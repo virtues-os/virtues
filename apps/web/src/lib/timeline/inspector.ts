@@ -33,6 +33,12 @@ export interface DerivedPlace {
 	/** The person named it; an unnamed place carries the resolver's "Location …". */
 	is_named: boolean;
 	place_name: string | null;
+	/** The box's title for it: Home or Work, the map's match, else its city. */
+	title?: string;
+	/** Where that title came from: `map` is the map's guess, never confirmed. */
+	title_source?: string;
+	/** "Help Virtues out" has a question about it. */
+	asked?: boolean;
 }
 
 /** One transcription window, as `/api/timeline/voice` serves it. */
@@ -89,11 +95,18 @@ export interface InspectorSection {
 	placeId: string | null;
 	/** A stay only: the person named its place. */
 	named: boolean;
+	/** A stay only: its title is the map's guess, offered for correction. */
+	guessed?: boolean;
+	/** A trip only: fast enough that only a plane goes that fast. */
+	flight?: boolean;
+	/** A stay only: where its title came from (`home`, `work`, `map`,
+	 *  `city`, `none`). */
+	source?: string;
 	rows: InspectorRow[];
 	/** A stay's audio note: "no audio" or "silent", only when clear-cut. */
 	atag: "no audio" | "silent" | null;
 	/** In Bed only: where the night came from. */
-	src: "healthkit" | "quiet_hours" | null;
+	src: "healthkit" | "quiet_hours" | "estimated" | null;
 }
 
 const HOUR = 3_600_000;
@@ -107,11 +120,19 @@ export function fmtDur(ms: number): string {
 	return r ? `${h}h ${r}m` : `${h}h`;
 }
 
-/** A place's title: the name the person gave it, else "Unnamed place". The
- *  wiki names a place nobody named "Location <lat>, <lon>"; that is no title
- *  to show. */
+/** A place asked about that only its city names: "Unknown · Austin", so
+ *  the stay reads at a glance as one that needs the person. */
+function unknown(p: DerivedPlace | undefined): boolean {
+	return !!p?.asked && !p.is_named && (p.title_source === "city" || p.title_source === "none");
+}
+
+/** A place's title: the name the person gave it, else the box's title for
+ *  it (Home or Work, the map's match, its city), else "Unnamed place"; a
+ *  place asked about with only its city is "Unknown · <city>". The wiki names a place
+ *  nobody named "Location <lat>, <lon>"; that is no title to show. */
 export function placeTitle(p: DerivedPlace | undefined): string {
-	return p?.is_named && p.place_name ? p.place_name : "Unnamed place";
+	if (unknown(p)) return p?.title_source === "city" && p.title ? `Unknown · ${p.title}` : "Unknown";
+	return p?.is_named && p.place_name ? p.place_name : (p?.title ?? "Unnamed place");
 }
 
 /** Faster than anything on the ground: only a flight reaches it. */
@@ -182,19 +203,29 @@ export function buildInspector(w: DerivedWindow, start: number, end: number, voi
 		switch (s.kind) {
 			case "stay": {
 				const place = places.get(s.timeline_place_id ?? "");
-				return { ...base, kind: "place", title: placeTitle(place), named: !!place?.is_named, dur: fmtDur(ce - cs) };
+				return {
+					...base,
+					kind: "place",
+					title: placeTitle(place),
+					named: !!place?.is_named,
+					guessed: !place?.is_named && place?.title_source === "map",
+					source: place?.title_source,
+					dur: fmtDur(ce - cs),
+				};
 			}
 			case "transit":
 				return {
 					...base,
 					kind: "transit",
 					title: movementTitle(Number(s.metadata.path_meters ?? 0), Number(s.metadata.peak_kmh ?? 0), s.e - s.s),
+					flight: Number(s.metadata.peak_kmh ?? 0) >= FLIGHT_KMH,
 					dur: fmtDur(ce - cs),
 				};
 			case "sleep": {
 				// A night keeps its full length, though the day only shows its part.
-				const src = s.metadata.source === "healthkit" ? "healthkit" : "quiet_hours";
-				return { ...base, kind: "sleep", title: "In Bed", dur: fmtDur(s.e - s.s), src };
+				const src = s.metadata.source === "healthkit" ? "healthkit" : s.metadata.source === "estimated" ? "estimated" : "quiet_hours";
+				// An estimate says so in its length: "~7h 30m".
+				return { ...base, kind: "sleep", title: "In Bed", dur: `${src === "estimated" ? "~" : ""}${fmtDur(s.e - s.s)}`, src };
 			}
 			case "unknown": {
 				// Says only what the record knows: no location, and what the

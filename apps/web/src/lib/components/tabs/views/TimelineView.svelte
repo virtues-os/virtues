@@ -23,38 +23,38 @@
 	import { deriveDay, joinDays, type Sources } from '$lib/timeline/derive';
 	import { getStreamHealth } from '$lib/api/client';
 	import { mergePlace, updatePlace, type NearbyPlace } from '$lib/wiki/api';
-	import type { DerivedWindow, VoiceWindow } from '$lib/timeline/inspector';
+	import type { DerivedPlace, DerivedWindow, VoiceWindow } from '$lib/timeline/inspector';
 	import type { LaneWindow } from '$lib/timeline/lanes';
 	import { cleanTrack, dropSpikes, flagHoles, splitTrack, toFixes, type Fix, type Line } from '$lib/timeline/track';
+	import { wheelSource } from '$lib/timeline/wheel';
 	import { buildInspector, placeTitle, type InspectorPick, type InspectorSection } from '$lib/timeline/inspector';
 	import { anchorAt, positionAt, trackMetres } from '$lib/timeline/anchor';
 	import { Bubbles, type Area, type MapMoment } from '$lib/timeline/bubbles';
 	import TimelineInspector from '$lib/components/timeline/TimelineInspector.svelte';
+	import ReviewTile from '$lib/components/timeline/ReviewTile.svelte';
 	import TimelineScrubber from '$lib/components/timeline/TimelineScrubber.svelte';
 	import TimelineMonth from '$lib/components/timeline/TimelineMonth.svelte';
+	import { ReviewState } from '$lib/timeline/reviewState.svelte';
+	import { sendAnswer, type PlaceCandidate } from '$lib/timeline/review';
+	import Icon from '$lib/components/Icon.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
-	import TextAction from '$lib/components/TextAction.svelte';
+	import Pill from '$lib/components/timeline/Pill.svelte';
 	import { laneData, NO_LANES, type Lanes, type RibbonKind } from '$lib/timeline/lanes';
 	import { buildFolds, clampView, HOUR, MIN, midnightIn, tierOf, tierView, unwarp, warp, weekOf, mondayOf, zoneOffset, type Tier } from '$lib/timeline/scale';
 	import { colourVars, mapInk } from '$lib/timeline/colours';
+	import { APPLE_DARK, APPLE_LIGHT, hsl, recolour, type Palette } from '$lib/timeline/palette';
 
 	/** Below this pane width the list leaves the map's side for a sheet. */
 	const NARROW_PX = 640;
 	/** The narrow layout's sheet, as a share of the pane's height. */
 	const SHEET = 0.34;
 
-	// Without the box's map archives there is no basemap: the page's own
-	// surface, so the path still draws and the page doesn't read as broken.
-	const bare = (): StyleSpecification => ({
+	// Without the box's map archives there is no basemap: the palette's
+	// ground alone, so the path still draws and the page doesn't read as broken.
+	const bare = (palette: Palette): StyleSpecification => ({
 		version: 8,
 		sources: {},
-		layers: [
-			{
-				id: 'bare',
-				type: 'background',
-				paint: { 'background-color': getComputedStyle(document.documentElement).getPropertyValue('--color-surface').trim() },
-			},
-		],
+		layers: [{ id: 'bare', type: 'background', paint: { 'background-color': hsl(palette.land) } }],
 	});
 
 	/** Virtues' own scheme: its dark themes set `--identity-dark: 1` (themes.css),
@@ -62,11 +62,14 @@
 	 *  page reads it. The map follows with the atlas's own dark style. */
 	const isDark = () => getComputedStyle(document.documentElement).getPropertyValue('--identity-dark').trim() === '1';
 	let dark = $state(browser ? isDark() : false);
-	/** The basemap for a side: the atlas's own style, or the page's plain
-	 *  ground when the box has no map files. When
+	/** The basemap for a side: the atlas's own style in the prototype's
+	 *  palette (cream land, white streets, green parks, blue water; see
+	 *  palette.ts), or the palette's plain ground when the box has no map
+	 *  files. When
 	 *  the box can't be reached (it's restarting), the ground stands in, no note
 	 *  claims there are no maps, and the map asks again until the box answers. */
 	async function baseStyle(night: boolean): Promise<StyleSpecification> {
+		const palette = night ? APPLE_DARK : APPLE_LIGHT;
 		let style: StyleSpecification | null;
 		try {
 			style = await atlasStyle(night ? 'dark' : 'light');
@@ -74,31 +77,35 @@
 			console.warn('[Timeline] map files unreachable; asking again', e);
 			clearTimeout(mapRetry);
 			mapRetry = window.setTimeout(() => void restyle(), MAP_RETRY_MS);
-			return bare();
+			return bare(palette);
 		}
 		basemap = style !== null;
 		if (squares === null) void loadSquares();
-		return style ?? bare();
+		return style ? recolour(style, palette) : bare(palette);
 	}
 	/** How long to wait before asking an unreachable box for its map again. */
 	const MAP_RETRY_MS = 5000;
 	let mapRetry = 0;
-	/** The day's own sources and layers, drawn over the basemap. */
-	const OWN = ['track-run', 'track-bridge', 'lit-glow', 'lit-run', 'lit-bridge'];
-	/** A theme switch swaps the basemap and carries the day's track across, so
-	 *  nothing reloads. */
+	/** The basemap the map is drawn on: every source and layer not in it is
+	 *  the day's own. */
+	let base: StyleSpecification | null = null;
+	/** A theme switch swaps the basemap and carries the day's own sources and
+	 *  layers across, so nothing reloads. */
 	async function restyle() {
 		const m = map;
 		if (!m) return;
 		const night = dark;
 		const next = await baseStyle(night);
 		if (map !== m || dark !== night) return;
+		const was = base;
+		base = next;
 		m.setStyle(next, {
 			transformStyle: (prev, fresh) => {
-				if (!prev) return fresh;
+				if (!prev || !was) return fresh;
 				const sources = { ...fresh.sources };
-				for (const id of OWN) if (prev.sources[id]) sources[id] = prev.sources[id];
-				return { ...fresh, sources, layers: [...fresh.layers, ...prev.layers.filter((l) => OWN.includes(l.id))] };
+				for (const [id, src] of Object.entries(prev.sources)) if (!(id in was.sources)) sources[id] = src;
+				const baseLayers = new Set(was.layers.map((l) => l.id));
+				return { ...fresh, sources, layers: [...fresh.layers, ...prev.layers.filter((l) => !baseLayers.has(l.id))] };
 			},
 		});
 	}
@@ -136,14 +143,20 @@
 	let note = $state<{ title: string; lines: string[] } | null>(null);
 	let map: MlMap | null = null;
 	/** The map's paint, read off the theme (colours.ts). */
-	let ink = browser ? mapInk() : { track: '', now: '' };
+	let ink = browser ? mapInk() : { track: '', move: '', movePicked: '', label: '', halo: '' };
 	/** A theme switch repaints the day's own layers. */
 	function paintInk() {
 		ink = mapInk();
 		const m = map;
 		if (!m?.getLayer('track-run')) return;
 		for (const id of ['track-run', 'track-bridge']) m.setPaintProperty(id, 'line-color', ink.track);
-		for (const id of ['lit-glow', 'lit-run', 'lit-bridge']) m.setPaintProperty(id, 'line-color', ink.now);
+		m.setPaintProperty('track-drive', 'line-color', ink.move);
+		m.setPaintProperty('review-dots', 'circle-color', ink.label);
+		m.setPaintProperty('review-dots', 'circle-stroke-color', ink.halo);
+		m.setPaintProperty('review-names', 'text-color', ink.label);
+		m.setPaintProperty('review-names', 'text-halo-color', ink.halo);
+		m.setPaintProperty('lit-glow', 'line-color', ink.movePicked);
+		for (const id of ['lit-run', 'lit-bridge']) m.setPaintProperty(id, 'line-color', picked?.kind === 'transit' ? ink.movePicked : ink.move);
 	}
 	let maplibre: typeof import('maplibre-gl') | null = null;
 	let resizer: ResizeObserver | null = null;
@@ -294,6 +307,7 @@
 			if (cancelled || !container) return;
 			const style = await baseStyle(dark);
 			if (cancelled || !container) return;
+			base = style;
 			const m = new ml.Map({
 				container,
 				style,
@@ -304,22 +318,50 @@
 			});
 			map = m;
 			// The prototype's gestures (dayback/src/main.js:988-993, 1870-1875): a
-			// pinch is the only zoom, two fingers pan, nothing rotates, and no
+			// pinch zooms, two fingers pan, nothing rotates, and no
 			// double-click, drag-box or keyboard zoom (the keys belong to the
-			// playhead).
+			// playhead). A mouse's wheel zooms (onWheel).
 			m.doubleClickZoom.disable();
 			m.boxZoom.disable();
 			m.keyboard.disable();
 			m.dragRotate.disable();
 			m.touchZoomRotate.disableRotation();
+			// A pinch follows the fingers: spreading them twice as far zooms
+			// the map in twice (one zoom level). Browsers send a pinch as a
+			// ctrl wheel with deltaY = -100 * ln(scale) (Chrome's
+			// touchpad_pinch_event_queue.cc; Firefox alike), and MapLibre's
+			// scale per frame is about exp(|delta| * rate / 2), so 1/50 is
+			// 1:1; its default, 1/100, moved the map half as far (the owner's
+			// call, 2026-10-09: match Apple Maps). A mouse's wheel zooms at
+			// 1/360, a quarter faster than MapLibre's 1/450.
+			m.scrollZoom.setZoomRate(PINCH_RATE.trackpad);
+			m.scrollZoom.setWheelZoomRate(PINCH_RATE.wheel);
 			container.addEventListener('wheel', onWheel, { passive: false, capture: true });
 			m.on('move', syncAway);
+			// A drag or a pinch by hand stops following until the next scrub or play.
+			m.on('movestart', (e) => {
+				if ((e as { originalEvent?: Event }).originalEvent) following = false;
+			});
 			m.on('moveend', syncStreets);
-			// A click on the map itself (not a bubble, a chip or a card) lets go
-			// of a picked drive or stay.
-			m.on('click', () => {
+			// A click on the day's path picks the stay or drive it belongs to, as
+			// its row in the list does (the owner's call, 2026-10-08; the
+			// prototype's path took no clicks). A click on the map anywhere else
+			// (not a bubble, a chip or a card) lets go of a picked drive or stay.
+			m.on('click', (e) => {
+				// Pointing to Home or Work: the tap is the answer, and nothing else.
+				if (pointing) return tapAt(e.lngLat.lat, e.lngLat.lng);
+				const sec = m.queryRenderedFeatures(e.point, { layers: PATH_HIT }).length ? sectionAt(m, e.point) : null;
+				if (sec) return reveal({ kind: sec.kind, s: sec.s, e: sec.e });
 				if (picked) unpick();
 			});
+			for (const id of PATH_HIT) {
+				m.on('mouseenter', id, () => !pointing && (m.getCanvas().style.cursor = 'pointer'));
+				m.on('mouseleave', id, () => {
+					if (!pointing) m.getCanvas().style.cursor = '';
+					hoverPath(m, null);
+				});
+				m.on('mousemove', id, (e) => hoverPath(m, e.point));
+			}
 			maplibre = ml;
 			// MapLibre only follows the window's size. A hidden tab stays mounted
 			// and split view narrows it, so follow the container instead.
@@ -345,10 +387,44 @@
 					layout: { 'line-join': 'round', 'line-cap': 'butt' },
 					paint: { 'line-color': ink.track, 'line-width': 1.5, 'line-opacity': 0.4, 'line-dasharray': [2, 3] },
 				});
+				// Every drive in moving's hue over the path, so the map tells being
+				// somewhere from going somewhere as the lanes and the list do.
+				m.addSource('track-drive', { type: 'geojson', data: lines([]) });
+				m.addLayer({
+					id: 'track-drive',
+					type: 'line',
+					source: 'track-drive',
+					layout: { 'line-join': 'round', 'line-cap': 'round' },
+					paint: { 'line-color': ink.move, 'line-width': 3, 'line-opacity': 0.85 },
+				});
+				// The stretch a click would pick, under the pointer: that stay's or
+				// drive's piece of the path at twice the weight, in its own colour.
+				// The colour changes at once: MapLibre's default 300 ms fade would
+				// draw a stay in the last drive's orange as it comes in.
+				m.addSource('hover-run', { type: 'geojson', data: lines([]) });
+				m.addLayer({
+					id: 'hover-run',
+					type: 'line',
+					source: 'hover-run',
+					layout: { 'line-join': 'round', 'line-cap': 'round' },
+					paint: { 'line-color': ink.track, 'line-color-transition': { duration: 0, delay: 0 }, 'line-width': 6, 'line-opacity': 1 },
+				});
+				// What a click on the path finds: the drawn path is 3 px, too thin
+				// to aim at, so an unseen 18 px band over it takes the click. A
+				// hole's dashed bridge is no one's, so it takes none.
+				for (const [id, source] of [['track-hit', 'track-run'], ['drive-hit', 'track-drive']]) {
+					m.addLayer({
+						id,
+						type: 'line',
+						source,
+						layout: { 'line-join': 'round', 'line-cap': 'round' },
+						paint: { 'line-color': ink.track, 'line-width': 18, 'line-opacity': 0 },
+					});
+				}
 				// The lit stretch: the stretch of path the playhead is moving along,
-				// in the accent at the path's own weight, over a path otherwise ink
-				// all day - the accent means now, so only what you're looking at
-				// takes it. A drive picked from the inspector grows heavier over a
+				// in moving's orange at the path's own weight, over a path otherwise
+				// ink all day, so only what you're looking at takes the colour. A
+				// drive picked from the inspector turns a brighter orange over a
 				// soft halo (pick, below).
 				m.addSource('lit-run', { type: 'geojson', data: lines([]) });
 				m.addSource('lit-bridge', { type: 'geojson', data: lines([]) });
@@ -359,14 +435,14 @@
 					type: 'line',
 					source: 'lit-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': ink.now, 'line-width': 22, 'line-blur': 10, 'line-opacity': 0 },
+					paint: { 'line-color': ink.movePicked, 'line-width': 22, 'line-blur': 10, 'line-opacity': 0 },
 				});
 				m.addLayer({
 					id: 'lit-run',
 					type: 'line',
 					source: 'lit-run',
 					layout: { 'line-join': 'round', 'line-cap': 'round' },
-					paint: { 'line-color': ink.now, 'line-width': 3, 'line-opacity': 0.95 },
+					paint: { 'line-color': ink.move, 'line-width': 3, 'line-opacity': 0.95 },
 				});
 				m.addLayer({
 					id: 'lit-bridge',
@@ -374,11 +450,41 @@
 					source: 'lit-bridge',
 					layout: { 'line-join': 'round', 'line-cap': 'butt' },
 					paint: {
-						'line-color': ink.now,
+						'line-color': ink.move,
 						'line-width': 1.5,
 						'line-opacity': 0.9,
 						'line-dasharray': [2, 2.5],
 					},
+				});
+				// While "Help Virtues out" asks about a place, the named places it
+				// offers are labelled on the map, so each choice can be found
+				// (main.js:916-924); otherwise nothing.
+				m.addSource('review-names', { type: 'geojson', data: { type: 'FeatureCollection', features: [] } });
+				m.addLayer({
+					id: 'review-dots',
+					type: 'circle',
+					source: 'review-names',
+					// A named place offered, in the label's ink: a mark on the map,
+					// never a second "you were here" beside the pin.
+					paint: { 'circle-radius': 3, 'circle-color': ink.label, 'circle-stroke-width': 1.5, 'circle-stroke-color': ink.halo },
+				});
+				m.addLayer({
+					id: 'review-names',
+					type: 'symbol',
+					source: 'review-names',
+					layout: {
+						'text-field': ['get', 'name'],
+						'text-font': ['Noto Sans Medium'],
+						'text-size': 13,
+						// Each name finds a side of its dot clear of the others,
+						// so a street of bars side by side stays readable.
+						'text-variable-anchor': ['top', 'bottom', 'left', 'right', 'top-left', 'top-right', 'bottom-left', 'bottom-right'],
+						'text-radial-offset': 0.7,
+						'text-justify': 'auto',
+						'text-padding': 2,
+						'text-max-width': 9,
+					},
+					paint: { 'text-color': ink.label, 'text-halo-color': ink.halo, 'text-halo-width': 1.5 },
 				});
 				const el = document.createElement('div');
 				el.className = 'tl-pin';
@@ -477,6 +583,7 @@
 		const bounds = { startMs: Date.parse(day.started_at), endMs: Date.parse(day.ended_at), zone: day.zone };
 		const { derived, voice, lanes: lw } = deriveDay(day, sources);
 		loaded = { derived, voice, lw, startMs: Date.parse(day.started_at), endMs: Date.parse(day.ended_at) };
+		markAsked(derived.places);
 		const window = { points: day.points, before: day.last_point_before };
 		if (mine !== asked) return;
 		const { startMs, endMs } = bounds;
@@ -499,6 +606,8 @@
 		// Across a crossing the week's lanes already drawn stay, rather than
 		// shrinking to the one day until the week reloads.
 		const across = crossing;
+		// A day opens framed whole; following carries on only across a crossing.
+		if (!across) following = false;
 		crossing = false;
 		if (!(across && lanes.a <= week.s && lanes.b >= week.e)) lanes = laneData(derived, voice, lw, startMs, endMs);
 		midnights = Array.from({ length: 15 }, (_, i) => midnightIn(stepDay(slug, i - 7), bounds.zone));
@@ -510,9 +619,12 @@
 			armed = true;
 			setView(week.s, week.e);
 		} else {
-			// A stepped-to day opens whole, at midnight, untouched (main.js:1387);
-			// a nudge lands at its time of day, in its tier.
-			playT = startMs;
+			// A stepped-to day opens whole and untouched, its playhead at wake-up:
+			// the end of the night it woke from (recorded or estimated), else
+			// the first stay or drive after midnight (the owner's call,
+			// 2026-10-08; the prototype opened at midnight, main.js:1387). A
+			// nudge lands at its time of day, in its tier.
+			playT = wakeOf(sections, startMs, endMs);
 			armed = false;
 			setView(startMs, endMs);
 			const nudged = pendingNudge;
@@ -544,13 +656,33 @@
 		const { runs, bridges } = splitTrack(dayTrack);
 		(m.getSource('track-run') as GeoJSONSource).setData(lines(runs));
 		(m.getSource('track-bridge') as GeoJSONSource).setData(lines(bridges));
+		const drives = sections
+			.filter((s) => s.kind === 'transit')
+			.flatMap((d) => splitTrack(dayTrack.filter((f) => f.t >= d.s && f.t < d.e)).runs);
+		(m.getSource('track-drive') as GeoJSONSource).setData(lines(drives));
 		// The inspector draws first, so the framing can leave room for it.
 		await tick();
 		if (mine !== asked) return;
 		if (dayFixes.length) {
-			frameDay(m, 0);
+			// The first day jumps into place; every day after it glides there,
+			// so a step between days reads as one move (the owner's call,
+			// 2026-10-10).
+			frameDay(m, framedOnce ? DAY_GLIDE_MS : 0);
+			framedOnce = true;
 			bubbles?.build(mapMoments());
 			syncPlayhead();
+			// A card opened while the day loaded (the tile's step to another
+			// day): the place it asks about, not the whole day. Only a card on
+			// this day: one left open on the day before must not hold the map.
+			if (focused && focusedDay === date) focusPlace(focused);
+			// A name opened from "Named Places" while its day loaded: its
+			// question opened once the day is framed, so the framing doesn't
+			// undo it.
+			if (pendingShow) {
+				const id = pendingShow;
+				pendingShow = null;
+				inspector?.revisit(id);
+			}
 			return;
 		}
 		bubbles?.clear();
@@ -595,8 +727,15 @@
 	/** Two fingers pan the map the way they move; a pinch (the browser sends
 	 *  it as a wheel with ctrl) is left to MapLibre, which zooms about the
 	 *  cursor; over a place card the card's list scrolls (main.js:988-992). */
+	/** How fast a pinch (or a wheel with Ctrl) zooms the map. */
+	const PINCH_RATE = { trackpad: 1 / 50, wheel: 1 / 360 };
+	/** Two fingers pan; a mouse's wheel, with no pinch to zoom by, zooms
+	 *  (MapLibre's scroll zoom, about the pointer). */
+	const wheelFrom = wheelSource();
 	function onWheel(e: WheelEvent) {
+		following = false;
 		if (e.ctrlKey || e.metaKey) return;
+		if (wheelFrom(e) === 'mouse') return;
 		if ((e.target as HTMLElement | null)?.closest?.('.tl-card')) return;
 		e.preventDefault();
 		e.stopPropagation();
@@ -625,19 +764,280 @@
 	}
 	/** Glide back to the day's frame; an opened knot folds into its chip. */
 	function resetView() {
+		following = false;
 		const m = map;
 		if (!m) return;
 		bubbles?.fold();
 		if (dayFixes.length) frameDay(m, 650);
 		else if (home) m.easeTo({ center: home.c, zoom: home.z, duration: 650 });
 	}
+	let glow: Marker | null = null;
+	/** "Help Virtues out": the questions, answers and Undo, shared by the
+	 *  day's list and its Review. An answer re-reads the day's titles. */
+	const review = new ReviewState(() => void refreshTitles());
+	// Home and Work come first, for everyone: while either is unanswered,
+	// opening the Timeline opens its question (the owner's call, 2026-10-09).
+	onMount(() => {
+		void review.load().then(() => {
+			const first = steps[0];
+			if (first && (first.ask === 'home' || first.ask === 'work')) stepTo(0);
+		});
+	});
+	/** The places "Help Virtues out" asks about: titled "Unknown" while only
+	 *  their city names them. */
+	function markAsked(places: DerivedPlace[]) {
+		for (const p of places) p.asked = review.byPlace.has(p.id);
+	}
+	$effect(() => {
+		void review.byPlace;
+		untrack(() => {
+			if (!loaded) return;
+			markAsked(loaded.derived.places);
+			redrawPlaces();
+		});
+	});
+
+	/** The tile's steps between days: the questions that have a day to open,
+	 *  in Review's order (Home and Work, then the most time first). */
+	const steps = $derived(review.questions.filter((q) => q.best_day));
+	let stepAt = $state<number | null>(null);
+	/** The question stepped to. Once answered it leaves the list, and the
+	 *  step sits between its neighbours: the next one has taken its index. */
+	let stepId = $state<string | null>(null);
+	const stepAnswered = $derived(stepAt !== null && steps[stepAt]?.id !== stepId);
+	/** A question whose day is loading: its card opens once the day is in. */
+	let pendingAsk = $state<string | null>(null);
+	function stepTo(i: number) {
+		const q = steps[i];
+		if (!q?.best_day) return;
+		stepAt = i;
+		stepId = q.id;
+		if (q.best_day === date) inspector?.ask(q.id);
+		else {
+			pendingAsk = q.id;
+			date = q.best_day;
+		}
+	}
+	$effect(() => {
+		const id = pendingAsk;
+		if (!id || !sections.some((x) => x.placeId === id)) return;
+		untrack(() => {
+			pendingAsk = null;
+			inspector?.ask(id);
+		});
+	});
+	/** The day "Named Places" was opened on: leaving it by "‹ Back to the
+	 *  Day" returns there, however many names' days it showed. */
+	let detourFrom: string | null = null;
+	function detour(open: boolean, back = false) {
+		if (open) {
+			detourFrom ??= date;
+			return;
+		}
+		const from = detourFrom;
+		detourFrom = null;
+		if (back && from && from !== date) date = from;
+	}
+	/** The list on show: behind it, the day it was opened on, not the last
+	 *  name's (the owner's call, 2026-10-13: a confirmed name left him on
+	 *  its day). */
+	function listShown() {
+		detourFrom ??= date;
+		if (date !== detourFrom) date = detourFrom;
+	}
+	/** A name from "Named Places": its last day, with its question asked
+	 *  again under its stay once the day is drawn (`drawDay`). */
+	let pendingShow: string | null = null;
+	function openPlace(id: string, day: string) {
+		if (day === date) inspector?.revisit(id);
+		else {
+			pendingShow = id;
+			date = day;
+		}
+	}
+	// The pill is there while something is left to ask. The answer that
+	// clears the list leaves "All caught up" on that day, then the pill goes
+	// (the owner's call, 2026-10-13: a pill that stays is noise); every name
+	// stays under "Named Places" at the end of the day's list.
+	let caughtUpOn = $state<string | null>(null);
+	let lastCount = -1;
+	$effect(() => {
+		const n = steps.length;
+		untrack(() => {
+			if (lastCount > 0 && n === 0) caughtUpOn = date;
+			lastCount = n;
+		});
+	});
+	// An answer shortens the list: the step stays where the answered one was,
+	// so the next one in line is one tap away, never skipped.
+	$effect(() => {
+		const n = steps.length;
+		untrack(() => {
+			if (stepAt !== null && stepAt > n) stepAt = n;
+			if (!n) stepAt = null;
+		});
+	});
+	/** A stay's name field made its place Home or Work. */
+	async function setRole(placeId: string, role: 'home' | 'work'): Promise<boolean> {
+		try {
+			await sendAnswer(placeId, { kind: role });
+			await Promise.all([refreshTitles(), review.load()]);
+			return true;
+		} catch (e) {
+			console.warn('[Timeline] setting Home or Work failed', e);
+			return false;
+		}
+	}
+	/** Pointing to Home or Work on the map, after a "no": a mode of its own,
+	 *  a banner at the top and one pin that each tap moves. */
+	const pointing = $derived(review.pointing?.role ?? null);
+	let tapped = $state<{ lat: number; lon: number } | null>(null);
+	let tapMark: Marker | null = null;
+	$effect(() => {
+		const role = pointing;
+		untrack(() => {
+			tapped = null;
+			tapMark?.remove();
+			tapMark = null;
+			const m = map;
+			if (m) m.getCanvas().style.cursor = role ? 'crosshair' : '';
+			if (role) focusPlace(null);
+		});
+	});
+	function tapAt(lat: number, lon: number) {
+		const m = map;
+		if (!m || !maplibre) return;
+		if (!tapMark) {
+			const el = document.createElement('div');
+			el.className = 'tl-tap';
+			el.append(Object.assign(document.createElement('span'), { className: 'tl-tap-pin' }));
+			tapMark = new maplibre.Marker({ element: el, anchor: 'bottom' });
+		}
+		tapMark.setLngLat([lon, lat]).addTo(m);
+		tapped = { lat, lon };
+	}
+	/** How close the map comes to a place being asked about. */
+	const QUESTION_ZOOM = 16.75;
+	/** A place is being asked about: the map is on it, the day's marks dimmed. */
+	let focusing = $state(false);
+	/** Take the map to the place "Help Virtues out" is asking about, under a
+	 *  glowing pin, with the day's marks dimmed (main.js:2209-2221); `null`
+	 *  gives the day back. The map frames the stay picked for the question on
+	 *  its own path, as a pick does, and the path keeps its weight: the
+	 *  prototype faded it and framed the named places around, which left the
+	 *  stay small and its path a ghost (the owner's call, 2026-10-09). */
+	let focused: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null = null;
+	/** The day the focused question was opened on. */
+	let focusedDay: string | null = null;
+	/** Whether a day has been framed yet: the first jumps, the rest glide. */
+	let framedOnce = false;
+	const DAY_GLIDE_MS = 900;
+	function focusPlace(at: { lat: number; lon: number; reachM: number; shown: PlaceCandidate[] } | null) {
+		focused = at;
+		focusedDay = at ? date : null;
+		const m = map;
+		if (!m || !maplibre || !m.getLayer('track-run')) return;
+		glow?.remove();
+		glow = null;
+		const names = m.getSource('review-names') as GeoJSONSource | undefined;
+		focusing = !!at;
+		names?.setData({
+			type: 'FeatureCollection',
+			features: (at?.shown ?? []).map((c) => ({ type: 'Feature', properties: { name: c.name }, geometry: { type: 'Point', coordinates: [c.lon, c.lat] } })),
+		});
+		if (!at) return;
+		const el = document.createElement('div');
+		el.className = 'tl-glow';
+		glow = new maplibre.Marker({ element: el, anchor: 'center' }).setLngLat([at.lon, at.lat]).addTo(m);
+		// The place in the middle of the clear map, at block scale: its
+		// streets named and the path around it in view (the owner's call,
+		// 2026-10-10, over framing the stay's own path, which set the pin low
+		// and close). An offset, not `padding`: MapLibre keeps an ease's
+		// padding on the map, and every fit after it then added its own on
+		// top and found no room, so "Show the whole day" did nothing.
+		const lim = clearArea(m);
+		const c = m.getContainer();
+		const offset: [number, number] = [(lim.l + lim.r) / 2 - c.clientWidth / 2, (lim.t + lim.b) / 2 - c.clientHeight / 2];
+		m.easeTo({ center: [at.lon, at.lat], zoom: QUESTION_ZOOM, offset, duration: 820 });
+	}
+
+	/** After an answer, the day's titles again: a place just named, or one no
+	 *  longer called by the map's wrong match, reads its new title. */
+	async function refreshTitles() {
+		const at = date;
+		try {
+			const day = await fetchDay(at);
+			if (at !== date || !loaded) return;
+			for (const p of loaded.derived.places) {
+				const stay = day.stays.find((s) => s.place_id === p.id);
+				p.title = day.place_titles[p.id]?.title ?? p.title;
+				if (stay) [p.is_named, p.place_name] = [stay.place_is_named, stay.place_name];
+			}
+			redrawPlaces();
+		} catch (e) {
+			console.warn('[Timeline] titles after an answer unavailable', e);
+		}
+	}
+
+	/** The map follows the scrub (patch item 9, the owner's idea): while you
+	 *  scrub, play or step with the keys, the camera keeps your pin centred in
+	 *  the clear map and zooms with your pace, close in while walking around
+	 *  a place, far out on a drive or a flight. The zoom comes from how far
+	 *  the path covers in the five minutes either side of the playhead, eases
+	 *  toward it, and only retargets on a clear change of pace. In a stretch
+	 *  with no location the map shows the whole day, and picks the pin up
+	 *  again where the record resumes. A pan or pinch by hand, a pick, or
+	 *  "Show the whole day" stops following until the next scrub or play. */
+	let following = false;
+	let followTarget: number | null = null;
+	let followGap = false;
+	let followRaf = 0;
+	const FOLLOW_WINDOW = 5 * MIN;
+	const FOLLOW_MAX_ZOOM = 18;
+	const FOLLOW_EASE = 0.15;
+	function paceZoom(m: MlMap, t: number): number {
+		const near = dayTrack.filter((f) => Math.abs(f.t - t) <= FOLLOW_WINDOW);
+		const ml = maplibre;
+		if (!ml || near.length < 2) return FOLLOW_MAX_ZOOM;
+		const b = new ml.LngLatBounds();
+		for (const f of near) b.extend([f.lng, f.lat]);
+		const cam = m.cameraForBounds(b, { padding: fitPad(m), maxZoom: FOLLOW_MAX_ZOOM });
+		return Math.max(3, Math.min(FOLLOW_MAX_ZOOM, cam?.zoom ?? FOLLOW_MAX_ZOOM));
+	}
+	function followTick(m: MlMap) {
+		cancelAnimationFrame(followRaf);
+		const at = positionAt(dayTrack, playT);
+		if (!at) {
+			if (!followGap) {
+				followGap = true;
+				followTarget = null;
+				frameDay(m, 650);
+			}
+			return;
+		}
+		followGap = false;
+		const target = paceZoom(m, playT);
+		if (followTarget === null || Math.abs(target - followTarget) > 0.75) followTarget = target;
+		const z = m.getZoom();
+		const zoom = Math.abs(followTarget - z) < 0.02 ? followTarget : z + (followTarget - z) * FOLLOW_EASE;
+		const lim = clearArea(m);
+		const c = m.getContainer();
+		const offset: [number, number] = [(lim.l + lim.r) / 2 - c.clientWidth / 2, (lim.t + lim.b) / 2 - c.clientHeight / 2];
+		m.easeTo({ center: [at.lng, at.lat], zoom, offset, duration: 0 });
+		// The zoom settles on its own once the playhead rests.
+		if (zoom !== followTarget) followRaf = requestAnimationFrame(() => following && followTick(m));
+	}
+
 	/** The keys (main.js:792-802, 1205): Esc is Reset view; ← → nudge the
 	 *  playhead; Space plays. Shift+← → do nothing (the owner's call: the
 	 *  prototype's jump between conversations is left out). Only while the
 	 *  Timeline is on screen, and never while typing. */
 	function onKey(e: KeyboardEvent) {
 		if (e.key === 'Escape') {
-			if (monthOpen) {
+			if (pointing) {
+				e.preventDefault();
+				review.cancelPointing();
+			} else if (monthOpen) {
 				e.preventDefault();
 				monthOpen = false;
 			} else if (picked) {
@@ -668,7 +1068,8 @@
 			const at = anchorAt(dayTrack, r.s, r.e);
 			if (!at) continue;
 			const km = trackMetres(dayTrack, r.s, r.e) / 1000;
-			out.push({ s: r.s, e: r.e, kind: r.kind, title: r.title, lng: at.lng, lat: at.lat, km, moving: km > 0.5 });
+			const flight = sections.some((x) => x.kind === 'transit' && x.flight && x.s <= r.s && r.s < x.e);
+			out.push({ s: r.s, e: r.e, kind: r.kind, title: r.title, lng: at.lng, lat: at.lat, km, moving: km > 0.5, flight });
 		}
 		return out;
 	}
@@ -707,6 +1108,16 @@
 		ensureVisible();
 		syncPlayhead();
 	}
+	/** When the day began for the person: the end of the night they woke
+	 *  from inside the day, else the start of its first stay or drive after
+	 *  midnight, else midnight. */
+	function wakeOf(secs: InspectorSection[], startMs: number, endMs: number): number {
+		const woke = secs.filter((x) => x.kind === 'sleep' && x.e > startMs && x.e < endMs).sort((a, b) => a.e - b.e)[0];
+		if (woke) return woke.e;
+		const first = secs.find((x) => (x.kind === 'place' || x.kind === 'transit') && x.s > startMs && x.s < endMs);
+		return first?.s ?? startMs;
+	}
+
 	/** Load the day holding `t`, keeping the playhead and the week. */
 	function follow(t: number) {
 		const slug = new Date(t).toLocaleDateString('en-CA', { timeZone: zone });
@@ -785,6 +1196,7 @@
 	function scrubSeek(t: number) {
 		cancelAnim();
 		inspectorFocus = 'row';
+		following = true;
 		park(t);
 	}
 
@@ -796,6 +1208,7 @@
 	function swipe(t: number) {
 		cancelAnim();
 		inspectorFocus = 'row';
+		following = true;
 		if (viewStart <= dayStart && viewEnd >= dayEnd) {
 			park(t);
 			return;
@@ -822,8 +1235,9 @@
 			loopTs = null;
 			return;
 		}
-		// Play is a touch too.
+		// Play is a touch too, and the map follows it.
 		armed = true;
+		following = true;
 		inspectorFocus = 'row';
 		if (playT >= dayEnd - 2 * MIN) playT = dayStart;
 		loopRaf = requestAnimationFrame(loop);
@@ -863,6 +1277,7 @@
 	 *  minute or an hour inside the day; a day or a week crosses to that day,
 	 *  keeping the time of day and the tier, never past today. */
 	function nudge(dir: 1 | -1) {
+		following = true;
 		const t = tier;
 		if (t === 'min' || t === 'hour') {
 			inspectorFocus = 'row';
@@ -912,9 +1327,12 @@
 	function syncPlayhead() {
 		const m = map;
 		if (!m) return;
+		if (following) followTick(m);
 		if (picked && !(picked.s <= playT && playT < picked.e)) unpick();
 		const at = positionAt(dayTrack, playT);
-		if (at && pin) pin.setLngLat([at.lng, at.lat]).addTo(m);
+		// A picked stay's pulse is where you were; the pin waits until the
+		// playhead leaves it, so one mark says "here".
+		if (at && pin && !pulse) pin.setLngLat([at.lng, at.lat]).addTo(m);
 		else pin?.remove();
 		bubbles?.sync(playT);
 		const drive = sections.find((s) => s.kind === 'transit' && s.s <= playT && playT < s.e);
@@ -936,12 +1354,49 @@
 	/** A click on a stretch of the scrubber's Location lane: the playhead is
 	 *  already where the click landed; the map goes to the stretch holding it,
 	 *  as a pick in the inspector would take it (the owner's call). */
+	/** The stay or drive under the pointer on the map: its stretch of path
+	 *  drawn heavier, and its row in the list lit as on hover, so you see what
+	 *  a click will pick. */
+	let hovered = $state<{ kind: 'place' | 'transit'; s: number } | null>(null);
+	let hoverFrame = 0;
+	function hoverPath(m: MlMap, at: { x: number; y: number } | null) {
+		cancelAnimationFrame(hoverFrame);
+		hoverFrame = requestAnimationFrame(() => {
+			const sec = at && !pointing && !focusing ? sectionAt(m, at) : null;
+			const next = sec && !(picked && picked.s === sec.s) ? { kind: sec.kind as 'place' | 'transit', s: sec.s } : null;
+			if (next?.s === hovered?.s && next?.kind === hovered?.kind) return;
+			hovered = next;
+			const src = m.getSource('hover-run') as GeoJSONSource | undefined;
+			if (!src) return;
+			if (!sec || !next) return src.setData(lines([]));
+			m.setPaintProperty('hover-run', 'line-color', next.kind === 'transit' ? ink.move : ink.track);
+			src.setData(lines(splitTrack(dayTrack.filter((f) => f.t >= sec.s && f.t < sec.e)).runs));
+		});
+	}
+	/** The layers a click on the day's path lands on. */
+	const PATH_HIT = ['track-hit', 'drive-hit'];
+	/** The stay or drive a click on the path belongs to: the time of the
+	 *  path's nearest point to it, and the section holding that time. */
+	function sectionAt(m: MlMap, at: { x: number; y: number }): InspectorSection | null {
+		let best: Fix | null = null;
+		let bestD = Infinity;
+		for (const f of dayTrack) {
+			const p = m.project([f.lng, f.lat]);
+			const d = Math.hypot(p.x - at.x, p.y - at.y);
+			if (d < bestD) [best, bestD] = [f, d];
+		}
+		if (!best) return null;
+		const t = best.t;
+		return sections.find((s) => (s.kind === 'place' || s.kind === 'transit') && s.s <= t && t < s.e) ?? null;
+	}
+
 	function revealAt(kind: RibbonKind, t: number) {
 		const sec = sections.find((s) => s.kind === kind && s.s <= t && t < s.e);
 		if (sec) reveal({ kind: sec.kind, s: sec.s, e: sec.e }, false);
 	}
 
 	function reveal(p: InspectorPick, parkIt = true) {
+		following = false;
 		const m = map;
 		const ml = maplibre;
 		if (!m || !ml) return;
@@ -949,9 +1404,12 @@
 			pickMoment(p.s, false);
 			return;
 		}
-		// A second click on the picked drive or stay lets go of it.
+		// A second click on the picked drive or stay undoes the first: it
+		// lets go of it and the map goes back to the whole day (the owner's
+		// call, 2026-10-08).
 		if (picked && picked.s === p.s && picked.kind === (p.kind === 'transit' ? 'transit' : 'place')) {
 			unpick();
+			resetView();
 			return;
 		}
 		const i = sections.findIndex((s) => s.kind === p.kind && s.s === p.s);
@@ -972,11 +1430,12 @@
 		// A stay flies in to its place, close enough to read the streets around
 		// it, and its place pulses while it stays picked (the owner's call; the
 		// prototype only pans a stay onto the map, main.js:1101).
-		const place = p.kind === 'place' ? placeCoords.get(sections[i]?.placeId ?? '') : undefined;
+		const placeId = sections[i]?.placeId ?? '';
+		const place = p.kind === 'place' ? placeCoords.get(placeId) : undefined;
 		if (place) {
 			bubbles?.fold();
-			flyIn(m, place);
-			pick({ kind: 'place', s: p.s, e: p.e, at: place });
+			frameStay(m, place, p.s, p.e);
+			pick({ kind: 'place', s: p.s, e: p.e, at: place, asked: review.byPlace.has(placeId) });
 			return;
 		}
 		const keys = sections[i]?.rows.map((r) => r.s) ?? [];
@@ -991,9 +1450,24 @@
 	 *  there), and the map flies in to it, or opens the chip holding it (the
 	 *  owner's call; the prototype only panned a bubble into view). */
 	function pickMoment(s: number, openRow: boolean) {
+		following = false;
 		inspectorFocus = 'row';
 		park(s);
 		if (openRow) inspector?.expand(s);
+		// Above the ground, where a conversation happened says nothing: a
+		// moment on a flight frames the flight, as picking the flight does
+		// (the owner's call, 2026-10-08).
+		const flight = sections.find((x) => x.kind === 'transit' && x.flight && x.s <= s && s < x.e);
+		const m = map;
+		const ml = maplibre;
+		const path = flight ? dayTrack.filter((f) => f.t >= flight.s && f.t < flight.e) : [];
+		if (m && ml && path.length >= 2) {
+			bubbles?.fold();
+			const b = new ml.LngLatBounds();
+			for (const f of path) b.extend([f.lng, f.lat]);
+			m.fitBounds(b, { padding: fitPad(m), maxZoom: 15, duration: 650 });
+			return;
+		}
 		bubbles?.reveal(s);
 	}
 
@@ -1006,40 +1480,78 @@
 		m.easeTo({ center: at, zoom: Math.max(m.getZoom(), 16), offset, duration: 650 });
 	}
 
+	/** A picked stay frames its own stretch of path, as close as it takes to
+	 *  show the walking inside it (a terminal, a bar's floor) up to zoom 18.5;
+	 *  a stay that barely moved, or whose path spreads wider than streets,
+	 *  flies in to street level as before (the owner's call, 2026-10-08). */
+	const STAY_MAX_ZOOM = 18.5;
+	function frameStay(m: MlMap, place: [number, number], s: number, e: number) {
+		const ml = maplibre;
+		const path = dayTrack.filter((f) => f.t >= s && f.t < e);
+		if (!ml || path.length < 2) return flyIn(m, place);
+		const b = new ml.LngLatBounds(place, place);
+		for (const f of path) b.extend([f.lng, f.lat]);
+		const cam = m.cameraForBounds(b, { padding: fitPad(m), maxZoom: STAY_MAX_ZOOM });
+		if (!cam || (cam.zoom ?? 0) < 16) return flyIn(m, place);
+		m.fitBounds(b, { padding: fitPad(m), maxZoom: STAY_MAX_ZOOM, duration: 650 });
+	}
+
 	/** A stay or a drive picked from the inspector stays marked while the playhead
 	 *  is inside it: a stay's place wears a ring, a drive's lit stretch a halo.
 	 *  Any other pick, a scrub, or the playhead leaving it clears the mark. */
 	let picked: { kind: 'place' | 'transit'; s: number; e: number } | null = null;
+	/** The picked stay or drive, for the list's selection; kept apart from
+	 *  `picked`, which the playhead's own code reads and clears. */
+	let selected = $state<{ kind: 'place' | 'transit'; s: number } | null>(null);
 	let pulse: Marker | null = null;
-	function pick(p: { kind: 'place' | 'transit'; s: number; e: number; at?: [number, number] }) {
+	function pick(p: { kind: 'place' | 'transit'; s: number; e: number; at?: [number, number]; asked?: boolean }) {
 		unpick();
 		const m = map;
 		const ml = maplibre;
 		if (!m || !ml) return;
 		picked = { kind: p.kind, s: p.s, e: p.e };
+		selected = { kind: p.kind, s: p.s };
 		if (p.at) {
 			const el = document.createElement('div');
 			el.className = 'tl-pulse';
+			// A stay Virtues has a question about: a "?" on its pin, and no
+			// names around it until its card is open.
+			if (p.asked) {
+				el.classList.add('asked');
+				el.textContent = '?';
+			}
 			pulse = new ml.Marker({ element: el, anchor: 'center' }).setLngLat(p.at).addTo(m);
+			pin?.remove();
 			return;
 		}
 		if (!m.getLayer('lit-glow')) return;
 		// The picked drive stands out from a drive the playhead merely passes
 		// through: twice the path's weight, over a still halo. Nothing on the
 		// page breathes but Home's now-marker (design-grammar §7).
+		// The picked drive turns the brighter orange (PROTOTYPE-RULES 9.21, 9.27).
 		m.setPaintProperty('lit-run', 'line-width', 6);
 		m.setPaintProperty('lit-bridge', 'line-width', 2.5);
+		m.setPaintProperty('lit-run', 'line-color', ink.movePicked);
+		m.setPaintProperty('lit-bridge', 'line-color', ink.movePicked);
 		m.setPaintProperty('lit-glow', 'line-opacity', 0.3);
 	}
 	function unpick() {
 		picked = null;
-		pulse?.remove();
-		pulse = null;
+		selected = null;
 		const m = map;
+		if (pulse) {
+			pulse.remove();
+			pulse = null;
+			// The pin comes back where the playhead is.
+			const at = positionAt(dayTrack, playT);
+			if (at && pin && m) pin.setLngLat([at.lng, at.lat]).addTo(m);
+		}
 		if (!m?.getLayer('lit-glow')) return;
 		m.setPaintProperty('lit-glow', 'line-opacity', 0);
 		m.setPaintProperty('lit-run', 'line-width', 3);
 		m.setPaintProperty('lit-bridge', 'line-width', 1.5);
+		m.setPaintProperty('lit-run', 'line-color', ink.move);
+		m.setPaintProperty('lit-bridge', 'line-color', ink.move);
 	}
 
 	/** The clear map (`v4ClearArea`, main.js:1042-1044): not under the top
@@ -1101,11 +1613,12 @@
 
 <div
 	class="timeline"
+	class:focusing={focusing || !!pointing}
 	class:with-inspector={shownSections.length > 0}
 	class:narrow
 	bind:this={root}
 	bind:clientWidth={paneW}
-	style="{colourVars()}; --top-chrome: {topChrome}px; --scrub-h: {scrubH}px; --inspector-top: {inspectorLow ? topChrome + 12 : 16}px"
+	style="{colourVars(dark)}; --top-chrome: {topChrome}px; --scrub-h: {scrubH}px; --inspector-top: {inspectorLow ? topChrome + 12 : 16}px"
 >
 	<div class="timeline-map" bind:this={container}></div>
 
@@ -1116,12 +1629,28 @@
 		<div class="date-card tile" bind:offsetWidth={cardW} bind:offsetHeight={cardH}>
 			<div class="date-row">
 				<IconButton icon="ri:arrow-left-s-line" label="Previous day" size="sm" onclick={() => (date = stepDay(date, -1))} />
+				<!-- Calendar's ‹ Today ›: a button between the arrows, there on
+				     every day and greyed out on today, so it never reads as the
+				     date's label and the › never moves. -->
+				<span class="date-today"><Pill disabled={date === today} onclick={() => (date = today)}>Today</Pill></span>
 				<IconButton icon="ri:arrow-right-s-line" label="Next day" size="sm" disabled={date >= today} onclick={() => (date = stepDay(date, 1))} />
 				<IconButton icon="ri:calendar-line" label="Show the month" size="sm" pressed={monthOpen} onclick={() => (monthOpen = !monthOpen)} />
-				{#if date !== today}<span class="date-today"><TextAction onclick={() => (date = today)}>Today</TextAction></span>{/if}
 			</div>
 			<button class="date-title" type="button" title="Back to the whole day" onclick={resetView}>{title}</button>
 		</div>
+		{#if review.review && !monthOpen && (steps.length || caughtUpOn === date)}
+			<ReviewTile
+				count={steps.length}
+				at={stepAt}
+				answered={stepAnswered}
+				onstep={stepTo}
+				onnames={() => inspector?.names()}
+				onclose={() => {
+					stepAt = null;
+					pendingAsk = null;
+				}}
+			/>
+		{/if}
 		{#if monthOpen}
 			<TimelineMonth
 				{date}
@@ -1134,13 +1663,39 @@
 		{/if}
 	</div>
 
+	{#if pointing}
+		<!-- Pointing to Home or Work: its own mode, top centre, in the accent. -->
+		<div class="pointing" role="dialog" aria-label={pointing === 'home' ? 'Tap your home' : 'Tap where you work'}>
+			<p class="pointing-text">
+				<Icon icon={pointing === 'home' ? 'ri:home-5-line' : 'ri:briefcase-4-line'} width="18" />
+				{pointing === 'home' ? 'Tap your home on the map' : 'Tap where you work on the map'}
+			</p>
+			<p class="pointing-sub">{tapped ? 'Tap again to move the pin.' : 'Zoom or move the map to find it.'}</p>
+			<div class="pointing-actions">
+				<button class="pointing-btn" type="button" onclick={() => review.cancelPointing()}>Cancel</button>
+				<button class="pointing-btn save" type="button" disabled={!tapped} onclick={() => tapped && review.savePointed(tapped)}>Save Here</button>
+			</div>
+			<button class="pointing-btn skip" type="button" onclick={() => review.skipPointing()}>Skip - don't ask again</button>
+		</div>
+	{/if}
+
 	<TimelineInspector bind:this={inspector} sections={shownSections}
 		onname={namePlace}
+		onrole={setRole}
+		homeSet={review.homeSet}
+		{review}
+		{selected}
+		{hovered}
+		onfocus={focusPlace}
 		onmerge={mergeInto}
 		{zone}
+		day={date}
 		{playT}
 		{armed}
 		focus={inspectorFocus}
+		onopenplace={openPlace}
+		ondetour={detour}
+		onlist={listShown}
 		onpick={reveal}
 		onseek={(t) => {
 			inspectorFocus = 'row';
@@ -1264,8 +1819,7 @@
 		min-height: 24px;
 	}
 	.date-today {
-		margin-left: 8px;
-		font-size: 13px;
+		margin: 0 2px;
 	}
 	.date-title {
 		display: block;
@@ -1297,7 +1851,8 @@
 		font-family: var(--font-sans);
 		font-size: 14px;
 		font-weight: 500;
-		color: var(--color-primary);
+		/* Virtues' secondary button: the foreground's ink on the surface. */
+		color: var(--color-foreground);
 		cursor: pointer;
 	}
 	.timeline:not(.with-inspector) .reset {
@@ -1349,6 +1904,115 @@
 
 	/* The map's own marks, made by MapLibre markers outside this component's
 	   markup, so :global. The pin is now, so it takes the accent. */
+	/* The place asked about: a glowing pin (index.html:321-323), still, as the
+	   pane's grammar keeps motion for Home's now-marker. */
+	.timeline :global(.tl-glow) {
+		width: 18px;
+		height: 18px;
+		border-radius: 50%;
+		background: var(--c-place);
+		border: 3px solid var(--color-background);
+		box-shadow: 0 0 0 6px color-mix(in srgb, var(--c-place) 30%, transparent); /* design-ok: the prototype's glow around the place asked about (index.html:321) */
+	}
+	/* The spot tapped as Home or Work: a map pin in the accent, its point on
+	   the spot. MapLibre moves the marker by its own transform, so the pin's
+	   shape is drawn inside it. */
+	.timeline :global(.tl-tap) {
+		padding-bottom: 8px;
+	}
+	.timeline :global(.tl-tap-pin) {
+		display: block;
+		width: 22px;
+		height: 22px;
+		border: 3px solid var(--color-background);
+		border-radius: 50% 50% 50% 0;
+		background: var(--color-primary);
+		transform: rotate(-45deg);
+	}
+	/* Pointing to Home or Work: a banner of its own at the top centre, in the
+	   accent, so the mode can't be mistaken for the card. */
+	.pointing {
+		position: absolute;
+		top: 16px;
+		left: 50%;
+		z-index: 14;
+		transform: translateX(-50%);
+		width: min(360px, calc(100% - 32px));
+		padding: 12px 16px;
+		border-radius: var(--tile-radius);
+		background: var(--color-primary);
+		color: var(--color-background);
+		font-family: var(--font-sans);
+		text-align: center;
+	}
+	.pointing-text {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 8px;
+		margin: 0;
+		font-size: 16px;
+		font-weight: 600;
+	}
+	.pointing-sub {
+		margin: 4px 0 12px;
+		font-size: 13px;
+		opacity: 0.85;
+	}
+	.pointing-actions {
+		display: flex;
+		gap: 8px;
+	}
+	/* Pills, as everywhere in the Timeline (Pill.svelte), drawn on the
+	   banner's blue: Save Here filled white, Cancel and Skip quiet. */
+	.pointing-btn {
+		flex: 1;
+		min-height: 32px;
+		border: 0;
+		border-radius: 999px;
+		background: color-mix(in srgb, var(--color-background) 18%, transparent);
+		color: var(--color-background);
+		font-family: var(--font-sans);
+		font-size: 15px;
+		font-weight: 500;
+		cursor: pointer;
+	}
+	.pointing-btn.save {
+		background: var(--color-background);
+		color: var(--color-primary);
+	}
+	.pointing-btn:disabled {
+		opacity: 0.45;
+		cursor: default;
+	}
+	.pointing-btn.skip {
+		min-height: 28px;
+		margin-top: 8px;
+		padding: 0 12px;
+		background: none;
+		font-size: 12px;
+	}
+	.pointing-btn.skip:hover {
+		background: color-mix(in srgb, var(--color-background) 18%, transparent);
+	}
+	/* The day's note speaks of the day, not of the place asked about or
+	   pointed to. */
+	.timeline.focusing .note {
+		display: none;
+	}
+	/* The day's own marks step back while a place is asked about. MapLibre
+	   writes a marker's opacity inline, so a filter fades them instead. */
+	.timeline.focusing :global(.tl-pin),
+	.timeline.focusing :global(.tl-bubble),
+	.timeline.focusing :global(.tl-knot) {
+		filter: opacity(0.22);
+	}
+	/* A faded mark is a mark; a faded caption is a ghost over the place
+	   being asked about. Captions and knot cards wait until the card closes. */
+	.timeline.focusing :global(.tl-bubble-label),
+	.timeline.focusing :global(.tl-card) {
+		display: none;
+	}
 	.timeline :global(.tl-pin) {
 		width: 16px;
 		height: 16px;
@@ -1439,6 +2103,18 @@
 		outline: 6px solid color-mix(in srgb, var(--c-sel) 22%, transparent);
 		pointer-events: none;
 		z-index: 3;
+	}
+	.timeline :global(.tl-pulse.asked) {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		color: var(--c-ring);
+		font-family: var(--font-sans);
+		font-size: 13px;
+		font-weight: 600;
+		line-height: 1;
 	}
 	/* A knot of moments folded into a count chip; never set transform here,
 	   MapLibre positions the marker with it. */

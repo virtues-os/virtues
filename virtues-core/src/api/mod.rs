@@ -66,6 +66,7 @@ pub mod publications;
 pub mod publish_page;
 pub mod publish_chat;
 pub mod search_local;
+pub mod place_review;
 pub mod search_status;
 pub mod places;
 pub mod profile;
