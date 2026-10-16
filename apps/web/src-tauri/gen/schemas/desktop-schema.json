@@ -729,6 +729,12 @@
           "markdownDescription": "Enables the shell_identity_cmd command without any pre-configured scope."
         },
         {
+          "description": "Enables the start_dictation command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-start-dictation",
+          "markdownDescription": "Enables the start_dictation command without any pre-configured scope."
+        },
+        {
           "description": "Enables the stop_collector command without any pre-configured scope.",
           "type": "string",
           "const": "allow-stop-collector",
@@ -925,6 +931,12 @@
           "type": "string",
           "const": "deny-shell-identity-cmd",
           "markdownDescription": "Denies the shell_identity_cmd command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the start_dictation command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-start-dictation",
+          "markdownDescription": "Denies the start_dictation command without any pre-configured scope."
         },
         {
           "description": "Denies the stop_collector command without any pre-configured scope.",

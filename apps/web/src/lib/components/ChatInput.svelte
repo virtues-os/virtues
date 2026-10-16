@@ -9,6 +9,7 @@
 	import { ATTACH_ACCEPT } from "$lib/components/chat/state/attachments.svelte";
 	import { AGENT_MODES, getModeById, nextMode, type AgentMode, type AgentModeId } from "$lib/config/agentModes";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
+	import { canDictate, startDictation } from "$lib/tauri/bridge";
 
 	let {
 		value = $bindable(""),
@@ -266,6 +267,15 @@
 		onStop?.();
 	}
 
+	// The Mac app's mic: Apple's dictation, into this field. A phone has the
+	// keyboard's own mic and a browser has nothing to ask, so only the Mac
+	// shell new enough to answer shows it.
+	let showMic = $state(false);
+	function dictate() {
+		editor?.view.focus();
+		void startDictation();
+	}
+
 	function handleWrapperClick(e: MouseEvent) {
 		const target = e.target as HTMLElement;
 		if (target.tagName === "BUTTON" || target.closest("button")) {
@@ -317,6 +327,7 @@
 		});
 		docText = value;
 		inputIsEmpty = !value.trim();
+		void canDictate().then((yes) => (showMic = yes));
 	});
 
 	onDestroy(() => {
@@ -389,6 +400,21 @@
 
 		<!-- Trailing controls: send / stop -->
 		<div class="composer-actions">
+			{#if showMic}
+				<!-- mousedown is held back so the field keeps the focus the
+				     dictation writes into. -->
+				<button
+					type="button"
+					onmousedown={(e) => e.preventDefault()}
+					onclick={dictate}
+					{disabled}
+					class="pill-btn mic-button"
+					aria-label="Dictate"
+					title="Dictate"
+				>
+					<Icon icon="ri:mic-line" width="17" />
+				</button>
+			{/if}
 			<!-- One persistent trailing button — its icon flips between send and
 			     stop so a turn starting animates rather than swaps. -->
 			<button
@@ -581,10 +607,12 @@
 		}
 	}
 
-	.attach-button {
+	.attach-button,
+	.mic-button {
 		color: var(--color-foreground-muted);
 	}
-	.attach-button:hover {
+	.attach-button:hover,
+	.mic-button:hover:not(:disabled) {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
