@@ -38,7 +38,14 @@ BEGIN
 END $$;
 SQL
   echo "ROLLBACK;"
-} | psql "$URL" -X -q -v ON_ERROR_STOP=1 -f - 2>&1)
+} | psql "$URL" -X -q -v ON_ERROR_STOP=1 -f - 2>&1) || {
+  status=$?
+  # Caught, not left to `set -e`: that would end the script with psql's
+  # exit code and none of its output, and CI would show no reason.
+  echo "$out" | tail -15
+  echo "✖ demo life did not load (psql exit $status)" >&2
+  exit 1
+}
 echo "$out" | tail -3
 if echo "$out" | sed -n '/SECOND_PLACE/,$p' | grep -q 'demo: week day\|demo: backbone now'; then
   echo "✖ a second placement moved rows: place.sql is not idempotent" >&2; exit 1
