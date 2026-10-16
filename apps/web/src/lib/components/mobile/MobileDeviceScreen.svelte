@@ -24,9 +24,11 @@
 	import { onMount } from "svelte";
 	import MobileStreamPage from "./MobileStreamPage.svelte";
 	import MobileAudioSettings from "./MobileAudioSettings.svelte";
+	import { boxApiVersion } from "$lib/boxApi";
 	import {
 		audioState,
 		type AudioStatus,
+		type HealthStatus,
 		type OutboxStats,
 		type StreamKey,
 		type StreamStatus,
@@ -73,7 +75,7 @@
 	let rows = $state<ProbeRow[]>([]);
 	let reach = $state<ReachStatus | null>(null);
 	let sync = $state<OutboxStats | null>(null);
-	let health = $state<StreamStatus | null>(null);
+	let health = $state<HealthStatus | null>(null);
 	let healthSync = $state<OutboxStats | null>(null);
 	let cal = $state<StreamStatus | null>(null);
 	let calSync = $state<OutboxStats | null>(null);
@@ -94,6 +96,9 @@
 	let push = $state<string | null>(null);
 	let allowingPush = $state(false);
 	let enablingHealth = $state(false);
+	let enablingCycle = $state(false);
+	/** The box's `api_version`; null until asked, or when it cannot be reached. */
+	let boxApi = $state<number | null>(null);
 	let enablingCal = $state(false);
 	let enablingContacts = $state(false);
 	let enablingFinance = $state(false);
@@ -328,6 +333,7 @@
 				audioSyncResp,
 				radioResp,
 				ver,
+				boxVer,
 			] = await Promise.all([
 				// A page's worth of history now that the log has a page; 60 was
 				// sized for an inline strip that showed three runs.
@@ -339,7 +345,7 @@
 				}),
 				invoke<ReachStatus>("plugin:reach|reach_status").catch(() => null),
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "location" }).catch(() => null),
-				invoke<StreamStatus>("plugin:health|status").catch(() => null),
+				invoke<HealthStatus>("plugin:health|status").catch(() => null),
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "healthkit" }).catch(() => null),
 				invoke<StreamStatus>("plugin:eventkit|status").catch(() => null),
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "eventkit" }).catch(() => null),
@@ -351,6 +357,7 @@
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "microphone" }).catch(() => null),
 				invoke<RadioStats>("plugin:reach|radio_stats").catch(() => null),
 				getVersion().catch(() => ""),
+				boxApiVersion().catch(() => null),
 			]);
 			rows = (rowsResp.rows ?? []).slice().reverse(); // newest first
 			reach = reachResp;
@@ -367,6 +374,7 @@
 			audioSync = audioSyncResp;
 			radio = radioResp;
 			version = ver;
+			boxApi = boxVer;
 			await pushRead;
 		} catch (e) {
 			error = String(e);
@@ -392,12 +400,34 @@
 		enablingHealth = true;
 		error = null;
 		try {
-			health = await invoke<StreamStatus>("plugin:health|enable");
+			health = await invoke<HealthStatus>("plugin:health|enable");
 			setTimeout(load, 1500);
 		} catch (e) {
 			error = String(e);
 		} finally {
 			enablingHealth = false;
+		}
+	}
+
+	/**
+	 * Cycle tracking needs a box at `api_version` 5. A box below that drops
+	 * the cycle types while the phone's anchors move past them, which loses
+	 * them for good, so the switch stays off until the box can store them.
+	 */
+	const CYCLE_MIN_BOX_API = 5;
+	const cycleBoxReady = $derived(boxApi !== null && boxApi >= CYCLE_MIN_BOX_API);
+
+	async function enableCycle() {
+		if (!cycleBoxReady) return;
+		enablingCycle = true;
+		error = null;
+		try {
+			health = await invoke<HealthStatus>("plugin:health|enable_cycle");
+			setTimeout(load, 1500);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			enablingCycle = false;
 		}
 	}
 
@@ -613,6 +643,15 @@
 			description: "What the Health app already keeps - steps, sleep, heart rate, workouts - copied to your server as it lands.",
 		},
 		{
+			key: "cycle",
+			title: "Cycle",
+			icon: "ri:drop-line",
+			what: "Periods, symptoms, wrist temperature",
+			description:
+				"Your periods, spotting, ovulation tests, symptoms and your watch's nightly wrist temperature, copied from the Health app to your server. Your assistant can't read any of it.",
+			note: "This app never asks Health for sexual activity or pregnancy tests.",
+		},
+		{
 			key: "calendar",
 			title: "Calendar",
 			icon: "ri:calendar-line",
@@ -651,6 +690,8 @@
 				return enabled;
 			case "health":
 				return !!health?.authorized;
+			case "cycle":
+				return !!health?.cycle;
 			case "calendar":
 				return !!cal?.authorized;
 			case "contacts":
@@ -670,6 +711,10 @@
 				return enabled ? `On · ${fixes.length} recent${lastTs ? ` · ${rel(lastTs)}` : ""}` : "Off";
 			case "health":
 				return health?.authorized ? `On${syncWord(healthSync)}` : meta.what;
+			case "cycle":
+				if (health?.cycle) return `On${syncWord(healthSync)}`;
+				if (boxApi !== null && !cycleBoxReady) return "Needs a server update";
+				return meta.what;
 			case "calendar":
 				return cal?.authorized ? `On${syncWord(calSync)}` : meta.what;
 			case "contacts":
@@ -687,6 +732,7 @@
 			case "location":
 				return sync;
 			case "health":
+			case "cycle":
 				return healthSync;
 			case "calendar":
 				return calSync;
@@ -707,6 +753,13 @@
 				return health?.authorized
 					? null
 					: { label: enablingHealth ? "Enabling…" : "Enable", onclick: enableHealth, disabled: enablingHealth };
+			case "cycle":
+				if (health?.cycle) return null;
+				return {
+					label: enablingCycle ? "Enabling…" : "Enable",
+					onclick: enableCycle,
+					disabled: enablingCycle || !cycleBoxReady,
+				};
 			case "calendar":
 				return cal?.authorized
 					? null

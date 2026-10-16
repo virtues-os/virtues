@@ -319,6 +319,18 @@
           "markdownDescription": "Denies the enable command without any pre-configured scope."
         },
         {
+          "description": "Enables the enable_cycle command without any pre-configured scope.",
+          "type": "string",
+          "const": "allow-enable-cycle",
+          "markdownDescription": "Enables the enable_cycle command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the enable_cycle command without any pre-configured scope.",
+          "type": "string",
+          "const": "deny-enable-cycle",
+          "markdownDescription": "Denies the enable_cycle command without any pre-configured scope."
+        },
+        {
           "description": "Enables the resume command without any pre-configured scope.",
           "type": "string",
           "const": "allow-resume",
@@ -343,10 +355,10 @@
           "markdownDescription": "Denies the status command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the health plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-resume`\n- `allow-status`\n- `allow-collect`",
+          "description": "Default permissions for the health plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-enable-cycle`\n- `allow-resume`\n- `allow-status`\n- `allow-collect`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the health plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-resume`\n- `allow-status`\n- `allow-collect`"
+          "markdownDescription": "Default permissions for the health plugin\n#### This default permission set includes:\n\n- `allow-enable`\n- `allow-enable-cycle`\n- `allow-resume`\n- `allow-status`\n- `allow-collect`"
         }
       ]
     }

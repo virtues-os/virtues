@@ -32,6 +32,14 @@ impl<R: Runtime> Health<R> {
       .map_err(Into::into)
   }
 
+  /// Cycle tracking's own opt-in (prompts for the cycle types only).
+  pub fn enable_cycle(&self) -> crate::Result<HealthStatus> {
+    self
+      .0
+      .run_mobile_plugin("enableCycle", EmptyRequest {})
+      .map_err(Into::into)
+  }
+
   /// Launch auto-resume: start collecting only if already authorized (no prompt).
   pub fn resume(&self) -> crate::Result<HealthStatus> {
     self

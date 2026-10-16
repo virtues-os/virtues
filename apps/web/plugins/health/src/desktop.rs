@@ -21,6 +21,9 @@ impl<R: Runtime> Health<R> {
   pub fn enable(&self) -> crate::Result<HealthStatus> {
     Ok(unavailable())
   }
+  pub fn enable_cycle(&self) -> crate::Result<HealthStatus> {
+    Ok(unavailable())
+  }
   pub fn resume(&self) -> crate::Result<HealthStatus> {
     Ok(unavailable())
   }

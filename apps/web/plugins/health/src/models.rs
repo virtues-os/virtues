@@ -18,4 +18,11 @@ pub struct HealthStatus {
   /// predates it.
   #[serde(default)]
   pub permission: Option<String>,
+  /// The person turned on cycle tracking (its own opt-in and sheet). Absent
+  /// on a native build that predates it.
+  #[serde(default)]
+  pub cycle: Option<bool>,
+  /// `permission`, for the cycle sheet.
+  #[serde(default)]
+  pub cycle_permission: Option<String>,
 }

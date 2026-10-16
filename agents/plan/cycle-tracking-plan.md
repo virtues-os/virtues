@@ -1,8 +1,10 @@
 # Cycle tracking
 
-**Status:** Slices 1 and 2 built on `wave`, unreleased. Migration 0053 holds the
-three raw tables (`fd07c088`), and 0054 adds the missing tombstone columns for
-HealthKit deletions. The phone sends deletions but not yet the cycle types.
+**Status:** Slices 1–3 built on `wave`, unreleased and never run on a device.
+Migration 0053 holds the three raw tables (`fd07c088`), 0054 adds the missing
+tombstone columns for HealthKit deletions (`0a3cfe8a`), and the phone has a
+Cycle stream gated on the box's `api_version` 5. Next is slice 4, the check on
+a real phone.
 
 The owner's menstrual cycle, read from Apple Health. **Raw first:** the box
 ingests the primitives exactly as Health stores them. Cycles, predictions,
@@ -156,15 +158,21 @@ whole batch would fail, and the phone retries a failed batch forever (see
    - The readers in dayline, census, circumstances and day summary skip
      tombstones, as do the lane measures, the health day sources and the SQL
      catalog note.
-3. **Phone.**
-   - A "Track your cycle" switch that requests only the slice-1 types, with one
-     anchor key per type.
-   - Full history for these types, not the collector's 3-year backfill.
-   - The payload below.
-   - **Trap:** an older box logs and drops an unknown `metric_type`, and the
-     phone's anchor still advances. Gate the switch on the box's
-     `api_version` (see [version-compat-plan.md](version-compat-plan.md)), or
-     that data is lost the way sleep's was before `sleep_refetch_v1`.
+3. **Phone.** Built.
+   - A Cycle stream on the device screen (`MobileDeviceScreen.svelte`). Its
+     Enable button calls `plugin:health|enable_cycle`, which shows a Health
+     sheet for the cycle types only and sets its own opt-in flag.
+   - One anchor key per type, and full history for these types instead of the
+     3-year backfill.
+   - The payloads below.
+   - **The gate:** an older box logs and drops an unknown `metric_type` while
+     the phone's anchor advances, which would lose that data for good. So the
+     button stays disabled until the box reports `api_version` 5 or higher
+     (`virtues-core/src/api_version.rs`), and an older box shows "Needs a
+     server update". Deletions are not gated, so a box below 5 loses them.
+   - Wrist temperature's `local_start_date` is the start minus 12 hours, by
+     definition. A night that starts after midnight still counts as the
+     night before.
 4. **Check on a real phone.**
    - Compare row counts with Health.
    - Grep an `export.xml` for anything that isn't a HealthKit sample.
