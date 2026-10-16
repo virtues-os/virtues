@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly reset of the demo box
+
+[Timer]
+# 08:00 UTC = 03:00 in Austin: after anyone is plausibly still on it, and well
+# before a working morning in US or European hours.
+OnCalendar=*-*-* 08:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

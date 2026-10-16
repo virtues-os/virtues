@@ -510,6 +510,13 @@ jobs:
       - name: Dynamic SQL + model catalog match the schema
         run: python3 tools/check-dynamic-inserts.py
 
+      # The demo life is a frozen data file, not code, so a migration that
+      # renames or drops a column it uses breaks it silently — on the demo box,
+      # at the next install. Load it on the migrated schema, place it twice
+      # (the second run must move nothing), check membership; rolled back.
+      - name: Demo life loads and places
+        run: sh deploy/demo/check.sh "$DATABASE_URL"
+
       # `--workspace`, not `-p virtues`. This used to test the one package, so
       # virtues-registry, virtues-helpers, virtues-iroh and virtues-installer
       # had their tests skipped entirely — a failing registry test sat on green

@@ -1,0 +1,11 @@
+[Unit]
+Description=Place the demo life on today (demo box only)
+After=postgresql.service
+Requires=postgresql.service
+OnFailure=alert-on-failure@%n.service
+
+[Service]
+Type=oneshot
+User=postgres
+# Idempotent: an hour with nothing to move writes nothing.
+ExecStart=/usr/bin/psql -X -v ON_ERROR_STOP=1 -d virtues -f /usr/local/share/virtues/demo/place.sql

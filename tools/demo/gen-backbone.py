@@ -1,26 +1,19 @@
 #!/usr/bin/env python3
-"""Generate the multi-year demo seed.
+"""Generate the demo life's three-year backbone.
 
-Why this exists
----------------
-`demo_narrative.sql` is 80 days of *conclusions* — 715 `wiki_events` and
-nothing underneath them. The product's whole claim is that a day is rebuilt
-from evidence and that a plan with no trace becomes an honest `unknown`, so a
-seed with no raw streams demonstrates the claim without the proof: every
-provenance surface (the dayline, sources, the deck's lanes, the movement map,
-every chart) is empty on 79 of those 80 days. And at nine weeks, Chapters,
-Years, Stories and Lifeline have nothing to draw at all.
+The demo box shows one fictional life: this backbone (three thin years) and
+the dense showcase week in front of it (tools/demo/week/). Both feed ONE file,
+`virtues-core/seeds/demo/life.sql.gz`, built by tools/demo/build.sh; nothing
+loads this script's output directly. Placement onto today and the nightly
+visitor reset live in deploy/demo/.
 
-This emits three years, bottom-up: raw streams first, the derived layer on top
-of them, and the creation layer (chats, pages, articles) that nothing seeded
-before. Output is deterministic — same seed, same SQL — so regenerating after a
-schema change is a re-run rather than a rewrite.
+The backbone is built bottom-up: raw streams first, the derived layer on top
+of them, then the creation layer (chats, pages, articles), so every
+provenance surface has evidence under it and Chapters, Years, Stories and
+Lifeline have three years to draw. Output is deterministic — same seed, same
+SQL — so regenerating after a schema change is a re-run rather than a rewrite.
 
-Deliberately NOT wired into `demo_seed.rs`. That file `include_str!`s its seeds
-into the binary; these total tens of MB and belong on the demo box as files,
-run by `seeds/demo3y/run.sh`.
-
-Usage:  python3 tools/gen-demo-seed.py [--out virtues-core/seeds/demo3y]
+Usage:  python3 tools/demo/gen-backbone.py --out <dir>   (build.sh does this)
 """
 
 from __future__ import annotations
@@ -33,12 +26,8 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 # --------------------------------------------------------------------------
-# Span. Absolute dates, as the seeds README requires — `run.sh` ends with a
-# re-anchor that walks the whole life forward onto today.
-#
-# ANCHOR_END is the day before `demo_day.sql`'s instrumented Friday, so the two
-# sets abut rather than fight: this file covers the three years leading up to
-# it, and that day stays the richest single day in the database.
+# Span. Absolute dates; deploy/demo/place.sql walks the whole life forward so
+# it ends the day before the showcase week.
 # --------------------------------------------------------------------------
 ANCHOR_END = date(2026, 2, 12)
 DAYS = 1095  # three years
@@ -49,6 +38,11 @@ TZ = "America/Chicago"
 LAT0, LON0 = 30.2849, -97.7341
 
 RNG = random.Random(20260916)
+# The last eight weeks before the showcase week are as dense as it is, so its
+# day numbers read against a believable "usual" instead of a 10x outlier. A
+# separate stream, so adding them leaves every other generated row unchanged.
+RECENT_DAYS = 56
+RNG_RECENT = random.Random(20261016)
 
 # --------------------------------------------------------------------------
 # SQL emission
@@ -130,24 +124,23 @@ def ts(d: date, hh: int, mm: int = 0) -> datetime:
 
 # --------------------------------------------------------------------------
 # The cast. Fictional throughout — `@example.com`, `+1512555xxxx`, per the
-# repo's rule. The six people and eight places `demo_day.sql` already defines
-# keep their ids so the instrumented day joins onto this history instead of
-# standing beside a second, identically-named cast.
+# repo's rule. The showcase week (tools/demo/week/) casts from this same list,
+# so the people in the week are the people in the history.
 # --------------------------------------------------------------------------
 
 PEOPLE = [
     # (id, name, relationship, bond, first_day_offset, last_day_offset, weight, notes)
-    ("person_demo_maya", "Mara Vance", "colleague", "close", 0, DAYS, 9,
+    ("p3y_mara", "Mara Vance", "colleague", "close", 0, DAYS, 9,
      "Design lead at Canopy, then the person who kept calling after both of us left. Lunch at Tatsu-ya most weeks."),
-    ("person_demo_david", "David Okafor", "friend", "close", 0, DAYS, 7,
+    ("p3y_david", "David Okafor", "friend", "close", 0, DAYS, 7,
      "Known since Chicago. The one who drove the U-Haul down."),
-    ("person_demo_rachel", "Cora Delgado", "professional", "weak", 240, DAYS, 3,
+    ("p3y_cora", "Cora Delgado", "professional", "weak", 240, DAYS, 3,
      "Realtor. Found the Selden St house."),
-    ("person_demo_jess", "Nell Kovac", "friend", "close", 0, DAYS, 6,
+    ("p3y_nell", "Nell Kovac", "friend", "close", 0, DAYS, 6,
      "Runs the Thursday table. Hosts more than anyone should have to."),
-    ("person_demo_priya", "Priya Haddad", "colleague", "moderate", 430, DAYS, 5,
+    ("p3y_priya", "Priya Haddad", "colleague", "moderate", 430, DAYS, 5,
      "Contract client, then a collaborator. Ships faster than anyone."),
-    ("person_demo_mom", "Rosa", "family", "close", 0, DAYS, 8, "Mom. Sunday calls."),
+    ("p3y_rosa", "Rosa", "family", "close", 0, DAYS, 8, "Mom. Sunday calls."),
     # The Chicago half of the life, which fades after the move — this is the
     # "who have I lost touch with" case, and it has to be a real decay in the
     # data rather than a flag on a row.
@@ -199,12 +192,12 @@ PEOPLE = [
 
 PLACES = [
     # (id, name, category, lat_off, lon_off, address)
-    ("place_demo_home", "Home", "residence", 0.0, 0.0, "1847 Selden St, Austin, TX"),
-    ("place_demo_office", "Office", "work", 0.0121, -0.0187, "E 6th St, Austin, TX"),
-    ("place_demo_ramen", "Ramen Tatsu-ya", "restaurant", 0.0049, -0.0093, "S Lamar Blvd, Austin, TX"),
-    ("place_demo_jos", "Jo's", "cafe", 0.0033, -0.0051, "S Congress Ave, Austin, TX"),
-    ("place_demo_ladybird", "Lady Bird Lake", "outdoors", -0.0062, -0.0044, "Austin, TX"),
-    ("place_demo_mueller_trails", "Mueller Trails", "outdoors", 0.0208, 0.0121, "Mueller, Austin, TX"),
+    ("p3y_pl_home", "Home", "residence", 0.0, 0.0, "1847 Selden St, Austin, TX"),
+    ("p3y_pl_office", "Office", "work", 0.0121, -0.0187, "E 6th St, Austin, TX"),
+    ("p3y_pl_ramen", "Ramen Tatsu-ya", "restaurant", 0.0049, -0.0093, "S Lamar Blvd, Austin, TX"),
+    ("p3y_pl_jos", "Jo's", "cafe", 0.0033, -0.0051, "S Congress Ave, Austin, TX"),
+    ("p3y_pl_ladybird", "Lady Bird Lake", "outdoors", -0.0062, -0.0044, "Austin, TX"),
+    ("p3y_pl_mueller_trails", "Mueller Trails", "outdoors", 0.0208, 0.0121, "Mueller, Austin, TX"),
     ("p3y_pl_chicago_apt", "Logan Square apartment", "residence", 11.60, 10.13, "Chicago, IL"),
     ("p3y_pl_agency", "The agency", "work", 11.62, 10.10, "West Loop, Chicago, IL"),
     ("p3y_pl_market", "Mueller Farmers Market", "market", 0.0211, 0.0128, "Mueller, Austin, TX"),
@@ -236,9 +229,9 @@ PLACES = [
 ]
 
 ORGS = [
-    ("org_demo_employer", "Canopy", "company", "employer", "Product designer",
+    ("p3y_org_canopy", "Canopy", "company", "employer", "Product designer",
      date(2023, 12, 4), date(2025, 1, 14)),
-    ("org_demo_realty", "Delgado Realty", "company", "vendor", None, None, None),
+    ("p3y_org_realty", "Delgado Realty", "company", "vendor", None, None, None),
     ("p3y_org_agency", "Field & Marrow", "company", "employer", "Senior designer",
      date(2021, 6, 1), date(2023, 11, 3)),
     ("p3y_org_clinic", "Hyde Park Family Medicine", "clinic", "provider", None, None, None),
@@ -403,7 +396,7 @@ def build():
                                              "from_identifier", "from_name", "to_identifiers",
                                              "is_read", "is_group_message", "has_attachments",
                                              "occurred_at", "source_stream_id", "source_table",
-                                             "source_provider"])
+                                             "source_provider", "from_handle", "metadata"])
     trans = tbl("data_communication_transcription", ["id", "text", "language", "duration_seconds",
                                                       "started_at", "ended_at", "speaker_count",
                                                       "title", "summary", "confidence", "tags",
@@ -466,6 +459,9 @@ def build():
                                          "document_type", "tags", "is_authored",
                                          "occurred_at", "source_stream_id", "source_table",
                                          "source_provider"])
+    apps = tbl("data_activity_app_session", ["id", "app_name", "app_bundle_id", "started_at", "ended_at",
+                                             "window_title", "source_stream_id", "source_table",
+                                             "source_provider", "device_id", "attention", "is_open"])
     web = tbl("data_activity_web_browsing", ["id", "url", "domain", "page_title",
                                              "occurred_at", "source_stream_id",
                                              "source_table", "source_provider"])
@@ -549,6 +545,8 @@ def build():
         _day_calendar(d, off, cal, weekend, chi, ctx)
         _day_events(d, off, did, events, migraine, instrumented, lisbon, chi, weekend, ctx)
         _day_web(d, off, web, chi)
+        if off >= DAYS - RECENT_DAYS:
+            _day_recent(d, off, msg, apps, weekend)
         n += 1
 
     _showcase(msg, trans)
@@ -577,36 +575,36 @@ def build():
 SC = "p3y_tr_sc_"
 SM = "p3y_ms_sc_"
 
-SHOWCASE_ARTICLE = f"""The day was [⟦Bea⟧](/person/p3y_bea): you took her to ⟦the clinic⟧ in the morning, and the evening was a coffee house, a long quiz, and a conversation about ⟦an accident she had never talked about⟧ that turned awkward, drew an apology, and was set down so the evening could go on.
+SHOWCASE_ARTICLE = f"""The day was [⟦Bea⟧](/person/p3y_bea): a hardware run in the morning for her porch, and the evening was a pottery class, four lopsided pieces, and a conversation about ⟦her sister moving back to Gothenburg⟧ that went quiet, came back round, and was set down so the evening could go on.
 
-## The waiting room at the clinic[^cx-1]
+## The hardware store at opening[^cx-1]
 
-She drove, and on the way showed you the bag she keeps in the car: hand sanitizer, lip balm, a tide chart, toothpicks.[^ev-1] At ⟦the clinic⟧ you said the name made it sound like a bank, and then that the waiting room was better than the three chairs you had pictured.[^ev-1] You talked her into a parallel park outside the house on ⟦Selden⟧ and ran up for the dog.[^ev-2] Later you sent her a photo of a cabin you would love to build.[^ev-3]
+She drove, and read you the list off the back of an envelope: wood glue, a sanding block, two brass hinges, a tin of exterior varnish.[^ev-1] At ⟦Cobb Hardware⟧ you said the place smelled like a grandfather's garage, and then that the paint-chip wall was better than any app for choosing a colour.[^ev-1] You talked her into a parallel park outside the house on ⟦Selden⟧ and ran up for the dog.[^ev-2] Later you sent her a sketch of a reading nook you would like to build under the stairs.[^ev-3]
 
 Nothing was recorded between 8:41 and 5.
 
-## The coffee house[^cx-2]
+## The pottery studio[^cx-2]
 
-You sent her the quiz, and between you it came to an order not set in stone: the two of you, then trivia, then questions, then you teaching her about maps.[^ev-4] On the way you crossed ⟦South First⟧ in the rain, and lingered over a good hairbrush as a gift and a dress in a green you both liked.[^ev-5]
+She sent the class confirmation, and between you it came to a plan: the wheel first, then glazing, then whatever was left of the clay.[^ev-4] On the way you crossed ⟦Manor Road⟧ in the rain, and stopped in front of a shelf of mugs, both of you drawn to the same ash-blue glaze.[^ev-5]
 
-Some of the questions, and what came back:
+What came off the wheel:
 
-| Question | Answer |
-|---|---|
-| What's the most romantic thing someone could do for you? | A walk to the door through the rain, no umbrella |
-| How would you style my hair? | Like Princess Leia |
-| Would you rather live without music or movies? | Movies, both of you |
-| Most overrated city in the world? | Paris |
+| Piece | Whose | How it went |
+|---|---|---|
+| Bowl | Bea | Collapsed twice; kept the third |
+| Mug | Jules | Handle set too low, kept anyway |
+| Plate | Bea | Off-centre, on purpose she says |
+| Spoon rest | Jules | The one that worked |
 
 [^ev-6]
 
-Truth or dare opened a conversation about ⟦an accident she had never talked about⟧. It was new territory for you and it got awkward; she apologized for how it had landed, you told her you were not trying to make her feel bad, and after a while you set it down and went back to the list.[^ev-7] The talk cards went further on their own: ⟦the last few years, and learning to let them go⟧, and a climbing trip in the spring, shoulder permitting.[^ev-8]
+Glazing turned into a conversation about ⟦her sister moving back to Gothenburg⟧. It went quiet for a while; she said she was happy for her and meant it, and that it still felt like losing a room in the house. You did not try to fix it, and after a while you both went back to the glaze buckets.[^ev-7] The talk drifted on its own: ⟦whether to fly over for midsummer⟧, and a climbing trip in the spring if Greta can get the weekend.[^ev-8]
 
 A storm was passing. Leaving at 6:30 sounded right, and you both said you were tired.[^ev-9]
 
 ## After the rain[^cx-3]
 
-You walked back past ⟦the library⟧, got home, and took the dog out.[^ev-10] Then you wrote [⟦David Okafor⟧](/person/person_demo_david) that you were ⟦second-guessing a few things and not in the best mood⟧, and might just read, or try the bath.[^ev-11]
+You walked back past ⟦the library⟧, got home, and took the dog out.[^ev-10] Then you wrote [⟦David Okafor⟧](/person/p3y_david) that you were ⟦tired in the good way and a bit flat about the beta⟧, and might just read.[^ev-11]
 
 [^cx-1]: 7:46–8:41 AM
 [^cx-2]: 4:52–7:06 PM
@@ -629,36 +627,35 @@ def _showcase(msg, trans):
     """The rows the showcase article cites: recordings and messages, fictional."""
     d = START + timedelta(days=SHOWCASE)
     recordings = [
-        ("0746", 7, 46, "Driving to the clinic, the car bag",
-         "[Speaker]: Hand sanitizer, lip balm, a tide chart, toothpicks. It's the car bag. "
-         "[Speaker]: All right, we're here. [Speaker]: The name makes it sound like a bank. "
-         "[Speaker]: This is the waiting room. [Speaker]: That's a lot better than I "
-         "imagined. I pictured three chairs."),
-        ("0806", 8, 6, "Parking on Selden, the elevator",
-         "[Speaker]: You can parallel park right here, perfect. I'll run up for the dog, "
-         "seven minutes. [Speaker]: Sorry, the elevator took forever, and then the dog did."),
-        ("1704", 17, 4, "A shop on South First",
-         "[Speaker]: Crossing South First in this rain. [Speaker]: A really nice "
-         "hairbrush is such a good gift. [Speaker]: I like that green. [Speaker]: Me too."),
-        ("1739", 17, 39, "The quiz",
-         "[Speaker]: What's the most romantic thing someone could do for you? [Speaker]: "
-         "Walk to my door through the rain, no umbrella. [Speaker]: How would you style my "
-         "hair? [Speaker]: Like Princess Leia. [Speaker]: Would you rather live without "
-         "music or movies? [Speaker]: Movies. [Speaker]: Me too. Most overrated city in "
-         "the world? [Speaker]: Paris."),
-        ("1804", 18, 4, "Truth or dare",
-         "[Speaker]: Freebie truth: the accident I never talk about. [Speaker]: I didn't "
-         "know. This is new for me. [Speaker]: I'm sorry, I didn't mean to make it awkward. "
-         "[Speaker]: I'm not trying to make you feel bad. Can we go back to the list?"),
+        ("0746", 7, 46, "The porch list, Cobb Hardware",
+         "[Speaker]: Wood glue, sanding block, two brass hinges, a tin of the outdoor "
+         "varnish. [Speaker]: Okay, we're here. [Speaker]: It smells like somebody's "
+         "grandfather's garage in here. [Speaker]: The paint chips are better than the app. "
+         "[Speaker]: You just hold them up to the light."),
+        ("0806", 8, 6, "Parking on Selden, the dog",
+         "[Speaker]: You can fit right there, you've got room. I'll run up for the dog, "
+         "five minutes. [Speaker]: Sorry, couldn't find the leash, and then he couldn't "
+         "find the door."),
+        ("1704", 17, 4, "Manor Road in the rain",
+         "[Speaker]: Running across Manor in this. [Speaker]: Look at that shelf. That blue. "
+         "[Speaker]: The ash one? [Speaker]: Yeah. [Speaker]: Same."),
+        ("1739", 17, 39, "The wheel",
+         "[Speaker]: Keep your elbows on your knees. [Speaker]: It's going. It's gone. "
+         "[Speaker]: Third time. [Speaker]: Mine's a mug, I think. The handle's low. "
+         "[Speaker]: It's a mug. Keep it. [Speaker]: Your plate's off-centre. "
+         "[Speaker]: On purpose."),
+        ("1804", 18, 4, "Glazing, Gothenburg",
+         "[Speaker]: My sister's moving back to Gothenburg. In March. [Speaker]: Oh. "
+         "[Speaker]: I'm happy for her. I mean that. It just feels like losing a room in "
+         "the house. [Speaker]: Yeah. [Speaker]: Hand me the blue?"),
         ("1809", 18, 9, "The storm passing",
-         "[Speaker]: The storm's passing, just drizzle in twenty minutes. [Speaker]: Leave "
-         "at 6:30 then. [Speaker]: I'm so tired. [Speaker]: Me too."),
-        ("1834", 18, 34, "The talk cards",
-         "[Speaker]: The last few years, and learning to let them go. [Speaker]: For me, "
-         "a climbing trip in the spring. Shoulder permitting."),
+         "[Speaker]: Radar says it's through in twenty minutes. [Speaker]: Leave at 6:30 "
+         "then. [Speaker]: I'm wiped. [Speaker]: Me too."),
+        ("1834", 18, 34, "Midsummer, the spring",
+         "[Speaker]: We could fly over for midsummer. [Speaker]: Maybe. And the climbing "
+         "trip in the spring, if Greta can get the weekend."),
         ("1906", 19, 6, "The walk home",
-         "[Speaker]: Straight past the library, that's the fastest way. [Speaker]: Come "
-         "on, bud. Sit. Good."),
+         "[Speaker]: Past the library, it's quicker. [Speaker]: Come on, bud. Sit. Good."),
     ]
     for hm, hh, mm, title, text in recordings:
         start = ts(d, hh, mm)
@@ -666,19 +663,19 @@ def _showcase(msg, trans):
                   title, title + ".", 0.9, ["showcase"], f"p3y_s_{SC}{hm}",
                   "data_communication_transcription", "demo")
     messages = [
-        ("0857", 8, 57, "p3y_bea", "This one is a cabin I'd love to build: [Photo]"),
-        ("1652", 16, 52, "p3y_bea", "the quiz, for tonight: https://example.com/quiz"),
-        ("1940", 19, 40, "person_demo_david",
-         "Just got home and walked the dog. Second guessing a few things and not in the best "
-         "mood, so might just read. Might even try the bath"),
+        ("0857", 8, 57, "p3y_bea", "reading nook under the stairs, yes or no: [Photo]"),
+        ("1652", 16, 52, "p3y_bea", "class is 5:15, bring an apron: https://example.com/class"),
+        ("1940", 19, 40, "p3y_david",
+         "Home, dog walked. Tired in the good way, a bit flat about the beta otherwise. "
+         "Might just read tonight"),
     ]
     for hm, hh, mm, pid, body in messages:
         name = next(p[1] for p in PEOPLE if p[0] == pid)
         # All three are the owner's own, sent to the person named.
         msg.add(f"{SM}{hm}", f"p3y_msgid_sc_{hm}", f"p3y_thr_{pid}", "imessage", body,
-                "+15125550100", None, [f"{name.split()[0].lower()}@example.com"],
+                "me", None, [PHONE[pid]],
                 True, False, "[Photo]" in body, ts(d, hh, mm), f"p3y_s_{SM}{hm}",
-                "data_communication_message", "demo")
+                "data_communication_message", "demo", "", {"is_from_me": True, "service": "iMessage"})
 
 
 # --------------------------------------------------------------------------
@@ -787,8 +784,8 @@ def _day_location(d, off, lpoint, lvisit, instrumented, lisbon, chi, weekend, ct
     if not instrumented:
         return
     # A real trace on instrumented days — enough for the movement map to draw a
-    # path rather than a scatter of stops. Capped at 22 so `demo_day.sql`'s
-    # 26-point Friday stays the single richest day in the database.
+    # path rather than a scatter of stops. Kept sparse: the showcase week is
+    # where the dense days live.
     for i in range(22):
         frac = i / 21
         a, b = stops[0], stops[min(1, len(stops) - 1)]
@@ -806,6 +803,7 @@ def _day_location(d, off, lpoint, lvisit, instrumented, lisbon, chi, weekend, ct
 # from it made the generator non-deterministic — two runs produced different
 # SQL while the docstring promised they would not.
 PHONE = {p[0]: f"+1512555{2000 + i * 7:04d}" for i, p in enumerate(PEOPLE)}
+OWNER_PHONE = "+15125550199"  # Jules; the showcase week uses the same number
 
 
 def _day_comms(d, off, msg, email, lisbon, ctx):
@@ -819,7 +817,6 @@ def _day_comms(d, off, msg, email, lisbon, ctx):
         pid, name, *_rest = RNG.choices(live, weights=[p[6] for p in live])[0]
         if name not in spoke:
             spoke.append(name)
-        handle = name.split()[0].lower()
         inbound = RNG.random() < 0.55
         body = RNG.choice([
             "running about ten minutes late", "did you see the thing I sent",
@@ -827,12 +824,15 @@ def _day_comms(d, off, msg, email, lisbon, ctx):
             "ok that's actually very funny", "landed", "made too much soup, come over",
             "no rush on this at all", "found it, never mind", "how'd it go?",
         ])
+        # The Mac importer's shape: the owner is 'me' with an empty handle,
+        # and is_from_me says which side wrote it. Day numbers count by these.
         msg.add(f"p3y_ms_{k}_{i}", f"p3y_msgid_{k}_{i}", f"p3y_thr_{pid}", "imessage", body,
-                PHONE[pid] if inbound else "+15125550100",
+                PHONE[pid] if inbound else "me",
                 name if inbound else None,
-                ["+15125550100"] if inbound else [f"{handle}@example.com"],
+                [OWNER_PHONE] if inbound else [PHONE[pid]],
                 True, False, False, ts(d, RNG.randint(8, 22), RNG.randint(0, 59)),
-                f"p3y_s_ms_{k}_{i}", "data_communication_message", "demo")
+                f"p3y_s_ms_{k}_{i}", "data_communication_message", "demo",
+                PHONE[pid] if inbound else "", {"is_from_me": not inbound, "service": "iMessage"})
 
     ctx["spoke"] = spoke
     if RNG.random() < 0.6:
@@ -1302,8 +1302,8 @@ def compute_facts(t):
     answers come from the record, a demo whose assistant contradicts its own
     database is worse than a demo with no chat history at all.
 
-    ONLY SHIFT-INVARIANT FACTS. `demo3y_reanchor` walks the whole life forward
-    onto today, and it moves rows, not prose. Counts, totals, medians and the
+    ONLY SHIFT-INVARIANT FACTS. Placement (deploy/demo/place.sql) walks the
+    whole life forward onto today, and it moves rows, not prose. Counts, totals, medians and the
     distance between two events all survive that. "795 days ago" and any
     absolute date do not — they were wrong the morning after they were written.
     """
@@ -1498,7 +1498,7 @@ def _pages_and_articles(pages, articles, f):
          f"the record and no final conversation; the frequency decays and then ends. The "
          f"record can show that it happened. It cannot say why, and neither of you appears "
          f"to have written it down."),
-        ("place", "place_demo_home", "Home",
+        ("place", "p3y_pl_home", "Home",
          "1847 Selden St. Bought after six weeks of showings with Cora Delgado and one "
          "inspection that nearly ended it.\n\nIt is the most-visited place in the record "
          "by a wide margin, and since leaving Canopy it is also where the work happens — "
@@ -1534,205 +1534,9 @@ def _pages_and_articles(pages, articles, f):
                          "A long call with Mara that went somewhere unexpected.",
                          "Nothing much after six.", "Out to the trails before dark.",
                      ]))
-        pages.add(pid, d.strftime("%A, %-d %B %Y"), prose, None, [], "article", now, now)
+        pages.add(pid, d.strftime("%-d %B %Y"), prose, None, [], "article", now, now)
         articles.add(f"p3y_art_day_{d.isoformat()}", "day", did, pid, now, "auto", [], [])
 
-
-REANCHOR = """\
--- Re-anchor: walk the generated life forward so its last day lands on today.
---
--- EXACT DAYS, matching `demo_reanchor.sql`, and this is a trade rather than a
--- preference. A whole-week shift would preserve weekday shape — markets on
--- Saturdays, no calendar at weekends, which this set now has and the old
--- twelve-week one did not — but it lands the last day up to six days behind
--- today, and Home asks for the literal current date with no fallback to the
--- newest day holding data. A demo whose front page is blank for six days out
--- of seven is worse than one whose farmers market drifts to a Wednesday.
---
--- The fix that buys both is to generate the final partial week against the
--- real current date at seed time instead of from a fixed anchor. Worth doing
--- if the weekday rotation is ever noticed in Lifeline; it is not free, which
--- is why it is written down here rather than done.
---
--- Anchors on a known date rather than on "the day with the most location
--- points", because `demo_day.sql` deliberately keeps the densest day and would
--- otherwise capture the anchor.
---
--- RUN THIS INSTEAD OF `demo_reanchor.sql`, not alongside it. That file is
--- generic over every timestamp column in `data_*` and `wiki_*` and would shift
--- this set a second time. It also skips `app_*` on purpose — product state it
--- must not drag — which is why the chats and pages below are moved here by
--- name rather than by a sweep.
---
--- Idempotent: after a run the remaining offset is under seven days and floors
--- to zero, so a second run moves nothing.
-
-DO $$
-DECLARE
-  cur_anchor date;
-  shift_days integer;
-  r record;
-BEGIN
-  -- READ THE ANCHOR OUT OF THE DATA, never from a constant. A fixed anchor
-  -- makes this file shift again on every run, walking the life further into
-  -- the future each time — which is not a theoretical failure, it is what the
-  -- first draft of this file did (+216 days on the second run). Reading it
-  -- back means a second run computes zero and returns, and that is also what
-  -- makes re-running the seed the way to re-age a long-lived demo box.
-  --
-  -- ANCHOR ON A DATE, NEVER ON A TIMESTAMP. This read
-  -- `max(ended_at)::date ... WHERE id LIKE 'p3y_%%'`, and a timestamptz cast to
-  -- date uses the SESSION timezone — which is `Etc/UTC` on a box, while the
-  -- days themselves are America/Chicago. The last event of the newest day runs
-  -- to local midnight, i.e. 05:00 UTC the NEXT day, so the anchor read one day
-  -- ahead of the day it belonged to, the shift computed to zero, and the
-  -- seeded life came to rest ENDING YESTERDAY. Home asks for the browser's
-  -- literal today with no fallback, so the demo's front page was empty every
-  -- day, which is the exact failure this file exists to prevent.
-  --
-  -- The day rows carry real dates, so ask them instead and no timezone enters
-  -- the arithmetic. Restricted to days holding THIS set's events: a running box
-  -- auto-creates an empty `wiki_days` row for today with a hashed id, and
-  -- `max(wiki_days.date)` would read that empty row as the anchor and again
-  -- compute a zero shift.
-  SELECT max(d.date) INTO cur_anchor
-    FROM wiki_days d
-   WHERE EXISTS (SELECT 1 FROM wiki_events e
-                  WHERE e.day_id = d.id AND e.id LIKE 'p3y!_%%' ESCAPE '!');
-  IF cur_anchor IS NULL THEN RETURN; END IF;
-  shift_days := current_date - cur_anchor;
-  IF shift_days = 0 THEN RETURN; END IF;
-
-  -- MOVE ONLY THE DAY ROWS THIS SET WROTE. Every other table below is
-  -- filtered to this set's ids, and the day rows once were not: the whole of
-  -- `wiki_days` moved while only `p3y_` events moved with it, so any day the
-  -- box made for itself — and every day of another seed — slid away from the
-  -- events and streams still sitting on its old date. The set writes exactly
-  -- `day_<date>` for each generated date, and an id never changes when its
-  -- row moves, so the id still names the date it was written for.
-  CREATE TEMP TABLE _p3y_days ON COMMIT DROP AS
-    SELECT id, date + shift_days AS landing FROM wiki_days
-     WHERE id ~ '^day_[0-9]{4}-[0-9]{2}-[0-9]{2}$'
-       AND substr(id, 5)::date BETWEEN DATE '%FIRST_DAY%' AND DATE '%LAST_DAY%';
-
-  -- Events the box wrote onto this set's days ride with them. A box re-reads
-  -- a day it narrates and replaces its events with its own hashed ids, so a
-  -- `p3y_` filter alone leaves those behind a day per run. Taken before the
-  -- fold below: events folded in from a box-made row already sit on the date
-  -- they are moving to.
-  CREATE TEMP TABLE _p3y_riders ON COMMIT DROP AS
-    SELECT e.id FROM wiki_events e JOIN _p3y_days o ON o.id = e.day_id
-     WHERE e.id NOT LIKE 'p3y!_%%' ESCAPE '!';
-
-  -- A row the box made on a date this set is about to land on would break the
-  -- UNIQUE date, and it is the ordinary case, not an edge: a running box
-  -- creates a hashed-id row for any date someone opens, so the day after the
-  -- life's last one usually exists before the hourly run reaches it, and may
-  -- already hold a paired phone's events. Fold it into the seeded row for that
-  -- date — its events and, when the seeded row has none, its day article —
-  -- then drop it. Raising instead would wedge the re-anchor on the first such
-  -- row and leave the demo ageing a day at a time.
-  FOR r IN
-    SELECT f.id AS foreign_id, o.id AS own_id
-      FROM wiki_days f JOIN _p3y_days o ON f.date = o.landing
-     WHERE f.id NOT IN (SELECT id FROM _p3y_days)
-  LOOP
-    UPDATE wiki_events SET day_id = r.own_id WHERE day_id = r.foreign_id;
-    UPDATE wiki_articles SET subject_id = r.own_id
-     WHERE subject_type = 'day' AND subject_id = r.foreign_id
-       AND NOT EXISTS (SELECT 1 FROM wiki_articles
-                        WHERE subject_type = 'day' AND subject_id = r.own_id);
-    DELETE FROM wiki_days WHERE id = r.foreign_id;
-  END LOOP;
-
-  -- `wiki_days.date` is UNIQUE, and Postgres writes a unique index row by row
-  -- inside an UPDATE rather than deferring the check to the end of the
-  -- statement. A uniform `date + N` therefore collides mid-statement whenever
-  -- N is smaller than the span — always true here, three years against a shift
-  -- of months. Park the column far outside any plausible range and land it
-  -- from there, so neither pass writes a value the column already holds.
-  -- (`demo_reanchor.sql` solves the same problem the same way; this file
-  -- cannot simply call it, see the header.)
-  UPDATE wiki_days SET date = date + 100000 WHERE id IN (SELECT id FROM _p3y_days);
-  UPDATE wiki_days SET date = date - 100000 + shift_days WHERE id IN (SELECT id FROM _p3y_days);
-  UPDATE wiki_events          SET started_at = started_at + (shift_days || ' days')::interval,
-                                  ended_at   = ended_at   + (shift_days || ' days')::interval
-                              WHERE id LIKE 'p3y_%%';
-  UPDATE wiki_events          SET started_at = started_at + (shift_days || ' days')::interval,
-                                  ended_at   = ended_at   + (shift_days || ' days')::interval
-                              WHERE id IN (SELECT id FROM _p3y_riders);
-  -- The box writes a ref per entity it finds in a seeded row, stamped with
-  -- that row's time; the ref moves when its source does.
-  UPDATE wiki_refs SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE source_id LIKE 'p3y_%%';
-  UPDATE data_health_heart_rate SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_health_hrv        SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_health_steps      SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_health_sleep      SET started_at = started_at + (shift_days||' days')::interval,
-                                    ended_at   = ended_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_health_workout    SET started_at = started_at + (shift_days||' days')::interval,
-                                    ended_at   = ended_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_location_point    SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_location_visit    SET started_at = started_at + (shift_days||' days')::interval,
-                                    ended_at   = ended_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_communication_message SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_communication_email   SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_communication_transcription SET started_at = started_at + (shift_days||' days')::interval,
-                                          ended_at   = ended_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_financial_transaction SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_calendar_event    SET started_at = started_at + (shift_days||' days')::interval,
-                                    ended_at   = ended_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_environment_weather SET occurred_at = occurred_at + (shift_days||' days')::interval,
-                                      issued_at   = issued_at   + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_activity_web_browsing SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_content_bookmark  SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE data_content_document  SET occurred_at = occurred_at + (shift_days||' days')::interval WHERE id LIKE 'p3y_%%';
-  UPDATE app_chats           SET created_at = created_at + (shift_days||' days')::interval,
-                                 updated_at = updated_at + (shift_days||' days')::interval WHERE id LIKE 'chat_p3y_%%';
-  UPDATE app_chat_messages   SET created_at = created_at + (shift_days||' days')::interval WHERE id LIKE 'chat_p3y_%%';
-  -- `wiki_chapters` carries an EXCLUSION constraint against overlapping
-  -- spans, checked per row and not deferrable. An in-place shift overlaps
-  -- transiently, and the park-and-land trick used above for `wiki_days` does
-  -- not rescue it: the current chapter has `ended_at IS NULL`, so parking it
-  -- makes an unbounded range that covers every row still waiting its turn.
-  -- Emptying the table first is the only order with no intermediate conflict.
-  --
-  -- NOTE for whoever touches `demo_reanchor.sql`: it shifts every date column
-  -- under `wiki_*` generically and will hit this same wall the moment chapters
-  -- are seeded into the set it moves.
-  CREATE TEMP TABLE _p3y_ch ON COMMIT DROP AS
-    SELECT * FROM wiki_chapters WHERE id LIKE 'p3y_%%';
-  DELETE FROM wiki_chapters WHERE id LIKE 'p3y_%%';
-  INSERT INTO wiki_chapters (id, kind, title, started_at, ended_at,
-                             started_precision, ended_precision, summary,
-                             created_at, updated_at)
-    SELECT id, kind, title, started_at + shift_days, ended_at + shift_days,
-           started_precision, ended_precision, summary, created_at, updated_at
-    FROM _p3y_ch;
-  UPDATE wiki_stories        SET started_at = started_at + shift_days,
-                                 ended_at   = ended_at   + shift_days WHERE id LIKE 'p3y_%%';
-  UPDATE wiki_orgs           SET started_at = started_at + shift_days,
-                                 ended_at   = ended_at   + shift_days WHERE id LIKE 'p3y_%%' OR id LIKE 'org_demo_%%';
-END $$;
-"""
-
-RUNSH = """\
-#!/bin/sh
-# Run the three-year demo seed. Order matters: entities before the rows that
-# name them, and the re-anchor strictly last.
-#
-# These files are NOT compiled into the binary (demo_seed.rs uses include_str!,
-# and these are tens of MB). On a demo box, run them with psql.
-#
-#   DB=virtues sh run.sh
-set -eu
-DB="${DB:-virtues}"
-cd "$(dirname "$0")"
-for f in 01_entities.sql 02_streams.sql 03_derived.sql 04_creation.sql 05_content.sql 99_reanchor.sql; do
-  echo "→ $f"
-  psql -v ON_ERROR_STOP=1 -d "$DB" -f "$f" >/dev/null
-done
-echo "✓ seeded"
-"""
 
 HEADER = """\
 -- GENERATED by tools/gen-demo-seed.py — do not edit by hand.
@@ -1742,6 +1546,50 @@ HEADER = """\
 -- appears here, and none may be added: this repo is public and box context
 -- reaches model providers at runtime.
 """
+
+RECENT_TEXTS = [
+    "running about ten minutes late", "did you see the thing I sent", "thursday still good?",
+    "call me when you get a sec", "ok that's actually very funny", "landed", "on my way",
+    "made too much soup, come over", "no rush on this at all", "found it, never mind",
+    "how'd it go?", "yes", "ha", "sounds good", "can you send me that link again",
+    "board rev b looks right to me", "the beta build is up", "are we still on for dinner",
+    "I'll bring the bread", "send pics", "that's a lot of hinges", "pushed a fix, try now",
+    "parking is a nightmare, walking over", "lol", "sorry, was on a call", "tomorrow works",
+]
+APPS = [("Figma", "com.figma.Desktop", ["Thing app — Figma", "Day page v4 — Figma", "Enclosure labels — Figma"]),
+        ("Dia", "company.thebrowser.dia", ["GitHub", "Linear", "Gmail", "Are.na"]),
+        ("Claude", "com.anthropic.claudefordesktop", ["Firmware flashing order", "Copy for the setup screen"]),
+        ("Slack", "com.tinyspeck.slackmacgap", ["#beta — Arden Works — Slack", "#hardware — Arden Works — Slack"]),
+        ("Messages", "com.apple.MobileSMS", ["Bea", "Thursday table"]),
+        ("Terminal", "com.apple.Terminal", ["jules@studio: ~/thing-app — zsh"])]
+
+
+def _day_recent(d, off, msg, apps, weekend):
+    """A dense day's messages and Mac time, for the eight weeks before the week."""
+    k = d.isoformat()
+    R = RNG_RECENT
+    live = [p for p in PEOPLE if p[4] <= off <= p[5]]
+    for i in range(R.randint(45, 80) if weekend else R.randint(70, 140)):
+        pid, name, *_rest = R.choices(live, weights=[p[6] ** 2 for p in live])[0]
+        inbound = R.random() < 0.5
+        msg.add(f"p3y_mr_{k}_{i}", f"p3y_msgid_r_{k}_{i}", f"p3y_thr_{pid}", "imessage",
+                R.choice(RECENT_TEXTS), PHONE[pid] if inbound else "me", name if inbound else None,
+                [OWNER_PHONE] if inbound else [PHONE[pid]], True, False, False,
+                ts(d, R.randint(7, 23), R.randint(0, 59)) + timedelta(seconds=R.randint(0, 59)),
+                f"p3y_s_mr_{k}_{i}", "data_communication_message", "demo",
+                PHONE[pid] if inbound else "", {"is_from_me": not inbound, "service": "iMessage"})
+    t = ts(d, 8 if not weekend else 10, R.randint(0, 40))
+    end = ts(d, 18 if not weekend else 13, R.randint(0, 59))
+    i = 0
+    while t < end:
+        app, bundle, titles = R.choices(APPS, weights=[5, 6, 3, 2, 2, 1])[0]
+        length = timedelta(minutes=R.randint(3, 45))
+        apps.add(f"p3y_app_{k}_{i}", app, bundle, t, t + length, R.choice(titles),
+                 f"dev_p3y_mac:{bundle}:{int(t.timestamp())}", "mac_apps", "mac",
+                 "dev_p3y_mac", "active", False)
+        t += length + timedelta(minutes=R.randint(0, 12))
+        i += 1
+
 
 def _day_web(d, off, web, chi):
     k = d.isoformat()
@@ -1765,7 +1613,7 @@ PROJECTS = [
     ("p3y_nb_house", "The Selden St house", "\U0001F3E1", "#7A5C3E",
      "Everything about buying and keeping this house. Inspection notes are the "
      "important part; the rest is sentiment.", True,
-     [("/place/place_demo_home", "pin"), ("/person/person_demo_rachel", "library"),
+     [("/place/p3y_pl_home", "pin"), ("/person/p3y_cora", "library"),
       ("/page/p3y_up_inspection", "manuscript"), ("/page/p3y_up_closing", "library")]),
     ("p3y_nb_migraine", "Migraines", "\U0001FA7A", "#8C3B3B",
      "Track what precedes one. Do not speculate about causes — collect, then look.",
@@ -1777,7 +1625,7 @@ PROJECTS = [
       ("/place/p3y_pl_conf", "library")]),
     ("p3y_nb_independent", "Going independent", "\U0001F5DD\uFE0F", "#4A5D3A",
      "The decision, the runway maths, and who I told in what order.", True,
-     [("/org/org_demo_employer", "library"), ("/org/p3y_org_client", "library"),
+     [("/org/p3y_org_canopy", "library"), ("/org/p3y_org_client", "library"),
       ("/page/p3y_up_runway", "manuscript"), ("/chat/chat_p3y_03", "pin")]),
     ("p3y_nb_chicago", "Chicago, before", "\U0001F5C3\uFE0F", "#5A5A6B", None, False,
      [("/person/p3y_theo", "pin"), ("/person/p3y_junie", "library"),
@@ -1810,7 +1658,7 @@ def _projects(projects, nbitems):
 USER_PAGES = [
     ("p3y_up_inspection", "Inspection — 1847 Selden", "\U0001F50D",
      "Roof: 4-6 years left, seller won't budge. Foundation: two hairlines, both "
-     "old, [@Cora Delgado](/person/person_demo_rachel) says they're settlement not "
+     "old, [@Cora Delgado](/person/p3y_cora) says they're settlement not "
      "movement and the report agrees.\n\nHVAC is the real number — 2009, and the "
      "inspector's face did a thing when he said it.\n\n**Walk away number: 5%.** "
      "Wrote it down so I'd hold to it. Held to it."),
@@ -1832,7 +1680,7 @@ USER_PAGES = [
      "Rehearse on the plane, not in the room."),
     ("p3y_up_closing", "Closing day", "\U0001F511",
      "Wire went out 9:40, cleared 2:15, keys 4:30. [@Cora Delgado]"
-     "(/person/person_demo_rachel) brought bread and salt, which she said is a "
+     "(/person/p3y_cora) brought bread and salt, which she said is a "
      "thing her mother did.\n\nSlept on the floor of the front room because the "
      "bed didn't come until Tuesday. Best night's sleep in a year."),
     ("p3y_up_reading", "Reading, 2025", "\U0001F4D6",
@@ -1893,7 +1741,7 @@ def _notes_and_memories(notes, memories):
         ("day", None, "observation",
          "Nothing reached the server for nine days here. The gap is the device, "
          "not the life.", "ai", now, "accepted", "human"),
-        ("place", "place_demo_home", "memo",
+        ("place", "p3y_pl_home", "memo",
          "Bought in August. Everything before that date at this address is the "
          "showings, not living here.", "human", None, None, None),
         ("person", "p3y_theo", "appraisal",
@@ -1902,7 +1750,7 @@ def _notes_and_memories(notes, memories):
         ("chapter", "p3y_ch_unknown", "memo",
          "I have not named this stretch and I would rather it stayed unnamed "
          "than got a tidy label.", "human", None, None, None),
-        ("organization", "org_demo_employer", "correction",
+        ("organization", "p3y_org_canopy", "correction",
          "End date is the last day worked, not the last day paid.", "human",
          now, "accepted", "human"),
         ("year", "year_2025", "style_note",
@@ -1954,10 +1802,9 @@ def _notes_and_memories(notes, memories):
         ("practices", "Used to run every morning before the move.", "ai",
          ts(ANCHOR_END - timedelta(days=200), 9, 0), "no longer true"),
     ]
-    # No explicit id: the column is a bigint identity, so there is no prefix to
-    # mark these with. `98_reset.sql` therefore clears this table wholesale and
-    # lets a re-run of THIS file restore it — safe here and nowhere else,
-    # because memories carry no anchored dates to be reinserted wrongly.
+    # No explicit id: the column is a bigint identity. The ids Postgres assigns
+    # at build time are frozen into life.sql and listed in demo.rows, which is
+    # what the nightly reset keeps by.
     for lane, body, author, retired, reason in mem:
         memories.add(lane, body, author, now, now, retired, reason)
 
@@ -2056,76 +1903,6 @@ def _applets(applets, runs):
 # visible to the person after them.
 # --------------------------------------------------------------------------
 
-RESET = """-- Return the demo box to its seeded state: remove what a VISITOR wrote, keep
--- what the seed put there. Run nightly by `virtues-demo3y-reset.timer`.
---
--- DELETE WHAT IS NOT SEEDED — never wipe-and-restore. Re-running the creation
--- layer looks like the obvious shape and is wrong: it re-inserts the seeded
--- chats at their ABSOLUTE dates, and `99_reanchor.sql` computes a zero shift
--- once the rest of the life is already anchored, so they would come back
--- sitting three years in the past. Deleting only the unseeded rows leaves the
--- seeded ones untouched with the dates they already have, and puts no date
--- arithmetic in this file at all.
---
--- AUTH IS NEVER NAMED HERE, and the table list below is an allowlist for that
--- reason. `app_` is the whole application layer, not an auth prefix:
--- `app_device`, `app_auth_user`, `app_pair_token` and `app_setup_phrase` carry
--- the paired devices and the App Store review pair code, so a blanket `app_*`
--- wipe would un-pair a reviewer mid-round. Adding a table here means checking
--- it holds visitor work and not credentials.
-
-BEGIN;
-
--- Seeded chats, plus the two rooms the box maintains rather than a visitor.
--- Getting Started is kept deliberately: it derives its own steps, so a fresh
--- visitor meets the walkthrough, and deleting product state the box expects is
--- the riskier half of the trade.
-CREATE TEMP TABLE _keep_chats ON COMMIT DROP AS
-  SELECT id FROM app_chats
-   WHERE starts_with(id, 'chat_p3y_')
-      OR id IN ('chat_getting_started', 'chat_narrative_interview');
-
-DELETE FROM app_chat_messages WHERE chat_id NOT IN (SELECT id FROM _keep_chats);
-DELETE FROM app_chat_usage    WHERE chat_id NOT IN (SELECT id FROM _keep_chats);
-DELETE FROM app_chats         WHERE id      NOT IN (SELECT id FROM _keep_chats);
-
--- Pages. The unseeded ones include the day pages the box narrates for itself —
--- those are regenerated by its own nightly pass, and the ones standing today
--- describe days that no longer exist, because the seed beneath them was
--- replaced.
-DELETE FROM app_page_versions
- WHERE page_id NOT IN (SELECT id FROM app_pages WHERE starts_with(id, 'page_p3y_'));
-DELETE FROM app_pages WHERE NOT starts_with(id, 'page_p3y_');
-
--- Projects, and the items inside them. An item a visitor adds to a SEEDED
--- project survives this: the seed does not give items their own ids, so there
--- is nothing to tell one from the other. Left as-is deliberately — give
--- `app_project_items` seeded ids if that edge ever shows up in a demo.
-DELETE FROM app_project_items
- WHERE project_id NOT IN (SELECT id FROM app_projects WHERE starts_with(id, 'p3y_nb_'));
-DELETE FROM app_projects WHERE NOT starts_with(id, 'p3y_nb_');
-
--- What a visitor's chat taught the assistant about a life that is not theirs.
---
--- The ONLY table here that is cleared wholesale and restored, rather than
--- filtered. `app_assistant_memories.id` is a bigint identity, so the seeded
--- rows carry no prefix to keep them by, and `author` cannot separate them —
--- the seed writes both 'ai' and 'human' and so does the box. Restoring works
--- for this table alone because memories hold no anchored dates: the timer
--- re-runs `04_creation.sql` after this file, which no-ops on every other table
--- (`ON CONFLICT DO NOTHING`, or for `wiki_notes`, whose ids are generated too,
--- an insert guarded by the note's subject and body) and re-inserts only these
--- twelve.
-DELETE FROM app_assistant_memories;
-
--- Nothing seeds these, so anything in them arrived from a visitor.
-DELETE FROM app_marginalia;
-DELETE FROM app_pins;
-DELETE FROM app_drive_files;
-
-COMMIT;
-"""
-
 GROUPS = {
     "01_entities": ["wiki_people", "wiki_places", "wiki_orgs", "wiki_chapters",
                     "wiki_stories", "wiki_years", "data_financial_account"],
@@ -2140,13 +1917,13 @@ GROUPS = {
                     "app_projects", "app_project_items", "wiki_notes",
                     "app_assistant_memories", "app_applets", "app_applet_runs"],
     "05_content": ["data_content_bookmark", "data_content_document",
-                   "data_activity_web_browsing"],
+                   "data_activity_web_browsing", "data_activity_app_session"],
 }
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default="virtues-core/seeds/demo3y")
+    ap.add_argument("--out", required=True, help="scratch dir; tools/demo/build.sh passes one")
     ap.add_argument("--check-db", metavar="DBNAME",
                     help="validate every column against a live database first")
     args = ap.parse_args()
@@ -2157,7 +1934,7 @@ def main():
 
     # Validate before writing. A seed is raw SQL, so a renamed column is not a
     # compile error anywhere — it is a runtime failure on a box, months later,
-    # which is how `wiki_people` in `demo_day.sql` came to be checked by hand.
+    # which is how a seeded `wiki_people` insert once came to be checked by hand.
     if args.check_db:
         import subprocess
         bad = False
@@ -2189,14 +1966,6 @@ def main():
                 body.append(tables[nm].sql())
                 total += len(tables[nm].rows)
         (out / f"{group}.sql").write_text("\n".join(body))
-
-    (out / "98_reset.sql").write_text(HEADER + "\n" + RESET)
-    (out / "99_reanchor.sql").write_text(
-        HEADER + "\n" + REANCHOR.replace("%FIRST_DAY%", START.isoformat())
-                         .replace("%LAST_DAY%", ANCHOR_END.isoformat()))
-    run = out / "run.sh"
-    run.write_text(RUNSH)
-    run.chmod(0o755)
 
     print(f"{ndays} days, {START} → {ANCHOR_END}")
     for nm in sorted(tables, key=lambda k: -len(tables[k].rows)):
