@@ -8,7 +8,7 @@
 //! the trait/registry plumbing is stripped.
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde_json::Value;
 use sqlx::PgPool;
 use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
@@ -714,4 +714,409 @@ async fn flush_workout(db: &PgPool, records: &[WorkoutRow]) -> Result<usize> {
     }
     let result = q.execute(db).await?;
     Ok(result.rows_affected() as usize)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Cycle, symptoms, wrist temperature
+//
+// Raw samples only; cycles and estimates are transforms over these rows (see
+// agents/plan/cycle-tracking-plan.md). Each record carries the phone's calendar
+// days beside the instants, because these are all-day samples and the box
+// cannot recover the right day from a UTC midnight.
+//
+// Every row is checked against the vocabulary here before it is inserted. The
+// tables have the same CHECKs, but a CHECK failure rejects the whole batch,
+// and the phone retries a rejected batch forever.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Each cycle `kind` and the values it may carry. An empty list means the kind
+/// carries no value (spotting, a factor's interval, a temperature reading).
+const CYCLE_KINDS: &[(&str, &[&str])] = &[
+    ("flow", &["unspecified", "light", "medium", "heavy", "none"]),
+    ("spotting", &[]),
+    ("basal_temperature", &[]),
+    ("ovulation_test", &["negative", "lh_surge", "estrogen_surge", "indeterminate"]),
+    ("cervical_mucus", &["dry", "sticky", "creamy", "watery", "egg_white"]),
+    ("contraceptive", &["unspecified", "implant", "injection", "iud", "ring", "oral", "patch"]),
+    ("pregnancy", &[]),
+    ("lactation", &[]),
+    ("deviation", &["irregular", "infrequent", "prolonged", "persistent_spotting"]),
+];
+
+/// Cycle factors are intervals and may still be running (no end yet).
+const OPEN_INTERVAL_KINDS: &[&str] = &["contraceptive", "pregnancy", "lactation"];
+
+/// Every HealthKit symptom category type, as the phone names it.
+const SYMPTOMS: &[&str] = &[
+    "abdominal_cramps", "acne", "appetite_changes", "bladder_incontinence", "bloating",
+    "breast_pain", "chest_tightness_or_pain", "chills", "constipation", "coughing",
+    "diarrhea", "dizziness", "dry_skin", "fainting", "fatigue", "fever",
+    "generalized_body_ache", "hair_loss", "headache", "heartburn", "hot_flashes",
+    "loss_of_smell", "loss_of_taste", "lower_back_pain", "memory_lapse", "mood_changes",
+    "nausea", "night_sweats", "pelvic_pain", "rapid_pounding_or_fluttering_heartbeat",
+    "runny_nose", "shortness_of_breath", "sinus_congestion", "skipped_heartbeat",
+    "sleep_changes", "sore_throat", "vaginal_dryness", "vomiting", "wheezing",
+];
+
+/// The values a symptom may carry, which follow its HealthKit value enum.
+fn symptom_values(symptom: &str) -> &'static [&'static str] {
+    match symptom {
+        "mood_changes" | "sleep_changes" => &["present", "not_present"],
+        "appetite_changes" => &["unspecified", "no_change", "decreased", "increased"],
+        _ => &["unspecified", "not_present", "mild", "moderate", "severe"],
+    }
+}
+
+fn str_field<'a>(record: &'a Value, field: &str) -> Option<&'a str> {
+    record.get(field).and_then(|v| v.as_str()).filter(|s| !s.is_empty())
+}
+
+fn date_field(record: &Value, field: &str) -> Option<NaiveDate> {
+    str_field(record, field).and_then(|s| s.parse::<NaiveDate>().ok())
+}
+
+fn instant_field(record: &Value, field: &str) -> Option<DateTime<Utc>> {
+    str_field(record, field).and_then(|s| s.parse::<DateTime<Utc>>().ok())
+}
+
+#[derive(Debug, PartialEq)]
+struct CycleSample {
+    kind: String,
+    value: Option<String>,
+    temperature_celsius: Option<f64>,
+    is_cycle_start: Option<bool>,
+    started_on: NaiveDate,
+    ended_on: Option<NaiveDate>,
+    started_at: DateTime<Utc>,
+    ended_at: Option<DateTime<Utc>>,
+}
+
+/// One cycle record, or `Err` naming why it cannot be stored.
+fn parse_cycle(record: &Value) -> std::result::Result<CycleSample, String> {
+    let kind = str_field(record, "kind").ok_or("no kind")?;
+    let allowed = CYCLE_KINDS
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map(|(_, v)| *v)
+        .ok_or_else(|| format!("unknown kind {kind:?}"))?;
+
+    let value = str_field(record, "value");
+    match (allowed.is_empty(), value) {
+        (true, None) => {}
+        (false, Some(v)) if allowed.contains(&v) => {}
+        (true, Some(v)) => return Err(format!("{kind} carries no value, got {v:?}")),
+        (false, v) => return Err(format!("bad {kind} value {v:?}")),
+    }
+
+    let temperature_celsius = record.get("temperature_celsius").and_then(|v| v.as_f64());
+    if (kind == "basal_temperature") != temperature_celsius.is_some() {
+        return Err(format!("{kind}: temperature_celsius must be present only for basal_temperature"));
+    }
+
+    let started_on = date_field(record, "local_start_date").ok_or("no local_start_date")?;
+    let started_at = instant_field(record, "timestamp").ok_or("no timestamp")?;
+    let ended_at = instant_field(record, "end_timestamp");
+    let open = OPEN_INTERVAL_KINDS.contains(&kind);
+    // A point sample with no end date is a one-day sample; only a factor may
+    // still be running.
+    let ended_on = match date_field(record, "local_end_date") {
+        Some(d) => Some(d),
+        None if open => None,
+        None => Some(started_on),
+    };
+    if ended_on.is_some_and(|e| e < started_on) {
+        return Err("local_end_date before local_start_date".into());
+    }
+
+    Ok(CycleSample {
+        kind: kind.to_string(),
+        value: value.map(String::from),
+        temperature_celsius,
+        is_cycle_start: record.get("is_cycle_start").and_then(|v| v.as_bool()),
+        started_on,
+        ended_on,
+        started_at,
+        ended_at,
+    })
+}
+
+#[derive(Debug, PartialEq)]
+struct SymptomSample {
+    symptom: String,
+    value: String,
+    started_on: NaiveDate,
+    ended_on: NaiveDate,
+    started_at: DateTime<Utc>,
+    ended_at: DateTime<Utc>,
+}
+
+fn parse_symptom(record: &Value) -> std::result::Result<SymptomSample, String> {
+    let symptom = str_field(record, "symptom").ok_or("no symptom")?;
+    if !SYMPTOMS.contains(&symptom) {
+        return Err(format!("unknown symptom {symptom:?}"));
+    }
+    let value = str_field(record, "value").ok_or("no value")?;
+    if !symptom_values(symptom).contains(&value) {
+        return Err(format!("bad {symptom} value {value:?}"));
+    }
+    let started_on = date_field(record, "local_start_date").ok_or("no local_start_date")?;
+    let ended_on = date_field(record, "local_end_date").unwrap_or(started_on);
+    if ended_on < started_on {
+        return Err("local_end_date before local_start_date".into());
+    }
+    let started_at = instant_field(record, "timestamp").ok_or("no timestamp")?;
+    let ended_at = instant_field(record, "end_timestamp").unwrap_or(started_at);
+    Ok(SymptomSample {
+        symptom: symptom.to_string(),
+        value: value.to_string(),
+        started_on,
+        ended_on,
+        started_at,
+        ended_at,
+    })
+}
+
+#[derive(Debug, PartialEq)]
+struct WristTemperatureSample {
+    temperature_celsius: f64,
+    night_of: NaiveDate,
+    started_at: DateTime<Utc>,
+    ended_at: DateTime<Utc>,
+}
+
+fn parse_wrist_temperature(record: &Value) -> std::result::Result<WristTemperatureSample, String> {
+    let temperature_celsius = record
+        .get("temperature_celsius")
+        .and_then(|v| v.as_f64())
+        .ok_or("no temperature_celsius")?;
+    let night_of = date_field(record, "local_start_date").ok_or("no local_start_date")?;
+    let started_at = instant_field(record, "timestamp").ok_or("no timestamp")?;
+    let ended_at = instant_field(record, "end_timestamp").unwrap_or(started_at);
+    Ok(WristTemperatureSample { temperature_celsius, night_of, started_at, ended_at })
+}
+
+/// Parse every record, logging and dropping the ones that cannot be stored.
+fn parse_all<T>(
+    records: &[Value],
+    what: &str,
+    parse: fn(&Value) -> std::result::Result<T, String>,
+) -> Vec<(T, String, Value)> {
+    records
+        .iter()
+        .filter_map(|record| match parse(record) {
+            Ok(sample) => Some((
+                sample,
+                stream_id_or_hash(record, HEALTHKIT_STREAM_TABLE),
+                serde_json::json!({ "healthkit_raw": record.get("raw_data").cloned() }),
+            )),
+            Err(reason) => {
+                tracing::warn!(what, %reason, "skipping healthkit record");
+                None
+            }
+        })
+        .collect()
+}
+
+pub async fn write_cycle(db: &PgPool, records: &[Value]) -> Result<usize> {
+    let rows = parse_all(records, "cycle", parse_cycle);
+    let mut written = 0;
+    for chunk in rows.chunks(BATCH_SIZE) {
+        let sql = build_batch_insert_query(
+            "data_health_cycle_log",
+            &[
+                "id", "kind", "value", "temperature_celsius", "is_cycle_start",
+                "started_on", "ended_on", "started_at", "ended_at",
+                "source_stream_id", "source_table", "source_provider", "metadata",
+            ],
+            "source_stream_id",
+            chunk.len(),
+        );
+        let mut q = sqlx::query(&sql);
+        for (s, stream_id, metadata) in chunk {
+            q = q
+                .bind(row_id(HEALTHKIT_STREAM_TABLE, stream_id))
+                .bind(&s.kind)
+                .bind(&s.value)
+                .bind(s.temperature_celsius)
+                .bind(s.is_cycle_start)
+                .bind(s.started_on)
+                .bind(s.ended_on)
+                .bind(s.started_at)
+                .bind(s.ended_at)
+                .bind(stream_id)
+                .bind(HEALTHKIT_STREAM_TABLE)
+                .bind(IOS_PROVIDER)
+                .bind(metadata);
+        }
+        written += q.execute(db).await?.rows_affected() as usize;
+    }
+    Ok(written)
+}
+
+pub async fn write_symptom(db: &PgPool, records: &[Value]) -> Result<usize> {
+    let rows = parse_all(records, "symptom", parse_symptom);
+    let mut written = 0;
+    for chunk in rows.chunks(BATCH_SIZE) {
+        let sql = build_batch_insert_query(
+            "data_health_symptom",
+            &[
+                "id", "symptom", "value", "started_on", "ended_on", "started_at", "ended_at",
+                "source_stream_id", "source_table", "source_provider", "metadata",
+            ],
+            "source_stream_id",
+            chunk.len(),
+        );
+        let mut q = sqlx::query(&sql);
+        for (s, stream_id, metadata) in chunk {
+            q = q
+                .bind(row_id(HEALTHKIT_STREAM_TABLE, stream_id))
+                .bind(&s.symptom)
+                .bind(&s.value)
+                .bind(s.started_on)
+                .bind(s.ended_on)
+                .bind(s.started_at)
+                .bind(s.ended_at)
+                .bind(stream_id)
+                .bind(HEALTHKIT_STREAM_TABLE)
+                .bind(IOS_PROVIDER)
+                .bind(metadata);
+        }
+        written += q.execute(db).await?.rows_affected() as usize;
+    }
+    Ok(written)
+}
+
+pub async fn write_wrist_temperature(db: &PgPool, records: &[Value]) -> Result<usize> {
+    let rows = parse_all(records, "wrist_temperature", parse_wrist_temperature);
+    let mut written = 0;
+    for chunk in rows.chunks(BATCH_SIZE) {
+        let sql = build_batch_insert_query(
+            "data_health_wrist_temperature",
+            &[
+                "id", "temperature_celsius", "night_of", "started_at", "ended_at",
+                "source_stream_id", "source_table", "source_provider", "metadata",
+            ],
+            "source_stream_id",
+            chunk.len(),
+        );
+        let mut q = sqlx::query(&sql);
+        for (s, stream_id, metadata) in chunk {
+            q = q
+                .bind(row_id(HEALTHKIT_STREAM_TABLE, stream_id))
+                .bind(s.temperature_celsius)
+                .bind(s.night_of)
+                .bind(s.started_at)
+                .bind(s.ended_at)
+                .bind(stream_id)
+                .bind(HEALTHKIT_STREAM_TABLE)
+                .bind(IOS_PROVIDER)
+                .bind(metadata);
+        }
+        written += q.execute(db).await?.rows_affected() as usize;
+    }
+    Ok(written)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn flow(value: &str) -> Value {
+        json!({"id": format!("hk-flow-{value}"), "metric_type": "cycle", "kind": "flow",
+               "value": value, "is_cycle_start": true,
+               "local_start_date": "2026-09-29", "local_end_date": "2026-09-29",
+               "timestamp": "2026-09-29T07:00:00Z", "end_timestamp": "2026-09-30T07:00:00Z"})
+    }
+
+    /// The calendar day comes from the phone, never from the instant: a sample
+    /// logged at local midnight in UTC-7 is the 29th, though its instant is
+    /// 07:00Z.
+    #[test]
+    fn a_flow_day_keeps_the_phones_calendar_day() {
+        let s = parse_cycle(&flow("medium")).unwrap();
+        assert_eq!(s.started_on, NaiveDate::from_ymd_opt(2026, 9, 29).unwrap());
+        assert_eq!(s.ended_on, Some(s.started_on));
+        assert_eq!(s.value.as_deref(), Some("medium"));
+        assert_eq!(s.is_cycle_start, Some(true));
+    }
+
+    /// Anything the table would reject is dropped here, so one bad record can
+    /// never fail its whole batch.
+    #[test]
+    fn values_outside_the_vocabulary_are_refused() {
+        assert!(parse_cycle(&flow("gushing")).is_err());
+        let mut r = flow("medium");
+        r["kind"] = json!("sexual_activity");
+        assert!(parse_cycle(&r).is_err(), "never read, so never stored");
+        r["kind"] = json!("spotting");
+        assert!(parse_cycle(&r).is_err(), "spotting carries no value");
+        r.as_object_mut().unwrap().remove("value");
+        assert!(parse_cycle(&r).is_ok());
+    }
+
+    #[test]
+    fn temperature_belongs_to_basal_temperature_only() {
+        let bbt = json!({"kind": "basal_temperature", "temperature_celsius": 36.4,
+                         "local_start_date": "2026-10-01", "timestamp": "2026-10-01T13:00:00Z"});
+        assert_eq!(parse_cycle(&bbt).unwrap().temperature_celsius, Some(36.4));
+        let mut no_temp = bbt.clone();
+        no_temp.as_object_mut().unwrap().remove("temperature_celsius");
+        assert!(parse_cycle(&no_temp).is_err());
+        let mut flow_with_temp = flow("light");
+        flow_with_temp["temperature_celsius"] = json!(36.4);
+        assert!(parse_cycle(&flow_with_temp).is_err());
+    }
+
+    /// A contraception factor with no end yet is still running; a flow sample
+    /// with no end date is a single day.
+    #[test]
+    fn only_a_factor_may_be_open() {
+        let iud = json!({"kind": "contraceptive", "value": "iud",
+                         "local_start_date": "2026-01-10", "timestamp": "2026-01-10T08:00:00Z"});
+        assert_eq!(parse_cycle(&iud).unwrap().ended_on, None);
+        let mut f = flow("heavy");
+        f.as_object_mut().unwrap().remove("local_end_date");
+        assert_eq!(parse_cycle(&f).unwrap().ended_on, Some(NaiveDate::from_ymd_opt(2026, 9, 29).unwrap()));
+    }
+
+    /// Each symptom family has its own enum; zero means "unspecified" for
+    /// severity and "present" for presence, so the phone must send names.
+    #[test]
+    fn symptom_values_follow_their_family() {
+        let s = |symptom: &str, value: &str| {
+            parse_symptom(&json!({"symptom": symptom, "value": value,
+                                  "local_start_date": "2026-09-30",
+                                  "timestamp": "2026-09-30T07:00:00Z"}))
+        };
+        assert!(s("abdominal_cramps", "moderate").is_ok());
+        assert!(s("abdominal_cramps", "present").is_err());
+        assert!(s("mood_changes", "present").is_ok());
+        assert!(s("mood_changes", "mild").is_err());
+        assert!(s("appetite_changes", "increased").is_ok());
+        assert!(s("toe_tingling", "mild").is_err());
+    }
+
+    #[sqlx::test(migrations = "../virtues-core/migrations")]
+    async fn raw_samples_land_once(pool: PgPool) {
+        let batch = vec![
+            flow("medium"),
+            flow("not-a-value"),
+            json!({"id": "hk-sym-1", "symptom": "headache", "value": "mild",
+                   "local_start_date": "2026-09-30", "timestamp": "2026-09-30T07:00:00Z"}),
+            json!({"id": "hk-wt-1", "temperature_celsius": 35.91, "local_start_date": "2026-09-29",
+                   "timestamp": "2026-09-30T05:10:00Z", "end_timestamp": "2026-09-30T13:02:00Z"}),
+        ];
+        assert_eq!(write_cycle(&pool, &batch[..2]).await.unwrap(), 1);
+        assert_eq!(write_cycle(&pool, &batch[..2]).await.unwrap(), 0, "deduped on the sample id");
+        assert_eq!(write_symptom(&pool, &batch[2..3]).await.unwrap(), 1);
+        assert_eq!(write_wrist_temperature(&pool, &batch[3..]).await.unwrap(), 1);
+
+        let (day, value): (NaiveDate, String) =
+            sqlx::query_as("SELECT started_on, value FROM data_health_cycle_log")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((day.to_string(), value.as_str()), ("2026-09-29".into(), "medium"));
+    }
 }

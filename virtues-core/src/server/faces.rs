@@ -393,7 +393,8 @@ pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::resul
 /// after each setup_applet schema apply.
 ///
 /// - `virtues_face_reader`: SELECT on `data_*` / `wiki_*` tables and every
-///   `applet_*` schema (the faces' read-only bridge).
+///   `applet_*` schema (the faces' read-only bridge), except the ontologies
+///   marked `ModelAccess::OwnerOptIn`, which it revokes.
 /// - `virtues_applet_writer`: DML strictly inside `applet_*` schemas (the
 ///   `sql_write` tool) — the write scope is PG grants, not SQL parsing.
 pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Result<()> {
@@ -408,6 +409,21 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
     .execute(pool)
     .await
     .map_err(|e| crate::error::Error::Database(format!("applet role membership grant failed: {e}")))?;
+
+    // Ontologies the owner has not opened to the assistant are left out of the
+    // sweep and revoked, in one transaction so there is no moment at boot when
+    // they are readable. The list rides in a transaction-local setting because
+    // a DO block takes no parameters.
+    let opt_in = virtues_registry::ontologies::owner_opt_in_tables();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
+    sqlx::query("SELECT set_config('virtues.owner_opt_in_tables', $1, true)")
+        .bind(opt_in.join(","))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
 
     sqlx::query(
         r#"
@@ -436,6 +452,8 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
                              OR c.relname LIKE 'wiki\_%'
                              OR c.relname = 'app_pages'))
                        OR n.nspname LIKE 'applet\_%')
+                  AND NOT (c.relname = ANY (string_to_array(
+                        coalesce(current_setting('virtues.owner_opt_in_tables', true), ''), ',')))
             LOOP
                 EXECUTE format('GRANT SELECT ON %I.%I TO virtues_face_reader',
                                t.schemaname, t.tablename);
@@ -463,9 +481,20 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
         END $$
         "#,
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
+
+    // Table names are compile-time constants from the registry.
+    for table in &opt_in {
+        sqlx::query(&format!("REVOKE ALL ON public.{table} FROM virtues_face_reader"))
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| crate::error::Error::Database(format!("revoke on {table} failed: {e}")))?;
+    }
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
     Ok(())
 }
 
@@ -554,5 +583,34 @@ mod tests {
             assert!(!csp.contains("allow-same-origin"), "{mime}: {csp}");
             assert!(csp.contains("script-src 'self' http://127.0.0.1:7117"), "{mime}: {csp}");
         }
+    }
+
+    /// The assistant reads the record as `virtues_face_reader`. An ontology
+    /// the owner has not opened must stay unreadable to it after the boot
+    /// sweep, which grants every other `data_*` table, and after a second
+    /// sweep, which is what every later boot runs.
+    #[sqlx::test]
+    async fn owner_opt_in_tables_stay_unreadable_after_the_grant_sweep(pool: sqlx::PgPool) {
+        let opt_in = virtues_registry::ontologies::owner_opt_in_tables();
+        assert!(opt_in.contains(&"data_health_cycle_log"));
+        for _ in 0..2 {
+            ensure_applet_db_grants(&pool).await.expect("grant sweep");
+        }
+        let can_read = |table: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT has_table_privilege('virtues_face_reader', $1, 'SELECT')",
+                )
+                .bind(format!("public.{table}"))
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        for table in opt_in {
+            assert!(!can_read(table).await, "{table} is readable by the assistant");
+        }
+        assert!(can_read("data_health_sleep").await, "the sweep still grants the rest");
     }
 }
