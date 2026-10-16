@@ -8,8 +8,8 @@ chat. Nothing else is seeded from the binary.
 
 ## The demo life
 
-`demo/life.sql.gz` is the one demo dataset: a single fictional person, Jules
-Arden, a product designer in Austin. It is what demo.virtues.com shows and what
+`demo/life.sql.gz` is the one demo dataset: a single fictional person, Oriel
+Akerlund, a product designer in Austin. It is what demo.virtues.com shows and what
 `make dev-demo` loads.
 
 - **Backbone.** Three thin years: raw streams, the days and events written on

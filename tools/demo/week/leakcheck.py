@@ -61,8 +61,10 @@ for sql in ("select body from data_communication_message where length(body) > 40
     for (b,) in conn.execute(sql):
         for x in shingles(b) & fic_sh:
             real_cnt[x] += 1
-ALLOW = {l.strip() for l in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "leak_allow.txt")) if l.strip()}  # reviewed boilerplate
-common = {x for x, n in real_cnt.items() if n < 3} - ALLOW
+import hashlib
+ALLOW = {l.strip() for l in open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "leak_allow.txt"))
+         if l.strip() and not l.startswith("#")}  # sha256 of reviewed boilerplate
+common = {x for x, n in real_cnt.items() if n < 3 and hashlib.sha256(x.encode()).hexdigest() not in ALLOW}
 print("8-word runs shared but common (>=3 real texts, boilerplate):", sum(1 for n in real_cnt.values() if n >= 3))
 # boilerplate that is not personal (legal footers etc.) still counts; show fiction side
 print("8-word runs shared with real text:", len(common))

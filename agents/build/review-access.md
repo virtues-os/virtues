@@ -181,7 +181,7 @@ row must produce a 429.
    sudo sh deploy/demo/install.sh virtues-core/seeds/demo/life.sql.gz
    ```
 
-   It backs the database up, clears the box's life, loads Jules Arden's (a
+   It backs the database up, clears the box's life, loads Oriel Akerlund's (a
    three-year backbone and a dense showcase week), places it on today, installs
    the hourly placement and nightly reset units, turns the box's own day writer
    off (the life is already written) and starts a background reindex. Paired

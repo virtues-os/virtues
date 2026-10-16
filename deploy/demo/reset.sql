@@ -42,7 +42,7 @@ DELETE FROM app_drive_files;
 -- and moves the home timezone, which moves every day boundary in the record.
 INSERT INTO app_user_profile (full_name, preferred_name, occupation, home_place_id, home_timezone,
                               home_city, self_person_id, onboarding_status)
-VALUES ('Jules Arden', 'Jules', 'Product designer', 'p3y_pl_home', 'America/Chicago', 'Austin', 'wk_self',
+VALUES ('Oriel Akerlund', 'Oriel', 'Product designer', 'p3y_pl_home', 'America/Chicago', 'Austin', 'wk_self',
         'active')
 ON CONFLICT (id) DO UPDATE
    SET full_name = EXCLUDED.full_name, preferred_name = EXCLUDED.preferred_name,

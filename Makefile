@@ -296,7 +296,7 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 
 DEMO_DB_URL ?= postgres://virtues:virtues@localhost:5432/virtues_demo
 
-dev-demo: db ## Load the demo life (Jules Arden: 3 years + a dense showcase week) into its own DB, virtues_demo. Never the shared dev DB. Re-run to reload.
+dev-demo: db ## Load the demo life (Oriel Akerlund: 3 years + a dense showcase week) into its own DB, virtues_demo. Never the shared dev DB. Re-run to reload.
 	@psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues_demo'" | grep -q 1 || createdb -O virtues virtues_demo
 	@psql -d virtues_demo -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null
 	sqlx migrate run --source virtues-core/migrations --database-url "$(DEMO_DB_URL)"
