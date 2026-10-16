@@ -7464,13 +7464,13 @@ mod tests {
         let (_, page_id) = article(&pool, "person_1", "You met Nick at the R&B night.\n").await;
         let yjs = YjsState::with_tree_articles(pool.clone(), true);
         let converted = || yjs.doc_cache.first_opens.load(std::sync::atomic::Ordering::Relaxed);
-        // The article's row stays readable; what its writers last wrote does not.
-        for statement in [
-            "REVOKE SELECT ON wiki_articles FROM CURRENT_USER",
-            "GRANT SELECT (id, page_id, subject_type, subject_id) ON wiki_articles TO CURRENT_USER",
-        ] {
-            sqlx::query(statement).execute(&pool).await.unwrap();
-        }
+        // The article's row stays readable; what its writers last wrote does
+        // not. A missing column, not a revoked grant: CI's Postgres role is a
+        // superuser, and a superuser reads through any REVOKE.
+        sqlx::query("ALTER TABLE wiki_articles RENAME COLUMN machine_text TO machine_text_away")
+            .execute(&pool)
+            .await
+            .unwrap();
         let doc = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
         let (format, built_at) = {
             let d = doc.read().await;
@@ -7487,7 +7487,10 @@ mod tests {
         yjs.doc_cache.pages.run_pending_tasks();
         assert_eq!(converted(), 1);
 
-        sqlx::query("GRANT SELECT ON wiki_articles TO CURRENT_USER").execute(&pool).await.unwrap();
+        sqlx::query("ALTER TABLE wiki_articles RENAME COLUMN machine_text_away TO machine_text")
+            .execute(&pool)
+            .await
+            .unwrap();
         let doc = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
         assert_eq!(doc.read().await.format(), PageFormat::Tree, "the move is tried again");
         assert_eq!(converted(), 2);
