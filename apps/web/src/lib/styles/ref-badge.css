@@ -7,7 +7,7 @@
  *
  * - Ref.svelte (.ref-link, .ref-link--quiet)  — rendered output: chat answers, previews, the day biography
  * - CodeMirror (.cm-ref-link, codemirror/extensions/ref-links.css)
- *                                             — page editor AND chat composer (editable),
+ *                                             — the chat composer (editable),
  *                                               the same dotted hairline as .ref-link--quiet
  */
 

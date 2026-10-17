@@ -123,6 +123,11 @@ jobs:
       - name: cargo check
         run: cargo check --workspace
 
+      # The page converter without its Yjs half, as the browser's WebAssembly
+      # build compiles it (crates/virtues-document-wasm).
+      - name: cargo check, the page converter alone
+        run: cargo check -p virtues-document --no-default-features
+
   # ci.yml's append-only check, copied for contributor PRs into `wave`: ci.yml
   # no longer runs on them, and an edited applied migration must be caught
   # before it merges, not at the next `wave` → `staging` PR. sqlx checksums the

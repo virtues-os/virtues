@@ -61,6 +61,34 @@ pub async fn run_agent_loop(
 
     // Extract optional chat_id and model from config
     let chat_id = action.config.get("chat_id").and_then(|v| v.as_str()).map(|s| s.to_string());
+
+    // An applet whose work has nowhere to go fails before it spends anything
+    // on the model: the run could only finish as a success that made nothing.
+    // A chat in Recently deleted still has its id here, but nobody reads it.
+    let has_chat = match &chat_id {
+        Some(cid) => {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS (SELECT 1 FROM app_chats WHERE id = $1 AND deleted_at IS NULL)",
+            )
+            .bind(cid)
+            .fetch_one(pool)
+            .await?
+        }
+        None => false,
+    };
+    let has_face = crate::server::faces::face_dir_for(applet_id).is_some();
+    if let Some(reason) = missing_destination(delivers_kind(&action.config), has_chat, has_face) {
+        tracing::warn!(applet_id, %reason, "applet has nowhere to put its work");
+        return Ok(AgentLoopResult {
+            applet_id: applet_id.to_string(),
+            chat_id,
+            steps: 0,
+            message: None,
+            cost_micros: 0,
+            budget_stopped: None,
+            error: Some(reason),
+        });
+    }
     let model_override = action.config.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
     // An applet may ask for a SLOT instead of a model id. The slot is the
     // supported lever: a model id in a manifest is a literal that goes stale
@@ -99,32 +127,28 @@ pub async fn run_agent_loop(
     };
     let mut llm_messages = build_context_for_llm(&messages, None, 0, Some(&system_prompt), None, None);
 
-    // Providers (Bedrock, zai) require the first non-system message to be a
-    // user message. Two ways that breaks here: a folder applet with no linked
-    // chat has an empty history (system prompt only), and a compacted chat's
-    // post-checkpoint tail can begin with an assistant turn. Insert a
-    // synthetic kickoff turn right after the system message when needed.
-    let first_non_system = llm_messages
-        .iter()
-        .position(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"));
-    let needs_kickoff = match first_non_system {
-        None => true, // system-only (or empty) conversation
-        Some(i) => llm_messages[i].get("role").and_then(|r| r.as_str()) != Some("user"),
-    };
-    if needs_kickoff {
-        let at = first_non_system.unwrap_or(llm_messages.len());
-        llm_messages.insert(
-            at,
-            serde_json::json!({
-                "role": "user",
-                // When a person sent something, THAT is the turn. The synthetic
-                // instruction is for wakes nobody asked for — a clock, a poll.
-                // Handing the applet "Run your action instruction now." while
-                // the user's actual words sat in a side channel would make the
-                // message a footnote to a prompt about itself.
-                "content": message.unwrap_or("Run your action instruction now."),
-            }),
-        );
+    add_wake_turn(&mut llm_messages, message);
+    // The person's words go into the chat too, so the conversation shows
+    // what was said.
+    if let (Some(text), Some(cid)) = (message, &chat_id) {
+        let said = ChatMessage {
+            id: None,
+            role: "user".to_string(),
+            content: text.to_string(),
+            timestamp: Timestamp::now(),
+            model: None,
+            provider: None,
+            agent_id: None,
+            tool_calls: None,
+            reasoning: None,
+            intent: None,
+            subject: None,
+            reasoning_details: None,
+            parts: None,
+        };
+        if let Err(e) = append_message(pool, cid.clone(), said).await {
+            tracing::warn!(applet_id, error = %e, "failed to post the message to the applet's chat");
+        }
     }
 
     // 4. Get tools and model
@@ -156,6 +180,9 @@ pub async fn run_agent_loop(
         user_id: Some("system".to_string()),
         chat_id: chat_id.clone(),
         applet_id: Some(applet_id.to_string()),
+        // A run is a turn: what it reads of a page serves it, not a later run
+        // that sees this one's results only as clipped replays.
+        turn: Some(crate::api::chat::generate_id()),
         ..Default::default()
     };
 
@@ -187,9 +214,30 @@ pub async fn run_agent_loop(
     let mut cost_micros: i64 = 0;
     let mut budget_stopped: Option<String> = None;
     let mut error: Option<String> = None;
+    // What the applet says it makes (`config.delivers`), and whether this run
+    // made it. Tool results name only the call's id, so the name is kept
+    // from the call's start.
+    let delivers = delivers_kind(&action.config);
+    let mut tool_names: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    let mut wrote_page = false;
 
     while let Some(event) = stream.next().await {
         match event {
+            crate::agent::AgentEvent::ToolCallStart { id, name, .. } => {
+                tool_names.insert(id, name);
+            }
+            crate::agent::AgentEvent::ToolCallResult { id, result, success, .. } => {
+                let written = tool_names.get(&id).and_then(|name| page_written(name, success, &result));
+                if let Some(page_id) = written {
+                    wrote_page = true;
+                    // What the run made, so the applet's page can show it.
+                    // A record we failed to write must not fail the run that
+                    // wrote the page.
+                    if let Err(e) = crate::scheduler::applets::record_page_output(pool, run_id, page_id).await {
+                        tracing::warn!(applet_id, page_id, error = %e, "failed to record the page a run wrote");
+                    }
+                }
+            }
             crate::agent::AgentEvent::TextDelta { content } => {
                 assistant_content.push_str(&content);
             }
@@ -281,6 +329,15 @@ pub async fn run_agent_loop(
         }
     }
 
+    // A run that finished without making what the applet makes failed, even
+    // when the model ended politely. Without this, a run whose query broke
+    // and which then said "I couldn't create today's page" was recorded as a
+    // success. A run already failed or stopped at its ceiling keeps that
+    // reason.
+    if error.is_none() && budget_stopped.is_none() {
+        error = missing_delivery(delivers, wrote_page, message.is_some());
+    }
+
     // 8. Save assistant message (only if chat is linked)
     if !assistant_content.is_empty() {
         if let Some(cid) = &chat_id {
@@ -331,6 +388,83 @@ pub async fn run_agent_loop(
 // ============================================================================
 // Helpers
 // ============================================================================
+
+/// What an applet says it makes, from `config.delivers.kind` ("page",
+/// "chat", "dashboard"). Absent when it doesn't say, which most don't yet.
+fn delivers_kind(config: &serde_json::Value) -> Option<&str> {
+    config.get("delivers")?.get("kind")?.as_str()
+}
+
+/// The tools that write a page. `edit_page` asked to edit with no page bound
+/// answers `needs_binding` and succeeds without writing anything.
+const PAGE_WRITE_TOOLS: &[&str] = &["create_page", "edit_page", "revise_article"];
+
+/// The page a tool call wrote, if it wrote one. Every page tool answers with
+/// the `page_id` it acted on.
+fn page_written<'a>(tool: &str, success: bool, result: &'a serde_json::Value) -> Option<&'a str> {
+    if !success || !PAGE_WRITE_TOOLS.contains(&tool) || result.get("needs_binding").is_some() {
+        return None;
+    }
+    result.get("page_id")?.as_str()
+}
+
+/// Why a finished run failed to make what its applet makes, if it did.
+/// Only a page is checked after the run: the other kinds have no tool whose
+/// success says the work arrived, so `missing_destination` checks them
+/// before it instead. A run a person's message woke is answering them, and a
+/// reply that writes no page is still a reply, so it isn't checked.
+fn missing_delivery(delivers: Option<&str>, wrote_page: bool, answering: bool) -> Option<String> {
+    (delivers == Some("page") && !wrote_page && !answering)
+        .then(|| "The run ended without writing its page.".to_string())
+}
+
+/// Why an applet's work has nowhere to go, if it doesn't. A conversation or a
+/// dashboard can't be checked after the run the way a page is: a run that
+/// found nothing new rightly posts nothing and changes no table. What can be
+/// checked is that the place exists.
+fn missing_destination(delivers: Option<&str>, has_chat: bool, has_face: bool) -> Option<String> {
+    match delivers {
+        Some("chat") if !has_chat => Some("It has no conversation to post to.".to_string()),
+        Some("dashboard") if !has_face => Some("It has no dashboard to update.".to_string()),
+        _ => None,
+    }
+}
+
+/// What a wake nobody asked for (a clock, a poll) runs on.
+const RUN_INSTRUCTION: &str = "Run your action instruction now.";
+
+/// Ends the conversation on this wake's own turn, after whatever the chat
+/// already holds: the person's message when they sent one, the instruction
+/// otherwise. Without a turn of its own a run on a chat-linked applet ended on
+/// the applet's last reply, which the model reads as text to continue, and a
+/// message sent to it was never read at all.
+///
+/// Providers (Bedrock, zai) also require the first non-system message to be a
+/// user message, and a compacted chat's post-checkpoint tail can begin with
+/// an assistant turn, so that case opens with the instruction.
+///
+/// A chat can also already end on a user turn: the person's message is posted
+/// before the run, so a run that failed or hit its ceiling leaves it
+/// unanswered. Some providers reject two user turns in a row, so this wake's
+/// words join that turn instead of following it.
+fn add_wake_turn(llm_messages: &mut Vec<serde_json::Value>, message: Option<&str>) {
+    let role = |m: &serde_json::Value| m.get("role").and_then(|r| r.as_str()).map(str::to_owned);
+    if let Some(i) = llm_messages.iter().position(|m| role(m).as_deref() != Some("system")) {
+        if role(&llm_messages[i]).as_deref() != Some("user") {
+            llm_messages.insert(i, serde_json::json!({ "role": "user", "content": RUN_INSTRUCTION }));
+        }
+    }
+    let text = message.unwrap_or(RUN_INSTRUCTION);
+    if let Some(last) = llm_messages.last_mut() {
+        if role(last).as_deref() == Some("user") {
+            if let Some(held) = last.get("content").and_then(|c| c.as_str()) {
+                last["content"] = serde_json::Value::String(format!("{held}\n\n{text}"));
+                return;
+            }
+        }
+    }
+    llm_messages.push(serde_json::json!({ "role": "user", "content": text }));
+}
 
 /// Load chat messages for context building.
 async fn load_chat_messages(pool: &PgPool, chat_id: &str) -> Result<Vec<ChatMessage>> {
@@ -429,4 +563,107 @@ async fn build_applet_system_prompt(
     }
 
     prompt
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::{json, Value};
+
+    fn roles_and_text(m: &[Value]) -> Vec<(String, String)> {
+        m.iter()
+            .map(|x| (x["role"].as_str().unwrap().to_string(), x["content"].as_str().unwrap_or("").to_string()))
+            .collect()
+    }
+
+    #[test]
+    fn a_page_applet_that_wrote_no_page_failed() {
+        let page = json!({ "delivers": { "kind": "page" } });
+        assert_eq!(delivers_kind(&page), Some("page"));
+        assert_eq!(delivers_kind(&json!({})), None);
+        assert!(missing_delivery(Some("page"), false, false).is_some());
+        assert!(missing_delivery(Some("page"), true, false).is_none());
+        assert!(missing_delivery(None, false, false).is_none(), "an applet that says nothing is not checked");
+        assert!(missing_delivery(Some("chat"), false, false).is_none(), "a quiet run on a chat applet is not a failure");
+        assert!(missing_delivery(Some("page"), false, true).is_none(), "a reply to a message is not a missing page");
+    }
+
+    #[test]
+    fn an_applet_with_nowhere_to_put_its_work_fails() {
+        assert!(missing_destination(Some("chat"), false, false).is_some());
+        assert!(missing_destination(Some("chat"), true, false).is_none());
+        assert!(missing_destination(Some("dashboard"), false, false).is_some());
+        assert!(missing_destination(Some("dashboard"), false, true).is_none());
+        assert!(missing_destination(Some("page"), false, false).is_none(), "every box has Pages");
+        assert!(missing_destination(None, false, false).is_none(), "an applet that says nothing is not checked");
+    }
+
+    #[test]
+    fn only_a_successful_page_write_counts() {
+        assert_eq!(page_written("create_page", true, &json!({ "page_id": "page_1" })), Some("page_1"));
+        assert_eq!(page_written("revise_article", true, &json!({ "page_id": "page_2" })), Some("page_2"));
+        assert_eq!(page_written("create_page", false, &json!({ "page_id": "page_1" })), None, "a failed write");
+        assert_eq!(page_written("sql_query", true, &json!({ "page_id": "x" })), None, "not a page tool");
+        assert_eq!(
+            page_written("edit_page", true, &json!({ "needs_binding": true })),
+            None,
+            "no page was bound, so nothing was written"
+        );
+    }
+
+    #[test]
+    fn a_message_is_the_last_turn_after_the_chat_history() {
+        let mut m = vec![
+            json!({"role": "system", "content": "s"}),
+            json!({"role": "user", "content": "I had eggs"}),
+            json!({"role": "assistant", "content": "Logged."}),
+        ];
+        add_wake_turn(&mut m, Some("And toast"));
+        assert_eq!(roles_and_text(&m).last().unwrap(), &("user".to_string(), "And toast".to_string()));
+        assert_eq!(m.len(), 4, "nothing else is added when the history already opens with the person");
+    }
+
+    #[test]
+    fn a_scheduled_wake_on_a_chat_ends_on_the_instruction_not_the_last_reply() {
+        let mut m = vec![
+            json!({"role": "system", "content": "s"}),
+            json!({"role": "user", "content": "Make it weekly"}),
+            json!({"role": "assistant", "content": "Done."}),
+        ];
+        add_wake_turn(&mut m, None);
+        assert_eq!(roles_and_text(&m).last().unwrap(), &("user".to_string(), RUN_INSTRUCTION.to_string()));
+    }
+
+    #[test]
+    fn an_unanswered_message_joins_the_next_wake_instead_of_doubling_the_turn() {
+        let mut m = vec![
+            json!({"role": "system", "content": "s"}),
+            json!({"role": "user", "content": "Make it weekly"}),
+        ];
+        add_wake_turn(&mut m, None);
+        assert_eq!(m.len(), 2, "no second user turn in a row");
+        assert_eq!(m[1]["content"], format!("Make it weekly\n\n{RUN_INSTRUCTION}"));
+    }
+
+    #[test]
+    fn an_empty_history_gets_one_turn() {
+        let mut m = vec![json!({"role": "system", "content": "s"})];
+        add_wake_turn(&mut m, None);
+        assert_eq!(
+            roles_and_text(&m),
+            vec![("system".into(), "s".into()), ("user".into(), RUN_INSTRUCTION.into())]
+        );
+    }
+
+    #[test]
+    fn a_tail_that_opens_on_an_assistant_turn_is_opened_by_the_instruction() {
+        let mut m = vec![
+            json!({"role": "system", "content": "s"}),
+            json!({"role": "assistant", "content": "Earlier reply"}),
+        ];
+        add_wake_turn(&mut m, Some("Hello"));
+        let r = roles_and_text(&m);
+        assert_eq!(r[1].0, "user", "providers need the first non-system turn to be the user's");
+        assert_eq!(r.last().unwrap(), &("user".to_string(), "Hello".to_string()));
+    }
 }

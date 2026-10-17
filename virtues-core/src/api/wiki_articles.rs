@@ -431,8 +431,10 @@ enum VersionKind {
     /// always did.
     Edit,
     /// The state before a machine changed the whole page
-    /// (`pages::cut_restore_point`). Not an edit, so no entry of its own; the
-    /// next entry is diffed against it, so that entry's undo puts it back.
+    /// (`pages::cut_restore_point`), or either side of the page's move to
+    /// blocks (`pages::is_move_version`). Not an edit, so no entry of its
+    /// own; the next entry is diffed against it, so that entry's undo puts
+    /// it back.
     RestorePoint,
     /// A chat edit's snapshot from before the convention: the page as it was
     /// before the chat changed it. A restore point too, except that the
@@ -444,7 +446,7 @@ enum VersionKind {
 fn version_kind(created_by: &str, description: Option<&str>) -> VersionKind {
     if created_by == "ai" && description == Some(BEFORE_CHAT_EDIT) {
         VersionKind::BeforeChatEdit
-    } else if pages::is_restore_point(created_by, description) {
+    } else if pages::is_restore_point(created_by, description) || pages::is_move_version(created_by, description) {
         VersionKind::RestorePoint
     } else {
         VersionKind::Edit
@@ -994,7 +996,7 @@ mod tests {
                 cover_url: None,
                 tags: None,
                 project_id: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )
         .await
@@ -1473,5 +1475,52 @@ mod tests {
         assert_eq!(left, 0, "index rows must not outlive the article");
 
         assert!(get_article(&pool, "person", "p_1").await.unwrap().is_none());
+    }
+
+    /// An article's move to blocks is no edit: History shows no entry for
+    /// either of its versions, and the first edit after it is diffed against
+    /// the blocks, an escape the export writes showing as no change.
+    #[sqlx::test]
+    async fn history_shows_no_entry_for_the_move(pool: PgPool) {
+        let article = create_article(&pool, "person", "person_1", "Nick", "You met Nick at the R&B night.\n")
+            .await
+            .unwrap();
+        let yjs = crate::server::yjs::YjsState::with_tree_articles(pool.clone(), true);
+        assert_eq!(
+            yjs.read_text(&article.page_id).await.unwrap(),
+            "You met Nick at the R\\&B night.\n"
+        );
+        let kinds: Vec<(String, Option<String>)> = sqlx::query_as(
+            "SELECT created_by, description FROM app_page_versions WHERE page_id = $1 ORDER BY version_number",
+        )
+        .bind(&article.page_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(kinds.len(), 3, "the first draft, and both sides of the move: {kinds:?}");
+        assert!(get_article_history(&pool, "person", "person_1").await.unwrap().is_empty());
+
+        let base = yjs.read_tree(&article.page_id).await.unwrap();
+        yjs.edit_tree(
+            &article.page_id,
+            Some(&virtues_document::Seen::of_page(&base)),
+            &[virtues_document::Op::Append {
+                html: "<p>I stayed late.</p>".into(),
+            }],
+        )
+        .await
+        .unwrap();
+        pages::cut_version_now(&pool, &yjs, &article.page_id, "user", Some("Saved"))
+            .await
+            .unwrap();
+        let history = get_article_history(&pool, "person", "person_1").await.unwrap();
+        assert_eq!(history.len(), 1, "{history:?}");
+        let changed: Vec<(&str, &str)> = history[0]
+            .diff
+            .iter()
+            .filter(|l| l.kind != "ctx")
+            .map(|l| (l.kind, l.text.as_str()))
+            .collect();
+        assert_eq!(changed, [("add", ""), ("add", "I stayed late.")]);
     }
 }

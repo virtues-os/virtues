@@ -139,9 +139,11 @@ jobs:
           # shallow checkout has no tags for `git describe` to find).
           echo "VIRTUES_BUILD_VERSION=$V" >> "$GITHUB_ENV"
 
+      # wasm32: `pnpm build` below builds the page editor's markdown
+      # converter (apps/web/scripts/build-converter.mjs).
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: ${{ matrix.target }},wasm32-unknown-unknown
 
       # No version stamping: virtues-core/Cargo.toml's `version` is the semver
       # source of truth (bumped by hand at milestones). `virtues --version`
@@ -208,7 +210,7 @@ jobs:
         run: |
           cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-client --bin virtues-client --target ${{ matrix.target }}
 
-      # llama-server — the engine behind the virtues-embed/-rerank sidecars
+      # llama-server — the engine behind the virtues-embed sidecar
       # (one CPU binary per arch — the universal floor for Manual mode and the
       # Dragon fallback). GGML_NATIVE=OFF keeps the build portable
       # across the arch instead of tuned to the runner's CPU; static libs

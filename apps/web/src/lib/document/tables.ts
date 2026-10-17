@@ -4,8 +4,7 @@
  * Shift-F10): rows and columns added, moved or deleted, the header row
  * toggled, and a column aligned. Alignment is per column, as GFM has it:
  * every cell of the column takes the same `align`. A row or column moves by
- * one at a time, as the CodeMirror editor's drag handles move them, and the
- * header row stays first.
+ * one at a time, and the header row stays first.
  */
 
 import { Extension, type Editor } from '@tiptap/core';
@@ -218,7 +217,7 @@ export function selectionForCellMenu(state: EditorState, pos: number): Selection
 
 /**
  * Enter in a cell's own line moves to the cell below, in the same column,
- * as it does in the CodeMirror editor's tables; in the last row it does
+ * as it does in a spreadsheet; in the last row it does
  * nothing. Shift-Enter breaks the line in the cell. A list, a quote or a
  * code block inside a cell takes Enter as it does anywhere.
  */

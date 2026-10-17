@@ -1,6 +1,6 @@
 # Composable Inference
 
-How the box gets embeddings and reranking, and how the search index defends
+How the box gets embeddings, and how the search index defends
 itself against a model it was not built with. Code:
 `tools/virtues-installer/src/mode.rs` (the choice, validation, fingerprint),
 `tools/virtues-installer/src/install.rs` (the env it writes),
@@ -10,15 +10,15 @@ itself against a model it was not built with. Code:
 
 ## The architecture in one sentence
 
-**Virtues consumes two HTTP contracts and defends its index.** An OpenAI-style
-`/v1/embeddings` endpoint (required) and a `/v1/rerank` endpoint (optional —
-search degrades to fusion ranking without one). Where they come from is decided
-once, at install (`InferenceMode`), and there are three answers:
+**Virtues consumes one HTTP contract and defends its index.** An OpenAI-style
+`/v1/embeddings` endpoint. Search doesn't rerank: the fused dense + BM25 order
+is the ranking (`search::query` has the measurements). Where the endpoint comes
+from is decided once, at install (`InferenceMode`), and there are three answers:
 
 | Mode | Where | Serves | Chosen by |
 |---|---|---|---|
-| **Dragon** | our board (Q6A, Hexagon v68 NPU), detected from the device tree | `virtues-qnnd` on the NPU: gte-small (384-d, native) on `:18181`, answerai-colbert-small@256 MaxSim rerank on `:18182` | detection; zero questions |
-| **Bundled** | any other machine; the default | the CPU `llama-server` sidecar we build and smoke-test in CI: EmbeddingGemma 2 (Q8_0, 768-d native) on `:18181`, kept current by `virtues upgrade` ([model-migration.md](model-migration.md)). No reranker | the interactive picker, or `VIRTUES_INFERENCE=bundled` |
+| **Dragon** | our board (Q6A, Hexagon v68 NPU), detected from the device tree | `virtues-qnnd` on the NPU: gte-small (384-d, native) on `:18181` (it also loads ColBERT on `:18182`, which search doesn't call) | detection; zero questions |
+| **Bundled** | any other machine; the default | the CPU `llama-server` sidecar we build and smoke-test in CI: EmbeddingGemma 2 (Q8_0, 768-d native) on `:18181`, kept current by `virtues upgrade` ([model-migration.md](model-migration.md)) | the interactive picker, or `VIRTUES_INFERENCE=bundled` |
 | **Manual** | any other machine | whatever the user runs — llama.cpp, Ollama, LM Studio, a vendor NPU server | the picker: recipes, then URLs, a probe, and a pinned fingerprint |
 
 There is deliberately **no managed GPU/NPU mode for arbitrary hardware**: we
@@ -41,14 +41,13 @@ Written by the installer into the box env file; read by core.
 |---|---|---|---|
 | `VIRTUES_INFERENCE` | `dragon` | `bundled` | `manual` |
 | `VIRTUES_EMBED_URL` | `http://127.0.0.1:18181` | same | user's |
-| `VIRTUES_RERANK_URL` | `http://127.0.0.1:18182` | — | user's, if any |
 | `VIRTUES_EMBED_MODEL` | — | — | model name sent in every request |
 | `VIRTUES_EMBED_FINGERPRINT` | — | — | pinned at install |
 | `VIRTUES_EMBED_DIMS` | — | — (native 768) | probed native width |
 | `VIRTUES_EMBED_QUERY_PROMPT` / `_DOC_PROMPT` | — | Gemma's | resolved by the installer |
 | `VIRTUES_QNND_MODELS_DIR` | the QNN models dir | — | — |
 
-- **Local-only.** Manual mode refuses a public embed/rerank endpoint
+- **Local-only.** Manual mode refuses a public embedding endpoint
   (`mode.rs::ensure_local`: loopback, RFC1918, link-local, CGNAT `100.64/10`
   and IPv6 ULA pass). This *is* the "no cloud embedding APIs" rule.
   `VIRTUES_ALLOW_REMOTE_INFERENCE=1` is the logged override.

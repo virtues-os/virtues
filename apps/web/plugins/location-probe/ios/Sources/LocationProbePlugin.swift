@@ -5,6 +5,7 @@ import WebKit
 
 class RowsArgs: Decodable {
   let limit: Int?
+  let fixesOnly: Bool?
 }
 
 class LocationProbePlugin: Plugin {
@@ -70,8 +71,9 @@ class LocationProbePlugin: Plugin {
 
   /// Return the rows the native side has written to SQLite.
   @objc public func readRows(_ invoke: Invoke) throws {
-    let limit = (try? invoke.parseArgs(RowsArgs.self))?.limit ?? 200
-    let rows = LocationProbe.shared.readRows(limit: limit)
+    let args = try? invoke.parseArgs(RowsArgs.self)
+    let rows = LocationProbe.shared.readRows(
+      limit: args?.limit ?? 200, fixesOnly: args?.fixesOnly ?? false)
     invoke.resolve(["rows": rows])
   }
 }

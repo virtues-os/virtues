@@ -575,7 +575,8 @@
 		if (!selectedDay || !mapYear) return null;
 		const day = mapYear.days.find((d) => d.date === selectedDay);
 		const count = day?.event_count ?? 0;
-		const marked = veilMarks(ledeSentence(day?.lede) ?? '');
+		// The lede sentence is plain words already, drawn as they are.
+		const marked = veilMarks(ledeSentence(day?.lede) ?? '', 'text');
 		return {
 			date: new Date(selectedDay + 'T12:00:00').toLocaleDateString('en-US', {
 				weekday: 'long',

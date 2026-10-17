@@ -5,29 +5,26 @@
 	 * Displays and edits a user page. Can be used in tabs, modals, or mobile WebViews.
 	 * Uses Yjs for real-time collaborative editing with WebSocket sync.
 	 *
-	 * The page's format picks the editor (`pageDocument.ts`): a block page
-	 * opens in `DocumentEditor` on its Yjs tree, a markdown page in
-	 * `CodeMirrorEditor` on its Y.Text. A block page's history, Copy markdown
-	 * and View as markdown go through the server, which holds its tree.
+	 * A block page opens in `DocumentEditor` on its Yjs tree (`pageDocument.ts`);
+	 * a page still in markdown, which no editor here edits, is shown read only
+	 * as its markdown. History, Copy markdown and View as markdown go through
+	 * the server, which holds the page.
 	 */
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import Button from "$lib/components/Button.svelte";
 	import IconPicker from "$lib/components/IconPicker.svelte";
-	import CodeMirrorEditor from "$lib/components/pages/CodeMirrorEditor.svelte";
 	import DocumentEditor from "$lib/components/pages/DocumentEditor.svelte";
 	import MarkdownView from "$lib/components/pages/MarkdownView.svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import type { DocStats } from "$lib/components/pages/stats";
-	import type { OutlineNav } from "$lib/components/pages/outline";
+	import type { OutlineNav, PageHeading } from "$lib/components/pages/outline";
 	import PageCoverImage from "$lib/components/pages/PageCoverImage.svelte";
 	import PageStatusBar from "$lib/components/pages/PageStatusBar.svelte";
 	import PageToolbar from "$lib/components/pages/PageToolbar.svelte";
 	import PageProjects from "$lib/components/pages/PageProjects.svelte";
 	import PageOutline from "$lib/components/pages/PageOutline.svelte";
 	import ReferencesPanel from "$lib/components/pages/ReferencesPanel.svelte";
-	import { cmOutlineNav, type PageHeading } from "$lib/codemirror/outline";
-	import type { EditorView } from "@codemirror/view";
 	import { Popover } from "$lib/floating";
 	import {
 		getPageBacklinks,
@@ -43,11 +40,13 @@
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { untitled } from "$lib/refs/identity.svelte";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
-	import type { TreeDocument, YjsDocument } from "$lib/yjs";
-	import { cutServerVersion, saveVersion } from "$lib/yjs/versions";
+	import type { TreeDocument } from "$lib/yjs";
+	import { cutServerVersion } from "$lib/yjs/versions";
 	import { canPrint, printAlone, printThis } from "$lib/document/print";
 	import { treeAiDriver } from "$lib/ai/treeAiSession";
+	import { converterSettled } from "$lib/document/converter";
 	import {
+		MARKDOWN_READ_ONLY,
 		mayShowKeptCopy,
 		openPageDocument,
 		stillLoading,
@@ -96,11 +95,12 @@
 		format?: PageFormat;
 		/** The newest contract the server reads; absent from a box from before block pages. */
 		box_contract?: number;
+		/** `article` for a wiki article or a day page, `page` for a person's own; absent from an older box. */
+		kind?: string;
 	}
 
 	let pageData = $state<PageData | null>(null);
 	let title = $state("");
-	let content = $state("");
 	let icon = $state<string | null>(null);
 	/** `--cat-*` token key for the icon, or null. Migration 0079. */
 	let iconColor = $state<string | null>(null);
@@ -122,10 +122,8 @@
 	let hasEditsSinceSnapshot = false;
 	let autoSnapshotTimeout: ReturnType<typeof setTimeout> | null = null;
 
-	// Yjs document for real-time sync: a markdown page's Y.Text, or a block
-	// page's tree. One of the two at a time; `opened` holds whichever it is.
-	let yjsDoc = $state<YjsDocument | undefined>(undefined);
-	// Raw: the bindings hold live Yjs objects, never to be proxied.
+	// A block page's tree, bound for real-time sync; none for a page still in
+	// markdown. Raw: the binding holds live Yjs objects, never to be proxied.
 	let treeDoc = $state.raw<TreeDocument | undefined>(undefined);
 	let opened = $state.raw<OpenedPage | null>(null);
 	let format = $state<PageFormat>("markdown");
@@ -150,14 +148,13 @@
 
 	// Track whether there are unsaved changes (for beforeunload warning)
 	const hasUnsavedChanges = $derived(!!saveTimeout || saving || isTyping);
-	// Don't mount the editor until Yjs has synced (from IndexedDB or server).
-	// This prevents yCollab from rendering an empty document before the real
-	// content arrives via Y.Text sync.
+	// The editor mounts only once Yjs has synced (from IndexedDB or the
+	// server): bound to an empty tree, it would write its empty paragraph.
 
 	// Editor ref for focusing
 	let editorContainerEl = $state<HTMLDivElement>();
 
-	// Doc stats from CodeMirror (updated via onDocChange callback)
+	// Doc stats from the editor (updated via onDocChange callback)
 	let wordCount = $state(0);
 	let charCount = $state(0);
 	let linkCount = $state(0);
@@ -166,7 +163,6 @@
 	// panel is a quiet, summonable right-hand rail, not always-on chrome.
 	let showReferences = $state(false);
 	let outline = $state<PageHeading[]>([]);
-	let editorView = $state<EditorView | null>(null);
 	/** The block editor's outline navigation, while one is mounted. */
 	let treeNav = $state<OutlineNav | null>(null);
 	/** View as markdown (block pages). */
@@ -230,16 +226,10 @@
 	}
 
 	async function autoSnapshot(description: string, keepalive = false) {
-		if (!hasEditsSinceSnapshot) return;
-		if (treeDoc) {
-			// The server reads its own copy of the tree, which every edit reaches first.
-			hasEditsSinceSnapshot = false;
-			await cutServerVersion(pageId, description, 'auto', { keepalive });
-			return;
-		}
-		if (!yjsDoc) return;
+		if (!hasEditsSinceSnapshot || !treeDoc) return;
+		// The server reads its own copy of the tree, which every edit reaches first.
 		hasEditsSinceSnapshot = false;
-		await saveVersion(yjsDoc.ydoc, pageId, description, 'auto', { keepalive });
+		await cutServerVersion(pageId, description, 'auto', { keepalive });
 	}
 
 	function resetIdleTimer() {
@@ -250,9 +240,9 @@
 	}
 
 	/**
-	 * The editor's counts changed. `local` (the block editor says) is whether
-	 * any of the change was typed here: only that is this device's edit to keep
-	 * a version of, or to show as typing. CodeMirror reports its own edits.
+	 * The editor's counts changed. `local` is whether any of the change was
+	 * typed here: only that is this device's edit to keep a version of, or to
+	 * show as typing.
 	 */
 	function handleDocChange(stats: DocStats, local = true) {
 		wordCount = stats.wordCount;
@@ -368,11 +358,11 @@
 	function closeDocument() {
 		const old = opened;
 		opened = null;
-		yjsDoc = undefined;
 		treeDoc = undefined;
 		treeNav = null;
+		outline = [];
 		viewingMarkdown = false;
-		if (old) void tick().then(() => old.doc.destroy());
+		if (old?.format === "tree") void tick().then(() => old.doc.destroy());
 	}
 
 	// Reload only when pageId actually changes to a new value
@@ -430,8 +420,6 @@
 			});
 			pageData = data;
 			title = data.title;
-			// Content will be synced via Yjs, but we set it for initial display and word count
-			content = data.content;
 			icon = data.icon;
 			iconColor = data.icon_color ?? null;
 			coverUrl = data.cover_url;
@@ -444,13 +432,15 @@
 			unsubConnected?.();
 			unsubRefused?.();
 
-			// Create Yjs document for real-time sync, in the editor the page's
-			// format calls for. This connects via WebSocket to /ws/yjs/{pageId}
+			void refreshShared();
+
+			// Bind a block page's tree for real-time sync, over the WebSocket
+			// at /ws/yjs/{pageId}. A page in markdown binds nothing.
 			const page = openPageDocument(pageId, data);
 			opened = page;
 			format = page.format;
-			if (page.format === "tree") treeDoc = page.doc;
-			else yjsDoc = page.doc;
+			if (page.format !== "tree") return;
+			treeDoc = page.doc;
 			const bound = page.doc;
 
 			// Grace period: suppress "Offline" during initial connection
@@ -462,10 +452,9 @@
 
 			// Sync fallback: if neither IndexedDB nor WebSocket sync within 4s,
 			// force-show the editor so the user never gets a permanent black screen,
-			// on a page the server said this editor reads: the local copy of any
-			// other may be from before the page was rewritten as a tree. A block
-			// page's copy must also hold a block: an editor bound to an empty
-			// tree writes its empty paragraph into the shared document.
+			// on a page the server said this editor reads, from a copy that
+			// holds a block: an editor bound to an empty tree writes its empty
+			// paragraph into the shared document.
 			if (syncFallbackRef) clearTimeout(syncFallbackRef);
 			syncFallbackRef = setTimeout(() => {
 				if (!isSynced && opened === page && mayShowKeptCopy(page, refusedReason)) {
@@ -494,10 +483,6 @@
 					if (graceTimerRef) clearTimeout(graceTimerRef);
 				}
 			});
-
-			// Content sync happens via Yjs. Doc stats are pushed via onDocChange callback.
-
-			void refreshShared();
 		} catch (e) {
 			// Ignore aborted fetches (cancelled by a newer loadPage call)
 			if (e instanceof DOMException && e.name === "AbortError") return;
@@ -517,9 +502,6 @@
 			save();
 		}, 1000);
 	}
-
-	// Note: handleContentChange removed — stats are now computed from CodeMirror
-	// directly via onDocChange callback. Content sync happens through Yjs.
 
 	// Watch for title changes and sync to stores immediately
 	$effect(() => {
@@ -638,19 +620,13 @@
 	async function copyMarkdown() {
 		try {
 			// Never the API's `content`, which can trail the page by the 2s
-			// debounced save. A block page's export is the server's live copy;
-			// a markdown page's text is the local Yjs document.
-			const text =
-				format === "tree"
-					? (await getPageMarkdown(pageId)).markdown
-					: yjsDoc?.ytext?.toString() || content;
-			await navigator.clipboard.writeText(text);
+			// debounced save: the server's live copy of the page.
+			const { markdown } = await getPageMarkdown(pageId);
+			await navigator.clipboard.writeText(markdown);
 			copied = true;
 		} catch (err) {
 			console.error("Failed to copy markdown:", err);
-			if (format === "tree") {
-				toast.error("Your server couldn't give this page as markdown. Try again.");
-			}
+			toast.error("Your server couldn't give this page as markdown. Try again.");
 		}
 	}
 
@@ -695,7 +671,7 @@
 			<div class="page-topbar" data-print="hide">
 			<PageOutline
 				headings={outline}
-				nav={treeDoc ? treeNav : editorView ? cmOutlineNav(editorView) : null}
+				nav={treeNav}
 			/>
 			<!-- The projects this page is in, beside the outline: the page's
 			     "where it lives", in the corner a chat says it. -->
@@ -708,7 +684,6 @@
 				{copied}
 				{pageId}
 				{format}
-				{yjsDoc}
 				bind:showCoverPicker
 				{isShared}
 				referencesActive={showReferences}
@@ -835,7 +810,7 @@
 						{#if refusedReason}
 							<p class="editor-refused" role="alert" data-print="hide">{refusedReason}</p>
 						{/if}
-						{#if !opened || stillLoading(opened, isSynced, refusedReason)}
+						{#if !opened || stillLoading(opened, isSynced, refusedReason) || (treeDoc && isSynced && !$converterSettled)}
 							<div class="editor-loading" data-print="hide">
 								<Icon
 									icon="ri:loader-4-line"
@@ -845,12 +820,13 @@
 								<span>Loading document...</span>
 							</div>
 						{/if}
-						{#if treeDoc && isSynced}
+						{#if treeDoc && isSynced && $converterSettled}
 							{#key pageId}
 								<DocumentEditor
 									doc={treeDoc}
 									{pageId}
 									pageTitle={title}
+									article={pageData?.kind === "article"}
 									editable={!treeDoc.readOnly}
 									ai={treeAiDriver}
 									placeholder="Start writing, or press / for commands…"
@@ -859,21 +835,9 @@
 									onOutlineNav={(nav) => (treeNav = nav)}
 								/>
 							{/key}
-						{:else if yjsDoc && isSynced}
-							{#key pageId}
-								<CodeMirrorEditor
-									initialContent={content}
-									onDocChange={handleDocChange}
-									onOutline={(h) => (outline = h)}
-									onViewReady={(v) => (editorView = v)}
-									placeholder="Start writing, or press / for commands…"
-									{yjsDoc}
-									{isConnected}
-									{isSynced}
-									{pageId}
-									pageTitle={title}
-								/>
-							{/key}
+						{:else if opened?.format === "markdown"}
+							<p class="editor-refused" role="status">{MARKDOWN_READ_ONLY}</p>
+							<MarkdownView {pageId} hint={null} />
 						{/if}
 					</div>
 				</div>
@@ -889,7 +853,8 @@
 			{/if}
 			</div>
 
-			<!-- Bottom Status Bar -->
+			<!-- Bottom Status Bar: a block page's, which is edited here -->
+			{#if treeDoc}
 			<PageStatusBar
 				{linkCount}
 				{wordCount}
@@ -902,6 +867,7 @@
 				{saveError}
 				{connectionGracePeriod}
 			/>
+			{/if}
 		</div>
 	{/if}
 	{#if pageId && treeDoc}

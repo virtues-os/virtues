@@ -93,8 +93,8 @@ const SOURCES: &[(&str, &str, &str, &str)] = &[
     ("bookmarks", "things saved", "data_content_bookmark", "occurred_at"),
     ("recordings", "recordings", "data_audio_recording", "started_at"),
     ("transactions", "transactions", "data_financial_transaction", "occurred_at"),
-    ("sleep", "nights of sleep", "data_health_sleep", "started_at"),
-    ("workouts", "workouts", "data_health_workout", "started_at"),
+    ("sleep", "nights of sleep", "data_health_sleep WHERE deleted_at_source IS NULL", "started_at"),
+    ("workouts", "workouts", "data_health_workout WHERE deleted_at_source IS NULL", "started_at"),
     ("sessions", "app sessions", "data_activity_app_session", "started_at"),
 ];
 

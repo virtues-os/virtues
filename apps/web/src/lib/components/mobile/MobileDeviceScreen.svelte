@@ -24,9 +24,11 @@
 	import { onMount } from "svelte";
 	import MobileStreamPage from "./MobileStreamPage.svelte";
 	import MobileAudioSettings from "./MobileAudioSettings.svelte";
+	import { boxApiVersion } from "$lib/boxApi";
 	import {
 		audioState,
 		type AudioStatus,
+		type HealthStatus,
 		type OutboxStats,
 		type StreamKey,
 		type StreamStatus,
@@ -73,7 +75,7 @@
 	let rows = $state<ProbeRow[]>([]);
 	let reach = $state<ReachStatus | null>(null);
 	let sync = $state<OutboxStats | null>(null);
-	let health = $state<StreamStatus | null>(null);
+	let health = $state<HealthStatus | null>(null);
 	let healthSync = $state<OutboxStats | null>(null);
 	let cal = $state<StreamStatus | null>(null);
 	let calSync = $state<OutboxStats | null>(null);
@@ -94,6 +96,9 @@
 	let push = $state<string | null>(null);
 	let allowingPush = $state(false);
 	let enablingHealth = $state(false);
+	let enablingCycle = $state(false);
+	/** The box's `api_version`; null until asked, or when it cannot be reached. */
+	let boxApi = $state<number | null>(null);
 	let enablingCal = $state(false);
 	let enablingContacts = $state(false);
 	let enablingFinance = $state(false);
@@ -219,6 +224,88 @@
 			: `${fixes.length} location fixes · last ${rel(lastTs ?? "")}`,
 	);
 
+	/** Share the log: the same table the page reads, as text for a bug report. */
+	let sharing = $state(false);
+	let shareNote = $state<string | null>(null);
+
+	/**
+	 * The log as plain text, oldest first. Marker rows (what the recorder and
+	 * the location probe did, with the app state at the time) are kept as
+	 * written, except that a muted place's id becomes "muted place 1", 2 and so
+	 * on for this file; a fix keeps only its time and state. No coordinate or
+	 * place id leaves the phone this way: the person sharing it may not be
+	 * sharing where they were. Row times are UTC; the header gives the
+	 * phone's offset so a "it cut out at 3:40" report can be lined up.
+	 */
+	function logText(all: ProbeRow[], status: AudioStatus | null): string {
+		const now = new Date();
+		const off = -now.getTimezoneOffset();
+		const hh = String(Math.floor(Math.abs(off) / 60)).padStart(2, "0");
+		const mm = String(Math.abs(off) % 60).padStart(2, "0");
+		const head = [
+			`Virtues ${version || "?"} log, ${now.toISOString()} (phone clock UTC${off >= 0 ? "+" : "-"}${hh}:${mm}; times below are UTC)`,
+			navigator.userAgent,
+			status
+				? `audio: ${status.enabled ? "on" : "off"}, ${status.recording ? "recording" : "not recording"}, mic ${status.mic ?? "?"}` +
+					(status.mutedBy ? `, muted by ${status.mutedBy}` : "") +
+					(status.pausedReason ? `, paused for ${status.pausedReason}` : "") +
+					(status.override ? `, override ${status.override}` : "")
+				: "audio: unknown",
+			"",
+		];
+		const places = new Map<string, number>();
+		const placeLabel = (id: string) => {
+			if (!places.has(id)) places.set(id, places.size + 1);
+			return `muted place ${places.get(id)}`;
+		};
+		const lines = all
+			.slice()
+			.reverse()
+			.map((r) => {
+				const marker = r.lat === 0 && r.lon === 0;
+				const launch = r.launchReason && r.launchReason !== "user" ? ` [launched for ${r.launchReason}]` : "";
+				const what = marker
+					? r.source.replace(/virtues\.place\.[^\s]+/g, placeLabel)
+					: `location fix (${r.source})`;
+				return `${r.ts}  ${r.appState}${launch}  ${what}`;
+			});
+		return [...head, ...lines, ""].join("\n");
+	}
+
+	async function shareLog() {
+		sharing = true;
+		shareNote = null;
+		try {
+			// The status is read now, not taken from the screen's last load: the
+			// header has to describe the moment the log was shared.
+			const [resp, status] = await Promise.all([
+				invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
+					payload: { limit: 5000 },
+				}),
+				invoke<AudioStatus>("plugin:audio|status").catch(() => null),
+			]);
+			const text = logText(resp.rows ?? [], status);
+			const d = new Date();
+			const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+			const name = `virtues-log-${day}.txt`;
+			const file = new File([text], name, { type: "text/plain" });
+			if (navigator.canShare?.({ files: [file] })) {
+				await navigator.share({ files: [file], title: name });
+			} else if (typeof navigator.share === "function") {
+				await navigator.share({ title: name, text });
+			} else {
+				await navigator.clipboard.writeText(text);
+				shareNote = "Copied the log. Paste it into your message.";
+			}
+		} catch (e) {
+			// Closing the share sheet is a choice, not a failure.
+			if (e instanceof DOMException && e.name === "AbortError") return;
+			shareNote = "Couldn't share the log. Try again.";
+		} finally {
+			sharing = false;
+		}
+	}
+
 	async function load() {
 		if (!mobileLayout.isNativeShell) {
 			loading = false;
@@ -246,15 +333,19 @@
 				audioSyncResp,
 				radioResp,
 				ver,
+				boxVer,
 			] = await Promise.all([
 				// A page's worth of history now that the log has a page; 60 was
 				// sized for an inline strip that showed three runs.
+				// Fixes only: marker rows (the probe's events, the recorder's
+				// diagnostics) would otherwise crowd fixes out of the window that
+				// decides whether Location reads as on.
 				invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
-					payload: { limit: 300 },
+					payload: { limit: 300, fixesOnly: true },
 				}),
 				invoke<ReachStatus>("plugin:reach|reach_status").catch(() => null),
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "location" }).catch(() => null),
-				invoke<StreamStatus>("plugin:health|status").catch(() => null),
+				invoke<HealthStatus>("plugin:health|status").catch(() => null),
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "healthkit" }).catch(() => null),
 				invoke<StreamStatus>("plugin:eventkit|status").catch(() => null),
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "eventkit" }).catch(() => null),
@@ -266,6 +357,7 @@
 				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "microphone" }).catch(() => null),
 				invoke<RadioStats>("plugin:reach|radio_stats").catch(() => null),
 				getVersion().catch(() => ""),
+				boxApiVersion().catch(() => null),
 			]);
 			rows = (rowsResp.rows ?? []).slice().reverse(); // newest first
 			reach = reachResp;
@@ -282,6 +374,7 @@
 			audioSync = audioSyncResp;
 			radio = radioResp;
 			version = ver;
+			boxApi = boxVer;
 			await pushRead;
 		} catch (e) {
 			error = String(e);
@@ -307,12 +400,34 @@
 		enablingHealth = true;
 		error = null;
 		try {
-			health = await invoke<StreamStatus>("plugin:health|enable");
+			health = await invoke<HealthStatus>("plugin:health|enable");
 			setTimeout(load, 1500);
 		} catch (e) {
 			error = String(e);
 		} finally {
 			enablingHealth = false;
+		}
+	}
+
+	/**
+	 * Cycle tracking needs a box at `api_version` 5. A box below that drops
+	 * the cycle types while the phone's anchors move past them, which loses
+	 * them for good, so the switch stays off until the box can store them.
+	 */
+	const CYCLE_MIN_BOX_API = 5;
+	const cycleBoxReady = $derived(boxApi !== null && boxApi >= CYCLE_MIN_BOX_API);
+
+	async function enableCycle() {
+		if (!cycleBoxReady) return;
+		enablingCycle = true;
+		error = null;
+		try {
+			health = await invoke<HealthStatus>("plugin:health|enable_cycle");
+			setTimeout(load, 1500);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			enablingCycle = false;
 		}
 	}
 
@@ -528,6 +643,15 @@
 			description: "What the Health app already keeps - steps, sleep, heart rate, workouts - copied to your server as it lands.",
 		},
 		{
+			key: "cycle",
+			title: "Cycle",
+			icon: "ri:drop-line",
+			what: "Periods, symptoms, wrist temperature",
+			description:
+				"Your periods, spotting, ovulation tests, symptoms and your watch's nightly wrist temperature, copied from the Health app to your server. Your assistant can't read any of it.",
+			note: "This app never asks Health for sexual activity or pregnancy tests.",
+		},
+		{
 			key: "calendar",
 			title: "Calendar",
 			icon: "ri:calendar-line",
@@ -566,6 +690,8 @@
 				return enabled;
 			case "health":
 				return !!health?.authorized;
+			case "cycle":
+				return !!health?.cycle;
 			case "calendar":
 				return !!cal?.authorized;
 			case "contacts":
@@ -585,6 +711,10 @@
 				return enabled ? `On · ${fixes.length} recent${lastTs ? ` · ${rel(lastTs)}` : ""}` : "Off";
 			case "health":
 				return health?.authorized ? `On${syncWord(healthSync)}` : meta.what;
+			case "cycle":
+				if (health?.cycle) return `On${syncWord(healthSync)}`;
+				if (boxApi !== null && !cycleBoxReady) return "Needs a server update";
+				return meta.what;
 			case "calendar":
 				return cal?.authorized ? `On${syncWord(calSync)}` : meta.what;
 			case "contacts":
@@ -602,6 +732,7 @@
 			case "location":
 				return sync;
 			case "health":
+			case "cycle":
 				return healthSync;
 			case "calendar":
 				return calSync;
@@ -622,6 +753,13 @@
 				return health?.authorized
 					? null
 					: { label: enablingHealth ? "Enabling…" : "Enable", onclick: enableHealth, disabled: enablingHealth };
+			case "cycle":
+				if (health?.cycle) return null;
+				return {
+					label: enablingCycle ? "Enabling…" : "Enable",
+					onclick: enableCycle,
+					disabled: enablingCycle || !cycleBoxReady,
+				};
 			case "calendar":
 				return cal?.authorized
 					? null
@@ -865,6 +1003,20 @@
 		{error}
 		onBack={() => (activityOpen = false)}
 	>
+		<!-- For a bug report: what the recorder and the location probe did
+		     lately, as a text file. Above the list so it is never 300 runs
+		     down. -->
+		<div class="card share">
+			<button class="stream link" type="button" onclick={shareLog} disabled={sharing}>
+				<div class="s-icon">
+					<Icon icon="ri:file-text-line" width={18} />
+				</div>
+				<div class="s-body">
+					<div class="s-title">{sharing ? "Preparing…" : "Share the log"}</div>
+					<div class="s-sub">{shareNote ?? "What recording and location did lately, without your locations or places"}</div>
+				</div>
+			</button>
+		</div>
 		<div class="card activity">
 			{#if loading && runs.length === 0}
 				<div class="empty">Loading…</div>
@@ -1023,6 +1175,7 @@
 	}
 
 	/* Recent activity: one run per line, on its own page. */
+	.card.share,
 	.card.activity {
 		margin-top: 16px;
 	}

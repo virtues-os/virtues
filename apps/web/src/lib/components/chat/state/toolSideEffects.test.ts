@@ -40,8 +40,8 @@ describe('the edit animation', () => {
 		const effects = new ToolSideEffects();
 		effects.animateNewEdits([]); // the seeding run, over an empty history
 		effects.animateNewEdits([editTurn('c1', treeEdit), editTurn('c2', markdownEdit)]);
-		expect(animate).toHaveBeenCalledWith('page_abc', treeEdit.edit.replace, ['p0q9z1mm', 't7c2k1aa']);
-		expect(animate).toHaveBeenCalledWith('page_md', 'New line.', []);
+		expect(animate).toHaveBeenCalledWith('page_abc', ['p0q9z1mm', 't7c2k1aa']);
+		expect(animate).toHaveBeenCalledWith('page_md', []);
 	});
 
 	it('animates nothing for a refused edit, which has no edit to show', () => {

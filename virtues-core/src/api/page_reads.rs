@@ -1,18 +1,18 @@
-//! Read bases: what the model has been shown of a block page, kept so its
-//! next edit can be merged against exactly that (`YjsState::edit_tree`).
+//! Read bases: what the model has been shown of a block page
+//! (`virtues_document::Seen`), kept so its next edit is checked against
+//! exactly that (`YjsState::edit_tree`).
 //!
-//! A base is named by a hash of the tree it holds, block ids included, so
-//! deleting a block changes it where a state vector would not move. Bases
-//! live in `app_page_read_bases` rather than beside the cached doc: an edit
-//! can arrive after the doc has been evicted, or after a restart.
+//! A base is named by a hash of what it holds, so it changes when a read
+//! shows anything new, and a base that is a read of the whole page as it
+//! stands is named by the page's own tree hash, as a read of an unchanged
+//! page names it. Bases live in `app_page_read_bases` rather than beside
+//! the cached doc: an edit can arrive after the doc has been evicted, or
+//! after a restart.
 
 use crate::error::{Error, Result};
-use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
-use std::collections::{BTreeMap, BTreeSet};
-use virtues_document::{Mark, Node};
+use virtues_document::{Node, Part, Seen, Shown};
 
 /// The most bases kept for one page; older ones are pruned as new ones are
 /// kept. A model reads a page a few times per edit, so fifty spans several
@@ -23,151 +23,57 @@ pub const KEEP_PER_PAGE: i64 = 50;
 /// older than this is treated as having no base.
 pub const KEEP_DAYS: i64 = 7;
 
-/// The name of a base: 16 lowercase hex of the SHA-256 of the tree's JSON.
-/// The JSON is canonical (`serde_json` keeps attributes sorted), so the same
-/// tree always hashes the same.
-pub fn tree_hash(nodes: &[Node]) -> String {
-    let json = serde_json::to_vec(nodes).expect("a page tree serializes");
-    let digest = Sha256::digest(&json);
-    hex::encode(&digest[..8])
+/// The tag a base made in a chat turn carries after its hash
+/// (`<hash>.<tag>`): the first bytes of a hash of the turn.
+fn turn_tag(turn: &str) -> String {
+    hex::encode(&Sha256::digest(turn.as_bytes())[..4])
 }
 
-/// The hash of one block, as [`ReadBase::whole`] holds it.
-pub fn node_hash(node: &Node) -> String {
-    tree_hash(std::slice::from_ref(node))
-}
-
-/// What reads showed of a block page, kept as the base of the next edit
-/// ([`keep_read_base`]): the tree as shown, and how some of it was shown.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct ReadBase {
-    /// The blocks the reads showed, each as it stood then.
-    pub tree: Vec<Node>,
-    /// Blocks shown only as markdown, each named, the blocks inside one
-    /// included. Markdown does not say what a block's HTML is (a mention
-    /// reads as a link, a callout as a quote), so a replace that would
-    /// write one of them (the block, or a block around it) waits for a
-    /// read of its HTML, which takes it out of this set.
-    pub markdown_only: BTreeSet<String>,
-    /// Blocks shown in part (a list opened by its first items, the list
-    /// around one item read by id), each with its [`node_hash`] whole as it
-    /// stood when shown: deleting one stands while it still hashes so, since
-    /// nothing in it changed unseen. Replacing one waits until reads have
-    /// shown all of it.
-    pub whole: BTreeMap<String, String>,
-}
-
-impl ReadBase {
-    /// A base that is `tree` as shown, HTML and whole.
-    pub fn of(tree: Vec<Node>) -> Self {
-        Self {
-            tree,
-            ..Self::default()
-        }
+/// Whether `base` may be used in `turn`. A chat turn's tool results replay
+/// to later turns clipped (`api::compaction`: 32 KiB for the last reply, 2
+/// KiB before it), while a base would still let an edit write over all a
+/// read showed; a later turn's model holds only part of what such a base
+/// says it saw, and a replace written from that part drops the rest. So in
+/// a turn only a base that turn made serves: a later one reads again, or
+/// takes the open page's base, which each turn makes afresh. Outside a turn
+/// (the CLI, an applet's run), any base serves.
+pub fn serves_turn(base: &str, turn: Option<&str>) -> bool {
+    match turn {
+        None => true,
+        Some(turn) => base.split_once('.').is_some_and(|(_, tag)| tag == turn_tag(turn)),
     }
 }
 
-/// A kept base that says more than its tree.
-#[derive(Serialize, Deserialize)]
-struct Kept {
-    tree: Vec<Flat>,
-    #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
-    markdown_only: BTreeSet<String>,
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    whole: BTreeMap<String, String>,
+/// The hash a base is named by, its turn's tag left off.
+pub fn base_hash(base: &str) -> &str {
+    base.split_once('.').map_or(base, |(hash, _)| hash)
 }
 
-/// One node of a kept tree, in document order, its children counted rather
-/// than nested in it. A tree as deep as the contract allows
-/// (`virtues_document::MAX_DEPTH`) nests about twice as deep as JSON, past
-/// the depth `serde_json` reads back, and reading nested JSON costs stack
-/// for each level; a flat list reads back at any depth, in a loop.
-#[derive(Serialize, Deserialize)]
-struct Flat {
-    #[serde(rename = "type")]
-    kind: String,
-    #[serde(default, skip_serializing_if = "Map::is_empty")]
-    attrs: Map<String, Value>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    text: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    marks: Vec<Mark>,
-    #[serde(default, skip_serializing_if = "is_zero")]
-    children: usize,
-}
-
-fn is_zero(n: &usize) -> bool {
-    *n == 0
-}
-
-/// `nodes` as the flat list a base is stored as: each node, then its
-/// children, as `Node::walk` visits them.
-fn flatten(nodes: &[Node]) -> Vec<Flat> {
-    let mut out = vec![];
-    for n in nodes {
-        n.walk(&mut |n| {
-            out.push(Flat {
-                kind: n.kind.clone(),
-                attrs: n.attrs.clone(),
-                text: n.text.clone(),
-                marks: n.marks.clone(),
-                children: n.content.len(),
-            })
-        });
-    }
-    out
-}
-
-/// The tree a flat list holds, or `None` when the counts do not add up.
-fn unflatten(flat: Vec<Flat>) -> Option<Vec<Node>> {
-    // The nodes still taking children, each with how many it still takes;
-    // the root takes every top-level node there is.
-    let mut open: Vec<(Node, usize)> = vec![(Node::element("", Map::new(), vec![]), usize::MAX)];
-    for f in flat {
-        let node = Node {
-            kind: f.kind,
-            attrs: f.attrs,
-            content: Vec::with_capacity(f.children.min(1024)),
-            text: f.text,
-            marks: f.marks,
-        };
-        let parent = open.last_mut()?;
-        parent.1 = parent.1.checked_sub(1)?;
-        if f.children > 0 {
-            open.push((node, f.children));
-            continue;
-        }
-        open.last_mut()?.0.content.push(node);
-        // A node whose last child has come is done.
-        while open.len() > 1 && open.last()?.1 == 0 {
-            let (done, _) = open.pop()?;
-            open.last_mut()?.0.content.push(done);
-        }
-    }
-    match open.pop() {
-        Some((root, _)) if open.is_empty() => Some(root.content),
-        _ => None,
-    }
-}
-
-/// Keep `kept` as a base of the page and return its name. A base that is
-/// its tree alone is stored as its flat tree and named by [`tree_hash`]; one
-/// that says more is named by the hash of all it says. Keeping a base that
-/// is already kept only marks it recent. Prunes the page's bases past
-/// [`KEEP_PER_PAGE`] and every base older than [`KEEP_DAYS`].
-pub async fn keep_read_base(pool: &PgPool, page_id: &str, kept: &ReadBase) -> Result<String> {
-    let encoded = if kept.markdown_only.is_empty() && kept.whole.is_empty() {
-        serde_json::to_vec(&flatten(&kept.tree)).map(|json| (tree_hash(&kept.tree), json))
+/// Keep `seen` as a base of the page and return its name: the tree hash of
+/// `page` (the page as it stands) when `seen` is a read of it whole, which
+/// is the name a read of an unchanged page gives, or else the hash of what
+/// `seen` holds; made in a chat `turn`, the hash carries that turn's tag
+/// ([`serves_turn`]). Keeping a base that is already kept only marks it
+/// recent. Prunes the page's bases past [`KEEP_PER_PAGE`] and every base
+/// older than [`KEEP_DAYS`].
+pub async fn keep_read_base(
+    pool: &PgPool,
+    page_id: &str,
+    seen: &Seen,
+    page: &[Node],
+    turn: Option<&str>,
+) -> Result<String> {
+    let json = serde_json::to_vec(seen)
+        .map_err(|e| Error::Other(format!("could not encode the page's read base: {e}")))?;
+    let hash = if seen.is_page(page) {
+        virtues_document::tree_hash(page)
     } else {
-        serde_json::to_vec(&Kept {
-            tree: flatten(&kept.tree),
-            markdown_only: kept.markdown_only.clone(),
-            whole: kept.whole.clone(),
-        })
-        .map(|json| (hex::encode(&Sha256::digest(&json)[..8]), json))
+        hex::encode(&Sha256::digest(&json)[..8])
     };
-    let (base, json) =
-        encoded.map_err(|e| Error::Other(format!("could not encode the page's tree: {e}")))?;
+    let base = match turn {
+        Some(turn) => format!("{hash}.{}", turn_tag(turn)),
+        None => hash,
+    };
     sqlx::query(
         "INSERT INTO app_page_read_bases (page_id, base, tree_json, created_at, updated_at) \
          VALUES ($1, $2, $3, clock_timestamp(), clock_timestamp()) \
@@ -204,12 +110,12 @@ pub async fn keep_read_base(pool: &PgPool, page_id: &str, kept: &ReadBase) -> Re
     Ok(base)
 }
 
-/// The tree kept as `base` for the page, or `None` when it was never kept,
+/// The base kept as `base` for the page, or `None` when it was never kept,
 /// was pruned, or is older than [`KEEP_DAYS`]. A kept row that does not read
-/// back as a tree is logged and is `None` too: a base the server cannot read
+/// back as a base is logged and is `None` too: a base the server cannot read
 /// is one it does not have, and the edit falls back as it does for a pruned
-/// one.
-pub async fn read_base(pool: &PgPool, page_id: &str, base: &str) -> Result<Option<ReadBase>> {
+/// one. A row kept before bases were kept block by block is such a row.
+pub async fn read_base(pool: &PgPool, page_id: &str, base: &str) -> Result<Option<Seen>> {
     let json: Option<Vec<u8>> = sqlx::query_scalar(
         "SELECT tree_json FROM app_page_read_bases \
          WHERE page_id = $1 AND base = $2 \
@@ -222,24 +128,8 @@ pub async fn read_base(pool: &PgPool, page_id: &str, base: &str) -> Result<Optio
     .await
     .map_err(|e| Error::Database(format!("Failed to read the read base: {e}")))?;
     let Some(json) = json else { return Ok(None) };
-    let kept = match json.first() {
-        Some(b'[') => serde_json::from_slice::<Vec<Flat>>(&json).map(|tree| Kept {
-            tree,
-            markdown_only: BTreeSet::new(),
-            whole: BTreeMap::new(),
-        }),
-        _ => serde_json::from_slice::<Kept>(&json),
-    };
-    let read = kept.map_err(|e| e.to_string()).and_then(|kept| {
-        let tree = unflatten(kept.tree).ok_or("its child counts do not add up")?;
-        Ok(ReadBase {
-            tree,
-            markdown_only: kept.markdown_only,
-            whole: kept.whole,
-        })
-    });
-    match read {
-        Ok(read) => Ok(Some(read)),
+    match serde_json::from_slice::<Seen>(&json) {
+        Ok(seen) => Ok(Some(seen)),
         Err(error) => {
             tracing::warn!(page = %page_id, base, %error, "a kept read base does not read back; treating it as gone");
             Ok(None)
@@ -247,53 +137,25 @@ pub async fn read_base(pool: &PgPool, page_id: &str, base: &str) -> Result<Optio
     }
 }
 
-/// A long page's markdown, as one read shows it: the export with ids of
-/// whole top-level blocks from `start`, as many as fit in `limit` as
-/// `measure` counts the text. A read's base names only the blocks it lists
-/// ([`Window::listed`]), so a block past the end of what was listed, or one
-/// too long for the window that another read can show, is read before it
-/// is replaced, never written over unseen.
+/// A long page's markdown, as one read shows it: whole top-level blocks from
+/// `start`, as many as fit in `limit` as `measure` counts the text, each
+/// under its id ([`Shown::text`]). What it showed is what a base learns from
+/// it, so a block past the end of the window, or one too long for it that
+/// another read can show, is read before it is replaced.
 pub struct Window {
-    pub markdown: String,
-    /// The top-level blocks shown, whole, in page order.
-    pub shown: Vec<Node>,
-    /// Every top-level block the window shows, and every one too long for
-    /// any read that it lists by id alone, in page order: what a read of it
-    /// has seen, for its base. A block too long for any read is in the base
-    /// as it stands, so it can be deleted or replaced whole, and a change
-    /// made to it since is still caught. One a read can show, or show the
-    /// blocks inside, is not: it is read before it is replaced.
-    pub listed: Vec<Node>,
+    pub shown: Shown,
     /// The id of the last block listed, when more blocks follow it: where
     /// the next read starts.
     pub next: Option<String>,
 }
 
-impl Window {
-    /// What a read of this window has seen, as its base: the blocks it
-    /// listed, the ones it showed, and every block inside them, said to be
-    /// shown as markdown alone.
-    pub fn read_base(&self) -> ReadBase {
-        let mut markdown_only = BTreeSet::new();
-        for node in &self.shown {
-            node.walk(&mut |n| {
-                if let Some(id) = n.id() {
-                    markdown_only.insert(id.to_string());
-                }
-            });
-        }
-        ReadBase {
-            tree: self.listed.clone(),
-            markdown_only,
-            whole: BTreeMap::new(),
-        }
-    }
-}
-
 /// Whether a block too long to show whole is shown by the blocks inside it
 /// (`get_page_content` with ids): it holds blocks, each with an id, as a
 /// list holds items and a table rows. A paragraph or a code block holds
-/// only text.
+/// only text. A table row holds its blocks inside cells, which carry no id,
+/// so a row too long for any read is listed whole; the blocks in its cells
+/// are still read by id, and an edit that would take them unread is refused
+/// with their ids to read.
 pub fn opens(node: &Node) -> bool {
     !node.content.is_empty() && node.content.iter().all(|n| n.id().is_some())
 }
@@ -305,8 +167,8 @@ pub enum TooLong {
     Inside,
     /// A read with ids shows it whole: the window was too short for it.
     ById,
-    /// No read shows it: it is in the base as it stands, to delete or
-    /// replace whole.
+    /// No read shows it: an op naming it deletes it, or replaces it whole,
+    /// while it stays as it was when listed.
     WholeOnly,
 }
 
@@ -330,30 +192,28 @@ impl TooLong {
                 "too long to show here; read it with get_page_content and ids to see the blocks inside it"
             }
             TooLong::ById => "too long to show here; read it with get_page_content, ids and this base",
-            TooLong::WholeOnly => "too long to show in any read; delete it or replace it whole",
+            TooLong::WholeOnly => "too long to show in any read; delete it or replace it whole, by its id",
         }
     }
 }
 
-/// What to do with a block too long for a read with ids: read inside it,
-/// or, for one too long for any read, delete it or replace it whole, which
-/// needs no read (it is in the base as it stands).
-pub fn too_long_advice(node: &Node) -> &'static str {
-    TooLong::of(node, false).advice()
-}
-
-/// What stands for a block too long for the window: its id, so the model
-/// can write beside it, and what to do with it.
-fn too_long(node: &Node, kind: TooLong) -> String {
-    let id = node.id().unwrap_or_default();
-    format!("<!-- {id} -->\n<!-- {} -->", kind.advice())
+/// What stands for a block too long for where it is: a comment naming it,
+/// so the model can write beside it, with what to do with it. One too long
+/// for any read carries its hash: an op naming it takes it while it stays
+/// as listed.
+pub fn listed(node: &Node, kind: TooLong) -> Part {
+    Part::Listed {
+        id: node.id().unwrap_or_default().to_string(),
+        say: kind.advice().to_string(),
+        opaque: (kind == TooLong::WholeOnly).then(|| virtues_document::node_hash(node)),
+    }
 }
 
 /// See [`Window`]. A block too long for any window of `limit` is listed by
 /// its id alone and the window goes on past it, so reading on always moves.
 /// `fits_a_read` says whether a read with ids shows a block whole: a window
 /// shorter than a read (the chat's view of an open page) says to read such
-/// a block, and does not put it in the base unread.
+/// a block.
 pub fn markdown_window(
     tree: &[Node],
     start: usize,
@@ -361,12 +221,8 @@ pub fn markdown_window(
     measure: impl Fn(&str) -> usize,
     fits_a_read: impl Fn(&Node) -> bool,
 ) -> Window {
-    enum Part {
-        Shown(usize),
-        TooLong(usize, TooLong),
-    }
     let separator = measure("\n\n");
-    let mut parts: Vec<Part> = vec![];
+    let mut parts: Vec<(usize, Part)> = vec![];
     let mut used = 0;
     for (i, node) in tree.iter().enumerate().skip(start) {
         let gap = if parts.is_empty() { 0 } else { separator };
@@ -374,74 +230,33 @@ pub fn markdown_window(
         let alone = measure(text.trim_end_matches('\n'));
         if used + gap + alone <= limit {
             used += gap + alone;
-            parts.push(Part::Shown(i));
+            parts.push((i, Part::Whole(node.clone())));
             continue;
         }
-        let kind = TooLong::of(node, fits_a_read(node));
+        let part = listed(node, TooLong::of(node, fits_a_read(node)));
+        let said = measure(Shown::markdown(vec![part.clone()]).text().trim_end_matches('\n'));
         match node.id() {
-            Some(_) if alone > limit && used + gap + measure(&too_long(node, kind)) <= limit => {
-                used += gap + measure(&too_long(node, kind));
-                parts.push(Part::TooLong(i, kind));
+            Some(_) if alone > limit && used + gap + said <= limit => {
+                used += gap + said;
+                parts.push((i, part));
             }
             _ => break,
         }
     }
-    // Written run by run, so the text is the export's own; measured again,
-    // since the export of a run can differ by a separator from its blocks'.
+    // Measured again as a whole, since the export of a run can differ by a
+    // separator from its blocks'.
     loop {
-        let mut pieces: Vec<String> = vec![];
-        let mut run: Vec<Node> = vec![];
-        for part in &parts {
-            match part {
-                Part::Shown(i) => run.push(tree[*i].clone()),
-                Part::TooLong(i, kind) => {
-                    if !run.is_empty() {
-                        let text = virtues_document::to_markdown_with_ids(&run);
-                        pieces.push(text.trim_end_matches('\n').to_string());
-                        run.clear();
-                    }
-                    pieces.push(too_long(&tree[*i], *kind));
-                }
-            }
-        }
-        if !run.is_empty() {
-            let text = virtues_document::to_markdown_with_ids(&run);
-            pieces.push(text.trim_end_matches('\n').to_string());
-        }
-        let mut markdown = pieces.join("\n\n");
-        markdown.push('\n');
-        if measure(&markdown) > limit && parts.len() > 1 {
+        let shown = Shown::markdown(parts.iter().map(|(_, p)| p.clone()).collect());
+        if measure(&shown.text()) > limit && parts.len() > 1 {
             parts.pop();
             continue;
         }
-        let end = match parts.last() {
-            Some(Part::Shown(i) | Part::TooLong(i, _)) => i + 1,
-            None => start,
-        };
+        let end = parts.last().map_or(start, |(i, _)| i + 1);
         let next = (end < tree.len())
             .then(|| end.checked_sub(1).and_then(|i| tree[i].id()))
             .flatten()
             .map(str::to_string);
-        let shown = parts
-            .iter()
-            .filter_map(|p| match p {
-                Part::Shown(i) => Some(tree[*i].clone()),
-                Part::TooLong(..) => None,
-            })
-            .collect();
-        let listed = parts
-            .iter()
-            .filter_map(|p| match p {
-                Part::Shown(i) | Part::TooLong(i, TooLong::WholeOnly) => Some(tree[*i].clone()),
-                Part::TooLong(..) => None,
-            })
-            .collect();
-        return Window {
-            markdown,
-            shown,
-            listed,
-            next,
-        };
+        return Window { shown, next };
     }
 }
 
@@ -461,7 +276,7 @@ mod tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
             PageFormat::Tree,
         )
@@ -505,13 +320,35 @@ mod tests {
         paragraphs(&texts.iter().map(String::as_str).collect::<Vec<_>>())
     }
 
+    /// The blocks a window shows whole, in page order.
+    fn wholes(w: &Window) -> Vec<Node> {
+        w.shown
+            .parts
+            .iter()
+            .filter_map(|p| match p {
+                Part::Whole(n) => Some(n.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// What a base learns from a window of `tree` alone.
+    fn learned(w: &Window, tree: &[Node]) -> Seen {
+        let mut seen = Seen::default();
+        seen.learn(&w.shown, tree, &Default::default());
+        seen
+    }
+
     #[test]
     fn a_window_that_holds_the_page_is_its_export() {
         let tree = long_paragraphs(20, 50);
         let w = markdown_window(&tree, 0, usize::MAX, str::len, |_| false);
-        assert_eq!(w.markdown, virtues_document::to_markdown_with_ids(&tree));
-        assert_eq!(w.shown, tree);
-        assert_eq!(w.listed, tree);
+        assert_eq!(w.shown.text(), virtues_document::to_markdown_with_ids(&tree));
+        assert_eq!(wholes(&w), tree);
+        let seen = learned(&w, &tree);
+        for n in &tree {
+            assert_eq!(seen.known(n.id().unwrap()).unwrap().form, virtues_document::Form::Markdown);
+        }
         assert_eq!(w.next, None);
     }
 
@@ -522,18 +359,15 @@ mod tests {
         let tree = long_paragraphs(12, 1_000);
         let chars = |s: &str| s.chars().count();
         let first = markdown_window(&tree, 0, 10_000, chars, |_| false);
-        assert!(chars(&first.markdown) <= 10_000);
-        let k = first.shown.len();
+        assert!(chars(&first.shown.text()) <= 10_000);
+        let k = wholes(&first).len();
         assert!(k > 0 && k < tree.len(), "{k}");
-        assert_eq!(first.shown, tree[..k]);
-        assert_eq!(
-            first.markdown,
-            virtues_document::to_markdown_with_ids(&tree[..k])
-        );
-        assert!(!first.markdown.contains(tree[k].id().unwrap()));
+        assert_eq!(wholes(&first), tree[..k]);
+        assert_eq!(first.shown.text(), virtues_document::to_markdown_with_ids(&tree[..k]));
+        assert!(!first.shown.text().contains(tree[k].id().unwrap()));
         assert_eq!(first.next.as_deref(), tree[k - 1].id());
 
-        let mut seen = first.shown.clone();
+        let mut seen = wholes(&first);
         let mut next = first.next;
         while let Some(after) = next {
             let at = tree
@@ -541,62 +375,67 @@ mod tests {
                 .position(|n| n.id() == Some(after.as_str()))
                 .unwrap();
             let w = markdown_window(&tree, at + 1, 10_000, chars, |_| false);
-            assert!(!w.shown.is_empty());
-            seen.extend(w.shown);
+            assert!(!wholes(&w).is_empty());
+            seen.extend(wholes(&w));
             next = w.next;
         }
         assert_eq!(seen, tree);
     }
 
     /// A block too long for any window is listed by its id and passed over,
-    /// so a read moves on. It is not among what the read showed. Too long
-    /// for any read, it is among what the read listed, which the base
-    /// holds, to delete or replace whole.
+    /// so a read moves on. It is not among what the read showed: too long
+    /// for any read, it is listed with its hash, which an op naming it
+    /// takes it by.
     #[test]
     fn a_block_too_long_for_any_window_is_listed_not_shown() {
         let long = "Long. ".repeat(1_000);
         let tree = paragraphs(&["Short one.", &long, "Short two.", "Short three."]);
         let w = markdown_window(&tree, 0, 1_000, str::len, |_| false);
-        assert_eq!(w.shown, [tree[0].clone(), tree[2].clone(), tree[3].clone()]);
-        assert_eq!(w.listed, tree);
+        assert_eq!(wholes(&w), [tree[0].clone(), tree[2].clone(), tree[3].clone()]);
         assert_eq!(
-            w.markdown,
+            w.shown.text(),
             "<!-- block000 -->\nShort one.\n\n\
-             <!-- block001 -->\n<!-- too long to show in any read; delete it or replace it whole -->\n\n\
+             <!-- block001 -->\n<!-- too long to show in any read; delete it or replace it whole, by its id -->\n\n\
              <!-- block002 -->\nShort two.\n\n<!-- block003 -->\nShort three.\n"
         );
         assert_eq!(w.next, None);
+        let seen = learned(&w, &tree);
+        assert!(!seen.knows("block001"));
+        assert_eq!(seen.opaque_hash("block001"), Some(virtues_document::node_hash(&tree[1]).as_str()));
 
-        // A list too long for any window says to read inside it, and is not
-        // in the base: replacing it unread would write over what it holds.
+        // A list too long for any window says to read inside it, and is
+        // neither known nor listed whole: replacing it unread would write
+        // over what it holds.
         let items: String = (0..200).map(|i| format!("<li><p>Item {i}.</p></li>")).collect();
         let o = virtues_document::parse_html(&format!("<p>Before.</p><ul>{items}</ul>"), "doc");
         let mut tree = o.nodes;
         virtues_document::ensure_ids(&mut tree);
         let w = markdown_window(&tree, 0, 1_000, str::len, |_| false);
-        assert_eq!(w.listed, tree[..1]);
-        assert!(w.markdown.contains("read it with get_page_content and ids"), "{}", w.markdown);
+        assert_eq!(wholes(&w), tree[..1]);
+        assert!(w.shown.text().contains("read it with get_page_content and ids"), "{}", w.shown.text());
+        let list = tree[1].id().unwrap();
+        assert!(!learned(&w, &tree).knows(list) && learned(&w, &tree).opaque_hash(list).is_none());
     }
 
     /// A window shorter than a read (the chat's view of an open page) says
-    /// to read a block it has no room for that a read shows whole, and
-    /// keeps it out of the base: it is read before it is replaced. Only a
-    /// block no read shows is in the base unread.
+    /// to read a block it has no room for that a read shows whole: it is
+    /// read before it is replaced.
     #[test]
     fn a_block_too_long_for_the_window_but_not_for_a_read_is_read_first() {
         let long = "Long. ".repeat(1_000);
         let tree = paragraphs(&["Short one.", &long, "Short two."]);
         let w = markdown_window(&tree, 0, 1_000, str::len, |_| true);
-        assert_eq!(w.shown, [tree[0].clone(), tree[2].clone()]);
-        assert_eq!(w.listed, [tree[0].clone(), tree[2].clone()]);
+        assert_eq!(wholes(&w), [tree[0].clone(), tree[2].clone()]);
         assert!(
-            w.markdown.contains(
+            w.shown.text().contains(
                 "<!-- block001 -->\n<!-- too long to show here; read it with get_page_content, ids and this base -->"
             ),
             "{}",
-            w.markdown
+            w.shown.text()
         );
-        assert!(!w.markdown.contains("any read"), "{}", w.markdown);
+        assert!(!w.shown.text().contains("any read"), "{}", w.shown.text());
+        let seen = learned(&w, &tree);
+        assert!(!seen.knows("block001") && seen.opaque_hash("block001").is_none());
     }
 
     #[sqlx::test]
@@ -605,38 +444,38 @@ mod tests {
         // A NUL in the text, which a jsonb column would refuse.
         let mut tree = paragraphs(&["One.", "Two."]);
         tree[1].content = vec![Node::text("Tw\u{0}o.", vec![])];
+        let whole = Seen::of_page(&tree);
 
-        let base = keep_read_base(&pool, &page_id, &ReadBase::of(tree.clone())).await.unwrap();
+        let base = keep_read_base(&pool, &page_id, &whole, &tree, None).await.unwrap();
         assert_eq!(base.len(), 16);
         assert!(base.chars().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
-        assert_eq!(base, tree_hash(&tree));
-        assert_eq!(keep_read_base(&pool, &page_id, &ReadBase::of(tree.clone())).await.unwrap(), base);
+        assert_eq!(base, virtues_document::tree_hash(&tree));
+        assert_eq!(keep_read_base(&pool, &page_id, &whole, &tree, None).await.unwrap(), base);
         assert_eq!(bases(&pool, &page_id).await, [base.as_str()], "one row");
 
         // Deleting a block names a different tree.
         let fewer = tree[..1].to_vec();
-        assert_ne!(tree_hash(&fewer), base);
+        assert_ne!(virtues_document::tree_hash(&fewer), base);
         // So does an id alone.
         let mut renamed = tree.clone();
         renamed[0]
             .attrs
             .insert("id".into(), serde_json::Value::String("other001".into()));
-        assert_ne!(tree_hash(&renamed), base);
+        assert_ne!(virtues_document::tree_hash(&renamed), base);
 
         // A restart: a new server reads the base back from the table.
         let after_restart = crate::server::yjs::YjsState::new(pool.clone());
         let read = read_base(&after_restart.pool, &page_id, &base).await.unwrap();
-        assert_eq!(read, Some(ReadBase::of(tree.clone())));
+        assert_eq!(read, Some(whole.clone()));
         assert_eq!(read_base(&pool, &page_id, "0000000000000000").await.unwrap(), None);
 
-        // A base that says how its blocks were shown is named by all of it,
-        // and reads back whole.
-        let mut said = ReadBase::of(tree.clone());
-        said.markdown_only.insert("block000".into());
-        said.whole.insert("block001".into(), node_hash(&tree[1]));
-        let named = keep_read_base(&pool, &page_id, &said).await.unwrap();
+        // A base that is not a read of the page whole is named by all it
+        // holds, and reads back whole.
+        let mut part = Seen::default();
+        part.learn(&Shown::markdown(vec![Part::Whole(tree[0].clone())]), &tree, &Default::default());
+        let named = keep_read_base(&pool, &page_id, &part, &tree, None).await.unwrap();
         assert_ne!(named, base);
-        assert_eq!(read_base(&pool, &page_id, &named).await.unwrap(), Some(said));
+        assert_eq!(read_base(&pool, &page_id, &named).await.unwrap(), Some(part));
     }
 
     /// A page as deep as the contract allows: quotes nested to
@@ -662,45 +501,42 @@ mod tests {
         nodes
     }
 
-    #[test]
-    fn a_tree_flattens_and_reads_back_whole() {
-        let tree = deepest_page();
-        assert_eq!(unflatten(flatten(&tree)), Some(tree.clone()));
-        assert_eq!(unflatten(flatten(&[])), Some(vec![]));
-        // Counts that do not add up read as nothing, not as part of a tree.
-        let mut cut = flatten(&tree);
-        cut.pop();
-        assert_eq!(unflatten(cut), None);
-        let mut extra = flatten(&tree[..1]);
-        extra[0].children += 1;
-        assert_eq!(unflatten(extra), None);
-    }
-
     /// A base is kept for every read, so one the contract allows has to read
-    /// back, however deep: otherwise every edit of that page fails.
+    /// back, however deep the page: a base holds each block by itself, so
+    /// it nests no deeper than a row's cells.
     #[sqlx::test]
     async fn a_base_as_deep_as_the_contract_allows_reads_back(pool: PgPool) {
         let page_id = tree_page(&pool, "One.\n").await;
         let tree = deepest_page();
-        let base = keep_read_base(&pool, &page_id, &ReadBase::of(tree.clone())).await.unwrap();
-        assert_eq!(read_base(&pool, &page_id, &base).await.unwrap(), Some(ReadBase::of(tree)));
+        let seen = Seen::of_page(&tree);
+        let base = keep_read_base(&pool, &page_id, &seen, &tree, None).await.unwrap();
+        let read = read_base(&pool, &page_id, &base).await.unwrap().unwrap();
+        assert_eq!(read, seen);
+        assert_eq!(read.subtree(tree[1].id().unwrap()).as_ref(), Some(&tree[1]));
     }
 
     /// A kept row that does not read back is a base the server does not
-    /// have, so an edit falls back as it does when the base was pruned.
+    /// have, so an edit falls back as it does when the base was pruned: a
+    /// row in no shape a base takes, and one kept as a tree before bases
+    /// were kept block by block.
     #[sqlx::test]
     async fn a_base_that_does_not_read_back_is_none(pool: PgPool) {
         let page_id = tree_page(&pool, "One.\n").await;
-        sqlx::query(
-            "INSERT INTO app_page_read_bases (page_id, base, tree_json) VALUES ($1, $2, $3)",
-        )
-        .bind(&page_id)
-        .bind("00000000000000aa")
-        .bind(b"[{\"type\":\"paragraph\",\"children\":2}]".as_slice())
-        .execute(&pool)
-        .await
-        .unwrap();
-        assert_eq!(read_base(&pool, &page_id, "00000000000000aa").await.unwrap(), None);
+        for (base, json) in [
+            ("00000000000000aa", b"[{\"type\":\"paragraph\",\"children\":2}]".as_slice()),
+            ("00000000000000bb", b"{\"tree\":[{\"type\":\"paragraph\"}],\"markdown_only\":[\"a\"]}".as_slice()),
+        ] {
+            sqlx::query(
+                "INSERT INTO app_page_read_bases (page_id, base, tree_json) VALUES ($1, $2, $3)",
+            )
+            .bind(&page_id)
+            .bind(base)
+            .bind(json)
+            .execute(&pool)
+            .await
+            .unwrap();
+            assert_eq!(read_base(&pool, &page_id, base).await.unwrap(), None, "{base}");
+        }
     }
 
     #[sqlx::test]
@@ -709,7 +545,8 @@ mod tests {
         let mut kept = vec![];
         for i in 0..=KEEP_PER_PAGE {
             let text = format!("Version {i}.");
-            kept.push(keep_read_base(&pool, &page_id, &ReadBase::of(paragraphs(&[&text]))).await.unwrap());
+            let tree = paragraphs(&[&text]);
+            kept.push(keep_read_base(&pool, &page_id, &Seen::of_page(&tree), &tree, None).await.unwrap());
         }
         let now = bases(&pool, &page_id).await;
         assert_eq!(now.len() as i64, KEEP_PER_PAGE);
@@ -728,7 +565,8 @@ mod tests {
         .unwrap();
         assert_eq!(read_base(&pool, &page_id, &kept[1]).await.unwrap(), None);
         let other = tree_page(&pool, "Two.\n").await;
-        keep_read_base(&pool, &other, &ReadBase::of(paragraphs(&["Two."]))).await.unwrap();
+        let two = paragraphs(&["Two."]);
+        keep_read_base(&pool, &other, &Seen::of_page(&two), &two, None).await.unwrap();
         assert!(!bases(&pool, &page_id).await.contains(&kept[1]));
 
         // Trash keeps them; purging the page takes them.

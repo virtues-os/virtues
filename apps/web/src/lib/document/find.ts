@@ -1,8 +1,8 @@
 /**
  * Find and replace in page: matches drawn as decorations, never written. ⌘F
  * opens the bar (the host's `onOpen`), Enter and ⌘G go to the next match,
- * Shift-Enter and ⌘⇧G to the previous, Escape closes. As the CodeMirror
- * editor's search panel: case ignored unless asked, a pattern read as a
+ * Shift-Enter and ⌘⇧G to the previous, Escape closes. As a code editor's
+ * search panel: case ignored unless asked, a pattern read as a
  * regular expression or a whole word when asked, and Replace (the current
  * match, then on to the next) and Replace all (every match, in one
  * transaction, so one undo step). A replacement takes the marks of the text
@@ -10,8 +10,8 @@
  * replaced, since its text cannot say what the widget was. A match never
  * spans two blocks, as a reader would not expect it to.
  *
- * Selected words are echoed where else they occur, quietly, as the
- * CodeMirror editor's `highlightSelectionMatches` does: the same text, case
+ * Selected words are echoed where else they occur, quietly, as a code
+ * editor's `highlightSelectionMatches` does: the same text, case
  * and all, for a selection inside one block of up to 200 characters that is
  * not only spaces, and nothing past 100 others.
  */

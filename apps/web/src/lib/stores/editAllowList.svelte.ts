@@ -11,7 +11,6 @@
  * The list is per-chat and cleared when the chat is deleted (via CASCADE).
  */
 
-import { type YjsDocument } from '$lib/yjs';
 import { getChatPermissions, addChatPermission, removeChatPermission } from '$lib/api/client';
 
 /**
@@ -31,13 +30,6 @@ export interface EditAllowListItem {
 	title: string;
 	/** Optional icon identifier */
 	icon?: string;
-	/**
-	 * For a markdown page: its Yjs document, so each chat turn carries the
-	 * text as the editor holds it. A block page has none: the server reads
-	 * its tree for the model itself, and a markdown binding on one would be
-	 * refused by the server anyway.
-	 */
-	yjsDoc?: YjsDocument;
 }
 
 /**
@@ -238,16 +230,12 @@ function createEditAllowListStore() {
 			// and will be synced when markChatCreated() is called
 		},
 
-		/**
-		 * Add a page to the allow list (convenience method). `yjsDoc` only for
-		 * a markdown page.
-		 */
-		async addPage(pageId: string, title: string, yjsDoc?: YjsDocument) {
+		/** Add a page to the allow list (convenience method). */
+		async addPage(pageId: string, title: string) {
 			await this.add({
 				type: 'page',
 				id: pageId,
-				title,
-				yjsDoc
+				title
 			});
 		},
 
@@ -258,11 +246,6 @@ function createEditAllowListStore() {
 		async remove(type: EditableResourceType, id: string) {
 			const item = state.items.find((i) => i.type === type && i.id === id);
 
-			// Clean up Yjs document if it's a page
-			if (item?.yjsDoc) {
-				item.yjsDoc.destroy();
-			}
-
 			// Remove from local state
 			state.items = state.items.filter((i) => !(i.type === type && i.id === id));
 
@@ -270,8 +253,8 @@ function createEditAllowListStore() {
 			if (state.chatId && state.chatExistsInBackend && item) {
 				const success = await removeFromBackend(state.chatId, id);
 				if (!success) {
-					// Rollback on failure (re-add without Yjs doc)
-					state.items = [...state.items, { ...item, yjsDoc: undefined }];
+					// Rollback on failure
+					state.items = [...state.items, item];
 					console.warn('Failed to sync permission removal with backend');
 				}
 			}
@@ -305,12 +288,6 @@ function createEditAllowListStore() {
 		 * Does NOT sync with backend (use for local cleanup only)
 		 */
 		clear() {
-			// Clean up all Yjs documents
-			for (const item of state.items) {
-				if (item.yjsDoc) {
-					item.yjsDoc.destroy();
-				}
-			}
 			state.items = [];
 			state.chatId = null;
 			state.chatExistsInBackend = false;

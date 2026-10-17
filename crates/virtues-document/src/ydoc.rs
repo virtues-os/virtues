@@ -63,8 +63,15 @@ pub fn fragment(c: &Contract, txn: &mut TransactionMut) -> XmlFragmentRef {
 
 /// Write the contract version into the document's `meta` map.
 pub fn stamp_version(c: &Contract, txn: &mut TransactionMut) {
+    stamp_version_as(c.version, txn);
+}
+
+/// Write `version` into the document's `meta` map as the contract it is
+/// written under: the version of a client that wrote into it, which may be
+/// older than this one's.
+pub fn stamp_version_as(version: u32, txn: &mut TransactionMut) {
     let meta = txn.get_or_insert_map(META);
-    meta.insert(txn, META_CONTRACT, Any::from(c.version as i64));
+    meta.insert(txn, META_CONTRACT, Any::from(i64::from(version)));
 }
 
 /// The contract version a document was stamped with, if any.
@@ -478,6 +485,31 @@ mod tests {
             "<h4>four</h4><h5>five</h5><h6>six</h6>\
              <table><tr><th align=\"center\">A</th><th align=\"right\">B</th></tr><tr><td align=\"left\">1</td><td>2</td></tr></table>",
         );
+    }
+
+    /// An item's own number is a number in the shared document, as the
+    /// browser writes one, and reads back as the item's.
+    #[test]
+    fn an_items_own_number_round_trips_through_yjs() {
+        round_trip(
+            "<ol start=\"2019\" data-id=\"l\"><li data-id=\"a\"><p>a</p></li><li value=\"2021\" data-id=\"b\"><p>b</p>\
+             <ol start=\"0\"><li><p>zero</p></li><li value=\"-3\"><p>below</p></li></ol></li></ol>",
+        );
+        let c = Contract::load();
+        let o = parse(&c, "<ol><li>a</li><li value=\"5\">b</li></ol>", "doc", Mode::Strict);
+        let doc = new_doc();
+        {
+            let mut txn = doc.transact_mut();
+            let frag = fragment(&c, &mut txn);
+            write_nodes(&c, &mut txn, &frag, 0, &o.nodes);
+        }
+        let txn = doc.transact();
+        let frag = txn.get_xml_fragment(c.fragment.as_str()).unwrap();
+        let Some(yrs::XmlOut::Element(list)) = frag.get(&txn, 0) else { panic!("no list") };
+        let Some(yrs::XmlOut::Element(item)) = list.get(&txn, 1) else { panic!("no item") };
+        assert!(matches!(item.get_attribute(&txn, "value"), Some(Out::Any(Any::Number(_)))));
+        let Some(yrs::XmlOut::Element(first)) = list.get(&txn, 0) else { panic!("no item") };
+        assert_eq!(first.get_attribute(&txn, "value"), None, "a null number is no attribute");
     }
 
     #[test]

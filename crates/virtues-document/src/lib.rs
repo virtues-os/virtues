@@ -9,14 +9,18 @@
 //! - **ingest** HTML strictly ([`parse_html`]): anything outside the contract
 //!   is refused with a message the model can act on, never silently dropped;
 //! - **convert** our markdown dialect ([`parse_markdown`]) in migration mode,
-//!   which unwraps what the contract cannot hold and notes each step;
+//!   which unwraps what the contract cannot hold and notes each step, and an
+//!   article's ([`parse_article_markdown`]), whose footnotes, figures and
+//!   veils are nodes and a mark of their own;
 //! - **write and read** the tree in a Yjs document in the shape Tiptap's
 //!   binding uses ([`new_doc`], [`write_nodes`], [`read_doc`]);
 //! - **render** canonical HTML, with or without block ids ([`to_html`]), and
 //!   the markdown export the `content` column holds ([`to_markdown`]);
-//! - **edit** by block id ([`apply_ops`]), merging a write against the tree
-//!   the model read when it says which one that was ([`seen_tree`]), and
-//!   turn one page into another block by block ([`diff_ops`]);
+//! - **edit** by block id ([`apply_ops`]), checked against what reads have
+//!   shown the writer ([`Seen`], built from what each read put in front of
+//!   it, a [`Shown`]), and turn one page into another block by block
+//!   ([`diff_ops`]), or write a writer's markdown over it, leaving alone
+//!   what the markdown shows as it stands ([`revise_ops`]);
 //! - **validate** a tree or a whole document ([`validate`], [`validate_doc`],
 //!   [`check_update`]) so an update outside the contract is refused before
 //!   it is applied or relayed, and **repair** ([`repair()`]) the shapes a
@@ -51,29 +55,41 @@
 //! a node type, a mark or an attribute requires a bump.
 
 pub mod contract;
+#[cfg(feature = "yjs")]
 pub mod diff;
 pub mod ingest;
 pub mod migrate;
 pub mod model;
+#[cfg(feature = "yjs")]
 pub mod ops;
 pub mod render;
+#[cfg(feature = "yjs")]
 pub mod repair;
+#[cfg(feature = "yjs")]
+pub mod seen;
 pub mod table;
 pub mod validate;
+#[cfg(feature = "yjs")]
 pub mod wire;
+#[cfg(feature = "yjs")]
 pub mod ydoc;
 
-use std::collections::HashSet;
 use std::sync::OnceLock;
+#[cfg(feature = "yjs")]
 use yrs::{Doc, ReadTxn, Transact, TransactionMut, XmlFragment};
 
 pub use contract::{Contract, CONTRACT_JSON};
 pub use ingest::{Mode, Outcome, MAX_INPUT_BYTES, MAX_PROBLEMS};
 pub use migrate::{media_kind, MediaKind};
 pub use model::{node_count, Mark, Node, Problem, MAX_DEPTH, MAX_NODES};
-pub use ops::{Applied, Op};
+#[cfg(feature = "yjs")]
+pub use ops::{Applied, Checked, Op, Unseen, Why};
+#[cfg(feature = "yjs")]
+pub use seen::{node_hash, tree_hash, Form, Known, Part, Seen, Shown};
+#[cfg(feature = "yjs")]
 pub use wire::{decode_update, encode_state, MAX_VALUE_DEPTH};
-pub use ydoc::{client_id, new_doc, stamp_version, stamped_version};
+#[cfg(feature = "yjs")]
+pub use ydoc::{client_id, new_doc, stamp_version, stamp_version_as, stamped_version};
 
 /// The compiled-in contract, parsed on first use.
 pub fn contract() -> &'static Contract {
@@ -93,6 +109,15 @@ pub fn parse_html(html: &str, parent: &str) -> Outcome {
 /// Markdown from anyone else goes through [`parse_written_markdown`].
 pub fn parse_markdown(md: &str) -> Outcome {
     migrate::from_markdown(contract(), md)
+}
+
+/// A page its owner wrote in the markdown editor, as blocks: read as that
+/// editor showed it ([`migrate::Dialect::Page`]), raw HTML as its text and
+/// each line of a paragraph a line of its own, so moving the page to
+/// blocks, or putting back a version from before, loses nothing its owner
+/// saw. Suggestions in it stay suggestions, as [`parse_markdown`] keeps them.
+pub fn parse_page_markdown(md: &str) -> Outcome {
+    migrate::from_markdown_as(contract(), md, migrate::Dialect::Page)
 }
 
 /// Markdown a writer sends into a page (a model, an applet, a PDF's text, a
@@ -126,6 +151,178 @@ pub fn parse_pasted_markdown(md: &str) -> Outcome {
     o
 }
 
+/// An article's markdown from its writer (a narrator, the wiki editor) as
+/// blocks, read as an article ([`migrate::Dialect::Article`]): footnotes,
+/// figures and veils become the article's own nodes. Its suggestions, if it
+/// holds any, are written as accepted, as [`parse_written_markdown`] writes
+/// a writer's. A writer's markdown over a whole page goes through
+/// [`parse_draft`], which keeps the page's own suggestions.
+pub fn parse_article_markdown(md: &str) -> Outcome {
+    let mut o = parse_own_article_markdown(md);
+    if accept_proposals(&mut o.nodes) {
+        o.notes.push(Problem::new(
+            "markdown",
+            "wrote its suggestions as accepted: suggestions are made by the page's owner, in the page",
+        ));
+    }
+    o
+}
+
+/// An article's own markdown as blocks (the page as it stands, a version
+/// of it, its edition), read as an article, its suggestions kept as
+/// suggestions: they are its owner's, still to accept or reject.
+pub fn parse_own_article_markdown(md: &str) -> Outcome {
+    migrate::from_markdown_as(contract(), md, migrate::Dialect::Article)
+}
+
+/// An article's markdown as its block page would export it: read as the
+/// article's own ([`parse_own_article_markdown`], its suggestions kept) and
+/// written back ([`to_markdown`]). What a writer records as its edition of
+/// an article that is blocks, and what any text of the article is compared
+/// as, so two spellings of one page (an escape, the order of its
+/// definitions) compare equal, and a sentence under the owner's pending
+/// suggestion reads as that suggestion, never as decided. The problems when
+/// the markdown makes no page.
+pub fn edition_of(md: &str) -> Result<String, Vec<Problem>> {
+    let o = parse_own_article_markdown(md);
+    if !o.errors.is_empty() {
+        return Err(o.errors);
+    }
+    Ok(to_markdown(&o.nodes))
+}
+
+#[cfg(feature = "yjs")]
+/// A writer's markdown over the whole page `current` (a narrator's draft,
+/// the wiki editor's revision, a page a picture was painted into), as
+/// blocks, read as `dialect` ([`migrate::Dialect::Article`] on an article,
+/// [`migrate::Dialect::Written`] on any other page). The writer read the
+/// page's export, so a block that shows one of the page's own as it stands
+/// carries the page's suggestions back as CriticMarkup: those stay
+/// suggestions, and [`revise_ops`] leaves the block alone. Every other
+/// suggestion is the writer's, and is written as accepted, with a note
+/// saying so ([`diff::keep_shown_suggestions`]).
+pub fn parse_draft(current: &[Node], md: &str, dialect: migrate::Dialect) -> Outcome {
+    let mut o = migrate::from_markdown_as(contract(), md, dialect);
+    if o.errors.is_empty() && diff::keep_shown_suggestions(contract(), current, &mut o.nodes, dialect) {
+        o.notes.push(Problem::new(
+            "markdown",
+            "wrote its suggestions as accepted: suggestions are made by the page's owner, in the page",
+        ));
+    }
+    o
+}
+
+/// The most markdown the editor converts at once: a paste, a drop, the
+/// inline writer's output. The editor converts on the page's own thread
+/// (`crates/virtues-document-wasm`), so this bounds how long a paste holds
+/// it; more goes in as the text it is.
+pub const EDITOR_MAX_BYTES: usize = 256 << 10;
+
+/// How the editor reads markdown it converts ([`convert_for_editor`]). The
+/// browser's converter takes it as a number (`crates/virtues-document-wasm`),
+/// which is each variant's discriminant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum EditorMode {
+    /// A writer's markdown ([`parse_written_markdown`]), on any page.
+    Written = 0,
+    /// A person's paste ([`parse_pasted_markdown`]).
+    Paste = 1,
+    /// A writer's markdown into an article ([`parse_article_markdown`]): the
+    /// inline writer on an article writes its footnotes, figures and veils.
+    Article = 2,
+}
+
+impl EditorMode {
+    /// The mode a number names, as the browser's converter passes it.
+    pub fn from_number(n: u32) -> Option<Self> {
+        match n {
+            0 => Some(EditorMode::Written),
+            1 => Some(EditorMode::Paste),
+            2 => Some(EditorMode::Article),
+            _ => None,
+        }
+    }
+}
+
+/// `true` is a paste and `false` a writer's markdown, as
+/// [`convert_for_editor`] took them before an article had a mode of its own.
+impl From<bool> for EditorMode {
+    fn from(paste: bool) -> Self {
+        if paste {
+            EditorMode::Paste
+        } else {
+            EditorMode::Written
+        }
+    }
+}
+
+/// Markdown as the editor inserts it ([`convert_for_editor`]).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct Converted {
+    /// Canonical HTML of the blocks, without block ids: the editor gives
+    /// each block its own as it inserts them.
+    pub html: String,
+    /// What the conversion changed on the way in.
+    pub notes: Vec<Problem>,
+}
+
+/// Why the editor's markdown was not converted ([`convert_for_editor`]).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+#[serde(tag = "refused", rename_all = "kebab-case")]
+pub enum Refused {
+    /// More than one conversion holds: past [`EDITOR_MAX_BYTES`], or more
+    /// parts or nodes than one conversion makes
+    /// ([`migrate::past_one_conversion`]). Less at a time converts.
+    TooLarge,
+    /// What the contract refuses in it, a tree nested too deep say.
+    Problems { problems: Vec<Problem> },
+}
+
+/// Markdown as the blocks the editor inserts for it, as canonical HTML
+/// without block ids. A person's paste ([`EditorMode::Paste`]) is read as
+/// one ([`parse_pasted_markdown`]): a raw tag that is no HTML and
+/// CriticMarkup stay in its text as written. Otherwise it is a writer's
+/// ([`parse_written_markdown`], or [`parse_article_markdown`] into an
+/// article): a suggestion in it comes in accepted, since suggestions are
+/// made in the page, never brought into it.
+///
+/// The one converter: the server's writers convert through the same
+/// functions, and the browser runs this one, compiled to WebAssembly.
+pub fn convert_for_editor(markdown: &str, mode: impl Into<EditorMode>) -> Result<Converted, Refused> {
+    if markdown.len() > EDITOR_MAX_BYTES {
+        return Err(Refused::TooLarge);
+    }
+    let o = match mode.into() {
+        EditorMode::Paste => parse_pasted_markdown(markdown),
+        EditorMode::Written => parse_written_markdown(markdown),
+        EditorMode::Article => parse_article_markdown(markdown),
+    };
+    if o.errors.iter().any(migrate::past_one_conversion) {
+        return Err(Refused::TooLarge);
+    }
+    if !o.errors.is_empty() {
+        return Err(Refused::Problems { problems: o.errors });
+    }
+    Ok(Converted {
+        html: to_html(&o.nodes, false),
+        notes: o.notes,
+    })
+}
+
+/// [`convert_for_editor`]'s answer as the editor reads it, JSON:
+/// `{"html", "notes"}`, `{"refused": "too-large"}` or
+/// `{"refused": "problems", "problems": […]}`. The browser's WebAssembly
+/// build and `document-conformance convert` both answer with this, so the
+/// two are compared byte for byte.
+pub fn convert_for_editor_json(markdown: &str, mode: impl Into<EditorMode>) -> String {
+    let answer = match convert_for_editor(markdown, mode) {
+        Ok(converted) => serde_json::to_string(&converted),
+        Err(refused) => serde_json::to_string(&refused),
+    };
+    answer.expect("a conversion's answer is plain data")
+}
+
 /// Every suggestion in `nodes` decided as accepted: text a suggestion takes
 /// out goes, text it puts in stays, unmarked. Returns whether there was any.
 pub fn accept_proposals(nodes: &mut Vec<Node>) -> bool {
@@ -146,6 +343,7 @@ pub fn accept_proposals(nodes: &mut Vec<Node>) -> bool {
     found
 }
 
+#[cfg(feature = "yjs")]
 /// Put a document's tree back inside the contract when it holds what the
 /// contract refuses ([`validate::refused_in_tree`]): content no update
 /// inside the contract makes, which reached it past [`check_update`]. Each
@@ -204,6 +402,7 @@ pub fn put_back_in_contract(txn: &mut TransactionMut) -> Result<Option<Vec<Probl
     Ok(Some(refused))
 }
 
+#[cfg(feature = "yjs")]
 /// Give every block that carries an id one, unique within `nodes`: for a
 /// new document's tree. Nodes going into a document that already holds
 /// blocks get theirs from [`write_nodes`].
@@ -211,6 +410,7 @@ pub fn ensure_ids(nodes: &mut [Node]) {
     ops::ensure_ids(contract(), nodes);
 }
 
+#[cfg(feature = "yjs")]
 /// Insert `nodes` into `parent` (the page's fragment, or an element in it)
 /// at `index`, every block with an id no other block in the document has:
 /// one a node carries is kept unless a block already has it. Returns the
@@ -230,6 +430,7 @@ pub fn write_nodes<F: XmlFragment>(
     nodes
 }
 
+#[cfg(feature = "yjs")]
 /// A new page document holding `nodes`, block ids filled in and the
 /// contract version stamped.
 pub fn doc_from_nodes(mut nodes: Vec<Node>) -> Doc {
@@ -245,6 +446,7 @@ pub fn doc_from_nodes(mut nodes: Vec<Node>) -> Doc {
     doc
 }
 
+#[cfg(feature = "yjs")]
 /// The page's tree, every attribute filled and marks in contract order.
 pub fn read_doc<T: ReadTxn>(txn: &T) -> Vec<Node> {
     ydoc::read_doc(contract(), txn)
@@ -270,6 +472,7 @@ pub fn to_markdown_with_ids(nodes: &[Node]) -> String {
     render::markdown_with_ids(contract(), nodes)
 }
 
+#[cfg(feature = "yjs")]
 /// Ops that turn the page `current` into `target`, top-level blocks only:
 /// inserts and replaces first, each in target order, deletes last, so the
 /// page holds a block at every step. A block that does not change is not
@@ -278,25 +481,24 @@ pub fn diff_ops(current: &[Node], target: &[Node]) -> Vec<Op> {
     diff::diff_ops(contract(), current, target)
 }
 
-/// What a reader has seen of a page: `base` (its earlier read) with the
-/// blocks whose ids are in `fresh` taken from `current`. The merge base for
-/// its next edit. See [`diff::seen_tree`].
-pub fn seen_tree(base: &[Node], current: &[Node], fresh: &HashSet<String>) -> Vec<Node> {
-    diff::seen_tree(base, current, fresh)
+#[cfg(feature = "yjs")]
+/// Ops that write a writer's markdown, converted as `dialect` reads it
+/// ([`parse_draft`]: `target`, blocks without ids), over the page
+/// `current`: a block the markdown shows as it stands is left alone,
+/// whatever it holds that markdown cannot show, and so is one the export
+/// shows as nothing, unless the write keeps no block of the page; a block
+/// the writer changed a little is written in place, keeping its id. See [`diff::revise_ops`]; a write is refused when
+/// [`suggestions_taken`] names a block.
+pub fn revise_ops(current: &[Node], target: &[Node], dialect: migrate::Dialect) -> Vec<Op> {
+    diff::revise_ops(contract(), current, target, dialect)
 }
 
-/// The block a reader is shown for the block `id` to enter what it has seen:
-/// `id`, or the outermost block around it the base lacks. See
-/// [`diff::shown_for`].
-pub fn shown_for(base: &[Node], current: &[Node], id: &str) -> Option<String> {
-    diff::shown_for(base, current, id)
-}
-
-/// Put the blocks in `keep` back in `seen` as `base` has them, inside fresh
-/// blocks too: what a writer is about to write over stays as it read it.
-/// See [`diff::keep_as_read`].
-pub fn keep_as_read(seen: &mut Vec<Node>, base: &[Node], keep: &HashSet<String>) {
-    diff::keep_as_read(seen, base, keep)
+#[cfg(feature = "yjs")]
+/// The blocks of `current` holding a suggestion its owner has not decided
+/// that `ops` would replace or delete, by id: what a writer may not touch.
+/// See [`diff::suggestions_taken`].
+pub fn suggestions_taken(current: &[Node], ops: &[Op]) -> Vec<String> {
+    diff::suggestions_taken(current, ops)
 }
 
 /// The tags a writer may use, generated from the contract: one line each for
@@ -306,22 +508,33 @@ pub fn tag_guide() -> String {
     contract().tag_guide()
 }
 
+#[cfg(feature = "yjs")]
 /// Apply block-id edits in one transaction. All or nothing: a refused batch
-/// writes nothing and every problem is returned. `base` is the tree the
-/// model read, when it says; see [`ops::apply_in`].
-pub fn apply_ops(doc: &Doc, base: Option<&[Node]>, ops: &[Op]) -> Result<Applied, Vec<Problem>> {
+/// writes nothing and every problem is returned. `base` is what reads have
+/// shown the writer, when it says; see [`ops::apply_in`].
+pub fn apply_ops(doc: &Doc, base: Option<&Seen>, ops: &[Op]) -> Result<Applied, Vec<Problem>> {
     ops::apply(contract(), doc, base, ops)
 }
 
+#[cfg(feature = "yjs")]
 /// [`apply_ops`] inside the caller's transaction.
 pub fn apply_ops_in(
     txn: &mut TransactionMut,
-    base: Option<&[Node]>,
+    base: Option<&Seen>,
     ops: &[Op],
 ) -> Result<Applied, Vec<Problem>> {
     ops::apply_in(contract(), txn, base, ops)
 }
 
+#[cfg(feature = "yjs")]
+/// What [`apply_ops`] refuses of a batch over the page `tree` with `base`,
+/// checked on a copy: the problems, and the blocks behind each one about
+/// what the base has not seen as it stands. See [`ops::check`].
+pub fn check_ops(tree: &[Node], base: &Seen, ops: &[Op]) -> Checked {
+    ops::check(contract(), tree, base, ops)
+}
+
+#[cfg(feature = "yjs")]
 /// [`apply_ops_in`] for the ops [`diff_ops`] makes from a tree of the
 /// server's own (a version put back), which no write's size limit bounds;
 /// see [`ops::apply_own_in`].
@@ -335,12 +548,14 @@ pub fn validate(nodes: &[Node]) -> Vec<Problem> {
     validate::validate(c, nodes, &c.fragment)
 }
 
+#[cfg(feature = "yjs")]
 /// Problems with a whole page document, including what its tree cannot
 /// express (a stray root such as the old `content` text).
 pub fn validate_doc<T: ReadTxn>(txn: &T) -> Vec<Problem> {
     validate::validate_doc(contract(), txn)
 }
 
+#[cfg(feature = "yjs")]
 /// Problems `update` would bring into `doc` that refuse it, checked on a
 /// copy: what the document would hold that it does not hold now, and that
 /// no merge of edits inside the contract can make. See
@@ -349,6 +564,7 @@ pub fn check_update(doc: &Doc, update: &[u8]) -> anyhow::Result<Vec<Problem>> {
     validate::check_update(contract(), doc, update)
 }
 
+#[cfg(feature = "yjs")]
 /// [`check_update`] against a document's full state (`encode_state`), which
 /// owns nothing of the document: for a check run off the thread that holds
 /// it. See [`validate::check_update_on_state`].
@@ -356,6 +572,7 @@ pub fn check_update_on_state(state: &[u8], update: &[u8]) -> anyhow::Result<Vec<
     validate::check_update_on_state(contract(), state, update)
 }
 
+#[cfg(feature = "yjs")]
 /// [`check_update_on_state`] as a page's socket acts on it: an update that
 /// only waits on items the page lacks is neither taken nor refused. See
 /// [`validate::admit_update_on_state`].
@@ -363,12 +580,14 @@ pub fn admit_update_on_state(state: &[u8], update: &[u8]) -> anyhow::Result<vali
     validate::admit_update_on_state(contract(), state, update)
 }
 
+#[cfg(feature = "yjs")]
 /// Whether `update` changes `doc`'s `meta`, checked without the rest of the
 /// contract: for a page still in markdown. See [`validate::changes_meta`].
 pub fn changes_meta(doc: &Doc, update: &[u8]) -> anyhow::Result<bool> {
     validate::changes_meta(doc, update)
 }
 
+#[cfg(feature = "yjs")]
 /// Repair, in `txn`, the shapes a merge of edits inside the contract can
 /// leave outside it (an emptied list, a block id used twice). Returns how
 /// many changes it made. See [`repair::repair`].
@@ -380,6 +599,7 @@ pub fn repair(txn: &mut TransactionMut) -> usize {
 mod tests {
     use super::*;
 
+    #[cfg(feature = "yjs")]
     #[test]
     fn the_public_path_round_trips() {
         let o = parse_html("<h4>Plan</h4><p>One <strong>two</strong></p>", "doc");
@@ -399,7 +619,7 @@ mod tests {
         let id = tree[1].id().unwrap().to_string();
         let applied = apply_ops(
             &doc,
-            Some(&tree),
+            Some(&Seen::of_page(&tree)),
             &[Op::Replace {
                 id: id.clone(),
                 html: "<p>One <em>three</em></p>".into(),
@@ -484,32 +704,35 @@ mod tests {
         assert_eq!(text(&parse_written_markdown("- remember <placeholder> here\n")), "remember here|");
     }
 
-    /// Nothing written under version 1 has shipped, so what this contract
-    /// adds is still version 1. The first release that writes tree pages for
-    /// people freezes it.
+    /// Version 1 shipped (staging.97, mac 1.0.30), and a client deletes
+    /// from the shared document what its schema cannot read: the article's
+    /// footnote, figure and veil are version 2.
     #[test]
-    fn the_contract_is_version_one() {
-        assert_eq!(contract().version, 1);
+    fn the_contract_is_version_two() {
+        assert_eq!(contract().version, 2);
     }
 
     #[test]
     fn the_tag_guide_names_what_a_writer_may_use() {
         assert_eq!(
             tag_guide(),
-            "Blocks: <p> <h1>…<h6> <blockquote> <aside data-tone=\"note|tip|warning\"> <ul> <ol start> <li> \
+            "Blocks: <p> <h1>…<h6> <blockquote> <aside data-tone=\"note|tip|warning\"> <ul> <ol start> <li value> \
              <ul data-type=\"taskList\"> <li data-type=\"taskItem\" data-checked=\"true|false\"> <pre data-language> \
              <hr> <img src alt width> <audio src data-name></audio> <video src data-name></video> \
              <virtues-file src data-name></virtues-file> <table> <tr> <th colspan rowspan align=\"left|center|right\"> \
-             <td colspan rowspan align=\"left|center|right\"> <virtues-applet ref height></virtues-applet>\n\
-             Inline: <br> <virtues-mention to label></virtues-mention>\n\
-             Marks: <a href> <strong> <em> <u> <s> <mark> <code>"
+             <td colspan rowspan align=\"left|center|right\"> <virtues-applet ref height></virtues-applet> \
+             <virtues-figure kind=\"quote|thread|route|picture\" text who ref refs src caption data-style time></virtues-figure>\n\
+             Inline: <br> <virtues-mention to label></virtues-mention> <virtues-footnote label note></virtues-footnote>\n\
+             Marks: <a href> <strong> <em> <u> <s> <mark> <virtues-veil> <code>"
         );
         // Every tag in it is one the model's write path takes.
         let o = parse_html(
             "<p><a href=\"/x\"><strong>a</strong></a><em>b</em><u>c</u><s>d</s><mark>e</mark><code>f</code><br>\
              <virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention></p>\
              <audio src=\"/drive/df_3\" data-name=\"memo.m4a\"></audio><video src=\"/drive/df_2\"></video>\
-             <virtues-file src=\"/drive/df_1\" data-name=\"report.pdf\"></virtues-file>",
+             <virtues-file src=\"/drive/df_1\" data-name=\"report.pdf\"></virtues-file>\
+             <p>Lunch<virtues-footnote label=\"ev-1\" note=\"Message · 12:10 PM\"></virtues-footnote> at <virtues-veil>the Blue Kettle</virtues-veil></p>\
+             <virtues-figure kind=\"picture\" src=\"/drive/df_4\" caption=\"Rain\" data-style=\"watercolor\" time=\"9:00 AM\"></virtues-figure>",
             "doc",
         );
         assert!(o.errors.is_empty(), "{:?}", o.errors);
@@ -547,6 +770,68 @@ mod tests {
         }
         let plain = parse_written_markdown("Lunch with Nick.\n");
         assert_eq!(plain.notes, []);
+    }
+
+    /// The editor's conversion: canonical HTML without block ids, a paste
+    /// read as one, a writer's suggestions accepted, and what it refuses
+    /// named as too large (less at a time converts) or by its problems.
+    #[test]
+    fn the_editor_converts_markdown_to_blocks_without_ids() {
+        let converted = convert_for_editor(
+            "---\ntitle: Trip\n---\n\n## Plan\n\n- [ ] Book seats\n\nLunch with [@Nick](/person/person_1).\n",
+            false,
+        )
+        .unwrap();
+        assert_eq!(
+            converted.html,
+            "<h2>Plan</h2><ul data-type=\"taskList\"><li data-type=\"taskItem\"><p>Book seats</p></li></ul>\
+             <p>Lunch with <virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention>.</p>"
+        );
+        assert!(converted.notes.iter().any(|n| n.message.contains("front matter")), "{:?}", converted.notes);
+        assert!(!converted.html.contains("data-id"));
+
+        let written = convert_for_editor("The {--quick--}{++slow++} fox.\n", false).unwrap();
+        assert_eq!(written.html, "<p>The slow fox.</p>");
+        assert!(written.notes.iter().any(|n| n.message.contains("as accepted")));
+        let pasted = convert_for_editor("- Draft {--old--} with <Login/>\n", true).unwrap();
+        assert_eq!(pasted.html, "<ul><li><p>Draft {--old--} with &lt;Login/&gt;</p></li></ul>");
+
+        // Markdown that only looks like front matter converts, and returns.
+        for md in ["Notes:\n\n ---\nLunch with **Nick** on Friday.\n---\n", " ---\nx\n---"] {
+            assert!(convert_for_editor(md, true).is_ok(), "{md:?}");
+        }
+        // A paste opening with `---`, a line and `---` keeps its words, as a
+        // rule and a heading: a paste is what the person copied, and the
+        // lines left out as front matter vanished from the page unsaid.
+        for (md, kept) in [
+            ("---\nMeeting notes from Tuesday\nAttendees: Nick, David Okafor\n---\n## Agenda\n- one\n- two", "Attendees: Nick, David Okafor"),
+            ("---\ntitle: Trip plan\ntags: [travel]\n---\n\n# Trip\n\n- Book seats", "tags: [travel]"),
+        ] {
+            let pasted = convert_for_editor(md, true).unwrap();
+            assert!(pasted.html.starts_with("<hr>"), "{md:?}: {}", pasted.html);
+            assert!(pasted.html.contains(kept), "{md:?}: {}", pasted.html);
+            assert!(!pasted.notes.iter().any(|n| n.message.contains("front matter")), "{:?}", pasted.notes);
+        }
+
+        let deep = format!("{}Deep.\n", "> ".repeat(150));
+        assert!(matches!(convert_for_editor(&deep, true), Err(Refused::Problems { .. })));
+        let too_large = "a".repeat(EDITOR_MAX_BYTES + 1);
+        assert_eq!(convert_for_editor(&too_large, true), Err(Refused::TooLarge));
+        // Under the size limit, but more nodes than a page holds.
+        let rows = "| a | b |\n| - | - |\n".to_string() + &"| x | y |\n".repeat(20_000);
+        assert!(rows.len() <= EDITOR_MAX_BYTES);
+        assert_eq!(convert_for_editor(&rows, true), Err(Refused::TooLarge));
+    }
+
+    /// What the browser's converter answers with, as JSON
+    /// (`crates/virtues-document-wasm`).
+    #[test]
+    fn a_refusal_reads_as_its_kind() {
+        assert_eq!(serde_json::to_value(Refused::TooLarge).unwrap(), serde_json::json!({ "refused": "too-large" }));
+        assert_eq!(
+            serde_json::to_value(Refused::Problems { problems: vec![Problem::new("doc", "x")] }).unwrap(),
+            serde_json::json!({ "refused": "problems", "problems": [{ "at": "doc", "message": "x" }] })
+        );
     }
 
     #[test]

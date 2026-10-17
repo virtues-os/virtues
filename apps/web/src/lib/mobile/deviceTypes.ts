@@ -27,6 +27,11 @@ export type HealthPermission = "requested" | "not_requested" | "unknown" | "unav
 export interface HealthStatus extends StreamStatus {
 	/** Absent on a native build that predates it. */
 	permission?: HealthPermission;
+	/** Cycle tracking is on: its own opt-in and its own Health sheet. Absent
+	 * on a native build that predates it. */
+	cycle?: boolean;
+	/** `permission`, for the cycle sheet. */
+	cyclePermission?: HealthPermission;
 }
 
 /** The microphone permission, with its two "no"s told apart. */
@@ -76,7 +81,7 @@ export interface AudioStatus {
 	overrideUntil?: number;
 }
 
-export type StreamKey = "location" | "health" | "calendar" | "contacts" | "finance" | "audio";
+export type StreamKey = "location" | "health" | "cycle" | "calendar" | "contacts" | "finance" | "audio";
 
 /** Minutes since midnight → a short local time, "10:00 PM". */
 export function fmtClock(m: number): string {

@@ -9,9 +9,8 @@
 //! the old model until then. Once the swap is done, [`settle_finished_change`]
 //! moves the new model onto `virtues-embed` and :18181 and removes the old one.
 //!
-//! The reranker goes too: it made results worse on every eval we ran
-//! (`search::query::rerank_gap_threshold`), so a box that hasn't opted in
-//! (`VIRTUES_RERANK_GAP`) stops running it.
+//! Older installs also ran a reranker sidecar. Search no longer reranks (see
+//! `search::query`), so the update removes it and gets its memory back.
 //!
 //! A box on its own server (`manual`) chose its models and maintains them, so
 //! nothing here touches it, not even when that server stops answering: it may
@@ -32,14 +31,14 @@ use sha2::{Digest, Sha256};
 
 use super::ui;
 use crate::box_env;
-use crate::inference_report::{
-    EMBED_DOC_PROMPT, EMBED_GGUF, EMBED_GGUF_SHA256, EMBED_QUERY_PROMPT, RERANK_GGUF,
-};
+use crate::inference_report::{EMBED_DOC_PROMPT, EMBED_GGUF, EMBED_GGUF_SHA256, EMBED_QUERY_PROMPT};
 
 const UNITS: &str = "/etc/systemd/system";
 const EMBED: &str = "virtues-embed";
 const NEXT: &str = "virtues-embed-next";
 const RERANK: &str = "virtues-rerank";
+/// The model the retired reranker sidecar loaded.
+const RERANK_GGUF: &str = "gte-reranker-modernbert-base-Q8_0.gguf";
 const EMBED_URL: &str = "http://127.0.0.1:18181";
 const NEXT_URL: &str = "http://127.0.0.1:18183";
 
@@ -128,14 +127,10 @@ fn remove_unit(unit: &str) {
     systemctl(&["daemon-reload"]);
 }
 
-/// The reranker made results worse on every eval we ran, so search stopped
-/// calling it unless the owner opts in. Stop running it too, and get its
-/// memory back.
+/// Remove an older install's reranker sidecar, its model and its setting.
+/// Search no longer calls one.
 fn retire_reranker() {
-    let opted_in = box_env::get("VIRTUES_RERANK_GAP")
-        .and_then(|g| g.trim().parse::<f64>().ok())
-        .is_some_and(|g| g > 0.0);
-    if opted_in || !unit_path(RERANK).exists() {
+    if !unit_path(RERANK).exists() {
         return;
     }
     ui::step("retiring the reranker (search no longer uses it)…");

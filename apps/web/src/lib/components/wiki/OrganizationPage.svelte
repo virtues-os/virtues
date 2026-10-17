@@ -15,6 +15,7 @@
 	import AliasEditor from "./AliasEditor.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import { updateOrganization } from "$lib/wiki/api";
+	import { reloadApp } from "$lib/reload";
 
 	interface Props {
 		/** The wire shape. See PersonPage for why the converter is gone. */
@@ -120,7 +121,7 @@
 									subjectType="organization"
 					subjectId={page.id}
 					maintained={page.article_maintained}
-					onChanged={() => location.reload()}
+					onChanged={() => reloadApp()}
 				/>
 			</section>
 

@@ -11,6 +11,27 @@ private let iso: ISO8601DateFormatter = {
   return f
 }()
 
+/// The phone's own calendar day. Cycle samples are all-day, and only the phone
+/// knows which day a midnight belongs to; the box cannot recover it from UTC.
+private let localDay: DateFormatter = {
+  let f = DateFormatter()
+  f.calendar = Calendar(identifier: .gregorian)
+  f.locale = Locale(identifier: "en_US_POSIX")
+  f.timeZone = .current
+  f.dateFormat = "yyyy-MM-dd"
+  return f
+}()
+
+/// A cycle-log category type and how its values read on the box. `fixed` is
+/// the value for a type whose samples carry none of their own (Apple's
+/// deviation flags); a type with neither sends no value (spotting).
+private struct CycleType {
+  let id: HKCategoryTypeIdentifier
+  let kind: String
+  var values: [Int: String] = [:]
+  var fixed: String? = nil
+}
+
 /// One quantity metric we read, with its box `metric_type` + unit.
 private struct QType {
   let id: HKQuantityTypeIdentifier
@@ -37,6 +58,9 @@ public final class HealthCollector {
   /// Page size for the anchored backfill.
   private let pageLimit = 2000
   private let enabledKey = "virtues.health.enabled"
+  /// Cycle tracking is its own opt-in with its own Health sheet, never part
+  /// of the general one.
+  private let cycleEnabledKey = "virtues.health.cycle.enabled"
 
   private init() {}
 
@@ -49,6 +73,9 @@ public final class HealthCollector {
   /// store), so this flag is all there is to gate collection on.
   public func optedIn() -> Bool { UserDefaults.standard.bool(forKey: enabledKey) }
 
+  /// The person turned on cycle tracking. Not a grant, as with `optedIn`.
+  public func cycleOptedIn() -> Bool { UserDefaults.standard.bool(forKey: cycleEnabledKey) }
+
   /// Whether the Health sheet has been shown for every type we read, which is
   /// the most iOS will say: `requested`, `not_requested`, `unavailable` (no
   /// HealthKit on this device) or `unknown` (iOS could not tell). `requested`
@@ -56,6 +83,18 @@ public final class HealthCollector {
   public func permission(_ done: @escaping (String) -> Void) {
     guard isAvailable() else { done("unavailable"); return }
     store.getRequestStatusForAuthorization(toShare: [], read: readTypes()) { status, _ in
+      switch status {
+      case .unnecessary: done("requested")
+      case .shouldRequest: done("not_requested")
+      default: done("unknown")
+      }
+    }
+  }
+
+  /// The same as `permission`, for the cycle sheet.
+  public func cyclePermission(_ done: @escaping (String) -> Void) {
+    guard isAvailable() else { done("unavailable"); return }
+    store.getRequestStatusForAuthorization(toShare: [], read: cycleReadTypes()) { status, _ in
       switch status {
       case .unnecessary: done("requested")
       case .shouldRequest: done("not_requested")
@@ -85,6 +124,88 @@ public final class HealthCollector {
     return s
   }
 
+  // MARK: - Cycle types
+  //
+  // Never requested: sexual activity, pregnancy and progesterone tests, and
+  // (until their own switch) pregnancy and lactation. Not asking is what keeps
+  // them on the phone. See agents/plan/cycle-tracking-plan.md.
+
+  private func cycleTypes() -> [CycleType] {
+    var t = [
+      CycleType(id: .menstrualFlow, kind: "flow",
+                values: [1: "unspecified", 2: "light", 3: "medium", 4: "heavy", 5: "none"]),
+      CycleType(id: .intermenstrualBleeding, kind: "spotting"),
+      CycleType(id: .ovulationTestResult, kind: "ovulation_test",
+                values: [1: "negative", 2: "lh_surge", 3: "indeterminate", 4: "estrogen_surge"]),
+      CycleType(id: .cervicalMucusQuality, kind: "cervical_mucus",
+                values: [1: "dry", 2: "sticky", 3: "creamy", 4: "watery", 5: "egg_white"]),
+    ]
+    if #available(iOS 14.3, *) {
+      t.append(CycleType(id: .contraceptive, kind: "contraceptive",
+                         values: [1: "unspecified", 2: "implant", 3: "injection", 4: "iud",
+                                  5: "ring", 6: "oral", 7: "patch"]))
+    }
+    if #available(iOS 16.0, *) {
+      t.append(CycleType(id: .irregularMenstrualCycles, kind: "deviation", fixed: "irregular"))
+      t.append(CycleType(id: .infrequentMenstrualCycles, kind: "deviation", fixed: "infrequent"))
+      t.append(CycleType(id: .prolongedMenstrualPeriods, kind: "deviation", fixed: "prolonged"))
+      t.append(CycleType(id: .persistentIntermenstrualBleeding, kind: "deviation",
+                         fixed: "persistent_spotting"))
+    }
+    return t
+  }
+
+  /// Every HealthKit symptom type, by the name the box stores.
+  private let symptomTypes: [(HKCategoryTypeIdentifier, String)] = [
+    (.abdominalCramps, "abdominal_cramps"), (.acne, "acne"),
+    (.appetiteChanges, "appetite_changes"), (.bladderIncontinence, "bladder_incontinence"),
+    (.bloating, "bloating"), (.breastPain, "breast_pain"),
+    (.chestTightnessOrPain, "chest_tightness_or_pain"), (.chills, "chills"),
+    (.constipation, "constipation"), (.coughing, "coughing"), (.diarrhea, "diarrhea"),
+    (.dizziness, "dizziness"), (.drySkin, "dry_skin"), (.fainting, "fainting"),
+    (.fatigue, "fatigue"), (.fever, "fever"), (.generalizedBodyAche, "generalized_body_ache"),
+    (.hairLoss, "hair_loss"), (.headache, "headache"), (.heartburn, "heartburn"),
+    (.hotFlashes, "hot_flashes"), (.lossOfSmell, "loss_of_smell"),
+    (.lossOfTaste, "loss_of_taste"), (.lowerBackPain, "lower_back_pain"),
+    (.memoryLapse, "memory_lapse"), (.moodChanges, "mood_changes"), (.nausea, "nausea"),
+    (.nightSweats, "night_sweats"), (.pelvicPain, "pelvic_pain"),
+    (.rapidPoundingOrFlutteringHeartbeat, "rapid_pounding_or_fluttering_heartbeat"),
+    (.runnyNose, "runny_nose"), (.shortnessOfBreath, "shortness_of_breath"),
+    (.sinusCongestion, "sinus_congestion"), (.skippedHeartbeat, "skipped_heartbeat"),
+    (.sleepChanges, "sleep_changes"), (.soreThroat, "sore_throat"),
+    (.vaginalDryness, "vaginal_dryness"), (.vomiting, "vomiting"), (.wheezing, "wheezing"),
+  ]
+
+  /// A symptom's value names, which follow its HealthKit enum. Zero means
+  /// "unspecified" for severity but "present" for presence, so the raw int
+  /// never travels alone.
+  private func symptomValue(_ name: String, _ raw: Int) -> String? {
+    switch name {
+    case "mood_changes", "sleep_changes":
+      return [0: "present", 1: "not_present"][raw]
+    case "appetite_changes":
+      return [0: "unspecified", 1: "no_change", 2: "decreased", 3: "increased"][raw]
+    default:
+      return [0: "unspecified", 1: "not_present", 2: "mild", 3: "moderate", 4: "severe"][raw]
+    }
+  }
+
+  private func cycleReadTypes() -> Set<HKObjectType> {
+    var s = Set<HKObjectType>()
+    for c in cycleTypes() {
+      if let t = HKObjectType.categoryType(forIdentifier: c.id) { s.insert(t) }
+    }
+    for (id, _) in symptomTypes {
+      if let t = HKObjectType.categoryType(forIdentifier: id) { s.insert(t) }
+    }
+    if let t = HKObjectType.quantityType(forIdentifier: .basalBodyTemperature) { s.insert(t) }
+    if #available(iOS 16.0, *),
+      let t = HKObjectType.quantityType(forIdentifier: .appleSleepingWristTemperature) {
+      s.insert(t)
+    }
+    return s
+  }
+
   // MARK: - Lifecycle
 
   /// Explicit opt-in: prompt for access, then backfill + start collecting.
@@ -99,9 +220,26 @@ public final class HealthCollector {
     }
   }
 
+  /// Cycle tracking's own opt-in: its own Health sheet, then a backfill of
+  /// the whole history for these types. The app turns this on only for a box
+  /// that can store them (`api_version` 5); a box below that would drop them
+  /// while the anchors move past.
+  public func enableCycle(_ completion: @escaping (Bool) -> Void) {
+    guard isAvailable() else { completion(false); return }
+    store.requestAuthorization(toShare: nil, read: cycleReadTypes()) { [weak self] ok, _ in
+      DispatchQueue.main.async {
+        guard let self = self else { return }
+        if ok { UserDefaults.standard.set(true, forKey: self.cycleEnabledKey) }
+        self.start()
+        self.collectAll()
+        completion(ok)
+      }
+    }
+  }
+
   /// Launch auto-resume: start collecting only if already opted in; no prompt.
   public func resume() {
-    guard isAvailable(), optedIn() else { return }
+    guard isAvailable(), optedIn() || cycleOptedIn() else { return }
     start()
   }
 
@@ -136,9 +274,11 @@ public final class HealthCollector {
   /// Fetch new samples for every type (safe to call from any wake). No-op if
   /// not authorized.
   public func collectAll() {
-    guard optedIn() else { return }
-    for qt in quantityTypes { collectQuantity(qt) }
-    collectSleep()
+    if optedIn() {
+      for qt in quantityTypes { collectQuantity(qt) }
+      collectSleep()
+    }
+    if cycleOptedIn() { collectCycle() }
   }
 
   // MARK: - Collection
@@ -193,6 +333,116 @@ public final class HealthCollector {
     }
   }
 
+  // MARK: - Cycle collection
+
+  private func collectCycle() {
+    for c in cycleTypes() {
+      guard let type = HKObjectType.categoryType(forIdentifier: c.id) else { continue }
+      runAnchored(type: type, fullHistory: true) { [weak self] samples -> Bool in
+        guard let self = self else { return false }
+        var allEnqueued = true
+        for s in samples {
+          guard let cs = s as? HKCategorySample else { continue }
+          var rec = self.daySample(cs, metric: "cycle")
+          rec["kind"] = c.kind
+          if let v = c.fixed ?? c.values[cs.value] {
+            rec["value"] = v
+          } else if !c.values.isEmpty {
+            // A value this build does not know (a newer iOS case). Skipping is
+            // safe for the anchor: the box would refuse it anyway.
+            NSLog("[Health] unknown %@ value %d, skipped", c.kind, cs.value)
+            continue
+          }
+          if c.kind == "flow",
+            let start = cs.metadata?[HKMetadataKeyMenstrualCycleStart] as? NSNumber {
+            rec["is_cycle_start"] = start.boolValue
+          }
+          if !self.enqueue(rec) { allEnqueued = false }
+        }
+        return allEnqueued
+      }
+    }
+
+    for (id, name) in symptomTypes {
+      guard let type = HKObjectType.categoryType(forIdentifier: id) else { continue }
+      runAnchored(type: type, fullHistory: true) { [weak self] samples -> Bool in
+        guard let self = self else { return false }
+        var allEnqueued = true
+        for s in samples {
+          guard let cs = s as? HKCategorySample,
+            let value = self.symptomValue(name, cs.value)
+          else { continue }
+          var rec = self.daySample(cs, metric: "symptom")
+          rec["symptom"] = name
+          rec["value"] = value
+          if !self.enqueue(rec) { allEnqueued = false }
+        }
+        return allEnqueued
+      }
+    }
+
+    if let type = HKObjectType.quantityType(forIdentifier: .basalBodyTemperature) {
+      runAnchored(type: type, fullHistory: true) { [weak self] samples -> Bool in
+        guard let self = self else { return false }
+        var allEnqueued = true
+        for s in samples {
+          guard let q = s as? HKQuantitySample else { continue }
+          var rec = self.daySample(q, metric: "cycle")
+          rec["kind"] = "basal_temperature"
+          rec["temperature_celsius"] = q.quantity.doubleValue(for: .degreeCelsius())
+          if !self.enqueue(rec) { allEnqueued = false }
+        }
+        return allEnqueued
+      }
+    }
+
+    if #available(iOS 16.0, *),
+      let type = HKObjectType.quantityType(forIdentifier: .appleSleepingWristTemperature) {
+      runAnchored(type: type, fullHistory: true) { [weak self] samples -> Bool in
+        guard let self = self else { return false }
+        var allEnqueued = true
+        for s in samples {
+          guard let q = s as? HKQuantitySample else { continue }
+          // The night a reading belongs to is the day it began, counting a
+          // start before noon as the night before. That is a definition, not
+          // an inference: a night that starts after midnight is still last
+          // night.
+          let night = q.startDate.addingTimeInterval(-12 * 3600)
+          if !self.enqueue([
+            "id": q.uuid.uuidString,
+            "metric_type": "wrist_temperature",
+            "temperature_celsius": q.quantity.doubleValue(for: .degreeCelsius()),
+            "local_start_date": localDay.string(from: night),
+            "timestamp": iso.string(from: q.startDate),
+            "end_timestamp": iso.string(from: q.endDate),
+            "raw_data": ["hk_type": type.identifier],
+          ]) { allEnqueued = false }
+        }
+        return allEnqueued
+      }
+    }
+  }
+
+  /// The fields every cycle and symptom record shares: the instants, and the
+  /// phone's calendar days. An all-day sample ends at the next midnight, so
+  /// its last day is the one just before its end.
+  private func daySample(_ s: HKSample, metric: String) -> [String: Any] {
+    let last = s.endDate > s.startDate ? s.endDate.addingTimeInterval(-1) : s.startDate
+    // Only JSON types in here: a boxed nil makes JSONSerialization raise an
+    // Objective-C exception, which no `try?` catches.
+    var raw: [String: Any] = ["hk_type": s.sampleType.identifier]
+    if let c = s as? HKCategorySample { raw["hk_value"] = c.value }
+    return [
+      "id": s.uuid.uuidString,
+      "metric_type": metric,
+      "local_start_date": localDay.string(from: s.startDate),
+      "local_end_date": localDay.string(from: last),
+      "timestamp": iso.string(from: s.startDate),
+      "end_timestamp": iso.string(from: s.endDate),
+      "raw_data": raw,
+    ]
+  }
+
   /// Run an anchored query and page through history. Persists the anchor after
   /// each page (over-fetch after a crash is deduped at the box), so an
   /// interrupted 3-year backfill resumes instead of restarting.
@@ -206,17 +456,28 @@ public final class HealthCollector {
   /// sent sleep in a shape the box dropped while the anchor advanced through
   /// it, and recovery required shipping code). Paging also stops on failure —
   /// pulling more history we cannot store just widens the hole.
-  private func runAnchored(type: HKSampleType, handle: @escaping ([HKSample]) -> Bool) {
+  private func runAnchored(
+    type: HKSampleType, fullHistory: Bool = false, handle: @escaping ([HKSample]) -> Bool
+  ) {
     let key = "virtues.health.anchor." + type.identifier
-    let start = Calendar.current.date(byAdding: .year, value: -backfillYears, to: Date())
-    let predicate = HKQuery.predicateForSamples(withStart: start, end: nil, options: [])
+    // Cycle types take the whole history: years of cycles are what make a
+    // person's own pattern, and the rows are small.
+    let predicate: NSPredicate? = fullHistory
+      ? nil
+      : HKQuery.predicateForSamples(
+          withStart: Calendar.current.date(byAdding: .year, value: -backfillYears, to: Date()),
+          end: nil, options: [])
 
     let query = HKAnchoredObjectQuery(
       type: type, predicate: predicate, anchor: loadAnchor(key), limit: pageLimit
-    ) { [weak self] _, samples, _, newAnchor, _ in
+    ) { [weak self] _, samples, deleted, newAnchor, _ in
       guard let self = self else { return }
       let samples = samples ?? []
-      let durable = handle(samples)
+      let deleted = deleted ?? []
+      // Deletions ride the same anchor as samples, so they count toward
+      // whether the page is durable. Without them a sample deleted in Health
+      // stays on the box for good.
+      let durable = handle(samples) && self.enqueueDeletions(deleted)
       guard durable else {
         NSLog("[Health] enqueue failed for %@ — anchor HELD, will retry this page",
               type.identifier)
@@ -224,11 +485,29 @@ public final class HealthCollector {
       }
       if let a = newAnchor { self.saveAnchor(key, a) }
       // A full page means there may be more history — page again.
-      if samples.count >= self.pageLimit {
-        self.runAnchored(type: type, handle: handle)
+      if samples.count + deleted.count >= self.pageLimit {
+        self.runAnchored(type: type, fullHistory: fullHistory, handle: handle)
       }
     }
     store.execute(query)
+  }
+
+  /// Tell the box which samples were deleted in Health. The box tombstones
+  /// the row on whichever table holds it. The record's own `id` cannot be the
+  /// sample's: the outbox ignores an id it has already queued, and the sample
+  /// may still be in it.
+  private func enqueueDeletions(_ deleted: [HKDeletedObject]) -> Bool {
+    var allEnqueued = true
+    for d in deleted {
+      let uuid = d.uuid.uuidString
+      if !enqueue([
+        "id": "deleted:" + uuid,
+        "metric_type": "deleted",
+        "deleted_id": uuid,
+        "timestamp": iso.string(from: Date()),
+      ]) { allEnqueued = false }
+    }
+    return allEnqueued
   }
 
   /// Hand one record to the outbox. Returns whether it was actually taken —

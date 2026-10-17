@@ -57,9 +57,12 @@ TEST_MOD = re.compile(r'#\[cfg\(test\)\]\s*(?:pub\s+)?mod\b')
 INSERT = re.compile(r'INSERT INTO\s+(?P<table>[a-z_]+)[\s\\]*\((?P<cols>[^)]*)\)', re.S | re.I)
 UPDATE_HEAD = re.compile(r'UPDATE\s+(?P<table>[a-z_]+)\b', re.I)
 ASSIGN = re.compile(r'([a-z_]+)\s*=')
-# build_batch_insert_query with either an inline &[..] or a named array var.
+# build_batch_insert_query with either an inline &[..] or a named array var,
+# borrowed at the call (`&cols`) or already a slice (`columns`, declared
+# `let columns: &[&str] = &[..]`). Missing the second shape hid the message
+# and transaction writers, which only the demo seed SQL had been covering.
 BATCH = re.compile(
-    r'build_batch_(?:insert|upsert)_query\(\s*"(?P<table>[a-z_]+)"\s*,\s*&(?:\[(?P<inline>.*?)\]|(?P<var>[a-z_]+))',
+    r'build_batch_(?:insert|upsert)_query\(\s*"(?P<table>[a-z_]+)"\s*,\s*(?:&\[(?P<inline>.*?)\]|&?(?P<var>[a-z_]+))',
     re.S,
 )
 

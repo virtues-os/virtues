@@ -895,8 +895,20 @@ mod tests {
         use std::collections::BTreeSet;
 
         /// In the registry, deliberately NOT in the SQL catalog. Reason required.
-        /// (Empty since R4 removed data_activity_listening with its table.)
-        const REGISTRY_ONLY: &[(&str, &str)] = &[];
+        const REGISTRY_ONLY: &[(&str, &str)] = &[
+            (
+                "data_health_cycle_log",
+                "ModelAccess::OwnerOptIn: hidden from the model until the owner turns access on",
+            ),
+            (
+                "data_health_symptom",
+                "ModelAccess::OwnerOptIn: hidden from the model until the owner turns access on",
+            ),
+            (
+                "data_health_wrist_temperature",
+                "ModelAccess::OwnerOptIn: hidden from the model until the owner turns access on",
+            ),
+        ];
         /// In the SQL catalog, deliberately NOT in the registry. Reason required.
         const CATALOG_ONLY: &[(&str, &str)] = &[
             (

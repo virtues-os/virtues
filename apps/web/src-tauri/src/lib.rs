@@ -70,6 +70,8 @@ pub mod web_bundle;
 /// | 11 | `browser_pane_open` / `_bounds` / `_go` / `_agent` (desktop; the Mac
 /// |   | implements them): the Browser is a pane beside the app's view, and on
 /// |   | the Mac `browser_login` opens there instead of a window of its own |
+/// | 12 | `start_dictation` (desktop; the Mac implements it): the composer's
+/// |   | mic button starts the system's dictation in the focused field |
 ///
 /// `bundle-contract.json` requires 9. No shell below it has ever run a box
 /// bundle (they all boot white), so requiring it strands no client: they keep
@@ -77,7 +79,7 @@ pub mod web_bundle;
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 11;
+pub const COMMAND_SURFACE_VERSION: u32 = 12;
 
 /// What the native shell knows about itself.
 ///
@@ -551,9 +553,9 @@ pub fn run() {
         if let Err(e) = app.finance().resume() {
           eprintln!("[finance] resume failed: {e}");
         }
-        // Audio: resume recording only if already authorized + left enabled. The
-        // recording session doubles as the background keepalive; a significant-
-        // location wake also calls this path so it resurrects after suspension.
+        // Audio: resume recording only if already authorized + left enabled. A
+        // relaunch the OS made in the background (a location event) cannot
+        // start the mic, so there this only starts the gap nudge's clock.
         if let Err(e) = app.audio().resume() {
           eprintln!("[audio] resume failed: {e}");
         }

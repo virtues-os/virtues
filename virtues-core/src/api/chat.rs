@@ -605,6 +605,7 @@ pub enum StreamEvent {
         model: String,
         status: String,
         tokens: u32,
+        step: Option<crate::tools::WorkerStep>,
     },
 
     // A local turn's own measurements, for the line under the reply.
@@ -637,6 +638,7 @@ impl From<crate::tools::SubagentUpdate> for StreamEvent {
             model: update.model,
             status: update.status.as_str().to_string(),
             tokens: update.tokens,
+            step: update.step,
         }
     }
 }
@@ -687,6 +689,9 @@ struct SubagentStatusData {
     /// "thinking" | "done" | "failed"
     status: String,
     tokens: u32,
+    /// Set only by the browsing agent: the call it is making now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    step: Option<crate::tools::WorkerStep>,
 }
 
 /// Chat error response
@@ -790,7 +795,7 @@ pub(crate) fn serialize_event(event: &StreamEvent) -> String {
             true,
         ),
         // Transient: the live panel only.
-        StreamEvent::SubagentStatus { dispatch_id, subagent_id, title, model, status, tokens } => data_event(
+        StreamEvent::SubagentStatus { dispatch_id, subagent_id, title, model, status, tokens, step } => data_event(
             "data-subagent",
             None,
             SubagentStatusData {
@@ -800,6 +805,7 @@ pub(crate) fn serialize_event(event: &StreamEvent) -> String {
                 model: model.clone(),
                 status: status.clone(),
                 tokens: *tokens,
+                step: step.clone(),
             },
             true,
         ),
@@ -1185,7 +1191,8 @@ pub async fn next_turn_preview(
     };
     let history = load_saved_history(pool, chat_id).await?;
     let active_page = match request.active_page.as_ref() {
-        Some(ctx) => resolve_active_page(pool, yjs, ctx).await,
+        // A preview is not a turn: its read of the page serves no edit.
+        Some(ctx) => resolve_active_page(pool, yjs, ctx, None).await,
         None => None,
     };
     let TurnRequest { system, messages } = assemble_turn_request(
@@ -1459,15 +1466,16 @@ async fn build_system_prompt_blocks(
 /// The open page, as the prompt shows it. A markdown page keeps the text
 /// the client sent: an older box reads only that, so the app still sends it.
 /// A block page is read here, from the live tree, whatever the client sent,
-/// and the blocks it lists, and only those, are kept as a read base, so the
-/// model can edit them from the prompt with no read of its own, and a block
-/// past what the prompt holds is read before it is replaced. A block listed
-/// by id alone, too long to show, is in the base as it stands. An unchanged
-/// page keeps the same base each turn.
+/// and what it shows, and only that, is kept as a read base, so the model
+/// can edit those blocks from the prompt with no read of its own, and a
+/// block past what the prompt holds is read before it is replaced. A block
+/// listed by id alone as too long for any read is taken whole only by an op
+/// naming it. An unchanged page keeps the same base each turn.
 async fn resolve_active_page(
     pool: &PgPool,
     yjs: &YjsState,
     ctx: &ActivePageContext,
+    turn: Option<&str>,
 ) -> Option<ActivePage> {
     let id = ctx.page_id.clone()?;
     let title = ctx.page_title.clone().unwrap_or_else(|| "Untitled".to_string());
@@ -1491,8 +1499,8 @@ async fn resolve_active_page(
         }
     };
     let html = virtues_document::to_html(&tree, true);
-    let (seen, long) = if html.chars().count() <= MAX_PAGE_CONTENT_CHARS {
-        (crate::api::page_reads::ReadBase::of(tree), None)
+    let (seen, shown, long) = if html.chars().count() <= MAX_PAGE_CONTENT_CHARS {
+        (virtues_document::Seen::of_page(&tree), tree.clone(), None)
     } else {
         let window = crate::api::page_reads::markdown_window(
             &tree,
@@ -1501,17 +1509,27 @@ async fn resolve_active_page(
             |s| s.chars().count(),
             crate::tools::fits_one_read,
         );
-        (window.read_base(), Some((window.markdown, window.next)))
+        let mut seen = virtues_document::Seen::default();
+        seen.learn(&window.shown, &tree, &Default::default());
+        let shown = window
+            .shown
+            .parts
+            .iter()
+            .filter_map(|p| match p {
+                virtues_document::Part::Whole(n) => Some(n.clone()),
+                _ => None,
+            })
+            .collect();
+        (seen, shown, Some((window.shown.text(), window.next)))
     };
-    let shown = &seen.tree;
-    let base = match crate::api::page_reads::keep_read_base(pool, &id, &seen).await {
+    let base = match crate::api::page_reads::keep_read_base(pool, &id, &seen, &tree, turn).await {
         Ok(base) => base,
         Err(e) => {
             tracing::warn!(page = %id, error = %e, "open block page's base not kept; the model reads it instead");
             return Some(ActivePage::Unreadable { id, title });
         }
     };
-    let suggestions = crate::tools::holds_proposal(shown);
+    let suggestions = crate::tools::holds_proposal(&shown);
     let view = match long {
         None => TreeView::Html { html, base },
         Some((markdown, next)) => TreeView::Long { markdown, base, next },
@@ -1537,7 +1555,7 @@ pub(crate) async fn open_page_section(
     yjs: &YjsState,
     ctx: &ActivePageContext,
 ) -> Option<String> {
-    let page = resolve_active_page(pool, yjs, ctx).await?;
+    let page = resolve_active_page(pool, yjs, ctx, None).await?;
     build_active_page_block(Some(&page))
 }
 
@@ -1828,8 +1846,11 @@ async fn chat_handler_inner(
     // replays. The Context panel's preview builds the same thing.
     let t_history = ms(started);
     let prompt_started = std::time::Instant::now();
+    // This turn, for what it reads of a page: a read base made in it serves
+    // only it (`page_reads::serves_turn`), the open page's included.
+    let turn_key = format!("turn_{}", generate_id());
     let active_page = match request.active_page.as_ref() {
-        Some(ctx) => resolve_active_page(&pool, &yjs_state, ctx).await,
+        Some(ctx) => resolve_active_page(&pool, &yjs_state, ctx, Some(&turn_key)).await,
         None => None,
     };
     let TurnRequest { system, messages: api_messages } = assemble_turn_request(
@@ -1886,6 +1907,7 @@ async fn chat_handler_inner(
         turn_token.clone(),
         ghost_permissions,
         turn_started_at,
+        turn_key,
     );
     spawn_turn_driver(agent_stream, turn.clone(), turn_token, live_turns, cancel_state, chat_id_str);
 
@@ -2333,6 +2355,8 @@ fn create_agent_stream(
     ghost_permissions: crate::api::chat_permissions::GhostPermissions,
     // When the box received the request, before history and compaction.
     started_at: crate::types::Timestamp,
+    // This turn, as the handler named it for the open page's base.
+    turn_key: String,
 ) -> Pin<Box<dyn Stream<Item = String> + Send>> {
     let chat_id = request.chat_id.clone();
     // Copied out for the stream block below, which reads `request` for a
@@ -2388,6 +2412,7 @@ fn create_agent_stream(
             ghost_permissions: Some(ghost_permissions.clone()),
             sudo: mode.is_sudo(),
             timezone: request.timezone.clone(),
+            turn: Some(turn_key),
             console: false,
         };
 
@@ -2450,9 +2475,10 @@ fn create_agent_stream(
         yield ("[DONE]".to_string());
 
         let usage = recorder.usage();
+        let delegated = recorder.delegated_usage().to_vec();
         let subject = recorder.subject(was_cancelled, was_unattended);
         let message = recorder.into_message(&model, agent_id, subject);
-        persist_turn(&pool, &chat_id, &model, mode.wire_name(), temporary, message, usage, Some(started_at)).await;
+        persist_turn(&pool, &chat_id, &model, mode.wire_name(), temporary, message, usage, &delegated, Some(started_at)).await;
 
         // Clean up cancellation token when stream ends
         cancel_state.remove(&chat_id, &cancel_token);
@@ -2471,6 +2497,7 @@ async fn persist_turn(
     temporary: bool,
     message: Option<ChatMessage>,
     usage: TurnUsage,
+    delegated: &[crate::agent::DelegatedUsage],
     started_at: Option<crate::types::Timestamp>,
 ) {
     if let Some(assistant_message) = message {
@@ -2529,17 +2556,8 @@ async fn persist_turn(
     // recorded in app_ai_calls below, and the one the wallet was actually
     // debited for. No estimating. Cache writes are 0 on every turn today
     // because nothing reports one, not because this assumes it.
-    let usage_data = UsageData {
-        input_tokens: usage.input_tokens as i64,
-        output_tokens: usage.output_tokens as i64,
-        reasoning_tokens: usage.reasoning_tokens as i64,
-        cache_read_tokens: usage.cache_read_tokens as i64,
-        cache_write_tokens: usage.cache_write_tokens as i64,
-        cost_micros: Some(usage.cost_micros),
-    };
-
-    // Read once and shared with the cost log below, so the two cannot
-    // disagree about which route paid for this turn.
+    // Read once and shared by every row below, so the usage table and the
+    // cost log cannot disagree about which route paid for this turn.
     //
     // The CHECKED form, because this value decides whether the box prices
     // the turn from its own catalog: a swallowed error would read as "not
@@ -2562,45 +2580,98 @@ async fn persist_turn(
             true
         }
     };
-    if temporary {
-        // Ghost: app_chat_usage keys on a chat row that does not exist.
-        // app_ai_calls below still records cost and counts, no content.
-    } else if let Err(e) = record_chat_usage(pool, chat_id.to_string(), model, usage_data, byo).await {
-        tracing::warn!(
-            chat_id = %chat_id,
-            error = %e,
-            "Failed to record chat usage"
-        );
-    }
-
-    // Box-local per-call cost log (authoritative gateway cost) for the
-    // Usage/Telemetry tabs. Best-effort — never break the response.
-    if let Err(e) = crate::api::ai_calls::record_ai_call(
-        pool,
-        &crate::api::ai_calls::AiCall {
-            // Real feature bucket: the mode's wire name (every mode shares
-            // this handler), so spend attributes correctly.
-            feature: agent_mode.to_string(),
-            model: model.to_string(),
-            prompt_tokens: usage.input_tokens as i64,
-            completion_tokens: usage.output_tokens as i64,
-            reasoning_tokens: usage.reasoning_tokens as i64,
-            cost_micros: usage.cost_micros,
-            // `stream()` diverts to the user's endpoint when BYO is set, and
-            // no upstream but our own gateway sends a cost trailer — so the
-            // cost is 0-as-unknown there, and the Usage tab must show tokens
-            // instead of "$0.00".
-            route: if byo {
-                crate::api::ai_calls::Route::Byo
-            } else {
-                crate::api::ai_calls::Route::Wallet
+    let spend = Spend { pool, chat_id, temporary, byo };
+    spend
+        .record(
+            model,
+            agent_mode,
+            UsageData {
+                input_tokens: usage.input_tokens as i64,
+                output_tokens: usage.output_tokens as i64,
+                reasoning_tokens: usage.reasoning_tokens as i64,
+                cache_read_tokens: usage.cache_read_tokens as i64,
+                cache_write_tokens: usage.cache_write_tokens as i64,
+                cost_micros: Some(usage.cost_micros),
             },
-            applet_run_id: None,
-        },
-    )
-    .await
-    {
-        tracing::warn!(chat_id = %chat_id, error = %e, "Failed to record ai_call");
+        )
+        .await;
+    // What the turn's tools spent on its behalf, each under the model that
+    // spent it: a browsing task on Lite is not the chat model's spend.
+    for spent in delegated {
+        spend
+            .record(
+                &spent.model,
+                spent.feature.as_deref().unwrap_or(agent_mode),
+                UsageData {
+                    input_tokens: spent.input_tokens as i64,
+                    output_tokens: spent.output_tokens as i64,
+                    reasoning_tokens: spent.reasoning_tokens as i64,
+                    cache_read_tokens: spent.cache_read_tokens as i64,
+                    cache_write_tokens: 0,
+                    cost_micros: Some(spent.cost_micros),
+                },
+            )
+            .await;
+    }
+}
+
+/// Where a turn's spend is written, shared by each model it spent on.
+struct Spend<'a> {
+    pool: &'a PgPool,
+    chat_id: &'a str,
+    temporary: bool,
+    byo: bool,
+}
+
+impl Spend<'_> {
+    /// One model's share of the turn: its row in the chat's usage, and its
+    /// line in the cost log.
+    async fn record(&self, model: &str, feature: &str, usage: UsageData) {
+        let (pool, chat_id) = (self.pool, self.chat_id);
+        let (prompt_tokens, completion_tokens, reasoning_tokens) =
+            (usage.input_tokens, usage.output_tokens, usage.reasoning_tokens);
+        let cost_micros = usage.cost_micros.unwrap_or(0);
+        if self.temporary {
+            // Ghost: app_chat_usage keys on a chat row that does not exist.
+            // app_ai_calls below still records cost and counts, no content.
+        } else if let Err(e) = record_chat_usage(pool, chat_id.to_string(), model, usage, self.byo).await {
+            tracing::warn!(
+                chat_id = %chat_id,
+                error = %e,
+                "Failed to record chat usage"
+            );
+        }
+
+        // Box-local per-call cost log (authoritative gateway cost) for the
+        // Usage/Telemetry tabs. Best-effort — never break the response.
+        if let Err(e) = crate::api::ai_calls::record_ai_call(
+            pool,
+            &crate::api::ai_calls::AiCall {
+                // Real feature bucket: the mode's wire name (every mode shares
+                // this handler) or the tool that spent it, so spend
+                // attributes correctly.
+                feature: feature.to_string(),
+                model: model.to_string(),
+                prompt_tokens,
+                completion_tokens,
+                reasoning_tokens,
+                cost_micros,
+                // `stream()` diverts to the user's endpoint when BYO is set, and
+                // no upstream but our own gateway sends a cost trailer — so the
+                // cost is 0-as-unknown there, and the Usage tab must show tokens
+                // instead of "$0.00".
+                route: if self.byo {
+                    crate::api::ai_calls::Route::Byo
+                } else {
+                    crate::api::ai_calls::Route::Wallet
+                },
+                applet_run_id: None,
+            },
+        )
+        .await
+        {
+            tracing::warn!(chat_id = %chat_id, error = %e, "Failed to record ai_call");
+        }
     }
 }
 
@@ -3342,8 +3413,21 @@ mod ui_stream_fixture {
                 model: "m".into(),
                 status: "thinking".into(),
                 tokens: 42,
+                step: None,
             }),
             r#"{"type":"data-subagent","data":{"dispatchId":3,"subagentId":1,"title":"Prices","model":"m","status":"thinking","tokens":42},"transient":true}"#
+        );
+        assert_eq!(
+            serialize_event(&StreamEvent::SubagentStatus {
+                dispatch_id: 4,
+                subagent_id: 0,
+                title: "browse".into(),
+                model: "m".into(),
+                status: "thinking".into(),
+                tokens: 0,
+                step: Some(crate::tools::WorkerStep { tool: "browser_click".into(), input: serde_json::json!({"ref": "e7"}) }),
+            }),
+            r#"{"type":"data-subagent","data":{"dispatchId":4,"subagentId":0,"title":"browse","model":"m","status":"thinking","tokens":0,"step":{"tool":"browser_click","input":{"ref":"e7"}}},"transient":true}"#
         );
     }
 }
@@ -3382,6 +3466,42 @@ mod persist_turn_tests {
     const USAGE: &str = "SELECT count(*) FROM app_chat_usage WHERE chat_id = $1";
     const AI_CALLS: &str = "SELECT count(*) FROM app_ai_calls WHERE feature = $1";
 
+    /// What a tool spent for the turn is billed under the model that spent
+    /// it: its own usage row beside the chat model's, and its own cost-log
+    /// line filed under the tool.
+    #[sqlx::test]
+    async fn persist_turn_bills_a_tools_spend_under_its_own_model(pool: PgPool) {
+        sqlx::query("INSERT INTO app_chats (id, title, message_count) VALUES ('chat_b', 't', 0)")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (message, usage) = recorded_turn("Your flight leaves at 9:40.");
+        let browsing = crate::agent::DelegatedUsage {
+            model: "openai/lite-x".into(),
+            feature: Some("browse".into()),
+            input_tokens: 40_000,
+            output_tokens: 900,
+            cost_micros: 3_500,
+            ..Default::default()
+        };
+        persist_turn(&pool, "chat_b", "anthropic/claude-x", "chat", false, message, usage, &[browsing], None).await;
+
+        let rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT model, input_tokens FROM app_chat_usage WHERE chat_id = 'chat_b' ORDER BY model",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows, vec![("anthropic/claude-x".to_string(), 1_200), ("openai/lite-x".to_string(), 40_000)]);
+        let (model, cost): (String, i64) =
+            sqlx::query_as("SELECT model, cost_micros::bigint FROM app_ai_calls WHERE feature = 'browse'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((model.as_str(), cost), ("openai/lite-x", 3_500));
+        assert_eq!(count(&pool, AI_CALLS, "chat").await, 1, "the chat model's own line is unchanged");
+    }
+
     /// A normal turn writes its row, its per-chat usage and its ai_call, each
     /// carrying the recorder's figures.
     #[sqlx::test]
@@ -3392,7 +3512,7 @@ mod persist_turn_tests {
             .unwrap();
         let began = crate::types::Timestamp::now();
         let (message, usage) = recorded_turn("Hello.");
-        persist_turn(&pool, "chat_p", "anthropic/claude-x", "chat", false, message, usage, Some(began)).await;
+        persist_turn(&pool, "chat_p", "anthropic/claude-x", "chat", false, message, usage, &[], Some(began)).await;
 
         let (role, content, model): (String, String, Option<String>) =
             sqlx::query_as("SELECT role, content, model FROM app_chat_messages WHERE chat_id = 'chat_p'")
@@ -3439,7 +3559,7 @@ mod persist_turn_tests {
     async fn a_temporary_turn_writes_only_its_ai_call(pool: PgPool) {
         let (message, usage) = recorded_turn("Off the record.");
         assert!(message.is_some(), "the turn said something; only `temporary` keeps it out");
-        persist_turn(&pool, "chat_ghost", "anthropic/claude-x", "sudo", true, message, usage, None).await;
+        persist_turn(&pool, "chat_ghost", "anthropic/claude-x", "sudo", true, message, usage, &[], None).await;
 
         assert_eq!(count(&pool, MESSAGES, "chat_ghost").await, 0);
         assert_eq!(count(&pool, USAGE, "chat_ghost").await, 0);
@@ -3461,7 +3581,7 @@ mod persist_turn_tests {
             .unwrap();
         let (message, usage) = recorded_turn("");
         assert!(message.is_none(), "no text and no tools is no message");
-        persist_turn(&pool, "chat_e", "anthropic/claude-x", "deep_research", false, message, usage, None).await;
+        persist_turn(&pool, "chat_e", "anthropic/claude-x", "deep_research", false, message, usage, &[], None).await;
 
         assert_eq!(count(&pool, MESSAGES, "chat_e").await, 0);
         assert_eq!(count(&pool, USAGE, "chat_e").await, 1);
@@ -3487,7 +3607,7 @@ mod active_page_tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
             format,
         )
@@ -3512,11 +3632,11 @@ mod active_page_tests {
         let id = page(&pool, "## Plan\n\nLunch with [@Nick](/person/person_1).\n", PageFormat::Tree).await;
         let yjs = YjsState::new(pool.clone());
         let ctx = open(&id, Some("The client's own copy."));
-        let resolved = resolve_active_page(&pool, &yjs, &ctx).await.unwrap();
+        let resolved = resolve_active_page(&pool, &yjs, &ctx, None).await.unwrap();
         let block = build_active_page_block(Some(&resolved)).unwrap();
 
         let tree = yjs.read_tree(&id).await.unwrap();
-        let base = page_reads::tree_hash(&tree);
+        let base = virtues_document::tree_hash(&tree);
         assert_eq!(
             block,
             format!(
@@ -3533,9 +3653,9 @@ mod active_page_tests {
         assert!(block.contains("<aside data-tone"), "{block}");
         assert!(block.contains("<virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention>"));
         assert!(!block.contains("client's own copy"));
-        assert_eq!(page_reads::read_base(&pool, &id, &base).await.unwrap(), Some(page_reads::ReadBase::of(tree)));
+        assert_eq!(page_reads::read_base(&pool, &id, &base).await.unwrap(), Some(virtues_document::Seen::of_page(&tree)));
 
-        resolve_active_page(&pool, &yjs, &ctx).await.unwrap();
+        resolve_active_page(&pool, &yjs, &ctx, None).await.unwrap();
         let kept: i64 =
             sqlx::query_scalar("SELECT count(*) FROM app_page_read_bases WHERE page_id = $1")
                 .bind(&id)
@@ -3554,7 +3674,7 @@ mod active_page_tests {
             .collect();
         let id = page(&pool, &markdown, PageFormat::Tree).await;
         let yjs = YjsState::new(pool.clone());
-        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None)).await.unwrap();
+        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None), None).await.unwrap();
         let block = build_active_page_block(Some(&resolved)).unwrap();
 
         let tree = yjs.read_tree(&id).await.unwrap();
@@ -3568,13 +3688,13 @@ mod active_page_tests {
         };
         let base = base.clone();
         let kept = page_reads::read_base(&pool, &id, &base).await.unwrap().unwrap();
-        assert_eq!(kept.tree, tree[..k].to_vec(), "the base is what was shown");
-        // Shown as markdown only: a replace of any of them waits for a read
-        // of its HTML.
-        assert_eq!(
-            kept.markdown_only,
-            tree[..k].iter().map(|n| n.id().unwrap().to_string()).collect(),
-        );
+        // The base is what was shown, as markdown only: a write that changes
+        // any of them waits for a read of its HTML.
+        for (i, n) in tree.iter().enumerate() {
+            let known = kept.known(n.id().unwrap());
+            assert_eq!(known.is_some(), i < k, "block {i}");
+            assert!(known.is_none_or(|k| k.form == virtues_document::Form::Markdown), "block {i}");
+        }
         let (first, last) = (tree[0].id().unwrap(), tree[k - 1].id().unwrap());
         assert!(block.contains(&format!(
             "<current_content base=\"{base}\" view=\"markdown\">\n<!-- {first} -->\nParagraph 0 of"
@@ -3613,7 +3733,7 @@ mod active_page_tests {
         let tree = yjs.read_tree(&id).await.unwrap();
         let code = tree[1].id().unwrap().to_string();
         assert!(crate::tools::fits_one_read(&tree[1]), "a read shows the block whole");
-        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None)).await.unwrap();
+        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None), None).await.unwrap();
         let ActivePage::Tree { view: TreeView::Long { base, markdown: shown, .. }, .. } = &resolved else {
             panic!("a long view: {resolved:?}");
         };
@@ -3659,7 +3779,7 @@ mod active_page_tests {
         let id = page(&pool, &markdown, PageFormat::Tree).await;
         let yjs = YjsState::new(pool.clone());
         let tree = yjs.read_tree(&id).await.unwrap();
-        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None)).await.unwrap();
+        let resolved = resolve_active_page(&pool, &yjs, &open(&id, None), None).await.unwrap();
         let ActivePage::Tree { view: TreeView::Long { base, markdown: shown, next }, .. } = &resolved else {
             panic!("a long view: {resolved:?}");
         };
@@ -3729,7 +3849,7 @@ mod active_page_tests {
     async fn a_markdown_page_keeps_its_block_word_for_word(pool: PgPool) {
         let id = page(&pool, "Coffee.\n", PageFormat::Markdown).await;
         let yjs = YjsState::new(pool.clone());
-        let resolved = resolve_active_page(&pool, &yjs, &open(&id, Some("Coffee and tea.\n"))).await.unwrap();
+        let resolved = resolve_active_page(&pool, &yjs, &open(&id, Some("Coffee and tea.\n")), None).await.unwrap();
         assert_eq!(
             build_active_page_block(Some(&resolved)).unwrap(),
             format!(
@@ -3741,7 +3861,7 @@ mod active_page_tests {
             )
         );
 
-        let unsent = resolve_active_page(&pool, &yjs, &open(&id, None)).await.unwrap();
+        let unsent = resolve_active_page(&pool, &yjs, &open(&id, None), None).await.unwrap();
         assert_eq!(
             build_active_page_block(Some(&unsent)).unwrap(),
             format!(

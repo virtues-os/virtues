@@ -9123,12 +9123,21 @@ dependencies = [
  "anyhow",
  "ego-tree",
  "fastrand",
+ "hex",
  "pulldown-cmark",
  "regex",
  "scraper",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "yrs",
+]
+
+[[package]]
+name = "virtues-document-wasm"
+version = "0.1.0"
+dependencies = [
+ "virtues-document",
 ]
 
 [[package]]

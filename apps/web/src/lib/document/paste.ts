@@ -12,33 +12,43 @@
  *   colours as styled spans, and a token's bold is no writer's bold, so its
  *   text is pasted instead, as markdown when it reads as markdown. Where the
  *   browser hands over VS Code's own data, a markdown file's text is
- *   converted and any other language's goes to Tiptap's code block paste.
- * - Plain text that reads as markdown: converted by the server, the one
- *   converter, so a paste reads markdown exactly as the server's own
- *   writers do. Only a block's sign counts as markdown (a heading, a list, a
- *   quote, a fence, a table row): a line of code holds `==`, `**` and `](`
- *   often enough, and the converter would read `<Tag>` in it as a tag. The
- *   words of a line are formatted by the editor's own paste rules (bold,
- *   italic, code, strike, highlight, links), which read emphasis as
- *   CommonMark does, so `a == b` and `2 * 3 * 4` stay as they are, and run
- *   on plain text only, never in inline code (`delimited` in schema.ts).
- *   The converter takes a paste as text (`convertPastedMarkdown`): a tag
- *   the page cannot hold, or CriticMarkup, stays in it as written. It lands
- *   where the paste was, wherever edits made meanwhile have moved that,
- *   another device's included: the spot is held by an anchor
- *   (`anchor.ts`), as an upload's is. If that text is gone by the time the
- *   server answers, it lands at the caret, and says so. If the server cannot convert it, or converts
- *   it to nothing, the text is pasted as it is. A selection the paste
- *   replaces stays, drawn as going, until the paste lands, and goes in the
- *   same edit: one undo takes the paste back and puts the selection back,
- *   however long the server took. If its words changed meanwhile (someone
- *   typed into them on another device), they stay, the paste lands before
- *   them, and the person is told. That edit is an undo step of its own,
- *   apart from typing done meanwhile. Pastes waiting at one place land
- *   there in the order they were made, whichever the server answers first.
- *   Undo while a paste waits calls it off (`callOffPaste`): its marker
- *   goes, the selection it would have replaced stays, and nothing lands
- *   when the server answers.
+ *   converted, prose with no block's sign included, and code (another
+ *   language's, or code copied out of a markdown file's fence) goes to
+ *   Tiptap's code block paste.
+ * - Plain text that reads as markdown: converted by the contract's own
+ *   converter, compiled into the page (`converter.ts`), so a paste reads
+ *   markdown exactly as the server's writers do. Only a block's sign counts
+ *   as markdown (a heading, a list, a quote, a fence, a table row): a line
+ *   of code holds `==`, `**` and `](` often enough, and the converter would
+ *   read `<Tag>` in it as a tag. Text with a line that reads as code is
+ *   never markdown (`readsAsCode`): a Python or shell comment starts with
+ *   `# `, a heading's sign, and the converter would read the code's
+ *   `__init__` as bold. The converter keeps each line a line. The words of
+ *   a line are formatted by the editor's own paste rules (bold, italic,
+ *   code, strike, highlight, links), which read emphasis as CommonMark
+ *   does, so `a == b` and `2 * 3 * 4` stay as they are, and run on plain
+ *   text only, never in inline code
+ *   (`delimited` in schema.ts). The converter reads a paste as text
+ *   (`convertNow(…, 'paste')`): a tag the page would lose the words of (an
+ *   unknown tag, a comment, `<script>`), or CriticMarkup, stays in it as
+ *   written.
+ *
+ *   The conversion runs inside the paste event, and what it makes goes into
+ *   the page in the same edit that takes out the selection it replaces: the
+ *   page changes once, when the person pastes, and nothing written after a
+ *   wait can race their typing, their undo or another device's edits. That
+ *   edit is an undo step of its own (`ownUndoStep`). If the converter cannot
+ *   run, refuses the text, or makes nothing of it, the text is pasted as it
+ *   is; more than one paste converts is said, and so, once, is a converter
+ *   that cannot run.
+ * - Pasted as plain text (Shift with the paste, as Paste and Match Style
+ *   is): the text as written, a paragraph a line, never read as markdown
+ *   and its words never formatted by the paste rules, so text misread as
+ *   markdown can always go in as it is.
+ * - A paste or a drop that would take the page past what it holds
+ *   (`MAX_NODES`, every text run counted, or `MAX_DEPTH` levels of nesting)
+ *   is refused and said, whatever made it: the server would refuse the
+ *   edit, and the page would stop saving.
  * - Over selected table cells: each cell takes the text, as prosemirror-tables
  *   pastes text into cells; it is not converted.
  * - Dropped text is read as the same text pasted: plain text that reads as
@@ -54,31 +64,20 @@
 
 import { Extension } from '@tiptap/core';
 import { DOMParser as PmDOMParser, Fragment, Slice, type Node as PmNode, type Schema } from '@tiptap/pm/model';
-import { Plugin, PluginKey, TextSelection, type EditorState, type Selection, type Transaction } from '@tiptap/pm/state';
+import { Plugin, TextSelection, type Selection, type Transaction } from '@tiptap/pm/state';
 import { CellSelection } from '@tiptap/pm/tables';
 import { canJoin, canSplit } from '@tiptap/pm/transform';
-import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view';
+import type { EditorView } from '@tiptap/pm/view';
 import { toast } from 'svelte-sonner';
-import { convertPastedMarkdown } from '$lib/api/client';
-import {
-	anchorAt,
-	goingDecorations,
-	heldPos,
-	heldSelection,
-	hold,
-	holdRangeThrough,
-	holdSelection,
-	holdThrough,
-	holdsAsTaken,
-	landApart,
-	nextWait,
-	type Anchor,
-	type Held,
-	type HeldRange,
-} from './anchor';
-import { contract } from './schema';
+import { convertNow, type ConvertResult } from './converter';
+import { readsAsCode } from './code-text';
+import { ownUndoStep } from './history';
+import { contract, ITEM_NUMBER, itemNumbers } from './schema';
 
-export type Convert = (markdown: string) => Promise<{ html: string }>;
+/** Markdown as the blocks a paste makes, now: the page's converter by default. */
+export type Convert = (markdown: string) => ConvertResult;
+
+const convertPaste: Convert = (markdown) => convertNow(markdown, 'paste');
 
 /** A block's markdown sign at the start of a line: what makes pasted text markdown. */
 const MARKDOWN_SIGNS = [/^#{1,6} /m, /^ {0,3}[-*+] /m, /^ {0,3}\d+\. /m, /^ {0,3}> /m, /^ {0,3}(```|~~~)/m, /^\|.*\|\s*$/m];
@@ -86,13 +85,107 @@ const MARKDOWN_SIGNS = [/^#{1,6} /m, /^ {0,3}[-*+] /m, /^ {0,3}\d+\. /m, /^ {0,3
 /** Signs of markdown inside a line: bold, a link, a highlight. */
 const INLINE_SIGNS = [/\*\*/, /\]\(/, /==/];
 
+/** An article's own signs inside a line: a footnote's marker, a veil. */
+const ARTICLE_SIGNS = [/\[\^[A-Za-z0-9]/, /⟦/];
+
 /**
  * Whether text reads as markdown rather than plain words: a line starts
- * with a block's sign. With `inline`, for text a model wrote as markdown
- * (the inline writer's output), a sign inside a line counts too.
+ * with a block's sign, and no line reads as code (`readsAsCode`). With
+ * `inline`, for text a model wrote as markdown (the inline writer's
+ * output), a sign inside a line counts too, and code in it is the model's
+ * to fence; with `article` as well, an article's footnote marker or veil.
  */
-export function looksLikeMarkdown(text: string, o: { inline?: boolean } = {}): boolean {
-	return MARKDOWN_SIGNS.some((re) => re.test(text)) || (!!o.inline && INLINE_SIGNS.some((re) => re.test(text)));
+export function looksLikeMarkdown(text: string, o: { inline?: boolean; article?: boolean } = {}): boolean {
+	if (o.inline) {
+		const signs = o.article ? [...INLINE_SIGNS, ...ARTICLE_SIGNS] : INLINE_SIGNS;
+		return MARKDOWN_SIGNS.some((re) => re.test(text)) || signs.some((re) => re.test(text));
+	}
+	return MARKDOWN_SIGNS.some((re) => re.test(text)) && !readsAsCode(text);
+}
+
+/**
+ * The most nodes a page holds, every text run counted: the crate's
+ * `MAX_NODES` (`model.rs`). The server refuses an edit that takes a page
+ * past it, and the page stops saving.
+ */
+export const MAX_NODES = 100_000;
+
+/** How many nodes `doc` holds as the server counts them: every node in the page, each text run one. */
+export function nodeCount(doc: PmNode): number {
+	let n = 0;
+	doc.descendants(() => {
+		n++;
+		return true;
+	});
+	return n;
+}
+
+/**
+ * The most levels a page's nodes nest, its own blocks one and text none:
+ * the crate's `MAX_DEPTH` (`model.rs`). The server refuses an edit that
+ * nests a page deeper, wherever it comes from, and the page stops saving.
+ */
+export const MAX_DEPTH = 100;
+
+/** How many levels of nodes `doc` nests as the server counts them: a page of paragraphs is 1, one holding a mention 2. */
+export function nodeDepth(doc: PmNode): number {
+	let deepest = 0;
+	const walk = (node: PmNode, level: number): void => {
+		node.forEach((child) => {
+			if (child.isText) return;
+			deepest = Math.max(deepest, level);
+			walk(child, level + 1);
+		});
+	};
+	walk(doc, 1);
+	return deepest;
+}
+
+/** What a page holds that an edit can take it past: its nodes, or how deep they nest. */
+export type PageLimit = 'nodes' | 'depth';
+
+/**
+ * What `tr` takes the page past, or null when it leaves the page within
+ * what it holds. A page already past a limit may stay there, no further.
+ */
+export function pastPageLimit(before: PmNode, tr: Transaction): PageLimit | null {
+	if (!tr.docChanged) return null;
+	const nodes = nodeCount(tr.doc);
+	if (nodes > MAX_NODES && nodes > nodeCount(before)) return 'nodes';
+	const depth = nodeDepth(tr.doc);
+	if (depth > MAX_DEPTH && depth > nodeDepth(before)) return 'depth';
+	return null;
+}
+
+/**
+ * What the person is told when what they gave the page would take it past
+ * what it holds. Files go in as blocks beside the line they are given at,
+ * never deeper, so only their number can.
+ */
+export function tellPastLimit(limit: PageLimit, what: 'pasted' | 'files' = 'pasted'): void {
+	if (what === 'files') {
+		toast('Not added', {
+			description: 'That would make this page larger than it can hold. Add the files to a new page instead.',
+		});
+	} else if (limit === 'nodes') {
+		toast('Not pasted', {
+			description: 'That would make this page larger than it can hold. Paste less at a time, or start a new page for it.',
+		});
+	} else {
+		toast('Not pasted', {
+			description: 'That would nest lists, quotes or tables deeper than a page can hold. Hold Shift as you paste to paste it as plain text.',
+		});
+	}
+}
+
+/**
+ * Whether the paste under way is one of plain text: Shift held with it, as
+ * ProseMirror reads it (`view.input`), but not Shift-Insert, which is an
+ * ordinary paste on Windows and Linux.
+ */
+function pastingPlain(view: EditorView): boolean {
+	const input = (view as unknown as { input?: { shiftKey?: boolean; lastKeyCode?: number | null } }).input;
+	return !!input?.shiftKey && input.lastKeyCode !== 45;
 }
 
 /**
@@ -249,8 +342,9 @@ export function placeConverted(tr: Transaction, at: number, content: Fragment): 
 	}
 	// Out to that node, splitting each node on the way where `pos` is inside
 	// it rather than at an edge. The second half of a split is a new block,
-	// so it gets a new id, and a numbered list's goes on counting from the
-	// items before it.
+	// so it gets a new id; an item's counts on from the first half, and a
+	// numbered list's starts at its first item's number, so every item keeps
+	// the one it showed.
 	let pos = at;
 	let split = false;
 	for (let d = $at.depth; d > depth; d--) {
@@ -260,7 +354,9 @@ export function placeConverted(tr: Transaction, at: number, content: Fragment): 
 		const atEnd = node.isTextblock ? $pos.parentOffset === node.content.size : $pos.index() === node.childCount;
 		const attrs: Record<string, unknown> = { ...node.attrs };
 		if (contract.id.attr in attrs) attrs[contract.id.attr] = null;
-		if ('start' in attrs && node.type.name === 'orderedList') attrs.start = (Number(node.attrs.start) || 1) + $pos.index();
+		if (node.type.name === 'listItem') attrs[ITEM_NUMBER] = null;
+		const number = node.type.name === 'orderedList' ? itemNumbers(node)[$pos.index()] : undefined;
+		if (number !== undefined) attrs.start = number;
 		const after = [{ type: node.type, attrs }];
 		if (atEnd) {
 			pos = $pos.after();
@@ -298,171 +394,83 @@ export function placeConverted(tr: Transaction, at: number, content: Fragment): 
 	return edge(end);
 }
 
-interface PendingPaste {
-	id: string;
-	/** When it started waiting, among pastes and uploads (`nextWait`). */
-	order: number;
-	/** Where the paste lands. */
-	at: Held;
-	/** The selection the paste replaces, taken out when it lands. */
-	replaces?: HeldRange;
-}
+/** Said once a session: a converter that cannot run here stays so until the app changes. */
+let toldUnavailable = false;
 
-type PasteMeta =
-	| { add: PendingPaste }
-	/** A paste landed; `follow` are the pastes made after it at the same place, which go after it, at `pos`. */
-	| { remove: string; follow?: { ids: string[]; pos: number } }
-	/** The place taken again as an anchor, once the document it is in is the page's. */
-	| { anchor: { id: string; at: Anchor } };
-
-interface Pastes {
-	/** The markers, and the selections going, drawn where they are now. */
-	set: DecorationSet;
-	pending: PendingPaste[];
-}
-
-const pasteKey = new PluginKey<Pastes>('markdownPaste');
-let nextPaste = 0;
-
-function marker(p: PendingPaste): HTMLElement {
-	const el = document.createElement('span');
-	el.className = 'doc-paste-pending';
-	el.dataset.pasteId = p.id;
-	return el;
-}
-
-function decorations(doc: PmNode, p: PendingPaste): Decoration[] {
-	const out: Decoration[] = [];
-	if (p.at.pos !== null) {
-		out.push(Decoration.widget(Math.min(p.at.pos, doc.content.size), () => marker(p), { pasteId: p.id, side: -1 }));
+/** What the person is told when their markdown went in as its text. */
+function tell(result: ConvertResult): void {
+	if (result.kind === 'too-large') {
+		toast('Pasted as text', {
+			description: "That's more markdown than one paste converts. Paste it in parts to keep its formatting.",
+		});
+	} else if (result.kind === 'unavailable' && !toldUnavailable) {
+		toldUnavailable = true;
+		toast('Pasted as text', {
+			description: "This app couldn't start its markdown reader, so headings, lists and tables came in as plain text. Try updating the app.",
+		});
 	}
-	out.push(...goingDecorations(doc, p.replaces));
-	return out;
-}
-
-function pendingPastes(view: EditorView): PendingPaste[] {
-	return pasteKey.getState(view.state)?.pending ?? [];
-}
-
-/** The pastes waiting on the server, as Undo weighs them against uploads. */
-export function waitingPastes(state: EditorState): { id: string; order: number }[] {
-	return (pasteKey.getState(state)?.pending ?? []).map(({ id, order }) => ({ id, order }));
 }
 
 /**
- * Call off a waiting paste, as Undo does while it waits: its marker goes,
- * the selection it would have replaced stays, and when the server answers
- * nothing lands. A paste waiting is no edit yet, so y-undo would pass over
- * it to the person's own writing, and its landing, a new edit, would then
- * clear the redo that could bring that writing back.
+ * Convert `text` and put what it makes at `at`, now, in one edit with taking
+ * out `replacing` when there is a selection to replace: a paste's or a
+ * drop's whole effect on the page, an undo step of its own. What the
+ * converter cannot make blocks of goes in as the text it is.
  */
-export function callOffPaste(view: EditorView, id: string): void {
-	view.dispatch(view.state.tr.setMeta(pasteKey, { remove: id }));
-	toast('Undo stopped the paste');
-}
-
-/**
- * Convert `text` and put it at `pos`, wherever that has moved by the time
- * the server answers. With `replacing`, that selection goes in the same
- * edit, wherever it has moved. Pastes waiting at one place land there in
- * the order they were made, whichever the server answers first. The
- * landing is an undo step of its own.
- */
-export async function pasteMarkdown(
+export function pasteMarkdown(
 	view: EditorView,
 	text: string,
-	pos: number,
-	convert: Convert,
-	replacing?: Selection,
-): Promise<void> {
-	const id = `paste-${++nextPaste}`;
-	const replaces = replacing && holdSelection(view.state, replacing);
-	view.dispatch(view.state.tr.setMeta(pasteKey, { add: { id, order: nextWait(), at: hold(view.state, pos), replaces } }));
-	let content: Fragment | null = null;
-	try {
-		const { html } = await convert(text);
-		if (view.isDestroyed) return;
-		content = htmlSlice(view.state.schema, html).content;
-	} catch {
-		if (view.isDestroyed) return;
-	}
-	const pending = pendingPastes(view);
-	const index = pending.findIndex((p) => p.id === id);
-	// Undo called it off while it waited.
-	if (index < 0) return;
-	const self = pending[index];
-	const origin = heldPos(view.state, self.at);
-	let at = origin;
-	const replaced = self.replaces ? heldSelection(view.state, self.replaces) : null;
+	at: number,
+	o: { replacing?: Selection; convert?: Convert } = {},
+): void {
+	const { schema } = view.state;
 	const tr = view.state.tr;
-	if (self.replaces && replaced && holdsAsTaken(self.replaces, replaced)) {
-		const first = Math.min(...replaced.ranges.map((r) => r.$from.pos));
-		replaced.replace(tr);
+	if (o.replacing && !o.replacing.empty) {
+		const first = Math.min(...o.replacing.ranges.map((r) => r.$from.pos));
+		o.replacing.replace(tr);
 		at = tr.mapping.map(first, -1);
-	} else if (replaced) {
-		toast('Pasted beside your selection', {
-			description: 'Someone changed the words you selected while your server converted the paste, so they stay.',
-		});
 	}
-	if (at === null) {
-		at = view.state.selection.from;
-		toast('Pasted at the cursor', {
-			description: 'Someone deleted the text you pasted into while your server converted the paste.',
-		});
+	const result = (o.convert ?? convertPaste)(text);
+	const content = result.kind === 'converted' ? htmlSlice(schema, result.html).content : null;
+	const converted = !!content?.size;
+	if (content && converted) placeConverted(tr, at, content);
+	else tr.replaceRange(at, at, plainSlice(schema, text));
+	// As text, a paste the converter found too large is a paragraph a line.
+	const past = pastPageLimit(view.state.doc, tr);
+	if (past) {
+		tellPastLimit(past);
+		return;
 	}
-	// Nothing converted is the text pasted as it is, not lost.
-	let end: number;
-	if (content?.size) {
-		end = placeConverted(tr, at, content);
-	} else {
-		const steps = tr.steps.length;
-		tr.replaceRange(at, at, plainSlice(view.state.schema, text));
-		end = tr.mapping.slice(steps).map(at, 1);
-	}
-	// A paste made after this one at the same place goes after it.
-	const later = pending.slice(index + 1);
-	const follow = origin === null ? [] : later.filter((p) => heldPos(view.state, p.at) === origin).map((p) => p.id);
-	tr.setMeta(pasteKey, { remove: id, follow: { ids: follow, pos: end } });
-	landApart(view, tr);
-	for (const other of follow) {
-		const now = pendingPastes(view).find((p) => p.id === other)?.at.pos;
-		if (now != null) view.dispatch(view.state.tr.setMeta(pasteKey, { anchor: { id: other, at: anchorAt(view.state, now) } }));
-	}
+	if (!converted) tell(result);
+	// No `uiEvent`: Tiptap's paste rules run on a transaction marked as a
+	// paste or a drop, and would format the converter's text again, or the
+	// text pasted as it is.
+	ownUndoStep(view, tr.scrollIntoView());
 }
 
-export function pasteHandling(convert: Convert = convertPastedMarkdown): Extension {
+/** Put a paste of text as it is into the page, as its own undo step, unless it would take the page past what it holds. */
+function place(view: EditorView, tr: Transaction): void {
+	const past = pastPageLimit(view.state.doc, tr);
+	if (past) tellPastLimit(past);
+	else ownUndoStep(view, tr.scrollIntoView());
+}
+
+export function pasteHandling(convert: Convert = convertPaste): Extension {
 	return Extension.create({
 		name: 'pagePaste',
 		addProseMirrorPlugins() {
 			return [
-				new Plugin<Pastes>({
-					key: pasteKey,
-					state: {
-						init: () => ({ set: DecorationSet.empty, pending: [] }),
-						apply(tr, prev) {
-							const meta = tr.getMeta(pasteKey) as PasteMeta | undefined;
-							if (!meta && !prev.pending.length) return prev;
-							// Each held through this edit: a marker stays before text typed at it.
-							let pending: PendingPaste[] = prev.pending.map((p) => ({
-								...p,
-								at: holdThrough(tr, p.at, -1),
-								replaces: p.replaces && holdRangeThrough(tr, p.replaces),
-							}));
-							if (meta && 'add' in meta) pending = [...pending, meta.add];
-							if (meta && 'remove' in meta) {
-								const follow = meta.follow;
-								pending = pending
-									.filter((p) => p.id !== meta.remove)
-									.map((p) => (follow?.ids.includes(p.id) ? { ...p, at: { at: p.at.at, pos: follow.pos } } : p));
-							}
-							if (meta && 'anchor' in meta) {
-								pending = pending.map((p) => (p.id === meta.anchor.id ? { ...p, at: { ...p.at, at: meta.anchor.at } } : p));
-							}
-							return { set: DecorationSet.create(tr.doc, pending.flatMap((p) => decorations(tr.doc, p))), pending };
-						},
+				new Plugin({
+					// ProseMirror's own paste and drop, of HTML or of text.
+					filterTransaction(tr, state) {
+						const ui = tr.getMeta('uiEvent');
+						if (ui !== 'paste' && ui !== 'drop') return true;
+						const past = pastPageLimit(state.doc, tr);
+						if (!past) return true;
+						tellPastLimit(past);
+						return false;
 					},
 					props: {
-						decorations: (state) => pasteKey.getState(state)?.set,
 						transformPastedHTML: wordLists,
 						handlePaste(view, event) {
 							const data = event.clipboardData;
@@ -478,25 +486,33 @@ export function pasteHandling(convert: Convert = convertPastedMarkdown): Extensi
 							// Selected cells take a paste as cells, each the text pasted
 							// (prosemirror-tables), never one of them the converted blocks.
 							if (view.state.selection instanceof CellSelection) return false;
+							if (pastingPlain(view)) {
+								// No `uiEvent`: the paste rules would format its words.
+								place(view, view.state.tr.replaceSelection(plainSlice(view.state.schema, text)));
+								return true;
+							}
 							const markdown = looksLikeMarkdown(text);
 							const html = data.getData('text/html');
 							if (html) {
 								const mode = vscodeMode(data);
 								if (mode !== null) {
-									// Tiptap's code block paste takes any other language.
-									if (mode !== 'markdown' || !markdown) return false;
+									// Tiptap's code block paste takes any other language, and
+									// code from a markdown file: VS Code names the file's
+									// language, not that of the fence the code was copied
+									// from. A markdown file's other text is converted, a line
+									// of its prose included, which has no block's sign.
+									if (mode !== 'markdown' || readsAsCode(text)) return false;
 								} else if (!isCodeEditorHtml(html)) {
 									return false;
 								} else if (!markdown) {
-									view.dispatch(view.state.tr.replaceSelection(plainSlice(view.state.schema, text)).scrollIntoView());
+									place(view, view.state.tr.replaceSelection(plainSlice(view.state.schema, text)));
 									return true;
 								}
 							} else if (!markdown) {
 								return false;
 							}
-							// The selection stays until the paste lands, and goes with it.
 							const { selection } = view.state;
-							void pasteMarkdown(view, text, selection.from, convert, selection);
+							pasteMarkdown(view, text, selection.from, { replacing: selection, convert });
 							return true;
 						},
 						handleDrop(view, event, _slice, moved) {
@@ -507,7 +523,7 @@ export function pasteHandling(convert: Convert = convertPastedMarkdown): Extensi
 							const at = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
 							if (at === undefined || view.state.doc.resolve(at).parent.type.spec.code) return false;
 							event.preventDefault();
-							void pasteMarkdown(view, text, at, convert);
+							pasteMarkdown(view, text, at, { convert });
 							return true;
 						},
 					},

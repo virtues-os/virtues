@@ -1,6 +1,5 @@
 /**
- * What the page status bar counts, from whichever editor holds the page: the
- * CodeMirror editor counts its markdown, the block editor its tree
+ * What the page status bar counts, from the block editor's tree
  * (`lib/document/stats.ts`).
  */
 export interface DocStats {

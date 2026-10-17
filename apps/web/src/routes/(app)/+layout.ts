@@ -126,8 +126,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		}
 
 		// The server is too old for this copy of the app: one clear screen
-		// rather than a half-working app. Asks nothing while the floor is 0.
-		// See $lib/boxApi.ts.
+		// rather than a half-working app. See $lib/boxApi.ts.
 		if (await boxBelowFloor(fetch)) throw redirect(303, '/server-update');
 
 		// Let in: from here `/setup` opens as a tab in the app, not the stage.

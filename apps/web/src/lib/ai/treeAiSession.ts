@@ -1,6 +1,6 @@
 /**
  * The inline writer on a block page: ⌘J, `/ai` and Ask AI in `DocumentEditor`
- * (`TreeAiDriver`). The CodeMirror editor's writer is `aiCursorSession.ts`.
+ * (`TreeAiDriver`).
  *
  * It streams a completion into the page's tree so it reads as writing:
  *
@@ -18,7 +18,7 @@
  *  - A CONTINUATION inserts plainly: there is nothing to compare it with, and
  *    undo takes the whole of it back.
  *  - A REWRITE PROPOSES. While the model thinks, the words it will replace
- *    are washed (the telegraph, as the CodeMirror writer draws it), and the
+ *    are washed (the telegraph), and the
  *    selection is marked as a proposed deletion when the first words arrive, and the rewrite streams in after it as a
  *    proposed insertion sharing its id (`lib/document/suggestions.ts`), for
  *    the person to accept or reject. The original is never sent back through
@@ -26,13 +26,22 @@
  *    line break inside the selection stays, whichever way they decide. In a
  *    code block, which holds no marks, the rewrite replaces the selection;
  *    across a code block's edge it is not written at all.
+ *  - ON AN ARTICLE the model reads the page as the article's markdown: each
+ *    source as its marker (`[^ev-2]`) and its note after the context, a
+ *    veiled phrase inside `⟦ ⟧`. A rewrite keeps each source where it is (a
+ *    source cannot be proposed) and writes the words that replace a sourced
+ *    sentence before that sentence's source: a marker in the output naming
+ *    one of the selection's sources moves the writer on to before the next.
+ *    A marker naming any other is left out, and the output's `⟦…⟧` is
+ *    written veiled.
  *  - At the end, output that reads as markdown (a list, a heading, `**`) goes
- *    through the server's converter, and the blocks it makes replace only what
- *    this session wrote, in one transaction, still proposed on a rewrite. If
- *    the server cannot convert it, or anyone has changed those words since,
- *    the text stays as it streamed; on a rewrite it stays too when rejecting
- *    the converted blocks would not take them all back (a mention, a rule or
- *    a code block, which no mark can hold).
+ *    through the page's converter (`lib/document/converter.ts`), and the
+ *    blocks it makes replace only what this session wrote, in the same task
+ *    and one transaction, still proposed on a rewrite. If it cannot be
+ *    converted, or anyone has changed those words since, the text stays as
+ *    it streamed; on a rewrite it stays too when rejecting the converted
+ *    blocks would not take them all back (a mention, a rule or a code block,
+ *    which no mark can hold).
  *
  * Typing in the page or Escape stops it (`DocumentEditor`); what has arrived
  * by then stays, its marks whole.
@@ -45,22 +54,21 @@ import { canSplit } from "@tiptap/pm/transform";
 import { yUndoPluginKey } from "@tiptap/y-tiptap";
 import type * as Y from "yjs";
 import { toast } from "svelte-sonner";
-import { convertMarkdown } from "$lib/api/client";
 import { anchorAt, isBound, type Anchor } from "$lib/document/anchor";
 import type { TreeAiDriver } from "$lib/document/editor";
 import { clearAi, setAiCaret, setAiTelegraph, setAiTrail } from "$lib/document/presence";
 import { DELETION, INSERTION, PROPOSAL_ATTR, withProposalRejected } from "$lib/document/suggestions";
 import { htmlSlice, looksLikeMarkdown } from "$lib/document/paste";
+import { convertNow, type ConvertResult, type Dialect } from "$lib/document/converter";
 import { contract, newId } from "$lib/document/schema";
 import { aiSession } from "./aiSession.svelte";
-import { abortAiSession } from "./aiCursorSession";
 import { streamCompletion, type AiCompleteRequest, type AiIntent } from "./inlineComplete";
 import { createOutputSanitizer } from "./sanitize";
 
 const CONTEXT_CHARS = 1200;
 const FLUSH_MS = 30;
 const DONE_DISSOLVE_MS = 650;
-/** How long a rewrite shows what it will replace before it asks the model: the CodeMirror writer's beat. */
+/** How long a rewrite shows what it will replace before it asks the model. */
 const TELEGRAPH_MS = 380;
 // Client-side backstop on top of the server's max_tokens, so a runaway
 // completion can never fill the page.
@@ -69,7 +77,8 @@ const MAX_OUTPUT_CHARS = 8000;
 /** What a session talks to; the defaults are the server's. Tests pass their own. */
 export interface TreeAiDeps {
 	stream: (req: AiCompleteRequest, signal: AbortSignal) => AsyncIterable<string>;
-	convert: (markdown: string, signal?: AbortSignal) => Promise<{ html: string }>;
+	/** Markdown as blocks, now, read as `as` says: the page's converter by default. */
+	convert: (markdown: string, as: Dialect) => ConvertResult;
 	flushMs: number;
 	dissolveMs: number;
 	telegraphMs: number;
@@ -77,7 +86,7 @@ export interface TreeAiDeps {
 
 const DEFAULTS: TreeAiDeps = {
 	stream: streamCompletion,
-	convert: convertMarkdown,
+	convert: (markdown, as) => convertNow(markdown, as),
 	flushMs: FLUSH_MS,
 	dissolveMs: DONE_DISSOLVE_MS,
 	telegraphMs: TELEGRAPH_MS,
@@ -89,6 +98,11 @@ export interface StartTreeAi {
 	instruction: string;
 	/** The page's real title, for the model's context. */
 	pageTitle?: string;
+	/**
+	 * The page is an article: the output is read as an article's markdown,
+	 * its footnotes, figures and veils the article's own.
+	 */
+	article?: boolean;
 }
 
 /** The text a model reads for a stretch of the page: blocks apart, a mention as its label. */
@@ -98,6 +112,128 @@ function textOf(doc: PmNode, from: number, to: number, blockSeparator = "\n\n"):
 		if (leaf.type.name === "hardBreak") return "\n";
 		return "";
 	});
+}
+
+/**
+ * The text a model reads for a stretch of an article: as `textOf`, with each
+ * source as its marker (`[^ev-2]`) and each veiled phrase inside `⟦ ⟧`, as
+ * the article's markdown writes them, so a rewrite can keep both.
+ */
+function articleText(doc: PmNode, from: number, to: number, blockSeparator = "\n\n"): string {
+	let text = "";
+	let first = true;
+	let veiled = false;
+	const veil = (on: boolean) => {
+		if (on !== veiled) text += on ? "⟦" : "⟧";
+		veiled = on;
+	};
+	doc.nodesBetween(from, to, (node, pos) => {
+		let piece = "";
+		if (node.isText) piece = node.text!.slice(Math.max(from, pos) - pos, to - pos);
+		else if (node.type.name === "footnote") piece = `[^${node.attrs.label}]`;
+		else if (node.type.name === "mention") piece = String(node.attrs.label ?? "");
+		else if (node.type.name === "hardBreak") piece = "\n";
+		if (node.isBlock && ((node.isLeaf && piece) || node.isTextblock)) {
+			veil(false);
+			if (first) first = false;
+			else text += blockSeparator;
+		}
+		if (piece) veil(node.isText && node.marks.some((m) => m.type.name === "veil"));
+		text += piece;
+		return true;
+	});
+	veil(false);
+	return text;
+}
+
+/** An article's source marker, its footnote's label (`label` in `contract.json`): `MARKER` anywhere, `MARKER_HERE` at the start. */
+const LABEL = "[A-Za-z0-9][A-Za-z0-9_-]{0,63}";
+const MARKER = new RegExp(`\\[\\^(${LABEL})\\]`, "g");
+const MARKER_HERE = new RegExp(`^\\[\\^(${LABEL})\\]`);
+/** What could still become a marker once more arrives. */
+const MARKER_BEGUN = new RegExp(`^\\[(?:\\^(?:${LABEL})?)?$`);
+
+/** The note lines of the sources `text` cites, as an article's markdown ends with them. */
+function notesCited(doc: PmNode, text: string): string {
+	const notes = pageNotes(doc);
+	const lines: string[] = [];
+	for (const label of new Set([...text.matchAll(MARKER)].map((m) => m[1]))) {
+		const note = notes.get(label);
+		if (note !== undefined) lines.push(`[^${label}]: ${note}`);
+	}
+	return lines.length ? `\n\n${lines.join("\n")}` : "";
+}
+
+/** A piece of an article rewrite's output: words, veiled or not, or a source it cites. */
+type Piece = { kind: "text"; text: string; veil: boolean } | { kind: "source"; label: string };
+
+/**
+ * An article rewrite's output as it streams, read as the article's markdown
+ * reads it: a source marker, and a veil (a `⟦` and the next `⟧` on one
+ * line, with words between and no other bracket). What may still become
+ * one waits for the next chunk.
+ */
+class ArticleOutput {
+	private held = "";
+
+	push(chunk: string): Piece[] {
+		this.held += chunk;
+		return this.read(false);
+	}
+
+	/** Everything held, read with nothing more to come. */
+	flush(): Piece[] {
+		return this.read(true);
+	}
+
+	private read(end: boolean): Piece[] {
+		const s = this.held;
+		const out: Piece[] = [];
+		let text = "";
+		const words = () => {
+			if (text) out.push({ kind: "text", text, veil: false });
+			text = "";
+		};
+		let i = 0;
+		while (i < s.length) {
+			const rest = s.slice(i);
+			if (s[i] === "[") {
+				const m = MARKER_HERE.exec(rest);
+				if (m) {
+					words();
+					out.push({ kind: "source", label: m[1] });
+					i += m[0].length;
+					continue;
+				}
+				if (!end && MARKER_BEGUN.test(rest)) break;
+			} else if (s[i] === "⟦") {
+				const close = s.indexOf("⟧", i + 1);
+				const inner = close > i + 1 ? s.slice(i + 1, close) : "";
+				if (inner && !/[\n⟦]/.test(inner)) {
+					words();
+					out.push({ kind: "text", text: inner, veil: true });
+					i = close + 1;
+					continue;
+				}
+				if (!end && close < 0 && !/[\n⟦]/.test(s.slice(i + 1))) break;
+			}
+			text += s[i];
+			i++;
+		}
+		words();
+		this.held = s.slice(i);
+		return out;
+	}
+}
+
+/** The sources a selection holds, in order: each footnote's label and where it is. */
+function sourcesIn(doc: PmNode, from: number, to: number): { label: string; pos: number }[] {
+	const out: { label: string; pos: number }[] = [];
+	doc.nodesBetween(from, to, (node, pos) => {
+		if (node.type.name === "footnote" && pos >= from && pos < to) out.push({ label: String(node.attrs.label), pos });
+		return true;
+	});
+	return out;
 }
 
 function inCode($pos: ResolvedPos): boolean {
@@ -146,6 +282,36 @@ function replaceConverted(tr: Transaction, from: number, to: number, html: strin
 	}
 }
 
+/** Each footnote label in `doc` with the first note its footnotes carry. */
+function pageNotes(doc: PmNode): Map<string, string> {
+	const notes = new Map<string, string>();
+	doc.descendants((node) => {
+		const { label, note } = node.attrs;
+		if (node.type.name === "footnote" && typeof note === "string" && !notes.has(label)) notes.set(label, note);
+		return true;
+	});
+	return notes;
+}
+
+/**
+ * A footnote the writer wrote in `from..to` with a label and no note takes
+ * the note of the page's footnote with that label (`notes`), as the server
+ * gives a model's footnote one (`inherit_notes` in the crate's `ops.rs`):
+ * a writer that cites `[^ev-1]` as the page does keeps its source.
+ */
+function inheritNotes(tr: Transaction, from: number, to: number, notes: Map<string, string>): void {
+	const found: { pos: number; note: string }[] = [];
+	tr.doc.nodesBetween(from, to, (node, pos) => {
+		if (node.type.name !== "footnote" || typeof node.attrs.note === "string") return true;
+		const note = notes.get(node.attrs.label);
+		if (note !== undefined) found.push({ pos, note });
+		return false;
+	});
+	for (const { pos, note } of found) {
+		tr.setNodeMarkup(pos, undefined, { ...tr.doc.nodeAt(pos)!.attrs, note });
+	}
+}
+
 /**
  * A transaction for the writer's words. Autolink stays off them: it would
  * read them joined to the text they follow ("tea." and a rewrite's "Coffee"
@@ -162,6 +328,7 @@ class TreeAiSession {
 	private readonly intent: AiIntent;
 	private readonly instruction: string;
 	private readonly pageTitle?: string;
+	private readonly article: boolean;
 	private readonly deps: TreeAiDeps;
 	/** Whether the editor is bound to a shared document, which the writer's anchors need. */
 	private readonly bound: boolean;
@@ -179,6 +346,21 @@ class TreeAiSession {
 	private proposal: string | null = null;
 	/** Whether a rewrite writes in a block of its own now, not the one it began in. */
 	private ownBlock = false;
+	/**
+	 * An article rewrite's sources (`sourcesIn`), each with the place before
+	 * it, and how many the writer has passed: its words go before the next.
+	 * `end` is the selection's end, past the last.
+	 */
+	private sources: { label: string; before: Anchor | null }[] = [];
+	private passed = 0;
+	private end: Anchor | null = null;
+	/** The writer moved on to the next source's place and has written nothing there yet. */
+	private atSource = false;
+	/** An article rewrite's output, read as it streams; null elsewhere. */
+	private reader: ArticleOutput | null = null;
+	/** Pieces read and not yet written, in order, and whether they are being written. */
+	private queue: Piece[] = [];
+	private draining = false;
 
 	private isRewrite = false;
 	private code = false;
@@ -200,6 +382,7 @@ class TreeAiSession {
 		this.intent = o.intent;
 		this.instruction = o.instruction;
 		this.pageTitle = o.pageTitle;
+		this.article = o.article ?? false;
 		this.deps = deps;
 		this.bound = isBound(o.editor.state);
 	}
@@ -271,17 +454,31 @@ class TreeAiSession {
 		let selection: string | undefined;
 		let before: string;
 		let after: string;
+		const read = this.article ? articleText : textOf;
 		if (this.isRewrite) {
-			selection = textOf(doc, sel.from, sel.to);
-			before = textOf(doc, 0, sel.from).slice(-CONTEXT_CHARS);
-			after = textOf(doc, sel.to, doc.content.size).slice(0, CONTEXT_CHARS);
+			selection = read(doc, sel.from, sel.to);
+			before = read(doc, 0, sel.from).slice(-CONTEXT_CHARS);
+			after = read(doc, sel.to, doc.content.size).slice(0, CONTEXT_CHARS);
 			this.pending = { from: this.track(sel.from)!, to: this.track(sel.to)! };
-			this.anchor = this.track(sel.to);
-			// The rewrite lands after the selection; a selection growing over it
-			// would raise the format bar over words still arriving. The words it
-			// will replace stay washed until the first words mark them (`write`).
+			this.end = this.track(sel.to);
+			let at = sel.to;
+			if (this.article && !this.code) {
+				// A source the selection opens with closes the sentence before
+				// it, and is passed from the start.
+				const sources = sourcesIn(doc, sel.from, sel.to);
+				this.sources = sources.map((f) => ({ label: f.label, before: this.track(f.pos) }));
+				this.passed = sources.findIndex((f) => doc.textBetween(sel.from, f.pos).trim() !== "");
+				if (this.passed < 0) this.passed = sources.length;
+				if (this.passed < sources.length) at = sources[this.passed].pos;
+				this.reader = new ArticleOutput();
+			}
+			this.anchor = this.track(at);
+			// The rewrite lands at the end of the selection, or before its
+			// first source; a selection growing over it would raise the format
+			// bar over words still arriving. The words it will replace stay
+			// washed until the first words mark them (`write`).
 			this.editor.commands.setTextSelection(sel.to);
-			setAiCaret(this.editor, { pos: sel.to, phase: "active" });
+			setAiCaret(this.editor, { pos: at, phase: "active" });
 			aiSession.set("telegraphing");
 			setAiTelegraph(this.editor, { from: sel.from, to: sel.to });
 			await new Promise((r) => setTimeout(r, this.deps.telegraphMs));
@@ -290,11 +487,13 @@ class TreeAiSession {
 				return;
 			}
 		} else {
-			before = textOf(doc, 0, sel.head).slice(-CONTEXT_CHARS);
-			after = textOf(doc, sel.head, doc.content.size).slice(0, CONTEXT_CHARS);
+			before = read(doc, 0, sel.head).slice(-CONTEXT_CHARS);
+			after = read(doc, sel.head, doc.content.size).slice(0, CONTEXT_CHARS);
 			this.anchor = this.track(sel.head);
 			setAiCaret(this.editor, { pos: sel.head, phase: "active" });
 		}
+		// The notes of the sources it reads, as the article ends with them.
+		if (this.article) after += notesCited(doc, `${before}${selection ?? ""}${after}`);
 
 		try {
 			aiSession.set("streaming");
@@ -329,7 +528,7 @@ class TreeAiSession {
 			const tail = this.sanitizer.flush();
 			if (tail) this.buffer += tail;
 			this.landBuffer();
-			await this.convertOutput();
+			this.convertOutput();
 
 			const end = this.anchor?.resolve();
 			if (end != null && this.live()) setAiCaret(this.editor, { pos: end, phase: "done" });
@@ -362,7 +561,7 @@ class TreeAiSession {
 			if (this.aborted) return;
 			const text = this.buffer;
 			this.buffer = "";
-			this.write(text);
+			this.land(text, false);
 		}, this.deps.flushMs);
 	}
 
@@ -370,7 +569,48 @@ class TreeAiSession {
 	private landBuffer() {
 		const text = this.buffer;
 		this.buffer = "";
-		if (text) this.write(text);
+		this.land(text, true);
+	}
+
+	/**
+	 * Write `text`; `last` when nothing more comes. An article rewrite's
+	 * output is read first (`ArticleOutput`), and its pieces written in
+	 * order, whatever writing one sets off.
+	 */
+	private land(text: string, last: boolean) {
+		if (!this.reader) {
+			if (text) this.write(text);
+			return;
+		}
+		this.queue.push(...this.reader.push(text), ...(last ? this.reader.flush() : []));
+		if (this.draining) return;
+		this.draining = true;
+		try {
+			for (let p = this.queue.shift(); p; p = this.queue.shift()) {
+				if (p.kind === "source") this.passSource(p.label);
+				else this.write(p.text, p.veil);
+			}
+		} finally {
+			this.draining = false;
+		}
+	}
+
+	/**
+	 * The output cited one of the selection's sources: what follows goes
+	 * before the next, or at the selection's end. Any other is left out: a
+	 * rewrite proposes words, and a source cannot be proposed.
+	 */
+	private passSource(label: string) {
+		const j = this.sources.findIndex((f, k) => k >= this.passed && f.label === label);
+		if (j < 0) return;
+		this.passed = j + 1;
+		const next = j + 1 < this.sources.length ? this.sources[j + 1].before : this.end;
+		if (next) this.anchor = next;
+		// A line break around the source parts its sentence from the next,
+		// which the page parts already: it starts no block.
+		this.breakPending = false;
+		this.ownBlock = false;
+		this.atSource = true;
 	}
 
 	/**
@@ -427,8 +667,8 @@ class TreeAiSession {
 		return after + 1;
 	}
 
-	/** One chunk, as one transaction: the selection marked first if it is the first. */
-	private write(raw: string): void {
+	/** One chunk, as one transaction: the selection marked first if it is the first. `veil`: the words are veiled. */
+	private write(raw: string, veil = false): void {
 		if (!raw || !this.live()) return;
 		const at = this.anchor?.resolve();
 		if (at == null) {
@@ -460,6 +700,7 @@ class TreeAiSession {
 
 		const text = raw.replace(/\r\n?/g, "\n");
 		const marks = this.proposal ? [schema.marks[INSERTION].create({ [PROPOSAL_ATTR]: this.proposal })] : [];
+		if (veil) marks.push(schema.marks.veil.create());
 		const startOfWrite = pos;
 		// Where this session's first words go, when they are in this chunk.
 		let firstAt: number | null = null;
@@ -472,6 +713,8 @@ class TreeAiSession {
 			if (i > 0) this.breakPending = true;
 			const run = runs[i];
 			if (!run) continue;
+			if (this.atSource) this.breakPending = false;
+			this.atSource = false;
 			if (this.breakPending) {
 				this.breakPending = false;
 				const fromOwn = this.proposal === null || this.ownBlock;
@@ -494,8 +737,8 @@ class TreeAiSession {
 			wrote += run;
 		}
 		// The converter reads the model's text whole, line breaks that start no
-		// block included.
-		this.output += raw;
+		// block included, a veil as written.
+		this.output += veil ? `⟦${raw}⟧` : raw;
 		this.insertedChars += raw.length;
 		if (tr.docChanged) this.editor.view.dispatch(tr);
 		if (first) setAiTelegraph(this.editor, null);
@@ -520,19 +763,14 @@ class TreeAiSession {
 	}
 
 	/** Replace what streamed with the blocks its markdown makes, when it reads as markdown. */
-	private async convertOutput(): Promise<void> {
-		if (this.code || !this.written || !looksLikeMarkdown(this.output, { inline: true })) return;
-		if (!this.ownRange()) return;
-		let html: string;
-		try {
-			({ html } = await this.deps.convert(this.output, this.controller.signal));
-		} catch {
-			// The text stays as it streamed.
-			return;
-		}
-		if (this.aborted) return;
+	private convertOutput(): void {
+		if (this.code || !this.written || !looksLikeMarkdown(this.output, { inline: true, article: this.article })) return;
 		const own = this.ownRange();
 		if (!own) return;
+		const converted = this.deps.convert(this.output, this.article ? "article" : "written");
+		// Otherwise the text stays as it streamed.
+		if (converted.kind !== "converted") return;
+		const { html } = converted;
 		// Spaces around the words stay as they are: the converter trims a
 		// paragraph, and " **bold**" after a word must keep its space.
 		const lead = /^[ \t]*/.exec(this.written)![0].length;
@@ -544,6 +782,7 @@ class TreeAiSession {
 		replaceConverted(tr, range.from, range.to, html);
 		const from = tr.mapping.map(range.from, -1);
 		const to = tr.mapping.map(range.to, 1);
+		if (this.article) inheritNotes(tr, from, to, pageNotes(state.doc));
 		if (this.proposal) {
 			markText(tr, from, to, state.schema.marks[INSERTION].create({ [PROPOSAL_ATTR]: this.proposal }));
 			// Rejected, the converted page must read as the streamed one does
@@ -586,8 +825,6 @@ export function createTreeAiDriver(
 	let running: Promise<void> = Promise.resolve();
 	return {
 		start(o) {
-			// The CodeMirror editor's writer, if one is running elsewhere.
-			abortAiSession();
 			current?.abort();
 			const session = new TreeAiSession(o, resolved);
 			current = session;

@@ -10,6 +10,8 @@
 //! a CRDT or a scheduler, and because the invariant is the thing that makes
 //! two pens on one article safe.
 
+use std::collections::HashSet;
+
 use crate::error::{Error, Result};
 use crate::server::yjs::TextWriteError;
 
@@ -176,8 +178,13 @@ pub fn sentences(text: &str) -> Vec<String> {
             // so is "at 3.30 p.m. The train was quiet", because a period after
             // a one-letter token is ambiguous even to a person and the safe
             // reading is the one that does not split.
+            // An escaped terminator (`2019\.`, as the export writes a
+            // number that would start a list) ends a sentence as the bare
+            // one does, so a sentence splits the same in an article's
+            // markdown and in its export.
             let word: String = cur
                 .trim_end_matches(['.', '!', '?'])
+                .trim_end_matches('\\')
                 .chars()
                 .rev()
                 .take_while(|c| c.is_alphanumeric())
@@ -192,21 +199,41 @@ pub fn sentences(text: &str) -> Vec<String> {
             ];
             let abbrev = c == '.'
                 && (word.chars().count() <= 1 || ABBREV.contains(&word.to_lowercase().as_str()));
+            // Whitespace follows it, or a hard line break as the export
+            // writes one (a backslash ending the line), where the writer
+            // wrote two spaces or a tag.
             let mut look = chars.clone();
-            let ws = matches!(look.peek(), Some(c) if c.is_whitespace());
-            if ws && !abbrev {
-                while matches!(look.peek(), Some(c) if c.is_whitespace()) {
-                    look.next();
+            let mut ws = false;
+            loop {
+                let mut ahead = look.clone();
+                match (ahead.next(), ahead.next()) {
+                    (Some(c), _) if c.is_whitespace() => {
+                        look.next();
+                    }
+                    (Some('\\'), Some('\n')) => {
+                        look.next();
+                        look.next();
+                    }
+                    _ => break,
                 }
-                let starts_new = look
-                    .peek()
-                    .is_none_or(|n| n.is_uppercase() || n.is_ascii_digit() || *n == '[' || *n == '#');
+                ws = true;
+            }
+            if ws && !abbrev {
+                // An escaped `[` or `#` starts one as the bare character
+                // does: the export escapes a bracket that opens no link.
+                let mut next = look.clone();
+                let starts_new = match next.next() {
+                    None => true,
+                    Some('\\') => next.next().is_some_and(|n| n == '[' || n == '#'),
+                    Some(n) => n.is_uppercase() || n.is_ascii_digit() || n == '[' || n == '#',
+                };
                 if starts_new {
                     let s = cur.trim().to_string();
                     if !s.is_empty() {
                         out.push(s);
                     }
                     cur.clear();
+                    chars = look;
                 }
             }
         }
@@ -218,25 +245,98 @@ pub fn sentences(text: &str) -> Vec<String> {
     out
 }
 
+/// A sentence as provenance compares it: its markdown escapes and the
+/// character references an export writes read as the characters they stand
+/// for ([`unescape`]), and its whitespace collapsed. An article that holds
+/// blocks has its text written by the export, which escapes `&`, `_`, `*`,
+/// `[` and the like where the writer did not; compared by key, the
+/// owner's `R&B` and the export's `R\&B` are one sentence.
+pub fn sentence_key(sentence: &str) -> String {
+    unescape(sentence).split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Markdown text with its backslash escapes (a `\` before ASCII
+/// punctuation) and its character references (`&amp;`, `&lt;`, `&gt;`,
+/// `&quot;`, `&apos;`, `&nbsp;`, `&#N;`, `&#xN;`) read as the characters they
+/// stand for, and a backslash ending a line read as the hard line break it
+/// writes (the export's spelling of one), its line's end alone. Markup is
+/// left as it is.
+pub fn unescape(md: &str) -> String {
+    let mut out = String::with_capacity(md.len());
+    let mut rest = md;
+    while let Some(c) = rest.chars().next() {
+        let after = &rest[c.len_utf8()..];
+        if c == '\\' {
+            if let Some(n) = after.chars().next().filter(char::is_ascii_punctuation) {
+                out.push(n);
+                rest = &after[n.len_utf8()..];
+                continue;
+            }
+            if after.starts_with('\n') || after.starts_with("\r\n") {
+                rest = after;
+                continue;
+            }
+        } else if c == '&' {
+            if let Some((ch, used)) = character_reference(rest) {
+                out.push(ch);
+                rest = &rest[used..];
+                continue;
+            }
+        }
+        out.push(c);
+        rest = after;
+    }
+    out
+}
+
+/// The character a reference at the start of `s` names, and its length in
+/// bytes; `None` when `s` opens with none.
+fn character_reference(s: &str) -> Option<(char, usize)> {
+    let end = s.char_indices().take(12).find(|(_, c)| *c == ';')?.0;
+    let name = &s[1..end];
+    let ch = match name {
+        "amp" => '&',
+        "lt" => '<',
+        "gt" => '>',
+        "quot" => '"',
+        "apos" => '\'',
+        "nbsp" => '\u{a0}',
+        _ => {
+            let number = name.strip_prefix('#')?;
+            let code = match number.strip_prefix(['x', 'X']) {
+                Some(hex) if !hex.is_empty() => u32::from_str_radix(hex, 16).ok()?,
+                Some(_) => return None,
+                None if !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()) => number.parse().ok()?,
+                None => return None,
+            };
+            char::from_u32(code).filter(|c| *c != '\0').unwrap_or('\u{fffd}')
+        }
+    };
+    Some((ch, end + 1))
+}
+
 /// What the person has done to an article since the editor last left it.
 ///
 /// `machine_text` is the article exactly as the editor wrote it. Anything in
 /// the live text that is not in it, they added; anything in it that is no
 /// longer in the live text, they removed. That is the whole of provenance, and
-/// it needs no per-character attribution and no version history.
+/// it needs no per-character attribution and no version history. Sentences
+/// are compared by key ([`sentence_key`]).
 ///
 /// Returns `(added, removed)` as sentences.
 pub fn provenance(machine_text: &str, live_text: &str) -> (Vec<String>, Vec<String>) {
     let before = sentences(machine_text);
     let after = sentences(live_text);
+    let before_keys: HashSet<String> = before.iter().map(|s| sentence_key(s)).collect();
+    let after_keys: HashSet<String> = after.iter().map(|s| sentence_key(s)).collect();
     let added = after
         .iter()
-        .filter(|s| !before.contains(s))
+        .filter(|s| !before_keys.contains(&sentence_key(s)))
         .cloned()
         .collect();
     let removed = before
         .iter()
-        .filter(|s| !after.contains(s))
+        .filter(|s| !after_keys.contains(&sentence_key(s)))
         .cloned()
         .collect();
     (added, removed)
@@ -245,9 +345,9 @@ pub fn provenance(machine_text: &str, live_text: &str) -> (Vec<String>, Vec<Stri
 /// Fold a new observation of the person's edits into the stored sets.
 ///
 /// Both sets are pruned against the live text so they cannot grow without
-/// bound: a sentence they wrote and later deleted stops being theirs and
-/// becomes a removal; a removal they typed back in themselves stops being a
-/// removal.
+/// bound: a sentence they wrote and later deleted stops being theirs; a
+/// removal they typed back in themselves stops being a removal. Each set
+/// holds a sentence once, by key, in the spelling first seen.
 pub fn fold_provenance(
     theirs: &[String],
     removed: &[String],
@@ -255,21 +355,27 @@ pub fn fold_provenance(
     removed_now: &[String],
     live_text: &str,
 ) -> (Vec<String>, Vec<String>) {
-    let live = sentences(live_text);
-    let mut t: Vec<String> = theirs
+    let live: HashSet<String> = sentences(live_text).iter().map(|s| sentence_key(s)).collect();
+    let mut seen = HashSet::new();
+    let t: Vec<String> = theirs
         .iter()
         .chain(added_now.iter())
-        .filter(|s| live.contains(s))
+        .filter(|s| {
+            let key = sentence_key(s);
+            live.contains(&key) && seen.insert(key)
+        })
         .cloned()
         .collect();
-    t.dedup();
-    let mut r: Vec<String> = removed
+    let mut seen = HashSet::new();
+    let r: Vec<String> = removed
         .iter()
         .chain(removed_now.iter())
-        .filter(|s| !live.contains(s))
+        .filter(|s| {
+            let key = sentence_key(s);
+            !live.contains(&key) && seen.insert(key)
+        })
         .cloned()
         .collect();
-    r.dedup();
     (t, r)
 }
 
@@ -305,20 +411,28 @@ impl std::fmt::Display for Violation {
 /// claim flip could be removed. The constitution ASKS the editor to leave
 /// their words alone; this REFUSES the edit if it did not. A rule a prompt
 /// merely states is a rule that holds most of the time.
+///
+/// `new_text` is the edition as the page will hold it (`Draft::text`), never
+/// the model's raw text, and sentences are compared by key
+/// ([`sentence_key`]): a sentence of theirs the export spells with an escape
+/// is still theirs. On a block page the edition is the export of what the
+/// model wrote, so markup the model spelled another way reads as the page
+/// would write it.
 pub fn check_edit(new_text: &str, theirs: &[String], removed: &[String]) -> Result<()> {
     if lede(new_text).is_none() {
         return Err(Error::InvalidInput(Violation::NoLede.to_string()));
     }
+    let edition = sentence_key(new_text);
     for s in theirs {
-        if !new_text.contains(s.as_str()) {
+        if !edition.contains(sentence_key(s).as_str()) {
             return Err(Error::InvalidInput(
                 Violation::LostTheirs(s.clone()).to_string(),
             ));
         }
     }
-    let after = sentences(new_text);
+    let after: HashSet<String> = sentences(new_text).iter().map(|s| sentence_key(s)).collect();
     for s in removed {
-        if after.contains(s) {
+        if after.contains(&sentence_key(s)) {
             return Err(Error::InvalidInput(
                 Violation::RestoredRemoved(s.clone()).to_string(),
             ));
@@ -862,6 +976,15 @@ pub async fn record_provenance(
 /// be restored. Setting it to the reverted text would tell the editor it had
 /// authored every word of it, and it would feel free to rewrite them all.
 ///
+/// An article that holds blocks is put back by blocks
+/// (`pages::restore_version`, which takes the page's write turn itself and
+/// stamps the restore as the owner's, as History's restore is): a block the
+/// version shares with the page keeps its items, and a version from before
+/// the article held blocks is converted as an article. Its document is
+/// built first, so an article nobody had opened moves to blocks before
+/// anything is put back. The stamp follows only a revert that changed the
+/// page.
+///
 /// A revert whose save fails is still a revert: the page and every open
 /// editor already say the version, its own version is cut, and the save loop
 /// retries the save. It comes back as `Changed { saved: false }`, never as
@@ -877,8 +1000,8 @@ pub async fn revert_article(
         .await?
         .ok_or_else(|| Error::NotFound(format!("No article for {subject_type} {subject_id}")))?;
 
-    let snapshot: Vec<u8> = sqlx::query_scalar(
-        "SELECT yjs_snapshot FROM app_page_versions \
+    let (version_id, snapshot): (String, Option<Vec<u8>>) = sqlx::query_as(
+        "SELECT id, yjs_snapshot FROM app_page_versions \
          WHERE page_id = $1 AND version_number = $2",
     )
     .bind(&article.page_id)
@@ -888,7 +1011,25 @@ pub async fn revert_article(
     .map_err(|e| Error::Database(format!("Failed to load that version: {e}")))?
     .ok_or_else(|| Error::NotFound(format!("No version {version_number} of this article")))?;
 
-    let text = crate::server::yjs::extract_text_content(&snapshot);
+    let format = yjs
+        .format_of(&article.page_id)
+        .await
+        .map_err(|e| Error::Other(format!("could not read the article: {e}")))?;
+    if format == crate::api::pages::PageFormat::Tree {
+        let restored = crate::api::pages::restore_version(pool, yjs, &article.page_id, &version_id).await?;
+        if !restored.changed {
+            return Ok(RevertOutcome::Unchanged);
+        }
+        return Ok(RevertOutcome::Changed {
+            change: restored.change,
+            saved: restored.saved,
+        });
+    }
+
+    let text = snapshot
+        .as_deref()
+        .map(crate::server::yjs::extract_text_content)
+        .unwrap_or_default();
     if text.trim().is_empty() {
         return Err(Error::InvalidInput(
             "that version has no readable text to restore".into(),
@@ -953,13 +1094,14 @@ pub struct Revision {
     /// False when the revision is on the page but its save failed and waits
     /// in the save loop for a retry.
     pub saved: bool,
+    /// The article's page, so an applet run can record what it wrote.
+    pub page_id: String,
 }
 
 /// The maintenance state of one article, as the editor needs it.
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct EditorArticle {
     id: String,
-    page_id: String,
     maintenance: String,
     machine_text: Option<String>,
     last_written_at: Option<chrono::DateTime<chrono::Utc>>,
@@ -988,21 +1130,31 @@ impl EditorArticle {
 /// agent because every step after "here is the new text" is a guarantee the
 /// agent must not be able to skip:
 ///
-/// 1. Read the live document. If the person has edited it since the editor
-///    last wrote, cut a `user` version first — otherwise their change would
-///    sit invisibly inside the machine's next version — and fold what they did
-///    into `theirs` / `removed`. An article with no version yet gets the
-///    editor's last edition as its first (`pages::keep_first_draft`), so
-///    their version has the text it is diffed against.
-/// 2. Check the proposed text against those sets. A refusal returns the reason
-///    rather than raising: the caller is an agent loop, and the reason is
-///    something it can act on in the same turn.
+/// 1. Read the live document, in the page's write turn. Building it can move
+///    an article nobody had opened to blocks, which rebases its edition
+///    (`block_move::first_open`), so the article's own columns are read
+///    after. If the person has edited it since the editor last wrote, cut a
+///    `user` version first — otherwise their change would sit invisibly
+///    inside the machine's next version — and fold what they did into
+///    `theirs` / `removed`. An article with no version yet gets the editor's
+///    last edition as its first (`pages::keep_first_draft`), so their
+///    version has the text it is diffed against. On a block article both
+///    sides are compared as this server writes them
+///    (`block_move::as_compared`).
+/// 2. Turn the proposed text into what the page will hold
+///    (`YjsState::draft`: the markdown itself, or on a block page its
+///    blocks and their export), and check that against those sets. A
+///    refusal returns the reason rather than raising: the caller is an
+///    agent loop, and the reason is something it can act on in the same
+///    turn.
 /// 3. Keep the page as it stands (`pages::cut_restore_point`), so the
-///    revision can be put back, and record the edition, so the next pass
-///    reads provenance against it. Either failing refuses the revision with
-///    nothing applied. Then apply only what changed, through the CRDT, with
-///    the staleness guard; a write that changes nothing puts the previous
-///    edition back.
+///    revision can be put back, and record the draft's text as the edition,
+///    so the next pass reads provenance against it. Either failing refuses
+///    the revision with nothing applied. Then apply only what changed,
+///    through the CRDT, with the staleness guard
+///    (`YjsState::write_draft`: word by word, or block by block); a write
+///    that changes nothing puts the previous edition back, and one that left
+///    other text than the draft records what it left.
 /// 4. Cut the machine's version, carrying the editor's own summary and a
 ///    mechanical count that cannot flatter itself.
 ///
@@ -1016,11 +1168,30 @@ pub async fn revise_article(
     new_text: &str,
     summary: &str,
 ) -> Result<Revision> {
+    let page_id: String = sqlx::query_scalar(
+        "SELECT page_id FROM wiki_articles WHERE subject_type = $1 AND subject_id = $2",
+    )
+    .bind(subject_type)
+    .bind(subject_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to load article: {e}")))?
+    .ok_or_else(|| Error::NotFound(format!("No article for {subject_type} {subject_id}")))?;
+
+    let _turn = yjs.write_turn(&page_id).await;
+    // The text and its state from one read, so the person's version below
+    // holds exactly the text their provenance is worked out from.
+    let current = yjs
+        .text_and_state(&page_id)
+        .await
+        .map_err(|e| Error::Other(format!("could not read the article: {e}")))?;
+    let live = current.text.as_str();
+
     // The editor's own columns, read directly: `wiki_articles::get_article`
     // is a compile-time-checked macro over a shared struct, and widening that
     // for one caller would put maintenance state on every reader of articles.
     let article: EditorArticle = sqlx::query_as(
-        "SELECT id, page_id, maintenance, machine_text, last_written_at, theirs, removed \
+        "SELECT id, maintenance, machine_text, last_written_at, theirs, removed \
          FROM wiki_articles WHERE subject_type = $1 AND subject_id = $2",
     )
     .bind(subject_type)
@@ -1030,21 +1201,12 @@ pub async fn revise_article(
     .map_err(|e| Error::Database(format!("Failed to load article: {e}")))?
     .ok_or_else(|| Error::NotFound(format!("No article for {subject_type} {subject_id}")))?;
 
-    let _turn = yjs.write_turn(&article.page_id).await;
     if article.maintenance == "never" {
         return Err(Error::InvalidInput(
             "the owner has turned maintenance off for this article".into(),
         ));
     }
     let (theirs_stored, removed_stored) = article.provenance_sets();
-
-    // The text and its state from one read, so the person's version below
-    // holds exactly the text their provenance is worked out from.
-    let current = yjs
-        .text_and_state(&article.page_id)
-        .await
-        .map_err(|e| Error::Other(format!("could not read the article: {e}")))?;
-    let live = current.text.as_str();
 
     // ── 1. What the person has done since the editor last wrote ──
     //
@@ -1054,50 +1216,72 @@ pub async fn revise_article(
     // mark every sentence, including the machine's own first draft, as the
     // person's, and the invariant would then forbid the editor from ever
     // touching the article again. Absent is absent.
-    let (theirs, removed) = match article.machine_text.as_deref() {
+    let format = if current.tree.is_some() {
+        crate::api::pages::PageFormat::Tree
+    } else {
+        crate::api::pages::PageFormat::Markdown
+    };
+    let compared = match article.machine_text.as_deref() {
         Some(machine_text) => {
+            let both = crate::api::block_move::compared(format, true, vec![machine_text.to_string(), live.to_string()]).await;
+            let [machine_text, live]: [String; 2] = both.try_into().expect("two texts in, two out");
+            Some((machine_text, live))
+        }
+        None => None,
+    };
+    let (theirs, removed) = match &compared {
+        Some((machine_text, live)) => {
             let (added, removed_now) = provenance(machine_text, live);
             fold_provenance(&theirs_stored, &removed_stored, &added, &removed_now, live)
         }
         None => (theirs_stored.clone(), removed_stored.clone()),
     };
-    let machine_text = article.machine_text.clone().unwrap_or_default();
-    if !machine_text.is_empty() && live != machine_text {
+    let edited = compared
+        .as_ref()
+        .is_some_and(|(machine_text, live)| !machine_text.is_empty() && live != machine_text);
+    if edited {
+        let machine_text = article.machine_text.as_deref().unwrap_or_default();
         // An article nothing versioned when it was created gets the
         // editor's last edition, the draft their edit started from, as its
         // first version (a no-op once the page has any), so History can
         // show that edit and undo it.
-        crate::api::pages::keep_first_draft(pool, &article.page_id, &machine_text).await?;
+        crate::api::pages::keep_first_draft(pool, &page_id, machine_text).await?;
         // Their edit becomes its own version, before the machine's, so the
         // history reads in the order the writing happened.
-        crate::api::pages::cut_version(pool, &article.page_id, &current, "user", Some("edited"))
-            .await;
+        crate::api::pages::cut_version(pool, &page_id, &current, "user", Some("edited")).await;
         record_provenance(pool, &article.id, &theirs, &removed).await?;
     }
 
-    // ── 2. The invariants, before anything reaches the document ──
-    check_edit(new_text, &theirs, &removed)?;
-    check_links(pool, new_text).await?;
+    // ── 2. The draft as the page will hold it, and the invariants ──
+    let draft = yjs
+        .draft(&page_id, new_text)
+        .await
+        .map_err(|e| Error::InvalidInput(e.to_string()))?;
+    check_edit(&draft.text, &theirs, &removed)?;
+    check_links(pool, &draft.text).await?;
 
     // ── 3. The page as it stands, the edition, then only what changed ──
     //
     // The restore point is the latest version when one already holds the
     // live text (the first draft, step 1's, or the last revision's). No
     // copy, no revision.
-    crate::api::pages::cut_restore_point(pool, yjs, &article.page_id).await?;
+    crate::api::pages::cut_restore_point(pool, yjs, &page_id).await?;
     // The edition is recorded before the page changes, and a database that
     // refuses it refuses the revision: applied with `machine_text` still the
     // previous edition, the next pass would credit the machine's own
     // sentences to the person and refuse to touch them. No edition, no
     // revision.
-    record_edition(pool, &article.id, new_text).await?;
-    let (written, saved) = match yjs.apply_text_diff(&article.page_id, live, new_text).await {
+    record_edition(pool, &article.id, &draft.text).await?;
+    let written = yjs
+        .write_draft(&page_id, live, &draft, crate::server::yjs::Granularity::Words)
+        .await;
+    let (written, saved) = match written {
         Ok(written) => (written, true),
         // On the page and in every open editor already, and queued to save:
         // an applied revision, whose edition is recorded above and whose
         // version is cut below like any other.
         Err(TextWriteError::NotSaved { written, error }) => {
-            tracing::warn!(page = %article.page_id, error = %error, "revision applied but not saved yet");
+            tracing::warn!(page = %page_id, error = %error, "revision applied but not saved yet");
             (written, false)
         }
         // Nothing changed on the page, so the edition recorded above is not
@@ -1107,6 +1291,14 @@ pub async fn revise_article(
             return Err(Error::Other(e.to_string()));
         }
     };
+    // The write leaves the draft's blocks, so its export is the draft's
+    // text; where it is not, the edition is what the page holds.
+    if written.text != draft.text {
+        tracing::warn!(page = %page_id, "a revision left other text than its draft; recording what it left as the edition");
+        if let Err(e) = record_edition(pool, &article.id, &written.text).await {
+            tracing::error!(article = %article.id, error = %e, "the revision's edition was not corrected to what it left");
+        }
+    }
 
     // ── 4. The machine's version, with a summary that cannot flatter itself ──
     //
@@ -1114,12 +1306,11 @@ pub async fn revise_article(
     // is not: a failure is logged.
     let change = change_line(live, &written.text);
     let description = format!("{} — {}", summary.trim(), change);
-    crate::api::pages::cut_version(pool, &article.page_id, &written, "ai", Some(&description))
-        .await;
+    crate::api::pages::cut_version(pool, &page_id, &written, "ai", Some(&description)).await;
     if let Err(e) = record_provenance(pool, &article.id, &theirs, &removed).await {
         tracing::error!(article = %article.id, error = %e, "revision applied but its provenance was not recorded");
     }
-    Ok(Revision { change, saved })
+    Ok(Revision { change, saved, page_id })
 }
 
 /// Undo `revise_article`'s `record_edition` for a revision that changed
@@ -2394,4 +2585,383 @@ mod tests {
         }
     }
 
+    // ── articles that hold blocks ──────────────────────────────────────────
+
+    /// The export writes a hard line break as a backslash ending the line,
+    /// where a writer wrote two spaces or `<br>`: read, it is the line's end,
+    /// so a sentence after one keys and reads as the writer's. A backslash
+    /// that is itself escaped stays.
+    #[test]
+    fn a_backslash_ending_a_line_is_a_line_break() {
+        assert_eq!(unescape("You cooked dinner.\\\nThen you read."), "You cooked dinner.\nThen you read.");
+        assert_eq!(unescape("a\\\r\nb"), "a\r\nb");
+        assert_eq!(unescape("a\\\\\nb"), "a\\\nb", "an escaped backslash");
+        assert_eq!(unescape("a\\\\\\\nb"), "a\\\nb", "an escaped backslash, then a break");
+        assert_eq!(
+            sentence_key("You cooked dinner.\\\nThen you read."),
+            sentence_key("You cooked dinner.  \nThen you read.")
+        );
+    }
+
+    #[test]
+    fn a_sentence_is_keyed_past_escapes_and_references() {
+        assert_eq!(sentence_key("You met Zoe at the R\\&B night."), "You met Zoe at the R&B night.");
+        assert_eq!(sentence_key("user\\_name &amp; co &#x2014; &#8212;  done"), "user_name & co — — done");
+        assert_eq!(sentence_key("a\\\nb"), "a b", "a backslash ending a line is a hard line break");
+        assert_eq!(unescape("&bogus; &#; &#xZ; &#0;"), "&bogus; &#; &#xZ; \u{fffd}");
+        assert_eq!(unescape("\\é stays"), "\\é stays");
+    }
+
+    #[test]
+    fn sentences_split_the_same_in_an_articles_export() {
+        let written = "Learning to sail. [Dad] taught me.\n\nI sailed.  \nRowed home.\n\n2019. A good year.";
+        let exported = "Learning to sail. \\[Dad\\] taught me.\n\nI sailed.\\\nRowed home.\n\n2019\\. A good year.";
+        let keys = |t: &str| sentences(t).iter().map(|s| sentence_key(s)).collect::<Vec<_>>();
+        assert_eq!(keys(written), keys(exported));
+        assert_eq!(sentences(written).len(), 6, "{:?}", sentences(written));
+    }
+
+    #[test]
+    fn provenance_reads_an_escape_as_no_edit() {
+        let machine = "You met Zoe at the R&B night. She fixes bicycles.";
+        let live = "You met Zoe at the R\\&B night. She fixes bicycles. I stayed late.";
+        let (added, removed) = provenance(machine, live);
+        assert_eq!(added, ["I stayed late."]);
+        assert!(removed.is_empty(), "{removed:?}");
+        let (theirs, _) = fold_provenance(&["I stayed late.".into()], &[], &added, &removed, live);
+        assert_eq!(theirs, ["I stayed late."], "held once");
+        assert!(check_edit("You met Zoe at the R\\&B night. I stayed late.", &theirs, &[]).is_ok());
+        assert!(check_edit("You met Zoe at the R\\&B night.", &theirs, &[]).is_err());
+        assert!(check_edit("You met Zoe. She fixes R\\&B bicycles.", &[], &["She fixes R&B bicycles.".into()]).is_err());
+    }
+
+    /// [`article_fixture`], its article moving to blocks when first opened.
+    async fn tree_article_fixture(
+        pool: &sqlx::PgPool,
+        first_draft: &str,
+    ) -> (crate::server::yjs::YjsState, String, String) {
+        let (_, id, page_id) = article_fixture(pool, first_draft).await;
+        (crate::server::yjs::YjsState::with_tree_articles(pool.clone(), true), id, page_id)
+    }
+
+    async fn edition(pool: &sqlx::PgPool, id: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT machine_text FROM wiki_articles WHERE id = $1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    async fn theirs_stored(pool: &sqlx::PgPool, id: &str) -> serde_json::Value {
+        sqlx::query_scalar("SELECT theirs FROM wiki_articles WHERE id = $1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// On a block article the edition is the export of what the model
+    /// wrote, which is what the page then says: the next pass reads no edit
+    /// of the owner's in an escape the export writes.
+    #[sqlx::test]
+    async fn a_tree_revision_records_the_export_as_its_edition(pool: sqlx::PgPool) {
+        let (yjs, id, page_id) =
+            tree_article_fixture(&pool, "You met Zoe at the R&B night. She fixes bicycles.").await;
+        let revision = revise_article(
+            &pool,
+            &yjs,
+            "person",
+            "person_z",
+            "You met Zoe at the R&B night. She fixes bicycles. You now ride together on Sundays.",
+            "added the Sunday rides",
+        )
+        .await
+        .unwrap();
+        assert!(revision.change.contains("+1 sentence"), "{revision:?}");
+        assert_eq!(yjs.format_of(&page_id).await.unwrap(), crate::api::pages::PageFormat::Tree);
+        let live = yjs.read_text(&page_id).await.unwrap();
+        assert_eq!(live, "You met Zoe at the R\\&B night. She fixes bicycles. You now ride together on Sundays.\n");
+        assert_eq!(edition(&pool, &id).await.as_deref(), Some(live.as_str()));
+        assert_eq!(stored_content(&pool, &page_id).await, live);
+        let edited: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM app_page_versions WHERE page_id = $1 AND created_by = 'user'",
+        )
+        .bind(&page_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(edited, 0, "no edit of the owner's");
+    }
+
+    /// Putting back a version of a block article goes by blocks: a block
+    /// the version shares with the page keeps its id, the revert is the
+    /// owner's and stamped, and the edition stays the editor's.
+    #[sqlx::test]
+    async fn revert_on_a_tree_article_restores_by_blocks(pool: sqlx::PgPool) {
+        let (yjs, id, page_id) = tree_article_fixture(&pool, "You met Zoe at the shop.\n\nShe fixes bicycles.\n").await;
+        let first = yjs.read_tree(&page_id).await.unwrap();
+        let moved: i64 = sqlx::query_scalar(
+            "SELECT max(version_number) FROM app_page_versions WHERE page_id = $1",
+        )
+        .bind(&page_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        revise_article(
+            &pool,
+            &yjs,
+            "person",
+            "person_z",
+            "You met Zoe at the shop.\n\nShe fixes bicycles.\n\nYou ride together on Sundays.\n",
+            "added the Sunday rides",
+        )
+        .await
+        .unwrap();
+        let revised = edition(&pool, &id).await;
+
+        let outcome = revert_article(&pool, &yjs, "person", "person_z", moved).await.unwrap();
+        assert_eq!(
+            outcome,
+            RevertOutcome::Changed { change: "−1 sentence, -1 paragraph".into(), saved: true }
+        );
+        let now = yjs.read_tree(&page_id).await.unwrap();
+        assert_eq!(now, first, "the blocks as they were, ids included");
+        let stamped: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT last_human_edit_at FROM wiki_articles WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(stamped.is_some());
+        assert_eq!(edition(&pool, &id).await, revised, "the editor's edition is left as it was");
+        assert_eq!(
+            revert_article(&pool, &yjs, "person", "person_z", moved).await.unwrap(),
+            RevertOutcome::Unchanged
+        );
+
+        // The first draft, kept in markdown before the article held blocks,
+        // goes back by conversion.
+        revert_article(&pool, &yjs, "person", "person_z", 1).await.unwrap();
+        assert_eq!(yjs.read_text(&page_id).await.unwrap(), "You met Zoe at the shop.\n\nShe fixes bicycles.\n");
+    }
+
+    /// The move rebases the edition, so an article nobody edited reads as
+    /// nobody's edit after it, escapes the export writes and all.
+    #[sqlx::test]
+    async fn a_moved_article_does_not_read_as_owner_edited(pool: sqlx::PgPool) {
+        let (yjs, id, page_id) =
+            tree_article_fixture(&pool, "You met Zoe at the R&B night.\n\nShe fixes user_name bicycles.\n").await;
+        let live = yjs.read_text(&page_id).await.unwrap();
+        assert_eq!(live, "You met Zoe at the R\\&B night.\n\nShe fixes user\\_name bicycles.\n");
+        let machine = edition(&pool, &id).await.unwrap();
+        assert_eq!(provenance(&machine, &live), (vec![], vec![]));
+
+        revise_article(&pool, &yjs, "person", "person_z", &format!("{live}\nYou ride on Sundays.\n"), "Sundays")
+            .await
+            .unwrap();
+        let by: Vec<String> = sqlx::query_scalar(
+            "SELECT created_by FROM app_page_versions WHERE page_id = $1 ORDER BY version_number",
+        )
+        .bind(&page_id)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(!by.contains(&"user".to_string()), "{by:?}");
+    }
+
+    /// The ownership rule holds on a block article: a revision that drops a
+    /// sentence the owner wrote is refused, and one that keeps it, spelled
+    /// as the model spells it, is not.
+    #[sqlx::test]
+    async fn a_revision_of_a_tree_article_is_refused_when_it_loses_their_sentence(pool: sqlx::PgPool) {
+        let (yjs, id, page_id) = tree_article_fixture(&pool, "You met Zoe at the shop.\n").await;
+        let base = yjs.read_tree(&page_id).await.unwrap();
+        // The owner adds a sentence of their own (here through the chat's
+        // block edit, as typing in the page would).
+        yjs.edit_tree(
+            &page_id,
+            Some(&virtues_document::Seen::of_page(&base)),
+            &[virtues_document::Op::Append {
+                html: "<p>I stayed late at R&amp;B night.</p>".into(),
+            }],
+        )
+        .await
+        .unwrap();
+
+        let lost = revise_article(&pool, &yjs, "person", "person_z", "You met Zoe at the shop. She fixes bicycles.\n", "x")
+            .await
+            .unwrap_err();
+        assert!(lost.to_string().contains("did not survive"), "{lost}");
+        assert_eq!(
+            yjs.read_text(&page_id).await.unwrap(),
+            "You met Zoe at the shop.\n\nI stayed late at R\\&B night.\n",
+            "nothing written"
+        );
+
+        revise_article(
+            &pool,
+            &yjs,
+            "person",
+            "person_z",
+            "You met Zoe at the shop. She fixes bicycles.\n\nI stayed late at R&B night.\n",
+            "the shop",
+        )
+        .await
+        .unwrap();
+        assert_eq!(theirs_stored(&pool, &id).await, serde_json::json!(["I stayed late at R\\&B night."]));
+        assert!(yjs.read_text(&page_id).await.unwrap().contains("I stayed late at R\\&B night."));
+    }
+
+    /// The owner's pending suggestion on a block article is theirs to
+    /// decide. The editor's revision carries it back as the page's export
+    /// says it, CriticMarkup and all: that block is left alone, the
+    /// suggestion still pending, and the sentence under it stays theirs. A
+    /// revision that decides it, either way, is refused with nothing
+    /// written. Read as a writer's, the suggestion came back accepted, and
+    /// the owner's sentence left `theirs` unprotected.
+    #[sqlx::test]
+    async fn a_pending_suggestion_survives_a_revision(pool: sqlx::PgPool) {
+        let (yjs, id, page_id) = tree_article_fixture(&pool, "You met Zoe at the shop.\n").await;
+        let base = yjs.read_tree(&page_id).await.unwrap();
+        yjs.edit_tree(
+            &page_id,
+            Some(&virtues_document::Seen::of_page(&base)),
+            &[virtues_document::Op::Append { html: "<p>I had lunch at noon with her.</p>".into() }],
+        )
+        .await
+        .unwrap();
+        record_provenance(&pool, &id, &["I had lunch at noon with her.".into()], &[]).await.unwrap();
+        // The owner's inline writer proposes a change to their sentence, and
+        // they have not decided it yet.
+        let mut tree = yjs.read_tree(&page_id).await.unwrap();
+        let theirs_id = tree[1].id().unwrap().to_string();
+        let suggested = virtues_document::parse_html(
+            &format!(
+                "<p data-id=\"{theirs_id}\">I had lunch <virtues-del proposal=\"p1\">at noon</virtues-del>\
+                 <virtues-ins proposal=\"p1\">on Friday</virtues-ins> with her.</p>"
+            ),
+            "doc",
+        );
+        assert!(suggested.errors.is_empty(), "{:?}", suggested.errors);
+        tree[1] = suggested.nodes[0].clone();
+        yjs.replace_tree(&page_id, &tree).await.unwrap();
+        let live = yjs.read_text(&page_id).await.unwrap();
+        assert_eq!(live, "You met Zoe at the shop.\n\nI had lunch {--at noon--}{++on Friday++} with her.\n");
+
+        let revision = revise_article(&pool, &yjs, "person", "person_z", &format!("{live}\nYou walked home.\n"), "the walk")
+            .await
+            .unwrap();
+        assert!(revision.change.contains("+1 sentence"), "{revision:?}");
+        let html = virtues_document::to_html(&yjs.read_tree(&page_id).await.unwrap(), true);
+        assert!(
+            html.contains(&format!("<p data-id=\"{theirs_id}\">I had lunch <virtues-del proposal=\"p1\">at noon</virtues-del>")),
+            "{html}"
+        );
+        let theirs = theirs_stored(&pool, &id).await;
+        assert_eq!(theirs, serde_json::json!(["I had lunch {--at noon--}{++on Friday++} with her."]));
+
+        let before = yjs.read_text(&page_id).await.unwrap();
+        for decided in ["I had lunch on Friday with her.", "I had lunch at noon with her."] {
+            let refused = revise_article(
+                &pool,
+                &yjs,
+                "person",
+                "person_z",
+                &format!("You met Zoe at the shop.\n\n{decided}\n\nYou walked home.\n"),
+                "decided",
+            )
+            .await
+            .unwrap_err();
+            assert!(refused.to_string().contains("did not survive"), "{decided}: {refused}");
+            assert_eq!(yjs.read_text(&page_id).await.unwrap(), before, "{decided}: nothing written");
+        }
+    }
+
+    /// A sentence of the owner's spelled with other markup than the export
+    /// writes is still theirs after the move: it is matched by its words and
+    /// held in the export's spelling, and a revision keeping it as they
+    /// spelled it keeps it.
+    #[sqlx::test]
+    async fn their_sentence_spelled_with_other_markup_still_matches(pool: sqlx::PgPool) {
+        let draft = "You met Zoe at the shop.\n";
+        let (yjs, id, page_id) = tree_article_fixture(&pool, draft).await;
+        // Their edit, made while the article was markdown nobody had opened.
+        sqlx::query("UPDATE app_pages SET content = $1 WHERE id = $2")
+            .bind("You met Zoe at the shop.\n\nIt was __very__ late.\n")
+            .bind(&page_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        record_provenance(&pool, &id, &["It was __very__ late.".into()], &[]).await.unwrap();
+
+        assert_eq!(yjs.format_of(&page_id).await.unwrap(), crate::api::pages::PageFormat::Tree);
+        assert_eq!(theirs_stored(&pool, &id).await, serde_json::json!(["It was **very** late."]));
+        assert_eq!(edition(&pool, &id).await.as_deref(), Some(draft));
+
+        revise_article(
+            &pool,
+            &yjs,
+            "person",
+            "person_z",
+            "You met Zoe at the shop. She fixes bicycles.\n\nIt was __very__ late.\n",
+            "the shop",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            yjs.read_text(&page_id).await.unwrap(),
+            "You met Zoe at the shop. She fixes bicycles.\n\nIt was **very** late.\n"
+        );
+    }
+
+    /// A story's seed the page has run on into a longer sentence is no
+    /// longer a sentence of the page, so the move drops it from theirs, as
+    /// the next revision's `fold_provenance` drops it, and the article
+    /// moves. Held back as a sentence the export cannot place, the article
+    /// stayed markdown for good. The seed as a sentence of its own is placed,
+    /// and stays theirs.
+    #[sqlx::test]
+    async fn a_seed_sentence_run_into_a_longer_one_is_dropped_and_the_article_moves(pool: sqlx::PgPool) {
+        use crate::api::stories::{create_story, start_article, update_story, StoryFields};
+        let seed = "Two finished, one abandoned.";
+        for (title, page, theirs) in [
+            ("The garden", "Two finished, one abandoned. ⟦The third⟧ I still dream about.\n", serde_json::json!([])),
+            ("The orchard", "Two finished, one abandoned. The third I still dream about.\n", serde_json::json!([seed])),
+        ] {
+            let story = create_story(&pool, title).await.unwrap();
+            update_story(
+                &pool,
+                &story.id,
+                &StoryFields {
+                    title: None,
+                    summary: Some(seed.into()),
+                    started_at: None,
+                    ended_at: None,
+                    started_precision: None,
+                    ended_precision: None,
+                },
+            )
+            .await
+            .unwrap();
+            let id = start_article(&pool, &story.id).await.unwrap();
+            let page_id: String = sqlx::query_scalar("SELECT page_id FROM wiki_articles WHERE id = $1")
+                .bind(&id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+            sqlx::query("UPDATE app_pages SET content = $2 WHERE id = $1")
+                .bind(&page_id)
+                .bind(page)
+                .execute(&pool)
+                .await
+                .unwrap();
+            assert_eq!(theirs_stored(&pool, &id).await, serde_json::json!([seed]));
+            let (folded, _) = fold_provenance(&[seed.to_string()], &[], &[], &[], page);
+            assert_eq!(serde_json::json!(folded), theirs, "{page}: the next revision agrees");
+
+            let yjs = crate::server::yjs::YjsState::with_tree_articles(pool.clone(), true);
+            assert_eq!(yjs.format_of(&page_id).await.unwrap(), crate::api::pages::PageFormat::Tree, "{page}");
+            assert_eq!(theirs_stored(&pool, &id).await, theirs, "{page}");
+        }
+    }
 }

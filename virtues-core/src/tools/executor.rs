@@ -33,8 +33,9 @@ impl SubagentStatus {
     }
 }
 
-/// A live update from a Deep Research worker, streamed out to the panel via the
-/// `subagent_tx` side-channel on [`ToolContext`].
+/// A live update from a worker the turn started (Deep Research workers, the
+/// browsing agent), streamed to the client via the `subagent_tx` side-channel
+/// on [`ToolContext`].
 #[derive(Debug, Clone)]
 pub struct SubagentUpdate {
     /// Unique per-dispatch id, so multiple dispatch rounds in one turn don't collide in the panel.
@@ -44,6 +45,16 @@ pub struct SubagentUpdate {
     pub model: String,
     pub status: SubagentStatus,
     pub tokens: u32,
+    /// The browsing agent's call in flight, for the chat's status line. The
+    /// client words it as it words that tool anywhere else.
+    pub step: Option<WorkerStep>,
+}
+
+/// One tool call a worker is making, as the client's tool table reads it.
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct WorkerStep {
+    pub tool: String,
+    pub input: serde_json::Value,
 }
 
 /// Context provided to tools during execution
@@ -86,6 +97,10 @@ pub struct ToolContext {
     /// written in. SQL tools read dates in it. `None` (an applet run, a
     /// worker) falls back to `home_timezone`.
     pub timezone: Option<String>,
+    /// The chat turn the call is part of, made afresh for each turn by the
+    /// chat handler. A page's read base made in a turn serves only that
+    /// turn (`page_reads::serves_turn`). `None` outside a chat turn.
+    pub turn: Option<String>,
     /// The call came through the console door (`server/api/console.rs`): the
     /// owner at the box, running a CLI verb. Set only by that handler, never
     /// from a tool's arguments, so the model cannot claim it.
@@ -108,6 +123,7 @@ impl Default for ToolContext {
             ghost_permissions: None,
             sudo: false,
             timezone: None,
+            turn: None,
             console: false,
         }
     }
@@ -491,6 +507,9 @@ impl ToolExecutor {
             )),
             "read_asset" => self.execute_read_asset(arguments).await,
             "show" => super::show::execute(&self.sql_query, arguments, context.timezone.as_deref()).await,
+            // The chat's browsing task, run by its own loop, whose steps come
+            // back through this executor as the `browser_*` calls below.
+            crate::browse::TOOL => Ok(crate::browse::run_tool(&self._pool, &arguments, context).await),
             name if crate::browser::TOOLS.contains(&name) => {
                 Ok(crate::browser::run_tool(name, arguments).await)
             }
@@ -538,6 +557,7 @@ impl ToolExecutor {
                     Ok(revision) if revision.saved => Ok(ToolResult::success(serde_json::json!({
                         "applied": true,
                         "saved": true,
+                        "page_id": revision.page_id,
                         "change": revision.change,
                     }))),
                     // Made, and versioned: only the save is pending. Sending
@@ -545,6 +565,7 @@ impl ToolExecutor {
                     Ok(revision) => Ok(ToolResult::success(serde_json::json!({
                         "applied": true,
                         "saved": false,
+                        "page_id": revision.page_id,
                         "change": revision.change,
                         "note": "the revision is on the page, but the server couldn't save it yet \
                                  and saves it again on its own; do not send it again",

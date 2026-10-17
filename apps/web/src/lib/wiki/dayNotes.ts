@@ -10,7 +10,7 @@
  */
 
 import type { ArticleBlock } from "./dayArticle";
-import { tokenize, type Token } from "./inlineMarkdown";
+import { plainText } from "./inlineMarkdown";
 
 export interface NoteAnchor {
 	/** The sentence as plain text, the way `plainSentence` writes it. */
@@ -27,11 +27,13 @@ export interface Placed<N> {
 	lost: string | null;
 }
 
-const flat = (ts: Token[]): string => ts.map((t) => ("children" in t ? flat(t.children) : t.text)).join("");
-
-/** A sentence's words with its markup gone, read by the same rules the page draws with. */
+/**
+ * A sentence's words with its markup gone, read by the same rules the page
+ * draws with: escapes and character references read, so a sentence anchors
+ * the same before and after its article becomes a block page.
+ */
 export function plainSentence(markdown: string): string {
-	return flat(tokenize(markdown))
+	return plainText(markdown)
 		.replace(/[⟦⟧]/g, "")
 		.replace(/\s+/g, " ")
 		.trim();

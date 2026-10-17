@@ -11,6 +11,64 @@ pub(crate) fn default_port() -> u16 {
         .unwrap_or(8000)
 }
 
+/// Every command that opens a Postgres pool or reads the `virtues`-owned env
+/// file, which `main` runs as the `virtues` service user on a box. Miss one
+/// and it runs as the login user, who can read neither: it fails on a role
+/// that does not exist (`role "root" does not exist`), or on `DATABASE_URL`
+/// unset, before it does anything, a confusing way to say "wrong user".
+///
+/// The list beside it at the top of `main()` decides the log level for
+/// interactive commands, and [`DATA_VERBS`] the data verbs'. When you add a
+/// subcommand that touches the database, add it here and to the one that
+/// sets its noise floor.
+///
+/// Deliberately absent: the root-only lifecycle verbs (`upgrade`, `prepare`,
+/// `activate`, `auto-update`, `rollback`, `deprovision`, `uninstall`,
+/// `image-check`, `bringup`), which drive systemd and must not drop
+/// privilege.
+pub const RUNS_AS_SERVICE_USER: &[&str] = &[
+    "init", "pair", "link", "login", "subscribe", "sudo", "backup", "reset", "status",
+    "migrate",
+    // `doctor` reads the env file (inference mode) and the DB (reach legs),
+    // both `virtues`-owned. Run as another user it can read neither, so it
+    // would render the default llama-server guess and "DB unknown": a
+    // confident, wrong report.
+    "doctor",
+    // Each of these opens its own pool before the app path (main.rs) or
+    // rides the shared one in `cli::run`.
+    "device",
+    "reindex",
+    "configure-inference",
+    "lake-adopt",
+    "volumes",
+    // The data verbs (`cli::data`) ride the shared pool too.
+    "query",
+    "search",
+    "schema",
+    "write",
+    "applet",
+    "page",
+    // The move to blocks: `--dry-run` reads every page through
+    // `DATABASE_URL`, and `--apply` names that database to the server.
+    "pages",
+];
+
+/// Commands that print what went wrong themselves, as their error or their
+/// report, so they log only errors: a tool's own WARN line, or a line per
+/// page converted, would say it twice. `cli::data`'s verbs, and the move
+/// to blocks, whose report lists every page with notes or a failure.
+pub const DATA_VERBS: &[&str] = &[
+    "query",
+    "search",
+    "schema",
+    "write",
+    "applet",
+    "page",
+    "pages",
+    "agent-key",
+    "agent-exec",
+];
+
 #[derive(Parser)]
 #[command(name = "virtues")]
 #[command(version, about = "Virtues personal data platform CLI", long_about = None)]
@@ -156,7 +214,10 @@ pub enum PageCmd {
     /// ops on the block ids `page get --blocks` prints, with the base it
     /// prints: `--ops` for a JSON array of {op, id, html}, or one op with
     /// `--op`, `--block` and `--html`. An append needs no base. All or
-    /// none: a refused edit writes nothing, says why, and exits 1.
+    /// none: a refused edit writes nothing, says why, and exits 1. Either
+    /// way it prints, with ids, the blocks the base on stderr has learned:
+    /// those it wrote as the page holds them now, or those a refusal is
+    /// about. Write the next edit from those, not from an older copy.
     #[command(group(clap::ArgGroup::new("change").required(true).args(["find", "ops", "op"])))]
     Edit {
         /// The page id.
@@ -211,6 +272,45 @@ pub enum PageCmd {
         /// The base from the last read, for `--after` or `--ids`.
         #[arg(long, requires = "read_on")]
         base: Option<String>,
+        #[command(flatten)]
+        out: OutputArgs,
+    },
+}
+
+/// `virtues pages <action>`: every page at once.
+#[derive(Subcommand)]
+pub enum PagesCmd {
+    /// Move every markdown page to blocks.
+    ///
+    /// `--dry-run` converts each page in memory and reports what converting
+    /// it would change, writing no page; it reads the database from here.
+    /// `--apply` moves them in the server, which must be running: it keeps
+    /// each page as it was in History first, leaves a page that would lose
+    /// text in markdown, and closes any editor open on a page it moves.
+    /// Both keep a report on the box and print it; `--apply` needs block
+    /// pages on, as they are unless VIRTUES_TREE_PAGES=0.
+    ///
+    /// User pages by default. `--articles` moves wiki articles and day pages
+    /// instead: an article nobody has opened moves when it is first opened,
+    /// so `--apply` moves the opened ones, and needs block articles turned on
+    /// as well (VIRTUES_TREE_ARTICLES=1).
+    #[command(group(clap::ArgGroup::new("run").required(true).args(["dry_run", "apply"])))]
+    Convert {
+        /// Report what converting would change, and write nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Move the pages.
+        #[arg(long)]
+        apply: bool,
+        /// Move articles instead of user pages.
+        #[arg(long)]
+        articles: bool,
+        /// With `--dry-run --articles`, write each day page's markdown, its
+        /// export and its notes' anchors into this folder, for the readers'
+        /// check. They hold the pages' words: keep the folder on scratch
+        /// space and delete it after.
+        #[arg(long, value_name = "DIR", requires_all = ["dry_run", "articles"])]
+        texts: Option<std::path::PathBuf>,
         #[command(flatten)]
         out: OutputArgs,
     },
@@ -611,10 +711,6 @@ pub enum Commands {
         port: u16,
     },
 
-    /// Seed the database with demo data (people, places, events, etc.)
-    #[command(hide = true)]
-    Seed,
-
     /// Show box health: identity (WG keypair), subscription, and paired devices.
     /// The deployment substrate's status command.
     ///
@@ -714,6 +810,12 @@ pub enum Commands {
         cmd: PageCmd,
     },
 
+    /// Work on every page at once: move markdown pages to blocks.
+    Pages {
+        #[command(subcommand)]
+        cmd: PagesCmd,
+    },
+
     /// Report a crash to the Virtues cloud diagnostic endpoint.
     ///
     /// Invoked by systemd's `ExecStopPost=` hook. Reads `$EXIT_STATUS` and
@@ -774,10 +876,6 @@ pub enum Commands {
         /// /v1/embeddings endpoint on this machine, your LAN, or your VPN).
         #[arg(long)]
         embed_url: Option<String>,
-        /// Rerank server to record with the switch. Reranking stays off
-        /// unless VIRTUES_RERANK_GAP opts in.
-        #[arg(long)]
-        rerank_url: Option<String>,
         /// Model name sent with every request; Ollama routes by it.
         #[arg(long)]
         embed_model: Option<String>,
@@ -790,7 +888,7 @@ pub enum Commands {
         /// Go back to the recommended setup: Virtues runs the embedding model
         /// it recommends on this machine's CPU and keeps it current. Search
         /// keeps using your server until the index is rebuilt. Needs sudo.
-        #[arg(long, conflicts_with_all = ["embed_url", "rerank_url", "embed_model"])]
+        #[arg(long, conflicts_with_all = ["embed_url", "embed_model"])]
         recommended: bool,
     },
 
@@ -920,4 +1018,28 @@ pub enum VolumesCmd {
         #[arg(long)]
         name: Option<String>,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    /// Every name in the lists is a subcommand, and the page verbs run as
+    /// the service user and log only what they do not print themselves.
+    #[test]
+    fn the_command_lists_name_real_commands_and_hold_the_page_verbs() {
+        let cli = Cli::command();
+        let names: Vec<String> = cli
+            .get_subcommands()
+            .flat_map(|c| std::iter::once(c.get_name().to_string()).chain(c.get_all_aliases().map(str::to_string)))
+            .collect();
+        for name in RUNS_AS_SERVICE_USER.iter().chain(DATA_VERBS) {
+            assert!(names.iter().any(|n| n == name), "`{name}` is no subcommand");
+        }
+        for verb in ["page", "pages"] {
+            assert!(RUNS_AS_SERVICE_USER.contains(&verb), "`{verb}` runs as the service user");
+            assert!(DATA_VERBS.contains(&verb), "`{verb}` prints its own report");
+        }
+    }
 }

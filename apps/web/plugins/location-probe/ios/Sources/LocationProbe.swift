@@ -20,13 +20,6 @@ private func virtues_drain_blocking(_ timeoutSecs: Int32) -> Int32
 @_silgen_name("virtues_share_inbox_drain")
 private func virtues_share_inbox_drain() -> Int32
 
-// Re-arm audio recording (audio plugin). The piggyback: location keeps the app
-// alive + fires callbacks, giving audio a heartbeat to recover the mic after an
-// interruption/kill. No-op unless audio is enabled+authorized. Whether iOS
-// actually allows a background mic re-arm here is what we're testing.
-@_silgen_name("virtues_ensure_recording")
-private func virtues_ensure_recording()
-
 // Hand the latest fix to the audio plugin for its place gate (any thread; it
 // locks). Cheap — a few comparisons — so it runs on every callback, before
 // the log throttle: the gate wants the freshest fix, not one per 15 s.
@@ -103,42 +96,36 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private var launchActivationSeen = false
   private var enteredForeground = false
 
-  /// Throttle: keep at most one fix per ~15s (matches the native app's sampling
-  /// cadence — avoids flooding the log + outbox with near-identical points).
+  /// Which callbacks are sent. A fix reporting at least `stepSpeed` that has
+  /// moved `minStep` (and further than its own error radius) from the last
+  /// sent one goes after `minStepInterval`; any other, one per
+  /// `minFixInterval`. Time alone drew a drive as 200-300 m chords across
+  /// blocks. The speed gate is what keeps a still phone on 15 s: indoors its
+  /// Wi-Fi fixes hop 30-120 m with no speed, and an error-radius guard alone
+  /// let 13% of them through, and stay detection ends a stay on two far
+  /// fixes in a row.
   private var lastFixAt: Date?
+  private var lastFix: CLLocation?
   private let minFixInterval: TimeInterval = 15
+  private let minStep: CLLocationDistance = 20
+  private let minStepInterval: TimeInterval = 2
+  private let stepSpeed: CLLocationSpeed = 1
+  /// The local log keeps the 15 s cadence: the shared log is its newest 5000
+  /// rows, and a drive's dense fixes would push the diagnostics out of it.
+  private var lastLoggedAt: Date?
 
   // MARK: - Power modes (motion-adaptive duty cycle)
   //
   // GPS at 10m accuracy 24/7 is the single biggest hardware burn and a phone is
   // stationary most of the day. `coarse` (cell/Wi-Fi positioning, GNSS chip off)
-  // is entered when stationary UNLESS audio is freshly down and needs the fast
-  // re-arm heartbeat (see `heartbeatActive`). In coarse mode location may be the
-  // app's ONLY residency assertion (audio off, or audio session dead) — that is
-  // fine: residency comes from updates being ACTIVE, not from their accuracy.
+  // is entered when stationary. In coarse mode location may be the app's ONLY
+  // residency assertion (audio off, or audio session dead) — that is fine:
+  // residency comes from updates being ACTIVE, not from their accuracy.
   // Updates are never stopped — only accuracy/filter are modulated — so
   // background residency and the sig-loc relaunch path are untouched.
 
   private enum PowerMode { case precise, coarse }
   private var mode: PowerMode = .precise
-  /// 0 = audio off, 1 = enabled but not recording (down), 2 = recording healthy.
-  /// Pushed by the audio plugin on every state transition.
-  private var audioState: Int32 = 0
-  /// When audio entered state 1 (down). Precise-as-re-arm-heartbeat is only
-  /// justified for a bounded window after that: past `heartbeatCap` a wedge the
-  /// heartbeat hasn't fixed isn't going to be fixed by more heartbeat — the gap
-  /// nudge is the recovery path — and unbounded precise GNSS was the single
-  /// worst battery failure mode in the app (blowtorch until the user notices).
-  private var audioDownSince: Date?
-  private let heartbeatCap: TimeInterval = 600
-  /// Audio is freshly down and still deserves the precise heartbeat. NOTE
-  /// deliberately false for state 0 (audio off BY CHOICE): there is nothing to
-  /// re-arm, but this class conflation previously forced audio-off users into
-  /// precise GNSS 24/7 — including motionless at home all night.
-  private var heartbeatActive: Bool {
-    guard audioState == 1, let since = audioDownSince else { return false }
-    return Date().timeIntervalSince(since) < heartbeatCap
-  }
   /// Last position that counted as movement; displacement is measured from here.
   private var moveAnchor: CLLocation?
   private var lastMovedAt = Date()
@@ -431,14 +418,11 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   public func locationManager(_ m: CLLocationManager, didEnterRegion region: CLRegion) {
     pushVerdict(region, inside: true)
     writeMarker(source: "region-enter=\(region.identifier)")
-    // Same piggyback as a fix: the OS woke us, so give the mic its chance.
-    virtues_ensure_recording()
   }
 
   public func locationManager(_ m: CLLocationManager, didExitRegion region: CLRegion) {
     pushVerdict(region, inside: false)
     writeMarker(source: "region-exit=\(region.identifier)")
-    virtues_ensure_recording()
   }
 
   public func locationManager(_ m: CLLocationManager, didDetermineState state: CLRegionState, for region: CLRegion) {
@@ -465,23 +449,33 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
       return
     }
     updateMotion(l)  // mode logic sees every callback, before the log throttle
-    if let last = lastFixAt, Date().timeIntervalSince(last) < minFixInterval { return }
+    if !isDue(l) { return }
     record(l, still: false)
+  }
+
+  private func isDue(_ l: CLLocation) -> Bool {
+    guard let at = lastFixAt else { return true }
+    let since = Date().timeIntervalSince(at)
+    if since >= minFixInterval { return true }
+    guard since >= minStepInterval, l.speed >= stepSpeed, l.horizontalAccuracy >= 0,
+      let prev = lastFix else { return false }
+    return l.distance(from: prev) >= max(minStep, l.horizontalAccuracy)
   }
 
   /// Log one fix locally, enqueue it for the box, and ride its wake.
   private func record(_ l: CLLocation, still: Bool) {
     // A still fix is proof of presence, not news: it rides the next upload
     // (the audio chunk's nudge, or the drain timer) instead of calling one.
-    lastFixAt = Date()
+    let now = Date()
+    lastFixAt = now
+    lastFix = l
     // Local rolling log (device-screen "recent activity" + background badge).
-    write(lat: l.coordinate.latitude, lon: l.coordinate.longitude, source: still ? "still" : "update")
+    if still || lastLoggedAt.map({ now.timeIntervalSince($0) >= minFixInterval }) ?? true {
+      lastLoggedAt = now
+      write(lat: l.coordinate.latitude, lon: l.coordinate.longitude, source: still ? "still" : "update")
+    }
     // Durable delivery: full-field record → shared outbox → box.
     enqueueFix(l, still: still)
-    // Piggyback: re-arm audio (no-op unless enabled). Location keeps the app
-    // alive and fires here regularly, so this is audio's best shot at recovering
-    // the mic in the background after a call/interruption without a foreground.
-    virtues_ensure_recording()
     // If this fix arrived while backgrounded (incl. a cold sig-loc relaunch),
     // drain to the box now — the foreground loop won't run until next launch.
     if !still { maybeDrainInBackground() }
@@ -624,9 +618,8 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
       if mode == .coarse { apply(.precise, reason: "movement") }
       return
     }
-    if mode == .precise, !heartbeatActive,
-      Date().timeIntervalSince(lastMovedAt) > stationaryAfter {
-      apply(.coarse, reason: audioState == 1 ? "stationary+heartbeat-capped" : "stationary")
+    if mode == .precise, Date().timeIntervalSince(lastMovedAt) > stationaryAfter {
+      apply(.coarse, reason: "stationary")
     }
   }
 
@@ -648,35 +641,6 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     case .coarse:
       manager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
       manager.distanceFilter = 100
-    }
-  }
-
-  /// Audio plugin push (via C ABI): recording health drives how lazy location
-  /// may be. Only state 1 (enabled but DOWN — the mic re-arm needs a fast
-  /// heartbeat) forces precise, and only for `heartbeatCap`. State 0 (off by
-  /// choice) deliberately forces nothing: there is nothing to re-arm, and the
-  /// old `state < 2` check burned precise GNSS 24/7 for audio-off users.
-  public func setAudioState(_ state: Int32) {
-    DispatchQueue.main.async { [weak self] in
-      guard let self = self else { return }
-      let old = self.audioState
-      self.audioState = state
-      if state == 1 {
-        // Fresh transition into down restarts the heartbeat window; a repeated
-        // state-1 push (audio retrying) does not — else the cap never lands.
-        if old != 1 { self.audioDownSince = Date() }
-        // Same gate as updateMotion's demotion. Without it, a repeated state-1
-        // push past the cap re-promotes on every audio retry (5-60s cadence)
-        // and the promote/demote GNSS cycling outspends the always-precise
-        // mode the cap was written to kill.
-        if self.mode == .coarse, self.heartbeatActive {
-          self.apply(.precise, reason: "audio=down")
-        }
-      } else {
-        self.audioDownSince = nil
-        // No forced mode change: updateMotion relaxes to coarse once the
-        // stationary window passes, and movement keeps precise on its own.
-      }
     }
   }
 
@@ -712,12 +676,16 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
 
   // MARK: - Reads (for the JS viewer)
 
-  public func readRows(limit: Int) -> [[String: Any]] {
+  /// The newest `limit` rows. `fixesOnly` leaves out the 0,0 marker rows (this
+  /// probe's own events and other plugins' diagnostics), so a burst of them
+  /// cannot crowd the fixes out of a screen's window.
+  public func readRows(limit: Int, fixesOnly: Bool = false) -> [[String: Any]] {
     var out: [[String: Any]] = []
     withDB { db in
       var stmt: OpaquePointer?
+      let filter = fixesOnly ? "WHERE NOT (lat = 0 AND lon = 0) " : ""
       let sql =
-        "SELECT ts, lat, lon, source, app_state, launch_reason FROM rows ORDER BY id DESC LIMIT ?"
+        "SELECT ts, lat, lon, source, app_state, launch_reason FROM rows \(filter)ORDER BY id DESC LIMIT ?"
       if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
         sqlite3_bind_int(stmt, 1, Int32(limit))
         while sqlite3_step(stmt) == SQLITE_ROW {
@@ -764,10 +732,24 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
     write(lat: 0, lon: 0, source: source)
   }
 
-  private func write(lat: Double, lon: Double, source: String) {
+  /// Another plugin's line for the log (see `virtues_diag_note`). The caller
+  /// has already written it to the console.
+  func note(_ line: String) {
+    write(lat: 0, lon: 0, source: line, console: false)
+  }
+
+  /// The log is a rolling one: rows older than `rowsKeep` go, checked on the
+  /// first write of a process and every `pruneEvery` writes after it.
+  private let rowsKeep: TimeInterval = 7 * 24 * 3600
+  private let pruneEvery = 500
+  private var writesSincePrune = 0
+
+  private func write(lat: Double, lon: Double, source: String, console: Bool = true) {
     let ts = ISO8601DateFormatter().string(from: Date())
     let state = appStateString()
     let reason = launchReason
+    let prune = writesSincePrune == 0
+    writesSincePrune = (writesSincePrune + 1) % pruneEvery
     withDB { db in
       var stmt: OpaquePointer?
       let sql =
@@ -782,8 +764,24 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
         sqlite3_step(stmt)
       }
       sqlite3_finalize(stmt)
+      if prune {
+        // `ts` is ISO-8601 in UTC, so text order is time order. Batched, on
+        // main: a table that was never pruned can hold months of rows, and
+        // the oldest come first in id order, so each pass clears a slice and
+        // the backlog drains over the following prunes.
+        let cutoff = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-rowsKeep))
+        let sql = "DELETE FROM rows WHERE id IN (SELECT id FROM rows WHERE ts < ? ORDER BY id LIMIT 5000)"
+        var del: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &del, nil) == SQLITE_OK {
+          sqlite3_bind_text(del, 1, cutoff, -1, SQLITE_TRANSIENT)
+          sqlite3_step(del)
+        }
+        sqlite3_finalize(del)
+      }
     }
-    NSLog("[LocationProbe] %@ state=%@ reason=%@ (%f,%f)", source, state, reason, lat, lon)
+    if console {
+      NSLog("[LocationProbe] %@ state=%@ reason=%@ (%f,%f)", source, state, reason, lat, lon)
+    }
   }
 
   // MARK: - SQLite plumbing
@@ -797,6 +795,10 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   private func withDB(_ body: (OpaquePointer) -> Void) {
     var db: OpaquePointer?
     if sqlite3_open(dbPath(), &db) == SQLITE_OK, let db = db {
+      // Writes happen on main and the screen's reads on a Tauri worker, each
+      // on its own connection: wait out the other's lock briefly instead of
+      // dropping the row or returning a short read.
+      sqlite3_busy_timeout(db, 250)
       sqlite3_exec(
         db,
         """
@@ -840,11 +842,13 @@ public final class LocationProbe: NSObject, CLLocationManagerDelegate {
   }
 }
 
-/// C-ABI push from the audio plugin (mirror of `virtues_ensure_recording`):
-/// 0 = audio off, 1 = enabled but not recording, 2 = recording healthy.
-@_cdecl("virtues_location_audio_state")
-func virtues_location_audio_state(_ state: Int32) {
-  LocationProbe.shared.setAudioState(state)
+/// C-ABI from the audio plugin: one line for the rolling diagnostics log
+/// (`rows`, as a 0,0 marker). Any thread; the write happens on main, where
+/// the row's app state is read.
+@_cdecl("virtues_diag_note")
+func virtues_diag_note(_ text: UnsafePointer<CChar>) {
+  let line = String(cString: text)
+  DispatchQueue.main.async { LocationProbe.shared.note(line) }
 }
 
 /// C-ABI push from the audio plugin: the muted places to monitor as regions.

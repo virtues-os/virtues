@@ -98,6 +98,19 @@ describe("deriveDay", () => {
 		expect(d.derived.moments.map((m) => m.title)).toEqual(["Weekend plans"]);
 	});
 
+	it("counts a stretch's rough indoor fixes as recording, though the track leaves them out", () => {
+		const wifi = (min: number, m: number) => ({ ...fix(min, m), horizontal_accuracy: 45, speed: 0 });
+		const d = deriveDay(
+			day({
+				stays: [stay("a", 0, 6 * 60), stay("b", 10 * 60, 24 * 60)],
+				points: [wifi(7 * 60, 100), wifi(7 * 60 + 1, 0), wifi(7 * 60 + 2, 100)],
+			}),
+			sources,
+		);
+		const gap = d.derived.spans.find((s) => s.kind === "unknown");
+		expect(gap?.metadata.fix_count).toBe(3);
+	});
+
 	it("keeps a night as a night, and never calls its silence a gap", () => {
 		const d = deriveDay(
 			day({

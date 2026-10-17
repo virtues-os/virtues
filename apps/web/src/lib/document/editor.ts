@@ -30,8 +30,6 @@ import { localUser, renderCaret, renderSelection } from './presence';
 import { pageNodeViews } from './views';
 import { clipboardText } from './markdown';
 import { ProposalsPasted, ProposalsRead, TypingOutsideDeletions } from './suggestions';
-import { callOffPaste, waitingPastes } from './paste';
-import { callOffUpload, waitingUploads } from './media';
 import { KeptThroughOthersEdits } from './anchor';
 
 /** What the editor binds to: a `TreeDocument`, or anything with its document and caret channel. */
@@ -63,7 +61,8 @@ export interface PageEditorOptions {
  * without one, the editor offers no Ask AI.
  */
 export interface TreeAiDriver {
-	start(o: { editor: Editor; intent: AiIntent; instruction: string; pageTitle?: string }): void;
+	/** `article`: the page is an article, whose writer's markdown is read as one. */
+	start(o: { editor: Editor; intent: AiIntent; instruction: string; pageTitle?: string; article?: boolean }): void;
 	abortIn(editor: Editor): void;
 	isActive(): boolean;
 }
@@ -172,39 +171,10 @@ export function codeAt(state: EditorState): 'code' | 'text' | 'across' {
 }
 
 /**
- * Undo while a paste or an upload waits on the server calls off the newest
- * of them (`callOffPaste`, `callOffUpload`), and says so; only with nothing
- * waiting does it undo an edit. What waits is no edit yet: y-undo would pass
- * over it to the person's own writing, and its landing, a new edit, would
- * clear the redo that could bring that writing back, while the paste or the
- * file the person meant to undo landed anyway. Returns whether one waited.
- */
-export function callOffNewestWaiting(view: EditorView): boolean {
-	const waiting = [
-		...waitingPastes(view.state).map((p) => ({ order: p.order, callOff: () => callOffPaste(view, p.id) })),
-		...waitingUploads(view.state).map((u) => ({ order: u.order, callOff: () => callOffUpload(view, u.id) })),
-	];
-	if (!waiting.length) return false;
-	waiting.reduce((newest, w) => (w.order > newest.order ? w : newest)).callOff();
-	return true;
-}
-
-/** ⌘Z calls off what waits first (`callOffNewestWaiting`). */
-const UndoCallsOffWaiting = Extension.create({
-	name: 'undoCallsOffWaiting',
-	// Ahead of Collaboration's ⌘Z (priority 1000), which goes to y-undo.
-	priority: 1001,
-	addKeyboardShortcuts() {
-		return { 'Mod-z': ({ editor }) => callOffNewestWaiting(editor.view) };
-	},
-});
-
-/**
  * The platform's own undo: shake to undo, three fingers, the iPad's undo
  * key, Edit > Undo. They reach the page as `historyUndo` and `historyRedo`
  * input, not as ⌘Z; left alone, the browser would undo the DOM under
- * ProseMirror. They go to the editor's own undo, as the CodeMirror editor's
- * binding sends them to its, and an undo calls off what waits first.
+ * ProseMirror. They go to the editor's own undo.
  */
 const PlatformUndo = Extension.create({
 	name: 'platformUndo',
@@ -214,12 +184,12 @@ const PlatformUndo = Extension.create({
 			new Plugin({
 				props: {
 					handleDOMEvents: {
-						beforeinput(view, event) {
+						beforeinput(_view, event) {
 							const type = (event as InputEvent).inputType;
 							if (type !== 'historyUndo' && type !== 'historyRedo') return false;
 							event.preventDefault();
 							if (type === 'historyRedo') editor.commands.redo();
-							else if (!callOffNewestWaiting(view)) editor.commands.undo();
+							else editor.commands.undo();
 							return true;
 						},
 					},
@@ -329,7 +299,6 @@ export function createPageEditor(o: PageEditorOptions): Editor {
 		TodoKeys,
 		TableKeys,
 		ClickBelowEnd,
-		UndoCallsOffWaiting,
 		PlatformUndo,
 		DragBetweenPages,
 		ProposalsPasted,

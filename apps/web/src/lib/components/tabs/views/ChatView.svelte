@@ -1449,6 +1449,18 @@
 		}
 	}
 
+	// A send scrolls once more when its message is on screen. The scroll at
+	// Enter runs before the SDK appends the message, and a smooth scroll
+	// keeps the target it started with: it stopped at the old end, and the
+	// message landed just below it, out of view.
+	let followSend = false;
+	$effect(() => {
+		const last = chat?.messages[chat.messages.length - 1];
+		if (!followSend || last?.role !== "user") return;
+		followSend = false;
+		void tick().then(() => scrollToBottom("smooth"));
+	});
+
 	async function handleChatStop() {
 		// Stop the client-side stream
 		chat.stop();
@@ -1559,6 +1571,9 @@
 			// effect re-sends this once the current turn finishes.
 			queuedMessages = [...queuedMessages, messageToSend];
 			input = "";
+			// The queued chip is the message for now; Enter still brings the
+			// reader down to it.
+			scrollToBottom("smooth");
 			return;
 		}
 		input = "";
@@ -1585,7 +1600,8 @@
 		turnPhase.beginSend();
 		await tick(); // Flush DOM so the indicator renders before the network call
 
-		// Auto-scroll to bottom on submit
+		// Auto-scroll to bottom on submit, and again once the message lands.
+		followSend = true;
 		scrollToBottom("smooth");
 
 		try {
@@ -1643,6 +1659,9 @@
 				attachments.restore(stagedBeforeSend);
 			}
 		} finally {
+			// A send that failed before its message was added leaves no
+			// scroll waiting for the next one.
+			followSend = false;
 			isAwaitingResponse = false;
 			turnPhase.endSend();
 		}
@@ -1662,6 +1681,7 @@
 		isAwaitingResponse = true;
 		turnPhase.beginSend();
 		await tick();
+		followSend = true;
 		scrollToBottom("smooth");
 		try {
 			await chat.sendMessage({ text });
@@ -1671,6 +1691,9 @@
 			console.error("[sendChoice] Error:", error);
 			return false;
 		} finally {
+			// A send that failed before its message was added leaves no
+			// scroll waiting for the next one.
+			followSend = false;
 			isAwaitingResponse = false;
 			turnPhase.endSend();
 		}
@@ -1932,6 +1955,9 @@
 													reasoningContent={turn.reasoning}
 													narration={turn.narration}
 													intent={turn.intent}
+													browseStep={isStreaming
+														? chatInstances.getBrowseStep(conversationId)
+														: undefined}
 													seconds={turnPhase.secondsFor(message.id) ||
 														turnSeconds.get(message.id) ||
 														0}

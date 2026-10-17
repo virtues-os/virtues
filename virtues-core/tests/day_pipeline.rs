@@ -155,7 +155,7 @@ async fn full_pipeline_persists_every_score() {
     )
     .fetch_one(&pool)
     .await
-    .expect("a day with segmented events (run `virtues seed`)");
+    .expect("a day with segmented events (load the demo life: `make dev-demo`)");
 
     // Wipe the derived columns so we prove the pipeline WRITES them rather than
     // reading values a previous run — or the demo seed — left behind. This is

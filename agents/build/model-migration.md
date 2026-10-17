@@ -1,9 +1,7 @@
 # Migrating the local embedding model
 
-The box talks to local inference over loopback HTTP: embedding on `:18181`,
-and rerank on `:18182` only where something serves it
-([composable-inference.md](composable-inference.md)). Search calls a reranker
-only when `VIRTUES_RERANK_GAP` opts in (`search::query::reranker_enabled`).
+The box talks to local inference over loopback HTTP: embedding on `:18181`
+([composable-inference.md](composable-inference.md)). Search doesn't rerank.
 
 | Profile | Server | Files it loads |
 |---|---|---|
@@ -64,7 +62,7 @@ the old names, so they stay.
 **Bundled boxes move themselves.** On `virtues upgrade` and the nightly
 `virtues auto-update`, `cli::model_set` (root):
 
-1. retires the reranker unless `VIRTUES_RERANK_GAP` opts in;
+1. retires the reranker sidecar older installs ran;
 2. if `virtues-embed`'s `-m` isn't `EMBED_GGUF`, downloads it (checked against
    `EMBED_GGUF_SHA256`), runs it as `virtues-embed-next` on `:18183`, and sets
    `VIRTUES_EMBED_NEXT_URL` and the next prompts in the box env file;

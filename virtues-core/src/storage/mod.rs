@@ -106,6 +106,12 @@ impl Storage {
         })
     }
 
+    /// Storage over another backend: a test's stand-in for a disk.
+    #[cfg(test)]
+    pub(crate) fn from_backend(backend: Arc<dyn StorageBackend>) -> Self {
+        Self { backend }
+    }
+
     pub async fn initialize(&self) -> Result<()> {
         self.backend.initialize().await
     }

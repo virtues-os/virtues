@@ -30,8 +30,7 @@
  *   - non-left buttons — CodeMirror only starts a drag selection for button 0,
  *     and a native context menu can swallow the matching `pointerup`;
  *   - non-primary pointers — the second finger of a pinch.
- * A press on a widget inside `contentDOM` (a checkbox, a copy button, a file
- * card) DOES freeze: it still moves CodeMirror's caret to the widget's edge,
+ * A press on a widget inside `contentDOM` (a ref link) DOES freeze: it still moves CodeMirror's caret to the widget's edge,
  * which is exactly the shift-under-pointer this guards against, and a freeze
  * that turns out unnecessary costs one idempotent rebuild on release.
  */

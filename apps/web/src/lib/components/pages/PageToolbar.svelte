@@ -12,7 +12,6 @@
 	import { Popover } from "$lib/floating";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import type { PageFormat } from "$lib/api/client";
-	import type { YjsDocument } from "$lib/yjs";
 
 	interface Props {
 		icon: string | null;
@@ -21,10 +20,8 @@
 		coverUrl: string | null;
 		copied: boolean;
 		pageId: string;
-		/** How the page holds its text; a block page's history is kept by the server. */
+		/** How the page holds its text: only a block page puts a version back. */
 		format?: PageFormat;
-		/** A markdown page's document, for its history; none for a block page. */
-		yjsDoc: YjsDocument | undefined;
 		showCoverPicker?: boolean;
 		isShared?: boolean;
 		referencesActive?: boolean;
@@ -48,7 +45,6 @@
 		copied,
 		pageId,
 		format = "markdown",
-		yjsDoc,
 		showCoverPicker = $bindable(false),
 		isShared = false,
 		referencesActive = false,
@@ -143,7 +139,6 @@
 			{/snippet}
 			{#snippet children()}
 				<DisplaySettingsPopover
-					{format}
 					onViewMarkdown={onViewMarkdown
 						? () => {
 								showDisplaySettings = false;
@@ -178,7 +173,7 @@
 				<IconButton icon="ri:history-line" label="Version history" onclick={toggle} />
 			{/snippet}
 			{#snippet children({ close })}
-				<VersionHistoryPanel {close} {pageId} {format} {yjsDoc} />
+				<VersionHistoryPanel {close} {pageId} {format} />
 			{/snippet}
 		</Popover>
 		{#if onShare}

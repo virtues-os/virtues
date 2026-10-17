@@ -118,6 +118,12 @@ pub struct PageDoc {
     /// Every text path routes on it, and the save writes only while the row
     /// still says it (`save_and_materialize`).
     format: PageFormat,
+    /// Whether the page is an article (`kind = 'article'`, or a
+    /// `wiki_articles` row owns it), as read when the doc was built. A
+    /// writer's markdown into an article is read as an article
+    /// (`parse_article_markdown`): its footnotes, figures and veils become
+    /// the contract's nodes.
+    is_article: bool,
     /// What each client on the page last said about itself: its caret, name
     /// and colour. A mutex, so a read lock on the doc is enough for cursor
     /// traffic.
@@ -141,6 +147,7 @@ impl PageDoc {
             saved: 0,
             contract: watch::Sender::new(stamped),
             format,
+            is_article: false,
             awareness: std::sync::Mutex::new(Presence::default()),
             retired: watch::Sender::new(Retired::No),
         }
@@ -190,11 +197,34 @@ impl PageDoc {
             return None;
         }
         let before = self.doc.transact().state_vector();
-        virtues_document::stamp_version(virtues_document::contract(), &mut self.doc.transact_mut());
+        self.stamp(version);
         let update = self.doc.transact().encode_diff_v1(&before);
-        self.contract.send_replace(version);
         let _ = self.broadcast_tx.send(encode_sync_update(&update));
         Some(self.record_change())
+    }
+
+    /// Raise a block page to the contract of the client `writer` that just
+    /// changed it, when the page is stamped below that: what the client
+    /// wrote may hold a node, a mark or an attribute a client at the page's
+    /// stamp cannot read, and Tiptap's binding deletes those from the shared
+    /// document. Every socket bound below the new stamp closes before the
+    /// edit reaches it (`handle_yjs_connection` reads the stamp before
+    /// relaying anything). The caller relays the stamp with the edit.
+    /// Returns whether it raised the page.
+    fn raise_for_writer(&mut self, writer: u32) -> bool {
+        let version = writer.min(virtues_document::contract().version);
+        if self.format != PageFormat::Tree || version <= self.contract() {
+            return false;
+        }
+        self.stamp(version);
+        true
+    }
+
+    /// Stamp `version` into the doc and tell every socket bound to it,
+    /// before anything written under it is relayed.
+    fn stamp(&mut self, version: u32) {
+        virtues_document::stamp_version_as(version, &mut self.doc.transact_mut());
+        self.contract.send_replace(version);
     }
 
     /// Repair what a merge of clients' edits left outside the contract
@@ -280,6 +310,56 @@ pub struct PageText {
     pub tree: Option<Vec<Node>>,
 }
 
+/// A writer's markdown as the page will hold it (`YjsState::draft`),
+/// written with `YjsState::write_draft`.
+#[derive(Debug, Clone)]
+pub struct Draft {
+    /// What the page reads as once written, and what a writer records as its
+    /// edition: the markdown itself on a markdown page, its blocks' export on
+    /// a tree page.
+    pub text: String,
+    /// The tree page's target, its blocks without ids; `None` for a draft
+    /// made for a markdown page.
+    blocks: Option<Vec<Node>>,
+    /// What converting the markdown into blocks changed on the way in.
+    pub notes: Vec<Problem>,
+    /// How the writer's markdown was read, and so how the page's blocks
+    /// read back when compared with it.
+    dialect: virtues_document::migrate::Dialect,
+}
+
+/// How a writer's markdown into a page is read: an article's as an
+/// article, its footnotes, figures and veils the contract's own nodes.
+fn writers_dialect(is_article: bool) -> virtues_document::migrate::Dialect {
+    if is_article {
+        virtues_document::migrate::Dialect::Article
+    } else {
+        virtues_document::migrate::Dialect::Written
+    }
+}
+
+/// Why a writer's whole-page write was refused
+/// (`TextWriteError::SuggestionKept`): it would replace or delete a block
+/// holding a suggestion its owner has not accepted or rejected yet. Read by
+/// a writer with a turn (the wiki editor), which reads the page's markdown
+/// with the suggestion in it as `{--…--}` and `{++…++}`. The owner's
+/// rewrite of a day page has a refusal of its own (`pending_suggestion`).
+/// Names no words of the page: it can reach a log.
+const SUGGESTION_KEPT: &str = "Your server wrote nothing: the new text changes a paragraph holding a suggestion \
+     the page's owner hasn't accepted or rejected yet, and that decision is theirs. Accept or reject it in the page \
+     first, or keep that paragraph, its {--…--} and {++…++} included, exactly as the page has it.";
+
+/// What a whole-page write to a tree page (`YjsState::write_tree`) found and
+/// left.
+struct TreeWrite {
+    /// The page just before the write, read under its lock.
+    before: Written,
+    /// What the write left: `Ok`, or `NotSaved` carrying the same.
+    after: Result<Written, TextWriteError>,
+    /// Whether the write changed the page.
+    changed: bool,
+}
+
 /// What `YjsState::append_markdown` left on the page.
 #[derive(Debug, Clone)]
 pub struct Appended {
@@ -332,9 +412,11 @@ impl std::fmt::Display for TreeError {
 
 impl std::error::Error for TreeError {}
 
-/// The refusal of a write to a tree page through a Y.Text path. A Y.Text
-/// written into a tree page would be a stray root no editor shows and the
-/// contract refuses (`check_update`), and server writes skip `admit_update`.
+/// The refusal of a find/replace on a tree page (`apply_text_edit`), whose
+/// anchors are markdown text the page does not hold. A Y.Text written into a
+/// tree page would be a stray root no editor shows and the contract refuses
+/// (`check_update`), and server writes skip `admit_update`; a writer's whole
+/// page reaches a tree page as blocks instead (`write_draft`).
 const TREE_TEXT_WRITE: &str = "this page holds blocks, not markdown text; edit it by block";
 
 /// The awareness state each client on a page last sent: its caret, name and
@@ -458,16 +540,36 @@ pub struct DocCache {
     /// reaches the doc an open socket holds, or the doc whose unsaved state
     /// is queued.
     held: std::sync::Mutex<std::collections::HashMap<String, Weak<RwLock<PageDoc>>>>,
+    /// Whether a markdown article nobody has opened becomes blocks when its
+    /// document is first built (`block_move::tree_articles_enabled`).
+    tree_articles: bool,
+    /// Articles whose first open left them markdown for a reason of their
+    /// own, by the row's `updated_at` then: not converted again on every
+    /// load, only once the page changes.
+    stays_markdown: Cache<(String, chrono::DateTime<chrono::Utc>), ()>,
+    /// How many first opens converted an article, for the tests.
+    #[cfg(test)]
+    first_opens: std::sync::atomic::AtomicUsize,
 }
 
 impl DocCache {
     pub fn new() -> Self {
+        Self::with_tree_articles(crate::api::block_move::tree_articles_enabled())
+    }
+
+    /// A cache that moves an unopened article to blocks at its first open
+    /// when `on`, whatever the switch says.
+    pub fn with_tree_articles(on: bool) -> Self {
         Self {
             pages: Cache::builder()
                 .time_to_idle(Duration::from_secs(30 * 60)) // 30 min TTL
                 .max_capacity(100)
                 .build(),
             held: std::sync::Mutex::new(std::collections::HashMap::new()),
+            tree_articles: on,
+            stays_markdown: Cache::builder().max_capacity(10_000).build(),
+            #[cfg(test)]
+            first_opens: std::sync::atomic::AtomicUsize::new(0),
         }
     }
 
@@ -612,8 +714,18 @@ impl DocCache {
         // A put-back is saved before the doc is handed out; when the page was
         // written meanwhile, it is read again, and the write it read is the
         // one put back. A page written on every read is not opened.
+        //
+        // A markdown article nobody has opened moves to blocks here, when
+        // the switch is on (`block_move::first_open`): converted, kept as it
+        // was, and flipped against the row as read, its state stored before
+        // any doc of it is handed out, so two loads at once make one
+        // document. Moved, the page is read again as the blocks it now
+        // holds; a flip that missed (the page written meanwhile) reads the
+        // page again too.
         let mut reads = 0;
-        let (doc, built_at, format) = loop {
+        // This page's turn to move to blocks, once a read finds it unopened.
+        let mut moving: Option<tokio::sync::OwnedMutexGuard<()>> = None;
+        let (doc, built_at, format, is_article) = loop {
             reads += 1;
             if reads > 3 {
                 anyhow::bail!("page {page_id} kept changing while your server opened it; try again");
@@ -626,10 +738,13 @@ impl DocCache {
                 yjs_state: Option<Vec<u8>>,
                 updated_at: chrono::DateTime<chrono::Utc>,
                 format: String,
+                is_article: bool,
             }
             let row: Option<Row> = sqlx::query_as(
-                "SELECT content, yjs_state, updated_at, format FROM app_pages \
-                 WHERE id = $1 AND deleted_at IS NULL",
+                "SELECT content, yjs_state, updated_at, format, \
+                        (kind = 'article' OR EXISTS \
+                            (SELECT 1 FROM wiki_articles a WHERE a.page_id = app_pages.id)) AS is_article \
+                 FROM app_pages WHERE id = $1 AND deleted_at IS NULL",
             )
             .bind(page_id)
             .fetch_optional(pool)
@@ -639,6 +754,7 @@ impl DocCache {
                 yjs_state,
                 updated_at: mut built_at,
                 format,
+                is_article,
             }) = row
             else {
                 anyhow::bail!("Page not found: {page_id}");
@@ -668,13 +784,51 @@ impl DocCache {
                     );
                 }
                 (PageFormat::Markdown, Some(state)) => doc_from_state(page_id, &state),
+                (PageFormat::Markdown, None)
+                    if is_article
+                        && self.tree_articles
+                        && !self.stays_markdown.contains_key(&(page_id.to_string(), built_at)) =>
+                {
+                    // One first open of a page at a time in this process,
+                    // the row read again under it: a second, finding the
+                    // page moved, loads the blocks, and never drops the
+                    // first's copy of the page as it was for a flip it
+                    // lost.
+                    if moving.is_none() {
+                        moving = Some(FIRST_OPENS.take(page_id).await);
+                        reads -= 1;
+                        continue;
+                    }
+                    #[cfg(test)]
+                    self.first_opens.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    match crate::api::block_move::first_open(pool, page_id, &content, built_at).await {
+                        crate::api::block_move::FirstOpen::Moved => {
+                            // Read again as the blocks it holds now; that read
+                            // is the move's own, not another writer's.
+                            reads -= 1;
+                            continue;
+                        }
+                        crate::api::block_move::FirstOpen::Again => continue,
+                        crate::api::block_move::FirstOpen::StaysMarkdown { reason, settled } => {
+                            if settled {
+                                tracing::warn!(page_id, %reason, "an article stays markdown as it is first opened");
+                                self.stays_markdown.insert((page_id.to_string(), built_at), ());
+                            } else {
+                                tracing::warn!(page_id, %reason, "an article stays markdown for now as it is first opened");
+                            }
+                            doc_from_text(&content)
+                        }
+                    }
+                }
                 // No Yjs state yet: the page's markdown is the doc's text.
                 (PageFormat::Markdown, None) => doc_from_text(&content),
             };
-            break (doc, built_at, format);
+            break (doc, built_at, format, is_article);
         };
 
-        let page_doc = Arc::new(RwLock::new(PageDoc::new(doc, built_at, format)));
+        let mut page_doc = PageDoc::new(doc, built_at, format);
+        page_doc.is_article = is_article;
+        let page_doc = Arc::new(RwLock::new(page_doc));
 
         // Two callers can miss together and both load (the loads await the
         // database). Whoever registers first wins and the other takes that
@@ -928,8 +1082,10 @@ fn doc_from_text(text: &str) -> Doc {
 /// The full state of a doc built from `text` (`doc_from_text`), as
 /// `app_page_versions.yjs_snapshot` holds it: for versioning text the
 /// server has as markdown rather than in a live doc, such as an article's
-/// first draft. A Y.Text: only articles reach it, and the table keeps
-/// articles markdown (`app_pages_tree_is_a_user_page`).
+/// first draft, or a page as it was before it moved to blocks. A Y.Text: a
+/// version holding one, in the History of a page that holds blocks now, is
+/// read as its text (`text_of_state`) and put back by conversion
+/// (`pages::restore_version`).
 pub fn state_from_text(text: &str) -> Vec<u8> {
     doc_from_text(text)
         .transact()
@@ -1027,6 +1183,15 @@ impl SaveQueue {
             .get(page_id)
             .is_some_and(|queued| Arc::ptr_eq(&queued.doc, doc) && queued.generation == generation)
         {
+            pending.remove(page_id);
+        }
+    }
+
+    /// Drop whatever of `doc` waits here: a doc whose page moved to a tree
+    /// (`YjsState::move_to_tree`), which no state of it may be written over.
+    async fn forget(&self, page_id: &str, doc: &Arc<RwLock<PageDoc>>) {
+        let mut pending = self.pending.write().await;
+        if pending.get(page_id).is_some_and(|queued| Arc::ptr_eq(&queued.doc, doc)) {
             pending.remove(page_id);
         }
     }
@@ -1188,7 +1353,11 @@ impl Default for SaveQueue {
 /// which leave the state vector where it was. Both count, so every state
 /// that says something new has a higher change count than the states before
 /// it, which is what lets the save queue keep the newest (`queue_save`).
-fn apply_yjs_update(doc: &mut PageDoc, data: &[u8]) -> Option<(Vec<u8>, bool, u64)> {
+///
+/// `writer` is the contract the client that sent the update reads (its
+/// socket's `?contract=N`): a change to a block page stamped below it
+/// raises the page to it (`PageDoc::raise_for_writer`).
+fn apply_yjs_update(doc: &mut PageDoc, data: &[u8], writer: u32) -> Option<(Vec<u8>, bool, u64)> {
     let sv_before = doc.doc.transact().state_vector();
     let deleted = match apply_v1(&doc.doc, data) {
         Ok(deleted) => deleted,
@@ -1203,13 +1372,17 @@ fn apply_yjs_update(doc: &mut PageDoc, data: &[u8]) -> Option<(Vec<u8>, bool, u6
     // Edits each inside the contract can merge into a tree page that is
     // not (`admit_update` takes them); the server puts it right at once.
     let repaired = doc.contract() > 0 && doc.repair();
+    let changed = deleted || repaired || doc.doc.transact().state_vector() != sv_before;
+    // A newer client's edit raises the page to its contract before the
+    // edit goes out, so no client below that reads it.
+    let raised = changed && doc.raise_for_writer(writer);
 
-    // Relayed to every client, the edit and its repair as one update. A
-    // client that applied the edit alone would hold the merge the repair
-    // puts right, and Tiptap's binding deletes from the shared document a
-    // node its schema refuses, with everything inside it, before the
-    // repair could reach it.
-    let relayed = if repaired {
+    // Relayed to every client, the edit, its repair and the page's new
+    // stamp as one update. A client that applied the edit alone would hold
+    // the merge the repair puts right, and Tiptap's binding deletes from
+    // the shared document a node its schema refuses, with everything
+    // inside it, before the repair could reach it.
+    let relayed = if repaired || raised {
         encode_sync_update(&doc.doc.transact().encode_diff_v1(&sv_before))
     } else {
         encode_sync_update(data)
@@ -1217,11 +1390,7 @@ fn apply_yjs_update(doc: &mut PageDoc, data: &[u8]) -> Option<(Vec<u8>, bool, u6
     let _ = doc.broadcast_tx.send(relayed);
 
     // Get current state for debounced save
-    let (state, changed) = {
-        let txn = doc.doc.transact();
-        let changed = deleted || repaired || txn.state_vector() != sv_before;
-        (virtues_document::encode_state(&txn, &StateVector::default()), changed)
-    };
+    let state = virtues_document::encode_state(&doc.doc.transact(), &StateVector::default());
     let generation = if changed { doc.record_change() } else { doc.changes };
     Some((state, changed, generation))
 }
@@ -1455,6 +1624,62 @@ pub(crate) fn page_text_of_state(state: &[u8]) -> Result<PageText, ApplyError> {
     })
 }
 
+/// A markdown page's copy a device kept (the Y.Text doc a browser keeps
+/// under `v2-<id>`), laid over the page's own last markdown state: what the
+/// page would have said had that device's typing all reached the server.
+#[derive(Debug)]
+pub(crate) struct DeviceCopy {
+    /// The page's own last markdown.
+    pub base: String,
+    /// The device's copy alone.
+    pub copy: String,
+    /// The two merged, as the CRDT merges them.
+    pub merged: String,
+    /// The merged doc's state, `encode_state_as_update_v1` of it whole.
+    pub state: Vec<u8>,
+}
+
+/// [`DeviceCopy`] of `copy` over `base`, a markdown page's saved state
+/// (none: an empty page).
+///
+/// A copy that shares no client with the base is not a copy of this
+/// document at all: one kept from before the page's document was built
+/// again from its text (a page written outside the editor, whose state was
+/// cleared). Merged, the CRDT would set its text beside the page's, every
+/// line twice. It is taken as its own text instead: the same text as the
+/// base, it holds nothing new; any other, it is what that device typed.
+pub(crate) fn merge_device_copy(base: Option<&[u8]>, copy: &[u8]) -> Result<DeviceCopy, ApplyError> {
+    let alone = new_doc();
+    apply_v1(&alone, copy)?;
+    let copy_text = content_of(&alone.transact());
+    let doc = new_doc();
+    if let Some(base) = base {
+        apply_v1(&doc, base)?;
+    }
+    let base_text = content_of(&doc.transact());
+    let shared = {
+        let (base_sv, copy_sv) = (doc.transact().state_vector(), alone.transact().state_vector());
+        copy_sv.iter().any(|(client, _)| base_sv.contains_client(client))
+    };
+    if !shared {
+        let state = alone.transact().encode_state_as_update_v1(&StateVector::default());
+        return Ok(DeviceCopy {
+            base: base_text,
+            merged: copy_text.clone(),
+            copy: copy_text,
+            state,
+        });
+    }
+    apply_v1(&doc, copy)?;
+    let txn = doc.transact();
+    Ok(DeviceCopy {
+        base: base_text,
+        copy: copy_text,
+        merged: content_of(&txn),
+        state: txn.encode_state_as_update_v1(&StateVector::default()),
+    })
+}
+
 /// Whether a doc read with no page row at hand is a tree page's: stamped,
 /// and either its fragment holds blocks or it has no `content` text.
 fn holds_tree<T: ReadTxn>(txn: &T) -> bool {
@@ -1563,9 +1788,72 @@ async fn save_and_materialize(
     Ok(())
 }
 
+/// What `YjsState::move_to_tree` did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeMove {
+    /// The page holds the tree, and its markdown doc is retired.
+    Moved,
+    /// Nothing written: the page holds typing or a write the caller did not
+    /// read. Read it again.
+    Changed,
+    /// Nothing written: the page holds blocks already.
+    AlreadyTree,
+}
+
+/// Flip a markdown page to a tree, unless its row was written after
+/// `read_at`: state, export, format and a fresh lineage
+/// (`app_pages.tree_lineage`, which a device keys its copy of the document
+/// by), and for an article its rebased edition (`block_move::record_rebase`),
+/// in one transaction. Returns whether it moved; an edition written since it
+/// was read rolls the flip back, as a row written since does. Callers choose
+/// the rows: a run's pages, an article at its first open.
+///
+/// A change of format keeps `updated_at` (the table's `set_updated_at`
+/// trigger, migration 0051): a page moved to blocks is not a page its owner
+/// edited, and every list ordered by `updated_at` (Pages, a project's pages)
+/// keeps it where it was. The statement locks only its row; `lock_timeout`
+/// bounds the wait for a write to it already in flight, and a page whose
+/// wait runs out stays markdown, reported, for the next attempt.
+pub(crate) async fn move_row(
+    pool: &PgPool,
+    page_id: &str,
+    read_at: chrono::DateTime<chrono::Utc>,
+    state: &[u8],
+    export: &str,
+    rebase: Option<&crate::api::block_move::ArticleRebase>,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET LOCAL lock_timeout = '5s'").execute(&mut *tx).await?;
+    let moved: Option<String> = sqlx::query_scalar(
+        "UPDATE app_pages SET format = $2, yjs_state = $3, content = $4, tree_lineage = $7 \
+         WHERE id = $1 AND format = $5 AND updated_at = $6 \
+         RETURNING id",
+    )
+    .bind(page_id)
+    .bind(PageFormat::Tree.as_str())
+    .bind(state)
+    .bind(export)
+    .bind(PageFormat::Markdown.as_str())
+    .bind(read_at)
+    .bind(crate::api::pages::new_lineage())
+    .fetch_optional(&mut *tx)
+    .await?;
+    if moved.is_none() {
+        return Ok(false);
+    }
+    if let Some(rebase) = rebase {
+        if !crate::api::block_move::record_rebase(&mut tx, rebase).await? {
+            return Ok(false);
+        }
+    }
+    tx.commit().await?;
+    Ok(true)
+}
+
 /// Why a server-side text write (`apply_text_edit`, `apply_text_diff`,
-/// `replace_text`) did not simply land. The variants differ in what the page
-/// says afterwards, which is the thing a caller has to report honestly.
+/// `replace_text`, `write_draft`, `replace_tree`) did not simply land. The
+/// variants differ in what the page says afterwards, which is the thing a
+/// caller has to report honestly.
 #[derive(Debug, Clone, PartialEq)]
 pub enum TextWriteError {
     /// The page no longer says what the caller read before it started, so
@@ -1577,6 +1865,10 @@ pub enum TextWriteError {
     /// until the state lands. An applied edit: a caller versions `written`
     /// and reports the pending save, and never makes the edit again.
     NotSaved { written: Written, error: String },
+    /// Nothing was changed: the write would replace or delete a block
+    /// holding a suggestion its owner has not accepted or rejected yet
+    /// (`virtues_document::suggestions_taken`).
+    SuggestionKept,
     /// Nothing was changed, for the reason given: the page's document could
     /// not be loaded, or the text a find/replace looks for is not on it.
     Other(String),
@@ -1592,6 +1884,7 @@ impl std::fmt::Display for TextWriteError {
                 f,
                 "the edit is on the page, but your server couldn't save it yet and saves it again on its own: {error}"
             ),
+            Self::SuggestionKept => f.write_str(SUGGESTION_KEPT),
             Self::Other(e) => f.write_str(e),
         }
     }
@@ -1599,9 +1892,10 @@ impl std::fmt::Display for TextWriteError {
 
 impl std::error::Error for TextWriteError {}
 
-/// The unit a text write diffs in.
+/// The unit a markdown page's text write diffs in. A block page's write
+/// diffs block by block whatever it says (`YjsState::write_draft`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Granularity {
+pub enum Granularity {
     /// For revising prose in place: a changed word stays a changed word, so
     /// History shows the edit and a concurrent edit elsewhere in the sentence
     /// survives.
@@ -1654,6 +1948,10 @@ fn apply_text_ops(txn: &mut yrs::TransactionMut, text: &yrs::TextRef, ops: Vec<(
     }
 }
 
+/// First opens that move an article to blocks take turns, per page, across
+/// every cache in the process (`DocCache::get_or_create`).
+static FIRST_OPENS: std::sync::LazyLock<WriteTurns> = std::sync::LazyLock::new(WriteTurns::default);
+
 /// Machine writes to one page take turns, from the copy kept before a write
 /// to the version cut after it. Two at once would each read the other's change
 /// as typing that landed in between, and version it as the owner's.
@@ -1689,12 +1987,32 @@ pub struct YjsState {
 
 impl YjsState {
     pub fn new(pool: PgPool) -> Self {
+        Self::with_cache(pool, DocCache::new())
+    }
+
+    /// A state whose documents move an unopened article to blocks at its
+    /// first open when `on`, whatever `VIRTUES_TREE_ARTICLES` says: the
+    /// switch is read once per process, so a test sets it per state.
+    pub fn with_tree_articles(pool: PgPool, on: bool) -> Self {
+        Self::with_cache(pool, DocCache::with_tree_articles(on))
+    }
+
+    fn with_cache(pool: PgPool, doc_cache: DocCache) -> Self {
         Self {
-            doc_cache: Arc::new(DocCache::new()),
+            doc_cache: Arc::new(doc_cache),
             save_queue: Arc::new(SaveQueue::new()),
             write_turns: Arc::new(WriteTurns::default()),
             pool,
         }
+    }
+
+    /// The page's format as its live document holds it. Builds the document
+    /// when nothing holds it, which moves an article nobody had opened to
+    /// blocks first (`block_move::first_open`).
+    pub async fn format_of(&self, page_id: &str) -> anyhow::Result<PageFormat> {
+        let page_doc = self.doc_cache.get_or_create(page_id, &self.pool).await?;
+        let format = page_doc.read().await.format;
+        Ok(format)
     }
 
     /// This page's turn for a machine write; held until the write's version is cut.
@@ -1709,6 +2027,27 @@ impl YjsState {
         tokio::spawn(async move {
             save_queue.process_loop(pool).await;
         });
+    }
+
+    /// Each page whose doc this process holds (an open editor's, or one
+    /// whose save waits), with its markdown, a tree's as its export: as new
+    /// as its row's `content`, or newer. A doc retired from its page (moved
+    /// to the other format) is left out: its row says the page.
+    pub async fn held_markdown(&self) -> Vec<(String, String)> {
+        let docs: Vec<(String, Arc<RwLock<PageDoc>>)> = self
+            .doc_cache
+            .held()
+            .iter()
+            .filter_map(|(page, doc)| Some((page.clone(), doc.upgrade()?)))
+            .collect();
+        let mut out = Vec::with_capacity(docs.len());
+        for (page, doc) in docs {
+            let doc = doc.read().await;
+            if doc.retired() == Retired::No {
+                out.push((page, markdown_of(&doc.doc.transact(), doc.format)));
+            }
+        }
+        out
     }
 
     /// Write every queued edit now, ignoring the debounce.
@@ -1742,6 +2081,105 @@ impl YjsState {
                     "could not flush page on shutdown - these edits are lost");
             }
         }
+    }
+
+    /// Write the page's queued save now, ignoring the debounce, so the
+    /// database holds everything this process has of the page: for a caller
+    /// about to read the page from the database and write it whole
+    /// (`api::page_convert`). Writes are one at a time (`SaveQueue::write`),
+    /// so a save the loop has in flight lands first. A save that fails goes
+    /// back in the queue for the loop to retry, and its error comes back.
+    pub async fn save_page_now(&self, page_id: &str) -> Result<(), String> {
+        let queued = self.save_queue.pending.write().await.remove(page_id);
+        let Some(save) = queued else {
+            // A save the loop has taken is written under `writing`: let it
+            // land before the caller reads the row.
+            drop(self.save_queue.writing.lock().await);
+            return Ok(());
+        };
+        let written = self
+            .save_queue
+            .write(&self.pool, page_id, &save.doc, &save.yjs_state, save.generation)
+            .await;
+        match written {
+            // The page moved to the other format: nothing of this doc is
+            // saved again, and there is nothing left to write.
+            Ok(()) | Err(SaveError::FormatChanged) => Ok(()),
+            Err(e) => {
+                let error = e.to_string();
+                let save = PendingSave {
+                    queued_at: Instant::now(),
+                    attempts: save.attempts.saturating_add(1),
+                    ..save
+                };
+                self.save_queue.requeue(page_id.to_string(), save).await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Move a markdown page to a tree: `state`, a tree document's full
+    /// state, and `export`, its markdown, written over the page's text and
+    /// `format` flipped, with a fresh lineage and, for an article, its
+    /// rebased edition (`rebase`), in one transaction (`move_row`). The
+    /// write the conversion run makes (`api::page_convert`).
+    ///
+    /// Made under the write lock of the page's doc, loaded for this when
+    /// nothing holds it, so no keystroke lands between the check and the
+    /// flip. The doc is then retired (`Retired::Reformatted`): every socket
+    /// bound to it closes, so its tab opens the page again as blocks, and a
+    /// keystroke that waited on the lock meanwhile is refused, never
+    /// applied to a doc whose saves no longer land; an append that waited
+    /// is written to the page's blocks (`append_markdown`).
+    ///
+    /// `Changed`, with nothing written, when the doc holds typing the
+    /// database lacks, or the row was written after the caller read it
+    /// (`read_at`, its `updated_at` then): the caller saves the page
+    /// (`save_page_now`), reads it and converts it again; so is an article
+    /// whose edition a writer recorded since the caller read it.
+    /// `AlreadyTree` when the page holds blocks already.
+    pub async fn move_to_tree(
+        &self,
+        page_id: &str,
+        read_at: chrono::DateTime<chrono::Utc>,
+        state: &[u8],
+        export: &str,
+        rebase: Option<&crate::api::block_move::ArticleRebase>,
+    ) -> Result<TreeMove, String> {
+        // A trashed page loads no doc, but one a socket still holds is found.
+        let page_doc = match self.doc_cache.get_or_create(page_id, &self.pool).await {
+            Ok(doc) => Some(doc),
+            Err(_) => self.doc_cache.in_memory(page_id),
+        };
+        let mut doc = match &page_doc {
+            Some(page_doc) => Some(page_doc.write().await),
+            None => None,
+        };
+        if let Some(d) = &doc {
+            if d.format != PageFormat::Markdown {
+                return Ok(TreeMove::AlreadyTree);
+            }
+            if d.has_unsaved_changes() || d.retired() != Retired::No {
+                return Ok(TreeMove::Changed);
+            }
+        }
+        let moved = move_row(&self.pool, page_id, read_at, state, export, rebase)
+            .await
+            .map_err(|e| format!("Your server couldn't write the page as blocks, so it left the page in markdown: {e}"))?;
+        if !moved {
+            return Ok(TreeMove::Changed);
+        }
+        if let Some(d) = doc.as_mut() {
+            let changes = d.changes;
+            d.mark_saved(changes);
+            d.retire(Retired::Reformatted);
+        }
+        drop(doc);
+        if let Some(page_doc) = &page_doc {
+            self.doc_cache.retire(page_id, page_doc);
+            self.save_queue.forget(page_id, page_doc).await;
+        }
+        Ok(TreeMove::Moved)
     }
 
     /// The document contract the page is written under, as its socket binds
@@ -1908,8 +2346,9 @@ impl YjsState {
     ///
     /// The editor reads this to build its prompt and hands the same string
     /// back as `expected_old`, which is what makes the staleness guard in
-    /// `apply_text_diff` meaningful. Every text writer refuses a tree page,
-    /// so its export is only ever read.
+    /// `apply_text_diff` meaningful: on a tree page the guard compares the
+    /// export, read again under the lock the write is made under
+    /// (`write_draft`).
     pub async fn read_text(&self, page_id: &str) -> Result<String, String> {
         let page_doc = self
             .doc_cache
@@ -1938,7 +2377,8 @@ impl YjsState {
     }
 
     /// Apply block ops (`virtues_document::Op`) to a tree page, all or none,
-    /// merged against `base`, the tree the writer read, when it has one.
+    /// checked against `base`, what reads have shown the writer, when it has
+    /// one (`virtues_document::apply_ops_in`).
     ///
     /// Under the doc's lock: a page stamped above this server's contract is
     /// refused (a newer server wrote it, and this one cannot check what it
@@ -1953,7 +2393,7 @@ impl YjsState {
     pub async fn edit_tree(
         &self,
         page_id: &str,
-        base: Option<&[Node]>,
+        base: Option<&virtues_document::Seen>,
         ops: &[virtues_document::Op],
     ) -> Result<TreeEdit, TreeError> {
         let page_doc = self
@@ -2037,8 +2477,7 @@ impl YjsState {
     /// between the read and the write. A block that does not change keeps
     /// its Yjs items, so a caret in it, or a keystroke an editor sends from
     /// before this write, still lands; a text block kept by id is patched
-    /// where it changed rather than swapped. The write a restore makes, and
-    /// the one a writer that produces a whole page makes.
+    /// where it changed rather than swapped. The write a restore makes.
     ///
     /// `Ok(None)` when the page already reads as `target`: nothing written.
     /// Otherwise the write goes to every open editor and is saved at once
@@ -2054,6 +2493,33 @@ impl YjsState {
         page_id: &str,
         target: &[Node],
     ) -> Result<Option<TextEdit>, TextWriteError> {
+        let not_tree = TextWriteError::Other(TreeError::NotTree.to_string());
+        let write = self
+            .write_tree(page_id, not_tree, |current| {
+                Ok(virtues_document::diff_ops(current, target))
+            })
+            .await?;
+        Ok(write.changed.then_some(TextEdit {
+            before: write.before,
+            after: write.after,
+        }))
+    }
+
+    /// The one locked body of every whole-page write to a tree page
+    /// (`replace_tree`, `write_draft`): under the doc's write lock, refuse a
+    /// page stamped above this server's contract, raise one below it, read
+    /// the tree, `plan` the ops against it, and apply them as the server's
+    /// own in one transaction, checked as a batch before anything is
+    /// written. A change goes to every open editor and is saved at once
+    /// (`persist_now`). A markdown page is `not_tree`, with nothing written;
+    /// a plan or a batch refused writes nothing but the raise, which is the
+    /// server's own change and stands.
+    async fn write_tree(
+        &self,
+        page_id: &str,
+        not_tree: TextWriteError,
+        plan: impl FnOnce(&[Node]) -> Result<Vec<virtues_document::Op>, TextWriteError>,
+    ) -> Result<TreeWrite, TextWriteError> {
         let page_doc = self
             .doc_cache
             .get_or_create(page_id, &self.pool)
@@ -2063,7 +2529,7 @@ impl YjsState {
         let (before, written, generation, changed) = {
             let mut doc = page_doc.write().await;
             if doc.format != PageFormat::Tree {
-                return Err(TextWriteError::Other(TreeError::NotTree.to_string()));
+                return Err(not_tree);
             }
             if doc.contract() > virtues_document::contract().version {
                 return Err(TextWriteError::Other(
@@ -2073,24 +2539,29 @@ impl YjsState {
             let raised = doc.raise_contract();
             let before = doc.written();
 
-            let outcome = {
-                let mut txn = doc.doc.transact_mut();
-                let ops = virtues_document::diff_ops(&virtues_document::read_doc(&txn), target);
-                if ops.is_empty() {
-                    Ok(None)
-                } else {
-                    // The ops are made from a tree of the server's own (a
-                    // version), so no write's size limit bounds them: a page
-                    // cleared to a line is put back whole. They are checked
-                    // as a batch before anything is written, so a refusal
-                    // leaves the transaction empty.
+            let outcome = match plan(before.tree.as_deref().unwrap_or_default()) {
+                Err(e) => Err(e),
+                Ok(ops) if ops.is_empty() => Ok(None),
+                Ok(ops) => {
+                    let mut txn = doc.doc.transact_mut();
+                    // The ops are made from trees of the server's own (a
+                    // version, a writer's converted markdown), so no write's
+                    // size limit bounds them: a page cleared to a line is
+                    // put back whole. They are checked as a batch before
+                    // anything is written, so a refusal leaves the
+                    // transaction empty.
                     virtues_document::apply_own_ops_in(&mut txn, &ops)
                         .map(|_| Some(txn.encode_update_v1()))
+                        .map_err(|problems| {
+                            TextWriteError::Other(format!(
+                                "your server wrote nothing: {}",
+                                problems_summary(&problems)
+                            ))
+                        })
                 }
             };
             match outcome {
-                Err(problems) => {
-                    // A raise is the server's own change and stands.
+                Err(e) => {
                     let raised = raised.map(|generation| (doc.written().state, generation));
                     drop(doc);
                     if let Some((state, generation)) = raised {
@@ -2098,10 +2569,7 @@ impl YjsState {
                             .queue_save(page_id.to_string(), &page_doc, state, generation)
                             .await;
                     }
-                    return Err(TextWriteError::Other(format!(
-                        "your server wrote nothing: {}",
-                        problems_summary(&problems)
-                    )));
+                    return Err(e);
                 }
                 Ok(Some(update)) => {
                     let _ = doc.broadcast_tx.send(encode_sync_update(&update));
@@ -2116,7 +2584,7 @@ impl YjsState {
             Some(generation) => self.persist_now(page_id, &page_doc, written, generation).await,
             None => Ok(written),
         };
-        Ok(changed.then_some(TextEdit { before, after }))
+        Ok(TreeWrite { before, after, changed })
     }
 
     /// The page's markdown and the doc's full state, read under one lock so
@@ -2135,8 +2603,114 @@ impl YjsState {
         Ok(written)
     }
 
+    /// A writer's markdown as the page will hold it: the one door every
+    /// machine writer's whole-page markdown goes through, so what a writer
+    /// records as its edition is what the page then says.
+    ///
+    /// On a markdown page the draft is the markdown. On a tree page it is
+    /// converted, off the async workers, as an article's (its footnotes,
+    /// figures and veils the contract's own nodes) or as any writer's
+    /// markdown, over the page as it stands (`virtues_document::parse_draft`):
+    /// the page's own suggestions, which the writer read in its export and
+    /// carries back as they stand, stay suggestions, and any other is
+    /// written as accepted. Its text is the blocks' export. Markdown the
+    /// contract refuses is `Other`, with nothing written. Building the
+    /// page's document first moves an article nobody had opened to blocks
+    /// (`block_move::first_open`), so the draft is made for the format the
+    /// page then has.
+    pub async fn draft(&self, page_id: &str, markdown: &str) -> Result<Draft, TextWriteError> {
+        let page_doc = self
+            .doc_cache
+            .get_or_create(page_id, &self.pool)
+            .await
+            .map_err(|e| TextWriteError::Other(format!("Failed to get page document: {e}")))?;
+        let (format, is_article, current) = {
+            let doc = page_doc.read().await;
+            let current = match doc.format {
+                PageFormat::Tree => virtues_document::read_doc(&doc.doc.transact()),
+                PageFormat::Markdown => vec![],
+            };
+            (doc.format, doc.is_article, current)
+        };
+        if format == PageFormat::Markdown {
+            return Ok(Draft {
+                text: markdown.to_string(),
+                blocks: None,
+                notes: vec![],
+                dialect: writers_dialect(is_article),
+            });
+        }
+        let markdown = markdown.to_string();
+        let dialect = writers_dialect(is_article);
+        let o = crate::api::pages::convert_off_workers(move || {
+            virtues_document::parse_draft(&current, &markdown, dialect)
+        })
+        .await
+        .map_err(|e| TextWriteError::Other(e.to_string()))?;
+        if !o.errors.is_empty() {
+            return Err(TextWriteError::Other(format!(
+                "your server couldn't turn the writing into blocks ({}), so it wrote nothing",
+                problems_summary(&o.errors)
+            )));
+        }
+        let blocks = crate::api::pages::at_least_one_block(o.nodes);
+        Ok(Draft {
+            text: virtues_document::to_markdown(&blocks),
+            blocks: Some(blocks),
+            notes: o.notes,
+            dialect,
+        })
+    }
+
+    /// Write a `draft` over the page, only what changed, refused with
+    /// `Stale` when the page no longer reads as `expected_old`, the text the
+    /// writer read before it started. Returns what the write left, read under
+    /// the lock it was made under; `NotSaved` carries the same.
+    ///
+    /// On a markdown page the text is diffed by `granularity` and written
+    /// into the Y.Text. On a tree page the draft's blocks are written block
+    /// by block (`virtues_document::revise_ops`): a block the draft shows as
+    /// the page has it is left alone, with everything it holds that
+    /// markdown cannot show, and so are its Yjs items and any caret in it,
+    /// as is a block the export shows as nothing (an empty paragraph) on a
+    /// page the write does not replace whole; a
+    /// block the writer changed a little is patched where it changed,
+    /// keeping its id. A write that would replace or delete a block holding
+    /// the owner's pending suggestion is refused with nothing written
+    /// (`virtues_document::suggestions_taken`): accepting or rejecting it is
+    /// the owner's. The staleness check compares the page's export under
+    /// the lock. A draft made for the other format (the page moved since) is
+    /// `Stale`: read it again.
+    pub async fn write_draft(
+        &self,
+        page_id: &str,
+        expected_old: &str,
+        draft: &Draft,
+        granularity: Granularity,
+    ) -> Result<Written, TextWriteError> {
+        match &draft.blocks {
+            None => self.write_text(page_id, expected_old, &draft.text, granularity).await,
+            Some(blocks) => {
+                let write = self
+                    .write_tree(page_id, TextWriteError::Stale, |current| {
+                        if virtues_document::to_markdown(current) != expected_old {
+                            return Err(TextWriteError::Stale);
+                        }
+                        let ops = virtues_document::revise_ops(current, blocks, draft.dialect);
+                        if !virtues_document::suggestions_taken(current, &ops).is_empty() {
+                            return Err(TextWriteError::SuggestionKept);
+                        }
+                        Ok(ops)
+                    })
+                    .await?;
+                write.after
+            }
+        }
+    }
+
     /// Revise a page's prose by applying only what actually changed, word by
-    /// word.
+    /// word on a markdown page, block by block on a tree page: the editor's
+    /// whole-article revision ([`Self::draft`], then [`Self::write_draft`]).
     ///
     /// The editor returns a whole article — a batch job has no turn in which
     /// to retry a failed find/replace, and asking a model for exact anchor
@@ -2162,7 +2736,8 @@ impl YjsState {
         expected_old: &str,
         new_text: &str,
     ) -> Result<Written, TextWriteError> {
-        self.write_text(page_id, expected_old, new_text, Granularity::Words)
+        let draft = self.draft(page_id, new_text).await?;
+        self.write_draft(page_id, expected_old, &draft, Granularity::Words)
             .await
     }
 
@@ -2170,9 +2745,10 @@ impl YjsState {
     ///
     /// The same write as `apply_text_diff` (only what changed, through the
     /// CRDT, refused with `Stale` when the page has moved off `expected_old`),
-    /// diffed by LINE. Two independent drafts share common words all the way
-    /// through, so a word diff between them interleaves thousands of tiny
-    /// operations and leaves a much larger stored state for the same text.
+    /// diffed by LINE on a markdown page. Two independent drafts share common
+    /// words all the way through, so a word diff between them interleaves
+    /// thousands of tiny operations and leaves a much larger stored state for
+    /// the same text. A tree page is written block by block either way.
     ///
     /// Returns what the edit left on the page, read under the same lock as
     /// the edit; `NotSaved` carries the same.
@@ -2182,10 +2758,13 @@ impl YjsState {
         expected_old: &str,
         new_text: &str,
     ) -> Result<Written, TextWriteError> {
-        self.write_text(page_id, expected_old, new_text, Granularity::Lines)
+        let draft = self.draft(page_id, new_text).await?;
+        self.write_draft(page_id, expected_old, &draft, Granularity::Lines)
             .await
     }
 
+    /// A markdown draft into the page's Y.Text. A page that holds blocks by
+    /// now is `Stale`: the draft was made for its markdown.
     async fn write_text(
         &self,
         page_id: &str,
@@ -2207,7 +2786,7 @@ impl YjsState {
         let (written, generation) = {
             let mut doc = page_doc.write().await;
             if doc.format == PageFormat::Tree {
-                return Err(TextWriteError::Other(TREE_TEXT_WRITE.into()));
+                return Err(TextWriteError::Stale);
             }
             {
                 let mut txn = doc.doc.transact_mut();
@@ -2240,9 +2819,10 @@ impl YjsState {
     /// never run together.
     ///
     /// On a tree page the markdown is converted to blocks by the contract's
-    /// converter and written after the last block, any suggestion in it
-    /// accepted (`parse_written_markdown`): suggestions are made by the
-    /// page's owner, in the page. What the conversion changed comes back as
+    /// converter, as an article's on an article (`parse_article_markdown`),
+    /// and written after the last block, any suggestion in it accepted
+    /// (`parse_written_markdown`): suggestions are made by the page's owner,
+    /// in the page. What the conversion changed comes back as
     /// `notes`. Markdown the converter refuses is `InvalidInput` naming its
     /// problems, with nothing written: the caller's to fix, not the server's.
     /// As every write to a tree page does (`edit_tree`, `replace_tree`), it
@@ -2254,23 +2834,69 @@ impl YjsState {
         page_id: &str,
         markdown: &str,
     ) -> crate::error::Result<Appended> {
-        let page_doc = self
-            .doc_cache
+        let page_doc = self.doc_for_append(page_id).await?;
+        self.append_markdown_to(page_id, page_doc, markdown).await
+    }
+
+    async fn doc_for_append(&self, page_id: &str) -> crate::error::Result<Arc<RwLock<PageDoc>>> {
+        self.doc_cache
             .get_or_create(page_id, &self.pool)
             .await
-            .map_err(|e| crate::error::Error::Other(format!("Failed to get page document: {}", e)))?;
+            .map_err(|e| crate::error::Error::Other(format!("Failed to get page document: {}", e)))
+    }
 
+    /// [`Self::append_markdown`] into `page_doc`, the page's doc when the
+    /// append began. The append takes no write turn, so the page can move
+    /// to blocks between then and its write lock (`move_to_tree`), which
+    /// retires that doc: no save of it lands again, so written there the
+    /// append would be answered as made and lost. It is written into the
+    /// page's doc as it is now instead, as blocks.
+    async fn append_markdown_to(
+        &self,
+        page_id: &str,
+        mut page_doc: Arc<RwLock<PageDoc>>,
+        markdown: &str,
+    ) -> crate::error::Result<Appended> {
+        // A page moves to blocks once; a second retirement in a row is a
+        // page changing faster than an append can follow.
+        for _ in 0..3 {
+            match self.append_into(page_id, &page_doc, markdown).await? {
+                Some(appended) => return Ok(appended),
+                None => page_doc = self.doc_for_append(page_id).await?,
+            }
+        }
+        Err(crate::error::Error::Other(
+            "Your server couldn't add this to the page while it was changing format. Try again.".into(),
+        ))
+    }
+
+    /// [`Self::append_markdown_to`] into `page_doc` alone: `None`, with
+    /// nothing written, when that doc was retired because its page changed
+    /// format.
+    async fn append_into(
+        &self,
+        page_id: &str,
+        page_doc: &Arc<RwLock<PageDoc>>,
+        markdown: &str,
+    ) -> crate::error::Result<Option<Appended>> {
         // Converted before the write lock, which open editors wait on, and
         // off the async workers, as every conversion is. A doc keeps its
         // format for its whole life, so the format read here is still the
         // doc's under that lock.
-        let format = page_doc.read().await.format;
+        let (format, is_article) = {
+            let doc = page_doc.read().await;
+            (doc.format, doc.is_article)
+        };
         let converted = match format {
             PageFormat::Markdown => None,
             PageFormat::Tree => {
                 let markdown = markdown.to_string();
                 let o = crate::api::pages::convert_off_workers(move || {
-                    virtues_document::parse_written_markdown(&markdown)
+                    if is_article {
+                        virtues_document::parse_article_markdown(&markdown)
+                    } else {
+                        virtues_document::parse_written_markdown(&markdown)
+                    }
                 })
                 .await?;
                 if !o.errors.is_empty() {
@@ -2285,6 +2911,11 @@ impl YjsState {
 
         let (written, generation, notes) = {
             let mut doc = page_doc.write().await;
+            // Checked under the lock the append is written under, as a
+            // keystroke's is (`take_client_update`).
+            if doc.retired() == Retired::Reformatted {
+                return Ok(None);
+            }
             match converted {
                 None => {
                     append_block_to_doc(&doc.doc, markdown);
@@ -2337,14 +2968,14 @@ impl YjsState {
 
         if let Some(generation) = generation {
             self.save_queue
-                .queue_save(page_id.to_string(), &page_doc, written.state, generation)
+                .queue_save(page_id.to_string(), page_doc, written.state, generation)
                 .await;
         }
 
-        Ok(Appended {
+        Ok(Some(Appended {
             text: written.text,
             notes,
-        })
+        }))
     }
 }
 
@@ -2399,6 +3030,15 @@ fn client_contract(params: &HashMap<String, String>) -> u32 {
         .get("contract")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0)
+}
+
+/// Whether the socket is a markdown binding from an app that knows block
+/// pages: it says `contract=0`, where an app from before them says nothing.
+/// Such a binding meets a tree only on a page moved to blocks after the app
+/// read its format, so it is told the page was converted, to open it again,
+/// not that the app needs updating.
+fn binds_markdown(params: &HashMap<String, String>) -> bool {
+    params.get("contract").map(String::as_str) == Some("0")
 }
 
 /// Whether an update from a client may be applied to `doc`, and if not, why.
@@ -2507,12 +3147,14 @@ impl Refused {
 /// or relayed, and comes back as the reason, for the socket to close on;
 /// so is any update to a doc retired because its page changed format. One
 /// that waits on edits the page lacks is not applied either, and comes back
-/// as `Taken::Waits`, for the socket to ask its client to sync.
+/// as `Taken::Waits`, for the socket to ask its client to sync. `writer` is
+/// the contract the client reads (`apply_yjs_update`).
 async fn take_client_update(
     state: &YjsState,
     page_id: &str,
     page_doc: &Arc<RwLock<PageDoc>>,
     update: &[u8],
+    writer: u32,
 ) -> Result<Taken, Refused> {
     let mut doc = page_doc.write().await;
     // Checked under the same lock it is applied under: nothing lands between.
@@ -2522,7 +3164,7 @@ async fn take_client_update(
     if admit_update(&doc, update).await.map_err(Refused::Update)? == Taken::Waits {
         return Ok(Taken::Waits);
     }
-    let Some((full_state, changed, generation)) = apply_yjs_update(&mut doc, update) else {
+    let Some((full_state, changed, generation)) = apply_yjs_update(&mut doc, update, writer) else {
         return Ok(Taken::Applied);
     };
     // Opening a page sends an update that changes nothing. A tree page
@@ -2577,11 +3219,12 @@ pub async fn yjs_websocket_handler(
     State(state): State<YjsState>,
     headers: axum::http::HeaderMap,
 ) -> Response {
-    if let Some(refused) = crate::server::refuse_foreign_socket(&headers, "page") {
+    if let Some(refused) = crate::server::refuse_foreign_socket(&headers, "page", crate::server::public_origins()) {
         return refused;
     }
     let contract = client_contract(&params);
-    ws.on_upgrade(move |socket| handle_yjs_connection(socket, page_id, contract, state))
+    let markdown = binds_markdown(&params);
+    ws.on_upgrade(move |socket| handle_yjs_connection(socket, page_id, contract, markdown, state))
 }
 
 /// Handle a single WebSocket connection for Yjs sync
@@ -2590,6 +3233,7 @@ async fn handle_yjs_connection(
     mut socket: WebSocket,
     page_id: String,
     client: u32,
+    binds_markdown: bool,
     state: YjsState,
 ) {
     tracing::debug!("WebSocket connection opened for page {}", page_id);
@@ -2618,6 +3262,12 @@ async fn handle_yjs_connection(
     let document = *contract_rx.borrow_and_update();
     let binding = match bind(client, document) {
         Ok(binding) => binding,
+        Err(_) if binds_markdown && page_doc.read().await.format() == PageFormat::Tree => {
+            tracing::info!(page_id, "closing a markdown binding on a page converted to blocks");
+            let (code, reason) = Refused::Reformatted.close();
+            close_with(&mut socket, code, reason).await;
+            return;
+        }
         Err(reason) => {
             tracing::info!(page_id, client, %reason, "refusing a client below the page's contract");
             close_with(&mut socket, CLOSE_CONTRACT, &reason).await;
@@ -2676,16 +3326,29 @@ async fn handle_yjs_connection(
                                         // Parse client's state vector and send back missing updates
                                         let response = {
                                             let doc = page_doc.read().await;
-                                            let txn = doc.doc.transact();
-                                            
-                                            // Decode client's state vector
-                                            let client_sv = client_state_vector(sv_bytes);
-                                            
-                                            // Encode updates the client is missing
-                                            let update = virtues_document::encode_state(&txn, &client_sv);
-                                            encode_sync_step2(&update)
+                                            // Read under the lock the state is: a page raised past
+                                            // this client holds what it cannot read.
+                                            match bind(client, doc.contract()) {
+                                                Err(reason) => Err(reason),
+                                                Ok(_) => {
+                                                    let txn = doc.doc.transact();
+                                                    // Decode client's state vector
+                                                    let client_sv = client_state_vector(sv_bytes);
+                                                    // Encode updates the client is missing
+                                                    let update = virtues_document::encode_state(&txn, &client_sv);
+                                                    Ok(encode_sync_step2(&update))
+                                                }
+                                            }
                                         };
-                                        
+                                        let response = match response {
+                                            Ok(response) => response,
+                                            Err(reason) => {
+                                                tracing::info!(page_id, client, "closing a client below the page's raised contract");
+                                                close_with(&mut socket, CLOSE_CONTRACT, &reason).await;
+                                                break;
+                                            }
+                                        };
+
                                         if socket.send(Message::Binary(response)).await.is_err() {
                                             break;
                                         }
@@ -2706,7 +3369,7 @@ async fn handle_yjs_connection(
                                                 continue;
                                             }
                                         };
-                                        match take_update(binding, &state, &page_id, &page_doc, update_bytes).await {
+                                        match take_update(binding, client, &state, &page_id, &page_doc, update_bytes).await {
                                             Ok(Taken::Applied) => {}
                                             Ok(Taken::Waits) => {
                                                 let Some(request) = asking.waited(&page_doc, &page_id).await else {
@@ -2733,7 +3396,7 @@ async fn handle_yjs_connection(
                                                 continue;
                                             }
                                         };
-                                        match take_update(binding, &state, &page_id, &page_doc, update_bytes).await {
+                                        match take_update(binding, client, &state, &page_id, &page_doc, update_bytes).await {
                                             Ok(Taken::Applied) => {}
                                             Ok(Taken::Waits) => {
                                                 let Some(request) = asking.waited(&page_doc, &page_id).await else {
@@ -2778,6 +3441,15 @@ async fn handle_yjs_connection(
             }
             // Broadcast from another client (already wrapped in y-websocket format)
             Ok(update) = broadcast_rx.recv() => {
+                // The page is raised before anything written under the new
+                // stamp goes out (`PageDoc::stamp`), so a client below it is
+                // closed here rather than sent what it cannot read.
+                let document = *contract_rx.borrow_and_update();
+                if let Err(reason) = bind(client, document) {
+                    tracing::info!(page_id, client, document, "closing a client below the page's raised contract");
+                    close_with(&mut socket, CLOSE_CONTRACT, &reason).await;
+                    break;
+                }
                 if socket.send(Message::Binary(update)).await.is_err() {
                     break;
                 }
@@ -2827,6 +3499,7 @@ async fn handle_yjs_connection(
 /// applied. Refused comes back as the reason.
 async fn take_update(
     binding: Binding,
+    client: u32,
     state: &YjsState,
     page_id: &str,
     page_doc: &Arc<RwLock<PageDoc>>,
@@ -2834,7 +3507,7 @@ async fn take_update(
 ) -> Result<Taken, Refused> {
     match binding {
         Binding::ReadWrite => {
-            let taken = take_client_update(state, page_id, page_doc, update).await;
+            let taken = take_client_update(state, page_id, page_doc, update, client).await;
             match &taken {
                 Err(refused) => {
                     tracing::warn!(page_id, reason = refused.close().1, "refused an editor's update");
@@ -3054,7 +3727,7 @@ mod tests {
 
         // Replaying the shared state back at the server: applies, changes nothing.
         let replay = client.transact().encode_state_as_update_v1(&yrs::StateVector::default());
-        let (_, changed, generation) = apply_yjs_update(&mut page, &replay).expect("decodable");
+        let (_, changed, generation) = apply_yjs_update(&mut page, &replay, this_contract()).expect("decodable");
         assert!(!changed, "an update carrying nothing new must not read as an edit");
         assert_eq!(generation, 0, "and is no change to save");
 
@@ -3067,7 +3740,7 @@ mod tests {
         }
         let sv = page.doc.transact().state_vector();
         let diff = client.transact().encode_state_as_update_v1(&sv);
-        let (_, changed, generation) = apply_yjs_update(&mut page, &diff).expect("decodable");
+        let (_, changed, generation) = apply_yjs_update(&mut page, &diff, this_contract()).expect("decodable");
         assert!(changed, "a real insertion must read as an edit");
         assert_eq!(generation, 1);
         assert!(page.has_unsaved_changes());
@@ -3094,13 +3767,13 @@ mod tests {
         }
         let diff = client.transact().encode_state_as_update_v1(&sv);
 
-        let (_, changed, generation) = apply_yjs_update(&mut page, &diff).expect("decodable");
+        let (_, changed, generation) = apply_yjs_update(&mut page, &diff, this_contract()).expect("decodable");
         assert!(changed, "a deletion is an edit");
         assert_eq!(generation, 1);
         assert_eq!(read_content(&page.doc), "Keep this.");
 
         // The same deletion again deletes nothing new.
-        let (_, changed, generation) = apply_yjs_update(&mut page, &diff).expect("decodable");
+        let (_, changed, generation) = apply_yjs_update(&mut page, &diff, this_contract()).expect("decodable");
         assert!(!changed);
         assert_eq!(generation, 1);
     }
@@ -3372,7 +4045,7 @@ mod tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )
         .await
@@ -3476,7 +4149,7 @@ mod tests {
                 icon_color: None,
                 cover_url: None,
                 tags: None,
-                format: None,
+                format: Some(crate::api::pages::PageFormat::Markdown),
             },
         )
         .await
@@ -3548,7 +4221,7 @@ mod tests {
         let editor = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
 
         let typed = typed_in_an_editor(&editor, "More.\n").await;
-        take_client_update(&yjs, &page_id, &editor, &typed).await.unwrap();
+        take_client_update(&yjs, &page_id, &editor, &typed, this_contract()).await.unwrap();
 
         let edit = yjs
             .apply_text_edit(&page_id, "Your line.", "Your own line.")
@@ -3619,12 +4292,12 @@ mod tests {
         // Opening the page: the client answers with an update that changes
         // nothing, and the socket queues the state anyway.
         let nothing = editor.read().await.written().state;
-        take_client_update(&yjs, &page_id, &editor, &nothing).await.unwrap();
+        take_client_update(&yjs, &page_id, &editor, &nothing, this_contract()).await.unwrap();
         let other = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
         assert!(Arc::ptr_eq(&editor, &other), "an open page is not a rewrite");
 
         let typed = typed_in_an_editor(&editor, "Your line.\n").await;
-        take_client_update(&yjs, &page_id, &editor, &typed).await.unwrap();
+        take_client_update(&yjs, &page_id, &editor, &typed, this_contract()).await.unwrap();
         assert_eq!(yjs.read_text(&page_id).await.unwrap(), "Old prose.\nYour line.\n");
         let other = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
         assert!(Arc::ptr_eq(&editor, &other), "nor is typing that has not saved yet");
@@ -3717,7 +4390,7 @@ mod tests {
 
         let typed = typed_in_an_editor(&editor, "More.\n").await;
         let (late, changed, generation) =
-            apply_yjs_update(&mut *editor.write().await, &typed).expect("decodable");
+            apply_yjs_update(&mut *editor.write().await, &typed, this_contract()).expect("decodable");
         assert!(changed);
 
         let written = yjs
@@ -3745,7 +4418,7 @@ mod tests {
 
         let typed = typed_in_an_editor(&editor, "More.\n").await;
         let (late, _, generation) =
-            apply_yjs_update(&mut *editor.write().await, &typed).expect("decodable");
+            apply_yjs_update(&mut *editor.write().await, &typed, this_contract()).expect("decodable");
 
         refuse_page_saves(&pool).await;
         let edit = yjs
@@ -4055,13 +4728,13 @@ mod tests {
             let mut page = page_doc(doc_from_state(name, base));
 
             let (state, changed, generation) =
-                apply_yjs_update(&mut page, update).expect("applies");
+                apply_yjs_update(&mut page, update, this_contract()).expect("applies");
             assert!(changed, "{name}");
             assert_eq!(generation, 1, "{name}");
             assert_eq!(read_content(&page.doc), after, "{name}");
             assert_eq!(extract_text_content(&state), after, "{name}");
 
-            let (_, changed, _) = apply_yjs_update(&mut page, update).expect("applies");
+            let (_, changed, _) = apply_yjs_update(&mut page, update, this_contract()).expect("applies");
             assert!(!changed, "{name}: the same update again changes nothing");
         }
     }
@@ -4313,6 +4986,12 @@ mod tests {
     }
 
     /// The text of the first paragraph of a tree doc.
+    /// The contract a client of this build reads, which these tests' editors
+    /// write as.
+    fn this_contract() -> u32 {
+        virtues_document::contract().version
+    }
+
     fn first_paragraph(doc: &Doc) -> String {
         virtues_document::read_doc(&doc.transact())
             .first()
@@ -4339,11 +5018,14 @@ mod tests {
         let yjs = YjsState::new(pool.clone());
         let addr = serve(yjs.clone()).await;
 
-        // Every app that binds the Y.Text, which sends no version.
+        // Every app from before block pages, which sends no version.
         let mut old = Client::connect(addr, &page_id, None).await;
         assert_eq!(old.hear().await, Heard::Closed(CLOSE_CONTRACT));
+        // An app that knows block pages binds a page as markdown only when it
+        // read the page's format before the page moved to blocks: it is told
+        // to open the page again.
         let mut zero = Client::connect(addr, &page_id, Some(0)).await;
-        assert_eq!(zero.hear().await, Heard::Closed(CLOSE_CONTRACT));
+        assert_eq!(zero.hear().await, Heard::Closed(CLOSE_REFORMATTED));
 
         let version = virtues_document::contract().version;
         let mut current = Client::connect(addr, &page_id, Some(version)).await;
@@ -4466,7 +5148,7 @@ mod tests {
 
         // The server writes, which would have supplied the item waited on.
         let base = yjs.read_tree(&page_id).await.unwrap();
-        yjs.edit_tree(&page_id, Some(&base), &[virtues_document::Op::Append { html: "<p>More.</p>".into() }])
+        yjs.edit_tree(&page_id, Some(&virtues_document::Seen::of_page(&base)), &[virtues_document::Op::Append { html: "<p>More.</p>".into() }])
             .await
             .unwrap();
         let held = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
@@ -4793,7 +5475,7 @@ mod tests {
             let tree = yjs.read_tree(&page_id).await.unwrap();
             yjs.edit_tree(
                 &page_id,
-                Some(&tree),
+                Some(&virtues_document::Seen::of_page(&tree)),
                 &[virtues_document::Op::Replace {
                     id: block_ids(&tree)[2].clone(),
                     html: "<p>Seats booked.</p>".into(),
@@ -4893,9 +5575,65 @@ mod tests {
             virtues_document::stamped_version(&doc_from_state(&page_id, &saved).transact()),
             Some(version)
         );
-        let mut late = Client::connect(addr, &page_id, Some(0)).await;
+        let mut late = Client::connect(addr, &page_id, None).await;
         assert_eq!(late.hear().await, Heard::Closed(CLOSE_CONTRACT));
     }
+    /// A block page stamped below this server's contract is raised by the
+    /// first edit a client at this contract makes in it, before the edit
+    /// goes out: a client at the page's old stamp, whose editor deletes from
+    /// the shared document what its schema cannot read (a mark it lacks
+    /// takes the whole run of text with it), is closed, never sent the edit.
+    /// Opening the page, which changes nothing, raises nothing.
+    #[sqlx::test]
+    async fn a_newer_clients_edit_raises_the_page_before_an_older_client_reads_it(pool: PgPool) {
+        let version = this_contract();
+        let older = version - 1;
+        let page_id = tree_page(&pool, "<p>You met Nick by the river.</p>").await;
+        let stamped = {
+            let (doc, _) = doc_from_tree_state(&page_id, &saved_state(&pool, &page_id).await.unwrap()).unwrap();
+            virtues_document::stamp_version_as(older, &mut doc.transact_mut());
+            let state = doc.transact().encode_state_as_update_v1(&StateVector::default());
+            state
+        };
+        sqlx::query("UPDATE app_pages SET yjs_state = $1 WHERE id = $2")
+            .bind(&stamped)
+            .bind(&page_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let yjs = YjsState::new(pool.clone());
+        let addr = serve(yjs.clone()).await;
+
+        let mut old = Client::connect(addr, &page_id, Some(older)).await;
+        let mut current = Client::connect(addr, &page_id, Some(version)).await;
+        assert_eq!(old.hear().await, Heard::Synced);
+        assert_eq!(current.hear().await, Heard::Synced);
+        current.answer(&yjs, &page_id).await;
+        assert_eq!(settle(&mut old).await, None, "opening the page raises nothing");
+
+        // The current editor veils a name: a mark the older contract lacks.
+        current
+            .edit(|txn| {
+                use yrs::{Text, XmlFragment, XmlOut};
+                let frag = txn.get_or_insert_xml_fragment("doc");
+                let Some(XmlOut::Element(p)) = frag.get(txn, 0) else { panic!("a paragraph") };
+                let Some(XmlOut::Text(t)) = p.get(txn, 0) else { panic!("its text") };
+                let veil = yrs::Any::from(std::collections::HashMap::<String, yrs::Any>::new());
+                t.format(txn, "You met ".len() as u32, "Nick".len() as u32, yrs::types::Attrs::from([("veil".into(), veil)]));
+            })
+            .await;
+
+        assert_eq!(old.close().await, Heard::Closed(CLOSE_CONTRACT));
+        assert!(!page_html(&old.doc).contains("virtues-veil"), "{}", page_html(&old.doc));
+        assert_eq!(settle(&mut current).await, None, "the current editor stays");
+        assert_eq!(virtues_document::stamped_version(&current.doc.transact()), Some(version));
+        let held = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        assert_eq!(held.read().await.contract(), version);
+        assert!(page_html(&held.read().await.doc).contains("<virtues-veil>Nick</virtues-veil>"));
+        let mut late = Client::connect(addr, &page_id, Some(older)).await;
+        assert_eq!(late.hear().await, Heard::Closed(CLOSE_CONTRACT));
+    }
+
     /// Hear what the server sends until it goes quiet. Returns how the socket
     /// closed, if it did.
     async fn settle(client: &mut Client) -> Option<Heard> {
@@ -5159,11 +5897,11 @@ mod tests {
         for pending in [true, false] {
             let update = json_item_update(pending);
             assert!(Update::decode_v1(&update).is_ok(), "yrs reads it");
-            assert_eq!(take_client_update(&yjs, &page_id, &doc, &update).await, Ok(Taken::Applied));
+            assert_eq!(take_client_update(&yjs, &page_id, &doc, &update, this_contract()).await, Ok(Taken::Applied));
             assert_eq!(doc.read().await.written().text, "Some notes.\n");
         }
         let typed = typed_in_an_editor(&doc, " More.").await;
-        take_client_update(&yjs, &page_id, &doc, &typed).await.unwrap();
+        take_client_update(&yjs, &page_id, &doc, &typed, this_contract()).await.unwrap();
         let written = doc.read().await.written();
         assert_eq!(written.text, "Some notes.\n More.");
         assert_eq!(read_content(&doc_from_state(&page_id, &written.state)), written.text);
@@ -5171,7 +5909,7 @@ mod tests {
         let tree_id = tree_page(&pool, "<p>Hello</p>").await;
         let tree = yjs.doc_cache.get_or_create(&tree_id, &pool).await.unwrap();
         for pending in [true, false] {
-            let refused = take_client_update(&yjs, &tree_id, &tree, &json_item_update(pending))
+            let refused = take_client_update(&yjs, &tree_id, &tree, &json_item_update(pending), this_contract())
                 .await
                 .unwrap_err();
             assert!(
@@ -5236,9 +5974,9 @@ mod tests {
                     .build()
                     .unwrap();
                 let mut markdown = page_doc(doc_from_text("x"));
-                assert!(apply_yjs_update(&mut markdown, &shallow).is_some());
+                assert!(apply_yjs_update(&mut markdown, &shallow, this_contract()).is_some());
                 assert_eq!(runtime.block_on(admit_update(&markdown, &deep)), Ok(Taken::Applied));
-                assert!(apply_yjs_update(&mut markdown, &deep).is_none());
+                assert!(apply_yjs_update(&mut markdown, &deep, this_contract()).is_none());
                 assert_eq!(read_content(&markdown.doc), "x");
 
                 let o = virtues_document::parse_html("<p>x</p>", "doc");
@@ -5262,7 +6000,7 @@ mod tests {
             icon_color: None,
             cover_url: None,
             tags: None,
-            format: None,
+            format: Some(crate::api::pages::PageFormat::Markdown),
         }
     }
 
@@ -5400,11 +6138,12 @@ mod tests {
         );
     }
 
-    /// Server writes skip `admit_update`, so each Y.Text writer refuses a
-    /// tree page itself, under the lock, before it writes anything. Readers
-    /// get the export.
+    /// Server writes skip `admit_update`, so a find/replace, whose anchors
+    /// are markdown the page does not hold, refuses a tree page itself,
+    /// under the lock, before it writes anything. A writer's whole page is
+    /// written as blocks (`write_draft`), and readers get the export.
     #[sqlx::test]
-    async fn text_writers_refuse_a_tree_page_and_readers_get_its_export(pool: PgPool) {
+    async fn only_find_replace_refuses_a_tree_page_and_readers_get_its_export(pool: PgPool) {
         let page_id = tree_from_markdown(&pool, "## Plan\n\nFirst line.\n").await;
         let yjs = YjsState::new(pool.clone());
         let doc = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
@@ -5417,20 +6156,22 @@ mod tests {
             refused
         );
         assert_eq!(yjs.apply_text_edit(&page_id, "", "All new.").await.unwrap_err(), refused);
-        assert_eq!(
-            yjs.apply_text_diff(&page_id, export, "## Plan\n\n1st line.\n").await.unwrap_err(),
-            refused
-        );
-        assert_eq!(yjs.replace_text(&page_id, export, "Other.\n").await.unwrap_err(), refused);
-
         assert_eq!(state_vector_of(&doc).await, before, "nothing written");
-        assert!(doc.read().await.doc.transact().get_text("content").is_none(), "no stray root");
 
         assert_eq!(yjs.read_text(&page_id).await.unwrap(), export);
         let written = yjs.text_and_state(&page_id).await.unwrap();
         assert_eq!(written.text, export);
         assert_eq!(texts(written.tree.as_deref().unwrap()), ["Plan", "First line."]);
         assert_eq!(extract_text_content(&written.state), export);
+
+        let ids = block_ids(written.tree.as_deref().unwrap());
+        let revised = yjs.apply_text_diff(&page_id, export, "## Plan\n\n1st line.\n").await.unwrap();
+        assert_eq!(revised.text, "## Plan\n\n1st line.\n");
+        assert_eq!(block_ids(revised.tree.as_deref().unwrap())[0], ids[0], "the heading kept");
+        let replaced = yjs.replace_text(&page_id, &revised.text, "Other.\n").await.unwrap();
+        assert_eq!(replaced.text, "Other.\n");
+        assert_eq!(stored(&pool, &page_id).await.0, "Other.\n", "saved at once");
+        assert!(doc.read().await.doc.transact().get_text("content").is_none(), "no stray root");
     }
 
     /// An editor's keystroke on a tree page saves the export as `content`.
@@ -5445,7 +6186,7 @@ mod tests {
         let sv = client.transact().state_vector();
         type_at(&mut client.transact_mut(), 0, 0, "Late ");
         let typed = client.transact().encode_diff_v1(&sv);
-        take_client_update(&yjs, &page_id, &doc, &typed).await.unwrap();
+        take_client_update(&yjs, &page_id, &doc, &typed, this_contract()).await.unwrap();
 
         run_the_save_loop(&yjs).await;
         let (content, _) = stored(&pool, &page_id).await;
@@ -5478,7 +6219,7 @@ mod tests {
         apply_v1(&client, &doc.read().await.written().state).unwrap();
         let sv = doc.read().await.doc.transact().state_vector();
         let nothing = client.transact().encode_diff_v1(&sv);
-        take_client_update(&yjs, &page_id, &doc, &nothing).await.unwrap();
+        take_client_update(&yjs, &page_id, &doc, &nothing, this_contract()).await.unwrap();
 
         run_the_save_loop(&yjs).await;
         assert_eq!(updated_at(pool.clone(), page_id.clone()).await, before);
@@ -5543,10 +6284,10 @@ mod tests {
         // The new doc's change waits in the queue; the old doc takes nothing
         // more, and a state it queued on its way out does not replace it.
         let typed = typed_in_a_tree(&tree, "New. ").await;
-        take_client_update(&yjs, &page_id, &tree, &typed).await.unwrap();
+        take_client_update(&yjs, &page_id, &tree, &typed, this_contract()).await.unwrap();
         let old_typing = typed_in_an_editor(&markdown, "Lost.\n").await;
         assert_eq!(
-            take_client_update(&yjs, &page_id, &markdown, &old_typing).await,
+            take_client_update(&yjs, &page_id, &markdown, &old_typing, this_contract()).await,
             Err(Refused::Reformatted)
         );
         let (state, generation) = {
@@ -5572,7 +6313,7 @@ mod tests {
         let yjs = YjsState::new(pool.clone());
         let markdown = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
         let typed = typed_in_an_editor(&markdown, "More.\n").await;
-        take_client_update(&yjs, &page_id, &markdown, &typed).await.unwrap();
+        take_client_update(&yjs, &page_id, &markdown, &typed, this_contract()).await.unwrap();
         assert!(markdown.read().await.has_unsaved_changes());
 
         flip_to_tree(&pool, &page_id, "Your line, as blocks.\n").await;
@@ -5589,7 +6330,7 @@ mod tests {
         let yjs = YjsState::new(pool.clone());
         let markdown = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
         let typed = typed_in_an_editor(&markdown, "More.\n").await;
-        take_client_update(&yjs, &page_id, &markdown, &typed).await.unwrap();
+        take_client_update(&yjs, &page_id, &markdown, &typed, this_contract()).await.unwrap();
 
         // The page moves to a tree while that keystroke waits to be saved.
         let o = virtues_document::parse_markdown("Your line, as blocks.\n");
@@ -5646,7 +6387,7 @@ mod tests {
                 html: "<p>New line.</p>".into(),
             },
         ];
-        let edit = yjs.edit_tree(&page_id, Some(&base), &ops).await.unwrap();
+        let edit = yjs.edit_tree(&page_id, Some(&virtues_document::Seen::of_page(&base)), &ops).await.unwrap();
         assert_eq!(edit.before.text, "## Plan\n\nLunch on Friday.\n\nOld line.\n");
         let after = edit.after.unwrap();
         assert_eq!(after.text, "## Plan\n\nLunch on Saturday.\n\nNew line.\n");
@@ -5686,7 +6427,7 @@ mod tests {
             },
         ];
         let Err(TreeError::Refused { problems, tree }) =
-            yjs.edit_tree(&page_id, Some(&base), &ops).await
+            yjs.edit_tree(&page_id, Some(&virtues_document::Seen::of_page(&base)), &ops).await
         else {
             panic!("refused");
         };
@@ -5737,7 +6478,7 @@ mod tests {
         let ops = [virtues_document::Op::Append {
             html: "<p>More.</p>".into(),
         }];
-        let Err(TreeError::Refused { problems, .. }) = yjs.edit_tree(&page_id, Some(&base), &ops).await
+        let Err(TreeError::Refused { problems, .. }) = yjs.edit_tree(&page_id, Some(&virtues_document::Seen::of_page(&base)), &ops).await
         else {
             panic!("refused");
         };
@@ -5855,7 +6596,7 @@ mod tests {
         let ops = [virtues_document::Op::Append {
             html: "<p>Tea.</p>".into(),
         }];
-        let edit = yjs.edit_tree(&page_id, Some(&base), &ops).await.unwrap();
+        let edit = yjs.edit_tree(&page_id, Some(&virtues_document::Seen::of_page(&base)), &ops).await.unwrap();
         let Err(TextWriteError::NotSaved { written, .. }) = edit.after else {
             panic!("expected NotSaved, got {:?}", edit.after);
         };
@@ -5888,7 +6629,7 @@ mod tests {
         let edit = yjs
             .edit_tree(
                 &page_id,
-                Some(&base),
+                Some(&virtues_document::Seen::of_page(&base)),
                 &[virtues_document::Op::Replace {
                     id: id.clone(),
                     html: "<p>Lunch on Saturday.</p>".into(),
@@ -5913,7 +6654,7 @@ mod tests {
         let Err(TreeError::Refused { problems, tree }) = yjs
             .edit_tree(
                 &page_id,
-                Some(&base),
+                Some(&virtues_document::Seen::of_page(&base)),
                 &[virtues_document::Op::Replace {
                     id,
                     html: "<p>Long Lunch on Sunday.</p>".into(),
@@ -6112,7 +6853,7 @@ mod tests {
         let then = yjs.read_tree(&page_id).await.unwrap();
         yjs.edit_tree(
             &page_id,
-            Some(&then),
+            Some(&virtues_document::Seen::of_page(&then)),
             &[virtues_document::Op::Replace {
                 id: block_ids(&then)[1].clone(),
                 html: "<p>Coffee.</p>".into(),
@@ -6280,5 +7021,669 @@ mod tests {
             .awareness()
             .snapshot()
             .is_none());
+    }
+
+    /// When the page was last written, as the row says.
+    async fn updated_at(pool: &PgPool, page_id: &str) -> chrono::DateTime<chrono::Utc> {
+        sqlx::query_scalar("SELECT updated_at FROM app_pages WHERE id = $1")
+            .bind(page_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// Moving a page to blocks closes the editor open on its markdown, so
+    /// its tab opens the page again as blocks. A markdown binding from an
+    /// app that knows block pages, reconnecting later, is told the page was
+    /// converted; an app from before block pages, that it needs updating.
+    #[sqlx::test]
+    async fn moving_a_page_to_blocks_closes_the_editor_open_on_it(pool: PgPool) {
+        let page_id = saved_page(&pool, "Your line.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let addr = serve(yjs.clone()).await;
+        let mut editor = Client::connect(addr, &page_id, Some(0)).await;
+        assert_eq!(editor.hear().await, Heard::Synced);
+
+        let dir = tempfile::tempdir().unwrap();
+        let report = crate::api::page_convert::apply_into(&yjs, dir.path()).await.unwrap();
+        assert_eq!(report.converted, 1, "{report:?}");
+        assert_eq!(editor.close().await, Heard::Closed(CLOSE_REFORMATTED));
+
+        let mut stale = Client::connect(addr, &page_id, Some(0)).await;
+        assert_eq!(stale.hear().await, Heard::Closed(CLOSE_REFORMATTED));
+        let mut old_app = Client::connect(addr, &page_id, None).await;
+        assert_eq!(old_app.hear().await, Heard::Closed(CLOSE_CONTRACT));
+        let version = virtues_document::contract().version;
+        let mut blocks = Client::connect(addr, &page_id, Some(version)).await;
+        assert_eq!(blocks.hear().await, Heard::Synced);
+        assert_eq!(first_paragraph(&blocks.doc), "Your line.");
+    }
+
+    /// Typing still inside the save debounce when the page moves is in its
+    /// blocks: the move writes the queued save first. A keystroke the old
+    /// doc is sent after the move is refused, and never saved over them.
+    #[sqlx::test]
+    async fn typing_queued_before_the_move_is_in_the_blocks(pool: PgPool) {
+        let page_id = saved_page(&pool, "Your line.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let markdown = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        let typed = typed_in_an_editor(&markdown, "\nTyped just now.\n").await;
+        take_client_update(&yjs, &page_id, &markdown, &typed, this_contract()).await.unwrap();
+        assert_eq!(stored(&pool, &page_id).await.0, "Your line.\n", "still in the debounce");
+
+        let dir = tempfile::tempdir().unwrap();
+        let report = crate::api::page_convert::apply_into(&yjs, dir.path()).await.unwrap();
+        assert_eq!(report.converted, 1, "{report:?}");
+        assert_eq!(stored(&pool, &page_id).await.0, "Your line.\n\nTyped just now.\n");
+        assert_eq!(texts(&yjs.read_tree(&page_id).await.unwrap()), ["Your line.", "Typed just now."]);
+        assert!(yjs.save_queue.pending.read().await.is_empty());
+        assert_eq!(markdown.read().await.retired(), Retired::Reformatted);
+
+        let late = typed_in_an_editor(&markdown, "Too late.\n").await;
+        assert_eq!(
+            take_client_update(&yjs, &page_id, &markdown, &late, this_contract()).await,
+            Err(Refused::Reformatted)
+        );
+        run_the_save_loop(&yjs).await;
+        assert_eq!(stored(&pool, &page_id).await.0, "Your line.\n\nTyped just now.\n");
+    }
+
+    /// A highlight sent to a page as it moves to blocks lands in its
+    /// blocks. The append had the page's markdown doc in hand when the move
+    /// took it and retired it: written into that doc, the append was
+    /// answered as made, and no save of a retired doc lands.
+    #[sqlx::test]
+    async fn an_append_holding_the_markdown_doc_as_the_page_moves_lands_in_its_blocks(pool: PgPool) {
+        let page_id = saved_page(&pool, "Your line.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let markdown = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let report = crate::api::page_convert::apply_into(&yjs, dir.path()).await.unwrap();
+        assert_eq!(report.converted, 1, "{report:?}");
+        assert_eq!(markdown.read().await.retired(), Retired::Reformatted);
+
+        let appended = yjs.append_markdown_to(&page_id, markdown, "A highlight.\n").await.unwrap();
+        assert!(appended.text.contains("A highlight."), "{}", appended.text);
+        run_the_save_loop(&yjs).await;
+        assert_eq!(texts(&yjs.read_tree(&page_id).await.unwrap()), ["Your line.", "A highlight."]);
+        assert!(stored(&pool, &page_id).await.0.contains("A highlight."));
+    }
+
+    /// The flip writes nothing over typing its doc holds that the database
+    /// lacks, nor over a page written after the caller read it; read again,
+    /// the page moves, once.
+    #[sqlx::test]
+    async fn a_move_over_a_change_it_did_not_read_writes_nothing(pool: PgPool) {
+        let page_id = saved_page(&pool, "Your line.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let read_at = updated_at(&pool, &page_id).await;
+        let blocks = pages::new_tree_document(virtues_document::parse_markdown("Your line.\n").nodes);
+        let move_read_at = |read_at| {
+            let (yjs, page_id, blocks) = (yjs.clone(), page_id.clone(), blocks.clone());
+            async move { yjs.move_to_tree(&page_id, read_at, &blocks.state, &blocks.text, None).await }
+        };
+
+        let doc = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        let typed = typed_in_an_editor(&doc, "More.\n").await;
+        take_client_update(&yjs, &page_id, &doc, &typed, this_contract()).await.unwrap();
+        assert_eq!(move_read_at(read_at).await, Ok(TreeMove::Changed), "typing the database lacks");
+
+        yjs.save_page_now(&page_id).await.unwrap();
+        assert_eq!(move_read_at(read_at).await, Ok(TreeMove::Changed), "a write after the read");
+        assert_eq!(stored(&pool, &page_id).await.0, "Your line.\nMore.\n");
+        assert_eq!(doc.read().await.retired(), Retired::No);
+
+        let read_at = updated_at(&pool, &page_id).await;
+        assert_eq!(move_read_at(read_at).await, Ok(TreeMove::Moved));
+        assert_eq!(updated_at(&pool, &page_id).await, read_at, "a move is no edit");
+        assert_eq!(move_read_at(read_at).await, Ok(TreeMove::AlreadyTree));
+    }
+
+    // ── machine writers on tree pages ─────────────────────────────────────
+
+    /// A writer's whole page leaves every block it shows as the page has it
+    /// alone: its Yjs items stay, so a keystroke an editor typed into one
+    /// before the write, and sent after it, still lands.
+    #[sqlx::test]
+    async fn a_writers_markdown_keeps_unchanged_blocks_and_their_items(pool: PgPool) {
+        let before = "First.\n\nSecond.\n\nThird.\n";
+        let page_id = tree_from_markdown(&pool, before).await;
+        let yjs = YjsState::new(pool.clone());
+        let addr = serve(yjs.clone()).await;
+        let mut editor =
+            Client::connect(addr, &page_id, Some(virtues_document::contract().version)).await;
+        assert_eq!(editor.hear().await, Heard::Synced);
+        let ids = block_ids(&yjs.read_tree(&page_id).await.unwrap());
+
+        let sv = editor.doc.transact().state_vector();
+        type_at(&mut editor.doc.transact_mut(), 1, 0, "Typed ");
+        let typed = editor.doc.transact().encode_diff_v1(&sv);
+
+        let written = yjs
+            .replace_text(&page_id, before, "First.\n\nSecond.\n\nA new ending.\n")
+            .await
+            .unwrap();
+        assert_eq!(written.text, "First.\n\nSecond.\n\nA new ending.\n");
+        assert_eq!(block_ids(written.tree.as_deref().unwrap())[..2], ids[..2], "untouched blocks keep their ids");
+        assert_eq!(stored(&pool, &page_id).await.0, written.text, "saved at once");
+        assert_eq!(editor.hear().await, Heard::Update);
+
+        editor.send(encode_sync_update(&typed)).await;
+        assert_eq!(editor.hear().await, Heard::Update);
+        let merged = ["First.", "Typed Second.", "A new ending."];
+        assert_eq!(texts(&yjs.read_tree(&page_id).await.unwrap()), merged);
+        assert_eq!(texts(&virtues_document::read_doc(&editor.doc.transact())), merged);
+    }
+
+    /// The owner's pending suggestion is theirs to decide, whatever the
+    /// writer: a whole page that carries it back as the export says it
+    /// leaves its block alone; one that writes that block otherwise, or
+    /// drops it, is refused with nothing written; and a suggestion the
+    /// writer brings of its own is written as accepted.
+    #[sqlx::test]
+    async fn a_writer_leaves_the_owners_suggestion_alone(pool: PgPool) {
+        let page_id = tree_from_markdown(&pool, "Lunch at noon.\n\nTea later.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let mut tree = yjs.read_tree(&page_id).await.unwrap();
+        let id = tree[0].id().unwrap().to_string();
+        let suggested = virtues_document::parse_html(
+            &format!(
+                "<p data-id=\"{id}\">Lunch <virtues-del proposal=\"p1\">at noon</virtues-del>\
+                 <virtues-ins proposal=\"p1\">on Friday</virtues-ins>.</p>"
+            ),
+            "doc",
+        );
+        tree[0] = suggested.nodes[0].clone();
+        yjs.replace_tree(&page_id, &tree).await.unwrap();
+        let export = yjs.read_text(&page_id).await.unwrap();
+        assert_eq!(export, "Lunch {--at noon--}{++on Friday++}.\n\nTea later.\n");
+        let holds = |tree: &[Node]| virtues_document::to_html(tree, false).contains("<virtues-del proposal=\"p1\">at noon</virtues-del>");
+
+        for decided in [
+            "Lunch on Friday.\n\nTea later.\n\nA walk.\n",
+            "Lunch at noon.\n\nTea later.\n\nA walk.\n",
+            "Tea later.\n\nA walk.\n",
+        ] {
+            let refused = yjs.replace_text(&page_id, &export, decided).await.unwrap_err();
+            assert!(matches!(&refused, TextWriteError::SuggestionKept), "{decided}: {refused:?}");
+            assert_eq!(yjs.read_text(&page_id).await.unwrap(), export, "{decided}: nothing written");
+        }
+
+        let written = yjs
+            .replace_text(&page_id, &export, &format!("{export}\nA walk {{--home--}}{{++back++}}.\n"))
+            .await
+            .unwrap();
+        assert_eq!(written.text, format!("{export}\nA walk back.\n"), "the writer's own suggestion is accepted");
+        assert!(holds(&yjs.read_tree(&page_id).await.unwrap()), "the owner's stays a suggestion");
+    }
+
+    /// A paragraph a writer changed a little is patched where it changed:
+    /// it keeps its id, and an editor's keystroke in it from before the write
+    /// lands beside the new words.
+    #[sqlx::test]
+    async fn a_lightly_revised_paragraph_keeps_its_id_and_an_open_editors_keystroke(pool: PgPool) {
+        let before = "You had lunch with Nick by the river at noon.\n\nTea later.\n";
+        let page_id = tree_from_markdown(&pool, before).await;
+        let yjs = YjsState::new(pool.clone());
+        let addr = serve(yjs.clone()).await;
+        let mut editor =
+            Client::connect(addr, &page_id, Some(virtues_document::contract().version)).await;
+        assert_eq!(editor.hear().await, Heard::Synced);
+        let ids = block_ids(&yjs.read_tree(&page_id).await.unwrap());
+
+        let sv = editor.doc.transact().state_vector();
+        type_at(&mut editor.doc.transact_mut(), 0, 0, "Late ");
+        let typed = editor.doc.transact().encode_diff_v1(&sv);
+
+        let written = yjs
+            .apply_text_diff(&page_id, before, "You had lunch with Nick by the river at one.\n\nTea later.\n")
+            .await
+            .unwrap();
+        assert_eq!(block_ids(written.tree.as_deref().unwrap()), ids, "the revised paragraph keeps its id");
+        assert_eq!(editor.hear().await, Heard::Update);
+
+        editor.send(encode_sync_update(&typed)).await;
+        assert_eq!(editor.hear().await, Heard::Update);
+        assert_eq!(
+            texts(&yjs.read_tree(&page_id).await.unwrap()),
+            ["Late You had lunch with Nick by the river at one.", "Tea later."]
+        );
+    }
+
+    /// A tree write checks the page's export against what the writer read,
+    /// under the lock it writes under: a page that moved since is refused,
+    /// with nothing written.
+    #[sqlx::test]
+    async fn a_tree_write_from_a_stale_read_is_refused(pool: PgPool) {
+        let page_id = tree_from_markdown(&pool, "Lunch.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let doc = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        let draft = yjs.draft(&page_id, "Dinner.\n").await.unwrap();
+        assert_eq!(draft.text, "Dinner.\n");
+        let before = state_vector_of(&doc).await;
+        assert_eq!(
+            yjs.write_draft(&page_id, "Breakfast.\n", &draft, Granularity::Words).await.unwrap_err(),
+            TextWriteError::Stale
+        );
+        assert_eq!(state_vector_of(&doc).await, before, "nothing written");
+        assert_eq!(yjs.read_text(&page_id).await.unwrap(), "Lunch.\n");
+        assert_eq!(
+            yjs.apply_text_diff(&page_id, "Breakfast.\n", "Dinner.\n").await.unwrap_err(),
+            TextWriteError::Stale
+        );
+    }
+
+    /// Markdown the contract refuses makes no draft, and the page is left
+    /// as it is.
+    #[sqlx::test]
+    async fn markdown_the_converter_refuses_writes_nothing(pool: PgPool) {
+        let page_id = tree_from_markdown(&pool, "Lunch.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let doc = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        let before = state_vector_of(&doc).await;
+        let deep = format!("{}Deep.\n", "> ".repeat(150));
+        let refused = yjs.replace_text(&page_id, "Lunch.\n", &deep).await.unwrap_err();
+        assert!(
+            matches!(&refused, TextWriteError::Other(why) if why.contains("couldn't turn the writing into blocks")),
+            "{refused}"
+        );
+        assert_eq!(state_vector_of(&doc).await, before, "nothing written");
+        assert_eq!(stored(&pool, &page_id).await.0, "Lunch.\n");
+    }
+
+    /// A draft is made for the page's format; once the page has moved to the
+    /// other one, writing it is refused as stale, to be made again.
+    #[sqlx::test]
+    async fn a_draft_made_for_the_other_format_is_stale(pool: PgPool) {
+        let page_id = saved_page(&pool, "Your line.\n").await;
+        let yjs = YjsState::new(pool.clone());
+        let draft = yjs.draft(&page_id, "Your line, revised.\n").await.unwrap();
+        flip_to_tree(&pool, &page_id, "Your line.\n").await;
+        assert_eq!(
+            yjs.write_draft(&page_id, "Your line.\n", &draft, Granularity::Lines).await.unwrap_err(),
+            TextWriteError::Stale
+        );
+        assert_eq!(yjs.read_text(&page_id).await.unwrap(), "Your line.\n");
+
+        let tree = tree_from_markdown(&pool, "Lunch.\n").await;
+        let draft = yjs.draft(&tree, "Dinner.\n").await.unwrap();
+        sqlx::query("UPDATE app_pages SET format = 'markdown', yjs_state = NULL WHERE id = $1")
+            .bind(&tree)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(
+            yjs.write_draft(&tree, "Lunch.\n", &draft, Granularity::Words).await.unwrap_err(),
+            TextWriteError::Stale
+        );
+        assert_eq!(yjs.read_text(&tree).await.unwrap(), "Lunch.\n");
+    }
+
+    // ── an article's first open ────────────────────────────────────────────
+
+    /// An article as its writers make one: the page `create_article` mints,
+    /// its first draft recorded as the edition. Its article id and page id.
+    async fn article(pool: &PgPool, subject_id: &str, draft: &str) -> (String, String) {
+        let created = crate::api::wiki_articles::create_article(pool, "person", subject_id, "Nick", draft)
+            .await
+            .unwrap();
+        crate::api::wiki_editor::record_edition(pool, &created.id, draft)
+            .await
+            .unwrap();
+        (created.id, created.page_id)
+    }
+
+    async fn edition_of_article(pool: &PgPool, article_id: &str) -> Option<String> {
+        sqlx::query_scalar("SELECT machine_text FROM wiki_articles WHERE id = $1")
+            .bind(article_id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// The texts of the page's versions described `description`, oldest first.
+    async fn versions_described(pool: &PgPool, page_id: &str, description: &str) -> Vec<String> {
+        let states: Vec<Vec<u8>> = sqlx::query_scalar(
+            "SELECT yjs_snapshot FROM app_page_versions \
+             WHERE page_id = $1 AND description = $2 ORDER BY version_number",
+        )
+        .bind(page_id)
+        .bind(description)
+        .fetch_all(pool)
+        .await
+        .unwrap();
+        states.iter().map(|s| text_of_state(s).unwrap()).collect()
+    }
+
+    /// An article nobody had opened moves to blocks as its document is first
+    /// built, once however many loads race for it: one document under one
+    /// lineage, the page as it was kept once, `updated_at` where it was, the
+    /// export as `content`, and the edition moved with it.
+    #[sqlx::test]
+    async fn an_unborn_article_moves_once_under_concurrent_loads(pool: PgPool) {
+        let draft = "You met Nick at the R&B night.\n\nYou walked home.\n";
+        let export = "You met Nick at the R\\&B night.\n\nYou walked home.\n";
+        let (article_id, page_id) = article(&pool, "person_1", draft).await;
+        let read_at = updated_at(&pool, &page_id).await;
+        let a = YjsState::with_tree_articles(pool.clone(), true);
+        let b = YjsState::with_tree_articles(pool.clone(), true);
+
+        let loads = (0..6).map(|i| {
+            let yjs = if i % 2 == 0 { a.clone() } else { b.clone() };
+            let page_id = page_id.clone();
+            async move { yjs.doc_cache.get_or_create(&page_id, &yjs.pool).await.unwrap() }
+        });
+        for doc in futures::future::join_all(loads).await {
+            assert_eq!(doc.read().await.format(), PageFormat::Tree);
+        }
+
+        let (content, format, lineage): (String, String, Option<String>) =
+            sqlx::query_as("SELECT content, format, tree_lineage FROM app_pages WHERE id = $1")
+                .bind(&page_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((content.as_str(), format.as_str()), (export, "tree"));
+        let lineage = lineage.expect("a lineage");
+        assert!(lineage.len() == 16 && lineage.bytes().all(|b| b.is_ascii_hexdigit()), "{lineage}");
+        assert_eq!(updated_at(&pool, &page_id).await, read_at, "a move is no edit");
+        assert_eq!(versions_described(&pool, &page_id, pages::BEFORE_BLOCKS).await, [draft]);
+        assert_eq!(
+            versions_described(&pool, &page_id, crate::api::page_convert::MOVED_TO_BLOCKS).await,
+            [export]
+        );
+        assert_eq!(edition_of_article(&pool, &article_id).await.as_deref(), Some(export), "the edition rebased");
+        assert_eq!(a.read_tree(&page_id).await.unwrap(), b.read_tree(&page_id).await.unwrap(), "one document");
+        assert_eq!(a.doc_cache.first_opens.load(std::sync::atomic::Ordering::Relaxed)
+            + b.doc_cache.first_opens.load(std::sync::atomic::Ordering::Relaxed), 1, "converted once");
+    }
+
+    /// A source note running onto a second line, which the day page reads
+    /// the first line of: an article whose blocks its readers would read
+    /// otherwise than its markdown.
+    const HELD_BACK: &str = "You ran.[^ev-1]\n\n[^ev-1]: Recording · 6:00 AM\nby the river\n";
+
+    /// An article held back from blocks stays markdown, as it was: nothing
+    /// written, nothing kept, and it opens as markdown.
+    #[sqlx::test]
+    async fn a_first_open_held_back_stays_markdown(pool: PgPool) {
+        let draft = HELD_BACK;
+        let (article_id, page_id) = article(&pool, "person_1", draft).await;
+        let read_at = updated_at(&pool, &page_id).await;
+        let yjs = YjsState::with_tree_articles(pool.clone(), true);
+        let doc = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        assert_eq!(doc.read().await.format(), PageFormat::Markdown);
+        assert_eq!(yjs.read_text(&page_id).await.unwrap(), draft);
+        let (format, state): (String, Option<Vec<u8>>) =
+            sqlx::query_as("SELECT format, yjs_state FROM app_pages WHERE id = $1")
+                .bind(&page_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(format, "markdown");
+        assert!(state.is_none(), "nothing written");
+        assert_eq!(updated_at(&pool, &page_id).await, read_at);
+        assert!(versions_described(&pool, &page_id, pages::BEFORE_BLOCKS).await.is_empty());
+        assert_eq!(edition_of_article(&pool, &article_id).await.as_deref(), Some(draft));
+    }
+
+    /// An article its first open held back is converted once: loaded again
+    /// it opens as markdown without converting, until the page changes.
+    #[sqlx::test]
+    async fn a_first_open_held_back_is_not_converted_on_every_load(pool: PgPool) {
+        let (article_id, page_id) = article(&pool, "person_1", HELD_BACK).await;
+        let yjs = YjsState::with_tree_articles(pool.clone(), true);
+        let converted = || yjs.doc_cache.first_opens.load(std::sync::atomic::Ordering::Relaxed);
+        for _ in 0..3 {
+            let doc = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+            assert_eq!(doc.read().await.format(), PageFormat::Markdown);
+            drop(doc);
+            // Out of the cache, so the next load reads the row.
+            yjs.doc_cache.pages.invalidate(&page_id);
+        }
+        assert_eq!(converted(), 1);
+
+        // Written again by its writers: it converts, and moves.
+        sqlx::query("UPDATE app_pages SET content = $1 WHERE id = $2")
+            .bind("You wrote here.\n")
+            .bind(&page_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        crate::api::wiki_editor::record_edition(&pool, &article_id, "You wrote here.\n").await.unwrap();
+        let doc = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        assert_eq!(doc.read().await.format(), PageFormat::Tree);
+        assert_eq!(converted(), 2);
+    }
+
+    /// An article whose edition could not be read this time (the database
+    /// refusing the read) stays markdown for this open only: the next load
+    /// tries the move again, and it moves once the read succeeds.
+    #[sqlx::test]
+    async fn a_first_open_whose_edition_was_not_read_is_tried_again(pool: PgPool) {
+        let (_, page_id) = article(&pool, "person_1", "You met Nick at the R&B night.\n").await;
+        let yjs = YjsState::with_tree_articles(pool.clone(), true);
+        let converted = || yjs.doc_cache.first_opens.load(std::sync::atomic::Ordering::Relaxed);
+        // The article's row stays readable; what its writers last wrote does
+        // not. A missing column, not a revoked grant: CI's Postgres role is a
+        // superuser, and a superuser reads through any REVOKE.
+        sqlx::query("ALTER TABLE wiki_articles RENAME COLUMN machine_text TO machine_text_away")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let doc = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        let (format, built_at) = {
+            let d = doc.read().await;
+            (d.format(), d.built_at)
+        };
+        assert_eq!(format, PageFormat::Markdown);
+        assert!(
+            !yjs.doc_cache.stays_markdown.contains_key(&(page_id.clone(), built_at)),
+            "a refused read is not the article's own reason"
+        );
+        // Out of memory, so the next load reads the row.
+        drop(doc);
+        yjs.doc_cache.pages.invalidate(&page_id);
+        yjs.doc_cache.pages.run_pending_tasks();
+        assert_eq!(converted(), 1);
+
+        sqlx::query("ALTER TABLE wiki_articles RENAME COLUMN machine_text_away TO machine_text")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let doc = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+        assert_eq!(doc.read().await.format(), PageFormat::Tree, "the move is tried again");
+        assert_eq!(converted(), 2);
+    }
+
+    /// Narration that writes the page between a first open's read and its
+    /// flip makes the flip miss: the copy it kept is dropped, and the page
+    /// is read again and moves as narration left it.
+    #[sqlx::test]
+    async fn narration_between_read_and_move_is_read_again(pool: PgPool) {
+        let (article_id, page_id) = article(&pool, "person_1", "The first draft.\n").await;
+        let yjs = YjsState::with_tree_articles(pool.clone(), true);
+
+        // Keeping the page as it was waits on this lock while narration writes.
+        let mut hold = pool.begin().await.unwrap();
+        sqlx::query("LOCK TABLE app_page_versions IN SHARE MODE")
+            .execute(&mut *hold)
+            .await
+            .unwrap();
+        let open = tokio::spawn({
+            let (yjs, page_id) = (yjs.clone(), page_id.clone());
+            async move { yjs.doc_cache.get_or_create(&page_id, &yjs.pool).await.map(|_| ()) }
+        });
+        pages::until_a_statement_waits(&pool, "%INSERT INTO app_page_versions%").await;
+        let narrated = sqlx::query(
+            "UPDATE app_pages SET content = $1, updated_at = now() \
+             WHERE id = $2 AND yjs_state IS NULL AND format = 'markdown'",
+        )
+        .bind("The second draft.\n")
+        .bind(&page_id)
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(narrated.rows_affected(), 1, "narration found the page unopened");
+        crate::api::wiki_editor::record_edition(&pool, &article_id, "The second draft.\n").await.unwrap();
+        hold.rollback().await.unwrap();
+        open.await.unwrap().unwrap();
+
+        assert_eq!(yjs.read_text(&page_id).await.unwrap(), "The second draft.\n");
+        assert_eq!(stored(&pool, &page_id).await, ("The second draft.\n".to_string(), true));
+        assert_eq!(
+            versions_described(&pool, &page_id, pages::BEFORE_BLOCKS).await,
+            ["The second draft.\n"],
+            "the copy of the draft the flip missed is dropped"
+        );
+        assert_eq!(edition_of_article(&pool, &article_id).await.as_deref(), Some("The second draft.\n"));
+    }
+
+    /// A writer that records an edition between the move's read and its
+    /// flip without touching the page (the wiki editor records its edition
+    /// before it writes) rolls the flip back: the page stays markdown, the
+    /// copy kept for the move is dropped, and the new edition stands, never
+    /// written over by the old one rebased.
+    #[sqlx::test]
+    async fn an_edition_recorded_between_read_and_flip_rolls_the_flip_back(pool: PgPool) {
+        let (article_id, page_id) = article(&pool, "person_1", "The first draft.\n").await;
+        let (content, read_at): (String, chrono::DateTime<chrono::Utc>) =
+            sqlx::query_as("SELECT content, updated_at FROM app_pages WHERE id = $1")
+                .bind(&page_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+
+        // The flip's rebase waits on the article's row, its page's row
+        // already written in the flip's transaction.
+        let mut hold = pool.begin().await.unwrap();
+        sqlx::query("SELECT 1 FROM wiki_articles WHERE id = $1 FOR UPDATE")
+            .bind(&article_id)
+            .execute(&mut *hold)
+            .await
+            .unwrap();
+        let open = tokio::spawn({
+            let (pool, page_id) = (pool.clone(), page_id.clone());
+            async move { crate::api::block_move::first_open(&pool, &page_id, &content, read_at).await }
+        });
+        pages::until_a_statement_waits(&pool, "%IS NOT DISTINCT FROM%FOR UPDATE%").await;
+        sqlx::query("UPDATE wiki_articles SET machine_text = $2 WHERE id = $1")
+            .bind(&article_id)
+            .bind("A newer edition.\n")
+            .execute(&mut *hold)
+            .await
+            .unwrap();
+        hold.commit().await.unwrap();
+
+        let outcome = open.await.unwrap();
+        assert!(matches!(outcome, crate::api::block_move::FirstOpen::Again), "{outcome:?}");
+        let (format, updated_at): (String, chrono::DateTime<chrono::Utc>) =
+            sqlx::query_as("SELECT format, updated_at FROM app_pages WHERE id = $1")
+                .bind(&page_id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((format.as_str(), updated_at), ("markdown", read_at), "the flip rolled back");
+        assert_eq!(stored(&pool, &page_id).await, ("The first draft.\n".to_string(), false));
+        assert!(versions_described(&pool, &page_id, pages::BEFORE_BLOCKS).await.is_empty(), "the copy is dropped");
+        assert_eq!(edition_of_article(&pool, &article_id).await.as_deref(), Some("A newer edition.\n"));
+    }
+
+    /// Every article shape the contract's corpus holds
+    /// (`crates/virtues-document/tests/corpus/articles.json`: day pages with
+    /// sources, figures, veils and a table, year, entity, story and identity
+    /// articles, prose with escapes), first opened: each moves holding its
+    /// export, its edition the export, and nobody's edit; a writer sending
+    /// the same markdown again changes nothing on it, every block keeping its
+    /// items; and one adding a sentence changes the one block. One whose
+    /// source note runs onto a second line stays markdown.
+    #[sqlx::test]
+    async fn every_article_shape_moves_and_a_writer_leaves_its_blocks(pool: PgPool) {
+        #[derive(serde::Deserialize)]
+        struct Shape {
+            name: String,
+            markdown: String,
+            export: String,
+        }
+        let shapes: Vec<Shape> = serde_json::from_str(include_str!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../crates/virtues-document/tests/corpus/articles.json"
+        )))
+        .unwrap();
+        assert!(shapes.len() >= 5);
+        let yjs = YjsState::with_tree_articles(pool.clone(), true);
+        for (i, shape) in shapes.iter().enumerate() {
+            let (article_id, page_id) = article(&pool, &format!("person_{i}"), &shape.markdown).await;
+            let doc = yjs.doc_cache.get_or_create(&page_id, &pool).await.unwrap();
+            if shape.name.contains("continuation") {
+                assert_eq!(doc.read().await.format(), PageFormat::Markdown, "{}", shape.name);
+                continue;
+            }
+            assert_eq!(doc.read().await.format(), PageFormat::Tree, "{}", shape.name);
+            let live = yjs.read_text(&page_id).await.unwrap();
+            assert_eq!(live, shape.export, "{}", shape.name);
+            let edition = edition_of_article(&pool, &article_id).await.unwrap();
+            assert_eq!(edition, shape.export, "{}", shape.name);
+            assert_eq!(crate::api::wiki_editor::provenance(&edition, &live), (vec![], vec![]), "{}", shape.name);
+
+            let before = state_vector_of(&doc).await;
+            let tree = yjs.read_tree(&page_id).await.unwrap();
+            let again = yjs.replace_text(&page_id, &live, &shape.markdown).await.unwrap();
+            assert_eq!(again.text, live, "{}", shape.name);
+            assert_eq!(state_vector_of(&doc).await, before, "{}: the same markdown writes nothing", shape.name);
+
+            let added = format!("{}\n\nYou slept well.\n", shape.markdown.trim_end());
+            let revised = yjs.apply_text_diff(&page_id, &live, &added).await.unwrap();
+            assert!(revised.text.contains("You slept well."), "{}: {}", shape.name, revised.text);
+            let now = revised.tree.unwrap();
+            assert_eq!(now.len(), tree.len() + 1, "{}", shape.name);
+            assert_eq!(block_ids(&now)[..tree.len()], block_ids(&tree)[..], "{}: every block keeps its id", shape.name);
+        }
+    }
+
+    /// An editor binding an article's markdown, from an app that knows block
+    /// pages, opens an article nobody had opened, and its own open moves it:
+    /// it is told the page was converted, and opens it again as blocks.
+    #[sqlx::test]
+    async fn a_markdown_binding_that_moves_an_article_is_told_to_open_it_again(pool: PgPool) {
+        let (_, page_id) = article(&pool, "person_1", "You walked home.\n").await;
+        let yjs = YjsState::with_tree_articles(pool.clone(), true);
+        let addr = serve(yjs.clone()).await;
+        let mut markdown = Client::connect(addr, &page_id, Some(0)).await;
+        assert_eq!(markdown.hear().await, Heard::Closed(CLOSE_REFORMATTED));
+        let mut blocks = Client::connect(addr, &page_id, Some(virtues_document::contract().version)).await;
+        assert_eq!(blocks.hear().await, Heard::Synced);
+        assert_eq!(first_paragraph(&blocks.doc), "You walked home.");
+    }
+
+    /// A device's copy that shares no client with the page's document (one
+    /// kept from before the document was built again from its text) is its
+    /// own text, never the page's text twice; a copy of the document merges
+    /// as ever.
+    #[test]
+    fn a_device_copy_sharing_no_client_is_its_own_text() {
+        let base = state_from_text("Groceries\nEggs\n");
+
+        let same = state_from_text("Groceries\nEggs\n");
+        let merged = merge_device_copy(Some(&base), &same).unwrap();
+        assert_eq!(merged.merged, "Groceries\nEggs\n");
+        assert_eq!(merged.copy, merged.base);
+
+        let other = state_from_text("Groceries\nEggs\nMilk\n");
+        let merged = merge_device_copy(Some(&base), &other).unwrap();
+        assert_eq!(merged.merged, "Groceries\nEggs\nMilk\n");
+        assert_eq!(page_text_of_state(&merged.state).unwrap().markdown, "Groceries\nEggs\nMilk\n");
+
+        let device = new_doc();
+        apply_v1(&device, &base).unwrap();
+        {
+            let mut txn = device.transact_mut();
+            let text = txn.get_or_insert_text("content");
+            let end = text.len(&txn);
+            text.insert(&mut txn, end, "Bread\n");
+        }
+        let copy = device.transact().encode_state_as_update_v1(&StateVector::default());
+        let merged = merge_device_copy(Some(&base), &copy).unwrap();
+        assert_eq!(merged.merged, "Groceries\nEggs\nBread\n");
     }
 }

@@ -33,6 +33,15 @@ describe("messages", () => {
 	});
 });
 
+describe("contentWords", () => {
+	it("reads a sentence's export as its markdown: escapes go with what they escape", () => {
+		const written = "Lunch at [⟦Ruth's⟧](/place/p) with R&B and ~20 people from user_name.";
+		const exported = "Lunch at [⟦Ruth\\'s⟧](/place/p) with R\\&B and \\~20 people from user\\_name.";
+		expect(contentWords(exported)).toEqual(contentWords(written));
+		expect(sharedRanges("We heard R&B for lunch", exported)).toEqual(sharedRanges("We heard R&B for lunch", written));
+	});
+});
+
 describe("stem", () => {
 	it("brings -s, -es, -ed and -ing to one stem", () => {
 		for (const group of [

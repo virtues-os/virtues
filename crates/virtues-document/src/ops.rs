@@ -17,10 +17,11 @@
 use crate::contract::Contract;
 use crate::ingest::{parse_slice, Mode, MAX_INPUT_BYTES};
 use crate::model::{depth, new_id, too_deep, Mark, Node, Problem, MAX_DEPTH};
+use crate::seen::Seen;
 use crate::ydoc::{self, read_doc, read_text, value_to_any, write_nodes};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use yrs::types::Delta;
 use yrs::{
     Any, Doc, In, OffsetKind, Out, ReadTxn, Text, Transact, TransactionMut, Xml, XmlElementRef,
@@ -50,6 +51,10 @@ pub struct Applied {
     /// How each replace landed: "text-diff" (a text block's changed text),
     /// "patch" (any other block, child by child) or "swap".
     pub replaced_as: Vec<String>,
+    /// Text blocks a replace merged with a change made since the writer's
+    /// read: the writer has not seen them as they now stand.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub merged: Vec<String>,
 }
 
 /// One op resolved against the tree: where it lands and what it writes.
@@ -76,6 +81,36 @@ fn find_path(nodes: &[Node], id: &str, path: &mut Vec<usize>) -> bool {
         path.pop();
     }
     false
+}
+
+/// A parent a block was taken out of, left holding what it cannot
+/// ([`plan_batch`]): where it is, as later ops in the batch cannot shift
+/// it, and the op that left it so.
+struct Emptied {
+    at: String,
+    /// The nearest block with an id at or around the parent; `None` for the
+    /// page itself.
+    holder: Option<String>,
+    /// The steps from that block down to the parent: a table cell's, which
+    /// carries no id.
+    steps: Vec<usize>,
+}
+
+/// [`Emptied`]'s place for the node at `path` under `root`.
+fn anchor_of(root: &Node, path: &[usize]) -> (Option<String>, Vec<usize>) {
+    let (mut holder, mut steps) = (None, vec![]);
+    let mut n = root;
+    for &i in path {
+        n = &n.content[i];
+        match n.id() {
+            Some(id) => {
+                holder = Some(id.to_string());
+                steps.clear();
+            }
+            None => steps.push(i),
+        }
+    }
+    (holder, steps)
 }
 
 fn parent_mut<'a>(root: &'a mut Node, path: &[usize]) -> &'a mut Node {
@@ -137,11 +172,26 @@ pub(crate) fn assign_ids(
 /// taken. Without this every nested block the model wrote without its
 /// `data-id` was new, so the replace swapped it whole, and a person's
 /// keystroke on its way into it was lost.
-fn inherit_ids(c: &Contract, old: &Node, new: &mut Node, written: &HashSet<String>) {
+///
+/// A child lends its id only when `lends` says so, asked with the nearest
+/// block around it that has an id: never when its writer's base holds that
+/// block and no read showed the child in it, a block its writer cannot
+/// mean. Lent anyway, the model's new item took the id of an item a person
+/// had moved in, and the replace wrote over that item's words where it
+/// should have been refused for taking it.
+fn inherit_ids(
+    c: &Contract,
+    old: &Node,
+    new: &mut Node,
+    written: &HashSet<String>,
+    holder: Option<&str>,
+    lends: &dyn Fn(Option<&str>, &str) -> bool,
+) {
     if old.kind != new.kind || c.is_textblock(&new.kind) {
         return;
     }
-    let free = |n: &Node| n.id().is_none_or(|id| !written.contains(id));
+    let holder = old.id().or(holder);
+    let free = |n: &Node| n.id().is_none_or(|id| !written.contains(id) && lends(holder, id));
     let paired = crate::diff::pair_blocks(&old.content, &new.content);
     let mut pairs = vec![];
     let (mut i0, mut j0) = (0, 0);
@@ -173,8 +223,46 @@ fn inherit_ids(c: &Contract, old: &Node, new: &mut Node, written: &HashSet<Strin
             }
         }
         if child.id() == was.id() {
-            inherit_ids(c, was, child, written);
+            inherit_ids(c, was, child, written, holder, lends);
         }
+    }
+}
+
+/// Each footnote label on the page with the first note its footnotes carry.
+fn notes_by_label(nodes: &[Node]) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for n in nodes {
+        n.walk(&mut |n| {
+            if n.kind != "footnote" {
+                return;
+            }
+            if let (Some(label), Some(note)) = (
+                n.attrs.get("label").and_then(Value::as_str),
+                n.attrs.get("note").and_then(Value::as_str),
+            ) {
+                out.entry(label.to_string()).or_insert_with(|| note.to_string());
+            }
+        });
+    }
+    out
+}
+
+/// A footnote a writer's HTML writes with a label and no note takes the
+/// note of the page's own footnote with that label (`page_notes`), so a
+/// model that writes `<virtues-footnote label="ev-1"></virtues-footnote>`
+/// back keeps its source. The browser's inline writer does the same
+/// (`treeAiSession.ts`).
+fn inherit_notes(nodes: &mut [Node], page_notes: &HashMap<String, String>) {
+    for n in nodes {
+        n.walk_mut(&mut |n| {
+            if n.kind != "footnote" || n.attrs.get("note").is_some_and(|v| !v.is_null()) {
+                return;
+            }
+            let note = n.attrs.get("label").and_then(Value::as_str).and_then(|l| page_notes.get(l));
+            if let Some(note) = note {
+                n.attrs.insert("note".into(), Value::String(note.clone()));
+            }
+        });
     }
 }
 
@@ -457,7 +545,10 @@ fn span(a: &Flat, b: &Flat) -> (usize, usize, usize) {
 
 /// The block changed between the model's read and now. Three-way merge of
 /// one text block: the model's change and the person's change both apply
-/// when they touch different stretches of the text; otherwise refuse.
+/// when they touch different stretches of the text, or different
+/// attributes; otherwise refuse. An attribute both changed (a heading's
+/// level, a code block's language) is the person's, unless both changed it
+/// to the same.
 fn merge_block(c: &Contract, base: &Node, current: &Node, model: &Node) -> Result<Node, String> {
     let same_shape =
         base.kind == current.kind && current.kind == model.kind && c.is_textblock(&model.kind);
@@ -465,10 +556,25 @@ fn merge_block(c: &Contract, base: &Node, current: &Node, model: &Node) -> Resul
         return Err("the block changed since you read it; read it again".into());
     }
     let mut attrs = current.attrs.clone();
-    for (k, v) in &model.attrs {
-        if base.attrs.get(k) != Some(v) {
-            attrs.insert(k.clone(), v.clone());
+    let keys: std::collections::BTreeSet<&String> =
+        base.attrs.keys().chain(current.attrs.keys()).chain(model.attrs.keys()).collect();
+    for k in keys {
+        let (b, now, m) = (base.attrs.get(k), current.attrs.get(k), model.attrs.get(k));
+        if m == b || m == now {
+            continue;
         }
+        if now != b {
+            let say = |v: Option<&Value>| v.map_or_else(|| "nothing".to_string(), Value::to_string);
+            return Err(format!(
+                "someone changed the block's {k} since you read it, from {} to {}; write the op from the block as it is now",
+                say(b),
+                say(now)
+            ));
+        }
+        match m {
+            Some(v) => attrs.insert(k.clone(), v.clone()),
+            None => attrs.remove(k),
+        };
     }
     let (b, cur, m) = (
         flat(&base.content),
@@ -544,7 +650,7 @@ fn strip_ids_deep(c: &Contract, n: &Node) -> Node {
 pub fn apply(
     c: &Contract,
     doc: &Doc,
-    base: Option<&[Node]>,
+    base: Option<&Seen>,
     ops: &[Op],
 ) -> Result<Applied, Vec<Problem>> {
     let mut txn = doc.transact_mut();
@@ -554,14 +660,17 @@ pub fn apply(
 /// Apply a batch inside the caller's transaction, which makes the read and
 /// the write one step: nothing can change the document between them.
 ///
-/// `base`: the tree the model read (as [`read_doc`] returns it), when it says
-/// which version it read. A block that changed since is merged with the
-/// model's edit or refused. Without it, a replace wins over whatever the
-/// block holds now.
+/// `base`: what reads have shown the writer of the page, when it says. A
+/// batch with one takes off the page, or writes over, only what the base
+/// has seen as it stands ([`check`]): a text block someone changed since it
+/// was shown is merged with the edit or refused, and any other block that
+/// changed since, or that no read showed, is refused. A block too long for
+/// any read goes only by an op deleting it. Without a base, a replace wins
+/// over whatever the block holds now.
 pub fn apply_in(
     c: &Contract,
     txn: &mut TransactionMut,
-    base: Option<&[Node]>,
+    base: Option<&Seen>,
     ops: &[Op],
 ) -> Result<Applied, Vec<Problem>> {
     apply_checked(c, txn, base, ops, false)
@@ -576,13 +685,63 @@ pub fn apply_own_in(c: &Contract, txn: &mut TransactionMut, ops: &[Op]) -> Resul
     apply_checked(c, txn, None, ops, true)
 }
 
+/// What [`apply_in`] refuses of a batch over the page `tree` with the base
+/// `base`, checked on a copy, with nothing written: every problem, and the
+/// blocks behind each one about what the base has not seen as it stands,
+/// for the writer's next step to show or name.
+pub fn check(c: &Contract, tree: &[Node], base: &Seen, ops: &[Op]) -> Checked {
+    let planned = plan_batch(c, tree.to_vec(), Some(base), ops, false);
+    Checked {
+        problems: planned.errors,
+        unseen: planned.unseen,
+        conflicts: planned.conflicts,
+    }
+}
+
+/// See [`check`].
+#[derive(Debug, Default)]
+pub struct Checked {
+    pub problems: Vec<Problem>,
+    pub unseen: Vec<Unseen>,
+    /// The replaces (by op, from 0) refused because their block changed
+    /// since the read in a way the edit could not be merged with: over the
+    /// block, as an unseen one is, not over the op's HTML.
+    pub conflicts: Vec<usize>,
+}
+
 fn apply_checked(
     c: &Contract,
     txn: &mut TransactionMut,
-    base: Option<&[Node]>,
+    base: Option<&Seen>,
     ops: &[Op],
     own: bool,
 ) -> Result<Applied, Vec<Problem>> {
+    let planned = plan_batch(c, read_doc(c, &*txn), base, ops, own);
+    if !planned.errors.is_empty() {
+        return Err(planned.errors);
+    }
+    let mut applied = planned.applied;
+    let frag = ydoc::fragment(c, txn);
+    for plan in planned.plans {
+        if let Some(how) = write_plan(c, txn, &frag, plan) {
+            applied.replaced_as.push(how.to_string());
+        }
+    }
+    Ok(applied)
+}
+
+/// A batch worked out on a copy of the page: what to write, or why not.
+#[derive(Default)]
+struct Planned {
+    plans: Vec<Plan>,
+    errors: Vec<Problem>,
+    applied: Applied,
+    unseen: Vec<Unseen>,
+    conflicts: Vec<usize>,
+}
+
+fn plan_batch(c: &Contract, page: Vec<Node>, base: Option<&Seen>, ops: &[Op], own: bool) -> Planned {
+    let mut planned = Planned::default();
     let html_bytes: usize = ops
         .iter()
         .map(|op| match op {
@@ -596,24 +755,41 @@ fn apply_checked(
     if html_bytes > MAX_INPUT_BYTES && !own {
         // Each op's HTML is within the limit on its own; the batch is one
         // call, and one call reads at most the limit.
-        return Err(vec![Problem::new(
+        planned.errors.push(Problem::new(
             "ops",
             format!(
                 "the ops hold {html_bytes} bytes of HTML; one write holds at most {} MiB",
                 MAX_INPUT_BYTES >> 20
             ),
-        )]);
+        ));
+        return planned;
     }
-    let mut root = Node::element(&c.fragment, Default::default(), read_doc(c, &*txn));
+    let before = page;
+    let page_notes = notes_by_label(&before);
+    let mut root = Node::element(&c.fragment, Default::default(), before.clone());
+    let then = crate::seen::index(&before);
     let nodes_before = crate::node_count(&root.content);
     let mut taken = HashSet::new();
     collect_ids(&root.content, &mut taken);
-    let mut errors = vec![];
-    let mut applied = Applied::default();
-    let mut plans = vec![];
+    let errors = &mut planned.errors;
+    let applied = &mut planned.applied;
+    let plans = &mut planned.plans;
     // The tables the batch edits rows of, by id, and the last op to: each is
     // checked for a grid once the batch is done.
     let mut tables: Vec<(String, String)> = vec![];
+    // Which ops reached the copy of the page, and the ids each wrote.
+    let mut reached = vec![false; ops.len()];
+    let mut wrote: Vec<(usize, HashSet<String>)> = vec![];
+    // Each text block a replace merged with a change made since, as merged.
+    let mut merged: HashMap<String, Node> = HashMap::new();
+    // What the batch writes that a block shown only as markdown could come
+    // back as.
+    let mut from_markdown = FromMarkdown::default();
+    // What a block taken out left its parent unable to hold, judged once the
+    // batch is done: a later op may take the parent too (an item's only
+    // paragraph deleted, then the item), as a refusal's advice to delete a
+    // block in an op before one around it asks.
+    let mut emptied: Vec<Emptied> = vec![];
 
     for (i, op) in ops.iter().enumerate() {
         let at = format!("op {}", i + 1);
@@ -667,6 +843,9 @@ fn apply_checked(
                     .map(|n| Problem::new(format!("{at}: {}", n.at), n.message)),
             );
             nodes = o.nodes;
+            if !own {
+                inherit_notes(&mut nodes, &page_notes);
+            }
             let keep = if matches!(kind, PlanKind::Replace) {
                 target.map(String::as_str)
             } else {
@@ -676,13 +855,20 @@ fn apply_checked(
                 if let Some(old) = find_node(&root.content, k) {
                     let mut written = HashSet::new();
                     collect_ids(std::slice::from_ref(model), &mut written);
-                    inherit_ids(c, old, model, &written);
+                    // A block around it the base holds lends only the
+                    // blocks a read showed in it.
+                    let lends = |holder: Option<&str>, child: &str| {
+                        base.and_then(|s| s.known(holder?)).is_none_or(|k| k.shows(child))
+                    };
+                    inherit_ids(c, old, model, &written, None, &lends);
                 }
-                // The block as the model read it: the base's, or the page's
-                // when the batch names none.
-                let read = base.and_then(|b| find_node(b, k)).or_else(|| find_node(&root.content, k));
+                // The block as the writer read it: the base's, or the page's
+                // when the batch names none or no read showed it.
+                let read = base
+                    .and_then(|s| s.subtree(k))
+                    .or_else(|| find_node(&root.content, k).cloned());
                 if let (Some(read), false) = (read, own) {
-                    keep_typed_space(c, read, model);
+                    keep_typed_space(c, &read, model);
                 }
             }
             if let Some(old) = keep.and_then(|k| find_node(&root.content, k)) {
@@ -695,40 +881,41 @@ fn apply_checked(
             assign_ids(c, &mut nodes, &mut taken, keep);
         }
 
-        if let (Some(base), Some(id)) = (base, target) {
-            let then = find_node(base, id).map(|n| strip_ids_deep(c, n));
-            let now = find_node(&root.content, id).map(|n| strip_ids_deep(c, n));
-            if let (Some(then), Some(now)) = (then, now) {
-                if then != now {
-                    let merged = match (&kind, nodes.as_slice()) {
-                        (PlanKind::Replace, [model]) => {
-                            merge_block(c, &then, &now, &strip_ids_deep(c, model)).map(Some)
+        // A replace of a block someone changed since the writer read it: a
+        // text block is merged with the change, and any other block shown
+        // whole is refused. What else the batch takes or writes over is
+        // judged once the batch is done (`effects`).
+        if let (Some(seen), Some(id), PlanKind::Replace) = (base, target, &kind) {
+            if let Some(now) = then.get(id.as_str()) {
+                match concurrent(c, seen, now, &nodes) {
+                    Ok(Some(mut m)) => {
+                        m.attrs.insert(c.id.attr.clone(), Value::String(id.clone()));
+                        applied
+                            .notes
+                            .push(Problem::new(&at, "merged with a concurrent edit to this block"));
+                        merged.insert(id.clone(), m.clone());
+                        nodes = vec![m];
+                    }
+                    Ok(None) => {}
+                    Err(Refused::Said(message)) => {
+                        errors.push(Problem::new(&at, message));
+                        planned.conflicts.push(i);
+                        continue;
+                    }
+                    Err(Refused::Unseen(found)) => {
+                        for mut u in found {
+                            u.op = i;
+                            errors.push(Problem::new(&at, u.message()));
+                            planned.unseen.push(u);
                         }
-                        (PlanKind::Replace | PlanKind::Delete, _) => {
-                            Err("the block changed since you read it; read it again".into())
-                        }
-                        _ => Ok(None),
-                    };
-                    match merged {
-                        Ok(Some(mut m)) => {
-                            m.attrs.insert(c.id.attr.clone(), Value::String(id.clone()));
-                            applied.notes.push(Problem::new(
-                                &at,
-                                "merged with a concurrent edit to this block",
-                            ));
-                            nodes = vec![m];
-                        }
-                        Ok(None) => {}
-                        Err(message) => {
-                            errors.push(Problem::new(&at, message));
-                            continue;
-                        }
+                        continue;
                     }
                 }
             }
         }
 
         let idx = *path.last().expect("a path names at least the index");
+        let place = nodes.is_empty().then(|| anchor_of(&root, &path[..path.len() - 1]));
         let parent = parent_mut(&mut root, &path);
         match kind {
             PlanKind::Replace => {
@@ -744,10 +931,19 @@ fn apply_checked(
                 parent.content.remove(idx);
             }
         }
+        reached[i] = true;
+        let mut ids = HashSet::new();
+        collect_ids(&nodes, &mut ids);
+        wrote.push((i, ids));
+        from_markdown.add(&nodes);
         let kinds: Vec<&str> = parent.content.iter().map(|n| n.kind.as_str()).collect();
         if !c.content_matches(&parent.kind, &kinds) {
-            errors.push(Problem::new(&at, misfit(c, &parent.kind, &kinds, &nodes)));
-            continue;
+            if let Some((holder, steps)) = place {
+                emptied.push(Emptied { at: at.clone(), holder, steps });
+            } else {
+                errors.push(Problem::new(&at, misfit(c, &parent.kind, &kinds, &nodes)));
+                continue;
+            }
         }
         // A row added, replaced or taken out must leave the table a grid,
         // or the editor's table plugin would rewrite it on the next open.
@@ -770,6 +966,32 @@ fn apply_checked(
             kind,
             nodes,
         });
+    }
+
+    for e in &emptied {
+        let holder = match &e.holder {
+            Some(id) => find_node(&root.content, id),
+            None => Some(&root),
+        };
+        // Gone: a later op took the parent with a block around it.
+        let Some(mut parent) = holder else { continue };
+        let mut there = true;
+        for &i in &e.steps {
+            match parent.content.get(i) {
+                Some(n) => parent = n,
+                None => there = false,
+            }
+            if !there {
+                break;
+            }
+        }
+        if !there {
+            continue;
+        }
+        let kinds: Vec<&str> = parent.content.iter().map(|n| n.kind.as_str()).collect();
+        if !c.content_matches(&parent.kind, &kinds) {
+            errors.push(Problem::new(&e.at, misfit(c, &parent.kind, &kinds, &[])));
+        }
     }
 
     for (id, at) in &tables {
@@ -807,17 +1029,616 @@ fn apply_checked(
         errors.push(Problem::new("ops", too_deep()));
     }
 
-    if !errors.is_empty() {
-        return Err(errors);
-    }
+    // A merged block a later op wrote over again (a replace of a block
+    // around it, written from the writer's copy) holds that op's copy, not
+    // the merge, and is judged as written over, as any block is.
+    merged.retain(|id, m| find_node(&root.content, id).is_some_and(|n| strip_ids_deep(c, n) == strip_ids_deep(c, m)));
+    let merged: HashSet<String> = merged.into_keys().collect();
 
-    let frag = ydoc::fragment(c, txn);
-    for plan in plans {
-        if let Some(how) = write_plan(c, txn, &frag, plan) {
-            applied.replaced_as.push(how.to_string());
+    // What the batch would take or write over, judged on the page it leaves.
+    if let Some(seen) = base {
+        let mut after = root.content.clone();
+        crate::ydoc::canonicalize(c, &mut after);
+        let refused: HashSet<String> = errors.iter().map(|p| p.at.clone()).collect();
+        let done = Done {
+            ops,
+            reached: &reached,
+            wrote: &wrote,
+            merged: &merged,
+            from_markdown: &from_markdown,
+        };
+        for u in effects(seen, &before, &after, &done) {
+            let at = format!("op {}", u.op + 1);
+            if refused.contains(&at) {
+                continue;
+            }
+            errors.push(Problem::new(at, u.message()));
+            planned.unseen.push(u);
         }
     }
-    Ok(applied)
+    planned.applied.merged = merged.into_iter().collect();
+    planned.applied.merged.sort();
+    planned
+}
+
+/// Why [`concurrent`] refused a replace.
+enum Refused {
+    Said(String),
+    Unseen(Vec<Unseen>),
+}
+
+/// A replace of `now`, a block on the page, by `nodes`, checked against
+/// what the writer read of it: a text block changed since is merged with
+/// the writer's edit (`Some`), or refused when the two touch the same
+/// words; any other block a read showed whole is refused when it changed
+/// since, naming the blocks inside it that did, since its writer rewrote
+/// it from a copy that lacks the change, and writing that copy back would
+/// undo it (a deleted item put back, a reorder undone). A block not read
+/// whole is left to [`effects`].
+fn concurrent(c: &Contract, seen: &Seen, now: &Node, nodes: &[Node]) -> Result<Option<Node>, Refused> {
+    let Some(id) = now.id() else {
+        return Ok(None);
+    };
+    if c.is_textblock(&now.kind) {
+        let Some(then) = seen.subtree(id) else {
+            return Ok(None);
+        };
+        let (then, now) = (strip_ids_deep(c, &then), strip_ids_deep(c, now));
+        if then == now {
+            return Ok(None);
+        }
+        return match nodes {
+            [model] => merge_block(c, &then, &now, &strip_ids_deep(c, model))
+                .map(Some)
+                .map_err(Refused::Said),
+            _ => Err(Refused::Unseen(vec![Unseen::one(id, Why::Changed {
+                deleted: vec![],
+                added: vec![],
+            })])),
+        };
+    }
+    if !seen.complete_over(now) {
+        return Ok(None);
+    }
+    if seen.subtree(id).as_ref() == Some(now) {
+        return Ok(None);
+    }
+    let mut found = vec![];
+    now.walk(&mut |b| {
+        let Some(bid) = b.id() else { return };
+        let Some(known) = seen.known(bid) else { return };
+        let shell = crate::seen::shell(b);
+        if known.shell != shell && found.len() < MAX_CHANGED_SHOWN {
+            let was = crate::seen::stubs(&known.shell);
+            let is = crate::seen::stubs(&shell);
+            let mut u = Unseen::one(bid, Why::Changed {
+                deleted: was.iter().filter(|w| !is.contains(w)).map(|s| s.to_string()).collect(),
+                added: is.iter().filter(|s| !was.contains(s)).map(|s| s.to_string()).collect(),
+            });
+            u.target = bid == id;
+            found.push(u);
+        }
+    });
+    if found.is_empty() {
+        found.push(Unseen::one(id, Why::Changed {
+            deleted: vec![],
+            added: vec![],
+        }));
+    }
+    Err(Refused::Unseen(found))
+}
+
+/// The most blocks one op is refused over for having changed since they
+/// were read: each comes with the refusal to be read again, which holds
+/// only so much.
+const MAX_CHANGED_SHOWN: usize = 8;
+
+/// A block an op would take off the page, or write over, that the base has
+/// not seen as it stands ([`check`]), or a run of such blocks beside each
+/// other.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unseen {
+    /// The op (from 0) the problem is charged to: the last op naming the
+    /// block or a block around it.
+    pub op: usize,
+    /// The block, or the run's blocks in page order.
+    pub ids: Vec<String>,
+    /// The block around them, when a read has shown it.
+    pub inside: Option<String>,
+    /// The block before the first of them, beside it.
+    pub after: Option<String>,
+    /// Whether the op takes them off the page, or writes over them.
+    pub removes: bool,
+    /// Whether the block is the op's own (`ids` is it alone).
+    pub target: bool,
+    pub why: Why,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Why {
+    /// A read showed it, and it has changed since: `deleted` and `added`
+    /// name the blocks inside it gone or new since.
+    Changed { deleted: Vec<String>, added: Vec<String> },
+    /// Shown only as markdown, which does not say what its HTML is.
+    MarkdownOnly,
+    /// No read showed it. `added_since`: the block around it, as a read
+    /// showed it, did not hold it.
+    Unread { added_since: bool },
+    /// Listed as too long for any read, and changed since it was listed.
+    ListedChanged,
+    /// Too long for any read, and taken or written over by an op on a block
+    /// around it: only an op of its own takes it.
+    NamedInside,
+    /// Deleted after the read, and written back by its id.
+    Deleted,
+}
+
+impl Unseen {
+    fn one(id: &str, why: Why) -> Self {
+        Unseen {
+            op: 0,
+            ids: vec![id.to_string()],
+            inside: None,
+            after: None,
+            removes: false,
+            target: true,
+            why,
+        }
+    }
+
+    /// The first block.
+    pub fn id(&self) -> &str {
+        &self.ids[0]
+    }
+
+    /// What is wrong, naming no tool: the writer's tool says what to do.
+    pub fn message(&self) -> String {
+        let id = self.id();
+        let count = self.ids.len();
+        let verb = if self.removes { "remove" } else { "write over" };
+        let inside = self.inside.as_deref().map(|p| format!(" inside `{p}`")).unwrap_or_default();
+        match &self.why {
+            Why::Changed { deleted, added } => {
+                let mut said = format!("the block `{id}` changed since you read it");
+                if !deleted.is_empty() {
+                    said.push_str(&format!(
+                        "; {} inside it {} deleted since",
+                        names(deleted),
+                        if deleted.len() == 1 { "was" } else { "were" }
+                    ));
+                }
+                if !added.is_empty() {
+                    said.push_str(&format!(
+                        "; {} {} added to it since",
+                        names(added),
+                        if added.len() == 1 { "was" } else { "were" }
+                    ));
+                }
+                said
+            }
+            Why::MarkdownOnly if count == 1 => format!(
+                "the block `{id}` was shown only as markdown, which does not say what its HTML is \
+                 (a mention reads as a link, audio as an image, a callout as a quote)"
+            ),
+            Why::MarkdownOnly => format!(
+                "this op would {verb} {count} blocks shown only as markdown, from `{id}`{inside}; \
+                 markdown does not say what a block's HTML is (a mention reads as a link, audio as \
+                 an image, a callout as a quote)"
+            ),
+            Why::Unread { added_since: false } if self.target => {
+                format!("the block `{id}` is not in the read that base names")
+            }
+            Why::Unread { added_since } => match (count, added_since, self.inside.as_deref()) {
+                (1, true, Some(p)) => format!("this op would {verb} `{id}`, added to `{p}` after you read it"),
+                (1, ..) => format!("this op would {verb} `{id}`, which no read has shown you"),
+                (_, true, Some(_)) => {
+                    format!("this op would {verb} {count} blocks added after you read the page, from `{id}`{inside}")
+                }
+                _ => format!("this op would {verb} {count} blocks that no read has shown you, from `{id}`{inside}"),
+            },
+            Why::ListedChanged => {
+                format!("the block `{id}` is too long for any read, and changed since it was listed")
+            }
+            Why::NamedInside if self.removes => format!(
+                "this op would remove `{id}`, which is too long for any read: only an op deleting it \
+                 takes it, and a comment that stands for it writes nothing"
+            ),
+            Why::NamedInside => format!(
+                "this op would write over `{id}`, which is too long for any read: only an op naming \
+                 it writes over it, and a comment that stands for it writes nothing"
+            ),
+            Why::Deleted => format!("this op writes `{id}` back, which was deleted after you read the page"),
+        }
+    }
+}
+
+/// Whether `nodes` hold a link to a ref on the box (`/person/…`): what a
+/// mention shown as markdown (`[@Nick](/person/person_1)`) comes back as
+/// when written from it.
+fn links_to_a_ref(nodes: &[Node]) -> bool {
+    let mut found = false;
+    for n in nodes {
+        n.walk(&mut |n| {
+            found |= n.marks.iter().any(|m| {
+                m.kind == "link"
+                    && m.attrs
+                        .get("href")
+                        .and_then(Value::as_str)
+                        .is_some_and(crate::contract::is_route)
+            });
+        });
+    }
+    found
+}
+
+/// `` `a`, `b` ``.
+fn names(ids: &[String]) -> String {
+    ids.iter().map(|id| format!("`{id}`")).collect::<Vec<_>>().join(", ")
+}
+
+/// The ids of `node` and every block inside it.
+fn block_ids<'a>(node: &'a Node, out: &mut Vec<&'a str>) {
+    if let Some(id) = node.id() {
+        out.push(id);
+    }
+    for c in &node.content {
+        block_ids(c, out);
+    }
+}
+
+/// Where a block is on the page before a batch.
+struct Place<'a> {
+    node: &'a Node,
+    /// The nearest block around it.
+    parent: Option<&'a str>,
+    /// The block before it in what holds it (a block, or a table cell).
+    prev: Option<&'a str>,
+    /// What holds it, numbered: blocks beside each other share one.
+    list: usize,
+}
+
+fn places<'a>(
+    nodes: &'a [Node],
+    parent: Option<&'a str>,
+    lists: &mut usize,
+    out: &mut HashMap<&'a str, Place<'a>>,
+    order: &mut Vec<&'a str>,
+) {
+    let list = *lists;
+    *lists += 1;
+    let mut prev = None;
+    for n in nodes {
+        match n.id() {
+            Some(id) => {
+                out.insert(id, Place { node: n, parent, prev, list });
+                order.push(id);
+                places(&n.content, Some(id), lists, out, order);
+                prev = Some(id);
+            }
+            None if !n.is_text() => places(&n.content, parent, lists, out, order),
+            None => {}
+        }
+    }
+}
+
+/// What a batch did on its copy of the page, for [`effects`].
+struct Done<'a> {
+    ops: &'a [Op],
+    /// Which ops reached the copy.
+    reached: &'a [bool],
+    /// The ids each op that reached it wrote.
+    wrote: &'a [(usize, HashSet<String>)],
+    /// Text blocks a replace merged with a change made since the read, each
+    /// holding the merge at the batch's end.
+    merged: &'a HashSet<String>,
+    from_markdown: &'a FromMarkdown,
+}
+
+/// What a batch writes that a block shown only as markdown could come back
+/// as, written from that markdown: a link to a ref (`/person/…`, as a
+/// mention reads), a file's address in another block (audio, a video and a
+/// file read as images), a quote opening with `[!TONE]` (as a callout
+/// reads), text holding `[^` (as a footnote's marker reads, its note left
+/// behind), a code block in the language `figure` (as a figure reads).
+#[derive(Default)]
+struct FromMarkdown {
+    links_route: bool,
+    srcs: HashSet<String>,
+    alert_quote: bool,
+    marker_text: bool,
+    figure_code: bool,
+}
+
+impl FromMarkdown {
+    fn add(&mut self, nodes: &[Node]) {
+        self.links_route |= links_to_a_ref(nodes);
+        for n in nodes {
+            n.walk(&mut |n| {
+                if let Some(src) = n.attrs.get("src").and_then(Value::as_str) {
+                    self.srcs.insert(src.to_string());
+                }
+                if n.kind == "blockquote" && n.text_content().trim_start().starts_with("[!") {
+                    self.alert_quote = true;
+                }
+                if n.text.as_deref().is_some_and(|t| t.contains("[^")) {
+                    self.marker_text = true;
+                }
+                if n.kind == "codeBlock" && n.attrs.get("language").and_then(Value::as_str) == Some("figure") {
+                    self.figure_code = true;
+                }
+            });
+        }
+    }
+
+    /// Whether `block`, shown only as markdown and taken off the page,
+    /// could be what the batch writes back elsewhere from that markdown, as
+    /// a block of another kind. An image's markdown says all an image is. A
+    /// veil written back as its brackets is: it reads the same everywhere.
+    fn could_be(&self, block: &Node) -> bool {
+        if self.links_route {
+            return true;
+        }
+        let mut found = false;
+        block.walk(&mut |n| {
+            found |= n.kind != "image"
+                && n.attrs.get("src").and_then(Value::as_str).is_some_and(|src| self.srcs.contains(src));
+            found |= self.alert_quote && n.kind == "callout";
+            found |= self.marker_text && n.kind == "footnote";
+            found |= self.figure_code && n.kind == "figure";
+        });
+        found
+    }
+}
+
+/// What a batch takes off the page, or writes over, that the base has not
+/// seen as it stands, judged by its effect: every block of the page before
+/// it (`before`) against the page it leaves (`after`). A block it takes is
+/// one a read showed as it stands, or one listed as too long for any read,
+/// unchanged since, that an op deletes by name; taken with a block around
+/// it, it is also one a read showed inside that block, or one an op deletes
+/// by name, so a block moved there since (an item indented, a paragraph
+/// joined into a quote) is not taken on the strength of a read that showed
+/// it elsewhere, nor on a read of that block that counted it without
+/// showing it. A replace naming a block that writes something means the
+/// block to stay, and takes nothing. A block listed as too long for any
+/// read, as it stands, goes only by an op deleting it, whatever a markdown
+/// read showed of it. A block it changes
+/// is one a read showed as it stands as HTML, a text block merged with a
+/// change made since, or one listed, unchanged, that a replace names. A
+/// block written back by the id of one deleted since the read is refused. The batch's own
+/// churn (a block it inserted, then replaced) is not seen: only the page
+/// before and after. Each problem is charged to the last op naming the
+/// block or a block around it; a block inside one refused for the same
+/// reason by the same op is that one's, and blocks beside each other make
+/// one problem.
+fn effects(seen: &Seen, before: &[Node], after: &[Node], done: &Done) -> Vec<Unseen> {
+    use crate::seen::{node_hash, own, shell, stubs};
+    let Done {
+        ops,
+        reached,
+        wrote,
+        merged,
+        from_markdown,
+    } = *done;
+    let mut at: HashMap<&str, Place> = HashMap::new();
+    let mut order = vec![];
+    places(before, None, &mut 0, &mut at, &mut order);
+    let now = crate::seen::index(after);
+
+    // The op each block of the page is charged to, the blocks an op takes
+    // off the page by name (a delete, a replace with nothing) and those it
+    // writes over by name. A replace that writes something means its block
+    // to stay: it is no word to take that block with a block around it.
+    let mut charged: HashMap<&str, usize> = HashMap::new();
+    let mut deleted: HashSet<&str> = HashSet::new();
+    let mut replaced: HashSet<&str> = HashSet::new();
+    for (i, op) in ops.iter().enumerate() {
+        let (id, replace) = match op {
+            Op::Replace { id, html } => (id, !html.trim().is_empty()),
+            Op::Delete { id } => (id, false),
+            _ => continue,
+        };
+        if !reached.get(i).copied().unwrap_or(false) {
+            continue;
+        }
+        if replace {
+            replaced.insert(id.as_str());
+        } else {
+            deleted.insert(id.as_str());
+        }
+        if let Some(place) = at.get(id.as_str()) {
+            let mut inside = vec![];
+            block_ids(place.node, &mut inside);
+            for bid in inside {
+                charged.insert(bid, i);
+            }
+        }
+    }
+
+    #[derive(Clone, PartialEq)]
+    struct Verdict {
+        op: usize,
+        why: Why,
+        removes: bool,
+    }
+    let added_since = |id: &str| {
+        at.get(id)
+            .and_then(|p| p.parent)
+            .and_then(|parent| seen.known(parent))
+            .is_some_and(|k| !stubs(&k.shell).contains(&id))
+    };
+    // Named by the block around it, as read, without a read showing it
+    // there (counted in `<!-- 74 more -->`), and shown elsewhere: it came
+    // there since that read too, as far as any text showed the writer.
+    let moved_in_unshown = |id: &str| {
+        seen.knows(id)
+            && at
+                .get(id)
+                .and_then(|p| p.parent)
+                .and_then(|parent| seen.known(parent))
+                .is_some_and(|k| k.unshown.contains(id))
+    };
+    let mut verdicts: HashMap<&str, Verdict> = HashMap::new();
+    for &id in &order {
+        let Some(&op) = charged.get(id) else { continue };
+        let was = at[id].node;
+        let removes = !now.contains_key(id);
+        if !removes && own(now[id]) == own(was) {
+            continue;
+        }
+        let markdown = seen.known(id).is_some_and(|k| k.form == crate::seen::Form::Markdown);
+        let listed_as_it_stands = seen.opaque_hash(id).is_some_and(|hash| hash == node_hash(was));
+        let by_name = (removes && deleted.contains(id)) || (!removes && replaced.contains(id));
+        let why = if removes && !deleted.contains(id) && (added_since(id) || moved_in_unshown(id)) {
+            // Taken with the block around it, which no read showed holding
+            // it: added there or moved there since, whatever a read showed
+            // of it where it was. The model saw it elsewhere, so the op
+            // would take it unawares.
+            Why::Unread { added_since: true }
+        } else if listed_as_it_stands {
+            // Listed as too long for any read, as it stands: an op deleting
+            // it takes it and one replacing it writes over it, and nothing
+            // else does either, whatever a markdown read showed of it, which
+            // says nothing an HTML read could.
+            if by_name {
+                continue;
+            }
+            Why::NamedInside
+        } else if merged.contains(id) && !removes {
+            if !markdown {
+                continue;
+            }
+            Why::MarkdownOnly
+        } else if seen.seen_as_it_stands(was) {
+            // Taking a block off the page needs no word of its HTML, unless
+            // the batch writes it back elsewhere from its markdown, as a
+            // block of another kind: a mention shown as markdown comes back
+            // as a link, audio as an image, a callout as a quote.
+            if !markdown || (removes && !from_markdown.could_be(was)) {
+                continue;
+            }
+            Why::MarkdownOnly
+        } else if seen.opaque_hash(id).is_some() {
+            // Listed, and changed since.
+            Why::ListedChanged
+        } else if let Some(known) = seen.known(id) {
+            let shown = shell(was);
+            let (then, is) = (stubs(&known.shell), stubs(&shown));
+            Why::Changed {
+                deleted: then.iter().filter(|t| !is.contains(t)).map(|s| s.to_string()).collect(),
+                added: is.iter().filter(|s| !then.contains(s)).map(|s| s.to_string()).collect(),
+            }
+        } else {
+            Why::Unread {
+                added_since: added_since(id),
+            }
+        };
+        verdicts.insert(id, Verdict { op, why, removes });
+    }
+
+    // A block no read showed, inside blocks no read showed either, all in
+    // what one op writes over: the problem is the outermost of them, which
+    // the op took or wrote over unread.
+    let unread: Vec<&str> = order
+        .iter()
+        .copied()
+        .filter(|id| verdicts.get(id).is_some_and(|v| matches!(v.why, Why::Unread { .. })))
+        .collect();
+    for id in unread {
+        let op = verdicts[id].op;
+        let mut cur = id;
+        while let Some(parent) = at[cur].parent {
+            if seen.knows(parent) || seen.opaque_hash(parent).is_some() || charged.get(parent) != Some(&op) {
+                break;
+            }
+            verdicts.entry(parent).or_insert(Verdict {
+                op,
+                why: Why::Unread {
+                    added_since: added_since(parent),
+                },
+                removes: !now.contains_key(parent),
+            });
+            cur = parent;
+        }
+    }
+
+    let same = |a: &Why, b: &Why| std::mem::discriminant(a) == std::mem::discriminant(b);
+    let mut out: Vec<Unseen> = vec![];
+    // The open run of each (op, holder, reason, removes), as an index in out.
+    let mut runs: HashMap<(usize, usize, std::mem::Discriminant<Why>, bool), usize> = HashMap::new();
+    for &id in &order {
+        let Some(v) = verdicts.get(id) else { continue };
+        let place = &at[id];
+        // Inside a block refused for the same reason by the same op: that
+        // block's problem says it.
+        if let Some(pv) = place.parent.and_then(|p| verdicts.get(p)) {
+            if pv.op == v.op && same(&pv.why, &v.why) {
+                continue;
+            }
+        }
+        let target = ops.get(v.op).and_then(|op| match op {
+            Op::Replace { id, .. } | Op::Delete { id } => Some(id.as_str()),
+            _ => None,
+        }) == Some(id);
+        let runs_on = matches!(v.why, Why::Unread { .. } | Why::MarkdownOnly);
+        let key = (v.op, place.list, std::mem::discriminant(&v.why), v.removes);
+        if runs_on {
+            if let Some(&k) = runs.get(&key) {
+                let run: &mut Unseen = &mut out[k];
+                if run.ids.last().map(String::as_str) == place.prev && run.why == v.why {
+                    run.ids.push(id.to_string());
+                    run.target = false;
+                    continue;
+                }
+            }
+        }
+        out.push(Unseen {
+            op: v.op,
+            ids: vec![id.to_string()],
+            inside: place.parent.filter(|p| seen.knows(p)).map(str::to_string),
+            after: place.prev.map(str::to_string),
+            removes: v.removes,
+            target,
+            why: v.why.clone(),
+        });
+        if runs_on {
+            runs.insert(key, out.len() - 1);
+        }
+    }
+
+    // One op's blocks unread, or shown only as markdown, are one problem,
+    // said from the first in page order: the read that shows the first goes
+    // on to the rest, and a refusal naming each one would run as long as
+    // the page.
+    let mut out = out.into_iter().fold(Vec::<Unseen>::new(), |mut acc, u| {
+        if matches!(u.why, Why::Unread { .. } | Why::MarkdownOnly) {
+            if let Some(m) = acc.iter_mut().find(|m| m.op == u.op && m.why == u.why && m.removes == u.removes) {
+                m.ids.extend(u.ids);
+                m.target = false;
+                return acc;
+            }
+        }
+        acc.push(u);
+        acc
+    });
+
+    // A block deleted after the read, written back by its id.
+    for (op, ids) in wrote {
+        let mut ids: Vec<&String> = ids.iter().filter(|id| !at.contains_key(id.as_str()) && seen.knows(id)).collect();
+        ids.sort();
+        for id in ids {
+            out.push(Unseen {
+                op: *op,
+                ids: vec![id.clone()],
+                inside: None,
+                after: None,
+                removes: false,
+                target: false,
+                why: Why::Deleted,
+            });
+        }
+    }
+    out
 }
 
 #[derive(Clone)]
@@ -938,10 +1759,12 @@ fn same_atom(a: &Node, b: &Node) -> bool {
             .all(|k| get(a, k) == get(b, k))
 }
 
-/// Same-type text block holding the same inline atoms in the same order:
-/// update attributes in place and write only the changed middle of each
-/// run of text between atoms. The atoms, and every run that did not change,
-/// keep their Yjs items, so a caret anywhere else in the block holds.
+/// Same-type text block holding inline atoms of the same types in the same
+/// order: update attributes in place, the block's and each atom's, and
+/// write only the changed middle of each run of text between atoms. The
+/// atoms, and every run that did not change, keep their Yjs items, so a
+/// caret anywhere else in the block holds; a writer that renumbers its
+/// footnotes on every draft changes their labels, not the sentences.
 fn patch_textblock(c: &Contract, txn: &mut TransactionMut, el: &XmlElementRef, new: &Node) -> bool {
     if el.tag().as_ref() != new.kind || !c.is_textblock(&new.kind) {
         return false;
@@ -949,12 +1772,12 @@ fn patch_textblock(c: &Contract, txn: &mut TransactionMut, el: &XmlElementRef, n
     // The block's children as runs of text between atoms, each atom with
     // its index among the children.
     let mut runs: Vec<Vec<XmlTextRef>> = vec![vec![]];
-    let mut atoms: Vec<(u32, Node)> = vec![];
+    let mut atoms: Vec<(u32, Node, XmlElementRef)> = vec![];
     for (i, child) in ydoc::children(txn, el) {
         match child {
             Out::YXmlText(t) => runs.last_mut().expect("one run at least").push(t),
             Out::YXmlElement(a) => {
-                atoms.push((i, atom_node(txn, &a)));
+                atoms.push((i, atom_node(txn, &a), a));
                 runs.push(vec![]);
             }
             _ => return false,
@@ -977,7 +1800,7 @@ fn patch_textblock(c: &Contract, txn: &mut TransactionMut, el: &XmlElementRef, n
         || !atoms
             .iter()
             .zip(&new_atoms)
-            .all(|((_, a), b)| same_atom(a, b))
+            .all(|((_, a, _), b)| a.kind == b.kind && b.marks.is_empty())
     {
         return false;
     }
@@ -997,6 +1820,11 @@ fn patch_textblock(c: &Contract, txn: &mut TransactionMut, el: &XmlElementRef, n
     }
 
     set_attrs(txn, el, &new.attrs);
+    for ((_, was, atom), now) in atoms.iter().zip(&new_atoms) {
+        if !same_atom(was, now) {
+            set_attrs(txn, atom, &now.attrs);
+        }
+    }
     // Last run first: a text node inserted for a run moves the children
     // after it, never those before.
     for (r, a, b) in changed.into_iter().rev() {
@@ -1033,13 +1861,15 @@ fn set_attrs(txn: &mut TransactionMut, el: &XmlElementRef, attrs: &serde_json::M
 /// Replace `el`, a block that holds blocks (a list, an item, a table, a
 /// row, a quote) or none (an image), with `new` of its own type, in place:
 /// its attributes where they differ, and its children paired with `new`'s
-/// as [`crate::diff_ops`] pairs a page's blocks, by id, or by type and text
-/// for one without (a table's cells). A paired child is patched the same
-/// way, a text block by its text (`patch_textblock`), and swapped alone when
-/// it cannot be; a child `new` lacks goes, and one only `new` has is written
-/// where it goes. What did not change keeps its Yjs items, so a person's
-/// keystroke still on its way into it lands. False, with nothing written,
-/// when `el` is not of `new`'s type or holds anything but blocks.
+/// as [`crate::diff_ops`] pairs a page's blocks, by id, or, for one without
+/// (a table's cell), by type and text or by the first id it holds, so a
+/// cell whose words changed is patched, not swapped, and a keystroke on its
+/// way into it lands. A paired child is patched the same way, a text block
+/// by its text (`patch_textblock`), and swapped alone when it cannot be; a
+/// child `new` lacks goes, and one only `new` has is written where it goes.
+/// What did not change keeps its Yjs items, so a person's keystroke still
+/// on its way into it lands. False, with nothing written, when `el` is not
+/// of `new`'s type or holds anything but blocks.
 fn patch_block(c: &Contract, txn: &mut TransactionMut, el: &XmlElementRef, new: &Node) -> bool {
     if el.tag().as_ref() != new.kind || c.is_textblock(&new.kind) {
         return false;
@@ -1310,7 +2140,7 @@ mod tests {
         assert_eq!(text(&doc), "Total:  5 apples.\tThen   the ls  -la line.  ");
 
         let base = read_doc(&c, &doc.transact());
-        let r = apply(&c, &doc, Some(&base), &[Op::Replace { id: "a".into(), html: shown(&base).replace("apples", "pears") }])
+        let r = apply(&c, &doc, Some(&Seen::of_page(&base)), &[Op::Replace { id: "a".into(), html: shown(&base).replace("apples", "pears") }])
             .unwrap();
         assert_eq!(r.replaced_as, ["text-diff"]);
         assert_eq!(
@@ -1322,7 +2152,7 @@ mod tests {
         // land, the spaces between them as typed.
         let base = read_doc(&c, &doc.transact());
         typed(&doc, "<p data-id=\"a\">Total:  5 pears.\tThan   the <code>ls  -la</code> line.  </p>");
-        let r = apply(&c, &doc, Some(&base), &[Op::Replace { id: "a".into(), html: shown(&base).replace("Total", "Sum") }])
+        let r = apply(&c, &doc, Some(&Seen::of_page(&base)), &[Op::Replace { id: "a".into(), html: shown(&base).replace("Total", "Sum") }])
             .unwrap();
         assert!(r.notes.iter().any(|n| n.message.contains("merged")), "{:?}", r.notes);
         assert_eq!(text(&doc), "Sum:  5 pears.\tThan   the ls  -la line.  ");
@@ -1601,7 +2431,7 @@ mod tests {
         let r = apply(
             &c,
             &doc,
-            Some(&base),
+            Some(&Seen::of_page(&base)),
             &[Op::Replace {
                 id: "a".into(),
                 html: "<p>The slow fox jumps.</p>".into(),
@@ -1632,7 +2462,7 @@ mod tests {
         apply(
             &c,
             &doc,
-            Some(&base2),
+            Some(&Seen::of_page(&base2)),
             &[Op::Replace {
                 id: "a".into(),
                 html: "<p>The sly fox jumps. Then it naps.</p>".into(),
@@ -1658,7 +2488,7 @@ mod tests {
         let err = apply(
             &c,
             &doc,
-            Some(&base3),
+            Some(&Seen::of_page(&base3)),
             &[Op::Replace {
                 id: "a".into(),
                 html: "<p>The quick red fox jumps. Then it naps.</p>".into(),
@@ -1678,7 +2508,7 @@ mod tests {
         let doc = seed(&c, "<p data-id=\"a\">Lunch with <virtues-mention to=\"/person/1\" label=\"Nick\"></virtues-mention> on Friday.</p>");
         let base = read_doc(&c, &doc.transact());
         apply(&c, &doc, None, &[Op::Replace { id: "a".into(), html: "<p>Lunch with <virtues-mention to=\"/person/1\" label=\"Nick\"></virtues-mention> on Friday. Bring the map.</p>".into() }]).unwrap();
-        apply(&c, &doc, Some(&base), &[Op::Replace { id: "a".into(), html: "<p>Dinner with <virtues-mention to=\"/person/1\" label=\"Nick\"></virtues-mention> on Friday.</p>".into() }]).unwrap();
+        apply(&c, &doc, Some(&Seen::of_page(&base)), &[Op::Replace { id: "a".into(), html: "<p>Dinner with <virtues-mention to=\"/person/1\" label=\"Nick\"></virtues-mention> on Friday.</p>".into() }]).unwrap();
         assert_eq!(
             render(&c, &doc),
             "<p data-id=\"a\">Dinner with <virtues-mention to=\"/person/1\" label=\"Nick\"></virtues-mention> on Friday. Bring the map.</p>"
@@ -1785,13 +2615,16 @@ mod tests {
         );
     }
 
+    /// An atom added or taken out, or one of another type in its place,
+    /// swaps the block; one of the same type whose attributes changed is
+    /// written in place (`a_renumbered_footnote_is_patched_in_place`).
     #[test]
     fn a_changed_atom_swaps_the_block() {
         let c = Contract::load();
         for (before, after) in [
             (
                 "a <virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention>",
-                "a <virtues-mention to=\"/person/person_2\" label=\"Nick\"></virtues-mention>",
+                "a <virtues-footnote label=\"ev-1\"></virtues-footnote>",
             ),
             ("a<br>b", "a b"),
             ("a b", "a<br>b"),
@@ -1810,6 +2643,79 @@ mod tests {
             assert_eq!(r.replaced_as, ["swap"], "{before}");
             assert_eq!(render(&c, &doc), format!("<p data-id=\"a\">{after}</p>"));
         }
+    }
+
+    /// A writer renumbers its footnotes on every draft: a sentence whose
+    /// footnote's label and note changed keeps the footnote's item, and the
+    /// text's around it, so a caret in it holds. A mention is the same.
+    #[test]
+    fn a_renumbered_footnote_is_patched_in_place() {
+        let c = Contract::load();
+        let f = |label: &str, note: &str| format!("<virtues-footnote label=\"{label}\" note=\"{note}\"></virtues-footnote>");
+        let doc = seed(
+            &c,
+            &format!("<p data-id=\"a\">You read.{} You ate.{}</p>", f("ev-1", "Recording · 9:05 AM"), f("ev-2", "Chat · 9:30 AM")),
+        );
+        let before = items(&c, &doc, "a");
+        let html = format!("<p>You read.{} You ate.{}</p>", f("ev-3", "Recording · 9:05 AM"), f("ev-4", "Chat · 9:31 AM"));
+        let r = apply(&c, &doc, None, &[Op::Replace { id: "a".into(), html: html.clone() }]).unwrap();
+        assert_eq!(r.replaced_as, ["text-diff"]);
+        assert_eq!(items(&c, &doc, "a"), before);
+        assert_eq!(render(&c, &doc), html.replace("<p>", "<p data-id=\"a\">"));
+
+        let doc = seed(&c, "<p data-id=\"m\">a <virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention></p>");
+        let before = items(&c, &doc, "m");
+        let html = "<p>a <virtues-mention to=\"/person/person_2\" label=\"David Okafor\"></virtues-mention></p>";
+        let r = apply(&c, &doc, None, &[Op::Replace { id: "m".into(), html: html.into() }]).unwrap();
+        assert_eq!(r.replaced_as, ["text-diff"]);
+        assert_eq!(items(&c, &doc, "m"), before);
+        assert_eq!(render(&c, &doc), html.replace("<p>", "<p data-id=\"m\">"));
+    }
+
+    /// A model writes a footnote back as a read showed it, its note an
+    /// attribute it may leave out: a footnote with a label and no note takes
+    /// the note of the page's footnote with that label. A label the page
+    /// does not hold stays without one, and a note written is kept.
+    #[test]
+    fn a_footnote_written_without_its_note_takes_the_pages() {
+        let c = Contract::load();
+        let doc = seed(
+            &c,
+            "<p data-id=\"a\">You read.<virtues-footnote label=\"ev-1\" note=\"Recording · 9:05 AM\"></virtues-footnote></p>",
+        );
+        apply(
+            &c,
+            &doc,
+            None,
+            &[
+                Op::Replace {
+                    id: "a".into(),
+                    html: "<p>You read a book.<virtues-footnote label=\"ev-1\"></virtues-footnote></p>".into(),
+                },
+                Op::Append {
+                    html: "<p>Again.<virtues-footnote label=\"ev-1\"></virtues-footnote> New.<virtues-footnote label=\"ev-7\"></virtues-footnote> \
+                           Said.<virtues-footnote label=\"ev-1\" note=\"Chat · 9:06 AM\"></virtues-footnote></p>"
+                        .into(),
+                },
+            ],
+        )
+        .unwrap();
+        let tree = read_doc(&c, &doc.transact());
+        let notes: Vec<(String, Value)> = tree
+            .iter()
+            .flat_map(|b| b.content.iter())
+            .filter(|n| n.kind == "footnote")
+            .map(|n| (n.attrs["label"].as_str().unwrap().to_string(), n.attrs["note"].clone()))
+            .collect();
+        assert_eq!(
+            notes,
+            [
+                ("ev-1".to_string(), Value::from("Recording · 9:05 AM")),
+                ("ev-1".to_string(), Value::from("Recording · 9:05 AM")),
+                ("ev-7".to_string(), Value::Null),
+                ("ev-1".to_string(), Value::from("Chat · 9:06 AM")),
+            ]
+        );
     }
 
     #[test]
@@ -2248,5 +3154,857 @@ mod tests {
         let texts: Vec<String> = tree[0].content.iter().map(Node::text_content).collect();
         assert_eq!(texts, ["Three", "New", "One"]);
         assert_eq!(crate::validate::validate(&c, &tree, "doc"), []);
+    }
+}
+
+/// A batch with a base takes off the page, or writes over, only what reads
+/// showed as it stands: each case here lost text a read never showed, in
+/// an earlier shape of the check.
+#[cfg(test)]
+mod unseen {
+    use super::*;
+    use crate::seen::{shell, Part, Shown};
+
+    fn page(html: &str) -> Doc {
+        let c = Contract::load();
+        let o = crate::ingest::parse(&c, html, "doc", Mode::Strict);
+        assert!(o.errors.is_empty(), "{:?}", o.errors);
+        let doc = ydoc::new_doc();
+        {
+            let mut txn = doc.transact_mut();
+            let frag = ydoc::fragment(&c, &mut txn);
+            write_nodes(&c, &mut txn, &frag, 0, &o.nodes);
+        }
+        doc
+    }
+
+    fn tree(doc: &Doc) -> Vec<Node> {
+        read_doc(&Contract::load(), &doc.transact())
+    }
+
+    fn node(doc: &Doc, id: &str) -> Node {
+        find_node(&tree(doc), id).unwrap().clone()
+    }
+
+    /// What a read of `doc` showing `parts` as HTML teaches `seen`.
+    fn learn(seen: &mut Seen, doc: &Doc, parts: Vec<Part>) {
+        seen.learn(&Shown::html(parts), &tree(doc), &HashSet::new());
+    }
+
+    /// `id` opened, with the blocks inside it in `shown` shown whole.
+    fn opened(doc: &Doc, id: &str, shown: &[&str]) -> Part {
+        let n = node(doc, id);
+        let inside = n
+            .content
+            .iter()
+            .filter(|c| c.id().is_some_and(|cid| shown.contains(&cid)))
+            .cloned()
+            .map(Part::Whole)
+            .collect();
+        Part::Opened { shell: shell(&n), inside }
+    }
+
+    fn apply_seen(doc: &Doc, seen: &Seen, ops: &[Op]) -> Result<Applied, Vec<Problem>> {
+        apply(&Contract::load(), doc, Some(seen), ops)
+    }
+
+    fn checked(doc: &Doc, seen: &Seen, ops: &[Op]) -> Vec<Unseen> {
+        check(&Contract::load(), &tree(doc), seen, ops).unseen
+    }
+
+    fn list(items: usize) -> String {
+        let li: String = (0..items).map(|i| format!("<li data-id=\"i{i}\"><p data-id=\"p{i}\">Item {i}</p></li>")).collect();
+        format!("<p data-id=\"top\">Top</p><ul data-id=\"l\">{li}</ul><p data-id=\"end\">End</p>")
+    }
+
+    fn delete(id: &str) -> Op {
+        Op::Delete { id: id.into() }
+    }
+
+    fn replace(id: &str, html: &str) -> Op {
+        Op::Replace { id: id.into(), html: html.into() }
+    }
+
+    /// A list opened by its first items is not replaced or deleted until
+    /// reads have shown the rest; the refusal says where reading on starts.
+    #[test]
+    fn replacing_or_deleting_a_block_read_in_part_is_refused_with_where_to_read_on() {
+        let doc = page(&list(6));
+        let before = tree(&doc);
+        let mut seen = Seen::default();
+        learn(&mut seen, &doc, vec![opened(&doc, "l", &["i0", "i1"])]);
+        for op in [delete("l"), replace("l", "<ul><li><p>Item 0</p></li><li><p>Item 1</p></li></ul>")] {
+            let found = checked(&doc, &seen, std::slice::from_ref(&op));
+            assert_eq!(found.len(), 1, "{op:?}: {found:?}");
+            let u = &found[0];
+            assert_eq!(u.ids, ["i2", "i3", "i4", "i5"]);
+            assert_eq!(u.inside.as_deref(), Some("l"));
+            assert_eq!(u.after.as_deref(), Some("i1"));
+            assert!(u.removes);
+            assert_eq!(u.why, Why::Unread { added_since: false });
+            assert_eq!(
+                u.message(),
+                "this op would remove 4 blocks that no read has shown you, from `i2` inside `l`"
+            );
+            assert!(apply_seen(&doc, &seen, &[op]).is_err());
+        }
+        assert_eq!(tree(&doc), before);
+        // Read on to the end: the delete stands.
+        learn(&mut seen, &doc, (2..6).map(|i| Part::Whole(node(&doc, &format!("i{i}")))).collect());
+        assert!(apply_seen(&doc, &seen, &[delete("l")]).is_ok());
+    }
+
+    /// An item an opened read counted before any read had shown it, moved
+    /// out by a person, read where it went, then moved back: no read showed
+    /// it inside the list. Counted while unknown, it was no block left
+    /// unshown there, so once a read elsewhere taught it, the list held it as
+    /// shown inside: a replace of the list wrote the model's new item over
+    /// the person's under the ids `inherit_ids` gave it, and a replace or a
+    /// delete leaving it out took it.
+    #[test]
+    fn an_item_counted_unread_then_read_elsewhere_is_not_shown_inside_the_list() {
+        const L: &str = "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">one</p></li></ul>";
+        const K: &str = "<li data-id=\"k\"><p data-id=\"pk\">kay</p></li>";
+        const M: &str = "<ul data-id=\"m\"><li data-id=\"m1\"><p data-id=\"pm\">em</p></li>";
+        let counted = page(&format!("{}{K}</ul>{M}</ul>", &L[..L.len() - 5]));
+        let mut seen = Seen::default();
+        // Read 1 opens the list by its first item and counts `k`.
+        learn(&mut seen, &counted, vec![opened(&counted, "l", &["i1"])]);
+        // A person moves `k` into the other list, and read 2 shows it there.
+        let moved = page(&format!("{L}{M}{K}</ul>"));
+        learn(&mut seen, &moved, vec![Part::Whole(node(&moved, "m"))]);
+        assert!(seen.knows("k"));
+        assert!(!seen.known("l").unwrap().shows("k"), "no read showed `k` inside `l`");
+        // The person moves it back (undo).
+        let doc = page(&format!("{}{K}</ul>{M}</ul>", &L[..L.len() - 5]));
+        let before = tree(&doc);
+
+        let written = "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">one</p></li><li><p>two</p></li></ul>";
+        for op in [replace("l", written), replace("l", L), delete("l")] {
+            let found = checked(&doc, &seen, std::slice::from_ref(&op));
+            assert!(found.iter().any(|u| u.ids.contains(&"k".to_string())), "{op:?}: {found:?}");
+            assert!(apply_seen(&doc, &seen, &[op]).is_err());
+        }
+        assert_eq!(tree(&doc), before, "a refused batch writes nothing");
+        assert_eq!(node(&doc, "pk").text_content(), "kay");
+
+        // Read on inside the list, `k` is shown there, and the list goes.
+        seen.learn(&Shown::html(vec![Part::Whole(node(&doc, "k"))]).inside(Some("l")), &tree(&doc), &HashSet::new());
+        assert!(apply_seen(&doc, &seen, &[delete("l")]).is_ok());
+    }
+
+    /// The same, with the block moved out to the page's top level and read
+    /// there: by a read on at the top level (markdown) or an `ids` read
+    /// showing it alone (HTML). A block a read showed at the top level was
+    /// never placed, so the quote still held it as shown inside it: a
+    /// delete or a replace leaving it out took the person's paragraph, and a
+    /// replace writing a paragraph with no id wrote the model's words under
+    /// its id.
+    #[test]
+    fn a_block_counted_unread_then_read_at_the_top_level_is_not_shown_inside_its_old_block() {
+        const Q: &str = "<blockquote data-id=\"q\"><p data-id=\"a\">one</p></blockquote>";
+        const K: &str = "<p data-id=\"k\">kay</p>";
+        const END: &str = "<p data-id=\"end\">End</p>";
+        let inside = format!("{}{K}</blockquote>{END}", &Q[..Q.len() - 13]);
+        let out = format!("{Q}{K}{END}");
+        type Read = fn(&Doc) -> Shown;
+        let reads: [(&str, Read); 2] = [
+            ("a read on at the top level", |d| {
+                Shown::markdown(vec![Part::Whole(node(d, "k")), Part::Whole(node(d, "end"))])
+            }),
+            ("an ids read", |d| Shown::html(vec![Part::Whole(node(d, "k"))])),
+        ];
+        for (how, read) in reads {
+            let mut seen = Seen::default();
+            // Read 1 opens the quote by its first paragraph and counts `k`.
+            let counted = page(&inside);
+            learn(&mut seen, &counted, vec![opened(&counted, "q", &["a"])]);
+            // A person moves `k` out of the quote, and a read shows it at the
+            // page's top level.
+            let moved = page(&out);
+            seen.learn(&read(&moved), &tree(&moved), &HashSet::new());
+            assert!(seen.knows("k"), "{how}");
+            assert!(!seen.known("q").unwrap().shows("k"), "{how}: no read showed `k` inside `q`");
+            // The person moves it back.
+            let doc = page(&inside);
+            let before = tree(&doc);
+
+            let id_less = "<blockquote data-id=\"q\"><p data-id=\"a\">one</p><p>model words</p></blockquote>";
+            for op in [delete("q"), replace("q", Q), replace("q", id_less)] {
+                let found = checked(&doc, &seen, std::slice::from_ref(&op));
+                assert!(found.iter().any(|u| u.ids.contains(&"k".to_string())), "{how}, {op:?}: {found:?}");
+                assert!(apply_seen(&doc, &seen, &[op]).is_err(), "{how}");
+            }
+            assert_eq!(tree(&doc), before, "{how}: a refused batch writes nothing");
+            assert_eq!(node(&doc, "k").text_content(), "kay");
+        }
+    }
+
+    /// A delete is judged by what it takes, whatever else the batch writes:
+    /// a list read in part, deleted beside a rewrite of it, is refused at the
+    /// delete; one read whole, deleted beside an append, stands.
+    #[test]
+    fn a_delete_beside_any_write_is_judged_by_what_it_removes() {
+        let doc = page(&list(4));
+        let mut seen = Seen::default();
+        learn(&mut seen, &doc, vec![opened(&doc, "l", &["i0"])]);
+        let rewrite = Op::InsertAfter { id: "top".into(), html: "<ul><li><p>Item 0</p></li></ul>".into() };
+        let refused = apply_seen(&doc, &seen, &[delete("l"), rewrite.clone()]).unwrap_err();
+        assert_eq!(refused.len(), 1, "{refused:?}");
+        assert_eq!(refused[0].at, "op 1");
+        // The same delete in its own batch is refused just the same: the
+        // rewrite cannot follow it in the next edit.
+        assert!(apply_seen(&doc, &seen, &[delete("l")]).is_err());
+
+        let read_whole = Seen::of_page(&tree(&doc));
+        let applied = apply_seen(&doc, &read_whole, &[delete("l"), Op::Append { html: "<p>After</p>".into() }]);
+        assert!(applied.is_ok(), "{applied:?}");
+    }
+
+    /// A paragraph too long for any read, inside a quote the read opened:
+    /// a replace of the quote that leaves it out took it. Only an op naming
+    /// it takes it, which the refusal says.
+    #[test]
+    fn a_replace_that_leaves_out_an_opaque_block_is_refused_and_naming_it_lands() {
+        let doc = page("<blockquote data-id=\"q\"><p data-id=\"p1\">Teh log</p><p data-id=\"p2\">Long text</p></blockquote><p data-id=\"z\">After</p>");
+        let mut seen = Seen::default();
+        let p2 = node(&doc, "p2");
+        learn(&mut seen, &doc, vec![Part::Opened {
+            shell: shell(&node(&doc, "q")),
+            inside: vec![
+                Part::Whole(node(&doc, "p1")),
+                Part::Listed { id: "p2".into(), say: "too long".into(), opaque: Some(crate::seen::node_hash(&p2)) },
+            ],
+        }]);
+        let fixed = replace("q", "<blockquote><p data-id=\"p1\">The log</p></blockquote>");
+        let found = checked(&doc, &seen, std::slice::from_ref(&fixed));
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!((found[0].id(), &found[0].why), ("p2", &Why::NamedInside));
+        // Deleting the quote takes it the same way.
+        let found = checked(&doc, &seen, &[delete("q")]);
+        assert_eq!((found[0].id(), &found[0].why), ("p2", &Why::NamedInside));
+        // Named in an op of its own, earlier: both land.
+        let applied = apply_seen(&doc, &seen, &[delete("p2"), fixed]);
+        assert!(applied.is_ok(), "{applied:?}");
+        assert_eq!(
+            crate::to_html(&tree(&doc), true),
+            "<blockquote data-id=\"q\"><p data-id=\"p1\">The log</p></blockquote><p data-id=\"z\">After</p>"
+        );
+    }
+
+    /// A block too long for any read that changed since it was listed is
+    /// not taken, even by an op naming it: the listing named another text.
+    #[test]
+    fn an_opaque_block_changed_since_it_was_listed_is_refused() {
+        let doc = page("<p data-id=\"a\">One</p><pre data-id=\"code\"><code>log</code></pre>");
+        let mut seen = Seen::default();
+        learn(&mut seen, &doc, vec![
+            Part::Whole(node(&doc, "a")),
+            Part::Listed { id: "code".into(), say: "too long".into(), opaque: Some(crate::seen::node_hash(&node(&doc, "code"))) },
+        ]);
+        assert!(checked(&doc, &seen, &[replace("code", "<p>cut</p>")]).is_empty());
+        apply(&Contract::load(), &doc, None, &[replace("code", "<pre><code>log, more</code></pre>")]).unwrap();
+        let found = checked(&doc, &seen, &[replace("code", "<p>cut</p>")]);
+        assert_eq!((found[0].id(), &found[0].why), ("code", &Why::ListedChanged));
+    }
+
+    /// A person's change to an item of a list read whole refuses a replace
+    /// of the list written from the read, and names the item, not the list.
+    #[test]
+    fn an_item_changed_since_the_read_refuses_the_list_replace_and_names_the_item() {
+        let doc = page(&list(3));
+        let seen = Seen::of_page(&tree(&doc));
+        apply(&Contract::load(), &doc, None, &[replace("p1", "<p>Item 1, packed</p>")]).unwrap();
+        let rewrite = replace("l", &crate::to_html(&[seen.subtree("l").unwrap()], true).replace("Item 2", "Item two"));
+        let found = checked(&doc, &seen, std::slice::from_ref(&rewrite));
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].id(), "p1");
+        assert!(matches!(found[0].why, Why::Changed { .. }));
+        assert!(apply_seen(&doc, &seen, &[rewrite]).is_err());
+        // An item deleted since: named as deleted, and the list too.
+        let doc = page(&list(3));
+        let seen = Seen::of_page(&tree(&doc));
+        apply(&Contract::load(), &doc, None, &[delete("i1")]).unwrap();
+        let found = checked(&doc, &seen, &[replace("l", "<ul><li><p>Item 0</p></li><li><p>Item 1</p></li><li><p>Item 2</p></li></ul>")]);
+        assert_eq!(found[0].id(), "l");
+        assert_eq!(found[0].why, Why::Changed { deleted: vec!["i1".into()], added: vec![] });
+    }
+
+    /// An item a person added to a list the read showed whole is no item of
+    /// the read: a delete of the list is refused over it, said to be new.
+    #[test]
+    fn an_item_added_since_refuses_a_delete_and_is_named() {
+        let doc = page(&list(3));
+        let seen = Seen::of_page(&tree(&doc));
+        apply(&Contract::load(), &doc, None, &[Op::InsertAfter { id: "i0".into(), html: "<li><p>socks</p></li>".into() }]).unwrap();
+        let added = tree(&doc)[1].content[1].id().unwrap().to_string();
+        let found = checked(&doc, &seen, &[delete("l")]);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].ids, std::slice::from_ref(&added));
+        assert_eq!(found[0].why, Why::Unread { added_since: true });
+        assert_eq!(found[0].after.as_deref(), Some("i0"));
+        assert_eq!(found[0].message(), format!("this op would remove `{added}`, added to `l` after you read it"));
+    }
+
+    /// The id of a block deleted after the read, written back, is a person's
+    /// deletion undone: refused.
+    #[test]
+    fn writing_back_the_id_of_a_block_deleted_since_is_refused() {
+        let doc = page(&list(3));
+        let seen = Seen::of_page(&tree(&doc));
+        apply(&Contract::load(), &doc, None, &[delete("i1")]).unwrap();
+        let found = checked(&doc, &seen, &[Op::InsertAfter { id: "i0".into(), html: "<li data-id=\"i1\"><p data-id=\"p1\">Item 1</p></li>".into() }]);
+        assert!(found.iter().any(|u| u.why == Why::Deleted && u.id() == "i1"), "{found:?}");
+    }
+
+    /// Markdown does not say what a block's HTML is: a write that changes a
+    /// block shown only so is refused, and a reorder that changes none lands.
+    #[test]
+    fn a_markdown_only_block_is_refused_only_where_the_write_changes_it() {
+        let doc = page("<p data-id=\"a\">Lunch with <virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention></p>\
+                        <ul data-id=\"l\"><li data-id=\"i0\"><p data-id=\"p0\">One</p></li><li data-id=\"i1\"><p data-id=\"p1\">Two</p></li></ul>");
+        let mut seen = Seen::default();
+        seen.learn(&Shown::markdown(tree(&doc).into_iter().map(Part::Whole).collect()), &tree(&doc), &HashSet::new());
+        let found = checked(&doc, &seen, &[replace("a", "<p>Lunch with <a href=\"/person/person_1\">@Nick</a></p>")]);
+        assert_eq!((found[0].id(), &found[0].why), ("a", &Why::MarkdownOnly));
+        let reordered = apply_seen(&doc, &seen, &[replace("l", "<ul><li><p>Two</p></li><li><p>One</p></li></ul>")]);
+        assert!(reordered.is_ok(), "{reordered:?}");
+        let texts: Vec<String> = tree(&doc)[1].content.iter().map(Node::text_content).collect();
+        assert_eq!(texts, ["Two", "One"]);
+    }
+
+    /// A block the batch inserted is its own to replace in the same batch.
+    #[test]
+    fn a_batchs_own_inserts_are_its_own() {
+        let doc = page("<p data-id=\"a\">One</p>");
+        let seen = Seen::default();
+        let applied = apply_seen(&doc, &seen, &[Op::Append { html: "<p data-id=\"n\">New</p>".into() }, replace("n", "<p>Newer</p>")]);
+        assert!(applied.is_ok(), "{applied:?}");
+    }
+
+    /// A list no read showed, named in a replace's HTML by its id (copied
+    /// from a comment that listed it), is no read of it: the replace that
+    /// would write over it is refused.
+    #[test]
+    fn an_id_named_only_in_a_comment_does_not_carry_a_rewrite() {
+        let doc = page(&format!("<blockquote data-id=\"q\"><p data-id=\"x\">Intro</p>{}</blockquote>", list(3).replace("<p data-id=\"top\">Top</p>", "").replace("<p data-id=\"end\">End</p>", "")));
+        let mut seen = Seen::default();
+        learn(&mut seen, &doc, vec![Part::Opened {
+            shell: shell(&node(&doc, "q")),
+            inside: vec![Part::Whole(node(&doc, "x")), Part::Listed { id: "l".into(), say: "read it by id".into(), opaque: None }],
+        }]);
+        let found = checked(&doc, &seen, &[replace("q", "<blockquote><p>Intro, edited</p><ul data-id=\"l\"><li><p>Item 0</p></li></ul></blockquote>")]);
+        assert!(!found.is_empty());
+        assert!(found.iter().all(|u| matches!(u.why, Why::Unread { .. })), "{found:?}");
+    }
+
+    /// A table row too long for any read is listed whole; the blocks in its
+    /// cells are not, and a replace of the row that drops them is refused
+    /// over them, by id, to be read.
+    #[test]
+    fn a_row_listed_whole_does_not_take_the_blocks_in_its_cells() {
+        let doc = page(&format!(
+            "<table data-id=\"t\"><tr data-id=\"r\"><td><p data-id=\"c1\">Day</p></td><td>{}</td></tr></table>",
+            list(3).replace("<p data-id=\"top\">Top</p>", "").replace("<p data-id=\"end\">End</p>", "")
+        ));
+        let mut seen = Seen::default();
+        learn(&mut seen, &doc, vec![Part::Opened {
+            shell: shell(&node(&doc, "t")),
+            inside: vec![Part::Listed { id: "r".into(), say: "too long".into(), opaque: Some(crate::seen::node_hash(&node(&doc, "r"))) }],
+        }]);
+        let found = checked(&doc, &seen, &[replace("r", "<tr><td><p>Day</p></td><td><p>Short</p></td></tr>")]);
+        let named: Vec<&str> = found.iter().map(Unseen::id).collect();
+        assert!(named.contains(&"l"), "{found:?}");
+        assert!(found.iter().all(|u| matches!(u.why, Why::Unread { .. })), "{found:?}");
+        // Read, the row's blocks go with it.
+        learn(&mut seen, &doc, vec![Part::Whole(node(&doc, "c1")), Part::Whole(node(&doc, "l"))]);
+        let applied = apply_seen(&doc, &seen, &[replace("r", "<tr><td><p>Day</p></td><td><p>Short</p></td></tr>")]);
+        assert!(applied.is_ok(), "{applied:?}");
+    }
+
+    /// An item of a list no read showed, written over by its own replace,
+    /// is named itself, not the paragraph inside it.
+    #[test]
+    fn an_unread_target_is_named_as_the_block_the_op_names() {
+        let doc = page(&list(3));
+        let mut seen = Seen::default();
+        learn(&mut seen, &doc, vec![Part::Whole(node(&doc, "top"))]);
+        let found = checked(&doc, &seen, &[replace("i1", "<li><p>Item 1, packed</p></li>")]);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!((found[0].id(), found[0].target), ("i1", true));
+        assert_eq!(found[0].message(), "the block `i1` is not in the read that base names");
+    }
+
+    /// A callout read whole, with a list inside it read in part: the base
+    /// once took the callout from the page whole, so deleting it took the
+    /// items no read showed. The delete waits for the rest of the list.
+    #[test]
+    fn deleting_a_block_around_a_list_read_in_part_waits_for_the_rest_of_it() {
+        let items: String = (0..5).map(|i| format!("<li data-id=\"i{i}\"><p data-id=\"p{i}\">Item {i}</p></li>")).collect();
+        let doc = page(&format!(
+            "<p data-id=\"top\">Top</p><aside data-id=\"c\" data-tone=\"tip\"><p data-id=\"cp\">Packing:</p><ul data-id=\"l\">{items}</ul></aside>"
+        ));
+        let mut seen = Seen::default();
+        learn(&mut seen, &doc, vec![Part::Opened {
+            shell: shell(&node(&doc, "c")),
+            inside: vec![Part::Whole(node(&doc, "cp")), Part::Listed { id: "l".into(), say: "read it by id".into(), opaque: None }],
+        }]);
+        learn(&mut seen, &doc, vec![opened(&doc, "l", &["i0", "i1"])]);
+        let found = checked(&doc, &seen, &[delete("c")]);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].ids, ["i2", "i3", "i4"]);
+        assert_eq!((found[0].inside.as_deref(), found[0].after.as_deref()), (Some("l"), Some("i1")));
+        learn(&mut seen, &doc, (2..5).map(|i| Part::Whole(node(&doc, &format!("i{i}")))).collect());
+        assert!(apply_seen(&doc, &seen, &[delete("c")]).is_ok());
+    }
+
+    /// A block too long for any read goes by an op naming it, ahead of any
+    /// op on a block around it; after it, the op around it has already
+    /// taken it, and is refused for that.
+    #[test]
+    fn a_block_too_long_for_any_read_goes_only_by_an_op_that_names_it() {
+        let doc = page("<blockquote data-id=\"q\"><p data-id=\"p1\">Log</p><p data-id=\"p2\">Long text</p></blockquote><p data-id=\"z\">After</p>");
+        let mut seen = Seen::default();
+        learn(&mut seen, &doc, vec![Part::Opened {
+            shell: shell(&node(&doc, "q")),
+            inside: vec![
+                Part::Whole(node(&doc, "p1")),
+                Part::Listed { id: "p2".into(), say: "too long".into(), opaque: Some(crate::seen::node_hash(&node(&doc, "p2"))) },
+            ],
+        }]);
+        let refused = apply_seen(&doc, &seen, &[delete("q"), delete("p2")]).unwrap_err();
+        assert!(refused.iter().any(|p| p.at == "op 1" && p.message.contains("too long for any read")), "{refused:?}");
+        assert!(refused.iter().any(|p| p.at == "op 2" && p.message == "no block has id `p2`"), "{refused:?}");
+        let applied = apply_seen(&doc, &seen, &[delete("p2"), delete("q")]);
+        assert!(applied.is_ok(), "{applied:?}");
+        assert_eq!(crate::to_html(&tree(&doc), true), "<p data-id=\"z\">After</p>");
+    }
+
+    /// A block shown only as markdown, taken off the page while the batch
+    /// writes a link to a ref, is a move written from its markdown: the
+    /// mention in it would come back as a link. Taken alone, it goes.
+    #[test]
+    fn a_block_shown_as_markdown_is_not_moved_from_its_markdown() {
+        let doc = page("<p data-id=\"a\">Lunch with <virtues-mention to=\"/person/person_1\" label=\"Nick\"></virtues-mention></p><p data-id=\"b\">Coffee</p>");
+        let mut seen = Seen::default();
+        seen.learn(&Shown::markdown(tree(&doc).into_iter().map(Part::Whole).collect()), &tree(&doc), &HashSet::new());
+        let moved = [delete("a"), Op::InsertAfter { id: "b".into(), html: "<p>Lunch with <a href=\"/person/person_1\">@Nick</a></p>".into() }];
+        let found = checked(&doc, &seen, &moved);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!((found[0].id(), &found[0].why, found[0].removes), ("a", &Why::MarkdownOnly, true));
+        assert!(checked(&doc, &seen, &[delete("a")]).is_empty());
+        // Read as HTML, the move stands: the writer has seen the mention.
+        learn(&mut seen, &doc, vec![Part::Whole(node(&doc, "a"))]);
+        assert!(apply_seen(&doc, &seen, &moved).is_ok());
+    }
+
+    /// A footnote shown as markdown is its marker, its note a line at the
+    /// page's end, and a figure a fence: a block holding one, taken off the
+    /// page while the batch writes its marker as text or its fence as code,
+    /// is moved from its markdown, and comes back without its source or as
+    /// code. A veil written back as its brackets reads the same, and stands.
+    #[test]
+    fn a_footnoted_paragraph_shown_as_markdown_is_not_taken_by_its_text() {
+        let cases = [
+            (
+                "<p data-id=\"a\">Lunch.<virtues-footnote label=\"ev-1\" note=\"Message · 12:10 PM\"></virtues-footnote></p>",
+                "<p>Lunch.[^ev-1]</p>",
+            ),
+            (
+                "<virtues-figure data-id=\"a\" kind=\"quote\" text=\"Save me a seat.\"></virtues-figure>",
+                "<pre data-language=\"figure\">kind: quote\ntext: Save me a seat.</pre>",
+            ),
+        ];
+        for (block, written) in cases {
+            let doc = page(&format!("<p data-id=\"p0\">Intro.</p>{block}<p data-id=\"b\">End.</p>"));
+            let mut seen = Seen::default();
+            seen.learn(&Shown::markdown(tree(&doc).into_iter().map(Part::Whole).collect()), &tree(&doc), &HashSet::new());
+            let moved = [delete("a"), Op::InsertBefore { id: "p0".into(), html: written.into() }];
+            let found = checked(&doc, &seen, &moved);
+            assert_eq!(found.len(), 1, "{block}: {found:?}");
+            assert_eq!((found[0].id(), &found[0].why, found[0].removes), ("a", &Why::MarkdownOnly, true), "{block}");
+            assert!(checked(&doc, &seen, &[delete("a")]).is_empty(), "{block}");
+        }
+        let doc = page("<p data-id=\"p0\">Intro.</p><p data-id=\"a\">At <virtues-veil>the clinic</virtues-veil>.</p>");
+        let mut seen = Seen::default();
+        seen.learn(&Shown::markdown(tree(&doc).into_iter().map(Part::Whole).collect()), &tree(&doc), &HashSet::new());
+        let moved = [delete("a"), Op::InsertBefore { id: "p0".into(), html: "<p>At ⟦the clinic⟧.</p>".into() }];
+        assert!(checked(&doc, &seen, &moved).is_empty());
+    }
+
+    /// Audio, a video, a file and a callout shown only as markdown read as
+    /// an image and a quote: moved by a delete and an insert written from
+    /// that markdown, each came back as the other kind, the player gone.
+    #[test]
+    fn a_widget_shown_as_markdown_is_not_moved_from_its_markdown() {
+        let src = "/drive/file_0123456789abcdef";
+        let cases = [
+            (format!("<audio data-id=\"a\" src=\"{src}\" data-name=\"memo.m4a\"></audio>"), format!("<img src=\"{src}\" alt=\"memo.m4a\">")),
+            (format!("<video data-id=\"a\" src=\"{src}\" data-name=\"walk.mp4\"></video>"), format!("<img src=\"{src}\" alt=\"walk.mp4\">")),
+            (
+                format!("<virtues-file data-id=\"a\" src=\"{src}\" data-name=\"plan.pdf\"></virtues-file>"),
+                format!("<img src=\"{src}\" alt=\"plan.pdf\">"),
+            ),
+            (
+                "<aside data-id=\"a\" data-tone=\"warning\"><p data-id=\"w\">Mind the step.</p></aside>".to_string(),
+                "<blockquote><p>[!WARNING]<br>Mind the step.</p></blockquote>".to_string(),
+            ),
+        ];
+        for (block, written) in cases {
+            let doc = page(&format!("<p data-id=\"p0\">Intro.</p>{block}<p data-id=\"b\">End.</p>"));
+            let mut seen = Seen::default();
+            seen.learn(&Shown::markdown(tree(&doc).into_iter().map(Part::Whole).collect()), &tree(&doc), &HashSet::new());
+            let moved = [delete("a"), Op::InsertBefore { id: "p0".into(), html: written }];
+            let found = checked(&doc, &seen, &moved);
+            assert_eq!(found.len(), 1, "{block}: {found:?}");
+            assert_eq!((found[0].id(), &found[0].why, found[0].removes), ("a", &Why::MarkdownOnly, true), "{block}");
+            assert!(checked(&doc, &seen, &[delete("a")]).is_empty(), "{block}");
+        }
+        // An image's markdown says all an image is: moved from it, it stands.
+        let doc = page(&format!("<p data-id=\"p0\">Intro.</p><img data-id=\"a\" src=\"{src}\" alt=\"harbour.png\"><p data-id=\"b\">End.</p>"));
+        let mut seen = Seen::default();
+        seen.learn(&Shown::markdown(tree(&doc).into_iter().map(Part::Whole).collect()), &tree(&doc), &HashSet::new());
+        let moved = [delete("a"), Op::InsertBefore { id: "p0".into(), html: format!("<img src=\"{src}\" alt=\"harbour.png\">") }];
+        assert!(checked(&doc, &seen, &moved).is_empty());
+    }
+
+    /// Blocks unread in several places of what one op takes are one
+    /// problem, said from the first.
+    #[test]
+    fn one_ops_unread_blocks_are_one_problem() {
+        let lists: String = (0..3)
+            .map(|l| {
+                let items: String = (0..3).map(|i| format!("<li data-id=\"i{l}{i}\"><p data-id=\"p{l}{i}\">Item {i}</p></li>")).collect();
+                format!("<li data-id=\"o{l}\"><p data-id=\"h{l}\">Group {l}</p><ul data-id=\"l{l}\">{items}</ul></li>")
+            })
+            .collect();
+        let doc = page(&format!("<ul data-id=\"outer\">{lists}</ul><p data-id=\"z\">After</p>"));
+        let mut seen = Seen::default();
+        learn(&mut seen, &doc, vec![Part::Opened {
+            shell: shell(&node(&doc, "outer")),
+            inside: (0..3)
+                .map(|l| Part::Opened {
+                    shell: shell(&node(&doc, &format!("o{l}"))),
+                    inside: vec![Part::Whole(node(&doc, &format!("h{l}"))), opened(&doc, &format!("l{l}"), &[&format!("i{l}0")])],
+                })
+                .collect(),
+        }]);
+        let found = checked(&doc, &seen, &[delete("outer")]);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].ids, ["i01", "i02", "i11", "i12", "i21", "i22"]);
+        assert_eq!(
+            found[0].message(),
+            "this op would remove 6 blocks that no read has shown you, from `i01` inside `l0`"
+        );
+    }
+
+    /// An item a person moved into a block the read showed without it (Tab
+    /// on it, which nests it under the item above, keeping its id) goes
+    /// with that block only once a read has shown it there: a delete of the
+    /// block is refused over it, as a replace of it is, though a read showed
+    /// the item where it was.
+    #[test]
+    fn a_block_moved_into_one_read_without_it_refuses_a_delete_of_that_one() {
+        let read = page(
+            "<ul data-id=\"l\"><li data-id=\"a\"><p data-id=\"pa\">A</p></li>\
+             <li data-id=\"b\"><p data-id=\"pb\">B</p><ul data-id=\"n\"><li data-id=\"n1\"><p data-id=\"pn1\">N1</p></li></ul></li>\
+             <li data-id=\"c\"><p data-id=\"pc\">C</p></li></ul>",
+        );
+        let seen = Seen::of_page(&tree(&read));
+        let doc = page(
+            "<ul data-id=\"l\"><li data-id=\"a\"><p data-id=\"pa\">A</p></li>\
+             <li data-id=\"b\"><p data-id=\"pb\">B</p><ul data-id=\"n\"><li data-id=\"n1\"><p data-id=\"pn1\">N1</p></li>\
+             <li data-id=\"c\"><p data-id=\"pc\">C</p></li></ul></li></ul>",
+        );
+        let found = checked(&doc, &seen, &[delete("b")]);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].ids, ["c"]);
+        assert_eq!(found[0].why, Why::Unread { added_since: true });
+        assert_eq!(found[0].inside.as_deref(), Some("n"));
+        assert!(found[0].removes);
+        assert_eq!(found[0].message(), "this op would remove `c`, added to `n` after you read it");
+        let written = crate::to_html(&[seen.subtree("b").unwrap()], true);
+        assert!(!checked(&doc, &seen, &[replace("b", &written)]).is_empty());
+
+        // Named, it goes: the writer means it.
+        assert!(checked(&doc, &seen, &[delete("c"), delete("b")]).is_empty());
+        // Read where it is now, it goes with the block around it.
+        let mut now = seen.clone();
+        learn(&mut now, &doc, vec![Part::Whole(node(&doc, "n"))]);
+        assert!(apply_seen(&doc, &now, &[delete("b")]).is_ok());
+    }
+
+    /// A paragraph joined into the quote above it (Backspace at its start)
+    /// is taken with the quote only once a read has shown it there.
+    #[test]
+    fn a_paragraph_joined_into_a_quote_since_the_read_refuses_a_delete_of_the_quote() {
+        let read = page(
+            "<blockquote data-id=\"q\"><p data-id=\"x\">Quoted</p></blockquote><p data-id=\"p\">Mine</p><p data-id=\"z\">After</p>",
+        );
+        let seen = Seen::of_page(&tree(&read));
+        let doc = page(
+            "<blockquote data-id=\"q\"><p data-id=\"x\">Quoted</p><p data-id=\"p\">Mine</p></blockquote><p data-id=\"z\">After</p>",
+        );
+        let found = checked(&doc, &seen, &[delete("q")]);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!((found[0].id(), &found[0].why), ("p", &Why::Unread { added_since: true }));
+        assert!(apply_seen(&doc, &seen, &[delete("q")]).is_err());
+        assert_eq!(tree(&doc).len(), 2, "a refused batch writes nothing");
+    }
+
+    /// A replace that names a block means it to stay, and is no word to
+    /// take it with a block around it: a paragraph a person joined into a
+    /// quote, replaced by name in the batch that deletes the quote, went
+    /// with the quote, the person's paragraph and the update both lost;
+    /// so did an item indented into the list a delete took. A delete, or a
+    /// replace with nothing, takes it by name.
+    #[test]
+    fn a_replace_naming_a_block_moved_in_does_not_take_it_with_the_block_around_it() {
+        let read = page(
+            "<blockquote data-id=\"q\"><p data-id=\"x\">Quoted</p></blockquote><p data-id=\"p\">Mine</p><p data-id=\"z\">After</p>",
+        );
+        let seen = Seen::of_page(&tree(&read));
+        let doc = page(
+            "<blockquote data-id=\"q\"><p data-id=\"x\">Quoted</p><p data-id=\"p\">Mine</p></blockquote><p data-id=\"z\">After</p>",
+        );
+        let ops = [replace("p", "<p>Mine, updated</p>"), delete("q")];
+        let found = checked(&doc, &seen, &ops);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!((found[0].id(), &found[0].why, found[0].op), ("p", &Why::Unread { added_since: true }, 1));
+        assert!(apply_seen(&doc, &seen, &ops).is_err());
+        assert_eq!(node(&doc, "p").text_content(), "Mine");
+        assert!(checked(&doc, &seen, &[replace("p", ""), delete("q")]).is_empty());
+        assert!(checked(&doc, &seen, &[delete("p"), delete("q")]).is_empty());
+
+        let read = page(
+            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">Pack</p><ul data-id=\"n\"><li data-id=\"n1\"><p data-id=\"q1\">Sub</p></li></ul></li>\
+             <li data-id=\"i2\"><p data-id=\"p2\">Book the ferry</p></li></ul>",
+        );
+        let seen = Seen::of_page(&tree(&read));
+        let doc = page(
+            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">Pack</p><ul data-id=\"n\"><li data-id=\"n1\"><p data-id=\"q1\">Sub</p></li>\
+             <li data-id=\"i2\"><p data-id=\"p2\">Book the ferry</p></li></ul></li></ul>",
+        );
+        for ops in [
+            [replace("i2", "<li><p>Book the ferry for Friday</p></li>"), delete("n")],
+            [replace("p2", "<p>Book the ferry for Friday</p>"), delete("n")],
+        ] {
+            assert!(!checked(&doc, &seen, &ops).is_empty(), "{ops:?}");
+            assert!(apply_seen(&doc, &seen, &ops).is_err(), "{ops:?}");
+        }
+        assert_eq!(node(&doc, "p2").text_content(), "Book the ferry");
+    }
+
+    /// A text block merged with a person's change, then written over again
+    /// by a later op of the same batch, a replace of the list around it
+    /// from the writer's copy: the merge shielded the copy, which landed
+    /// over the person's words. Judged as written over, it is refused.
+    #[test]
+    fn a_merged_block_a_later_op_writes_over_is_judged_as_written_over() {
+        let doc = page(
+            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">Book the ferry seats</p></li>\
+             <li data-id=\"i2\"><p data-id=\"p2\">Pack the bags</p></li></ul><p data-id=\"z\">End</p>",
+        );
+        // `i2` read alone, then the list cut down to the way to `p1`: the
+        // list is known with `i2` not shown in it.
+        let mut seen = Seen::default();
+        learn(&mut seen, &doc, vec![Part::Whole(node(&doc, "i2"))]);
+        learn(&mut seen, &doc, vec![opened(&doc, "l", &["i1"])]);
+        assert!(!seen.complete_over(&node(&doc, "l")));
+        apply(&Contract::load(), &doc, None, &[replace("p1", "<p>Reserve the ferry seats</p>")]).unwrap();
+
+        let copy = "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">Book the ferry tickets</p></li>\
+                    <li data-id=\"i2\"><p data-id=\"p2\">Pack the bags</p></li></ul>";
+        let ops = [replace("p1", "<p>Book the ferry tickets</p>"), replace("l", copy)];
+        let found = checked(&doc, &seen, &ops);
+        assert!(found.iter().any(|u| u.id() == "p1" && u.op == 1), "{found:?}");
+        assert!(apply_seen(&doc, &seen, &ops).is_err());
+        assert_eq!(node(&doc, "p1").text_content(), "Reserve the ferry seats");
+
+        // The fix alone merges with the person's word.
+        let applied = apply_seen(&doc, &seen, &ops[..1]).unwrap();
+        assert_eq!(applied.merged, ["p1"]);
+        assert_eq!(node(&doc, "p1").text_content(), "Reserve the ferry tickets");
+    }
+
+    /// A paragraph a person joined into a quote too long for one read is
+    /// not taken with the quote on a read that opened it and counted the
+    /// paragraph without showing it: the opened read's shell named every
+    /// block inside, and a stub stood as a read showing it there, so the
+    /// paragraph read at the top level went with the quote unseen.
+    #[test]
+    fn an_opened_read_that_counts_a_block_moved_in_does_not_show_it_there() {
+        let quote: String = (0..8).map(|i| format!("<p data-id=\"q{i}\">Line {i}</p>")).collect();
+        let read = page(&format!("<blockquote data-id=\"q\">{quote}</blockquote><p data-id=\"x\">Mine</p><p data-id=\"z\">After</p>"));
+        let mut seen = Seen::of_page(&tree(&read));
+        let copy = crate::to_html(&[seen.subtree("q").unwrap()], true);
+        let doc = page(&format!(
+            "<blockquote data-id=\"q\">{quote}<p data-id=\"x\">Mine</p></blockquote><p data-id=\"z\">After</p>"
+        ));
+        assert!(!checked(&doc, &seen, &[replace("q", &copy)]).is_empty());
+
+        // Opened, its first lines shown and the rest, the joined one among
+        // them, counted.
+        learn(&mut seen, &doc, vec![opened(&doc, "q", &["q0", "q1", "q2"])]);
+        for op in [replace("q", &copy), delete("q")] {
+            let found = checked(&doc, &seen, std::slice::from_ref(&op));
+            assert!(found.iter().any(|u| u.ids.contains(&"x".to_string())), "{op:?}: {found:?}");
+            assert!(apply_seen(&doc, &seen, &[op]).is_err());
+        }
+        assert!(find_node(&tree(&doc), "x").is_some());
+
+        // Read on inside the quote, it is shown there, and goes with it.
+        seen.learn(
+            &Shown::html((3..8).map(|i| Part::Whole(node(&doc, &format!("q{i}")))).chain([Part::Whole(node(&doc, "x"))]).collect())
+                .inside(Some("q")),
+            &tree(&doc),
+            &HashSet::new(),
+        );
+        assert!(apply_seen(&doc, &seen, &[delete("q")]).is_ok());
+    }
+
+    /// A block a markdown read showed and an HTML read listed as too long
+    /// for any read goes only by an op naming it, never with a block around
+    /// it, even with a link to a ref in the batch: what the markdown showed
+    /// was judged first, and the block went unnamed, or the refusal asked
+    /// for an HTML read that could only list it again.
+    #[test]
+    fn a_block_shown_as_markdown_and_listed_goes_only_by_name() {
+        let doc = page(
+            "<ul data-id=\"l\"><li data-id=\"i1\"><p data-id=\"p1\">One</p>\
+             <pre data-id=\"code\"><code>a &lt; b &amp;&amp; c &gt; d</code></pre></li>\
+             <li data-id=\"i2\"><p data-id=\"p2\">Two</p></li></ul><p data-id=\"z\">After</p>",
+        );
+        let mut seen = Seen::default();
+        seen.learn(&Shown::markdown(tree(&doc).into_iter().map(Part::Whole).collect()), &tree(&doc), &HashSet::new());
+        let listed = Part::Listed {
+            id: "code".into(),
+            say: "too long".into(),
+            opaque: Some(crate::seen::node_hash(&node(&doc, "code"))),
+        };
+        learn(&mut seen, &doc, vec![Part::Opened {
+            shell: shell(&node(&doc, "l")),
+            inside: vec![
+                Part::Opened { shell: shell(&node(&doc, "i1")), inside: vec![Part::Whole(node(&doc, "p1")), listed] },
+                Part::Whole(node(&doc, "i2")),
+            ],
+        }]);
+        let link = Op::Append { html: "<p><a href=\"/person/person_1\">@Nick</a></p>".into() };
+        for ops in [vec![delete("l")], vec![delete("i1")], vec![delete("l"), link.clone()]] {
+            let found = checked(&doc, &seen, &ops);
+            assert_eq!(found.len(), 1, "{ops:?}: {found:?}");
+            assert_eq!((found[0].id(), &found[0].why), ("code", &Why::NamedInside), "{ops:?}");
+            assert!(apply_seen(&doc, &seen, &ops).is_err());
+        }
+        assert!(find_node(&tree(&doc), "code").is_some());
+        assert!(apply_seen(&doc, &seen, &[delete("code"), delete("l"), link]).is_ok());
+    }
+
+    /// A person's change to a text block's attribute since the read is
+    /// merged with the writer's change to its text, and an attribute both
+    /// changed is refused: the person's level and language were written
+    /// over, said only as merged.
+    #[test]
+    fn an_attribute_both_changed_since_the_read_is_refused_and_one_alone_is_kept() {
+        let c = Contract::load();
+        let doc = page("<h2 data-id=\"h\">Plan for the trip</h2><pre data-id=\"k\" data-language=\"python\"><code>x = 1</code></pre>");
+        let seen = Seen::of_page(&tree(&doc));
+        apply(&c, &doc, None, &[
+            replace("h", "<h3>Plan for the trip</h3>"),
+            replace("k", "<pre data-language=\"rust\"><code>x = 1</code></pre>"),
+        ])
+        .unwrap();
+        for op in [replace("h", "<h1>Plan for the holiday</h1>"), replace("k", "<pre data-language=\"go\"><code>x = 2</code></pre>")] {
+            let refused = apply_seen(&doc, &seen, std::slice::from_ref(&op)).unwrap_err();
+            assert!(refused[0].message.starts_with("someone changed the block's "), "{refused:?}");
+        }
+        assert_eq!(
+            crate::to_html(&tree(&doc), true),
+            "<h3 data-id=\"h\">Plan for the trip</h3><pre data-id=\"k\" data-language=\"rust\">x = 1</pre>"
+        );
+        // Only the text changed here, only the level there: both stand.
+        apply_seen(&doc, &seen, &[replace("h", "<h2>Plan for the holiday</h2>")]).unwrap();
+        assert_eq!(node(&doc, "h").attrs["level"], 3);
+        assert_eq!(node(&doc, "h").text_content(), "Plan for the holiday");
+    }
+
+    /// A block a markdown read showed whole, and an HTML read then listed
+    /// as too long for any read (code, whose HTML is far longer than its
+    /// markdown), is replaced by an op naming it while it stands as listed,
+    /// as a block only ever listed is: no read could show it as HTML.
+    #[test]
+    fn a_block_shown_as_markdown_then_listed_is_replaced_by_name() {
+        let doc = page("<p data-id=\"a\">One</p><pre data-id=\"code\"><code>a &lt; b &amp;&amp; c &gt; d</code></pre>");
+        let mut seen = Seen::default();
+        seen.learn(&Shown::markdown(tree(&doc).into_iter().map(Part::Whole).collect()), &tree(&doc), &HashSet::new());
+        learn(&mut seen, &doc, vec![Part::Listed {
+            id: "code".into(),
+            say: "too long".into(),
+            opaque: Some(crate::seen::node_hash(&node(&doc, "code"))),
+        }]);
+        assert_eq!(seen.known("code").map(|k| k.form), Some(crate::seen::Form::Markdown));
+        let applied = apply_seen(&doc, &seen, &[replace("code", "<pre><code>a &lt; b</code></pre>")]);
+        assert!(applied.is_ok(), "{applied:?}");
+        assert_eq!(node(&doc, "code").text_content(), "a < b");
+        // A block around it still needs a read of its HTML to write over it.
+        let doc = page("<blockquote data-id=\"q\"><pre data-id=\"code\"><code>x &lt; y</code></pre></blockquote>");
+        let mut seen = Seen::default();
+        seen.learn(&Shown::markdown(tree(&doc).into_iter().map(Part::Whole).collect()), &tree(&doc), &HashSet::new());
+        learn(&mut seen, &doc, vec![Part::Listed {
+            id: "code".into(),
+            say: "too long".into(),
+            opaque: Some(crate::seen::node_hash(&node(&doc, "code"))),
+        }]);
+        assert!(!checked(&doc, &seen, &[replace("q", "<blockquote><pre><code>x &lt; z</code></pre></blockquote>")]).is_empty());
+    }
+
+    /// A refusal over a block too long for any read, inside one an op
+    /// takes, says to delete it by its id in an op before. When
+    /// it is all its parent holds (an item's one paragraph, a cell's one
+    /// block), deleting it first leaves the parent empty until the op after
+    /// takes the parent too: judged once the batch is done, that lands.
+    #[test]
+    fn deleting_a_parents_only_block_before_the_parent_lands() {
+        let big = |doc: &Doc| Part::Listed {
+            id: "big".into(),
+            say: "too long".into(),
+            opaque: Some(crate::seen::node_hash(&node(doc, "big"))),
+        };
+        let doc = page(
+            "<ul data-id=\"l\"><li data-id=\"i0\"><p data-id=\"p0\">Item 0</p></li>\
+             <li data-id=\"i1\"><p data-id=\"big\">Long</p></li></ul><p data-id=\"end\">End</p>",
+        );
+        let mut seen = Seen::default();
+        learn(&mut seen, &doc, vec![Part::Opened {
+            shell: shell(&node(&doc, "l")),
+            inside: vec![
+                Part::Whole(node(&doc, "i0")),
+                Part::Opened { shell: shell(&node(&doc, "i1")), inside: vec![big(&doc)] },
+            ],
+        }]);
+        let found = checked(&doc, &seen, &[delete("i1")]);
+        assert_eq!((found[0].id(), &found[0].why), ("big", &Why::NamedInside));
+        let alone = apply_seen(&doc, &seen, &[delete("big")]).unwrap_err();
+        assert!(alone[0].message.contains("`listItem` would hold nothing"), "{alone:?}");
+        let applied = apply_seen(&doc, &seen, &[delete("big"), delete("i1")]);
+        assert!(applied.is_ok(), "{applied:?}");
+        assert!(find_node(&tree(&doc), "i1").is_none());
+
+        let doc = page(
+            "<table data-id=\"t\"><tr data-id=\"r0\"><td><p data-id=\"a\">A</p></td><td><p data-id=\"b\">B</p></td></tr>\
+             <tr data-id=\"r1\"><td><p data-id=\"c\">C</p></td><td><p data-id=\"big\">Long</p></td></tr></table>",
+        );
+        let mut seen = Seen::default();
+        learn(&mut seen, &doc, vec![Part::Opened {
+            shell: shell(&node(&doc, "t")),
+            inside: vec![
+                Part::Whole(node(&doc, "r0")),
+                Part::Opened { shell: shell(&node(&doc, "r1")), inside: vec![] },
+            ],
+        }]);
+        learn(&mut seen, &doc, vec![Part::Whole(node(&doc, "c")), big(&doc)]);
+        let applied = apply_seen(&doc, &seen, &[delete("big"), delete("r1")]);
+        assert!(applied.is_ok(), "{applied:?}");
+        assert_eq!(node(&doc, "t").content.len(), 1);
     }
 }

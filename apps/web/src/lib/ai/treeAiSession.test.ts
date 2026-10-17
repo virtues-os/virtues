@@ -20,8 +20,9 @@ vi.mock('$lib/components/pages/nodes/MediaNode.svelte', () => ({ default: () => 
 vi.mock('$lib/components/pages/nodes/AppletNode.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/components/pages/nodes/CalloutNode.svelte', () => ({ default: () => {} }));
 vi.mock('$lib/components/pages/nodes/CodeBlockNode.svelte', () => ({ default: () => {} }));
+vi.mock('$lib/components/pages/nodes/FootnoteNode.svelte', () => ({ default: () => {} }));
+vi.mock('$lib/components/pages/nodes/FigureNode.svelte', () => ({ default: () => {} }));
 vi.mock('./aiSession.svelte', () => ({ aiSession: { set: vi.fn(), reset: vi.fn(), active: false } }));
-vi.mock('./aiCursorSession', () => ({ abortAiSession: vi.fn() }));
 vi.mock('svelte-sonner', () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 
 import type { Editor } from '@tiptap/core';
@@ -35,6 +36,9 @@ import { acceptProposal, proposalIds, rejectProposal } from '$lib/document/sugge
 import { pageDoc, posIn, settle } from '$lib/document/test-utils';
 import type { AiCompleteRequest } from './inlineComplete';
 import { createTreeAiDriver } from './treeAiSession';
+import type { ConvertResult } from '$lib/document/converter';
+import { toMarkdown } from '$lib/document/markdown';
+import { parseDayArticle } from '$lib/wiki/dayArticle';
 
 const editors: Editor[] = [];
 
@@ -105,7 +109,15 @@ function feed() {
 	};
 }
 
-function driverWith(f: ReturnType<typeof feed>, convert = vi.fn(async (_md: string) => ({ html: '' }))) {
+/** What the page's converter answers for markdown it makes `html` of. */
+function converted(html: string): ConvertResult {
+	return { kind: 'converted', html, notes: [] };
+}
+
+function driverWith(
+	f: ReturnType<typeof feed>,
+	convert = vi.fn((_md: string, _as?: string): ConvertResult => ({ kind: 'unavailable' })),
+) {
 	return { driver: createTreeAiDriver({ stream: f.stream, convert, flushMs: 0, dissolveMs: 0, telegraphMs: 0 }), convert };
 }
 
@@ -466,7 +478,7 @@ describe('the final conversion', () => {
 		const { here, there } = twoDevices('<p>Intro text.</p><p>After.</p>');
 		const before = { intro: idOf(here, 'Intro text.'), after: idOf(here, 'After.') };
 		const f = feed();
-		const convert = vi.fn(async (_md: string) => ({ html: '<ul><li><p>one</p></li><li><p>two</p></li></ul>' }));
+		const convert = vi.fn((_md: string) => converted('<ul><li><p>one</p></li><li><p>two</p></li></ul>'));
 		const { driver } = driverWith(f, convert);
 		here.commands.setTextSelection(posIn(here, 'Intro text.', 'Intro text.'.length));
 		driver.start({ editor: here, intent: 'continue', instruction: 'List them' });
@@ -474,7 +486,7 @@ describe('the final conversion', () => {
 		f.end();
 		await driver.whenIdle();
 
-		expect(convert).toHaveBeenCalledWith('\n\n- one\n- two\n', expect.anything());
+		expect(convert).toHaveBeenCalledWith('\n\n- one\n- two\n', 'written');
 		const want = ['paragraph: Intro text.', 'bulletList: onetwo', 'paragraph: After.'];
 		expect(blocks(here)).toEqual(want);
 		expect(blocks(there)).toEqual(want);
@@ -482,10 +494,188 @@ describe('the final conversion', () => {
 		expect(idOf(here, 'After.')).toBe(before.after);
 	});
 
+	// On an article the output reads as an article's markdown, and a
+	// footnote it cites without a note takes the page's own note for that
+	// label, as the server gives a model's footnote one.
+	it('on an article, reads the output as one, and a footnote it cites takes the page’s note', async () => {
+		const { here, there } = twoDevices(
+			'<p>Lunch.<virtues-footnote label="ev-1" note="Message · 12:10 PM"></virtues-footnote></p><p>Then</p>',
+		);
+		const f = feed();
+		const convert = vi.fn((_md: string, _as?: string) =>
+			converted('<p>coffee.<virtues-footnote label="ev-1"></virtues-footnote> Walked.<virtues-footnote label="ev-7"></virtues-footnote></p>'),
+		);
+		const { driver } = driverWith(f, convert);
+		here.commands.setTextSelection(posIn(here, 'Then', 4));
+		driver.start({ editor: here, intent: 'continue', instruction: 'Go on', article: true });
+		f.push(' coffee.[^ev-1] Walked.[^ev-7]');
+		f.end();
+		await driver.whenIdle();
+		expect(convert).toHaveBeenCalledWith(' coffee.[^ev-1] Walked.[^ev-7]', 'article');
+		const notes = (editor: Editor) => {
+			const out: [string, unknown][] = [];
+			editor.state.doc.descendants((n) => {
+				if (n.type.name === 'footnote') out.push([n.attrs.label, n.attrs.note]);
+				return true;
+			});
+			return out;
+		};
+		const want = [
+			['ev-1', 'Message · 12:10 PM'],
+			['ev-1', 'Message · 12:10 PM'],
+			['ev-7', null],
+		];
+		expect(notes(here)).toEqual(want);
+		expect(notes(there)).toEqual(want);
+	});
+
+	// The model reads an article as its markdown, sources and veils included,
+	// and a rewrite keeps each source after the words that replace its
+	// sentence: a source cannot be proposed, so the words go before it.
+	describe('on an article', () => {
+		// The Abstract first: the day page reads sentences after it.
+		const ARTICLE =
+			'<p>A day out.</p><p>Lunch was fine.<virtues-footnote label="ev-1" note="Message · 12:10 PM"></virtues-footnote> ' +
+			'You met <virtues-veil>Nick</virtues-veil> at the clinic.<virtues-footnote label="ev-2" note="Location · 1:00 PM"></virtues-footnote> ' +
+			'You walked home.<virtues-footnote label="ev-3" note="Location · 2:00 PM"></virtues-footnote></p>';
+
+		/** Where `text` starts in a text run of the page: footnotes count, as positions do. */
+		function at(editor: Editor, text: string): number {
+			let found = -1;
+			editor.state.doc.descendants((node, pos) => {
+				if (found < 0 && node.isText && node.text!.includes(text)) found = pos + node.text!.indexOf(text);
+				return found < 0;
+			});
+			return found;
+		}
+
+		/** Where the footnote labelled `label` ends. */
+		function after(editor: Editor, label: string): number {
+			let found = -1;
+			editor.state.doc.descendants((node, pos) => {
+				if (found < 0 && node.type.name === 'footnote' && node.attrs.label === label) found = pos + node.nodeSize;
+				return found < 0;
+			});
+			return found;
+		}
+
+		/** Each sentence of the page as the day page reads its export: its words, sources and veils. */
+		function read(editor: Editor) {
+			const markdown = toMarkdown(editor.state.doc.content);
+			return parseDayArticle(markdown).blocks.flatMap((b) =>
+				b.sentences.map((s) => ({ words: s.markdown, sources: s.evidence.map((e) => e.label) })),
+			);
+		}
+
+		it('shows the model its sources and veils, and keeps each sentence its own', async () => {
+			const { here, there } = twoDevices(ARTICLE);
+			const f = feed();
+			const { driver } = driverWith(f);
+			// The second and third sentences, each with its source.
+			here.commands.setTextSelection({ from: at(here, 'You met'), to: after(here, 'ev-3') });
+			driver.start({ editor: here, intent: 'rewrite', instruction: 'Warmer', article: true });
+			for (const chunk of ['You saw ⟦Ni', 'ck⟧ at the clinic.[^ev', '-2] You', ' strolled home.[^ev-3]']) {
+				await settle();
+				f.push(chunk);
+			}
+			f.end();
+			await driver.whenIdle();
+
+			expect(f.requests[0].selection).toBe('You met ⟦Nick⟧ at the clinic.[^ev-2] You walked home.[^ev-3]');
+			expect(f.requests[0].context_before).toBe('A day out.\n\nLunch was fine.[^ev-1] ');
+			expect(f.requests[0].context_after).toBe(
+				'\n\n[^ev-1]: Message · 12:10 PM\n[^ev-2]: Location · 1:00 PM\n[^ev-3]: Location · 2:00 PM',
+			);
+
+			const [id] = proposalIds(here.state);
+			acceptProposal(here, id);
+			const accepted = [
+				{ words: 'Lunch was fine.', sources: ['Message · 12:10 PM'] },
+				{ words: 'You saw ⟦Nick⟧ at the clinic.', sources: ['Location · 1:00 PM'] },
+				{ words: 'You strolled home.', sources: ['Location · 2:00 PM'] },
+			];
+			expect(read(here)).toEqual(accepted);
+			expect(read(there)).toEqual(accepted);
+		});
+
+		it('keeps each paragraph its sentence and source across a selection of two', async () => {
+			const { here } = twoDevices(
+				'<p>A day out.</p><p>You ate.<virtues-footnote label="ev-1" note="Message · 12:10 PM"></virtues-footnote></p>' +
+					'<p>You slept.<virtues-footnote label="ev-2" note="Location · 11:00 PM"></virtues-footnote></p>',
+			);
+			const f = feed();
+			const { driver } = driverWith(f);
+			here.commands.setTextSelection({ from: at(here, 'You ate.'), to: after(here, 'ev-2') });
+			driver.start({ editor: here, intent: 'rewrite', instruction: 'Warmer', article: true });
+			f.push('You ate well.[^ev-1]\n\nYou slept late.[^ev-2]');
+			f.end();
+			await driver.whenIdle();
+			expect(f.requests[0].selection).toBe('You ate.[^ev-1]\n\nYou slept.[^ev-2]');
+			acceptProposal(here, proposalIds(here.state)[0]);
+			expect(read(here)).toEqual([
+				{ words: 'You ate well.', sources: ['Message · 12:10 PM'] },
+				{ words: 'You slept late.', sources: ['Location · 11:00 PM'] },
+			]);
+			expect(blocks(here)).toEqual(['paragraph: A day out.', 'paragraph: You ate well.', 'paragraph: You slept late.']);
+		});
+
+		it('rejected, leaves the page as it was', async () => {
+			const { here } = twoDevices(ARTICLE);
+			const original = toMarkdown(here.state.doc.content);
+			const f = feed();
+			const { driver } = driverWith(f);
+			here.commands.setTextSelection({ from: at(here, 'You met'), to: after(here, 'ev-2') });
+			driver.start({ editor: here, intent: 'rewrite', instruction: 'Warmer', article: true });
+			f.push('You saw ⟦Nick⟧ at the clinic.[^ev-2]');
+			f.end();
+			await driver.whenIdle();
+			rejectProposal(here, proposalIds(here.state)[0]);
+			expect(toMarkdown(here.state.doc.content)).toBe(original);
+		});
+
+		it('adds no source of its own, and keeps the sources a rewrite that cites none replaced', async () => {
+			const { here } = twoDevices(ARTICLE);
+			const f = feed();
+			const { driver } = driverWith(f);
+			here.commands.setTextSelection({ from: at(here, 'You met'), to: after(here, 'ev-3') });
+			driver.start({ editor: here, intent: 'rewrite', instruction: 'Shorter', article: true });
+			f.push('You saw ⟦Nick⟧, then went home.[^ev-9]');
+			f.end();
+			await driver.whenIdle();
+			acceptProposal(here, proposalIds(here.state)[0]);
+			expect(read(here)).toEqual([
+				{ words: 'Lunch was fine.', sources: ['Message · 12:10 PM'] },
+				{ words: 'You saw ⟦Nick⟧, then went home.', sources: ['Location · 1:00 PM', 'Location · 2:00 PM'] },
+			]);
+			let footnotes = 0;
+			here.state.doc.descendants((n) => {
+				if (n.type.name === 'footnote') footnotes++;
+				return true;
+			});
+			expect(footnotes).toBe(3);
+		});
+
+		it('passes a source the selection opens with: it closes the sentence before', async () => {
+			const { here } = twoDevices(ARTICLE);
+			const f = feed();
+			const { driver } = driverWith(f);
+			here.commands.setTextSelection({ from: at(here, 'Lunch was fine.') + 'Lunch was fine.'.length, to: after(here, 'ev-2') });
+			driver.start({ editor: here, intent: 'rewrite', instruction: 'Warmer', article: true });
+			f.push(' You saw ⟦Nick⟧ at the clinic.');
+			f.end();
+			await driver.whenIdle();
+			acceptProposal(here, proposalIds(here.state)[0]);
+			expect(read(here).slice(0, 2)).toEqual([
+				{ words: 'Lunch was fine.', sources: ['Message · 12:10 PM'] },
+				{ words: 'You saw ⟦Nick⟧ at the clinic.', sources: ['Location · 1:00 PM'] },
+			]);
+		});
+	});
+
 	it('joins inline formatting to the block it was written in', async () => {
 		const { here } = twoDevices('<p>Intro</p>');
 		const f = feed();
-		const convert = vi.fn(async () => ({ html: '<p><strong>bold</strong> words</p>' }));
+		const convert = vi.fn(() => converted('<p><strong>bold</strong> words</p>'));
 		const { driver } = driverWith(f, convert);
 		here.commands.setTextSelection(posIn(here, 'Intro', 5));
 		driver.start({ editor: here, intent: 'continue', instruction: 'Go on' });
@@ -504,7 +694,7 @@ describe('the final conversion', () => {
 	it('keeps a rewrite proposed after converting it', async () => {
 		const { here } = twoDevices('<p>Plain words here.</p>');
 		const f = feed();
-		const convert = vi.fn(async () => ({ html: '<p><strong>Bold</strong> words</p>' }));
+		const convert = vi.fn(() => converted('<p><strong>Bold</strong> words</p>'));
 		const { driver } = driverWith(f, convert);
 		const from = posIn(here, 'Plain words');
 		here.commands.setTextSelection({ from, to: from + 'Plain words'.length });
@@ -537,7 +727,7 @@ describe('the final conversion', () => {
 			const { here, there } = twoDevices(page);
 			const original = here.state.doc.toJSON();
 			const f = feed();
-			const convert = vi.fn(async () => ({ html }));
+			const convert = vi.fn(() => converted(html));
 			const { driver } = driverWith(f, convert);
 			// The whole block, so a line break leaves no tail to carry over.
 			const from = posIn(here, 'Lunch on Friday.');
@@ -564,7 +754,7 @@ describe('the final conversion', () => {
 		const { here } = twoDevices(page);
 		const original = here.state.doc.toJSON();
 		const f = feed();
-		const convert = vi.fn(async () => ({ html: '<ul><li><p>Coffee</p></li><li><p>Tea</p></li></ul>' }));
+		const convert = vi.fn(() => converted('<ul><li><p>Coffee</p></li><li><p>Tea</p></li></ul>'));
 		const { driver } = driverWith(f, convert);
 		here.commands.setTextSelection({ from: 1, to: 1 + 'Coffee and tea.'.length });
 		driver.start({ editor: here, intent: 'rewrite', instruction: 'As a list' });
@@ -576,37 +766,66 @@ describe('the final conversion', () => {
 		expect(here.state.doc.toJSON()).toEqual(original);
 	});
 
-	it('leaves the text as it streamed when the server cannot convert it', async () => {
-		const { here } = twoDevices('<p>Intro</p>');
-		const f = feed();
-		const convert = vi.fn(async () => {
-			throw new Error('no');
+	const answers: ConvertResult[] = [{ kind: 'unavailable' }, { kind: 'too-large' }, { kind: 'refused', problems: [] }];
+	for (const answer of answers) {
+		it(`leaves the text as it streamed when the converter answers ${answer.kind}`, async () => {
+			const { here } = twoDevices('<p>Intro</p>');
+			const f = feed();
+			const convert = vi.fn((): ConvertResult => answer);
+			const { driver } = driverWith(f, convert);
+			here.commands.setTextSelection(posIn(here, 'Intro', 5));
+			driver.start({ editor: here, intent: 'continue', instruction: 'Go on' });
+			f.push(' **bold** words');
+			f.end();
+			await driver.whenIdle();
+			expect(convert).toHaveBeenCalled();
+			expect(blocks(here)).toEqual(['paragraph: Intro **bold** words']);
 		});
-		const { driver } = driverWith(f, convert);
-		here.commands.setTextSelection(posIn(here, 'Intro', 5));
-		driver.start({ editor: here, intent: 'continue', instruction: 'Go on' });
-		f.push(' **bold** words');
-		f.end();
-		await driver.whenIdle();
-		expect(blocks(here)).toEqual(['paragraph: Intro **bold** words']);
-	});
+	}
 
-	it('leaves the text when someone changed those words before the server answered', async () => {
+	it('leaves the text when someone changed those words before the stream ended, and asks nothing', async () => {
 		const { here, there } = twoDevices('<p>Intro</p>');
 		const f = feed();
-		let release: (v: { html: string }) => void = () => {};
-		const convert = vi.fn(() => new Promise<{ html: string }>((r) => (release = r)));
+		const convert = vi.fn(() => converted('<p><strong>bold</strong> words</p>'));
 		const { driver } = driverWith(f, convert);
+		here.commands.setTextSelection(posIn(here, 'Intro', 5));
+		driver.start({ editor: here, intent: 'continue', instruction: 'Go on' });
+		// Long enough to land at once: a shorter start waits to be told from a fence.
+		f.push(' **bold** words, then more');
+		await settle(20);
+		there.commands.insertContentAt(posIn(there, 'words', 2), 'XX');
+		await settle();
+		f.end();
+		await driver.whenIdle();
+		expect(convert).not.toHaveBeenCalled();
+		expect(blocks(here)).toEqual(['paragraph: Intro **bold** woXXrds, then more']);
+	});
+
+	/**
+	 * The words are checked and replaced in the task the stream ends in:
+	 * the conversion is synchronous, so no edit can land between the check
+	 * that the words are the session's and the replace.
+	 */
+	it('converts in the task the stream ends in, with nothing between the check and the replace', async () => {
+		const { here } = twoDevices('<p>Intro</p>');
+		const f = feed();
+		let docAtConvert: unknown = null;
+		const convert = vi.fn(() => {
+			docAtConvert = here.state.doc;
+			return converted('<p><strong>bold</strong> words</p>');
+		});
+		const { driver } = driverWith(f, convert);
+		const updates: unknown[] = [];
+		here.on('transaction', ({ transaction }) => {
+			if (transaction.docChanged) updates.push(transaction.before);
+		});
 		here.commands.setTextSelection(posIn(here, 'Intro', 5));
 		driver.start({ editor: here, intent: 'continue', instruction: 'Go on' });
 		f.push(' **bold** words');
 		f.end();
-		await settle(20);
-		expect(convert).toHaveBeenCalled();
-		there.commands.insertContentAt(posIn(there, 'words', 2), 'XX');
-		await settle();
-		release({ html: '<p><strong>bold</strong> words</p>' });
 		await driver.whenIdle();
-		expect(blocks(here)).toEqual(['paragraph: Intro **bold** woXXrds']);
+		// The replace's transaction started from the document the converter saw.
+		expect(updates.at(-1)).toBe(docAtConvert);
+		expect(blocks(here)).toEqual(['paragraph: Intro bold words']);
 	});
 });

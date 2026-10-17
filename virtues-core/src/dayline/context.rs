@@ -187,7 +187,7 @@ pub async fn build_hourly_context(
         // `::float8`: AVG over an integer column is NUMERIC, which sqlx will
         // not decode as f64 — and the `.ok()` below then dropped the health
         // line silently on every context ever built.
-        "SELECT COUNT(*) as cnt, AVG(bpm)::float8 as avg_bpm FROM data_health_heart_rate WHERE occurred_at >= $1 AND occurred_at < $2",
+        "SELECT COUNT(*) as cnt, AVG(bpm)::float8 as avg_bpm FROM data_health_heart_rate WHERE occurred_at >= $1 AND occurred_at < $2 AND deleted_at_source IS NULL",
     )
     .bind(window_start)
     .bind(window_end)
@@ -206,7 +206,7 @@ pub async fn build_hourly_context(
     }
 
     if let Ok(row) = sqlx::query(
-        "SELECT SUM(step_count) as total FROM data_health_steps WHERE occurred_at >= $1 AND occurred_at < $2",
+        "SELECT SUM(step_count) as total FROM data_health_steps WHERE occurred_at >= $1 AND occurred_at < $2 AND deleted_at_source IS NULL",
     )
     .bind(window_start)
     .bind(window_end)

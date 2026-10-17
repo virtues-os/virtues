@@ -9,9 +9,13 @@
 //!   3. Fusion — z-score normalize both arms over the candidate union and blend
 //!      with a query-adaptive weight α: rare-term/entity queries lean lexical,
 //!      paraphrase queries stay dense.
-//!   4. Dedupe to one chunk per record. A cross-encoder / ColBERT rerank of
-//!      close calls is available but OFF by default — see
-//!      `rerank_gap_threshold` for why.
+//!   4. Dedupe to one chunk per record, ordered by the fused score.
+//!
+//! No reranker. Every one we measured either made the fused order worse (the
+//! small local cross-encoder and ColBERT, 2026-10-08) or helped only on our own
+//! data while sending candidates off the box (hosted decision models,
+//! 2026-10-13; neutral on SciFact, and +~300 ms per search). The fused
+//! dense+BM25 order is the ranking.
 
 use anyhow::Result;
 use pgvector::Vector;
@@ -21,11 +25,10 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::bm25;
-use super::reranker::get_reranker;
 
-/// A single semantic search result. `score` is always normalized to [0, 1]
-/// within the result set (min-max) — after reranking it's the rerank order,
-/// otherwise the fused-score order. Only meaningful as a within-query ranking.
+/// A single semantic search result. `score` is the fused score normalized to
+/// [0, 1] within the result set (min-max): only meaningful as a within-query
+/// ranking.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SearchResult {
     pub ontology: String,
@@ -35,10 +38,6 @@ pub struct SearchResult {
     pub preview: Option<String>,
     pub author: Option<String>,
     pub timestamp: Option<String>,
-    /// The matched chunk's text — what the reranker scores (not the whole
-    /// record). `None` only for legacy rows without `content`.
-    #[serde(skip)]
-    pub content: Option<String>,
 }
 
 /// Semantic search engine
@@ -47,7 +46,7 @@ pub struct SemanticSearchEngine {
 }
 
 /// First-stage candidate pool per arm before fusion. The field-report SQL used
-/// 200; the fused top-`recall_limit` feed the reranker.
+/// 200.
 const CANDIDATE_POOL: i64 = 200;
 
 /// pgvector's HNSW beam width, and the reason `CANDIDATE_POOL` was a lie.
@@ -141,92 +140,6 @@ pub struct SearchOptions {
     pub limit: Option<i64>,
 }
 
-/// Cap each reranker candidate so a (query, doc) pair fits the rerank model's
-/// window (~512 tok for the cross-encoder, 256 for ColBERT). A document's lead
-/// carries the relevance signal, so truncating to ~1000 chars (~256 tok) is
-/// lossless in effect. Char-based (not byte) slicing keeps it UTF-8 safe.
-const MAX_RERANK_CHARS: usize = 1000;
-
-fn truncate_for_rerank(text: &str) -> String {
-    if text.chars().count() <= MAX_RERANK_CHARS {
-        text.to_string()
-    } else {
-        text.chars().take(MAX_RERANK_CHARS).collect()
-    }
-}
-
-/// Whether search calls a reranker at all. Off unless the owner opts in with
-/// `VIRTUES_RERANK_GAP`, so liveness checks (`virtues doctor`, system status)
-/// leave an absent reranker alone.
-pub fn reranker_enabled() -> bool {
-    rerank_gap_threshold() > 0.0
-}
-
-/// Conditional-rerank trigger: rerank only when the top-1/top-2 margin is a
-/// small fraction of the pool's whole score span (the ordering is ambiguous
-/// and reranking can reorder it); skip when the top result dominates.
-///
-/// The margin is RELATIVE — `(s1 − s2) / (s1 − s_last)` — because this
-/// threshold is applied in two incompatible score spaces: single-query
-/// candidates carry fused z-scores (span of a few σ), multi-query candidates
-/// carry RRF weights (span ≈ 0.03–0.07). The old absolute threshold (1.5,
-/// z-units) was unreachable in RRF space, so every multi-phrasing search
-/// reranked unconditionally and the trigger only ever fired on the
-/// single-query path. A ratio of the span means the same thing in both.
-///
-/// **Default 0.0: never rerank.** A margin is never below 0, so the reranker is
-/// not called unless `VIRTUES_RERANK_GAP` opts in. Both rerankers we ship made
-/// the final order WORSE than the fused ranking they were handed, in every
-/// configuration measured on 2026-10-08 (this pipeline replicated, nDCG@10):
-///
-/// | first stage                | fused | + gte-reranker | + ColBERT-small |
-/// |----------------------------|-------|----------------|-----------------|
-/// | personal, EmbeddingGemma 2 | 0.764 | 0.670          | 0.679           |
-/// | personal, gte-small        | 0.671 | 0.645          | 0.625           |
-/// | SciFact, EmbeddingGemma 2  | 0.843 | 0.776          | 0.765           |
-///
-/// with the old 0.4 trigger firing on 85% of personal queries. The embedders
-/// out-rank these small rerankers, so handing them the order throws quality
-/// away. A better reranker should earn its way back on the same eval.
-///
-/// The unit is a fraction in [0, 1], not z-units. A value above 1 is almost
-/// certainly a calibration from the old unit (1.5 was the documented default),
-/// so it clamps to 1.0 — "always rerank" — and says so, rather than being
-/// silently reinterpreted.
-fn rerank_gap_threshold() -> f64 {
-    match std::env::var("VIRTUES_RERANK_GAP")
-        .ok()
-        .and_then(|s| s.trim().parse::<f64>().ok())
-    {
-        Some(v) if (0.0..=1.0).contains(&v) => v,
-        Some(v) if v > 1.0 => {
-            tracing::warn!(
-                "VIRTUES_RERANK_GAP={v} is outside [0, 1] — the variable changed \
-                 units (fraction of the pool's score span; it was a z-score gap). \
-                 Clamping to 1.0 (always rerank); recalibrate or unset."
-            );
-            1.0
-        }
-        _ => 0.0,
-    }
-}
-
-/// Top-1/top-2 margin as a fraction of the candidate pool's score span.
-/// 0.0 = tied at the top (maximally ambiguous); 1.0 = top-1 alone above a flat
-/// rest. Invariant under shift and positive scale, which is what lets one
-/// threshold serve both z-score and RRF-weight candidate pools. A degenerate
-/// span (≤ 0, all scores equal) reads as fully ambiguous.
-pub(crate) fn relative_margin(candidates: &[SearchResult]) -> f64 {
-    if candidates.len() < 2 {
-        return 1.0;
-    }
-    let span = candidates[0].score - candidates[candidates.len() - 1].score;
-    if span <= 0.0 {
-        return 0.0;
-    }
-    (candidates[0].score - candidates[1].score) / span
-}
-
 /// Min-max rescale candidate scores into [0, 1] in place, preserving order.
 pub(crate) fn normalize_scores(candidates: &mut [SearchResult]) {
     let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
@@ -240,44 +153,12 @@ pub(crate) fn normalize_scores(candidates: &mut [SearchResult]) {
     }
 }
 
-/// Reorder a reranked pool so that candidates the reranker actually scored come
-/// first, in its order, and the ones it could not read follow in the fused order
-/// they arrived in. `was_scored[i]` refers to `candidates[i]` on entry.
-///
-/// See `rerank_candidates` for why this exists: the two groups carry scores in
-/// different units, so the only valid comparisons are within a group.
-pub(crate) fn order_scored_first(candidates: &mut Vec<SearchResult>, was_scored: &[bool]) {
-    // `sort_by` is stable, so the unscored tail holds its arrival order; sorting
-    // it by its own (stale, but mutually consistent) score is a no-op that keeps
-    // the comparator total.
-    let mut tagged: Vec<(bool, SearchResult)> = was_scored
-        .iter()
-        .copied()
-        .zip(candidates.drain(..))
-        .collect();
-    tagged.sort_by(|a, b| b.0.cmp(&a.0).then_with(|| b.1.score.total_cmp(&a.1.score)));
-
-    // Restate the tail's scores below the scored floor so the numbers agree with
-    // the order. `semantic_search` returns rank and not score, so the magnitudes
-    // are never read today — but a `score` that contradicts the position it sits
-    // in is a trap for the next caller, and `normalize_scores` runs on these
-    // values immediately after. One average gap per step keeps the tail from
-    // stretching the span and squashing the real scores into it.
-    let floor = tagged
-        .iter()
-        .take_while(|(scored, _)| *scored)
-        .map(|(_, c)| c.score)
-        .fold(f64::INFINITY, f64::min);
-    if floor.is_finite() {
-        let scored_count = tagged.iter().filter(|(scored, _)| *scored).count().max(1);
-        let top = tagged[0].1.score;
-        let step = ((top - floor) / scored_count as f64).max(f64::EPSILON);
-        for (k, (_, c)) in tagged.iter_mut().filter(|(scored, _)| !*scored).enumerate() {
-            c.score = floor - step * (k + 1) as f64;
-        }
-    }
-
-    candidates.extend(tagged.into_iter().map(|(_, c)| c));
+/// Normalize to [0, 1] for the caller and keep the top `limit`, in the fused
+/// order the candidates arrived in.
+fn finalize(mut candidates: Vec<SearchResult>, limit: usize) -> Vec<SearchResult> {
+    normalize_scores(&mut candidates);
+    candidates.truncate(limit);
+    candidates
 }
 
 /// Reciprocal Rank Fusion constant. A document's fused weight is
@@ -285,7 +166,7 @@ pub(crate) fn order_scored_first(candidates: &mut Vec<SearchResult>, was_scored:
 /// damps how much any single list's top ranks dominate.
 const RRF_K: f64 = 60.0;
 
-/// How many fused candidates survive into the single rerank pass. Wider than one
+/// How many fused candidates the multi-phrasing merge keeps. Wider than one
 /// query's recall (multiple variants contribute), but still a shortlist.
 const RRF_POOL: usize = 30;
 
@@ -294,8 +175,8 @@ const RRF_POOL: usize = 30;
 /// Each per-query list is z-normalized *within its own pool*, so scores are not
 /// comparable across queries — RRF merges by **rank**, which is. A record that
 /// several variants rank highly rises; the surviving `SearchResult` keeps its
-/// first-seen fields (its `content` still feeds the downstream reranker). The
-/// returned `score` is the RRF weight, replaced by Stage B's normalization.
+/// first-seen fields. The returned `score` is the RRF weight, replaced by
+/// `finalize`'s normalization.
 fn rrf_merge(lists: Vec<Vec<SearchResult>>, k: f64, pool: usize) -> Vec<SearchResult> {
     let mut acc: HashMap<(String, String), (f64, SearchResult)> = HashMap::new();
     for list in lists {
@@ -414,15 +295,13 @@ impl SemanticSearchEngine {
     }
 
     /// Multi-query retrieval (RAG-fusion). Runs recall for several phrasings of
-    /// one information need in parallel and fuses them with RRF, then reranks the
-    /// merged pool ONCE against the primary query (`queries[0]`). Widens recall on
-    /// vague or many-worded questions where a single phrasing misses.
+    /// one information need in parallel and fuses them with RRF. Widens recall
+    /// on vague or many-worded questions where a single phrasing misses.
     ///
     /// Cheap on-box: the variants embed in ONE batched sidecar call and their
-    /// recalls run concurrently (Postgres parallelizes); only the final rerank
-    /// touches the reranker, once. A single phrasing skips the RRF pass so its
-    /// candidates keep their fused z-scores (RRF would replace them with
-    /// rank-weights for no benefit).
+    /// recalls run concurrently (Postgres parallelizes). A single phrasing skips
+    /// the RRF pass so its candidates keep their fused z-scores (RRF would
+    /// replace them with rank-weights for no benefit).
     pub async fn search_multi(
         &self,
         queries: &[String],
@@ -457,9 +336,7 @@ impl SemanticSearchEngine {
                     recall_limit,
                 )
                 .await?;
-            return self
-                .rerank_and_finalize(&queries[0], candidates, limit as usize)
-                .await;
+            return Ok(finalize(candidates, limit as usize));
         }
 
         // One batched embed call for every variant.
@@ -474,15 +351,14 @@ impl SemanticSearchEngine {
         });
         let lists = futures::future::try_join_all(recalls).await?;
 
-        // Fuse by rank, then one rerank against the user's actual question.
+        // Fuse by rank.
         let merged = rrf_merge(lists, RRF_K, RRF_POOL);
-        self.rerank_and_finalize(&queries[0], merged, limit as usize)
-            .await
+        Ok(finalize(merged, limit as usize))
     }
 
-    /// Stage A — recall + z-fusion for one query VECTOR. Returns fused, deduped
-    /// candidates ordered by the fused z-score, WITHOUT reranking or [0,1]
-    /// normalization (that is Stage B, `rerank_and_finalize`).
+    /// Recall + z-fusion for one query VECTOR. Returns fused, deduped candidates
+    /// ordered by the fused z-score, without the [0,1] normalization
+    /// (`finalize`).
     ///
     /// Takes a vector, not text, so an event embedding is a first-class query
     /// — multi-query fan-out is a caller. `terms` are the BM25 tokens of the source query (empty for a
@@ -621,11 +497,11 @@ impl SemanticSearchEngine {
                SELECT DISTINCT ON (se.record_id) \
                       se.ontology, se.record_id, se.title, se.preview, se.author, \
                       to_char(se.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as ts, \
-                      se.content, ({wd}*z.dz + {wl}*z.bz{boost})::float8 AS s \
+                      ({wd}*z.dz + {wl}*z.bz{boost})::float8 AS s \
                FROM z JOIN search_embeddings se ON se.id = z.id \
                ORDER BY se.record_id, s DESC, se.id \
              ) \
-             SELECT ontology, record_id, title, preview, author, ts, content, s \
+             SELECT ontology, record_id, title, preview, author, ts, s \
              FROM best ORDER BY s DESC, record_id LIMIT ${lim}",
             f = filter_sql,
             pool = CANDIDATE_POOL,
@@ -650,8 +526,7 @@ impl SemanticSearchEngine {
                 Option<String>,
                 Option<String>,
                 Option<String>,
-                Option<String>, // content (chunk text)
-                f64,             // fused score
+                f64, // fused score
             ),
         >(&sql)
         .bind(query_vector)
@@ -702,7 +577,7 @@ impl SemanticSearchEngine {
         //
         // Iterative scan makes pgvector resume the graph walk until it has
         // enough rows that survive the filter. `relaxed_order` rather than
-        // `strict_order` because the results are re-ranked downstream anyway,
+        // `strict_order` because the fused score re-sorts them below anyway,
         // and relaxed is markedly faster.
         sqlx::query("SET LOCAL hnsw.iterative_scan = relaxed_order")
             .execute(&mut *tx)
@@ -719,42 +594,9 @@ impl SemanticSearchEngine {
                 preview: row.3,
                 author: row.4,
                 timestamp: row.5,
-                content: row.6,
-                score: row.7, // fused score; reranked or normalized in Stage B
+                score: row.6, // fused score; normalized by `finalize`
             })
             .collect())
-    }
-
-    /// Stage B — conditional rerank, then min-max normalize to [0,1] and truncate
-    /// to `limit`. Reranks only when the fused top-1/top-2 margin is tight (the
-    /// ordering is ambiguous and a rerank can reorder it); a dominant top-1 skips
-    /// the reranker entirely. `query` is the text the reranker scores against.
-    pub(crate) async fn rerank_and_finalize(
-        &self,
-        query: &str,
-        mut candidates: Vec<SearchResult>,
-        limit: usize,
-    ) -> Result<Vec<SearchResult>> {
-        let ambiguous = relative_margin(&candidates) < rerank_gap_threshold();
-        if ambiguous {
-            match self.rerank_candidates(query, &mut candidates).await {
-                Ok(did) => {
-                    if did {
-                        let q: String = query.chars().take(60).collect();
-                        tracing::debug!("Reranked {} candidates for: {}", candidates.len(), q);
-                    }
-                }
-                Err(e) => {
-                    tracing::warn!("Reranker unavailable, using fused ranking: {}", e);
-                }
-            }
-        }
-
-        // Normalize to [0, 1] for the caller/LLM (order already set — by rerank
-        // if it ran, else by the fused SQL).
-        normalize_scores(&mut candidates);
-        candidates.truncate(limit);
-        Ok(candidates)
     }
 
     /// Resolve an active project's members into the two buckets the search
@@ -855,68 +697,6 @@ impl SemanticSearchEngine {
             .collect())
     }
 
-    /// Rerank candidates over the matched **chunk** text. Returns `true` if it
-    /// reranked, `false` if there were no usable docs. Errors only when the
-    /// reranker is unreachable (caller falls back to fused order). Sets each
-    /// candidate's `score` to the raw rerank score (cross-encoder logit or
-    /// ColBERT MaxSim); the caller min-max normalizes — both are monotonic, so
-    /// order is preserved either way.
-    ///
-    /// # A candidate the reranker never saw must not be sorted against one it did
-    ///
-    /// Only candidates with text go to the reranker, and the scores that come
-    /// back replace their fused scores. Everything else kept its OLD number and
-    /// was then sorted into the same list — three different units in one
-    /// comparison: ColBERT MaxSim (≈30 for a good match on the box), a fused
-    /// z-score (a few σ around zero), or an RRF weight (≈0.02) when the search
-    /// fanned out over several phrasings. An unscored candidate would therefore
-    /// leap to the top of a MaxSim list or sink below a z-scored one purely on
-    /// which arithmetic produced its number — and it is invisible, because the
-    /// result is a plausible ordering, never an error.
-    ///
-    /// The honest ordering is: everything the reranker could read, in its order;
-    /// then everything it could not, in the fused order it arrived in. Absent
-    /// evidence is not evidence of irrelevance, but it cannot outrank evidence
-    /// either. Title is included in the text fallback so that "could not read it"
-    /// means a record with no text at all, rather than one that merely lacks a
-    /// stored chunk.
-    async fn rerank_candidates(
-        &self,
-        query: &str,
-        candidates: &mut Vec<SearchResult>,
-    ) -> Result<bool> {
-        let reranker = get_reranker().await?;
-
-        let mut rerank_indices: Vec<usize> = Vec::new();
-        let mut rerank_docs: Vec<String> = Vec::new();
-        for (i, c) in candidates.iter().enumerate() {
-            let text = c
-                .content
-                .clone()
-                .or_else(|| c.preview.clone())
-                .or_else(|| c.title.clone())
-                .unwrap_or_default();
-            if !text.trim().is_empty() {
-                rerank_indices.push(i);
-                rerank_docs.push(truncate_for_rerank(&text));
-            }
-        }
-        if rerank_docs.is_empty() {
-            return Ok(false);
-        }
-
-        let scores = reranker.rerank_async(query, &rerank_docs).await?;
-
-        let mut was_scored = vec![false; candidates.len()];
-        for score in &scores {
-            let i = rerank_indices[score.index];
-            candidates[i].score = score.score as f64;
-            was_scored[i] = true;
-        }
-
-        order_scored_first(candidates, &was_scored);
-        Ok(true)
-    }
 }
 
 #[cfg(test)]
@@ -932,61 +712,7 @@ mod tests {
             preview: None,
             author: None,
             timestamp: None,
-            content: Some(format!("{ontology}/{record_id}")),
         }
-    }
-
-    fn hit(record_id: &str, score: f64) -> SearchResult {
-        let mut r = sr("m", record_id);
-        r.score = score;
-        r
-    }
-
-    /// The bug this guards: a candidate the reranker never saw kept its fused
-    /// score and was then sorted against MaxSim scores. An RRF weight (~0.02)
-    /// sinks below every MaxSim score; a z-score can be anything. Either way the
-    /// position is decided by which arithmetic produced the number, not by
-    /// relevance — and it looks like a normal result list.
-    #[test]
-    fn a_candidate_the_reranker_never_saw_cannot_outrank_one_it_scored() {
-        // As `rerank_candidates` leaves it: B and D carry MaxSim scores, A and C
-        // still carry fused z-scores — and A's z-score is numerically the largest
-        // number in the pool, which is exactly how it used to win.
-        let mut pool = vec![
-            hit("A_unscored_high_z", 41.0),
-            hit("B_maxsim_top", 30.0),
-            hit("C_unscored_low_z", -1.0),
-            hit("D_maxsim_low", 12.0),
-        ];
-        order_scored_first(&mut pool, &[false, true, false, true]);
-
-        let ids: Vec<&str> = pool.iter().map(|c| c.record_id.as_str()).collect();
-        assert_eq!(
-            ids,
-            ["B_maxsim_top", "D_maxsim_low", "A_unscored_high_z", "C_unscored_low_z"],
-            "scored candidates first in rerank order, then the unscored in arrival order"
-        );
-
-        // Scores must agree with the order, or the next caller — and
-        // `normalize_scores`, which runs immediately after — reads a contradiction.
-        for pair in pool.windows(2) {
-            assert!(
-                pair[0].score > pair[1].score,
-                "{} ({}) should out-score {} ({})",
-                pair[0].record_id, pair[0].score, pair[1].record_id, pair[1].score
-            );
-        }
-    }
-
-    /// Nothing scored: there is no floor to place a tail under, and the fused
-    /// order is the best information available. It must survive untouched.
-    #[test]
-    fn an_all_unscored_pool_keeps_its_fused_order() {
-        let mut pool = vec![hit("A", 3.0), hit("B", 2.0), hit("C", 1.0)];
-        order_scored_first(&mut pool, &[false, false, false]);
-        let ids: Vec<&str> = pool.iter().map(|c| c.record_id.as_str()).collect();
-        assert_eq!(ids, ["A", "B", "C"]);
-        assert_eq!(pool[0].score, 3.0, "untouched, not restated against a floor");
     }
 
     #[test]
@@ -1015,48 +741,6 @@ mod tests {
         let merged = rrf_merge(vec![list], RRF_K, 2);
         assert_eq!(merged.len(), 2);
         assert_eq!(merged[0].record_id, "A");
-    }
-
-    fn scored(scores: &[f64]) -> Vec<SearchResult> {
-        scores
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                let mut r = sr("m", &format!("r{i}"));
-                r.score = *s;
-                r
-            })
-            .collect()
-    }
-
-    /// The reason the margin is relative: one threshold must mean the same
-    /// thing for z-score pools (span ≈ several σ) and RRF-weight pools
-    /// (span ≈ 0.03). The old absolute gap (1.5) was unreachable in RRF space,
-    /// so multi-query searches always reranked regardless of how dominant the
-    /// top hit was.
-    #[test]
-    fn margin_is_scale_invariant_across_score_spaces() {
-        // Same shape, two spaces: top-1 well clear of a tight rest.
-        let z_space = scored(&[2.0, 0.1, 0.0, -0.1]);
-        let rrf_space = scored(&[0.048, 0.017, 0.0164, 0.016]);
-        let mz = relative_margin(&z_space);
-        let mr = relative_margin(&rrf_space);
-        assert!(mz > 0.8 && mr > 0.8, "dominant top-1 in both spaces: {mz} {mr}");
-
-        // And a genuine tie at the top is ambiguous in both.
-        let z_tie = scored(&[2.0, 1.98, 0.0]);
-        let rrf_tie = scored(&[0.048, 0.0478, 0.016]);
-        assert!(relative_margin(&z_tie) < 0.05);
-        assert!(relative_margin(&rrf_tie) < 0.05);
-    }
-
-    #[test]
-    fn margin_degenerate_cases() {
-        // Fewer than two candidates: nothing to disambiguate, never rerank.
-        assert_eq!(relative_margin(&scored(&[1.0])), 1.0);
-        assert_eq!(relative_margin(&[]), 1.0);
-        // A flat pool (span 0) is maximally ambiguous.
-        assert_eq!(relative_margin(&scored(&[0.5, 0.5, 0.5])), 0.0);
     }
 }
 

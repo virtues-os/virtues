@@ -143,7 +143,8 @@ async fn window_avg_hr(
     sqlx::query_scalar(
         r#"SELECT AVG(CAST(bpm AS REAL))
            FROM data_health_heart_rate
-           WHERE occurred_at >= $1 AND occurred_at < $2"#,
+           WHERE occurred_at >= $1 AND occurred_at < $2
+             AND deleted_at_source IS NULL"#,
     )
     .bind(start)
     .bind(end)
@@ -203,7 +204,10 @@ async fn window_ontologies(
 ) -> Vec<String> {
     let mut present = Vec::new();
 
-    for ont in registered_ontologies() {
+    // `source_ontologies` lands in `wiki_events`, which the assistant reads,
+    // so an ontology the owner has not opened to it must not show up here
+    // even as a name.
+    for ont in registered_ontologies().into_iter().filter(|o| o.is_model_visible()) {
         // Interpolated identifiers are compile-time constants from the
         // registry, never user input. The window is bound.
         let sql = format!(

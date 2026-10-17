@@ -4,12 +4,9 @@
 //! the box. This one only ever returns what the box has already indexed, and is the only
 //! search the command palette calls.
 //!
-//! **No reranker.** The palette runs on every keystroke, so this stops at
-//! `recall_and_fuse` — hybrid dense + BM25 with adaptive fusion — and skips
-//! `rerank_and_finalize`. Reranking is a cross-encoder/ColBERT pass over the
-//! shortlist and costs tens of milliseconds it would spend re-ordering results
-//! the user is about to discard by typing another character. Committing to a
-//! query (Enter into full search) is where that pass belongs.
+//! The palette runs on every keystroke, so this is one phrasing through
+//! `recall_and_fuse` — hybrid dense + BM25 with adaptive fusion — and no
+//! multi-phrasing fan-out.
 //!
 //! Objects (a page, a chat, a project — the things you *navigate to*) are not
 //! here either: the client already holds those in its stores and matches them
@@ -101,7 +98,7 @@ pub async fn search_local(
         .map_err(|e| Error::Other(format!("recall: {e}")))?;
 
     // `SearchResult` documents its score as normalized to [0, 1]; that
-    // normalization lives in `rerank_and_finalize`, which this path skips.
+    // normalization lives in `search_multi`, which this path skips.
     // Without this the endpoint returns raw fused scores while claiming
     // otherwise — harmless for the palette, which ignores score, and a trap
     // for anything that later believes the type's own contract.

@@ -1,11 +1,9 @@
-//! Seeding module for production defaults
+//! The defaults every box needs at boot. Demo data is not seeded from the
+//! binary: a demo box loads the demo life (deploy/demo/).
 //!
-//! Note: Models, agents, and built-in tools are read directly from
-//! the virtues-registry crate at runtime.
-//! See: crates/virtues-registry/
+//! Models, agents and built-in tools are read from the virtues-registry crate
+//! at runtime.
 
-pub mod demo_seed;
 pub mod prod_seed;
 
-pub use demo_seed::seed_demo_data;
 pub use prod_seed::seed_production_data;

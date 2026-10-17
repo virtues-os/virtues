@@ -691,7 +691,7 @@ pub async fn set_home_place(pool: &PgPool, place_id: String) -> Result<()> {
 /// The People index is full of companies, and not by accident:
 /// `extract_name_from_email()` mints a `wiki_people` row for any sender it has
 /// not seen, with no test for whether a person is on the other end. On a real
-/// box that produced `Gusto <no-reply@payroll.example.com>`, `Slack <no-reply@slack.com>`
+/// box that produced `Payroll <no-reply@payroll.example.com>`, `Slack <no-reply@slack.com>`
 /// and `The Plaid Team <info@email.plaid.com>` — filed as people, alongside the
 /// user's actual contacts.
 ///

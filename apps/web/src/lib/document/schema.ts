@@ -20,7 +20,9 @@ import {
 	PasteRule,
 	getExtensionField,
 	getSchema,
+	markInputRule,
 	markPasteRule,
+	wrappingInputRule,
 	type Attributes,
 	type Extensions,
 	type MarkConfig,
@@ -60,19 +62,23 @@ import HorizontalRule from '@tiptap/extension-horizontal-rule';
 import Image, { inputRegex as imageInputRegex } from '@tiptap/extension-image';
 import Italic from '@tiptap/extension-italic';
 import Link from '@tiptap/extension-link';
-import { BulletList, ListItem, OrderedList, TaskItem, TaskList } from '@tiptap/extension-list';
+import { BulletList, ListItem, OrderedList, TaskItem, TaskList, orderedListInputRegex } from '@tiptap/extension-list';
 import Paragraph from '@tiptap/extension-paragraph';
 import Strike from '@tiptap/extension-strike';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
 import Text from '@tiptap/extension-text';
 import Underline from '@tiptap/extension-underline';
 import contractJson from '$contract';
+import { readsAsCode } from './code-text';
 import { altWidth, kindOfLink, type MediaKind } from './media-kind';
 import { insertBlockAt } from './place';
 
 export type AttrSpec = {
-	/** `int`: a safe integer. `route`: a ref on the box, `/kind/id` (`isRoute`). */
-	type: 'int' | 'string' | 'bool' | 'url' | 'route';
+	/**
+	 * `int`: a safe integer. `route`: a ref on the box, `/kind/id` (`isRoute`).
+	 * `label`: a footnote's name within its page (`isLabel`).
+	 */
+	type: 'int' | 'string' | 'bool' | 'url' | 'route' | 'label';
 	default?: unknown;
 	required?: boolean;
 	enum?: unknown[];
@@ -149,8 +155,8 @@ function contractUrl(spec: AttrSpec | undefined, raw: unknown): string | null {
 
 /**
  * What a typed `![name](src)` makes of a `kind`: the block `kindOfLink`
- * reads it as (an image, audio, video or a file), as the CodeMirror editor
- * draws it and the server's converter reads it, a `|600` after the name
+ * reads it as (an image, audio, video or a file), as the server's
+ * converter reads it, a `|600` after the name
  * being an image's width (`altWidth`); nothing when it is another kind, or
  * the contract refuses its `src`. The match is the `![name](src)` alone,
  * not the space before it.
@@ -221,8 +227,8 @@ const ContractImage = Image.extend({
 });
 
 /**
- * The stock code block, its Enter keeping the line's indent, as the
- * CodeMirror editor's does: the new line starts with the spaces and tabs
+ * The stock code block, its Enter keeping the line's indent, as a code
+ * editor's does: the new line starts with the spaces and tabs
  * the caret's line starts with. A line of nothing but its indent loses it
  * first, so a run of Enters leaves empty lines, and the third Enter at the
  * end of the block still leaves it, as Tiptap's own does.
@@ -255,6 +261,28 @@ const IndentingCodeBlock = CodeBlock.extend({
 				return true;
 			},
 		};
+	},
+});
+
+/**
+ * Tiptap's numbered list, its typed `1. ` joining the list just above only
+ * where the number typed is the one after that list's last item, the item's
+ * own number counted (`itemNumbers`): under a list numbered 2019, 2021,
+ * 2024, `2025. ` goes on with it, and `2022. ` starts a list of its own.
+ */
+const CountingOrderedList = OrderedList.extend({
+	addInputRules() {
+		return [
+			wrappingInputRule({
+				find: orderedListInputRegex,
+				type: this.type,
+				getAttributes: (match) => ({ start: +match[1] }),
+				joinPredicate: (match, node) => {
+					const numbers = itemNumbers(node);
+					return numbers[numbers.length - 1] + 1 === +match[1];
+				},
+			}),
+		];
 	},
 });
 
@@ -321,6 +349,18 @@ const QuietTaskItem = TaskItem.extend({
 	},
 });
 
+/**
+ * The veil: words an article's writer marked as what the device's veil
+ * hides (a name, a hard passage). Typed as `⟦words⟧`, as the writers write
+ * it and the export does, it becomes the mark.
+ */
+const Veil = Mark.create({
+	name: 'veil',
+	addInputRules() {
+		return [markInputRule({ find: /(⟦([^⟦⟧]+)⟧)$/, type: this.type })];
+	},
+});
+
 /** Whether a link may point at `url`: the contract's schemes, not the stock list. */
 export function linkAllowed(url: string): boolean {
 	return contractUrl(contract.marks.link?.attrs?.href, url) !== null;
@@ -344,7 +384,7 @@ function nodeBase(name: string): Node | undefined {
 		case 'bulletList':
 			return BulletList;
 		case 'orderedList':
-			return OrderedList;
+			return CountingOrderedList;
 		case 'listItem':
 			return ListItem;
 		case 'taskList':
@@ -412,7 +452,7 @@ const TypedLink = Link.extend({
  * A drop is read as the same data pasted would be. Set while the drop's
  * own event runs, in which ProseMirror puts it in and the rules run.
  */
-let dropping: { html: boolean; fromPage: boolean } | null = null;
+let dropping: { html: boolean; fromPage: boolean; code: boolean } | null = null;
 
 /** Notes what each drop carried (`dropping`), for the paste rules. */
 const DropsReadAsPastes = Extension.create({
@@ -424,7 +464,8 @@ const DropsReadAsPastes = Extension.create({
 					handleDOMEvents: {
 						drop(_view, event) {
 							const html = event.dataTransfer?.getData('text/html') ?? '';
-							dropping = { html: !!html, fromPage: html.includes('data-pm-slice') };
+							const code = readsAsCode(event.dataTransfer?.getData('text/plain') ?? '');
+							dropping = { html: !!html, fromPage: html.includes('data-pm-slice'), code };
 							queueMicrotask(() => (dropping = null));
 							return false;
 						},
@@ -436,13 +477,23 @@ const DropsReadAsPastes = Extension.create({
 });
 
 /**
- * Whether a paste, or a drop, came as plain text. HTML carries its own
- * formatting, and the `**` in its text are its writer's.
+ * Whether a paste, or a drop, came as plain text that is not code. HTML
+ * carries its own formatting, and the `**` in its text are its writer's;
+ * code's `__init__` and `*args` are the code's (`readsAsCode`).
  */
 function pastedAsText(event: ClipboardEvent | null): boolean {
-	if (dropping) return !dropping.html;
-	return !event?.clipboardData?.getData('text/html');
+	if (dropping) return !dropping.html && !dropping.code;
+	const data = event?.clipboardData;
+	if (data?.getData('text/html')) return false;
+	if (!event) return true;
+	// Every rule asks of the same paste: its text is read once.
+	let code = pastedCode.get(event);
+	if (code === undefined) pastedCode.set(event, (code = readsAsCode(data?.getData('text/plain') ?? '')));
+	return !code;
 }
+
+/** Whether each paste's plain text reads as code, as the paste rules first asked. */
+const pastedCode = new WeakMap<ClipboardEvent, boolean>();
 
 /**
  * `rule` never run on a block dragged from another page's editor: it is
@@ -538,8 +589,8 @@ function markBase(name: string): Mark | undefined {
 				isAllowedUri: (url) => linkAllowed(url),
 				// A URL pasted over selected text asks only this.
 				shouldAutoLink: (url) => linkAllowed(url) && stockShouldAutoLink(url),
-				// `[label](url)` typed or pasted is a link, as the CodeMirror
-				// editor draws it; the address passes `isAllowedUri` first.
+				// `[label](url)` typed or pasted is a link, as markdown reads
+				// it; the address passes `isAllowedUri` first.
 				markdownLinks: true,
 			});
 		case 'bold':
@@ -556,7 +607,7 @@ function markBase(name: string): Mark | undefined {
 			});
 		case 'underline':
 			return Underline;
-		// Each with the CodeMirror editor's key beside Tiptap's own (⌘⇧S, ⌘E).
+		// Each with a second key beside Tiptap's own (⌘⇧S, ⌘E).
 		case 'strike':
 			return Strike.extend({
 				addKeyboardShortcuts() {
@@ -572,6 +623,8 @@ function markBase(name: string): Mark | undefined {
 					return delimitedRules(this.type, ['==']);
 				},
 			});
+		case 'veil':
+			return Veil;
 		case 'code':
 			return Code.extend({
 				addKeyboardShortcuts() {
@@ -623,6 +676,15 @@ export function isRoute(route: string): boolean {
 	return m !== null && m[2].length > 0;
 }
 
+/**
+ * Whether `label` names a footnote, as the server reads one (`is_label` in the
+ * crate): an ASCII letter or digit, then up to 63 more letters, digits, `_`
+ * or `-` (`ev-1`, `cx-12`).
+ */
+export function isLabel(label: string): boolean {
+	return /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/.test(label);
+}
+
 /** Whether an `int` attribute's value is in its range: safe, and within `min` and `max`. */
 function inRange(spec: AttrSpec, n: number): boolean {
 	return (
@@ -666,6 +728,10 @@ export function typed(spec: AttrSpec, raw: string | null): unknown {
 			if (!isRoute(raw)) return null;
 			value = raw;
 			break;
+		case 'label':
+			if (!isLabel(raw)) return null;
+			value = raw;
+			break;
 		case 'string':
 			value = raw;
 			break;
@@ -689,6 +755,9 @@ export function fits(spec: AttrSpec, value: unknown): boolean {
 			break;
 		case 'route':
 			if (typeof value !== 'string' || !isRoute(value)) return false;
+			break;
+		case 'label':
+			if (typeof value !== 'string' || !isLabel(value)) return false;
 			break;
 		case 'bool':
 			if (typeof value !== 'boolean') return false;
@@ -774,21 +843,92 @@ function readAttr(el: HTMLElement, spec: AttrSpec): unknown {
 }
 
 /**
- * Attributes the second half of a split block starts without, as the stock
- * extensions have them: Enter after a checked to-do starts an unchecked one.
+ * The attribute holding a list item's own number, HTML's `<li value>`
+ * (`ITEM_NUMBER` in the crate). An item without one counts on from the
+ * item before it.
  */
-const NOT_KEPT_ON_SPLIT: Record<string, string[]> = { taskItem: ['checked'] };
+export const ITEM_NUMBER = 'value';
+
+/**
+ * Attributes the second half of a split block starts without, as the stock
+ * extensions have them: Enter after a checked to-do starts an unchecked one,
+ * and Enter in a numbered item starts one that counts on from it, the
+ * item's own number staying with the item.
+ */
+const NOT_KEPT_ON_SPLIT: Record<string, string[]> = { taskItem: ['checked'], listItem: [ITEM_NUMBER] };
+
+/**
+ * Each item's number in an ordered list, as HTML numbers `<ol start>` and
+ * `<li value>`: an item's own number where it carries one, else one past
+ * the item before it (the first, `start`). The crate's `item_numbers`.
+ */
+export function itemNumbers(list: PmNode): number[] {
+	let next = typeof list.attrs.start === 'number' ? list.attrs.start : 1;
+	const out: number[] = [];
+	list.forEach((item) => {
+		const own = item.attrs[ITEM_NUMBER];
+		const n = typeof own === 'number' ? own : next;
+		out.push(n);
+		next = n + 1;
+	});
+	return out;
+}
+
+/** A list item's own number as its `<li value>` gives it, or null. */
+function ownNumber(li: Element): number | null {
+	const spec = contract.nodes.listItem?.attrs?.[ITEM_NUMBER];
+	return spec ? (readAttr(li as HTMLElement, spec) as number | null) : null;
+}
+
+/**
+ * An ordered list's start as its HTML read whole gives it: its first
+ * item's own number where that item has one, which is the number the list
+ * shows first, else its `start`.
+ */
+function listStart(el: HTMLElement, spec: AttrSpec): unknown {
+	const first = [...el.children].find((c) => c.tagName === 'LI');
+	return (first ? ownNumber(first) : null) ?? readAttr(el, spec);
+}
+
+/**
+ * An item's own number as its list's HTML read whole gives it, kept where
+ * it departs from the count: dropped where it only repeats the number the
+ * item before it leads to (the list's start, `listStart`, for the first),
+ * and in a bullet list, which numbers nothing, so the list shows what the
+ * HTML showed. The server's ingest reads it so (`count_items` in
+ * `ingest.rs`).
+ */
+function itemNumber(el: HTMLElement): unknown {
+	const own = ownNumber(el);
+	const list = el.parentElement;
+	const start = contract.nodes.orderedList?.attrs?.start;
+	if (own === null || list?.tagName !== 'OL' || !start) return null;
+	let next = (listStart(list, start) as number | null) ?? 1;
+	for (const item of list.children) {
+		if (item === el) break;
+		if (item.tagName !== 'LI') continue;
+		next = (ownNumber(item) ?? next) + 1;
+	}
+	return own === next ? null : own;
+}
+
+/** Attributes read with more than the element itself: a list's numbers, read from its items. */
+const READ_IN_PLACE: Record<string, Record<string, (el: HTMLElement, spec: AttrSpec) => unknown>> = {
+	orderedList: { start: listStart },
+	listItem: { [ITEM_NUMBER]: itemNumber },
+};
 
 function attributesFor(attrs: Record<string, AttrSpec> = {}, node?: string): Attributes {
 	const out: Attributes = {};
 	const fresh = (node && NOT_KEPT_ON_SPLIT[node]) || [];
 	for (const [key, spec] of Object.entries(attrs)) {
+		const read = (node && READ_IN_PLACE[node]?.[key]) || readAttr;
 		out[key] = {
 			default: defaultOf(spec),
 			// Null when the element lacks the attribute. Tiptap drops a null
 			// parse, so the rule's `set` (h2 → level 2) or the default applies;
 			// any other value would override the rule and h2 would parse as h1.
-			parseHTML: (el) => readAttr(el, spec),
+			parseHTML: (el) => read(el, spec),
 			// renderHTML below writes attributes itself, in contract order.
 			rendered: false,
 			...(fresh.includes(key) ? { keepOnSplit: false } : {}),

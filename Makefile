@@ -5,7 +5,7 @@
 # Cloud services (virtues-atlas / virtues-api) are built and deployed on the cloud server (make deploy-*).
 
 .DEFAULT_GOAL := help
-.PHONY: help init hooks commit migration dev seed dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
+.PHONY: help init hooks commit migration dev dev-demo dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
         dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api deploy-rollback mac-app mac-dev web-test \
         iroh-ffi-ios iroh-ffi-mac ios-release flash
 
@@ -82,9 +82,7 @@ VIRTUES_DEV_SKIP_SETUP ?= 1
 # installer pins (see tools/virtues-installer/src/install.rs). `dev-core` points
 # at this dir so `virtues doctor` reports them baked.
 # `make dev` runs the embedding sidecar by default (~1 GB RAM, ~0% CPU idle).
-# Skip it for a UI-only or low-RAM session: `make dev WITH_EMBED=0`. No
-# reranker: search calls one only when VIRTUES_RERANK_GAP opts in, so a dev
-# session testing that runs its own on :18182.
+# Skip it for a UI-only or low-RAM session: `make dev WITH_EMBED=0`.
 WITH_EMBED ?= 1
 VIRTUES_MODELS_DIR ?= $(CURDIR)/.data/models
 # Must match the GGUF boxes run (virtues-core/src/inference_report.rs
@@ -278,9 +276,13 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 # build rather than two serial ones, and the `cargo run` below starts with
 # nothing left to compile. Warm-tree cost: a freshness check, ~1s.
 	SQLX_OFFLINE="$(SQLX_OFFLINE)" cargo build -p virtues -p virtues-applets -p virtues-door
+# The dev server's page dials the box's sockets through its proxy, which
+# passes the page's Origin as sent (apps/web/vite.config.ts). The box lists
+# that origin for the page socket alone; its terminal refuses it.
 	RUST_LOG="$(RUST_LOG),noq_udp=error" \
 	SQLX_OFFLINE="$(SQLX_OFFLINE)" \
 	VIRTUES_DEV_SKIP_SETUP="$(VIRTUES_DEV_SKIP_SETUP)" \
+	VIRTUES_PUBLIC_ORIGINS="http://localhost:$(DEV_WEB_PORT),http://127.0.0.1:$(DEV_WEB_PORT)" \
 	ENVIRONMENT=dev \
 	DATABASE_URL=$(DEV_DB_URL) \
 	VIRTUES_API_URL=$(VIRTUES_API_URL) \
@@ -292,11 +294,17 @@ dev-core: ## Run virtues-core on the host (HTTP :8000, auto-migrates + prod-seed
 	STATIC_DIR="$(CURDIR)/apps/web/build" \
 	$(DEV_CORE_RUN)
 
-seed: db ## Load demo data (people/places/orgs/events) into the dev DB. Idempotent — safe to re-run.
-	SQLX_OFFLINE="$(SQLX_OFFLINE)" \
-	ENVIRONMENT=dev \
-	DATABASE_URL=postgres://virtues:virtues@localhost:5432/virtues \
-	cargo run -p virtues -- seed
+DEMO_DB_URL ?= postgres://virtues:virtues@localhost:5432/virtues_demo
+
+dev-demo: db ## Load the demo life (Oriel Akerlund: 3 years + a dense showcase week) into its own DB, virtues_demo. Never the shared dev DB. Re-run to reload.
+	@psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='virtues_demo'" | grep -q 1 || createdb -O virtues virtues_demo
+	@psql -d virtues_demo -c "CREATE EXTENSION IF NOT EXISTS vector" >/dev/null
+	sqlx migrate run --source virtues-core/migrations --database-url "$(DEMO_DB_URL)"
+	{ cat deploy/demo/clear.sql; gunzip -c virtues-core/seeds/demo/life.sql.gz; cat deploy/demo/place.sql deploy/demo/reset.sql; } \
+	  | psql -X -q -v ON_ERROR_STOP=1 -1 -d "$(DEMO_DB_URL)" -f -
+	@echo "→ demo life loaded into virtues_demo. Serve it beside the shared :8000 core:"
+	@echo "    NOMAD_PORT_http=8090 DEV_DB_URL=$(DEMO_DB_URL) make dev-core"
+	@echo "    BACKEND_URL=http://localhost:8090 DEV_WEB_PORT=5190 make dev-web"
 
 dev-api: db ## Run virtues-api locally on :9002 (standalone, dev-seeded wallet)
 	@echo "→ local virtues-api on :9002. Point dev-core at it with:"

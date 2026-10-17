@@ -12,7 +12,22 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+
+/** Whether a page names each file, as the server answers (`getNamedUploads`). */
+const server = vi.hoisted(() => ({ names: (_id: string): boolean => true }));
+
+/** Files sent to the server, held until the test settles each (`sendPageFile`). */
+const transfers = vi.hoisted(
+	() =>
+		[] as {
+			id: string;
+			file: File;
+			done: () => void;
+			fail: (error: Error) => void;
+			progress?: (sent: number, total: number) => void;
+		}[],
+);
 
 const mounted = vi.hoisted(() => {
 	(globalThis as Record<string, unknown>).$state = <T>(v: T) => v;
@@ -44,6 +59,8 @@ vi.mock('$lib/components/pages/nodes/MediaNode.svelte', () => ({ default: standI
 vi.mock('$lib/components/pages/nodes/AppletNode.svelte', () => ({ default: standIn('AppletNode') }));
 vi.mock('$lib/components/pages/nodes/CalloutNode.svelte', () => ({ default: standIn('CalloutNode') }));
 vi.mock('$lib/components/pages/nodes/CodeBlockNode.svelte', () => ({ default: standIn('CodeBlockNode') }));
+vi.mock('$lib/components/pages/nodes/FootnoteNode.svelte', () => ({ default: standIn('FootnoteNode') }));
+vi.mock('$lib/components/pages/nodes/FigureNode.svelte', () => ({ default: standIn('FigureNode') }));
 vi.mock('$lib/stores/contextMenu.svelte', () => ({ contextMenu: { show: vi.fn(), reachFirstRow: vi.fn() } }));
 vi.mock('$lib/stores/linkEditor.svelte', () => ({ linkEditor: { show: vi.fn() } }));
 vi.mock('$lib/stores/window-shell.svelte', () => ({
@@ -52,8 +69,22 @@ vi.mock('$lib/stores/window-shell.svelte', () => ({
 vi.mock('svelte-sonner', () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 vi.mock('$lib/api/client', async (orig) => ({
 	...(await orig<typeof import('$lib/api/client')>()),
-	convertPastedMarkdown: vi.fn(async () => ({ html: '', notes: [] })),
 	getApplet: vi.fn(async (id: string) => ({ id, name: 'Sleep this week' })),
+	sendPageFile: vi.fn(
+		(id: string, file: File, progress?: (sent: number, total: number) => void) =>
+			new Promise((resolve, reject) =>
+				transfers.push({
+					id,
+					file,
+					progress,
+					done: () => resolve({ id, url: `/api/drive/files/${id}/download`, filename: file.name, mime_type: file.type }),
+					fail: reject,
+				}),
+			),
+	),
+	getMediaUploads: vi.fn(async () => ({})),
+	announcePageFiles: vi.fn(async () => undefined),
+	getNamedUploads: vi.fn(async (ids: string[]) => Object.fromEntries(ids.map((id) => [id, server.names(id)]))),
 }));
 
 import { Editor } from '@tiptap/core';
@@ -63,17 +94,18 @@ import { GapCursor } from '@tiptap/pm/gapcursor';
 import { yXmlFragmentToProseMirrorRootNode } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { filterCommands, menuKey } from '$lib/components/menuCommand';
-import { getDefaultSlashCommands } from '$lib/codemirror/extensions/slash-commands';
 import { createPageEditor } from './editor';
-import { contract, contractExtensions } from './schema';
+import { contract, contractExtensions, ITEM_NUMBER, itemNumbers } from './schema';
 import { appletCommands, insertEntity, moveBlock, treeCommands, type TreeCommandHost } from './commands';
 import { pickedRange, putBackQuery, triggers, triggerState } from './triggers';
 import { fileIcon, parseRef } from '$lib/utils/refRoutes';
 import { clearFind, find, findMatches, findNext, findPrevious, findState, selectionEchoes, setFindQuery } from './find';
 import { focusMode } from './focus';
 import { codeHighlight } from './code';
-import { isCodeEditorHtml, looksLikeMarkdown, pasteHandling, pasteMarkdown, wordLists } from './paste';
-import { mediaUploads, pendingUploads, uploadFiles, driveFileId, mediaSrc, nameOfSrc } from './media';
+import { isCodeEditorHtml, looksLikeMarkdown, MAX_DEPTH, MAX_NODES, nodeCount, nodeDepth, pasteHandling, pasteMarkdown, wordLists, type Convert } from './paste';
+import { addFiles, driveFileId, imagesOnTheirWay, kindOfFile, MAX_UPLOAD_BYTES, mediaSrc, mediaUploads, nameForBlock, nameOfSrc, type Send } from './media';
+import { CHECK_AFTER_MS, resetUploads, retryUpload, TRY_AGAIN_EVERY_MS, uploadsAtStake, watchUpload, type LocalUpload } from './uploads';
+import { convertNow, type ConvertResult } from './converter';
 import { kindOfLink } from './media-kind';
 import { decoded } from '$lib/utils/urlUtils';
 import { svelteNodeView } from './nodeviews.svelte';
@@ -81,7 +113,7 @@ import { editLinkAtSelection, isRef, linkAt, linkMenu, links, openLink, openLink
 import { anchorAt, anchorRange, pinAt, placeOf, resolveRange } from './anchor';
 import { linkEditor } from '$lib/stores/linkEditor.svelte';
 import { toast } from 'svelte-sonner';
-import { convertPastedMarkdown, type Applet } from '$lib/api/client';
+import { sendPageFile, UploadError, type Applet } from '$lib/api/client';
 import { aiPresence, clearAi, flashBlocks, flashedBlocks, setAiCaret, setAiTrail } from './presence';
 import { contextGesture } from './gesture';
 import { acceptAllProposals, acceptProposal, proposalAt, proposalIds, rejectProposal } from './suggestions';
@@ -89,7 +121,8 @@ import { alignColumn, columnAlign, tableActions } from './tables';
 import { scrollerOf, treeHeadings, treeOutlineNav } from './outline';
 import { treeStats } from './stats';
 import { getTreeEditor, registerTreeEditor, unregisterTreeEditor } from './registry';
-import { fakeProvider, htmlEditor, pageDoc, posIn, settle } from './test-utils';
+import { fakeProvider, htmlEditor, pageDoc, posIn, settle, useRealConverter } from './test-utils';
+import { get } from 'svelte/store';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const COMPONENTS = path.resolve(HERE, '../components/pages/nodes');
@@ -122,16 +155,39 @@ function pagePlugins() {
 		find({ onOpen: () => {}, onClose: () => {} }),
 		focusMode(true),
 		codeHighlight(async (code) => [[{ content: code, color: 'var(--color-primary)', offset: 0 }]]),
-		pasteHandling(async () => ({ html: '' })),
-		mediaUploads(async () => ({ url: '/api/media/x', filename: 'x', mime_type: null })),
+		pasteHandling(),
+		mediaUploads(sends),
 		links({ onHover: () => {}, onLeave: () => {} }),
 		aiPresence(),
 		contextGesture([]),
 	];
 }
 
+/** Files the page's editors were given, recorded instead of sent: tests that send them use the queue itself. */
+const sends = vi.fn<Send>();
+
+/** What the converter answers for markdown it makes `html` of. */
+function converted(html: string): ConvertResult {
+	return { kind: 'converted', html, notes: [] };
+}
+
+/** A converter that answers `answer` for anything. */
+function answering(answer: ConvertResult): Convert & ReturnType<typeof vi.fn> {
+	return vi.fn(() => answer);
+}
+
+/** The page's own converter, watched. */
+function realConvert() {
+	return vi.fn((markdown: string) => convertNow(markdown, 'paste'));
+}
+
+/** A file's block address: `/drive/` and a Drive id made in the browser. */
+const UPLOAD_SRC = /^\/drive\/file_[0-9a-f]{16}$/;
+
 const editors: Editor[] = [];
 const cleanups: (() => void)[] = [];
+
+beforeAll(() => useRealConverter());
 
 function bind(doc: Y.Doc, opts: { plugins?: boolean } = {}) {
 	const provider = fakeProvider(doc);
@@ -157,6 +213,10 @@ function track<T extends Editor>(editor: T): T {
 
 beforeEach(() => {
 	mounted.length = 0;
+	sends.mockClear();
+	transfers.length = 0;
+	server.names = () => true;
+	resetUploads();
 });
 
 afterEach(() => {
@@ -222,6 +282,47 @@ describe('opening a page writes nothing', () => {
 		expect(names).toContain('CodeBlockNode');
 		expect(names).toContain('MediaNode');
 		expect(editor.state.doc.textContent).not.toContain('CalloutNode');
+	});
+
+	// An article: its footnotes, a figure of each kind and veils, as the
+	// server writes them when it moves a day page to blocks. Opening it
+	// writes nothing, and each atom is drawn by its own view.
+	it('opening an article holding footnotes, figures and veils writes nothing', async () => {
+		const article = [
+			'<p>A slow Saturday with <a href="/person/person_n"><virtues-veil>Nick</virtues-veil></a>.</p>',
+			'<h2>Morning on the porch<virtues-footnote label="cx-1" note="8:40 AM–10:05 AM"></virtues-footnote></h2>',
+			'<p>You read while it rained.<virtues-footnote label="ev-1" note="Recording · 8:40 AM · data_communication_transcription:tr_1"></virtues-footnote> ',
+			'<strong><virtues-veil>Nick</virtues-veil></strong> was late.<virtues-footnote label="ev-2" note="Message · 9:12 AM · data_communication_message:msg_3"></virtues-footnote>',
+			'<virtues-footnote label="ev-3"></virtues-footnote></p>',
+			'<virtues-figure kind="quote" text="Save me a seat." who="Nick" ref="data_communication_message:msg_3" time="9:12 AM"></virtues-figure>',
+			'<virtues-figure kind="thread" refs="data_communication_message:msg_8, data_communication_message:msg_9"></virtues-figure>',
+			'<virtues-figure kind="route"></virtues-figure>',
+			'<virtues-figure kind="picture" src="/api/drive/files/f_1/download" caption="Rain at ⟦the Blue Kettle⟧." data-style="watercolor" time="10:40 AM"></virtues-figure>',
+			'<table><tbody><tr><th><p>Where</p></th></tr><tr><td><p><virtues-veil>the Blue Kettle</virtues-veil><virtues-footnote label="ev-4" note="Location · 7:15 PM"></virtues-footnote></p></td></tr></tbody></table>',
+		].join('');
+		const { doc, writtenBy } = pageDoc(article);
+		const before = Y.encodeStateVector(doc);
+		const writes: unknown[] = [];
+		const { editor, provider } = bind(doc);
+		doc.on('update', (_u: Uint8Array, origin: unknown) => {
+			if (origin !== provider) writes.push(origin);
+		});
+		await settle(250);
+		editor.commands.focus('end');
+		editor.commands.blur();
+		provider.emit('synced', true);
+		await settle(50);
+		expect(writes, `writes (page written by ${writtenBy})`).toEqual([]);
+		expect(Y.encodeStateVector(doc)).toEqual(before);
+		const names = mounted.map((m) => m.name);
+		expect(names.filter((n) => n === 'FootnoteNode')).toHaveLength(5);
+		expect(names.filter((n) => n === 'FigureNode')).toHaveLength(4);
+		let veiled = 0;
+		editor.state.doc.descendants((n) => {
+			if (n.isText && n.marks.some((m) => m.type.name === 'veil')) veiled++;
+			return true;
+		});
+		expect(veiled).toBe(3);
 	});
 
 	// Autolink reads every range a transaction changes, and binding a page
@@ -642,14 +743,11 @@ describe('the insert menu', () => {
 		expect(triggerState(editor.state, '/').active).toBe(false);
 	});
 
-	// Text came first, so `/` and Enter, and `/h` and Enter (`paragraph`
-	// holds an h), made a paragraph a paragraph: on a markdown page they
-	// make Heading 1.
-	it('`/` and Enter, `/h` and `/t` and Enter, make Heading 1, as on a markdown page', () => {
+	// Text first would make `/` and Enter, and `/h` and Enter (`paragraph`
+	// holds an h), turn a paragraph into a paragraph: they make Heading 1.
+	it('`/` and Enter, `/h` and `/t` and Enter, make Heading 1', () => {
 		for (const query of ['', 'h', 't']) {
-			const first = filterCommands(commands, query)[0]?.label;
-			expect(first, `/${query}`).toBe('Heading 1');
-			expect(first, `/${query}`).toBe(filterCommands(getDefaultSlashCommands(), query)[0]?.label);
+			expect(filterCommands(commands, query)[0]?.label, `/${query}`).toBe('Heading 1');
 		}
 		expect(filterCommands(commands, 'text')[0]?.label).toBe('Text');
 		expect(filterCommands(commands, 'paragraph')[0]?.label).toBe('Text');
@@ -859,6 +957,61 @@ describe('typed triggers', () => {
 		(text.get(0) as Y.XmlText).insert(0, '/');
 		expect(editor.state.doc.textContent).toBe('/Hello');
 		expect(triggerState(editor.state, '/').active).toBe(false);
+	});
+});
+
+describe('a list numbered its own way', () => {
+	const YEARS =
+		'<ol start="2019"><li><p>Moved</p></li><li value="2021"><p>Boat</p></li><li value="2024"><p>Sold</p></li></ol>';
+	const enter = (e: Editor) =>
+		e.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }));
+	/** Each item of the page's first block, a list: its number, its text. */
+	const items = (e: Editor) => {
+		const list = e.state.doc.child(0);
+		const numbers = itemNumbers(list);
+		const out: string[] = [];
+		list.forEach((item, _, i) => out.push(`${numbers[i]}. ${item.textContent}`));
+		return out;
+	};
+	/** The own numbers the shared document holds for the first list's items. */
+	const shared = (doc: Y.Doc) =>
+		(treeOf(doc).content![0].content ?? []).map((item: { attrs?: Record<string, unknown> }) => item.attrs?.[ITEM_NUMBER] ?? null);
+
+	// A page whose list was numbered 2019, 2021, 2024 moved to blocks
+	// numbered 2019, 2020, 2021. Each item keeps its number now, and Enter
+	// starts an item that counts on from the one it is typed in.
+	it('Enter at an item\'s end starts one counting on from it, every other item keeping its number', async () => {
+		const { doc } = pageDoc(YEARS);
+		const { editor } = bind(doc);
+		await settle();
+		editor.commands.setTextSelection(posIn(editor, 'Boat', 4));
+		enter(editor);
+		typeIn(editor, 'Fixed');
+		expect(items(editor)).toEqual(['2019. Moved', '2021. Boat', '2022. Fixed', '2024. Sold']);
+		expect(shared(doc)).toEqual([null, 2021, null, 2024]);
+	});
+
+	it('Enter at an item\'s start leaves it its number, the item made before it counting on from the one above', async () => {
+		const { doc } = pageDoc(YEARS);
+		const { editor } = bind(doc);
+		await settle();
+		editor.commands.setTextSelection(posIn(editor, 'Boat'));
+		enter(editor);
+		expect(items(editor)).toEqual(['2019. Moved', '2020. ', '2021. Boat', '2024. Sold']);
+		expect(shared(doc)).toEqual([null, null, 2021, 2024]);
+	});
+
+	it('a number typed under it goes on with it only when it is the next one', () => {
+		const next = track(htmlEditor(`${YEARS}<p></p>`));
+		next.commands.setTextSelection(next.state.doc.content.size - 1);
+		typeIn(next, '2025. Bought another');
+		expect(next.state.doc.childCount).toBe(1);
+		expect(items(next)).toEqual(['2019. Moved', '2021. Boat', '2024. Sold', '2025. Bought another']);
+		const other = track(htmlEditor(`${YEARS}<p></p>`));
+		other.commands.setTextSelection(other.state.doc.content.size - 1);
+		typeIn(other, '2022. ');
+		expect(other.state.doc.childCount).toBe(2);
+		expect(other.state.doc.child(1).attrs.start).toBe(2022);
 	});
 });
 
@@ -1228,24 +1381,41 @@ describe('paste', () => {
 		return !!editor.view.someProp('handlePaste', (f) => f(editor.view, event, editor.state.doc.slice(0, 0)));
 	}
 
-	it('converts markdown text through the server and puts it where the paste was', async () => {
-		const convert = vi.fn(async () => ({ html: '<h2>Plan</h2><ul><li><p>one</p></li></ul>' }));
+	it('converts markdown text in the page, in the page when the paste returns, where the paste was', () => {
+		const convert = realConvert();
 		const editor = track(htmlEditor('<p>Before</p><p></p>', [pasteHandling(convert)]));
 		editor.commands.setTextSelection(editor.state.doc.content.size - 1);
 		expect(paste(editor, clipboard({ 'text/plain': '## Plan\n\n- one' }))).toBe(true);
-		// Something typed above while the server answers moves the landing spot.
-		editor.commands.insertContentAt(1, 'Typed ');
-		await settle();
 		expect(convert).toHaveBeenCalledWith('## Plan\n\n- one');
-		expect(editor.getHTML()).toBe('<p>Typed Before</p><h2>Plan</h2><ul><li><p>one</p></li></ul>');
+		expect(editor.getHTML()).toBe('<p>Before</p><h2>Plan</h2><ul><li><p>one</p></li></ul>');
 	});
 
-	it('pastes the text as it is when the server cannot convert it', async () => {
-		const editor = track(htmlEditor('<p></p>', [pasteHandling(async () => Promise.reject(new Error('offline')))]));
+	it('pastes the text as it is when the converter cannot run, and says so once', () => {
+		vi.mocked(toast).mockClear();
+		const editor = track(htmlEditor('<p></p>', [pasteHandling(answering({ kind: 'unavailable' }))]));
 		editor.commands.setTextSelection(1);
 		paste(editor, clipboard({ 'text/plain': '- **bold** text' }));
-		await settle();
 		expect(editor.getHTML()).toBe('<p>- **bold** text</p>');
+		paste(editor, clipboard({ 'text/plain': '- again' }));
+		expect(editor.getHTML()).toBe('<p>- **bold** text- again</p>');
+		expect(toast).toHaveBeenCalledOnce();
+		expect(vi.mocked(toast).mock.calls[0][0]).toBe('Pasted as text');
+	});
+
+	it('pastes the text as it is when the converter refuses it, saying so when it was too much', () => {
+		vi.mocked(toast).mockClear();
+		const refused = track(htmlEditor('<p></p>', [pasteHandling(answering({ kind: 'refused', problems: [] }))]));
+		refused.commands.setTextSelection(1);
+		paste(refused, clipboard({ 'text/plain': '> deep' }));
+		expect(refused.getHTML()).toBe('<p>&gt; deep</p>');
+		expect(toast).not.toHaveBeenCalled();
+		const large = track(htmlEditor('<p></p>', [pasteHandling(answering({ kind: 'too-large' }))]));
+		large.commands.setTextSelection(1);
+		paste(large, clipboard({ 'text/plain': '# Long\nlines' }));
+		expect(large.getHTML()).toBe('<p># Long</p><p>lines</p>');
+		expect(vi.mocked(toast).mock.calls.map((c) => c[0])).toEqual(['Pasted as text']);
+		// The page's converter says so of more than one conversion takes, before reading any of it.
+		expect(convertNow('x'.repeat(256 * 1024 + 1), 'paste')).toEqual({ kind: 'too-large' });
 	});
 
 	// A line of code holds `==`, `**` and `](` often enough, and the
@@ -1253,7 +1423,7 @@ describe('paste', () => {
 	// pasted text markdown, and the words of a line are the editor's paste
 	// rules' to format.
 	it('pastes code-like text as it is, never through the converter', () => {
-		const convert = vi.fn(async () => ({ html: '<p>lost</p>' }));
+		const convert = answering(converted('<p>lost</p>'));
 		const editor = track(htmlEditor('<p></p>', [pasteHandling(convert)]));
 		editor.commands.setTextSelection(1);
 		for (const text of [
@@ -1265,14 +1435,234 @@ describe('paste', () => {
 			'#include <stdio.h>\nint main() { return a == b; }',
 			'let v = vec![1](x) == 2',
 			'Run **this** first',
+			// A Python or shell comment's `# ` is a heading's sign.
+			"# load the config\ndef __init__(self, *args, **kwargs):\n    self.path = base_dir + '/' + file_name\n",
+			'# install\npip install foo_bar\nexport PATH=$HOME/.local/bin:$PATH  # *not* sudo',
+			'# build\n$ cargo build --release\n- then run it',
+			'- step\nconst total = items.length;',
+			'# ship\ngit commit -m "Fix the date."',
+			'# deploy\nsteps:\n  - run: |\n      npm ci',
+			// Python: its names in two underscores, and its blocks.
+			'# entry point\nif __name__ == "__main__":\n    main()',
+			'# set up\nobj.__init__(x)',
+			'# inspect\nprint(obj.__dict__)',
+			'# each\nfor item in items:\n    print(item)',
+			'# fall back\ntry:\n    run()\nexcept ValueError:\n    pass',
+			// A diff's removed and added lines read as bullets of one kind.
+			'@@ -1,3 +1,3 @@\n context line\n- old line\n+ new line',
+			'--- a/notes.md\n+++ b/notes.md\n- old line\n+ new line',
+			' keep this\n- old line\n+ new line',
+			// A shell, YAML or Dockerfile comment, and C's directives.
+			'# back up the photos\ntar -czf photos.tgz ~/Pictures\nrsync -av photos.tgz nas:/backups/',
+			'# Clean the build\nrm -rf dist\nmake',
+			'# Connect\nssh pi@host\ncd ~/app',
+			'# CI\non: push\njobs:\n  build:\n    steps:\n      - run: make',
+			'# Build stage\nFROM node:20 AS build\nRUN npm ci',
+			'# Logs\n*.log\nnode_modules/',
+			'#define MAX 10\n# define MIN 0',
+			'# users who signed in\nSELECT name FROM users WHERE active = true',
+			'# list them\nGet-ChildItem -Path C:\\Users',
+			'# the path\n$env:PATH = "C:\\bin"',
+			'# load it\nlibrary(ggplot2)\nx <- c(1, 2, 3)',
+			// A terminal's prompt is no quote.
+			'> npm start\n\nserver listening on 3000',
 		]) {
 			expect(looksLikeMarkdown(text), text).toBe(false);
 			expect(paste(editor, clipboard({ 'text/plain': text })), text).toBe(false);
 		}
 		expect(convert).not.toHaveBeenCalled();
-		for (const text of ['## Plan', '- one', '1. one', '> quoted', '```js\nx\n```', '| a | b |', '  - nested']) {
+		for (const text of [
+			'## Plan',
+			'- one',
+			'1. one',
+			'> quoted',
+			'```js\nx\n```',
+			'| a | b |',
+			'  - nested',
+			'## Setup\n\n```sh\nexport PATH=$HOME/bin:$PATH\nnpm install\n```\n\n- Paris (France)\n- Rome',
+			"# Title\n\nHere's how:\n\n1. Open it",
+			// Chat's answers: a fence nested in a list item, or under item 10
+			// or later, is indented four spaces or more; code indented inside
+			// an item is the item's; prose may open with a command's word.
+			'## Setup\n\n- Install the tools:\n  - Node:\n\n    ```sh\n    npm install\n    ```\n\nThen **restart** the app.',
+			'10. Install the deps:\n\n    ```sh\n    pnpm install\n    ```',
+			'1. Run it:\n\n        npm install\n\n2. Open the **app**',
+			'## Why\n\ngit keeps every version, so **nothing** is lost.',
+			'## Result\n\nresult = good, so **ship** it.',
+			// Bold in underscores, a dunder in inline code, a sentence ending in a colon.
+			'## Note\n\nUse __bold__ here.',
+			'## API\n\nCall `obj.__init__()` once, and `x == "__main__"` never.',
+			'## Steps\n\nfor example:\n  - one\n  - two',
+			// Notes the code check must leave alone.
+			'# Shopping\nmilk\neggs\nbread',
+			'# Notes\nCall Nick at 5',
+			'Shopping:\n  - milk: 2 liters\n  - eggs',
+			'> git keeps every version, so nothing is lost.',
+			'## Links\nhttps://example.com/x',
+			'- milk\n- eggs\n\nMake sure to buy bread',
+			'---\ntitle: Trip\ntags:\n  place: Lisbon\n---\n\n# Trip',
+		]) {
 			expect(looksLikeMarkdown(text), text).toBe(true);
 		}
+	});
+
+	// Code copied as plain text came through the converter for one `# `
+	// comment line: its lines joined into one, and `__init__` bold.
+	it('pastes code with a comment line as its lines, as written', () => {
+		const editor = track(htmlEditor('<p></p>', [pasteHandling(realConvert())]));
+		const lines = (text: string) => {
+			editor.commands.setContent('<p></p>');
+			editor.commands.setTextSelection(1);
+			pasteEvent(editor, { 'text/plain': text });
+			const out: string[] = [];
+			editor.state.doc.forEach((n) => out.push(`${n.type.name}:${n.textContent}`));
+			return out;
+		};
+		expect(lines("# load the config\ndef __init__(self, *args, **kwargs):\n    self.path = base_dir")).toEqual([
+			'paragraph:# load the config',
+			'paragraph:def __init__(self, *args, **kwargs):',
+			'paragraph:    self.path = base_dir',
+		]);
+		// Python's idiom came in as a heading and `if name == "main":`, bold.
+		expect(lines('# entry point\nif __name__ == "__main__":\n    main()')).toEqual([
+			'paragraph:# entry point',
+			'paragraph:if __name__ == "__main__":',
+			'paragraph:    main()',
+		]);
+		expect(lines('# set up\nobj.__init__(x)')).toEqual(['paragraph:# set up', 'paragraph:obj.__init__(x)']);
+		// A diff's removed and added lines came in as two bullets alike.
+		expect(lines('@@ -1,3 +1,3 @@\n context line\n- old line\n+ new line')).toEqual([
+			'paragraph:@@ -1,3 +1,3 @@',
+			'paragraph: context line',
+			'paragraph:- old line',
+			'paragraph:+ new line',
+		]);
+		// YAML lost its indents, and its comment became a heading.
+		expect(lines('# CI\njobs:\n  build:\n    steps:')).toEqual(['paragraph:# CI', 'paragraph:jobs:', 'paragraph:  build:', 'paragraph:    steps:']);
+	});
+
+	// Text misread as markdown could only be undone: no paste put it in as
+	// written. Shift with the paste (Paste and Match Style) does.
+	it('pastes text as written, never converted nor formatted, with Shift held', () => {
+		const convert = realConvert();
+		const editor = track(htmlEditor('<p></p>', [pasteHandling(convert)]));
+		const pasted = (text: string, shift: boolean) => {
+			editor.commands.setContent('<p></p>');
+			editor.commands.setTextSelection(1);
+			// What ProseMirror reads of the keys (`view.input`), as a keydown sets it.
+			editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: shift ? 'Shift' : 'v', keyCode: shift ? 16 : 86, shiftKey: shift, bubbles: true }));
+			pasteEvent(editor, { 'text/plain': text });
+			return editor.getHTML();
+		};
+		expect(pasted('## Plan\n- milk **now**', true)).toBe('<p>## Plan</p><p>- milk **now**</p>');
+		expect(convert).not.toHaveBeenCalled();
+		expect(pasted('Run **this** first', true)).toBe('<p>Run **this** first</p>');
+		expect(pasted('## Plan\n- milk **now**', false)).toBe('<h2>Plan</h2><ul><li><p>milk <strong>now</strong></p></li></ul>');
+		expect(convert).toHaveBeenCalledOnce();
+	});
+
+	// A note with one bullet in it came through as one item holding every
+	// line after it, run together.
+	it('pastes markdown with each line kept a line, never run on into an item', () => {
+		const editor = track(htmlEditor('<p></p>', [pasteHandling(realConvert())]));
+		editor.commands.setTextSelection(1);
+		expect(paste(editor, clipboard({ 'text/plain': 'Shopping\n- milk\nCall Nick at 5\nBring receipts' }))).toBe(true);
+		expect(editor.getHTML()).toBe('<p>Shopping</p><ul><li><p>milk</p></li></ul><p>Call Nick at 5<br>Bring receipts</p>');
+	});
+
+	// A page filled to MAX_NODES takes about a second to build here and over
+	// five on a shared CI runner, past vitest's default of five.
+	const FULL_PAGE_MS = 30_000;
+
+	// A paste too large to convert went in as a paragraph a line, past what
+	// a page holds: the server refused the edit, and the page stopped saving.
+	it('refuses a paste that would take the page past what it holds, however it would have landed', () => {
+		vi.mocked(toast).mockClear();
+		const lines = Array.from({ length: MAX_NODES / 2 + 10 }, (_, i) => `- ${i}`).join('\n');
+		const large = track(htmlEditor('<p>Keep</p>', [pasteHandling(answering({ kind: 'too-large' }))]));
+		large.commands.setTextSelection(5);
+		expect(paste(large, clipboard({ 'text/plain': lines }))).toBe(true);
+		expect(large.getHTML()).toBe('<p>Keep</p>');
+		expect(vi.mocked(toast).mock.calls.map((c) => c[0])).toEqual(['Not pasted']);
+
+		// ProseMirror's own paste of plain text, a paragraph a line.
+		vi.mocked(toast).mockClear();
+		const words = Array.from({ length: MAX_NODES / 2 + 10 }, (_, i) => `line ${i}`).join('\n');
+		const plain = track(htmlEditor('<p>Keep</p>', [pasteHandling()]));
+		plain.commands.setTextSelection(5);
+		pasteEvent(plain, { 'text/plain': words });
+		expect(plain.getHTML()).toBe('<p>Keep</p>');
+		expect(vi.mocked(toast).mock.calls.map((c) => c[0])).toEqual(['Not pasted']);
+
+		// What fits still lands.
+		pasteEvent(plain, { 'text/plain': 'one\ntwo' });
+		expect(plain.getHTML()).toBe('<p>Keepone</p><p>two</p>');
+		expect(nodeCount(plain.state.doc)).toBe(4);
+	}, FULL_PAGE_MS);
+
+	// Files went in past what a page holds, with nothing said, and their
+	// upload began: the server refused the edit, and the page stopped saving.
+	it('refuses files pasted, dropped or picked that would take the page past what it holds', () => {
+		const photo = () => new File(['x'], 'harbour.png', { type: 'image/png' });
+		const editor = track(htmlEditor('<p>x</p>'.repeat(MAX_NODES / 2), [pasteHandling(), mediaUploads(sends)]));
+		expect(nodeCount(editor.state.doc)).toBe(MAX_NODES);
+		const before = editor.state.doc;
+		editor.view.posAtCoords = () => ({ pos: 1, inside: -1 });
+		const dropped = {
+			dataTransfer: { files: [photo()], getData: () => '' },
+			clientX: 0,
+			clientY: 0,
+			preventDefault() {},
+		} as unknown as DragEvent;
+		const cases: [string, () => void][] = [
+			['pasted', () => void paste(editor, clipboard({}, [photo()]))],
+			['dropped', () => void editor.view.someProp('handleDrop', (f) => f(editor.view, dropped, editor.state.doc.slice(0, 0), false))],
+			['picked', () => addFiles(editor.view, [photo()], 1, { send: sends })],
+		];
+		for (const [how, give] of cases) {
+			vi.mocked(toast).mockClear();
+			editor.commands.setTextSelection(1);
+			give();
+			expect(editor.state.doc.eq(before), how).toBe(true);
+			expect(sends, how).not.toHaveBeenCalled();
+			expect(vi.mocked(toast).mock.calls.map((c) => c[0]), how).toEqual(['Not added']);
+		}
+
+		// What fits still goes in.
+		const room = track(htmlEditor('<p>x</p>', [pasteHandling(), mediaUploads(sends)]));
+		addFiles(room.view, [photo()], 1, { send: sends });
+		expect(sends).toHaveBeenCalledOnce();
+	}, FULL_PAGE_MS);
+
+	// A paste nesting lists past the levels a page holds went in, the server
+	// refused the edit, and the page stopped saving with nothing said.
+	it('refuses a paste or a drop that would nest the page deeper than it holds', () => {
+		vi.mocked(toast).mockClear();
+		const deep = (lists: number) => '<ul><li><p>x</p>'.repeat(lists) + '</li></ul>'.repeat(lists);
+		const editor = track(htmlEditor('<p>hello</p>', [pasteHandling(), mediaUploads(sends)]));
+		editor.commands.setTextSelection(6);
+		pasteEvent(editor, { 'text/html': deep(60), 'text/plain': 'x' });
+		expect(editor.getHTML()).toBe('<p>hello</p>');
+		expect(vi.mocked(toast).mock.calls.map((c) => c[0])).toEqual(['Not pasted']);
+		expect(nodeDepth(editor.state.doc)).toBe(1);
+
+		// What the server takes still lands: a list is two levels, its text one more.
+		vi.mocked(toast).mockClear();
+		pasteEvent(editor, { 'text/html': deep(49), 'text/plain': 'x' });
+		expect(nodeDepth(editor.state.doc)).toBeGreaterThan(90);
+		expect(nodeDepth(editor.state.doc)).toBeLessThanOrEqual(MAX_DEPTH);
+		expect(toast).not.toHaveBeenCalled();
+		expect(nodeDepth(track(htmlEditor('<p>Lunch with <virtues-mention to="/person/person_1" label="Nick"></virtues-mention></p>')).state.doc)).toBe(2);
+	});
+
+	it("counts a page's depth against the crate's own limit", () => {
+		const model = fs.readFileSync(path.resolve(HERE, '../../../../../crates/virtues-document/src/model.rs'), 'utf8');
+		expect(model).toContain(`pub const MAX_DEPTH: usize = ${MAX_DEPTH};`);
+	});
+
+	it("counts a page's nodes against the crate's own limit", () => {
+		const model = fs.readFileSync(path.resolve(HERE, '../../../../../crates/virtues-document/src/model.rs'), 'utf8');
+		expect(model).toContain(`pub const MAX_NODES: usize = ${MAX_NODES.toLocaleString('en').replace(/,/g, '_')};`);
 	});
 
 	/** Paste `data` through the browser's paste event, as a person does: paste rules run on it. */
@@ -1287,7 +1677,7 @@ describe('paste', () => {
 	// operator. Pasted HTML carries its own formatting, and inline code holds
 	// its text as written.
 	it("formats a pasted line's words as markdown reads them, and leaves operators, inline code and HTML's text as they are", () => {
-		const editor = track(htmlEditor('<p></p>', [pasteHandling(async () => ({ html: '' })), mediaUploads(async () => ({ url: '/api/media/x', filename: 'x', mime_type: null }))]));
+		const editor = track(htmlEditor('<p></p>', [pasteHandling(), mediaUploads(sends)]));
 		const landed = (data: Record<string, string>, page = '<p></p>', at = 1) => {
 			editor.commands.setContent(page);
 			editor.commands.setTextSelection(at);
@@ -1301,12 +1691,17 @@ describe('paste', () => {
 			'rm ~~ and ~~ more',
 			'the snake_case_name and an other_name_',
 			'Keep `a == b` and `x **y** z` as code',
+			// Python's names in two underscores are no bold.
+			'print(obj.__dict__)',
+			'obj.__class__.__name__',
+			'if __name__ == "__main__":',
 		]) {
 			expect(landed({ 'text/plain': text }).replace(/<\/?code>/g, '`'), text).toBe(`<p>${text}</p>`);
 		}
 		expect(landed({ 'text/plain': 'Run **this** first, *then* ==that== and ~~not~~ `code`' })).toBe(
 			'<p>Run <strong>this</strong> first, <em>then</em> <mark>that</mark> and <s>not</s> <code>code</code></p>',
 		);
+		expect(landed({ 'text/plain': 'Use __bold__ here' })).toBe('<p>Use <strong>bold</strong> here</p>');
 		expect(landed({ 'text/html': '<code>a == b || c == d</code>', 'text/plain': 'a == b || c == d' })).toBe(
 			'<p><code>a == b || c == d</code></p>',
 		);
@@ -1340,13 +1735,11 @@ describe('paste', () => {
 		);
 	});
 
-	it("sends a paste to the server's converter as a paste, which keeps its text", async () => {
-		vi.mocked(convertPastedMarkdown).mockClear();
+	it('reads a paste as a paste, which keeps its text', () => {
 		const editor = track(htmlEditor('<p></p>', [pasteHandling()]));
 		editor.commands.setTextSelection(1);
 		expect(paste(editor, clipboard({ 'text/plain': '- remember <placeholder> here' }))).toBe(true);
-		await settle();
-		expect(convertPastedMarkdown).toHaveBeenCalledWith('- remember <placeholder> here');
+		expect(editor.getHTML()).toBe('<ul><li><p>remember &lt;placeholder&gt; here</p></li></ul>');
 	});
 
 	/** VS Code's clipboard HTML: its syntax colours as styled spans, a token's bold included. */
@@ -1355,16 +1748,15 @@ describe('paste', () => {
 		+ lines.map((l) => (l ? `<div><span style="color: #569cd6;font-weight: bold;">${l}</span></div>` : '<br>')).join('')
 		+ '</div>';
 
-	it("reads a code editor's HTML as the text it shows: markdown converted, code without its colours' bold", async () => {
+	it("reads a code editor's HTML as the text it shows: markdown converted, code without its colours' bold", () => {
 		expect(isCodeEditorHtml(VSCODE(['## Plan']))).toBe(true);
 		expect(isCodeEditorHtml('<div style="white-space: pre"><b>Bold</b></div>')).toBe(false);
 		expect(isCodeEditorHtml('<p><span style="font-weight:700">Bold</span></p>')).toBe(false);
 
-		const convert = vi.fn(async () => ({ html: '<h2>Plan</h2><ul><li><p>one</p></li></ul>' }));
+		const convert = realConvert();
 		const editor = track(htmlEditor('<p></p>', [pasteHandling(convert)]));
 		editor.commands.setTextSelection(1);
 		expect(paste(editor, clipboard({ 'text/plain': '## Plan\n\n- one', 'text/html': VSCODE(['## Plan', '', '- one']) }))).toBe(true);
-		await settle();
 		expect(convert).toHaveBeenCalledWith('## Plan\n\n- one');
 		expect(editor.getHTML()).toBe('<h2>Plan</h2><ul><li><p>one</p></li></ul>');
 
@@ -1375,8 +1767,8 @@ describe('paste', () => {
 		expect(convert).toHaveBeenCalledTimes(1);
 	});
 
-	it("leaves VS Code's own data to the code block paste, unless it says markdown", async () => {
-		const convert = vi.fn(async () => ({ html: '<h2>Plan</h2>' }));
+	it("leaves VS Code's own data to the code block paste, unless it says markdown", () => {
+		const convert = realConvert();
 		const editor = track(htmlEditor('<p></p>', [pasteHandling(convert)]));
 		editor.commands.setTextSelection(1);
 		const html = VSCODE(['# comment']);
@@ -1392,12 +1784,47 @@ describe('paste', () => {
 		const md = track(htmlEditor('<p></p>', [pasteHandling(convert)]));
 		md.commands.setTextSelection(1);
 		expect(paste(md, clipboard({ 'text/plain': '## Plan', 'text/html': VSCODE(['## Plan']), 'vscode-editor-data': markdown }))).toBe(true);
-		await settle();
 		expect(md.getHTML()).toBe('<h2>Plan</h2>');
+
+		// A markdown file's prose has no block's sign, and the code block
+		// paste made a markdown code block of it.
+		for (const [text, html] of [
+			['Read the **setup** guide first.', '<p>Read the <strong>setup</strong> guide first.</p>'],
+			['First one.\n\nThen a [link](https://example.com).', '<p>First one.</p><p>Then a <a href="https://example.com">link</a>.</p>'],
+		]) {
+			const prose = track(htmlEditor('<p></p>', [pasteHandling(convert)]));
+			prose.commands.setTextSelection(1);
+			const pasted = clipboard({ 'text/plain': text, 'text/html': VSCODE(text.split('\n')), 'vscode-editor-data': markdown });
+			expect(handledBy(prose, pasted), text).toBe(true);
+			expect(prose.getHTML(), text).toBe(html);
+			expect(prose.state.doc.firstChild?.type.name, text).toBe('paragraph');
+		}
+
+		// Code copied out of a fence in a README: VS Code names the file's
+		// language, not the fence's. It reads as code, so it stays as it is,
+		// a code block: converted, `__init__` turned bold, every `# ` a
+		// heading and each line's indent gone.
+		for (const text of [
+			'class Config:\n    def __init__(self, *args, **kwargs):\n        # keep the defaults\n        self.items = [*args]',
+			'# install the tools\nnpm install --save-dev vitest\n# then run\nnpx vitest run',
+		]) {
+			const code = track(htmlEditor('<p></p>', [pasteHandling(convert)]));
+			code.commands.setTextSelection(1);
+			const pasted = clipboard({ 'text/plain': text, 'text/html': VSCODE(text.split('\n')), 'vscode-editor-data': markdown });
+			expect(handledBy(code, pasted), text).toBe(true);
+			expect(code.state.doc.firstChild?.type.name, text).toBe('codeBlock');
+			expect(code.state.doc.firstChild?.textContent, text).toBe(text);
+		}
+		expect(convert).toHaveBeenCalledTimes(3);
 	});
 
-	it('leaves plain words and HTML to the editor, and pastes raw into a code block', async () => {
-		const convert = vi.fn(async () => ({ html: '' }));
+	/** Whether any paste handler takes `event`, as ProseMirror asks each in turn: Tiptap's code block paste after the page's. */
+	function handledBy(editor: Editor, event: ClipboardEvent): boolean {
+		return !!editor.view.someProp('handlePaste', (f) => (f === undefined ? false : f(editor.view, event, editor.state.doc.slice(0, 0))));
+	}
+
+	it('leaves plain words and HTML to the editor, and pastes raw into a code block', () => {
+		const convert = realConvert();
 		const editor = track(htmlEditor('<p></p><pre><code>x</code></pre>', [pasteHandling(convert)]));
 		editor.commands.setTextSelection(1);
 		expect(paste(editor, clipboard({ 'text/plain': 'just words' }))).toBe(false);
@@ -1411,7 +1838,7 @@ describe('paste', () => {
 	// Windows puts CRLF line ends on its clipboard; the server's own writers
 	// never put a CR in code, as ProseMirror's code paste never does.
 	it('pastes Windows line ends into a code block as line ends', () => {
-		const editor = track(htmlEditor('<pre data-language="python"><code>x = 1</code></pre>', [pasteHandling(async () => ({ html: '' }))]));
+		const editor = track(htmlEditor('<pre data-language="python"><code>x = 1</code></pre>', [pasteHandling()]));
 		editor.commands.setTextSelection(posIn(editor, 'x = 1', 5));
 		expect(paste(editor, clipboard({ 'text/plain': '\r\ny = 2\r\nz = 3\rw = 4' }))).toBe(true);
 		expect(editor.state.doc.firstChild?.textContent).toBe('x = 1\ny = 2\nz = 3\nw = 4');
@@ -1430,10 +1857,9 @@ describe('paste', () => {
 	// A drop is read as the same data pasted: markdown text dropped stayed
 	// raw, and HTML dropped had the plain-text rules run over its words.
 	it('reads dropped text as it reads the same text pasted: markdown converted, HTML’s words as written', async () => {
-		const convert = vi.fn(async () => ({ html: '<h2>Plan</h2><ul><li><p>one</p></li></ul>' }));
+		const convert = realConvert();
 		const editor = track(htmlEditor('<p>Start</p>', [pasteHandling(convert)]));
 		dropAt(editor, posIn(editor, 'Start', 5), { 'text/plain': '## Plan\n\n- one' });
-		await settle();
 		expect(convert).toHaveBeenCalledWith('## Plan\n\n- one');
 		expect(editor.getHTML()).toBe('<p>Start</p><h2>Plan</h2><ul><li><p>one</p></li></ul>');
 
@@ -1494,77 +1920,26 @@ describe('paste', () => {
 		expect(wordLists(plain)).toBe(plain);
 	});
 
-	it('a paste whose spot is gone lands at the caret, and says so', async () => {
-		vi.mocked(toast).mockClear();
-		let answer: (v: { html: string }) => void = () => {};
-		const editor = track(htmlEditor('<p>Before</p><p>Draft line.</p><p></p>', [pasteHandling(async () => ({ html: '' }))]));
-		const done = pasteMarkdown(editor.view, '- one', posIn(editor, 'Draft line.', 5), () => new Promise((r) => (answer = r)));
-		const from = posIn(editor, 'Draft line.') - 1;
-		editor.commands.deleteRange({ from, to: from + editor.state.doc.child(1).nodeSize });
-		editor.commands.setTextSelection(editor.state.doc.content.size - 1);
-		answer({ html: '<ul><li><p>one</p></li></ul>' });
-		await done;
-		expect(editor.getHTML()).toBe('<p>Before</p><ul><li><p>one</p></li></ul>');
-		expect(toast).toHaveBeenCalledOnce();
+	it('two pastes at one caret go in in the order made', async () => {
+		for (const shape of ['plain', 'shared'] as const) {
+			const editor =
+				shape === 'plain' ? track(htmlEditor('<p>Start</p><p>End</p>', [pasteHandling()])) : bind(pageDoc('<p>Start</p><p>End</p>').doc).editor;
+			await settle();
+			editor.commands.setTextSelection(posIn(editor, 'Start', 5));
+			paste(editor, clipboard({ 'text/plain': '## First\n\n- a' }));
+			paste(editor, clipboard({ 'text/plain': '## Second\n\n- b' }));
+			const out: string[] = [];
+			editor.state.doc.forEach((n) => out.push(`${n.type.name}:${n.textContent}`));
+			expect(out, shape).toEqual(['paragraph:Start', 'heading:First', 'bulletList:a', 'heading:Second', 'bulletList:b', 'paragraph:End']);
+		}
 	});
 
-	/** A converter whose answers the test gives, one per call, in the order asked. */
-	function heldConverter() {
-		const answers: ((v: { html: string }) => void)[] = [];
-		return {
-			convert: () => new Promise<{ html: string }>((r) => answers.push(r)),
-			answer: (i: number, html: string) => answers[i]({ html }),
-		};
-	}
-
-	for (const order of [
-		[0, 1],
-		[1, 0],
-	]) {
-		it(`two pastes waiting at one caret land in the order made, the server answering ${order.join(' then ')}`, async () => {
-			for (const shape of ['plain', 'shared'] as const) {
-				const held = heldConverter();
-				const editor =
-					shape === 'plain'
-						? track(htmlEditor('<p>Start</p><p>End</p>', [pasteHandling(held.convert)]))
-						: bind(pageDoc('<p>Start</p><p>End</p>').doc).editor;
-				editor.commands.setTextSelection(posIn(editor, 'Start', 5));
-				const first = pasteMarkdown(editor.view, '## First\n\n- a', posIn(editor, 'Start', 5), held.convert);
-				const second = pasteMarkdown(editor.view, '## Second\n\n- b', posIn(editor, 'Start', 5), held.convert);
-				const html = ['<h2>First</h2><ul><li><p>a</p></li></ul>', '<h2>Second</h2><ul><li><p>b</p></li></ul>'];
-				for (const i of order) {
-					held.answer(i, html[i]);
-					await settle();
-				}
-				await Promise.all([first, second]);
-				const out: string[] = [];
-				editor.state.doc.forEach((n) => out.push(`${n.type.name}:${n.textContent}`));
-				expect(out, shape).toEqual(['paragraph:Start', 'heading:First', 'bulletList:a', 'heading:Second', 'bulletList:b', 'paragraph:End']);
-			}
-		});
-	}
-
-	it('two runs of words pasted at one caret join the text in the order made', async () => {
-		const held = heldConverter();
-		const editor = track(htmlEditor('<p>Start</p>', [pasteHandling(held.convert)]));
-		const one = pasteMarkdown(editor.view, '**one**', posIn(editor, 'Start', 5), held.convert);
-		const two = pasteMarkdown(editor.view, '**two**', posIn(editor, 'Start', 5), held.convert);
-		held.answer(0, '<p>ONE</p>');
-		await settle();
-		held.answer(1, '<p>TWO</p>');
-		await Promise.all([one, two]);
-		expect(editor.getHTML()).toBe('<p>StartONETWO</p>');
-	});
-
-	it('a pending paste is not a document node', async () => {
-		let answer: (v: { html: string }) => void = () => {};
-		const editor = track(htmlEditor('<p></p>', [pasteHandling(() => new Promise((r) => (answer = r)))]));
-		editor.commands.setTextSelection(1);
-		const done = pasteMarkdown(editor.view, '- one', 1, () => new Promise((r) => (answer = r)));
-		expect(editor.getHTML()).toBe('<p></p>');
-		answer({ html: '<ul><li><p>one</p></li></ul>' });
-		await done;
-		expect(editor.getHTML()).toBe('<ul><li><p>one</p></li></ul>');
+	it('two runs of words pasted at one caret join the text in the order made', () => {
+		const editor = track(htmlEditor('<p>Start</p>', [pasteHandling()]));
+		editor.commands.setTextSelection(posIn(editor, 'Start', 5));
+		pasteMarkdown(editor.view, '**one**', editor.state.selection.from);
+		pasteMarkdown(editor.view, '*two*', editor.state.selection.from);
+		expect(editor.getHTML()).toBe('<p>Start<strong>one</strong><em>two</em></p>');
 	});
 
 	describe('blocks arrive whole, an inline run joins the text', () => {
@@ -1576,10 +1951,10 @@ describe('paste', () => {
 		 * the block holding `text`, or at the position `text` is.
 		 */
 		async function pasteInto(page: string, text: string | number, offset: number, html: string) {
-			const editor = track(htmlEditor(page, [pasteHandling(async () => ({ html }))]));
+			const editor = track(htmlEditor(page, [pasteHandling(answering(converted(html)))]));
 			const at = typeof text === 'number' ? text : posIn(editor, text, offset);
 			editor.commands.setTextSelection(at);
-			await pasteMarkdown(editor.view, 'markdown', at, async () => ({ html }));
+			pasteMarkdown(editor.view, 'markdown', at, { convert: answering(converted(html)) });
 			return editor;
 		}
 
@@ -1639,6 +2014,27 @@ describe('paste', () => {
 			const inside = await pasteInto('<ol><li><p>alpha</p></li><li><p>beta</p></li><li><p>gamma</p></li></ol>', 'beta', 2, '<ul><li><p>x</p></li></ul>');
 			expect(inside.getHTML()).toBe(
 				'<ol><li><p>alpha</p></li><li><p>be</p></li></ol><ul><li><p>x</p></li></ul><ol start="3"><li><p>ta</p></li><li><p>gamma</p></li></ol>',
+			);
+		});
+
+		// Items numbered their own way keep their numbers either side of the
+		// paste: the second list starts at its first item's, which keeps its
+		// own, so a list pasted between that joins both still leaves it its
+		// number; the second half of a split item counts on from the first.
+		it('in a list numbered its own way, every item keeping its number', async () => {
+			const years = '<ol start="2019"><li><p>a</p></li><li value="2021"><p>b</p></li><li value="2024"><p>c</p></li></ol>';
+			const between = await pasteInto(years, 'a', 1, '<h2>Mid</h2>');
+			expect(between.getHTML()).toBe(
+				'<ol start="2019"><li><p>a</p></li></ol><h2>Mid</h2><ol start="2021"><li value="2021"><p>b</p></li><li value="2024"><p>c</p></li></ol>',
+			);
+			const joined = await pasteInto(years, 'a', 1, '<ol><li><p>x</p></li></ol>');
+			expect(joined.getHTML()).toBe(
+				'<ol start="2019"><li><p>a</p></li><li><p>x</p></li><li value="2021"><p>b</p></li><li value="2024"><p>c</p></li></ol>',
+			);
+			const inside = await pasteInto(years.replace('<p>b</p>', '<p>beta</p>'), 'beta', 2, '<h2>Mid</h2>');
+			expect(inside.getHTML()).toBe(
+				'<ol start="2019"><li><p>a</p></li><li value="2021"><p>be</p></li></ol><h2>Mid</h2>'
+					+ '<ol start="2022"><li><p>ta</p></li><li value="2024"><p>c</p></li></ol>',
 			);
 		});
 
@@ -1708,115 +2104,83 @@ describe('paste', () => {
 });
 
 describe('media', () => {
-	it('an audio file becomes an audio block, and nothing is in the page while it uploads', async () => {
-		let finish: (v: { url: string; filename: string; mime_type: string | null }) => void = () => {};
-		const upload = () => new Promise<{ url: string; filename: string; mime_type: string | null }>((r) => (finish = r));
-		const editor = track(htmlEditor('<p>Notes</p>', [mediaUploads(upload)]));
-		const before = editor.getJSON();
-		const file = new File(['abc'], 'memo.m4a', { type: 'audio/mp4' });
-		const done = uploadFiles(editor.view, [file], editor.state.doc.content.size - 1, upload);
-		expect(editor.getJSON()).toEqual(before);
-		expect(pendingUploads(editor.view)).toBe(1);
-		finish({ url: '/api/media/memo.m4a', filename: 'memo.m4a', mime_type: 'audio/mp4' });
-		await done;
-		expect(pendingUploads(editor.view)).toBe(0);
-		expect(editor.getJSON().content?.[1]).toMatchObject({ type: 'audio', attrs: { src: '/api/media/memo.m4a', name: 'memo.m4a' } });
-	});
-
-	/** Uploads that finish when the test says, by file name. */
-	function heldUploads() {
-		const waiting = new Map<string, (v: { url: string; filename: string; mime_type: string | null }) => void>();
-		const failing = new Map<string, (e: Error) => void>();
-		const upload = vi.fn(
-			(file: File) =>
-				new Promise<{ url: string; filename: string; mime_type: string | null }>((resolve, reject) => {
-					waiting.set(file.name, resolve);
-					failing.set(file.name, reject);
-				}),
-		);
-		return {
-			upload,
-			finish: (name: string) => waiting.get(name)!({ url: `/api/media/${name}`, filename: name, mime_type: 'image/png' }),
-			fail: (name: string) => failing.get(name)!(new Error('disk full')),
-		};
-	}
-
 	const photos = (...names: string[]) => names.map((n) => new File(['x'], n, { type: 'image/png' }));
 
-	/** Each top-level block: its type, and its text or its address. */
+	/** Each top-level block: its type, and its text, or its name with its address's shape. */
 	function blocks(editor: Editor): string[] {
 		const out: string[] = [];
-		editor.state.doc.forEach((n) => out.push(n.isAtom ? `${n.type.name}:${n.attrs.src}` : `${n.type.name}:${n.textContent}`));
+		editor.state.doc.forEach((n) => {
+			if (!n.isAtom) return void out.push(`${n.type.name}:${n.textContent}`);
+			const src = String(n.attrs.src);
+			out.push(`${n.type.name}:${n.attrs.alt ?? n.attrs.name}${UPLOAD_SRC.test(src) ? '' : ` at ${src}`}`);
+		});
 		return out;
 	}
 
-	it('several files on an empty line all land there, in the order given, whichever finishes first', async () => {
-		const held = heldUploads();
-		const editor = track(htmlEditor('<p>Trip</p><p></p><p>After</p>', [mediaUploads(held.upload)]));
+	/** The Drive ids the page's file blocks name, in document order. */
+	function fileIds(editor: Editor): string[] {
+		const out: string[] = [];
+		editor.state.doc.descendants((n) => {
+			if (n.isAtom && typeof n.attrs.src === 'string' && UPLOAD_SRC.test(n.attrs.src)) out.push(driveFileId(n.attrs.src)!);
+			return true;
+		});
+		return out;
+	}
+
+	it('an audio file becomes its audio block at once, at its final address, and the file is sent after', () => {
+		const send = vi.fn<Send>();
+		const editor = track(htmlEditor('<p>Notes</p>', [mediaUploads(send)]));
+		addFiles(editor.view, [new File(['abc'], 'memo.m4a', { type: 'audio/mp4' })], editor.state.doc.content.size - 1, { send });
+		expect(blocks(editor)).toEqual(['paragraph:Notes', 'audio:memo.m4a']);
+		const [id] = fileIds(editor);
+		expect(editor.getJSON().content?.[1]).toMatchObject({ type: 'audio', attrs: { src: `/drive/${id}`, name: 'memo.m4a' } });
+		expect(send).toHaveBeenCalledOnce();
+		expect(send.mock.calls[0][0]).toBe(id);
+		expect(send.mock.calls[0][1].name).toBe('memo.m4a');
+	});
+
+	it('several files on an empty line all go in there, in the order given, each at an address of its own', () => {
+		const editor = track(htmlEditor('<p>Trip</p><p></p><p>After</p>', [mediaUploads(sends)]));
 		// The Image command's flow: the trigger deleted, the place anchored while the dialog is open.
 		const at = anchorAt(editor.state, posIn(editor, 'Trip') + 6);
-		const done = uploadFiles(editor.view, photos('harbour.png', 'tram.png', 'castle.png'), at, held.upload);
-		expect(pendingUploads(editor.view)).toBe(1);
-		held.finish('castle.png');
-		held.finish('harbour.png');
-		await settle();
-		held.finish('tram.png');
-		await done;
-		expect(blocks(editor)).toEqual([
-			'paragraph:Trip',
-			'image:/api/media/harbour.png',
-			'image:/api/media/tram.png',
-			'image:/api/media/castle.png',
-			'paragraph:After',
+		addFiles(editor.view, photos('harbour.png', 'tram.png', 'castle.png'), at, { send: sends });
+		expect(blocks(editor)).toEqual(['paragraph:Trip', 'image:harbour.png', 'image:tram.png', 'image:castle.png', 'paragraph:After']);
+		const ids = fileIds(editor);
+		expect(new Set(ids).size).toBe(3);
+		expect(sends.mock.calls.map(([id, file]) => [id, file.name])).toEqual([
+			[ids[0], 'harbour.png'],
+			[ids[1], 'tram.png'],
+			[ids[2], 'castle.png'],
 		]);
-		expect(pendingUploads(editor.view)).toBe(0);
-		expect(held.upload).toHaveBeenCalledTimes(3);
 	});
 
-	it('several files at the end of a line land after it in order, and in the middle of one, between its halves', async () => {
-		const end = heldUploads();
-		const atEnd = track(htmlEditor('<p>Notes</p><p>After</p>', [mediaUploads(end.upload)]));
-		const done = uploadFiles(atEnd.view, photos('one.png', 'two.png', 'three.png'), posIn(atEnd, 'Notes', 5), end.upload);
-		for (const name of ['one.png', 'two.png', 'three.png']) {
-			end.finish(name);
-			await settle();
-		}
-		await done;
-		expect(blocks(atEnd)).toEqual(['paragraph:Notes', 'image:/api/media/one.png', 'image:/api/media/two.png', 'image:/api/media/three.png', 'paragraph:After']);
+	it('several files at the end of a line go after it in order, and in the middle of one, between its halves', () => {
+		const atEnd = track(htmlEditor('<p>Notes</p><p>After</p>', [mediaUploads(sends)]));
+		addFiles(atEnd.view, photos('one.png', 'two.png', 'three.png'), posIn(atEnd, 'Notes', 5), { send: sends });
+		expect(blocks(atEnd)).toEqual(['paragraph:Notes', 'image:one.png', 'image:two.png', 'image:three.png', 'paragraph:After']);
 
-		const mid = heldUploads();
-		const middle = track(htmlEditor('<p>Notes More</p>', [mediaUploads(mid.upload)]));
-		const split = uploadFiles(middle.view, photos('one.png', 'two.png'), posIn(middle, 'More'), mid.upload);
-		mid.finish('two.png');
-		mid.finish('one.png');
-		await split;
-		expect(blocks(middle)).toEqual(['paragraph:Notes ', 'image:/api/media/one.png', 'image:/api/media/two.png', 'paragraph:More']);
+		const middle = track(htmlEditor('<p>Notes More</p>', [mediaUploads(sends)]));
+		addFiles(middle.view, photos('one.png', 'two.png'), posIn(middle, 'More'), { send: sends });
+		expect(blocks(middle)).toEqual(['paragraph:Notes ', 'image:one.png', 'image:two.png', 'paragraph:More']);
 	});
 
-	// Placing the first file splits the paragraph, and UniqueID re-marks the
-	// second half with an id of its own: a step that drops a widget at that
-	// half's start, which is where the next file goes.
-	it('on a shared page, several files in the middle of a line land between its halves, in order', async () => {
+	it('on a shared page, several files in the middle of a line go between its halves, in order, every block with an id of its own', async () => {
 		const { doc, writtenBy } = pageDoc('<p>Notes More</p><p>After</p>');
-		const held = heldUploads();
-		const { editor } = bind(doc, { plugins: false });
-		editor.registerPlugin(mediaUploads(held.upload).config.addProseMirrorPlugins!.call({ editor } as never)[0]);
-		const done = uploadFiles(editor.view, photos('one.png', 'two.png', 'three.png'), posIn(editor, 'More'), held.upload);
-		for (const name of ['one.png', 'two.png', 'three.png']) {
-			held.finish(name);
-			await settle();
-		}
-		await done;
+		const { editor } = bind(doc);
+		await settle();
+		addFiles(editor.view, photos('one.png', 'two.png', 'three.png'), posIn(editor, 'More'), { send: sends });
+		await settle();
 		expect(blocks(editor), `page written by ${writtenBy}`).toEqual([
 			'paragraph:Notes ',
-			'image:/api/media/one.png',
-			'image:/api/media/two.png',
-			'image:/api/media/three.png',
+			'image:one.png',
+			'image:two.png',
+			'image:three.png',
 			'paragraph:More',
 			'paragraph:After',
 		]);
 		const ids = editor.state.doc.content.content.map((n) => n.attrs[contract.id.attr]);
 		expect(new Set(ids).size).toBe(ids.length);
+		expect(treeOf(doc)).toEqual(editor.state.doc.toJSON());
 	});
 
 	/** A paste of `files` alone, as a copied picture is. */
@@ -1825,89 +2189,50 @@ describe('media', () => {
 		return !!editor.view.someProp('handlePaste', (f) => f(editor.view, event, editor.state.doc.slice(0, 0)));
 	}
 
-	it('a file pasted over words leaves them until it lands, and a failed upload leaves them be', async () => {
-		vi.mocked(toast.error).mockClear();
-		const { doc } = pageDoc('<p>Keep these words</p>');
-		const held = heldUploads();
-		const { editor } = bind(doc, { plugins: false });
-		editor.registerPlugin(mediaUploads(held.upload).config.addProseMirrorPlugins!.call({ editor } as never)[0]);
-		const from = posIn(editor, 'these');
-		editor.commands.setTextSelection({ from, to: from + 'these'.length });
-		expect(pasteFiles(editor, photos('new.png'))).toBe(true);
-		expect(blocks(editor)).toEqual(['paragraph:Keep these words']);
-		held.fail('new.png');
-		await settle();
-		expect(blocks(editor)).toEqual(['paragraph:Keep these words']);
-		expect(toast.error).toHaveBeenCalledOnce();
-		expect(pendingUploads(editor.view)).toBe(0);
-	});
-
-	it('a file pasted over a selected image leaves the image when the upload fails', async () => {
-		const { doc } = pageDoc('<p>A</p><img src="/api/media/old.png" alt="Old"><p>B</p>');
-		const held = heldUploads();
-		const { editor } = bind(doc, { plugins: false });
-		editor.registerPlugin(mediaUploads(held.upload).config.addProseMirrorPlugins!.call({ editor } as never)[0]);
-		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, editor.state.doc.child(0).nodeSize)));
-		expect(pasteFiles(editor, photos('new.png'))).toBe(true);
-		held.fail('new.png');
-		await settle();
-		expect(blocks(editor)).toEqual(['paragraph:A', 'image:/api/media/old.png', 'paragraph:B']);
-	});
-
-	it('a file pasted over words replaces them as it lands, one undo putting them back however long it took', async () => {
+	it('a file pasted over words replaces them at once, and one undo puts them back', async () => {
 		const { doc } = pageDoc('<p>Before</p><p>Keep these words</p>');
-		const held = heldUploads();
-		const { editor } = bind(doc, { plugins: false });
-		editor.registerPlugin(mediaUploads(held.upload).config.addProseMirrorPlugins!.call({ editor } as never)[0]);
+		const { editor } = bind(doc);
+		await settle();
 		const from = posIn(editor, 'these');
 		editor.commands.setTextSelection({ from, to: from + 'these'.length });
 		expect(pasteFiles(editor, photos('new.png'))).toBe(true);
-		await settle(700);
-		expect(blocks(editor)).toEqual(['paragraph:Before', 'paragraph:Keep these words']);
-		held.finish('new.png');
-		await settle();
-		expect(blocks(editor)).toEqual(['paragraph:Before', 'paragraph:Keep ', 'image:/api/media/new.png', 'paragraph: words']);
+		expect(blocks(editor)).toEqual(['paragraph:Before', 'paragraph:Keep ', 'image:new.png', 'paragraph: words']);
 		editor.commands.undo();
 		expect(blocks(editor)).toEqual(['paragraph:Before', 'paragraph:Keep these words']);
+		expect(treeOf(doc)).toEqual(editor.state.doc.toJSON());
 	});
 
-	it('on a shared page, several files picked onto an empty line all land, and a failed one is said', async () => {
-		vi.mocked(toast.error).mockClear();
-		const { doc } = pageDoc('<p>Trip</p><p></p><p>After</p>');
-		const held = heldUploads();
-		const { editor } = bind(doc, { plugins: false });
-		editor.registerPlugin(mediaUploads(held.upload).config.addProseMirrorPlugins!.call({ editor } as never)[0]);
-		const at = anchorAt(editor.state, posIn(editor, 'Trip') + 6);
-		const done = uploadFiles(editor.view, photos('harbour.png', 'tram.png', 'castle.png'), at, held.upload);
-		held.finish('harbour.png');
+	it('a file pasted over a selected image replaces it at once, and undo puts the image back', async () => {
+		const { doc } = pageDoc('<p>A</p><img src="/api/media/old.png" alt="Old"><p>B</p>');
+		const { editor } = bind(doc);
 		await settle();
-		held.fail('tram.png');
-		held.finish('castle.png');
-		await done;
-		expect(blocks(editor)).toEqual(['paragraph:Trip', 'image:/api/media/harbour.png', 'image:/api/media/castle.png', 'paragraph:After']);
-		expect(toast.error).toHaveBeenCalledOnce();
-		expect(pendingUploads(editor.view)).toBe(0);
+		editor.view.dispatch(editor.state.tr.setSelection(NodeSelection.create(editor.state.doc, editor.state.doc.child(0).nodeSize)));
+		expect(pasteFiles(editor, photos('new.png'))).toBe(true);
+		expect(blocks(editor)).toEqual(['paragraph:A', 'image:new.png', 'paragraph:B']);
+		editor.commands.undo();
+		expect(blocks(editor)).toEqual(['paragraph:A', 'image:Old at /api/media/old.png', 'paragraph:B']);
 	});
 
-	it('files whose place is gone land at the caret, and say so', async () => {
+	it('a picked file whose line someone deleted while the dialog was open goes in where the line was', async () => {
 		vi.mocked(toast).mockClear();
-		const held = heldUploads();
-		const editor = track(htmlEditor('<p>Before</p><p>Draft line.</p><p>End</p>', [mediaUploads(held.upload)]));
-		const done = uploadFiles(editor.view, photos('one.png', 'two.png'), posIn(editor, 'Draft', 2), held.upload);
+		const { editor } = bind(pageDoc('<p>Before</p><p>Draft line.</p><p>End</p>').doc);
+		await settle();
+		const at = anchorAt(editor.state, posIn(editor, 'Draft', 2));
 		const from = posIn(editor, 'Draft line.') - 1;
 		editor.commands.deleteRange({ from, to: from + editor.state.doc.child(1).nodeSize });
 		editor.commands.setTextSelection(posIn(editor, 'End', 3));
-		held.finish('one.png');
-		held.finish('two.png');
-		await done;
-		expect(blocks(editor)).toEqual(['paragraph:Before', 'paragraph:End', 'image:/api/media/one.png', 'image:/api/media/two.png']);
+		addFiles(editor.view, photos('one.png', 'two.png'), at, { send: sends });
+		expect(blocks(editor)).toEqual(['paragraph:Before', 'image:one.png', 'image:two.png', 'paragraph:End']);
+		expect(toast).not.toHaveBeenCalled();
+		// A place no longer in the page at all: the cursor, said.
+		addFiles(editor.view, photos('three.png'), { resolve: () => null }, { send: sends });
+		expect(blocks(editor)).toEqual(['paragraph:Before', 'image:one.png', 'image:two.png', 'paragraph:End', 'image:three.png']);
 		expect(toast).toHaveBeenCalledOnce();
 	});
 
 	// Word, Excel and PowerPoint copy a picture of the range beside its HTML.
-	it("pastes Office's HTML, not the picture of it beside it; a copied picture is uploaded", async () => {
-		const upload = vi.fn(async () => ({ url: '/api/media/x.png', filename: 'image.png', mime_type: 'image/png' }));
-		const editor = track(htmlEditor('<p>Notes</p>', [pasteHandling(async () => ({ html: '' })), mediaUploads(upload)]));
+	it("pastes Office's HTML, not the picture of it beside it; a copied picture becomes its block", async () => {
+		const editor = track(htmlEditor('<p>Notes</p>', [pasteHandling(), mediaUploads(sends)]));
 		editor.commands.setTextSelection(posIn(editor, 'Notes', 5));
 		const office = new DataTransfer();
 		office.setData('text/html', '<table><tr><td>Q1</td><td>40</td></tr></table>');
@@ -1915,7 +2240,7 @@ describe('media', () => {
 		office.items.add(new File(['x'], 'image.png', { type: 'image/png' }));
 		editor.view.dom.dispatchEvent(new ClipboardEvent('paste', { clipboardData: office, bubbles: true, cancelable: true }));
 		await settle();
-		expect(upload).not.toHaveBeenCalled();
+		expect(sends).not.toHaveBeenCalled();
 		expect(blocks(editor)).toEqual(['paragraph:Notes', 'table:Q140']);
 
 		const picture = new DataTransfer();
@@ -1923,14 +2248,13 @@ describe('media', () => {
 		picture.items.add(new File(['x'], 'image.png', { type: 'image/png' }));
 		editor.view.dom.dispatchEvent(new ClipboardEvent('paste', { clipboardData: picture, bubbles: true, cancelable: true }));
 		await settle();
-		expect(upload).toHaveBeenCalledOnce();
+		expect(sends).toHaveBeenCalledOnce();
 	});
 
 	// A Word range holding a picture: its HTML carries the picture as a file
 	// on the copying computer, and the picture of the range comes beside it.
 	it("pastes the words of a Word range that holds a picture, not the picture of the range", async () => {
-		const upload = vi.fn(async () => ({ url: '/api/media/range.png', filename: 'image.png', mime_type: 'image/png' }));
-		const editor = track(htmlEditor('<p>Notes</p>', [pasteHandling(async () => ({ html: '' })), mediaUploads(upload)]));
+		const editor = track(htmlEditor('<p>Notes</p>', [pasteHandling(), mediaUploads(sends)]));
 		editor.commands.setTextSelection(posIn(editor, 'Notes', 5));
 		const word = new DataTransfer();
 		word.setData(
@@ -1947,20 +2271,278 @@ describe('media', () => {
 		word.items.add(new File(['x'], 'image.png', { type: 'image/png' }));
 		editor.view.dom.dispatchEvent(new ClipboardEvent('paste', { clipboardData: word, bubbles: true, cancelable: true }));
 		await settle();
-		expect(upload).not.toHaveBeenCalled();
+		expect(sends).not.toHaveBeenCalled();
 		const text = blocks(editor).join(' ');
 		expect(text).toContain('Quarterly results were strong.');
 		expect(text).toContain('Next steps follow.');
 	});
 
-	it('a failed upload leaves the page as it was', async () => {
+	it('a file larger than a page holds is said and left out; the rest go in', () => {
+		vi.mocked(toast.error).mockClear();
+		const editor = track(htmlEditor('<p>Notes</p>', [mediaUploads(sends)]));
+		const huge = new File(['x'], 'film.mov', { type: 'video/quicktime' });
+		Object.defineProperty(huge, 'size', { value: MAX_UPLOAD_BYTES + 1 });
+		addFiles(editor.view, [huge], 6, { send: sends });
+		expect(blocks(editor)).toEqual(['paragraph:Notes']);
+		addFiles(editor.view, [huge, ...photos('small.png')], 6, { send: sends });
+		expect(blocks(editor)).toEqual(['paragraph:Notes', 'image:small.png']);
+		expect(toast.error).toHaveBeenCalledTimes(2);
+		expect(sends).toHaveBeenCalledOnce();
+		// The server's own limit (`api/media.rs`).
+		const media = fs.readFileSync(path.resolve(HERE, '../../../../../virtues-core/src/api/media.rs'), 'utf8');
+		expect(/const MAX_FILE_SIZE: usize = 100 \* 1024 \* 1024;/.test(media)).toBe(MAX_UPLOAD_BYTES === 100 * 1024 * 1024);
+	});
+
+	// The page's markdown reads a Drive file's kind from its name's
+	// extension: a picture pasted as `image` came back from it as a file.
+	it('names a file with no extension by its type, so its markdown reads back as the same block', () => {
+		expect(nameForBlock(new File(['x'], 'image', { type: 'image/png' }))).toBe('image.png');
+		expect(nameForBlock(new File(['x'], 'Voice memo', { type: 'audio/mp4' }))).toBe('Voice memo.m4a');
+		expect(nameForBlock(new File(['x'], 'scan.TIF', { type: 'image/tiff' }))).toBe('scan.TIF');
+		expect(nameForBlock(new File(['x'], 'notes', { type: 'application/x-unknown' }))).toBe('notes');
+		const clip = new File(['x'], 'clip', { type: 'video/quicktime' });
+		expect(kindOfFile(clip, nameForBlock(clip))).toBe('video');
+		const unknown = new File(['x'], 'scan.heic', { type: '' });
+		expect(kindOfFile(unknown, nameForBlock(unknown))).toBe('image');
+		const editor = track(htmlEditor('<p>Notes</p>', [mediaUploads(sends)]));
+		addFiles(editor.view, [new File(['x'], 'image', { type: 'image/png' })], 6, { send: sends });
+		expect(kindOfLink(String(editor.state.doc.child(1).attrs.src), String(editor.state.doc.child(1).attrs.alt))).toBe('image');
+	});
+
+	it('the upload is sent to the address the block holds, and a failure it can recover from is tried again there', async () => {
+		vi.useFakeTimers();
+		try {
+			const editor = track(htmlEditor('<p>Notes</p>', [mediaUploads()]));
+			addFiles(editor.view, photos('harbour.png'), 6);
+			const [id] = fileIds(editor);
+			expect(transfers.map((t) => t.id)).toEqual([id]);
+			expect(get(watchUpload(id))).toMatchObject({ phase: 'uploading', name: 'harbour.png' });
+			expect(uploadsAtStake()).toBe(1);
+			transfers[0].progress?.(1, 2);
+			expect(get(watchUpload(id))).toMatchObject({ phase: 'uploading', sent: 1, total: 2 });
+			// The network: tried again in two seconds, to the same address.
+			transfers[0].fail(new UploadError("Couldn't reach your server", 0));
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(transfers.map((t) => t.id)).toEqual([id, id]);
+			transfers[1].done();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(get(watchUpload(id))).toMatchObject({ phase: 'done' });
+			expect(uploadsAtStake()).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('an upload out of retries keeps its block, which says why, and Try again sends the same file to the same address', async () => {
+		vi.useFakeTimers();
+		try {
+			const editor = track(htmlEditor('<p>Notes</p>', [mediaUploads()]));
+			addFiles(editor.view, photos('harbour.png'), 6);
+			const before = editor.getJSON();
+			const [id] = fileIds(editor);
+			// Out of space is no refusal: emptying the trash makes room.
+			for (let i = 0; i < 5; i++) {
+				transfers[i].fail(new UploadError('Your server is out of space.', 507));
+				await vi.advanceTimersByTimeAsync(60_000);
+			}
+			expect(transfers).toHaveLength(5);
+			expect(get(watchUpload(id))).toMatchObject({ phase: 'failed', reason: 'Your server is out of space.', refused: false });
+			expect(editor.getJSON()).toEqual(before);
+			// Still the only copy of the file: a reload would lose it.
+			expect(uploadsAtStake()).toBe(1);
+			retryUpload(id);
+			expect(transfers.map((t) => [t.id, t.file.name])).toEqual(Array.from({ length: 6 }, () => [id, 'harbour.png']));
+			transfers[5].done();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(get(watchUpload(id))).toMatchObject({ phase: 'done' });
+			expect(uploadsAtStake()).toBe(0);
+			expect(editor.getJSON()).toEqual(before);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	// Undone or removed, a block whose file had stopped short of a refusal
+	// stayed at stake for good: every close asked first, the app never took a
+	// new UI, every reconnect sent the file again, and nothing on any page
+	// was left to let it go. It is let go once the server says no page names
+	// it, and redo sends it again.
+	it('a file whose block is undone or removed is let go once no page names it, and redo sends it again', async () => {
+		const { doc } = pageDoc('<p>Notes</p>');
+		const { editor } = bind(doc, { plugins: false });
+		editor.registerPlugin(mediaUploads().config.addProseMirrorPlugins!.call({ editor } as never)[0]);
+		await settle();
+		const asksBeforeClosing = () => {
+			const event = new Event('beforeunload', { cancelable: true });
+			window.dispatchEvent(event);
+			return event.defaultPrevented;
+		};
+		vi.useFakeTimers();
+		try {
+			addFiles(editor.view, photos('harbour.png'), posIn(editor, 'Notes', 5));
+			const [id] = fileIds(editor);
+			for (let i = 0; i < 5; i++) {
+				transfers[i].fail(new UploadError('Your server is out of space.', 507));
+				await vi.advanceTimersByTimeAsync(60_000);
+			}
+			expect(get(watchUpload(id))).toMatchObject({ phase: 'failed', refused: false });
+			expect(uploadsAtStake()).toBe(1);
+
+			// Its page saved without it, the server names it nowhere.
+			server.names = () => false;
+			editor.commands.undo();
+			expect(fileIds(editor)).toEqual([]);
+			await vi.advanceTimersByTimeAsync(CHECK_AFTER_MS);
+			expect(uploadsAtStake()).toBe(0);
+			expect(asksBeforeClosing()).toBe(false);
+			window.dispatchEvent(new Event('online'));
+			await vi.advanceTimersByTimeAsync(TRY_AGAIN_EVERY_MS);
+			expect(transfers).toHaveLength(5);
+
+			editor.commands.redo();
+			expect(fileIds(editor)).toEqual([id]);
+			expect(transfers.map((t) => t.id)).toEqual(Array.from({ length: 6 }, () => id));
+			expect(uploadsAtStake()).toBe(1);
+
+			// Remove, while it is on its way: once let go, a failure is not tried again.
+			let at = -1;
+			editor.state.doc.forEach((n, pos) => {
+				if (n.attrs.src === `/drive/${id}`) at = pos;
+			});
+			editor.view.dispatch(editor.state.tr.delete(at, at + editor.state.doc.nodeAt(at)!.nodeSize));
+			await vi.advanceTimersByTimeAsync(CHECK_AFTER_MS);
+			expect(uploadsAtStake()).toBe(0);
+			transfers[5].fail(new UploadError("Couldn't reach your server", 0));
+			await vi.advanceTimersByTimeAsync(TRY_AGAIN_EVERY_MS);
+			window.dispatchEvent(new Event('online'));
+			await vi.advanceTimersByTimeAsync(0);
+			expect(transfers).toHaveLength(6);
+			expect(asksBeforeClosing()).toBe(false);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	// Copied into a page that was then closed, and taken out of the page it
+	// was given to, the block's file was let go on what the open pages
+	// showed: never sent, not at stake, and the copy named a file that never
+	// came. Another device's or the model's move to a page not open here
+	// went the same way.
+	it('a file whose block was copied into a page now closed goes on, while that page names it', async () => {
+		vi.useFakeTimers();
+		const one = track(htmlEditor('<p>Notes</p>', [mediaUploads()]));
+		const other = htmlEditor('<p>Elsewhere</p>', [mediaUploads()]);
+		registerTreeEditor('page_one', one);
+		registerTreeEditor('page_other', other);
+		try {
+			addFiles(one.view, photos('harbour.png'), posIn(one, 'Notes', 5));
+			const [id] = fileIds(one);
+			transfers[0].fail(new UploadError("Couldn't reach your server", 0));
+			await vi.advanceTimersByTimeAsync(0);
+			const block = one.state.doc.lastChild!;
+			other.view.dispatch(other.state.tr.insert(other.state.doc.content.size, other.schema.nodeFromJSON(block.toJSON())));
+			unregisterTreeEditor('page_other', other);
+			other.destroy();
+			one.view.dispatch(one.state.tr.delete(one.state.doc.content.size - block.nodeSize, one.state.doc.content.size));
+			expect(fileIds(one)).toEqual([]);
+			await vi.advanceTimersByTimeAsync(CHECK_AFTER_MS);
+			expect(uploadsAtStake()).toBe(1);
+			expect(transfers.map((t) => t.id)).toEqual([id, id]);
+			transfers[1].done();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(get(watchUpload(id))).toMatchObject({ phase: 'done' });
+			expect(uploadsAtStake()).toBe(0);
+		} finally {
+			unregisterTreeEditor('page_one', one);
+			vi.useRealTimers();
+		}
+	});
+
+	// Shared from the device sending it, a page went without an image on its
+	// way whenever the server had not heard of it yet.
+	it('counts the images on an open page that this device has not finished sending', async () => {
+		const editor = track(htmlEditor('<p>Notes</p><img src="https://images.example.com/photo-1" alt="Harbour">', [mediaUploads()]));
+		registerTreeEditor('page_shared', editor);
+		try {
+			expect(imagesOnTheirWay('page_shared')).toBe(0);
+			addFiles(editor.view, [...photos('harbour.png', 'pier.png'), new File(['%PDF'], 'report.pdf', { type: 'application/pdf' })], 6);
+			expect(imagesOnTheirWay('page_shared')).toBe(2);
+			expect(imagesOnTheirWay('page_closed')).toBe(0);
+			transfers[0].done();
+			await settle();
+			expect(imagesOnTheirWay('page_shared')).toBe(1);
+		} finally {
+			unregisterTreeEditor('page_shared', editor);
+		}
+	});
+
+	// Turn into link left the page pointing at the file's address while the
+	// upload, taken for gone, stopped trying after a failure and let the app
+	// close: a link to an address nothing would fill, with nothing said.
+	it('a file whose block is turned into a link to its address stays at stake and is tried again', async () => {
+		vi.useFakeTimers();
+		try {
+			const editor = track(htmlEditor('<p>Notes</p>', [mediaUploads()]));
+			addFiles(editor.view, [new File(['%PDF'], 'report.pdf', { type: 'application/pdf' })], 6);
+			const [id] = fileIds(editor);
+			let at = -1;
+			editor.state.doc.forEach((n, pos) => {
+				if (n.attrs.src === `/drive/${id}`) at = pos;
+			});
+			// What MediaNode's Turn into link writes in the block's place.
+			const { schema } = editor;
+			const link = schema.nodes.paragraph.create(null, schema.text('report.pdf', [schema.marks.link.create({ href: `/drive/${id}` })]));
+			editor.view.dispatch(editor.state.tr.replaceWith(at, at + editor.state.doc.nodeAt(at)!.nodeSize, link));
+			expect(fileIds(editor)).toEqual([]);
+			expect(uploadsAtStake()).toBe(1);
+			transfers[0].fail(new UploadError("Couldn't reach your server", 0));
+			await vi.advanceTimersByTimeAsync(2000);
+			expect(transfers.map((t) => t.id)).toEqual([id, id]);
+			expect(uploadsAtStake()).toBe(1);
+			transfers[1].done();
+			await vi.advanceTimersByTimeAsync(0);
+			expect(uploadsAtStake()).toBe(0);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
+	it('a file whose block is cut from one page and pasted into another stays at stake', async () => {
+		const one = htmlEditor('<p>Notes</p>', [mediaUploads()]);
+		const other = htmlEditor('<p>Elsewhere</p>', [mediaUploads()]);
+		track(one);
+		track(other);
+		registerTreeEditor('page_one', one);
+		registerTreeEditor('page_other', other);
+		try {
+			addFiles(one.view, photos('harbour.png'), posIn(one, 'Notes', 5));
+			const [id] = fileIds(one);
+			const block = one.state.doc.lastChild!;
+			// Pasted into the other page first, then cut from this one.
+			other.view.dispatch(other.state.tr.insert(other.state.doc.content.size, other.schema.nodeFromJSON(block.toJSON())));
+			one.view.dispatch(one.state.tr.delete(one.state.doc.content.size - block.nodeSize, one.state.doc.content.size));
+			expect(fileIds(one)).toEqual([]);
+			expect(fileIds(other)).toEqual([id]);
+			expect(uploadsAtStake()).toBe(1);
+		} finally {
+			unregisterTreeEditor('page_one', one);
+			unregisterTreeEditor('page_other', other);
+		}
+	});
+
+	it('a refused upload keeps its block, which says why, and is never sent again', async () => {
 		const editor = track(htmlEditor('<p>Notes</p>', [mediaUploads()]));
+		addFiles(editor.view, photos('harbour.png'), 6);
 		const before = editor.getJSON();
-		await uploadFiles(editor.view, [new File(['x'], 'a.png', { type: 'image/png' })], 1, async () => {
-			throw new Error('disk full');
-		});
+		const [id] = fileIds(editor);
+		transfers[0].fail(new UploadError('harbour.png is over 100 MB, the most a page holds.', 413));
+		await settle();
+		expect(get(watchUpload(id))).toMatchObject({ phase: 'failed', refused: true });
+		// Every other device has stopped asking: sent again, it would be refused again.
+		retryUpload(id);
+		expect(transfers).toHaveLength(1);
+		expect(uploadsAtStake()).toBe(0);
 		expect(editor.getJSON()).toEqual(before);
-		expect(pendingUploads(editor.view)).toBe(0);
 	});
 
 	it('classifies addresses as the converter does, and loads Drive files from their download address', () => {
@@ -2088,7 +2670,7 @@ describe('tables, pasted into', () => {
 	// The paste plugin takes a paste before tableEditing does: a markdown
 	// paste over selected cells would replace only the head cell.
 	it('markdown text pasted over selected cells fills every cell, as any text does', async () => {
-		const convert = vi.fn(async () => ({ html: '<blockquote><p>q</p></blockquote>' }));
+		const convert = realConvert();
 		const { doc } = pageDoc(
 			'<table><tbody><tr><th><p>H1</p></th><th><p>H2</p></th></tr><tr><td><p>c1</p></td><td><p>c2</p></td></tr></tbody></table>',
 		);
@@ -2130,20 +2712,13 @@ describe('tables, pasted into', () => {
 			cleanups.push(provider.destroy);
 			const element = document.createElement('div');
 			document.body.append(element);
-			let finish = () => {};
-			const upload = vi.fn(
-				() =>
-					new Promise<{ url: string; filename: string; mime_type: string | null }>((resolve) => {
-						finish = () => resolve({ url: '/api/media/shot.png', filename: 'shot.png', mime_type: 'image/png' });
-					}),
-			);
 			const editor = track(
 				createPageEditor({
 					element,
 					doc: { ydoc: doc, provider },
 					editable: true,
 					placeholder: 'Write',
-					plugins: [pasteHandling(async () => ({ html: '' })), mediaUploads(upload)],
+					plugins: [pasteHandling(), mediaUploads(sends)],
 				}),
 			);
 			const cell = (text: string) => editor.state.doc.resolve(posIn(editor, text) - 2);
@@ -2160,14 +2735,10 @@ describe('tables, pasted into', () => {
 			const data = new DataTransfer();
 			data.items.add(new File(['x'], 'shot.png', { type: 'image/png' }));
 			editor.view.dom.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
-			await settle();
-			const going = [...element.querySelectorAll('.doc-paste-replaced')].map((el) => el.textContent).sort();
-			expect(going, `${anchor}..${head} drawn as going`).toEqual(
-				['H1', 'H2', 'c1', 'c2'].filter((t, i) => (want[i] as string) !== t),
-			);
-			finish();
-			await settle();
+			// At once, in the edit the paste made.
 			expect(cells(), `${anchor}..${head}`).toEqual(want);
+			await settle();
+			expect(cells(), `${anchor}..${head} synced`).toEqual(want);
 			expect(editor.state.doc.firstChild?.textContent).toBe('Before');
 			expect(editor.state.doc.lastChild?.textContent).toBe('After');
 			editor.commands.undo();
@@ -2262,15 +2833,28 @@ describe('the page moving under a panel, a menu or a picker', () => {
 		const { doc } = pageDoc(html);
 		const other = new Y.Doc();
 		Y.applyUpdate(other, Y.encodeStateAsUpdate(doc));
+		// Held, the wire keeps each side's updates until `release`: edits the
+		// two devices make meanwhile are concurrent, as on a slow network.
+		const wire = { held: false, toPhone: [] as Uint8Array[], toHere: [] as Uint8Array[] };
 		doc.on('update', (u: Uint8Array, origin: unknown) => {
-			if (origin !== 'wire') Y.applyUpdate(other, u, 'wire');
+			if (origin === 'wire') return;
+			if (wire.held) wire.toPhone.push(u);
+			else Y.applyUpdate(other, u, 'wire');
 		});
 		other.on('update', (u: Uint8Array, origin: unknown) => {
-			if (origin !== 'wire') Y.applyUpdate(doc, u, 'wire');
+			if (origin === 'wire') return;
+			if (wire.held) wire.toHere.push(u);
+			else Y.applyUpdate(doc, u, 'wire');
 		});
 		const { editor, element } = bind(doc);
 		const phone = bind(other, { plugins: false }).editor;
-		return { editor, phone, element };
+		const hold = () => (wire.held = true);
+		const release = () => {
+			wire.held = false;
+			for (const u of wire.toPhone.splice(0)) Y.applyUpdate(other, u, 'wire');
+			for (const u of wire.toHere.splice(0)) Y.applyUpdate(doc, u, 'wire');
+		};
+		return { editor, phone, element, hold, release };
 	}
 
 	/** The phone types at the start of the block holding `text`, then adds a paragraph at the top. */
@@ -2413,54 +2997,46 @@ describe('the page moving under a panel, a menu or a picker', () => {
 		]);
 	});
 
-	it('a picked file uploads where the command ran, its placeholder moving with the page', async () => {
-		const { editor, phone, element } = twoDevices('<h2>Trip to Lisbon</h2><p>Lunch with Nick on Friday.</p>');
+	it('a picked file goes in where the command ran, the phone writing while the dialog was open', async () => {
+		const { editor, phone } = twoDevices('<h2>Trip to Lisbon</h2><p>Lunch with Nick on Friday.</p>');
 		await settle();
 		const end = posIn(editor, 'Lunch with Nick on Friday.', 'Lunch with Nick on Friday.'.length);
 		const at = anchorAt(editor.state, end);
 		// The file dialog is open while the phone writes.
 		await phoneEditsAbove(phone, 'Trip to Lisbon');
-		let finish: (v: { url: string; filename: string; mime_type: string | null }) => void = () => {};
-		const upload = () => new Promise<{ url: string; filename: string; mime_type: string | null }>((r) => (finish = r));
-		const done = uploadFiles(editor.view, [new File(['abc'], 'memo.m4a', { type: 'audio/mp4' })], at, upload);
+		addFiles(editor.view, [new File(['abc'], 'memo.m4a', { type: 'audio/mp4' })], at, { send: sends });
 		phone.commands.insertContentAt(0, '<p>And again, while it uploads.</p>');
 		await settle();
-		expect(pendingUploads(editor.view)).toBe(1);
-		expect(element.querySelectorAll('.doc-upload')).toHaveLength(1);
-
-		finish({ url: '/api/media/memo.m4a', filename: 'memo.m4a', mime_type: 'audio/mp4' });
-		await done;
-		expect(pendingUploads(editor.view)).toBe(0);
-		expect(blocks(editor)).toEqual([
+		const want = [
 			'paragraph:And again, while it uploads.',
 			'paragraph:Added on the phone first.',
 			'heading:Moved: Trip to Lisbon',
 			'paragraph:Lunch with Nick on Friday.',
 			'audio:',
-		]);
+		];
+		expect(blocks(editor)).toEqual(want);
+		expect(blocks(phone)).toEqual(want);
+		expect(String(phone.state.doc.lastChild!.attrs.src)).toMatch(UPLOAD_SRC);
 	});
 
-	it('a paste waiting on the server lands where it was pasted while the phone writes', async () => {
-		const { editor, phone, element } = twoDevices('<p>Plan</p><p></p><p>Lunch with Nick.</p>');
+	it('a paste goes in where it was pasted, and the phone writing at the same moment merges around it', async () => {
+		const { editor, phone, hold, release } = twoDevices('<p>Plan</p><p></p><p>Lunch with Nick.</p>');
 		await settle();
-		let answer: (v: { html: string }) => void = () => {};
-		const at = editor.state.doc.child(0).nodeSize + 1;
-		const done = pasteMarkdown(editor.view, '- passport\n- tickets', at, () => new Promise((r) => (answer = r)));
+		vi.mocked(toast).mockClear();
+		hold();
+		editor.commands.setTextSelection(editor.state.doc.child(0).nodeSize + 1);
+		pasteMarkdown(editor.view, '- passport\n- tickets', editor.state.selection.from);
 		phone.commands.insertContentAt(posIn(phone, 'Plan', 'Plan'.length), ' for Friday');
 		await phoneEditsAbove(phone, 'Lunch with Nick');
-		expect(element.querySelectorAll('.doc-paste-pending')).toHaveLength(1);
-
-		answer({ html: '<ul><li><p>passport</p></li><li><p>tickets</p></li></ul>' });
-		await done;
+		release();
+		await settle();
 		expect(blocks(editor)).toEqual([
 			'paragraph:Added on the phone first.',
 			'paragraph:Plan for Friday',
 			'bulletList:passporttickets',
 			'paragraph:Moved: Lunch with Nick.',
 		]);
-		expect(element.querySelectorAll('.doc-paste-pending')).toHaveLength(0);
 		expect(toast).not.toHaveBeenCalled();
-		await settle();
 		expect(blocks(phone)).toEqual(blocks(editor));
 	});
 
@@ -2495,69 +3071,80 @@ describe('the page moving under a panel, a menu or a picker', () => {
 		}
 	});
 
-	/** Paste or upload over the selection, the server or the upload held; returns what lets it land. */
-	function waitOver(editor: Editor, via: 'paste' | 'upload'): () => Promise<void> {
+	/** Paste markdown or a picture over the selection: in the page when it returns. */
+	function overSelection(editor: Editor, via: 'paste' | 'upload'): void {
 		const { selection } = editor.state;
-		if (via === 'paste') {
-			let answer: (v: { html: string }) => void = () => {};
-			const done = pasteMarkdown(editor.view, '## Plan', selection.from, () => new Promise((r) => (answer = r)), selection);
-			return async () => {
-				answer({ html: '<h2>Plan</h2>' });
-				await done;
-			};
-		}
-		let finish = () => {};
-		const upload = () =>
-			new Promise<{ url: string; filename: string; mime_type: string | null }>((r) => {
-				finish = () => r({ url: '/api/media/plan.png', filename: 'plan.png', mime_type: 'image/png' });
-			});
-		const done = uploadFiles(editor.view, [new File(['x'], 'plan.png', { type: 'image/png' })], selection.from, upload, selection);
-		return async () => {
-			finish();
-			await done;
-		};
+		if (via === 'paste') pasteMarkdown(editor.view, '## Plan', selection.from, { replacing: selection });
+		else addFiles(editor.view, [new File(['x'], 'plan.png', { type: 'image/png' })], selection.from, { replacing: selection, send: sends });
 	}
 
-	// The start of a held selection held to the character before it, so the
-	// phone's words typed at it fell inside it; and nothing checked the
-	// selection still held what was chosen. The landing deleted the phone's
-	// words, and nobody on the phone was told.
-	it('a paste or an upload waiting over a selection leaves the words the phone typed into it, and those it typed beside it', async () => {
+	// A paste or files over a selection replace it in the edit the person
+	// makes. Words the phone typed into it at the same moment are its own,
+	// which the merge keeps: nothing here deletes what it never saw.
+	it('a paste or files over a selection replace it at once, and words the phone typed into it at the same moment stay', async () => {
 		for (const via of ['paste', 'upload'] as const) {
 			const landed = via === 'paste' ? 'heading:Plan' : 'image:';
-			for (const [phoneTypes, want, told] of [
-				[(p: Editor) => p.commands.insertContentAt(posIn(p, 'Hello world', 5), ' there'), ['paragraph:Say ', landed, 'paragraph:Hello there world'], true],
-				[(p: Editor) => p.commands.insertContentAt(posIn(p, 'Hello world'), 'Oh, '), ['paragraph:Say Oh, ', landed], false],
-				[(p: Editor) => p.commands.insertContentAt(posIn(p, 'Hello world', 'Hello world'.length), '!'), ['paragraph:Say ', landed, 'paragraph:!'], false],
+			for (const [phoneTypes, typed] of [
+				[(p: Editor) => p.commands.insertContentAt(posIn(p, 'Hello world', 5), ' there'), 'there'],
+				[(p: Editor) => p.commands.insertContentAt(posIn(p, 'Hello world'), 'Oh, '), 'Oh,'],
+				[(p: Editor) => p.commands.insertContentAt(posIn(p, 'Hello world', 'Hello world'.length), '!'), '!'],
 			] as const) {
-				const { editor, phone } = twoDevices('<p>Say Hello world</p><p>Next</p>');
+				const { editor, phone, hold, release } = twoDevices('<p>Say Hello world</p><p>Next</p>');
 				await settle();
 				vi.mocked(toast).mockClear();
 				const from = posIn(editor, 'Hello world');
 				editor.commands.setTextSelection({ from, to: from + 'Hello world'.length });
-				const land = waitOver(editor, via);
+				hold();
+				overSelection(editor, via);
+				expect(blocks(editor), `${via}: at once`).toEqual(['paragraph:Say ', landed, 'paragraph:Next']);
 				phoneTypes(phone);
+				release();
 				await settle();
-				await land();
-				expect(blocks(editor), `${via}: ${want.join(' | ')}`).toEqual([...want, 'paragraph:Next']);
-				expect(vi.mocked(toast).mock.calls.length, `${via} told`).toBe(told ? 1 : 0);
-				await settle();
-				expect(blocks(phone)).toEqual(blocks(editor));
+				const merged = blocks(editor);
+				expect(merged.join(' | '), `${via}: ${typed} kept`).toContain(typed);
+				expect(merged.join(' | ')).not.toContain('Hello');
+				expect(merged).toContain(landed);
+				expect(toast).not.toHaveBeenCalled();
+				expect(blocks(phone)).toEqual(merged);
 				for (const e of [editor, phone]) e.destroy();
 			}
-			// Words this device writes into it meanwhile are its own choice: they go with it.
-			const { editor, phone } = twoDevices('<p>Say Hello world</p><p>Next</p>');
-			await settle();
-			vi.mocked(toast).mockClear();
-			const from = posIn(editor, 'Hello world');
-			editor.commands.setTextSelection({ from, to: from + 'Hello world'.length });
-			const land = waitOver(editor, via);
-			editor.view.dispatch(editor.state.tr.insertText(' there', from + 5));
-			await land();
-			expect(blocks(editor), `${via}: typed here`).toEqual(['paragraph:Say ', landed, 'paragraph:Next']);
-			expect(toast).not.toHaveBeenCalled();
-			await settle();
-			expect(blocks(phone)).toEqual(blocks(editor));
+		}
+	});
+
+	// The person types the moment a paste or files went in over a selection:
+	// before it, at the caret where the selection was, and after it. The
+	// paste was once held there while the server answered, and typing inside
+	// or beside the held words moved it, lost them, or split the undo.
+	it('typing on this device at once, before, where and after a paste or files over a selection, lands where it is typed', async () => {
+		for (const via of ['paste', 'upload'] as const) {
+			const landed = via === 'paste' ? 'heading:Plan' : 'image:';
+			for (const where of ['before', 'where it was', 'after'] as const) {
+				const { editor, phone } = twoDevices('<p>Say Hello world</p><p>Next</p>');
+				await settle();
+				const from = posIn(editor, 'Hello world');
+				editor.commands.setTextSelection({ from, to: from + 'Hello world'.length });
+				overSelection(editor, via);
+				if (where === 'before') editor.commands.setTextSelection(posIn(editor, 'Say'));
+				if (where === 'after') editor.commands.setTextSelection(posIn(editor, 'Next'));
+				typeIn(editor, 'Oh');
+				await settle();
+				const what = `${via}, typed ${where}`;
+				// The caret, where the selection was, ends after what went in: at
+				// the end of the pasted heading, or in the line after the file.
+				const want = {
+					before: ['paragraph:OhSay ', landed, 'paragraph:Next'],
+					'where it was': ['paragraph:Say ', via === 'paste' ? 'heading:PlanOh' : landed, via === 'paste' ? 'paragraph:Next' : 'paragraph:OhNext'],
+					after: ['paragraph:Say ', landed, 'paragraph:OhNext'],
+				}[where];
+				expect(blocks(editor), what).toEqual(want);
+				expect(blocks(phone), what).toEqual(want);
+				// The typing is its own step, and the paste or the files the next.
+				editor.commands.undo();
+				expect(blocks(editor).join(' | '), what).not.toContain('Oh');
+				editor.commands.undo();
+				expect(blocks(editor), what).toEqual(['paragraph:Say Hello world', 'paragraph:Next']);
+				for (const e of [editor, phone]) e.destroy();
+			}
 		}
 	});
 
@@ -2567,7 +3154,7 @@ describe('the page moving under a panel, a menu or a picker', () => {
 		const id = editor.state.doc.child(1).attrs[contract.id.attr];
 		const at = posIn(editor, 'Before after', 7);
 		editor.commands.setTextSelection(at);
-		await pasteMarkdown(editor.view, '## Pasted', at, async () => ({ html: '<h2>Pasted</h2><ul><li><p>one</p></li></ul>' }));
+		pasteMarkdown(editor.view, '## Pasted\n\n- one', at);
 		await settle();
 		expect(blocks(editor)).toEqual(['paragraph:Plan', 'paragraph:Before ', 'heading:Pasted', 'bulletList:one', 'paragraph:after']);
 		expect(editor.state.doc.child(1).attrs[contract.id.attr]).toBe(id);
@@ -2577,19 +3164,54 @@ describe('the page moving under a panel, a menu or a picker', () => {
 		expect(blocks(phone)).toEqual(blocks(editor));
 	});
 
-	it('a paste whose paragraph the phone deleted lands where the paragraph was', async () => {
-		const { editor, phone } = twoDevices('<p>Plan</p><p>Draft line.</p><p>Lunch with Nick.</p>');
+	it('a paste into a paragraph the phone deleted at the same moment merges as typing there does', async () => {
+		const { editor, phone, hold, release } = twoDevices('<p>Plan</p><p>Draft line.</p><p>Lunch with Nick.</p>');
 		await settle();
 		vi.mocked(toast).mockClear();
-		let answer: (v: { html: string }) => void = () => {};
-		const done = pasteMarkdown(editor.view, '- passport', posIn(editor, 'Draft line.', 5), () => new Promise((r) => (answer = r)));
+		hold();
+		pasteMarkdown(editor.view, '- passport', posIn(editor, 'Draft line.', 5));
 		const from = posIn(phone, 'Draft line.') - 1;
 		phone.commands.deleteRange({ from, to: from + phone.state.doc.child(1).nodeSize });
+		release();
 		await settle();
+		expect(blocks(editor)).toContain('bulletList:passport');
+		expect(blocks(editor).join(' | ')).not.toContain('Draft');
+		expect(blocks(editor)[0]).toBe('paragraph:Plan');
+		expect(blocks(editor).at(-1)).toBe('paragraph:Lunch with Nick.');
+		expect(blocks(phone)).toEqual(blocks(editor));
+		expect(toast).not.toHaveBeenCalled();
+	});
 
-		answer({ html: '<ul><li><p>passport</p></li></ul>' });
-		await done;
-		expect(blocks(editor)).toEqual(['paragraph:Plan', 'bulletList:passport', 'paragraph:Lunch with Nick.']);
+	// Files over a selection whose block the phone deleted at the same
+	// moment: the files' block is the person's edit, which the merge keeps,
+	// and the upload that follows writes nothing that could land elsewhere.
+	it('files over a selection in a paragraph the phone deleted at the same moment stay in the page', async () => {
+		const { editor, phone, hold, release } = twoDevices('<p>Plan</p><p>Draft line.</p><p>Lunch with Nick.</p>');
+		await settle();
+		vi.mocked(toast).mockClear();
+		const from = posIn(editor, 'Draft line.');
+		editor.commands.setTextSelection({ from, to: from + 'Draft'.length });
+		hold();
+		overSelection(editor, 'upload');
+		const id = sends.mock.calls.at(-1)![0];
+		const at = posIn(phone, 'Draft line.') - 1;
+		phone.commands.deleteRange({ from: at, to: at + phone.state.doc.child(1).nodeSize });
+		release();
+		await settle();
+		const src = (e: Editor) => {
+			let found: unknown = null;
+			e.state.doc.descendants((n) => {
+				if (n.type.name === 'image') found = n.attrs.src;
+				return found === null;
+			});
+			return found;
+		};
+		expect(src(editor)).toBe(`/drive/${id}`);
+		expect(src(phone)).toBe(`/drive/${id}`);
+		expect(blocks(editor).join(' | ')).not.toContain('Draft');
+		expect(blocks(editor)[0]).toBe('paragraph:Plan');
+		expect(blocks(editor).at(-1)).toBe('paragraph:Lunch with Nick.');
+		expect(blocks(phone)).toEqual(blocks(editor));
 		expect(toast).not.toHaveBeenCalled();
 	});
 
@@ -2796,46 +3418,6 @@ describe('undo', () => {
 		agree(editor, doc);
 	});
 
-	// A paste or an upload lands when the server answers, not when the person
-	// acted: within y-undo's capture window of typing elsewhere it would join
-	// that typing, and undoing the typing would take it too.
-	it('a paste landing while the person types elsewhere is an undo step of its own', async () => {
-		const { doc } = pageDoc('<p>Notes</p><p>Draft</p>');
-		const { editor } = bind(doc);
-		await settle();
-		let answer: (v: { html: string }) => void = () => {};
-		const done = pasteMarkdown(editor.view, '## Plan', posIn(editor, 'Notes', 5), () => new Promise((r) => (answer = r)));
-		await settle(700);
-		editor.commands.setTextSelection(posIn(editor, 'Draft', 5));
-		typeIn(editor, ' typed');
-		answer({ html: '<h2>Plan</h2>' });
-		await done;
-		expect(blocks(editor)).toEqual(['paragraph:Notes', 'heading:Plan', 'paragraph:Draft typed']);
-		editor.commands.undo();
-		expect(blocks(editor)).toEqual(['paragraph:Notes', 'paragraph:Draft typed']);
-		editor.commands.undo();
-		expect(blocks(editor)).toEqual(['paragraph:Notes', 'paragraph:Draft']);
-		agree(editor, doc);
-	});
-
-	it('an upload landing while the person types elsewhere is an undo step of its own', async () => {
-		const { doc } = pageDoc('<p>Notes</p><p>Draft</p>');
-		const { editor } = bind(doc);
-		await settle();
-		let finish: (v: { url: string; filename: string; mime_type: string | null }) => void = () => {};
-		const upload = () => new Promise<{ url: string; filename: string; mime_type: string | null }>((r) => (finish = r));
-		const done = uploadFiles(editor.view, [new File(['x'], 'a.png', { type: 'image/png' })], posIn(editor, 'Notes', 5), upload);
-		await settle(700);
-		editor.commands.setTextSelection(posIn(editor, 'Draft', 5));
-		typeIn(editor, ' typed');
-		finish({ url: '/api/media/a.png', filename: 'a.png', mime_type: 'image/png' });
-		await done;
-		expect(blocks(editor)).toEqual(['paragraph:Notes', 'image:', 'paragraph:Draft typed']);
-		editor.commands.undo();
-		expect(blocks(editor)).toEqual(['paragraph:Notes', 'paragraph:Draft typed']);
-		agree(editor, doc);
-	});
-
 	/** ⌘Z (Ctrl-Z off Apple keyboards), as the browser delivers it. */
 	function pressUndo(editor: Editor) {
 		const apple = /Mac|iP(hone|[oa]d)/.test(navigator.platform);
@@ -2844,93 +3426,132 @@ describe('undo', () => {
 		);
 	}
 
-	// What waits on the server is no edit yet: an undo that passed over it
-	// took the person's own writing, and the landing, a new edit, then put
-	// that writing beyond redo while the paste landed anyway.
-	it('Undo while a paste waits calls it off; the writing before it stays, to undo and redo', async () => {
-		const { doc } = pageDoc('<p>Notes</p>');
+	/** The platform's undo (shake, three fingers, Edit > Undo), as the browser delivers it. */
+	function platformUndo(editor: Editor) {
+		editor.view.dom.dispatchEvent(new InputEvent('beforeinput', { inputType: 'historyUndo', bubbles: true, cancelable: true }));
+	}
+
+	// Within y-undo's capture window of typing just before it, a paste or
+	// files would join that typing, and one undo would take both.
+	it('a paste right after typing is an undo step of its own', async () => {
+		const { doc } = pageDoc('<p>Notes</p><p>Draft</p>');
 		const { editor } = bind(doc);
 		await settle();
-		editor.commands.setTextSelection(posIn(editor, 'Notes', 5));
-		typeIn(editor, ' I wrote this sentence.');
-		await settle(600);
-		let answer: (v: { html: string }) => void = () => {};
-		const done = pasteMarkdown(editor.view, '## Plan\n\n- one', editor.state.selection.from, () => new Promise((r) => (answer = r)));
-		vi.mocked(toast).mockClear();
-		pressUndo(editor);
-		expect(blocks(editor)).toEqual(['paragraph:Notes I wrote this sentence.']);
-		expect(editor.view.dom.querySelector('.doc-paste-pending')).toBeNull();
-		expect(toast).toHaveBeenCalledWith('Undo stopped the paste');
-		answer({ html: '<h2>Plan</h2><ul><li><p>one</p></li></ul>' });
-		await done;
-		expect(blocks(editor)).toEqual(['paragraph:Notes I wrote this sentence.']);
-		pressUndo(editor);
-		expect(blocks(editor)).toEqual(['paragraph:Notes']);
-		expect(editor.commands.redo()).toBe(true);
-		expect(blocks(editor)).toEqual(['paragraph:Notes I wrote this sentence.']);
+		editor.commands.setTextSelection(posIn(editor, 'Draft', 5));
+		typeIn(editor, ' typed');
+		pasteMarkdown(editor.view, '## Plan', posIn(editor, 'Notes', 5));
+		expect(blocks(editor)).toEqual(['paragraph:Notes', 'heading:Plan', 'paragraph:Draft typed']);
+		editor.commands.undo();
+		expect(blocks(editor)).toEqual(['paragraph:Notes', 'paragraph:Draft typed']);
+		editor.commands.undo();
+		expect(blocks(editor)).toEqual(['paragraph:Notes', 'paragraph:Draft']);
 		agree(editor, doc);
 	});
 
-	it('Undo while a file uploads calls it off, by key or by the platform’s undo; the writing before it stays, to undo and redo', async () => {
+	it('files added right after typing are an undo step of their own', async () => {
+		const { doc } = pageDoc('<p>Notes</p><p>Draft</p>');
+		const { editor } = bind(doc);
+		await settle();
+		editor.commands.setTextSelection(posIn(editor, 'Draft', 5));
+		typeIn(editor, ' typed');
+		addFiles(editor.view, [new File(['x'], 'a.png', { type: 'image/png' })], posIn(editor, 'Notes', 5), { send: sends });
+		expect(blocks(editor)).toEqual(['paragraph:Notes', 'image:', 'paragraph:Draft typed']);
+		editor.commands.undo();
+		expect(blocks(editor)).toEqual(['paragraph:Notes', 'paragraph:Draft typed']);
+		agree(editor, doc);
+	});
+
+	// Undo while a paste waited on the server once took the person's own
+	// writing instead, and the paste landed anyway: a paste is now an edit
+	// from the moment it is made, and undo takes it back like any other.
+	it('Undo right after a paste takes it back, and only it, by key or by the platform’s undo; redo puts it back', async () => {
 		for (const how of ['key', 'platform'] as const) {
 			const { doc } = pageDoc('<p>Notes</p>');
 			const { editor } = bind(doc);
 			await settle();
 			editor.commands.setTextSelection(posIn(editor, 'Notes', 5));
-			typeIn(editor, ' and a paragraph I wrote.');
+			typeIn(editor, ' I wrote this sentence.');
 			await settle(600);
-			let finish: (v: { url: string; filename: string; mime_type: string | null }) => void = () => {};
-			const upload = () => new Promise<{ url: string; filename: string; mime_type: string | null }>((r) => (finish = r));
-			const done = uploadFiles(editor.view, [new File(['x'], 'wrong.png', { type: 'image/png' })], editor.state.selection.from, upload);
-			expect(pendingUploads(editor.view)).toBe(1);
-			vi.mocked(toast).mockClear();
+			pasteMarkdown(editor.view, '## Plan\n\n- one', editor.state.selection.from);
+			expect(blocks(editor), how).toEqual(['paragraph:Notes I wrote this sentence.', 'heading:Plan', 'bulletList:one']);
 			if (how === 'key') pressUndo(editor);
-			else editor.view.dom.dispatchEvent(new InputEvent('beforeinput', { inputType: 'historyUndo', bubbles: true, cancelable: true }));
-			expect(pendingUploads(editor.view), how).toBe(0);
-			expect(blocks(editor), how).toEqual(['paragraph:Notes and a paragraph I wrote.']);
-			expect(toast).toHaveBeenCalledWith('Undo stopped uploading wrong.png');
-			finish({ url: '/api/media/wrong.png', filename: 'wrong.png', mime_type: 'image/png' });
-			await done;
-			expect(blocks(editor), how).toEqual(['paragraph:Notes and a paragraph I wrote.']);
+			else platformUndo(editor);
+			expect(blocks(editor), how).toEqual(['paragraph:Notes I wrote this sentence.']);
+			expect(editor.commands.redo(), how).toBe(true);
+			expect(blocks(editor), how).toEqual(['paragraph:Notes I wrote this sentence.', 'heading:Plan', 'bulletList:one']);
+			pressUndo(editor);
 			pressUndo(editor);
 			expect(blocks(editor), how).toEqual(['paragraph:Notes']);
-			expect(editor.commands.redo(), how).toBe(true);
-			expect(blocks(editor), how).toEqual(['paragraph:Notes and a paragraph I wrote.']);
 			agree(editor, doc);
 		}
 	});
 
-	it('Undo calls off the newest of a paste and an upload first, then undoes edits', async () => {
+	// Undo while a file uploaded once took the person's own writing, and the
+	// file landed anyway. Its block is now an edit from the moment the file
+	// was given: undo takes it out, its upload ending writes nothing, and
+	// redo puts back the block at the address its file reached.
+	it('Undo takes a file block back while its file uploads, by key or by the platform’s undo; its upload ending writes nothing; redo puts it back', async () => {
+		for (const how of ['key', 'platform'] as const) {
+			transfers.length = 0;
+			const { doc } = pageDoc('<p>Notes</p>');
+			const { editor } = bind(doc);
+			const ext = mediaUploads();
+			editor.registerPlugin(ext.config.addProseMirrorPlugins!.call({ editor } as never)[0]);
+			await settle();
+			editor.commands.setTextSelection(posIn(editor, 'Notes', 5));
+			typeIn(editor, ' and a paragraph I wrote.');
+			await settle(600);
+			addFiles(editor.view, [new File(['x'], 'wrong.png', { type: 'image/png' })], editor.state.selection.from);
+			const src = String(editor.state.doc.lastChild!.attrs.src);
+			expect(src, how).toMatch(UPLOAD_SRC);
+			expect(transfers.map((t) => `/drive/${t.id}`), how).toEqual([src]);
+			if (how === 'key') pressUndo(editor);
+			else platformUndo(editor);
+			expect(blocks(editor), how).toEqual(['paragraph:Notes and a paragraph I wrote.']);
+			const updates: Uint8Array[] = [];
+			const onUpdate = (u: Uint8Array) => updates.push(u);
+			doc.on('update', onUpdate);
+			transfers[0].done();
+			await settle();
+			doc.off('update', onUpdate);
+			expect(updates, how).toHaveLength(0);
+			expect(editor.commands.redo(), how).toBe(true);
+			expect(blocks(editor), how).toEqual(['paragraph:Notes and a paragraph I wrote.', 'image:']);
+			expect(String(editor.state.doc.lastChild!.attrs.src), how).toBe(src);
+			pressUndo(editor);
+			pressUndo(editor);
+			expect(blocks(editor), how).toEqual(['paragraph:Notes']);
+			agree(editor, doc);
+		}
+	});
+
+	it('Undo takes back the file block, then the paste, then the typing, in the order made', async () => {
 		const { doc } = pageDoc('<p>Notes</p><p>Draft</p>');
 		const { editor } = bind(doc);
 		await settle();
-		let answer: (v: { html: string }) => void = () => {};
-		const pasted = pasteMarkdown(editor.view, '## Plan', posIn(editor, 'Notes', 5), () => new Promise((r) => (answer = r)));
-		let finish: (v: { url: string; filename: string; mime_type: string | null }) => void = () => {};
-		const upload = () => new Promise<{ url: string; filename: string; mime_type: string | null }>((r) => (finish = r));
-		const uploaded = uploadFiles(editor.view, [new File(['x'], 'a.png', { type: 'image/png' })], posIn(editor, 'Draft', 5), upload);
+		editor.commands.setTextSelection(posIn(editor, 'Draft', 5));
+		typeIn(editor, ' typed');
+		await settle(600);
+		pasteMarkdown(editor.view, '## Plan', posIn(editor, 'Notes', 5));
+		addFiles(editor.view, [new File(['x'], 'a.png', { type: 'image/png' })], posIn(editor, 'Draft typed', 11), { send: sends });
+		expect(blocks(editor)).toEqual(['paragraph:Notes', 'heading:Plan', 'paragraph:Draft typed', 'image:']);
 		pressUndo(editor);
-		expect(pendingUploads(editor.view)).toBe(0);
-		expect(editor.view.dom.querySelector('.doc-paste-pending')).not.toBeNull();
-		finish({ url: '/api/media/a.png', filename: 'a.png', mime_type: 'image/png' });
-		await uploaded;
-		answer({ html: '<h2>Plan</h2>' });
-		await pasted;
-		expect(blocks(editor)).toEqual(['paragraph:Notes', 'heading:Plan', 'paragraph:Draft']);
+		expect(blocks(editor)).toEqual(['paragraph:Notes', 'heading:Plan', 'paragraph:Draft typed']);
+		pressUndo(editor);
+		expect(blocks(editor)).toEqual(['paragraph:Notes', 'paragraph:Draft typed']);
 		pressUndo(editor);
 		expect(blocks(editor)).toEqual(['paragraph:Notes', 'paragraph:Draft']);
+		agree(editor, doc);
 	});
 
-	it('a markdown paste over a selection is one undo step, however long the server takes', async () => {
+	it('a markdown paste over a selection is one undo step', async () => {
 		const { doc } = pageDoc('<p>Before</p><p>Select me</p>');
-		let answer: (v: { html: string }) => void = () => {};
-		const convert = vi.fn(() => new Promise<{ html: string }>((r) => (answer = r)));
 		const provider = fakeProvider(doc);
 		cleanups.push(provider.destroy);
 		const element = document.createElement('div');
 		document.body.append(element);
 		const editor = track(
-			createPageEditor({ element, doc: { ydoc: doc, provider }, editable: true, placeholder: 'Write', plugins: [pasteHandling(convert)] }),
+			createPageEditor({ element, doc: { ydoc: doc, provider }, editable: true, placeholder: 'Write', plugins: [pasteHandling()] }),
 		);
 		await settle();
 		const from = posIn(editor, 'Select me');
@@ -2940,17 +3561,173 @@ describe('undo', () => {
 			preventDefault() {},
 		} as unknown as ClipboardEvent;
 		expect(editor.view.someProp('handlePaste', (f) => f(editor.view, event, editor.state.doc.slice(0, 0)))).toBe(true);
-		// The selection stays while the server converts.
-		expect(blocks(editor)).toEqual(['paragraph:Before', 'paragraph:Select me']);
-		await settle(700);
-		answer({ html: '<h2>Plan</h2><ul><li><p>one</p></li></ul>' });
-		await settle();
 		expect(blocks(editor)).toEqual(['paragraph:Before', 'heading:Plan', 'bulletList:one']);
 		agree(editor, doc);
 		expect(() => editor.commands.undo()).not.toThrow();
 		expect(blocks(editor)).toEqual(['paragraph:Before', 'paragraph:Select me']);
 		agree(editor, doc);
-		expect(() => editor.commands.undo()).not.toThrow();
+		expect(editor.commands.redo()).toBe(true);
+		expect(blocks(editor)).toEqual(['paragraph:Before', 'heading:Plan', 'bulletList:one']);
 		agree(editor, doc);
+	});
+});
+
+/**
+ * The family of defects this guards against had one shape: what the person
+ * did was split into a decision, made at once, and a write, made when a
+ * server answered, with everything in between to be reconciled (the place,
+ * the selection, the order, undo, other devices' edits). A paste now
+ * converts in the page, and a file's block goes in when it is given: the
+ * page changes once, when the person acts. These hold that shape.
+ */
+describe('nothing in the editor lands after a wait', () => {
+	function clipboard(data: Record<string, string>, files: File[] = []) {
+		return { clipboardData: { getData: (type: string) => data[type] ?? '', files }, preventDefault() {} } as unknown as ClipboardEvent;
+	}
+
+	function dropEvent(editor: Editor, data: Record<string, string>, files: File[] = []) {
+		const transfer = new DataTransfer();
+		for (const [type, value] of Object.entries(data)) transfer.setData(type, value);
+		for (const file of files) transfer.items.add(file);
+		const event = new DragEvent('drop', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 });
+		Object.defineProperty(event, 'dataTransfer', { value: transfer });
+		return event;
+	}
+
+	const VSCODE_MARKDOWN = JSON.stringify({ version: 1, mode: 'markdown' });
+
+	it('a paste, a drop and files pasted, dropped or picked are in the page when their handler returns, nothing fetched and nothing written after', async () => {
+		const fetch = vi.fn(() => new Promise<Response>(() => {}));
+		vi.stubGlobal('fetch', fetch);
+		try {
+			const cases: [string, (editor: Editor) => void, string][] = [
+				['markdown text', (e) => void e.view.someProp('handlePaste', (f) => f(e.view, clipboard({ 'text/plain': '## Plan\n\n- one' }), e.state.doc.slice(0, 0))), 'heading:Plan'],
+				[
+					"a code editor's markdown",
+					(e) =>
+						void e.view.someProp('handlePaste', (f) =>
+							f(e.view, clipboard({ 'text/plain': '## Plan', 'text/html': '<div style="white-space: pre"><div><span>## Plan</span></div></div>' }), e.state.doc.slice(0, 0)),
+						),
+					'heading:Plan',
+				],
+				[
+					"VS Code's markdown",
+					(e) =>
+						void e.view.someProp('handlePaste', (f) =>
+							f(e.view, clipboard({ 'text/plain': '## Plan', 'text/html': '<div>## Plan</div>', 'vscode-editor-data': VSCODE_MARKDOWN }), e.state.doc.slice(0, 0)),
+						),
+					'heading:Plan',
+				],
+				[
+					'markdown dropped',
+					(e) => {
+						e.view.posAtCoords = () => ({ pos: 1, inside: -1 });
+						e.view.dom.dispatchEvent(dropEvent(e, { 'text/plain': '## Plan' }));
+					},
+					'heading:Plan',
+				],
+				['files pasted', (e) => void e.view.someProp('handlePaste', (f) => f(e.view, clipboard({}, [new File(['x'], 'a.png', { type: 'image/png' })]), e.state.doc.slice(0, 0))), 'image:'],
+				[
+					'files dropped',
+					(e) => {
+						e.view.posAtCoords = () => ({ pos: 1, inside: -1 });
+						e.view.dom.dispatchEvent(dropEvent(e, {}, [new File(['x'], 'a.png', { type: 'image/png' })]));
+					},
+					'image:',
+				],
+				['files picked', (e) => addFiles(e.view, [new File(['x'], 'a.png', { type: 'image/png' })], anchorAt(e.state, 1)), 'image:'],
+			];
+			for (const [what, act, landed] of cases) {
+				const { doc } = pageDoc('<p></p><p>End</p>');
+				const { editor } = bind(doc);
+				editor.registerPlugin(mediaUploads().config.addProseMirrorPlugins!.call({ editor } as never)[0]);
+				await settle();
+				editor.commands.setTextSelection(1);
+				await settle();
+				vi.useFakeTimers();
+				try {
+					act(editor);
+					const out: string[] = [];
+					editor.state.doc.forEach((n) => out.push(`${n.type.name}:${n.isAtom ? '' : n.textContent}`));
+					expect(out, what).toContain(landed);
+					expect(treeOf(doc), what).toEqual(editor.state.doc.toJSON());
+					// What the editor schedules after any edit (a code block's
+					// highlight, Tiptap's own events) runs, and none of it writes:
+					// the paste's whole effect was the edit it made.
+					const landedDoc = editor.state.doc.toJSON();
+					const updates: Uint8Array[] = [];
+					doc.on('update', (u: Uint8Array) => updates.push(u));
+					await vi.runAllTimersAsync();
+					expect(updates, what).toHaveLength(0);
+					expect(editor.state.doc.toJSON(), what).toEqual(landedDoc);
+				} finally {
+					vi.useRealTimers();
+				}
+			}
+			expect(fetch).not.toHaveBeenCalled();
+		} finally {
+			vi.unstubAllGlobals();
+		}
+	});
+
+	it('an upload ending, failing or tried again writes nothing to the page, in any order', async () => {
+		const { doc } = pageDoc('<p>Notes</p>');
+		const { editor } = bind(doc);
+		editor.registerPlugin(mediaUploads().config.addProseMirrorPlugins!.call({ editor } as never)[0]);
+		await settle();
+		addFiles(editor.view, photos('one.png', 'two.png', 'three.png'), 6);
+		const before = editor.state.doc.toJSON();
+		const updates: Uint8Array[] = [];
+		doc.on('update', (u: Uint8Array) => updates.push(u));
+		transfers[2].done();
+		transfers[0].fail(new UploadError('Your server is out of space.', 507));
+		transfers[1].done();
+		await settle();
+		// Back online: sent again now, not after its retry's wait.
+		window.dispatchEvent(new Event('online'));
+		transfers[3].fail(new UploadError("Couldn't reach your server", 0));
+		await settle();
+		expect(updates).toHaveLength(0);
+		expect(editor.state.doc.toJSON()).toEqual(before);
+		expect(transfers.slice(0, 3).map((t) => get(watchUpload(t.id))?.phase)).toEqual(['uploading', 'done', 'done']);
+	});
+
+	const photos = (...names: string[]) => names.map((n) => new File(['x'], n, { type: 'image/png' }));
+
+	// The paste was lost when the page closed before the server answered,
+	// and nothing said so.
+	it('a paste made just before the page closes is in the page', async () => {
+		const { doc } = pageDoc('<p>Notes</p>');
+		const { editor } = bind(doc);
+		await settle();
+		editor.commands.setTextSelection(posIn(editor, 'Notes', 5));
+		editor.view.someProp('handlePaste', (f) => f(editor.view, clipboard({ 'text/plain': '## Plan\n\n- one' }), editor.state.doc.slice(0, 0)));
+		editor.destroy();
+		const after = htmlEditor('<p>x</p>');
+		track(after);
+		const tree = yXmlFragmentToProseMirrorRootNode(doc.getXmlFragment(contract.fragment), after.schema);
+		const out: string[] = [];
+		tree.forEach((n) => out.push(`${n.type.name}:${n.textContent}`));
+		expect(out).toEqual(['paragraph:Notes', 'heading:Plan', 'bulletList:one']);
+	});
+
+	// The server stored the file, but it never reached the page when the
+	// page closed while it uploaded.
+	it('files added just before the page closes are in the page, and their upload ends after', async () => {
+		const { doc } = pageDoc('<p>Notes</p>');
+		const { editor } = bind(doc);
+		await settle();
+		addFiles(editor.view, photos('harbour.png'), 6);
+		const src = String(editor.state.doc.lastChild!.attrs.src);
+		editor.destroy();
+		transfers[0].done();
+		await settle();
+		expect(get(watchUpload(transfers[0].id))).toMatchObject({ phase: 'done' });
+		const after = htmlEditor('<p>x</p>');
+		track(after);
+		const tree = yXmlFragmentToProseMirrorRootNode(doc.getXmlFragment(contract.fragment), after.schema);
+		expect(tree.lastChild?.type.name).toBe('image');
+		expect(tree.lastChild?.attrs.src).toBe(src);
+		expect(`/drive/${transfers[0].id}`).toBe(src);
 	});
 });

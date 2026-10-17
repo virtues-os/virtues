@@ -1,0 +1,10 @@
+[Unit]
+Description=Place the demo life on today, hourly
+
+[Timer]
+# Just after the hour, so a new UTC day has its full "today" within a minute.
+OnCalendar=*-*-* *:00:30
+Persistent=true
+
+[Install]
+WantedBy=timers.target

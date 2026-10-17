@@ -1,11 +1,10 @@
 /**
- * A block page's history goes through the server: a version is asked for
+ * A page's history goes through the server: a version is asked for
  * with no document, so nothing this browser holds enters the history
  * unchecked, and a restore is one request the server carries out.
  */
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import * as Y from 'yjs';
 
 const api = vi.hoisted(() => ({
 	request: vi.fn(),
@@ -24,7 +23,7 @@ vi.mock('$lib/api/client', () => ({
 		),
 }));
 
-import { cutServerVersion, restorePageVersion, saveVersion } from './versions';
+import { cutServerVersion, restorePageVersion } from './versions';
 
 beforeEach(() => {
 	api.request.mockReset();
@@ -44,7 +43,7 @@ describe("a block page's versions", () => {
 		expect(body).not.toHaveProperty('snapshot');
 	});
 
-	it('say so with null when the server refuses, as a markdown save does', async () => {
+	it('say so with null when the server refuses', async () => {
 		api.request.mockRejectedValue(new Error('down'));
 		expect(await cutServerVersion('page_abc')).toBeNull();
 	});
@@ -54,17 +53,5 @@ describe("a block page's versions", () => {
 		const restored = await restorePageVersion('page_abc', 'ver_1');
 		expect(api.apiSend).toHaveBeenCalledWith('POST', '/pages/page_abc/versions/ver_1/restore', {});
 		expect(restored).toEqual({ version_number: 7, notes: [{ at: 'block 2', message: 'became a link' }] });
-	});
-});
-
-describe("a markdown page's versions", () => {
-	it('still carry the snapshot this browser holds', async () => {
-		api.request.mockResolvedValue({ id: 'v2' });
-		const doc = new Y.Doc();
-		doc.getText('content').insert(0, 'Lunch with Nick.');
-		await saveVersion(doc, 'page_md', 'Saved');
-		const body = JSON.parse(api.request.mock.calls[0][1].body);
-		expect(typeof body.snapshot).toBe('string');
-		expect(body.content_preview).toBe('Lunch with Nick.');
 	});
 });

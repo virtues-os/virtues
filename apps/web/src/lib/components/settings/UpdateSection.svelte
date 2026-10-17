@@ -25,6 +25,7 @@
 	} from '$lib/api/client';
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { autoUpdateOf, setAutoUpdate, type AutoUpdateStatus } from '$lib/api/autoUpdate';
+	import { reloadApp } from '$lib/reload';
 
 	let status = $state<UpdateStatus | null>(null);
 	let loading = $state(true);
@@ -208,7 +209,7 @@
 				// On the new build (whether or not a poll caught it down). A
 				// reload is right here: the served assets changed underneath.
 				restart = { phase: 'back' };
-				setTimeout(() => location.reload(), 1200);
+				setTimeout(() => reloadApp(), 1200);
 				return;
 			} else if (sawItGo) {
 				// Back on the build it had: the activation rolled back.

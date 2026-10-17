@@ -2,11 +2,9 @@
  * The rendered caret's look — the half of `caret.ts` that CSS carries.
  *
  * Imported by `caret.ts` itself, not by an editor component, so every editor
- * that turns on `smoothCaret` gets its styles in the same chunk. It used to
- * live in `../theme.css`, which only the page editor imports: the chat
- * composer runs `smoothCaret` too, and until a page had been opened (loading
- * the lazy page-editor chunk and its CSS) the composer's caret was
- * CodeMirror's bare bar, with no glide and no blink.
+ * that turns on `smoothCaret` gets its styles in the same chunk as the
+ * behavior: styles loaded with some other chunk leave the caret CodeMirror's
+ * bare bar, with no glide and no blink, until that chunk loads.
  */
 
 /* =============================================================================
@@ -41,6 +39,12 @@
 		left 105ms cubic-bezier(0.22, 0.61, 0.36, 1),
 		top 105ms cubic-bezier(0.22, 0.61, 0.36, 1),
 		height 105ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+/* Typing gets a shorter glide: keys land faster than 105ms, and a caret
+   still travelling when the next letter appears sits behind the text. */
+.cm-editor[data-caret-input='typing'] .cm-cursorLayer .cm-cursor {
+	transition-duration: 60ms;
 }
 
 /* A click is a teleport. Gliding toward the spot someone just pointed at is

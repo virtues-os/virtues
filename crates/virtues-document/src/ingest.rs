@@ -12,7 +12,7 @@
 //! HTML with it and the two must agree.
 
 use crate::contract::{normalize_url, AttrSpec, AttrType, Contract, HtmlRule, Node as Spec};
-use crate::model::{depth, too_deep, Mark, Node, Problem, MAX_DEPTH};
+use crate::model::{depth, drop_counted_numbers, item_numbers, too_deep, Mark, Node, Problem, ITEM_NUMBER, MAX_DEPTH};
 use ego_tree::iter::Edge;
 use ego_tree::NodeRef;
 use scraper::{ElementRef, Html, Node as Dom};
@@ -137,6 +137,27 @@ const BLOCKS: &[&str] = &[
     "ul",
     "xmp",
 ];
+
+/// Whether raw HTML naming `tag`, read in migration mode, keeps every word
+/// of it in its place: a tag the contract reads, or reads through (a
+/// table's `<tbody>`), or an inline element unwrapped where it stands
+/// (`<kbd>`, `<span>`). What loses words: an element whose content is
+/// dropped (`<script>`, `<style>`, `<template>`), the document's own frame
+/// (`<html>`, `<body>`, which HTML's parser takes out), an element whose
+/// content is raw text (`<textarea>`, `<iframe>`), and a block the contract
+/// does not hold, whose words unwrapping runs into its neighbours'
+/// (`<details>`, `<div>`).
+pub(crate) fn keeps_its_words(c: &Contract, tag: &str) -> bool {
+    let reads = !c.node_rules_for_tag(tag).is_empty()
+        || c.mark_rule_for_tag(tag).is_some()
+        || c.nodes
+            .iter()
+            .any(|n| n.spec.html.iter().any(|r| r.transparent.iter().any(|t| t == tag)));
+    reads
+        || !(DROPPED.contains(&tag)
+            || BLOCKS.contains(&tag)
+            || matches!(tag, "html" | "body" | "frameset" | "textarea" | "iframe" | "noembed" | "noframes"))
+}
 
 /// A tag that can close the elements opened inside it: a block, or a custom
 /// element such as a widget, which HTML closes like any unknown element.
@@ -691,7 +712,11 @@ fn parse_inner(c: &Contract, html: &str, parent: &str, mode: Mode, fill: bool, o
     } else {
         root.children().collect()
     };
-    let nodes = r.block_children(parent, kids, parent, fill);
+    let mut nodes = r.block_children(parent, kids, parent, fill);
+    if !own_tree && parent == "bulletList" {
+        // Items written into a bullet list, which shows no number of theirs.
+        unnumbered(&mut nodes);
+    }
     if depth(&nodes) > MAX_DEPTH {
         r.error(parent, too_deep());
         return refused(r);
@@ -937,7 +962,7 @@ impl<'c> Reader<'c> {
             );
             return None;
         };
-        let attrs = match self.attrs(spec, rule, el, &here) {
+        let mut attrs = match self.attrs(spec, rule, el, &here) {
             Ok(attrs) => attrs,
             Err(reasons) => return self.stand_in(el, &spec.name, reasons, &here),
         };
@@ -1027,6 +1052,9 @@ impl<'c> Reader<'c> {
             self.task_runs(name, attrs, content, out, &here);
             return None;
         }
+        if !self.own_tree {
+            count_items(name, &mut attrs, &mut content);
+        }
         let mut node = Node::element(name, attrs, content);
         if name == "table" && !self.table_is_a_grid(&mut node, &here) {
             return None;
@@ -1085,7 +1113,8 @@ impl<'c> Reader<'c> {
     /// A markdown list holding task items, which the contract keeps in a
     /// task list of their own: each run of tasks becomes a task list, each
     /// run of other items a list of the kind it was in, numbered on where it
-    /// left off. A bullet list of nothing but tasks is just a task list.
+    /// left off, each item keeping its own number.
+    /// A bullet list of nothing but tasks is just a task list.
     fn task_runs(
         &mut self,
         name: &str,
@@ -1094,13 +1123,13 @@ impl<'c> Reader<'c> {
         out: &mut Vec<Node>,
         at: &str,
     ) {
-        let start = attrs.get("start").and_then(Value::as_i64).unwrap_or(1);
+        let numbers = item_numbers(list_start(&attrs), &items);
         let mut runs: Vec<(bool, i64, Vec<Node>)> = vec![];
-        for (i, item) in items.into_iter().enumerate() {
+        for (item, number) in items.into_iter().zip(numbers) {
             let task = item.kind == "taskItem";
             match runs.last_mut() {
                 Some((t, _, run)) if *t == task => run.push(item),
-                _ => runs.push((task, start + i as i64, vec![item])),
+                _ => runs.push((task, number, vec![item])),
             }
         }
         if name == "orderedList" {
@@ -1118,7 +1147,7 @@ impl<'c> Reader<'c> {
                 ),
             );
         }
-        for (task, first, run) in runs {
+        for (task, first, mut run) in runs {
             if task {
                 out.push(Node::element(
                     "taskList",
@@ -1131,6 +1160,7 @@ impl<'c> Reader<'c> {
             if a.contains_key("start") {
                 a.insert("start".into(), Value::from(first));
             }
+            count_items(name, &mut a, &mut run);
             out.push(Node::element(name, a, run));
         }
     }
@@ -1646,6 +1676,36 @@ impl<'c> Reader<'c> {
     }
 }
 
+/// The number an ordered list's first item takes, unless it carries its own.
+fn list_start(attrs: &Map<String, Value>) -> i64 {
+    attrs.get("start").and_then(Value::as_i64).unwrap_or(1)
+}
+
+/// A list's items as HTML read whole: an ordered list starts at its first
+/// item's number and keeps an item's own number only where it departs from
+/// the count ([`drop_counted_numbers`]), and a bullet list numbers nothing.
+/// Either way the list shows what the HTML showed. Not for a page's own
+/// tree, which keeps what it holds.
+fn count_items(name: &str, attrs: &mut Map<String, Value>, items: &mut [Node]) {
+    match name {
+        "orderedList" => {
+            if let Some(first) = items.first().and_then(|i| i.attrs.get(ITEM_NUMBER)).and_then(Value::as_i64) {
+                attrs.insert("start".into(), Value::from(first));
+            }
+            drop_counted_numbers(list_start(attrs), items)
+        }
+        "bulletList" => unnumbered(items),
+        _ => {}
+    }
+}
+
+/// Items without numbers of their own, as a bullet list holds them.
+fn unnumbered(items: &mut [Node]) {
+    for item in items.iter_mut().filter(|i| i.attrs.contains_key(ITEM_NUMBER)) {
+        item.attrs.insert(ITEM_NUMBER.into(), Value::Null);
+    }
+}
+
 /// One HTML attribute value as the contract types it, or why it is refused.
 /// A URL is kept as a browser reads it ([`normalize_url`]), so what is
 /// checked is what a click would follow.
@@ -1661,7 +1721,7 @@ fn typed_value(c: &Contract, a: &AttrSpec, key: &str, raw: &str) -> Result<Value
             other => return Err(format!("`{key}` must be true or false; got \"{other}\"")),
         },
         AttrType::Url => Value::String(normalize_url(raw)),
-        AttrType::String | AttrType::Route => Value::String(raw.to_string()),
+        AttrType::String | AttrType::Route | AttrType::Label => Value::String(raw.to_string()),
     };
     a.check(c, key, &v).map(|()| v)
 }
@@ -1814,6 +1874,55 @@ mod tests {
         assert!(ok.errors.is_empty(), "{:?}", ok.errors);
         assert_eq!(ok.nodes[0].attrs["start"], json!(3));
         assert_eq!(ok.nodes[2].attrs["level"], json!(2));
+    }
+
+    /// An item's own number (`<li value>`): kept where it departs from
+    /// the count, dropped where it only repeats it or sits in a bullet
+    /// list, which numbers nothing. The list shows what the HTML showed,
+    /// and writes a value only where an item's number is its own.
+    #[test]
+    fn an_items_own_number_is_kept_where_it_departs_from_the_count() {
+        let values = |list: &Node| -> Vec<Value> { list.content.iter().map(|i| i.attrs["value"].clone()).collect() };
+        let o = strict("<ol start=\"2019\"><li>a</li><li value=\"2021\">b</li><li value=\"2024\">c</li></ol>");
+        assert!(o.errors.is_empty(), "{:?}", o.errors);
+        assert_eq!(values(&o.nodes[0]), [Value::Null, json!(2021), json!(2024)]);
+        // Each value only repeating the count goes; the count goes on from
+        // one that does not.
+        let o = strict(
+            "<ol><li value=\"1\">a</li><li value=\"2\">b</li><li value=\"9\">c</li><li value=\"10\">d</li><li>e</li><li value=\"0\">f</li></ol>",
+        );
+        assert!(o.errors.is_empty(), "{:?}", o.errors);
+        assert_eq!(values(&o.nodes[0]), [Value::Null, Value::Null, json!(9), Value::Null, Value::Null, json!(0)]);
+        assert_eq!(crate::model::item_numbers(1, &o.nodes[0].content), [1, 2, 9, 10, 11, 0]);
+        // A first item's own number is the list's start.
+        let o = strict("<ol start=\"3\"><li value=\"-2\">a</li><li>b</li></ol>");
+        assert_eq!(o.nodes[0].attrs["start"], json!(-2));
+        assert_eq!(values(&o.nodes[0]), [Value::Null, Value::Null]);
+        // A bullet list numbers nothing, written whole or into.
+        let o = strict("<ul><li value=\"3\">a</li></ul>");
+        assert!(o.errors.is_empty(), "{:?}", o.errors);
+        assert_eq!(values(&o.nodes[0]), [Value::Null]);
+        let c = Contract::load();
+        let o = parse_slice(&c, "<li value=\"3\">a</li>", "bulletList", Mode::Strict);
+        assert_eq!(o.nodes[0].attrs["value"], Value::Null);
+        // Written into an ordered list, an item's place in the count is not
+        // in the HTML: its number is kept as written.
+        let o = parse_slice(&c, "<li value=\"2\">a</li>", "orderedList", Mode::Strict);
+        assert_eq!(o.nodes[0].attrs["value"], json!(2));
+        // A page's own tree keeps what it holds.
+        let o = parse_own_blocks(&c, "<ol><li value=\"1\">a</li></ol><ul><li value=\"4\">b</li></ul>");
+        assert_eq!(o.nodes[0].content[0].attrs["value"], json!(1));
+        assert_eq!(o.nodes[1].content[0].attrs["value"], json!(4));
+        // A value that is no whole number, or past what a browser holds, is
+        // refused, and dropped with a note in migration.
+        for bad in ["two", "1.5", "9007199254740992"] {
+            let html = format!("<ol><li value=\"{bad}\">a</li></ol>");
+            assert_eq!(strict(&html).errors.len(), 1, "{bad}");
+            let o = parse(&c, &html, "doc", Mode::Migrate);
+            assert!(o.errors.is_empty(), "{bad}: {:?}", o.errors);
+            assert_eq!(o.nodes[0].content[0].attrs["value"], Value::Null, "{bad}");
+            assert!(o.notes.iter().any(|n| n.message.contains("`value`")), "{bad}: {:?}", o.notes);
+        }
     }
 
     #[test]

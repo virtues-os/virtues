@@ -1,7 +1,7 @@
 /**
  * The context gesture inside the editor: right-click, or a touch or pen held
  * for 450 ms with less than 8 px of drift, since iOS fires no `contextmenu`
- * for text. The same thresholds as CodeMirror's `long-press.ts`.
+ * for text. The same thresholds as `onContextGesture` in `long-press.ts`.
  *
  * Delegated on the editor, so text the editor re-renders keeps it. `pick`
  * says what is under the gesture; when it finds nothing the gesture is left

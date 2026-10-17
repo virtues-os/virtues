@@ -347,8 +347,8 @@ h6 {
 }
 
 /* Heading VALUES come from the --md-* tokens in themes.css — one definition,
-   cited here and by the editor's .cm-heading-* rules. Only the margins are
-   local: rhythm is engine-specific (the editor pads .cm-line instead). */
+   cited here and by the page editor's (lib/document/document.css). Only the
+   margins are local: rhythm is engine-specific. */
 .markdown h1 {
 	@apply mb-6;
 	font-family: var(--md-heading-major-family);

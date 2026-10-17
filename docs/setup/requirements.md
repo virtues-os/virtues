@@ -93,9 +93,9 @@ installing:
 - **The CPU engine keeps GPU offload off, on purpose.** The model's math
   overflows 16-bit arithmetic, which some GPU paths use. A GPU server you set
   up yourself gets checked when you point Virtues at it.
-- **Search doesn't use a reranker by default.** The small rerankers we tested
-  ranked results worse than the embedding model they followed, so there is no
-  second model to plan hardware for.
+- **Search doesn't use a reranker.** The small rerankers we tested ranked
+  results worse than search without them, so there is no second model to plan
+  hardware for.
 
 **Most NPUs need their vendor's runtime.** They reach Virtues through any
 server that offers the embedding contract, which is what bring-your-own

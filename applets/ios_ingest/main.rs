@@ -238,6 +238,10 @@ async fn healthkit_ingest(db: &PgPool, records: &[Value]) -> Result<String> {
     let mut workout = Vec::new();
     let mut active_energy = Vec::new();
     let mut distance = Vec::new();
+    let mut cycle = Vec::new();
+    let mut symptom = Vec::new();
+    let mut wrist_temperature = Vec::new();
+    let mut deleted = Vec::new();
     let mut unknown = 0usize;
 
     for record in records {
@@ -253,6 +257,10 @@ async fn healthkit_ingest(db: &PgPool, records: &[Value]) -> Result<String> {
             "workout" => workout.push(record.clone()),
             "active_energy" => active_energy.push(record.clone()),
             "distance" => distance.push(record.clone()),
+            "cycle" => cycle.push(record.clone()),
+            "symptom" => symptom.push(record.clone()),
+            "wrist_temperature" => wrist_temperature.push(record.clone()),
+            "deleted" => deleted.push(record.clone()),
             other => {
                 tracing::warn!(metric_type = other, "unknown healthkit metric_type");
                 unknown += 1;
@@ -299,6 +307,26 @@ async fn healthkit_ingest(db: &PgPool, records: &[Value]) -> Result<String> {
     let distance_written = healthkit::write_distance(db, &distance).await?;
     if !distance.is_empty() {
         results.push(format!("distance: {}/{}", distance_written, distance.len()));
+    }
+
+    for (name, batch, written) in [
+        ("cycle", &cycle, healthkit::write_cycle(db, &cycle).await?),
+        ("symptom", &symptom, healthkit::write_symptom(db, &symptom).await?),
+        (
+            "wrist_temperature",
+            &wrist_temperature,
+            healthkit::write_wrist_temperature(db, &wrist_temperature).await?,
+        ),
+    ] {
+        if !batch.is_empty() {
+            results.push(format!("{name}: {written}/{}", batch.len()));
+        }
+    }
+
+    // Last, so a sample and its deletion in one batch end tombstoned.
+    let deleted_marked = healthkit::mark_deleted(db, &deleted).await?;
+    if !deleted.is_empty() {
+        results.push(format!("deleted: {}/{}", deleted_marked, deleted.len()));
     }
 
     if unknown > 0 {

@@ -80,19 +80,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | Some("sudo")
                 | Some("warm-models")
         );
-        // The data verbs (`cli::data`) print a tool's failure themselves, as
-        // their error; the tool's own WARN line would say it twice.
-        let data_verb = matches!(
-            std::env::args().nth(1).as_deref(),
-            Some("query")
-                | Some("search")
-                | Some("schema")
-                | Some("write")
-                | Some("applet")
-                | Some("page")
-                | Some("agent-key")
-                | Some("agent-exec")
-        );
+        let data_verb = std::env::args()
+            .nth(1)
+            .is_some_and(|cmd| virtues::cli::types::DATA_VERBS.contains(&cmd.as_str()));
         // The format (text on a terminal, JSON under systemd) and the field
         // vocabulary live in `observe`; the noise floor is this binary's own
         // judgment, so it stays here.
@@ -170,8 +160,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             probe.len()
         ));
 
-        let _reranker = virtues::search::get_reranker().await?;
-        ui::ok("reranker ready");
         println!();
 
         return Ok(());
@@ -565,7 +553,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // fingerprint mismatch this command exists to fix.
     if let Some(Commands::ConfigureInference {
         embed_url,
-        rerank_url,
         embed_model,
         reembed,
         yes,
@@ -577,7 +564,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(url) => {
                 virtues::cli::configure_inference::switch(
                     url,
-                    rerank_url.as_deref(),
                     embed_model.as_deref(),
                     *reembed || *yes,
                 )
@@ -972,49 +958,10 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
 /// and exit — never fall through to the misleading Postgres timeout.
 #[cfg(unix)]
 fn maybe_reexec_as_service_user() {
-    // Every command that opens a Postgres pool or reads the `virtues`-owned env
-    // file. Miss one and it runs as the login user, whose role does not exist in
-    // the cluster: `virtues reindex` died with `role "root" does not exist`
-    // after an hour-long restore (2026-08-27), which is a confusing way to say
-    // "wrong user".
-    //
-    // THIS LIST DRIFTED FROM THE ONE AT THE TOP OF `main()`. That one decides
-    // the log level for "interactive" commands and already knew about
-    // `reindex`, `configure-inference`, `restore` and `warm-models`; this one
-    // decides who they run AS, and had never been updated. Two hand-synced
-    // lists, one true — the same shape as the ACL lattice (`plugins/lockstep`)
-    // and the applet env allowlist. When you add a subcommand that touches the
-    // database, add it to BOTH.
-    //
-    // Deliberately absent: the root-only lifecycle verbs — `upgrade`,
-    // `prepare`, `activate`, `auto-update`, `rollback`, `deprovision`,
-    // `uninstall`, `image-check`, `bringup` — which drive systemd and must NOT
-    // drop privilege.
-    const DB_COMMANDS: &[&str] = &[
-        "init", "pair", "link", "login", "subscribe", "sudo", "backup", "reset", "status",
-        "migrate", "seed",
-        // `doctor` reads the env file (inference mode) and the DB (reach legs),
-        // both `virtues`-owned. Run as another user it can read neither, so it
-        // would render the default llama-server guess + "DB unknown" — a
-        // confident, wrong report. Re-exec so it reports this box's real config.
-        "doctor",
-        // Each of these opens its own pool before the app path (main.rs) or
-        // rides the shared one in `cli::run`.
-        "device",
-        "reindex",
-        "configure-inference",
-        "lake-adopt",
-        "volumes",
-        // The data verbs (`cli::data`) ride the shared pool too.
-        "query",
-        "search",
-        "schema",
-        "write",
-        "applet",
-        "page",
-    ];
+    // Who each command runs as: `cli::types::RUNS_AS_SERVICE_USER`, which
+    // says why.
     let Some(cmd) = std::env::args().nth(1) else { return };
-    if !DB_COMMANDS.contains(&cmd.as_str()) {
+    if !virtues::cli::types::RUNS_AS_SERVICE_USER.contains(&cmd.as_str()) {
         return;
     }
     // `configure-inference --recommended` writes and starts a systemd unit and
