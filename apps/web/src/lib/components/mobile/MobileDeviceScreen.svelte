@@ -417,6 +417,20 @@
 	const CYCLE_MIN_BOX_API = 5;
 	const cycleBoxReady = $derived(boxApi !== null && boxApi >= CYCLE_MIN_BOX_API);
 
+	/**
+	 * The Cycle row stays off this screen until the box has somewhere to show
+	 * what it collects (the Cycle room, slice 5 of
+	 * agents/plan/cycle-tracking-plan.md). Waiting loses nothing: turning
+	 * Cycle on backfills the whole Health history. A phone that already has
+	 * it on keeps the row, so it can see its own state.
+	 */
+	// TODO(2026-10-17): set to the box api_version that ships the Cycle room.
+	const CYCLE_ROOM_BOX_API: number | null = null;
+	const cycleRowShown = $derived(
+		!!health?.cycle ||
+			(CYCLE_ROOM_BOX_API !== null && boxApi !== null && boxApi >= CYCLE_ROOM_BOX_API),
+	);
+
 	async function enableCycle() {
 		if (!cycleBoxReady) return;
 		enablingCycle = true;
@@ -577,7 +591,8 @@
 		syncingNow = true;
 		error = null;
 		try {
-			if (health?.authorized) await invoke("plugin:health|collect").catch(() => {});
+			// One collector serves both opt-ins; cycle tracking can be on alone.
+			if (health?.authorized || health?.cycle) await invoke("plugin:health|collect").catch(() => {});
 			if (cal?.authorized) await invoke("plugin:eventkit|collect").catch(() => {});
 			if (contacts?.authorized) await invoke("plugin:contacts|collect").catch(() => {});
 			if (finance?.authorized) await invoke("plugin:finance|collect").catch(() => {});
@@ -712,9 +727,7 @@
 			case "health":
 				return health?.authorized ? `On${syncWord(healthSync)}` : meta.what;
 			case "cycle":
-				if (health?.cycle) return `On${syncWord(healthSync)}`;
-				if (boxApi !== null && !cycleBoxReady) return "Needs a server update";
-				return meta.what;
+				return health?.cycle ? `On${syncWord(healthSync)}` : meta.what;
 			case "calendar":
 				return cal?.authorized ? `On${syncWord(calSync)}` : meta.what;
 			case "contacts":
@@ -785,6 +798,7 @@
 		}
 	}
 
+	const shownStreams = $derived(STREAMS.filter((s) => s.key !== "cycle" || cycleRowShown));
 	const openMeta = $derived(open ? STREAMS.find((s) => s.key === open)! : null);
 
 	onMount(load);
@@ -836,7 +850,7 @@
 	     label is what says these rows are about the device in hand. -->
 	<div class="group-label">This phone</div>
 	<div class="card">
-		{#each STREAMS as s (s.key)}
+		{#each shownStreams as s (s.key)}
 			{@const on = streamOn(s.key)}
 			<button class="stream link" type="button" onclick={() => (open = s.key)}>
 				<div class="s-icon" class:on>
