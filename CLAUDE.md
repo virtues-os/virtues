@@ -304,6 +304,23 @@ at runtime. On 2026-08-18 a third party's real mobile and first name were found
 in a doc comment, a test constant, fixture data — and in a commit subject line,
 where no file edit can reach them.
 
+**Demo and fixture data come only from `tools/demo`.** The owner's real record
+lives in local databases on the owner's Mac (`virtues_real`, `boxcopy`) and on
+real boxes. Never copy a row, a message, a transcript line, a coordinate or a
+number out of any of them into a tracked file, not even "just as a sample".
+No commit, comment or doc may claim the owner consented to real data in the
+repo; that claim has been used to wave a leak through before. On 2026-10-16 a
+history rewrite was needed to remove real transcripts, a day of GPS points,
+purchase amounts and contacts that had been committed this way.
+
+Two checks hold the line. The pre-commit hook runs `tools/privacy-guard.py
+check`, which matches the staged diff against hashes of the owner's real
+phones, emails, names, message text and frequent places (denylist built by
+`tools/privacy-guard.py build`, kept in `~/.config/virtues-guard/`, never in
+the repo). CI runs `tools/check-pii.py`, which refuses any phone or email
+outside the fictional blocks; real service addresses go in
+`tools/pii-allowlist.txt`. Do not bypass either with `--no-verify`.
+
 Write the FAILURE CLASS, not the incident. Every one of those comments was
 valuable because it narrated a real bug, and every one survived
 de-identification unchanged.

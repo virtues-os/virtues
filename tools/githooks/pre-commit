@@ -15,9 +15,16 @@
 # Either way, exporting that index gives exactly the tree CI will check out, and
 # nobody else's in-flight edits can reach it.
 #
-#   Skip once:  VIRTUES_SKIP_RATCHETS=1 git commit ...   (or --no-verify)
+#   Skip the ratchets once:  VIRTUES_SKIP_RATCHETS=1 git commit ...
+#   (the privacy guard still runs; a generic false hit is accepted with
+#   `tools/privacy-guard.py allow --last`, never by skipping the hook)
 
 set -uo pipefail
+
+# Real personal data first, and never skipped by the ratchet switch: it reads
+# the staged diff against a hashed denylist of the owner's record, kept outside
+# the repo. A clone with no denylist passes straight through.
+python3 tools/privacy-guard.py check || exit 1
 
 [ "${VIRTUES_SKIP_RATCHETS:-}" = 1 ] && exit 0
 

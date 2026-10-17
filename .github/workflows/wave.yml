@@ -128,6 +128,20 @@ jobs:
       - name: cargo check, the page converter alone
         run: cargo check -p virtues-document --no-default-features
 
+  # No phone number or email address outside the fictional blocks (+1512555xxxx,
+  # example.com, virtues.com) in the committed tree. The repo is public and real
+  # contact details have reached it in comments, tests and seeds; this is the
+  # check that needs no real data, so it runs anywhere. tools/privacy-guard.py
+  # is the half that knows the owner's real values and runs at commit time on
+  # the owner's machine. Git only, so a free GitHub-hosted runner.
+  contact-details:
+    name: No real contact details
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Phones and emails stay in the fictional blocks
+        run: python3 tools/check-pii.py
+
   # ci.yml's append-only check, copied for contributor PRs into `wave`: ci.yml
   # no longer runs on them, and an edited applied migration must be caught
   # before it merges, not at the next `wave` → `staging` PR. sqlx checksums the
