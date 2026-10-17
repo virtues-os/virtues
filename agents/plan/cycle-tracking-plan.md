@@ -3,8 +3,9 @@
 **Status:** Slices 1–3 built on `wave`, unreleased and never run on a device.
 Migration 0053 holds the three raw tables (`fd07c088`), 0054 adds the missing
 tombstone columns for HealthKit deletions (`0a3cfe8a`), and the phone has a
-Cycle stream gated on the box's `api_version` 5. Next is slice 4, the check on
-a real phone.
+Cycle stream gated on the box's `api_version` 5. Slices 1–3 ship without
+slice 5, but the Cycle row stays off the device screen until the box can show
+cycles (`CYCLE_ROOM_BOX_API` in `MobileDeviceScreen.svelte` is unset).
 
 The owner's menstrual cycle, read from Apple Health. **Raw first:** the box
 ingests the primitives exactly as Health stores them. Cycles, predictions,
@@ -176,7 +177,10 @@ whole batch would fail, and the phone retries a failed batch forever (see
      night before.
 4. **Check.** Simulator run done (see "Measured" below). Left for a real
    device: wrist temperature from a watch, and the export and PDF checks.
-5. **Transforms and screens** (below), plus the assistant-access switch.
+5. **Transforms and screens** (below), plus the assistant-access switch. The
+   Cycle room raises the box's `api_version`, and the same change sets
+   `CYCLE_ROOM_BOX_API` to that number, which is what puts the Cycle row back
+   on the phone.
 6. **Later.**
    - Pregnancy and lactation behind their own switch.
    - An Apple Health `export.zip` import.
