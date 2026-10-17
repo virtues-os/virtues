@@ -577,7 +577,8 @@
 		syncingNow = true;
 		error = null;
 		try {
-			if (health?.authorized) await invoke("plugin:health|collect").catch(() => {});
+			// One collector serves both opt-ins; cycle tracking can be on alone.
+			if (health?.authorized || health?.cycle) await invoke("plugin:health|collect").catch(() => {});
 			if (cal?.authorized) await invoke("plugin:eventkit|collect").catch(() => {});
 			if (contacts?.authorized) await invoke("plugin:contacts|collect").catch(() => {});
 			if (finance?.authorized) await invoke("plugin:finance|collect").catch(() => {});

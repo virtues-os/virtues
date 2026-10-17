@@ -389,7 +389,7 @@ public final class HealthCollector {
           guard let q = s as? HKQuantitySample else { continue }
           var rec = self.daySample(q, metric: "cycle")
           rec["kind"] = "basal_temperature"
-          rec["temperature_celsius"] = q.quantity.doubleValue(for: .degreeCelsius())
+          rec["temperature_celsius"] = celsius(q)
           if !self.enqueue(rec) { allEnqueued = false }
         }
         return allEnqueued
@@ -411,7 +411,7 @@ public final class HealthCollector {
           if !self.enqueue([
             "id": q.uuid.uuidString,
             "metric_type": "wrist_temperature",
-            "temperature_celsius": q.quantity.doubleValue(for: .degreeCelsius()),
+            "temperature_celsius": celsius(q),
             "local_start_date": localDay.string(from: night),
             "timestamp": iso.string(from: q.startDate),
             "end_timestamp": iso.string(from: q.endDate),
@@ -423,24 +423,39 @@ public final class HealthCollector {
     }
   }
 
+  /// A temperature to the hundredth of a degree. The °F → °C conversion
+  /// otherwise leaves float noise (97.7 °F arrives as 36.50000000000006).
+  private func celsius(_ q: HKQuantitySample) -> Double {
+    (q.quantity.doubleValue(for: .degreeCelsius()) * 100).rounded() / 100
+  }
+
   /// The fields every cycle and symptom record shares: the instants, and the
-  /// phone's calendar days. An all-day sample ends at the next midnight, so
-  /// its last day is the one just before its end.
+  /// phone's calendar days. Health logs a day as an instant at local noon, so
+  /// a zero-length sample's last day is its first; a span's last day is the
+  /// one just before its end.
+  ///
+  /// A cycle factor still running ("Ended: Not Yet") carries `distantFuture`
+  /// as its end. It is sent with no end at all, which the box stores as an
+  /// open interval, rather than as the year 4000.
   private func daySample(_ s: HKSample, metric: String) -> [String: Any] {
+    let open = s.endDate >= Date.distantFuture.addingTimeInterval(-86_400 * 366)
     let last = s.endDate > s.startDate ? s.endDate.addingTimeInterval(-1) : s.startDate
     // Only JSON types in here: a boxed nil makes JSONSerialization raise an
     // Objective-C exception, which no `try?` catches.
     var raw: [String: Any] = ["hk_type": s.sampleType.identifier]
     if let c = s as? HKCategorySample { raw["hk_value"] = c.value }
-    return [
+    var rec: [String: Any] = [
       "id": s.uuid.uuidString,
       "metric_type": metric,
       "local_start_date": localDay.string(from: s.startDate),
-      "local_end_date": localDay.string(from: last),
       "timestamp": iso.string(from: s.startDate),
-      "end_timestamp": iso.string(from: s.endDate),
       "raw_data": raw,
     ]
+    if !open {
+      rec["local_end_date"] = localDay.string(from: last)
+      rec["end_timestamp"] = iso.string(from: s.endDate)
+    }
+    return rec
   }
 
   /// Run an anchored query and page through history. Persists the anchor after

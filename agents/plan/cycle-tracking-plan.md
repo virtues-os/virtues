@@ -46,7 +46,8 @@ Apple's deviation flags (once the owner confirms one), and the nightly
 
 These are the inputs HealthKit has no type for:
 
-- the usual cycle and period length typed in at setup;
+- the usual cycle length typed in at setup (the last period and its length
+  become flow samples);
 - a pregnancy's due date or gestational age (there is no metadata key);
 - the Cycle Tracking settings themselves.
 
@@ -173,12 +174,8 @@ whole batch would fail, and the phone retries a failed batch forever (see
    - Wrist temperature's `local_start_date` is the start minus 12 hours, by
      definition. A night that starts after midnight still counts as the
      night before.
-4. **Check on a real phone.**
-   - Compare row counts with Health.
-   - Grep an `export.xml` for anything that isn't a HealthKit sample.
-   - Confirm what an all-day sample's instants are.
-   - Generate a Cycle History PDF and see whether it holds the ovulation
-     estimates.
+4. **Check.** Simulator run done (see "Measured" below). Left for a real
+   device: wrist temperature from a watch, and the export and PDF checks.
 5. **Transforms and screens** (below), plus the assistant-access switch.
 6. **Later.**
    - Pregnancy and lactation behind their own switch.
@@ -260,12 +257,37 @@ Never claim Apple equivalence.
 - Copy says "cycle", "period" and "spotting". Never "late", "abnormal" or
   "women's health".
 
+## Measured in the Simulator (2026-10-17)
+
+The full pipe ran end to end on an iOS 26.5 Simulator paired with a scratch box
+at `api_version` 5: Health → collector → outbox → iroh → `ios_ingest` → the
+tables. 12 records landed, a replay deduped to 0, and `virtues_face_reader`
+could not SELECT either table.
+
+- **A logged day is an instant at local noon, not a span.** Cycle samples
+  arrive with `startDate == endDate` at 12:00 local, so the phone's calendar
+  day is the only safe day key. The box was right to take dates from the phone.
+- **Apple's setup writes samples.** The "last period" and "usually lasts" setup
+  answers became one `unspecified` flow sample per day, with the cycle-start
+  flag on the first. Only the usual cycle length stays a setting.
+- **A running factor ends at `distantFuture`** (year 4001). The phone now sends
+  it with no end, which the box stores as an open interval.
+- **°F entries carry float noise** after conversion (97.7 °F became
+  36.50000000000006 °C). The phone now rounds temperatures to 0.01 °C.
+- A sexual-activity entry was logged and never queued, so the not-requested
+  types stay on the phone.
+- Symptoms logged from Cycle Tracking carry no severity (`unspecified`).
+- **Sync now skipped cycle-only opt-ins.** It ran Health collection only when
+  the general Health stream was on. Fixed; that fix is type-checked but not
+  re-run in the Simulator, because a `dev`-stamped build keeps the SPA bundle
+  the box served at pairing.
+
 ## Unverified
 
-- That Health app samples span exactly local midnight to midnight.
-- How an ongoing contraception factor's end date is stored.
-- Wrist temperature: one sample per night, and what its `startDate` means.
+- Wrist temperature: one sample per night, and what its `startDate` means. The
+  Simulator cannot produce it; it needs a watch.
 - Whether `export.xml` or the Cycle History PDF contains Apple's estimates.
+  This needs someone who uses Cycle Tracking.
 
 ## Sources
 
