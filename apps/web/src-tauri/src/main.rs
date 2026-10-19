@@ -1,0 +1,2053 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+// The tray, self-updater, and collector-reconcile machinery is macOS-only for
+// now (Windows/Linux ship a lean views-only window — no tray, no self-update,
+// no collector). Those fns still *compile* everywhere but are only *called* from
+// macOS-gated sites; likewise `Manager`/`WindowEvent` are only used there. So
+// suppress the resulting dead-code / unused-import warnings off macOS rather
+// than #[cfg]-gating ~20 definitions. Revisit when desktop collectors land.
+#![cfg_attr(not(target_os = "macos"), allow(dead_code, unused_imports))]
+
+mod browser;
+#[cfg(target_os = "macos")]
+mod browser_host;
+use browser::{browser_login, browser_pane_agent, browser_pane_bounds, browser_pane_go, browser_pane_open};
+
+use serde::{Deserialize, Serialize};
+use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, WindowEvent};
+use tauri_plugin_reach::ReachExt;
+use tauri_plugin_shell::ShellExt;
+
+/// Collector status returned from CLI
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct CollectorStatus {
+    /// The installed collector binary's release, from its own status output.
+    /// `None` from a collector predating the field — same rule as the
+    /// permission flags below: absence means "cannot tell", never a value.
+    #[serde(default)]
+    pub version: Option<String>,
+    pub running: bool,
+    pub paused: bool,
+    pub pending_events: i64,
+    pub pending_messages: i64,
+    pub last_sync: Option<String>,
+    pub has_full_disk_access: bool,
+    pub has_accessibility: bool,
+    /// True when the two flags above came from the DAEMON's own self-report and
+    /// that report is fresh. False means they describe nothing trustworthy —
+    /// either no daemon has ever written a record, or the one on disk has gone
+    /// stale (see `CollectorHealth`).
+    ///
+    /// The collector has always emitted this. This struct dropped it, so every
+    /// consumer downstream had to treat a possibly-frozen snapshot as live
+    /// fact — which on 2026-08-05 meant showing "accessibility denied" from a
+    /// record six days old, while the permission actually denied went unnamed.
+    /// Absent from an older collector's JSON, hence `serde(default)`: false is
+    /// the honest answer for a binary that cannot tell us.
+    #[serde(default)]
+    pub permissions_reported_by_daemon: bool,
+    /// When the daemon last evaluated its permissions, ISO 8601. `None` if it
+    /// never has. Pair it with the flag above: the UI says *when* it last
+    /// heard rather than asserting a state it cannot observe.
+    #[serde(default)]
+    pub permissions_checked_at: Option<String>,
+    /// Can the daemon read `~/Library/Safari` (history and bookmarks)? Part of
+    /// Full Disk Access in System Settings, but probed separately because a
+    /// daemon can read Messages and still be refused Safari. `None` when the
+    /// daemon has not said: an older collector, or no Safari data to read.
+    #[serde(default)]
+    pub safari_library: Option<bool>,
+}
+
+/// A Virtues server discovered on the local network. Shape mirrors what the
+/// connect screen (`connect.html`) reads: `name` + `origin`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FoundServer {
+    pub name: String,
+    pub origin: String,
+}
+
+// ============================================================================
+// Pairing state helpers
+// ============================================================================
+
+/// Check whether this machine is paired.
+///
+/// Reads the in-process reach plugin's store location: `box.json` under the
+/// platform data dir (`dirs::data_dir()/virtues/box.json` — mirrors the reach
+/// plugin's `virtues_dir()` / `FileStore`). This is the record the reach pairing
+/// flow writes, so its presence is the reliable paired signal now that the
+/// `virtues-client` sidecar (which wrote to the keychain / `~/.virtues`) is gone.
+///
+/// A bare existence check (not a full parse) — enough for the tray / launch
+/// decision; the reach plugin does the authoritative load when it serves.
+/// A page of the Mac's own copy of the UI, on the `virtues://` scheme the
+/// phone uses (see `serve_ui`). One origin for every page of the app's own
+/// copy, so its storage and its OTA bundles never split across two.
+fn own_copy(route: &str) -> WebviewUrl {
+    WebviewUrl::CustomProtocol(
+        format!("virtues://localhost/{route}")
+            .parse()
+            .expect("static url"),
+    )
+}
+
+/// A dev profile's WebKit data store: the same 16 bytes for the same name on
+/// every launch, so the profile keeps its storage, and never the default
+/// store the real app uses.
+#[cfg(target_os = "macos")]
+fn profile_store_id(profile: &str) -> [u8; 16] {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(format!("virtues/webkit-store/{profile}").as_bytes());
+    let mut id = [0u8; 16];
+    id.copy_from_slice(&digest[..16]);
+    id
+}
+
+fn is_paired() -> bool {
+    // Through the plugin's path fn, so a dev profile (VIRTUES_PROFILE) checks
+    // ITS store, not the machine's real one.
+    tauri_plugin_reach::virtues_dir().join("box.json").exists()
+}
+
+
+/// Ask the local proxy (`localhost:7117`) whether THIS device's pairing is still
+/// valid with the box, by reading `/auth/session`. `is_paired()` only checks
+/// that a bundle exists on disk — but after a box reinstall/revoke that bundle's
+/// bearer is dead, and loading the box web with it dead-ends the user on the
+/// box's `/pair` page with no way back. This lets the launch path send a
+/// definitively-rejected device to the app's own `connect.html` instead.
+///
+/// `Some(true)` = authenticated; `Some(false)` = box rejected us (re-pair);
+/// `None` = proxy unreachable (can't tell — it may still be starting up, so the
+/// caller should NOT bounce a possibly-valid device on this).
+///
+/// std-only (no HTTP dep): a raw GET with short timeouts.
+///
+/// Per-attempt budget. Worst case for one attempt = connect + read timeout.
+/// The retry COUNT is the caller's lever, not baked in: the launch path waits
+/// out the proxy startup race with several attempts, while the connect-screen
+/// poll passes 1 (its 4s `setInterval` IS the retry). Keep the total —
+/// `attempts × (CONNECT + READ + RETRY_GAP)` — well under that poll interval so
+/// a probe can never queue up behind itself.
+const PROBE_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(400);
+const PROBE_READ_TIMEOUT: std::time::Duration = std::time::Duration::from_millis(800);
+const PROBE_RETRY_GAP: std::time::Duration = std::time::Duration::from_millis(300);
+
+/// BLOCKING. Never call on the main/UI thread — use `probe_box_session()`
+/// (the async wrapper) instead, which offloads this to the blocking pool. The
+/// `_blocking` suffix is the warning label: a synchronous Tauri command running
+/// this freezes the webview for up to `attempts × ~1.5s`.
+fn probe_box_session_blocking(attempts: u8) -> Option<bool> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let addr = format!("127.0.0.1:{}", tauri_plugin_reach::loopback_port())
+        .parse()
+        .ok()?;
+    for i in 0..attempts {
+        if let Ok(mut s) = TcpStream::connect_timeout(&addr, PROBE_CONNECT_TIMEOUT) {
+            let _ = s.set_read_timeout(Some(PROBE_READ_TIMEOUT));
+            let req = "GET /auth/session HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+            if s.write_all(req.as_bytes()).is_ok() {
+                let mut buf = String::new();
+                let _ = s.read_to_string(&mut buf);
+                if let Some(verdict) = classify_session_response(&buf) {
+                    return Some(verdict);
+                }
+            }
+        }
+        // No gap after the final attempt — we're about to return.
+        if i + 1 < attempts {
+            std::thread::sleep(PROBE_RETRY_GAP);
+        }
+    }
+    None
+}
+
+/// Async, main-thread-safe wrapper around [`probe_box_session_blocking`]. Use
+/// this from Tauri commands; it runs the blocking probe on the blocking pool so
+/// the webview's UI thread is never parked on a socket read.
+async fn probe_box_session(attempts: u8) -> Option<bool> {
+    tauri::async_runtime::spawn_blocking(move || probe_box_session_blocking(attempts))
+        .await
+        .unwrap_or(None)
+}
+
+/// Classify a raw `/auth/session` HTTP response into rejected (`Some(false)`),
+/// authenticated (`Some(true)`), or indeterminate (`None`, retry).
+///
+/// Parses deliberately: a 401 status line is a definitive rejection, and the
+/// `user` check runs ONLY against the body (after the header terminator) so
+/// header text can never false-match. `/auth/session` returns a small known
+/// shape — `{"user":null}` unauth, `{"user":{…}}` authed — so a body substring
+/// test is sufficient without dragging in an HTTP/JSON dep.
+fn classify_session_response(raw: &str) -> Option<bool> {
+    // Status line first: an explicit 401 means the box rejected this device.
+    if let Some(status_line) = raw.lines().next() {
+        if status_line.contains(" 401") {
+            return Some(false);
+        }
+    }
+    // Body only — split on the header terminator so we never inspect headers.
+    let body = raw.split("\r\n\r\n").nth(1)?;
+    let body = body.split_whitespace().collect::<String>(); // drop chunk framing/whitespace
+    if body.contains("\"user\":null") {
+        return Some(false);
+    }
+    if body.contains("\"user\":{") {
+        return Some(true);
+    }
+    None
+}
+
+/// Coarse internet check: can this Mac open a TCP connection to a public
+/// anchor? std-only, short timeout. Distinguishes "this device is offline" from
+/// "the box is unreachable."
+fn device_online() -> bool {
+    use std::net::{TcpStream, ToSocketAddrs};
+    use std::time::Duration;
+    // Well-known always-on anchors on :443/:53. Any success = online.
+    for anchor in ["1.1.1.1:443", "8.8.8.8:53"] {
+        if let Ok(addrs) = anchor.to_socket_addrs() {
+            for addr in addrs {
+                if TcpStream::connect_timeout(&addr, Duration::from_millis(700)).is_ok() {
+                    return true;
+                }
+            }
+        }
+    }
+    false
+}
+
+/// Diagnose why a paired box can't be reached, for the connect screen's
+/// network-aware callout. Returns one of:
+///   - `"ok"`            — recovered; the caller should load the box.
+///   - `"stale_bearer"`  — box reachable but rejected this device → re-pair.
+///   - `"device_offline"`— this Mac has no usable internet.
+///   - `"box_unreachable"`— box off/asleep OR this network blocks
+///     device-to-device traffic (work/café Wi-Fi). Distinguishing the two
+///     precisely needs a reachability probe (future, via virtues-client); the
+///     callout copy covers both honestly for now.
+#[tauri::command]
+async fn diagnose_box() -> String {
+    // A few attempts here: this backs an explicit diagnosis, so it's worth
+    // riding out a transient blip rather than reporting "unreachable" too eagerly.
+    let verdict = probe_box_session(3).await;
+    // device_online() is blocking; keep it off the UI thread too.
+    tauri::async_runtime::spawn_blocking(move || {
+        match verdict {
+            Some(true) => "ok",
+            Some(false) => "stale_bearer",
+            None => {
+                if device_online() {
+                    "box_unreachable"
+                } else {
+                    "device_offline"
+                }
+            }
+        }
+        .to_string()
+    })
+    .await
+    .unwrap_or_else(|_| "box_unreachable".to_string())
+}
+
+/// Whether `url` is one of the pages this window exists to show: the baked
+/// app (`tauri://localhost` on macOS and Linux, `http(s)://tauri.localhost` on
+/// Windows) or the box through the reach loopback on `loopback_port`.
+fn is_own_page(url: &url::Url, loopback_port: u16) -> bool {
+    match url.scheme() {
+        "tauri" => url.host_str() == Some("localhost"),
+        // The app's own copy of the UI (`serve_ui`, the phone's scheme), since
+        // 2026-09-29: agents/plan/local-ui-plan.md.
+        "virtues" => url.host_str() == Some("localhost"),
+        "about" => matches!(url.as_str(), "about:blank" | "about:srcdoc"),
+        "http" | "https" => match url.host_str() {
+            Some("tauri.localhost") => true,
+            Some("localhost") | Some("127.0.0.1") => {
+                url.scheme() == "http" && url.port() == Some(loopback_port)
+            }
+            _ => false,
+        },
+        _ => false,
+    }
+}
+
+#[cfg(test)]
+mod own_page_tests {
+    use super::is_own_page;
+
+    fn own(u: &str) -> bool {
+        is_own_page(&url::Url::parse(u).unwrap(), 7117)
+    }
+
+    #[test]
+    fn the_app_and_the_tunnel_are_allowed() {
+        assert!(own("tauri://localhost/setup"));
+        assert!(own("virtues://localhost/setup"));
+        assert!(own("virtues://localhost/reconnect"));
+        assert!(own("http://tauri.localhost/connect.html#reset"));
+        assert!(own("https://tauri.localhost/"));
+        assert!(own("http://localhost:7117/setup?x=1"));
+        assert!(own("http://127.0.0.1:7117/"));
+        assert!(own("about:blank"));
+        assert!(own("about:srcdoc"));
+    }
+
+    #[test]
+    fn everything_else_is_refused() {
+        assert!(!own("https://virtues.com/docs"));
+        assert!(!own("https://atlas.virtues.com/"));
+        assert!(!own("http://localhost:5173/")); // another local server
+        assert!(!own("https://localhost:7117/"));
+        assert!(!own("http://box.virtues:8000/"));
+        assert!(!own("file:///Users/nick/Downloads/a.pdf"));
+        assert!(!own("tauri://evil.example/"));
+        assert!(!own("virtues://evil.example/"));
+        assert!(!own("data:text/html,hi"));
+    }
+}
+
+#[cfg(test)]
+mod session_probe_tests {
+    use super::classify_session_response;
+
+    fn resp(status: &str, body: &str) -> String {
+        format!("HTTP/1.1 {status}\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n{body}")
+    }
+
+    #[test]
+    fn unauth_user_null_is_rejected() {
+        assert_eq!(classify_session_response(&resp("200 OK", "{\"user\":null}")), Some(false));
+    }
+
+    #[test]
+    fn authed_user_object_is_ok() {
+        assert_eq!(
+            classify_session_response(&resp("200 OK", "{\"user\":{\"device_id\":\"d1\"}}")),
+            Some(true)
+        );
+    }
+
+    #[test]
+    fn status_401_is_rejected() {
+        assert_eq!(classify_session_response(&resp("401 Unauthorized", "{}")), Some(false));
+    }
+
+    #[test]
+    fn header_text_never_false_matches() {
+        // A header value containing the sentinel must not be read as the body.
+        let raw = "HTTP/1.1 200 OK\r\nX-Note: \"user\":null\r\n\r\n{\"user\":{\"device_id\":\"d\"}}";
+        assert_eq!(classify_session_response(raw), Some(true));
+    }
+
+    #[test]
+    fn indeterminate_when_no_body() {
+        assert_eq!(classify_session_response("HTTP/1.1 200 OK\r\n\r\n"), None);
+    }
+}
+
+// ============================================================================
+// Tauri Commands (IPC from web frontend)
+// ============================================================================
+
+/// Returns this shell's command-surface version. Deliberately the simplest
+/// possible command — it is the one call a bundle makes *before* it knows
+/// whether any other call is safe, so it must never gain arguments.
+///
+/// The constant itself lives in `lib.rs` (`virtues_lib::COMMAND_SURFACE_VERSION`)
+/// because mobile needs it too and never compiles this file. Its doc comment is
+/// where the contract is written down — read that before bumping.
+#[tauri::command]
+fn command_surface_version() -> u32 {
+    virtues_lib::COMMAND_SURFACE_VERSION
+}
+
+/// What this shell is: its own version, the command contract it exposes, and
+/// which OTA bundle (if any) is serving the UI.
+///
+/// The SPA knows what it was built from but not whether it arrived over the air
+/// or shipped inside the app — only the shell can answer that. Together with
+/// `$lib/build` and the box's `/health`, this is the third of the three version
+/// lines, and the one that was missing when a phone visibly outran the Mac
+/// beside it with no way to see why.
+#[tauri::command]
+fn shell_identity_cmd(app: AppHandle) -> virtues_lib::ShellIdentity {
+    virtues_lib::shell_identity(&app)
+}
+
+/// Tell the shell the UI booted successfully from the active OTA bundle.
+///
+/// A freshly applied bundle stays *pending* until this lands, and a pending
+/// bundle found at the next startup is treated as one that failed to come up —
+/// abandoned, pointer reverted. Downloading proved nothing; rendering does.
+#[tauri::command]
+fn bundle_boot_ok(app: AppHandle) {
+    // Confirms the bundle this page load was pinned to (the Mac's own copy,
+    // since 2026-09-29). A page the box served has no overlay pin, and this is
+    // then a harmless no-op.
+    virtues_lib::confirm_page_load(&app);
+}
+
+/// Is a newer UI bundle staged since this page loaded? The SPA reloads while
+/// hidden when it is (`checkForNewUi` in `routes/(app)/+layout.svelte`). Same command on the phone.
+#[tauri::command]
+fn bundle_update_ready(app: AppHandle) -> bool {
+    virtues_lib::update_ready(&app)
+}
+
+/// Check the box for a newer UI bundle now, at the UI's request (the window
+/// coming back to the front). Returns at once; the work runs on its own
+/// thread. Same command on the phone. The Mac almost never relaunches (closing
+/// the window only hides it), so the launch check alone would go stale.
+#[tauri::command]
+fn ota_check_now(app: AppHandle) {
+    #[cfg(target_os = "macos")]
+    std::thread::spawn(move || virtues_lib::ota_check(&app));
+    #[cfg(not(target_os = "macos"))]
+    let _ = app;
+}
+
+/// Returns whether the machine is currently paired to a Virtues server.
+#[tauri::command]
+fn get_client_status() -> bool {
+    is_paired()
+}
+
+/// Discover Virtues boxes on the local network (subnet scan, via the reach
+/// crate — Bonjour-free, reliable across multicast-filtering APs).
+#[tauri::command]
+async fn discover_servers() -> Result<Vec<FoundServer>, String> {
+    let found = virtues_reach_client::scan_subnet().await;
+    Ok(found
+        .into_iter()
+        .map(|b| FoundServer { name: b.name, origin: b.origin })
+        .collect())
+}
+
+/// Pair with a box using a 6-character code, over the in-process reach plugin.
+/// `pair` consumes the code (plain HTTP to the box's LAN origin), stores the
+/// iroh reach ticket, and starts serving `:7117` in-process — no sidecar.
+#[tauri::command]
+async fn pair_with_code(app: AppHandle, server: String, code: String) -> Result<(), String> {
+    app.reach()
+        .pair(&server, &code)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Start serving the box on `:7117` in-process (idempotent). Called by the
+/// connect screen right after pairing; `pair` already starts serving, so this is
+/// a confirm/no-op in the normal flow, but keeps the connect-screen sequence
+/// intact and covers a paired-but-not-yet-serving relaunch.
+#[tauri::command]
+async fn install_helpers(app: AppHandle, _server: String) -> Result<(), String> {
+    app.reach().ensure_serving().await.map_err(|e| e.to_string())
+}
+
+/// No-op retained for connect-screen API compatibility. There is no proxy
+/// service to uninstall now that reach runs in-process — `forget_pairing` does
+/// the real teardown (aborts serving + clears creds).
+#[tauri::command]
+async fn uninstall_helpers(_app: AppHandle) -> Result<(), String> {
+    Ok(())
+}
+
+/// Clear THIS device's pairing. Aborts the in-process loopback + drain tasks,
+/// clears the warm client, and deletes the stored box record — a true clean
+/// slate so a re-pair (even to a reset box) starts fresh without an app restart.
+///
+/// Called (a) by the connect screen *before* a re-pair of a RESET box (its new
+/// key would otherwise trip the TOFU pin), and (b) by Settings →
+/// "Disconnect this Mac".
+#[tauri::command]
+async fn forget_pairing(app: AppHandle) -> Result<(), String> {
+    app.reach().forget().map_err(|e| e.to_string())
+}
+
+/// Re-check whether the box now accepts this device — backs the connect
+/// screen's "Retry" on the unreachable state (box was off/asleep/elsewhere).
+/// `true` → load the box; `false` → still not reachable/accepted. The reach
+/// loopback is already served in-process (launch ensures it when paired), so
+/// this just re-probes `/auth/session` through it. Single attempt: the connect
+/// screen polls on a timer, so the poll interval IS the retry cadence.
+#[tauri::command]
+async fn recheck_box() -> bool {
+    probe_box_session(1).await == Some(true)
+}
+
+/// Relaunch the app — used after Settings → "Disconnect this Mac" so the window
+/// comes back up through the launch decision (now unpaired → the connect
+/// screen) instead of sitting on a dead localhost:7117 the proxy no longer
+/// serves. Never returns.
+#[tauri::command]
+fn restart_app(app: AppHandle) {
+    app.restart();
+}
+
+/// Get collector daemon status by invoking CLI
+#[tauri::command]
+async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String> {
+    let shell = app.shell();
+
+    let installed_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".virtues")
+        .join("bin")
+        .join("virtues-collector");
+
+    let output = if installed_path.exists() {
+        shell
+            .command(installed_path.to_string_lossy().to_string())
+            .args(["status", "--json"])
+            .output()
+            .await
+            .map_err(|e| e.to_string())?
+    } else {
+        match shell.sidecar("virtues-collector") {
+            Ok(cmd) => cmd.args(["status", "--json"]).output().await.map_err(|e| e.to_string())?,
+            Err(_) => return Ok(CollectorStatus::default()),
+        }
+    };
+
+    if output.status.success() {
+        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())
+    } else {
+        // The installed binary (or sidecar) ran but exited non-zero — a real
+        // read failure, NOT proof the collector is off. Surface it as an error
+        // so callers keep their last-good state instead of flashing "stopped".
+        // (The genuine "never installed, no sidecar" case already returned a
+        // default above.)
+        Err(format!(
+            "collector status failed (exit {:?}): {}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
+}
+
+/// Ask the running collector to re-check its permissions now, and return the
+/// status once it has.
+///
+/// macOS sends nothing when someone flips a Full Disk Access or Accessibility
+/// toggle, so the daemon otherwise notices on its next 5-minute tick. This
+/// sends it SIGUSR1 through launchd (no pid needed), then waits up to ~3s for
+/// the daemon to rewrite its health record, and reads status after. A
+/// collector older than the SIGUSR1 handler dies of the signal instead, and
+/// launchd restarts it (KeepAlive), which writes the record on startup: the
+/// same answer, a little slower.
+///
+/// Returns whatever status there is when the wait runs out; the caller keeps
+/// polling as before.
+#[tauri::command]
+async fn recheck_collector(app: AppHandle) -> Result<CollectorStatus, String> {
+    deny_collector_in_profile()?;
+    let health = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".virtues")
+        .join("health.json");
+    tauri::async_runtime::spawn_blocking(move || {
+        let modified = |p: &std::path::Path| std::fs::metadata(p).and_then(|m| m.modified()).ok();
+        let before = modified(&health);
+        let uid = current_uid().ok_or("could not read the user id")?;
+        let sent = std::process::Command::new("/bin/launchctl")
+            .args(["kill", "SIGUSR1", &format!("gui/{uid}/com.virtues.collector")])
+            .output()
+            .map_err(|e| e.to_string())?;
+        if !sent.status.success() {
+            return Err(format!(
+                "collector is not running ({})",
+                String::from_utf8_lossy(&sent.stderr).trim()
+            ));
+        }
+        for _ in 0..15 {
+            if modified(&health) != before {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| e.to_string())??;
+
+    get_collector_status(app).await
+}
+
+/// This user's numeric id, for addressing launchd's `gui/<uid>` domain.
+fn current_uid() -> Option<String> {
+    std::process::Command::new("id")
+        .arg("-u")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+/// Refuse collector mutations from a dev profile. The collector — its
+/// LaunchAgent, its persisted endpoint, its TCC grants — is machine-global
+/// state belonging to the machine's REAL pairing. A profiled instance exists
+/// precisely so that pairing keeps collecting undisturbed while UI/pairing
+/// work happens beside it; the one way to break that contract is a profile
+/// reaching launchd. Reads (`get_collector_status`) stay allowed.
+fn deny_collector_in_profile() -> Result<(), String> {
+    match tauri_plugin_reach::profile() {
+        None => Ok(()),
+        Some(p) => Err(format!(
+            "dev profile '{p}': the collector belongs to the machine's real \
+             pairing; this instance never touches it"
+        )),
+    }
+}
+
+/// Install the collector as a LaunchAgent
+#[tauri::command]
+async fn install_collector(app: AppHandle, token: String) -> Result<(), String> {
+    deny_collector_in_profile()?;
+    let shell = app.shell();
+
+    // Point the collector at the LOCAL PROXY (:7117), not its built-in
+    // localhost:8000 fallback. The proxy (installed by `install_helpers`) is
+    // already up by the time "Turn on this Mac" runs and tunnels to the box
+    // over WireGuard — so this works whether the box is on this LAN or remote.
+    // Without it the collector pairs against localhost:8000 and a remote-box
+    // user gets "Could not connect" (ECONNREFUSED). The endpoint returned by
+    // pair/consume is persisted, so this also routes ongoing uploads.
+    let output = shell
+        .sidecar("virtues-collector")
+        .map_err(|e| e.to_string())?
+        .env("VIRTUES_TOKEN", &token)
+        .env(
+            "VIRTUES_API_URL",
+            format!("http://localhost:{}", tauri_plugin_reach::loopback_port()),
+        )
+        .args(["install", "--token-from-env"])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+/// Uninstall the collector LaunchAgent
+#[tauri::command]
+async fn uninstall_collector(app: AppHandle) -> Result<(), String> {
+    deny_collector_in_profile()?;
+    let installed_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".virtues")
+        .join("bin")
+        .join("virtues-collector");
+
+    if !installed_path.exists() {
+        return Ok(());
+    }
+
+    let shell = app.shell();
+    let output = shell
+        .command(installed_path.to_string_lossy().to_string())
+        .args(["uninstall"])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+/// Pause collector
+#[tauri::command]
+async fn pause_collector(app: AppHandle) -> Result<(), String> {
+    deny_collector_in_profile()?;
+    let installed_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".virtues")
+        .join("bin")
+        .join("virtues-collector");
+
+    if !installed_path.exists() {
+        return Err("Collector not installed".to_string());
+    }
+
+    let shell = app.shell();
+    let output = shell
+        .command(installed_path.to_string_lossy().to_string())
+        .args(["pause"])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+/// Resume collector
+#[tauri::command]
+async fn resume_collector(app: AppHandle) -> Result<(), String> {
+    deny_collector_in_profile()?;
+    let installed_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".virtues")
+        .join("bin")
+        .join("virtues-collector");
+
+    if !installed_path.exists() {
+        return Err("Collector not installed".to_string());
+    }
+
+    let shell = app.shell();
+    let output = shell
+        .command(installed_path.to_string_lossy().to_string())
+        .args(["resume"])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+/// Stop collector daemon
+#[tauri::command]
+async fn stop_collector(app: AppHandle) -> Result<(), String> {
+    deny_collector_in_profile()?;
+    let installed_path = dirs::home_dir()
+        .unwrap_or_default()
+        .join(".virtues")
+        .join("bin")
+        .join("virtues-collector");
+
+    if !installed_path.exists() {
+        return Err("Collector not installed".to_string());
+    }
+
+    let shell = app.shell();
+    let output = shell
+        .command(installed_path.to_string_lossy().to_string())
+        .args(["stop"])
+        .output()
+        .await
+        .map_err(|e| e.to_string())?;
+
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+/// Open System Preferences to Full Disk Access pane
+#[tauri::command]
+async fn open_full_disk_access(app: AppHandle) -> Result<(), String> {
+    app.shell()
+        .command("open")
+        .args(["x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Open System Preferences to Accessibility pane
+#[tauri::command]
+async fn open_accessibility_settings(app: AppHandle) -> Result<(), String> {
+    app.shell()
+        .command("open")
+        .args(["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// Start the Mac's own dictation in whatever has focus — the composer, when
+/// its mic button asks. This is the Edit menu's "Start Dictation…" sent down
+/// the responder chain, so the words are Apple's: on the device, streaming
+/// into the field as they are spoken, under the system's own mic. A Mac with
+/// Dictation off answers with the system's offer to turn it on.
+#[tauri::command]
+fn start_dictation(app: AppHandle) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        app.run_on_main_thread(|| unsafe {
+            use objc2::runtime::{AnyObject, Bool};
+            use objc2::{class, msg_send, sel};
+            let ns_app: *mut AnyObject = msg_send![class!(NSApplication), sharedApplication];
+            let none: *mut AnyObject = std::ptr::null_mut();
+            let _: Bool = msg_send![ns_app, sendAction: sel!(startDictation:), to: none, from: none];
+        })
+        .map_err(|e| e.to_string())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = app;
+        Err("dictation is the Mac's".into())
+    }
+}
+
+// ============================================================================
+// Global summon shortcut
+// ============================================================================
+
+/// Default chord. `CmdOrCtrl+Shift+Space` because:
+///
+///  · ⌘Space is Spotlight, and on the machines our users have, Raycast has
+///    usually taken it instead;
+///  · ⌥Space is Alfred's default and a common Raycast rebind — the collision
+///    risk is highest with exactly the power users most likely to run this;
+///  · ⌥⌘Space is Spotlight's Finder-search window.
+///
+/// ⌘⇧Space is free on a stock macOS and reads as adjacent to ⌘Space, which is
+/// already what "summon a thing" means to most people.
+///
+/// ## Why not double-⌘
+///
+/// It cannot be a registered hotkey at all. `RegisterEventHotKey` (which this
+/// plugin sits on) takes a non-modifier key plus a modifier mask; modifiers
+/// alone are not expressible. Detecting either double-tap-⌘ or
+/// left-⌘-plus-right-⌘ means watching `flagsChanged` globally — an event tap or
+/// an `NSEvent` global monitor — and both need Accessibility permission, whose
+/// prompt says the app will be able to control your computer. That is a bad
+/// first-launch trade on an appliance holding someone's entire life, so if it
+/// ships it ships as an opt-in the user goes looking for, never as the default.
+/// (Left and right ⌘ *are* distinguishable once you're there —
+/// `NX_DEVICELCMDKEYMASK` / `NX_DEVICERCMDKEYMASK` — so the idea is sound; it is
+/// the permission, not the detection, that is the obstacle.)
+const DEFAULT_SUMMON_CHORD: &str = "CmdOrCtrl+Shift+Space";
+
+/// Event the webview listens for. Carries no payload — the frontend decides
+/// what summoning means (today: focus the window and open the ⌘K palette), so
+/// changing that is not a native change.
+const SUMMON_EVENT: &str = "virtues://summon";
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+fn bring_to_front(app: &AppHandle) {
+    use tauri::Emitter;
+    if let Some(w) = app.get_webview_window("main") {
+        let _ = w.show();
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+    }
+    let _ = app.emit(SUMMON_EVENT, ());
+}
+
+/// Rebind the summon chord at runtime.
+///
+/// The frontend owns the stored preference and calls this on startup, so the
+/// binding is data rather than a rebuild. Unregisters everything first: leaving
+/// the old chord live would mean two chords summoning the app and no way to
+/// take the first one back.
+///
+/// Returns the accelerator actually in force, so a rejected chord doesn't leave
+/// the settings UI showing something that isn't bound.
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+#[tauri::command]
+async fn set_summon_shortcut(app: AppHandle, accelerator: String) -> Result<String, String> {
+    use tauri_plugin_global_shortcut::GlobalShortcutExt;
+
+    let wanted = if accelerator.trim().is_empty() {
+        DEFAULT_SUMMON_CHORD.to_string()
+    } else {
+        accelerator.trim().to_string()
+    };
+
+    let gs = app.global_shortcut();
+    let _ = gs.unregister_all();
+
+    match gs.register(wanted.as_str()) {
+        Ok(()) => Ok(wanted),
+        Err(e) => {
+            // Fall back rather than leaving the app with no summon at all. A
+            // chord already held by another app is the common case here, and it
+            // is the user's to resolve — but not at the cost of the feature
+            // silently disappearing.
+            let _ = gs.register(DEFAULT_SUMMON_CHORD);
+            Err(format!(
+                "could not bind {wanted}: {e} — kept {DEFAULT_SUMMON_CHORD}"
+            ))
+        }
+    }
+}
+
+// ============================================================================
+// Self-updater
+// ============================================================================
+
+/// A detected, ready-to-apply app update, surfaced *ambiently* — one native
+/// notification + a tray "Restart to update" line. We never force a relaunch
+/// (the Chrome model): the user applies it when convenient. Apply re-checks and
+/// runs download+install, so we never stash a non-Send `Update` across threads.
+#[derive(Default)]
+struct UpdateState {
+    ready: Option<ReadyUpdate>,
+    /// Consecutive failures — check failures AND staging failures. We say
+    /// nothing about the first: a download interrupted by a closing laptop lid
+    /// is not news, and the next tick retries. Two in a row is a real problem
+    /// worth one line. (The counter used to see only staging failures, which
+    /// made a dead manifest URL structurally silent forever — the notification
+    /// could never fire for the failure mode actually observed in production.)
+    failures: u8,
+    /// What the most recent check concluded. The tray label and the SPA (over
+    /// `update_state_cmd`) both read this. `Failed` is a first-class outcome:
+    /// the box-side update UI refuses to render "couldn't check" as "up to
+    /// date", and the tray used to commit exactly that lie on a failed manual
+    /// check.
+    last_check: Option<CheckOutcome>,
+}
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "snake_case", tag = "outcome")]
+enum CheckOutcome {
+    UpToDate,
+    Staged { version: String },
+    Failed { error: String },
+}
+
+struct ReadyUpdate {
+    version: String,
+}
+
+// ============================================================================
+// Attention: the box's "needs you" list, as notifications
+// ============================================================================
+
+/// How often the tray asks the box what needs the owner. The list changes on
+/// the scale of hours (a stream stalls after a day, a backup is late after
+/// two), so five minutes is prompt without being chatty.
+const ATTENTION_EVERY: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+#[derive(serde::Deserialize)]
+struct AttentionItem {
+    key: String,
+    title: String,
+    body: String,
+}
+
+/// Turns `GET /api/attention` into native notifications, once per problem.
+///
+/// The box knew when a stream stopped, a sign-in expired, the backup drive
+/// went missing or an update rolled back, and said so only on pages the
+/// owner had to think to open. This app is the one thing that is always
+/// running, so it is the one that speaks.
+///
+/// A key is notified when it first appears and again only if it goes away
+/// and comes back. The first poll after launch notifies what is already
+/// open; the app runs for days, so that is a reminder, not a stream.
+#[derive(Default)]
+struct AttentionNotifier {
+    last_poll: Option<std::time::Instant>,
+    /// Keys the last successful poll returned.
+    known: std::collections::HashSet<String>,
+}
+
+impl AttentionNotifier {
+    fn tick(&mut self, app: &AppHandle) {
+        if self.last_poll.is_some_and(|t| t.elapsed() < ATTENTION_EVERY) || !is_paired() {
+            return;
+        }
+        self.last_poll = Some(std::time::Instant::now());
+        // A failed poll changes nothing: unreachable is the tray's own line.
+        let Some(items) = fetch_attention_blocking() else { return };
+        let fresh: Vec<&AttentionItem> =
+            items.iter().filter(|i| !self.known.contains(&i.key)).collect();
+        notify_attention(app, &fresh);
+        self.known = items.into_iter().map(|i| i.key).collect();
+    }
+}
+
+fn notify_attention(app: &AppHandle, fresh: &[&AttentionItem]) {
+    use tauri_plugin_notification::NotificationExt;
+    match fresh {
+        [] => {}
+        // A handful each get their own; more than that is one summary, so a
+        // bad morning is one notification rather than a stack of them.
+        items if items.len() <= 3 => {
+            for i in items {
+                let _ = app.notification().builder().title(&i.title).body(&i.body).show();
+            }
+        }
+        items => {
+            let _ = app
+                .notification()
+                .builder()
+                .title(format!("{} things on your server need you", items.len()))
+                .body(format!("{}, and more. Open Virtues to see them.", items[0].title))
+                .show();
+        }
+    }
+}
+
+/// `GET /api/attention` through the loopback. BLOCKING; the tray thread only.
+fn fetch_attention_blocking() -> Option<Vec<AttentionItem>> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let addr = format!("127.0.0.1:{}", tauri_plugin_reach::loopback_port())
+        .parse()
+        .ok()?;
+    let mut s = TcpStream::connect_timeout(&addr, std::time::Duration::from_secs(2)).ok()?;
+    // The loopback dials the box over iroh; a relay path can take a while.
+    let _ = s.set_read_timeout(Some(std::time::Duration::from_secs(30)));
+    s.write_all(b"GET /api/attention HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+        .ok()?;
+    let mut raw = Vec::new();
+    let _ = s.read_to_end(&mut raw);
+    let raw = String::from_utf8_lossy(&raw);
+    let (head, body) = raw.split_once("\r\n\r\n")?;
+    if !head.lines().next()?.contains(" 200") {
+        return None;
+    }
+    let body = if head.to_ascii_lowercase().contains("transfer-encoding: chunked") {
+        dechunk(body)?
+    } else {
+        body.to_string()
+    };
+    serde_json::from_str(&body).ok()
+}
+
+/// Undo HTTP/1.1 chunked framing. `None` on anything malformed.
+fn dechunk(mut rest: &str) -> Option<String> {
+    let mut out = String::new();
+    loop {
+        let (size, after) = rest.split_once("\r\n")?;
+        let size = usize::from_str_radix(size.split(';').next()?.trim(), 16).ok()?;
+        if size == 0 {
+            return Some(out);
+        }
+        out.push_str(after.get(..size)?);
+        rest = after.get(size..)?.strip_prefix("\r\n")?;
+    }
+}
+
+/// Record a failed check or stage: bump the shared counter, remember the
+/// verdict, and speak exactly once at two consecutive failures.
+fn record_update_failure(app: &AppHandle, err: String) {
+    use tauri_plugin_notification::NotificationExt;
+    let state = app.state::<std::sync::Mutex<UpdateState>>();
+    let mut g = state.lock().unwrap();
+    g.failures = g.failures.saturating_add(1);
+    g.last_check = Some(CheckOutcome::Failed { error: err.clone() });
+    if g.failures == 2 {
+        drop(g);
+        let _ = app
+            .notification()
+            .builder()
+            .title("Virtues could not update itself")
+            .body(format!("{err}\n\nIt will keep trying."))
+            .show();
+    }
+}
+
+/// Check for a newer app release and, on a hit, STAGE it — download and
+/// install silently, so the next launch is already the new version. No
+/// notification, no "Restart to update" prompt, nothing the user has to
+/// decide.
+///
+/// The old flow asked. That is a question the user has no basis to answer —
+/// they cannot know what is in the release or whether it matters — and the
+/// honest default for a background helper is to keep itself current the way
+/// the browser does. macOS lets us replace the bundle under a running app, so
+/// "apply on quit" costs nothing: whenever they next start Virtues, it is
+/// current.
+///
+/// Best-effort, but never silent about failure: every outcome — up to date,
+/// staged, couldn't check, couldn't download — lands in `last_check`, and two
+/// consecutive failures of either kind earn the one notification.
+async fn check_for_update(app: &AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+
+    // ONE channel: the configured `mac-latest` manifest. This used to route by
+    // the box's channel toward `mac-edge` — an endpoint that stopped
+    // publishing a manifest (a Mac sent there would never update again, and
+    // the error was swallowed), reached through a match arm ("prerelease")
+    // that the box's /health vocabulary ("staging") never produced anyway. A
+    // staging box's Mac follows stable app releases: the UI it renders is
+    // box-served and already tracks the box, and the gap a newer box may open
+    // against an older shell is the ShellTooOld gate's job — not a parallel
+    // signed-release channel. See agents/record/device-version-update-audit.md (U1-U5).
+    let updater = match app.updater() {
+        Ok(u) => u,
+        Err(e) => {
+            record_update_failure(app, format!("updater unavailable: {e}"));
+            return;
+        }
+    };
+
+    let update = match updater.check().await {
+        Ok(Some(u)) => u,
+        Ok(None) => {
+            let state = app.state::<std::sync::Mutex<UpdateState>>();
+            let mut g = state.lock().unwrap();
+            g.failures = 0;
+            // "Nothing newer than what you have" includes "you already staged
+            // it" — keep the staged verdict visible rather than downgrading it
+            // to a bare up-to-date.
+            g.last_check = Some(match &g.ready {
+                Some(r) => CheckOutcome::Staged { version: r.version.clone() },
+                None => CheckOutcome::UpToDate,
+            });
+            return;
+        }
+        // A failed CHECK (404 manifest, DNS, TLS, bad signature) is a verdict,
+        // not a no-op — collapsing it into silence is how a dead endpoint
+        // stayed invisible while the tray said "Up to date ✓".
+        Err(e) => {
+            record_update_failure(app, e.to_string());
+            return;
+        }
+    };
+    let version = update.version.clone();
+    let note = update
+        .body
+        .as_deref()
+        .and_then(|b| b.lines().map(str::trim).find(|l| !l.is_empty()))
+        .unwrap_or("")
+        .to_string();
+
+    // Already staged this version? Nothing to do. Scoped so the guard is
+    // dropped before the await below — holding a std Mutex across an await
+    // would be a deadlock waiting for a slow download.
+    {
+        let state = app.state::<std::sync::Mutex<UpdateState>>();
+        let mut g = state.lock().unwrap();
+        if g.ready.as_ref().map(|r| r.version.as_str()) == Some(version.as_str()) {
+            g.failures = 0;
+            g.last_check = Some(CheckOutcome::Staged { version });
+            return;
+        }
+    }
+
+    let staged = update.download_and_install(|_, _| {}, || {}).await;
+
+    match staged {
+        Ok(()) => {
+            let state = app.state::<std::sync::Mutex<UpdateState>>();
+            let mut g = state.lock().unwrap();
+            g.failures = 0;
+            g.ready = Some(ReadyUpdate { version: version.clone() });
+            g.last_check = Some(CheckOutcome::Staged { version });
+        }
+        Err(e) => record_update_failure(app, e.to_string()),
+    }
+    // `note` is read only for the tray line now; the release body is not
+    // pushed at the user unasked.
+    let _ = note;
+}
+
+/// Restart into an already-staged update, for the user who does not want to
+/// wait until their next launch. Optional by design: the staged bundle takes
+/// effect on quit whether or not anyone clicks this.
+///
+/// On relaunch the helper-reconcile redeploys the new sidecars — loop closed.
+/// `app.restart()` never returns, so `true` is a value no caller ever reads —
+/// `false` is the whole signal: nothing was staged and this did nothing.
+///
+/// Returning it is not ceremony. The SPA chip calls this, and a chip whose
+/// button can silently do nothing is the exact failure this session was
+/// opened to fix on the other track.
+fn apply_update(app: AppHandle) -> bool {
+    // try_state: only macOS manages UpdateState (Windows/Linux ship without a
+    // self-updater), and this is now reachable from the SPA on every platform.
+    let staged = app
+        .try_state::<std::sync::Mutex<UpdateState>>()
+        .is_some_and(|state| state.lock().unwrap().ready.is_some());
+    if staged {
+        app.restart();
+    }
+    false
+}
+
+/// The updater's state for the SPA — drives the sidebar's "Relaunch to X"
+/// chip, and is the first time anything outside the tray can see a staged
+/// update at all. `None` means "no self-updater on this platform", which the
+/// UI must treat as silence, not as up-to-date.
+#[derive(serde::Serialize)]
+struct UpdateStateView {
+    staged_version: Option<String>,
+    last_check: Option<CheckOutcome>,
+}
+
+#[tauri::command]
+fn update_state_cmd(app: AppHandle) -> Option<UpdateStateView> {
+    let state = app.try_state::<std::sync::Mutex<UpdateState>>()?;
+    let g = state.lock().unwrap();
+    Some(UpdateStateView {
+        staged_version: g.ready.as_ref().map(|r| r.version.clone()),
+        last_check: g.last_check.clone(),
+    })
+}
+
+/// Restart into a staged update, from the SPA chip. No-op when nothing is
+/// staged — the chip only renders when `staged_version` says so, but a stale
+/// click after a background apply must not restart an already-current app.
+///
+/// `false` means exactly that no-op happened, so the chip can clear itself
+/// instead of standing there as a button that does nothing when pressed.
+/// A `true` is unreachable: the restart does not return.
+#[tauri::command]
+fn apply_update_cmd(app: AppHandle) -> bool {
+    apply_update(app)
+}
+
+/// Run an update check now, at the UI's request (This Mac's "Check now").
+/// Fire-and-forget: the UI re-reads `update_state_cmd` for the verdict, which
+/// is the same state the tray and the chip read — one fact, three doors.
+/// Also the practical answer to the 6h loop having no wake/foreground recheck:
+/// opening the page that shows update state IS the foreground moment.
+#[tauri::command]
+fn check_app_update_cmd(app: AppHandle) {
+    if app.try_state::<std::sync::Mutex<UpdateState>>().is_none() {
+        return; // no self-updater on this platform
+    }
+    tauri::async_runtime::spawn(async move { check_for_update(&app).await });
+}
+
+// ============================================================================
+// Menu-bar tray
+// ============================================================================
+
+/// The collector is "installed" iff its LaunchAgent binary exists at the path
+/// `install_collector` writes to. `get_collector_status` returns a default
+/// (all-false) struct both when stopped AND when never installed, so the tray
+/// needs this to tell "off because not set up" from "installed but paused".
+fn collector_installed() -> bool {
+    dirs::home_dir()
+        .map(|h| h.join(".virtues").join("bin").join("virtues-collector").exists())
+        .unwrap_or(false)
+}
+
+/// Status-dot color, drawn as a colored `IconMenuItem` icon (not a template, so
+/// it keeps its color): 🟢 working · 🟡 transient/attention · 🔴 needs action ·
+/// ⚪ inactive — but as real PNG dots, no emoji.
+#[derive(Clone, Copy)]
+enum Dot {
+    Green,
+    Amber,
+    Red,
+    Grey,
+}
+
+/// Decode the bundled dot PNG for a state. `None` only on a decode failure, in
+/// which case the line just shows text with no icon rather than crashing.
+fn dot_image(dot: Dot) -> Option<tauri::image::Image<'static>> {
+    let bytes: &[u8] = match dot {
+        Dot::Green => include_bytes!("../icons/dot-green.png"),
+        Dot::Amber => include_bytes!("../icons/dot-amber.png"),
+        Dot::Red => include_bytes!("../icons/dot-red.png"),
+        Dot::Grey => include_bytes!("../icons/dot-grey.png"),
+    };
+    tauri::image::Image::from_bytes(bytes).ok()
+}
+
+/// First line of the tray menu: where this device stands with the box. Returns
+/// The tray's ONE line. Worst thing first: an unreachable box outranks a
+/// paused collector outranks all-quiet.
+///
+/// The tray stopped being a control panel in the 2026-08-27 surface diet:
+/// it had grown seven lines in three vocabularies (box, collector, sync,
+/// version, update ×3), duplicating — and disagreeing with — the in-app
+/// surfaces. Every action and every detail now lives in Devices → This Mac,
+/// the one place; this line exists only because a closed window cannot render
+/// that page, and its words match This Mac's exactly.
+fn tray_summary(installed: bool, status: &CollectorStatus) -> (Dot, &'static str) {
+    if !is_paired() {
+        return (Dot::Grey, "Not set up — open Virtues");
+    }
+    match probe_box_session_blocking(1) {
+        Some(false) => return (Dot::Red, "Box needs re-pairing — open Virtues"),
+        None => return (Dot::Amber, "Box unreachable"),
+        Some(true) => {}
+    }
+    if !installed {
+        (Dot::Grey, "Not collecting — open Virtues to set up")
+    } else if status.paused {
+        (Dot::Amber, "Paused")
+    } else if status.running && !permissions_ok(status) {
+        // A running collector with a revoked grant is the worst case this line
+        // has, because every other symptom of it looks like a quiet week: the
+        // process is up, uploads succeed, and only the TCC-gated streams
+        // (iMessage, Safari history, window titles) go dark. This tray said
+        // "Collecting" in green for three days while exactly that was true.
+        //
+        // Worst-thing-first, per this function's contract: a permission gap
+        // outranks "Collecting" because it is the thing the user must act on,
+        // and the tray sits on the machine that owns the permission — the fix
+        // is seconds away from here, rather than a trip to another device.
+        (Dot::Amber, "Permission needed — open Virtues")
+    } else if status.running {
+        (Dot::Green, "Collecting")
+    } else {
+        (Dot::Red, "Collector stopped — open Virtues")
+    }
+}
+
+/// Does the daemon report every permission it needs?
+///
+/// Only the DAEMON's own fresh self-report counts. `permissions_reported_by_daemon`
+/// false means the flags describe nothing trustworthy — no record has ever been
+/// written, or the one on disk is stale — and an unknown is not a denial. Saying
+/// "permission needed" on a stale record is how this tray previously named the
+/// wrong permission for six days; silence is the honest answer when we cannot
+/// observe, and the collector re-probes every five minutes anyway.
+fn permissions_ok(status: &CollectorStatus) -> bool {
+    if !status.permissions_reported_by_daemon {
+        return true;
+    }
+    status.has_full_disk_access && status.has_accessibility
+}
+
+/// The tray's mutable menu items, bundled so the poll loop and the menu-event
+/// handler can each hold a clone and refresh the same line.
+#[derive(Clone)]
+struct TrayItems {
+    status: tauri::menu::IconMenuItem<tauri::Wry>,
+}
+
+/// Recompute the status line and apply it. Spawns its OWN thread because
+/// computing the state BLOCKS (probing the box over TCP, and shelling out to
+/// the collector CLI when installed), then hops to the main thread for the
+/// actual menu mutation — AppKit requires UI changes on the main thread.
+fn refresh_tray(app: &AppHandle, items: TrayItems) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let installed = collector_installed();
+        // Skip the CLI call entirely when nothing's installed: its sidecar
+        // fallback would fork a process on every poll just to hand back defaults.
+        let status = if installed {
+            tauri::async_runtime::block_on(get_collector_status(app.clone())).unwrap_or_default()
+        } else {
+            CollectorStatus::default()
+        };
+        let (dot, text) = tray_summary(installed, &status);
+        let _ = app.run_on_main_thread(move || {
+            let _ = items.status.set_text(text);
+            let _ = items.status.set_icon(dot_image(dot));
+        });
+    });
+}
+
+/// Build the macOS menu-bar item: ONE colored status line, "Open Virtues",
+/// and a real Quit (the window close button only HIDES — see
+/// `on_window_event` — so Quit is the only way to exit).
+///
+/// This menu was a seven-line control panel — two status lines, last-sync,
+/// pause/resume, a version line, check-for-updates, and an update line — a
+/// second UI speaking its own dialect of facts the app also showed. The
+/// surface diet moved every action and every detail into Devices → This Mac;
+/// what remains is exactly what a closed window cannot provide: the dot, the
+/// door, and the exit.
+fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
+    use tauri::menu::{IconMenuItem, Menu, MenuItem, PredefinedMenuItem};
+    use tauri::tray::TrayIconBuilder;
+
+    // Enabled (so the text reads at full strength, not greyed), and clicking
+    // it opens the app — the line often names a problem whose fix lives
+    // in-window.
+    let status = IconMenuItem::with_id(
+        app, "status", "Checking…", true, dot_image(Dot::Grey), None::<&str>,
+    )?;
+    let show = MenuItem::with_id(app, "show", "Open Virtues", true, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit Virtues", true, None::<&str>)?;
+
+    let menu = Menu::with_items(
+        app,
+        &[
+            &status,
+            &PredefinedMenuItem::separator(app)?,
+            &show,
+            &quit,
+        ],
+    )?;
+
+    let items = TrayItems { status };
+
+    // The ∴ mark as a TEMPLATE image: monochrome black+alpha that AppKit recolors
+    // to fit light/dark menu bars. The full-color app icon would not adapt and
+    // would look wrong up there.
+    let icon = tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))
+        .expect("decode bundled tray icon");
+
+    TrayIconBuilder::with_id("main-tray")
+        .icon(icon)
+        .icon_as_template(true)
+        .tooltip("Virtues")
+        .menu(&menu)
+        .on_menu_event(move |app, event| match event.id.as_ref() {
+            // The status line doubles as the door — it often names a problem
+            // whose fix lives in-window (Devices → This Mac).
+            "show" | "status" => {
+                if let Some(w) = app.get_webview_window("main") {
+                    let _ = w.show();
+                    let _ = w.set_focus();
+                }
+            }
+            "quit" => app.exit(0),
+            _ => {}
+        })
+        .build(app)?;
+
+    // Keep the labels honest. A poll (not an event subscription) because the
+    // collector is a separate daemon with no push channel back to this app.
+    //
+    // The same tick decides the auto-apply: a staged update self-applies once
+    // the window has been hidden for two hours. Chrome stages-and-waits
+    // because a browser is full of your tabs and gets relaunched daily; this
+    // app is a picture frame over the box-served SPA (no state to lose) that
+    // is DESIGNED never to relaunch — so "applies on next launch" rounded to
+    // never, and the collector rode the stale app for weeks. Restarting while
+    // hidden is invisible; the collector is a separate LaunchAgent and keeps
+    // running through it, and the post-restart reconcile brings it to the new
+    // build. Never while a window is visible — the chip and the tray line
+    // stay the only interruptions a present user sees.
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let mut last_visible = std::time::Instant::now();
+        const HIDDEN_APPLY_AFTER: std::time::Duration = std::time::Duration::from_secs(2 * 3600);
+        let mut attention = AttentionNotifier::default();
+        loop {
+            refresh_tray(&app, items.clone());
+            attention.tick(&app);
+            let any_visible = app
+                .webview_windows()
+                .values()
+                .any(|w| w.is_visible().unwrap_or(false));
+            if any_visible {
+                last_visible = std::time::Instant::now();
+            }
+            let staged = app
+                .try_state::<std::sync::Mutex<UpdateState>>()
+                .is_some_and(|st| st.lock().unwrap().ready.is_some());
+            if staged && !any_visible && last_visible.elapsed() > HIDDEN_APPLY_AFTER {
+                apply_update(app.clone()); // restarts; never returns
+            }
+            std::thread::sleep(std::time::Duration::from_secs(10));
+        }
+    });
+
+    Ok(())
+}
+
+// ============================================================================
+// Helper reconcile — keep installed helpers matching the app's bundled ones
+// ============================================================================
+
+/// On launch, keep the installed **collector** helper (`virtues-collector` in
+/// `~/.virtues/bin/`) matching the version THIS app bundle ships. The collector
+/// is *copied* into `~/.virtues/bin` at "Turn on this Mac" time and runs as a
+/// LaunchAgent, so a plain app update would otherwise leave the OLD collector
+/// running. Reconciling here turns "install a new app" into "the collector
+/// updates too," with zero user action.
+///
+/// (The reach proxy is no longer a sidecar — it runs in-process — so only the
+/// collector is reconciled now.)
+///
+/// Only touches a collector that's ALREADY installed — first-run install stays
+/// with the "Turn on this Mac" opt-in flow. A no-op once in sync, so it's safe
+/// to run on every launch. Returns true if the collector was redeployed.
+fn reconcile_helpers() -> bool {
+    let mut changed = false;
+    for (name, agent) in [("virtues-collector", "com.virtues.collector")] {
+        match reconcile_one(name, agent) {
+            Ok(true) => {
+                changed = true;
+                eprintln!("[reconcile] {name}: redeployed to match app bundle + restarted {agent}");
+            }
+            Ok(false) => {}
+            Err(e) => eprintln!("[reconcile] {name}: {e}"),
+        }
+    }
+    changed
+}
+
+/// Reconcile one helper. `Ok(true)` = it was stale and got redeployed.
+fn reconcile_one(name: &str, agent: &str) -> Result<bool, String> {
+    let installed = dirs::home_dir()
+        .ok_or("no home dir")?
+        .join(".virtues")
+        .join("bin")
+        .join(name);
+    // Not installed → nothing to reconcile (the pair / "turn on this Mac" flow
+    // installs it fresh, with the upstream/permissions it needs).
+    if !installed.exists() {
+        return Ok(false);
+    }
+    // The bundled helper sits next to this app binary in `Contents/MacOS/`.
+    let bundled = std::env::current_exe()
+        .map_err(|e| e.to_string())?
+        .parent()
+        .ok_or("no exe dir")?
+        .join(name);
+    // A marker left by a failed kickstart below. Without it, a failed restart
+    // was UNRECOVERABLE: the copy had already made the byte-compare read "in
+    // sync", so every later launch no-op'd while the old process kept running
+    // from its held inode until logout. The marker keeps "binary replaced" and
+    // "process restarted" as separate facts.
+    let restart_pending = installed.with_file_name(format!(".{name}-restart-pending"));
+    // Dev build / sidecar not alongside → nothing we can reconcile against.
+    if !bundled.exists() {
+        return Ok(false);
+    }
+    if !files_differ(&bundled, &installed) && !restart_pending.exists() {
+        return Ok(false);
+    }
+    if files_differ(&bundled, &installed) {
+        // An ad-hoc signed collector has no signing identity for macOS to
+        // recognise it by, so TCC pins its Full Disk Access and Accessibility
+        // grants to that exact build — and this copy voids them. Silently: the
+        // switches in System Settings stay on while every read fails, so
+        // iMessages, Safari history and window titles simply stop arriving.
+        //
+        // This path, not `virtues-collector install`, is how it actually
+        // happens — an app rebuild relaunches, reconciles, and blinds the
+        // collector with nobody having typed anything. Say so HERE, where the
+        // cause is still known; five minutes later the collector's own health
+        // report says only "denied", with no hint of what did it.
+        //
+        // We still copy: a stale collector is the worse failure, and this is
+        // recoverable by removing and re-adding the entries (toggling them off
+        // and on does not repair the grant).
+        if is_adhoc_signed(&bundled) {
+            eprintln!(
+                "[reconcile] {name}: bundled helper is AD-HOC SIGNED — this redeploy \
+                 voids its macOS permissions. Remove and re-add virtues-collector in \
+                 System Settings → Privacy & Security → Full Disk Access and \
+                 Accessibility. Build with APPLE_SIGNING_IDENTITY set to stop this."
+            );
+        }
+        copy_executable(&bundled, &installed).map_err(|e| e.to_string())?;
+    }
+    // Kick the LaunchAgent so launchd drops the old process and runs the new
+    // binary now (rename-over-running is fine on macOS; the live process holds
+    // the old inode until this restart).
+    let uid = current_uid().unwrap_or_default();
+    let kicked = !uid.is_empty()
+        && std::process::Command::new("/bin/launchctl")
+            .args(["kickstart", "-k", &format!("gui/{uid}/{agent}")])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+    if kicked {
+        let _ = std::fs::remove_file(&restart_pending);
+    } else {
+        // Remember that the running process is still the old binary; the next
+        // launch retries the kickstart even though the files now match. (An
+        // agent that simply isn't loaded also lands here — the next login
+        // starts the new binary and the retry then clears the marker.)
+        let _ = std::fs::write(&restart_pending, b"");
+        eprintln!("[reconcile] {name}: kickstart failed — will retry next launch");
+    }
+    Ok(true)
+}
+
+/// Is this binary ad-hoc signed (no signing identity, so TCC pins its grants to
+/// the exact build)? Shells out to `codesign` because this runs only on the
+/// redeploy path — rare by construction — and linking the Security framework to
+/// read one flag is not worth it.
+///
+/// Failure reads as `false`: this only decides whether to print a warning, and
+/// a probe that could not run is not evidence that a build is unsigned.
+fn is_adhoc_signed(path: &std::path::Path) -> bool {
+    std::process::Command::new("/usr/bin/codesign")
+        .args(["-dv", "--verbose=2"])
+        .arg(path)
+        .output()
+        .ok()
+        // codesign writes its report to stderr.
+        .map(|o| String::from_utf8_lossy(&o.stderr).contains("adhoc"))
+        .unwrap_or(false)
+}
+
+/// Byte-equal? Cheap size check first, content compare only if sizes match (the
+/// up-to-date case). Any IO error → treat as "differ" so we err toward refresh.
+fn files_differ(a: &std::path::Path, b: &std::path::Path) -> bool {
+    match (a.metadata(), b.metadata()) {
+        (Ok(ma), Ok(mb)) if ma.len() == mb.len() => {
+            match (std::fs::read(a), std::fs::read(b)) {
+                (Ok(x), Ok(y)) => x != y,
+                _ => true,
+            }
+        }
+        _ => true,
+    }
+}
+
+/// Atomic replace of an executable (temp copy → chmod 0755 → rename). Renaming
+/// over a running binary is safe on macOS; the kickstart that follows restarts
+/// the process onto the new file.
+fn copy_executable(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    let tmp = dst.with_extension("new");
+    std::fs::copy(src, &tmp)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755))?;
+    }
+    std::fs::rename(&tmp, dst)
+}
+
+// ============================================================================
+// App Setup
+// ============================================================================
+
+/// ⌘+/⌘-/⌘0 page zoom — hand-rolled because Tauri's `zoom_hotkeys_enabled`
+/// polyfill also binds `ctrl+wheel`, and on a Mac trackpad **a pinch IS a
+/// ctrl+wheel**: macOS synthesises exactly that event stream for the magnify
+/// gesture. So a two-finger pinch — the gesture you make to nudge a photo, or by
+/// accident while scrolling a list — walked the whole app's page zoom in 20%
+/// steps. Page zoom is not magnification: it changes what a CSS pixel is worth,
+/// so every breakpoint, every rem, and the entire chrome re-laid out. The app
+/// looked broken and the way back (⌘0) is invisible.
+///
+/// Deliberately NOT translated into visual magnification instead. WKWebView can
+/// do that (`allowsMagnification`), but it scales the window's content and
+/// expects a page you can scroll around afterwards; this app is a fixed
+/// `100vh` shell with its own inner scrollers, so magnifying would push the
+/// sidebar and tab bar off-screen with nothing to scroll them back. Pinch is a
+/// no-op here, and zoom stays an explicit ⌘ gesture.
+///
+/// The keydown half is Tauri's, unchanged: same 20% steps, same 0.2–10 clamp,
+/// same `webview|set_webview_zoom` command (permissioned in
+/// capabilities/default.json — without it this is a silent no-op).
+const ZOOM_HOTKEYS_JS: &str = r#"
+;(function () {
+  var zoomLevel = 1
+  var MAX = 10
+  var MIN = 0.2
+
+  function apply() {
+    zoomLevel = Math.min(Math.max(zoomLevel, MIN), MAX)
+    window.__TAURI_INTERNALS__.invoke('plugin:webview|set_webview_zoom', {
+      value: zoomLevel
+    })
+  }
+
+  window.addEventListener('keydown', function (event) {
+    // ⌘ on macOS, Ctrl on Windows/Linux. Accepting either rather than branching
+    // on `navigator.platform` (deprecated, and the one script serves all three);
+    // the cost is that Ctrl+- also zooms on a Mac, which nothing else claims.
+    if (!event.metaKey && !event.ctrlKey) return
+    if (event.key === '-') zoomLevel -= 0.2
+    else if (event.key === '=' || event.key === '+') zoomLevel += 0.2
+    else if (event.key === '0') zoomLevel = 1
+    else return
+    event.preventDefault()
+    apply()
+  })
+
+  // Swallow the pinch rather than leave it to the webview: a ctrl+wheel that
+  // reaches WebKit unclaimed is its own zoom trigger, so ignoring it here is
+  // not the same as stopping it.
+  function swallowPinch(event) {
+    if (event.ctrlKey) event.preventDefault()
+  }
+  window.addEventListener('wheel', swallowPinch, { passive: false })
+  window.addEventListener('mousewheel', swallowPinch, { passive: false })
+})()
+"#;
+
+fn main() {
+    let builder = tauri::Builder::default();
+
+    // The app's own copy of the UI, on the phone's scheme and through the
+    // phone's handler (`virtues_lib::serve_ui`): baked build, OTA overlay from
+    // the box, each page load pinned to one bundle. macOS only: Windows and
+    // Linux bake no UI yet. See agents/plan/local-ui-plan.md.
+    #[cfg(target_os = "macos")]
+    let builder = builder.register_uri_scheme_protocol("virtues", |ctx, request| {
+        virtues_lib::serve_ui(ctx.app_handle(), &request)
+    });
+
+    // Single-instance guard — Windows/Linux only. macOS is single-instance
+    // natively (LaunchServices) and uses the tray + RunEvent::Reopen model, so
+    // gating it off there avoids interfering with that. Elsewhere, a second
+    // launch would spawn a process that fails to bind :7117 (the first instance
+    // holds it) and strand on a dead window — so instead focus the running one.
+    // MUST be the first plugin registered (it decides whether to even continue).
+    #[cfg(not(target_os = "macos"))]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        if let Some(w) = app.get_webview_window("main") {
+            let _ = w.show();
+            let _ = w.set_focus();
+        }
+    }));
+
+    builder
+        .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_notification::init())
+        // OS-global summon chord. The handler fires for whichever accelerator
+        // is currently registered, so rebinding needs no new handler — see
+        // `set_summon_shortcut`. Guard on Pressed: the plugin reports press and
+        // release, and without it every summon fires twice.
+        .plugin(
+            tauri_plugin_global_shortcut::Builder::new()
+                .with_handler(|app, _shortcut, event| {
+                    if event.state() == tauri_plugin_global_shortcut::ShortcutState::Pressed {
+                        bring_to_front(app);
+                    }
+                })
+                .build(),
+        )
+        // In-process iroh reach: pairs + serves the box on :7117 within the app
+        // (replaces the retired virtues-client proxy sidecar).
+        .plugin(tauri_plugin_reach::init())
+        .invoke_handler(tauri::generate_handler![
+            command_surface_version,
+            shell_identity_cmd,
+            bundle_boot_ok,
+            bundle_update_ready,
+            ota_check_now,
+            update_state_cmd,
+            apply_update_cmd,
+            check_app_update_cmd,
+            get_client_status,
+            discover_servers,
+            pair_with_code,
+            install_helpers,
+            uninstall_helpers,
+            forget_pairing,
+            recheck_box,
+            diagnose_box,
+            restart_app,
+            get_collector_status,
+            install_collector,
+            uninstall_collector,
+            pause_collector,
+            resume_collector,
+            stop_collector,
+            recheck_collector,
+            open_full_disk_access,
+            open_accessibility_settings,
+            start_dictation,
+            set_summon_shortcut,
+            browser_login,
+            browser_pane_open,
+            browser_pane_bounds,
+            browser_pane_go,
+            browser_pane_agent,
+        ])
+        .setup(|app| {
+            // The owner's browser, as the assistant's hands: a connection to
+            // the box that lives as long as the app (browser_host.rs).
+            #[cfg(target_os = "macos")]
+            browser_host::start(app.handle().clone(), is_paired);
+
+            // Bind the default summon chord here rather than waiting for the
+            // webview: the whole point is reaching the app from another app, and
+            // that has to work while the window is closed — which is precisely
+            // when no frontend is running to ask for it. A stored rebind arrives
+            // later via `set_summon_shortcut` and replaces this one.
+            {
+                use tauri_plugin_global_shortcut::GlobalShortcutExt;
+                if let Err(e) = app.global_shortcut().register(DEFAULT_SUMMON_CHORD) {
+                    // Not fatal. Another app holding the chord costs us the
+                    // shortcut, not the product.
+                    eprintln!(
+                        "[summon] could not bind {DEFAULT_SUMMON_CHORD}: {e} \
+                         (another app probably holds it)"
+                    );
+                }
+            }
+
+            // Keep the installed collector matching what this app bundle ships
+            // (a stale collector after an app update is the only reconcile case
+            // left now that the proxy runs in-process). macOS-only: the collector
+            // is a macOS daemon, and Windows/Linux are views-only here.
+            //
+            // Gated on being paired. Reconciling kickstarts the LaunchAgent, and
+            // a freshly-started collector asks macOS for Full Disk Access and
+            // Accessibility — so an UNPAIRED app threw two TCC prompts over its
+            // own connect screen, asking for the machine before it had shown
+            // what it was for (2026-08-13). No pairing means this Mac hasn't
+            // been onboarded, so there is nothing to keep in sync yet; the
+            // "Turn on this Mac" flow installs the collector and this reconcile
+            // takes over from the next launch on.
+            // ... and never from a dev profile: reconcile kickstarts the
+            // machine's real collector, which is exactly the cross-profile
+            // side effect profiles exist to prevent.
+            #[cfg(target_os = "macos")]
+            if tauri_plugin_reach::profile().is_none()
+                && app.reach().is_paired()
+                && reconcile_helpers()
+            {
+                std::thread::sleep(std::time::Duration::from_millis(300));
+            }
+
+            // Bring reach up IN-PROCESS before the launch probe: when paired,
+            // bind :7117 + build the warm iroh client here so the probe below
+            // (and the webview) have a live loopback to read. This replaces the
+            // old durable virtues-client proxy sidecar — the app now serves its
+            // own box reach for its session (the collector reaches the box over
+            // its own embedded iroh, independent of this).
+            if app.reach().is_paired() {
+                if let Err(e) = tauri::async_runtime::block_on(app.reach().ensure_serving()) {
+                    eprintln!("[reach] ensure_serving failed: {e}");
+                }
+            }
+
+            // Shared state for the self-updater (read by the tray poll). macOS
+            // only — Windows/Linux defer self-update (updates come from the box).
+            #[cfg(target_os = "macos")]
+            app.manage(std::sync::Mutex::new(UpdateState::default()));
+
+            // The Mac's own copy of the UI (`virtues://`), kept current like
+            // the phone's: drop an overlay a newer app build has overtaken
+            // (pointers only, before any page exists), then look for a newer
+            // bundle on the box off the launch path. A staged bundle applies at
+            // the next page load. See agents/plan/local-ui-plan.md.
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(dir) = virtues_lib::ui_data_dir(app.handle()) {
+                    let baked = virtues_lib::baked_bundle_version(app.handle());
+                    if let Some(dropped) =
+                        virtues_lib::web_bundle::drop_stale_overlay(&dir, baked.as_deref())
+                    {
+                        eprintln!("[ota] overlay {dropped} is older than this app's own UI; back to the build it shipped with");
+                    }
+                }
+                if app.reach().is_paired() {
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || virtues_lib::ota_check(&handle));
+                }
+            }
+
+            // Decide where to land. A valid pairing reconnects SILENTLY (the
+            // 90% reinstall case); we only ever interrupt when something's
+            // actually wrong, and the connect screen is the single recovery
+            // surface. The verdict is passed to connect.html via the URL hash so it
+            // can show the right one-line banner:
+            //   not paired        → fresh connect screen
+            //   box accepts us    → load the box (the in-process :7117 loopback)
+            //   box rejects us    → #reset      ("your box was reset, reconnect")
+            //   box unreachable   → #unreachable ("can't reach it" + Retry)
+            //
+            // An offline fallback to the app's own bundled build was tried on
+            // 2026-08-05 and reverted the same day. It booted, but web storage
+            // is partitioned by origin: the box-served UI lives at
+            // `http://localhost:7117` and a bundled one at `tauri://localhost`,
+            // so the offline app opened against an empty IndexedDB and showed
+            // none of the documents that were the entire point. Offline needs
+            // ONE origin across all four states (box up, box down, baked
+            // bundle, OTA bundle) — see "The origin problem" in
+            // agents/record/spa-delivery.md and agents/plan/local-ui-plan.md.
+            // Do not re-add the fallback alone; it looks like it works and
+            // does not.
+            // A SINGLE fast probe (not the multi-retry loop): reachable boxes
+            // reconnect silently with no connect-screen flash (the
+            // silent-reconnect doctrine), and an unreachable box bounds the
+            // pre-window delay. The connect screen polls asynchronously off the
+            // UI thread, so recovery doesn't cost main-thread time.
+            // `connect.html` is THE airlock, shared with mobile (which reaches
+            // it through the `virtues://` scheme). Desktop can decide the
+            // landing state before the window exists, so it passes the verdict
+            // in the hash instead of making the page probe for it.
+            let url = if std::env::var("VIRTUES_FORCE_CONNECT").is_ok() {
+                // Dev pin, mirroring mobile's `#setup`: open the airlock on an
+                // ALREADY-PAIRED machine without unpairing it. Setup is the
+                // hardest flow to exercise and the easiest to break, and the
+                // only other way in is to forget a real pairing — which on a
+                // single-box client means destroying it. The wifi and link
+                // steps are safe here; completing a PAIR would still replace
+                // the existing box, exactly as it does on the phone.
+                WebviewUrl::App("connect.html#setup".into())
+            } else if cfg!(target_os = "macos") {
+                // THE MAC IS ITS OWN COPY (2026-09-29, agents/plan/local-ui-plan.md).
+                // It shows the app it carries (`virtues://`, served by
+                // `serve_ui` from the baked build or an OTA overlay) and uses
+                // the box for data only, exactly as the phone does. Unpaired, it
+                // opens Setup; paired, the app, whatever the box is doing: an
+                // unreachable box is the app's own "Can't reach your server"
+                // banner, and a box that refuses this Mac sends `/pair` on to
+                // `/reconnect`. No probe before the window, so a launch never
+                // waits on the network.
+                if is_paired() {
+                    own_copy("")
+                } else {
+                    own_copy("setup")
+                }
+            } else if !is_paired() {
+                // Windows and Linux bake no UI yet: the connect page, then the
+                // box's own copy of the app through the loopback.
+                WebviewUrl::App("connect.html".into())
+            } else {
+                match probe_box_session_blocking(1) {
+                    Some(true) => WebviewUrl::External(
+                        format!("http://localhost:{}", tauri_plugin_reach::loopback_port())
+                            .parse()
+                            .unwrap(),
+                    ),
+                    Some(false) => WebviewUrl::App("connect.html#reset".into()),
+                    None => WebviewUrl::App("connect.html#unreachable".into()),
+                }
+            };
+
+            // What the page needs to know about its shell.
+            //
+            // The Mac gets what the phone gets (lib.rs): the loopback as the
+            // BACKEND origin, so `/api`, `/auth`, `/ws` go to the box while the
+            // page itself stays the app's own copy (src/lib/config/backend.ts),
+            // and whether it is paired (Setup's `prePair`). It no longer gets
+            // `__VIRTUES_BOX_URL__`: that told a baked page where the box's copy
+            // lived so it could hand over to it, and there is no handing over.
+            //
+            // Windows and Linux keep `__VIRTUES_BOX_URL__` for the connect page,
+            // whose fallback is the default :7117 (this matters for profiles).
+            let box_url_js = if cfg!(target_os = "macos") {
+                format!(
+                    "window.__VIRTUES_BACKEND_ORIGIN__ = 'http://127.0.0.1:{}'; window.__VIRTUES_PAIRED__ = {};",
+                    tauri_plugin_reach::loopback_port(),
+                    is_paired()
+                )
+            } else {
+                format!(
+                    "window.__VIRTUES_BOX_URL__ = 'http://localhost:{}';",
+                    tauri_plugin_reach::loopback_port()
+                )
+            };
+
+            let mut builder = WebviewWindowBuilder::new(app, "main", url);
+            // A dev profile gets its own web storage. The app's own copy is
+            // `virtues://localhost` in every profile, and storage is per
+            // origin, so without this a profile paired with a bench box would
+            // share the real app's (macOS 14+; older macOS shares it).
+            #[cfg(target_os = "macos")]
+            if let Some(p) = tauri_plugin_reach::profile() {
+                builder = builder.data_store_identifier(profile_store_id(p));
+            }
+            let window = builder
+                .title("Virtues")
+                .initialization_script(&box_url_js)
+                .inner_size(1200.0, 800.0)
+                .min_inner_size(800.0, 600.0)
+                .center()
+                .visible(true)
+                // WKWebView binds no zoom hotkeys of its own (unlike WebView2),
+                // and the app ships only a tray menu — no menu bar to hang a
+                // View → Zoom accelerator on. So ⌘+/⌘-/⌘0 land nowhere here
+                // while they work fine against the same UI in a browser.
+                //
+                // This is OUR polyfill rather than Tauri's `zoom_hotkeys_enabled`
+                // (see ZOOM_HOTKEYS_JS for why). Both invoke
+                // `webview|set_webview_zoom`; that command is permissioned
+                // separately in capabilities/default.json and is a silent
+                // no-op without it, so the two must move together.
+                .initialization_script(ZOOM_HOTKEYS_JS)
+                // Tauri's native OS drag-drop handler is on by default and swallows
+                // file drops before they reach the webview, so the chat composer's
+                // HTML5 ondrop/dataTransfer.files never fires. Disable it to let
+                // drops fall through to the web layer (works in-browser already).
+                .disable_drag_drop_handler()
+                // The window may only ever show our own pages: the baked app
+                // and the box through the loopback tunnel. Everything else is
+                // refused, silently. Two reasons, both below the web layer:
+                //
+                // - The remote origins in capabilities/default.json get the
+                //   app's commands (pairing, installing the collector). A page
+                //   from anywhere else that reached this window by a redirect
+                //   or a link without target=_blank would be one step from
+                //   them if the ACL list were ever widened again.
+                // - A file dropped where the web layer does not claim it
+                //   arrives as a `file:` navigation, and WebKit would REPLACE
+                //   the app with its PDF/image viewer. This window has no back
+                //   button or address bar, so that was a one-way trip until
+                //   relaunch (2026-08-17). A denied navigation is inert.
+                //
+                // On macOS wry asks this for EVERY frame, iframes included, so
+                // a refusal must not open anything elsewhere: a sandboxed face
+                // navigating its own frame would otherwise pop browser tabs.
+                // Links meant for the browser go through `openExternal`.
+                .on_navigation(|url| {
+                    let own = is_own_page(url, tauri_plugin_reach::loopback_port());
+                    if !own {
+                        eprintln!("[nav] refused {}", url.scheme());
+                    }
+                    own
+                })
+                .build()?;
+
+            // Only used in debug; silence the release-build unused warning.
+            #[cfg(debug_assertions)]
+            window.open_devtools();
+            #[cfg(not(debug_assertions))]
+            let _ = window;
+
+            // Menu-bar tray + self-update loop: macOS only. Windows/Linux ship a
+            // plain window (no tray, no self-update) — see the v1 scope decision.
+            #[cfg(target_os = "macos")]
+            {
+                setup_tray(app.handle())?;
+
+                // Self-update check loop: first pass ~5s after launch (off the
+                // critical path, after reconcile), then every 6h. The
+                // mac-latest manifest is the one source; a hit downloads and
+                // stages silently. The tray's own poll surfaces the staged
+                // state within its interval — and applies it after two hidden
+                // hours (see the poll loop).
+                let updater_handle = app.handle().clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_secs(5));
+                    loop {
+                        tauri::async_runtime::block_on(check_for_update(&updater_handle));
+                        std::thread::sleep(std::time::Duration::from_secs(6 * 3600));
+                    }
+                });
+            }
+
+            Ok(())
+        })
+        .on_window_event(|window, event| {
+            // macOS: the tray owns the app lifetime, so closing the window just
+            // hides it (Quit from the tray is the real exit). Windows/Linux have
+            // no tray, so let the close through — closing the last window quits.
+            #[cfg(target_os = "macos")]
+            if let WindowEvent::CloseRequested { api, .. } = event {
+                let _ = window.hide();
+                api.prevent_close();
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (window, event);
+        })
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // `Reopen` (dock/tray re-activate with no visible window) is a
+            // macOS-only RunEvent variant — gate so non-macOS compiles.
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { has_visible_windows, .. } = event {
+                if !has_visible_windows {
+                    if let Some(window) = app_handle.get_webview_window("main") {
+                        let _ = window.show();
+                        let _ = window.set_focus();
+                    }
+                }
+            }
+            #[cfg(not(target_os = "macos"))]
+            let _ = (app_handle, event);
+        });
+}
+
+
+#[cfg(test)]
+mod attention_tests {
+    use super::dechunk;
+
+    #[test]
+    fn dechunk_joins_chunks_and_rejects_garbage() {
+        assert_eq!(dechunk("4\r\n[{\"k\r\n3\r\n\":1\r\n2\r\n}]\r\n0\r\n\r\n").as_deref(), Some("[{\"k\":1}]"));
+        assert_eq!(dechunk("zz\r\nnope\r\n"), None);
+    }
+}

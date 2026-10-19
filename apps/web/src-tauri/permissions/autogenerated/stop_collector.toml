@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-stop-collector"
+description = "Enables the stop_collector command without any pre-configured scope."
+commands.allow = ["stop_collector"]
+
+[[permission]]
+identifier = "deny-stop-collector"
+description = "Denies the stop_collector command without any pre-configured scope."
+commands.deny = ["stop_collector"]

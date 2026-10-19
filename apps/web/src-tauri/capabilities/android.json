@@ -1,0 +1,12 @@
+{
+  "$schema": "https://schemas.tauri.app/capability/schema.json",
+  "identifier": "android",
+  "description": "Capabilities for the Android viewer build — reach only, no collectors",
+  "platforms": ["android"],
+  "windows": ["*"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-create",
+    "reach:default"
+  ]
+}

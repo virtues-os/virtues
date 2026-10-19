@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                    UPDATE wiki_people\n                    SET name = $1,\n                        updated_at = now()\n                    WHERE id = $2\n                    ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c59e5bf6f26e1d49359d089c2fd71fbec076ef9ad7c5854ce9f58d9943dc38fe"
+}

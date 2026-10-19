@@ -1,0 +1,616 @@
+//! Applet faces — sandboxed-iframe HTML runtime.
+//!
+//! A face is `face/index.html` inside the applet's folder, rendered by the
+//! web app in an `<iframe sandbox="allow-scripts">`. The sandbox (no
+//! `allow-same-origin`) gives the document an **opaque origin**, so it holds
+//! no cookies/storage and cannot read the parent. The box injects two
+//! runtime files: `virtues.css` (theme variables) and `virtues.js` (a scoped
+//! read-only `virtues.query(sql)` bridge).
+//!
+//! ## Trust model
+//!
+//! - Transport (proven iroh peer) is the outer wall, as for every route.
+//! - The **inner wall is CORS**: only the routes in this module answer with
+//!   `Access-Control-Allow-Origin: *`, so fetches from the opaque-origin
+//!   iframe can read *these* responses and nothing else on the API.
+//! - Data access needs a **face token** (minted by the authenticated app
+//!   per iframe load, short-lived, bound to one applet) and executes as the
+//!   `virtues_face_reader` PG role — default-deny, SELECT granted only on
+//!   `data_*` / `wiki_*` tables and `applet_*` schemas — inside a READ ONLY
+//!   transaction with a statement timeout.
+//! - Face documents get a strict CSP: no external hosts, ever.
+
+use axum::{
+    extract::{Path, Query, State},
+    http::{header, HeaderMap, HeaderValue, StatusCode},
+    response::{IntoResponse, Response},
+    Json,
+};
+use serde::Deserialize;
+use std::collections::HashMap;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
+
+use super::webhook::AppState;
+
+// ============================================================================
+// Face tokens
+// ============================================================================
+
+const TOKEN_TTL: Duration = Duration::from_secs(60 * 60); // one iframe session
+const MAX_ROWS: usize = 5000;
+
+struct FaceToken {
+    applet_id: String,
+    expires: Instant,
+}
+
+fn token_store() -> &'static Mutex<HashMap<String, FaceToken>> {
+    static STORE: OnceLock<Mutex<HashMap<String, FaceToken>>> = OnceLock::new();
+    STORE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn mint_token(applet_id: &str) -> String {
+    let token = format!(
+        "{}{}",
+        uuid::Uuid::new_v4().simple(),
+        uuid::Uuid::new_v4().simple()
+    );
+    let mut store = token_store().lock().expect("face token lock poisoned");
+    // Opportunistic GC so the map can't grow unboundedly.
+    store.retain(|_, t| t.expires > Instant::now());
+    store.insert(
+        token.clone(),
+        FaceToken {
+            applet_id: applet_id.to_string(),
+            expires: Instant::now() + TOKEN_TTL,
+        },
+    );
+    token
+}
+
+fn validate_token(token: &str) -> Option<String> {
+    let store = token_store().lock().expect("face token lock poisoned");
+    store
+        .get(token)
+        .filter(|t| t.expires > Instant::now())
+        .map(|t| t.applet_id.clone())
+}
+
+/// `GET /api/actions/:id/face-token` — minted by the authenticated app per
+/// iframe load. (Reaching this route at all required the proven transport.)
+pub async fn mint_face_token_handler(Path(applet_id): Path<String>) -> Response {
+    if face_dir_for(&applet_id).is_none() {
+        return (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "applet has no face" })),
+        )
+            .into_response();
+    }
+    let token = mint_token(&applet_id);
+    Json(serde_json::json!({
+        "token": token,
+        "expires_in_seconds": TOKEN_TTL.as_secs(),
+    }))
+    .into_response()
+}
+
+// ============================================================================
+// Face file serving
+// ============================================================================
+
+/// Resolve the on-disk `face/` directory for an applet id, if it has one.
+/// Serving is rooted at `<applet folder>/face` — never the folder root, so
+/// the manifest/prompt are not exposed to the iframe.
+pub fn face_dir_for(applet_id: &str) -> Option<std::path::PathBuf> {
+    let dir = crate::applet_templates::dir_for_applet_id(applet_id)?;
+    let face = crate::applet_templates::resolve_applet_dir(&dir).join("face");
+    face.join("index.html").is_file().then_some(face)
+}
+
+fn cors_headers(headers: &mut HeaderMap) {
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("authorization, content-type"),
+    );
+}
+
+/// Strict CSP for a face's files: same-URL-origin subresources only, no
+/// external hosts, and the document sandboxed as `FaceFrame`'s
+/// `<iframe sandbox="allow-scripts">` sandboxes it. The route is public, so
+/// a face can be loaded top-level too: a link to `/face/<id>/` in a page
+/// (a file block's card, its Open), or a typed address. Unsandboxed there,
+/// its script would run on the box's own origin, where every `/api` route
+/// answers it as the owner. The CSP's sandbox gives it the frame's opaque
+/// origin wherever it is loaded, and is sent with every file, since an SVG
+/// opened on its own runs script too.
+///
+/// By CSP spec `'self'` matches nothing for an opaque origin. WebKit
+/// enforces that literally: a CSP of `script-src 'self'` refuses the face's
+/// own `virtues.js`, so the panel never runs the bridge (Chromium is lenient
+/// here, which is how it went unnoticed). So the box's origin is named
+/// explicitly on every directive, derived from the request's Host header so
+/// it stays right on whichever hostname the box is reached by (`localhost`,
+/// `.local`, Tailscale, LAN). Still no external hosts; CORS (absent
+/// everywhere but this module) blocks reading anything else.
+fn face_csp(req_headers: &HeaderMap) -> String {
+    let host = req_headers
+        .get(header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("localhost");
+    let scheme = req_headers
+        .get("x-forwarded-proto")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("http");
+    let origin = format!("{scheme}://{host}");
+    format!(
+        "sandbox allow-scripts; \
+         default-src 'none'; \
+         script-src 'self' {origin} 'unsafe-inline'; \
+         style-src 'self' {origin} 'unsafe-inline'; \
+         img-src 'self' {origin} data: blob:; \
+         font-src 'self' {origin} data:; \
+         connect-src 'self' {origin}"
+    )
+}
+
+/// `GET /face/:applet_id/` and `GET /face/:applet_id/*path` — static files
+/// from the applet's `face/` directory. `virtues.js` / `virtues.css` resolve
+/// from the injected runtime, shadowing any local file of the same name.
+pub async fn face_file_handler(
+    Path((applet_id, path)): Path<(String, String)>,
+    req_headers: HeaderMap,
+) -> Response {
+    serve_face_file(&applet_id, &path, &req_headers).await
+}
+
+pub async fn face_index_handler(
+    Path(applet_id): Path<String>,
+    req_headers: HeaderMap,
+) -> Response {
+    serve_face_file(&applet_id, "index.html", &req_headers).await
+}
+
+async fn serve_face_file(applet_id: &str, raw_path: &str, req_headers: &HeaderMap) -> Response {
+    let rel = if raw_path.is_empty() { "index.html" } else { raw_path };
+
+    // Injected runtime files shadow local ones.
+    if rel == "virtues.js" {
+        return static_lib(VIRTUES_JS, "application/javascript; charset=utf-8");
+    }
+    if rel == "virtues.css" {
+        return static_lib(VIRTUES_CSS, "text/css; charset=utf-8");
+    }
+
+    let Some(face_dir) = face_dir_for(applet_id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    // Path-traversal guard: reject any segment that isn't a plain name.
+    if rel
+        .split('/')
+        .any(|seg| seg.is_empty() || seg == "." || seg == ".." || seg.contains('\\'))
+    {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+
+    // Second pass, and the one that holds: resolve the real path and require
+    // it to still be inside the face folder. The segment check cannot see a
+    // symlink whose target escapes — a package could ship
+    // `face/env -> /var/lib/virtues/virtues.env`, and this route is public on
+    // the LAN. Same guard as `api/applet_source.rs`.
+    let candidate = face_dir.join(rel);
+    let (Ok(full), Ok(real_dir)) = (candidate.canonicalize(), face_dir.canonicalize()) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !full.starts_with(&real_dir) || !full.is_file() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let Ok(bytes) = tokio::fs::read(&full).await else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    let mime = match full.extension().and_then(|e| e.to_str()) {
+        Some("html") => "text/html; charset=utf-8",
+        Some("js") => "application/javascript; charset=utf-8",
+        Some("css") => "text/css; charset=utf-8",
+        Some("json") => "application/json",
+        Some("svg") => "image/svg+xml",
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("woff2") => "font/woff2",
+        _ => "application/octet-stream",
+    };
+
+    (face_file_headers(mime, req_headers), bytes).into_response()
+}
+
+/// The headers a face's file is served with: its type, CORS, and the face's
+/// CSP ([`face_csp`]), on every file.
+fn face_file_headers(mime: &str, req_headers: &HeaderMap) -> HeaderMap {
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(mime).unwrap_or(HeaderValue::from_static("application/octet-stream")),
+    );
+    cors_headers(&mut headers);
+    if let Ok(v) = HeaderValue::from_str(&face_csp(req_headers)) {
+        headers.insert(header::CONTENT_SECURITY_POLICY, v);
+    }
+    headers
+}
+
+fn static_lib(body: &'static str, mime: &'static str) -> Response {
+    let mut headers = HeaderMap::new();
+    headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(mime));
+    cors_headers(&mut headers);
+    (headers, body).into_response()
+}
+
+// ============================================================================
+// The query bridge
+// ============================================================================
+
+#[derive(Deserialize)]
+pub struct FaceQueryBody {
+    pub sql: String,
+}
+
+#[derive(Deserialize)]
+pub struct FaceQueryParams {
+    pub vt: Option<String>,
+}
+
+/// `POST /api/face/query?vt=<token>` — the one data door for faces.
+///
+/// Executes the SQL as `virtues_face_reader` (default-deny grants) inside a
+/// READ ONLY, rolled-back transaction with a statement timeout, the session
+/// timezone set to home_timezone, and a hard row cap. The result is
+/// aggregated to JSON in SQL (`json_agg(row_to_json(...))`) so no generic
+/// row decoding is needed.
+pub async fn face_query_handler(
+    State(state): State<AppState>,
+    Query(params): Query<FaceQueryParams>,
+    headers: HeaderMap,
+    Json(body): Json<FaceQueryBody>,
+) -> Response {
+    // Token from ?vt= or Authorization: Bearer.
+    let token = params.vt.or_else(|| {
+        headers
+            .get(header::AUTHORIZATION)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.strip_prefix("Bearer "))
+            .map(|s| s.to_string())
+    });
+    let Some(applet_id) = token.as_deref().and_then(validate_token) else {
+        return with_cors((
+            StatusCode::UNAUTHORIZED,
+            Json(serde_json::json!({ "error": "invalid or expired face token" })),
+        ));
+    };
+
+    let pool = state.db.pool();
+    match run_face_query(pool, &body.sql).await {
+        Ok(rows) => {
+            note_query(&applet_id, &body.sql);
+            with_cors((StatusCode::OK, Json(rows)))
+        }
+        Err(e) => {
+            tracing::debug!(applet_id = %applet_id, error = %e, "face query failed");
+            with_cors((
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({ "error": e })),
+            ))
+        }
+    }
+}
+
+/// CORS preflight for the query endpoint (opaque-origin fetch sends one).
+pub async fn face_query_preflight() -> Response {
+    let mut headers = HeaderMap::new();
+    cors_headers(&mut headers);
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("POST, OPTIONS"),
+    );
+    (headers, StatusCode::NO_CONTENT).into_response()
+}
+
+fn with_cors(resp: impl IntoResponse) -> Response {
+    let mut r = resp.into_response();
+    cors_headers(r.headers_mut());
+    r
+}
+
+/// How many distinct queries per applet [`seen_queries`] remembers.
+const QUERIES_KEPT: usize = 32;
+
+fn seen_store() -> &'static Mutex<HashMap<String, Vec<String>>> {
+    static S: OnceLock<Mutex<HashMap<String, Vec<String>>>> = OnceLock::new();
+    S.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn note_query(applet_id: &str, sql: &str) {
+    let mut store = seen_store().lock().expect("face query store poisoned");
+    let seen = store.entry(applet_id.to_string()).or_default();
+    seen.retain(|q| q != sql);
+    seen.push(sql.to_string());
+    if seen.len() > QUERIES_KEPT {
+        seen.remove(0);
+    }
+}
+
+/// The queries this applet's face ran successfully since the server started,
+/// oldest first. Sharing a face that reads data publishes exactly these
+/// (`api::publications`): what the owner last saw is what the page shows.
+pub(crate) fn seen_queries(applet_id: &str) -> Vec<String> {
+    seen_store().lock().expect("face query store poisoned").get(applet_id).cloned().unwrap_or_default()
+}
+
+pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::result::Result<serde_json::Value, String> {
+    if sql.len() > 20_000 {
+        return Err("query too long".into());
+    }
+    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    sqlx::query("SET TRANSACTION READ ONLY")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("SET LOCAL statement_timeout = '5s'")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    // Set the timezone BEFORE dropping to face_reader — the profile table is
+    // app_*, which face_reader can't read. Reading it after the role switch
+    // would error and poison the whole transaction ("current transaction is
+    // aborted"), failing every face query. The pool role can read it here.
+    crate::timezone::set_local_timezone(&mut *tx, None)
+        .await
+        .map_err(|e| e.to_string())?;
+    sqlx::query("SET LOCAL ROLE virtues_face_reader")
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+
+    let wrapped = format!(
+        "SELECT COALESCE(json_agg(row_to_json(q)), '[]'::json) FROM \
+         (SELECT * FROM ({sql}) qq LIMIT {MAX_ROWS}) q"
+    );
+    let value: serde_json::Value = sqlx::query_scalar(&wrapped)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| e.to_string())?;
+    tx.rollback().await.ok();
+    Ok(value)
+}
+
+/// Idempotent grants for the two applet DB roles. Called at server boot and
+/// after each setup_applet schema apply.
+///
+/// - `virtues_face_reader`: SELECT on `data_*` / `wiki_*` tables and every
+///   `applet_*` schema (the faces' read-only bridge), except the ontologies
+///   marked `ModelAccess::OwnerOptIn`, which it revokes.
+/// - `virtues_applet_writer`: DML strictly inside `applet_*` schemas (the
+///   `sql_write` tool) — the write scope is PG grants, not SQL parsing.
+pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Result<()> {
+    // Role MEMBERSHIP must hold for the *connected* login role, or SET LOCAL
+    // ROLE fails ("permission denied to set role") and every face query and
+    // applet write breaks. Migrations 0052/0054 grant membership to whoever
+    // ran them — which on a cloud/externally-managed DB may differ from the
+    // app's pool role. Re-establish it here, at boot, as the pool role itself.
+    sqlx::query(
+        "GRANT virtues_face_reader, virtues_applet_writer TO current_user",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| crate::error::Error::Database(format!("applet role membership grant failed: {e}")))?;
+
+    // Ontologies the owner has not opened to the assistant are left out of the
+    // sweep and revoked, in one transaction so there is no moment at boot when
+    // they are readable. The list rides in a transaction-local setting because
+    // a DO block takes no parameters.
+    let opt_in = virtues_registry::ontologies::owner_opt_in_tables();
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
+    sqlx::query("SELECT set_config('virtues.owner_opt_in_tables', $1, true)")
+        .bind(opt_in.join(","))
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
+
+    sqlx::query(
+        r#"
+        DO $$
+        DECLARE t record;
+        BEGIN
+            -- pg_class, not pg_tables: `wiki_day_prose` is a VIEW, and so is
+            -- anything else the record grows as one. list_tables deliberately
+            -- shows the model every view, and wiki_days' join hint sends it
+            -- straight at that one, so a table-only grant made the box answer
+            -- `permission denied` to every question about a day. relkind
+            -- covers ordinary tables, views, materialized views, foreign
+            -- tables and partitions.
+            --
+            -- app_pages is named explicitly because it is neither data_ nor
+            -- wiki_ and the wiki_articles join hint points at it: an article's
+            -- prose lives there, so without it the hint the model is given
+            -- cannot be followed either.
+            FOR t IN
+                SELECT n.nspname AS schemaname, c.relname AS tablename
+                FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE c.relkind IN ('r', 'v', 'm', 'f', 'p')
+                  AND ((n.nspname = 'public'
+                        AND (c.relname LIKE 'data\_%'
+                             OR c.relname LIKE 'wiki\_%'
+                             OR c.relname = 'app_pages'))
+                       OR n.nspname LIKE 'applet\_%')
+                  AND NOT (c.relname = ANY (string_to_array(
+                        coalesce(current_setting('virtues.owner_opt_in_tables', true), ''), ',')))
+            LOOP
+                EXECUTE format('GRANT SELECT ON %I.%I TO virtues_face_reader',
+                               t.schemaname, t.tablename);
+            END LOOP;
+            FOR t IN
+                SELECT schemaname, tablename FROM pg_tables
+                WHERE schemaname LIKE 'applet\_%'
+            LOOP
+                EXECUTE format(
+                    'GRANT SELECT, INSERT, UPDATE, DELETE ON %I.%I TO virtues_applet_writer',
+                    t.schemaname, t.tablename);
+            END LOOP;
+            FOR t IN
+                SELECT nspname AS schemaname, NULL::text AS tablename
+                FROM pg_namespace WHERE nspname LIKE 'applet\_%'
+            LOOP
+                EXECUTE format('GRANT USAGE ON SCHEMA %I TO virtues_face_reader',
+                               t.schemaname);
+                EXECUTE format('GRANT USAGE ON SCHEMA %I TO virtues_applet_writer',
+                               t.schemaname);
+                EXECUTE format(
+                    'GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA %I TO virtues_applet_writer',
+                    t.schemaname);
+            END LOOP;
+        END $$
+        "#,
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
+
+    // Table names are compile-time constants from the registry.
+    for table in &opt_in {
+        sqlx::query(&format!("REVOKE ALL ON public.{table} FROM virtues_face_reader"))
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| crate::error::Error::Database(format!("revoke on {table} failed: {e}")))?;
+    }
+    tx.commit()
+        .await
+        .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
+    Ok(())
+}
+
+// ============================================================================
+// Injected runtime
+// ============================================================================
+
+const VIRTUES_JS: &str = r#"// virtues.js — the face runtime bridge (read-only).
+(function () {
+  const params = new URL(location.href).searchParams;
+  const token = params.get('vt') || '';
+  const theme = params.get('theme') || 'light';
+  document.documentElement.dataset.theme = theme;
+  // Where this face is hanging: '' in the app's pane, 'panel' on the box's
+  // 585x329 non-interactive screen. Exposed so a face MAY adapt; nothing
+  // requires it to.
+  const surface = params.get('surface') || '';
+  if (surface) document.documentElement.dataset.surface = surface;
+
+  async function query(sql) {
+    const res = await fetch(`/api/face/query?vt=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ sql }),
+    });
+    const body = await res.json();
+    if (!res.ok) throw new Error(body.error || `query failed (${res.status})`);
+    return body;
+  }
+
+  window.virtues = { query, theme, surface };
+})();
+"#;
+
+pub(crate) const VIRTUES_CSS: &str = r#"/* virtues.css — face theme variables + minimal base. */
+:root {
+  --color-surface: #ffffff;
+  --color-surface-elevated: #f3f4f6;
+  --color-foreground: #111827;
+  --color-foreground-subtle: #6b7280;
+  --color-border: #e5e7eb;
+  --color-accent: #1d4ed8;
+  --color-success: #047857;
+  --color-error: #b91c1c;
+  color-scheme: light;
+}
+:root[data-theme="dark"] {
+  --color-surface: #0b0f1a;
+  --color-surface-elevated: #161b28;
+  --color-foreground: #e5e7eb;
+  --color-foreground-subtle: #9ca3af;
+  --color-border: #253044;
+  --color-accent: #60a5fa;
+  --color-success: #34d399;
+  --color-error: #f87171;
+  color-scheme: dark;
+}
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-surface);
+  color: var(--color-foreground);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+"#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A face loaded top-level (a link to it in a page, a typed address)
+    /// runs sandboxed as it does in its frame: an opaque origin, never the
+    /// box's own, where every `/api` route would answer it as the owner.
+    /// An SVG or a page among its files is sandboxed alike.
+    #[test]
+    fn every_face_file_is_sandboxed_wherever_it_is_loaded() {
+        let mut req = HeaderMap::new();
+        req.insert(header::HOST, HeaderValue::from_static("127.0.0.1:7117"));
+        for mime in ["text/html; charset=utf-8", "image/svg+xml", "application/javascript; charset=utf-8"] {
+            let headers = face_file_headers(mime, &req);
+            let csp = headers
+                .get(header::CONTENT_SECURITY_POLICY)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or_default();
+            assert!(csp.starts_with("sandbox allow-scripts;"), "{mime}: {csp}");
+            assert!(!csp.contains("allow-same-origin"), "{mime}: {csp}");
+            assert!(csp.contains("script-src 'self' http://127.0.0.1:7117"), "{mime}: {csp}");
+        }
+    }
+
+    /// The assistant reads the record as `virtues_face_reader`. An ontology
+    /// the owner has not opened must stay unreadable to it after the boot
+    /// sweep, which grants every other `data_*` table, and after a second
+    /// sweep, which is what every later boot runs.
+    #[sqlx::test]
+    async fn owner_opt_in_tables_stay_unreadable_after_the_grant_sweep(pool: sqlx::PgPool) {
+        let opt_in = virtues_registry::ontologies::owner_opt_in_tables();
+        assert!(opt_in.contains(&"data_health_cycle_log"));
+        for _ in 0..2 {
+            ensure_applet_db_grants(&pool).await.expect("grant sweep");
+        }
+        let can_read = |table: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT has_table_privilege('virtues_face_reader', $1, 'SELECT')",
+                )
+                .bind(format!("public.{table}"))
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        for table in opt_in {
+            assert!(!can_read(table).await, "{table} is readable by the assistant");
+        }
+        assert!(can_read("data_health_sleep").await, "the sweep still grants the rest");
+    }
+}

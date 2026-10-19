@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-uninstall-helpers"
+description = "Enables the uninstall_helpers command without any pre-configured scope."
+commands.allow = ["uninstall_helpers"]
+
+[[permission]]
+identifier = "deny-uninstall-helpers"
+description = "Denies the uninstall_helpers command without any pre-configured scope."
+commands.deny = ["uninstall_helpers"]

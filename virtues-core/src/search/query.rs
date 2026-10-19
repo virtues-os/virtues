@@ -1,0 +1,908 @@
+//! Semantic search query engine.
+//!
+//! Hybrid retrieval, per the on-device field-report measurements:
+//!   1. Dense recall — the query embedding against `search_vectors`
+//!      (pgvector `halfvec`, HNSW cosine `<=>`), top-200.
+//!   2. Lexical recall — real BM25 (k1=1.5, b=0.75) over `search_bm25_postings`,
+//!      document-frequency derived inline, top-200. (Not `ts_rank`, which has no
+//!      IDF and dragged hybrid *below* dense-only.)
+//!   3. Fusion — z-score normalize both arms over the candidate union and blend
+//!      with a query-adaptive weight α: rare-term/entity queries lean lexical,
+//!      paraphrase queries stay dense.
+//!   4. Dedupe to one chunk per record, ordered by the fused score.
+//!
+//! No reranker. Every one we measured either made the fused order worse (the
+//! small local cross-encoder and ColBERT, 2026-10-08) or helped only on our own
+//! data while sending candidates off the box (hosted decision models,
+//! 2026-10-13; neutral on SciFact, and +~300 ms per search). The fused
+//! dense+BM25 order is the ranking.
+
+use anyhow::Result;
+use pgvector::Vector;
+use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use super::bm25;
+
+/// A single semantic search result. `score` is the fused score normalized to
+/// [0, 1] within the result set (min-max): only meaningful as a within-query
+/// ranking.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchResult {
+    pub ontology: String,
+    pub record_id: String,
+    pub score: f64,
+    pub title: Option<String>,
+    pub preview: Option<String>,
+    pub author: Option<String>,
+    pub timestamp: Option<String>,
+}
+
+/// Semantic search engine
+pub struct SemanticSearchEngine {
+    pool: Arc<PgPool>,
+}
+
+/// First-stage candidate pool per arm before fusion. The field-report SQL used
+/// 200.
+const CANDIDATE_POOL: i64 = 200;
+
+/// pgvector's HNSW beam width, and the reason `CANDIDATE_POOL` was a lie.
+///
+/// `hnsw.ef_search` defaults to **40** and nothing in this repo ever set it, so
+/// the dense arm's `LIMIT 200` returned 40 rows while the lexical arm returned
+/// 200 — a 5x asymmetry the fusion never accounted for, and invisible because
+/// the query succeeds and simply has less in it. Measured on a live index:
+/// `LIMIT 200` → 40 rows; `SET hnsw.ef_search = 250` → 200 rows.
+///
+/// Must exceed the LIMIT it serves. At exactly `CANDIDATE_POOL` the index still
+/// prunes below the target, so this carries a margin.
+///
+/// NEVER HOIST THE QUERY VECTOR INTO A CTE. This whole knob — and the index it
+/// tunes — was dead for weeks, and the way it died is a trap any rewrite of the
+/// SQL below will walk back into. The vector used to live in `WITH prm AS
+/// (SELECT $1::halfvec AS qv)`, read by both `dense` and `sc`. Postgres inlines
+/// a CTE only when it is referenced ONCE; at two references `prm` materializes,
+/// so `prm.qv` is a *column of another node* rather than a parameter — and
+/// pgvector can only drive an HNSW scan when the `<=>` operand is constant with
+/// respect to the scan. The planner silently fell back to a parallel seq scan
+/// over every vector plus a full sort, on every search, for every phrasing.
+///
+/// Nothing surfaces it: the results are correct (an exact scan is the same
+/// ranking, only slower), no error is raised, and `ef_search` quietly stops
+/// mattering because no index scan consumes it. Measured on a real box, 226k
+/// vectors, the shipped query against its own logged SQL:
+///
+/// ```text
+/// prm CTE, referenced twice   dense arm 260 ms (Parallel Seq Scan)   whole query 488 ms
+/// $1::halfvec at both sites   dense arm 6.3 ms (Index Scan, hnsw)    whole query 114 ms
+/// ```
+///
+/// Repeating `$1::halfvec` is not duplication to be tidied away; it is the only
+/// spelling that keeps the index reachable. The cost of the mistake grows with
+/// the corpus — it is O(N) per search — so it reads as "search got slower as I
+/// added data", which is exactly what a vector index is supposed to prevent.
+const HNSW_EF_SEARCH: i64 = CANDIDATE_POOL + CANDIDATE_POOL / 4;
+
+/// Project-scoped retrieval (lean v1): additive bonus, in z-score space, for a
+/// candidate chunk that belongs to the active project's members. z-scores can be
+/// negative, so we ADD a bonus (≈ one std-dev) rather than multiply — a boost, not
+/// a hard filter (recall is unchanged; only ranking shifts toward the project).
+const PROJECT_BOOST: f64 = 1.0;
+
+/// How an active project shapes retrieval (user-facing: "Open" vs "Scoped"
+/// chat — see researcher-plan decision 2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScopeMode {
+    /// Open: search everything; project members get the additive z-boost.
+    #[default]
+    Weighted,
+    /// Scoped: hard-filter to the project's members (grounded chat). An
+    /// empty scope returns no results — honest, never silently open.
+    Exclusive,
+}
+
+/// The scoping applied to a recall pass, resolved and owned so a single set can
+/// be reused across many recall calls (e.g. multi-query fan-out) without
+/// re-resolving. Empty collections mean "no filter". Project membership is
+/// pre-resolved into `nb_records`/`nb_entities` by `resolve_project_scope`, so
+/// `recall_and_fuse` does no I/O of its own.
+#[derive(Debug, Clone, Default)]
+pub struct SearchFilters {
+    pub ontologies: Vec<String>,
+    pub date_after: Option<String>,
+    pub date_before: Option<String>,
+    pub entities: Vec<String>,
+    pub nb_records: Vec<String>,
+    pub nb_entities: Vec<String>,
+    pub scope_mode: ScopeMode,
+}
+
+/// A search request as callers state it, before scope resolution. What
+/// `search_multi` takes instead of nine positional arguments; the
+/// resolved, bind-ready form is [`SearchFilters`] (built by `prepare_filters`).
+/// `Default` = search everything, top 10.
+#[derive(Debug, Clone, Default)]
+pub struct SearchOptions {
+    /// Restrict to these ontologies. Empty = all.
+    pub ontologies: Vec<String>,
+    pub date_after: Option<String>,
+    pub date_before: Option<String>,
+    /// Resolved entity IDs (person/place/org). When set, only rows whose
+    /// source record references one of these entities are returned.
+    pub entities: Vec<String>,
+    /// Active project: its members' chunks get an additive ranking boost
+    /// (Weighted) or become the only searchable set (Exclusive).
+    pub project_id: Option<String>,
+    pub scope_mode: ScopeMode,
+    pub limit: Option<i64>,
+}
+
+/// Min-max rescale candidate scores into [0, 1] in place, preserving order.
+pub(crate) fn normalize_scores(candidates: &mut [SearchResult]) {
+    let (mut lo, mut hi) = (f64::INFINITY, f64::NEG_INFINITY);
+    for c in candidates.iter() {
+        lo = lo.min(c.score);
+        hi = hi.max(c.score);
+    }
+    let span = hi - lo;
+    for c in candidates.iter_mut() {
+        c.score = if span > 0.0 { (c.score - lo) / span } else { 1.0 };
+    }
+}
+
+/// Normalize to [0, 1] for the caller and keep the top `limit`, in the fused
+/// order the candidates arrived in.
+fn finalize(mut candidates: Vec<SearchResult>, limit: usize) -> Vec<SearchResult> {
+    normalize_scores(&mut candidates);
+    candidates.truncate(limit);
+    candidates
+}
+
+/// Reciprocal Rank Fusion constant. A document's fused weight is
+/// `Σ 1/(RRF_K + rank)` across the lists it appears in; the standard `k=60`
+/// damps how much any single list's top ranks dominate.
+const RRF_K: f64 = 60.0;
+
+/// How many fused candidates the multi-phrasing merge keeps. Wider than one
+/// query's recall (multiple variants contribute), but still a shortlist.
+const RRF_POOL: usize = 30;
+
+/// Merge several ranked candidate lists into one by Reciprocal Rank Fusion.
+///
+/// Each per-query list is z-normalized *within its own pool*, so scores are not
+/// comparable across queries — RRF merges by **rank**, which is. A record that
+/// several variants rank highly rises; the surviving `SearchResult` keeps its
+/// first-seen fields. The returned `score` is the RRF weight, replaced by
+/// `finalize`'s normalization.
+fn rrf_merge(lists: Vec<Vec<SearchResult>>, k: f64, pool: usize) -> Vec<SearchResult> {
+    let mut acc: HashMap<(String, String), (f64, SearchResult)> = HashMap::new();
+    for list in lists {
+        for (rank, hit) in list.into_iter().enumerate() {
+            let key = (hit.ontology.clone(), hit.record_id.clone());
+            let entry = acc.entry(key).or_insert_with(|| (0.0, hit.clone()));
+            entry.0 += 1.0 / (k + rank as f64 + 1.0);
+        }
+    }
+    let mut merged: Vec<(f64, SearchResult)> = acc.into_values().collect();
+    merged.sort_by(|a, b| b.0.total_cmp(&a.0));
+    merged
+        .into_iter()
+        .take(pool)
+        .map(|(w, mut hit)| {
+            hit.score = w;
+            hit
+        })
+        .collect()
+}
+
+impl SemanticSearchEngine {
+    pub fn new(pool: Arc<PgPool>) -> Self {
+        Self { pool }
+    }
+
+    /// Confirms the search_vectors HNSW index is reachable.
+    pub async fn ensure_vec_table(&self) -> Result<()> {
+        sqlx::query("SELECT 1 FROM search_vectors LIMIT 0")
+            .execute(self.pool.as_ref())
+            .await?;
+        tracing::info!("search_vectors table ready");
+        Ok(())
+    }
+
+    /// The query-adaptive fusion weight α (lexical share) plus the BM25 corpus
+    /// stats (N, avgdl) reused by the main query. α = 0.4·clip((mean top-2 query
+    /// IDF − 5)/5): high-IDF (rare/entity) query terms pull α up toward lexical;
+    /// common paraphrase terms leave it near 0 (pure dense). df for the query's
+    /// terms is fetched here (cheap, indexed) and the IDFs computed in Rust.
+    async fn fusion_alpha(&self, terms: &[String]) -> Result<(f64, i64, f64)> {
+        if terms.is_empty() {
+            return Ok((0.0, 0, 1.0));
+        }
+        let (n_docs, sum_len): (i64, i64) =
+            sqlx::query_as("SELECT n_docs, sum_len FROM search_index_meta WHERE singleton")
+                .fetch_optional(self.pool.as_ref())
+                .await?
+                .unwrap_or((0, 0));
+        if n_docs == 0 {
+            return Ok((0.0, 0, 1.0));
+        }
+        let avg_len = sum_len as f64 / n_docs as f64;
+
+        let df_rows: Vec<(String, i64)> = sqlx::query_as(
+            "SELECT term, count(*)::int8 FROM search_bm25_postings \
+             WHERE term = ANY($1) GROUP BY term",
+        )
+        .bind(terms)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        let df: HashMap<String, i64> = df_rows.into_iter().collect();
+
+        // IDF over the distinct query terms (Lucene/BM25+ variant, matching the
+        // scoring SQL). An absent term has df=0 → maximal IDF.
+        let mut distinct: Vec<&String> = terms.iter().collect();
+        distinct.sort();
+        distinct.dedup();
+        let mut idfs: Vec<f64> = distinct
+            .iter()
+            .map(|t| {
+                let d = df.get(*t).copied().unwrap_or(0) as f64;
+                (((n_docs as f64) - d + 0.5) / (d + 0.5) + 1.0).ln()
+            })
+            .collect();
+        idfs.sort_by(|a, b| b.partial_cmp(a).unwrap_or(std::cmp::Ordering::Equal));
+        let top2 = &idfs[..idfs.len().min(2)];
+        let mean_idf = if top2.is_empty() {
+            0.0
+        } else {
+            top2.iter().sum::<f64>() / top2.len() as f64
+        };
+        let alpha = 0.4 * ((mean_idf - 5.0) / 5.0).clamp(0.0, 1.0);
+        Ok((alpha, n_docs, avg_len))
+    }
+
+    /// Resolve a request's scope into ready-to-bind `SearchFilters`, or `None`
+    /// for the honest-zero case: a grounded (Exclusive) chat over an empty or
+    /// fully unindexed project scope returns no results — never silently
+    /// falls open to the whole graph.
+    async fn prepare_filters(&self, opts: &SearchOptions) -> Result<Option<SearchFilters>> {
+        // Project scoping: resolve the active project's members into a set of
+        // record_ids (page/day/source/chat + document chunks for /drive/file_
+        // members) and entity_ids (person/place/org). Weighted = additive
+        // ranking bonus; Exclusive = hard filter (grounded chat).
+        let (nb_records, nb_entities): (Vec<String>, Vec<String>) = match &opts.project_id {
+            Some(nb) => self.resolve_project_scope(nb).await?,
+            None => (Vec::new(), Vec::new()),
+        };
+        let project_scoped = !nb_records.is_empty() || !nb_entities.is_empty();
+        if opts.project_id.is_some()
+            && opts.scope_mode == ScopeMode::Exclusive
+            && !project_scoped
+        {
+            return Ok(None);
+        }
+        Ok(Some(SearchFilters {
+            ontologies: opts.ontologies.clone(),
+            date_after: opts.date_after.clone(),
+            date_before: opts.date_before.clone(),
+            entities: opts.entities.clone(),
+            nb_records,
+            nb_entities,
+            scope_mode: opts.scope_mode,
+        }))
+    }
+
+    /// Multi-query retrieval (RAG-fusion). Runs recall for several phrasings of
+    /// one information need in parallel and fuses them with RRF. Widens recall
+    /// on vague or many-worded questions where a single phrasing misses.
+    ///
+    /// Cheap on-box: the variants embed in ONE batched sidecar call and their
+    /// recalls run concurrently (Postgres parallelizes). A single phrasing skips
+    /// the RRF pass so its candidates keep their fused z-scores (RRF would
+    /// replace them with rank-weights for no benefit).
+    pub async fn search_multi(
+        &self,
+        queries: &[String],
+        opts: &SearchOptions,
+    ) -> Result<Vec<SearchResult>> {
+        let queries: Vec<String> = queries
+            .iter()
+            .filter(|q| !q.trim().is_empty())
+            .cloned()
+            .collect();
+        // Nothing to ask: nothing to return. (Previously an empty set embedded
+        // the empty string and searched on its vector — noise, never useful.)
+        if queries.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let Some(filters) = self.prepare_filters(opts).await? else {
+            return Ok(Vec::new());
+        };
+        let limit = opts.limit.unwrap_or(10).clamp(1, 50);
+        let recall_limit = (limit * 2).clamp(10, 20); // per-variant
+        let embedder = super::embedder::searchable_embedder(&self.pool).await?;
+
+        // One phrasing — plain path, no fan-out, candidates keep fused z-scores.
+        if queries.len() == 1 {
+            let v = embedder.embed_query_async(&queries[0]).await?;
+            let candidates = self
+                .recall_and_fuse(
+                    &Vector::from(v),
+                    &bm25::tokens(&queries[0]),
+                    &filters,
+                    recall_limit,
+                )
+                .await?;
+            return Ok(finalize(candidates, limit as usize));
+        }
+
+        // One batched embed call for every variant.
+        let vecs = embedder.embed_query_batch(&queries).await?;
+
+        // Recall each variant concurrently (shared &filters, immutable &self).
+        let recalls = queries.iter().zip(vecs.into_iter()).map(|(q, v)| {
+            let qv = Vector::from(v);
+            let terms = bm25::tokens(q);
+            let filters = &filters;
+            async move { self.recall_and_fuse(&qv, &terms, filters, recall_limit).await }
+        });
+        let lists = futures::future::try_join_all(recalls).await?;
+
+        // Fuse by rank.
+        let merged = rrf_merge(lists, RRF_K, RRF_POOL);
+        Ok(finalize(merged, limit as usize))
+    }
+
+    /// Recall + z-fusion for one query VECTOR. Returns fused, deduped candidates
+    /// ordered by the fused z-score, without the [0,1] normalization
+    /// (`finalize`).
+    ///
+    /// Takes a vector, not text, so an event embedding is a first-class query
+    /// — multi-query fan-out is a caller. `terms` are the BM25 tokens of the source query (empty for a
+    /// pure-vector query, which degenerates cleanly to dense-only: the lexical
+    /// arm matches nothing and `bz` normalizes to 0). Scope resolution is the
+    /// caller's job (see `SearchFilters`); this method does no project I/O and
+    /// does not enforce Exclusive honest-zero — `prepare_filters` does that
+    /// before calling in.
+    pub(crate) async fn recall_and_fuse(
+        &self,
+        query_vector: &Vector,
+        terms: &[String],
+        filters: &SearchFilters,
+        recall_limit: i64,
+    ) -> Result<Vec<SearchResult>> {
+        // Adaptive fusion weight + corpus stats reused in the scoring SQL.
+        let (alpha, n_docs, avg_len) = self.fusion_alpha(terms).await?;
+        let w_dense = 1.0 - alpha;
+        let w_lex = alpha;
+
+        let project_scoped =
+            !filters.nb_records.is_empty() || !filters.nb_entities.is_empty();
+        let project_boost = project_scoped;
+
+        // Shared filters (applied to both arms). $1 = query vector, $2 = query
+        // terms; filter placeholders start at $3; the final placeholder is the
+        // recall limit.
+        let mut filter_sql = String::new();
+        let mut next = 3usize;
+        if !filters.ontologies.is_empty() {
+            let ph: Vec<String> = (0..filters.ontologies.len())
+                .map(|i| format!("${}", next + i))
+                .collect();
+            filter_sql.push_str(&format!(" AND se.ontology IN ({})", ph.join(",")));
+            next += filters.ontologies.len();
+        }
+        if filters.date_after.is_some() {
+            filter_sql.push_str(&format!(
+                " AND (${next}::timestamptz IS NULL OR se.occurred_at >= ${next})"
+            ));
+            next += 1;
+        }
+        if filters.date_before.is_some() {
+            filter_sql.push_str(&format!(
+                " AND (${next}::timestamptz IS NULL OR se.occurred_at <= ${next})"
+            ));
+            next += 1;
+        }
+        let entity_filter = !filters.entities.is_empty();
+        if entity_filter {
+            // A record that mentions the subject, or the subject's own article.
+            // Articles are not in `wiki_refs` (it links records to subjects),
+            // so without the second arm, filtering by a person excludes the one
+            // page written about them.
+            filter_sql.push_str(&format!(
+                " AND (EXISTS (SELECT 1 FROM wiki_refs er \
+                  WHERE er.source_table = se.source_table AND er.source_id = se.record_id \
+                  AND er.entity_id = ANY(${next})) \
+                  OR (se.ontology = 'wiki_article' AND EXISTS (SELECT 1 FROM wiki_articles wa \
+                  WHERE wa.page_id = se.record_id AND wa.subject_id = ANY(${next}))))",
+            ));
+            next += 1;
+        }
+        // Project boost placeholders ($record_ids, $entity_ids), bound after the
+        // filters and before the recall limit.
+        let (p_nb_rec, p_nb_ent) = if project_boost {
+            let a = next;
+            let b = next + 1;
+            next += 2;
+            (a, b)
+        } else {
+            (0, 0)
+        };
+        // Exclusive: membership becomes a hard filter on BOTH arms (the clause
+        // joins filter_sql, which dense and lex share). Weighted: the additive
+        // z-boost as before. Placeholder numbers were allocated above in bind
+        // order, so using them inside filter_sql is safe.
+        if project_boost && filters.scope_mode == ScopeMode::Exclusive {
+            filter_sql.push_str(&format!(
+                " AND (se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_refs er2 \
+                  WHERE er2.source_table = se.source_table AND er2.source_id = se.record_id \
+                  AND er2.entity_id = ANY(${e})))",
+                r = p_nb_rec,
+                e = p_nb_ent,
+            ));
+        }
+        let boost_sql = if project_boost && filters.scope_mode == ScopeMode::Weighted {
+            format!(
+                " + CASE WHEN se.record_id = ANY(${r}) OR EXISTS (SELECT 1 FROM wiki_refs er2 \
+                  WHERE er2.source_table = se.source_table AND er2.source_id = se.record_id \
+                  AND er2.entity_id = ANY(${e})) THEN {boost} ELSE 0 END",
+                r = p_nb_rec,
+                e = p_nb_ent,
+                boost = PROJECT_BOOST,
+            )
+        } else {
+            String::new()
+        };
+        let lim = next; // recall_limit placeholder
+
+        // Hybrid: dense (halfvec `<=>`) ⊕ BM25 (inline df), unioned, z-fused with
+        // a query-adaptive weight, deduped to the best chunk per record.
+        // Numeric constants (N, avgdl, k1, b, weights) are Rust-computed and
+        // inlined — injection-safe (all f64/i64).
+        //
+        // `$1::halfvec` IS REPEATED RATHER THAN HOISTED INTO A CTE, and must stay
+        // that way — see `HNSW_EF_SEARCH`.
+        let sql = format!(
+            "WITH dense AS ( \
+               SELECT se.id \
+               FROM search_vectors vs JOIN search_embeddings se ON se.id = vs.embedding_id \
+               WHERE 1=1{f} \
+               ORDER BY vs.embedding <=> $1::halfvec, se.id LIMIT {pool} \
+             ), lex AS ( \
+               SELECT dt.chunk_id AS id, \
+                      sum( ln(({n}::float8 - df.df + 0.5)/(df.df + 0.5) + 1) \
+                           * dt.tf * {k1p1} \
+                           / (dt.tf + {k1}*({omb} + {b}*COALESCE(se.bm25_len,1)::float8/{avg})) ) AS bs \
+               FROM search_bm25_postings dt \
+               JOIN (SELECT term, count(*) AS df FROM search_bm25_postings \
+                     WHERE term = ANY($2) GROUP BY term) df ON df.term = dt.term \
+               JOIN search_embeddings se ON se.id = dt.chunk_id \
+               WHERE dt.term = ANY($2){f} \
+               GROUP BY dt.chunk_id, se.bm25_len ORDER BY bs DESC LIMIT {pool} \
+             ), u AS (SELECT id FROM dense UNION SELECT id FROM lex), \
+             sc AS ( \
+               SELECT u.id, -(vs.embedding <=> $1::halfvec) AS ds, COALESCE(l.bs, 0) AS bs \
+               FROM u JOIN search_vectors vs ON vs.embedding_id = u.id \
+                      LEFT JOIN lex l ON l.id = u.id \
+             ), z AS ( \
+               SELECT id, \
+                 (ds - avg(ds) OVER())/(COALESCE(stddev_samp(ds) OVER(),0) + 1e-9) AS dz, \
+                 (bs - avg(bs) OVER())/(COALESCE(stddev_samp(bs) OVER(),0) + 1e-9) AS bz \
+               FROM sc \
+             ), best AS ( \
+               SELECT DISTINCT ON (se.record_id) \
+                      se.ontology, se.record_id, se.title, se.preview, se.author, \
+                      to_char(se.occurred_at AT TIME ZONE 'UTC', 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') as ts, \
+                      ({wd}*z.dz + {wl}*z.bz{boost})::float8 AS s \
+               FROM z JOIN search_embeddings se ON se.id = z.id \
+               ORDER BY se.record_id, s DESC, se.id \
+             ) \
+             SELECT ontology, record_id, title, preview, author, ts, s \
+             FROM best ORDER BY s DESC, record_id LIMIT ${lim}",
+            f = filter_sql,
+            pool = CANDIDATE_POOL,
+            n = n_docs,
+            avg = avg_len,
+            k1 = bm25::K1,
+            k1p1 = bm25::K1 + 1.0,
+            omb = 1.0 - bm25::B,
+            b = bm25::B,
+            wd = w_dense,
+            wl = w_lex,
+            boost = boost_sql,
+            lim = lim,
+        );
+
+        let mut db_query = sqlx::query_as::<
+            _,
+            (
+                String,
+                String,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                Option<String>,
+                f64, // fused score
+            ),
+        >(&sql)
+        .bind(query_vector)
+        .bind(terms);
+
+        for ont in &filters.ontologies {
+            db_query = db_query.bind(ont);
+        }
+        if let Some(da) = &filters.date_after {
+            let parsed = parse_date_filter(da);
+            if parsed.is_none() {
+                tracing::warn!(value = %da, "unparseable date_after; the filter is ignored");
+            }
+            db_query = db_query.bind(parsed);
+        }
+        if let Some(db) = &filters.date_before {
+            let parsed = parse_date_filter(db);
+            if parsed.is_none() {
+                tracing::warn!(value = %db, "unparseable date_before; the filter is ignored");
+            }
+            db_query = db_query.bind(parsed);
+        }
+        if entity_filter {
+            db_query = db_query.bind(filters.entities.clone());
+        }
+        if project_boost {
+            db_query = db_query.bind(filters.nb_records.clone());
+            db_query = db_query.bind(filters.nb_entities.clone());
+        }
+        db_query = db_query.bind(recall_limit);
+
+        // SET LOCAL, so it needs a transaction and reverts on commit — a bare
+        // `SET` would leave the beam width on whatever pooled connection this
+        // happened to borrow, silently changing every later query that reused it.
+        let mut tx = self.pool.begin().await?;
+        sqlx::query(&format!("SET LOCAL hnsw.ef_search = {HNSW_EF_SEARCH}"))
+            .execute(&mut *tx)
+            .await?;
+        // Keep scanning the graph when the WHERE clause throws candidates away.
+        //
+        // The dense arm post-filters: HNSW returns `ef_search` nearest rows,
+        // and only then does `AND se.ontology IN (…)` / `AND se.occurred_at >= $n`
+        // discard whatever does not match. So a narrow filter — "what did I do
+        // last March?" — could leave the dense arm returning a handful of rows
+        // instead of a full pool, and the hybrid would quietly degrade to
+        // lexical-only. No error, just worse answers on exactly the questions
+        // people ask most specifically.
+        //
+        // Iterative scan makes pgvector resume the graph walk until it has
+        // enough rows that survive the filter. `relaxed_order` rather than
+        // `strict_order` because the fused score re-sorts them below anyway,
+        // and relaxed is markedly faster.
+        sqlx::query("SET LOCAL hnsw.iterative_scan = relaxed_order")
+            .execute(&mut *tx)
+            .await?;
+        let rows = db_query.fetch_all(&mut *tx).await?;
+        tx.commit().await?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| SearchResult {
+                ontology: row.0,
+                record_id: row.1,
+                title: row.2,
+                preview: row.3,
+                author: row.4,
+                timestamp: row.5,
+                score: row.6, // fused score; normalized by `finalize`
+            })
+            .collect())
+    }
+
+    /// Resolve an active project's members into the two buckets the search
+    /// scope understands: direct record_ids (page/day/source/chat, plus the
+    /// document CHUNKS of `/drive/file_` members — the uploaded_document
+    /// ontology indexes per-chunk) and entity_ids (person/place/org —
+    /// matched via `wiki_refs`). Filters to `role='library'` (= grounds
+    /// chat; nav-only 'pin' rows are ignored, and 'manuscript' rows are the
+    /// user's own draft — retrieving them would cite their unfinished prose
+    /// back at them as a source). External URLs and nested projects aren't
+    /// indexed and are skipped.
+    async fn resolve_project_scope(&self, project_id: &str) -> Result<(Vec<String>, Vec<String>)> {
+        let urls: Vec<String> = sqlx::query_scalar(
+            "SELECT url FROM app_project_items WHERE project_id = $1 AND role = 'library'",
+        )
+        .bind(project_id)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        let mut records = Vec::new();
+        let mut entities = Vec::new();
+        let mut file_ids = Vec::new();
+        for url in urls {
+            // One grammar, one parser: `refs::split_ref` is the same split the
+            // prompt's member resolver uses. This chain used to be a third
+            // hand-rolled copy of it. (No "thing" arm — wiki_things was
+            // dropped by migration 0071 and its stored urls swept.)
+            let Some((kind, id)) = crate::api::refs::split_ref(&url) else {
+                continue; // external https://, /home → not indexed
+            };
+            match kind {
+                "page" | "day" | "source" | "chat" => records.push(id.to_string()),
+                "person" | "place" | "org" => entities.push(id.to_string()),
+                "drive" => {
+                    // split_ref already stripped any viewer params (?page=N).
+                    if id.starts_with("file_") {
+                        file_ids.push(id.to_string());
+                    }
+                }
+                _ => {} // /project/ → not indexed
+            }
+        }
+        if !file_ids.is_empty() {
+            let chunk_ids: Vec<String> = sqlx::query_scalar(
+                "SELECT id FROM extracted_document_chunks WHERE file_id = ANY($1)",
+            )
+            .bind(&file_ids)
+            .fetch_all(self.pool.as_ref())
+            .await?;
+            records.extend(chunk_ids);
+        }
+        Ok((records, entities))
+    }
+
+    /// Citation info for document-chunk hits: chunk_id → (file_id, filename,
+    /// page_num, quote_head). The semantic_search tool uses this to emit
+    /// viewer-resolvable refs (`/drive/{file}?page=N&q=…`) instead of raw
+    /// record routes for `uploaded_document` results.
+    pub async fn document_ref_info(
+        &self,
+        chunk_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, (String, String, Option<i32>, String)>> {
+        if chunk_ids.is_empty() {
+            return Ok(Default::default());
+        }
+        let rows: Vec<(String, String, String, Option<i32>, String)> = sqlx::query_as(
+            "SELECT c.id, c.file_id, f.filename, c.page_num, c.quote_head \
+             FROM extracted_document_chunks c \
+             JOIN app_drive_files f ON f.id = c.file_id \
+             WHERE c.id = ANY($1)",
+        )
+        .bind(chunk_ids)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, file_id, filename, page, quote)| (id, (file_id, filename, page, quote)))
+            .collect())
+    }
+
+    /// Citation info for annotation hits: annotation_id → (file_id, page_num).
+    /// The semantic_search tool turns these into `/drive/{file}?page=N&hl=<id>`.
+    pub async fn annotation_ref_info(
+        &self,
+        anno_ids: &[String],
+    ) -> Result<std::collections::HashMap<String, (String, Option<i32>)>> {
+        if anno_ids.is_empty() {
+            return Ok(Default::default());
+        }
+        let rows: Vec<(String, String, Option<i32>)> = sqlx::query_as(
+            "SELECT id, file_id, page_num FROM app_marginalia WHERE id = ANY($1)",
+        )
+        .bind(anno_ids)
+        .fetch_all(self.pool.as_ref())
+        .await?;
+        Ok(rows
+            .into_iter()
+            .map(|(id, file_id, page)| (id, (file_id, page)))
+            .collect())
+    }
+
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn sr(ontology: &str, record_id: &str) -> SearchResult {
+        SearchResult {
+            ontology: ontology.to_string(),
+            record_id: record_id.to_string(),
+            score: 0.0,
+            title: None,
+            preview: None,
+            author: None,
+            timestamp: None,
+        }
+    }
+
+    #[test]
+    fn rrf_ranks_shared_top_hits_first_and_dedupes() {
+        // A is rank-0 in BOTH lists; it must win. B/D are each a single rank-1;
+        // C/E each a single rank-2.
+        let list1 = vec![sr("m", "A"), sr("m", "B"), sr("m", "C")];
+        let list2 = vec![sr("m", "A"), sr("m", "D"), sr("m", "E")];
+
+        let merged = rrf_merge(vec![list1, list2], RRF_K, RRF_POOL);
+
+        // Deduped to 5 distinct records, A first.
+        assert_eq!(merged.len(), 5);
+        assert_eq!(merged[0].record_id, "A");
+        assert_eq!(merged.iter().filter(|r| r.record_id == "A").count(), 1);
+
+        // A's fused weight is strictly greater than any single-list rank-1.
+        let a = merged[0].score;
+        let b = merged.iter().find(|r| r.record_id == "B").unwrap().score;
+        assert!(a > b, "shared top hit must outweigh a single rank-1");
+    }
+
+    #[test]
+    fn rrf_respects_the_pool_cap() {
+        let list = vec![sr("m", "A"), sr("m", "B"), sr("m", "C")];
+        let merged = rrf_merge(vec![list], RRF_K, 2);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].record_id, "A");
+    }
+}
+
+/// Every filter combination against the real database. The recall SQL is
+/// assembled with a hand-maintained placeholder counter whose allocation order
+/// (one block) must match bind order (another block, ~90 lines later); nothing
+/// but execution proves they agree. Ignored by default — needs the dev box's
+/// Postgres. Uses a vector already in the index as the query vector, so no
+/// embedding sidecar is required.
+///   cargo test -p virtues --lib search::query::live_filter_matrix -- --ignored --nocapture
+#[cfg(test)]
+mod live_filter_matrix {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore]
+    async fn every_filter_combination_binds_correctly() {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://virtues:virtues@localhost:5432/virtues".to_string());
+        let pool = Arc::new(PgPool::connect(&url).await.expect("dev database"));
+
+        let Some(vec_str): Option<String> = sqlx::query_scalar(
+            "SELECT embedding::text FROM search_vectors LIMIT 1",
+        )
+        .fetch_optional(pool.as_ref())
+        .await
+        .expect("query")
+        else {
+            println!("index is empty; nothing to exercise");
+            return;
+        };
+        let floats: Vec<f32> = vec_str
+            .trim_matches(['[', ']'])
+            .split(',')
+            .map(|s| s.trim().parse().unwrap())
+            .collect();
+        let qv = Vector::from(floats);
+
+        let engine = SemanticSearchEngine::new(pool);
+        let terms = vec!["test".to_string(), "query".to_string()];
+
+        // One axis per filter; the matrix is their cross product (2·2·2·3 =
+        // 24 executions) — cheap, and exactly the space the counter must
+        // survive.
+        let onts = [vec![], vec!["app_page".to_string(), "communication_transcription".to_string()]];
+        let dates = [None, Some("2026-01-01T00:00:00Z".to_string())];
+        let ents = [vec![], vec!["person_demo_jess".to_string()]];
+        let scopes = [
+            (vec![], vec![], ScopeMode::Weighted),
+            (vec!["page_x".to_string()], vec!["person_demo_jess".to_string()], ScopeMode::Weighted),
+            (vec!["page_x".to_string()], vec![], ScopeMode::Exclusive),
+        ];
+
+        let mut ran = 0;
+        for ont in &onts {
+            for date in &dates {
+                for ent in &ents {
+                    for (nb_r, nb_e, mode) in &scopes {
+                        let filters = SearchFilters {
+                            ontologies: ont.clone(),
+                            date_after: date.clone(),
+                            date_before: date.clone(),
+                            entities: ent.clone(),
+                            nb_records: nb_r.clone(),
+                            nb_entities: nb_e.clone(),
+                            scope_mode: *mode,
+                        };
+                        engine
+                            .recall_and_fuse(&qv, &terms, &filters, 5)
+                            .await
+                            .unwrap_or_else(|e| {
+                                panic!("filter combination failed: {filters:?}\n{e}")
+                            });
+                        ran += 1;
+                    }
+                }
+            }
+        }
+        println!("all {ran} filter combinations bound and executed");
+    }
+}
+
+/// Parse a date filter the way the tool schema advertises it.
+///
+/// The `semantic_search` schema tells the model: *"ISO 8601, e.g.
+/// '2026-01-01'"* — and the code parsed it with `parse_from_rfc3339`, which
+/// requires a full timestamp with an offset and rejects a bare date. The result
+/// was `.ok()` → `None` → a bound NULL, and `occurred_at >= NULL` is never true.
+/// So every date-scoped search the assistant ever ran returned zero rows, and it
+/// reported "nothing in your record for that period" — about a record that had
+/// it.
+///
+/// Accepts what the schema promises (a bare date, read as UTC midnight) and what
+/// a model may send anyway (a full RFC 3339 timestamp).
+pub(crate) fn parse_date_filter(raw: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let raw = raw.trim();
+    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(raw) {
+        return Some(dt.with_timezone(&chrono::Utc));
+    }
+    if let Ok(d) = chrono::NaiveDate::parse_from_str(raw, "%Y-%m-%d") {
+        return Some(d.and_hms_opt(0, 0, 0)?.and_utc());
+    }
+    None
+}
+
+/// Filtering by a subject has to keep the page written about it: the article
+/// is not in `wiki_refs`, which links records to subjects, so the filter
+/// matches it by `wiki_articles.subject_id` instead.
+#[cfg(test)]
+mod entity_filter_tests {
+    use super::*;
+
+    #[sqlx::test]
+    async fn a_subjects_own_article_survives_its_entity_filter(pool: PgPool) {
+        for sql in [
+            "INSERT INTO app_pages (id, title, kind, content)
+               VALUES ('page-david', 'David Okafor', 'article', 'David writes most mornings.'),
+                      ('page-nick', 'Nick', 'article', 'Nick writes most evenings.')",
+            "INSERT INTO wiki_articles (id, subject_type, subject_id, page_id)
+               VALUES ('art-david', 'person', 'person_david', 'page-david'),
+                      ('art-nick', 'person', 'person_nick', 'page-nick')",
+            "INSERT INTO search_embeddings
+               (id, ontology, record_id, model, chunk_index, content, source_table, bm25_len, doc_hash)
+             VALUES ('wiki_article:page-david:0', 'wiki_article', 'page-david', 'test-model', 0,
+                     'David writes most mornings.', 'app_pages', 4, 'h'),
+                    ('wiki_article:page-nick:0', 'wiki_article', 'page-nick', 'test-model', 0,
+                     'Nick writes most evenings.', 'app_pages', 4, 'h')",
+        ] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        let dim: i32 = sqlx::query_scalar(
+            "SELECT atttypmod FROM pg_attribute
+             WHERE attrelid = 'search_vectors'::regclass AND attname = 'embedding'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let qv = Vector::from(vec![0.1f32; dim as usize]);
+        for id in ["wiki_article:page-david:0", "wiki_article:page-nick:0"] {
+            sqlx::query("INSERT INTO search_vectors (embedding_id, embedding) VALUES ($1, $2)")
+                .bind(id)
+                .bind(&qv)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+
+        let engine = SemanticSearchEngine::new(Arc::new(pool));
+        let filters = SearchFilters {
+            ontologies: vec![],
+            date_after: None,
+            date_before: None,
+            entities: vec!["person_david".into()],
+            nb_records: vec![],
+            nb_entities: vec![],
+            scope_mode: ScopeMode::Weighted,
+        };
+        let hits = engine
+            .recall_and_fuse(&qv, &["writes".to_string()], &filters, 10)
+            .await
+            .unwrap();
+        let ids: Vec<&str> = hits.iter().map(|h| h.record_id.as_str()).collect();
+        assert_eq!(ids, vec!["page-david"], "only David's own article");
+    }
+}

@@ -1,0 +1,50 @@
+name: Prune server prereleases
+
+# Deletes the vX.Y.Z-staging.N releases a stable release has overtaken, keeping
+# the newest few. tools/prune-prereleases.py says what goes and what always
+# stays; tags are never deleted.
+#
+# A schedule runs the copy of this file on the default branch, `main`, which
+# moves only on release, so the weekly run starts once a release carries it.
+# Until then, and to look before anything is deleted, dispatch it by hand: it
+# only lists unless `apply` is ticked.
+on:
+  schedule:
+    - cron: '17 6 * * 1'  # Mondays, 06:17 UTC
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Delete them (unticked: only list what would go)'
+        type: boolean
+        default: false
+      keep:
+        description: 'Newest server prereleases to keep whatever their version'
+        type: number
+        default: 5
+
+permissions:
+  contents: write  # delete releases
+
+concurrency:
+  group: prune-prereleases
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          sparse-checkout: tools/prune-prereleases.py
+          sparse-checkout-cone-mode: false
+
+      - name: Prune
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APPLY: ${{ github.event_name == 'schedule' || inputs.apply }}
+          KEEP: ${{ inputs.keep || 5 }}
+        run: |
+          args=(--repo "$GITHUB_REPOSITORY" --keep "$KEEP")
+          if [ "$APPLY" = "true" ]; then args+=(--apply); fi
+          python3 tools/prune-prereleases.py "${args[@]}"

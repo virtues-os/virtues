@@ -1,0 +1,218 @@
+#!/usr/bin/env python3
+"""Verify a built iOS archive before it is uploaded to TestFlight.
+
+Checks the ARCHIVE, not the sources that produced it. That distinction is the
+whole point: on 2026-08-05 an upload failed validation with
+
+    Invalid large app icon. The large app icon in the asset catalog in
+    "Virtues.app" can't be transparent or contain an alpha channel. (409)
+
+while the source PNGs looked fine to a casual check. What App Store validation
+reads is the compiled `Assets.car`, so that is what this reads.
+
+Usage:
+    tools/verify-ios-archive.py <build-dir> <expected-version>
+
+Exits non-zero with a one-line reason on the first failure.
+"""
+
+import json
+import plistlib
+import subprocess
+import tempfile
+import sys
+from pathlib import Path
+
+
+def fail(msg: str) -> "NoReturn":  # noqa: F821
+    print(f"✖ {msg}", file=sys.stderr)
+    raise SystemExit(1)
+
+
+def check_version(app: Path, expected: str) -> None:
+    with (app / "Info.plist").open("rb") as fh:
+        info = plistlib.load(fh)
+    got = info.get("CFBundleShortVersionString")
+    if got != expected:
+        fail(f"archive says {got}, expected {expected}")
+    build = info.get("CFBundleVersion")
+    print(f"  version {got} (build {build})")
+
+
+def check_extensions(app: Path) -> None:
+    """Every embedded extension carries the app's exact version.
+
+    App Store validation rejects an extension whose CFBundleShortVersionString
+    or CFBundleVersion differs from its app's. Tauri writes the version into
+    the app's Info.plist only; the extension's is copied over by a build phase
+    ("Stamp the app's version" in VirtuesControls), so this reads the result.
+    """
+    with (app / "Info.plist").open("rb") as fh:
+        info = plistlib.load(fh)
+    want = (info.get("CFBundleShortVersionString"), info.get("CFBundleVersion"))
+    appexes = sorted((app / "PlugIns").glob("*.appex"))
+    for appex in appexes:
+        with (appex / "Info.plist").open("rb") as fh:
+            ext = plistlib.load(fh)
+        got = (ext.get("CFBundleShortVersionString"), ext.get("CFBundleVersion"))
+        if got != want:
+            fail(f"{appex.name} is version {got}, the app is {want}")
+    print(f"  {len(appexes)} extension(s), versions match the app")
+
+
+def check_icons(app: Path) -> None:
+    """Every app icon carrying pixels must be opaque.
+
+    App Store validation rejects an alpha *channel* on the app icon even when
+    every pixel is fully opaque — ours measured alpha 254-255 throughout and
+    still 409'd, so "it looks opaque" is not a defence.
+    """
+    car = app / "Assets.car"
+    if not car.is_file():
+        fail(f"no Assets.car in {app}")
+
+    out = subprocess.run(
+        ["xcrun", "assetutil", "--info", str(car)],
+        capture_output=True,
+        text=True,
+    )
+    if out.returncode != 0:
+        fail(f"assetutil failed: {out.stderr.strip().splitlines()[:1]}")
+
+    entries = json.loads(out.stdout)
+    named = [e for e in entries if isinstance(e, dict) and "AppIcon" in str(e.get("Name", ""))]
+
+    # Only entries carrying pixels can be opaque or not. The catalog also holds
+    # "MultiSized Image" index records per idiom — metadata pointing at the real
+    # images, with no PixelWidth and no Opaque field. Counting those as failures
+    # rejects a good archive: the 1.2.5 build that uploaded cleanly has four.
+    images = [e for e in named if e.get("PixelWidth")]
+    if not images:
+        fail("no AppIcon image entries in Assets.car")
+
+    bad = [e for e in images if e.get("Opaque") is not True]
+    if bad:
+        sizes = ", ".join(f"{e.get('PixelWidth')}x{e.get('PixelHeight')}" for e in bad[:4])
+        fail(f"{len(bad)} app icon(s) carry alpha ({sizes}) — upload will 409. "
+             f"Run tools/strip-icon-alpha.py and rebuild.")
+
+    print(f"  {len(images)} icon images, all opaque")
+
+
+def check_signing(build_dir: Path) -> None:
+    summary = build_dir / "DistributionSummary.plist"
+    if not summary.is_file():
+        fail(f"no DistributionSummary.plist in {build_dir}")
+    with summary.open("rb") as fh:
+        data = plistlib.load(fh)
+
+    entry = next(iter(data.values()), None)
+    if not entry:
+        fail("DistributionSummary.plist has no entries")
+    rec = entry[0]
+
+    cert_type = rec.get("certificate", {}).get("type")
+    if cert_type != "Apple Distribution":
+        fail(f"signed with '{cert_type}', expected Apple Distribution")
+
+    ents = rec.get("entitlements", {})
+    if ents.get("beta-reports-active") is not True:
+        fail("beta-reports-active is not set — this build cannot go to TestFlight")
+    if ents.get("get-task-allow") is not False:
+        fail("get-task-allow is true — that is a debug build")
+
+    print(f"  signed {cert_type}, TestFlight-eligible")
+
+
+def check_nested_platforms(app: Path) -> None:
+    """No macOS artifact may ride along inside the iOS app.
+
+    App Store validation rejects this as
+
+        90562: Invalid Bundle. One of the nested bundles is built for a
+        platform which is different from the main bundle platform.
+
+    which happened on 2026-08-27: `tauri.conf.json` ships the compiled macOS
+    icon set as bundle `resources`, platform configs MERGE over the base, and
+    `tauri.ios.conf.json` did not override the key — so a macOS `Assets.car`
+    landed in the iOS app at `assets/`. Every other check here passed it,
+    because version, icon opacity and signing were all genuinely fine.
+
+    Two reads, because the failure has two visible faces: any compiled asset
+    catalog whose own Platform is not iOS, and any `.icns` at all (a macOS-only
+    icon format — iOS carries its icons in the catalog Xcode compiles).
+    """
+    strays = sorted(app.rglob("*.icns"))
+    if strays:
+        names = ", ".join(str(p.relative_to(app)) for p in strays[:3])
+        fail(f"macOS .icns inside the iOS app: {names}")
+
+    catalogs = sorted(app.rglob("Assets.car"))
+    for car in catalogs:
+        out = subprocess.run(
+            ["xcrun", "assetutil", "--info", str(car)],
+            capture_output=True,
+            text=True,
+        )
+        if out.returncode != 0:
+            # Unreadable catalog is not this check's business to adjudicate.
+            continue
+        try:
+            entries = json.loads(out.stdout)
+        except json.JSONDecodeError:
+            continue
+        platforms = {
+            e.get("Platform")
+            for e in entries
+            if isinstance(e, dict) and e.get("Platform")
+        }
+        bad = {p for p in platforms if p and p != "ios"}
+        if bad:
+            rel = car.relative_to(app)
+            fail(f"{rel} is built for {sorted(bad)}, not ios (App Store 90562)")
+
+    print(f"  {len(catalogs)} asset catalog(s), all ios, no .icns")
+
+
+def main() -> int:
+    if len(sys.argv) != 3:
+        fail("usage: verify-ios-archive.py <build-dir> <expected-version>")
+    build_dir = Path(sys.argv[1])
+    expected = sys.argv[2]
+
+    app = build_dir / "virtues_iOS.xcarchive/Products/Applications/Virtues.app"
+    if not app.is_dir():
+        fail(f"no archived app at {app}")
+
+    check_version(app, expected)
+    check_extensions(app)
+    check_icons(app)
+    check_nested_platforms(app)
+    check_signing(build_dir)
+
+    # And again on the IPA, because the IPA is what gets uploaded and it is
+    # EXPORTED from the archive rather than being the archive. On 2026-08-27 a
+    # run whose archive was clean still shipped a stale IPA, because a failed
+    # verification had left the previous attempt's file sitting at this exact
+    # path for Transporter to pick up. Checking the payload closes the gap
+    # between "what we inspected" and "what Apple receives".
+    ipa = build_dir / "arm64/Virtues.ipa"
+    if ipa.is_file():
+        with tempfile.TemporaryDirectory() as tmp:
+            subprocess.run(
+                ["unzip", "-q", str(ipa), "-d", tmp],
+                check=True,
+                capture_output=True,
+            )
+            payload = sorted(Path(tmp).glob("Payload/*.app"))
+            if not payload:
+                fail(f"{ipa.name} has no Payload/*.app")
+            print("  — and the exported IPA:")
+            check_version(payload[0], expected)
+            check_extensions(payload[0])
+            check_nested_platforms(payload[0])
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

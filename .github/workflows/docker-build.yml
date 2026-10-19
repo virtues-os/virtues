@@ -1,0 +1,76 @@
+name: Build cloud sidecar images
+
+# Builds + pushes the cloud sidecar Docker images (currently just
+# virtues-api) to GHCR on every push to main/staging. The home box itself
+# ships as a native binary via release-linux.yml, not as an image — the
+# old virtues-core Dockerfile was deleted when local ML moved out of
+# process (it lives on as the llama-server sidecars, also shipped by
+# release-linux.yml).
+#
+# Production does not pull this image. atlas and virtues-api are built ON the
+# cloud server from a pushed commit by `make deploy-* REF=...`
+# (tools/deploy-service.sh), so nothing reads GHCR at runtime. What this
+# workflow still gives is a clean-room build of virtues-api on `main`: a
+# release tag that no longer builds as a container is caught here.
+#
+# NOT built on `staging` pushes: nothing consumes the image, and building on
+# every staging merge was 8 paid runner minutes on a normal day, for nothing.
+# `main` is kept so a release tag still produces an
+# image, and `workflow_dispatch` covers the one-off.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Custom image tag (defaults to git SHA)"
+        required: false
+        default: ""
+
+env:
+  REGISTRY: ghcr.io
+  VIRTUES_API_IMAGE: ghcr.io/virtues-os/virtues-api
+
+jobs:
+  build-virtues-api:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Blacksmith's builder + colocated Docker layer cache replaces buildx +
+      # type=gha (the cache-from/to lines below are dropped — layer cache is
+      # automatic on Blacksmith).
+      - name: Set up Docker builder
+        uses: useblacksmith/setup-docker-builder@e4c1c000c95f9cc255f72940e9c56bcbd1239436 # v1.13.0
+
+      - name: Log in to GHCR
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5.10.0
+        with:
+          images: ${{ env.VIRTUES_API_IMAGE }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/main' }}
+            type=raw,value=staging,enable=${{ github.event_name == 'push' && github.ref == 'refs/heads/staging' }}
+            type=sha,prefix=,format=long
+            type=raw,value=${{ github.event.inputs.tag }},enable=${{ github.event.inputs.tag != '' }}
+
+      - name: Build and push virtues-api
+        uses: useblacksmith/build-push-action@9b0579bbec7a6cad2f171596c57e7ac1e7658850 # v2.3.0
+        with:
+          context: .
+          file: ./services/virtues-api/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}

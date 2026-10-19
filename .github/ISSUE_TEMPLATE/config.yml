@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/virtues-os/virtues/security/advisories/new
+    about: Privately, so it is fixed before it is public.
+  - name: Ask a question
+    url: https://discord.gg/sSQKzDWqgv
+    about: Questions about setting up or using Virtues go to Discord.

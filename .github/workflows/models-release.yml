@@ -1,0 +1,110 @@
+# Populates the dedicated `models-1` release with the GGUF model assets the
+# installer downloads (see tools/virtues-installer/src/config.rs
+# `models_base`). Models live on their own stable tag — separate from code
+# releases — because they change rarely and weigh ~2 GB; re-uploading them
+# per code release would be wasteful and would churn the URLs the installer
+# pins.
+#
+# Manual-dispatch only, and deliberately so: adding or changing a model is a
+# provenance decision (the upstream GGUFs are community conversions — vet
+# the conversion + run the embedding fixtures on a staging box BEFORE
+# dispatching). The workflow re-hosts the files under our release with
+# .sha256 sidecars, which is what lets the installer hard-fail on mismatch
+# and never depend on a third-party host at install time.
+#
+# To ship a model UPDATE (e.g. a newer embedder): upload under a NEW file
+# name and bump the names in installer config.rs + virtues-core
+# model_cache.rs. Never replace an asset in place — boxes skip re-downloading
+# files they already have, keyed by name.
+
+name: Release model assets
+
+on:
+  workflow_dispatch:
+    inputs:
+      embed_url:
+        description: 'Source URL for the embedding GGUF (vetted!)'
+        required: true
+        default: 'https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd298762cc34d0357ece5ebdd31791a3a374d8/embeddinggemma-2-Q8_0.gguf'
+        type: string
+      pdfium_version:
+        description: >
+          pdfium-binaries build to re-host for document extraction (vetted!).
+          Becomes assets libpdfium-<ver>-linux-{arm64,x64}.so — must match
+          PDFIUM_VERSION in tools/virtues-installer/src/config.rs.
+        required: true
+        default: '7961'
+        type: string
+      tag:
+        description: 'Models release tag to (create and) upload to'
+        required: true
+        default: 'models-1'
+        type: string
+
+permissions:
+  contents: write  # create the models release + upload assets
+
+jobs:
+  upload:
+    name: Fetch, checksum, upload
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Download GGUFs from vetted upstream
+        env:
+          EMBED_URL: ${{ inputs.embed_url }}
+        run: |
+          mkdir -p dist
+          # File names on OUR release must match installer config.rs /
+          # core inference_report.rs constants — derive them from the source URLs so
+          # a mismatch is loud here, not at install time on someone's box.
+          name="$(basename "$EMBED_URL")"
+          echo "fetching $name"
+          curl -fSL --retry 3 -o "dist/$name" "$EMBED_URL"
+          (cd dist && sha256sum "$name" > "$name.sha256")
+          ls -lh dist/
+
+      - name: Download + repack pdfium (document extraction)
+        env:
+          PDFIUM_VERSION: ${{ inputs.pdfium_version }}
+        run: |
+          # bblanchon/pdfium-binaries (BSD) ships per-arch tgz archives with
+          # lib/libpdfium.so inside. Re-host the bare .so under a versioned
+          # name so updates never replace an asset in place.
+          ver="$PDFIUM_VERSION"
+          [[ "$ver" =~ ^[0-9]+$ ]] || { echo "::error::pdfium_version must be a build number, got '$ver'"; exit 1; }
+          for arch in arm64 x64; do
+            url="https://github.com/bblanchon/pdfium-binaries/releases/download/chromium%2F${ver}/pdfium-linux-${arch}.tgz"
+            out="libpdfium-${ver}-linux-${arch}.so"
+            echo "fetching $url -> $out"
+            curl -fSL --retry 3 -o /tmp/pdfium-${arch}.tgz "$url"
+            tar -xzf /tmp/pdfium-${arch}.tgz -C /tmp lib/libpdfium.so
+            mv /tmp/lib/libpdfium.so "dist/$out"
+            rm -rf /tmp/lib
+            (cd dist && sha256sum "$out" > "$out.sha256")
+          done
+          ls -lh dist/
+
+      - name: Upload to models release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: 'Model assets (${{ inputs.tag }})'
+          body: >
+            GGUF model assets for the Virtues inference sidecars.
+            Downloaded by the installer; verified against the .sha256
+            sidecars. Do not replace assets in place — ship updates under
+            new file names on a new dispatch.
+          files: |
+            dist/*
+          fail_on_unmatched_files: true
+          draft: false
+          # The models release is an ASSET BUCKET, not a software release —
+          # it must never become `releases/latest` (virtues.com/sh resolves
+          # that to find the installer; a models tag there 404s every
+          # install). Prerelease excludes it from latest; the installer
+          # downloads by direct tag URL, which ignores prerelease status.
+          prerelease: true

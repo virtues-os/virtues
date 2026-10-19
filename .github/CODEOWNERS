@@ -1,0 +1,19 @@
+# Files where one careless change costs a server or a release.
+#
+# Applied migrations are checksummed by every server that ran them; an edit,
+# even to a comment, stops those servers booting. Workflows hold the release
+# and signing path. The license files state what everyone may do with the
+# code.
+#
+# GitHub asks these owners for review on any pull request that touches them.
+# That is a request until a ruleset also requires code-owner review.
+
+/virtues-core/migrations/            @aajaces
+/services/virtues-atlas/migrations/  @aajaces
+/services/virtues-api/migrations/    @aajaces
+/.github/workflows/                  @aajaces
+/.github/CODEOWNERS                  @aajaces
+/LICENSE                             @aajaces
+/apps/mac-source/LICENSE             @aajaces
+/apps/web/plugins/LICENSE            @aajaces
+/crates/virtues-registry/LICENSE     @aajaces

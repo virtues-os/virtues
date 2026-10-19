@@ -1,0 +1,8 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "build": {
+    "beforeBuildCommand": "bash scripts/bake-desktop-ui.sh",
+    "beforeDevCommand": "bash scripts/bake-desktop-ui.sh --if-missing",
+    "frontendDist": "../build-desktop"
+  }
+}

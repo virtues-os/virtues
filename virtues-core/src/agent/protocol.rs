@@ -1,0 +1,303 @@
+//! Agent Protocol
+//!
+//! Defines the SSE event types that the frontend expects from the agent loop.
+//! These events provide a clean contract between the Rust backend and Svelte frontend.
+
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+/// Model spend a tool made on the turn's behalf: a browsing agent, research
+/// workers. A tool result carries a list of these as `usage`, one per model,
+/// so the turn counts the spend against its budget and bills it under the
+/// model that spent it.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DelegatedUsage {
+    pub model: String,
+    /// The `app_ai_calls` feature the spend is filed under; the turn's own
+    /// mode when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub feature: Option<String>,
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+    #[serde(default)]
+    pub reasoning_tokens: u64,
+    #[serde(default)]
+    pub cache_read_tokens: u64,
+    pub cost_micros: i64,
+}
+
+impl DelegatedUsage {
+    /// The spend a tool result reports. A result with no `usage` spent
+    /// nothing on the turn's behalf; one whose `usage` does not parse is a
+    /// tool reporting wrongly, and is logged rather than read as free.
+    pub fn read(result: &Value) -> Vec<DelegatedUsage> {
+        let Some(usage) = result.get("usage") else { return Vec::new() };
+        match serde_json::from_value(usage.clone()) {
+            Ok(entries) => entries,
+            Err(e) => {
+                tracing::error!(error = %e, "a tool reported usage in a shape the turn cannot bill");
+                Vec::new()
+            }
+        }
+    }
+
+    /// Fold `other` in, summing every count.
+    pub fn add(&mut self, other: &DelegatedUsage) {
+        self.input_tokens += other.input_tokens;
+        self.output_tokens += other.output_tokens;
+        self.reasoning_tokens += other.reasoning_tokens;
+        self.cache_read_tokens += other.cache_read_tokens;
+        self.cost_micros += other.cost_micros;
+    }
+}
+
+/// Events emitted by the AgentLoop during execution.
+///
+/// These are serialized to SSE events for the frontend to consume.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentEvent {
+    // ─────────────────────────────────────────────────────────────────────────
+    // Text Streaming
+    // ─────────────────────────────────────────────────────────────────────────
+    /// A chunk of text content from the LLM
+    TextDelta {
+        content: String,
+    },
+
+    /// Reasoning/thinking content (for models that support it)
+    ReasoningDelta {
+        content: String,
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Tool Lifecycle
+    // ─────────────────────────────────────────────────────────────────────────
+    /// A tool call has started
+    ToolCallStart {
+        id: String,
+        name: String,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        args: Option<Value>,
+    },
+
+    /// Tool arguments are being streamed (partial)
+    ToolCallArgsPartial {
+        id: String,
+        args_delta: String,
+    },
+
+    /// Tool call arguments are complete
+    ToolCallArgsComplete {
+        id: String,
+        args: Value,
+    },
+
+    /// Tool execution has completed
+    ToolCallResult {
+        id: String,
+        result: Value,
+        success: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Step/Loop Management
+    // ─────────────────────────────────────────────────────────────────────────
+    /// A step in the agent loop has completed
+    StepComplete {
+        step: u32,
+        reason: StepReason,
+    },
+
+    /// The agent loop has started
+    LoopStarted {
+        max_steps: u32,
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Metadata
+    // ─────────────────────────────────────────────────────────────────────────
+    /// Token usage for a step
+    Usage {
+        prompt_tokens: u32,
+        completion_tokens: u32,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        total_tokens: Option<u32>,
+        /// Reasoning/thinking tokens (reasoning models). `None` if not reported.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reasoning_tokens: Option<u32>,
+        cache_read_tokens: Option<u32>,
+        /// Prompt tokens written INTO the provider's cache. `None` when the
+        /// gateway does not report it, which is every turn today.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cache_write_tokens: Option<u32>,
+        /// Authoritative cost in micros-USD from the gateway `usage.cost`.
+        /// `None` if the gateway didn't report it.
+        #[serde(skip_serializing_if = "Option::is_none")]
+        cost_micros: Option<i64>,
+    },
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Terminal Events
+    // ─────────────────────────────────────────────────────────────────────────
+    /// The agent loop has completed
+    Done {
+        total_steps: u32,
+        finish_reason: FinishReason,
+    },
+
+    /// An error occurred
+    Error {
+        message: String,
+        code: Option<ErrorCode>,
+        recoverable: bool,
+    },
+
+    /// The gateway's normalized reasoning blocks for one step (text and
+    /// provider signatures), merged by index. The loop echoes them on the
+    /// assistant message it builds for the next step, so a model that thought
+    /// before calling a tool can resume that thought after the result; the
+    /// chat handler stores them on the row.
+    ReasoningDetails {
+        details: Vec<Value>,
+    },
+}
+
+/// Reason why a step completed
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum StepReason {
+    /// LLM finished generating (stop token)
+    EndTurn,
+    /// LLM wants to execute tools
+    ToolCalls,
+    /// Hit max tokens limit
+    MaxTokens,
+    /// Content was filtered
+    ContentFilter,
+}
+
+/// Reason why the agent loop finished
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum FinishReason {
+    /// Normal completion (LLM said stop)
+    EndTurn,
+    /// Hit maximum steps limit
+    MaxSteps,
+    /// The turn spent its cost or wall-clock budget between steps.
+    BudgetExceeded,
+    /// A tool requires user action (e.g., binding a page)
+    AwaitingUser,
+    /// An error occurred
+    Error,
+    /// The model's output window ran out before it finished the reply.
+    OutputLimit,
+    /// Request was cancelled by user
+    Cancelled,
+}
+
+/// Error codes for categorizing failures
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorCode {
+    /// LLM API error
+    LlmError,
+    /// The stream ended before the model finished (dropped connection, idle
+    /// timeout, gateway error frame). What streamed is kept; it is partial.
+    Interrupted,
+    /// The provider turned the call away (502/503/504), even after one more
+    /// try. Nothing is wrong with the request; the model was unavailable.
+    ProviderUnavailable,
+}
+
+impl AgentEvent {
+    /// Create a text delta event
+    pub fn text(content: impl Into<String>) -> Self {
+        Self::TextDelta {
+            content: content.into(),
+        }
+    }
+
+    /// Create a reasoning delta event
+    pub fn reasoning(content: impl Into<String>) -> Self {
+        Self::ReasoningDelta {
+            content: content.into(),
+        }
+    }
+
+    /// Create a tool call start event
+    pub fn tool_start(id: impl Into<String>, name: impl Into<String>) -> Self {
+        Self::ToolCallStart {
+            id: id.into(),
+            name: name.into(),
+            args: None,
+        }
+    }
+
+    /// Create a tool call result event
+    pub fn tool_result(id: impl Into<String>, result: Value, success: bool) -> Self {
+        Self::ToolCallResult {
+            id: id.into(),
+            result,
+            success,
+            error: None,
+        }
+    }
+
+    /// Create a tool call error event
+    pub fn tool_error(id: impl Into<String>, error: impl Into<String>) -> Self {
+        Self::ToolCallResult {
+            id: id.into(),
+            result: Value::Null,
+            success: false,
+            error: Some(error.into()),
+        }
+    }
+
+    /// Create a step complete event
+    pub fn step_complete(step: u32, reason: StepReason) -> Self {
+        Self::StepComplete { step, reason }
+    }
+
+    /// Create a done event
+    pub fn done(total_steps: u32, finish_reason: FinishReason) -> Self {
+        Self::Done {
+            total_steps,
+            finish_reason,
+        }
+    }
+
+    /// Create an error event
+    pub fn error(message: impl Into<String>, code: Option<ErrorCode>, recoverable: bool) -> Self {
+        Self::Error {
+            message: message.into(),
+            code,
+            recoverable,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_event_serialization() {
+        let event = AgentEvent::text("Hello");
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("text_delta"));
+        assert!(json.contains("Hello"));
+    }
+
+    #[test]
+    fn test_tool_call_serialization() {
+        let event = AgentEvent::tool_start("call_123", "edit_page");
+        let json = serde_json::to_string(&event).unwrap();
+        assert!(json.contains("tool_call_start"));
+        assert!(json.contains("call_123"));
+        assert!(json.contains("edit_page"));
+    }
+}

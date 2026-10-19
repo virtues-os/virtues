@@ -1,0 +1,151 @@
+## Default Permission
+
+Default permissions for the health plugin
+
+#### This default permission set includes the following:
+
+- `allow-enable`
+- `allow-enable-cycle`
+- `allow-resume`
+- `allow-status`
+- `allow-collect`
+
+## Permission Table
+
+<table>
+<tr>
+<th>Identifier</th>
+<th>Description</th>
+</tr>
+
+
+<tr>
+<td>
+
+`health:allow-collect`
+
+</td>
+<td>
+
+Enables the collect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`health:deny-collect`
+
+</td>
+<td>
+
+Denies the collect command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`health:allow-enable`
+
+</td>
+<td>
+
+Enables the enable command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`health:deny-enable`
+
+</td>
+<td>
+
+Denies the enable command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`health:allow-enable-cycle`
+
+</td>
+<td>
+
+Enables the enable_cycle command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`health:deny-enable-cycle`
+
+</td>
+<td>
+
+Denies the enable_cycle command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`health:allow-resume`
+
+</td>
+<td>
+
+Enables the resume command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`health:deny-resume`
+
+</td>
+<td>
+
+Denies the resume command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`health:allow-status`
+
+</td>
+<td>
+
+Enables the status command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`health:deny-status`
+
+</td>
+<td>
+
+Denies the status command without any pre-configured scope.
+
+</td>
+</tr>
+</table>

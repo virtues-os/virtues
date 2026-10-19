@@ -1,0 +1,1471 @@
+<script lang="ts">
+	import type { Tab } from '$lib/tabs/types';
+	import { Button, Input, Badge, SudoModal, Page, TextAction } from '$lib';
+	import UsageView from '$lib/components/tabs/views/UsageView.svelte';
+	import { subscriptionStore } from '$lib/stores/subscription.svelte';
+	import { openExternal } from '$lib/tauri/bridge';
+	import { formatMicrosUSD, formatMicrosPrecise } from '$lib/utils/currency';
+	import { formatDate } from '$lib/utils/dateUtils';
+	import {
+		getBillingLinkStatus,
+		startBillingLink,
+		openBillingPortal as requestBillingPortal,
+		subscribeBilling,
+		getBillingState,
+		setBillingAutoTopup,
+		getBillingUsage,
+		getUsageSummary,
+		getByoKey,
+		setByoKey,
+		deleteByoKey,
+		ApiError,
+	} from '$lib/api/client';
+	import Icon from '$lib/components/Icon.svelte';
+	import { toast } from 'svelte-sonner';
+	import { reloadApp } from '$lib/reload';
+
+	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	let portalLoading = $state(false);
+	let portalError = $state<string | null>(null);
+	// The branch, not the sentence. Several unrelated failures share one line
+	// of prose ("Try again."), so the code beside it is the only thing a
+	// screenshot can hand us. Shown verbatim — never translated, never mapped.
+	let portalErrorCode = $state<string | null>(null);
+
+	// ─── Subscribe (a linked account with no subscription) ─────────────────
+	// The door 0017 created and nothing served: the connect flow below would
+	// start a NEW device link and mint a second account; the portal has
+	// nothing to open. This asks atlas for a checkout on the account the box
+	// already belongs to, then polls fresh until the subscription shows.
+	let subscribeLoading = $state(false);
+	let subscribeError = $state<string | null>(null);
+	let subscribeErrorCode = $state<string | null>(null);
+	let subscribeWaiting = $state(false);
+	let subscribePoll: ReturnType<typeof setInterval> | null = null;
+
+	function stopSubscribePoll() {
+		if (subscribePoll) {
+			clearInterval(subscribePoll);
+			subscribePoll = null;
+		}
+		subscribeWaiting = false;
+	}
+
+	async function openSubscribe() {
+		subscribeLoading = true;
+		subscribeError = null;
+		subscribeErrorCode = null;
+		try {
+			const data = await subscribeBilling<{ url?: string; error?: string; code?: string }>();
+			if (data.url) {
+				openExternal(data.url);
+				// Ten minutes of fresh polls, every 5s — long enough for a card
+				// and a 3-D Secure prompt, short enough not to poll forever on
+				// an abandoned tab.
+				subscribeWaiting = true;
+				let ticks = 0;
+				subscribePoll = setInterval(async () => {
+					ticks += 1;
+					await subscriptionStore.check(true);
+					if (subscriptionStore.subscribed || ticks >= 120) stopSubscribePoll();
+				}, 5000);
+			} else if (data.error) {
+				subscribeError = data.error;
+				subscribeErrorCode = data.code ?? null;
+			}
+		} catch (e) {
+			subscribeError = e instanceof ApiError ? e.message : 'Could not reach the Virtues billing service.';
+			subscribeErrorCode = e instanceof ApiError ? `http_${e.status}` : 'unreachable';
+		} finally {
+			subscribeLoading = false;
+		}
+	}
+	$effect(() => () => stopSubscribePoll());
+
+	// Device-authorization link flow (connect a paid subscription). The box
+	// never holds a Stripe key: we start a link, open the Atlas-hosted checkout
+	// URL, and poll the box until it has picked up the billing token.
+	type LinkInfo = {
+		user_code: string;
+		verification_uri: string;
+		verification_uri_complete: string;
+		interval: number;
+	};
+	let linkLoading = $state(false);
+	let linkError = $state<string | null>(null);
+	let linkInfo = $state<LinkInfo | null>(null);
+	let linkPolling = $state(false);
+	let linkDone = $state(false);
+	let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+	// `subscribed`, not "do we hold a key". Those were the same thing until
+	// 0017 decoupled linking from billing, after which a free account rendered
+	// this whole page as though it were paying.
+	const isSubscribed = $derived(subscriptionStore.subscribed);
+	// atlas unreachable and nothing cached. Neither standing is honest here, so
+	// the page says so instead of offering a subscription to someone who may
+	// already have one.
+	const standingUnknown = $derived(!subscriptionStore.entitlementKnown && !isSubscribed);
+
+	function stopPolling() {
+		if (pollTimer) {
+			clearInterval(pollTimer);
+			pollTimer = null;
+		}
+	}
+
+	function startPolling(intervalMs: number) {
+		linkPolling = true;
+		stopPolling();
+		pollTimer = setInterval(async () => {
+			try {
+				const data = await getBillingLinkStatus<{ status: string }>();
+				if (data.status === 'ready') {
+					stopPolling();
+					linkPolling = false;
+					linkDone = true;
+					// Re-fetch subscription state now that the box is linked.
+					setTimeout(() => reloadApp(), 1200);
+				} else if (data.status === 'expired' || data.status === 'none') {
+					stopPolling();
+					linkPolling = false;
+					linkInfo = null;
+					linkError = 'The link expired before checkout finished. Connect again for a new code.';
+				}
+			} catch {
+				// transient; keep polling
+			}
+		}, intervalMs);
+	}
+
+	// Host the checkout tab will hand off to (e.g. atlas.virtues.com), surfaced
+	// up front so the redirect isn't a surprise.
+	const checkoutHost = $derived.by(() => {
+		if (!linkInfo) return '';
+		try {
+			return new URL(linkInfo.verification_uri).host;
+		} catch {
+			return '';
+		}
+	});
+
+	// Step 1: ask the box to start a link. We do NOT open the checkout tab here —
+	// we show the code + destination first, then the user explicitly continues.
+	async function connectSubscription() {
+		linkLoading = true;
+		linkError = null;
+		linkDone = false;
+		try {
+			const data = await startBillingLink<LinkInfo & { error?: unknown }>();
+			if (data.error) {
+				linkError = typeof data.error === 'string' ? data.error : 'Could not start the link to your Virtues account.';
+				return;
+			}
+			linkInfo = data;
+			// Poll from now on: covers both the "continue" button and the manual
+			// enter-the-code path. The link self-expires (15 min) if unused.
+			startPolling(Math.max((data.interval || 5) * 1000, 2000));
+		} catch (e) {
+			// Surface any server-provided error body (ApiError.message extracts it),
+			// mirroring the old code that read data.error even on non-2xx.
+			linkError = e instanceof ApiError ? e.message : 'Could not reach the Virtues billing service.';
+		} finally {
+			linkLoading = false;
+		}
+	}
+
+	// Step 2: explicit hand-off to the Stripe-backed checkout, on user action.
+	function proceedToCheckout() {
+		if (linkInfo) openExternal(linkInfo.verification_uri_complete);
+	}
+
+	$effect(() => () => stopPolling());
+
+	async function openBillingPortal() {
+		portalLoading = true;
+		portalError = null;
+		portalErrorCode = null;
+		try {
+			const data = await requestBillingPortal<{
+				url?: string;
+				error?: { message?: string } | string;
+				code?: string;
+			}>();
+			if (data.url) {
+				openExternal(data.url);
+			} else if (data.error) {
+				portalError = typeof data.error === 'string' ? data.error : data.error.message || 'Could not open Stripe.';
+				portalErrorCode = data.code ?? null;
+			}
+		} catch (e) {
+			// The endpoint answers 200 on every handled refusal, so landing here
+			// means the box itself did not answer — the status is the only code
+			// there is.
+			portalError = e instanceof ApiError ? e.message : 'Could not reach the Virtues billing service.';
+			portalErrorCode = e instanceof ApiError ? `http_${e.status}` : 'unreachable';
+		} finally {
+			portalLoading = false;
+		}
+	}
+
+	// ─── Local billing-state (auto-top-up + BYO) ──────────────────────────
+	type AutoTopupState = {
+		enabled: boolean;
+		failures_24h: number;
+		disabled_at: string | null;
+	};
+	type ByoState = {
+		configured: boolean;
+		endpoint_url: string | null;
+		/** Legacy label on credentials saved before the picker was removed. */
+		provider: string | null;
+		default_model: string | null;
+	};
+	type LocalBillingState = { auto_topup: AutoTopupState; byo: ByoState };
+
+	let local = $state<LocalBillingState | null>(null);
+	let localLoading = $state(true);
+	// A failed read used to hide the whole chapter, so a box that could not
+	// answer "is auto top-up on?" showed a page with no auto top-up on it —
+	// indistinguishable from a box where the feature does not exist.
+	let localError = $state<string | null>(null);
+
+	async function loadLocal() {
+		localLoading = true;
+		localError = null;
+		try {
+			local = await getBillingState<LocalBillingState>();
+		} catch (e) {
+			localError = e instanceof ApiError ? e.message : 'Could not read your server’s wallet settings.';
+		}
+		localLoading = false;
+	}
+
+	async function setAutoTopup(enabled: boolean) {
+		try {
+			await setBillingAutoTopup(enabled);
+			await loadLocal();
+		} catch (e) {
+			// The toggle is the one control here that changes money. A silent
+			// no-op leaves the button showing the state you asked for and the
+			// box in the state you didn't.
+			toast.error(e instanceof ApiError ? e.message : 'Could not change auto top-up.');
+			await loadLocal();
+		}
+	}
+
+	$effect(() => { void loadLocal(); });
+
+	// ─── BYO AI (inline management, formerly ByoKeyView) ───────────────────
+	// The escape hatch from the Virtues wallet, and as of 2026-08-05 a whole
+	// door rather than half of one: `BearerClient` diverts every `/v1/ai/*`
+	// call — streaming and not — so chat, compaction, day summaries, image
+	// generation and transcription all leave by the user's endpoint.
+	//
+	// The copy here is load-bearing and has been wrong in both directions
+	// within a single day. It claimed "Skip the Virtues wallet" while seven
+	// callers still billed it, then got rewritten to say nothing read the key
+	// at all — from grepping `BYO_SOURCE_ID`, which the routing reaches
+	// through `load_byo_credential` and never names. If you change this text,
+	// verify against api/settings_byo.rs and virtues_api/client.rs, not grep.
+	//
+	// A credential is a URL and a key. There is no provider picker: one
+	// contract (OpenAI-style /chat/completions + bearer), so only the address
+	// varies. Example URLs live in the markup as *copy*, never as <option>s —
+	// a stale doc line is wrong, a stale option is a broken feature, which is
+	// precisely how `anthropic` and `google` shipped pointing at APIs we
+	// cannot call. Plan of record: agents/plan/byo-ai-plan.md.
+	//
+	// Save and Delete are both sudo-gated (`change_byo_key` is one of the four
+	// locked sensitive actions); the SudoModal handles the prompt + CLI
+	// approval round-trip.
+	type ByoStatus = {
+		configured: boolean;
+		/** Legacy label on credentials saved before the picker was removed. */
+		provider: string | null;
+		/** Slot name → the model id on the user's endpoint. */
+		models: Record<string, string>;
+		default_model: string | null;
+		endpoint_url: string | null;
+		/** Tokens, when the owner set one for a small or local model. */
+		context_window: number | null;
+		created_at: string | null;
+	};
+
+	/** Host of an endpoint URL, for display. Falls back to the raw string. */
+	function byoHost(url: string): string {
+		try {
+			return new URL(url).host;
+		} catch {
+			return url;
+		}
+	}
+
+	let byoOpen = $state(false);
+	let byoStatus = $state<ByoStatus | null>(null);
+	let byoLoading = $state(false);
+	let byoLoadError = $state<string | null>(null);
+
+	// Form state. No provider field — a credential is a URL and a key.
+	let byoApiKey = $state('');
+	let byoEndpointUrl = $state('');
+	/** As typed; blank means "let the box look it up". */
+	let byoContextWindow = $state('');
+	/**
+	 * One entry per slot, seeded blank.
+	 *
+	 * It started as `{}`, and `bind:value={byoModels[slot.key]}` in the form
+	 * below then bound to `undefined` — which Svelte 5 REFUSES with
+	 * `props_invalid_value`, thrown mid-render. The throw aborts the update,
+	 * so the branch on screen never advances past "Loading…": every box
+	 * without a key already saved opened Bring your own AI onto a panel that
+	 * loads forever. The error only reaches the console, so the screen shows a
+	 * plausible waiting state instead of a failure.
+	 *
+	 * `blankSlots()` rather than a literal so a new SLOT_FIELDS entry cannot
+	 * reintroduce it.
+	 */
+	let byoModels = $state<Record<string, string>>({});
+
+	/**
+	 * The slot map form. Keys match the box's slot names exactly.
+	 *
+	 * `note` is where judgment about *which* model suits a role lives —
+	 * deliberately here and not in the schema or the resolver, both of which
+	 * treat all five slots identically. Model landscapes shift faster than we
+	 * ship boxes, so guidance belongs somewhere a copy edit can fix.
+	 */
+	const SLOT_FIELDS = [
+		{ key: 'chat', label: 'Chat', placeholder: 'provider/model', note: '' },
+		{ key: 'coding', label: 'Coding', placeholder: 'provider/model', note: '' },
+		{
+			key: 'lite',
+			label: 'Lite',
+			placeholder: 'provider/model',
+			note: 'Titles, summaries, and background jobs. High volume, so favor something cheap and quick.',
+		},
+		{ key: 'image', label: 'Image', placeholder: 'provider/model', note: '' },
+		{
+			key: 'omni',
+			label: 'Audio',
+			placeholder: 'provider/model',
+			note: 'Transcription, and usually the largest line item. The model has to hear muffled, in-pocket audio and make sense of the scene. Speech-to-text models will not do, and most chat models refuse audio outright. In practice a Gemini Flash model is the one workable choice.',
+		},
+	] as const;
+
+	function blankSlots(): Record<string, string> {
+		return Object.fromEntries(SLOT_FIELDS.map((f) => [f.key, '']));
+	}
+	byoModels = blankSlots();
+
+	// Sudo modal coordination — we mint a sudo request, then on approval we
+	// fire the actual save/delete with the approved request id.
+	let showSudoSave = $state(false);
+	let showSudoDelete = $state(false);
+
+	async function loadByo() {
+		byoLoading = true;
+		byoLoadError = null;
+		try {
+			byoStatus = await getByoKey<ByoStatus>();
+			// Prefill so "Manage" edits the map instead of silently clearing it.
+			// Merged OVER a blank map, never replacing it: a response that omits
+			// a slot must leave that field bound to '' rather than undefined.
+			byoModels = { ...blankSlots(), ...(byoStatus?.models ?? {}) };
+			byoContextWindow = byoStatus?.context_window ? String(byoStatus.context_window) : '';
+		} catch (e) {
+			byoLoadError = e instanceof Error ? e.message : "Your server couldn't read your provider settings.";
+		} finally {
+			byoLoading = false;
+		}
+	}
+
+	function toggleByo() {
+		byoOpen = !byoOpen;
+		if (byoOpen && !byoStatus && !byoLoading) void loadByo();
+	}
+
+	function startByoSave() {
+		if (!byoEndpointUrl.trim()) {
+			toast.error('Enter the endpoint URL first.');
+			return;
+		}
+		if (!byoApiKey.trim()) {
+			toast.error('Enter the API key first.');
+			return;
+		}
+		showSudoSave = true;
+	}
+
+	async function performByoSave(sudoRequestId: string) {
+		try {
+			// No `provider` — the box takes the URL as given. The field still
+			// exists server-side to resolve credentials saved before the picker
+			// was removed; nothing new should send it.
+			// Blank rows are omitted, not sent as "": an absent slot means
+			// "your endpoint uses our id", which is the right default.
+			const models = Object.fromEntries(
+				Object.entries(byoModels)
+					.map(([k, v]) => [k, (v ?? '').trim()])
+					.filter(([, v]) => v.length > 0),
+			);
+			const contextWindow = Number.parseInt(byoContextWindow, 10);
+			if (byoContextWindow.trim() && !(contextWindow >= 1000 && contextWindow <= 10_000_000)) {
+				toast.error('Context window must be a number of tokens, from 1,000 to 10,000,000.');
+				return;
+			}
+			await setByoKey({
+				sudo_request_id: sudoRequestId,
+				api_key: byoApiKey,
+				endpoint_url: byoEndpointUrl,
+				models,
+				...(Number.isFinite(contextWindow) && contextWindow > 0
+					? { context_window: contextWindow }
+					: {}),
+			});
+			toast.success('Key saved. AI calls now go to your endpoint.');
+			byoApiKey = '';
+			await Promise.all([loadByo(), loadLocal()]);
+		} catch (e) {
+			toast.error('Could not save the key', {
+				description: e instanceof Error ? e.message : 'Unknown error',
+			});
+		}
+	}
+
+	function startByoDelete() {
+		showSudoDelete = true;
+	}
+
+	async function performByoDelete(sudoRequestId: string) {
+		try {
+			await deleteByoKey(sudoRequestId);
+			toast.success('Key removed. AI calls are back on the subscription.');
+			await Promise.all([loadByo(), loadLocal()]);
+		} catch (e) {
+			toast.error('Could not remove the key', {
+				description: e instanceof Error ? e.message : 'Unknown error',
+			});
+		}
+	}
+
+	// ─── Wallet balance + recent ledger (proxied from virtues-api) ─────────
+	type LedgerEntry = { ts: string; micros: number; kind: string; real_micros: number | null };
+	type Usage = {
+		balance_micros: number;
+		month_to_date_micros: number;
+		expires_at: string | null;
+		entries: LedgerEntry[];
+		error?: string;
+	};
+	let usage = $state<Usage | null>(null);
+	let usageLoading = $state(true);
+	/**
+	 * Why the balance is missing, in the words the server used.
+	 *
+	 * This panel used to hide itself on any failure — which removed the one
+	 * number the page exists to show and said nothing about why. A box whose
+	 * wallet call is failing then looks identical to a box with no wallet, and
+	 * the reader's only clue is an absence they have to notice.
+	 */
+	let usageError = $state<string | null>(null);
+
+	async function loadUsage() {
+		usageLoading = true;
+		usageError = null;
+		try {
+			const data = await getBillingUsage<Usage>();
+			// The server answers 200 with an `error` body when it cannot reach
+			// the wallet, so a thrown error is not the only failure shape.
+			if (data.error) {
+				usageError = data.error;
+				usage = null;
+			} else {
+				// Never trust `entries` to be present.
+				usage = { ...data, entries: data.entries ?? [] };
+			}
+		} catch (e) {
+			usageError = e instanceof ApiError ? e.message : 'Could not reach the wallet.';
+			usage = null;
+		}
+		usageLoading = false;
+	}
+
+	$effect(() => { void loadUsage(); });
+
+	// ─── Local spend summary: the chart and the by-kind tracks ─────────────
+	// `app_ai_calls`, box-local, no egress. The wallet above is what the
+	// gateway says the money is; this is where it went, by day and by kind.
+	type SpendBucket = { label: string; calls: number; cost_micros: number; byo_calls: number };
+	type DaySpend = { day: string; calls: number; cost_micros: number };
+	type Summary = {
+		by_feature: SpendBucket[];
+		by_day: DaySpend[];
+		last_month_to_date_micros: number | null;
+	};
+	let summary = $state<Summary | null>(null);
+	let summaryError = $state<string | null>(null);
+	async function loadSummary() {
+		summaryError = null;
+		try {
+			summary = await getUsageSummary<Summary>();
+		} catch (e) {
+			summaryError = e instanceof ApiError ? e.message : 'Could not read your server’s call log.';
+		}
+	}
+	$effect(() => { void loadSummary(); });
+
+	/** The last 14 UTC days as bar slots, absent days filled with zero. */
+	const days = $derived.by(() => {
+		const byDay = new Map((summary?.by_day ?? []).map((d) => [d.day, d]));
+		const out: { day: string; cost: number; calls: number; label: string }[] = [];
+		const today = new Date();
+		for (let i = 13; i >= 0; i--) {
+			const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() - i));
+			const key = d.toISOString().slice(0, 10);
+			const row = byDay.get(key);
+			out.push({
+				day: key,
+				cost: row?.cost_micros ?? 0,
+				calls: row?.calls ?? 0,
+				label: d.toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' }),
+			});
+		}
+		return out;
+	});
+	const dayMax = $derived(Math.max(1, ...days.map((d) => d.cost)));
+	// Chart geometry: 14 slots of 45 in a 640 box, bars 34 wide; plot 106 tall
+	// from y=12 to the baseline at y=118. One scale, from the tallest day.
+	const barX = (i: number) => 6 + i * 45;
+	const barH = (cost: number) => Math.max(cost > 0 ? 2 : 0, (cost / dayMax) * 106);
+
+	const monthLocalMicros = $derived((summary?.by_feature ?? []).reduce((a, b) => a + b.cost_micros, 0));
+	const totalCalls = $derived((summary?.by_feature ?? []).reduce((a, b) => a + b.calls, 0));
+	/** Percent change against last month to the same date; null when there is nothing to compare to. */
+	const monthDelta = $derived.by(() => {
+		const prev = summary?.last_month_to_date_micros;
+		if (prev == null || prev <= 0) return null;
+		return Math.round(((monthLocalMicros - prev) / prev) * 100);
+	});
+	const kindMax = $derived(Math.max(1, ...(summary?.by_feature ?? []).map((b) => b.cost_micros)));
+	const kindLabelOf = (label: string) =>
+		label === 'other' ? 'Other' : label.replace(/_/g, ' ').replace(/^\w/, (c) => c.toUpperCase());
+
+	/** `$12<span class="c">.40</span>` — the cents recede. Escaped: only digits reach the markup. */
+	function moneyFigure(micros: number): string {
+		const neg = micros < 0;
+		const cents = Math.round(Math.abs(micros) / 10_000);
+		const dollars = Math.floor(cents / 100);
+		const rest = String(cents % 100).padStart(2, '0');
+		return `${neg ? '−' : ''}$${dollars.toLocaleString()}<span class="c">.${rest}</span>`;
+	}
+
+	const kindLabel: Record<string, string> = {
+		grant: 'Monthly credit',
+		topup: 'Top-up',
+		charge: 'Usage',
+		refund: 'Refund',
+		adjust: 'Adjustment',
+	};
+	const kindIcon: Record<string, string> = {
+		grant: 'ri:refresh-line',
+		topup: 'ri:add-circle-line',
+		charge: 'ri:sparkling-2-line',
+		refund: 'ri:arrow-go-back-line',
+		adjust: 'ri:equalizer-line',
+	};
+
+	// Human "renews" date from expiry.
+	const renewsLabel = $derived(
+		usage?.expires_at
+			? formatDate(usage.expires_at, { month: 'long', day: 'numeric' })
+			: null
+	);
+	function entryDate(ts: string): string {
+		const d = new Date(ts);
+		const today = new Date();
+		const sameDay = d.toDateString() === today.toDateString();
+		return sameDay
+			? d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' })
+			: formatDate(ts, { month: 'short', day: 'numeric' });
+	}
+
+	// No trial, no expiry: the box reports subscribed or not. (`trialing` /
+	// `expired` labels lived here for a plan that never shipped.)
+	const statusLabel: Record<string, string> = { active: 'Active' };
+	const statusColor: Record<string, string> = { active: 'text-success' };
+</script>
+
+<!--
+	Billing — the room. There was a `PlanView.svelte` between this and
+	SettingsView whose whole body was a <Page> wrapper and two child tags; it
+	existed only to hold a title, and the title turned out to be wrong. Gone,
+	and the wrapper lives here, where the chapters are.
+
+	CHAPTERS, not cards. This was five identical `border rounded-lg p-6` boxes
+	stacked down the page, which gave a two-line Subscription panel exactly the
+	same weight as a BYO essay and made the balance — the one number anyone
+	opens this page for — the third thing in the third box. The rest of the
+	app (System especially) separates subjects with a hairline rule under a
+	heading and reserves a bordered surface for places you ACT. That reads as
+	hierarchy; five borders read as a list of equals.
+
+	Order follows the account, not the code: what you are ON, what is LEFT
+	(with the rule that refills it, and the ledger that moved it), where calls
+	go INSTEAD, and the door out to the processor. The itemized call log is
+	last, in UsageView — a statement puts the itemization at the end.
+-->
+<Page
+	title="Billing"
+	description="What AI costs you, and how you pay for it."
+	maxWidth="wide"
+>
+<div class="plan-sections">
+	<!-- ─── STANDING ──────────────────────────────────────────────────────
+	     When there is no subscription, this slot is the connect flow instead:
+	     linking the box is the whole job of the page in that state, and it
+	     used to sit third, below a balance that cannot exist yet. -->
+	{#if isSubscribed}
+		<!-- The plan, its state, its date — one line. The figures follow in
+		     the Balance chapter below; this is only the standing. -->
+		<section class="chapter">
+			<div class="standing-line">
+				<span class="plan">Virtues</span>
+				<span class="plan-state">Active</span>
+				{#if renewsLabel}<span class="plan-aside">Renews {renewsLabel}</span>{/if}
+			</div>
+		</section>
+	{:else if subscriptionStore.linked && subscriptionStore.entitlementKnown}
+		<!-- Linked, not subscribed: the account exists and the wallet does not.
+		     Subscribe, not connect — connecting again would mint a second
+		     account. The sentence names exactly what is off, because the
+		     accurate sentence is the whole argument. -->
+		<section class="chapter">
+			<h2 class="settings-label">Standing</h2>
+			<div class="ledger">
+				<div class="ledger-row">
+					<span class="ledger-label">Subscription</span>
+					<span class="leader"></span>
+					<span class="ledger-value">None</span>
+				</div>
+			</div>
+			<p class="chapter-lede">
+				Your account is connected, but there is no subscription behind it yet. Hosted AI,
+				web search, places, and bank data stay off until there is. One subscription covers
+				all four for $20 a month. Your own AI key, set below, covers the first on its own.
+			</p>
+			{#if subscribeError}
+				<p class="note note-error">
+					{subscribeError}
+					{#if subscribeErrorCode}<span class="error-code">{subscribeErrorCode}</span>{/if}
+				</p>
+			{/if}
+			{#if subscribeWaiting}
+				<p class="note">Checkout is open in your browser. This page updates on its own once you finish.</p>
+			{:else}
+				<button class="btn-quiet" onclick={openSubscribe} disabled={subscribeLoading}>
+					{subscribeLoading ? 'Opening…' : 'Subscribe · $20/mo'}
+				</button>
+			{/if}
+		</section>
+	{:else if standingUnknown}
+		<section class="chapter">
+			<h2 class="settings-label">Standing</h2>
+			<p class="chapter-lede">
+				Your server couldn't reach the Virtues billing service, so this page can't say
+				where your subscription stands. Your server keeps working either way. Check your
+				connection and reload.
+			</p>
+		</section>
+	{:else}
+		<section class="chapter">
+			<h2 class="settings-label">Connect your Virtues account</h2>
+			<p class="chapter-lede">
+				Link this server to your Virtues account. Sign in if you have one. Creating one
+				takes you through Stripe for the subscription. Your server never sees a payment
+				key.
+			</p>
+
+			{#if linkError}
+				<p class="note note-error">{linkError}</p>
+			{/if}
+
+			{#if linkDone}
+				<p class="note note-success">Linked. Finishing setup…</p>
+			{:else if linkInfo}
+				<!-- Hand-off announced: what opens, where, and the pairing code,
+				     shown before any tab opens. Continue is an explicit click. -->
+				<div class="panel">
+					<p class="panel-lede">
+						Continue opens a new tab at
+						<strong>{checkoutHost || 'the Virtues billing page'}</strong>
+						to finish checkout on Stripe. It sends you back here when you are done.
+					</p>
+					<div class="code-block">
+						<div class="code-caption">Your pairing code</div>
+						<div class="code-figure mono">{linkInfo.user_code}</div>
+						<div class="code-caption">
+							It should match the code on the checkout page. It expires in about 15
+							minutes.
+						</div>
+					</div>
+					<div>
+						<Button variant="primary" onclick={proceedToCheckout}>
+							Continue to checkout →
+						</Button>
+					</div>
+					<p class="panel-foot">
+						Prefer to do it by hand? Go to
+						<span class="mono">{linkInfo.verification_uri}</span> and enter the code above.
+					</p>
+					{#if linkPolling}
+						<p class="panel-foot">Waiting for checkout to finish…</p>
+					{/if}
+				</div>
+			{:else}
+				<div>
+					<Button variant="primary" onclick={connectSubscription} disabled={linkLoading}>
+						{linkLoading ? 'Starting…' : 'Connect subscription'}
+					</Button>
+				</div>
+			{/if}
+		</section>
+	{/if}
+
+	<!-- ─── BALANCE ───────────────────────────────────────────────────────
+	     The figure, the rule that refills it, and the ledger that moved it —
+	     one subject, one chapter. Auto top-up used to live two chapters below
+	     the number it governs, in a panel called "Wallet & top-up" that a
+	     reader had no reason to connect to the balance above it. -->
+	<section class="chapter chapter-figures">
+		{#if usageLoading && !usage && !usageError}
+			<p class="chapter-lede">Reading your wallet…</p>
+		{:else if usageError}
+			<!-- The report stands where the number would be. An empty space is
+			     not a report — and a placeholder dash at figure size read as a
+			     stray rule, so the note takes the slot instead. One plain line,
+			     then the server's words small: a Rust type string never sits at
+			     reading size. The retry is offered only where a retry can help —
+			     with no subscription there is no balance to fetch, and the
+			     Standing chapter above already says what to do. -->
+			<p class="note note-error note-figure">
+				Your server couldn't read the balance.
+				<span class="error-code">{usageError}</span>
+				{#if isSubscribed || standingUnknown}
+					<TextAction inline onclick={() => void loadUsage()}>Check again</TextAction>
+				{/if}
+			</p>
+		{:else if usage}
+			<!-- Two figures, Apple-large, the cents receding. The delta is
+			     against last month to the same date — the only fair comparison
+			     on the 4th — and is absent rather than wrong when there is no
+			     last month to compare to. -->
+			<div class="figures">
+				<div>
+					<div class="figure-label">Balance</div>
+					<div class="figure mono">{@html moneyFigure(usage.balance_micros)}</div>
+				</div>
+				<div>
+					<div class="figure-label">This month</div>
+					<div class="figure mono">{@html moneyFigure(usage.month_to_date_micros)}</div>
+					{#if monthDelta !== null}
+						<div class="delta" class:down={monthDelta < 0}>
+							{monthDelta < 0 ? '↓' : '↑'} {Math.abs(monthDelta)}% on last month
+						</div>
+					{/if}
+				</div>
+			</div>
+
+			<!-- One control, one sentence, one switch. Silence until `local`
+			     is known: a false sentence about money, shown while the truth
+			     is in flight, is worse than a beat of nothing. -->
+			{#if !localLoading && local}
+				<div class="control">
+					<div>
+						<div class="control-t">Auto top-up</div>
+						<div class="control-d">
+							{#if local.auto_topup.enabled}
+								Adds <span class="mono">$10</span> when the balance reaches <span class="mono">$0</span>.
+							{:else}
+								Off. AI stops when the balance reaches <span class="mono">$0</span>.
+							{/if}
+						</div>
+					</div>
+					<button
+						class="switch"
+						class:on={local.auto_topup.enabled}
+						role="switch"
+						aria-checked={local.auto_topup.enabled}
+						aria-label="Auto top-up"
+						onclick={() => setAutoTopup(!local!.auto_topup.enabled)}
+					></button>
+				</div>
+			{/if}
+
+			{#if local && !local.auto_topup.enabled && local.auto_topup.disabled_at}
+				<p class="note note-error">
+					Auto top-up turned itself off after {local.auto_topup.failures_24h} failed charges
+					in 24 hours. Update your payment method in Stripe below, then turn it back on.
+				</p>
+			{:else if local && local.auto_topup.failures_24h > 0}
+				<p class="note note-warning">
+					{local.auto_topup.failures_24h} failed top-up{local.auto_topup.failures_24h === 1
+						? ''
+						: 's'} in the last 24 hours. After {3 - local.auto_topup.failures_24h} more it
+					turns itself off.
+				</p>
+			{/if}
+
+			{#if localError}
+				<p class="note note-error">
+					Your server couldn't read auto top-up or your own key.
+					<span class="error-code">{localError}</span>
+				</p>
+			{/if}
+
+			<!-- Money in and out. The itemized AI calls that make up the
+			     `Usage` lines are the last chapter of the page; this is the
+			     account statement, not the receipt. -->
+			<h3 class="subhead">Wallet activity</h3>
+			{#if usage.entries.length > 0}
+				<div class="entries">
+					{#each usage.entries.slice(0, 15) as e (e.ts + e.kind + e.micros)}
+						<div class="entry">
+							<span class="entry-kind">{kindLabel[e.kind] ?? e.kind}</span>
+							<span class="leader"></span>
+							<span class="entry-when mono">{entryDate(e.ts)}</span>
+							<span class="entry-amount mono" class:credit={e.micros >= 0}>
+								{e.micros < 0 ? '−' : '+'}{formatMicrosPrecise(Math.abs(e.micros))}
+							</span>
+						</div>
+					{/each}
+				</div>
+			{:else}
+				<p class="chapter-lede">Nothing has moved yet. Top-ups and charges will appear here.</p>
+			{/if}
+		{/if}
+	</section>
+
+	<!-- ─── USAGE ─────────────────────────────────────────────────────────
+	     Where the month went: fourteen days as bars, then the same money by
+	     kind. Box-local (`app_ai_calls`); the wallet figures above are the
+	     gateway's. Own-key calls are counted and never priced. -->
+	<section class="chapter">
+		<div class="chapter-head">
+			<div>
+				<h2 class="settings-label">Usage</h2>
+				<p class="chapter-lede">
+					Here is what this month cost, day by day and by what it was for. We count calls
+					on your own key but don't price them, since only your provider knows the price.
+				</p>
+			</div>
+			{#if totalCalls > 0}
+				<a class="see-all" href="#calls">See all {totalCalls} calls →</a>
+			{/if}
+		</div>
+		{#if summaryError}
+			<p class="note note-error">
+				Your server couldn't read the call log.
+				<span class="error-code">{summaryError}</span>
+			</p>
+		{:else if summary}
+			<svg class="chart" viewBox="0 0 640 146" role="img" aria-label="Spending per day for the last fourteen days">
+				<g>
+					{#each days as d, i (d.day)}
+						<rect
+							class="bar"
+							class:today={i === 13}
+							x={barX(i)}
+							y={118 - barH(d.cost)}
+							width="34"
+							height={barH(d.cost)}
+							rx="3"
+						><title>{i === 13 ? 'Today' : d.label} · {formatMicrosPrecise(d.cost)}{d.calls ? ` · ${d.calls} call${d.calls === 1 ? '' : 's'}` : ''}</title></rect>
+					{/each}
+				</g>
+				<line class="base" x1="6" x2="625" y1="118.5" y2="118.5" />
+				{#if days[13]?.cost > 0}
+					<text class="v" x={barX(13) + 17} y={118 - barH(days[13].cost) - 8} text-anchor="middle">{formatMicrosPrecise(days[13].cost)}</text>
+				{/if}
+				{#if monthLocalMicros === 0 && days.every((d) => d.cost === 0)}
+					<text class="empty" x="316" y="72" text-anchor="middle">Nothing charged in the last two weeks</text>
+				{/if}
+				<text x="6" y="138">{days[0]?.label}</text>
+				<text x="625" y="138" text-anchor="end">Today</text>
+			</svg>
+
+			{#if summary.by_feature.length > 0}
+				<div class="kinds">
+					{#each summary.by_feature as b (b.label)}
+						<div class="kind">
+							<span class="kind-n">{kindLabelOf(b.label)}</span>
+							<div class="track"><div class="fill" style="width:{(b.cost_micros / kindMax) * 100}%"></div></div>
+							<!-- A bucket that is all own-key has a count and no price;
+							     "$0.00" there would be a number we invented. A mixed
+							     bucket shows the wallet price and says how many calls
+							     it leaves out, so the price is not read as the whole. -->
+							{#if b.byo_calls === b.calls}
+								<span class="kind-amt dim">on your key</span>
+							{:else}
+								<span class="kind-amt mono">
+									{formatMicrosPrecise(b.cost_micros)}
+									{#if b.byo_calls > 0}
+										<span class="block font-sans text-[11px] leading-tight text-foreground-subtle">{b.byo_calls} on your key</span>
+									{/if}
+								</span>
+							{/if}
+						</div>
+					{/each}
+				</div>
+			{/if}
+		{/if}
+	</section>
+
+	<!-- ─── BRING YOUR OWN AI ─────────────────────────────────────────────
+	     Its own chapter. It was a row nested inside the "Wallet & top-up"
+	     card, three levels deep, and expanded inline into six paragraphs and
+	     a nine-field form — the longest thing on the page, presented as a
+	     sub-setting of a toggle. It is where every AI call goes instead, which
+	     is a peer of the balance, not a detail of it. -->
+	{#if !localLoading && local}
+		<section class="chapter">
+			<div class="chapter-head">
+				<div>
+					<h2 class="settings-label">Bring your own AI</h2>
+					<p class="chapter-lede">
+						{#if local.byo.configured}
+							Every AI call goes to {local.byo.endpoint_url
+								? byoHost(local.byo.endpoint_url)
+								: (local.byo.provider ?? 'your endpoint')}{#if local.byo.default_model}, using
+								{local.byo.default_model} by default{/if}.
+						{:else}
+							Send every AI call to an endpoint of your own instead of the subscription.
+						{/if}
+					</p>
+				</div>
+				<button class="btn-quiet" onclick={toggleByo}>
+					{byoOpen ? 'Close' : local.byo.configured ? 'Manage' : 'Set up'}
+				</button>
+			</div>
+
+			{#if byoOpen}
+				<div class="byo-body">
+					<p class="prose-note">
+						Any endpoint that speaks OpenAI-style chat completions with a bearer token works.
+						That covers gateways like Vercel AI Gateway, OpenRouter, and LiteLLM, a provider's
+						own API, and a local server such as Ollama or llama.cpp. AWS Bedrock signs
+						requests instead of taking a key, so it needs a gateway in front. Your key is
+						stored encrypted on your server. It changes only with an approval at the command
+						line, so a browser session alone cannot swap it. Maps, web search, photos, and
+						bank connections are not AI calls and stay on the subscription.
+					</p>
+					<p class="prose-note warn">
+						One caution. A key from your employer sends your personal life through systems
+						they can read. Your own key gives you the vendor and the bill, not more privacy.
+						Whoever runs the endpoint still sees every call.
+					</p>
+
+					{#if byoLoading}
+						<p class="chapter-lede">Checking for a key…</p>
+					{:else if byoLoadError}
+						<p class="note note-error">
+							Your server couldn't read your provider settings.
+							<span class="error-code">{byoLoadError}</span>
+						</p>
+					{:else if byoStatus?.configured}
+						<div class="panel">
+							<div class="panel-head">
+								<div class="panel-mark"><Icon icon="ri:key-line" /></div>
+								<div class="panel-body">
+									<div class="panel-title">AI calls go to your endpoint</div>
+									<div class="panel-facts">
+										{#if byoStatus.endpoint_url}
+											<!-- The host, not a chosen label: it says where traffic
+											     actually goes, which a slug never did. -->
+											<span>Sending to <Badge>{byoHost(byoStatus.endpoint_url)}</Badge></span>
+											<span class="mono">{byoStatus.endpoint_url}</span>
+										{/if}
+										{#if byoStatus.default_model}
+											<span>Default model <code>{byoStatus.default_model}</code></span>
+										{/if}
+									</div>
+									<p class="panel-foot">
+										Every AI call goes straight from your server to your provider. The
+										subscription isn't in the path, and we don't charge it.
+									</p>
+								</div>
+								<Button variant="ghost" onclick={startByoDelete}>
+									<Icon icon="ri:close-circle-line" />
+									Remove
+								</Button>
+							</div>
+						</div>
+
+						<div class="panel">
+							<div class="panel-title">Replace the key</div>
+							{@render byoKeyForm()}
+							<div class="panel-actions">
+								<Button variant="primary" onclick={startByoSave}>Save new key</Button>
+							</div>
+						</div>
+					{:else}
+						<div class="panel">
+							<div class="panel-title">No key set</div>
+							<p class="panel-lede">
+								Everything runs on the Virtues subscription right now. Set an endpoint to
+								send AI calls there instead.
+							</p>
+							{@render byoKeyForm()}
+							<div class="panel-actions">
+								<Button variant="primary" onclick={startByoSave}>Save key</Button>
+							</div>
+						</div>
+					{/if}
+
+				</div>
+			{/if}
+		</section>
+	{/if}
+
+	<!-- ─── PAYMENT ───────────────────────────────────────────────────────
+	     The door out. Last, because it leaves. -->
+	<section class="chapter">
+		<div class="chapter-head">
+			<div>
+				<h2 class="settings-label">Payment</h2>
+				<p class="chapter-lede">
+					Your payment method, invoices, and plan changes live in Stripe.
+				</p>
+			</div>
+			<button class="btn-quiet" onclick={openBillingPortal} disabled={portalLoading}>
+				{portalLoading ? 'Opening…' : 'Manage in Stripe'}
+			</button>
+		</div>
+		{#if portalError}
+			<p class="note note-error">
+				{portalError}
+				{#if portalErrorCode}<span class="error-code">{portalErrorCode}</span>{/if}
+			</p>
+		{/if}
+	</section>
+
+	<!-- The itemization, last. -->
+	<div id="calls"><UsageView /></div>
+</div>
+</Page>
+
+<!--
+	Endpoint URL, not a provider picker. There is no provider taxonomy: we
+	speak one contract, so the only thing that varies is the address. The
+	examples below are copy, deliberately — when a vendor moves a path, stale
+	help text is wrong, whereas a stale <option> is a broken shipped feature.
+	That is exactly how `anthropic` and `google` came to point at APIs we
+	cannot call. See agents/plan/byo-ai-plan.md.
+-->
+{#snippet byoKeyForm()}
+	<div class="space-y-3">
+		<div>
+			<label class="block text-xs text-foreground-muted mb-1" for="byo-url"
+				>Endpoint URL</label
+			>
+			<Input
+				id="byo-url"
+				bind:value={byoEndpointUrl}
+				placeholder="https://ai-gateway.vercel.sh/v1/chat/completions"
+			/>
+			<p class="text-xs text-foreground-muted mt-1.5">
+				Any endpoint that speaks OpenAI-style <code>/chat/completions</code> with a bearer token.
+			</p>
+		</div>
+		<div>
+			<label class="block text-xs text-foreground-muted mb-1" for="byo-context-window"
+				>Context window (tokens)</label
+			>
+			<Input
+				id="byo-context-window"
+				bind:value={byoContextWindow}
+				placeholder="Optional, e.g. 32000"
+			/>
+			<p class="text-xs text-foreground-muted mt-1.5">
+				Set this for a local or small model, so long chats are summarized before they
+				overflow it. Blank: your server goes by the model id, and assumes 200k when it can't tell.
+			</p>
+		</div>
+		<div>
+			<label class="block text-xs text-foreground-muted mb-1" for="byo-key"
+				>API key</label
+			>
+			<Input
+				id="byo-key"
+				type="password"
+				bind:value={byoApiKey}
+				placeholder="sk-…"
+			/>
+		</div>
+		<div class="pt-1">
+			<div class="text-xs font-medium mb-1">What your endpoint calls each model</div>
+			<p class="text-xs text-foreground-muted mb-3">
+				Optional. If your endpoint names models differently, say what it calls each of
+				these. A blank row uses the same id Virtues does.
+			</p>
+			<div class="space-y-2">
+				{#each SLOT_FIELDS as slot (slot.key)}
+					<div class="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3">
+						<label
+							class="text-xs text-foreground-muted sm:w-28 sm:shrink-0 sm:text-right"
+							for="byo-model-{slot.key}">{slot.label}</label
+						>
+						<div class="flex-1">
+							<Input
+								id="byo-model-{slot.key}"
+								bind:value={byoModels[slot.key]}
+								placeholder={slot.placeholder}
+							/>
+						</div>
+					</div>
+					{#if slot.note}
+						<p class="text-xs text-foreground-muted sm:ml-[7.75rem] -mt-1">
+							{slot.note}
+						</p>
+					{/if}
+				{/each}
+			</div>
+		</div>
+	</div>
+{/snippet}
+
+<SudoModal
+	bind:show={showSudoSave}
+	action="change_byo_key"
+	title="Save your AI key"
+	description="Every AI call will go to this endpoint instead of the subscription. Approve at your server's command line."
+	onApproved={performByoSave}
+/>
+
+<SudoModal
+	bind:show={showSudoDelete}
+	action="change_byo_key"
+	title="Remove your AI key"
+	description="AI calls will go back to the Virtues subscription. Approve at your server's command line."
+	onApproved={performByoDelete}
+/>
+
+<style>
+	/* ─── Chapters ──────────────────────────────────────────────────────────
+	   Lifted from SystemInfoView so Plan and System read as siblings rather
+	   than as two apps. A hairline under a small-caps eyebrow separates
+	   subjects; a bordered surface is reserved for a place you ACT (`.panel`),
+	   which is what makes the checkout hand-off and the BYO form look
+	   different from the things you merely read. */
+	.plan-sections {
+		display: flex;
+		flex-direction: column;
+	}
+	.chapter {
+		padding-top: 28px;
+		margin-top: 28px;
+		border-top: 1px solid var(--color-border-subtle);
+	}
+	.chapter:first-child {
+		border-top: none;
+		margin-top: 8px;
+		padding-top: 0;
+	}
+	/* Eyebrow, then a control on the same optical line — used where the
+	   chapter is one sentence and one button (BYO, Payment). */
+	.chapter-head {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 16px;
+	}
+	.chapter-lede {
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+		margin: 0;
+		max-width: 60ch;
+	}
+	/* A step below `.settings-label`: still a heading, still roman serif, just
+	   smaller — this names a part of Balance, not a chapter of the page. */
+	.subhead {
+		font-size: 0.875rem;
+		font-weight: 400;
+		color: var(--color-foreground);
+		margin: 22px 0 4px;
+	}
+
+	.mono {
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-variant-numeric: tabular-nums;
+	}
+
+	.figure {
+		font-size: 40px;
+		line-height: 1;
+		font-weight: 500;
+		color: var(--color-foreground);
+	}
+
+	/* ─── Ledger rows (label · leader · value) ─────────────────────────────── */
+	.ledger {
+		margin-top: 10px;
+	}
+	.ledger-row {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
+		padding: 5px 0;
+		font-size: 13px;
+	}
+	.ledger-label {
+		color: var(--color-foreground-muted);
+	}
+	.leader {
+		flex: 1;
+		border-bottom: 1px dotted var(--color-border);
+		transform: translateY(-3px);
+		min-width: 16px;
+	}
+	.ledger-value {
+		color: var(--color-foreground);
+		white-space: nowrap;
+	}
+
+	/* ─── Wallet activity ───────────────────────────────────────────────────
+	   Was an icon + label + date + amount row. The kind icon is gone: the sign
+	   and the color already say which direction the money went, and a column
+	   of five different glyphs down the left edge was the loudest thing in a
+	   chapter about small numbers. */
+	.entries {
+		margin-top: 4px;
+	}
+	.entry {
+		display: flex;
+		align-items: baseline;
+		gap: 10px;
+		padding: 5px 0;
+		font-size: 13px;
+		border-bottom: 1px solid var(--color-border-subtle);
+	}
+	.entry:last-child {
+		border-bottom: none;
+	}
+	.entry-kind {
+		color: var(--color-foreground);
+		white-space: nowrap;
+	}
+	.entry-when {
+		font-size: 11px;
+		color: var(--color-foreground-subtle);
+		white-space: nowrap;
+	}
+	.entry-amount {
+		color: var(--color-foreground);
+		white-space: nowrap;
+		min-width: 5.5rem;
+		text-align: right;
+	}
+	.entry-amount.credit {
+		color: var(--color-success);
+	}
+
+	/* ─── Notes ─────────────────────────────────────────────────────────────
+	   One shape for every thing the page has to tell you, tinted by weight.
+	   The error variant is what stands where the balance would be when the
+	   wallet cannot be read — the panel used to just vanish. */
+	.note {
+		font-size: 12px;
+		line-height: 1.5;
+		margin: 10px 0 0;
+		padding: 9px 11px;
+		border-radius: 6px;
+		border: 1px solid transparent;
+		max-width: 60ch;
+	}
+	.note-error {
+		color: var(--color-error);
+		border-color: color-mix(in srgb, var(--color-error) 22%, transparent);
+		background: var(--color-error-subtle);
+	}
+	/* The branch, set quietly beside the sentence: an owner reads past it, and
+	   reads it out loud when we ask what the screen said. */
+	.error-code {
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 0.85em;
+		opacity: 0.72;
+	}
+	.note-warning {
+		color: var(--color-warning);
+		border-color: color-mix(in srgb, var(--color-warning) 22%, transparent);
+		background: var(--color-warning-subtle);
+	}
+	/* Holds the balance figure's slot when there is no balance to show. */
+	.note-figure {
+		margin-top: 2px;
+	}
+	.note-success {
+		color: var(--color-success);
+		border-color: color-mix(in srgb, var(--color-success) 22%, transparent);
+		background: var(--color-success-subtle);
+	}
+	/* ─── Controls ──────────────────────────────────────────────────────────
+	   Real actions use the shared Button (variant="primary"), because a
+	   hand-rolled one here painted itself with `bg-accent text-on-accent` —
+	   tokens this app has never defined. Tailwind emits no rule for an
+	   undefined token and reports nothing, so every button on this page has
+	   been shipping as unstyled text on a transparent ground: "Manage
+	   Subscription" and "Connect subscription" both read as bare labels.
+	   `bg-surface-alt`, used seven more times here, was the same mirage.
+
+	   `.btn-quiet` stays local: it OPENS something (a portal, a form) and
+	   should not carry the weight of the buttons that spend money. */
+	.btn-quiet {
+		flex-shrink: 0;
+		padding: 5px 11px;
+		border: 1px solid var(--color-border);
+		border-radius: 6px;
+		background: var(--color-surface-elevated);
+		color: var(--color-foreground);
+		font-size: 12px;
+		font-weight: 500;
+		cursor: pointer;
+		transition: background 150ms ease;
+	}
+	.btn-quiet:hover { background: var(--color-background-hover); }
+	.btn-quiet:disabled { opacity: 0.5; cursor: default; }
+
+
+	/* ─── Panels: places you act ────────────────────────────────────────── */
+	.panel {
+		margin-top: 14px;
+		padding: 18px;
+		border: 1px solid var(--color-border);
+		border-radius: 10px;
+		background: var(--color-surface);
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+	.panel-head { display: flex; align-items: flex-start; gap: 12px; }
+	.panel-mark {
+		flex-shrink: 0;
+		width: 38px;
+		height: 38px;
+		border-radius: 9px;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: color-mix(in srgb, var(--color-success) 10%, transparent);
+		border: 1px solid color-mix(in srgb, var(--color-success) 30%, transparent);
+		color: var(--color-success);
+	}
+	.panel-body { flex: 1; min-width: 0; }
+	.panel-title { font-size: 14px; font-weight: 500; color: var(--color-foreground); }
+	.panel-lede, .panel-foot {
+		font-size: 12px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+		margin: 0;
+	}
+	.panel-facts {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 4px 12px;
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+		margin-top: 4px;
+	}
+	.panel-actions { display: flex; justify-content: flex-end; }
+
+	.code-block {
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		background: var(--color-surface-elevated);
+		padding: 12px;
+	}
+	.code-caption { font-size: 11px; color: var(--color-foreground-muted); }
+	.code-figure {
+		font-size: 20px;
+		font-weight: 500;
+		letter-spacing: 0.12em;
+		color: var(--color-foreground);
+		margin: 3px 0;
+	}
+
+	/* ─── BYO prose ─────────────────────────────────────────────────────── */
+	.byo-body { margin-top: 16px; }
+	.prose-note {
+		font-size: 12px;
+		line-height: 1.6;
+		color: var(--color-foreground-muted);
+		margin: 0 0 12px;
+		max-width: 68ch;
+	}
+	.prose-note.warn { color: var(--color-warning); }
+
+	code {
+		font-family: var(--font-mono, ui-monospace, monospace);
+		font-size: 0.92em;
+		background: var(--color-surface-elevated);
+		padding: 0 4px;
+		border-radius: 3px;
+	}
+
+	@media (max-width: 640px) {
+		.chapter-head { flex-direction: column; gap: 10px; }
+		.figure { font-size: 34px; }
+	}
+
+	/* ─── Standing: one line ────────────────────────────────────────────── */
+	.standing-line { display: flex; align-items: baseline; gap: 12px; }
+	.plan { font-family: var(--font-serif); font-size: 22px; color: var(--color-foreground); }
+	.plan-state { font-size: 13px; color: var(--color-success); }
+	.plan-aside { margin-left: auto; font-size: 13px; color: var(--color-foreground-subtle); }
+
+	/* ─── The figures: Apple-large, mono, the cents recede ─────────────── */
+	.chapter-figures { padding-top: 22px; margin-top: 22px; }
+	.figures { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+	.figure-label { font-size: 11.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-foreground-subtle); }
+	.figures .figure { font-size: 44px; letter-spacing: -0.02em; margin-top: 8px; }
+	.figures .figure :global(.c) { color: var(--color-foreground-subtle); font-weight: 400; }
+	.delta { font-size: 13px; color: var(--color-foreground-subtle); margin-top: 8px; }
+	.delta.down { color: var(--color-success); }
+	@media (max-width: 480px) { .figures { grid-template-columns: 1fr; } }
+
+	/* One control, one sentence, one switch. */
+	.control { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-top: 26px; padding-top: 18px; border-top: 1px solid var(--color-border-subtle); }
+	.control-t { font-size: 15px; color: var(--color-foreground); }
+	.control-d { font-size: 13px; color: var(--color-foreground-muted); margin-top: 2px; }
+	.control-d .mono { font-size: 12.5px; color: var(--color-foreground); }
+	.switch { width: 44px; height: 26px; border-radius: 13px; background: var(--color-border); position: relative; flex: none; border: 0; cursor: pointer; transition: background 150ms ease; padding: 0; }
+	.switch.on { background: var(--color-success); }
+	.switch::after { content: ""; position: absolute; top: 3px; left: 3px; width: 20px; height: 20px; border-radius: 50%; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.18); transition: transform 150ms ease; }
+	.switch.on::after { transform: translateX(18px); }
+	.switch:focus-visible { outline: 2px solid var(--color-foreground); outline-offset: 3px; }
+
+	/* ─── The chart: soft bars, today in the accent, one baseline ─────── */
+	.see-all { font-size: 13px; color: var(--color-foreground-subtle); text-decoration: none; }
+	.see-all:hover { color: var(--color-foreground); }
+	.chart { width: 100%; height: auto; display: block; overflow: visible; margin-top: 6px; }
+	.chart .bar { fill: var(--color-border); transition: fill 120ms ease; }
+	.chart .bar.today { fill: var(--color-secondary); }
+	.chart .bar:hover { fill: var(--color-foreground-subtle); }
+	.chart .bar.today:hover { fill: var(--color-secondary); }
+	.chart .base { stroke: var(--color-border); stroke-width: 1; }
+	.chart text { font-family: var(--font-sans); font-size: 11px; fill: var(--color-foreground-subtle); }
+	.chart .v { font-family: var(--font-mono); font-variant-numeric: tabular-nums; fill: var(--color-secondary); font-weight: 500; }
+	.chart .empty { font-family: var(--font-sans); font-size: 12px; fill: var(--color-foreground-subtle); }
+
+	/* By kind: a name, a track, a figure. */
+	.kinds { margin-top: 22px; display: flex; flex-direction: column; gap: 12px; }
+	.kind { display: grid; grid-template-columns: 120px 1fr 72px; align-items: center; gap: 16px; font-size: 14px; }
+	.kind-n { color: var(--color-foreground); }
+	.track { height: 6px; border-radius: 3px; background: var(--color-border-subtle); overflow: hidden; }
+	.fill { height: 100%; border-radius: 3px; background: var(--color-border); }
+	.kind:first-child .fill { background: var(--color-secondary); }
+	.kind-amt { text-align: right; color: var(--color-foreground); }
+	.kind-amt.dim { color: var(--color-foreground-subtle); font-size: 13px; }
+	@media (max-width: 480px) { .kind { grid-template-columns: 96px 1fr 64px; } }
+</style>

@@ -1,0 +1,82 @@
+use tauri::{command, AppHandle, Runtime};
+
+use crate::models::*;
+use crate::AudioExt;
+use crate::Result;
+
+/// Explicit "Enable" opt-in: prompts for microphone access, then starts
+/// recording ambient audio in fixed-length chunks.
+#[command]
+pub(crate) async fn enable<R: Runtime>(app: AppHandle<R>) -> Result<AudioStatus> {
+  app.audio().enable()
+}
+
+/// Turn the collector off (the This-device toggle / pause): finalize the current
+/// chunk and stop recording. Persisted — a relaunch won't auto-resume.
+#[command]
+pub(crate) async fn disable<R: Runtime>(app: AppHandle<R>) -> Result<AudioStatus> {
+  app.audio().disable()
+}
+
+/// Launch auto-resume: start recording only if already authorized AND left
+/// enabled; never prompts.
+#[command]
+pub(crate) async fn resume<R: Runtime>(app: AppHandle<R>) -> Result<AudioStatus> {
+  app.audio().resume()
+}
+
+#[command]
+pub(crate) async fn status<R: Runtime>(app: AppHandle<R>) -> Result<AudioStatus> {
+  app.audio().status()
+}
+
+/// Toggle the "notify me if recording stops" gap-nudge (default on).
+#[command]
+pub(crate) async fn set_notify<R: Runtime>(
+  app: AppHandle<R>,
+  enabled: bool,
+) -> Result<AudioStatus> {
+  app.audio().set_notify(enabled)
+}
+
+/// Set the quiet-hours window (minutes since local midnight; -1/-1 = off).
+/// Mute-don't-release: the capture graph stays armed, chunk writing pauses.
+#[command]
+pub(crate) async fn set_quiet_hours<R: Runtime>(
+  app: AppHandle<R>,
+  start: i32,
+  end: i32,
+) -> Result<AudioStatus> {
+  app.audio().set_quiet_hours(start, end)
+}
+
+/// Replace the weekly mute schedule (see `SetScheduleRequest`). Mute-don't-
+/// release, like quiet hours: the graph stays armed, chunk writing pauses.
+#[command]
+pub(crate) async fn set_schedule<R: Runtime>(
+  app: AppHandle<R>,
+  schedule: serde_json::Value,
+) -> Result<AudioStatus> {
+  app.audio().set_schedule(schedule)
+}
+
+/// Replace the cached muted places (copied from the box's `wiki_places`).
+#[command]
+pub(crate) async fn set_places<R: Runtime>(
+  app: AppHandle<R>,
+  places: Vec<MutedPlace>,
+) -> Result<AudioStatus> {
+  app.audio().set_places(places)
+}
+
+/// Start or end the override the Control Center control sets: `mode`
+/// "silence" or "record" for `minutes` (None = open-ended), or no mode to end
+/// it. Mute-don't-release, so the mic stays on either way.
+#[command]
+pub(crate) async fn set_override<R: Runtime>(
+  app: AppHandle<R>,
+  mode: Option<String>,
+  minutes: Option<u32>,
+) -> Result<AudioStatus> {
+  app.audio().set_override(mode, minutes)
+}

@@ -1,0 +1,45 @@
+[package]
+name = "tauri-plugin-reach"
+version = "0.1.0"
+authors = ["Virtues"]
+description = "In-process reach: pair the mobile app to a Virtues box and serve it over iroh on a loopback port (the mobile replacement for the desktop virtues-client sidecar)."
+edition = "2021"
+license = "MIT"
+rust-version = "1.77.2"
+exclude = ["/examples", "/dist-js", "/guest-js", "/node_modules"]
+links = "tauri-plugin-reach"
+
+[dependencies]
+tauri = { version = "2" }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+# The handoff QR is rendered on the laptop, where the payload is assembled —
+# the box never sees it (it never sees the seed at all).
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+thiserror = "2"
+tokio = { version = "1.40", features = ["net", "rt", "time"] }
+anyhow = "1.0"
+dirs = "5"
+tracing = "0.1"
+# Reads the location collector's SQLite (shared-file hand-off) to batch uploads.
+# `bundled` compiles sqlite3 from source so it's identical on iOS.
+rusqlite = { version = "0.32", features = ["bundled"] }
+# The shared reach core (pair/consume, iroh loopback, session probe).
+virtues-reach-client = { path = "../../../../crates/virtues-reach-client" }
+
+# Improv BLE client — DESKTOP ONLY. This is what makes a Mac the first device:
+# it drives the same wire the box serves and the iOS client speaks, so the
+# connect shell has one code path for both. iOS is excluded deliberately —
+# there the Swift CoreBluetooth client owns the radio, and btleplug's own
+# CoreBluetooth backend would be a second, competing central in one process.
+[target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
+virtues-improv = { path = "../../../../crates/virtues-improv", features = ["client"] }
+
+[build-dependencies]
+tauri-plugin = { version = "2.6.3", features = ["build"] }
+virtues-plugin-lockstep = { path = "../lockstep" }
+
+# Standalone (excluded from the repo workspace). The empty table stops cargo's
+# workspace walk-up, which otherwise escapes the repo in nested git worktrees
+# and gets claimed by an outer checkout's manifest.
+[workspace]

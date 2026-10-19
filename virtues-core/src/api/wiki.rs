@@ -1,0 +1,1568 @@
+//! The wiki's SUBJECTS: people, places, organizations, and the records that
+//! reference them.
+//!
+//! A wiki page is not a separate construct — it is a view of a subject plus
+//! whatever prose the record has written about it (`wiki_articles`).
+//!
+//! This file used to be everything the wiki room touched, at three thousand
+//! lines, of which barely a third was about subjects at all. The day, its
+//! events and its raw streams have their own modules now:
+//!
+//! | module | what it answers |
+//! |---|---|
+//! | this one | who and what the record knows about |
+//! | [`crate::api::wiki_days`] | what a day was — the day row, its activity, its timeline |
+//! | [`crate::api::wiki_events`] | the day's event spine, and editing it |
+//! | [`crate::api::wiki_streams`] | the raw records beneath a day, unsynthesised |
+
+use chrono::{DateTime, NaiveDate, Utc};
+use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
+
+use crate::error::{Error, Result};
+
+// ============================================================================
+// Wiki Page Types - Entity Views
+// ============================================================================
+
+/// A person wiki page
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiPerson {
+    pub id: String,
+    pub name: String,
+    pub content: Option<String>,
+    /// Machine-written wikipedia-style record (entity_article applet). Never
+    /// user-edited — `content`/`notes` carry the user's own writing.
+    pub article: Option<String>,
+    pub article_updated_at: Option<DateTime<Utc>>,
+    /// Is this article being kept up to date? Off unless the user asked.
+    #[serde(default)]
+    pub article_maintained: bool,
+    pub picture: Option<String>,
+    pub cover_image: Option<String>,
+    // vCard fields
+    pub emails: Vec<String>,
+    pub phones: Vec<String>,
+    pub birthday: Option<NaiveDate>,
+    /// When they died, if they have — with the precision the person gave
+    /// ("sometime in 2019" is a real answer; see migration 0016).
+    pub died_on: Option<NaiveDate>,
+    pub died_precision: Option<String>,
+    pub instagram: Option<String>,
+    pub facebook: Option<String>,
+    pub linkedin: Option<String>,
+    pub x: Option<String>,
+    // Metadata
+    pub relationship_category: Option<String>,
+    pub nickname: Option<String>,
+    /// The AUTHORED line about what this person means — one sentence, the
+    /// owner's verbatim, never inferred. Recency says who is around; only
+    /// this says who matters. Rendered above every observed stat.
+    pub bond: Option<String>,
+    // `notes` retired to wiki_notes (migration 0082). The column still exists —
+    // drops trail by a release — but nothing reads or writes it from here, which
+    // is what lets the next migration drop it safely.
+    /// Surfaces this entity also answers to (0037). Read alongside write, or an
+    /// editor cannot show what is already there.
+    pub aliases: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// A place wiki page
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiPlace {
+    pub id: String,
+    pub name: String,
+    pub content: Option<String>,
+    pub article: Option<String>,
+    pub article_updated_at: Option<DateTime<Utc>>,
+    /// Is this article being kept up to date? Off unless the user asked.
+    #[serde(default)]
+    pub article_maintained: bool,
+    pub cover_image: Option<String>,
+    pub category: Option<String>,
+    pub address: Option<String>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    /// Visits, COUNTED FROM `wiki_refs` rather than read off the row. The
+    /// columns of these names had no writer, so the page reported "Total
+    /// visits: 0" for somewhere the person goes weekly; they are dropped in
+    /// 0025 and these fields now carry the real count and its two dates.
+    pub seen_count: Option<i32>,
+    pub first_seen: Option<DateTime<Utc>>,
+    pub last_seen: Option<DateTime<Utc>>,
+    /// The phone keeps no audio while the owner is inside this place.
+    #[serde(default)]
+    pub is_audio_muted: bool,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+/// An organization wiki page
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiOrganization {
+    pub id: String,
+    pub name: String,
+    pub content: Option<String>,
+    pub article: Option<String>,
+    pub article_updated_at: Option<DateTime<Utc>>,
+    /// Is this article being kept up to date? Off unless the user asked.
+    #[serde(default)]
+    pub article_maintained: bool,
+    pub cover_image: Option<String>,
+    pub organization_type: Option<String>,
+    pub relationship_type: Option<String>,
+    pub role_title: Option<String>,
+    pub started_at: Option<NaiveDate>,
+    pub ended_at: Option<NaiveDate>,
+    /// Surfaces this entity also answers to (0037).
+    pub aliases: Vec<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+}
+
+// ============================================================================
+// List Item Types (lighter weight for lists)
+// ============================================================================
+
+/// A person list item
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiPersonListItem {
+    pub id: String,
+    pub name: String,
+    pub picture: Option<String>,
+    pub relationship_category: Option<String>,
+    /// How many records mention this entity — see `REF_COUNT` in this module.
+    pub ref_count: i64,
+}
+
+/// A place list item
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiPlaceListItem {
+    pub id: String,
+    pub name: String,
+    pub category: Option<String>,
+    pub address: Option<String>,
+    /// How many records mention this entity — see `REF_COUNT` in this module.
+    pub ref_count: i64,
+}
+
+/// An organization list item
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WikiOrganizationListItem {
+    pub id: String,
+    pub name: String,
+    pub organization_type: Option<String>,
+    pub relationship_type: Option<String>,
+    /// How many records mention this entity — see `REF_COUNT` in this module.
+    pub ref_count: i64,
+}
+
+// ============================================================================
+// Update Request Types
+// ============================================================================
+
+/// Request to update a person wiki page
+#[derive(Debug, Deserialize)]
+pub struct UpdateWikiPersonRequest {
+    pub name: Option<String>,
+    pub content: Option<String>,
+    /// A picture URL, or `""` to remove the picture. Either is the owner's
+    /// choice, which a contact photo never overrides.
+    pub picture: Option<String>,
+    pub cover_image: Option<String>,
+    pub emails: Option<Vec<String>>,
+    pub phones: Option<Vec<String>>,
+    pub birthday: Option<NaiveDate>,
+    pub died_on: Option<NaiveDate>,
+    pub died_precision: Option<String>,
+    pub instagram: Option<String>,
+    pub facebook: Option<String>,
+    pub linkedin: Option<String>,
+    pub x: Option<String>,
+    pub relationship_category: Option<String>,
+    pub nickname: Option<String>,
+    /// One sentence, theirs verbatim — see WikiPerson::bond.
+    pub bond: Option<String>,
+    // `notes` retired to wiki_notes (migration 0082). The column still exists —
+    // drops trail by a release — but nothing reads or writes it from here, which
+    // is what lets the next migration drop it safely.
+    /// Surfaces this entity also answers to. 0037 calls an alias "the record of
+    /// a human decision" and built the column for exactly this — then nothing
+    /// ever wrote it: a handful of the hundreds of people on a real box have
+    /// one. Stored lowercased; the resolver lowercases the surface before
+    /// matching, so a name linked once resolves every past and future mention
+    /// of it.
+    pub aliases: Option<Vec<String>>,
+}
+
+/// Request to update a place wiki page
+#[derive(Debug, Deserialize)]
+pub struct UpdateWikiPlaceRequest {
+    pub name: Option<String>,
+    pub content: Option<String>,
+    pub cover_image: Option<String>,
+    pub category: Option<String>,
+    pub address: Option<String>,
+    /// Mute the phone's audio collector inside this place.
+    pub is_audio_muted: Option<bool>,
+    /// The place's radius in meters, set from the phone's muted-places list.
+    pub radius_m: Option<f64>,
+}
+
+/// Request to update an organization wiki page
+#[derive(Debug, Deserialize)]
+pub struct UpdateWikiOrganizationRequest {
+    pub name: Option<String>,
+    pub content: Option<String>,
+    pub cover_image: Option<String>,
+    pub organization_type: Option<String>,
+    pub relationship_type: Option<String>,
+    pub role_title: Option<String>,
+    pub started_at: Option<NaiveDate>,
+    pub ended_at: Option<NaiveDate>,
+    /// Surfaces this entity also answers to. 0037 calls an alias "the record of
+    /// a human decision" and built the column for exactly this — then nothing
+    /// ever wrote it: a handful of the hundreds of people on a real box have
+    /// one. Stored lowercased; the resolver lowercases the surface before
+    /// matching, so a name linked once resolves every past and future mention
+    /// of it.
+    pub aliases: Option<Vec<String>>,
+}
+
+/// Request to update a day wiki page
+
+// ============================================================================
+// Person CRUD Operations
+// ============================================================================
+
+/// Get a person by ID
+pub async fn get_person(pool: &PgPool, id: String) -> Result<WikiPerson> {
+    let row = sqlx::query!(
+        r#"
+        SELECT
+            id, name, content, picture, cover_image,
+            emails, phones, birthday, died_on, died_precision, instagram,
+            facebook, linkedin, x,
+            relationship_category, nickname, bond, aliases,
+            created_at, updated_at
+        FROM wiki_people
+        WHERE id = $1
+        "#,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get person: {}", e)))?
+    .ok_or_else(|| Error::NotFound(format!("Person not found: {}", id)))?;
+
+    let (article, article_updated_at, maintained) =
+        overlay_article(pool, "person", &row.id).await;
+
+    Ok(WikiPerson {
+        id: row.id,
+        name: row.name,
+        content: row.content,
+        article,
+        article_updated_at,
+        article_maintained: maintained,
+        picture: row.picture,
+        cover_image: row.cover_image,
+        emails: serde_json::from_value(row.emails).unwrap_or_default(),
+        phones: serde_json::from_value(row.phones).unwrap_or_default(),
+        aliases: serde_json::from_value(row.aliases).unwrap_or_default(),
+        birthday: row.birthday,
+        died_on: row.died_on,
+        died_precision: row.died_precision,
+        instagram: row.instagram,
+        facebook: row.facebook,
+        linkedin: row.linkedin,
+        x: row.x,
+        relationship_category: row.relationship_category,
+        nickname: row.nickname,
+        bond: row.bond,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    })
+}
+
+/// What a day page's gloss card says about a person, as of that day: the
+/// earliest message between you on record, how often in the month before, and
+/// when last. Messages only, by the refs entity resolution writes: a
+/// one-to-one thread counts in both directions (`sender` and `recipient`), a
+/// group chat only where they wrote (`sender`), because group membership isn't
+/// recorded. Tapbacks and deleted messages don't count. Everything is relative
+/// to the page's day, read in that day's timezone, so an old page tells you
+/// what was true then rather than now.
+#[derive(Debug, Serialize)]
+pub struct PersonGloss {
+    pub id: String,
+    pub date: NaiveDate,
+    /// How you know them, when you wrote it down: the bond in your own words,
+    /// else the relationship on their record.
+    pub relationship: Option<String>,
+    /// Their picture as stored (usually a box path into the media store), or
+    /// none; the card draws initials then.
+    pub picture: Option<String>,
+    pub first_message_on: Option<NaiveDate>,
+    /// Whether that first message was in a group thread.
+    pub first_message_in_group: Option<bool>,
+    pub last_message_before_on: Option<NaiveDate>,
+    /// The window `days_in_window` counts over: the days just before `date`.
+    pub window_days: i64,
+    pub days_in_window: i64,
+    /// One per day of the window, oldest first: whether there was a message.
+    pub days: Vec<bool>,
+    pub direct_messages_in_window: i64,
+    pub group_messages_in_window: i64,
+}
+
+pub const PERSON_GLOSS_WINDOW_DAYS: i64 = 31;
+
+/// The messages that count as contact with a person: their refs on messages,
+/// in either direction, not deleted and not a tapback. The gloss and the
+/// day's firsts read the same set, so "first message" means one thing.
+const PERSON_MESSAGE_REFS: &str = "r.entity_type = 'person'
+          AND r.source_table = 'data_communication_message'
+          AND r.role IN ('sender', 'recipient')
+          AND m.deleted_at_source IS NULL
+          AND m.metadata->>'reaction_type' IS NULL";
+
+pub async fn person_gloss(pool: &PgPool, id: &str, date: NaiveDate) -> Result<PersonGloss> {
+    let (relationship, picture): (Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT COALESCE(NULLIF(btrim(bond), ''), NULLIF(btrim(relationship_category), '')),
+                NULLIF(btrim(picture), '')
+         FROM wiki_people WHERE id = $1",
+    )
+    .bind(id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or_else(|| Error::NotFound(format!("Person not found: {}", id)))?;
+
+    let tz = crate::timezone::day_timezone(pool, date).await?;
+    let (day_start, day_end) = crate::api::day_summary::day_bounds(date, Some(&tz));
+    let window_first = date - chrono::Duration::days(PERSON_GLOSS_WINDOW_DAYS);
+    let (window_start, _) = crate::api::day_summary::day_bounds(window_first, Some(&tz));
+
+    // An aggregate always returns its one row, so fetch_one: a failure here
+    // is a broken query, never "no messages".
+    let (first_on, first_in_group, last_before_on, direct, group): (
+        Option<NaiveDate>,
+        Option<bool>,
+        Option<NaiveDate>,
+        i64,
+        i64,
+    ) = sqlx::query_as(&format!(
+        r#"
+        SELECT
+          (min(r.occurred_at) AT TIME ZONE $5::text)::date,
+          (array_agg(m.is_group_message ORDER BY r.occurred_at))[1],
+          (max(r.occurred_at) FILTER (WHERE r.occurred_at < $2) AT TIME ZONE $5::text)::date,
+          count(*) FILTER (WHERE r.occurred_at >= $3 AND r.occurred_at < $2 AND NOT m.is_group_message),
+          count(*) FILTER (WHERE r.occurred_at >= $3 AND r.occurred_at < $2 AND m.is_group_message)
+        FROM wiki_refs r
+        JOIN data_communication_message m ON m.id = r.source_id
+        WHERE r.entity_id = $1
+          AND {PERSON_MESSAGE_REFS}
+          AND r.occurred_at < $4
+        "#
+    ))
+    .bind(id)
+    .bind(day_start)
+    .bind(window_start)
+    .bind(day_end)
+    .bind(&tz)
+    .fetch_one(pool)
+    .await?;
+
+    let on: Vec<NaiveDate> = sqlx::query_scalar(&format!(
+        r#"
+        SELECT DISTINCT (r.occurred_at AT TIME ZONE $4::text)::date
+        FROM wiki_refs r
+        JOIN data_communication_message m ON m.id = r.source_id
+        WHERE r.entity_id = $1
+          AND {PERSON_MESSAGE_REFS}
+          AND r.occurred_at >= $2 AND r.occurred_at < $3
+        "#
+    ))
+    .bind(id)
+    .bind(window_start)
+    .bind(day_start)
+    .bind(&tz)
+    .fetch_all(pool)
+    .await?;
+    let days: Vec<bool> = (0..PERSON_GLOSS_WINDOW_DAYS)
+        .map(|i| on.contains(&(window_first + chrono::Duration::days(i))))
+        .collect();
+
+    Ok(PersonGloss {
+        id: id.to_string(),
+        date,
+        relationship,
+        picture,
+        first_message_on: first_on,
+        first_message_in_group: first_in_group,
+        last_message_before_on: last_before_on,
+        window_days: PERSON_GLOSS_WINDOW_DAYS,
+        days_in_window: days.iter().filter(|d| **d).count() as i64,
+        days,
+        direct_messages_in_window: direct,
+        group_messages_in_window: group,
+    })
+}
+
+/// How long the record of a kind must run before a day for something new in
+/// it to be a first: on the record's first days, everything is new.
+pub const FIRSTS_AFTER_DAYS: i64 = 14;
+
+/// A place whose earliest visit on record falls on the day.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct FirstPlace {
+    /// Only a name someone gave it: a coordinate stub reads as no name.
+    pub name: Option<String>,
+    pub at: DateTime<Utc>,
+}
+
+/// A person whose earliest message on record falls on the day, and who wrote.
+#[derive(Debug, Serialize, PartialEq)]
+pub struct FirstPerson {
+    pub id: String,
+    pub name: String,
+    /// Their first message that day.
+    pub at: DateTime<Utc>,
+}
+
+/// What a day holds for the first time in the record, for the day page's
+/// margin. Each kind counts only once its record has run
+/// [`FIRSTS_AFTER_DAYS`] before the day.
+#[derive(Debug, Serialize)]
+pub struct DayFirsts {
+    pub places: Vec<FirstPlace>,
+    pub people: Vec<FirstPerson>,
+}
+
+pub async fn day_firsts(pool: &PgPool, date: NaiveDate) -> Result<DayFirsts> {
+    let tz = crate::timezone::day_timezone(pool, date).await?;
+    let (day_start, day_end) = crate::api::day_summary::day_bounds(date, Some(&tz));
+    let began_by = day_start - chrono::Duration::days(FIRSTS_AFTER_DAYS);
+
+    // A visit can carry more than one place ref; the newest is the one
+    // resolution meant (as on the timeline), so one visit is one place.
+    let places: Vec<(Option<String>, DateTime<Utc>)> = sqlx::query_as(
+        r#"
+        WITH visit_place AS (
+            SELECT DISTINCT ON (r.source_id) r.source_id AS visit_id, r.entity_id AS place_id
+            FROM wiki_refs r
+            WHERE r.entity_type = 'place' AND r.source_table = 'data_location_visit'
+            ORDER BY r.source_id, r.created_at DESC
+        ), earliest AS (
+            SELECT vp.place_id, min(v.started_at) AS at
+            FROM visit_place vp
+            JOIN data_location_visit v ON v.id = vp.visit_id
+            WHERE v.deleted_at_source IS NULL AND NOT v.is_archived
+            GROUP BY vp.place_id
+        )
+        SELECT CASE WHEN p.is_named AND p.name <> 'Unknown' THEN p.name END, e.at
+        FROM earliest e
+        JOIN wiki_places p ON p.id = e.place_id
+        WHERE e.at >= $1 AND e.at < $2
+          AND (SELECT min(started_at) FROM data_location_visit
+               WHERE deleted_at_source IS NULL AND NOT is_archived) <= $3
+        ORDER BY e.at
+        "#,
+    )
+    .bind(day_start)
+    .bind(day_end)
+    .bind(began_by)
+    .fetch_all(pool)
+    .await?;
+
+    // People with a message on the day and none before it. "First message
+    // from" is only true of someone who wrote that day, so they must have.
+    // The owner is never new to their own record.
+    let people: Vec<(String, String, DateTime<Utc>)> = sqlx::query_as(&format!(
+        r#"
+        SELECT p.id, p.name, min(r.occurred_at) FILTER (WHERE r.role = 'sender') AS at
+        FROM wiki_refs r
+        JOIN data_communication_message m ON m.id = r.source_id
+        JOIN wiki_people p ON p.id = r.entity_id
+        WHERE {PERSON_MESSAGE_REFS}
+          AND r.occurred_at >= $1 AND r.occurred_at < $2
+          AND p.id IS DISTINCT FROM (SELECT self_person_id FROM app_user_profile LIMIT 1)
+          AND (SELECT min(occurred_at) FROM data_communication_message
+               WHERE deleted_at_source IS NULL) <= $3
+          AND NOT EXISTS (
+              SELECT 1 FROM wiki_refs r
+              JOIN data_communication_message m ON m.id = r.source_id
+              WHERE r.entity_id = p.id
+                AND {PERSON_MESSAGE_REFS}
+                AND r.occurred_at < $1
+          )
+        GROUP BY p.id, p.name
+        HAVING count(*) FILTER (WHERE r.role = 'sender') > 0
+        ORDER BY at
+        "#
+    ))
+    .bind(day_start)
+    .bind(day_end)
+    .bind(began_by)
+    .fetch_all(pool)
+    .await?;
+
+    Ok(DayFirsts {
+        places: places.into_iter().map(|(name, at)| FirstPlace { name, at }).collect(),
+        people: people.into_iter().map(|(id, name, at)| FirstPerson { id, name, at }).collect(),
+    })
+}
+
+/// List all people
+
+/// Overlay a subject's article from `wiki_articles` onto the legacy column.
+///
+/// Prose moved to `app_pages` (migration 0081), but the per-entity `article`
+/// columns from 0072 are still there — drops trail their phase by a release, so
+/// a box in the middle can hold prose in either place. New articles live on the
+/// page; anything written before the move still lives in the column. Read the
+/// page first and fall back, so neither is lost while both exist.
+async fn overlay_article(
+    pool: &PgPool,
+    subject_type: &str,
+    subject_id: &str,
+) -> (Option<String>, Option<DateTime<Utc>>, bool) {
+    match crate::api::wiki_articles::get_article_prose(pool, subject_type, subject_id).await {
+        Ok(Some(a)) => (Some(a.content), Some(a.updated_at), a.maintained),
+        // No article is the ordinary case, not an error: they are opt-in.
+        Ok(None) => (None, None, false),
+        // A read failure must not take the whole entity page down with it — the
+        // records below the article are the more important half.
+        //
+        // This used to fall back to the entity's own `article` column, which
+        // had no writer on any box, so the fallback could only ever return the
+        // same None it now returns directly.
+        Err(e) => {
+            tracing::warn!(subject_id, error = %e, "article read failed");
+            (None, None, false)
+        }
+    }
+}
+
+/// Aliases are stored lowercased, trimmed, deduped, and never empty.
+///
+/// 0037 stores them lowercased and matches with `aliases ? lower(surface)`, so
+/// a mixed-case alias is simply invisible to the resolver — it would look
+/// saved and never resolve anything. Normalizing on the way in is the only
+/// place that can be enforced once for every caller.
+fn normalize_aliases(input: Option<&Vec<String>>) -> Option<serde_json::Value> {
+    let list = input?;
+    let mut seen: Vec<String> = Vec::with_capacity(list.len());
+    for raw in list {
+        let a = raw.trim().to_lowercase();
+        if !a.is_empty() && !seen.contains(&a) {
+            seen.push(a);
+        }
+    }
+    Some(serde_json::json!(seen))
+}
+
+/// Entity indexes sort by how many records mention the entity, not by name.
+///
+/// The People index had no order at all: it sorted by `name`, and the
+/// column that was supposed to carry importance — `seen_count` — is 0 on
+/// every row on a real box, because nothing has ever written it. So an address
+/// book of several hundred contacts arrived alphabetically, with
+/// `no-reply@slack.com` sitting level with the people you actually talk to.
+///
+/// The signal was always there: `wiki_refs` holds over a hundred thousand
+/// message refs across a few hundred people. Counting them sorts the wall on its own — people you
+/// message rise, contacts with no traffic sink, transactional senders land at
+/// the bottom with two email refs each. No classifier, no model, no deletion:
+/// the noise does not need removing, it needs ordering.
+///
+/// **Computed per query, not materialized.** The obvious move is a counter
+/// column, but that needs a refresh path and can drift, and this is a sort key
+/// rather than a fact. Measured on a real corpus (over a hundred thousand
+/// refs, hundreds of people) the aggregate runs in milliseconds, which is
+/// cheaper than being wrong. Materialize it when the index gets slow, and not
+/// before.
+///
+/// Deliberately NOT `seen_count` or `wiki_places.seen_count`: those are
+/// two different quantities on two tables (and visits are not refs), so reusing
+/// either would make "the default sort" mean something different per index.
+/// Both are legacy; this is the one uniform measure.
+pub async fn list_people(pool: &PgPool) -> Result<Vec<WikiPersonListItem>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT
+            p.id, p.name, p.picture, p.relationship_category,
+            COALESCE(r.n, 0) AS "ref_count!"
+        FROM wiki_people p
+        LEFT JOIN (
+            SELECT entity_id, count(*) AS n
+            FROM wiki_refs WHERE entity_type = 'person' GROUP BY entity_id
+        ) r ON r.entity_id = p.id
+        ORDER BY COALESCE(r.n, 0) DESC, p.name ASC
+        "#
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list people: {}", e)))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| WikiPersonListItem {
+            id: row.id,
+            name: row.name,
+            picture: row.picture,
+            relationship_category: row.relationship_category,
+            ref_count: row.ref_count,
+        })
+        .collect())
+}
+
+/// Update a person
+pub async fn update_person(
+    pool: &PgPool,
+    id: String,
+    req: UpdateWikiPersonRequest,
+) -> Result<WikiPerson> {
+    let emails_json: Option<serde_json::Value> = req.emails.as_ref().map(|e| serde_json::json!(e));
+    let phones_json: Option<serde_json::Value> = req.phones.as_ref().map(|p| serde_json::json!(p));
+    let aliases_json = normalize_aliases(req.aliases.as_ref());
+
+    sqlx::query!(
+        r#"
+        UPDATE wiki_people
+        SET
+            name = COALESCE($2, name),
+            content = COALESCE($3, content),
+            picture = COALESCE($4, picture),
+            cover_image = COALESCE($5, cover_image),
+            emails = COALESCE($6, emails),
+            phones = COALESCE($7, phones),
+            birthday = COALESCE($8, birthday),
+            died_on = COALESCE($16, died_on),
+            died_precision = COALESCE($17, died_precision),
+            bond = COALESCE($18, bond),
+            instagram = COALESCE($9, instagram),
+            facebook = COALESCE($10, facebook),
+            linkedin = COALESCE($11, linkedin),
+            x = COALESCE($12, x),
+            relationship_category = COALESCE($13, relationship_category),
+            nickname = COALESCE($14, nickname),
+            aliases = COALESCE($15, aliases),
+            updated_at = now()
+        WHERE id = $1
+        "#,
+        id,
+        req.name,
+        req.content,
+        req.picture,
+        req.cover_image,
+        emails_json,
+        phones_json,
+        req.birthday,
+        req.instagram,
+        req.facebook,
+        req.linkedin,
+        req.x,
+        req.relationship_category,
+        req.nickname,
+        aliases_json,
+        req.died_on,
+        req.died_precision,
+        req.bond
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to update person: {}", e)))?;
+
+    // An owner rename ends the contact's claim on the name: from here on the iOS
+    // contacts ingest keeps its spellings as aliases and leaves `name` alone
+    // (see `contact_owns_name` in applets/ios_ingest/contacts.rs).
+    if req.name.is_some() {
+        sqlx::query(
+            "UPDATE wiki_people \
+             SET metadata = metadata || jsonb_build_object('name_edited_at', now()) \
+             WHERE id = $1",
+        )
+        .bind(&id)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to mark person rename: {}", e)))?;
+        crate::api::wiki_articles::retitle_article(pool, "person", &id).await?;
+    }
+
+    // A picture the owner sets is theirs, and so is removing one (an empty
+    // string, stored as no picture): the iOS contacts ingest never replaces
+    // either (see `contact_sets_picture` in applets/ios_ingest/contacts.rs).
+    if req.picture.is_some() {
+        sqlx::query(
+            "UPDATE wiki_people \
+             SET picture = NULLIF(btrim(picture), ''), \
+                 metadata = (metadata - 'picture_sha256') || jsonb_build_object('picture_from', 'owner') \
+             WHERE id = $1",
+        )
+        .bind(&id)
+        .execute(pool)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to mark person picture: {}", e)))?;
+    }
+
+    get_person(pool, id).await
+}
+
+// ============================================================================
+// Place CRUD Operations
+// ============================================================================
+
+/// Get a place by ID (wiki view with content fields)
+pub async fn get_wiki_place(pool: &PgPool, id: String) -> Result<WikiPlace> {
+    let row = sqlx::query!(
+        r#"
+        SELECT
+            id, name, content, cover_image, category, address,
+            latitude, longitude, is_audio_muted,
+            created_at, updated_at
+        FROM wiki_places
+        WHERE id = $1
+        "#,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get place: {}", e)))?
+    .ok_or_else(|| Error::NotFound(format!("Place not found: {}", id)))?;
+
+    let (article, article_updated_at, maintained) =
+        overlay_article(pool, "place", &row.id).await;
+
+    let visits: (i64, Option<DateTime<Utc>>, Option<DateTime<Utc>>) = sqlx::query_as(
+        "SELECT count(*), min(occurred_at), max(occurred_at) \
+         FROM wiki_refs WHERE entity_id = $1 AND role = 'location'",
+    )
+    .bind(&row.id)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to count visits: {e}")))?;
+
+    Ok(WikiPlace {
+        id: row.id,
+        name: row.name.clone(),
+        content: row.content.clone(),
+        article,
+        article_updated_at,
+        article_maintained: maintained,
+        cover_image: row.cover_image.clone(),
+        category: row.category.clone(),
+        address: row.address.clone(),
+        latitude: row.latitude,
+        longitude: row.longitude,
+        // Counted from the refs, not read off the row. `seen_count`,
+        // `first_seen` and `last_seen` have no writer anywhere, so the place
+        // page showed "Total visits: 0" and no dates for somewhere the person
+        // had been fifty times — the same zero the article prompt was being
+        // fed. The refs are where the visits actually are.
+        seen_count: Some(visits.0 as i32),
+        first_seen: visits.1,
+        last_seen: visits.2,
+        is_audio_muted: row.is_audio_muted,
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    })
+}
+
+/// List all places (wiki view with content fields)
+pub async fn list_wiki_places(pool: &PgPool) -> Result<Vec<WikiPlaceListItem>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT
+            p.id, p.name, p.category, p.address,
+            COALESCE(r.n, 0) AS "ref_count!"
+        FROM wiki_places p
+        LEFT JOIN (
+            SELECT entity_id, count(*) AS n
+            FROM wiki_refs WHERE entity_type = 'place' GROUP BY entity_id
+        ) r ON r.entity_id = p.id
+        ORDER BY COALESCE(r.n, 0) DESC, p.name ASC
+        "#
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list places: {}", e)))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| WikiPlaceListItem {
+            id: row.id,
+            name: row.name,
+            category: row.category,
+            address: row.address,
+            ref_count: row.ref_count,
+        })
+        .collect())
+}
+
+/// Update a place wiki content
+/// Bounds on a radius the owner sets: tighter than GPS jitter is meaningless,
+/// wider than a neighborhood stops being a place.
+const PLACE_RADIUS_MIN_M: f64 = 50.0;
+const PLACE_RADIUS_MAX_M: f64 = 2000.0;
+
+pub async fn update_wiki_place(
+    pool: &PgPool,
+    id: String,
+    req: UpdateWikiPlaceRequest,
+) -> Result<WikiPlace> {
+    if let Some(r) = req.radius_m {
+        if !r.is_finite() || !(PLACE_RADIUS_MIN_M..=PLACE_RADIUS_MAX_M).contains(&r) {
+            return Err(Error::InvalidInput(format!(
+                "radius_m must be between {PLACE_RADIUS_MIN_M} and {PLACE_RADIUS_MAX_M}"
+            )));
+        }
+    }
+    sqlx::query!(
+        r#"
+        UPDATE wiki_places
+        SET
+            name = COALESCE($2, name),
+            content = COALESCE($3, content),
+            cover_image = COALESCE($4, cover_image),
+            category = COALESCE($5, category),
+            address = COALESCE($6, address),
+            is_audio_muted = COALESCE($7, is_audio_muted),
+            updated_at = now()
+        WHERE id = $1
+        "#,
+        id,
+        req.name,
+        req.content,
+        req.cover_image,
+        req.category,
+        req.address,
+        req.is_audio_muted
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to update place: {}", e)))?;
+    if let Some(r) = req.radius_m {
+        sqlx::query("UPDATE wiki_places SET radius_m = $2 WHERE id = $1")
+            .bind(&id)
+            .bind(r)
+            .execute(pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to update place radius: {}", e)))?;
+    }
+    if req.name.is_some() {
+        crate::api::entities::mark_place_named(pool, &id).await?;
+    }
+    crate::api::wiki_articles::retitle_article(pool, "place", &id).await?;
+
+    get_wiki_place(pool, id).await
+}
+
+// ============================================================================
+// Organization CRUD Operations
+// ============================================================================
+
+/// Get an organization by ID
+pub async fn get_organization(pool: &PgPool, id: String) -> Result<WikiOrganization> {
+    let row = sqlx::query!(
+        r#"
+        SELECT
+            id, name, content, cover_image,
+            organization_type, relationship_type, role_title, aliases,
+            started_at, ended_at,
+            created_at, updated_at
+        FROM wiki_orgs
+        WHERE id = $1
+        "#,
+        id
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to get organization: {}", e)))?
+    .ok_or_else(|| Error::NotFound(format!("Organization not found: {}", id)))?;
+
+    let (article, article_updated_at, maintained) =
+        overlay_article(pool, "organization", &row.id).await;
+
+    Ok(WikiOrganization {
+        id: row.id,
+        name: row.name,
+        content: row.content,
+        article,
+        article_updated_at,
+        article_maintained: maintained,
+        cover_image: row.cover_image,
+        organization_type: row.organization_type,
+        relationship_type: row.relationship_type,
+        role_title: row.role_title,
+        started_at: row.started_at,
+        ended_at: row.ended_at,
+        aliases: serde_json::from_value(row.aliases).unwrap_or_default(),
+        created_at: row.created_at,
+        updated_at: row.updated_at,
+    })
+}
+
+/// List all organizations
+pub async fn list_organizations(pool: &PgPool) -> Result<Vec<WikiOrganizationListItem>> {
+    let rows = sqlx::query!(
+        r#"
+        SELECT
+            o.id, o.name, o.organization_type, o.relationship_type,
+            COALESCE(r.n, 0) AS "ref_count!"
+        FROM wiki_orgs o
+        LEFT JOIN (
+            SELECT entity_id, count(*) AS n
+            FROM wiki_refs WHERE entity_type = 'organization' GROUP BY entity_id
+        ) r ON r.entity_id = o.id
+        ORDER BY COALESCE(r.n, 0) DESC, o.name ASC
+        "#
+    )
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list organizations: {}", e)))?;
+
+    Ok(rows
+        .into_iter()
+        .map(|row| WikiOrganizationListItem {
+            id: row.id,
+            name: row.name,
+            organization_type: row.organization_type,
+            relationship_type: row.relationship_type,
+            ref_count: row.ref_count,
+        })
+        .collect())
+}
+
+/// Update an organization
+pub async fn update_organization(
+    pool: &PgPool,
+    id: String,
+    req: UpdateWikiOrganizationRequest,
+) -> Result<WikiOrganization> {
+    sqlx::query!(
+        r#"
+        UPDATE wiki_orgs
+        SET
+            name = COALESCE($2, name),
+            content = COALESCE($3, content),
+            cover_image = COALESCE($4, cover_image),
+            organization_type = COALESCE($5, organization_type),
+            relationship_type = COALESCE($6, relationship_type),
+            role_title = COALESCE($7, role_title),
+            started_at = COALESCE($8, started_at),
+            ended_at = COALESCE($9, ended_at),
+            aliases = COALESCE($10, aliases),
+            updated_at = now()
+        WHERE id = $1
+        "#,
+        id,
+        req.name,
+        req.content,
+        req.cover_image,
+        req.organization_type,
+        req.relationship_type,
+        req.role_title,
+        req.started_at,
+        req.ended_at,
+        normalize_aliases(req.aliases.as_ref())
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to update organization: {}", e)))?;
+    crate::api::wiki_articles::retitle_article(pool, "organization", &id).await?;
+
+    get_organization(pool, id).await
+}
+
+// ============================================================================
+// Narrative Identity
+// ============================================================================
+
+/// The user's narrative identity — the "In your own words" DOCUMENT, read
+/// straight from its wiki article's page. There is no separate stored copy
+/// (the abridged capsule was retired 2026-09-01): editing happens on the page
+/// itself, which is why this view is read-only and carries the page id.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NarrativeIdentity {
+    pub content: String,
+    pub updated_at: DateTime<Utc>,
+    /// The document's page — where editing happens. Empty until the interview
+    /// has been written up.
+    pub page_id: String,
+}
+
+/// Get the narrative identity. Before the interview is written up there is no
+/// article yet, so we return an empty placeholder (content = "") rather than
+/// 500ing — the clients treat empty content as "not authored yet".
+pub async fn get_narrative_identity(pool: &PgPool) -> Result<NarrativeIdentity> {
+    let article = crate::api::wiki_articles::get_article(
+        pool,
+        "narrative_identity",
+        crate::api::narrative_draft::NAR_IDENTITY_ID,
+    )
+    .await?;
+    let Some(article) = article else {
+        return Ok(NarrativeIdentity {
+            content: String::new(),
+            updated_at: Utc::now(),
+            page_id: String::new(),
+        });
+    };
+    let prose = crate::api::wiki_articles::get_article_prose(
+        pool,
+        "narrative_identity",
+        crate::api::narrative_draft::NAR_IDENTITY_ID,
+    )
+    .await?;
+    Ok(match prose {
+        Some(p) => NarrativeIdentity {
+            content: p.content,
+            updated_at: p.updated_at,
+            page_id: article.page_id,
+        },
+        None => NarrativeIdentity {
+            content: String::new(),
+            updated_at: Utc::now(),
+            page_id: article.page_id,
+        },
+    })
+}
+
+/// One raw record linked to an entity via `wiki_refs` — the entity
+/// page's CRM-style evidence feed. Same shape as `DaySource` plus the ref's
+/// `role` (sender, attendee, merchant, location, …).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EntityRecord {
+    pub source_type: String,
+    pub id: String,
+    pub timestamp: DateTime<Utc>,
+    pub label: String,
+    pub preview: Option<String>,
+    pub role: Option<String>,
+    pub continuous: bool,
+}
+
+/// One page of an entity's records, plus the true total for the query — the
+/// server half of the grid's server-side pagination.
+#[derive(Debug, Serialize)]
+pub struct EntityRecordsPage {
+    pub items: Vec<EntityRecord>,
+    pub total: i64,
+}
+
+/// Per-raw-source_type counts across ALL of an entity's records, for the chip
+/// rail. Computed server-side because the grid only ever holds one page —
+/// chips counted from loaded rows would lie.
+#[derive(Debug, Serialize)]
+pub struct EntityRecordFacet {
+    pub source_type: String,
+    pub count: i64,
+    pub continuous: bool,
+}
+
+/// Requests can't ask for unbounded pages.
+const ENTITY_RECORDS_MAX_LIMIT: i64 = 100;
+
+/// Build the UNION ALL body over every source table holding refs for this
+/// entity, each subquery rendered with its ontology's `DaySourceConfig` SQL
+/// (same labels/previews as the day page). Roles are merged per record inside
+/// each subquery, so pagination and totals count records, not refs. Returns
+/// `None` when the entity has no refs in any renderable table.
+///
+/// All subqueries bind the entity id as `$1`; callers add outer binds from $2.
+async fn entity_records_union(pool: &PgPool, entity_id: &str) -> Result<Option<String>> {
+    use virtues_registry::ontologies::registered_ontologies;
+
+    let tables: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT source_table FROM wiki_refs WHERE entity_id = $1",
+    )
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to list entity ref tables: {}", e)))?;
+
+    let mut subqueries: Vec<String> = Vec::new();
+    for table in &tables {
+        let Some(ont) = registered_ontologies()
+            .into_iter()
+            .find(|o| o.table_name == table.as_str() && o.day_source.is_some())
+        else {
+            // Refs exist but no ontology knows how to render them. Unlike the
+            // day pipeline (where a hole feeds an LLM), this only starves a
+            // reading surface — so skip loudly instead of failing the page,
+            // and treat the log line as the bug report it is.
+            tracing::warn!(
+                source_table = %table,
+                entity_id = %entity_id,
+                "entity refs point at a table with no day-source config; its records are invisible"
+            );
+            continue;
+        };
+        let cfg = ont.day_source.as_ref().unwrap();
+
+        let source_type_col = cfg
+            .source_type_sql
+            .map(|sql| format!("{} as source_type_dyn", sql))
+            .unwrap_or_else(|| format!("'{}' as source_type_dyn", cfg.source_type));
+
+        // Notes on the shape:
+        //  - `WHERE true` so `extra_where` (which carries its own leading AND)
+        //    splices the same way it does in the day-source template.
+        //  - The refs JOIN introduces a second `timestamp` column, so the
+        //    ontology's timestamp must be `t.`-qualified or Postgres calls it
+        //    ambiguous.
+        //  - The refs unique key includes `role`, so one record can join once
+        //    per role (sender AND recipient): the GROUP BY collapses those to
+        //    one row with the roles aggregated. Positional GROUP BY, because
+        //    the grouped expressions are registry-supplied SQL.
+        //  - `src_cont` is a bare literal, which Postgres exempts from
+        //    GROUP BY.
+        subqueries.push(format!(
+            "SELECT {id} as src_id, t.{ts} as src_ts, {label} as src_label, \
+                    {preview} as src_preview, {st}, \
+                    string_agg(DISTINCT er.role, ', ') as src_role, \
+                    {cont} as src_cont \
+             FROM {table} t \
+             JOIN wiki_refs er \
+               ON er.source_table = '{table}' AND er.source_id = {id} AND er.entity_id = $1 \
+             WHERE true \
+             {extra} \
+             GROUP BY 1, 2, 3, 4, 5",
+            id = cfg.id_sql,
+            ts = ont.timestamp_column,
+            label = cfg.label_sql,
+            preview = cfg.preview_sql,
+            st = source_type_col,
+            cont = if ont.temporal_type == virtues_registry::ontologies::TemporalType::Continuous {
+                "TRUE"
+            } else {
+                "FALSE"
+            },
+            table = ont.table_name,
+            extra = cfg.extra_where.unwrap_or(""),
+        ));
+    }
+
+    Ok(if subqueries.is_empty() {
+        None
+    } else {
+        Some(subqueries.join(" UNION ALL "))
+    })
+}
+
+/// Shared narrowing clause for the union: $2 = search text ('' = all),
+/// $3 = raw source_type allowlist (empty array = all).
+const ENTITY_RECORDS_WHERE: &str = "($2 = '' \
+       OR u.src_label ILIKE '%' || $2 || '%' \
+       OR COALESCE(u.src_preview, '') ILIKE '%' || $2 || '%') \
+   AND (cardinality($3::text[]) = 0 OR u.source_type_dyn = ANY($3::text[]))";
+
+fn entity_record_from_row(row: &sqlx::postgres::PgRow) -> Option<EntityRecord> {
+    use sqlx::Row;
+    Some(EntityRecord {
+        id: row.try_get("src_id").ok()?,
+        // TIMESTAMPTZ — decode directly, never via String (see get_day_sources).
+        timestamp: row.try_get("src_ts").ok()?,
+        label: row.try_get("src_label").unwrap_or_default(),
+        preview: row.try_get("src_preview").ok().flatten(),
+        source_type: row.try_get("source_type_dyn").unwrap_or_default(),
+        role: row.try_get("src_role").ok().flatten(),
+        continuous: row.try_get("src_cont").unwrap_or(false),
+    })
+}
+
+/// One page of the records linked to an entity (registry-driven, refs-driven),
+/// with search and source_type narrowing applied server-side.
+pub async fn get_entity_records_page(
+    pool: &PgPool,
+    entity_id: &str,
+    offset: i64,
+    limit: i64,
+    search: &str,
+    types: &[String],
+    newest_first: bool,
+) -> Result<EntityRecordsPage> {
+    let limit = limit.clamp(1, ENTITY_RECORDS_MAX_LIMIT);
+    let offset = offset.max(0);
+
+    let Some(union) = entity_records_union(pool, entity_id).await? else {
+        return Ok(EntityRecordsPage { items: Vec::new(), total: 0 });
+    };
+
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT count(*) FROM ({union}) u WHERE {ENTITY_RECORDS_WHERE}"
+    ))
+    .bind(entity_id)
+    .bind(search)
+    .bind(types)
+    .fetch_one(pool)
+    .await
+    .map_err(|e| Error::Database(format!("entity records count failed: {e}")))?;
+
+    let dir = if newest_first { "DESC" } else { "ASC" };
+    let rows = sqlx::query(&format!(
+        "SELECT * FROM ({union}) u WHERE {ENTITY_RECORDS_WHERE} \
+         ORDER BY u.src_ts {dir} LIMIT $4 OFFSET $5"
+    ))
+    .bind(entity_id)
+    .bind(search)
+    .bind(types)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("entity records page failed: {e}")))?;
+
+    Ok(EntityRecordsPage {
+        items: rows.iter().filter_map(entity_record_from_row).collect(),
+        total,
+    })
+}
+
+/// Facet counts over ALL of an entity's records (unnarrowed), for the chips.
+pub async fn get_entity_record_facets(
+    pool: &PgPool,
+    entity_id: &str,
+) -> Result<Vec<EntityRecordFacet>> {
+    use sqlx::Row;
+
+    let Some(union) = entity_records_union(pool, entity_id).await? else {
+        return Ok(Vec::new());
+    };
+
+    let rows = sqlx::query(&format!(
+        "SELECT u.source_type_dyn as st, count(*) as n, bool_and(u.src_cont) as cont \
+         FROM ({union}) u GROUP BY 1 ORDER BY 1"
+    ))
+    .bind(entity_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("entity record facets failed: {e}")))?;
+
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            Some(EntityRecordFacet {
+                source_type: row.try_get("st").ok()?,
+                count: row.try_get("n").ok()?,
+                continuous: row.try_get("cont").unwrap_or(false),
+            })
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The whole point of normalizing is that 0037 matches with
+    /// `aliases ? lower(surface)`. An alias stored with capitals or padding is
+    /// not "slightly wrong" — it is invisible to the resolver, so it looks
+    /// saved and resolves nothing. These cases are the ones a human actually
+    /// types.
+    #[test]
+    fn aliases_are_lowercased_trimmed_and_deduped() {
+        let input = vec![
+            "  Sarah ".to_string(),
+            "SARAH".to_string(), // same surface, different case
+            "sarah".to_string(), // exact duplicate
+            "Mum".to_string(),
+            "   ".to_string(), // whitespace only
+            "".to_string(),
+        ];
+        let out = normalize_aliases(Some(&input)).expect("some input");
+        assert_eq!(out, serde_json::json!(["sarah", "mum"]));
+    }
+
+    /// `None` must stay `None`: the update statement is
+    /// `aliases = COALESCE($n, aliases)`, so a null leaves the column alone.
+    /// Returning an empty array instead would silently erase every alias on
+    /// any request that simply did not mention them.
+    #[test]
+    fn absent_aliases_do_not_clear_the_column() {
+        assert!(normalize_aliases(None).is_none());
+    }
+
+    /// Clearing has to remain possible, and is distinct from "not mentioned".
+    #[test]
+    fn an_explicit_empty_list_clears() {
+        let empty: Vec<String> = vec![];
+        assert_eq!(
+            normalize_aliases(Some(&empty)).expect("some"),
+            serde_json::json!([])
+        );
+    }
+
+    async fn message(pool: &PgPool, id: &str, at: &str, group: bool, meta: &str, role: &str) {
+        sqlx::query(
+            "INSERT INTO data_communication_message
+                 (id, message_id, channel, body, from_identifier, occurred_at, is_group_message,
+                  source_stream_id, source_table, source_provider, metadata)
+             VALUES ($1, $1, 'imessage', 'hi', '+15125550100', $2::timestamptz, $3,
+                     $1, 'mac_imessage', 'mac', $4::jsonb)",
+        )
+        .bind(id)
+        .bind(at)
+        .bind(group)
+        .bind(meta)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
+             VALUES ($1, 'person', 'person_t1', 'data_communication_message', $2, $3, $4::timestamptz)",
+        )
+        .bind(format!("ref_{id}"))
+        .bind(id)
+        .bind(role)
+        .bind(at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// The gloss is about the page's day, not today: what came after the day
+    /// never shows, the day itself is not "before", and a tapback or a deleted
+    /// message is not contact.
+    #[sqlx::test]
+    async fn person_gloss_counts_messages_up_to_the_day(pool: PgPool) {
+        sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_t1', 'Nick')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        message(&pool, "m_first", "2025-09-23T15:00:00Z", true, "{}", "sender").await;
+        message(&pool, "m_a", "2026-09-10T15:00:00Z", false, "{}", "recipient").await;
+        message(&pool, "m_b", "2026-09-22T15:00:00Z", false, "{}", "sender").await;
+        message(&pool, "m_c", "2026-09-22T18:00:00Z", false, "{}", "recipient").await;
+        message(&pool, "m_tap", "2026-09-20T15:00:00Z", false, r#"{"reaction_type": 2000}"#, "sender").await;
+        message(&pool, "m_day", "2026-09-23T15:00:00Z", false, "{}", "sender").await;
+        message(&pool, "m_after", "2026-10-01T15:00:00Z", false, "{}", "sender").await;
+        message(&pool, "m_gone", "2026-09-15T15:00:00Z", false, "{}", "sender").await;
+        sqlx::query("UPDATE data_communication_message SET deleted_at_source = now() WHERE id = 'm_gone'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let date = NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
+        let g = person_gloss(&pool, "person_t1", date).await.unwrap();
+        assert_eq!(g.first_message_on, NaiveDate::from_ymd_opt(2025, 9, 23));
+        assert_eq!(g.first_message_in_group, Some(true));
+        assert_eq!(g.last_message_before_on, NaiveDate::from_ymd_opt(2026, 9, 22));
+        assert_eq!(g.days_in_window, 2, "Sep 10 and Sep 22; the tapback and the deleted message don't count");
+        assert_eq!(g.direct_messages_in_window, 3);
+        assert_eq!(g.group_messages_in_window, 0);
+        assert_eq!(g.relationship, None, "nothing written down is no relationship");
+
+        // Oldest first: Aug 23 is the first dot, Sep 22 (the day before) the last.
+        assert_eq!(g.days.len(), PERSON_GLOSS_WINDOW_DAYS as usize);
+        let on: Vec<usize> = g.days.iter().enumerate().filter(|(_, d)| **d).map(|(i, _)| i).collect();
+        assert_eq!(on, vec![18, 30], "Sep 10 and Sep 22");
+
+        let missing = person_gloss(&pool, "person_nobody", date).await;
+        assert!(matches!(missing, Err(Error::NotFound(_))));
+    }
+
+    /// The bond is the owner's own words and wins; a category stands in when
+    /// there is no bond; blank is nothing.
+    #[sqlx::test]
+    async fn person_gloss_says_how_you_know_them(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO wiki_people (id, name, bond, relationship_category) VALUES
+               ('person_b', 'Nick', 'My oldest friend', 'friend'),
+               ('person_c', 'David Okafor', '  ', 'colleague'),
+               ('person_n', 'Nobody', NULL, '')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
+        let b = person_gloss(&pool, "person_b", date).await.unwrap();
+        assert_eq!(b.relationship.as_deref(), Some("My oldest friend"));
+        let c = person_gloss(&pool, "person_c", date).await.unwrap();
+        assert_eq!(c.relationship.as_deref(), Some("colleague"));
+        let n = person_gloss(&pool, "person_n", date).await.unwrap();
+        assert_eq!(n.relationship, None);
+    }
+
+    /// The card's picture is the person's own; blank is none.
+    #[sqlx::test]
+    async fn person_gloss_carries_the_picture(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO wiki_people (id, name, picture) VALUES
+               ('person_p', 'Nick', '/api/drive/files/f1/download'),
+               ('person_q', 'David Okafor', ' ')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let date = NaiveDate::from_ymd_opt(2026, 9, 23).unwrap();
+        let p = person_gloss(&pool, "person_p", date).await.unwrap();
+        assert_eq!(p.picture.as_deref(), Some("/api/drive/files/f1/download"));
+        let q = person_gloss(&pool, "person_q", date).await.unwrap();
+        assert_eq!(q.picture, None);
+    }
+
+    /// A picture set by hand is marked the owner's, which is what keeps the
+    /// contacts ingest from replacing it; removing one stores none, also
+    /// marked the owner's, and an edit that leaves the picture out touches
+    /// neither.
+    #[sqlx::test]
+    async fn an_owner_picture_is_theirs_and_so_is_removing_it(pool: PgPool) {
+        sqlx::query(
+            r#"INSERT INTO wiki_people (id, name, picture, metadata) VALUES
+                 ('person_o', 'Nick', '/api/drive/files/f1/download',
+                  '{"picture_from": "contacts", "picture_sha256": "aaa"}')"#,
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let req = |v: serde_json::Value| -> UpdateWikiPersonRequest { serde_json::from_value(v).unwrap() };
+        let meta = |pool: PgPool| async move {
+            sqlx::query_scalar::<_, serde_json::Value>("SELECT metadata FROM wiki_people WHERE id = 'person_o'")
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+        };
+
+        let p = update_person(&pool, "person_o".into(), req(serde_json::json!({"bond": "My oldest friend"})))
+            .await
+            .unwrap();
+        assert_eq!(p.picture.as_deref(), Some("/api/drive/files/f1/download"));
+        assert_eq!(meta(pool.clone()).await["picture_from"], "contacts", "untouched by other edits");
+
+        let p = update_person(&pool, "person_o".into(), req(serde_json::json!({"picture": "/api/drive/files/mine/download"})))
+            .await
+            .unwrap();
+        assert_eq!(p.picture.as_deref(), Some("/api/drive/files/mine/download"));
+        let m = meta(pool.clone()).await;
+        assert_eq!(m["picture_from"], "owner");
+        assert!(m.get("picture_sha256").is_none(), "the contact's hash no longer describes it");
+
+        let p = update_person(&pool, "person_o".into(), req(serde_json::json!({"picture": ""})))
+            .await
+            .unwrap();
+        assert_eq!(p.picture, None, "removed is none, not an empty string");
+        assert_eq!(meta(pool.clone()).await["picture_from"], "owner");
+    }
+
+    async fn place(pool: &PgPool, id: &str, name: &str, is_named: bool) {
+        sqlx::query("INSERT INTO wiki_places (id, name, latitude, longitude, is_named) VALUES ($1, $2, 10.0, -140.0, $3)")
+            .bind(id)
+            .bind(name)
+            .bind(is_named)
+            .execute(pool)
+            .await
+            .unwrap();
+    }
+
+    async fn visit(pool: &PgPool, id: &str, place_id: &str, at: &str) {
+        sqlx::query(
+            "INSERT INTO data_location_visit
+                 (id, latitude, longitude, started_at, ended_at, source_stream_id, source_table, source_provider)
+             VALUES ($1, 10.0, -140.0, $2::timestamptz, $2::timestamptz + interval '1 hour', $1, 'location_point', 'ios')",
+        )
+        .bind(id)
+        .bind(at)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO wiki_refs (id, entity_type, entity_id, source_table, source_id, role, occurred_at)
+             VALUES ($1, 'place', $2, 'data_location_visit', $3, 'location', $4::timestamptz)",
+        )
+        .bind(format!("ref_{id}"))
+        .bind(place_id)
+        .bind(id)
+        .bind(at)
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// A place is new on the day of its earliest visit, named only when
+    /// someone named it; a place visited before is not new.
+    #[sqlx::test]
+    async fn day_firsts_finds_places_visited_for_the_first_time(pool: PgPool) {
+        place(&pool, "place_home", "Home", true).await;
+        place(&pool, "place_museum", "The Ashgrove Museum", true).await;
+        place(&pool, "place_stub", "Location 10.0, -140.0", false).await;
+        place(&pool, "place_unknown", "Unknown", true).await;
+        place(&pool, "place_gone", "Gone", true).await;
+        place(&pool, "place_early", "The early cafe", true).await;
+        visit(&pool, "v_home_early", "place_home", "2025-12-10T15:00:00Z").await;
+        visit(&pool, "v_early", "place_early", "2025-12-17T15:00:00Z").await;
+        visit(&pool, "v_home_day", "place_home", "2026-01-15T13:00:00Z").await;
+        visit(&pool, "v_museum", "place_museum", "2026-01-15T16:00:00Z").await;
+        visit(&pool, "v_museum_again", "place_museum", "2026-01-15T19:00:00Z").await;
+        visit(&pool, "v_stub", "place_stub", "2026-01-15T17:30:00Z").await;
+        visit(&pool, "v_unknown", "place_unknown", "2026-01-15T18:00:00Z").await;
+        visit(&pool, "v_gone", "place_gone", "2026-01-15T18:30:00Z").await;
+        sqlx::query("UPDATE data_location_visit SET deleted_at_source = now() WHERE id = 'v_gone'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let day = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap();
+        let f = day_firsts(&pool, day).await.unwrap();
+        let names: Vec<Option<&str>> = f.places.iter().map(|p| p.name.as_deref()).collect();
+        assert_eq!(names, vec![Some("The Ashgrove Museum"), None, None], "the stub and Unknown read as unnamed; Home isn't new");
+        assert_eq!(f.places[0].at.to_rfc3339(), "2026-01-15T16:00:00+00:00", "the first visit that day");
+
+        // Two weeks of record is the floor: a week in, a new place isn't news.
+        let early = day_firsts(&pool, NaiveDate::from_ymd_opt(2025, 12, 17).unwrap()).await.unwrap();
+        assert!(early.places.is_empty());
+    }
+
+    /// A person is new on the day of their earliest message, and only if they
+    /// wrote that day: a message you sent first is not one "from" them.
+    #[sqlx::test]
+    async fn day_firsts_finds_people_messaging_for_the_first_time(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO wiki_people (id, name) VALUES
+               ('person_t1', 'Nick'), ('person_old', 'David Okafor'), ('person_quiet', 'Quiet'),
+               ('person_early', 'Early')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        message(&pool, "m_old", "2025-12-10T15:00:00Z", false, "{}", "sender").await;
+        sqlx::query("UPDATE wiki_refs SET entity_id = 'person_old' WHERE id = 'ref_m_old'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        message(&pool, "m_new_to", "2026-01-15T14:00:00Z", false, "{}", "recipient").await;
+        message(&pool, "m_new_from", "2026-01-15T15:00:00Z", false, "{}", "sender").await;
+        message(&pool, "m_new_later", "2026-01-15T18:00:00Z", false, "{}", "sender").await;
+        // Someone you wrote to who never wrote back.
+        message(&pool, "m_quiet", "2026-01-15T16:00:00Z", false, "{}", "recipient").await;
+        sqlx::query("UPDATE wiki_refs SET entity_id = 'person_quiet' WHERE id = 'ref_m_quiet'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        // Someone known before writes again: not new.
+        message(&pool, "m_old_again", "2026-01-15T17:00:00Z", false, "{}", "sender").await;
+        sqlx::query("UPDATE wiki_refs SET entity_id = 'person_old' WHERE id = 'ref_m_old_again'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let day = NaiveDate::from_ymd_opt(2026, 1, 15).unwrap();
+        let f = day_firsts(&pool, day).await.unwrap();
+        assert_eq!(f.people.len(), 1, "{:?}", f.people);
+        assert_eq!(f.people[0].id, "person_t1");
+        assert_eq!(f.people[0].name, "Nick");
+        assert_eq!(f.people[0].at.to_rfc3339(), "2026-01-15T15:00:00+00:00", "their first message, not yours");
+
+        message(&pool, "m_early", "2025-12-17T15:00:00Z", false, "{}", "sender").await;
+        sqlx::query("UPDATE wiki_refs SET entity_id = 'person_early' WHERE id = 'ref_m_early'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let early = day_firsts(&pool, NaiveDate::from_ymd_opt(2025, 12, 17).unwrap()).await.unwrap();
+        assert!(early.people.is_empty(), "a week of record is too little to call anyone new");
+    }
+}

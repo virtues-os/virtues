@@ -1,0 +1,272 @@
+//! User profile API
+//!
+//! This module provides functions for managing the user's biographical profile.
+//! The profile is a singleton table containing non-ephemeral metadata about the user.
+
+use crate::error::{Error, Result};
+use crate::storage::models::UserProfile;
+use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
+
+/// Request to update user profile
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct UpdateProfileRequest {
+    // Identity
+    pub full_name: Option<String>,
+    pub preferred_name: Option<String>,
+    /// Parsed by serde from `"YYYY-MM-DD"` (what an HTML date input submits);
+    /// bound as a real DATE — a String bind fails Postgres's type check.
+    pub birth_date: Option<chrono::NaiveDate>,
+    // Physical/Biometric
+    pub height_cm: Option<f64>,
+    pub weight_kg: Option<f64>,
+    pub ethnicity: Option<String>,
+    // Work/Occupation
+    pub occupation: Option<String>,
+    pub employer: Option<String>,
+    // Home
+    pub home_place_id: Option<String>,
+    /// The city they named as home (Setup's "Where's home?").
+    pub home_city: Option<String>,
+    /// "This person is me" — points at a `wiki_people` row (0080).
+    pub self_person_id: Option<String>,
+    // Onboarding - single status field
+    pub onboarding_status: Option<String>,
+    // Preferences
+    pub theme: Option<String>,
+    /// Timezone of the box's physical home location (IANA). See agents/record/timezone-model.md.
+    pub home_timezone: Option<String>,
+    /// Getting-started sections dismissed from Home. The full array each time —
+    /// the client owns the merge, the box just remembers it.
+    pub getting_started_dismissed: Option<Vec<String>>,
+}
+
+/// Get the user's profile (singleton row)
+///
+/// This will always return a profile, as the migration creates an empty row by default.
+pub async fn get_profile(db: &PgPool) -> Result<UserProfile> {
+    let profile = sqlx::query_as::<_, UserProfile>(
+        r#"
+        SELECT *
+        FROM app_user_profile
+        LIMIT 1
+        "#,
+    )
+    .fetch_one(db)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to fetch user profile: {}", e)))?;
+
+    Ok(profile)
+}
+
+/// Update the user's profile
+///
+/// Only updates fields that are present in the request (not None).
+/// Returns the updated profile.
+pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Result<UserProfile> {
+    // Build dynamic UPDATE with positional pg placeholders ($1, $2, …).
+    let mut set_clauses: Vec<String> = Vec::new();
+    let mut next = 1usize;
+    let push = |col: &str, set_clauses: &mut Vec<String>, next: &mut usize| {
+        set_clauses.push(format!("{} = ${}", col, *next));
+        *next += 1;
+    };
+
+    if request.full_name.is_some()             { push("full_name", &mut set_clauses, &mut next); }
+    if request.preferred_name.is_some()        { push("preferred_name", &mut set_clauses, &mut next); }
+    if request.birth_date.is_some()            { push("birth_date", &mut set_clauses, &mut next); }
+    if request.height_cm.is_some()             { push("height_cm", &mut set_clauses, &mut next); }
+    if request.weight_kg.is_some()             { push("weight_kg", &mut set_clauses, &mut next); }
+    if request.ethnicity.is_some()             { push("ethnicity", &mut set_clauses, &mut next); }
+    if request.occupation.is_some()            { push("occupation", &mut set_clauses, &mut next); }
+    if request.employer.is_some()              { push("employer", &mut set_clauses, &mut next); }
+    if request.home_place_id.is_some()         { push("home_place_id", &mut set_clauses, &mut next); }
+    if request.home_city.is_some()             { push("home_city", &mut set_clauses, &mut next); }
+    if request.self_person_id.is_some()        { push("self_person_id", &mut set_clauses, &mut next); }
+    if request.onboarding_status.is_some()     { push("onboarding_status", &mut set_clauses, &mut next); }
+    if request.theme.is_some()                 { push("theme", &mut set_clauses, &mut next); }
+    if request.home_timezone.is_some()         { push("home_timezone", &mut set_clauses, &mut next); }
+    if request.getting_started_dismissed.is_some() { push("getting_started_dismissed", &mut set_clauses, &mut next); }
+
+    if set_clauses.is_empty() {
+        // No updates requested, just return current profile
+        return get_profile(db).await;
+    }
+
+    // Always update updated_at
+    set_clauses.push("updated_at = now()".to_string());
+
+    let query = format!(
+        "UPDATE app_user_profile SET {} WHERE id = '00000000-0000-0000-0000-000000000001'",
+        set_clauses.join(", ")
+    );
+
+    // Build the query with bindings
+    let mut query_builder = sqlx::query(&query);
+
+    // Bind in the same order as set_clauses
+    if let Some(ref v) = request.full_name {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.preferred_name {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.birth_date {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(v) = request.height_cm {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(v) = request.weight_kg {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.ethnicity {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.occupation {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.employer {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.home_place_id {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.home_city {
+        // An empty city clears it: NULL, not "".
+        let v = v.trim();
+        query_builder = query_builder.bind((!v.is_empty()).then_some(v));
+    }
+    if let Some(ref v) = request.self_person_id {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.onboarding_status {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.theme {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.home_timezone {
+        query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.getting_started_dismissed {
+        query_builder = query_builder.bind(v);
+    }
+
+    query_builder
+        .execute(db)
+        .await
+        .map_err(|e| Error::Database(format!("Failed to update user profile: {}", e)))?;
+
+    // Return updated profile
+    get_profile(db).await
+}
+
+/// Helper to get the user's display name for system prompts
+///
+/// Returns preferred_name if set, otherwise full_name, otherwise "the user"
+pub async fn get_display_name(db: &PgPool) -> Result<String> {
+    let profile = get_profile(db).await?;
+
+    Ok(profile
+        .preferred_name
+        .or(profile.full_name)
+        .unwrap_or_else(|| "the user".to_string()))
+}
+
+/// Get the box's home timezone (IANA), if set. Pure read — no side effects.
+///
+/// `home_timezone` is the timezone of the box's physical location — a stable
+/// anchor + fallback floor, NOT the owner's current location. The per-day
+/// "where the owner was" timezone lives on `wiki_days.start_timezone`.
+/// See agents/record/timezone-model.md.
+///
+/// Returns `None` until [`ensure_home_timezone`] has seeded it (run once at
+/// startup); callers fall back to UTC at the boundary in the meantime.
+pub async fn get_timezone(db: &PgPool) -> Result<Option<String>> {
+    let profile = get_profile(db).await?;
+    Ok(profile.home_timezone)
+}
+
+/// "Wednesday, September 17, 2025 at 6:31 PM PDT" — now, where the person is.
+///
+/// The interactive chat prompt has always used the person's timezone; the
+/// applet and worker prompts each formatted `Utc::now()` and appended "UTC",
+/// so a worker asked about "yesterday" after 5pm Pacific computed tomorrow's
+/// date. One helper, so the three cannot drift again.
+pub async fn local_datetime_line(db: &PgPool) -> String {
+    let now = chrono::Utc::now();
+    match get_timezone(db).await.ok().flatten().and_then(|tz| tz.parse::<chrono_tz::Tz>().ok()) {
+        Some(tz) => now.with_timezone(&tz).format("%A, %B %-d, %Y at %-I:%M %p %Z").to_string(),
+        None => now.format("%A, %B %-d, %Y at %-I:%M %p UTC").to_string(),
+    }
+}
+
+/// Seed `home_timezone` from the box's own system clock if it has never been set.
+/// Idempotent — a no-op once a value exists. Call once at server startup, before
+/// the scheduler resolves cron timezones.
+///
+/// For a self-hosted appliance configured at home, the system clock IS the home
+/// tz. (Cloud/datacenter boxes read "UTC", the honest fallback until the owner
+/// sets it explicitly during onboarding / device pairing.)
+pub async fn ensure_home_timezone(db: &PgPool) -> Result<()> {
+    if get_profile(db).await?.home_timezone.is_some() {
+        return Ok(());
+    }
+    if let Some(sys_tz) = crate::timezone::system_timezone() {
+        update_profile(
+            db,
+            UpdateProfileRequest {
+                home_timezone: Some(sys_tz),
+                ..Default::default()
+            },
+        )
+        .await?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[sqlx::test]
+    async fn birth_date_round_trips_as_a_real_date(pool: PgPool) {
+        // The column is a Postgres `date`. As Option<String> this round-trip
+        // failed on BOTH legs — the bind was rejected at prepare (text vs date)
+        // and, had a value ever landed, `SELECT *` failed to decode it, 500ing
+        // every GET /profile on the box. NaiveDate is the type the column is.
+        let d = chrono::NaiveDate::from_ymd_opt(1990, 1, 15).unwrap();
+        let updated = update_profile(
+            &pool,
+            UpdateProfileRequest { birth_date: Some(d), ..Default::default() },
+        )
+        .await
+        .expect("update with a birth date");
+        assert_eq!(updated.birth_date, Some(d));
+
+        let fetched = get_profile(&pool).await.expect("get after set");
+        assert_eq!(fetched.birth_date, Some(d));
+    }
+
+    #[sqlx::test]
+    async fn home_city_is_kept_and_tells_the_assistant_where_home_is(pool: PgPool) {
+        // Setup always sent the city; with no field for it the update
+        // dropped it silently and the assistant's home line stayed empty.
+        let updated = update_profile(
+            &pool,
+            UpdateProfileRequest {
+                home_city: Some(" Lisbon ".into()),
+                ..Default::default()
+            },
+        )
+        .await
+        .expect("update with a home city");
+        assert_eq!(updated.home_city.as_deref(), Some("Lisbon"));
+
+        let block = crate::api::circumstances::build_circumstances(&pool, None, chrono::Utc::now())
+            .await
+            .expect("circumstances render");
+        assert!(block.contains("They are: home is Lisbon."), "{block}");
+    }
+}

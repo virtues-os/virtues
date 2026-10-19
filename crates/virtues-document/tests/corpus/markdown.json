@@ -1,0 +1,227 @@
+[
+ {
+  "name": "pasted code with a tag",
+  "markdown": "- if (user == null) return <Login/>;\n"
+ },
+ {
+  "name": "a key in angle brackets",
+  "markdown": "- Press <Enter> to confirm, then check that a == b\n"
+ },
+ {
+  "name": "a placeholder tag",
+  "markdown": "- remember <placeholder> here\n"
+ },
+ {
+  "name": "generics",
+  "markdown": "- a Vec<String> == other, and `Vec<T>`\n"
+ },
+ {
+  "name": "criticmarkup in a list",
+  "markdown": "- Draft {--old--} == fine\n"
+ },
+ {
+  "name": "tags on their own lines",
+  "markdown": "<Login/>\n<Logout/>\n\n- x\n"
+ },
+ {
+  "name": "a kbd tag",
+  "markdown": "- Press <kbd>Enter</kbd>\n"
+ },
+ {
+  "name": "criticmarkup suggestion",
+  "markdown": "The {--quick--}{++slow++} fox.\n"
+ },
+ {
+  "name": "contract suggestion tags",
+  "markdown": "Dinner on <virtues-del proposal=\"p1\">Friday</virtues-del><virtues-ins proposal=\"p1\">Saturday</virtues-ins>.\n"
+ },
+ {
+  "name": "front matter",
+  "markdown": "---\ntitle: Trip\n---\n\n## Plan\n\n- [ ] Book seats\n- [x] Pack\n"
+ },
+ {
+  "name": "headings one to six",
+  "markdown": "# One\n\n## Two\n\n### Three\n\n#### Four\n\n##### Five\n\n###### Six\n"
+ },
+ {
+  "name": "aligned table",
+  "markdown": "| Day | Cost |\n| :-- | ---: |\n| Fri | 40 |\n| Sat | 12 |\n"
+ },
+ {
+  "name": "table with an empty header row",
+  "markdown": "| | |\n| - | - |\n| a | b |\n"
+ },
+ {
+  "name": "table cells with marks",
+  "markdown": "| a | b |\n| - | - |\n| **bold** | `code` |\n| [link](https://example.com) | ~~gone~~ |\n"
+ },
+ {
+  "name": "callouts",
+  "markdown": "> [!tip]\n> Bring a jacket.\n\n> [!warning]\n> Mind the step.\n\n> A plain quote.\n"
+ },
+ {
+  "name": "media embeds",
+  "markdown": "![photo.jpg](/drive/file_0123456789abcdef)\n\n![voice.m4a](/drive/df_3)\n\n![](https://example.com/report.pdf)\n\n![Harbour|600](https://images.example.com/photo-1)\n\n![clip.mov](/drive/file_fedcba9876543210)\n"
+ },
+ {
+  "name": "media amid text",
+  "markdown": "Lunch at the harbour ![Harbour](https://images.example.com/photo-1) on Friday.\n"
+ },
+ {
+  "name": "mentions",
+  "markdown": "Lunch with [@Nick](/person/person_1) and [@David Okafor](/person/person_2).\n\n![@Lisbon](/place/place_1)\n"
+ },
+ {
+  "name": "a mention that is no ref",
+  "markdown": "Ask [@Nick](https://example.com/nick).\n"
+ },
+ {
+  "name": "nested lists",
+  "markdown": "- one\n  - nested\n    - deeper\n- two\n\n1. first\n2. second\n   1. inner\n\n3. third after a gap\n"
+ },
+ {
+  "name": "an ordered list starting late",
+  "markdown": "7. seven\n8. eight\n"
+ },
+ {
+  "name": "an ordered list numbered by years",
+  "markdown": "2019. Moved to the coast\n2021. Started the boat\n2024. Sold it\n"
+ },
+ {
+  "name": "an ordered list with a gap",
+  "markdown": "1. one\n2. two\n7. seven\n8. eight\n"
+ },
+ {
+  "name": "an ordered list counting down",
+  "markdown": "3. three\n2. two\n1. one\n"
+ },
+ {
+  "name": "nested ordered lists numbered their own way",
+  "markdown": "1. a\n\n   4. four\n   6. six\n\n3. b\n"
+ },
+ {
+  "name": "an ordered list starting at 0",
+  "markdown": "0. zero\n1. one\n5. five\n"
+ },
+ {
+  "name": "an ordered list numbered 1 to n",
+  "markdown": "1. one\n2. two\n3. three\n"
+ },
+ {
+  "name": "an ordered list numbered lazily",
+  "markdown": "1. Install\n1. Configure\n1. Run\n"
+ },
+ {
+  "name": "link definitions, one used and one not",
+  "markdown": "See [the report][1].\n\n[1]: https://example.com/report \"Q3\"\n[2]: https://example.com/unused\n"
+ },
+ {
+  "name": "a table row wider than its header",
+  "markdown": "| a | b |\n|---|---|\n| 1 | 2 | 3 |\n| `x | y` | z |\n"
+ },
+ {
+  "name": "to-dos among numbered items",
+  "markdown": "1. a\n5. [ ] b\n6. c\n9. d\n"
+ },
+ {
+  "name": "task lists",
+  "markdown": "- [ ] open\n- [x] done\n  - [ ] nested\n"
+ },
+ {
+  "name": "code fences",
+  "markdown": "```rust\nfn main() {\n    println!(\"hi\");\n}\n```\n\n~~~\nplain\n~~~\n\n    indented code\n"
+ },
+ {
+  "name": "inline marks",
+  "markdown": "Some *italic*, **bold**, ***both***, `code`, ~~strike~~ and ==highlight==.\n"
+ },
+ {
+  "name": "operators stay text",
+  "markdown": "a == b and 2 * 3 * 4 and x_y_z\n"
+ },
+ {
+  "name": "hard breaks",
+  "markdown": "Line one  \nline two\\\nline three\n"
+ },
+ {
+  "name": "rules and html",
+  "markdown": "Above\n\n---\n\nBelow\n\n<div>raw <b>html</b></div>\n\n<!-- a comment -->\n"
+ },
+ {
+  "name": "links",
+  "markdown": "[titled](https://example.com \"A title\") and <https://example.com/auto> and [ref][r]\n\n[r]: https://example.com/ref\n"
+ },
+ {
+  "name": "a link with a quote in it",
+  "markdown": "[odd](https://example.com/a\"b)\n"
+ },
+ {
+  "name": "deeply nested quotes",
+  "markdown": "> > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > > Deep.\n"
+ },
+ {
+  "name": "blank",
+  "markdown": "\n\n   \n"
+ },
+ {
+  "name": "unicode",
+  "markdown": "Café — naïve 日本語 🚲\n\n- emoji 🎉 item\n"
+ },
+ {
+  "name": "a script tag in a list",
+  "markdown": "# Setup\n\n- Add <script src=\"/app.js\"></script> before </body>\n"
+ },
+ {
+  "name": "a template tag",
+  "markdown": "- <template>Hello {{name}}</template>\n"
+ },
+ {
+  "name": "a style tag in a line",
+  "markdown": "- use <style>.a{color:red}</style> here\n"
+ },
+ {
+  "name": "a comment before a list",
+  "markdown": "<!-- TODO: check this -->\n- item\n"
+ },
+ {
+  "name": "details and summary",
+  "markdown": "<details><summary>Why?</summary>Because it is.</details>\n"
+ },
+ {
+  "name": "a note with one bullet",
+  "markdown": "Shopping\n- milk\nCall Nick at 5\nBring receipts\n"
+ },
+ {
+  "name": "python with a comment line",
+  "markdown": "# load the config\ndef __init__(self, *args, **kwargs):\n    self.path = base_dir + '/' + file_name\n"
+ },
+ {
+  "name": "shell with a comment line",
+  "markdown": "# install\npip install foo_bar\nexport PATH=$HOME/.local/bin:$PATH  # *not* sudo\n"
+ },
+ {
+  "name": "article: a day page's footnotes",
+  "mode": "article",
+  "markdown": "## Morning[^cx-1]\n\nYou read on the porch.[^ev-1][^ev-2] Then lunch.[^ev-9]\n\n[^cx-1]: 9:05 AM–10:50 AM\n[^ev-1]: Recording · 9:05 AM · data_communication_transcription:tr_1\n[^ev-2]: Chat · 9:30 AM\n"
+ },
+ {
+  "name": "article: an orphan, a definition twice and one running on",
+  "mode": "article",
+  "markdown": "You ran.[^ev-1]\n\n[^ev-1]: Recording · 6:00 AM\n[^ev-1]: Location · 6:30 AM\nby the river\n[^cx-9]: 2:00 PM\n"
+ },
+ {
+  "name": "article: every figure, and fences that are no figure",
+  "mode": "article",
+  "markdown": "```figure\nkind: quote\ntext: Save me a seat.\nwho: Nick\ntime: 9:12 AM\n```\n\n```figure\nkind: thread\nrefs: data_communication_message:msg_8, data_communication_message:msg_9\n```\n\n```figure\nkind: route\n```\n\n```figure\nkind: picture\nsrc: /api/drive/files/f_1/download\ncaption: Rain.\nstyle: watercolor\n```\n\n```figure\nkind: chart\n```\n\n````figure\nkind: route\n````\n"
+ },
+ {
+  "name": "article: veils in a link, around bold, unpaired and across syntax",
+  "mode": "article",
+  "markdown": "With [⟦Nick⟧](/person/person_n) at **⟦the clinic⟧**, ⟦open, and ⟦**bold**⟧, and &#10214;x⟧.\n"
+ },
+ {
+  "name": "article: what is not a footnote",
+  "mode": "article",
+  "markdown": "Smile[^_^] and `[^ev-1]` and \\[^ev-2].\n\n> [^q]: in a quote\n"
+ }
+]

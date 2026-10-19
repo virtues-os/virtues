@@ -1,0 +1,2473 @@
+//! `virtues upgrade` — self-update from a GitHub Release, via atomic slots.
+//!
+//! A release is staged whole into `releases/<slot>/`, preflighted (the STAGED
+//! binary runs `migrate --check` + a `--version` smoke before anything is
+//! touched), then activated by flipping the `current` symlink — binary + web
+//! + actions move together, atomically. Any failure before the flip leaves
+//! the box byte-identical; any failure after flips straight back. `virtues
+//! rollback` is the same flip in reverse. See `cli/slots.rs` for the layout.
+//!
+//! Strictly opt-in. No background auto-upgrade — that lands when the
+//! upgrade path has been battle-tested.
+
+use std::fs::{self, File};
+use std::io::{Read, Write};
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::time::Duration;
+
+use semver::Version;
+
+use sha2::{Digest, Sha256};
+
+use super::{slots, ui};
+
+const BINARY_PATH: &str = "/usr/local/bin/virtues";
+pub(super) const RELEASE_REPO: &str = "virtues-os/virtues";
+const USER_AGENT: &str = concat!("virtues-upgrade/", env!("CARGO_PKG_VERSION"));
+
+/// Transient unit an upgrade or an activation runs under, whether Settings
+/// started it or it re-launched itself out of the service (see
+/// [`relaunched_outside_service`]). Named, so a second one while the first is
+/// running fails on the name collision instead of starting over the top of it.
+pub(crate) const UPGRADE_UNIT: &str = "virtues-upgrade";
+
+/// Transient unit `virtues rollback` re-launches itself under.
+const ROLLBACK_UNIT: &str = "virtues-rollback";
+
+pub async fn run(
+    check: bool,
+    version: Option<String>,
+    pre: bool,
+    force: bool,
+    only: Option<String>,
+) -> Result<(), crate::Error> {
+    // Resolution order: explicit --version, then --pre as a one-off override,
+    // then whatever channel this box is set to follow. `--pre` deliberately
+    // still works without touching the stored channel — it's the "just this
+    // once" escape hatch, and making it sticky would surprise anyone who has
+    // used it before.
+    let channel = super::channel::current();
+    let target_tag = match version {
+        Some(v) => v,
+        None if pre || channel == super::channel::Channel::Prerelease => {
+            fetch_latest_prerelease().await?
+        }
+        None => fetch_latest_tag().await?,
+    };
+    // The BAKED tag, not the crate semver. `codename::version()` documents
+    // itself as the single source of truth for the version everywhere, and this
+    // was the one place that reached past it to `CARGO_PKG_VERSION` — which
+    // every prerelease build shares, whatever tag it was cut from. So a box on
+    // `v0.1.0-staging.58` reported plain `0.1.0`, indistinguishable from
+    // staging.12 or from stable, and the downgrade guard below had to be
+    // switched off for the whole prerelease channel because nothing could be
+    // ordered. With the real tag, `0.1.0-staging.58 < 0.1.0-staging.59 < 0.1.0`
+    // orders exactly as semver says it should, and the guard works everywhere.
+    let current = super::super::codename::version().trim_start_matches('v');
+    let target = target_tag.trim_start_matches('v');
+
+    ui::section("Upgrade");
+    ui::kv("current", current);
+    ui::kv("channel", channel.as_str());
+    ui::kv("target", target);
+    println!();
+
+    // Cheap no-op detection works only for STABLE tags, where the semver is
+    // the whole identity. Prerelease/edge builds all report the bare crate
+    // version, so equality there means nothing — those fall through to the
+    // SHA comparison after download (the fix for "edge→edge is impossible").
+    // `--force` bypasses every equality short-circuit, and so does `--only`:
+    // refreshing the running release's web/ is what it is for.
+    let skip_if_current = equality_short_circuits(force, &only);
+    let is_stable_tag = !target.contains('-') && target.chars().next().is_some_and(|c| c.is_ascii_digit());
+    if skip_if_current && is_stable_tag && target == current {
+        ui::ok(&format!("already on {current} — nothing to do (--force to reinstall)"));
+        return Ok(());
+    }
+    if check {
+        ui::ok(&format!("{target} is available — run `virtues upgrade` to apply"));
+        return Ok(());
+    }
+
+    // Downgrade guard. A stale or tampered "latest", or an explicit older
+    // `--version`, could otherwise roll the box back to a known-vulnerable
+    // build.
+    //
+    // This used to skip the whole prerelease channel, because `current` was the
+    // crate version and every staging build reported the same one — there was
+    // nothing to compare. That is fixed above, so the guard now covers `--pre`
+    // too: a prerelease box is exactly the box most likely to be handed a bad
+    // "latest", and it was the one running without the check.
+    //
+    // `--force` is still the operator override, and unparseable versions (dev
+    // builds, the rolling `edge` tag) skip rather than block — refusing to
+    // upgrade a box because its own version string is odd would be worse than
+    // the risk being guarded against.
+    if !force {
+        if let (Ok(cur), Ok(tgt)) = (Version::parse(current), Version::parse(target)) {
+            if tgt < cur {
+                return Err(crate::Error::Other(format!(
+                    "target {target} is older than current {current} — refusing to \
+                     downgrade (pass --force to override)"
+                )));
+            }
+        }
+    }
+
+    // Only root can write to /usr/local/bin or restart the service.
+    if !running_as_root() {
+        return Err(crate::Error::Other(
+            "virtues upgrade must run as root (try with sudo)".to_string(),
+        ));
+    }
+
+    // `--only` refreshes files in the live slot and never stops the service,
+    // so it can run where it was typed.
+    if only.is_none() && relaunched_outside_service(UPGRADE_UNIT)? {
+        return Ok(());
+    }
+
+    // Single-flight: two concurrent upgrades interleaving binary swaps would
+    // corrupt the install. Held until `run` returns (RAII). A crashed prior run
+    // leaves a stale lock, which we reclaim once its PID is gone.
+    let _lock = acquire_lock()?;
+
+    let arch = host_arch();
+    let asset_name = format!("virtues-{target_tag}-{arch}-linux.tar.gz");
+    let sha_name = format!("{asset_name}.sha256");
+    let base = format!("https://github.com/{RELEASE_REPO}/releases/download/{target_tag}");
+    let asset_url = format!("{base}/{asset_name}");
+    let sha_url = format!("{base}/{sha_name}");
+
+    let work = mkstage()?;
+    let work_path: &Path = work.as_ref();
+    let asset_path = work_path.join(&asset_name);
+
+    ui::step(&format!("downloading {asset_name}…"));
+    download(&asset_url, &asset_path).await?;
+
+    ui::step("verifying sha256…");
+    let expected = fetch_text(&sha_url).await?;
+    let expected_hex = expected.split_whitespace().next().unwrap_or("").to_string();
+    verify_sha(&asset_path, &expected_hex)?;
+    ui::ok("sha256 verified");
+
+    ui::step("extracting…");
+    // Unpacks the whole tarball under `work_path/extracted/` and returns the
+    // `virtues` binary; the sibling artifacts (sidecars, web/, actions/,
+    // actions-bin/) are pulled out of the same tree below.
+    let new_binary = extract_binary(&asset_path, work_path)?;
+    let extracted = work_path.join("extracted");
+
+    // Which artifacts this tarball actually carries. Older releases ship a
+    // subset — every member but `virtues` itself is optional.
+    let new_llama = find_named(&extracted, "llama-server").ok();
+    let new_qnnd = find_named(&extracted, "virtues-qnnd").ok();
+    let web_src = find_dir_named(&extracted, "web").ok();
+    let actions_src = find_dir_named(&extracted, "applets")
+        .or_else(|_| find_dir_named(&extracted, "actions"))
+        .ok();
+    let actions_bin_src = find_dir_named(&extracted, "applets-bin")
+        .or_else(|_| find_dir_named(&extracted, "actions-bin"))
+        .ok();
+    let build_json = find_named(&extracted, "BUILD.json").ok();
+
+    // Build identity from the tarball's BUILD.json (releases since the slot
+    // era carry one). The SHA is the only honest identity for prerelease
+    // builds — every edge build reports the same crate version.
+    let build = read_build_manifest(&extracted);
+    if skip_if_current {
+        if let Some(sha) = build.as_ref().and_then(|b| b.sha.as_deref()) {
+            let running = env!("GIT_COMMIT");
+            if !running.is_empty() && running != "unknown" && sha.starts_with(&running[..running.len().min(7)]) {
+                ui::ok(&format!(
+                    "already on this exact build ({}) — nothing to do (--force to reinstall)",
+                    &sha[..sha.len().min(7)]
+                ));
+                return Ok(());
+            }
+        }
+    }
+
+    // ── `--only web[,actions]` — the fast path ──────────────────────────────
+    // Refresh just the named components IN the current slot, no binary swap,
+    // no migration, no restart (web is static files; actions are re-globbed).
+    // Deliberately mutates the live slot: this is the dev/UI iteration loop,
+    // not a release activation.
+    if let Some(list) = only {
+        let dirs = InstallDirs::resolve();
+        for part in list.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+            match part {
+                "web" => match &web_src {
+                    Some(src) => refresh_named("web UI", src, &canonical(&dirs.web)),
+                    None => ui::warn("tarball carries no web/ — skipped"),
+                },
+                "applets" | "actions" => {
+                    match &actions_src {
+                        Some(src) => refresh_named("applets", src, &canonical(&dirs.actions)),
+                        None => ui::warn("tarball carries no applets/ — skipped"),
+                    }
+                    match &actions_bin_src {
+                        Some(src) => {
+                            refresh_named("applet binaries", src, &canonical(&dirs.applets_bin))
+                        }
+                        None => ui::warn("tarball carries no applets-bin/ — skipped"),
+                    }
+                }
+                other => {
+                    return Err(crate::Error::Other(format!(
+                        "--only {other}: unknown component (web, applets)"
+                    )))
+                }
+            }
+        }
+        println!();
+        ui::ok(&format!("refreshed --only components from {target_tag}"));
+        return Ok(());
+    }
+
+    // ── Slot layout required from here on ───────────────────────────────────
+    let layout = slots::SlotLayout::system();
+    if !layout.exists() {
+        return Err(crate::Error::Other(
+            "this box predates release slots (no `current` link under \
+             /usr/local/share/virtues). Re-run the installer once to adopt the \
+             slot layout:\n\n  curl -sSL https://virtues.com/sh | sudo sh\n"
+                .to_string(),
+        ));
+    }
+    let prior_slot = layout.current_slot();
+
+    // ── Stage the whole release into its slot, then preflight it ────────────
+    let slot_id = slot_id_for(&build, &target_tag);
+    let slot = layout.slot_dir(&slot_id);
+    stage_and_preflight(
+        &layout,
+        &slot,
+        &asset_path,
+        &new_binary,
+        &new_llama,
+        &new_qnnd,
+        &web_src,
+        &actions_src,
+        &actions_bin_src,
+        &build_json,
+        force,
+    )?;
+
+    activate(
+        &layout,
+        &slot,
+        &slot_id,
+        &target_tag,
+        current,
+        target,
+        new_llama.is_some() || new_qnnd.is_some(),
+        prior_slot,
+    )
+    .await
+}
+
+/// Whether an upgrade may stop early because the box already runs the target.
+/// Not under `--force`, and not under `--only`, whose common use is refreshing
+/// the web/ of the release the box is already on.
+fn equality_short_circuits(force: bool, only: &Option<String>) -> bool {
+    !force && only.is_none()
+}
+
+/// This release's slot directory name: `<tag>-<sha7>` when the tarball carries
+/// a manifest, else a timestamp. Shared by [`run`] and [`prepare`] so both name
+/// the same slot for the same artifact — which is what lets `prepare` recognise
+/// that the release it is about to fetch is already sitting on disk.
+fn slot_id_for(build: &Option<BuildManifest>, target_tag: &str) -> String {
+    build
+        .as_ref()
+        .and_then(|b| b.slot_id(target_tag))
+        .unwrap_or_else(|| format!("{target_tag}-{}", chrono::Utc::now().format("%Y%m%dT%H%M%S")))
+}
+
+/// Copy a whole release into its slot and make it prove itself, leaving the box
+/// byte-identical either way.
+///
+/// The preflight is the reason preparation is worth doing ahead of time at all:
+///  1. `--version` smoke — the binary runs on this box at all.
+///  2. `migrate --check` — lineage compatibility, applying nothing. This is what
+///     turns "brick mid-swap on a migration mismatch" into a clean refusal.
+///
+/// `--force` skips only the lineage gate (older targets don't know `--check`),
+/// never the smoke test.
+///
+/// A failed preflight deletes the slot. That matters more now than it did when
+/// this ran inline: an undeleted bad slot would be the newest thing on disk and
+/// would go on failing every subsequent attempt, rather than being re-fetched.
+#[allow(clippy::too_many_arguments)]
+fn stage_and_preflight(
+    layout: &slots::SlotLayout,
+    slot: &Path,
+    asset_path: &Path,
+    binary: &Path,
+    llama: &Option<PathBuf>,
+    qnnd: &Option<PathBuf>,
+    web: &Option<PathBuf>,
+    actions: &Option<PathBuf>,
+    applets_bin: &Option<PathBuf>,
+    build_json: &Option<PathBuf>,
+    force: bool,
+) -> Result<(), crate::Error> {
+    // The scratch filesystem already proved it could hold the unpack; the slots
+    // filesystem is frequently a different one, and has to hold a copy of it.
+    if let Ok(meta) = fs::metadata(asset_path) {
+        ensure_space(
+            &layout.releases_dir(),
+            meta.len() * SLOT_HEADROOM,
+            "stage this release",
+        )?;
+    }
+
+    ui::step(&format!("staging release into {}…", slot.display()));
+    stage_slot(slot, binary, llama, qnnd, web, actions, applets_bin, build_json)?;
+    preflight(slot, force)
+}
+
+/// Make a staged slot prove itself. Deletes the slot on failure — see
+/// [`stage_and_preflight`] for why.
+///
+/// Runs again at activation for a prepared release, because the gap between
+/// preparing and activating is unbounded. `migrate --check` answers a question
+/// about the box's CURRENT schema, and a box that ran migrations from another
+/// source in the meantime can invalidate an answer given days ago. It costs
+/// about a second and is the difference between a clean refusal and a failed
+/// upgrade that has to roll itself back.
+fn preflight(slot: &Path, force: bool) -> Result<(), crate::Error> {
+    let staged_bin = slot.join("virtues");
+    ui::step("preflight: staged binary smoke test…");
+    match Command::new(&staged_bin).arg("--version").output() {
+        Ok(o) if o.status.success() => {
+            ui::ok(&format!("staged: {}", String::from_utf8_lossy(&o.stdout).trim()));
+        }
+        Ok(o) => {
+            let _ = fs::remove_dir_all(slot);
+            return Err(crate::Error::Other(format!(
+                "staged binary failed --version (exit {}); box untouched",
+                o.status
+            )));
+        }
+        Err(e) => {
+            let _ = fs::remove_dir_all(slot);
+            return Err(crate::Error::Other(format!(
+                "staged binary would not run ({e}); box untouched"
+            )));
+        }
+    }
+    if !force {
+        ui::step("preflight: migration lineage check…");
+        match Command::new(&staged_bin).args(["migrate", "--check"]).output() {
+            Ok(o) if o.status.success() => ui::ok("lineage OK"),
+            Ok(o) => {
+                let _ = fs::remove_dir_all(slot);
+                eprintln!("{}", String::from_utf8_lossy(&o.stderr).trim_end());
+                return Err(crate::Error::Other(
+                    "migration preflight refused this release — box untouched \
+                     (see reason above; `--force` overrides at your own risk)"
+                        .to_string(),
+                ));
+            }
+            Err(e) => {
+                let _ = fs::remove_dir_all(slot);
+                return Err(crate::Error::Other(format!(
+                    "could not run migration preflight ({e}); box untouched"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Everything from here on changes the box: dump → stop → flip → migrate →
+/// start → prove healthy, with a flip-back on any failure.
+///
+/// Split from the download-and-preflight half so that half can run on its own,
+/// unattended, hours or days earlier ([`prepare`]). The seam is not arbitrary —
+/// it is the exact line above which the box is byte-identical and below which
+/// it is not, which used to be a comment and is now enforced by the type of
+/// work each function is allowed to do.
+///
+/// `replaces_sidecars` rather than the two binary paths: by activation time all
+/// that matters is whether inference units need bouncing, and a prepared slot
+/// answers that by what it contains, not by what a download found.
+#[allow(clippy::too_many_arguments)]
+async fn activate(
+    layout: &slots::SlotLayout,
+    slot: &Path,
+    slot_id: &str,
+    target_tag: &str,
+    current: &str,
+    target: &str,
+    replaces_sidecars: bool,
+    prior_slot: Option<PathBuf>,
+) -> Result<(), crate::Error> {
+    // Last thing before the box changes. Preflight has passed, so this release
+    // is going in; a dump taken earlier would be paid for on releases we were
+    // about to refuse anyway.
+    let pre_dump = pre_migration_dump(current, target)?;
+
+    // Relay migration: an upgrade from a WireGuard-era release has an orphaned
+    // `virtues-wireguard.service`. Best-effort; no-op on boxes that never had it.
+    disable_legacy_wireguard();
+
+    // ── Stop → flip → migrate → start ───────────────────────────────────────
+    // Sidecars restart only when the release replaces their binaries
+    // (reloading multi-GB GGUFs is slow; don't pay it for an app-only bump).
+    ui::step("stopping virtues.service…");
+    service_stop("virtues");
+    let sidecars = if replaces_sidecars {
+        installed_inference_units()
+    } else {
+        Vec::new()
+    };
+    for unit in &sidecars {
+        service_stop(unit);
+    }
+
+    // On any failure after this point: flip back to the prior slot and
+    // restart, so the box always runs a COMPLETE release (binary + web +
+    // actions together — the old per-component path could not promise that).
+    let flip_back = |layout: &slots::SlotLayout, why: String| -> crate::Error {
+        if let Some(prior) = &prior_slot {
+            let _ = layout.flip(prior);
+            ui::warn(&format!("rolled back to {}", prior.display()));
+        }
+        let _ = service_start("virtues");
+        for unit in &sidecars {
+            let _ = service_start(unit);
+        }
+        restart_display();
+        // The flip restored the binary. If the failure was the migration, the
+        // schema is still forward of it — say where the undo lives rather than
+        // leaving the operator to discover that rollback does not cover data.
+        ui::warn(&format!(
+            "if the schema is the problem, the pre-migration dump is at {}",
+            pre_dump.display()
+        ));
+        crate::Error::Other(why)
+    };
+
+    ui::step("activating release (symlink flip)…");
+    if let Err(e) = layout.flip(slot) {
+        return Err(flip_back(layout, format!("could not flip current → {slot_id}: {e}")));
+    }
+
+    ui::step("running migrations under the new binary…");
+    // The child starts as root but demotes itself to `virtues` almost
+    // immediately (main.rs `maybe_reexec_as_service_user` — Postgres peer
+    // auth). The new binary runs its system repairs in that pre-demotion
+    // instant; the `run()` after this match is THIS binary's own root-context
+    // pass, so that once this orchestrator is the old half of a future
+    // upgrade, repairs fire even if the new binary's hook moves again.
+    match Command::new(BINARY_PATH).arg("migrate").status() {
+        Ok(s) if s.success() => {}
+        Ok(s) => {
+            return Err(flip_back(
+                layout,
+                format!("new binary's `migrate` exited {s} — rolled back"),
+            ))
+        }
+        Err(e) => return Err(flip_back(layout, format!("invoke migrate: {e} — rolled back"))),
+    }
+
+    // This orchestrator's own repair pass — see the comment above the migrate
+    // invocation. Never fails the upgrade.
+    crate::cli::system_repairs::run();
+
+    // The box keeps its default `virtues.local` name; remove the dead
+    // hostname-rename sudoers grant from older installs. Best-effort.
+    remove_stale_setup_sudoers();
+
+    // A search model change that finished since the last upgrade moves onto the
+    // usual sidecar while the server is down. Never fails the upgrade.
+    super::model_set::settle_finished_change(false).await;
+
+    ui::step("starting virtues.service…");
+    match service_start("virtues") {
+        Ok(true) => {}
+        _ => {
+            return Err(flip_back(
+                layout,
+                "systemctl start virtues failed on the new release — rolled back".to_string(),
+            ))
+        }
+    }
+
+    // `systemctl start` on a Type=simple unit returns as soon as the process is
+    // SPAWNED — it proves nothing about whether the new release can actually
+    // serve. A binary that panics on a migration it doesn't understand, or that
+    // can't reach Postgres, "starts" cleanly and then fails every request; with
+    // `Restart=on-failure` it crash-loops while the upgrade reports success.
+    //
+    // /health is the honest signal: it returns 200 only after a `SELECT 1`
+    // against the pool succeeds, so it covers both "bound its port" and "has a
+    // working database". Not becoming healthy is a failed upgrade, and gets the
+    // same slot flip-back as a failed start.
+    ui::step("waiting for the new release to serve…");
+    if !wait_healthy(service_port()).await {
+        // The unit is RUNNING (badly) on this path, unlike every other
+        // flip_back caller. Stop it first: flipping `current` only re-points
+        // the symlink, and the live process keeps its old inode open, so
+        // without this the box would go on serving the broken binary from a
+        // rolled-back slot.
+        service_stop("virtues");
+        return Err(flip_back(
+            layout,
+            format!("{target_tag} started but never became healthy — rolled back"),
+        ));
+    }
+
+    // A unit retired since the list was taken (a finished model change's
+    // temporary sidecar) is gone, not failed.
+    for unit in sidecars.iter().filter(|u| Path::new(&format!("/etc/systemd/system/{u}.service")).exists()) {
+        if let Ok(false) | Err(_) = service_start(unit) {
+            ui::warn(&format!(
+                "{unit} did not start — search/embeddings degraded; check `systemctl status {unit}`"
+            ));
+        }
+    }
+
+    // The panel has been staring at a dead server for the length of the swap.
+    restart_display();
+
+    // A release that is running is no longer a release that is pending. Clear
+    // the pointer before pruning, or `prune` would exempt the same slot twice
+    // and quietly keep one fewer rollback target than the keep-count promises.
+    //
+    // Guarded on identity because a direct `virtues upgrade` can activate
+    // something OTHER than what was prepared (an explicit `--version`, a
+    // channel switch). That prepared release is still downloaded, still valid,
+    // and still the thing the box was about to install — dropping it because an
+    // unrelated upgrade happened to run would throw away 120MB for nothing.
+    //
+    // Unless it is no longer newer: once the box runs something at least as new
+    // as the prepared release, activating that release would be a downgrade,
+    // which `activate_prepared` refuses. Kept, it would pin its slot against
+    // pruning, and Settings would offer an update the button can never install.
+    if let Some(prepared) = layout.prepared_slot() {
+        if prepared == slot || stale_prepared(&prepared, target) {
+            layout.clear_prepared();
+        }
+    }
+
+    // Keep current + one previous; delete older slots.
+    layout.prune(slots::KEEP_SLOTS - 1);
+
+    // `virtues upgrade` swaps binaries; the model files and sidecar units are
+    // provisioned separately. On the recommended setup the release's models
+    // follow it: retire the reranker, and start a background move to a new
+    // embedding model if this release recommends one (`model_set`). Never
+    // fails the upgrade. A box on its own server keeps its owner's models, and
+    // a Dragon's NPU models change only with the installer.
+    super::model_set::start_recommended_change().await;
+
+    println!();
+    ui::ok(&format!(
+        "upgraded to {target_tag} (slot {slot_id}) — `virtues rollback` restores the previous release"
+    ));
+    println!();
+    Ok(())
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Prepare / activate — the two halves, usable apart
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// What a [`prepare`] run concluded. Every variant is a success; the box is
+/// byte-identical in all of them.
+#[derive(Debug)]
+pub enum Prepared {
+    /// This box already runs the newest build on its channel.
+    UpToDate,
+    /// A staged release is already waiting, and still matches the newest build.
+    Already { slot_id: String },
+    /// Downloaded, staged, and preflighted just now.
+    Staged { slot_id: String },
+}
+
+/// The commit a staged slot was built from, per the `BUILD.json` it carries.
+///
+/// This is the identity check that makes repeated preparation cheap, and it
+/// reads the manifest rather than parsing the slot's directory name: the name
+/// is a convenience for humans reading `ls`, while the manifest is what CI
+/// actually stamped. Slots staged before manifests were copied in return
+/// `None`, which costs one re-fetch and then fixes itself.
+fn slot_build_sha(slot: &Path) -> Option<String> {
+    let raw = fs::read(slot.join("BUILD.json")).ok()?;
+    let m: BuildManifest = serde_json::from_slice(&raw).ok()?;
+    m.sha
+}
+
+/// The version a slot holds, from its `BUILD.json`.
+fn slot_version(slot: &Path) -> Option<Version> {
+    let raw = fs::read(slot.join("BUILD.json")).ok()?;
+    let m: BuildManifest = serde_json::from_slice(&raw).ok()?;
+    Version::parse(m.version?.trim_start_matches('v')).ok()
+}
+
+/// Whether a prepared slot is no newer than `running` (a tag such as
+/// `v0.1.10-staging.86`, build metadata allowed), so activating it would be a
+/// downgrade. Compared by semver precedence, which ignores build metadata: a
+/// dev build of staging.86 is running staging.86.
+///
+/// Anything unreadable on either side is NOT stale. Dropping a pointer
+/// wrongly throws away a download, and keeping one wrongly is the behavior
+/// that existed before this check.
+fn stale_prepared(prepared: &Path, running: &str) -> bool {
+    match (slot_version(prepared), Version::parse(running.trim_start_matches('v'))) {
+        (Some(staged), Ok(running)) => staged.cmp_precedence(&running) != std::cmp::Ordering::Greater,
+        _ => false,
+    }
+}
+
+/// Download, verify, stage, and preflight the newest release on this box's
+/// channel — and stop there, with `current` untouched.
+///
+/// This is the half of an upgrade that is safe to run unattended, and the split
+/// is what makes it safe: nothing below the preflight runs, so the box is
+/// byte-identical whether this succeeds or fails. What it buys is that the
+/// expensive and failure-prone work — a ~120MB transfer, an unpack, and the
+/// migration-lineage check — happens while nobody is waiting, so activating
+/// later is a symlink flip, migrations, and a restart.
+///
+/// ## It is nearly free when there is nothing to do
+///
+/// The common case by far is "already current", and answering that costs two
+/// small API calls: the channel's newest tag, then the commit that tag points
+/// at. Only a genuine mismatch reaches the download. That is what makes a
+/// recurring check reasonable — checking is kilobytes, and fetching is the rare
+/// event, not the scheduled one.
+///
+/// Deliberately does NOT decide policy. Whether a given box prepares at all,
+/// and how often, is the caller's business — see the scheduler in `server`.
+pub async fn prepare(force: bool) -> Result<Prepared, crate::Error> {
+    let channel = super::channel::current();
+    let target_tag = match channel {
+        super::channel::Channel::Prerelease => fetch_latest_prerelease().await?,
+        super::channel::Channel::Stable => fetch_latest_tag().await?,
+    };
+
+    let layout = slots::SlotLayout::system();
+    if !layout.exists() {
+        return Err(crate::Error::Other(
+            "this box predates release slots — nothing to prepare into".to_string(),
+        ));
+    }
+
+    // A release staged before the box moved past it (a manual `--version`, a
+    // channel switch) can never be activated, but the pointer still pins its
+    // slot. Nothing else clears it until something newer is staged over it,
+    // which on a quiet channel can be weeks.
+    if let Some(prepared) = layout.prepared_slot() {
+        if stale_prepared(&prepared, super::super::codename::version()) {
+            layout.clear_prepared();
+            layout.prune(slots::KEEP_SLOTS - 1);
+        }
+    }
+
+    // Refuse to prepare a downgrade for the same reason `run` refuses to apply
+    // one: a stale or tampered "latest" must not be able to walk a box back to
+    // a known-vulnerable build.
+    //
+    // This matters more here than in `run`, not less: `prepare` is the
+    // unattended path — it runs on the scheduler, with nobody reading the
+    // output — and it was the one restricted to the stable channel, so the
+    // automatic downloads on prerelease boxes were the unguarded ones.
+    // `codename::version()` gives the real tag, so both channels can be
+    // ordered now.
+    let current = super::super::codename::version().trim_start_matches('v');
+    let target = target_tag.trim_start_matches('v');
+    if !force {
+        if let (Ok(cur), Ok(tgt)) = (Version::parse(current), Version::parse(target)) {
+            if tgt < cur {
+                return Ok(Prepared::UpToDate);
+            }
+        }
+    }
+
+    // The whole no-op path, in a few hundred bytes.
+    let sha = fetch_tag_sha(&target_tag).await?;
+
+    // A box can be running the target without `GIT_COMMIT` proving it (a dev
+    // build, an older binary that didn't stamp one). The slot it booted from
+    // still carries the manifest, so ask that too.
+    let slot_is_target = |slot: &Path| slot_build_sha(slot).is_some_and(|s| sha_eq(&s, &sha));
+
+    // Unconditional — `--force` does NOT override this, and that asymmetry with
+    // `upgrade --force` is deliberate.
+    //
+    // Slot ids are a function of the build, so re-preparing the release you are
+    // already running resolves to the slot `current` points at, and staging
+    // begins by deleting the slot it is about to write. The running process
+    // survives on its open inodes, which is what makes this look harmless on a
+    // live box and is exactly why it isn't: for the duration of the copy,
+    // `current` names a half-written release, and anything that starts in that
+    // window — a restart, an applet subprocess, the health probe — reads it.
+    //
+    // `upgrade --force` accepts that risk because reinstalling in place is its
+    // whole purpose and it restarts into the result. Preparation has no such
+    // purpose: the release that is already running is, by definition, ready.
+    if is_running_commit(&sha) || layout.current_slot().is_some_and(|s| slot_is_target(&s)) {
+        return Ok(Prepared::UpToDate);
+    }
+
+    // This one IS what `--force` overrides: re-fetch a release already staged.
+    if !force {
+        if let Some(p) = layout.prepared_slot() {
+            if slot_is_target(&p) {
+                return Ok(Prepared::Already {
+                    slot_id: slot_name(&p),
+                });
+            }
+        }
+    }
+
+    if !running_as_root() {
+        return Err(crate::Error::Other(
+            "preparing a release must run as root".to_string(),
+        ));
+    }
+
+    // Same single-flight lock a manual upgrade takes. Held only for the fetch
+    // and stage, then released — an unattended prepare must never be the reason
+    // someone's `sudo virtues upgrade` sits there saying nothing.
+    let _lock = acquire_lock()?;
+    sweep_stale_staging();
+
+    let arch = host_arch();
+    let asset_name = format!("virtues-{target_tag}-{arch}-linux.tar.gz");
+    let base = format!("https://github.com/{RELEASE_REPO}/releases/download/{target_tag}");
+    let work = mkstage()?;
+    let work_path: &Path = work.as_ref();
+    let asset_path = work_path.join(&asset_name);
+
+    ui::section("Prepare");
+    ui::kv("channel", channel.as_str());
+    ui::kv("target", target);
+    ui::step(&format!("downloading {asset_name}…"));
+    download(&format!("{base}/{asset_name}"), &asset_path).await?;
+
+    ui::step("verifying sha256…");
+    let expected = fetch_text(&format!("{base}/{asset_name}.sha256")).await?;
+    let expected_hex = expected.split_whitespace().next().unwrap_or("").to_string();
+    verify_sha(&asset_path, &expected_hex)?;
+    ui::ok("sha256 verified");
+
+    ui::step("extracting…");
+    let new_binary = extract_binary(&asset_path, work_path)?;
+    let extracted = work_path.join("extracted");
+    let new_llama = find_named(&extracted, "llama-server").ok();
+    let new_qnnd = find_named(&extracted, "virtues-qnnd").ok();
+    let web_src = find_dir_named(&extracted, "web").ok();
+    let actions_src = find_dir_named(&extracted, "applets")
+        .or_else(|_| find_dir_named(&extracted, "actions"))
+        .ok();
+    let actions_bin_src = find_dir_named(&extracted, "applets-bin")
+        .or_else(|_| find_dir_named(&extracted, "actions-bin"))
+        .ok();
+    let build_json = find_named(&extracted, "BUILD.json").ok();
+    let build = read_build_manifest(&extracted);
+
+    let slot_id = slot_id_for(&build, &target_tag);
+    let slot = layout.slot_dir(&slot_id);
+
+    // The same refusal as above, now that the real slot id is known.
+    //
+    // The check up there compares build manifests, so it cannot fire for a slot
+    // staged before manifests were copied in — and those slots are named by the
+    // same `<tag>-<sha7>` rule, so the id can still collide. Reaching here means
+    // the next line would delete the running release.
+    if layout.current_slot().as_deref() == Some(slot.as_path()) {
+        return Ok(Prepared::UpToDate);
+    }
+
+    stage_and_preflight(
+        &layout,
+        &slot,
+        &asset_path,
+        &new_binary,
+        &new_llama,
+        &new_qnnd,
+        &web_src,
+        &actions_src,
+        &actions_bin_src,
+        &build_json,
+        force,
+    )?;
+
+    layout
+        .set_prepared(&slot)
+        .map_err(|e| crate::Error::Other(format!("could not mark {slot_id} prepared: {e}")))?;
+    // Reclaim whatever this supersedes — an older prepared release is now dead
+    // weight, and it is only reclaimable because the pointer moved off it first.
+    layout.prune(slots::KEEP_SLOTS - 1);
+
+    ui::ok(&format!("{target_tag} is staged and preflighted (slot {slot_id})"));
+    Ok(Prepared::Staged { slot_id })
+}
+
+/// A slot's directory name, for display.
+/// The staged release's slot id (`<tag>-<sha7>`), if one is staged.
+pub fn prepared_slot_id() -> Option<String> {
+    slots::SlotLayout::system().prepared_slot().map(|s| slot_name(&s))
+}
+
+fn slot_name(slot: &Path) -> String {
+    slot.file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| slot.display().to_string())
+}
+
+/// Activate the release [`prepare`] left staged: preflight it again, then flip,
+/// migrate, restart, and prove healthy.
+///
+/// Everything expensive already happened, so this is the short, loud part of an
+/// upgrade — which is the entire point of having prepared. It is also the only
+/// part that needed a human to say go.
+pub async fn activate_prepared() -> Result<(), crate::Error> {
+    if !running_as_root() {
+        return Err(crate::Error::Other(
+            "activating a release must run as root (try with sudo)".to_string(),
+        ));
+    }
+    let _lock = acquire_lock()?;
+
+    let layout = slots::SlotLayout::system();
+    let slot = layout.prepared_slot().ok_or_else(|| {
+        crate::Error::Other(
+            "no prepared release to activate — run `virtues upgrade` to fetch and \
+             install one in a single pass"
+                .to_string(),
+        )
+    })?;
+    let slot_id = slot_name(&slot);
+
+    // Identity from the slot itself. A prepared release may have been staged
+    // days ago by a different process; nothing about it should require another
+    // network round-trip to describe.
+    let build: Option<BuildManifest> = fs::read(slot.join("BUILD.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_slice(&raw).ok());
+    let target = build
+        .as_ref()
+        .and_then(|b| b.version.clone())
+        .unwrap_or_else(|| slot_id.clone());
+
+    // The real running version, not the crate literal — `run()` and `prepare()`
+    // both use this and document why (a box's tag is baked, the binary's
+    // CARGO_PKG_VERSION is whatever it was compiled as). Activation had neither
+    // this nor the downgrade guard below, so a staged release could move a box
+    // BACKWARDS with no check — which is exactly how a master that baked in an
+    // older stable build (before deprovision learned to strip staged releases)
+    // would have flipped a customer's box on their first update click.
+    let current = super::super::codename::version();
+    let current = current.trim_start_matches('v');
+
+    ui::section("Activate");
+    ui::kv("current", current);
+    ui::kv("staged", &slot_id);
+    println!();
+
+    let target_v = target.trim_start_matches('v');
+    if let (Ok(cur), Ok(tgt)) = (Version::parse(current), Version::parse(target_v)) {
+        if tgt < cur {
+            return Err(crate::Error::Other(format!(
+                "the staged release {target} is older than what's running ({current}) — \
+                 refusing to downgrade. Remove it with `virtues upgrade --check` guidance \
+                 or clear the prepared slot."
+            )));
+        }
+    }
+
+    preflight(&slot, false)?;
+
+    // What the slot CONTAINS decides whether sidecars bounce — the download
+    // that would otherwise have answered this happened in another process.
+    let replaces_sidecars = slot.join("llama-server").exists() || slot.join("virtues-qnnd").exists();
+    let prior_slot = layout.current_slot();
+
+    activate(
+        &layout,
+        &slot,
+        &slot_id,
+        &slot_id,
+        current,
+        &target,
+        replaces_sidecars,
+        prior_slot,
+    )
+    .await
+}
+
+/// `virtues rollback` — flip `current` back to the previous release slot and
+/// restart. The inverse of an upgrade's activation: one atomic symlink flip
+/// moves binary + web + actions together. No migrations run — schema rolls
+/// FORWARD only; a rolled-back binary boots with `ignore_missing`, so a
+/// newer-schema DB is tolerated (features that need the newer binary are
+/// simply gone until you upgrade again).
+pub async fn rollback() -> Result<(), crate::Error> {
+    ui::section("Rollback");
+    let layout = slots::SlotLayout::system();
+    if !layout.exists() {
+        return Err(crate::Error::Other(
+            "no release slots on this box (re-run the installer once to adopt the slot layout)"
+                .to_string(),
+        ));
+    }
+    let current = layout
+        .current_slot()
+        .ok_or_else(|| crate::Error::Other("current release link dangles".to_string()))?;
+    let Some(previous) = layout.previous_slot() else {
+        return Err(crate::Error::Other(
+            "no previous release kept — nothing to roll back to".to_string(),
+        ));
+    };
+    ui::kv("current", &current.file_name().unwrap_or_default().to_string_lossy());
+    ui::kv("target", &previous.file_name().unwrap_or_default().to_string_lossy());
+    println!();
+
+    if !running_as_root() {
+        return Err(crate::Error::Other(
+            "virtues rollback must run as root (try with sudo)".to_string(),
+        ));
+    }
+    if relaunched_outside_service(ROLLBACK_UNIT)? {
+        return Ok(());
+    }
+    let _lock = acquire_lock()?;
+
+    ui::step("stopping services…");
+    service_stop("virtues");
+    let sidecars = installed_inference_units();
+    for unit in &sidecars {
+        service_stop(unit);
+    }
+
+    ui::step("flipping current → previous release…");
+    layout
+        .flip(&previous)
+        .map_err(|e| crate::Error::Other(format!("flip failed: {e}")))?;
+
+    ui::step("starting services…");
+    match service_start("virtues") {
+        Ok(true) => {}
+        _ => {
+            // Roll forward again rather than leave the box down on a release
+            // that won't boot.
+            let _ = layout.flip(&current);
+            let _ = service_start("virtues");
+            for unit in &sidecars {
+                let _ = service_start(unit);
+            }
+            restart_display();
+            return Err(crate::Error::Other(
+                "previous release would not start — flipped forward again".to_string(),
+            ));
+        }
+    }
+    for unit in &sidecars {
+        let _ = service_start(unit);
+    }
+    restart_display();
+
+    println!();
+    ui::ok("rolled back — the previous release is active");
+
+    // Rollback moves code, never schema: migrations only roll forward, and the
+    // older binary boots against the newer schema by design. So a rollback
+    // prompted by *data* damage is only half a recovery, and the operator has no
+    // way to know the other half exists unless it is named here.
+    if let Some(dump) = newest_pre_upgrade_dump() {
+        println!();
+        ui::warn("the schema was NOT rolled back — migrations only roll forward.");
+        println!("  If a migration is what went wrong, restore the pre-upgrade dump:");
+        println!(
+            "    sudo -u virtues pg_restore --clean --if-exists --no-owner --no-acl \\\n       -d \"$DATABASE_URL\" {}",
+            dump.display()
+        );
+    }
+    Ok(())
+}
+
+/// The tarball's build identity, written by CI next to the binaries.
+#[derive(serde::Deserialize)]
+struct BuildManifest {
+    version: Option<String>,
+    sha: Option<String>,
+}
+
+impl BuildManifest {
+    /// Directory name for this release's slot: `<tag>-<sha7>`. Unique per
+    /// build (two edge cuts differ by sha), stable per artifact (re-running
+    /// an upgrade re-stages the same slot).
+    fn slot_id(&self, tag: &str) -> Option<String> {
+        let sha = self.sha.as_deref()?;
+        Some(format!("{tag}-{}", &sha[..sha.len().min(7)]))
+    }
+}
+
+/// Read `BUILD.json` from the extracted tarball. Absent on pre-slot-era
+/// releases — every consumer treats it as optional.
+fn read_build_manifest(extracted: &Path) -> Option<BuildManifest> {
+    let p = find_named(extracted, "BUILD.json").ok()?;
+    serde_json::from_slice(&fs::read(p).ok()?).ok()
+}
+
+/// Copy one whole release into its slot dir. The slot is the unit of
+/// activation and rollback, so it carries EVERYTHING the tarball shipped;
+/// only `virtues` itself is mandatory.
+fn stage_slot(
+    slot: &Path,
+    binary: &Path,
+    llama: &Option<PathBuf>,
+    qnnd: &Option<PathBuf>,
+    web: &Option<PathBuf>,
+    actions: &Option<PathBuf>,
+    applets_bin: &Option<PathBuf>,
+    build_manifest: &Option<PathBuf>,
+) -> Result<(), crate::Error> {
+    // Re-staging the same slot id (a retried upgrade) starts clean.
+    let _ = fs::remove_dir_all(slot);
+    fs::create_dir_all(slot)
+        .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", slot.display())))?;
+
+    let copy_bin = |src: &Path, name: &str| -> Result<(), crate::Error> {
+        let dst = slot.join(name);
+        fs::copy(src, &dst)
+            .map_err(|e| crate::Error::Other(format!("stage {name}: {e}")))?;
+        fs::set_permissions(&dst, fs::Permissions::from_mode(0o755))
+            .map_err(|e| crate::Error::Other(format!("chmod {name}: {e}")))?;
+        Ok(())
+    };
+    copy_bin(binary, "virtues")?;
+    if let Some(p) = llama {
+        copy_bin(p, "llama-server")?;
+    }
+    if let Some(p) = qnnd {
+        copy_bin(p, "virtues-qnnd")?;
+    }
+    for (src, name) in [(web, "web"), (actions, "applets"), (applets_bin, "applets-bin")] {
+        if let Some(s) = src {
+            copy_dir_all(s, &slot.join(name))?;
+        }
+    }
+    // Carry the build identity INTO the slot. Until preparation existed, the
+    // manifest was read once from the unpacked tarball and thrown away with the
+    // scratch dir, because activation always followed within the same process.
+    // A prepared slot outlives that process — possibly by days — and whoever
+    // activates it later has to be able to ask what it actually is without
+    // going back to the network.
+    if let Some(src) = build_manifest {
+        let _ = fs::copy(src, slot.join("BUILD.json"));
+    }
+    Ok(())
+}
+
+/// Resolve a well-known path through its symlinks to the real directory —
+/// `--only` must write INTO the current slot, not replace the routing link.
+fn canonical(p: &Path) -> PathBuf {
+    p.canonicalize().unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// Resolved on-box install destinations for the shipped data dirs. (Binaries
+/// are not among them: they install into release slots, see `slot_*`.) The
+/// dirs follow the env vars the installer writes into the box env file,
+/// falling back to the same `/usr/local` well-known defaults
+/// `virtues-installer` uses so a manual `sudo virtues upgrade` (which doesn't
+/// load that env file) still targets the right paths. Mirrors `InstallConfig`
+/// in the installer crate.
+struct InstallDirs {
+    web: PathBuf,
+    actions: PathBuf,
+    applets_bin: PathBuf,
+}
+
+impl InstallDirs {
+    fn resolve() -> Self {
+        let env_dir = |var: &str, default: &str| {
+            std::env::var(var)
+                .ok()
+                .filter(|s| !s.is_empty())
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(default))
+        };
+        // Applets dir: honor whichever env var the box was provisioned with,
+        // in the SAME order the runtime resolves it (applet_templates.rs /
+        // applet_runner.rs try APPLETS_ first, then legacy ACTIONS_). A box
+        // installed before the actions→applets rename only sets the ACTIONS_
+        // vars; defaulting straight to /applets here would refresh into a dir
+        // the runtime never reads (the bug that stranded document_extraction
+        // on the dragon). Falls through to the new default only when neither
+        // is set.
+        let env_dir_multi = |vars: &[&str], default: &str| {
+            vars.iter()
+                .find_map(|v| std::env::var(v).ok().filter(|s| !s.is_empty()))
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from(default))
+        };
+        Self {
+            web: env_dir("STATIC_DIR", "/usr/local/share/virtues/web"),
+            actions: env_dir_multi(
+                &["VIRTUES_APPLETS_DIR", "VIRTUES_ACTIONS_DIR"],
+                "/usr/local/share/virtues/applets",
+            ),
+            applets_bin: env_dir_multi(
+                &["VIRTUES_APPLETS_BIN_DIR", "VIRTUES_ACTIONS_BIN_DIR"],
+                "/usr/local/libexec/virtues",
+            ),
+        }
+    }
+}
+
+/// Atomically replace a shipped directory, logging a uniform success/skip line.
+/// Best-effort: a copy failure leaves the prior dir untouched (install_web
+/// stages into a sibling and only swaps on success) and never aborts the run.
+fn refresh_named(label: &str, src: &Path, dst: &Path) {
+    match install_web(src, dst) {
+        Ok(()) => ui::ok(&format!("refreshed {label} → {}", dst.display())),
+        Err(e) => ui::warn(&format!("{label} not refreshed ({e}); prior copy still in effect")),
+    }
+}
+
+/// Re-launch this command, same binary and argv, in the transient unit `unit`
+/// when it is running inside `virtues.service`'s cgroup. `Ok(true)` means it
+/// did, and the caller stops there: the copy in `unit` does the work.
+///
+/// The app's Terminal is a tmux server the box server spawned, so its shells,
+/// and a `sudo virtues upgrade` typed in one, sit in the service's cgroup.
+/// Stopping `virtues.service` kills that whole cgroup, this command included,
+/// between the stop and the start, and the box stays down. Settings starts
+/// these commands through `systemd-run` for the same reason
+/// (`api::updates::apply`).
+///
+/// No `--pipe` or `--pty`: either ties the unit's output to this process,
+/// which dies with the Terminal, so the upgrade would take a SIGPIPE just
+/// after it stopped the service.
+///
+/// Call it after the checks that refuse without touching anything, so those
+/// still answer where the command was typed, and before [`acquire_lock`],
+/// which the re-launched copy has to take.
+pub(super) fn relaunched_outside_service(unit: &str) -> Result<bool, crate::Error> {
+    // No cgroup file (not Linux) means no service to be inside of.
+    let in_service = fs::read_to_string("/proc/self/cgroup")
+        .is_ok_and(|cgroups| in_unit_cgroup(&cgroups, "virtues.service"));
+    // Without root, the caller refuses before it touches the service.
+    if !in_service || !running_as_root() {
+        return Ok(false);
+    }
+
+    let exe = std::env::current_exe()
+        .map_err(|e| crate::Error::Other(format!("could not find this binary to re-launch it: {e}")))?;
+    let output = Command::new("systemd-run")
+        .args(["--unit", unit, "--collect", "--description"])
+        .arg(format!("{unit} (re-launched from inside virtues.service)"))
+        .arg(&exe)
+        .args(std::env::args_os().skip(1))
+        .output()
+        .map_err(|e| crate::Error::Other(format!("could not invoke systemd-run: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let detail = match stderr.trim() {
+            "" => format!("systemd-run exited {}", output.status),
+            s => s.to_string(),
+        };
+        return Err(crate::Error::Other(format!(
+            "could not start {unit} outside virtues.service ({detail}). Running here \
+             instead would stop the service, and this command with it, partway through. \
+             If one is already running, `journalctl -u {unit} -f` shows it."
+        )));
+    }
+
+    ui::ok(&format!("started as {unit}, outside virtues.service"));
+    ui::skip("when the server restarts, this Terminal will drop and reconnect");
+    ui::kv("log", &format!("journalctl -u {unit} -f"));
+    Ok(true)
+}
+
+/// Whether a `/proc/<pid>/cgroup` body puts the process in the system unit
+/// `unit`, or in a cgroup beneath it. Lines are `id:controllers:path`; cgroup
+/// v2 has one (`0::/system.slice/virtues.service`), a v1 hybrid has the same
+/// path on its `name=systemd` line.
+fn in_unit_cgroup(proc_cgroup: &str, unit: &str) -> bool {
+    let unit_path = format!("/system.slice/{unit}");
+    proc_cgroup.lines().any(|line| {
+        line.splitn(3, ':').nth(2).is_some_and(|path| {
+            path == unit_path || path.strip_prefix(&unit_path).is_some_and(|rest| rest.starts_with('/'))
+        })
+    })
+}
+
+/// `systemctl stop <unit>` — best-effort (a not-yet-running unit is fine).
+/// The inference sidecars actually installed on THIS box.
+///
+/// We ship two backends: the llama.cpp sidecar (`virtues-embed`, plus
+/// `virtues-embed-next` during a model change and `virtues-rerank` on older
+/// installs) and the QNN NPU daemon (`virtues-qnnd`, on Q6A). Hardcoding either
+/// set is wrong for the other — assuming llama.cpp made a healthy Q6A box print
+/// "Unit virtues-embed.service not loaded" and a false "search/embeddings degraded"
+/// on every upgrade. So ask the filesystem instead of guessing.
+/// Inference sidecars to cycle around the swap — the installer's DECLARED
+/// topology, with a filesystem probe as the fallback for boxes older than the
+/// manifest. See `crate::install_manifest`.
+fn installed_inference_units() -> Vec<String> {
+    crate::install_manifest::sidecar_units()
+}
+
+fn service_stop(unit: &str) {
+    let _ = Command::new("systemctl").arg("stop").arg(unit).status();
+}
+
+/// Put the panel back on a live server.
+///
+/// The kiosk is a WebKit page pointed at `localhost:8000/display`; an upgrade
+/// takes that server away for the length of a stop → flip → migrate → start.
+/// `Restart=always` on `virtues-display.service` does not help, because the
+/// *process* never exits — cage and WebKit are perfectly happy, it is only the
+/// page underneath them that has died. So the panel sat on a stale render
+/// while the box moved between releases, and on the far side it was showing an
+/// old page against a new server.
+///
+/// Best-effort and silent on a box with no display: `systemctl restart` on an
+/// absent unit is a non-zero exit and nothing more. Deliberately fire-and-
+/// forget — a kiosk that fails to come back must never fail an upgrade that
+/// otherwise succeeded.
+fn restart_display() {
+    if !Path::new("/etc/systemd/system/virtues-display.service").exists() {
+        return;
+    }
+    let _ = Command::new("systemctl")
+        .args(["restart", "virtues-display"])
+        .status();
+}
+
+/// Relay migration: retire a leftover `virtues-wireguard.service` from a
+/// WireGuard-era box. Stop + disable + remove the unit and binary so it doesn't
+/// idle reconciling a wg0 that pairing no longer populates. All best-effort and
+/// a no-op on boxes that never had WireGuard.
+fn disable_legacy_wireguard() {
+    const UNIT: &str = "virtues-wireguard.service";
+    if !std::path::Path::new("/etc/systemd/system/virtues-wireguard.service").exists() {
+        return;
+    }
+    ui::step("retiring legacy virtues-wireguard.service (relay model)…");
+    let _ = Command::new("systemctl").arg("stop").arg(UNIT).status();
+    let _ = Command::new("systemctl").arg("disable").arg(UNIT).status();
+    let _ = std::fs::remove_file("/etc/systemd/system/virtues-wireguard.service");
+    let _ = std::fs::remove_file("/usr/local/bin/virtues-wireguard");
+    let _ = Command::new("systemctl").arg("daemon-reload").status();
+}
+
+/// `systemctl start <unit>` — `Ok(true)` on success, `Ok(false)` on non-zero
+/// exit, `Err` if systemctl couldn't be invoked.
+fn service_start(unit: &str) -> std::io::Result<bool> {
+    Command::new("systemctl")
+        .arg("start")
+        .arg(unit)
+        .status()
+        .map(|s| s.success())
+}
+
+/// The port `virtues.service` actually serves on, read from the installed
+/// unit's `ExecStart` (`… server --host [::] --port 8000`).
+///
+/// Parsed rather than hardcoded because the probe's failure mode is asymmetric:
+/// probing the wrong port would roll back a perfectly good upgrade. If the unit
+/// is unreadable or its ExecStart has no `--port`, fall back to the same 8000
+/// the installer writes.
+fn service_port() -> u16 {
+    fs::read_to_string("/etc/systemd/system/virtues.service")
+        .ok()
+        .and_then(|u| parse_port_from_unit(&u))
+        .unwrap_or(DEFAULT_SERVICE_PORT)
+}
+
+/// The port the installer writes into `virtues.service`.
+const DEFAULT_SERVICE_PORT: u16 = 8000;
+
+/// Pull `--port N` (or `--port=N`) out of a unit file's `ExecStart` line.
+/// Split out from [`service_port`] so it can be tested without a real
+/// `/etc/systemd/system`.
+fn parse_port_from_unit(unit: &str) -> Option<u16> {
+    let line = unit
+        .lines()
+        .find(|l| l.trim_start().starts_with("ExecStart="))?;
+    let mut it = line.split_whitespace();
+    while let Some(tok) = it.next() {
+        if tok == "--port" {
+            return it.next().and_then(|p| p.parse().ok());
+        }
+        if let Some(p) = tok.strip_prefix("--port=") {
+            return p.parse().ok();
+        }
+    }
+    None
+}
+
+/// Poll the box's own `/health` until it answers 200, or the budget runs out.
+///
+/// Retries rather than probing once: a fresh process has to bind its listener
+/// and open a Postgres pool, and the unit's `Restart=on-failure`/`RestartSec=5`
+/// means a crash-looping binary needs a few cycles before it's distinguishable
+/// from a slow-but-healthy start. 60s covers a cold start comfortably (the unit
+/// itself allows `TimeoutStartSec=120`) without hanging a broken upgrade for
+/// minutes before rolling it back.
+async fn wait_healthy(port: u16) -> bool {
+    const ATTEMPTS: u32 = 30;
+    const EVERY: Duration = Duration::from_secs(2);
+
+    let url = format!("http://127.0.0.1:{port}/health");
+    // Loopback plain HTTP — `base_builder` is the codebase's known-good builder
+    // and is already IPv4-only, which is exactly right for 127.0.0.1.
+    let Ok(client) = crate::http_client::base_builder()
+        .timeout(Duration::from_secs(3))
+        .build()
+    else {
+        // Can't probe → don't claim unhealthy and trigger a spurious rollback.
+        tracing::warn!("could not build health-probe client; skipping the probe");
+        return true;
+    };
+
+    for attempt in 1..=ATTEMPTS {
+        tokio::time::sleep(EVERY).await;
+        if let Ok(r) = client.get(&url).send().await {
+            if r.status().is_success() {
+                ui::ok(&format!(
+                    "health check passed after {}s",
+                    attempt * EVERY.as_secs() as u32
+                ));
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// Exclusive process lock for the duration of an upgrade. Created with
+/// `create_new` (atomic O_EXCL), removed on drop. Lives in `/run` (tmpfs →
+/// auto-cleared on reboot) so a power-loss mid-upgrade never leaves a
+/// permanently-stuck lock.
+const LOCK_PATH: &str = "/run/virtues-upgrade.lock";
+
+pub(super) struct UpgradeLock;
+impl Drop for UpgradeLock {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(LOCK_PATH);
+    }
+}
+
+/// Acquire the single-flight lock, reclaiming a stale one left by a crashed
+/// prior run (its recorded PID no longer exists). Returns an RAII guard whose
+/// drop releases the lock.
+/// How `acquire_lock` starts its refusal. Nothing was attempted, so a caller
+/// that records outcomes (`auto_update::activate_recorded`) leaves it out.
+const LOCK_HELD: &str = "another release operation is already running";
+
+/// True when `err` is `acquire_lock` refusing because another release
+/// operation holds the lock.
+pub fn is_lock_held(err: &crate::Error) -> bool {
+    err.to_string().contains(LOCK_HELD)
+}
+
+pub(super) fn acquire_lock() -> Result<UpgradeLock, crate::Error> {
+    let path = Path::new(LOCK_PATH);
+    loop {
+        match fs::OpenOptions::new().write(true).create_new(true).open(path) {
+            Ok(mut f) => {
+                let _ = write!(f, "{}", std::process::id());
+                return Ok(UpgradeLock);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                // A live holder keeps the lock; a dead one's PID is gone from
+                // /proc, so we reclaim it and retry. An unreadable/corrupt lock
+                // is treated as held (safer to refuse than to clobber).
+                let holder_alive = fs::read_to_string(path)
+                    .ok()
+                    .and_then(|s| s.trim().parse::<u32>().ok())
+                    .map(|pid| Path::new(&format!("/proc/{pid}")).exists())
+                    .unwrap_or(true);
+                if holder_alive {
+                    // Name the scheduled prepare explicitly. It is now the most
+                    // likely holder by far — it runs unattended every few hours
+                    // and can hold the lock for the length of a ~120MB download
+                    // — and "another upgrade is already running" would send
+                    // someone looking for an upgrade nobody started.
+                    return Err(crate::Error::Other(format!(
+                        "{LOCK_HELD} (possibly the scheduled prepare — `journalctl -u \
+                         virtues-prepare`). It releases the lock when it finishes; try \
+                         again shortly."
+                    )));
+                }
+                let _ = fs::remove_file(path); // stale — reclaim and retry
+            }
+            Err(e) => {
+                return Err(crate::Error::Other(format!("acquire upgrade lock: {e}")));
+            }
+        }
+    }
+}
+
+pub(crate) fn running_as_root() -> bool {
+    // Avoids pulling in `nix` or `libc` crates — we read EUID from the
+    // `/proc/self/status` file. Falls back to false (refuse to run) if
+    // we can't tell.
+    let Ok(s) = fs::read_to_string("/proc/self/status") else {
+        return false;
+    };
+    for line in s.lines() {
+        if let Some(rest) = line.strip_prefix("Uid:") {
+            // Format: `Uid:\t<real>\t<effective>\t<saved>\t<fs>`
+            let mut parts = rest.split_whitespace();
+            let _real = parts.next();
+            if let Some(euid) = parts.next() {
+                return euid == "0";
+            }
+        }
+    }
+    false
+}
+
+/// Remove the dead `/etc/sudoers.d/virtues-setup` grant from boxes installed
+/// when the in-app "name your box" rename step still existed. The box now keeps
+/// its default `virtues.local` name, so nothing shells out to `sudo hostnamectl`
+/// anymore. Best-effort — a missing file is the common (clean) case.
+fn remove_stale_setup_sudoers() {
+    const PATH: &str = "/etc/sudoers.d/virtues-setup";
+    if Path::new(PATH).exists() {
+        match fs::remove_file(PATH) {
+            Ok(()) => ui::ok("removed dead box-rename sudoers rule"),
+            Err(e) => ui::warn(&format!("couldn't remove stale {PATH} ({e})")),
+        }
+    }
+}
+
+fn host_arch() -> &'static str {
+    if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else {
+        "unknown"
+    }
+}
+
+/// Build the HTTP client used for all release fetches. When `force_ipv4`, bind
+/// the local socket to an IPv4 address so the connection can't attempt IPv6.
+///
+/// Why: some networks (Tailscale-only, corporate or coworking Wi-Fi) advertise
+/// an IPv6 default route that black-holes — the default connect stalls on the
+/// AAAA record and the update fails with "error sending request", even though
+/// IPv4 egress works fine (curl -4 succeeds). A short connect timeout makes that
+/// stall fail fast so we can retry over IPv4.
+fn build_client(force_ipv4: bool) -> Result<reqwest::Client, crate::Error> {
+    // Start from the shared rooted builder — `reqwest` is `rustls-tls-no-provider`,
+    // so a bare client has no CA roots and every HTTPS request fails to send
+    // (the bug this fixes). `base_builder` installs the provider + OS native
+    // roots and is already IPv4-only (so the IPv6-black-hole case is moot).
+    let mut b = crate::http_client::base_builder()
+        .user_agent(USER_AGENT)
+        .connect_timeout(std::time::Duration::from_secs(10));
+    if force_ipv4 {
+        b = b.local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
+    }
+    b.build()
+        .map_err(|e| crate::Error::Other(format!("build client: {e}")))
+}
+
+/// GET a URL, falling back to IPv4 if the default attempt can't connect/times
+/// out (the IPv6-black-hole symptom). Returns the response after `error_for_status`.
+pub(super) async fn send_get(url: &str) -> Result<reqwest::Response, crate::Error> {
+    let resp = match build_client(false)?.get(url).send().await {
+        Ok(r) => r,
+        Err(e) if e.is_connect() || e.is_timeout() => {
+            tracing::warn!("GET {url} failed ({e}); retrying over IPv4");
+            build_client(true)?
+                .get(url)
+                .send()
+                .await
+                .map_err(|e| crate::Error::Other(format!("GET {url} (ipv4 retry): {e}")))?
+        }
+        Err(e) => return Err(crate::Error::Other(format!("GET {url}: {e}"))),
+    };
+    resp.error_for_status()
+        .map_err(|e| crate::Error::Other(format!("GET {url}: {e}")))
+}
+
+/// One release list carries every product: the box (`vX.Y.Z`,
+/// `vX.Y.Z-staging.N`, `edge`), the Mac, Windows and Linux desktop apps
+/// (`mac-*`, `win-*`, `linux-desktop-*`) and the model bucket (`models-1`, a
+/// prerelease). The upgrader takes the newest match, so a tag from any other
+/// product that gets through wins whenever it is newer, and the upgrade then
+/// 404s on a box asset that release does not carry.
+///
+/// So this says what a box tag is rather than listing what it is not: a list
+/// of other products' prefixes is wrong the day a new product starts tagging.
+fn is_box_tag(tag: &str) -> bool {
+    tag == "edge"
+        || tag
+            .strip_prefix('v')
+            .is_some_and(|rest| rest.starts_with(|c: char| c.is_ascii_digit()))
+}
+
+async fn list_releases() -> Result<Vec<serde_json::Value>, crate::Error> {
+    let url = format!("https://api.github.com/repos/{RELEASE_REPO}/releases?per_page=30");
+    let body: serde_json::Value = send_get(&url)
+        .await
+        .map_err(|e| crate::Error::Other(format!("github api: {e}")))?
+        .json()
+        .await
+        .map_err(|e| crate::Error::Other(format!("parse github json: {e}")))?;
+    body.as_array()
+        .cloned()
+        .ok_or_else(|| crate::Error::Other("github releases: expected an array".to_string()))
+}
+
+fn release_tag(r: &serde_json::Value) -> Option<&str> {
+    r.get("tag_name").and_then(|v| v.as_str())
+}
+fn is_prerelease(r: &serde_json::Value) -> bool {
+    r.get("prerelease").and_then(|v| v.as_bool()).unwrap_or(false)
+}
+fn is_draft(r: &serde_json::Value) -> bool {
+    r.get("draft").and_then(|v| v.as_bool()).unwrap_or(false)
+}
+
+/// Newest stable (non-prerelease) box release tag. The releases list is
+/// newest-first, so the first match wins.
+pub(crate) async fn fetch_latest_tag() -> Result<String, crate::Error> {
+    let rels = list_releases().await?;
+    rels.iter()
+        .filter(|r| !is_draft(r) && !is_prerelease(r))
+        .filter_map(release_tag)
+        .find(|t| is_box_tag(t))
+        .map(|s| s.to_string())
+        .ok_or_else(|| crate::Error::Other("no stable Linux release found".to_string()))
+}
+
+/// Newest *prerelease* box tag (the staging/edge channel).
+pub(crate) async fn fetch_latest_prerelease() -> Result<String, crate::Error> {
+    let rels = list_releases().await?;
+    rels.iter()
+        .filter(|r| !is_draft(r) && is_prerelease(r))
+        .filter_map(release_tag)
+        .find(|t| is_box_tag(t))
+        .map(|s| s.to_string())
+        .ok_or_else(|| {
+            crate::Error::Other("no Linux prerelease found in the latest 30 releases".to_string())
+        })
+}
+
+/// The commit a release tag points at — without downloading the release.
+///
+/// This exists because version strings cannot answer "am I current?" on the
+/// prerelease channel. Every edge build reports the bare `CARGO_PKG_VERSION`,
+/// so comparing versions there is comparing two identical strings; the status
+/// endpoint used to paper over that by reporting an update as permanently
+/// available, which is true roughly as often as it is false and so tells you
+/// nothing. The commit is the only thing that actually distinguishes two
+/// prereleases, and `GIT_COMMIT` is baked into this binary at build time.
+///
+/// Costs a few hundred bytes, against ~120MB for the tarball that also carries
+/// the answer in its `BUILD.json`. That asymmetry is the whole reason checking
+/// and downloading are separate operations.
+///
+/// Annotated tags need a second hop: `refs/tags/x` points at a tag OBJECT,
+/// which in turn points at the commit. Release tooling usually creates
+/// lightweight tags (object type `commit`, one call), but a hand-cut annotated
+/// tag would otherwise resolve to a SHA that matches no commit and read as
+/// "always something newer" — the exact bug this replaces.
+pub(crate) async fn fetch_tag_sha(tag: &str) -> Result<String, crate::Error> {
+    let deref = |v: &serde_json::Value| -> Option<(String, String)> {
+        let obj = v.get("object")?;
+        Some((
+            obj.get("sha")?.as_str()?.to_string(),
+            obj.get("type")?.as_str()?.to_string(),
+        ))
+    };
+
+    let url = format!("https://api.github.com/repos/{RELEASE_REPO}/git/ref/tags/{tag}");
+    let body: serde_json::Value = send_get(&url)
+        .await?
+        .json()
+        .await
+        .map_err(|e| crate::Error::Other(format!("parse git ref json: {e}")))?;
+    let (sha, kind) = deref(&body)
+        .ok_or_else(|| crate::Error::Other(format!("git ref {tag}: no object sha")))?;
+    if kind != "tag" {
+        return Ok(sha);
+    }
+
+    let url = format!("https://api.github.com/repos/{RELEASE_REPO}/git/tags/{sha}");
+    let body: serde_json::Value = send_get(&url)
+        .await?
+        .json()
+        .await
+        .map_err(|e| crate::Error::Other(format!("parse git tag json: {e}")))?;
+    deref(&body)
+        .map(|(sha, _)| sha)
+        .ok_or_else(|| crate::Error::Other(format!("annotated tag {tag}: no target sha")))
+}
+
+/// The commit this binary was built from, if the build stamped one.
+///
+/// `None` for a dev build. Callers need that distinction rather than a bare
+/// bool: "this is a different commit" and "this binary cannot say what it is"
+/// are different answers, and collapsing them is what makes a status endpoint
+/// claim an update is available forever.
+pub fn running_commit() -> Option<&'static str> {
+    let c = env!("GIT_COMMIT");
+    (!c.is_empty() && c != "unknown").then_some(c)
+}
+
+/// Do two commit ids name the same commit?
+///
+/// Compares on the shorter one's length, because the sources genuinely differ:
+/// the GitHub API returns 40 hex chars, `BUILD.json` carries whatever CI's
+/// `GITHUB_SHA` held, and `GIT_COMMIT` is whatever the build stamped — often
+/// abbreviated. Requiring exact equality would be correct today and silently
+/// wrong the first time any one of those changes length, and "silently wrong"
+/// here means re-downloading ~120MB every six hours forever, with no error to
+/// notice. Seven hex chars is git's own abbreviation floor; below that, refuse
+/// to call it a match at all.
+fn sha_eq(a: &str, b: &str) -> bool {
+    let n = a.len().min(b.len()).min(40);
+    n >= 7 && a[..n].eq_ignore_ascii_case(&b[..n])
+}
+
+/// Does `sha` name the commit this binary was built from?
+///
+/// A binary that can't say what it is returns `false` rather than guessing —
+/// reporting "up to date" on unknown provenance is the failure worth avoiding.
+pub fn is_running_commit(sha: &str) -> bool {
+    running_commit().is_some_and(|running| sha_eq(sha, running))
+}
+
+/// A release sitting in the `prepared` slot: downloaded, verified, preflighted,
+/// and not yet activated.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct StagedRelease {
+    /// Slot directory name, e.g. `v0.3.1-a1b2c3d`.
+    pub slot_id: String,
+    /// Version string from the release's own `BUILD.json`, when it carries one.
+    pub version: Option<String>,
+    /// Commit the release was built from, when known.
+    pub sha: Option<String>,
+}
+
+/// What this box has staged and ready, if anything.
+///
+/// Reads the filesystem every call rather than caching. The answer can change
+/// underneath a running server — a scheduled prepare stages one, an activation
+/// consumes it, an operator clears `releases/` by hand — and a cached "ready to
+/// install" that is no longer true is worse than no answer at all.
+pub fn staged_release() -> Option<StagedRelease> {
+    let layout = slots::SlotLayout::system();
+    let slot = layout.prepared_slot()?;
+    // Settings treats a staged release as an available update and the update
+    // button activates it, so an older one would be offered and then refused
+    // as a downgrade, on every click. Falling through to "nothing staged" sends
+    // the button down the full `upgrade` path instead.
+    if stale_prepared(&slot, super::super::codename::version()) {
+        return None;
+    }
+    let build: Option<BuildManifest> = fs::read(slot.join("BUILD.json"))
+        .ok()
+        .and_then(|raw| serde_json::from_slice(&raw).ok());
+    Some(StagedRelease {
+        slot_id: slot_name(&slot),
+        version: build.as_ref().and_then(|b| b.version.clone()),
+        sha: build.as_ref().and_then(|b| b.sha.clone()),
+    })
+}
+
+async fn fetch_text(url: &str) -> Result<String, crate::Error> {
+    let body = send_get(url)
+        .await?
+        .text()
+        .await
+        .map_err(|e| crate::Error::Other(format!("read body: {e}")))?;
+    Ok(body)
+}
+
+async fn download(url: &str, dest: &Path) -> Result<(), crate::Error> {
+    let mut resp = send_get(url).await?;
+    // Refuse before writing rather than after: the failure we're avoiding is a
+    // disk filled to zero by a ~120MB download that was never going to fit its
+    // own unpack, on a box that then can't write anything else either.
+    if let (Some(len), Some(dir)) = (resp.content_length(), dest.parent()) {
+        ensure_space(dir, len * SCRATCH_HEADROOM, "download and unpack this release")?;
+    }
+    let mut file = File::create(dest)
+        .map_err(|e| crate::Error::Other(format!("create {}: {e}", dest.display())))?;
+    while let Some(chunk) = resp
+        .chunk()
+        .await
+        .map_err(|e| crate::Error::Other(format!("download chunk: {e}")))?
+    {
+        file.write_all(&chunk)
+            .map_err(|e| crate::Error::Other(format!("write chunk: {e}")))?;
+    }
+    file.flush()
+        .map_err(|e| crate::Error::Other(format!("flush {}: {e}", dest.display())))?;
+    Ok(())
+}
+
+fn verify_sha(path: &Path, expected_hex: &str) -> Result<(), crate::Error> {
+    let mut f = File::open(path)
+        .map_err(|e| crate::Error::Other(format!("open {}: {e}", path.display())))?;
+    let mut buf = vec![];
+    f.read_to_end(&mut buf)
+        .map_err(|e| crate::Error::Other(format!("read for sha: {e}")))?;
+    let mut h = Sha256::new();
+    h.update(&buf);
+    let got = format!("{:x}", h.finalize());
+    if got != expected_hex.to_lowercase() {
+        return Err(crate::Error::Other(format!(
+            "sha256 mismatch (expected {expected_hex}, got {got}) — refusing to install"
+        )));
+    }
+    Ok(())
+}
+
+fn extract_binary(tarball: &Path, work: &Path) -> Result<PathBuf, crate::Error> {
+    let file = File::open(tarball)
+        .map_err(|e| crate::Error::Other(format!("open tarball: {e}")))?;
+    let gz = flate2::read::GzDecoder::new(file);
+    let mut t = tar::Archive::new(gz);
+    let extract_dir = work.join("extracted");
+    fs::create_dir_all(&extract_dir)
+        .map_err(|e| crate::Error::Other(format!("mkdir extract: {e}")))?;
+    t.unpack(&extract_dir)
+        .map_err(|e| crate::Error::Other(format!("tar unpack: {e}")))?;
+    // Find `virtues` somewhere in the extracted tree.
+    let bin = find_named(&extract_dir, "virtues")?;
+    fs::set_permissions(&bin, fs::Permissions::from_mode(0o755))
+        .map_err(|e| crate::Error::Other(format!("chmod: {e}")))?;
+    Ok(bin)
+}
+
+/// A top-level directory of the extracted release (`web/`, `applets/`, …).
+///
+/// Top level only: the release tarball lays its components out flat
+/// (`release-linux.yml`), and a search that descends would take any nested
+/// directory of the same name — a route folder called `web` inside the SPA
+/// build, say — for the component.
+fn find_dir_named(dir: &Path, name: &str) -> Result<PathBuf, crate::Error> {
+    let path = dir.join(name);
+    if path.is_dir() {
+        Ok(path)
+    } else {
+        Err(crate::Error::Other(format!(
+            "{name}/ not found at the top of the release tarball"
+        )))
+    }
+}
+
+/// Replace the contents of `dst` with the freshly-extracted `src` directory.
+/// Copies into a sibling temp dir, then swaps via move-aside + rename so a
+/// failure mid-swap leaves the prior dir recoverable rather than an empty hole.
+/// Used for `web/`, `actions/`, and `actions-bin/` alike — `fs::copy` preserves
+/// the exec bit, so the swapped-in action binaries stay runnable. (Named for
+/// its original web-only use; now generic via `refresh_named`.)
+fn install_web(src: &Path, dst: &Path) -> Result<(), crate::Error> {
+    let parent = dst
+        .parent()
+        .ok_or_else(|| crate::Error::Other("target dir has no parent".to_string()))?;
+    fs::create_dir_all(parent)
+        .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", parent.display())))?;
+    // Per-destination temp names (derived from the leaf) so refreshing two dirs
+    // that share a parent — `web/` and `actions/` both live under
+    // /usr/local/share/virtues — can't stomp each other's staging area.
+    let leaf = dst
+        .file_name()
+        .and_then(|s| s.to_str())
+        .unwrap_or("dir");
+    let staged = parent.join(format!(".virtues-{leaf}.upgrade-tmp"));
+    let old = parent.join(format!(".virtues-{leaf}.upgrade-old"));
+    let _ = fs::remove_dir_all(&staged);
+    let _ = fs::remove_dir_all(&old);
+    copy_dir_all(src, &staged)?;
+
+    // Non-destructive swap: move the live dir ASIDE first, then move the new
+    // one into place. A failure (or a kill) between the two renames leaves the
+    // old dir recoverable at `old` — never an empty hole. Critical for
+    // `actions-bin/`: a destructive remove-then-rename that died mid-swap would
+    // wipe every action executable until a reinstall.
+    let had_prior = dst.exists();
+    if had_prior {
+        fs::rename(dst, &old)
+            .map_err(|e| crate::Error::Other(format!("move aside {}: {e}", dst.display())))?;
+    }
+    if let Err(e) = fs::rename(&staged, dst) {
+        if had_prior {
+            let _ = fs::rename(&old, dst); // restore the working dir
+        }
+        return Err(crate::Error::Other(format!(
+            "swap dir into {}: {e}",
+            dst.display()
+        )));
+    }
+    let _ = fs::remove_dir_all(&old);
+    Ok(())
+}
+
+fn copy_dir_all(src: &Path, dst: &Path) -> Result<(), crate::Error> {
+    fs::create_dir_all(dst)
+        .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", dst.display())))?;
+    for entry in
+        fs::read_dir(src).map_err(|e| crate::Error::Other(format!("read {}: {e}", src.display())))?
+    {
+        let entry = entry.map_err(|e| crate::Error::Other(format!("dir entry: {e}")))?;
+        let from = entry.path();
+        let to = dst.join(entry.file_name());
+        if from.is_dir() {
+            copy_dir_all(&from, &to)?;
+        } else {
+            fs::copy(&from, &to)
+                .map_err(|e| crate::Error::Other(format!("copy {}: {e}", from.display())))?;
+        }
+    }
+    Ok(())
+}
+
+fn find_named(dir: &Path, name: &str) -> Result<PathBuf, crate::Error> {
+    for entry in fs::read_dir(dir)
+        .map_err(|e| crate::Error::Other(format!("read {}: {e}", dir.display())))?
+    {
+        let entry = entry.map_err(|e| crate::Error::Other(format!("dir entry: {e}")))?;
+        let path = entry.path();
+        if path.is_dir() {
+            if let Ok(found) = find_named(&path, name) {
+                return Ok(found);
+            }
+        } else if path.file_name().and_then(|s| s.to_str()) == Some(name) {
+            return Ok(path);
+        }
+    }
+    Err(crate::Error::Other(format!(
+        "{name} not found inside the release tarball"
+    )))
+}
+
+struct Stage(PathBuf);
+impl Drop for Stage {
+    fn drop(&mut self) {
+        let _ = fs::remove_dir_all(&self.0);
+    }
+}
+impl AsRef<Path> for Stage {
+    fn as_ref(&self) -> &Path {
+        &self.0
+    }
+}
+
+/// Scratch space for a download + unpack, in the state root.
+///
+/// Deliberately NOT `std::env::temp_dir()`. On the boxes we ship, `/tmp` is
+/// frequently tmpfs — so the old path spooled a ~120MB tarball and its ~350MB
+/// unpacked tree through RAM, on exactly the hardware (Q6A, Jetson) with the
+/// least of it to spare. That was survivable when an upgrade only ever ran
+/// because a human typed it and watched. It is not survivable unattended, which
+/// is what [`prepare`] does.
+const STAGING_DIR: &str = "/var/lib/virtues/upgrade-staging";
+
+fn mkstage() -> Result<Stage, crate::Error> {
+    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%f");
+    let path = Path::new(STAGING_DIR).join(format!("upgrade-{stamp}"));
+    fs::create_dir_all(&path)
+        .map_err(|e| crate::Error::Other(format!("staging dir {}: {e}", path.display())))?;
+    Ok(Stage(path))
+}
+
+/// Sweep scratch dirs left by a killed or crashed run. `Stage` removes its own
+/// on drop, but a SIGKILL mid-download leaves ~500MB behind, and unlike the old
+/// `/tmp` location nothing here is cleared by a reboot — the same durability
+/// that keeps us off tmpfs also means nobody else takes out the garbage.
+fn sweep_stale_staging() {
+    let Ok(entries) = fs::read_dir(STAGING_DIR) else { return };
+    for e in entries.flatten().filter(|e| e.path().is_dir()) {
+        let _ = fs::remove_dir_all(e.path());
+    }
+}
+
+/// Bytes free on the filesystem holding `path`, or `None` if it can't be
+/// measured. Walks up to the nearest existing ancestor so it also answers for a
+/// directory we are about to create.
+///
+/// Linux-only, because `libc` is a Linux-only dependency here and this whole
+/// module targets a systemd box. Elsewhere — a developer's macOS checkout —
+/// it reports "unmeasurable", which [`ensure_space`] already treats as "allow
+/// through". Nothing that runs on a real box loses the guard.
+#[cfg(target_os = "linux")]
+fn free_bytes(path: &Path) -> Option<u64> {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+
+    let mut probe = path;
+    let existing = loop {
+        if probe.exists() {
+            break probe;
+        }
+        probe = probe.parent()?;
+    };
+
+    let c = CString::new(existing.as_os_str().as_bytes()).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    (st.f_bavail as u64).checked_mul(st.f_frsize as u64)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn free_bytes(_path: &Path) -> Option<u64> {
+    None
+}
+
+/// Refuse before writing when the filesystem clearly can't hold the result.
+///
+/// Checked per-path rather than once, because the scratch space (state root) and
+/// the slots (`/usr/local/share`) are routinely different filesystems — a single
+/// check against one of them would happily green-light filling the other.
+///
+/// An unmeasurable filesystem is allowed through. This guard exists to turn a
+/// confusing half-written failure into a clear refusal, and blocking a
+/// legitimate upgrade because `statvfs` didn't answer would be a worse bug than
+/// the one it prevents.
+pub(super) fn ensure_space(path: &Path, need: u64, what: &str) -> Result<(), crate::Error> {
+    let Some(free) = free_bytes(path) else { return Ok(()) };
+    if free >= need {
+        return Ok(());
+    }
+    let mb = |b: u64| b / 1_048_576;
+    Err(crate::Error::Other(format!(
+        "not enough space to {what}: {} needs about {}MB free, has {}MB",
+        path.display(),
+        mb(need),
+        mb(free),
+    )))
+}
+
+/// How far a release tarball inflates when unpacked, as a multiple of the
+/// compressed asset.
+///
+/// Measured on a real box rather than guessed: the aarch64 `edge` tarball is
+/// 120MB and unpacks to 360MB, so 3.0×. (`applets-bin` is two thirds of it —
+/// 236MB — which is why the ratio is higher than "mostly already-compressed
+/// binaries" would suggest.)
+const UNPACK_INFLATION: u64 = 3;
+
+/// Space the SCRATCH directory needs: the tarball and its unpacked tree live
+/// there at the same time, so it is the download plus everything the download
+/// becomes.
+///
+/// This was `UNPACK_INFLATION` alone, which was simply wrong — it budgeted for
+/// the unpacked tree and forgot the ~120MB archive sitting beside it. A box
+/// with 400MB free passed the check and then had 40MB left, which is the exact
+/// outcome the guard exists to prevent.
+const SCRATCH_HEADROOM: u64 = UNPACK_INFLATION + 1;
+
+/// Space the SLOTS directory needs: one copy of the unpacked tree. The tarball
+/// never goes here, so this is genuinely smaller than the scratch requirement —
+/// and they are frequently different filesystems, which is why they are
+/// budgeted apart rather than with one number that has to be wrong somewhere.
+const SLOT_HEADROOM: u64 = UNPACK_INFLATION;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_skips_the_already_current_short_circuit() {
+        assert!(equality_short_circuits(false, &None));
+        assert!(!equality_short_circuits(true, &None));
+        assert!(
+            !equality_short_circuits(false, &Some("web".into())),
+            "--only web must be able to refresh the release the box already runs"
+        );
+    }
+
+    #[test]
+    fn box_tags_are_the_only_releases_an_upgrade_considers() {
+        for tag in ["v0.1.0", "v0.1.1-staging.2", "v12.0.3", "edge"] {
+            assert!(is_box_tag(tag), "{tag} is a box release");
+        }
+        for tag in [
+            "mac-v1.0.30",
+            "mac-latest",
+            "mac-edge",
+            "win-v1.0.0",
+            "win-edge",
+            "linux-desktop-v1.0.0",
+            "linux-desktop-edge",
+            "models-1",
+            "v",
+            "vnext",
+            "edge-2",
+        ] {
+            assert!(!is_box_tag(tag), "{tag} is not a box release");
+        }
+    }
+
+    #[test]
+    fn find_dir_named_looks_only_at_the_top_level() {
+        let d = tempfile::tempdir().unwrap();
+        fs::create_dir_all(d.path().join("applets/web")).unwrap();
+        assert!(
+            find_dir_named(d.path(), "web").is_err(),
+            "a nested web/ is not the release's web component"
+        );
+        fs::create_dir_all(d.path().join("web")).unwrap();
+        assert_eq!(find_dir_named(d.path(), "web").unwrap(), d.path().join("web"));
+    }
+
+    fn slot_with_version(name: &str, version: Option<&str>) -> PathBuf {
+        let d = std::env::temp_dir().join(format!("stale-prepared-{}-{name}", std::process::id()));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        if let Some(v) = version {
+            fs::write(d.join("BUILD.json"), format!(r#"{{"version":"{v}","sha":"cf71b22"}}"#)).unwrap();
+        }
+        d
+    }
+
+    /// The case found on a bench box: v0.1.9 staged by the nightly, then the
+    /// box moved to a staging build by hand. That release can never activate.
+    #[test]
+    fn a_prepared_release_older_than_the_running_one_is_stale() {
+        let s = slot_with_version("older", Some("v0.1.9"));
+        assert!(stale_prepared(&s, "v0.1.10-staging.86"));
+        assert!(stale_prepared(&s, "v0.1.10-staging.86+136.gebfb6879"), "dev builds carry build metadata");
+        assert!(stale_prepared(&s, "v0.1.9"), "the same release is not an update either");
+    }
+
+    #[test]
+    fn a_prepared_release_newer_than_the_running_one_is_kept() {
+        let s = slot_with_version("newer", Some("v0.1.10-staging.88"));
+        assert!(!stale_prepared(&s, "v0.1.10-staging.86"));
+        assert!(!stale_prepared(&s, "v0.1.9"));
+        let stable = slot_with_version("stable", Some("v0.1.10"));
+        assert!(!stale_prepared(&stable, "v0.1.10-staging.88"), "a stable release outranks its prereleases");
+    }
+
+    /// Unreadable means unknown, and unknown keeps the pointer: dropping it
+    /// wrongly discards a download, keeping it wrongly is the old behavior.
+    #[test]
+    fn anything_unreadable_is_not_stale() {
+        let none = slot_with_version("no-manifest", None);
+        assert!(!stale_prepared(&none, "v0.1.10"));
+        let junk = slot_with_version("junk-version", Some("not-a-version"));
+        assert!(!stale_prepared(&junk, "v0.1.10"));
+        let s = slot_with_version("dev-running", Some("v0.1.9"));
+        assert!(!stale_prepared(&s, "0.1.0-dirty-unparseable+"), "an unparseable running version");
+    }
+
+    /// The scratch directory holds the tarball AND its unpacked tree at once,
+    /// so its budget must exceed the slots budget by exactly one tarball.
+    /// Getting this wrong is silent: the check passes and the disk fills.
+    #[test]
+    fn scratch_budget_covers_the_archive_as_well_as_what_it_unpacks_to() {
+        // The real aarch64 edge tarball, and what it actually unpacks to.
+        const TARBALL_MB: u64 = 120;
+        const UNPACKED_MB: u64 = 360;
+
+        assert_eq!(
+            UNPACKED_MB,
+            TARBALL_MB * UNPACK_INFLATION,
+            "measured inflation drifted from the constant"
+        );
+        assert!(
+            TARBALL_MB * SCRATCH_HEADROOM >= TARBALL_MB + UNPACKED_MB,
+            "scratch budget must hold the archive plus the unpacked tree"
+        );
+        assert!(
+            TARBALL_MB * SLOT_HEADROOM >= UNPACKED_MB,
+            "slot budget must hold the unpacked tree"
+        );
+        assert!(
+            SCRATCH_HEADROOM > SLOT_HEADROOM,
+            "scratch needs strictly more than slots — it also holds the archive"
+        );
+    }
+
+    /// The refusal branch, which no real box has exercised: every machine this
+    /// has run on had tens of gigabytes free. An unmeasurable filesystem is
+    /// allowed through on purpose — blocking a legitimate upgrade because
+    /// `statvfs` didn't answer would be worse than the failure being guarded.
+    #[test]
+    fn ensure_space_refuses_only_when_it_can_measure_a_shortfall() {
+        let dir = std::env::temp_dir();
+        let free = free_bytes(&dir);
+
+        // Never satisfiable on any real disk.
+        let absurd = u64::MAX / 2;
+        match free {
+            Some(_) => {
+                let err = ensure_space(&dir, absurd, "do the thing")
+                    .expect_err("a request for 8EB must be refused");
+                let msg = err.to_string();
+                // The message has to name the path and both numbers, or it
+                // sends someone to the box to work out which disk is full.
+                assert!(msg.contains("do the thing"), "names the operation: {msg}");
+                assert!(msg.contains(&dir.display().to_string()), "names the path: {msg}");
+                assert!(msg.contains("MB free"), "reports what is actually free: {msg}");
+            }
+            // Non-Linux: free_bytes is a stub, so everything passes.
+            None => assert!(ensure_space(&dir, absurd, "do the thing").is_ok()),
+        }
+
+        // Zero need always passes, measurable or not.
+        assert!(ensure_space(&dir, 0, "do nothing").is_ok());
+    }
+
+    /// `sha_eq` gates every download decision: it decides whether a box is
+    /// already on a release, and whether a staged one still matches. A false
+    /// negative costs ~120MB on every scheduled pass, silently and forever.
+    #[test]
+    fn sha_eq_matches_across_abbreviations() {
+        let full = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+        assert!(sha_eq(full, full));
+        assert!(sha_eq(full, "a1b2c3d"), "40-char vs git's 7-char abbreviation");
+        assert!(sha_eq("a1b2c3d", full), "argument order is irrelevant");
+        assert!(sha_eq(full, "A1B2C3D"), "hex case is not identity");
+
+        assert!(!sha_eq(full, "a1b2c3e4e5f60718293a4b5c6d7e8f9012345678"));
+        assert!(!sha_eq(full, "b1b2c3d"));
+    }
+
+    /// Too short to be a commit id is not the same as "matches everything" —
+    /// an empty or truncated value must never read as a match, or a box with a
+    /// malformed manifest would conclude it is up to date with anything.
+    #[test]
+    fn sha_eq_refuses_below_gits_abbreviation_floor() {
+        let full = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678";
+        assert!(!sha_eq(full, ""));
+        assert!(!sha_eq("", ""));
+        assert!(!sha_eq(full, "a1b2c3"), "six chars is below the floor");
+        assert!(sha_eq(full, "a1b2c3d"), "seven is exactly the floor");
+    }
+
+    /// A binary that cannot say what commit it is must report "not current"
+    /// rather than guessing. Claiming up-to-date on unknown provenance is how a
+    /// box quietly stops updating.
+    #[test]
+    fn unknown_provenance_never_reads_as_current() {
+        // Whatever this build stamped, an empty candidate is never a match.
+        assert!(!is_running_commit(""));
+        if running_commit().is_none() {
+            assert!(!is_running_commit("a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"));
+        }
+    }
+
+    /// The unit the installer actually writes today.
+    const REAL_UNIT: &str = "\
+[Service]
+Type=simple
+ExecStartPre=/bin/sh -c 'until pg_isready -t 1; do sleep 1; done'
+ExecStart=/usr/local/bin/virtues server --host [::] --port 8000
+TimeoutStartSec=120
+";
+
+    #[test]
+    fn reads_the_port_the_installer_writes() {
+        assert_eq!(parse_port_from_unit(REAL_UNIT), Some(8000));
+    }
+
+    #[test]
+    fn reads_a_hand_edited_port() {
+        // The whole reason this is parsed and not hardcoded: probing the wrong
+        // port would roll back a healthy upgrade.
+        let unit = REAL_UNIT.replace("--port 8000", "--port 9123");
+        assert_eq!(parse_port_from_unit(&unit), Some(9123));
+    }
+
+    #[test]
+    fn accepts_the_equals_form() {
+        let unit = REAL_UNIT.replace("--port 8000", "--port=9123");
+        assert_eq!(parse_port_from_unit(&unit), Some(9123));
+    }
+
+    #[test]
+    fn ignores_a_port_outside_execstart() {
+        // ExecStartPre mentions no port, but a sloppier scan of the whole file
+        // could pick up an unrelated one. Only ExecStart counts.
+        let unit = "[Service]\nEnvironment=SOME_PORT=--port 1234\nExecStart=/usr/local/bin/virtues server --port 8000\n";
+        assert_eq!(parse_port_from_unit(unit), Some(8000));
+    }
+
+    #[test]
+    fn no_port_falls_back_to_the_caller_default() {
+        let unit = "[Service]\nExecStart=/usr/local/bin/virtues server\n";
+        assert_eq!(parse_port_from_unit(unit), None);
+    }
+
+    #[test]
+    fn no_execstart_at_all() {
+        assert_eq!(parse_port_from_unit("[Unit]\nDescription=x\n"), None);
+    }
+
+    #[test]
+    fn a_terminal_shell_sits_in_the_service_cgroup() {
+        assert!(in_unit_cgroup("0::/system.slice/virtues.service\n", "virtues.service"));
+        // A cgroup v1 hybrid names the unit on its systemd line.
+        assert!(in_unit_cgroup(
+            "12:cpuset:/\n1:name=systemd:/system.slice/virtues.service\n0::/\n",
+            "virtues.service"
+        ));
+    }
+
+    #[test]
+    fn other_cgroups_are_not_the_service() {
+        assert!(!in_unit_cgroup("0::/user.slice/user-1000.slice/session-3.scope\n", "virtues.service"));
+        // The re-launched copy itself. Matching here would re-launch forever.
+        assert!(!in_unit_cgroup("0::/system.slice/virtues-upgrade.service\n", "virtues.service"));
+        assert!(!in_unit_cgroup("", "virtues.service"));
+    }
+}
+
+/// Pre-upgrade dumps live beside `virtues backup`'s output: an operator hunting
+/// for "the thing that can undo this" should find both in one directory.
+const PRE_UPGRADE_DIR: &str = "/var/lib/virtues/backups";
+
+/// Floor for the free-space guard when the database size cannot be measured.
+/// Filling the disk and *then* failing a migration is strictly worse than not
+/// upgrading, so an unmeasurable box gets a conservative fixed requirement.
+const PRE_UPGRADE_MIN_FREE: u64 = 2 * 1024 * 1024 * 1024;
+
+/// Dump the database before migrations run, and return the dump's path.
+///
+/// `virtues rollback` re-flips `current` and restarts. It does not touch the
+/// schema, because migrations only ever roll forward — `database::run_migrations`
+/// sets `ignore_missing`, and an older binary is expected to boot against a newer
+/// schema. So a migration that destroys data leaves rollback restoring *code onto
+/// damaged data*, which is the one failure the slot system cannot cover on its own.
+/// This closes it.
+///
+/// It is the data half of a release slot, not a backup: no encryption (the box
+/// already holds the key, and this never leaves it), no manifest, no lake, and it
+/// is pruned in lockstep with the slots it corresponds to.
+///
+/// Runs as `virtues`, not root. `upgrade` requires root and is deliberately
+/// absent from main.rs's `DB_COMMANDS` re-exec list, so a pg_dump inheriting this
+/// process's identity would authenticate to a peer-auth cluster as `root` and be
+/// refused.
+fn pre_migration_dump(from: &str, to: &str) -> Result<PathBuf, crate::Error> {
+    let dir = PathBuf::from(PRE_UPGRADE_DIR);
+    let existed = dir.is_dir();
+    fs::create_dir_all(&dir)
+        .map_err(|e| crate::Error::Other(format!("creating {PRE_UPGRADE_DIR}: {e}")))?;
+    // `upgrade` runs as root, so a directory it creates lands root-owned — but
+    // the dump below is written by `pg_dump` running as `virtues` (peer auth
+    // requires it), which then cannot write there. Every sibling under the data
+    // dir is virtues-owned for the same reason; this one has to match.
+    //
+    // Also repairs a directory an earlier build left root-owned, which
+    // additionally broke `virtues backup`, since that writes here too.
+    if !existed || !dir_is_service_owned(&dir) {
+        crate::cli::restore::give_to_service_user(&dir);
+    }
+
+    let need = database_size_bytes().unwrap_or(PRE_UPGRADE_MIN_FREE);
+    if let Some(free) = crate::storage::lake::free_bytes_at(&dir) {
+        if free < need {
+            return Err(crate::Error::Other(format!(
+                "refusing to upgrade: the pre-migration dump needs ~{} MB and {} has \
+                 {} MB free. Migrations roll forward only, so upgrading without this \
+                 dump means `virtues rollback` could not undo a migration that ate \
+                 data. Free some space, or re-run with --force to skip the guard.",
+                need / (1024 * 1024),
+                dir.display(),
+                free / (1024 * 1024),
+            )));
+        }
+    }
+
+    let dest = dir.join(format!(
+        "pre-upgrade-{}-{}.dump",
+        sanitize_tag(from),
+        sanitize_tag(to)
+    ));
+    ui::step("preflight: dumping database before migration…");
+    let status = Command::new("sudo")
+        .args(["-u", "virtues", "pg_dump", "--format=custom", "--no-owner", "--no-acl", "-f"])
+        .arg(&dest)
+        .status()
+        .map_err(|e| crate::Error::Other(format!("invoking pg_dump: {e}")))?;
+    if !status.success() {
+        let _ = fs::remove_file(&dest);
+        return Err(crate::Error::Other(format!(
+            "pre-migration pg_dump exited {status}; box untouched"
+        )));
+    }
+    let size = fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
+    ui::ok(&format!(
+        "dumped {} ({:.1} MB)",
+        dest.display(),
+        size as f64 / (1024.0 * 1024.0)
+    ));
+    prune_pre_upgrade_dumps(slots::KEEP_SLOTS);
+    Ok(dest)
+}
+
+/// Is the directory already owned by the service user? Avoids shelling out to
+/// `chown` on every upgrade once it is correct.
+fn dir_is_service_owned(dir: &Path) -> bool {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(meta) = fs::metadata(dir) else {
+            return false;
+        };
+        let uid = Command::new("id")
+            .args(["-u", "virtues"])
+            .output()
+            .ok()
+            .and_then(|o| String::from_utf8_lossy(&o.stdout).trim().parse::<u32>().ok());
+        return uid.is_some_and(|u| meta.uid() == u);
+    }
+    #[cfg(not(unix))]
+    true
+}
+
+/// Database size, as `virtues`, for the free-space guard. `None` when it cannot
+/// be measured — the caller falls back to a fixed floor rather than skipping the
+/// check.
+fn database_size_bytes() -> Option<u64> {
+    let out = Command::new("sudo")
+        .args([
+            "-u",
+            "virtues",
+            "psql",
+            "-tAc",
+            "SELECT pg_database_size(current_database())",
+        ])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+}
+
+/// Tags become filenames; keep them to characters that survive that.
+fn sanitize_tag(tag: &str) -> String {
+    tag.chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' { c } else { '_' })
+        .collect()
+}
+
+/// Keep the same number of dumps as release slots. They are two halves of one
+/// thing: a slot you can flip back to, and the data that slot expects.
+fn prune_pre_upgrade_dumps(keep: usize) {
+    prune_dumps_in(Path::new(PRE_UPGRADE_DIR), keep)
+}
+
+/// Split from `prune_pre_upgrade_dumps` so it can be tested against a scratch
+/// directory. This function deletes files, and it does so in the directory that
+/// also holds `virtues backup` output — the prefix/suffix filter is the only
+/// thing standing between a prune and someone's actual backup.
+fn prune_dumps_in(dir: &Path, keep: usize) {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return;
+    };
+    let mut dumps: Vec<(std::time::SystemTime, PathBuf)> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("pre-upgrade-") && n.ends_with(".dump"))
+        })
+        .filter_map(|p| {
+            let t = fs::metadata(&p).and_then(|m| m.modified()).ok()?;
+            Some((t, p))
+        })
+        .collect();
+    dumps.sort_by(|a, b| b.0.cmp(&a.0)); // newest first
+    for (_, path) in dumps.into_iter().skip(keep) {
+        let _ = fs::remove_file(path);
+    }
+}
+
+/// The newest pre-upgrade dump, if any. `rollback` surfaces it: restoring the
+/// binary while leaving a bad migration in place is exactly the case where the
+/// operator needs to know this file exists.
+fn newest_pre_upgrade_dump() -> Option<PathBuf> {
+    let entries = fs::read_dir(PRE_UPGRADE_DIR).ok()?;
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.starts_with("pre-upgrade-") && n.ends_with(".dump"))
+        })
+        .filter_map(|p| {
+            let t = fs::metadata(&p).and_then(|m| m.modified()).ok()?;
+            Some((t, p))
+        })
+        .max_by(|a, b| a.0.cmp(&b.0))
+        .map(|(_, p)| p)
+}
+
+#[cfg(test)]
+mod pre_upgrade_dump_tests {
+    use super::*;
+
+    fn touch(dir: &Path, name: &str, age_secs: u64) -> PathBuf {
+        let p = dir.join(name);
+        fs::write(&p, b"x").unwrap();
+        let when = std::time::SystemTime::now() - Duration::from_secs(age_secs);
+        let f = File::options().write(true).open(&p).unwrap();
+        f.set_times(fs::FileTimes::new().set_modified(when)).unwrap();
+        p
+    }
+
+    #[test]
+    fn prune_keeps_the_newest_and_never_eats_a_real_backup() {
+        let dir = std::env::temp_dir().join(format!("virtues-prune-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+
+        let newest = touch(&dir, "pre-upgrade-0.1.0-0.4.0.dump", 10);
+        let middle = touch(&dir, "pre-upgrade-0.1.0-0.3.0.dump", 100);
+        let oldest = touch(&dir, "pre-upgrade-0.1.0-0.2.0.dump", 1000);
+        // Shares the directory, and is the one thing that must never be pruned
+        // by the upgrade path — it is the user's actual backup.
+        let backup = touch(&dir, "virtues-20260725T030000Z.tar.gz", 5000);
+
+        prune_dumps_in(&dir, 2);
+
+        assert!(newest.exists(), "newest dump was pruned");
+        assert!(middle.exists(), "second-newest dump was pruned");
+        assert!(!oldest.exists(), "oldest dump should have been pruned");
+        assert!(
+            backup.exists(),
+            "prune ate a virtues backup sharing the directory"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn prune_on_a_missing_directory_is_a_no_op() {
+        prune_dumps_in(Path::new("/nonexistent/virtues/backups"), 2);
+    }
+
+    #[test]
+    fn tags_survive_becoming_filenames() {
+        assert_eq!(sanitize_tag("v0.1.0-staging.56"), "v0.1.0-staging.56");
+        assert_eq!(sanitize_tag("edge"), "edge");
+        // Dots are legal in tags and stay; the separators are what matter, and
+        // without one the result cannot escape the directory it is joined to.
+        let escaped = sanitize_tag("../../etc/passwd");
+        assert_eq!(escaped, ".._.._etc_passwd");
+        assert!(!escaped.contains('/'), "sanitized tag can still traverse");
+    }
+}

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1" />
+		<link rel="icon" type="image/png" href="/favicon.png" />
+		<!-- Pre-paint theme bootstrap. Runs before the stylesheet lands, so a
+		     cold start doesn't flash white on its way to a dark theme — most
+		     visible in the Tauri webview, where there's no browser chrome to
+		     hide behind. Both values are written by applyTheme().
+
+		     The page (`--page`), NOT `--background` or `--surface`: both shells
+		     cover the window in the page (the phone's `.viewport`, the desktop's
+		     main card), so on any theme where the tokens differ, painting
+		     another one shows one colour and the app arrives in another a
+		     quarter-second later, measured. Paint what the app is about to look
+		     like. applyTheme() caches it under `virtues-theme-surface`;
+		     `virtues-theme-bg` is the fallback for a cache written before that
+		     key existed.
+
+		     The literal fallback tracks the DEFAULT theme — Oxford's `--page`,
+		     #FFFFFF. Only a first run reaches it (afterwards localStorage has
+		     the real value), so getting it wrong means every new box flashes one
+		     colour on its very first paint and then settles to another. Keep it
+		     in step with virtues-registry DEFAULT_THEME. -->
+		<script>
+			(function () {
+				try {
+					var t = localStorage.getItem("virtues-theme");
+					if (t) document.documentElement.setAttribute("data-theme", t);
+					var bg =
+						localStorage.getItem("virtues-theme-surface") ||
+						localStorage.getItem("virtues-theme-bg") ||
+						"#FFFFFF";
+					document.documentElement.style.backgroundColor = bg;
+				} catch (e) {
+					/* private mode / storage disabled — the stylesheet still wins */
+				}
+			})();
+		</script>
+		%sveltekit.head%
+	</head>
+	<body data-sveltekit-preload-data="hover">
+		<div style="display: contents">%sveltekit.body%</div>
+	</body>
+</html>

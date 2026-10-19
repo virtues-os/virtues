@@ -1,0 +1,175 @@
+//! Auth-table sweeper.
+//!
+//! Every 10 minutes the daemon prunes auth tables that would otherwise grow
+//! unbounded:
+//!
+//!   - `app_pair_token` rows past `expires_at + 1m grace` get deleted. The
+//!     1-minute grace covers the consume re-claim window the auth model
+//!     promises (a user whose network died mid-consume retries with the
+//!     same token; the row is still around for that retry).
+//!
+//!   - `app_sudo_request` rows past `expires_at`, in any non-pending
+//!     terminal state (`consumed`, `denied`, `expired`), get deleted. The
+//!     `pending` state is kept past TTL until a separate pass flips it to
+//!     `expired` — handled inline by `verify_and_consume` when the gated
+//!     handler attempts to use it.
+//!
+//!   - `app_auth_event` rows older than 90 days are deleted. The archive
+//!     table that used to receive them had no reader anywhere — full auth
+//!     history with no query path is retention risk, not history — and was
+//!     dropped 2026-08-28.
+//!
+//!   - Chats, pages and projects in the trash past `TRASH_RETENTION_DAYS`
+//!     are purged through `api::trash::purge_expired`, which is the same
+//!     hard delete the Recently deleted room's "Delete forever" performs —
+//!     index rows and membership sweep included.
+//!
+//!   - `app_visits` rows past `VISIT_RETENTION_DAYS` are pruned; frecency
+//!     never reads further back than that anyway.
+//!
+//! No job queue, no worker pool, no PID file — one tokio task spawned by
+//! `server::run`. Stops when the daemon stops.
+
+use std::time::Duration;
+
+use sqlx::PgPool;
+use tokio::time::{interval, MissedTickBehavior};
+
+const TICK: Duration = Duration::from_secs(600); // 10 minutes
+const PAIR_TOKEN_GRACE: &str = "1 minute";
+const EVENT_RETENTION_DAYS: i64 = 90;
+/// How long a per-minute telemetry sample is worth keeping.
+///
+/// The sampler writes one row a minute, forever — 525,600 rows a year — while
+/// the System page only ever reads recent windows. Nobody will look at a CPU
+/// reading from three years ago, but the box will carry it, on an SBC, on the
+/// same disk as the owner's record.
+///
+/// 30 days is well past any window the UI offers and still bounds the table at
+/// ~43k rows. This is derived telemetry about the machine, not anything the
+/// owner recorded, so deleting it loses nothing of theirs.
+const TELEMETRY_RETENTION_DAYS: i64 = 30;
+
+/// Spawn the sweeper as a background tokio task. Logs cleanup counts at
+/// info level when work was done; silent on no-op ticks. Errors are logged
+/// and the loop continues — a transient DB error shouldn't take the
+/// daemon down with it.
+pub fn spawn(pool: PgPool) {
+    tokio::spawn(async move {
+        // `MissedTickBehavior::Skip` so a long-running iteration (e.g. a
+        // big archive batch) doesn't queue catch-up ticks. The sweeper is
+        // idempotent — skipping a tick is fine.
+        let mut tick = interval(TICK);
+        tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        // Burn the immediate first tick — interval fires once at start.
+        // We don't want the very first work to land before the server is
+        // accepting traffic.
+        tick.tick().await;
+        loop {
+            tick.tick().await;
+            match run_once(&pool).await {
+                Ok(Counts { pair_tokens: 0, sudo_requests: 0, archived: 0, telemetry: 0, trash: 0, visits: 0 }) => {
+                    // quiet
+                }
+                Ok(c) => tracing::info!(
+                    pair_tokens = c.pair_tokens,
+                    sudo_requests = c.sudo_requests,
+                    archived = c.archived,
+                    telemetry = c.telemetry,
+                    trash = c.trash,
+                    visits = c.visits,
+                    "sweeper: cleaned"
+                ),
+                Err(e) => tracing::warn!("sweeper tick failed: {e:#}"),
+            }
+        }
+    });
+}
+
+#[derive(Debug, Default)]
+struct Counts {
+    pair_tokens: u64,
+    sudo_requests: u64,
+    archived: u64,
+    telemetry: u64,
+    trash: u64,
+    visits: u64,
+}
+
+async fn run_once(pool: &PgPool) -> Result<Counts, sqlx::Error> {
+    let pair_tokens = sqlx::query(&format!(
+        "DELETE FROM app_pair_token \
+         WHERE expires_at < now() - interval '{PAIR_TOKEN_GRACE}'"
+    ))
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    let sudo_requests = sqlx::query(
+        "DELETE FROM app_sudo_request \
+         WHERE expires_at < now() AND status <> 'pending'",
+    )
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    let archived = sqlx::query(
+        "DELETE FROM app_auth_event \
+         WHERE occurred_at < now() - make_interval(days => $1::int)",
+    )
+    .bind(EVENT_RETENTION_DAYS as i32)
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    // Roll the 24h auto-top-up failure window. The breaker is "3 failures
+    // in 24h"; if the most recent failure or breaker-trip is more than 24h
+    // old, the counter resets. The user's `auto_topup_enabled` setting is
+    // left as-is — if the breaker tripped it off, the user has to flip it
+    // back on themselves (forces a deliberate "I've fixed my card" action).
+    let _ = sqlx::query(
+        "UPDATE app_user_profile \
+         SET auto_topup_failures_24h = 0 \
+         WHERE id = '00000000-0000-0000-0000-000000000001' \
+           AND auto_topup_failures_24h > 0 \
+           AND (auto_topup_disabled_at IS NULL \
+                OR auto_topup_disabled_at < now() - interval '24 hours')",
+    )
+    .execute(pool)
+    .await?;
+
+    let telemetry = sqlx::query(&format!(
+        "DELETE FROM app_system_samples \
+         WHERE sampled_at < now() - make_interval(days => {TELEMETRY_RETENTION_DAYS})"
+    ))
+    .execute(pool)
+    .await?
+    .rows_affected();
+
+    // Its own error type and its own log line: a failed purge must not take
+    // the auth sweep down with it, and must not pass as "0 purged" either.
+    let trash = match crate::api::trash::purge_expired(pool).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("sweeper: trash purge failed: {e:#}");
+            0
+        }
+    };
+
+    let visits = match crate::api::visits::prune(pool).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::warn!("sweeper: visits prune failed: {e:#}");
+            0
+        }
+    };
+
+    Ok(Counts {
+        pair_tokens,
+        sudo_requests,
+        archived,
+        telemetry,
+        trash,
+        visits,
+    })
+}

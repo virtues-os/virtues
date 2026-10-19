@@ -1,0 +1,900 @@
+@import 'tailwindcss';
+@import './themes.css';
+@import './lib/styles/sidebar.css';
+@import './lib/styles/ref-badge.css';
+
+/* Add Streamdown styles to Tailwind build */
+@source "../node_modules/svelte-streamdown/**/*";
+
+/* Global text selection/highlight styling */
+::selection {
+	background-color: var(--color-highlight);
+	color: var(--color-highlight-foreground);
+}
+
+::-moz-selection {
+	background-color: var(--color-highlight);
+	color: var(--color-highlight-foreground);
+}
+
+/* ===================================
+   BACKGROUND TREATMENT
+   Applies gradient/texture overlays from theme
+   =================================== */
+
+/* App shell background - gradient applied via inline style in layout */
+/* The one settings heading.
+ *
+ * Five settings views had four definitions of "a section heading": serif 19px
+ * beside sans 14px and 15px, weight 500 beside 600, `--foreground` beside
+ * `--foreground-muted`, and two spellings of the same custom property
+ * (`--foreground-muted` and `--color-foreground-muted`). None of that was
+ * chosen; it is what a copied shape turns into. Which one you met depended on
+ * which settings page you had opened.
+ *
+ * This is the treatment `Section.svelte` renders, available as a class for
+ * views whose markup has not been restructured into that component yet.
+ * Reading surfaces (the wiki pages, narrative identity) keep their own serif
+ * voice deliberately: their `.section-title` is untouched.
+ *
+ * It WAS 12px uppercase letterspaced in `--foreground-subtle`, on the theory
+ * that a settings heading is a label you scan past rather than a title you
+ * read. Sitting on an `<h2>`, which this app sets in the serif, that produced
+ * faux small caps in a serif we ship without a small-cap cut — the letterforms are
+ * stretched capitals with tracking added to keep them apart, in the lightest
+ * ink on the page. It read as decoration, and it was the loudest, ugliest
+ * thing on every settings page precisely because it was trying to be quiet.
+ *
+ * So: a heading, set like a heading. Serif at a readable size, in the
+ * page's own ink, roman (the serif ships no italic and is never set bold —
+ * hierarchy comes from size and weight of ink, not from shouting).
+ */
+.settings-label {
+	font-size: 1rem;
+	font-weight: 400;
+	line-height: 1.3;
+	color: var(--color-foreground);
+	margin: 0 0 0.625rem;
+}
+
+.app-shell {
+	background-attachment: fixed;
+	background-blend-mode: multiply;
+}
+
+/* Main content area background */
+.app-content {
+	background-image: var(--background-image, none);
+	background-attachment: fixed;
+}
+
+/* Avenir (sans) — self-hosted so it renders off-Apple (Jetson/Linux), not just
+   where it's a system font. Three static weights cover regular/medium/bold.
+
+   ⚠ LICENSE UNVERIFIED — A HUMAN MUST ANSWER THIS. Avenir is a commercial
+   Linotype/Monotype family. Every other face we self-host is free to
+   redistribute (IBM Plex Mono is OFL); these three .woff2 files are not
+   obviously covered by anything on record. Self-hosting redistributes the
+   webfont from a PUBLIC repo and from every box we ship, which is a heavier
+   use than "it happens to be installed on this Mac." Nobody on the build side
+   can settle this by reading code, so do not treat the files' presence as
+   evidence that a web license exists. Until a human confirms one: do not add
+   weights, do not copy these files into another repo or another product, and
+   do not remove them either — swapping the sans is a design decision, not a
+   cleanup. See agents/build/typography.md. */
+@font-face {
+	font-family: 'Avenir';
+	src: url('/fonts/Avenir-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Avenir';
+	src: url('/fonts/Avenir-Medium.woff2') format('woff2');
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+@font-face {
+	font-family: 'Avenir';
+	src: url('/fonts/Avenir-Bold.woff2') format('woff2');
+	font-weight: 700;
+	font-style: normal;
+	font-display: swap;
+}
+
+/* IBM Plex Mono (mono) — self-hosted (OFL) so code/terminal UIs render off-Apple
+   instead of falling back to a generic monospace on the Jetson. */
+@font-face {
+	font-family: 'IBM Plex Mono';
+	src: url('/fonts/IBMPlexMono-Regular.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'IBM Plex Mono';
+	src: url('/fonts/IBMPlexMono-Medium.woff2') format('woff2');
+	font-weight: 500;
+	font-style: normal;
+	font-display: swap;
+}
+
+@font-face {
+	font-family: 'IBM Plex Mono';
+	src: url('/fonts/IBMPlexMono-SemiBold.woff2') format('woff2');
+	font-weight: 600;
+	font-style: normal;
+	font-display: swap;
+}
+
+/* EB Garamond (serif) — REGULAR IS THE FACE, NO ITALIC. Read this before
+   designing anything with it.
+   `EB Garamond` is Regular 400 only, as two subsets split by `unicode-range`
+   (Latin, then Latin Extended), so a page of English prose downloads the
+   24 KB file and nothing else. The face has an italic; we do not ship it.
+
+   The consequence is a CONSTRAINT, not a taste: "the serif is never bold and
+   never italic" cannot be violated, only faked. Ask `EB Garamond` for weight
+   700 and CSS font matching stays inside the family and hands back the one
+   cut, so the heading silently renders regular; ask for italic and the
+   browser synthesizes an oblique — a mechanical slant, not a drawn italic,
+   and it looks it. There is no fall-through to another family for weight or
+   style: family fallback happens only for missing glyphs and while the file
+   loads.
+
+   So a serif hierarchy CANNOT be set with weight or slope. Set it with size,
+   case, color, and space — which is what the design grammar already asks for.
+   The 300 and 400 registrations exist so that either number in a
+   `font-weight` resolves without synthesis; they are the same ink.
+
+   SemiBold 600 exists for ONE job: the first word of a day's Abstract, after
+   its drop cap (DayPage). Nothing else uses it. It is registered as its own
+   family, `EB Garamond Lead`, not as a 600 inside `EB Garamond`: inside the
+   family, every bold the app already asks the serif for (a table header's
+   600, a `<strong>`) would quietly start rendering semibold. Latin only; a
+   letter outside it falls back to the regular, because `.lead-word` turns off
+   weight synthesis (without that the browser fakes a bold from the regular).
+   Another use, or the italic, is a change to the grammar, not a CSS tweak. */
+@font-face {
+	font-family: 'EB Garamond';
+	src: url('/fonts/EBGaramond-Regular-latin.woff2') format('woff2');
+	font-weight: 300 400;
+	font-style: normal;
+	font-display: swap;
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+@font-face {
+	font-family: 'EB Garamond';
+	src: url('/fonts/EBGaramond-Regular-latin-ext.woff2') format('woff2');
+	font-weight: 300 400;
+	font-style: normal;
+	font-display: swap;
+	unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* The same files again, with vertical metrics normalized — for the serif in UI
+   chrome rather than in prose.
+
+   EB Garamond declares ascent/descent = 1.007/0.298, a box with room above
+   the caps. A line box carries its baseline (ascent − descent)/2 below its own
+   center, so centering that box in a row beside an icon leaves the letters
+   visibly off-center against the icon.
+
+   ascent − descent = capHeight (0.653) is the condition for the cap band to
+   land on the center line; keeping descent at the real ink depth (0.290, the
+   descender of g and p) gives an ascent of 0.943. Expressed in em, so it holds
+   at 13.5px and at 46px alike — no per-element nudges, and any serif beside an
+   icon is correct by construction.
+
+   Not applied to 'EB Garamond' itself: prose sets its own line-height, and
+   moving every first baseline is a typography pass, not this rule. */
+@font-face {
+	font-family: 'EB Garamond UI';
+	src: url('/fonts/EBGaramond-Regular-latin.woff2') format('woff2');
+	font-weight: 300 400;
+	font-style: normal;
+	font-display: swap;
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+	ascent-override: 94.3%;
+	descent-override: 29%;
+	line-gap-override: 0%;
+}
+
+@font-face {
+	font-family: 'EB Garamond UI';
+	src: url('/fonts/EBGaramond-Regular-latin-ext.woff2') format('woff2');
+	font-weight: 300 400;
+	font-style: normal;
+	font-display: swap;
+	unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+	ascent-override: 94.3%;
+	descent-override: 29%;
+	line-gap-override: 0%;
+}
+
+/* The Abstract's lead word, semibold (see the EB Garamond note above). */
+@font-face {
+	font-family: 'EB Garamond Lead';
+	src: url('/fonts/EBGaramond-SemiBold-latin.woff2') format('woff2');
+	font-weight: 600;
+	font-style: normal;
+	font-display: swap;
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* Nothing You Could Do (hand) — OFL, Kimberly Geswein; the copyright and
+   license notice travel inside the file's own name table. Latin only, 16 KB,
+   and fetched only on a page that draws your handwriting: `--font-hand` sets
+   the notes you write in a day page's margin and nothing else. */
+@font-face {
+	font-family: 'Nothing You Could Do';
+	src: url('/fonts/NothingYouCouldDo-Regular-latin.woff2') format('woff2');
+	font-weight: 400;
+	font-style: normal;
+	font-display: swap;
+	unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+/* No serif fallback webfont. Lora used to be registered here — a 212 KB
+   UNCOMPRESSED .ttf, the only non-woff2 face we shipped — and it sat second in
+   `--font-serif`, behind the house serif. It could never earn that: family fallback is
+   reached only for a glyph the house serif lacks or during the swap window, and in
+   both cases Lora's own coverage is Latin, the same ground a system serif
+   already covers for free. So the user paid a quarter of a megabyte for the
+   flash before the real serif landed. The fallback is now a system stack —
+   zero bytes, drawn on frame one. If a serif fallback ever has to come back,
+   it comes back as woff2. */
+
+/* ===================================
+   SCROLLBARS — one rule, inherited
+   =================================== */
+
+/* There was no global scrollbar style at all. Ten components hand-rolled their
+   own at SIX different widths (3px, 4px, 6px, 8px, `thin`, hidden) and every
+   room that hadn't got round to it — Home, Wiki, Pages, Settings, Sources,
+   Drive, every list view — showed the raw platform bar: a 15px opaque slab
+   that steals 15px of content width, so a page that grows past one screen
+   shifts its centred column and stops lining up with its neighbours.
+   The merged card made it louder still, landing that slab against a 1px
+   divider.
+
+   STANDARD PROPERTIES ONLY, and that is the load-bearing part: unlike
+   `::-webkit-scrollbar`, they do not force classic layout-stealing scrollbars
+   on anyone whose platform draws overlay ones. Eight of the ten components
+   were reaching for `::-webkit-scrollbar` to make the gutter less ugly, which
+   was also what opted them INTO the gutter.
+
+   THE TWO PROPERTIES DO NOT BEHAVE THE SAME WAY, and writing both on `:root`
+   silently half-worked: `scrollbar-color` inherits, `scrollbar-width` does
+   NOT. Every scroller in the app took the colour and kept `width: auto`, so
+   the 15px platform gutter survived a rule that looked like it had replaced
+   it. Hence the universal selector — it is what makes the width reach the
+   elements that actually scroll.
+
+   `:where()` keeps the specificity at zero, so a component that genuinely
+   needs its own answer (the hidden ones below) still wins without `!important`.
+
+   Hiding is a different intent and stays local (`scrollbar-width: none` in the
+   tab strip and the wiki articles). */
+:where(*) {
+	scrollbar-width: thin;
+	scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+/* Themed root background. On the mobile shell the page paints edge-to-edge
+   (viewport-fit=cover), so this is what shows behind translucent chrome, in
+   the safe-area zones during transitions, and before the app shell mounts —
+   without it those read as the bare (black/white) native window. */
+html,
+body {
+	background-color: var(--color-background);
+}
+
+/* Native phone shell (class set by hooks.client.ts): suppress the iOS
+   long-press callout — the app synthesizes its own context menus on
+   long-press (ContextMenuProvider), and the system bubble fights them.
+   Text selection itself is unaffected. */
+html.native-mobile * {
+	-webkit-touch-callout: none;
+}
+
+/* Serif font defaults to 400 weight */
+.font-serif {
+	font-weight: 400;
+}
+
+/* Global heading styles - serif font for all headings */
+h1,
+h2,
+h3,
+h4,
+h5,
+h6 {
+	font-family: var(--font-serif);
+}
+
+/* ===================================
+   COMPONENT STYLES
+   =================================== */
+
+/* Markdown Styles - Using semantic colors */
+.markdown {
+	color: var(--color-foreground);
+	font-family: var(--md-body-family);
+	font-size: var(--md-body-size);
+	line-height: var(--md-body-lh);
+	width: 100%;
+	overflow-wrap: break-word;
+	word-break: break-word;
+}
+
+/* A wiki article — a day, a year, a person, a place, an organization, the
+   narrative identity. Same renderer, the other register.
+
+   It redefines the body tokens ON ITSELF rather than restating the rules, so
+   everything already citing them (`.markdown p`, `li`, blockquote) follows
+   without a second set of selectors to keep in step. That is the whole reason
+   the token layer exists: the surfaces that fell out of sync did so by each
+   writing its own font-size. */
+.markdown--article {
+	--md-body-family: var(--md-article-family);
+	--md-body-size: var(--md-article-size);
+	--md-body-lh: var(--md-article-lh);
+}
+
+/* Heading VALUES come from the --md-* tokens in themes.css — one definition,
+   cited here and by the page editor's (lib/document/document.css). Only the
+   margins are local: rhythm is engine-specific. */
+.markdown h1 {
+	@apply mb-6;
+	font-family: var(--md-heading-major-family);
+	font-size: var(--md-h1-size);
+	font-weight: var(--md-h1-weight);
+	line-height: var(--md-h1-lh);
+	color: var(--color-foreground);
+}
+
+.markdown h2 {
+	@apply mb-5;
+	font-family: var(--md-heading-major-family);
+	font-size: var(--md-h2-size);
+	font-weight: var(--md-h2-weight);
+	line-height: var(--md-h2-lh);
+	color: var(--color-foreground);
+}
+
+.markdown h3 {
+	@apply mb-4;
+	font-family: var(--md-heading-major-family);
+	font-size: var(--md-h3-size);
+	font-weight: var(--md-h3-weight);
+	line-height: var(--md-h3-lh);
+	color: var(--color-foreground);
+}
+
+.markdown h4 {
+	@apply mb-2;
+	font-size: var(--md-h4-size);
+	font-weight: var(--md-h4-weight);
+	line-height: var(--md-h4-lh);
+	color: var(--color-foreground);
+}
+
+.markdown h5 {
+	@apply mb-1;
+	font-size: var(--md-h5-size);
+	font-weight: var(--md-h5-weight);
+	line-height: var(--md-h5-lh);
+	color: var(--color-foreground);
+}
+
+.markdown h6 {
+	@apply mb-1;
+	font-size: var(--md-h6-size);
+	font-weight: var(--md-h6-weight);
+	line-height: var(--md-h6-lh);
+	color: var(--color-foreground);
+}
+
+.markdown p {
+	@apply mb-4;
+	line-height: var(--md-body-lh);
+	color: var(--color-foreground);
+}
+
+.markdown strong {
+	@apply font-medium;
+}
+
+.markdown em {
+	@apply italic;
+}
+
+/* Inline code styling - block code is handled by Streamdown */
+.markdown :not(pre)>code {
+	@apply px-1.5 py-0.5 font-mono;
+	font-size: var(--md-inline-code-size);
+	border-radius: var(--md-inline-code-radius);
+	border: var(--md-inline-code-border);
+	color: var(--color-foreground);
+	background-color: var(--md-inline-code-bg);
+}
+
+/* Size SVG icons in code block action buttons */
+.markdown [data-streamdown-code] button svg {
+	width: 1rem;
+	height: 1rem;
+}
+
+/* Remove duplicate padding and styling from streamdown's wrapper div */
+.markdown [data-streamdown-code]>div:last-child {
+	padding: 0;
+	margin: 0;
+	border: none;
+	border-radius: 0;
+	background: transparent;
+}
+
+/* Lists sit closer to the margin and closer to each other than they did.
+   2em of indent and 0.5rem between items reads as five separate paragraphs
+   that happen to have dots; a list is one thought in parts, and should look
+   like one block. The reference points: GitHub indents 2em and spaces items
+   0.25em, Tailwind's prose indents 1.625em, Stripe's docs about 1.25em —
+   1.5em and 0.35em sits inside that range, in `em` so it tracks the type.
+   Block margins stay at the paragraph's own rhythm. */
+.markdown ul {
+	@apply list-disc mb-4;
+	/* Streamdown ships its own `ml-4` on every list, which stacked 16px on top
+	   of whatever we set here — the reason a five-line list sat 40px in from
+	   its own paragraph. Padding is the one knob; the margin is zeroed so
+	   there is nothing to stack with. */
+	margin-left: 0;
+	padding-left: 1.5em;
+	list-style-position: outside;
+}
+
+.markdown ol {
+	@apply list-decimal mb-4;
+	margin-left: 0;
+	padding-left: 1.5em;
+	list-style-position: outside;
+}
+
+.markdown li {
+	line-height: var(--md-body-lh);
+	contain: layout;
+}
+
+.markdown li + li {
+	margin-top: 0.35em;
+}
+
+/* A nested list is part of its parent item, not a new block after it. */
+.markdown li > ul,
+.markdown li > ol {
+	margin-top: 0.35em;
+	margin-bottom: 0;
+}
+
+/* A paragraph inside a list item is the item, not a block in its own right —
+   markdown makes these the moment any item in the list has a blank line. */
+.markdown li > p {
+	margin-bottom: 0;
+}
+
+.markdown li > p + p {
+	margin-top: 0.5em;
+}
+
+.markdown blockquote {
+	@apply pl-4 italic my-4;
+	border-left: var(--md-quote-border);
+	color: var(--color-foreground-muted);
+}
+
+/* Plain prose links only. Refs and citations bring their own treatment from
+   ref-badge.css — a hairline (or dotted) border-bottom and their own color —
+   and this rule out-specifies it (`.markdown a` is 0,1,1 against `.ref-link`'s
+   0,1,0). The result was a citation wearing BOTH: a text-decoration underline
+   and a border under that, two lines at two offsets, in a color the ref
+   never chose. Excluding the ref classes is the fix; raising ref-badge's
+   specificity would only move the fight. */
+.markdown a:not(.ref-link):not(.ref-pill) {
+	@apply underline;
+	color: var(--color-primary);
+}
+
+.markdown a:not(.ref-link):not(.ref-pill):hover {
+	color: var(--color-primary-hover);
+}
+
+.markdown hr {
+	@apply my-6;
+	border-color: var(--color-border-subtle);
+}
+
+/* Override Streamdown's table wrapper styling to match our theme */
+.markdown [data-streamdown-table] {
+	border-color: var(--color-border-subtle) !important;
+	background-color: transparent !important;
+}
+
+/* Override Streamdown's thead background to match our theme */
+.markdown [data-streamdown-thead] {
+	background-color: var(--color-surface-elevated) !important;
+}
+
+/* Override Streamdown's row hover to match our theme */
+.markdown [data-streamdown-tr]:hover {
+	background-color: var(--color-background) !important;
+}
+
+.markdown table {
+	@apply w-full text-sm;
+	border-collapse: separate;
+	border-spacing: 0;
+}
+
+.markdown th {
+	@apply text-left;
+	padding: var(--md-cell-pad);
+	font-size: var(--md-th-size);
+	font-weight: var(--md-th-weight);
+	font-family: var(--md-heading-major-family);
+	border-right: 1px solid var(--md-table-border-color);
+	border-bottom: 1px solid var(--md-table-border-color);
+}
+
+.markdown th:last-child {
+	border-right: none;
+}
+
+.markdown td {
+	@apply text-sm;
+	padding: var(--md-cell-pad);
+	border-right: 1px solid var(--md-table-border-color);
+	border-bottom: 1px solid var(--md-table-border-color);
+}
+
+.markdown td:last-child {
+	border-right: none;
+}
+
+.markdown tr:last-child td {
+	border-bottom: none;
+}
+
+/* In an article a table is part of the prose: its cells read at the body's
+   size and face, and its header is a quiet label, not a bold one (the serif
+   is never bold). */
+.markdown--article table,
+.markdown--article td {
+	font-family: var(--md-body-family);
+	font-size: var(--md-body-size);
+	line-height: 1.45;
+}
+
+.markdown--article th {
+	font-family: var(--md-body-family);
+	font-size: 0.8125rem;
+	font-weight: 400;
+	color: var(--color-foreground-muted);
+}
+
+/* The veil (lib/actions/veil.ts): a hidden word keeps its place and loses its
+   ink. A link sets its own color in its component's styles, so the veil has to
+   outrank it; the action brings the ink back inline as the specks gather. */
+.veil-hidden {
+	color: transparent !important;
+	text-decoration-color: transparent !important;
+	cursor: default;
+}
+
+.veil-hidden * {
+	color: inherit !important;
+	text-decoration-color: transparent !important;
+}
+
+.markdown img {
+	@apply max-w-full h-auto rounded-lg my-4;
+}
+
+/* The spinner every "working" glyph in the app wears: `<Icon … class="spin" />`.
+   It lives here because it was never anywhere: SIX components each declared
+   their own `:global(.spin)` (ContextMenuItem, CoverImagePicker,
+   ProjectDetailView, PageContent, VersionHistoryPanel, the public share page)
+   and TEN more used the class without declaring it — SubagentPanel,
+   SystemInfoView, DeveloperSqlView, ReferencesPanel and the rest — so whether
+   your spinner turned depended on whether an unrelated component happened to
+   be mounted. Removing ContextMenuItem's copy on 2026-09-16 is what surfaced
+   it. The duplicate declarations are harmless now and should go. */
+.spin {
+	animation: virtues-spin 1s linear infinite;
+}
+
+@keyframes virtues-spin {
+	from { transform: rotate(0deg); }
+	to { transform: rotate(360deg); }
+}
+
+/* Keep the information, drop the travel (design.md). */
+@media (prefers-reduced-motion: reduce) {
+	.spin { animation: none; }
+}
+
+/* Button Variants - Using semantic colors */
+.btn-primary {
+	background-color: var(--color-secondary);
+	color: var(--color-surface);
+}
+
+.btn-primary:hover:not(:disabled) {
+	background-color: var(--color-secondary-hover);
+}
+
+.btn-primary:active:not(:disabled) {
+	background-color: var(--color-secondary-active);
+}
+
+.btn-secondary {
+	background-color: var(--color-background);
+	color: var(--color-secondary);
+	border: 1px solid var(--color-secondary);
+}
+
+.btn-secondary:hover:not(:disabled) {
+	background-color: var(--color-surface-elevated);
+}
+
+.btn-ghost {
+	background-color: transparent;
+	color: var(--color-foreground-muted);
+}
+
+.btn-ghost:hover:not(:disabled) {
+	background-color: var(--color-background);
+}
+
+/* ===================================
+   BADGE STYLES (semantic, theme-aware)
+   =================================== */
+
+.badge {
+	display: inline-flex;
+	align-items: center;
+	padding: 0.125rem 0.5rem;
+	font-size: 0.75rem;
+	font-weight: 500;
+	border-radius: var(--radius-full);
+	white-space: nowrap;
+	text-transform: capitalize;
+}
+
+.badge-muted {
+	background: color-mix(in srgb, var(--color-foreground) 10%, transparent);
+	color: var(--color-foreground-muted);
+}
+
+.badge-success {
+	background: var(--color-success-subtle);
+	color: var(--color-success);
+}
+
+.badge-error {
+	background: var(--color-error-subtle);
+	color: var(--color-error);
+}
+
+.badge-warning {
+	background: var(--color-warning-subtle);
+	color: var(--color-warning);
+}
+
+.badge-info {
+	background: var(--color-info-subtle);
+	color: var(--color-info);
+}
+
+.badge-primary {
+	background: color-mix(in srgb, var(--color-primary) 15%, transparent);
+	color: var(--color-primary);
+}
+
+/* ===================================
+   TOAST STYLES (svelte-sonner)
+   =================================== */
+
+[data-sonner-toast][data-type="success"] {
+	background: var(--success-subtle) !important;
+	border-color: var(--success) !important;
+	color: var(--success) !important;
+}
+
+[data-sonner-toast][data-type="error"] {
+	background: var(--error-subtle) !important;
+	border-color: var(--error) !important;
+	color: var(--error) !important;
+}
+
+[data-sonner-toast][data-type="warning"] {
+	background: var(--warning-subtle) !important;
+	border-color: var(--warning) !important;
+	color: var(--warning) !important;
+}
+
+[data-sonner-toast][data-type="info"] {
+	background: var(--info-subtle) !important;
+	border-color: var(--info) !important;
+	color: var(--info) !important;
+}
+
+[data-sonner-toast] [data-description] {
+	color: var(--foreground-muted) !important;
+	/* A description that lists several items (which files were turned away and
+	   why) writes one per line. Without this they run together into a single
+	   unreadable sentence, because the default collapses the newlines. */
+	white-space: pre-line;
+}
+
+/* Toast buttons — Undo on a delete, Details on the update notice.
+   Sonner styles these from its own --normal-bg/--normal-text, which it sets
+   from its theme prop and not from ours; left alone, the button on a dark
+   theme is near-black on a dark surface. !important because sonner's rules
+   ship inside the Toaster component and carry the same specificity. */
+[data-sonner-toast] [data-button] {
+	background: var(--foreground) !important;
+	color: var(--surface) !important;
+	font-family: var(--font-sans) !important;
+	height: 26px !important;
+	border-radius: 6px !important;
+}
+
+/* The secondary one (View). Quieter than Undo on purpose: the room is still
+   there in 30 days, the Undo is the thing with a clock on it. */
+[data-sonner-toast] [data-cancel] {
+	background: transparent !important;
+	color: var(--foreground-muted) !important;
+	border: 1px solid var(--border) !important;
+}
+
+[data-sonner-toast] [data-cancel]:hover {
+	color: var(--foreground) !important;
+	border-color: var(--foreground-muted) !important;
+}
+
+/* =============================================================================
+   FULL-SCREEN FOCUS MODE
+   Driven by body.focus-mode (toggled from the (app) layout on
+   pageDisplay.focusMode). Hides all peripheral chrome — sidebar + tab bars —
+   and removes the editor frame so only the document remains. A floating exit
+   button lives in the layout. !important guards against Tailwind utilities
+   (m-3 / border / rounded-lg) on <main>.
+   ============================================================================= */
+body.focus-mode .sidebar-container,
+body.focus-mode .tab-bar {
+	display: none !important;
+}
+
+body.focus-mode main {
+	margin: 0 !important;
+	border: none !important;
+	border-radius: 0 !important;
+}
+/* =============================================================================
+   THE APP OPENING — the letter set down (view transition half)
+   The founder's letter adds html.app-opening around the one view transition
+   that carries a new owner from the letter into the app. The old page (the
+   letter) shrinks back and dries away; the new one (the shell) comes up
+   under it. The shell's own opening — the ∴ beat and the rail cascade — lives
+   in the (app) layout and plays inside the live new-state snapshot, which is
+   why `main-content` (named in that layout) is left unanimated here. Global
+   because these pseudo-elements must be styled on both sides of a navigation
+   between two route groups.
+   ============================================================================= */
+html.app-opening::view-transition-old(root) {
+	animation: app-opening-recede 560ms cubic-bezier(0.4, 0, 0.2, 1) both;
+	transform-origin: 50% 35%;
+}
+html.app-opening::view-transition-new(root) {
+	animation: app-opening-arrive 520ms ease 140ms both;
+}
+html.app-opening::view-transition-new(main-content) {
+	animation: none;
+}
+@keyframes app-opening-recede {
+	to {
+		opacity: 0;
+		transform: scale(0.94);
+		filter: blur(3px);
+	}
+}
+@keyframes app-opening-arrive {
+	from {
+		opacity: 0;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	html.app-opening::view-transition-old(root),
+	html.app-opening::view-transition-new(root) {
+		animation: none;
+	}
+}
+
+/* ── Setup: the theme turned through the ∴ (setup/themeReveal.ts) ──────────
+   The new theme is revealed through three circles centered on the mark's
+   dots: a breath in, a pop past their size, then a push until they cover
+   the window. The old frame holds still underneath. */
+@property --vr {
+	syntax: '<length>';
+	inherits: false;
+	initial-value: 0px;
+}
+html.theme-reveal::view-transition-old(root) {
+	animation: none;
+}
+html.theme-reveal::view-transition-new(root) {
+	animation: theme-reveal 1250ms both;
+	-webkit-mask:
+		radial-gradient(circle at var(--rx1) var(--ry1), #000 var(--vr), transparent calc(var(--vr) + 1px)),
+		radial-gradient(circle at var(--rx2) var(--ry2), #000 var(--vr), transparent calc(var(--vr) + 1px)),
+		radial-gradient(circle at var(--rx3) var(--ry3), #000 var(--vr), transparent calc(var(--vr) + 1px));
+	mask:
+		radial-gradient(circle at var(--rx1) var(--ry1), #000 var(--vr), transparent calc(var(--vr) + 1px)),
+		radial-gradient(circle at var(--rx2) var(--ry2), #000 var(--vr), transparent calc(var(--vr) + 1px)),
+		radial-gradient(circle at var(--rx3) var(--ry3), #000 var(--vr), transparent calc(var(--vr) + 1px));
+}
+@keyframes theme-reveal {
+	0% {
+		--vr: var(--r0);
+		animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1);
+	}
+	/* the breath in */
+	14% {
+		--vr: calc(var(--r0) * 0.55);
+		animation-timing-function: cubic-bezier(0.3, 1.6, 0.5, 1);
+	}
+	/* the pop */
+	32% {
+		--vr: calc(var(--r0) * 1.5);
+		animation-timing-function: cubic-bezier(0.7, 0, 0.84, 0);
+	}
+	/* the push */
+	100% {
+		--vr: 150vmax;
+	}
+}
+@media (prefers-reduced-motion: reduce) {
+	html.theme-reveal::view-transition-new(root) {
+		animation: none;
+		-webkit-mask: none;
+		mask: none;
+	}
+}
+
+/* ===================================
+   Map credit
+   =================================== */
+
+/* The OpenStreetMap credit on every map ($lib/map/atlas.ts `compactCredit`).
+   The data's license requires it; the OSMF attribution guidelines accept it
+   collapsed behind an ⓘ, as long as it opens for anyone who looks. It opens on
+   hover, on keyboard focus, and on a tap, which toggles `is-open`. */
+.leaflet-control-attribution.atlas-credit {
+	cursor: pointer;
+}
+.leaflet-control-attribution.atlas-credit:not(.is-open):not(:hover):not(:focus-visible) {
+	font-size: 0;
+	padding: 0 4px;
+	background: transparent;
+}
+.leaflet-control-attribution.atlas-credit:not(.is-open):not(:hover):not(:focus-visible)::before {
+	content: "ⓘ";
+	/* design-ok: a map control glyph, sized like Leaflet's own chrome. */
+	font-size: 12px;
+	line-height: 1.4;
+	color: var(--color-foreground-muted);
+}

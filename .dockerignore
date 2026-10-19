@@ -1,0 +1,45 @@
+# Root .dockerignore
+.git/
+.github/
+.vscode/
+# Host cargo config: untracked, and points build.target-dir at a machine-local
+# shared cache. Inside a build it would send the binary to a path that doesn't
+# exist in the image. The Dockerfile also pins CARGO_TARGET_DIR; this keeps the
+# host's config out of the context in the first place.
+.cargo/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Development files
+.env
+.env.*
+!.env.example
+
+# Build artifacts (patterns without a leading path only match at the context
+# root, so nested crate/app build dirs like apps/web/src-tauri/target must be
+# globbed explicitly — otherwise they leak into the context on local builds,
+# ballooning it to tens of GB. The Dockerfile builds target/ inside the
+# container, so none of these are ever needed in the context.)
+target/
+**/target/
+node_modules/
+**/node_modules/
+.svelte-kit/
+**/.svelte-kit/
+build/
+**/build/
+dist/
+**/dist/
+
+# Runtime state (.sqlx kept — sqlx::query! offline cache, copied by Dockerfile)
+.data/
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

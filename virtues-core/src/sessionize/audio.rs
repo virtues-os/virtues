@@ -1,0 +1,396 @@
+//! Audio sessionization: 5-minute recorder slices → coherent context sessions.
+//!
+//! Ambient audio is captured in ~5-minute chunks — hundreds a day, each
+//! transcribed and titled in isolation. That granularity is the recorder's, not
+//! the day's. This rolls the chunks up into **sessions**: a conversation, a drive,
+//! a stretch of quiet work, ~10 hours of overnight quiet as one block.
+//!
+//! **Boundaries come from acoustic context, never topic.** Topic drifts wildly
+//! inside one context ("cable sizes → invoices → lunch → a football score", all at
+//! one desk, is one session). What marks a real change is *who is around and how loud*:
+//!
+//!   - `average_db_level` — a car, a quiet room, a loud restaurant read differently
+//!   - `speaker_count`, bucketed {silent 0, solo 1, dyad 2, group 3+} — raw
+//!     diarization is noisy (it will claim 40 speakers), so the tail is clamped
+//!
+//! Those two features, z-normalised and speaker-weighted, go through
+//! [`changepoint::detect`]. Verified on a real day: 271 chunks → ~24 coherent
+//! blocks, with topic drift staying inside its session.
+//!
+//! This is **mechanical**. It finds boundaries and stitches the chunk summaries it
+//! already has; it writes no titles and calls no model. All labelling — turning
+//! "quiet, no speakers, 10h, at home, overnight" into "Sleeping" — is the day
+//! detective's job, where the full context (time, place, duration) lives.
+
+use super::changepoint;
+use crate::error::Result;
+use crate::ids;
+use sqlx::{PgPool, Row};
+
+/// A transcribed 5-minute recording, the input unit.
+#[derive(Debug, Clone)]
+pub struct Chunk {
+    pub start: chrono::DateTime<chrono::Utc>,
+    pub end: chrono::DateTime<chrono::Utc>,
+    /// Ambient loudness (dB). `None` when the recording carried no level.
+    pub db: Option<f64>,
+    /// Distinct speakers this chunk, raw (noisy — clamped internally).
+    pub speaker_count: Option<i64>,
+    /// The chunk's own summary, stitched into the session verbatim (never a model
+    /// call here).
+    pub summary: Option<String>,
+}
+
+/// A coherent-context session: a span, the chunks it covers, their stitched
+/// content, and a speaker profile. No title, no generated summary — see the
+/// module doc.
+#[derive(Debug, Clone)]
+pub struct Session {
+    pub start: chrono::DateTime<chrono::Utc>,
+    pub end: chrono::DateTime<chrono::Utc>,
+    /// Indices into the input slice, in order.
+    pub chunk_idx: Vec<usize>,
+    /// The chunk summaries, joined — the detective's content clue and the search
+    /// document. Empty for a silent session (nothing was said).
+    pub stitched: String,
+    /// Modal speaker bucket over the session: 0 silent, 1 solo, 2 dyad, 3 group.
+    pub speaker_mode: u8,
+    /// Mean loudness, for the labeller downstream.
+    pub avg_db: Option<f64>,
+}
+
+/// Diarization garbage-collector: real social contexts are silent, solo, a pair,
+/// or a group. Beyond three the count is noise, and it would only inflate the
+/// feature and manufacture boundaries.
+fn speaker_bucket(s: Option<i64>) -> f64 {
+    s.unwrap_or(0).clamp(0, 3) as f64
+}
+
+/// The recall/precision dial, in **BIC units** — the raw penalty is scaled by
+/// `ln(n)` inside [`sessionize`], so this one constant behaves the same whether a
+/// day has 20 chunks or 300. (An absolute penalty does not: the value that gives
+/// ~24 sessions on a day of a few hundred chunks would merge everything in a
+/// 10-chunk test.)
+///
+/// These sessions are CLUES the detective can merge but never un-split, so we bias
+/// toward more of them. Calibrated on a real day: base 2.0 → ~18-24 coherent
+/// sessions (conversations, a drive, a long overnight quiet block) with few
+/// single-chunk fragments. Lower over-segments on speaker
+/// flicker (diarization reads 2,0,2 across one conversation); higher merges real
+/// shifts. Overridable per run via `VIRTUES_AUDIO_PENALTY` while it is tuned
+/// against a labelled week.
+pub const DEFAULT_PENALTY: f64 = 2.0;
+
+/// Speakers weigh more than loudness: a conversation is defined by voices, and dB
+/// is only a weak proxy for environment.
+const WEIGHTS: [f64; 2] = [0.7, 2.0];
+
+/// A missing dB reads as a low floor (silence), not as "unknown".
+const DB_FLOOR: f64 = -60.0;
+
+/// Cut a day's chunks into sessions. Pure — no I/O, no model. Chunks must be in
+/// time order.
+pub fn sessionize(chunks: &[Chunk], penalty: f64) -> Vec<Session> {
+    if chunks.is_empty() {
+        return Vec::new();
+    }
+
+    let features: Vec<Vec<f64>> = chunks
+        .iter()
+        .map(|c| vec![c.db.unwrap_or(DB_FLOOR), speaker_bucket(c.speaker_count)])
+        .collect();
+    let norm = changepoint::normalize(features, &WEIGHTS);
+    // BIC scaling: penalty grows with ln(n) so one `penalty` base is portable
+    // across days of wildly different length.
+    let effective = penalty * (chunks.len() as f64).ln().max(1.0);
+    let bounds = changepoint::detect(&norm, effective, 1);
+
+    // Turn boundary indices into [start, end) index ranges.
+    let mut ranges: Vec<(usize, usize)> = Vec::new();
+    let mut prev = 0usize;
+    for &b in &bounds {
+        ranges.push((prev, b));
+        prev = b;
+    }
+    ranges.push((prev, chunks.len()));
+
+    ranges
+        .into_iter()
+        .map(|(a, b)| {
+            let seg = &chunks[a..b];
+            let stitched = seg
+                .iter()
+                .filter_map(|c| c.summary.as_deref().map(str::trim).filter(|s| !s.is_empty()))
+                .collect::<Vec<_>>()
+                .join(" ");
+
+            // The PEAK speaker bucket — was this context social at all, and how.
+            // Not the mode: most chunks in a day are silent (only ~1 in 4 carry
+            // speech), so a real conversation of 3 talking + 5 quiet chunks would
+            // read "silent" by mode. Peak captures "the busiest this context got",
+            // which is what the label needs.
+            let speaker_mode = seg
+                .iter()
+                .map(|c| speaker_bucket(c.speaker_count) as u8)
+                .max()
+                .unwrap_or(0);
+
+            let dbs: Vec<f64> = seg.iter().filter_map(|c| c.db).collect();
+            let avg_db = if dbs.is_empty() {
+                None
+            } else {
+                Some(dbs.iter().sum::<f64>() / dbs.len() as f64)
+            };
+
+            Session {
+                start: seg[0].start,
+                end: seg[seg.len() - 1].end,
+                chunk_idx: (a..b).collect(),
+                stitched,
+                speaker_mode,
+                avg_db,
+            }
+        })
+        .collect()
+}
+
+/// Sessionize one day and rebuild its `data_audio_session` rows.
+///
+/// Wipe-and-rebuild for the day: sessions are a derived, re-derivable projection,
+/// and this runs nightly on a complete day, so recomputing from scratch is the
+/// simplest idempotent contract — no open-session bookkeeping needed (that is for
+/// the intra-day rollups; this is nightly, the day is done).
+///
+/// Returns the number of sessions written.
+pub async fn sessionize_day(pool: &PgPool, date: chrono::NaiveDate) -> Result<u32> {
+    // The day is a tz-aware window, not `started_at::date` — that cast uses the
+    // session timezone and silently shifts the day boundary (it cut a UTC-full day
+    // of 271 chunks down to 223 in the wrong zone). Use the same "where you woke
+    // up" boundary the rest of the day pipeline uses.
+    let tz = crate::timezone::day_timezone(pool, date).await?;
+    let (start_str, end_str) = crate::api::day_summary::day_boundaries_utc(date, Some(&tz));
+
+    // The day's chunks: transcription (speech + summary + speaker count) joined to
+    // its recording (loudness), in time order. Left join so a chunk with no
+    // recording row still contributes its speaker/summary. Keyed on
+    // source_stream_id, NOT audio_url — metadata-only silent chunks carry NULL
+    // audio_url on both sides, and NULL = NULL never matches.
+    //
+    // A silent chunk contributes its TIMING and LOUDNESS but never its prose.
+    // `text = ''` is the pipeline's canonical silence marker (set by the
+    // transcription drainer's silent path); `summary` is not — the model writes a
+    // scene description even when it transcribes no speech, so a silent chunk
+    // arrives with empty text and a non-empty summary. Stitching that summary put
+    // prose about silence into a session's transcript content, and pre-guard it
+    // put INVENTED prose there (a titled scene of someone's morning routine) over
+    // a chunk the VAD measured as no-speech, and real sessions carried it.
+    //
+    // Null it here rather than filtering the row out: dropping silent chunks from
+    // the query would remove them from segmentation too, and silence is exactly
+    // what marks where one session ends and the next begins — every boundary would
+    // move. `dayline::context` already keys on `text`; this makes the two readers
+    // agree. Consequence: a session covering no speech now stitches to nothing,
+    // which is what `silent_session_stitches_to_nothing` has always asserted.
+    let rows = sqlx::query(
+        "SELECT t.started_at, t.ended_at, t.speaker_count, \
+                CASE WHEN t.text = '' THEN NULL ELSE t.summary END AS summary, \
+                r.average_db_level AS db \
+         FROM data_communication_transcription t \
+         LEFT JOIN data_audio_recording r ON r.source_stream_id = t.source_stream_id \
+         WHERE t.started_at >= $1::timestamptz AND t.started_at < $2::timestamptz \
+         ORDER BY t.started_at",
+    )
+    .bind(&start_str)
+    .bind(&end_str)
+    .fetch_all(pool)
+    .await?;
+
+    let chunks: Vec<Chunk> = rows
+        .iter()
+        .map(|row| Chunk {
+            start: row.get("started_at"),
+            end: row.get("ended_at"),
+            db: row.get::<Option<f64>, _>("db"),
+            // `speaker_count` is int4, not int8 — decoding it as i64 fails, and a
+            // `.ok()` there silently turned EVERY speaker into None, so every
+            // session read as "silent" even mid-conversation. Decode the real type.
+            speaker_count: row.get::<Option<i32>, _>("speaker_count").map(|n| n as i64),
+            summary: row.get::<Option<String>, _>("summary"),
+        })
+        .collect();
+
+    // Env override is a tuning hook while the penalty is being calibrated against
+    // real days; unset uses the default.
+    let penalty = std::env::var("VIRTUES_AUDIO_PENALTY")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(DEFAULT_PENALTY);
+    let sessions = sessionize(&chunks, penalty);
+
+    let mut tx = pool.begin().await?;
+    sqlx::query("DELETE FROM data_audio_session WHERE started_at >= $1::timestamptz AND started_at < $2::timestamptz")
+        .bind(&start_str)
+        .bind(&end_str)
+        .execute(&mut *tx)
+        .await?;
+
+    for s in &sessions {
+        // Deterministic id from the session's boundaries, so a re-run of an
+        // unchanged day produces the same ids.
+        let id = ids::generate_id(
+            "aud",
+            &[&s.start.to_rfc3339(), &s.end.to_rfc3339()],
+        );
+        sqlx::query(
+            "INSERT INTO data_audio_session \
+             (id, started_at, ended_at, speaker_mode, avg_db, chunk_count, content) \
+             VALUES ($1, $2, $3, $4, $5, $6, $7)",
+        )
+        .bind(&id)
+        .bind(s.start)
+        .bind(s.end)
+        .bind(s.speaker_mode as i16)
+        .bind(s.avg_db)
+        .bind(s.chunk_idx.len() as i32)
+        .bind(if s.stitched.is_empty() { None } else { Some(&s.stitched) })
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+
+    tracing::info!(date = %date, chunks = chunks.len(), sessions = sessions.len(), "audio sessionized");
+    Ok(sessions.len() as u32)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chunk(min: i64, db: f64, spk: i64, s: &str) -> Chunk {
+        let base = chrono::DateTime::from_timestamp(1_700_000_000, 0).unwrap();
+        Chunk {
+            start: base + chrono::Duration::minutes(min),
+            end: base + chrono::Duration::minutes(min + 5),
+            db: Some(db),
+            speaker_count: Some(spk),
+            summary: Some(s.to_string()),
+        }
+    }
+
+    #[test]
+    fn topic_drift_within_one_context_stays_one_session() {
+        // The case that killed the embedding approach: same desk, same 2 speakers,
+        // same loudness — wildly different topics. Topic is not even a feature; the
+        // acoustic context is flat, so it is one session no matter what is said.
+        let chunks = vec![
+            chunk(0, -22.0, 2, "stapler refills"),
+            chunk(5, -22.0, 2, "invoices"),
+            chunk(10, -22.0, 2, "shipping"),
+            chunk(15, -22.0, 2, "lunch plans"),
+            chunk(20, -22.0, 2, "the weekend match"),
+        ];
+        let s = sessionize(&chunks, DEFAULT_PENALTY);
+        assert_eq!(s.len(), 1, "topic drift must not split a single context");
+        assert_eq!(s[0].speaker_mode, 2);
+        assert!(s[0].stitched.contains("stapler") && s[0].stitched.contains("match"));
+    }
+
+    #[test]
+    fn a_real_context_shift_gets_its_own_session() {
+        // Quiet writing → a conversation → quiet again. Two boundaries.
+        let mut chunks = Vec::new();
+        for i in 0..4 {
+            chunks.push(chunk(i * 5, -42.0, 0, "writing"));
+        }
+        for i in 4..7 {
+            chunks.push(chunk(i * 5, -20.0, 2, "talking about tide tables"));
+        }
+        for i in 7..11 {
+            chunks.push(chunk(i * 5, -43.0, 0, "writing again"));
+        }
+        let s = sessionize(&chunks, DEFAULT_PENALTY);
+        assert_eq!(s.len(), 3, "the conversation is its own session");
+        assert_eq!(s[1].speaker_mode, 2, "middle session is the conversation");
+        assert_eq!(s[0].speaker_mode, 0);
+    }
+
+    #[test]
+    fn a_long_flat_stretch_stays_one_block() {
+        // 120 chunks of overnight quiet. Flat features → one session, no
+        // matter how long.
+        let chunks: Vec<Chunk> =
+            (0..120).map(|i| chunk(i * 5, -49.0, 0, "")).collect();
+        let s = sessionize(&chunks, DEFAULT_PENALTY);
+        assert_eq!(s.len(), 1, "a coherent 10h stretch is one block, not 120");
+        assert_eq!(s[0].chunk_idx.len(), 120);
+        assert_eq!(s[0].stitched, "", "silent session stitches to nothing");
+    }
+
+    /// A silent chunk must not put its summary into a session's content.
+    ///
+    /// The unit tests above can't reach this: they build `Chunk` directly and so
+    /// assume the very thing that was broken — that a silent chunk arrives with no
+    /// summary. In reality the drainer writes `text = ''` for no-speech audio while
+    /// the model still fills in `summary`, so silent chunks arrive with prose
+    /// attached. Pre-guard that prose was invented (a titled scene over a chunk
+    /// the VAD measured as no-speech), and stitching it put a fabricated
+    /// narrative into the transcript content of real sessions.
+    ///
+    /// The suppression is in the SELECT, so only a DB-backed test proves it.
+    #[sqlx::test]
+    async fn a_silent_chunk_contributes_no_prose(pool: sqlx::PgPool) {
+        let date = chrono::NaiveDate::from_ymd_opt(2026, 7, 20).unwrap();
+        let at = |h: u32, m: u32| {
+            date.and_hms_opt(h, m, 0)
+                .unwrap()
+                .and_utc()
+        };
+
+        // Two chunks in one flat acoustic context: one real speech, one silent
+        // carrying a fabricated summary. Same loudness/speakers so they land in a
+        // single session — this is about content, not segmentation.
+        for (i, (text, summary, start)) in [
+            ("we should ship it friday", "talking about the release", at(14, 0)),
+            ("", "Lantern Repair Hour — someone sanding a brass hinge", at(14, 5)),
+        ]
+        .iter()
+        .enumerate()
+        {
+            sqlx::query(
+                "INSERT INTO data_communication_transcription \
+                 (id, text, summary, started_at, ended_at, speaker_count, \
+                  source_stream_id, source_table, source_provider) \
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, 'stream_ios_microphone', 'ios')",
+            )
+            .bind(format!("t{i}"))
+            .bind(text)
+            .bind(summary)
+            .bind(start)
+            .bind(*start + chrono::Duration::minutes(5))
+            .bind(1i32)
+            .bind(format!("s{i}"))
+            .execute(&pool)
+            .await
+            .expect("insert chunk");
+        }
+
+        sessionize_day(&pool, date).await.expect("sessionize");
+
+        let content: Vec<Option<String>> =
+            sqlx::query_scalar("SELECT content FROM data_audio_session ORDER BY started_at")
+                .fetch_all(&pool)
+                .await
+                .expect("read sessions");
+        let joined = content.into_iter().flatten().collect::<Vec<_>>().join(" ");
+
+        assert!(
+            joined.contains("release"),
+            "the speech chunk's summary must survive, got: {joined:?}",
+        );
+        assert!(
+            !joined.contains("hinge"),
+            "a silent chunk's summary must never reach session content, got: {joined:?}",
+        );
+    }
+}
+

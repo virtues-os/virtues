@@ -1,0 +1,11 @@
+name = "Plaid Accounts"
+description = "Keeps your bank balances current."
+owner = "system"
+command = ["plaid_accounts_sync"]
+triggers = ["cron", "manual"]
+schedule = "0 0 */6 * * *"
+per_credential = true
+source = { id = "plaid" }
+
+# Ontologies this applet writes — drives "what would fill this stream".
+writes = ["financial_account"]

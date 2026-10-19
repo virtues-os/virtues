@@ -1,0 +1,581 @@
+name: Release Linux binaries
+
+# Triggered on tag push (e.g. `v0.1.0`) or manual dispatch. Builds the
+# `virtues` binary for x86_64 + aarch64 Linux NATIVELY on GitHub-hosted
+# Ubuntu 22.04 runners (the arm64 runner is the free Linux ARM64 runner
+# GitHub launched in 2025 for public repos), packages each as a tarball,
+# and attaches them to the GitHub Release for that tag.
+#
+# Why Ubuntu 22.04: matches Jetson JetPack 6.x's base (glibc 2.35) so the
+# resulting binary runs on every supported target (Jetson 6.x, Debian 13,
+# Ubuntu 22.04+, Fedora 40+). We removed the in-process ORT dep that was
+# forcing glibc 2.38+; local ML runs in llama-server sidecars (also built
+# here, at a pinned llama.cpp tag), so the virtues binary only needs glibc
+# 2.31+ — covered by every supported distro and every JetPack 6.x release.
+#
+# Tarball naming intentionally matches what `tools/virtues-installer` expects:
+#
+#     virtues-<tag>-<arch>-linux.tar.gz
+#
+# where <arch> is `x86_64` or `aarch64` (the uname -m strings on Jetson +
+# typical x86_64 servers). The install script downloads the matching one
+# based on the target machine's architecture.
+
+on:
+  push:
+    tags:
+      # Stable releases: `v0.1.0` (bare semver → prerelease:false, what
+      # virtues.com/sh + `virtues upgrade` serve). Pre-1.0 staging tags
+      # `v0.1.0-staging.N` still work (any `-` identifier → prerelease).
+      - 'v*'
+      # Edge channel: the rolling `edge` tag, force-pushed each test build →
+      # one prerelease release that overwrites itself (`virtues upgrade --pre`).
+      - 'edge'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag (e.g. v0.1.0 or edge)'
+        required: true
+        type: string
+
+permissions:
+  contents: write  # upload release assets
+
+env:
+  # llama.cpp tag the inference sidecars are built from. Bump DELIBERATELY:
+  # upstream moves fast and has changed embedding/pooling defaults before.
+  # After a bump, run `virtues warm-models` + a fixture search on a staging
+  # box before publishing (llama-server smoke test below only proves the
+  # binary starts). Also pinned in warm-release-caches.yml and the Makefile
+  # (dev sidecars); move all three together. b11507 is the first we run with
+  # EmbeddingGemma 2 (architecture added upstream in llama.cpp#30054).
+  LLAMA_CPP_TAG: b11507
+  # QAIRT SDK (Community) version used to BUILD virtues-qnnd, the Dragon NPU
+  # daemon (aarch64 only). Public download from Qualcomm's software center; the
+  # daemon is header-only against it (dlopen's the runtime libs on the box). Must
+  # match the QAIRT the .bin context binaries were compiled with.
+  # qnnd's headers. Must match `QNND.version` in crates/virtues-qairt/src/lib.rs.
+  QAIRT_VERSION: 2.42.0.251225
+
+jobs:
+  # The draft exists BEFORE any arch uploads into it.
+  #
+  # Both matrix legs used to create it themselves, concurrently, with the same
+  # tag — so each made a draft and the loser deleted its own and adopted the
+  # winner's mid-flight:
+  #
+  #   ↪️ Using release 390984748 instead of duplicate draft 390988159
+  #   🧹 Removing duplicate draft release 390988159...
+  #   ⬆️ Uploading virtues-v0.1.7-staging.79-aarch64-linux.tar.gz...
+  #   ##[error] Error saving asset
+  #
+  # aarch64 was uploading into a release the other leg was still reconciling,
+  # and the largest asset lost the coin flip. The release stayed a draft (the
+  # `publish` job below is gated on `needs: [build]`, which is what kept a
+  # half-built release off the channel) — but it cost a re-run, and the board
+  # it was cut for is aarch64.
+  #
+  # One creator, then N uploaders, is the shape that has no coin flip in it.
+  prepare:
+    name: Create the draft release
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    permissions:
+      contents: write
+    steps:
+      - name: Resolve version tag
+        id: tag
+        # The dispatch input arrives through env, never spliced into the
+        # script, and only a box tag gets past this job: every later step
+        # splices the version into shell, and `build` and `publish` both wait
+        # on this one.
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            V="$INPUT_VERSION"
+          else
+            V="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ ! "$V" =~ ^(edge|v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?)$ ]]; then
+            echo "::error::'$V' is not a box release tag (want vX.Y.Z, vX.Y.Z-staging.N or edge)"
+            exit 1
+          fi
+          echo "version=$V" >> "$GITHUB_OUTPUT"
+
+      - name: Create the draft (no assets yet)
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ steps.tag.outputs.version }}
+          draft: true
+
+  build:
+    name: Build ${{ matrix.arch }}
+    needs: [prepare]
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            target: x86_64-unknown-linux-gnu
+            runner: blacksmith-16vcpu-ubuntu-2204
+          - arch: aarch64
+            target: aarch64-unknown-linux-gnu
+            runner: blacksmith-16vcpu-ubuntu-2204-arm
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Resolve version tag
+        id: tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Edge + pre-1.0 staging tags build the faster `staging` cargo profile (no
+      # LTO, opt-level 2) for quick turnaround; stable `v*` tags keep `release`.
+      # The profile name == the target/<arch>/<profile>/ output dir.
+      - name: Select cargo profile
+        run: |
+          V="${{ steps.tag.outputs.version }}"
+          if [[ "$V" == "edge" || "$V" == *staging* ]]; then
+            echo "CARGO_PROFILE=staging" >> "$GITHUB_ENV"
+          else
+            echo "CARGO_PROFILE=release" >> "$GITHUB_ENV"
+          fi
+          # Bake the exact release tag into --version (build.rs reads this; the
+          # shallow checkout has no tags for `git describe` to find).
+          echo "VIRTUES_BUILD_VERSION=$V" >> "$GITHUB_ENV"
+
+      # wasm32: `pnpm build` below builds the page editor's markdown
+      # converter (apps/web/scripts/build-converter.mjs).
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-12
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }},wasm32-unknown-unknown
+
+      # No version stamping: virtues-core/Cargo.toml's `version` is the semver
+      # source of truth (bumped by hand at milestones). `virtues --version`
+      # composes it with the codename + git sha + date via build.rs, so the
+      # build is identified without a CI-rewritten counter. The tarball NAME
+      # still carries the tag (`virtues-edge-…` / `virtues-v0.1.0-…`) for stable
+      # per-channel download URLs.
+
+      # Cache cargo registry + target dir — saves ~3-5 min on subsequent runs
+      # when only the source changes.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: release-${{ matrix.arch }}
+
+      # bluer (maintenance::ble_provision, the Improv BLE setup service) pulls
+      # libdbus-sys, which needs the libdbus headers at build time. Runtime on a
+      # box needs only libdbus-1-3, which Ubuntu server always has (systemd/NM
+      # depend on it).
+      - name: Install libdbus headers (bluer/BLE provisioning)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libdbus-1-dev pkg-config
+
+      # Sqlx queries are checked at compile-time against a recorded schema
+      # under .sqlx/ — offline mode avoids needing a live DB in CI.
+      # ONE INVOCATION, THREE PACKAGES. cargo parallelises across the whole
+      # build graph it is given, but two invocations cannot overlap: the first
+      # one's link phase — where parallelism collapses to roughly one core —
+      # runs while the second waits its turn. Split across four steps this left
+      # the whole runner idle through every tail.
+      #
+      # Measured on the aarch64 leg (2026-08-13): virtues 515s + applets 391s +
+      # installer 29s = 935s, 65% of a 24-minute build, on a machine that was
+      # not busy for much of it. The packages are independent, so merging costs
+      # nothing in correctness and lets the scheduler fill the box.
+      #
+      # The action binaries matter as much as the box: the function-runtime
+      # actions (ios_*, day_summary_eod, google_*_sync, plaid_*, …) are separate
+      # executables the box forks via `command = ["<name>"]`. They are NOT
+      # compiled into `virtues`, so without them (and the packaging below) the
+      # box has manifest rows it can never run — resolve_program finds nothing
+      # on PATH and every webhook 5xxs. `--bins` builds every [[bin]] in
+      # applets/Cargo.toml from one source of truth.
+      #
+      # `virtues-client` stays OUT of this on purpose — it is a preview whose
+      # compile is allowed to fail (`continue-on-error` below), and folding it
+      # in here would make its breakage gate the box and the installer, which
+      # is the exact thing that step's separation exists to prevent.
+      - name: Build box, installer + action binaries
+        env:
+          SQLX_OFFLINE: 'true'
+        run: |
+          cargo build --profile ${{ env.CARGO_PROFILE }} --target ${{ matrix.target }} \
+            -p virtues --bin virtues \
+            -p virtues-installer --bin virtues-installer \
+            -p virtues-applets --bins \
+            -p virtues-door --bin virtues-door
+
+      # Desktop daemon (v0.2). Linux-only today — macOS / Windows daemons land
+      # in v0.2.1+. A PREVIEW whose tunnel isn't finished (see PR #18) — its
+      # compile must NOT gate shipping the box (`virtues`) + installer, so this
+      # step is non-fatal and packaging/upload below include it only when it
+      # actually built this run. The build break is tracked separately.
+      - name: Build virtues-client binary (preview, non-fatal)
+        continue-on-error: true
+        run: |
+          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-client --bin virtues-client --target ${{ matrix.target }}
+
+      # llama-server — the engine behind the virtues-embed sidecar
+      # (one CPU binary per arch — the universal floor for Manual mode and the
+      # Dragon fallback). GGML_NATIVE=OFF keeps the build portable
+      # across the arch instead of tuned to the runner's CPU; static libs
+      # so the tarball ships one self-contained executable.
+      #
+      # The binary is byte-determined by (LLAMA_CPP_TAG, arch, cmake flags), so
+      # we cache the OUTPUT keyed on the pinned tag — no source hash. Bump the
+      # `-vN` suffix by hand if the cmake flags above change.
+      #
+      # This used to claim the cache "hits on every run until LLAMA_CPP_TAG is
+      # bumped". It never hit once. This workflow runs ONLY on tag pushes, and
+      # per GitHub's caching reference a tag can only read caches created in the
+      # DEFAULT BRANCH — never another tag's. Every release wrote a cache scoped
+      # to its own tag that the next release could not see, so llama.cpp was
+      # compiled from scratch on both arches every single time.
+      #
+      # `warm-release-caches.yml` now builds the same key on the default branch
+      # on a schedule, which is the one scope tag runs are allowed to read. The
+      # flags below and the key must stay identical to that file.
+      - name: Cache llama-server (CPU)
+        id: llama_cpu
+        uses: actions/cache@v4
+        with:
+          path: /tmp/llama-bin
+          key: llama-server-${{ env.LLAMA_CPP_TAG }}-${{ matrix.arch }}-cpu-v1
+
+      - name: Build llama-server (pinned llama.cpp, CPU)
+        if: steps.llama_cpu.outputs.cache-hit != 'true'
+        run: |
+          git clone --depth 1 --branch "$LLAMA_CPP_TAG" \
+            https://github.com/ggml-org/llama.cpp /tmp/llama.cpp
+          cmake -S /tmp/llama.cpp -B /tmp/llama.cpp/build \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DGGML_NATIVE=OFF \
+            -DBUILD_SHARED_LIBS=OFF \
+            -DLLAMA_CURL=OFF \
+            -DLLAMA_BUILD_TESTS=OFF \
+            -DLLAMA_BUILD_EXAMPLES=OFF \
+            -DLLAMA_BUILD_SERVER=ON
+          cmake --build /tmp/llama.cpp/build --target llama-server -j "$(nproc)"
+          mkdir -p /tmp/llama-bin
+          cp /tmp/llama.cpp/build/bin/llama-server /tmp/llama-bin/
+
+      # Say out loud whether the cache worked. `cache-hit` was always available
+      # and never surfaced, which is how a cache that never hit went unnoticed
+      # across every release since it was added — a miss looks exactly like a
+      # slow build unless something names it.
+      - name: Report llama cache outcome
+        run: |
+          echo "llama-server cache: ${{ steps.llama_cpu.outputs.cache-hit == 'true' && 'HIT' || 'MISS (rebuilt)' }}"
+          echo "key: llama-server-${{ env.LLAMA_CPP_TAG }}-${{ matrix.arch }}-cpu-v1"
+
+      # Smoke runs on cache HIT and MISS alike: the binary must start and report
+      # its version (also proves a restored cache isn't corrupt).
+      - name: Smoke llama-server (CPU)
+        run: /tmp/llama-bin/llama-server --version
+
+      # virtues-qnnd — the Dragon NPU daemon (aarch64 only). It compiles against
+      # the QAIRT SDK *headers* (the daemon dlopen's the runtime libs on the box,
+      # so no libs are needed here). QAIRT Community is a public ~2 GB download,
+      # version-pinned, so cache the extracted SDK keyed on the version.
+      - name: Cache QAIRT SDK
+        if: matrix.arch == 'aarch64'
+        id: qairt
+        uses: actions/cache@v4
+        with:
+          path: /tmp/qairt
+          key: qairt-${{ env.QAIRT_VERSION }}-v1
+
+      - name: Fetch QAIRT SDK (Community)
+        if: matrix.arch == 'aarch64' && steps.qairt.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq unzip
+          mkdir -p /tmp/qairt
+          # Plain GET (NO range — the gateway 403s range requests) + a browser
+          # UA; follows the softwarecenter → apigwx-aws redirect. Verified public
+          # (unauthenticated) 2026-07-07.
+          curl -fSL --retry 3 -A "Mozilla/5.0" -o /tmp/qairt/qairt.zip \
+            "https://softwarecenter.qualcomm.com/api/download/software/sdks/Qualcomm_AI_Runtime_Community/All/${QAIRT_VERSION}/v${QAIRT_VERSION}.zip"
+          unzip -q /tmp/qairt/qairt.zip -d /tmp/qairt
+          rm -f /tmp/qairt/qairt.zip
+
+      - name: Build virtues-qnnd (Dragon NPU daemon)
+        if: matrix.arch == 'aarch64'
+        run: |
+          # SDK unzips to /tmp/qairt/qairt/<version>/; locate the include root.
+          H=$(find /tmp/qairt -path '*/include/QNN/QnnInterface.h' 2>/dev/null | head -1)
+          test -n "$H" || (echo "QAIRT headers not found under /tmp/qairt" >&2 && exit 1)
+          export QNN_SDK_ROOT="$(cd "$(dirname "$H")/../.." && pwd)"
+          echo "QNN_SDK_ROOT=$QNN_SDK_ROOT"
+          cargo build --profile ${{ env.CARGO_PROFILE }} -p virtues-qnnd --bin virtues-qnnd --target ${{ matrix.target }}
+
+      # Node is needed only to BUILD the SvelteKit app (adapter-static
+      # produces pure HTML/JS/CSS; no Node at runtime on the box). The
+      # web package + lockfile live at apps/web/, not the repo root.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Build web UI (SvelteKit static)
+        working-directory: apps/web
+        env:
+          # Bake the SPA's build identity so __BUILD_COMMIT__/__BUILD_VERSION__
+          # resolve to the real release (not 'dev'). Mirrors the box's build.rs.
+          GIT_COMMIT: ${{ github.sha }}
+          GIT_DESCRIBE: ${{ env.VIRTUES_BUILD_VERSION }}
+        run: |
+          pnpm install --frozen-lockfile
+          pnpm build
+          # SvelteKit static adapter writes to ./build inside apps/web/.
+          test -d build || (echo "web build did not produce apps/web/build" >&2 && exit 1)
+
+      - name: Package release artifacts
+        id: tarball
+        run: |
+          mkdir -p dist staging
+          BIN_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues"
+          INSTALLER_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues-installer"
+          CLIENT_PATH="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}/virtues-client"
+          test -x "$BIN_PATH"       || (echo "virtues binary not built"      >&2 && exit 1)
+          test -x "$INSTALLER_PATH" || (echo "virtues-installer not built"   >&2 && exit 1)
+          # NOTE: no hard check on $CLIENT_PATH — the preview daemon is optional
+          # (its build step is non-fatal); it's packaged below only if present.
+
+          LLAMA_PATH="/tmp/llama-bin/llama-server"
+          test -x "$LLAMA_PATH" || (echo "llama-server not built" >&2 && exit 1)
+
+          # Layout inside the main tarball:
+          #   virtues             box binary, installer moves to /usr/local/bin/
+          #   llama-server        inference sidecar engine (CPU build), also to /usr/local/bin/
+          #   web/                SvelteKit static build, → /usr/local/share/virtues/web/
+          #   applets/            applet manifests + UI + sources.toml,
+          #                       → /usr/local/share/virtues/applets/ (VIRTUES_APPLETS_DIR).
+          #                       Globbed at runtime by virtues-core; NOT baked into
+          #                       the binary, so it must ship here or the box has no
+          #                       actions.
+          #   applets-bin/        compiled function-action executables (ios_*, …),
+          #                       → /usr/local/libexec/virtues/ (VIRTUES_APPLETS_BIN_DIR).
+          #                       Forked by the box per webhook; without them the
+          #                       manifests above exist but can never run.
+          cp "$BIN_PATH" staging/virtues
+          cp "$LLAMA_PATH" staging/llama-server
+          cp -r apps/web/build staging/web
+          cp -r applets staging/applets
+          # Ship only what the box READS at runtime: manifests, faces, schemas
+          # and sources.toml. `cp -r applets` brought the whole crate — 46 Rust
+          # source files (~10k lines) already compiled into applets-bin above,
+          # plus its Cargo.toml, the shared `src/` lib, the dev-only `vad_sweep`
+          # calibration example, and the authoring docs. None of it is opened by
+          # virtues-core; it was shipping to every customer because copying the
+          # directory was easier than saying what the directory is for.
+          # `applets/user/` is the owner's OWN chat-authored applets — per-box
+          # state, gitignored, and never package data (see CLAUDE.md). Absent on
+          # a clean CI checkout, present on any machine that has authored one,
+          # so a local release build would otherwise ship a person's private
+          # applets to every customer. Removed unconditionally rather than
+          # trusting the checkout to be clean.
+          rm -rf staging/applets/user
+          find staging/applets -name '*.rs' -delete
+          rm -rf staging/applets/src staging/applets/examples \
+                 staging/applets/Cargo.toml staging/applets/AGENTS.md \
+                 staging/applets/AUTHORING.md staging/applets/MANIFEST_SCHEMA.json
+          # A manifest with no face and no schema is still a valid applet, but
+          # zero manifests means the box has no actions at all — catch that here
+          # rather than on a customer's first boot.
+          test "$(find staging/applets -name manifest.toml | wc -l)" -gt 0 \
+            || (echo "no applet manifests staged" >&2 && exit 1)
+
+          # Stage every action binary. The list comes from cargo metadata so it
+          # tracks applets/Cargo.toml's [[bin]] entries automatically (no
+          # second list to keep in sync). Built into the same target/ dir above.
+          REL="target/${{ matrix.target }}/${{ env.CARGO_PROFILE }}"
+          mkdir -p staging/applets-bin
+          ACTION_BINS=$(cargo metadata --format-version 1 --no-deps \
+            | jq -r '.packages[] | select(.name=="virtues-applets") | .targets[] | select(.kind[]=="bin") | .name')
+          test -n "$ACTION_BINS" || (echo "no action bins found via cargo metadata" >&2 && exit 1)
+          for b in $ACTION_BINS; do
+            test -x "$REL/$b" || (echo "action binary $b not built at $REL/$b" >&2 && exit 1)
+            cp "$REL/$b" "staging/applets-bin/$b"
+          done
+          # The door (shared links) lives beside the applet binaries, where the
+          # core resolves helper programs (applet_runner::resolve_program).
+          test -x "$REL/virtues-door" || (echo "virtues-door not built at $REL/virtues-door" >&2 && exit 1)
+          cp "$REL/virtues-door" staging/applets-bin/virtues-door
+
+          # virtues-qnnd — Dragon NPU daemon, aarch64 only (built against QAIRT
+          # above). Packaged when present; the installer extracts it if there and
+          # only errors on a Dragon that finds it missing.
+          TAR_EXTRA=""
+          if [ -x "$REL/virtues-qnnd" ]; then
+            cp "$REL/virtues-qnnd" staging/virtues-qnnd
+            TAR_EXTRA="virtues-qnnd"
+          fi
+
+          # BUILD.json — the tarball's build identity. `virtues upgrade` reads
+          # it for SHA-based no-op detection (the only honest identity for
+          # prerelease builds, which all report the bare crate version) and to
+          # name the release slot (<tag>-<sha7>).
+          printf '{"version":"%s","sha":"%s","channel":"%s","built_at":"%s"}\n' \
+            "${{ steps.tag.outputs.version }}" "${GITHUB_SHA}" \
+            "$(case "${{ steps.tag.outputs.version }}" in *staging*) echo staging;; edge*) echo edge;; v*-*) echo dev;; v*) echo stable;; *) echo dev;; esac)" \
+            "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > staging/BUILD.json
+
+          TAR_NAME="virtues-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux.tar.gz"
+          tar -czf "dist/${TAR_NAME}" -C staging virtues llama-server web applets applets-bin BUILD.json $TAR_EXTRA
+          (cd dist && sha256sum "${TAR_NAME}" > "${TAR_NAME}.sha256")
+
+          # The installer ships as a standalone binary (NOT inside the
+          # tarball). bootstrap.sh downloads it directly, verifies the
+          # SHA, then execs it. Keeping it separate lets the bootstrap
+          # avoid extracting a tarball before having any UI to show.
+          INSTALLER_NAME="virtues-installer-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux"
+          cp "$INSTALLER_PATH" "dist/${INSTALLER_NAME}"
+          (cd dist && sha256sum "${INSTALLER_NAME}" > "${INSTALLER_NAME}.sha256")
+
+          echo "name=${TAR_NAME}" >> "$GITHUB_OUTPUT"
+          echo "path=dist/${TAR_NAME}" >> "$GITHUB_OUTPUT"
+          echo "installer_name=${INSTALLER_NAME}" >> "$GITHUB_OUTPUT"
+
+          # Desktop daemon ships as a standalone binary too — but it's a v0.2
+          # PREVIEW and may not have built (non-fatal step above). Package +
+          # advertise it ONLY when the binary exists this run; its absence must
+          # never fail the release. Testers download it directly, `sudo setcap
+          # cap_net_admin+ep` it, and run `virtues-client up`.
+          if [ -x "$CLIENT_PATH" ]; then
+            CLIENT_NAME="virtues-client-${{ steps.tag.outputs.version }}-${{ matrix.arch }}-linux"
+            cp "$CLIENT_PATH" "dist/${CLIENT_NAME}"
+            (cd dist && sha256sum "${CLIENT_NAME}" > "${CLIENT_NAME}.sha256")
+            echo "client_name=${CLIENT_NAME}" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::virtues-client (preview daemon) did not build for ${{ matrix.arch }}; releasing box + installer without it"
+          fi
+
+      # `draft: true` on EVERY upload, including this one. The other two steps
+      # in this job already said it and this one did not, so whichever leg won
+      # the create race also decided whether the release was born published or
+      # draft — a coin flip over whether a half-uploaded release is visible on
+      # the channel. With `prepare` above there is nothing left to create here,
+      # and this flag now only guarantees no step can publish early.
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ steps.tag.outputs.version }}
+          files: |
+            dist/${{ steps.tarball.outputs.name }}
+            dist/${{ steps.tarball.outputs.name }}.sha256
+            dist/${{ steps.tarball.outputs.installer_name }}
+            dist/${{ steps.tarball.outputs.installer_name }}.sha256
+          fail_on_unmatched_files: true
+          # Don't auto-publish: lets the release page collect both arches
+          # before going live. The release shows up as draft after the
+          # first job and ships once you manually publish (or call it as
+          # `prerelease: false, draft: false` once both are uploaded).
+          draft: true
+
+      # The bootstrap script ships WITH the release so virtues.com/sh (stable,
+      # → releases/latest/download/bootstrap.sh) and virtues.com/sh-pre (edge,
+      # → releases/download/edge/bootstrap.sh) each serve the copy bundled with
+      # the matching binaries — they version together, gated on the same tag,
+      # no server-side copy to drift. Arch-independent → one matrix leg ships it.
+      #
+      # Channel stamping: a release's bundled script should default to installing
+      # ITS OWN binaries. Bare stable `v*` keeps the source default `latest` so it
+      # auto-tracks the newest stable via the API. Pre-release tags (`edge`, any
+      # `-` semver like v0.1.0-staging.N) pin VIRTUES_VERSION to their own tag, so
+      # `curl virtues.com/sh-pre | sh` installs edge — not stable, which a bare
+      # `latest` default would otherwise resolve to.
+      - name: Stamp channel into bootstrap.sh (x86_64 leg only)
+        if: matrix.arch == 'x86_64'
+        run: |
+          V="${{ steps.tag.outputs.version }}"
+          mkdir -p dist
+          if [ "$V" = "edge" ] || printf '%s' "$V" | grep -q -- '-'; then
+            sed "s/{VIRTUES_VERSION:-latest}/{VIRTUES_VERSION:-$V}/" tools/bootstrap.sh > dist/bootstrap.sh
+            grep -q "{VIRTUES_VERSION:-$V}" dist/bootstrap.sh \
+              || (echo "channel stamp failed for $V — placeholder not found" >&2 && exit 1)
+          else
+            cp tools/bootstrap.sh dist/bootstrap.sh
+          fi
+          echo "bootstrap.sh default channel:"; grep 'VIRTUES_VERSION:-' dist/bootstrap.sh
+
+      - name: Upload bootstrap.sh (x86_64 leg only)
+        if: matrix.arch == 'x86_64'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ steps.tag.outputs.version }}
+          files: dist/bootstrap.sh
+          fail_on_unmatched_files: true
+          draft: true
+
+      # Preview daemon — separate, optional upload so a missing client asset
+      # (it may not have built) can't fail the strict core upload above.
+      - name: Upload virtues-client (preview, optional)
+        if: steps.tarball.outputs.client_name != ''
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ steps.tag.outputs.version }}
+          files: |
+            dist/${{ steps.tarball.outputs.client_name }}
+            dist/${{ steps.tarball.outputs.client_name }}.sha256
+          fail_on_unmatched_files: true
+          draft: true
+
+  # After both arches built + uploaded, flip the draft release to live.
+  # Keeping this as a separate job so a single-arch failure doesn't ship
+  # a half-baked release.
+  publish:
+    name: Publish release
+    needs: [build]
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Resolve version tag
+        id: tag
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            echo "version=$INPUT_VERSION" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+      # Channel = the GitHub `prerelease` flag, derived from the tag:
+      #   • `edge` or any `-` semver identifier (e.g. v0.1.0-staging.5) → edge
+      #     channel, prerelease:true. `releases/latest` skips these; they're
+      #     served by `virtues upgrade --pre` + virtues.com/sh-pre.
+      #   • bare `v0.1.0` → stable, prerelease:false → CLAIMS `releases/latest`,
+      #     served by virtues.com/sh + `virtues upgrade`.
+      #
+      # --latest is claimed EXPLICITLY (not left to GitHub's auto algorithm) so
+      # this is the sole owner of the repo-global pointer. The Mac app uploads
+      # with make_latest:false (see release-mac.yml) precisely so a newer mac-v*
+      # can't drift the pointer onto a DMG release that has no bootstrap.sh →
+      # `curl virtues.com/sh` 404. Edge/staging stay prerelease and never claim it.
+      - name: Flip draft → published (channel from tag)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V="${{ steps.tag.outputs.version }}"
+          if [[ "$V" == "edge" || "$V" == *-* ]]; then PRE=true; LATEST=false; else PRE=false; LATEST=true; fi
+          echo "tag=$V → prerelease=$PRE latest=$LATEST"
+          gh release edit "$V" --draft=false --prerelease="$PRE" --latest="$LATEST"

@@ -1,0 +1,1617 @@
+/* ===================================
+   VIRTUES THEME SYSTEM
+
+   Semantic color definitions for multiple theme variants.
+   These colors are available as Tailwind utilities (e.g., bg-primary, text-foreground)
+   and as CSS variables (e.g., var(--color-primary))
+
+   Themes (literary places) — sixteen, seven light and nine dark:
+   Light:
+   - Pemberley - Austen elegance, pristine. Occupies :root (see below).
+   - Caladan - Atreides ocean world
+   - Rivendell - Elven refuge, warm light
+   - Oxford (default) - Heritage ivory, navy & claret
+   - Netherfield - Flat white, blue accent
+   - Hogwarts - Warm parchment, candlelit
+   - Tatooine - Twin suns, desert warmth
+
+   Dark:
+   - Lothlorien - Golden wood twilight
+   - Baker Street - Victorian gaslight
+   - Narnia - Magical lamppost glow
+   - Canterbury - Pilgrim earth tones
+   - Borghese - Dramatic light and shadow (deliberately monochrome: its
+     --primary/--success/--error are all #FFFFFF, --warning/--info #CCCCCC.
+     Not a bug — it is the one theme with no hue at all.)
+   - The Lyceum - Aristotle's school, cool blues
+   - Asgard - Norse realm, cold majesty
+   - Agora - Greek marketplace purple
+   - The Shire - Cozy hobbit pastels
+
+   NOTE ON :root — Pemberley is the base layer, but Oxford is the default
+   theme (virtues-registry DEFAULT_THEME). Those are two different jobs and
+   they do not name the same theme: every other theme, Oxford included, is
+   an override on top of Pemberley's values. The practical consequence is
+   that app.html's pre-paint fallback must track *Oxford's* --background
+   (#FDFCF9), not :root's, or a new box flashes Pemberley white before
+   settling on ivory.
+
+   IMPORTANT: @theme must be top-level, not nested.
+   We define theme variables once, then override CSS variables per theme.
+   =================================== */
+
+/* Define all theme variables at top level - these create the utility classes */
+@theme inline {
+	/* Surface Colors */
+	--color-background: var(--background);
+	--color-surface: var(--surface);
+	--color-surface-elevated: var(--surface-elevated);
+	--color-surface-overlay: var(--surface-overlay);
+	/* The ground the main content card paints, which every view reads on.
+	   `--surface` stays for what lifts off it: cards, popovers, menus. */
+	--color-page: var(--page);
+
+	/* Interaction surfaces. These two were referenced across the app (datagrid,
+	   filter chips, pinned sidebar rows) but never bridged, so they resolved to
+	   nothing: toolbar buttons rendered unfilled with no hover response, and the
+	   two call sites carrying a hardcoded grey fallback painted a near-white
+	   hover in every dark theme. Every theme defines --surface-elevated. */
+	--color-background-hover: var(--surface-elevated);
+	--color-background-secondary: var(--surface-elevated);
+
+	/* Background Treatment (gradient/texture support) */
+	--color-background-image: var(--background-image);
+	--color-surface-elevated-image: var(--surface-elevated-image);
+	--color-surface-elevated-size: var(--surface-elevated-size);
+
+	/* Content Colors */
+	--color-foreground: var(--foreground);
+	--color-foreground-muted: var(--foreground-muted);
+	--color-foreground-subtle: var(--foreground-subtle);
+	--color-foreground-disabled: var(--foreground-disabled);
+
+	/* Interactive Colors */
+	--color-primary: var(--primary);
+	--color-primary-hover: var(--primary-hover);
+	--color-primary-active: var(--primary-active);
+	--color-primary-subtle: var(--primary-subtle);
+
+	--color-secondary: var(--secondary);
+	--color-secondary-hover: var(--secondary-hover);
+	--color-secondary-active: var(--secondary-active);
+
+	/* Status Colors */
+	--color-success: var(--success);
+	--color-success-subtle: var(--success-subtle);
+	--color-warning: var(--warning);
+	--color-warning-subtle: var(--warning-subtle);
+	--color-error: var(--error);
+	--color-error-subtle: var(--error-subtle);
+	--color-info: var(--info);
+	--color-info-subtle: var(--info-subtle);
+
+	/* Border Colors */
+	--color-border: var(--border);
+	--color-border-subtle: var(--border-subtle);
+	--color-border-strong: var(--border-strong);
+	--color-border-focus: var(--border-focus);
+
+	/* Selection/Highlight Colors */
+	--color-highlight: var(--highlight);
+	--color-highlight-foreground: var(--highlight-foreground);
+
+	/* Diff Colors */
+	--color-diff-add: var(--diff-add);
+	--color-diff-add-bg: var(--diff-add-bg);
+	--color-diff-remove: var(--diff-remove);
+	--color-diff-remove-bg: var(--diff-remove-bg);
+
+	/* Background Inverse - For intentionally dark backgrounds */
+	--color-background-inverse: var(--background-inverse);
+
+	/* Font Families */
+	--font-mono: 'IBM Plex Mono', monospace;
+	--font-sans: 'Avenir', sans-serif;
+	/* EB Garamond is regular 400 here: no bold, no italic. That is a technical
+	   constraint on any serif hierarchy, not only house taste; the @font-face
+	   note in app.css says what follows from it. The tail is a system stack,
+	   not a webfont: it is only ever seen during `font-display: swap` or for a
+	   glyph outside the two subsets, and it costs zero bytes. */
+	--font-serif: 'EB Garamond', ui-serif, Georgia, 'Times New Roman', serif;
+	/* The one semibold: the first word of a day's Abstract, at weight 600, and
+	   nothing else. Its own family, so no other bold reaches it (app.css). */
+	--font-serif-lead: 'EB Garamond Lead', 'EB Garamond', ui-serif, Georgia, 'Times New Roman', serif;
+	/* The serif for chrome — same face, metrics normalized so a centered line
+	   box centers the letters and not the em square. Use it wherever the serif
+	   shares a row with something that isn't text (an icon, a dot, a control);
+	   use --font-serif for prose. See the @font-face note in app.css. */
+	--font-serif-ui: 'EB Garamond UI', ui-serif, Georgia, 'Times New Roman', serif;
+	/* Your own hand: the notes you write in a day page's margin, and nothing
+	   else. Machine text is never set in it. The face ships with the app (see
+	   app.css); the rest of the stack only covers the swap while it loads. */
+	--font-hand: 'Nothing You Could Do', 'Bradley Hand', 'Segoe Print', cursive;
+
+	/* Animation Tokens — only the three the app actually reads.
+	   --duration-normal, --duration-slow and --ease-out-expo were declared here
+	   and referenced by nothing in apps/web/src, which is worse than absent: a
+	   token that exists but is never drawn reads as the house default to the
+	   next person, who then matches a timing nothing else uses. Removed rather
+	   than kept "for later" — a var() is one line to add back when something
+	   needs it. Verified with a repo-wide search first: the only other mention
+	   of all three is the gallery's own prose naming them as dead. */
+	--duration-fast: 150ms;
+	--ease-in-out-quad: cubic-bezier(0.45, 0, 0.55, 1);
+	--ease-premium: cubic-bezier(0.2, 0, 0, 1);
+
+	/* Radius — sm/md/lg/xl (4/6/8/12px) already match Tailwind v4 defaults,
+	   so `rounded-*` utilities are unchanged. `--radius-full` is the one gap:
+	   Tailwind's `rounded-full` is a static calc(infinity*1px) with no var,
+	   so this exposes a pill radius to hand-written `<style>` blocks. */
+	--radius-full: 9999px;
+
+	/* Named breakpoint for the app's dominant hand-written media query (900px),
+	   giving a `nav:` responsive variant. Deliberately NOT redefining --breakpoint-lg
+	   (that would silently move every existing `lg:` utility from 1024px). */
+	--breakpoint-nav: 900px;
+
+	/* Markdown typography — THE definition, cited by both render engines.
+	   `.markdown` (app.css) styles the read path (chat, wiki, asset panes);
+	   `.doc-prose` (lib/document/document.css) styles the page editor. They
+	   had drifted into three competing value sets (editor h1 1.75rem vs read
+	   1.875rem, 600-weight serif table headers vs 400, a blue 4px quote bar vs
+	   a gray 3px one). These tokens hold the VALUES only — spacing stays
+	   engine-side.
+	   Change a size here and page and editor move together; that is the whole
+	   WYSIWYG guarantee. Values are the editor's tuned scale. */
+	--md-h1-size: 1.75rem;   --md-h1-lh: 1.3;  --md-h1-weight: 400;
+	--md-h2-size: 1.375rem;  --md-h2-lh: 1.35; --md-h2-weight: 400;
+	--md-h3-size: 1.125rem;  --md-h3-lh: 1.4;  --md-h3-weight: 500;
+	--md-h4-size: 1rem;      --md-h4-lh: 1.5;  --md-h4-weight: 500;
+	--md-h5-size: 0.9375rem; --md-h5-lh: 1.5;  --md-h5-weight: 600;
+	--md-h6-size: 0.875rem;  --md-h6-lh: 1.5;  --md-h6-weight: 600;
+	/* h1–h3 serif, h4–h6 inherit the surrounding sans — the editor's split. */
+	--md-heading-major-family: var(--font-serif);
+
+	/* THE BODY REGISTER. Headings have been shared since the editor started
+	   citing these tokens; the body was set locally on every surface and was
+	   therefore different on every surface — five sizes, four leadings, and a
+	   serif/sans split that had the DAY article, the most-read page in the
+	   product, as the one wiki article set in the interface's sans.
+
+	   There are two registers and the split is real: the interface reads in
+	   sans, the record reads in serif. `.markdown` is the first; a wiki article
+	   asks for `.markdown--article`, which redefines these three on itself and
+	   lets them inherit. */
+	--md-body-family: var(--font-sans);
+	--md-body-size: 1rem;
+	--md-body-lh: 1.5;
+
+	/* Serif at the same nominal size reads smaller than sans, so the article is
+	   set a step up rather than at parity. 1.0625rem and 1.65 are the values the
+	   narrative identity essay already used — the best-looking of the five, and
+	   the only one anybody had chosen on purpose. */
+	--md-article-family: var(--font-serif);
+	--md-article-size: 1.0625rem;
+	--md-article-lh: 1.65;
+	/* Inline code (block code is Streamdown/Shiki chrome, not typography). */
+	--md-inline-code-size: 0.875em;
+	--md-inline-code-bg: var(--color-surface-elevated);
+	--md-inline-code-radius: 0.25rem;
+	--md-inline-code-border: 1px solid var(--color-border-subtle);
+	/* Blockquote: the hairline, not the accent — blue stays interactive. */
+	--md-quote-border: 3px solid var(--color-border);
+	/* Tables: hairline grid, dense cells, small serif headers. */
+	--md-table-border-color: var(--color-border-subtle);
+	--md-cell-pad: 0.375rem 0.75rem;
+	--md-th-size: 0.8125rem;
+	--md-th-weight: 600;
+}
+
+/* ===================================
+   PEMBERLEY (DEFAULT)
+   White on white — paper, hairlines, one blue
+   Applied to :root so it's the default
+   =================================== */
+:root {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+
+	/* Editor selection blend — see the dark-theme block below. */
+	--selection-blend: multiply;
+
+	/* Surface Colors - One paper, top to bottom.
+	   Every surface is the same pure white, including --surface-elevated, which
+	   is what the sidebar sits on. Previous themes gave the rail a 4% step so it
+	   read as a separate region; here the seam is carried by a single hairline
+	   border and the pane card's shadow instead. With no tint anywhere, spacing
+	   and type do the organising — which is the whole point of the register, and
+	   the hardest one to fake. */
+	--background: #FFFFFF;
+	--surface: #FFFFFF;
+	--surface-elevated: #FFFFFF;
+	--surface-overlay: #FFFFFF;
+	/* The page is the surface unless a theme says otherwise. It resolves here,
+	   on <html>, which is also where `data-theme` lands, so every theme's own
+	   --surface is the one it reads. */
+	--page: var(--surface);
+
+	/* Background Treatment - Nothing. No texture, no wash. */
+	--background-image: none;
+	--surface-elevated-image: none;
+	--surface-elevated-size: auto;
+
+	/* Content Colors - Four steps of graphite, never pure black.
+	   #000 on #FFF is a harsher contrast than print ever uses; the ink here is
+	   a near-black with a trace of blue so it sits with the accent. */
+	--foreground: #17171A;
+	--foreground-muted: #3F3F46;
+	--foreground-subtle: #71717A;
+	--foreground-disabled: #A1A1AA;
+
+	/* Interactive Colors - One blue, spent sparingly (links, focus, selection) */
+	--primary: #0A84FF;
+	--primary-hover: #3395FF;
+	--primary-active: #0060DF;
+	--primary-subtle: #EAF3FF;
+
+	/* Secondary - Ink. Filled controls are graphite, not colour. */
+	--secondary: #17171A;
+	--secondary-hover: #2A2A2F;
+	--secondary-active: #000000;
+
+	/* Status Colors - Semantic only, and muted enough to sit on paper */
+	--success: #1A7F45;
+	--success-subtle: #E6F4EC;
+	--warning: #A56800;
+	--warning-subtle: #FBF0DC;
+	--error: #C4322B;
+	--error-subtle: #FBE9E7;
+	--info: #0A84FF;
+	--info-subtle: #EAF3FF;
+
+	/* Border Colors - Hairlines. On white these are the only structure there
+	   is, so they are neutral and thin rather than tinted: a coloured rule
+	   reads far louder than a coloured fill of the same saturation. */
+	--border: #E7E7E9;
+	--border-subtle: #F1F1F3;
+	--border-strong: #D4D4D8;
+	--border-focus: #0A84FF;
+
+	/* Selection/Highlight - A soft wash of the one accent */
+	--highlight: rgba(10, 132, 255, 0.15);
+	--highlight-foreground: #17171A;
+
+	/* Diff Colors */
+	--diff-add: #1A7F45;
+	--diff-add-bg: #E6F4EC;
+	--diff-remove: #C4322B;
+	--diff-remove-bg: #FBE9E7;
+
+	/* Background Inverse - Graphite, never pure black */
+	--background-inverse: #17171A;
+
+	/* Sidebar Component Tokens */
+	--sidebar-interactive-padding: 6px 10px;
+	--sidebar-interactive-radius: 6px;
+	--sidebar-interactive-gap: 8px;
+	--sidebar-interactive-font-size: 13px;
+	--sidebar-interactive-icon-size: 16px;
+	--sidebar-interactive-icon-size-small: 14px;
+	--sidebar-interactive-height: 28px;
+	/* Four registers instead of one. Every row used to be 28px / 13px / one
+	   weight / one colour, so pins read like destinations read like utilities —
+	   ten items all shouting at the same volume, which gives the eye nothing to
+	   follow and makes every glance cost the same effort. */
+	/* Children MATCH their parents rather than shrinking. Expressed as
+	   references, not as numbers that happen to coincide, so the decision
+	   survives the next tuning pass.
+	   A shorter, smaller child row broke the column's rhythm — two heights
+	   alternating down a narrow panel reads as unsettled, and the hierarchy
+	   never needed the size anyway. It is carried by four other things:
+	   indentation, no icon, regular weight against 500, and muted colour. */
+	--sidebar-child-height: var(--sidebar-interactive-height);
+	--sidebar-child-font-size: var(--sidebar-interactive-font-size);
+	/* The specific thing that made this look like every SaaS menu: eight
+	   identical 16px icons at full contrast in a column. The words should carry
+	   a contents page; icon and label at equal weight turn it into a toolbar
+	   stood on end. Icons recede and come back on hover and for the active row. */
+	--sidebar-icon-opacity: 0.5;
+	--sidebar-child-icon-opacity: 0.4;
+	--sidebar-interactive-color: var(--color-foreground);
+	--sidebar-padding-left-base: 12px;
+	--sidebar-indent-width: 12px;
+	--sidebar-transition-duration: 150ms;
+	--sidebar-transition-easing: var(--ease-premium);
+	/* Interaction ramp. One definition for every hover/press in the app.
+	   Components used to reach for whichever surface token looked close —
+	   usually --color-surface-elevated — which is #F5F5F5 on a #FFFFFF parent
+	   in the default theme: a shift small enough to read as nothing happening.
+	   A translucent wash stays legible in all sixteen themes because it is a
+	   step off whatever ground it lands on, not a match against another
+	   surface.
+
+	   The wash is mixed from --wash-ink, a NEUTRAL pigment — black on paper,
+	   white on a dark ground (set in the dark-theme block below) — and not
+	   from the text colour. It used to be the text colour, and on any theme
+	   whose ink carries a hue that shows: Oxford's navy at 7% over cream came
+	   out a cool gray, sitting beside the warm stone of --surface-elevated as
+	   if it belonged to a different kit (the thinking card's header and body,
+	   for one). A neutral pigment darkens the paper without turning it; the
+	   strength is what makes a hover read, never the ink's hue. Components
+	   that need a wash of their own strength mix it from --wash-ink too. */
+	--wash-ink: #000000;
+	--hover-bg: color-mix(in srgb, var(--wash-ink) 7%, transparent);
+	--active-bg: color-mix(in srgb, var(--wash-ink) 12%, transparent);
+	--press-bg: color-mix(in srgb, var(--wash-ink) 16%, transparent);
+
+	/* The scrollbar's thumb, on the same ramp and for the same reason: a
+	   translucent step off the ground, so it reads in all sixteen themes
+	   instead of landing on whichever surface token looked close. 22% is a shade above
+	   --active-bg (12%) — a scrollbar has to be findable against content, not
+	   just against a ground. The track is always transparent; a painted track
+	   is a chrome object standing on the page permanently, and design.md's
+	   rule is that nothing on the desk may out-shout the page. */
+	--scrollbar-thumb: color-mix(in srgb, var(--wash-ink) 22%, transparent);
+
+	--sidebar-hover-bg: color-mix(in srgb, var(--wash-ink) 7%, transparent);
+	--sidebar-active-bg: color-mix(in srgb, var(--wash-ink) 9%, transparent);
+	--sidebar-item-gap: 4px;
+
+	/* The active tab, on the same ramp and for the same reason.
+	   It used to be --surface for the focused pane and --surface-elevated for an
+	   unfocused one. In Caladan --surface IS #FFFFFF, the tab bar is #FFFFFF and
+	   the pane is #FFFFFF — so the active tab in the pane you were working in
+	   was white on white on white, while the tab in the pane you were ignoring
+	   (elevated, #F5F5F5) was the visible one. Exactly inverted, and invisible
+	   in every theme whose surface and background agree.
+	   Stepped above --hover-bg (7%) so hovering an inactive tab can't be
+	   mistaken for selecting it. */
+	--tab-active-bg: color-mix(in srgb, var(--wash-ink) 9%, transparent);
+	--tab-active-bg-focused: color-mix(in srgb, var(--wash-ink) 14%, transparent);
+
+	/* One height for both chrome rows — the sidebar masthead and the pane
+	   toolbar. They were 30px and 40px, under a comment in WorkspaceHeader
+	   claiming they matched, which put the sidebar's top edge 5px off the
+	   toolbar's centreline. Two numbers that must be equal should be one
+	   number. */
+	/* 8pt grid throughout. Off-grid values (13px, 26px, 30px, 34px, 12.5px) are
+	   one of the reliable tells of machine-generated UI, and every one of those
+	   was in here a commit ago. */
+	/* One radius for every card in the shell — the pane, the split panes and the
+	   sidebar panel. They used to disagree (8px mono, 4px split, 6px fallback),
+	   which read as the sidebar being rounded differently from the pages. */
+	--card-radius: 6px;
+	--chrome-row-h: 40px;
+	--chrome-tab-h: 32px;
+
+	/* How far the pane card is inset from the window: `m-3` (12px) plus its
+	   1px border. The sidebar is full-bleed, so without matching this its
+	   masthead sat 13px higher than the toolbar — equal heights, unequal
+	   centrelines, which is what you actually see across the seam. Equalising
+	   the heights alone did not fix the complaint. */
+	--pane-inset: 12px;
+}
+
+/* ===================================
+   CALADAN
+   Atreides ocean world, subtle texture
+   =================================== */
+[data-theme="caladan"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+
+	/* Surface Colors - Pure whites */
+	--background: #FFFFFF;
+	--surface: #FFFFFF;
+	--surface-elevated: #F5F5F5;
+	--surface-overlay: #FFFFFF;
+
+	/* Background Treatment - Film grain + subtle navy gradient */
+	--background-image: none;
+	--surface-elevated-image:
+		url('/textures/noise.svg'),
+		linear-gradient(180deg,
+			#FFFFFF 0%,
+			#FCFCFC 55%,
+			#EFF3F8 80%,
+			#E6ECF4 100%);
+
+	/* Content Colors - Neutral grays */
+	--foreground: #171717;
+	--foreground-muted: #404040;
+	--foreground-subtle: #737373;
+	--foreground-disabled: #a3a3a3;
+
+	/* Interactive Colors - Blue accent */
+	/* --primary is a text ink here (links, ErrorState's retry, a primary Badge),
+	   so it owes 4.5:1 on the page and not only a pleasing fill. Darkened for
+	   that; hover and active moved by the same lightness step, or the pressed
+	   state would have landed LIGHTER than rest. --border-focus tracks --primary
+	   in this file — keep the two equal. Re-measure at /components. */
+	--primary: #2077cd;
+	--primary-hover: #348ee2;
+	--primary-active: #1a5ea2;
+	--primary-subtle: #EFF6FF;
+
+	--secondary: #171717;
+	--secondary-hover: #262626;
+	--secondary-active: #0a0a0a;
+
+	/* Status Colors — darkened from the Tailwind defaults these arrived as.
+	   Those are tuned against white and nothing else, and every one of them
+	   failed the pair a reader actually meets: #16a34a reads 3.30 on --surface
+	   and 3.00 on its own #dcfce7 fill, so a success Badge shipped below AA in
+	   the four themes that share this palette (Caladan, Rivendell, Netherfield,
+	   Hogwarts — identical ratios to two decimals). Each ink now clears 4.5:1
+	   against BOTH --surface and its -subtle fill. Hue and saturation held;
+	   only lightness moved. --diff-add / --diff-remove are these same two inks
+	   by construction — move them together or the diff and the Badge disagree.
+	   Re-measure at /components after any change here. */
+	--success: #11803a;
+	--success-subtle: #dcfce7;
+	--warning: #ba460a;
+	--warning-subtle: #ffedd5;
+	--error: #ca2121;
+	--error-subtle: #fee2e2;
+	--info: #0271ab;
+	--info-subtle: #e0f2fe;
+
+	/* Border Colors - Neutral grays */
+	--border: #e5e5e5;
+	--border-subtle: #f5f5f5;
+	--border-strong: #d4d4d4;
+	--border-focus: #2077cd;
+
+	/* Selection/Highlight - Soft light yellow */
+	--highlight: rgba(253, 237, 178, 0.45);
+	--highlight-foreground: #171717;
+
+	/* Diff Colors */
+	--diff-add: #11803a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #ca2121;
+	--diff-remove-bg: #fee2e2;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
+}
+
+/* ===================================
+   RIVENDELL
+   Elven refuge, warm ethereal light
+   =================================== */
+[data-theme="rivendell"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+
+	/* Surface Colors - Pure whites */
+	--background: #FFFFFF;
+	--surface: #FFFFFF;
+	--surface-elevated: #F5F5F5;
+	--surface-overlay: #FFFFFF;
+
+	/* Background Treatment - Blue to peach gradient */
+	--background-image: none;
+	--surface-elevated-image:
+		url('/textures/noise.svg'),
+		linear-gradient(180deg,
+			#E8F4F8 0%,
+			#F5F5F5 35%,
+			#FAF5F3 65%,
+			#F5E6E0 100%);
+
+	/* Content Colors - Neutral grays */
+	--foreground: #171717;
+	--foreground-muted: #404040;
+	--foreground-subtle: #737373;
+	--foreground-disabled: #a3a3a3;
+
+	/* Interactive Colors - Warm accent */
+	/* --primary is a text ink here (links, ErrorState's retry, a primary Badge),
+	   so it owes 4.5:1 on the page and not only a pleasing fill. Darkened for
+	   that; hover and active moved by the same lightness step, or the pressed
+	   state would have landed LIGHTER than rest. --border-focus tracks --primary
+	   in this file — keep the two equal. Re-measure at /components. */
+	--primary: #C4512C;
+	--primary-hover: #D5603B;
+	--primary-active: #984B30;
+	--primary-subtle: #FEF3F0;
+
+	--secondary: #171717;
+	--secondary-hover: #262626;
+	--secondary-active: #0a0a0a;
+
+	/* Status Colors — darkened to clear 4.5:1 on both --surface and the -subtle
+	   fill a Badge draws behind them. Shared with Caladan, whose block carries
+	   the account of why the Tailwind defaults failed. */
+	--success: #11803a;
+	--success-subtle: #dcfce7;
+	--warning: #ba460a;
+	--warning-subtle: #ffedd5;
+	--error: #ca2121;
+	--error-subtle: #fee2e2;
+	--info: #0271ab;
+	--info-subtle: #e0f2fe;
+
+	/* Border Colors - Neutral grays */
+	--border: #e5e5e5;
+	--border-subtle: #f5f5f5;
+	--border-strong: #d4d4d4;
+	--border-focus: #C4512C;
+
+	/* Selection/Highlight - Soft peach */
+	--highlight: rgba(249, 215, 200, 0.45);
+	--highlight-foreground: #171717;
+
+	/* Diff Colors */
+	--diff-add: #11803a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #ca2121;
+	--diff-remove-bg: #fee2e2;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
+}
+
+/* ===================================
+   OXFORD
+   Heritage — ivory, navy & claret
+   (Formerly the Pemberley palette, moved here intact when Pemberley became
+   the white-on-white default. The old Oxford — neutral greys on a paper
+   texture — is gone: it was a near-duplicate of Caladan wearing a background
+   image, and the texture fought every hairline drawn over it.)
+   =================================== */
+[data-theme="oxford"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+
+	/* Surface Colors - Warm paper, a whisper of cream (de-yellowed).
+	   --surface-elevated is what the sidebar sits on, so it is the largest
+	   field of colour in the window. At #F5F4EF it was 23% saturation on a
+	   50° (yellow) hue — fine on a card, too much across a full-height panel,
+	   where it read as a wash rather than as paper. Held at the same lightness
+	   and taken down to ~12%. */
+	--background: #FDFCF9;
+	--surface: #FFFFFF;
+	--surface-elevated: #F4F3F0;
+	--surface-overlay: #FFFFFF;
+	/* The page is the same white as the sidebar's card, so the two panes read
+	   as one paper on the warm ground; a card on it lifts by its border. */
+	--page: var(--surface);
+
+	/* Background Treatment - Flat warm ivory */
+	--background-image: none;
+	--surface-elevated-image: none;
+	--surface-elevated-size: auto;
+
+	/* Content Colors - Navy-black ink on ivory */
+	--foreground: #1A2030;
+	--foreground-muted: #3E4459;
+	--foreground-subtle: #6C7185;
+	--foreground-disabled: #A8A395;
+
+	/* Interactive Colors - Deep heritage navy */
+	--primary: #1D4572;
+	--primary-hover: #255893;
+	--primary-active: #153356;
+	--primary-subtle: #E8EEF5;
+
+	/* Secondary - Claret heritage red (the signature accent) */
+	--secondary: #9A2B2E;
+	--secondary-hover: #B23639;
+	--secondary-active: #7E2225;
+
+	/* Status Colors - Hunter green + goldenrod + claret */
+	--success: #2E6B43;
+	--success-subtle: #E3EDE5;
+	--warning: #B07514;
+	--warning-subtle: #F6ECD6;
+	--error: #9A2B2E;
+	--error-subtle: #F6E3E2;
+	--info: #1E4E8C;
+	--info-subtle: #E5EBF5;
+
+	/* Border Colors - Greige, genuinely de-yellowed: they were ~42° hue at
+	   19–28% saturation, which is gold, not greige — and a rule is a thin line,
+	   so saturation reads far more strongly on it than across a fill. */
+	--border: #E3E1DD;
+	--border-subtle: #EFEEEB;
+	--border-strong: #D4D1CC;
+	--border-focus: #1D4572;
+
+	/* Selection/Highlight - A yellow highlighter, warmed toward gold. Not the
+	   claret: a marked passage in the signature accent reads as an error state
+	   rather than as something someone marked. Yellow is what a pen does to
+	   paper, and the hue is nobody else's here. Warm (HSL 46°, 85%, 71%) so it
+	   reads as a mark on the ivory page and not as a tint of it: over the page
+	   it lands at #F9ECC3, over a white card at #FAEEC6. */
+	--highlight: rgba(244, 215, 120, 0.42);
+	--highlight-foreground: #1A2030;
+
+	/* Diff Colors */
+	--diff-add: #2E6B43;
+	--diff-add-bg: #E3EDE5;
+	--diff-remove: #9A2B2E;
+	--diff-remove-bg: #F6E3E2;
+
+	/* Background Inverse - Deep navy, never black */
+	--background-inverse: #14203A;
+}
+
+/* ===================================
+   NETHERFIELD
+   Austen elegance, pristine white
+   =================================== */
+[data-theme="netherfield"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+
+	/* Surface Colors - Pure whites */
+	--background: #FFFFFF;
+	--surface: #FFFFFF;
+	--surface-elevated: #F5F5F5;
+	--surface-overlay: #FFFFFF;
+
+	/* Background Treatment - Flat for this theme */
+	--background-image: none;
+	--surface-elevated-image: none;
+	--surface-elevated-size: auto;
+
+	/* Content Colors - Neutral grays */
+	--foreground: #171717;
+	--foreground-muted: #404040;
+	--foreground-subtle: #737373;
+	--foreground-disabled: #a3a3a3;
+
+	/* Interactive Colors - Blue accent */
+	/* --primary is a text ink here (links, ErrorState's retry, a primary Badge),
+	   so it owes 4.5:1 on the page and not only a pleasing fill. Darkened for
+	   that; hover and active moved by the same lightness step, or the pressed
+	   state would have landed LIGHTER than rest. --border-focus tracks --primary
+	   in this file — keep the two equal. Re-measure at /components. */
+	--primary: #2077cd;
+	--primary-hover: #348ee2;
+	--primary-active: #1a5ea2;
+	--primary-subtle: #EFF6FF;
+
+	--secondary: #171717;
+	--secondary-hover: #262626;
+	--secondary-active: #0a0a0a;
+
+	/* Status Colors — darkened to clear 4.5:1 on both --surface and the -subtle
+	   fill a Badge draws behind them. Shared with Caladan, whose block carries
+	   the account of why the Tailwind defaults failed. */
+	--success: #11803a;
+	--success-subtle: #dcfce7;
+	--warning: #ba460a;
+	--warning-subtle: #ffedd5;
+	--error: #ca2121;
+	--error-subtle: #fee2e2;
+	--info: #0271ab;
+	--info-subtle: #e0f2fe;
+
+	/* Border Colors - Neutral grays */
+	--border: #e5e5e5;
+	--border-subtle: #f5f5f5;
+	--border-strong: #d4d4d4;
+	--border-focus: #2077cd;
+
+	/* Selection/Highlight - Soft light yellow */
+	--highlight: rgba(253, 237, 178, 0.45);
+	--highlight-foreground: #171717;
+
+	/* Diff Colors */
+	--diff-add: #11803a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #ca2121;
+	--diff-remove-bg: #fee2e2;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
+}
+
+/* ===================================
+   LOTHLORIEN
+   Golden wood twilight, ethereal glow
+   =================================== */
+[data-theme="lothlorien"] {
+	/* Code Syntax Highlighting - Dark mode (Catppuccin Mocha) */
+	--shiki-theme: catppuccin-mocha;
+
+	/* Surface Colors - Deep blue-purple */
+	--background: #1a1a2e;
+	--surface: #1f1f35;
+	--surface-elevated: #25253d;
+	--surface-overlay: #2a2a45;
+
+	/* Background Treatment - Dark blue to warm gradient */
+	--background-image: none;
+	--surface-elevated-image:
+		url('/textures/noise-dark.svg'),
+		linear-gradient(180deg,
+			#1E2A4A 0%,
+			#25253d 35%,
+			#352D3D 65%,
+			#3D2D35 100%);
+
+	/* Content Colors - Light for dark bg */
+	--foreground: #e8e8f0;
+	--foreground-muted: #a0a0b8;
+	--foreground-subtle: #707088;
+	--foreground-disabled: #505068;
+
+	/* Interactive Colors - Warm peach accent */
+	--primary: #E8A87C;
+	--primary-hover: #F0BC96;
+	--primary-active: #D89668;
+	--primary-subtle: rgba(232, 168, 124, 0.15);
+
+	--secondary: #e8e8f0;
+	--secondary-hover: #f0f0f8;
+	--secondary-active: #d0d0e0;
+
+	/* Status Colors - Adjusted for dark */
+	--success: #4ade80;
+	--success-subtle: rgba(74, 222, 128, 0.15);
+	--warning: #fb923c;
+	--warning-subtle: rgba(251, 146, 60, 0.15);
+	--error: #f87171;
+	--error-subtle: rgba(248, 113, 113, 0.15);
+	--info: #60a5fa;
+	--info-subtle: rgba(96, 165, 250, 0.15);
+
+	/* Border Colors - Subtle for dark */
+	--border: #3a3a52;
+	--border-subtle: #2d2d42;
+	--border-strong: #4a4a65;
+	--border-focus: #E8A87C;
+
+	/* Selection/Highlight - Warm glow */
+	--highlight: rgba(232, 168, 124, 0.25);
+	--highlight-foreground: #e8e8f0;
+
+	/* Diff Colors */
+	--diff-add: #4ade80;
+	--diff-add-bg: rgba(74, 222, 128, 0.15);
+	--diff-remove: #f87171;
+	--diff-remove-bg: rgba(248, 113, 113, 0.15);
+
+	/* Background Inverse */
+	--background-inverse: #f0f0f8;
+}
+
+/* ===================================
+   HOGWARTS
+   Warm parchment, candlelit magic
+   =================================== */
+[data-theme="hogwarts"] {
+	/* Code Syntax Highlighting */
+	--shiki-theme: github-light;
+
+	/* Surface Colors - Paper/cream tones */
+	--background: #F7F7F4;
+	--surface: #FFFFFF;
+	--surface-elevated: #F0EFE9;
+	--surface-overlay: #FFFFFF;
+
+	/* Background Treatment - Flat for this theme */
+	--background-image: none;
+	--surface-elevated-image: none;
+
+	/* Content Colors - Warm brown text */
+	--foreground: #26251E;
+	--foreground-muted: #3D3B33;
+	--foreground-subtle: #78716c;
+	--foreground-disabled: #a8a29e;
+
+	/* Interactive Colors - Orange accent */
+	/* --primary is a text ink here (links, ErrorState's retry, a primary Badge),
+	   so it owes 4.5:1 on the page and not only a pleasing fill. Darkened for
+	   that; hover and active moved by the same lightness step, or the pressed
+	   state would have landed LIGHTER than rest. --border-focus tracks --primary
+	   in this file — keep the two equal. Re-measure at /components. */
+	--primary: #C34801;
+	--primary-hover: #F15500;
+	--primary-active: #A93C00;
+	--primary-subtle: #FFF0E6;
+
+	--secondary: #26251E;
+	--secondary-hover: #3D3B33;
+	--secondary-active: #1A1914;
+
+	/* Status Colors — darkened to clear 4.5:1 on both --surface and the -subtle
+	   fill a Badge draws behind them. Shared with Caladan, whose block carries
+	   the account of why the Tailwind defaults failed. */
+	--success: #11803a;
+	--success-subtle: #dcfce7;
+	--warning: #ba460a;
+	--warning-subtle: #ffedd5;
+	--error: #ca2121;
+	--error-subtle: #fee2e2;
+	--info: #0271ab;
+	--info-subtle: #e0f2fe;
+
+	/* Diff Colors */
+	--diff-add: #11803a;
+	--diff-add-bg: #dcfce7;
+	--diff-remove: #ca2121;
+	--diff-remove-bg: #fee2e2;
+
+	/* Border Colors - Fixed: border-subtle should be lighter than border */
+	--border: #e7e5e4;
+	--border-subtle: #f0eeeb;
+	--border-strong: #a8a29e;
+	--border-focus: #C34801;
+
+	/* Selection/Highlight - Warm peach/orange tint */
+	--highlight: #FEE4CC;
+	--highlight-foreground: #26251E;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
+}
+
+/* ===================================
+   BAKER STREET
+   Victorian gaslight, detective noir
+   =================================== */
+[data-theme="baker-street"] {
+	/* Code Syntax Highlighting (GitHub Dark) */
+	--shiki-theme: github-dark;
+
+	/* Surface Colors */
+	--background: #0a0a0a;
+	--surface: #171717;
+	--surface-elevated: #262626;
+	--surface-overlay: #2a2a2a;
+
+	/* Background Treatment - Subtle dark gradient with hint of warmth */
+	--background-image: none;
+	--surface-elevated-image: linear-gradient(160deg,
+			#262626 0%,
+			#1f1f1f 40%,
+			#262626 100%);
+
+	/* Content Colors */
+	--foreground: #fafafa;
+	--foreground-muted: #e5e5e5;
+	--foreground-subtle: #a3a3a3;
+	--foreground-disabled: #737373;
+
+	/* Interactive Colors */
+	--primary: #60a5fa;
+	--primary-hover: #93c5fd;
+	--primary-active: #3b82f6;
+	--primary-subtle: #1e3a5f;
+
+	--secondary: #e5e5e5;
+	--secondary-hover: #fafafa;
+	--secondary-active: #d4d4d4;
+
+	/* Status Colors */
+	--success: #4ade80;
+	--success-subtle: #14532d;
+	--warning: #fbbf24;
+	--warning-subtle: #422006;
+	--error: #f87171;
+	--error-subtle: #450a0a;
+	--info: #38bdf8;
+	--info-subtle: #082f49;
+
+	/* Diff Colors */
+	--diff-add: #4ade80;
+	--diff-add-bg: #14532d;
+	--diff-remove: #f87171;
+	--diff-remove-bg: #450a0a;
+
+	/* Border Colors */
+	--border: #404040;
+	--border-subtle: #2a2a2a;
+	--border-strong: #525252;
+	--border-focus: #60a5fa;
+
+	/* Selection/Highlight - Muted blue */
+	--highlight: #1e3a5f;
+	--highlight-foreground: #fafafa;
+
+	/* Background Inverse */
+	--background-inverse: #0a0a0a;
+}
+
+/* ===================================
+   NARNIA
+   Magical lamppost glow, warm enchantment
+   =================================== */
+[data-theme="narnia"] {
+	/* Blueprint. Narnia's most-remembered image is a snowy wood at night with a
+	   single cold lamp in it — which is process blue, white, and one cyan, i.e.
+	   a drafting sheet. Slate rather than saturated navy: at text density the
+	   chroma is itself noise, so it is pulled roughly half-way to neutral and
+	   the register is carried by the ruled ground instead. */
+
+	/* Code Syntax Highlighting (Tokyo Night — already a navy-ground theme) */
+	--shiki-theme: tokyo-night;
+
+	/* Surface Colors */
+	--background: #0F1821;
+	--surface: #131E28;
+	--surface-elevated: #18242F;
+	--surface-overlay: #1D2A36;
+
+	/* Background Treatment — the grid rules the DESK, not the page.
+	   `--surface-elevated-image` paints `.app-shell`: the sidebar plus the
+	   gutter the pane floats in. `<main>` is opaque `bg-surface` on top, so the
+	   ruling can never land behind prose or a table. That is the argument for
+	   putting it here — the rail is the one surface with almost no content to
+	   compete with, and its empty lower half has wanted a texture since the
+	   recessed-rail experiment was abandoned for making the void a visible
+	   object.
+
+	   TWO WEIGHTS, like real drafting paper: a fine field every 32px and a
+	   heavier rule every 128px. A single-weight mesh reads as a decorative
+	   pattern; the heavier fourth line is what makes it read as engineering
+	   paper.
+
+	   The pitch does NOT try to align to the rows, because it cannot: the nav
+	   runs on a 30px rhythm (28px row + 2px) and the footer group on 32px, so
+	   the sidebar has two rhythms and no grid can sit on both. Measured, not
+	   assumed. A near-miss pitch would read as failed alignment, so the grid
+	   is left as independent ground and kept faint enough that the question
+	   does not arise.
+
+	   Lines are LIGHT, which needs the blend mode overridden — see the
+	   `.app-shell` rule further down. */
+	--background-image: none;
+	--surface-elevated-image:
+		linear-gradient(rgba(233, 243, 250, 0.075) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(233, 243, 250, 0.075) 1px, transparent 1px),
+		linear-gradient(rgba(233, 243, 250, 0.035) 1px, transparent 1px),
+		linear-gradient(90deg, rgba(233, 243, 250, 0.035) 1px, transparent 1px);
+	--surface-elevated-size: 128px 128px, 128px 128px, 32px 32px, 32px 32px;
+
+	/* Content Colors — drawing white, cooled a trace toward the ground */
+	--foreground: #EDF1F4;
+	--foreground-muted: #C3CBD3;
+	--foreground-subtle: #9BA7B2;
+	--foreground-disabled: #7C8A97;
+
+	/* Interactive Colors — the one cold lamp */
+	--primary: #7CC3DE;
+	--primary-hover: #98D2E8;
+	--primary-active: #62B2D0;
+	--primary-subtle: #14303D;
+
+	--secondary: #EDF1F4;
+	--secondary-hover: #FFFFFF;
+	--secondary-active: #D6DEE5;
+
+	/* Status Colors — desaturated to sit on slate without shouting.
+	   `--info` is deliberately NOT the accent. The first draft set it to the
+	   same cyan as `--primary`, which made "act on this" and "note this" the
+	   same colour — the failure `design.md` means by "colour means something or
+	   it isn't used". Interactive keeps the cold lamp; informational moves to a
+	   periwinkle ~27° off it. Chosen DARKER than the accent rather than lighter:
+	   the lighter candidates separated from `--foreground-subtle` but converged
+	   with `--primary` in luminance (1.03–1.24), so they were distinguishable
+	   only by hue. This one is 1.53 against the accent, which means the split
+	   survives greyscale and colour-blindness, not just colour. 5.98:1 on the
+	   ground, comfortably above AA. */
+	--success: #5FBF8F;
+	--success-subtle: #10281F;
+	--warning: #D9A54C;
+	--warning-subtle: #2A2113;
+	--error: #E0736B;
+	--error-subtle: #2C1917;
+	--info: #7A94D4;
+	--info-subtle: #171D2E;
+
+	/* Diff Colors */
+	--diff-add: #5FBF8F;
+	--diff-add-bg: #10281F;
+	--diff-remove: #E0736B;
+	--diff-remove-bg: #2C1917;
+
+	/* Border Colors — hairlines, the only structure on a drawing */
+	--border: #2A3A49;
+	--border-subtle: #1D2934;
+	--border-strong: #3A4E60;
+	--border-focus: #7CC3DE;
+
+	/* Selection/Highlight — a wash of the one accent */
+	--highlight: rgba(124, 195, 222, 0.18);
+	--highlight-foreground: #EDF1F4;
+
+	/* Background Inverse */
+	--background-inverse: #0F1821;
+}
+
+/* ===================================
+   CANTERBURY
+   Pilgrim earth tones, warm wisdom
+   =================================== */
+[data-theme="canterbury"] {
+	/* Code Syntax Highlighting (Vitesse Dark) */
+	--shiki-theme: vitesse-dark;
+
+	/* Surface Colors */
+	--background: #14120B;
+	--surface: #1B1913;
+	--surface-elevated: #221E15;
+	--surface-overlay: #261F14;
+
+	/* Content Colors */
+	--foreground: #EDECEC;
+	--foreground-muted: #D0CCC7;
+	--foreground-subtle: #A9A39A;
+	--foreground-disabled: #6E695F;
+
+	/* Interactive Colors */
+	--primary: #E4B873;
+	--primary-hover: #F2C98D;
+	--primary-active: #C99B55;
+	--primary-subtle: #2B2115;
+
+	--secondary: #EDECEC;
+	--secondary-hover: #F7F5F2;
+	--secondary-active: #DCD8D2;
+
+	/* Status Colors */
+	--success: #4ade80;
+	--success-subtle: #1A2A1B;
+	--warning: #f59e0b;
+	--warning-subtle: #2B220F;
+	--error: #ef4444;
+	--error-subtle: #2C1818;
+	--info: #38bdf8;
+	--info-subtle: #0B1F2A;
+
+	/* Diff Colors */
+	--diff-add: #4ade80;
+	--diff-add-bg: #1A2A1B;
+	--diff-remove: #ef4444;
+	--diff-remove-bg: #2C1818;
+
+	/* Border Colors */
+	--border: #2A2418;
+	--border-subtle: #1D180F;
+	--border-strong: #3A3123;
+	--border-focus: #E4B873;
+
+	/* Selection/Highlight - Warm gold tint */
+	--highlight: #3d3220;
+	--highlight-foreground: #EDECEC;
+
+	/* Background Inverse */
+	--background-inverse: #14120B;
+}
+
+/* ===================================
+   BORGHESE
+   Dramatic gallery, stark light and shadow
+   =================================== */
+[data-theme="borghese"] {
+	/* Code Syntax Highlighting (GitHub Dark High Contrast) */
+	--shiki-theme: github-dark-high-contrast;
+
+	/* Surface Colors - Pure black */
+	--background: #000000;
+	--surface: #000000;
+	--surface-elevated: #1a1a1a;
+	--surface-overlay: #1a1a1a;
+
+	/* Content Colors - Pure white */
+	--foreground: #FFFFFF;
+	--foreground-muted: #CCCCCC;
+	--foreground-subtle: #999999;
+	--foreground-disabled: #666666;
+
+	/* Interactive Colors - White */
+	--primary: #FFFFFF;
+	--primary-hover: #CCCCCC;
+	--primary-active: #E5E5E5;
+	--primary-subtle: #1a1a1a;
+
+	--secondary: #FFFFFF;
+	--secondary-hover: #CCCCCC;
+	--secondary-active: #E5E5E5;
+
+	/* Status Colors - Grayscale */
+	--success: #FFFFFF;
+	--success-subtle: #1a1a1a;
+	--warning: #CCCCCC;
+	--warning-subtle: #1a1a1a;
+	--error: #FFFFFF;
+	--error-subtle: #1a1a1a;
+	--info: #CCCCCC;
+	--info-subtle: #1a1a1a;
+
+	/* Diff Colors - Grayscale */
+	--diff-add: #FFFFFF;
+	--diff-add-bg: #1a1a1a;
+	--diff-remove: #CCCCCC;
+	--diff-remove-bg: #1a1a1a;
+
+	/* Border Colors - White on black */
+	--border: #333333;
+	--border-subtle: #1a1a1a;
+	--border-strong: #FFFFFF;
+	--border-focus: #FFFFFF;
+
+	/* Selection/Highlight */
+	--highlight: #333333;
+	--highlight-foreground: #FFFFFF;
+
+	/* Background Inverse */
+	--background-inverse: #000000;
+}
+
+
+/* ===================================
+   THE LYCEUM
+   Aristotle's school, contemplative blues
+   =================================== */
+[data-theme="lyceum"] {
+	/* Code Syntax Highlighting (One Dark) */
+	--shiki-theme: one-dark-pro;
+
+	/* Surface Colors - Distinctive gray-blue */
+	--background: #292d34;
+	--surface: #2f333d;
+	--surface-elevated: #383e4a;
+	--surface-overlay: #3e4451;
+
+	/* Content Colors - Slightly lighter for readability */
+	--foreground: #c8cdd6;
+	--foreground-muted: #abb2bf;
+	--foreground-subtle: #7c8490;
+	--foreground-disabled: #5c6370;
+
+	/* Interactive Colors - Atom blue */
+	--primary: #61afef;
+	--primary-hover: #7ec0f2;
+	--primary-active: #4fa3e8;
+	--primary-subtle: #1e2d3d;
+
+	--secondary: #abb2bf;
+	--secondary-hover: #c8cdd5;
+	--secondary-active: #9199a6;
+
+	/* Status Colors - Atom palette */
+	--success: #90b061;
+	--success-subtle: #242d1a;
+	--warning: #be8a59;
+	--warning-subtle: #302419;
+	/* --error fills Button variant="danger" and the label on it is --surface —
+	   dark text on the red, as in Agora, so the fix is lighter rather than
+	   darker. This was the worst pair in the whole set: #c16266 against #2f333d
+	   read 3.13:1, and that is a destructive control's own label. #D0898C
+	   clears 4.5, and carries error-on-surface text with it. Hue and saturation
+	   held. Same ink as --diff-remove here, so the two move together. */
+	--error: #D0898C;
+	--error-subtle: #30191a;
+	--info: #56b6c2;
+	--info-subtle: #172d30;
+
+	/* Diff Colors - Atom green/red */
+	--diff-add: #90b061;
+	--diff-add-bg: #242d1a;
+	--diff-remove: #D0898C;
+	--diff-remove-bg: #30191a;
+
+	/* Border Colors */
+	--border: #3e4451;
+	--border-subtle: #343842;
+	--border-strong: #4d5566;
+	--border-focus: #61afef;
+
+	/* Selection/Highlight - Blue tinted */
+	--highlight: #3e4451;
+	--highlight-foreground: #abb2bf;
+
+	/* Background Inverse */
+	--background-inverse: #292d34;
+}
+
+/* ===================================
+   ASGARD
+   Norse realm, cold nordic majesty
+   =================================== */
+[data-theme="asgard"] {
+	/* Code Syntax Highlighting (Vitesse Dark) */
+	--shiki-theme: vitesse-dark;
+
+	/* Surface Colors */
+	--background: #0c0c0c;
+	--surface: #101010;
+	--surface-elevated: #191919;
+	--surface-overlay: #1f1f1f;
+
+	/* Content Colors */
+	--foreground: #D4D4D4;
+	--foreground-muted: #898989;
+	--foreground-subtle: #6b6b6b;
+	--foreground-disabled: #525252;
+
+	/* Interactive Colors - Nordic blue */
+	--primary: #88C0D0;
+	--primary-hover: #9dd0de;
+	--primary-active: #6fa8b8;
+	--primary-subtle: #1a2a2d;
+
+	--secondary: #D4D4D4;
+	--secondary-hover: #e5e5e5;
+	--secondary-active: #c4c4c4;
+
+	/* Status Colors */
+	--success: #3FA266;
+	--success-subtle: #1a251e;
+	--warning: #F1B367;
+	--warning-subtle: #2d2415;
+	--error: #E34671;
+	--error-subtle: #2d1a1f;
+	--info: #88C0D0;
+	--info-subtle: #1a2a2d;
+
+	/* Diff-specific colors (available as CSS vars) */
+	--diff-add: #306A47;
+	--diff-add-bg: #1a251e;
+	--diff-remove: #A14958;
+	--diff-remove-bg: #2d1a1f;
+
+	/* Border Colors */
+	--border: #2a2a2a;
+	--border-subtle: #1e1e1e;
+	--border-strong: #3a3a3a;
+	--border-focus: #88C0D0;
+
+	/* Selection/Highlight - the Nordic blue as a tint, strong enough to read
+	 * against the near-black ground. */
+	--highlight: rgba(136, 192, 208, 0.28);
+	--highlight-foreground: #D4D4D4;
+
+	/* Background Inverse */
+	--background-inverse: #0f0f0f;
+}
+
+/* ===================================
+   TATOOINE
+   Twin suns, desert warmth
+   =================================== */
+[data-theme="tatooine"] {
+	/* Code Syntax Highlighting (Solarized Light) */
+	--shiki-theme: solarized-light;
+
+	/* Surface Colors - Warm parchment */
+	--background: #fdf6e3;
+	--surface: #fdf6e3;
+	--surface-elevated: #eee8d5;
+	--surface-overlay: #ffffff;
+
+	/* Content Colors - Warm text hierarchy */
+	--foreground: #2d3632;
+	--foreground-muted: #5d665e;
+	--foreground-subtle: #8f918a;
+	--foreground-disabled: #b5b6ae;
+
+	/* Interactive Colors - Solarized blue */
+	--primary: #268bd2;
+	--primary-hover: #4a9fd9;
+	--primary-active: #1e7abb;
+	--primary-subtle: #f2d9be;
+
+	--secondary: #2d3632;
+	--secondary-hover: #3d4a42;
+	--secondary-active: #1e2622;
+
+	/* Status Colors */
+	--success: #859900;
+	--success-subtle: #f0f4e0;
+	--warning: #cb4b16;
+	--warning-subtle: #fbeee6;
+	/* --error fills Button variant="danger" and the label on it is --surface, so
+	   this one token sets the contrast of its own text. At #dc322f that pair
+	   read 4.29:1 — cream on red, below AA on the one control in the app that
+	   cannot afford to be misread. Darkened to #CD2522 (4.5+ against both the
+	   label and the -subtle Badge fill); hue and saturation held. Same ink as
+	   --diff-remove here, so the two move together. */
+	--error: #CD2522;
+	--error-subtle: #fce8e8;
+	--info: #268bd2;
+	--info-subtle: #f2d9be;
+
+	/* Diff Colors */
+	--diff-add: #859900;
+	--diff-add-bg: #f0f4e0;
+	--diff-remove: #CD2522;
+	--diff-remove-bg: #fce8e8;
+
+	/* Border Colors */
+	--border: #e6dfcc;
+	--border-subtle: #f0eadb;
+	--border-strong: #8f918a;
+	--border-focus: #268bd2;
+
+	/* Selection/Highlight */
+	--highlight: #e8e4d0;
+	--highlight-foreground: #2d3632;
+
+	/* Background Inverse */
+	--background-inverse: #002b36;
+}
+
+/* ===================================
+   AGORA
+   Greek marketplace, purple mystery
+   =================================== */
+[data-theme="agora"] {
+	/* Code Syntax Highlighting (Dracula) */
+	--shiki-theme: dracula;
+
+	/* Surface Colors - Deep purple-black */
+	--background: #282a36;
+	--surface: #2d303e;
+	--surface-elevated: #343746;
+	--surface-overlay: #3c3f52;
+
+	/* Content Colors */
+	--foreground: #f8f8f2;
+	--foreground-muted: #d0d0d0;
+	--foreground-subtle: #6272a4;
+	--foreground-disabled: #4d5470;
+
+	/* Interactive Colors - Dracula pink */
+	--primary: #ff79c6;
+	--primary-hover: #ff92d0;
+	--primary-active: #e066ad;
+	--primary-subtle: #3d2a38;
+
+	--secondary: #f8f8f2;
+	--secondary-hover: #ffffff;
+	--secondary-active: #e8e8e2;
+
+	/* Status Colors - Dracula palette */
+	--success: #50fa7b;
+	--success-subtle: #1e3d28;
+	--warning: #f1fa8c;
+	--warning-subtle: #3d3d20;
+	/* --error fills Button variant="danger" and the label on it is --surface —
+	   which in a dark theme is DARK text on the red. So this token raises its
+	   own label's contrast by getting lighter, not darker: #ff5555 read 4.17:1
+	   against #2d303e, and #FF6767 clears 4.5. Hue and saturation held. Same
+	   ink as --diff-remove here, so the two move together. */
+	--error: #FF6767;
+	--error-subtle: #3d1e1e;
+	--info: #8be9fd;
+	--info-subtle: #1e3d3d;
+
+	/* Diff Colors */
+	--diff-add: #50fa7b;
+	--diff-add-bg: #1e3d28;
+	--diff-remove: #FF6767;
+	--diff-remove-bg: #3d1e1e;
+
+	/* Border Colors */
+	--border: #44475a;
+	--border-subtle: #343746;
+	--border-strong: #6272a4;
+	--border-focus: #ff79c6;
+
+	/* Selection/Highlight - Purple tinted */
+	--highlight: #44475a;
+	--highlight-foreground: #f8f8f2;
+
+	/* Background Inverse */
+	--background-inverse: #282a36;
+}
+
+/* ===================================
+   THE SHIRE
+   Tolkien's cozy home, soft warm pastels
+   =================================== */
+[data-theme="shire"] {
+	/* Code Syntax Highlighting (Rose Pine Moon) */
+	--shiki-theme: rose-pine-moon;
+
+	/* Surface Colors - Soft purple-gray */
+	--background: #232136;
+	--surface: #2a273f;
+	--surface-elevated: #312e47;
+	--surface-overlay: #393552;
+
+	/* Content Colors */
+	--foreground: #e0def4;
+	--foreground-muted: #c5c3d6;
+	--foreground-subtle: #908caa;
+	--foreground-disabled: #6e6a86;
+
+	/* Interactive Colors - Rose */
+	--primary: #ea9a97;
+	--primary-hover: #edb0ad;
+	--primary-active: #d88885;
+	--primary-subtle: #3d2d2d;
+
+	--secondary: #e0def4;
+	--secondary-hover: #f0eef8;
+	--secondary-active: #d0cee4;
+
+	/* Status Colors - Rose Pine palette */
+	--success: #9ccfd8;
+	--success-subtle: #1e2d2f;
+	--warning: #f6c177;
+	--warning-subtle: #3d2d1e;
+	--error: #eb6f92;
+	--error-subtle: #3d1e28;
+	--info: #c4a7e7;
+	--info-subtle: #2d1e3d;
+
+	/* Diff Colors */
+	--diff-add: #9ccfd8;
+	--diff-add-bg: #1e2d2f;
+	--diff-remove: #eb6f92;
+	--diff-remove-bg: #3d1e28;
+
+	/* Border Colors */
+	--border: #393552;
+	--border-subtle: #312e47;
+	--border-strong: #524d6a;
+	--border-focus: #ea9a97;
+
+	/* Selection/Highlight - Rose tinted */
+	--highlight: #3d3252;
+	--highlight-foreground: #e0def4;
+
+	/* Background Inverse */
+	--background-inverse: #232136;
+}
+
+/* ===================================
+   MANUSCRIPT STYLE COMPONENTS
+   Reusable components for onboarding aesthetic
+   Works with any theme
+   =================================== */
+
+/* Manuscript Input - Underline Style */
+.input-manuscript {
+	font-family: var(--font-sans);
+	font-size: 15px;
+	width: 100%;
+	padding: 12px 0;
+	background: transparent;
+	border: none;
+	border-bottom: 1px solid var(--border);
+	color: var(--foreground);
+	outline: none;
+	transition: border-color 150ms ease;
+}
+
+.input-manuscript:focus {
+	border-bottom-color: var(--foreground);
+}
+
+.input-manuscript::placeholder {
+	color: var(--foreground-subtle);
+}
+/* ──────────────────────────────────────────────────────────────────────────
+ * Illustration auto-invert
+ *
+ * Authored illustrations (template card hero, day-page header) ship as
+ * black-line transparent PNGs. Components apply
+ *   filter: var(--illustration-filter, none);
+ * Light themes leave it as the default `none`. Dark themes set `invert(1)`
+ * here so the same asset reads as white-line on dark surface.
+ * ────────────────────────────────────────────────────────────────────────── */
+[data-theme="lothlorien"],
+[data-theme="baker-street"],
+[data-theme="narnia"],
+[data-theme="canterbury"],
+[data-theme="borghese"],
+[data-theme="lyceum"],
+[data-theme="asgard"],
+[data-theme="agora"],
+[data-theme="shire"] {
+	--illustration-filter: invert(1);
+	/* The interaction ramp's pigment (see :root): light on a dark ground. */
+	--wash-ink: #ffffff;
+	/* The editor composites its selection layer over the text with this blend
+	 * (the composer's, codemirror/theme.ts): multiply keeps dark ink dark on light paper,
+	 * screen keeps light ink light on dark paper. */
+	--selection-blend: screen;
+}
+
+/* Narnia draws its ruling in LIGHT lines, which the shared blend mode forbids.
+ * `.app-shell` composites `--surface-elevated-image` with `multiply`, and
+ * multiply can only darken — a light grid would vanish there. Overridden for
+ * this theme alone rather than changed globally, because the other fifteen
+ * use that blend for noise and gradient washes that depend on it. */
+[data-theme="narnia"] .app-shell {
+	background-blend-mode: normal;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * CATEGORICAL PALETTE
+ * Non-semantic, per-category accent hues — citation source-types, chat
+ * message-roles, etc. These are NOT status colors: for success/warning/error/
+ * info use the semantic --color-* tokens instead.
+ * Theme-adaptive by design: the light values below are the default; the dark
+ * override lifts each hue so categories stay legible on dark surfaces.
+ *
+ * Both sets sit at a UNIFORM lightness in OKLab — 0.58 light, 0.78 dark — with
+ * hue preserved and chroma held near 0.13. They were raw Tailwind 500s, whose
+ * lightness ranged 0.59 to 0.80: yellow was the palest thing in the set and
+ * washed out on paper while indigo sat heavy, so a row of them read as
+ * unevenly weighted rather than as one family. Equal lightness is what makes
+ * nine hues look like a palette instead of nine separate decisions.
+ *
+ * `--cat-indigo` is a true BLUE (hue 258°), not the blue-violet it used to be.
+ * The set had three neighbouring purples — indigo 277°, violet 293°, purple
+ * 304° — and a 57° hole where blue belongs, so the one hue people reach for
+ * first was the one hue missing. The token KEY stays `indigo` because it is
+ * the stored value in app_pins.color and friends; only the hue and the
+ * picker's label moved.
+ *
+ * Retune freely — every consumer reads var() — but keep the set at one
+ * lightness, or the unevenness comes straight back.
+ * ────────────────────────────────────────────────────────────────────────── */
+:root {
+	--cat-purple: #8b64b9;
+	--cat-purple-light: #a97fd6;
+	--cat-indigo: #457ac7;
+	--cat-violet: #7e69c1;
+	--cat-pink: #b4557f;
+	--cat-rose: #bb555f;
+	--cat-orange: #b75e2b;
+	--cat-yellow: #9d7300;
+	--cat-cyan: #008cab;
+	--cat-cyan-light: #22a6c6;
+	--cat-emerald: #009262;
+	--cat-emerald-light: #1cad7c;
+}
+
+[data-theme="lothlorien"],
+[data-theme="baker-street"],
+[data-theme="narnia"],
+[data-theme="canterbury"],
+[data-theme="borghese"],
+[data-theme="lyceum"],
+[data-theme="asgard"],
+[data-theme="agora"],
+[data-theme="shire"] {
+	--cat-purple: #c9a3f9;
+	--cat-purple-light: #dbbdff;
+	--cat-indigo: #84b9ff;
+	--cat-violet: #baa8ff;
+	--cat-pink: #f694bc;
+	--cat-rose: #fd959b;
+	--cat-orange: #f99d6e;
+	--cat-yellow: #dbb14e;
+	--cat-cyan: #37cbea;
+	--cat-cyan-light: #6fe0fb;
+	--cat-emerald: #60d09f;
+	--cat-emerald-light: #8ae5bb;
+
+	/* Dark-mode flag for the JS that adapts a user's CUSTOM hex (pin-colors.ts).
+	   Set here, beside the palette it belongs to, so adding a theme stays one
+	   block in this file rather than a list of theme names in TypeScript that
+	   someone will forget to update. */
+	--identity-dark: 1;
+}
+
+/* ──────────────────────────────────────────────────────────────────────────
+ * Z-INDEX LADDER
+ * One named stacking order for the whole app — consume as `z-index: var(--z-…)`.
+ * Theme-invariant (plain :root, not @theme). Replaces ad-hoc magic numbers and
+ * the 9999/10000/10001 "stacking war". Ordered low → high.
+ * ────────────────────────────────────────────────────────────────────────── */
+:root {
+	--z-raised: 10;          /* local raised content inside a component      */
+	--z-sticky: 20;          /* sticky headers / breadcrumbs / outlines      */
+	--z-dropdown: 50;        /* dropdowns, menus                             */
+	--z-popover: 60;         /* ref preview, selection popover               */
+	--z-overlay: 100;        /* split panes, side panels, tab bar            */
+	--z-modal: 1000;         /* modal dialogs, search, provisioning overlay  */
+	--z-lightbox: 1100;      /* fullscreen media lightbox                    */
+	--z-toast: 1200;         /* toasts / sonner                              */
+	--z-context-menu: 1300;  /* right-click context menu                     */
+	--z-context-submenu: 1301; /* its submenu, one above the menu            */
+	--z-tooltip: 1400;       /* tooltips — always on top                     */
+}

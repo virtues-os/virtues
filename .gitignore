@@ -1,0 +1,222 @@
+# Stray per-member Cargo.lock — the workspace root lock is canonical.
+/virtues-core/Cargo.lock
+
+# Built XCFramework + raw bindings from build-xcframework.sh (regenerate it;
+# the app vendors the Swift binding under apps/ios/.../Tunnel/).
+/crates/virtues-tunnel/generated/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Keep .env.example files
+!.env.example
+!**/.env.example
+
+# Backup / temp files (e.g. .env backups from `virtues init`, IDE .swp)
+*.backup
+*.bak
+*.bak.*
+*.swp
+*.orig
+
+# Postgres dumps — real box data must NEVER be committed (see `make dev-pull`).
+# The dump lands in $TMPDIR, not here, but ignore the patterns as belt-and-suspenders.
+*.dump
+*.pgdump
+*.rej
+
+# SvelteKit build output (per-package generated)
+.svelte-kit/
+
+# NB: do NOT add `.sqlx/` — the CI release pipeline builds with
+# SQLX_OFFLINE=true and requires the cache to be committed. Refresh via
+# `cargo sqlx prepare --workspace` against a live local Postgres.
+
+# Apple certificates and signing
+*.p12
+*.pfx
+*.cer
+*.certSigningRequest
+*.mobileprovision
+*.provisionprofile
+Developer ID Application*
+
+# Xcode
+*.xcuserdata/
+*.xcscheme
+*.pbxuser
+*.mode1v3
+*.mode2v3
+*.perspectivev3
+xcuserdata/
+*.xccheckout
+*.moved-aside
+DerivedData/
+*.hmap
+*.ipa
+*.xcworkspace/xcuserdata/
+*.xcodeproj/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcuserdata/
+.ropeproject/
+.conductor/
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# Node.js
+node_modules/
+
+# Python environments
+.venv/
+venv/
+env/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Python lock files
+uv.lock
+
+
+.Python
+build/
+apps/mac/build/
+
+# ...but `agents/build/` is a WRITING ROOT, not a build directory. The bare
+# `build/` above matches a directory of that name at ANY depth, so it silently
+# swallowed the whole prescriptive-docs tree (CLAUDE.md, "Where writing goes").
+# The files in there are tracked only because they were `git mv`d in from
+# `docs/` — a rename carries a tracked file past an ignore rule. Anything NEW
+# could not be added at all, which is why that directory's own README, the one
+# `tools/check-manual.py` requires every doc to be listed in, had never been
+# committed. Re-include the directory itself so git will descend into it.
+!agents/build/
+
+# Build artifacts
+apps/mac/virtues-mac
+apps/mac/*.tar.gz
+apps/mac/*.zip
+apps/mac/*.dmg
+
+# Git backups
+.git-backup-*/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Other
+/target/
+# Per-plugin Cargo build output (root `/target/` is anchored and misses these).
+apps/web/plugins/*/target/
+.data/
+# Runtime box data — the data lake (.media blobs), DB scratch, etc. Never
+# tracked: it's per-install state, not source. (The legacy `.data/` rule above
+# missed the real dir, which is `data/`.)
+/data/
+tmp/*
+
+/.pnpm-store
+/apps/web/.pnpm-store
+/apps/mac-source/.build
+# Generated per build by tools/stamp-mac-version.sh. Tracked until 2026-08-28,
+# when it was a literal 1.0.0 that only CI rewrote — so every locally built
+# collector claimed to be behind the app forever. Stamping a TRACKED file would
+# instead dirty a checkout several agents share.
+/apps/mac-source/Sources/Version.swift
+# Same for the Tauri iOS plugins: building one locally (e.g. to check a change
+# compiles against the iOS SDK) leaves a .build tree that is otherwise untracked
+# and can be swept into someone else's commit — this repo has lost work that way.
+/apps/web/plugins/*/ios/.build
+/crates/virtues-registry/target
+/virtues-core/core/
+/virtues-core/.sqlx
+
+# Local Claude Code project state (runtime locks, local settings).
+#
+# `.claude/*` rather than `.claude/`, because git cannot re-include a file whose
+# PARENT directory is excluded — with the directory itself ignored, the negation
+# below would silently do nothing. Excluding the contents instead leaves the
+# directory visible so `rules/` can be un-ignored.
+.claude/*
+
+# Path-scoped rules are shared project law, not local state: several agents work
+# in this one checkout, and a rule only one of them can see is worse than no
+# rule. These are committed on purpose.
+!.claude/rules/
+
+# Hooks are the enforcement half of the same law: the Never table and the
+# migration procedure are prose in CLAUDE.md and a gate here. Shared, for the
+# same reason the rules are — a guard only one agent has is not a guard.
+# `settings.local.json` stays ignored; that one is genuinely per-machine.
+!.claude/settings.json
+
+# Skills are on-demand reference material — shared for the same reason the
+# rules and hooks are.
+!.claude/skills/
+
+# Agent scratch. `.worktrees/` has already been swept into a commit as an
+# embedded git repo once — worktrees are not the workflow here (see the
+# Branching section of CLAUDE.md), but ignore the path so a stray one is inert.
+.worktrees/
+/.agent-scratch/
+
+# Chat/AI-authored applets materialize here per-box at runtime — they are
+# local state, not shipped source (builtin applets live under applets/<name>/).
+/applets/user/
+/.applet-state/
+/.publication-state/
+/.page-conversion-state/
+
+# Dev-only age recipient for `virtues backup` (public half; the secret is
+# printed once and never stored). The box equivalent lives in the state root.
+.backup-recipient
+
+# Golden master images and their records. Multi-GB, contain unredistributable
+# Qualcomm BSP firmware, and are handed over privately (never GitHub) — one
+# stray `git add -A` must not stage them.
+/masters/
+*.img
+*.img.zst
+
+# A 32-byte secret some local tooling drops at the repo root. It was untracked
+# but NOT ignored — the one file in the tree that was both a secret and a single
+# `git add -A` away from a public repo, which is a mistake this checkout has
+# already made with other stray files.
+.webui_secret_key
+
+
+# Licensed music (AGsoundtrax): the license grants no right
+# to publish the master, and this repo is public. Ship it from a private path.
+apps/web/static/onboarding/hello.mp3
+# The editor converter's own cargo build (apps/web/scripts/build-converter.mjs)
+/.converter-target/

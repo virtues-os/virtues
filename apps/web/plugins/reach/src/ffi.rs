@@ -1,0 +1,287 @@
+//! C ABI for native collectors to enqueue records into the shared outbox.
+//!
+//! The normal Tauri channel is JS → Rust → Swift; this is the **reverse** — a
+//! Swift collector (e.g. the `CLLocationManager` delegate, which fires on a cold
+//! background relaunch before any webview/JS exists) calls straight into Rust to
+//! persist a reading. Enqueue is synchronous and cheap, so it's safe there.
+//!
+//! Symbol retention: these are only ever called from Swift, so nothing in the
+//! Rust graph references them and the linker would drop the object from the
+//! app's static lib. [`keep_symbols`] (called from the plugin `init`, which *is*
+//! linked) takes their addresses to force the object to be included.
+
+use std::ffi::CStr;
+use std::os::raw::c_char;
+
+use virtues_reach_client::{outbox, BoxStore};
+
+/// Enqueue one collector record into the shared outbox.
+///
+/// `stream` and `record_json` are NUL-terminated UTF-8 C strings; `record_json`
+/// is the box-shaped record (its `id`, if present, is the dedup key). Returns 0
+/// on success, negative on error. Never panics across the FFI boundary.
+///
+/// # Safety
+/// Both pointers must be valid NUL-terminated C strings for the call's duration.
+#[no_mangle]
+pub extern "C" fn virtues_enqueue(stream: *const c_char, record_json: *const c_char) -> i32 {
+  if stream.is_null() || record_json.is_null() {
+    return -1;
+  }
+  let (stream, json) = unsafe { (CStr::from_ptr(stream), CStr::from_ptr(record_json)) };
+  let (Ok(stream), Ok(json)) = (stream.to_str(), json.to_str()) else {
+    return -2;
+  };
+  let record: serde_json::Value = match serde_json::from_str(json) {
+    Ok(v) => v,
+    Err(_) => return -3,
+  };
+  // Records must be JSON objects: enqueue stamps `id` via index-insert, which
+  // panics on a non-object value — and a panic out of extern "C" is an abort.
+  if !record.is_object() {
+    return -3;
+  }
+  // Silent chunks are ~1KB of metadata — not worth a dial of their own. Defer
+  // them to a wall-clock 30-min grid (all chunks in a window batch onto one
+  // dial) instead of nudging; overnight that's 2 dials/hour instead of 12.
+  let silent = stream == "microphone"
+    && record
+      .get("is_silent")
+      .and_then(serde_json::Value::as_bool)
+      .unwrap_or(false);
+  if silent {
+    return match outbox::enqueue_deferred(stream, record, 30 * 60) {
+      Ok(()) => {
+        crate::widget::publish(false);
+        0
+      }
+      Err(e) => enqueue_err_code(&e),
+    };
+  }
+  match outbox::enqueue(stream, record) {
+    Ok(()) => {
+      // Payload-align the radio: the ~5-min audio chunk is the dominant upload,
+      // so fire the drain the moment one lands — queued location/health fixes
+      // ride along in the same dial instead of earning their own.
+      if stream == "microphone" {
+        crate::nudge_drain();
+      }
+      crate::widget::publish(false);
+      0
+    }
+    Err(e) => enqueue_err_code(&e),
+  }
+}
+
+/// Hand Rust the App Group container, where the widget reads the upload
+/// snapshot (`widget.rs`). Called once from Swift at plugin init; a build
+/// without the group never calls it and the snapshot is simply not written.
+///
+/// # Safety
+/// `path` must be a valid NUL-terminated C string for the call's duration.
+#[no_mangle]
+pub extern "C" fn virtues_set_shared_dir(path: *const c_char) {
+  if path.is_null() {
+    return;
+  }
+  if let Ok(p) = unsafe { CStr::from_ptr(path) }.to_str() {
+    crate::widget::set_shared_dir(std::path::PathBuf::from(p));
+    crate::widget::publish(true);
+  }
+}
+
+/// -5 = capacity back-pressure (the outbox refused the row; the producer must
+/// keep its source and retry later) — distinct from -4 so field logs can tell
+/// a full queue from a broken one. Callers already treat any nonzero as
+/// "keep the file", so the split costs no Swift changes.
+fn enqueue_err_code(e: &anyhow::Error) -> i32 {
+  if e.downcast_ref::<outbox::CapacityReached>().is_some() {
+    -5
+  } else {
+    -4
+  }
+}
+
+/// Report radio cost from Swift (ReachMonitor): 1 = constrained (cellular /
+/// expensive path / Low Power Mode, and not charging), 0 = cheap (Wi-Fi or on
+/// power). Each backgrounded drain is a fresh QUIC dial whose LTE
+/// connection-promotion + ~10s high-power tail costs the same regardless of
+/// payload, so on constrained radio the drain loop batches chunks instead of
+/// dialing per chunk (see `drain_due` in lib.rs). Foreground is never held.
+#[no_mangle]
+pub extern "C" fn virtues_radio_constrained(constrained: i32) {
+  crate::set_radio_constrained(constrained != 0);
+}
+
+/// Report app lifecycle from Swift (didEnterBackground=1 / didBecomeActive=0).
+/// Backgrounded is what licenses endpoint parking after a drain: with the
+/// webview suspended nothing needs the endpoint, and a parked endpoint is the
+/// only way to stop iroh's keepalive chatter (its transport config clamps the
+/// intervals) so the cell radio can idle between wakes.
+#[no_mangle]
+pub extern "C" fn virtues_app_background(backgrounded: i32) {
+  crate::set_app_backgrounded(backgrounded != 0);
+  // Backgrounding nudges the drain loop: it flushes anything pending while iOS
+  // is still generous with runtime, then parks the endpoint — instead of the
+  // warm endpoint pinging for up to a full tick before the next drain parks it.
+  if backgrounded != 0 {
+    crate::nudge_drain();
+  }
+}
+
+/// Drain the outbox to the box, blocking until done or `timeout_secs` elapses.
+///
+/// Called by the Swift background paths (significant-location wake / BGTask)
+/// while holding an OS background-task assertion, so the drain runs before iOS
+/// suspends. Reuses the process-global warm iroh client (builds one if absent).
+/// Returns the number of records delivered, or a negative error code. A timeout
+/// (`-4`) is not data loss — partial progress is persisted and unsent rows stay
+/// queued for the next wake.
+///
+/// # Safety
+/// Safe to call from any non-tokio thread (it drives its own block_on).
+#[no_mangle]
+pub extern "C" fn virtues_drain_blocking(timeout_secs: i32) -> i32 {
+  let store = crate::FileStore::new();
+  let Some(rec) = store.load().ok().flatten() else {
+    return -1;
+  };
+  // Nothing due → no endpoint. The location drain timer calls this every
+  // 5 min whatever the queue holds, and building the client is the costly
+  // part (address lookup, socket bind, relay TLS, net probes, teardown), so
+  // the check comes first — the same fast path the upload loop takes. An
+  // outbox error also lands here, as it does there. Nothing is parked: the
+  // upload loop owns that, and parking here could cut off its in-flight drain.
+  if outbox::due_streams().map(|s| s.is_empty()).unwrap_or(true) {
+    return 0;
+  }
+  // Constrained-radio holdoff, shared clock with the upload loop: a location
+  // wake / fallback timer inside the holdoff window leaves rows queued for the
+  // batched dial. First call after launch always runs (a cold sig-loc relaunch
+  // may not live long enough to wait out a window). After the due check, so an
+  // empty call never stamps the clock and holds back the next real upload.
+  if !crate::bg_drain_due() {
+    return 0;
+  }
+  let timeout = std::time::Duration::from_secs(timeout_secs.clamp(1, 60) as u64);
+
+  tauri::async_runtime::block_on(async move {
+    let Some(client) = crate::ensure_client(&rec).await else {
+      return -2;
+    };
+    let rc = match tokio::time::timeout(timeout, crate::upload::drain(&client, &rec)).await {
+      Ok(Ok(n)) => n as i32,
+      Ok(Err(_)) => -3,
+      Err(_) => {
+        // The timeout dropped the drain future after claim_batch stamped rows
+        // as claimed — release them NOW, not at next launch, or they stay
+        // invisible to every drain for the process lifetime (which the audio
+        // session extends for days). A concurrent drain's claims get released
+        // too; the box dedups, so an early resend is harmless.
+        let _ = outbox::reset_stale();
+        -4
+      }
+    };
+    // Park only if still backgrounded: this entry point is called from
+    // background wakes (sig-loc / BGTask), but the user may have foregrounded
+    // mid-drain — recovery has then rebuilt the warm client for the webview,
+    // and parking here would tear down the client the UI is actively using.
+    if crate::app_backgrounded() {
+      crate::park_endpoint("bg-drain").await;
+    }
+    rc
+  })
+}
+
+/// Recover the box connection after an iOS network change / app foreground.
+/// Pokes iroh (`network_change`), and if a bounded probe still fails, rebuilds the
+/// whole endpoint (same identity) — the escape from the iOS socket wedge
+/// (iroh#4289). Called from Swift's `NWPathMonitor` + `didBecomeActive`. Blocks
+/// briefly (~1–5s), so call off the main thread. Returns 0 healed / 1 rebuilt /
+/// negative on error. Never panics across the boundary.
+#[no_mangle]
+pub extern "C" fn virtues_recover_connection() -> i32 {
+  tauri::async_runtime::block_on(crate::recover_connection())
+}
+
+/// Tell the box where it can reach this device — or that it no longer can.
+///
+/// `address` is the APNs token as a NUL-terminated lowercase-hex C string, or
+/// NULL to report "unreachable" (notifications turned off, or registration
+/// failed). Called from Swift's push registrar, **only while the app is
+/// active**: this dials, and a background wake must not spend a dial on it.
+/// Blocks for at most ~10s in total — DNS and endpoint build included — so
+/// call it off the main thread.
+///
+/// Returns 0 when the box accepted the report, and a negative code otherwise
+/// (-1 not paired, -2 no client, -3 request failed or timed out, -4 box
+/// refused, -5 bad string). A failure is not retried here: the registrar
+/// reports again on the next foreground, and iOS re-issues the token on every
+/// `registerForRemoteNotifications`, so the next launch heals it.
+///
+/// # Safety
+/// `address` must be NULL or a valid NUL-terminated C string for the call.
+#[no_mangle]
+pub extern "C" fn virtues_report_push_address(address: *const c_char) -> i32 {
+  let address = if address.is_null() {
+    None
+  } else {
+    match unsafe { CStr::from_ptr(address) }.to_str() {
+      Ok(s) => Some(s.to_owned()),
+      Err(_) => return -5,
+    }
+  };
+  let store = crate::FileStore::new();
+  let Some(rec) = store.load().ok().flatten() else {
+    return -1;
+  };
+  // ONE bound around everything, not just the request. `ensure_client` can
+  // cold-build an endpoint and resolve the box's LAN name through the system
+  // resolver with no timeout of its own, and a first version that timed only
+  // the request left the Swift caller's serial queue — and every report behind
+  // it — waiting on a DNS lookup for as long as iOS cared to take.
+  tauri::async_runtime::block_on(async move {
+    let work = async {
+      let Some(client) = crate::ensure_client(&rec).await else {
+        return -2;
+      };
+      let Ok(raw) = virtues_reach_client::push::push_address_request(address.as_deref()) else {
+        return -5;
+      };
+      let Ok(resp) = client.request(&raw).await else {
+        return -3;
+      };
+      match virtues_reach_client::handoff::split_response(&resp) {
+        Ok((status, _)) if (200..300).contains(&status) => 0,
+        Ok((status, body)) => {
+          tracing::warn!(status, body = %body, "box refused push-address report");
+          -4
+        }
+        Err(_) => -3,
+      }
+    };
+    tokio::time::timeout(std::time::Duration::from_secs(10), work)
+      .await
+      .unwrap_or(-3)
+  })
+}
+
+/// Force the linker to keep the C ABI symbols in the app's static lib. Call once
+/// from the plugin `init` (which is in the link graph); referencing the function
+/// pointer pulls this object out of the archive so Swift can find the symbol.
+pub(crate) fn keep_symbols() {
+  let enqueue: extern "C" fn(*const c_char, *const c_char) -> i32 = virtues_enqueue;
+  let drain: extern "C" fn(i32) -> i32 = virtues_drain_blocking;
+  let recover: extern "C" fn() -> i32 = virtues_recover_connection;
+  let app_bg: extern "C" fn(i32) = virtues_app_background;
+  let radio: extern "C" fn(i32) = virtues_radio_constrained;
+  let push: extern "C" fn(*const c_char) -> i32 = virtues_report_push_address;
+  let shared: extern "C" fn(*const c_char) = virtues_set_shared_dir;
+  std::hint::black_box(enqueue as *const ());
+  std::hint::black_box(shared as *const ());
+  std::hint::black_box(drain as *const ());
+  std::hint::black_box(recover as *const ());
+  std::hint::black_box(app_bg as *const ());
+  std::hint::black_box(radio as *const ());
+  std::hint::black_box(push as *const ());
+}

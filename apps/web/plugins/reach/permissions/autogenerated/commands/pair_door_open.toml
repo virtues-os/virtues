@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-pair-door-open"
+description = "Enables the pair_door_open command without any pre-configured scope."
+commands.allow = ["pair_door_open"]
+
+[[permission]]
+identifier = "deny-pair-door-open"
+description = "Denies the pair_door_open command without any pre-configured scope."
+commands.deny = ["pair_door_open"]

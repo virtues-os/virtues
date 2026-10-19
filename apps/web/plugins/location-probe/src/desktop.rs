@@ -1,0 +1,55 @@
+use serde::de::DeserializeOwned;
+use tauri::{plugin::PluginApi, AppHandle, Runtime};
+
+use crate::models::*;
+
+pub fn init<R: Runtime, C: DeserializeOwned>(
+  app: &AppHandle<R>,
+  _api: PluginApi<R, C>,
+) -> crate::Result<LocationProbe<R>> {
+  Ok(LocationProbe(app.clone()))
+}
+
+/// Access to the location-probe APIs.
+///
+/// Desktop is a no-op stub: the probe only means something on iOS/Android where
+/// the OS drives background location callbacks. These let the app compile and
+/// run on the desktop target without cfg noise at the call sites.
+pub struct LocationProbe<R: Runtime>(AppHandle<R>);
+
+impl<R: Runtime> LocationProbe<R> {
+  pub fn start_probe(&self) -> crate::Result<StartResponse> {
+    Ok(StartResponse { started: false })
+  }
+
+  pub fn resume_probe(&self) -> crate::Result<StartResponse> {
+    Ok(StartResponse { started: false })
+  }
+
+  /// Desktop has no push. `unavailable` rather than `denied`: the UI hides the
+  /// row for it instead of telling someone to fix a setting that does not exist.
+  pub fn push_status(&self) -> crate::Result<PushStatusResponse> {
+    Ok(PushStatusResponse { status: "unavailable".into() })
+  }
+
+  pub fn request_push(&self) -> crate::Result<PushStatusResponse> {
+    Ok(PushStatusResponse { status: "unavailable".into() })
+  }
+
+  pub fn status(&self) -> crate::Result<LocationStatusResponse> {
+    Ok(LocationStatusResponse { status: "unavailable".into() })
+  }
+
+  pub fn request_location(&self) -> crate::Result<LocationStatusResponse> {
+    Ok(LocationStatusResponse { status: "unavailable".into() })
+  }
+
+  /// There is no per-app settings page to open on desktop.
+  pub fn open_settings(&self) -> crate::Result<OpenSettingsResponse> {
+    Ok(OpenSettingsResponse { opened: false })
+  }
+
+  pub fn read_rows(&self, _payload: RowsRequest) -> crate::Result<RowsResponse> {
+    Ok(RowsResponse { rows: vec![] })
+  }
+}

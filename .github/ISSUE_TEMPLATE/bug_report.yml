@@ -1,0 +1,68 @@
+name: Bug report
+description: Something on a server or in an app does not work as it should.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Found a security problem? Report it privately instead:
+        https://github.com/virtues-os/virtues/security/advisories/new
+
+        Everything below is public. Leave out real names, messages, places
+        and keys; a made-up stand-in shows the same bug.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1.
+        2.
+        3.
+  - type: textarea
+    id: doctor
+    attributes:
+      label: Output of `virtues doctor`
+      description: |
+        Run `virtues doctor` on the server and paste everything it prints.
+        It lists LAN addresses and paired devices; replace those with
+        placeholders if you would rather not post them.
+      render: text
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Server version
+      description: The output of `virtues --version`.
+    validations:
+      required: true
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where it happens
+      multiple: true
+      options:
+        - On the server, or its web interface
+        - Mac app
+        - iPhone app
+        - Windows app
+        - Linux desktop app
+        - Installer
+  - type: input
+    id: host
+    attributes:
+      label: Hardware and OS
+      description: A Virtues Server, or your own machine with its distro and version, for example Debian 13 on x86_64.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Anything relevant from `journalctl -u virtues`, trimmed to the failure.
+      render: text

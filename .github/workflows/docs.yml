@@ -1,0 +1,91 @@
+name: Docs
+
+# The public manual (`docs/`) is checked and published from here, and the
+# index and link rules of `agents/` are checked here.
+#
+# WHY THIS IS NOT PART OF ci.yml
+#
+# `ci.yml` deliberately carries `paths-ignore: ["docs/**", "**/*.md"]`, because
+# a docs-only PR was costing a full Rust compile plus a Postgres service on a
+# paid runner, twice. Every change to the manual is a `.md` change, so ci.yml
+# is blind to all of it by design. This workflow is the cheap counterpart: no
+# toolchain, no services, a few seconds of Python.
+#
+# WHY PUBLISHING IS TIED TO `main`
+#
+# `main` moves only when a release ships, so virtues.com/docs describes what
+# boxes actually run rather than what is in flight. Publishing from `wave` or
+# `staging` would put version honesty in a `planned` flag somebody has to
+# remember to flip; tying it to the ref makes it structural. The website's
+# VIRTUES_DOCS_REF must stay in agreement with the deploy trigger below — if
+# one moves, move the other, or the site rebuilds content it did not intend.
+
+# README.md is checked here too. `ci.yml` carries `paths-ignore: **/*.md`, so
+# every README change has always run through zero CI — and its serif headings
+# couple four hand-maintained things per heading (a <picture>, two SVGs, an
+# <a id>, a TOC entry) that nothing verified. See tools/check-readme.py for the
+# four failures that motivated it, all of which reached a push.
+#
+# Only `docs/**` publishes, as the manual at virtues.com/docs. `agents/**` never
+# publishes; it is here because docs move between its four directories as they
+# ship, and a move without a link sweep strands every citation. On `main` an
+# agents-only push also pings the site rebuild, which is harmless: main moves
+# only on release.
+on:
+  push:
+    branches: [wave, staging, main]
+    paths:
+      - "docs/**"
+      - "agents/**"
+      - "tools/check-manual.py"
+      - "README.md"
+      - ".github/images/**"
+      - "tools/check-readme.py"
+      - ".github/workflows/docs.yml"
+  pull_request:
+    paths:
+      - "docs/**"
+      - "agents/**"
+      - "tools/check-manual.py"
+      - "README.md"
+      - ".github/images/**"
+      - "tools/check-readme.py"
+      - ".github/workflows/docs.yml"
+
+# Read-only. The deploy job reaches the website through its own hook secret,
+# not through this repository's token.
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Check the manual and the README
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Manifest, frontmatter, links, version literals
+        run: tools/check-manual.py
+      - name: README headings, anchors, images, badges
+        run: tools/check-readme.py
+
+  deploy:
+    name: Publish to virtues.com
+    # Only a release reaching main publishes. `needs: check` so a manifest that
+    # would fail the website's own build never triggers a deploy that fails in
+    # the other repo, where the error lands on a stranger.
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the website rebuild
+        env:
+          HOOK: ${{ secrets.VERCEL_DOCS_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$HOOK" ]; then
+            echo "::error::VERCEL_DOCS_DEPLOY_HOOK is not set — the manual reached main but virtues.com will keep serving the previous build."
+            exit 1
+          fi
+          curl -fsS -X POST "$HOOK" -o /dev/null
+          echo "Requested a rebuild; the site syncs docs/ from main at build time."

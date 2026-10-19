@@ -1,0 +1,47 @@
+[package]
+name = "virtues-document"
+version = "0.1.0"
+edition = "2021"
+publish = false
+authors = ["Virtues Team <team@virtues.com>"]
+description = "The page document contract: a Yjs XML tree, strict HTML ingest, block-id edits, canonical HTML and markdown"
+license.workspace = true
+repository = "https://github.com/virtues-os/virtues"
+
+[features]
+default = ["yjs"]
+# The Yjs side: the tree in a document, block-id edits, the socket's checks
+# and repair. Off, the crate is the converter alone (contract, ingest,
+# markdown, render), which is what the browser runs as WebAssembly
+# (crates/virtues-document-wasm): yrs turns on fastrand's `js`, whose
+# getrandom imports wasm-bindgen's glue, so a module built with it cannot
+# be instantiated on its own.
+yjs = ["dep:yrs"]
+
+[dependencies]
+# One yrs across the workspace: virtues-core holds the sync server on the same
+# requirement, and two copies would be two incompatible `Doc` types.
+yrs = { version = "0.28", optional = true }
+serde = { version = "1", features = ["derive"] }
+# No `preserve_order`: features unify across the workspace and would change
+# JSON key order everywhere in virtues-core. The contract keeps its order
+# through `contract::Ordered` instead.
+serde_json = "1"
+scraper = "0.27"
+ego-tree = "0.11"
+# `std` alone: content expressions are private-use letters, classes and
+# quantifiers, which need neither Unicode tables nor literal search. Those
+# would be about half the browser's converter (crates/virtues-document-wasm).
+# The server gets them anyway, through virtues-core's own regex.
+regex = { version = "1", default-features = false, features = ["std"] }
+anyhow = "1"
+fastrand = "2"
+pulldown-cmark = { version = "0.10", default-features = false, features = ["html"] }
+# A read base's name (`seen::tree_hash`), as virtues-core names it.
+sha2 = "0.10"
+hex = "0.4"
+
+[[bin]]
+name = "document-conformance"
+path = "src/bin/document-conformance.rs"
+required-features = ["yjs"]

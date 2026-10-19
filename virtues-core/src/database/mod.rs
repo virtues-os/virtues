@@ -1,0 +1,771 @@
+//! Database module for Postgres operations.
+//!
+//! Postgres runs on the same appliance box (or localhost in dev) via the
+//! Docker Compose stack at repo root. Single tenant, single database, single
+//! `DATABASE_URL`. No pgbouncer for now — connections are direct.
+
+use std::time::Duration;
+
+use sqlx::postgres::{PgConnectOptions, PgPoolOptions};
+use sqlx::PgPool;
+
+use crate::error::{Error, Result};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DATABASE_URL handling
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Read `DATABASE_URL` from the environment.
+///
+/// Kept as a thin helper (vs. the old path-normalizing version) so
+/// callers — including action subprocesses — go through one consistent
+/// resolver. Postgres URLs are location-independent, so no rewriting needed.
+pub fn normalize_database_url() -> Result<String> {
+    normalize_from(std::env::var("DATABASE_URL").ok())
+}
+
+/// Pure core of [`normalize_database_url`] — takes the env value instead of
+/// reading it, so tests never have to mutate the process-global env. (Env
+/// mutation in tests races the `#[sqlx::test]` suites, which read
+/// DATABASE_URL concurrently and panic on a mid-run change.)
+fn normalize_from(value: Option<String>) -> Result<String> {
+    value.ok_or_else(|| Error::Configuration("DATABASE_URL env var not set".to_string()))
+}
+
+/// Database connection and operations
+#[derive(Clone)]
+pub struct Database {
+    pool: PgPool,
+}
+
+impl Database {
+    /// Create a new database connection.
+    ///
+    /// `app_name` is what shows up in `pg_stat_activity.application_name` —
+    /// makes the per-action / per-binary connection landscape legible when
+    /// debugging on the appliance.
+    pub fn new(database_url: &str) -> Result<Self> {
+        Self::new_named(database_url, "virtues-core")
+    }
+
+    /// Create a new database connection with a custom application name.
+    pub fn new_named(database_url: &str, app_name: &str) -> Result<Self> {
+        // Default core pool size: 5. Applet subprocesses override via env.
+        let max_connections = std::env::var("DATABASE_MAX_CONNECTIONS")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(5);
+
+        tracing::info!(
+            "Database pool max connections: {} (app={})",
+            max_connections,
+            app_name
+        );
+
+        let opts: PgConnectOptions = database_url
+            .parse()
+            .map_err(|e| Error::Database(format!("invalid DATABASE_URL: {e}")))?;
+        let opts = opts.application_name(app_name);
+
+        let pool = PgPoolOptions::new()
+            .max_connections(max_connections)
+            .acquire_timeout(Duration::from_secs(10))
+            .idle_timeout(Duration::from_secs(600))
+            .max_lifetime(Duration::from_secs(1800))
+            .connect_lazy_with(opts);
+
+        Ok(Self { pool })
+    }
+
+    /// Create from an existing pool
+    pub fn from_pool(pool: PgPool) -> Self {
+        Self { pool }
+    }
+
+    /// Get the underlying connection pool
+    pub fn pool(&self) -> &PgPool {
+        &self.pool
+    }
+
+    /// Bring the schema up to this build: wait for Postgres, run migrations, size
+    /// the vector columns. Only the schema's owners call this — the server, and
+    /// the setup and maintenance verbs (`init`, `bringup`, `migrate`, `reset`,
+    /// `seed`, `subscribe`, `account-login`). Any other command calls
+    /// [`Database::connect`] or neither, so it never changes the schema under a
+    /// running server.
+    ///
+    /// Waits up to 30s for Postgres to accept connections before failing — on
+    /// a fresh box, PG can be in WAL recovery for several seconds after
+    /// systemd reports the unit "started." Without the retry the daemon would
+    /// panic, systemd would restart it 5s later, and the cycle would repeat
+    /// until PG was ready. Also covers the runtime case where PG restarts
+    /// (rare, but real).
+    pub async fn initialize(&self) -> Result<()> {
+        self.wait_for_postgres(std::time::Duration::from_secs(30)).await?;
+
+        // Run migrations — unless pointed at an externally-managed DB (e.g. a live
+        // box snapshot restored for local dev via `make dev-real`), whose
+        // `_sqlx_migrations` checksums were written by a different build and would
+        // trip the modification guard. The snapshot is already at its schema; we
+        // only read it. Guarded by an explicit opt-in env so normal startup always
+        // migrates.
+        if std::env::var("VIRTUES_SKIP_MIGRATIONS").as_deref() == Ok("1") {
+            tracing::warn!(
+                "VIRTUES_SKIP_MIGRATIONS=1 — skipping migrations (externally-managed DB)"
+            );
+        } else {
+            self.run_migrations().await?;
+        }
+
+        // Size the vector columns to the width the index was built at. A box
+        // that has never embedded has no recorded width; its first embed sizes
+        // them (`search::indexer`).
+        self.ensure_embedding_dims().await?;
+
+        Ok(())
+    }
+
+    /// Connect for a command that uses the database but does not own its schema:
+    /// wait for Postgres, then refuse if this build expects migrations the
+    /// database has not had, rather than apply them behind the server's back.
+    /// `VIRTUES_SKIP_MIGRATIONS=1` (an externally-managed snapshot, as in
+    /// [`Database::initialize`]) skips the check.
+    pub async fn connect(&self) -> Result<()> {
+        self.wait_for_postgres(std::time::Duration::from_secs(30)).await?;
+        if std::env::var("VIRTUES_SKIP_MIGRATIONS").as_deref() == Ok("1") {
+            return Ok(());
+        }
+        let pending = self.migration_check().await?.pending;
+        if let (Some(first), Some(last)) = (pending.first(), pending.last()) {
+            return Err(Error::Database(format!(
+                "this database is {} migration(s) behind this build ({first}..{last} \
+                 pending). Run `virtues migrate` first. (For a snapshot you only read, \
+                 set VIRTUES_SKIP_MIGRATIONS=1.)",
+                pending.len()
+            )));
+        }
+        Ok(())
+    }
+
+    /// Size the pgvector columns to the width the index was BUILT at, read from
+    /// `search_index_meta` — never from a constant, and never from the network.
+    ///
+    /// Bringup runs on boxes whose embedder is not running (`virtues migrate`, most
+    /// of the CLI), so it cannot go asking a sidecar how wide its vectors are. The
+    /// database remembers; the embedder's job at runtime is to *verify* that memory
+    /// (see `search::indexer`), not to supply it.
+    ///
+    /// No recorded width means the index has never been built — leave the columns at
+    /// their migration default. The first embed records the truth and calls this
+    /// again before writing a vector. Refuses to resize a populated index: that is a
+    /// re-embed, and `virtues reindex` owns it.
+    pub(crate) async fn ensure_embedding_dims(&self) -> Result<()> {
+        let Some(target) = crate::search::embedder::index_dim(&self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("{e:#}")))?
+        else {
+            // Never embedded. Nothing to match yet.
+            return Ok(());
+        };
+        let max = crate::search::embedder::MAX_INDEXED_DIM;
+        if target > max {
+            return Err(Error::Database(format!(
+                "the index records a {target}-dim model, above pgvector's {max}-dim HNSW \
+                 ceiling for halfvec — use a narrower model, or set VIRTUES_EMBED_DIMS to \
+                 truncate (only safe if the model is Matryoshka-trained)"
+            )));
+        }
+
+        // The target column is `halfvec(target)` (fp16 — half the storage, ~3×
+        // faster query, recall within noise of fp32). We need both the width AND
+        // the type family: an already-`halfvec` column at the right width is a
+        // no-op; a legacy `vector` column at the right width still converts (a
+        // lossless-enough cast — no re-embed), and any width change needs a
+        // reindex.
+        let current_type = self.vector_column_type("search_vectors", "embedding").await?;
+        let current = current_type.as_deref().and_then(parse_vector_dim);
+        // The early return has to prove ALL THREE columns are right, and the
+        // index with them. `search_vectors`, `search_topic_cache` and
+        // `app_projects.centroid` share one embedding geometry and are resized
+        // together below, between dropping the HNSW index and rebuilding it —
+        // but the loop is not a transaction, so a failure partway leaves some
+        // converted and some not, or no index at all. Guarding on
+        // `search_vectors` alone meant every later boot took this return and
+        // never looked at the others again, which is precisely how the centroid
+        // dimension drifted before (see 0060's header: "Every centroid write
+        // failed the dimension check").
+        //
+        // The converse binds too: every column checked here must be resized
+        // below. A guard demanding a column the loop never touches can never
+        // pass, so every boot drops and rebuilds the index.
+        let at_target = |ty: Option<&str>| {
+            ty.is_some_and(|t| {
+                t.trim_start().starts_with("halfvec") && parse_vector_dim(t) == Some(target)
+            })
+        };
+        let topic_type = self.vector_column_type("search_topic_cache", "embedding").await?;
+        let centroid_type = self.vector_column_type("app_projects", "centroid").await?;
+        let index_built: bool =
+            sqlx::query_scalar("SELECT to_regclass('search_vectors_hnsw') IS NOT NULL")
+                .fetch_one(&self.pool)
+                .await
+                .map_err(|e| Error::Database(format!("looking for search_vectors_hnsw: {e}")))?;
+        let search_ready =
+            at_target(current_type.as_deref()) && at_target(topic_type.as_deref()) && index_built;
+        if search_ready && at_target(centroid_type.as_deref()) {
+            return Ok(());
+        }
+        // Only the centroids are off: a model change whose centroid resize
+        // couldn't get its lock (`search::next_index`). Resize just them; the
+        // full pass below would drop and rebuild the search index for nothing.
+        if search_ready {
+            for stmt in [
+                format!(
+                    "UPDATE app_projects SET centroid = NULL \
+                     WHERE centroid IS NOT NULL AND vector_dims(centroid) <> {target}"
+                ),
+                format!(
+                    "ALTER TABLE app_projects ALTER COLUMN centroid \
+                     TYPE halfvec({target}) USING centroid::halfvec({target})"
+                ),
+            ] {
+                sqlx::query(&stmt)
+                    .execute(&self.pool)
+                    .await
+                    .map_err(|e| Error::Database(format!("resizing project centroids: {e}")))?;
+            }
+            return Ok(());
+        }
+
+        // Only a WIDTH change drops the vectors' meaning and forces a re-embed;
+        // a same-width vector→halfvec cast preserves them. Guard on the former.
+        // Centroids are not counted: `virtues reindex` does not wipe them, so a
+        // stored one would refuse a resize that reindex could never clear. The
+        // loop NULLs any of the wrong width instead.
+        let dim_changed = current != Some(target);
+        if dim_changed {
+            let populated: i64 = sqlx::query_scalar(
+                "SELECT (SELECT count(*) FROM search_vectors) \
+                      + (SELECT count(*) FROM search_topic_cache)",
+            )
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("counting stored vectors: {e}")))?;
+            if populated > 0 {
+                let from = current.map(|d| d.to_string()).unwrap_or_else(|| "?".into());
+                return Err(Error::Database(format!(
+                    "embedding index is halfvec({from}) but the configured model needs \
+                     halfvec({target}), and {populated} vectors are already stored — run \
+                     `virtues reindex` to re-embed (wipes the derived vectors, keeps your data)"
+                )));
+            }
+        }
+
+        tracing::info!(
+            from = ?current_type, to = target, "sizing embedding columns (halfvec) to the configured model"
+        );
+        // target is a validated usize (≤ max), so the format! interpolation is
+        // injection-safe. Cast to halfvec and rebuild the HNSW index. Cosine ops
+        // (`<=>`) — matches the operator query.rs uses, and for our L2-normalized
+        // embeddings it ranks identically to inner product.
+        for stmt in [
+            "DROP INDEX IF EXISTS search_vectors_hnsw".to_string(),
+            format!(
+                "ALTER TABLE search_vectors ALTER COLUMN embedding \
+                 TYPE halfvec({target}) USING embedding::halfvec({target})"
+            ),
+            format!(
+                "ALTER TABLE search_topic_cache ALTER COLUMN embedding \
+                 TYPE halfvec({target}) USING embedding::halfvec({target})"
+            ),
+            // Nothing reads or writes `app_projects.centroid` since the magnet
+            // went, but the guard above holds it to this geometry, so it is
+            // resized with the rest. A stored centroid of another width cannot
+            // be cast to this one; with no reader, NULLing it loses nothing.
+            format!(
+                "UPDATE app_projects SET centroid = NULL \
+                 WHERE centroid IS NOT NULL AND vector_dims(centroid) <> {target}"
+            ),
+            format!(
+                "ALTER TABLE app_projects ALTER COLUMN centroid \
+                 TYPE halfvec({target}) USING centroid::halfvec({target})"
+            ),
+            hnsw_index_sql("search_vectors_hnsw", "search_vectors", false),
+        ] {
+            sqlx::query(&stmt)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| Error::Database(format!("resizing embedding columns: {e}")))?;
+        }
+        Ok(())
+    }
+
+    /// The formatted SQL type of a column, e.g. `"vector(256)"` or
+    /// `"halfvec(384)"`. `None` if the column isn't found.
+    async fn vector_column_type(&self, table: &str, col: &str) -> Result<Option<String>> {
+        sqlx::query_scalar(
+            "SELECT format_type(a.atttypid, a.atttypmod) \
+             FROM pg_attribute a \
+             WHERE a.attrelid = $1::regclass AND a.attname = $2 AND NOT a.attisdropped",
+        )
+        .bind(table)
+        .bind(col)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| Error::Database(format!("reading {table}.{col} type: {e}")))
+    }
+
+    /// The declared dimension of a pgvector column, e.g. `vector(256)` → 256.
+    /// `None` if the column has no dimension modifier or isn't found.
+    #[allow(dead_code)]
+    async fn vector_column_dim(&self, table: &str, col: &str) -> Result<Option<usize>> {
+        Ok(self.vector_column_type(table, col).await?.as_deref().and_then(parse_vector_dim))
+    }
+
+    /// Poll `SELECT 1` until Postgres responds or we exhaust the budget.
+    /// One log line per second so `journalctl -u virtues` shows progress
+    /// instead of a wall of silence.
+    ///
+    /// Permanent errors fail IMMEDIATELY: auth/role/database errors don't fix
+    /// themselves by waiting, and burning the 30s budget on them used to bury
+    /// the real cause ("peer authentication failed for user adam") under a
+    /// misleading "did not accept connections within 30s" timeout. The classic
+    /// trigger is running a CLI command as the wrong OS user on a box install
+    /// (Unix socket + peer auth maps OS user → Postgres role), so the error
+    /// carries that hint.
+    async fn wait_for_postgres(&self, budget: std::time::Duration) -> Result<()> {
+        let start = std::time::Instant::now();
+        let mut emitted_waiting = false;
+        loop {
+            match sqlx::query("SELECT 1").execute(&self.pool).await {
+                Ok(_) => return Ok(()),
+                Err(e) => {
+                    let msg = e.to_string();
+                    // Auth/identity failures are permanent — retrying is noise.
+                    let permanent = [
+                        "peer authentication failed",
+                        "password authentication failed",
+                        "does not exist", // role "adam" / database "virtues" does not exist
+                        "no pg_hba.conf entry",
+                    ]
+                    .iter()
+                    .any(|p| msg.contains(p));
+                    if permanent {
+                        return Err(Error::Database(format!(
+                            "Postgres refused the connection: {msg}\n  \
+                             hint: on a box install, CLI commands must run as the \
+                             service user — try: sudo -u virtues virtues <command>"
+                        )));
+                    }
+                    if start.elapsed() >= budget {
+                        return Err(Error::Database(format!(
+                            "Postgres did not accept connections within {}s: {e}",
+                            budget.as_secs()
+                        )));
+                    }
+                    if !emitted_waiting {
+                        tracing::info!("waiting for postgres to accept connections…");
+                        emitted_waiting = true;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                }
+            }
+        }
+    }
+
+    /// Run database migrations
+    async fn run_migrations(&self) -> Result<()> {
+        let mut migrator = sqlx::migrate!("./migrations");
+        // NOTE: `ignore_missing` below means BOOT does not enforce lineage —
+        // deliberate (one dev DB serves many branches). The enforcement point
+        // is `virtues migrate --check` (migration_check), which the upgrade
+        // path runs BEFORE swapping anything. See agents/record/update-paradigm.md.
+        // One dev database serves many branches: a migration applied on a
+        // feature branch must not brick `make dev` on branches that don't
+        // carry its file. Skip applied-but-unknown versions instead.
+        migrator.set_ignore_missing(true);
+        self.adopt_amended_checksums().await?;
+        migrator
+            .run(&self.pool)
+            .await
+            .map_err(|e| Error::Database(format!("Failed to run migrations: {e}")))?;
+        Ok(())
+    }
+
+    /// Rewrite the recorded checksum of each [`AMENDED_MIGRATIONS`] entry to
+    /// this build's, where the box recorded exactly the old one. Any other
+    /// value is left for sqlx to refuse as the drift it is.
+    async fn adopt_amended_checksums(&self) -> Result<()> {
+        for (version, old) in AMENDED_MIGRATIONS {
+            let Some(m) = EMBEDDED_MIGRATIONS.iter().find(|m| m.version == *version) else {
+                continue;
+            };
+            let old = hex::decode(old).expect("AMENDED_MIGRATIONS holds hex");
+            match sqlx::query(
+                "UPDATE _sqlx_migrations SET checksum = $1 WHERE version = $2 AND checksum = $3",
+            )
+            .bind(m.checksum.as_ref())
+            .bind(version)
+            .bind(&old)
+            .execute(&self.pool)
+            .await
+            {
+                Ok(_) => {}
+                // A fresh database has no tracker yet; sqlx creates it.
+                Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("42P01") => return Ok(()),
+                Err(e) => return Err(Error::Database(format!("adopting amended migrations: {e}"))),
+            }
+        }
+        Ok(())
+    }
+
+    /// Lineage check between the DB's applied migrations and this binary's
+    /// embedded set — **applies nothing**. This is the upgrade preflight: run
+    /// under the *staged* binary before any swap, it turns "brick mid-swap on
+    /// a migration mismatch" into a clean pre-swap refusal.
+    pub async fn migration_check(&self) -> Result<MigrationCheck> {
+        let embedded: std::collections::BTreeMap<i64, &[u8]> = EMBEDDED_MIGRATIONS
+            .iter()
+            .map(|m| (m.version, m.checksum.as_ref()))
+            .collect();
+
+        // A fresh DB (no _sqlx_migrations table yet) has nothing applied —
+        // every embedded migration is pending, no divergence possible. Any
+        // other failure is an error: read as "nothing applied", it would call
+        // every migration pending.
+        let applied: Vec<(i64, Vec<u8>)> = match sqlx::query_as(
+            "SELECT version, checksum FROM _sqlx_migrations ORDER BY version",
+        )
+        .fetch_all(&self.pool)
+        .await
+        {
+            Ok(rows) => rows,
+            Err(sqlx::Error::Database(e)) if e.code().as_deref() == Some("42P01") => Vec::new(),
+            Err(e) => return Err(Error::Database(format!("reading applied migrations: {e}"))),
+        };
+
+        let mut check = MigrationCheck::default();
+        for (version, checksum) in &applied {
+            match embedded.get(version) {
+                None => check.missing.push(*version),
+                Some(c) if *c != checksum.as_slice() && !is_amended(*version, checksum) => {
+                    check.drifted.push(*version)
+                }
+                Some(_) => {}
+            }
+        }
+        let applied_set: std::collections::BTreeSet<i64> =
+            applied.iter().map(|(v, _)| *v).collect();
+        check.pending =
+            embedded.keys().filter(|v| !applied_set.contains(v)).copied().collect();
+        Ok(check)
+    }
+
+    /// Execute a query with parameters
+    pub async fn execute(&self, sql: &str, params: &[&str]) -> Result<()> {
+        let mut query = sqlx::query(sql);
+        for param in params {
+            query = query.bind(param);
+        }
+        query.execute(&self.pool).await?;
+        Ok(())
+    }
+
+    /// Batch insert helper — builds a multi-row INSERT with $N placeholders
+    /// and an `ON CONFLICT (...) DO NOTHING` clause. Caller binds parameters
+    /// in row-major order.
+    ///
+    /// # Arguments
+    /// * `table` — table name
+    /// * `columns` — column names in order
+    /// * `conflict_column` — single column for the conflict target
+    /// * `num_rows` — number of rows in this batch
+    pub fn build_batch_insert_query(
+        table: &str,
+        columns: &[&str],
+        conflict_column: &str,
+        num_rows: usize,
+    ) -> String {
+        let num_cols = columns.len();
+
+        let mut query = format!("INSERT INTO {} (", table);
+        query.push_str(&columns.join(", "));
+        query.push_str(") VALUES ");
+
+        let mut value_clauses = Vec::with_capacity(num_rows);
+        for row_idx in 0..num_rows {
+            let mut placeholders = Vec::with_capacity(num_cols);
+            for col_idx in 0..num_cols {
+                let param_num = row_idx * num_cols + col_idx + 1;
+                placeholders.push(format!("${}", param_num));
+            }
+            value_clauses.push(format!("({})", placeholders.join(", ")));
+        }
+
+        query.push_str(&value_clauses.join(", "));
+        query.push_str(&format!(" ON CONFLICT ({}) DO NOTHING", conflict_column));
+        query
+    }
+
+    /// Health check
+    pub async fn health_check(&self) -> Result<HealthStatus> {
+        match sqlx::query("SELECT 1").fetch_one(&self.pool).await {
+            Ok(_) => Ok(HealthStatus {
+                is_healthy: true,
+                message: "Connected".to_string(),
+            }),
+            Err(e) => Ok(HealthStatus {
+                is_healthy: false,
+                message: format!("Connection failed: {e}"),
+            }),
+        }
+    }
+}
+
+/// Health status for database
+#[derive(Debug)]
+pub struct HealthStatus {
+    pub is_healthy: bool,
+    pub message: String,
+}
+
+/// Parse the dimension out of a pgvector `format_type` string, e.g.
+/// `vector(256)` → `Some(256)`, `halfvec(3072)` → `Some(3072)`, bare `vector`
+/// (no modifier) → `None`.
+fn parse_vector_dim(ty: &str) -> Option<usize> {
+    let open = ty.find('(')?;
+    let close = ty.find(')')?;
+    ty.get(open + 1..close)?.trim().parse().ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_vector_dim_cases() {
+        assert_eq!(parse_vector_dim("vector(256)"), Some(256));
+        assert_eq!(parse_vector_dim("vector(768)"), Some(768));
+        assert_eq!(parse_vector_dim("halfvec(3072)"), Some(3072));
+        assert_eq!(parse_vector_dim("vector"), None);
+        assert_eq!(parse_vector_dim("text"), None);
+    }
+
+    async fn hnsw_oid(pool: &PgPool) -> Option<i64> {
+        sqlx::query_scalar("SELECT to_regclass('search_vectors_hnsw')::oid::bigint")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    /// A 384-d index (every Dragon runs gte-small) over the migrations' 256-d
+    /// columns, with a centroid left behind at the old width by the magnet.
+    async fn box_at_384(pool: &PgPool) -> Database {
+        for stmt in [
+            "UPDATE search_index_meta SET model = 'm', dim = 384 WHERE singleton",
+            "INSERT INTO app_projects (id, name, centroid) \
+             VALUES ('p_1', 'P', array_fill(0.1::real, ARRAY[256])::vector::halfvec)",
+        ] {
+            sqlx::query(stmt).execute(pool).await.unwrap();
+        }
+        Database::from_pool(pool.clone())
+    }
+
+    /// A box whose index is not 256-wide must reach the early return on its
+    /// second boot. When the resize stopped touching `app_projects.centroid`
+    /// but the guard still required it, the guard never passed, and every boot
+    /// dropped and rebuilt the HNSW index.
+    #[sqlx::test]
+    async fn resize_settles_after_one_boot(pool: PgPool) {
+        let db = box_at_384(&pool).await;
+
+        db.ensure_embedding_dims().await.unwrap();
+        let built = hnsw_oid(&pool).await;
+        assert!(built.is_some(), "the resize builds the index");
+
+        db.ensure_embedding_dims().await.unwrap();
+        assert_eq!(hnsw_oid(&pool).await, built, "second boot rebuilt the index");
+
+        for (table, col) in [
+            ("search_vectors", "embedding"),
+            ("search_topic_cache", "embedding"),
+            ("app_projects", "centroid"),
+        ] {
+            assert_eq!(
+                db.vector_column_type(table, col).await.unwrap().as_deref(),
+                Some("halfvec(384)"),
+                "{table}.{col}"
+            );
+        }
+        let centroids: i64 = sqlx::query_scalar("SELECT count(centroid) FROM app_projects")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(centroids, 0, "a 256-d centroid cannot live in a 384-d column");
+    }
+
+    /// The index is dropped before the columns are resized and built after, so
+    /// a boot that dies in between leaves every column right and no index. The
+    /// guard checks for the index too, and the next boot builds it.
+    #[sqlx::test]
+    async fn missing_index_is_rebuilt(pool: PgPool) {
+        let db = box_at_384(&pool).await;
+        db.ensure_embedding_dims().await.unwrap();
+
+        sqlx::query("DROP INDEX search_vectors_hnsw").execute(&pool).await.unwrap();
+        db.ensure_embedding_dims().await.unwrap();
+        assert!(hnsw_oid(&pool).await.is_some());
+    }
+
+    /// A command that does not own the schema connects to a migrated database,
+    /// and refuses one this build would migrate, naming the fix.
+    #[sqlx::test]
+    async fn connect_refuses_a_database_behind_this_build(pool: PgPool) {
+        let db = Database::from_pool(pool.clone());
+        db.connect().await.expect("the test database is fully migrated");
+
+        let latest = embedded_migration_max().expect("this build ships migrations");
+        sqlx::query("DELETE FROM _sqlx_migrations WHERE version = $1")
+            .bind(latest)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let err = db.connect().await.expect_err("one migration is pending");
+        assert!(err.to_string().contains("virtues migrate"), "{err}");
+    }
+
+    /// A box that applied a migration before its comments were amended has
+    /// the old file's checksum recorded. The preflight counts it as current,
+    /// boot adopts the new checksum, and any other recorded value is still
+    /// drift that both refuse.
+    #[sqlx::test]
+    async fn an_amended_migration_is_adopted_and_other_drift_still_refuses(pool: PgPool) {
+        let db = Database::from_pool(pool.clone());
+        let set = |sum: Vec<u8>, version: i64| {
+            sqlx::query("UPDATE _sqlx_migrations SET checksum = $1 WHERE version = $2")
+                .bind(sum)
+                .bind(version)
+                .execute(&pool)
+        };
+        for (version, old) in AMENDED_MIGRATIONS {
+            set(hex::decode(old).unwrap(), *version).await.unwrap();
+        }
+        assert!(db.migration_check().await.unwrap().drifted.is_empty());
+        db.run_migrations().await.expect("boot adopts the amended checksums");
+        for (version, _) in AMENDED_MIGRATIONS {
+            let now: Vec<u8> =
+                sqlx::query_scalar("SELECT checksum FROM _sqlx_migrations WHERE version = $1")
+                    .bind(version)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            let shipped = EMBEDDED_MIGRATIONS.iter().find(|m| m.version == *version).unwrap();
+            assert_eq!(now, shipped.checksum.as_ref(), "migration {version}");
+        }
+
+        let (version, _) = AMENDED_MIGRATIONS[0];
+        set(vec![0u8; 48], version).await.unwrap();
+        assert_eq!(db.migration_check().await.unwrap().drifted, vec![version]);
+        assert!(db.run_migrations().await.is_err(), "an unknown checksum is still drift");
+    }
+
+    /// Every entry names a migration this build ships, and records a checksum
+    /// that is not the shipped one: an entry equal to it hides nothing and has
+    /// gone stale.
+    #[test]
+    fn amended_entries_name_shipped_migrations() {
+        for (version, old) in AMENDED_MIGRATIONS {
+            let shipped = EMBEDDED_MIGRATIONS
+                .iter()
+                .find(|m| m.version == *version)
+                .unwrap_or_else(|| panic!("migration {version} is not shipped"));
+            assert_ne!(hex::encode(shipped.checksum.as_ref()), *old, "migration {version}");
+        }
+    }
+
+    // Tests go through the pure `normalize_from`, never the env: set_var/
+    // remove_var here raced the #[sqlx::test] suites (env is process-global,
+    // tests run concurrently across modules) — sqlx's tamper guard saw
+    // DATABASE_URL change mid-run and panicked.
+
+    #[test]
+    fn test_normalize_returns_url() {
+        let normalized =
+            normalize_from(Some("postgres://user:pass@localhost:5432/db".to_string())).unwrap();
+        assert_eq!(normalized, "postgres://user:pass@localhost:5432/db");
+    }
+
+    #[test]
+    fn test_normalize_errors_when_unset() {
+        assert!(normalize_from(None).is_err());
+    }
+}
+
+/// Migrations whose files changed after boxes had applied them, with the
+/// checksum boxes recorded for the old file. Each edit touched comments only:
+/// they held examples taken from a real record, and the files are public. The
+/// SQL a box ran is the SQL this build carries, so a box that recorded exactly
+/// the old checksum adopts the new one before migrating, and the upgrade
+/// preflight counts it as current. Never add an entry for a change to SQL.
+pub(crate) const AMENDED_MIGRATIONS: &[(i64, &str)] = &[
+    (11, "10f073b41d04ef737ff8691e696e20bb14ca0e22f51d15a295bca551232d03f4dd946ba3a8f95ce951c31a9436b1da52"),
+    (15, "c561448f25c032e198e55384234352ab14408d7fa317afc3f41f093821f67c6fef7435ae6e24cfbeb60d6cc039c96754"),
+    (23, "12b95552ae7cfc4c05bc17ea246d6331c5a3d358a1c07b58e4ec0dc6ee8fe958ac53c2c8e771db57ca58b6a056e83bc8"),
+    (30, "d3a87e83d0ca39b63ce245d92bd57329e9f0babbbca2cb17bf882b80585535432ea517ba2803d9fee5b2c88aab412a5c"),
+];
+
+fn is_amended(version: i64, recorded: &[u8]) -> bool {
+    AMENDED_MIGRATIONS
+        .iter()
+        .any(|(v, old)| *v == version && hex::encode(recorded) == *old)
+}
+
+/// This binary's embedded migration set — the single source of truth for
+/// "which migrations does this build know". Shared by `migration_check` (the
+/// upgrade preflight) and restore's schema-compatibility gate, so neither can
+/// drift from the real set the way the old hand-bumped `KNOWN_MAX_MIGRATION`
+/// constant did.
+pub static EMBEDDED_MIGRATIONS: sqlx::migrate::Migrator = sqlx::migrate!("./migrations");
+
+/// The largest migration version this binary ships. `None` only for a build
+/// with an empty migrations dir (never in practice).
+pub fn embedded_migration_max() -> Option<i64> {
+    EMBEDDED_MIGRATIONS.iter().map(|m| m.version).max()
+}
+
+/// Result of [`Database::migration_check`]: how the DB's applied migrations
+/// relate to this binary's embedded set. `missing`/`drifted` are DIVERGENCE
+/// (refuse to upgrade across them); `pending` is the normal forward case.
+#[derive(Debug, Default)]
+pub struct MigrationCheck {
+    /// Applied in the DB but absent from this binary — a branch/edge lineage
+    /// this build does not carry. Upgrading would strand them.
+    pub missing: Vec<i64>,
+    /// Applied with a different checksum than this binary ships — the file
+    /// was edited after being applied somewhere.
+    pub drifted: Vec<i64>,
+    /// In this binary but not yet applied — what a normal `migrate` will run.
+    pub pending: Vec<i64>,
+}
+
+impl MigrationCheck {
+    pub fn is_divergent(&self) -> bool {
+        !self.missing.is_empty() || !self.drifted.is_empty()
+    }
+}
+
+/// The search vectors' HNSW index. Build parameters stated, not inherited.
+/// Omitting `WITH` gets pgvector's defaults (m=16, ef_construction=64) by
+/// accident rather than by decision. ef_construction=128 roughly doubles build
+/// time for materially better recall at the same query cost — the right trade
+/// for an index rebuilt rarely (a reindex, a model change) and queried
+/// constantly. Cosine ops (`<=>`), matching what query.rs uses.
+/// `concurrently` builds without blocking writes; it can't run in a transaction.
+pub(crate) fn hnsw_index_sql(index: &str, table: &str, concurrently: bool) -> String {
+    let how = if concurrently { "CONCURRENTLY " } else { "" };
+    format!(
+        "CREATE INDEX {how}IF NOT EXISTS {index} ON {table} \
+         USING hnsw (embedding halfvec_cosine_ops) \
+         WITH (m = 16, ef_construction = 128)"
+    )
+}

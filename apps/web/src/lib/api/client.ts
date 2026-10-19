@@ -1,0 +1,2704 @@
+/**
+ * API Client for Rust Core Library
+ *
+ * All calls to /api/* are proxied to Rust backend (localhost:8000)
+ * via Vite proxy (see vite.config.ts).
+ */
+
+import { sanitizeUrl } from '$lib/utils/urlUtils';
+
+import { noteRequestId } from '$lib/log';
+import { backendUrl } from '$lib/config/backend';
+
+const API_BASE = '/api';
+
+// ============================================================================
+// Shared request layer
+// ============================================================================
+
+/**
+ * Error thrown by the shared `request()` helper when a response is not ok.
+ * Carries the HTTP `status` so callers can branch on it (e.g. 402 = wallet
+ * expired / subscription lapsed, 401 = unknown key) instead of parsing a
+ * stringified statusText. `body` holds the parsed JSON error payload when the
+ * server returned one.
+ */
+export class ApiError extends Error {
+	readonly status: number;
+	readonly body: unknown;
+	/**
+	 * The box's `x-request-id` for the request that failed.
+	 *
+	 * This is the join. The box stamps every request with an id, puts it on a
+	 * span so all of its own log lines inherit it, and returns it in this
+	 * header. Carrying it on the error means a client report about a failure
+	 * and the server-side lines that explain it end up on the same key —
+	 * without it, the two halves of an incident can only be matched by
+	 * guessing from timestamps.
+	 */
+	readonly requestId?: string;
+	constructor(status: number, message: string, body?: unknown, requestId?: string) {
+		super(message);
+		this.name = 'ApiError';
+		this.status = status;
+		this.body = body;
+		this.requestId = requestId;
+	}
+}
+
+type QueryValue = string | number | boolean | null | undefined;
+
+/**
+ * A signal that aborts after `ms`, as `AbortSignal.timeout` does. That one is
+ * missing before Safari 16, and the app still runs on iOS 15 and older macOS.
+ */
+export function deadline(ms: number): AbortSignal {
+	if (typeof AbortSignal.timeout === 'function') return AbortSignal.timeout(ms);
+	const c = new AbortController();
+	setTimeout(() => c.abort(new DOMException('The operation timed out.', 'TimeoutError')), ms);
+	return c.signal;
+}
+
+/**
+ * Core fetch wrapper for JSON endpoints under `/api`. Serializes an optional
+ * query object, throws {@link ApiError} (with status) on non-2xx, and returns
+ * the parsed JSON body (or `undefined` for empty/204 responses).
+ *
+ * Not for binary/blob endpoints or progress-tracked uploads — those keep their
+ * own `fetch`/XHR (see uploadMedia, downloadDriveFile).
+ */
+export async function request<T>(
+	path: string,
+	init?: RequestInit & { query?: Record<string, QueryValue> },
+): Promise<T> {
+	let url = `${API_BASE}${path}`;
+	if (init?.query) {
+		const qs = new URLSearchParams();
+		for (const [key, value] of Object.entries(init.query)) {
+			if (value !== undefined && value !== null) qs.set(key, String(value));
+		}
+		const q = qs.toString();
+		if (q) url += `?${q}`;
+	}
+
+	const res = await fetch(url, init);
+	// Remember it whether or not this request failed: an error thrown LATER,
+	// or an uncaught exception with no request of its own, still wants the
+	// most recent one as a hint. See `noteRequestId`.
+	const requestId = res.headers.get('x-request-id') ?? undefined;
+	if (requestId) noteRequestId(requestId);
+
+	if (!res.ok) {
+		let body: unknown;
+		let message = res.statusText || `HTTP ${res.status}`;
+		try {
+			const text = await res.text();
+			if (text) {
+				try {
+					body = JSON.parse(text);
+					const parsed = body as { error?: string; message?: string };
+					message = parsed?.error || parsed?.message || message;
+				} catch {
+					body = text;
+					message = text;
+				}
+			}
+		} catch {
+			/* keep statusText fallback */
+		}
+		throw new ApiError(res.status, message, body, requestId);
+	}
+
+	if (res.status === 204) return undefined as T;
+	const text = await res.text();
+	return (text ? JSON.parse(text) : undefined) as T;
+}
+
+/** GET a JSON endpoint, with an optional query object. */
+export function apiGet<T>(path: string, query?: Record<string, QueryValue>): Promise<T> {
+	return request<T>(path, { query });
+}
+
+/** Send a JSON body (POST/PUT/PATCH/DELETE) and parse the JSON response. */
+export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Promise<T> {
+	return request<T>(path, {
+		method,
+		headers: jsonBody !== undefined ? { 'Content-Type': 'application/json' } : undefined,
+		body: jsonBody !== undefined ? JSON.stringify(jsonBody) : undefined,
+	});
+}
+
+// ============================================================================
+// Actions — new schema (post cutover + PR 2 endpoints)
+// ============================================================================
+
+export type AppletTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook' | 'message';
+
+export interface AppletRun {
+	id: string;
+	applet_id: string | null;
+	/** `budget_exceeded` is not a failure: a spend ceiling the owner set in
+	 *  `config.limits` was reached, so the run stopped deliberately. It stays
+	 *  out of the needs-attention strip for that reason. */
+	status: 'running' | 'success' | 'error' | 'cancelled' | 'skipped' | 'budget_exceeded';
+	started_at: string;
+	completed_at: string | null;
+	records_processed: number;
+	error: string | null;
+	trigger: AppletTrigger;
+	result_summary: string | null;
+	/** What the user said, for `message` runs. This plus `result_summary` is
+	 *  the exchange — the conversation lives on the run, not in a thread. */
+	message: string | null;
+	/** What this run spent with the model, in micros-USD — summed from the
+	 *  gateway's authoritative per-call figures. Zero for runs that called no
+	 *  model, and for every run recorded before spend was attributed. */
+	cost_micros: number;
+	created_at: string;
+}
+
+export interface AppletLastRun {
+	status: string;
+	started_at: string | null;
+	completed_at?: string | null;
+	records_processed: number | null;
+	error: string | null;
+	summary?: string | null;
+}
+
+/**
+ * Which of the four things made this applet — the facet lists and filters use.
+ *
+ * Derived server-side, not stored: `owner` is the write-authority field
+ * (reconcile overwrites and GCs `system` rows, leaves `user`/`ai` alone), and
+ * every source fan-out row is `system` under it. Faceting on `owner` therefore
+ * files a Gmail sync with the embedding indexer; `origin` splits them.
+ */
+export type AppletOrigin = 'source' | 'system' | 'user' | 'ai';
+
+export interface Applet {
+	id: string;
+	owner: 'system' | 'user' | 'ai';
+	name: string;
+	/** The applet's one-sentence intent, from its manifest — what it is for,
+	 *  in the user's terms. The list row's plain-English line and the detail
+	 *  headline. Null only for a row whose manifest omits it. */
+	description: string | null;
+	agent: string | null;
+	/** The prompt we last SHIPPED, which is a different question from the one
+	 *  the applet is running. They differ once the person has written their
+	 *  own — and knowing that is what lets this page offer a diff and a way
+	 *  back to the default, rather than silently keeping either. */
+	agent_shipped: string | null;
+	schedule: string | null;
+	enabled: boolean;
+	config: Record<string, unknown>;
+	condition: string | null;
+	triggers: AppletTrigger[];
+	memory: string | null;
+	/** Set when the applet is one source connection's fan-out (OAuth/API-key). */
+	credential_id: string | null;
+	/** Set when the applet is one paired device's ingest webhook (iOS/Mac). */
+	device_id: string | null;
+	origin: AppletOrigin;
+	/** Polyglot escape: explicit argv to spawn instead of resolving a Cargo
+	 *  binary by `function_name`. Null when the action uses the function_name
+	 *  shortcut. */
+	command: string[] | null;
+	/** Lifecycle: null = forever · "once" = archive after first success ·
+	 *  anything else = SQL boolean checked after each success. */
+	until: string | null;
+	/** Set when the lifecycle completed; archived applets are disabled. */
+	archived_at: string | null;
+	/** The scheduled slot this applet currently owes. Null when it has no
+	 *  schedule, or the scheduler has not seen it yet. Far enough in the past
+	 *  means it was expected and didn't run. */
+	next_due_at: string | null;
+	/** The last scheduled slot actually handled — fired, or consciously
+	 *  skipped. Not the same as the last run's `started_at`: a catch-up run at
+	 *  07:12 handles the 06:00 slot. */
+	last_slot_at: string | null;
+	/** True when the applet folder ships a face/ (sandboxed-iframe HTML UI). */
+	has_face: boolean;
+	/** The last 10 run statuses, newest first — the card's pulse. Comes with
+	 *  the row so the list does not fetch it per applet. */
+	pulse: AppletRun['status'][];
+	/** The last successful run's summary — what the applet last produced. */
+	last_success_summary: string | null;
+	/** LLM spend charged to this applet over the last 7 days, in micros-USD.
+	 *  0 for everything deterministic, which is most of them. `null` means the
+	 *  box could not read it — NOT that it was free; render those differently
+	 *  from a real zero or the column quietly reassures. */
+	spend_week_micros: number | null;
+	created_at: string;
+	updated_at: string;
+	last_run: AppletLastRun | null;
+}
+
+export interface AppletDetail extends Applet {
+	recent_runs?: AppletRun[];
+}
+
+export async function mintFaceToken(
+	appletId: string
+): Promise<{ token: string; expires_in_seconds: number }> {
+	return request(`/applets/${encodeURIComponent(appletId)}/face-token`);
+}
+
+export function listApplets(): Promise<Applet[]> {
+	return apiGet<Applet[]>('/applets');
+}
+
+export function getApplet(id: string): Promise<Applet> {
+	return apiGet<Applet>(`/applets/${encodeURIComponent(id)}`);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Local content search (⌘K)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One content hit — a matched chunk inside an indexed record. */
+export interface LocalSearchHit {
+	ontology: string;
+	record_id: string;
+	score: number;
+	title: string | null;
+	preview: string | null;
+	author: string | null;
+	timestamp: string | null;
+}
+
+export interface LocalSearchResponse {
+	hits: LocalSearchHit[];
+	/** Echoed back so callers can drop responses that lost a race. */
+	query: string;
+}
+
+/**
+ * Content search across everything the box has indexed. Never leaves the box —
+ * `searchWeb` (Exa) is the separate, explicit thing.
+ *
+ * POST, not GET: the query is what someone is searching their own life for, and
+ * a GET would put it in the URL, browser history, and every access log along the
+ * way.
+ */
+export function searchLocal(
+	q: string,
+	opts: { limit?: number; signal?: AbortSignal } = {},
+): Promise<LocalSearchResponse> {
+	return request<LocalSearchResponse>('/search/local', {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify({ q, limit: opts.limit }),
+		signal: opts.signal,
+	});
+}
+
+/** Settings → Search. Mirrors `api::search_status::SearchStatus`. */
+export interface SearchStatus {
+	mode: 'dragon' | 'bundled' | 'manual' | 'unknown' | string;
+	embed_url: string;
+	index_model: string | null;
+	index_dims: number | null;
+	/** A move to another model, built in the background while search keeps
+	 *  using the current one. `done` of `total` chunks have new vectors. */
+	model_change: { model: string; done: number; total: number } | null;
+	records_searchable: number;
+	chunks: number;
+	last_indexed_at: string | null;
+	reachable: boolean;
+	/** No answer within the probe's limit: busy (often indexing), not down. */
+	busy: boolean;
+	probe_ms: number | null;
+	probe_error: string | null;
+	accelerator: string | null;
+	accelerator_guide: string | null;
+}
+
+export function getSearchStatus(): Promise<SearchStatus> {
+	return apiGet<SearchStatus>('/search/status');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Box updates (Settings → Box)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A release already downloaded, verified and preflighted on the box. */
+export interface StagedRelease {
+	/** Slot directory name, e.g. `v0.3.1-a1b2c3d`. */
+	slot_id: string;
+	/** Version from the release's own BUILD.json, when it carries one. */
+	version: string | null;
+	/** Commit the release was built from, when known. */
+	sha: string | null;
+}
+
+export interface UpdateStatus {
+	/** The BUILD COUNTER (crate version). Not what the box is running — see
+	 *  `running_version`. Kept because it is the compat coordinate. */
+	current: string;
+	/** The stored update PREFERENCE: what the box will be offered next. */
+	channel: string;
+	/** RELEASE IDENTITY — what this box is actually running, from the baked
+	 *  build tag: `edge`, `staging.4`, `v0.3.0`, `dev`. */
+	running_version: string;
+	/** Channel of the running BUILD: `stable` | `staging` | `edge` | `dev`. */
+	running_channel: string;
+	/** The running build is off a later track than the channel being followed,
+	 *  so that channel's newest tag is probably behind this box. */
+	running_ahead: boolean;
+	latest: string | null;
+	update_available: boolean;
+	/**
+	 * Set when the box has already fetched the update. Installing it is then a
+	 * restart plus migrations rather than a download — seconds, not minutes —
+	 * which is the difference the UI has to tell the truth about.
+	 */
+	staged: StagedRelease | null;
+	check_error: string | null;
+}
+
+export function getUpdateStatus(): Promise<UpdateStatus> {
+	return apiGet<UpdateStatus>('/system/update');
+}
+
+export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promise<void> {
+	await apiSend('PUT', '/system/update/channel', { channel });
+}
+
+export interface ReopenOnboardingResponse {
+	devices: number;
+	credentials: number;
+}
+
+/**
+ * Revoke every paired device, keeping data, sources, subscription and box
+ * identity. The box becomes unclaimed: it advertises over Bluetooth again and
+ * the panel returns to a setup screen.
+ *
+ * This device is revoked too — the caller loses its own session, by design.
+ */
+export function reopenOnboarding(): Promise<ReopenOnboardingResponse> {
+	return apiSend<ReopenOnboardingResponse>('POST', '/pair/reopen-onboarding');
+}
+
+export interface ApplyUpdateResponse {
+	unit: string;
+	/** Whether this activated an already-downloaded release (fast) or had to
+	 *  fetch one first (slow). */
+	staged: boolean;
+	detail: string;
+}
+
+/**
+ * Start an upgrade. Resolves as soon as the box has *accepted* the job (202),
+ * not when it finishes — the upgrade restarts the box, so there is no response
+ * to wait for. Watch `boxReachable` for the box going away and coming back.
+ *
+ * The error text is the box's own (request() surfaces its `error`/`message`),
+ * because "update failed" with nothing behind it is what sends someone to SSH
+ * in to find out why.
+ */
+export function applyUpdate(): Promise<ApplyUpdateResponse> {
+	return apiSend<ApplyUpdateResponse>('POST', '/system/update/apply');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Display — the box's attached screen (Settings → Display)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The face the panel wears in its ambient slot. */
+export interface DisplayFaceConfig {
+	kind: 'builtin' | 'applet';
+	/** Which built-in, when kind is 'builtin': 'record' | 'matte'. */
+	builtin: string;
+	applet_id?: string | null;
+}
+
+export interface DisplayPanelInfo {
+	/** DRM connector name, e.g. `card0-HDMI-A-1`. */
+	connector: string;
+	mode_width?: number;
+	mode_height?: number;
+}
+
+/**
+ * What the glass is showing, redacted for the LAN: the mirror may say THAT
+ * the panel is on its setup screen, never what the words are.
+ */
+export interface DisplayGlassState {
+	claimed: boolean;
+	online: boolean;
+	connectivity: string;
+	devices: number;
+	box_name: string;
+	data_disk_fault?: string | null;
+	record?: Array<{ label: string; count: number }>;
+	record_since?: string | null;
+	updating: boolean;
+	/** Hours is holding the glass dark right now (backlight off). */
+	asleep: boolean;
+}
+
+/** The screen's hours. Times are box-local "HH:MM:SS"; absent = never sleeps. */
+export interface DisplayHours {
+	sleep_start?: string | null;
+	sleep_end?: string | null;
+}
+
+export interface DisplaySettings {
+	/** This box has the kiosk stack installed at all. */
+	attached: boolean;
+	unit_state: 'active' | 'installed but not running' | 'not installed';
+	panel?: DisplayPanelInfo | null;
+	zoom_derived?: number | null;
+	zoom_override?: number | null;
+	face: DisplayFaceConfig;
+	hours: DisplayHours;
+	state: DisplayGlassState;
+}
+
+export function getDisplaySettings(): Promise<DisplaySettings> {
+	return apiGet('/system/display');
+}
+
+export function setDisplayFace(face: {
+	kind: 'builtin' | 'applet';
+	builtin?: string;
+	applet_id?: string;
+}): Promise<DisplayFaceConfig> {
+	return apiSend('PUT', '/system/display/face', face);
+}
+
+export function restartDisplay(): Promise<{ restarted: boolean }> {
+	return apiSend('POST', '/system/display/restart');
+}
+
+/** Set the sleep schedule ("HH:MM" box-local), or both null for never. */
+export function setDisplayHours(hours: {
+	sleep_start: string | null;
+	sleep_end: string | null;
+}): Promise<DisplayHours> {
+	return apiSend('PUT', '/system/display/hours', hours);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Sidebar pins
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * A pin as the box resolves it (`api/pins.rs` PinView): the URL, plus what it
+ * points at now. `title`, `icon` and `color` are the thing's; `label` is the
+ * pin's own and names only a pin with no record behind it.
+ */
+export interface Pin {
+	id: string;
+	url: string;
+	/** `chat`, `page`, `project`, a wiki kind, `web`, or `route`. Absent from an older box. */
+	kind?: string;
+	/** The thing's name now. Absent from an older box, which sends `label` only. */
+	title?: string;
+	label: string | null;
+	icon: string | null;
+	sort_order: number;
+	pinned_at: string;
+	/** A `--cat-*` token key, or a custom hex (see pin-colors.ts). */
+	color: string | null;
+}
+
+export function listPins(): Promise<Pin[]> {
+	return apiGet<Pin[]>('/pins');
+}
+
+export function createPin(req: {
+	url: string;
+	label?: string | null;
+	icon?: string | null;
+	color?: string | null;
+}): Promise<Pin> {
+	return apiSend<Pin>('POST', '/pins', req);
+}
+
+export function updatePin(
+	id: string,
+	req: { label?: string | null; icon?: string | null; sort_order?: number; color?: string | null }
+): Promise<Pin> {
+	return apiSend<Pin>('PATCH', `/pins/${encodeURIComponent(id)}`, req);
+}
+
+export async function deletePin(id: string): Promise<void> {
+	await apiSend('DELETE', `/pins/${encodeURIComponent(id)}`);
+}
+
+export async function reorderPins(urls: string[]): Promise<void> {
+	await apiSend('PUT', '/pins/reorder', { urls });
+}
+
+/** POST /api/admin/reconcile — re-reads manifests and upserts applet rows. */
+export function adminReconcile(): Promise<{ upserted: number }> {
+	return apiSend<{ upserted: number }>('POST', '/admin/reconcile');
+}
+
+/**
+ * POST /api/admin/applets/import-git — clones a repo into `actions/<slug>/`
+ * and runs the standard scanner. Any folder under the slug containing a
+ * `manifest.toml` becomes an action. Returns added/updated/removed ids.
+ */
+export function importActionsFromGit(body: {
+	url: string;
+	ref?: string;
+	/** From `/api/sudo/request` — importing runs someone else's code. */
+	sudo_request_id: string;
+}): Promise<{
+	/** Folder the package landed in — host + owner + repo, so two remotes with
+	 *  the same repo name can't claim each other's. */
+	slug: string;
+	/** Commit actually checked out. The server has always resolved this; the
+	 *  client used to drop it, which is why "is there a newer version" was
+	 *  unanswerable. */
+	commit: string | null;
+	added: string[];
+	updated: string[];
+	removed: string[];
+}> {
+	return apiSend('POST', '/admin/applets/import-git', body);
+}
+
+export interface PatchAppletBody {
+	name?: string;
+	agent?: string | null;
+	schedule?: string | null;
+	enabled?: boolean;
+	config?: Record<string, unknown>;
+	condition?: string | null;
+	triggers?: AppletTrigger[];
+	memory?: string | null;
+}
+
+export function patchApplet(id: string, patch: PatchAppletBody): Promise<Applet> {
+	return apiSend<Applet>('PATCH', `/applets/${encodeURIComponent(id)}`, patch);
+}
+
+export async function deleteApplet(id: string, dropData = false): Promise<void> {
+	await request(`/applets/${encodeURIComponent(id)}`, {
+		method: 'DELETE',
+		query: { drop_data: dropData ? 'true' : undefined },
+	});
+}
+
+/** One line of an applet's log: consecutive runs that shared an outcome,
+ *  counted. `occurrences > 1` means the applet repeated itself — which on a
+ *  real box is most of history, since a poll that finds nothing still records
+ *  a run. An agent's output varies, so its entries never group. */
+export interface AppletLogEntry {
+	run_id: string | null;
+	status: AppletRun['status'];
+	trigger: AppletTrigger | null;
+	summary: string | null;
+	/** What the user said, for `message` runs. */
+	message: string | null;
+	error: string | null;
+	occurrences: number;
+	first_at: string | null;
+	last_at: string | null;
+	cost_micros: number;
+}
+
+export function getAppletLog(id: string, limit = 50): Promise<AppletLogEntry[]> {
+	return apiGet<AppletLogEntry[]>(`/applets/${encodeURIComponent(id)}/log`, { limit });
+}
+
+/** Say something to an applet — the `message` wake. Returns once the run row
+ *  exists; the agent turn continues detached. */
+export function messageApplet(id: string, message: string): Promise<{ run_id: string | null; status: string }> {
+	return apiSend('POST', `/applets/${encodeURIComponent(id)}/message`, { message });
+}
+
+/** The private tables an applet owns — shown on the delete confirm so the user
+ *  can choose whether to also drop its data. Empty when it owns none. */
+export interface AppletData {
+	schema: string | null;
+	tables: string[];
+}
+
+export async function getAppletData(id: string): Promise<AppletData> {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/data`);
+	if (!res.ok) return { schema: null, tables: [] };
+	return (await res.json()) as AppletData;
+}
+
+export interface TriggerActionResponse {
+	run_id: string | null;
+	applet_id: string;
+	status: string;
+	summary: string;
+	error: string | null;
+}
+
+export async function runApplet(
+	id: string,
+	payload?: Record<string, unknown>
+): Promise<TriggerActionResponse> {
+	const res = await fetch(`${API_BASE}/applets/${encodeURIComponent(id)}/run`, {
+		method: 'POST',
+		headers: { 'Content-Type': 'application/json' },
+		body: JSON.stringify(payload ? { payload } : {})
+	});
+	if (!res.ok && res.status !== 500) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `Failed to run applet: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+// ── Applet source ───────────────────────────────────────────────────────────
+// Reading the code that ran. Every applet, whatever its provenance.
+
+export interface AppletSourceFile {
+	path: string;
+	size: number;
+	/** False for binary or oversized files — don't offer to open them. */
+	readable: boolean;
+}
+
+export interface AppletSourceListing {
+	dir: string;
+	/** Which root the folder resolved in — `shipped` came with the box. */
+	origin_root: 'shipped' | 'state';
+	/** `<origin>@<version>` the folder was copied from, when its manifest records it. */
+	forked_from: string | null;
+	files: AppletSourceFile[];
+	truncated: boolean;
+}
+
+export async function getAppletSource(id: string): Promise<AppletSourceListing> {
+	return apiGet<AppletSourceListing>(`/applets/${encodeURIComponent(id)}/source`);
+}
+
+/**
+ * Copy a shipped applet onto this box so it can be changed. Reverting is
+ * deleting the copy; the shipped version is never touched.
+ */
+export async function forkApplet(id: string): Promise<{ status: string; dir: string }> {
+	return apiSend<{ status: string; dir: string }>(
+		'POST',
+		`/applets/${encodeURIComponent(id)}/fork`
+	);
+}
+
+export async function getAppletSourceFile(
+	id: string,
+	path: string
+): Promise<{ path: string; text: string }> {
+	const safe = path.split('/').map(encodeURIComponent).join('/');
+	return apiGet<{ path: string; text: string }>(
+		`/applets/${encodeURIComponent(id)}/source/${safe}`
+	);
+}
+
+export function listRuns(opts?: {
+	limit?: number;
+	status?: string;
+	applet_id?: string;
+}): Promise<AppletRun[]> {
+	// `||` keeps the old rule: an empty status/applet_id is left off the query.
+	return apiGet<AppletRun[]>('/runs', {
+		limit: opts?.limit,
+		status: opts?.status || undefined,
+		applet_id: opts?.applet_id || undefined,
+	});
+}
+
+// ============================================================================
+// Credentials
+// ============================================================================
+
+export interface DeviceInfo {
+	device_id: string;
+	device_name: string;
+	device_model: string;
+	os_version: string;
+	app_version: string | null;
+}
+
+/**
+ * Mirrors the CHECK constraint on `credentials.status`. `reauth_required` and
+ * `error` are the states most worth surfacing — a Plaid `ITEM_LOGIN_REQUIRED`
+ * arrives as one — and they were missing here, so the two rows that need a
+ * Reconnect button were the two that rendered as unstyled raw text.
+ */
+export type CredentialStatus =
+	| 'pending'
+	| 'active'
+	| 'revoked'
+	| 'reauth_required'
+	| 'error';
+
+export interface Credential {
+	id: string;
+	provider: string;
+	name: string;
+	auth_type: string;
+	status: CredentialStatus;
+	/** The provider's own words for why a broken credential broke, when we
+	 *  have them. Absent on healthy rows. */
+	status_reason?: string | null;
+	is_active: boolean;
+	device_info: DeviceInfo | null;
+	last_seen_at: string | null;
+	created_at: string;
+	applet_count: number;
+	/** Tier-2 init-sync lifecycle for active credentials:
+	 *  'connected' → 'backfilling' → 'live'. Absent for pending/revoked. */
+	sync_state?: 'connected' | 'backfilling' | 'live';
+}
+
+export function listCredentials(): Promise<Credential[]> {
+	return apiGet<Credential[]>('/credentials');
+}
+
+export async function renameCredential(id: string, name: string): Promise<void> {
+	await apiSend('PATCH', `/credentials/${encodeURIComponent(id)}`, { name });
+}
+
+export async function revokeCredential(id: string): Promise<void> {
+	await apiSend('DELETE', `/credentials/${encodeURIComponent(id)}`);
+}
+
+// Source catalog
+//
+// One tile per [[source]] in actions/templates.toml. Drives the Sources tab grid.
+// `auth_kind` tells the UI which connect flow to dispatch on click.
+export type SourceAuthKind = 'self_issued_bearer' | 'via_proxy' | 'api_key';
+
+
+export interface SourceCatalogItem {
+	id: string;
+	name: string;
+	icon: string | null;
+	description: string | null;
+	auth_kind: SourceAuthKind;
+	credential_count: number;
+	/** Secret names an `api_key` source expects, in manifest order. Empty for
+	 *  every other auth kind. */
+	fields: string[];
+	/** Where this source's code can be read. Provenance only — the collectors
+	 *  ship through the App Store and update themselves; no git ref installs
+	 *  them. Null when the code is entirely the box's. */
+	repo?: string | null;
+	repo_ref?: string | null;
+	/** Ontologies this source can produce, by display name — what connecting it
+	 *  would actually give you. */
+	provides?: string[];
+	/** The life-domains those fall in (`health`, `financial`, …). */
+	domains?: string[];
+	/** Connect by logging in instead of pasting: the app opens `url`, and once
+	 *  every cookie in `cookies` is set it fills the fields from the cookie jar.
+	 *  `jar_field` set: that one field gets the whole jar as a Cookie header.
+	 *  Absent from boxes older than the field. */
+	login?: SourceLogin | null;
+}
+
+export interface SourceLogin {
+	url: string;
+	cookies: string[];
+	jar_field?: string | null;
+}
+
+/**
+ * Fetch the source catalog (one tile per `[[source]]` in templates.toml).
+ */
+export function listSourceCatalog(): Promise<SourceCatalogItem[]> {
+	return apiGet<SourceCatalogItem[]>('/sources');
+}
+
+/** One ingest stream's freshness. `status` is worst-first from the API. */
+export interface StreamHealth {
+	name: string;
+	display_name: string;
+	/** never = source never connected · live = data in last 24h ·
+	 *  stalled = was flowing this week, silent for a day · idle = nothing in 7d ·
+	 *  blocked = the applet writing this stream is failing, so the emptiness has
+	 *  a known cause and must not be drawn as quiet. */
+	status: 'never' | 'live' | 'stalled' | 'idle' | 'blocked';
+	total: number;
+	count_24h: number;
+	count_7d: number;
+	last_event: string | null;
+	last_ingest: string | null;
+	/** Sources that declare they write this stream, by display name. */
+	provided_by: string[];
+	/** At least one of those sources is connected. Distinguishes "nothing
+	 *  provides this" from "provided, but switched off or not yet delivering". */
+	connected: boolean;
+	/** Why the stream is `blocked`, from the failing applet's last run. */
+	blocked_reason?: string | null;
+	/** No source writes it, yet rows exist — the box computes it from other
+	 *  streams, so "connect something" is the wrong advice. */
+	derived: boolean;
+	/** Stays only: this week's hours at a place, against the hours the phone
+	 *  was reporting. Absent from servers that predate it. */
+	coverage?: { stay_hours: number; tracked_hours: number } | null;
+}
+
+/**
+ * Per-stream ingest freshness, worst-first. The signal that was missing while
+ * messages, the calendar sync, and finance each went dark unnoticed.
+ */
+/** One stream's arrivals, one entry per day, oldest first and zero-filled. */
+export interface StreamDays {
+	name: string;
+	display_name: string;
+	/** The provider that actually wrote these rows (`source_provider` on the
+	 *  data), not the manifest's claim. One entry per (stream, provider). */
+	provider: string;
+	days: number[];
+}
+
+/**
+ * Daily arrival counts per stream. A scalar "last seen" cannot show whether
+ * streams stopped *together* — nineteen rows reading the same date is one
+ * event, not nineteen — and on a day axis that becomes a visible cliff.
+ */
+export interface StreamDaysResponse {
+	/** UTC date that `days[0]` refers to. Labels come from this, not from a
+	 *  local `new Date()` — deriving them locally shifts every tick by a day for
+	 *  anyone west of UTC in the evening. */
+	start: string;
+	days: number;
+	streams: StreamDays[];
+}
+
+export async function getStreamDays(days = 84): Promise<StreamDaysResponse> {
+	return apiGet<StreamDaysResponse>(`/streams/days?days=${days}`);
+}
+
+export async function getStreamHealth(): Promise<StreamHealth[]> {
+	return apiGet<StreamHealth[]>('/streams/health');
+}
+
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Source-connect flows (drive the 5 thin handlers in virtues-core/src/api/source_auth.rs)
+// ─────────────────────────────────────────────────────────────────────────────
+
+// ─── Unified pairing (`/api/pair/*`) ─────────────────────────────────────────
+// One token mechanism for every device: the owner's authenticated session mints
+// a token, the new device redeems it at `/api/pair/consume`. The phone scans the
+// QR (`/pair#t=<token>`); the Mac app / collector takes the token directly.
+
+export interface PairMintResponse {
+	id: string;
+	token: string;
+	pair_url: string;
+	qr_svg: string;
+	expires_at: string;
+}
+
+/** POST /api/pair/mint — auth'd. Mint a `pending` token to add a device. */
+function pairMint(intendedKind?: string): Promise<PairMintResponse> {
+	return apiSend<PairMintResponse>('POST', '/pair/mint', { intended_kind: intendedKind ?? null });
+}
+
+/** DELETE /api/devices/:id — best-effort, no confirmation.
+ *
+ *  For rows WE created that the user never completed — the handoff enrolls a
+ *  device before the phone has scanned anything, so an abandoned sheet would
+ *  otherwise leave a live allowlisted key on the box. The interactive path is
+ *  `revokeDeviceFlow`, which confirms and reports; this one is cleanup and
+ *  stays quiet (409 on a last-remaining device is a legitimate refusal here,
+ *  not something to surface). */
+export async function revokeDevice(id: string): Promise<void> {
+	await apiSend('DELETE', `/devices/${encodeURIComponent(id)}`).catch(() => {
+		/* benign — the row may already be gone */
+	});
+}
+
+/** POST /api/pair/deny/:id — auth'd. Cancel an outstanding token (e.g. modal close). */
+export async function pairDeny(id: string): Promise<void> {
+	await apiSend('POST', `/pair/deny/${encodeURIComponent(id)}`).catch(() => {
+		/* benign — token may have already been consumed/expired */
+	});
+}
+
+export interface PairStatusResponse {
+	status: string; // pending | authorized | consumed | denied | expired
+	consumed_by_device: string | null;
+	consumed_by_label: string | null;
+}
+
+/** GET /api/pair/status/:id — auth'd. Poll for the new device redeeming. */
+function pairStatus(id: string): Promise<PairStatusResponse> {
+	return apiGet<PairStatusResponse>(`/pair/status/${encodeURIComponent(id)}`);
+}
+
+export interface ChatImportResponse {
+	status: string;
+	summary: string;
+	run_id: string | null;
+}
+
+/**
+ * POST /api/chat-import/upload — multipart upload of a chat export (Tier 3
+ * one-time import). Parsed + ingested box-side; returns the "Imported N
+ * messages" summary once the run completes.
+ */
+export async function uploadChatImport(
+	file: File,
+	provider: string
+): Promise<ChatImportResponse> {
+	const form = new FormData();
+	form.append('provider', provider);
+	form.append('file', file);
+	const res = await fetch(`${API_BASE}/chat-import/upload`, {
+		method: 'POST',
+		body: form
+	});
+	if (!res.ok) {
+		const err = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(err.error || `chat_import upload failed: ${res.statusText}`);
+	}
+	return res.json();
+}
+
+export interface MintCollectorResponse {
+	token: string;
+	expires_at: string;
+}
+
+/**
+ * POST /api/pair/mint-collector — auth'd. Mint + self-authorize a token for
+ * installing the local collector on THIS machine (handed to
+ * `installCollector(token)` via the Tauri bridge).
+ */
+export function mintCollectorToken(): Promise<MintCollectorResponse> {
+	return apiSend<MintCollectorResponse>('POST', '/pair/mint-collector');
+}
+
+export interface OauthStartResponse {
+	redirect_url: string;
+}
+
+/** POST /api/connect/:source_id/start — sign state, return proxy redirect URL. */
+export function oauthStart(
+	source_id: string,
+	opts: { existing_credential_id?: string; return_url?: string } = {}
+): Promise<OauthStartResponse> {
+	return apiSend<OauthStartResponse>('POST', `/connect/${encodeURIComponent(source_id)}/start`, opts);
+}
+
+export interface ApiKeyCompleteResponse {
+	credential_id: string;
+}
+
+/** POST /api/connect/:source_id/complete — encrypt + store a pasted token.
+ *  With `credentialId`, replace that credential's secrets (reconnecting). */
+export function apikeyComplete(
+	source_id: string,
+	name: string,
+	fields: Record<string, string>,
+	credentialId?: string
+): Promise<ApiKeyCompleteResponse> {
+	return apiSend<ApiKeyCompleteResponse>(
+		'POST',
+		`/connect/${encodeURIComponent(source_id)}/complete`,
+		{ name, fields, credential_id: credentialId }
+	);
+}
+
+// Device Pairing
+import type {
+	PairingInitResponse,
+	PairingStatus,
+	PendingPairing
+} from '$lib/types/device-pairing';
+
+/**
+ * Initiate device pairing via the unified `/api/pair/mint` flow.
+ *
+ * Returns a `PairingInitResponse` whose `source_id` is the pair-token id (polled
+ * via {@link getPairingStatus}), plus the QR/token redemption payload the new
+ * device scans (`qr_svg` encodes `/pair#t=<token>`) or types (`token`).
+ *
+ * @param deviceType - "ios" → `mobile_app`, otherwise `desktop_app`.
+ * @param _name - Display name (the device labels itself at consume time).
+ */
+export async function initiatePairing(
+	deviceType: string,
+	_name: string
+): Promise<PairingInitResponse> {
+	const intendedKind = deviceType === 'ios' ? 'mobile_app' : 'desktop_app';
+	const minted = await pairMint(intendedKind);
+	return {
+		source_id: minted.id,
+		token: minted.token,
+		qr_svg: minted.qr_svg,
+		pair_url: minted.pair_url
+	};
+}
+
+/**
+ * Poll pairing status by the token id. Maps the unified token lifecycle onto
+ * the modal's `pending | active | revoked` shape: `consumed` → active (the new
+ * device redeemed), `denied`/`expired` → revoked, everything else → pending.
+ */
+export async function getPairingStatus(sourceId: string): Promise<PairingStatus> {
+	const s = await pairStatus(sourceId);
+	if (s.status === 'consumed') {
+		return {
+			status: 'active',
+			device_info: {
+				device_id: s.consumed_by_device ?? '',
+				device_name: s.consumed_by_label ?? '',
+				device_model: '',
+				os_version: ''
+			}
+		};
+	}
+	if (s.status === 'denied' || s.status === 'expired') {
+		return { status: 'revoked' };
+	}
+	return { status: 'pending' };
+}
+
+
+// Profile
+export interface Profile {
+	/** First and last, as the person gave it. */
+	full_name?: string | null;
+	preferred_name?: string | null;
+	/** `"YYYY-MM-DD"` — serde's NaiveDate wire form, same as an HTML date input. */
+	birth_date?: string | null;
+	occupation?: string | null;
+	employer?: string | null;
+	theme?: string | null;
+	update_check_hour?: number | null;
+	home_timezone?: string | null;
+	home_place_id?: string | null;
+	/** Which wiki_people row is the owner (migration 0080). */
+	self_person_id?: string | null;
+	home_city?: string | null;
+	home_country?: string | null;
+	onboarding_status?: string | null;
+	/** Getting-started sections dismissed from Home. Send the whole array —
+	 *  the box remembers it verbatim; the client owns the merge. */
+	getting_started_dismissed?: string[];
+}
+
+export function getProfile(): Promise<Profile> {
+	return apiGet<Profile>('/profile');
+}
+
+export function updateProfile(profile: Partial<Profile>): Promise<Profile> {
+	return apiSend<Profile>('PUT', '/profile', profile);
+}
+
+// =============================================================================
+// Chapters - the person's own named eras (wiki_chapters)
+// =============================================================================
+
+export type DatePrecision = 'year' | 'month' | 'day';
+
+/** One chapter as the box stores it. Dates are `"YYYY-MM-DD"`. */
+export interface LifeChapter {
+	id: string;
+	kind: 'chapter' | 'unknown';
+	title: string | null;
+	started_at: string;
+	ended_at: string | null;
+	is_current: boolean;
+	started_precision: DatePrecision;
+	ended_precision: DatePrecision | null;
+	changepoint: string | null;
+	summary: string | null;
+}
+
+/** One band from the timeline editor. The last may run to now (`ended_at: null`);
+ *  every other band must end exactly where the next begins. */
+export interface LifeChapterInput {
+	title: string;
+	started_at: string;
+	started_precision?: DatePrecision;
+	ended_at: string | null;
+	ended_precision?: DatePrecision | null;
+}
+
+/** `GET /api/wiki/chapters`, oldest first. Throws on failure, unlike the
+ *  wiki's `getChapters`, so a caller can tell "none yet" from "unreachable". */
+export async function listLifeChapters(): Promise<LifeChapter[]> {
+	const body = await apiGet<{ chapters: LifeChapter[] }>('/wiki/chapters');
+	return body?.chapters ?? [];
+}
+
+/** `PUT /api/wiki/chapters` - replace every chapter with this list, in one
+ *  transaction. The box refuses (400) once the chapters have pages of their
+ *  own; the error message says so in words. */
+export async function replaceLifeChapters(chapters: LifeChapterInput[]): Promise<LifeChapter[]> {
+	const body = await apiSend<{ chapters: LifeChapter[] }>('PUT', '/wiki/chapters', { chapters });
+	return body?.chapters ?? [];
+}
+
+/** A rule the assistant obeys (`<rules>` in its prompt). `avoid` keeps a
+ *  subject out unless the person raises it; `defend` holds them to one. */
+export interface NarrativeRule {
+	id: string;
+	rule: string;
+	kind: 'avoid' | 'defend';
+	active: boolean;
+}
+
+/** `GET /api/narrative/rules`: the rules in force, and the ones heard in the
+ *  interview that wait for the person to confirm them. */
+export async function getNarrativeRules(): Promise<{ rules: NarrativeRule[]; proposed: NarrativeRule[] }> {
+	const body = await apiGet<{ rules?: NarrativeRule[]; proposed?: NarrativeRule[] }>('/narrative/rules');
+	return { rules: body?.rules ?? [], proposed: body?.proposed ?? [] };
+}
+
+/** `POST /api/narrative/rules`: replace the whole set with exactly these.
+ *  Proposals not included are dropped. */
+export async function saveNarrativeRules(rules: { rule: string; kind: 'avoid' | 'defend' }[]): Promise<void> {
+	await apiSend('POST', '/narrative/rules', { rules });
+}
+
+// =============================================================================
+// Drive - Personal File Storage
+// =============================================================================
+
+export interface DriveFile {
+	id: string;
+	path: string;
+	filename: string;
+	mime_type: string | null;
+	size_bytes: number;
+	is_folder: boolean;
+	parent_id: string | null;
+	sha256_hash: string | null;
+	/** Universal-extraction state: pending | extracting | done | no_text | failed | skipped */
+	extraction_status: string;
+	deleted_at: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+/** Queue a file for (re-)extraction (retry after a failure, or after
+ * installing a missing extractor). */
+export function reextractDriveFile(fileId: string): Promise<DriveFile> {
+	return apiSend<DriveFile>('POST', `/drive/files/${fileId}/reextract`);
+}
+
+// ── Annotations (document highlights + margin notes, researcher-plan D2) ──
+
+export interface AnnotationRect {
+	x: number;
+	y: number;
+	w: number;
+	h: number;
+}
+
+export interface Annotation {
+	id: string;
+	file_id: string;
+	page_num: number | null;
+	quote_text: string;
+	quote_prefix: string;
+	quote_suffix: string;
+	rects: AnnotationRect[];
+	color: string;
+	note_md: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export function listAnnotations(fileId: string): Promise<Annotation[]> {
+	return apiGet<Annotation[]>('/annotations', { file_id: fileId });
+}
+
+/** A highlight enriched with its file's name, for the project Highlights tab. */
+/** A file's highlights as markdown (blockquote + citation ref each). */
+export async function exportFileAnnotations(fileId: string): Promise<string> {
+	const res = await fetch(`${API_BASE}/annotations/export?file_id=${encodeURIComponent(fileId)}`);
+	if (!res.ok) throw new Error(`Failed to export annotations: ${res.statusText}`);
+	return res.text();
+}
+
+/** Trigger a client-side download of markdown text. */
+export function downloadMarkdown(filename: string, markdown: string): void {
+	const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown' }));
+	const a = document.createElement('a');
+	a.href = url;
+	a.download = filename.endsWith('.md') ? filename : `${filename}.md`;
+	a.click();
+	URL.revokeObjectURL(url);
+}
+
+export function createAnnotation(body: {
+	file_id: string;
+	page_num?: number | null;
+	quote_text: string;
+	quote_prefix?: string;
+	quote_suffix?: string;
+	rects?: AnnotationRect[];
+	color?: string;
+	note_md?: string;
+}): Promise<Annotation> {
+	return apiSend<Annotation>('POST', '/annotations', body);
+}
+
+export function updateAnnotation(
+	id: string,
+	body: { color?: string; note_md?: string }
+): Promise<Annotation> {
+	return apiSend<Annotation>('PATCH', `/annotations/${id}`, body);
+}
+
+export async function deleteAnnotation(id: string): Promise<void> {
+	await apiSend('DELETE', `/annotations/${id}`);
+}
+
+export interface DriveUsage {
+	/** Total bytes used (drive_bytes + data_lake_bytes) */
+	total_bytes: number;
+	/** User-uploaded files in /home/user/drive/ */
+	drive_bytes: number;
+	/** ELT archives in /home/user/data-lake/ */
+	data_lake_bytes: number;
+	/** Total capacity of the box's disk */
+	quota_bytes: number;
+	/** Free space actually left on that disk (other data lives there too) */
+	available_bytes: number;
+	/** Number of user files */
+	file_count: number;
+	/** Number of user folders */
+	folder_count: number;
+	/** Usage percentage (total_bytes / quota_bytes * 100) */
+	usage_percent: number;
+}
+
+/**
+ * Get drive storage usage and quota information
+ */
+export function getDriveUsage(): Promise<DriveUsage> {
+	return apiGet<DriveUsage>('/drive/usage');
+}
+
+export interface BackupVolumeStatus {
+	id: string;
+	name: string;
+	/** Whether the drive is plugged in right now, resolved live. */
+	attached: boolean;
+	last_ok_at: string | null;
+	age_seconds: number | null;
+	last_error: string | null;
+}
+
+export interface BackupStatus {
+	/** none | never | ok | stale | failing */
+	state: string;
+	/** Seconds since the newest successful backup on any volume. */
+	age_seconds: number | null;
+	volumes: BackupVolumeStatus[];
+}
+
+/**
+ * Backup freshness. The one number that matters is `age_seconds` — if the box
+ * died now, that is how much would be lost.
+ */
+export function getBackupStatus(): Promise<BackupStatus> {
+	return apiGet<BackupStatus>('/backup/status');
+}
+
+/**
+ * List files in a directory
+ * @param path - Directory path (empty string for root)
+ */
+export function listDriveFiles(path: string = ''): Promise<DriveFile[]> {
+	return apiGet<DriveFile[]>('/drive/files', { path: path || undefined });
+}
+
+/**
+ * Get file metadata by ID
+ */
+export function getDriveFile(fileId: string): Promise<DriveFile> {
+	return apiGet<DriveFile>(`/drive/files/${fileId}`);
+}
+
+/** One raw life-graph record (the data viewer / citation target). */
+export interface OntologyRecord {
+	ontology: string;
+	record_id: string;
+	display_name: string;
+	table_name: string;
+	timestamp_column: string;
+	/** The full row as a plain object (all columns). */
+	row: Record<string, unknown>;
+}
+
+/** Fetch a single raw record by ontology + id — backs the data viewer. */
+export function getRecord(ontology: string, recordId: string): Promise<OntologyRecord> {
+	return apiGet<OntologyRecord>(
+		`/records/${encodeURIComponent(ontology)}/${encodeURIComponent(recordId)}`
+	);
+}
+
+/**
+ * Upload a file to drive
+ * @param path - Target folder path
+ * @param file - File to upload
+ * @param onProgress - Optional progress callback (0-100)
+ */
+export async function uploadDriveFile(
+	path: string,
+	file: File,
+	onProgress?: (percent: number) => void
+): Promise<DriveFile> {
+	const formData = new FormData();
+	formData.append('file', file);
+	formData.append('path', path);
+	formData.append('filename', file.name);
+
+	// Use XMLHttpRequest for progress tracking
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		// XHR bypasses the fetch rewrite, so the box's origin is spelled out.
+		xhr.open('POST', backendUrl(`${API_BASE}/drive/upload`));
+
+		xhr.upload.onprogress = (e) => {
+			if (e.lengthComputable && onProgress) {
+				onProgress(Math.round((e.loaded / e.total) * 100));
+			}
+		};
+
+		xhr.onload = () => {
+			if (xhr.status >= 200 && xhr.status < 300) {
+				resolve(JSON.parse(xhr.responseText));
+			} else {
+				try {
+					const error = JSON.parse(xhr.responseText);
+					reject(new Error(error.error || `Upload failed: ${xhr.statusText}`));
+				} catch {
+					reject(new Error(`Upload failed: ${xhr.statusText}`));
+				}
+			}
+		};
+
+		xhr.onerror = () => reject(new Error('Upload failed: network error'));
+		xhr.send(formData);
+	});
+}
+
+/**
+ * Path of a message's stored attachment (an iMessage photo the Mac sent), by
+ * the message row's id and the attachment's position in
+ * `metadata.attachments`. Use as an image src via `backendUrl(...)`. 404 until
+ * the Mac has sent it — iCloud may not have downloaded it yet, and video and
+ * audio are never sent.
+ */
+export function messageAttachmentPath(messageId: string, index: number): string {
+	return `${API_BASE}/messages/${encodeURIComponent(messageId)}/attachments/${index}`;
+}
+
+/**
+ * Download a file from drive
+ */
+export async function downloadDriveFile(fileId: string): Promise<{ file: DriveFile; blob: Blob }> {
+	const res = await fetch(`${API_BASE}/drive/files/${fileId}/download`);
+	if (!res.ok) {
+		const error = await res.json().catch(() => ({ error: res.statusText }));
+		throw new Error(error.error || `Failed to download file: ${res.statusText}`);
+	}
+
+	// Get filename from Content-Disposition header
+	const contentDisposition = res.headers.get('Content-Disposition');
+	let filename = 'download';
+	if (contentDisposition) {
+		const match = contentDisposition.match(/filename="?([^";\n]+)"?/);
+		if (match) filename = match[1];
+	}
+
+	const blob = await res.blob();
+	return {
+		file: { filename } as DriveFile,
+		blob
+	};
+}
+
+/**
+ * Delete a file or folder
+ */
+export async function deleteDriveFile(fileId: string): Promise<void> {
+	await apiSend('DELETE', `/drive/files/${fileId}`);
+}
+
+/**
+ * Create a folder
+ */
+export function createDriveFolder(path: string, name: string): Promise<DriveFile> {
+	return apiSend<DriveFile>('POST', '/drive/folders', { path, name });
+}
+
+/**
+ * Move or rename a file/folder
+ */
+export function moveDriveFile(fileId: string, newPath: string): Promise<DriveFile> {
+	return apiSend<DriveFile>('PUT', `/drive/files/${fileId}/move`, { new_path: newPath });
+}
+
+/**
+ * List files in trash
+ */
+export function listDriveTrash(): Promise<DriveFile[]> {
+	return apiGet<DriveFile[]>('/drive/trash');
+}
+
+/**
+ * Restore a file from trash
+ */
+export function restoreDriveFile(fileId: string): Promise<DriveFile> {
+	return apiSend<DriveFile>('POST', `/drive/files/${fileId}/restore`);
+}
+
+/**
+ * Permanently delete a file (skip trash)
+ */
+export async function purgeDriveFile(fileId: string): Promise<void> {
+	await apiSend('DELETE', `/drive/files/${fileId}/purge`);
+}
+
+// ============================================================================
+// Recently deleted — chats, pages and projects (`api::trash` on the box)
+// ============================================================================
+
+export type TrashKind = 'chat' | 'page' | 'project';
+
+export interface TrashItem {
+	kind: TrashKind;
+	id: string;
+	title: string;
+	icon: string | null;
+	deleted_at: string;
+	/** When the box will purge it; computed server-side so every client agrees. */
+	expires_at: string;
+}
+
+/** GET /api/trash — every trashed chat, page and project, newest deletion first. */
+export function listTrash(): Promise<TrashItem[]> {
+	return apiGet<TrashItem[]>('/trash');
+}
+
+/** POST /api/trash/:kind/:id/restore */
+export function restoreTrashed(kind: TrashKind, id: string): Promise<void> {
+	return apiSend<void>('POST', `/trash/${kind}/${encodeURIComponent(id)}/restore`);
+}
+
+/** DELETE /api/trash/:kind/:id — delete forever. The box refuses anything not in the trash. */
+export function purgeTrashed(kind: TrashKind, id: string): Promise<void> {
+	return apiSend<void>('DELETE', `/trash/${kind}/${encodeURIComponent(id)}`);
+}
+
+/** POST /api/trash/empty — purge every trashed chat, page and project. */
+export function emptyTrash(): Promise<{ deleted_count: number }> {
+	return apiSend<{ deleted_count: number }>('POST', '/trash/empty');
+}
+
+// ============================================================================
+// Visits — the frecency log behind ⌘K (`api::visits` on the box)
+// ============================================================================
+
+export type VisitKind = 'chat' | 'page' | 'project';
+
+export interface Frecency {
+	kind: VisitKind;
+	record_id: string;
+	score: number;
+}
+
+/** POST /api/visits — the owner opened this themselves. 204; the box dedupes a minute. */
+export function recordVisit(kind: VisitKind, recordId: string): Promise<void> {
+	return apiSend<void>('POST', '/visits', { kind, record_id: recordId });
+}
+
+/** GET /api/visits/frecency — every visited record's score, highest first. */
+export function getFrecency(): Promise<Frecency[]> {
+	return apiGet<Frecency[]>('/visits/frecency');
+}
+
+/**
+ * Empty entire trash (permanently delete all trashed files)
+ */
+export function emptyDriveTrash(): Promise<{ deleted_count: number }> {
+	return apiSend<{ deleted_count: number }>('POST', '/drive/trash/empty');
+}
+
+// =============================================================================
+// Media - Content-addressed storage for page-embedded media
+// =============================================================================
+
+export interface MediaFile {
+	id: string;
+	url: string;
+	filename: string;
+	mime_type: string | null;
+	size_bytes: number;
+	width: number | null;
+	height: number | null;
+	deduplicated: boolean;
+}
+
+/**
+ * Upload a media file (image, video, audio) for embedding in pages.
+ * Uses content-addressed storage - duplicate uploads return existing file.
+ */
+export async function uploadMedia(
+	file: File,
+	onProgress?: (percent: number) => void
+): Promise<MediaFile> {
+	const formData = new FormData();
+	formData.append('file', file);
+	formData.append('filename', file.name);
+
+	// Use XMLHttpRequest for progress tracking
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		// XHR bypasses the fetch rewrite, so the box's origin is spelled out.
+		xhr.open('POST', backendUrl(`${API_BASE}/media/upload`));
+
+		xhr.upload.onprogress = (e) => {
+			if (e.lengthComputable && onProgress) {
+				onProgress(Math.round((e.loaded / e.total) * 100));
+			}
+		};
+
+		xhr.onload = () => {
+			if (xhr.status >= 200 && xhr.status < 300) {
+				resolve(JSON.parse(xhr.responseText));
+			} else {
+				try {
+					const error = JSON.parse(xhr.responseText);
+					reject(new Error(error.error || `Upload failed: ${xhr.statusText}`));
+				} catch {
+					reject(new Error(`Upload failed: ${xhr.statusText}`));
+				}
+			}
+		};
+
+		xhr.onerror = () => reject(new Error('Network error during upload'));
+		xhr.send(formData);
+	});
+}
+
+/**
+ * Why a page file's upload stopped (`sendPageFile`). `status` is the
+ * server's answer, 0 when none came. `refusedAnyway`: refused whatever the
+ * status, as a file stored under another address is.
+ */
+export class UploadError extends Error {
+	constructor(
+		message: string,
+		readonly status: number,
+		private readonly refusedAnyway = false,
+	) {
+		super(message);
+		this.name = 'UploadError';
+	}
+
+	/** The server refused it (a file too large, an address taken): sending it again would be refused again. */
+	get refused(): boolean {
+		return this.refusedAnyway || (this.status >= 400 && this.status < 500 && this.status !== 408 && this.status !== 429);
+	}
+}
+
+/**
+ * Upload a file a block page already shows, to the Drive id its block's
+ * address names (`/drive/<id>`, made in the browser: `mintFileId`). The id
+ * is the form's first field, so the server knows the upload by it before
+ * the bytes arrive (`GET /api/media/uploads`). Sending the same file to the
+ * same id again is answered with the file already stored.
+ *
+ * Stored is only stored at that id: a server from before page files took
+ * their id stores the bytes under one of its own and answers 201 all the
+ * same, which leaves the block's address naming nothing. That is a refusal.
+ */
+export function sendPageFile(
+	id: string,
+	file: File,
+	onProgress?: (sent: number, total: number) => void,
+): Promise<MediaFile> {
+	const form = new FormData();
+	form.append('id', id);
+	form.append('filename', file.name);
+	form.append('size', String(file.size));
+	form.append('file', file);
+	return new Promise((resolve, reject) => {
+		const xhr = new XMLHttpRequest();
+		// XHR bypasses the fetch rewrite, so the box's origin is spelled out.
+		xhr.open('POST', backendUrl(`${API_BASE}/media/upload`));
+		xhr.upload.onprogress = (e) => {
+			if (e.lengthComputable) onProgress?.(Math.min(e.loaded, file.size), file.size);
+		};
+		xhr.onload = () => {
+			if (xhr.status >= 200 && xhr.status < 300) {
+				let stored: MediaFile | null = null;
+				try {
+					stored = JSON.parse(xhr.responseText) as MediaFile;
+				} catch {
+					/* no file in the answer: not stored at this address */
+				}
+				if (stored?.id === id) {
+					resolve(stored);
+					return;
+				}
+				reject(
+					new UploadError(
+						`Your server stored ${file.name} somewhere this page can't find it. Update your server, then add the file again.`,
+						xhr.status,
+						true,
+					),
+				);
+				return;
+			}
+			let message = `Your server couldn't store ${file.name} (${xhr.status}).`;
+			try {
+				const body = JSON.parse(xhr.responseText) as { error?: string };
+				if (body.error) message = body.error;
+			} catch {
+				/* the status says it */
+			}
+			reject(new UploadError(message, xhr.status));
+		};
+		xhr.onerror = () => reject(new UploadError(`Couldn't reach your server to upload ${file.name}.`, 0));
+		xhr.send(form);
+	});
+}
+
+/** What the server knows of a page file's upload (`GET /api/media/uploads`). */
+export type PageFileState =
+	| { state: 'done' }
+	| { state: 'uploading'; filename: string; received: number; total: number | null }
+	/**
+	 * `refused`: the server refused the file, so the device holding it does not send it again.
+	 * `stopped_ms_ago`: how long before this answer the upload stopped.
+	 */
+	| { state: 'failed'; filename: string; reason: string; refused: boolean; stopped_ms_ago: number }
+	| { state: 'missing' };
+
+/** What the server knows of each of these files' uploads: up to 100 ids, each answered. */
+export function getMediaUploads(ids: string[]): Promise<Record<string, PageFileState>> {
+	return apiGet<Record<string, PageFileState>>('/media/uploads', { ids: ids.join(',') });
+}
+
+/**
+ * Tell the server these page files are coming, before a request can carry
+ * their bytes: up to 100. Each reads as arriving until its bytes begin
+ * (`POST /api/media/uploads`).
+ */
+export function announcePageFiles(files: { id: string; filename: string; size: number }[]): Promise<void> {
+	return apiSend<void>('POST', '/media/uploads', { files });
+}
+
+/** Whether any page names each of these files, as the server has every page now: up to 100 ids, each answered. */
+export function getNamedUploads(ids: string[]): Promise<Record<string, boolean>> {
+	return apiGet<Record<string, boolean>>('/media/uploads/named', { ids: ids.join(',') });
+}
+
+// =============================================================================
+// Chats - Chat Management
+// =============================================================================
+
+export interface ChatMessage {
+	role: 'user' | 'assistant' | 'system';
+	content: string;
+	timestamp: string;
+}
+
+/**
+ * Update a chat (title and/or icon)
+ */
+export function updateChat(
+	chatId: string,
+	updates: {
+		title?: string;
+		icon?: string | null;
+		icon_color?: string | null;
+		projectId?: string | null;
+	}
+): Promise<{
+	conversation_id: string;
+	title: string;
+	icon?: string | null;
+	icon_color?: string | null;
+	updated_at: string;
+}> {
+	return apiSend('PATCH', `/chats/${chatId}`, updates);
+}
+
+/**
+ * Delete a chat
+ */
+export function deleteChat(chatId: string): Promise<{ deleted: boolean }> {
+	return apiSend<{ deleted: boolean }>('DELETE', `/chats/${chatId}`);
+}
+
+// =============================================================================
+// Projects API — the "room" a chat lives in
+//
+// A Project is a manual collection the user returns to: a project, pet, hobby,
+// goal, or topic. It gathers entities, chats, and pages as URL-native members
+// and carries an icon, a color and a brief (`instructions`).
+// A chat lives in at most one Project (see `updateChat`'s `projectId`).
+// =============================================================================
+
+/** Core Project row (no counts). Returned by create/update. */
+export interface Project {
+	id: string;
+	name: string;
+	icon: string | null;
+	accent_color: string | null;
+	instructions: string | null;
+	sort_order: number;
+	/** Set when the project is closed: kept, out of the working view. Not the trash. */
+	archived_at: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+/** List-view summary — adds member and chat counts. */
+export interface ProjectSummary extends Project {
+	item_count: number;
+	chat_count: number;
+}
+
+/**
+ * What a member is to the project.
+ *  - `library`    grounds chat (the default for anything you add)
+ *  - `manuscript` yours to write — kept out of retrieval, so a draft is never
+ *                 cited back at you as if it were a source
+ *  - `pin`        nav-only shortcut
+ */
+export type ProjectItemRole = 'library' | 'manuscript' | 'pin';
+
+/** A single URL-native member of a Project. */
+export interface ProjectItem {
+	url: string;
+	sort_order: number;
+	role: ProjectItemRole;
+	added_at: string;
+	/** Resolved by the server with the project. Absent from a box older than the field. */
+	title?: string;
+	kind?: string;
+	/** Drive files only: `extraction_status` as stored. */
+	status?: string;
+}
+
+/** One entity referenced across a project's members. */
+export interface ProjectGraphNode {
+	/** Ref URL, e.g. `/person/pe_abc` — also the node's identity. */
+	url: string;
+	entity_type: string;
+	name: string;
+	/** Member urls referencing this entity; drives click-to-filter. */
+	item_urls: string[];
+}
+
+/** Two entities that share at least one member. */
+export interface ProjectGraphEdge {
+	source: string;
+	target: string;
+	weight: number;
+}
+
+export interface ProjectGraph {
+	nodes: ProjectGraphNode[];
+	edges: ProjectGraphEdge[];
+}
+
+/** GET /api/projects/:id — a Project plus its ordered members. */
+/** A chat filed in a project, as the project's own detail lists it. */
+export interface ProjectChat {
+	id: string;
+	title: string;
+	icon: string | null;
+	message_count: number;
+	last_message_at: string;
+}
+
+export interface ProjectDetail extends Project {
+	items: ProjectItem[];
+	/** Every chat filed here. Absent from a box older than the field. */
+	chats?: ProjectChat[];
+}
+
+/** GET /api/projects — all Projects with counts. */
+export async function listProjects(opts?: {
+	includeArchived?: boolean;
+	/** Only the projects holding this member url (a page asking where it is filed). */
+	member?: string;
+}): Promise<{ projects: ProjectSummary[] }> {
+	return apiGet<{ projects: ProjectSummary[] }>('/projects', {
+		include_archived: opts?.includeArchived ? 'true' : undefined,
+		member: opts?.member,
+	});
+}
+
+/** POST /api/projects/:id/archive — close a project. Reversible; no confirm needed. */
+export function archiveProject(id: string): Promise<void> {
+	return apiSend<void>('POST', `/projects/${encodeURIComponent(id)}/archive`);
+}
+
+/** POST /api/projects/:id/unarchive — reopen it. */
+export function unarchiveProject(id: string): Promise<void> {
+	return apiSend<void>('POST', `/projects/${encodeURIComponent(id)}/unarchive`);
+}
+
+/** GET /api/projects/:id — a Project with its ordered members. */
+export function getProject(id: string): Promise<ProjectDetail> {
+	return apiGet<ProjectDetail>(`/projects/${encodeURIComponent(id)}`);
+}
+
+/** POST /api/projects — create a Project. */
+export function createProject(body: {
+	name: string;
+	icon?: string | null;
+	accent_color?: string | null;
+}): Promise<Project> {
+	return apiSend<Project>('POST', '/projects', body);
+}
+
+/**
+ * PUT /api/projects/:id — update a Project. For the nullable fields
+ * (`icon`/`accent_color`/`instructions`): omit the key to leave unchanged,
+ * send `null` to clear, send a value to set.
+ */
+export function updateProject(
+	id: string,
+	patch: {
+		name?: string;
+		icon?: string | null;
+		accent_color?: string | null;
+		instructions?: string | null;
+		sort_order?: number;
+	}
+): Promise<Project> {
+	return apiSend<Project>('PUT', `/projects/${encodeURIComponent(id)}`, patch);
+}
+
+/** DELETE /api/projects/:id */
+export async function deleteProject(id: string): Promise<void> {
+	await apiSend('DELETE', `/projects/${encodeURIComponent(id)}`);
+}
+
+// =============================================================================
+// View Entity (sidebar smart-section rows — resolved client-side from
+// /api/chats and listPages; the folder/view CRUD API was removed.)
+// =============================================================================
+
+export interface ViewEntity {
+	id: string;
+	name: string;
+	namespace: string;
+	icon: string;
+	updated_at?: string;
+}
+
+// =============================================================================
+// Developer SQL API
+// =============================================================================
+
+
+// =============================================================================
+// Project Items API — the URL-native members of a Project
+//
+// (Listing comes back inside `getProject(id)` as `ProjectDetail.items`; there is
+// no separate GET.)
+// =============================================================================
+
+/** POST /api/projects/:id/items — add a member URL to a Project. */
+export function addProjectItem(projectId: string, url: string): Promise<ProjectItem> {
+	return apiSend<ProjectItem>('POST', `/projects/${encodeURIComponent(projectId)}/items`, {
+		url: sanitizeUrl(url),
+	});
+}
+
+/** DELETE /api/projects/:id/items — remove a member URL from a Project. */
+export async function removeProjectItem(projectId: string, url: string): Promise<void> {
+	await apiSend('DELETE', `/projects/${encodeURIComponent(projectId)}/items`, { url });
+}
+
+/** PUT /api/projects/:id/items/reorder — set the member order by URL. */
+export async function reorderProjectItems(projectId: string, urls: string[]): Promise<void> {
+	await apiSend('PUT', `/projects/${encodeURIComponent(projectId)}/items/reorder`, { urls });
+}
+
+/** PUT /api/projects/:id/items/role — set what a member is to the project. */
+export function setProjectItemRole(
+	projectId: string,
+	url: string,
+	role: ProjectItemRole
+): Promise<ProjectItem> {
+	return apiSend<ProjectItem>('PUT', `/projects/${encodeURIComponent(projectId)}/items/role`, {
+		url,
+		role,
+	});
+}
+
+/**
+ * GET /api/projects/:id/graph — entities referenced across the members.
+ * Built only from things explicitly filed or linked (`[@ref]`); nothing is
+ * inferred, so an entity merely mentioned inside a PDF will not appear.
+ */
+export function getProjectGraph(projectId: string): Promise<ProjectGraph> {
+	return apiGet<ProjectGraph>(`/projects/${encodeURIComponent(projectId)}/graph`);
+}
+
+// =============================================================================
+// Pages API
+// =============================================================================
+
+/**
+ * How a page holds its text: `tree`, a Yjs XML tree under the document
+ * contract (`crates/virtues-document`) for the block editor, or `markdown`
+ * in a Y.Text, for a page the server has not moved to blocks yet, which
+ * this app shows read only.
+ */
+export type PageFormat = 'markdown' | 'tree';
+
+export interface Page {
+	id: string;
+	title: string;
+	/** Markdown either way: for a block page, the export of its tree. */
+	content: string;
+	project_id: string | null;
+	icon: string | null;
+	/** `--cat-*` token key ('orange', 'emerald'), never a hex. Migration 0079. */
+	icon_color: string | null;
+	cover_url: string | null;
+	tags: string | null; // JSON array string: '["tag1", "tag2"]'
+	created_at: string;
+	updated_at: string;
+	/** Absent from a server older than block pages, where every page is markdown. */
+	format?: PageFormat;
+	/**
+	 * The document contract the page is written under (`GET /api/pages/:id`
+	 * only); null when the server could not read the page's document, absent
+	 * from a server older than the contract.
+	 */
+	contract?: number | null;
+	/** The newest contract the server reads (`GET /api/pages/:id` only). */
+	box_contract?: number;
+	/**
+	 * `page` or `article` (`GET /api/pages/:id` only): an article's markdown
+	 * reads as an article, its footnotes, figures and veils included. Absent
+	 * from a server older than articles in blocks.
+	 */
+	kind?: 'page' | 'article';
+	/**
+	 * Which copy of a block page's document the server holds
+	 * (`GET /api/pages/:id` only): this device keeps its copy under it. Null
+	 * for a markdown page and a block page from before lineages; absent from
+	 * an older server.
+	 */
+	lineage?: string | null;
+}
+
+export interface PageSummary {
+	id: string;
+	title: string;
+	project_id: string | null;
+	icon: string | null;
+	icon_color: string | null;
+	cover_url: string | null;
+	tags: string | null; // JSON array string: '["tag1", "tag2"]'
+	created_at: string;
+	updated_at: string;
+}
+
+export interface PageListResponse {
+	pages: PageSummary[];
+	total: number;
+	limit: number;
+	offset: number;
+}
+
+export interface RefSearchResult {
+	id: string;
+	name: string;
+	entity_type: string;
+	icon: string;
+}
+
+export interface RefSearchResponse {
+	results: RefSearchResult[];
+}
+
+/**
+ * List all pages with optional pagination and workspace filter
+ */
+export function listPages(limit?: number, offset?: number, project_id?: string): Promise<PageListResponse> {
+	return apiGet<PageListResponse>('/pages', { limit, offset, project_id });
+}
+
+/**
+ * Get a single page by ID
+ */
+export function getPage(id: string): Promise<Page> {
+	return apiGet<Page>(`/pages/${id}`);
+}
+
+/**
+ * Create a new page
+ */
+export function createPage(
+	title: string,
+	content: string = '',
+	project_id: string | null = null,
+	options?: { icon?: string; cover_url?: string; tags?: string }
+): Promise<Page> {
+	return apiSend<Page>('POST', '/pages', { title, content, projectId: project_id, ...options });
+}
+
+/**
+ * Update an existing page
+ */
+export function updatePage(
+	id: string,
+	updates: {
+		title?: string;
+		content?: string;
+		project_id?: string | null;
+		icon?: string | null;
+		icon_color?: string | null;
+		cover_url?: string | null;
+		tags?: string | null;
+	}
+): Promise<Page> {
+	return apiSend<Page>('PUT', `/pages/${id}`, updates);
+}
+
+/**
+ * Delete a page by ID
+ */
+export async function deletePage(id: string): Promise<void> {
+	await apiSend('DELETE', `/pages/${id}`);
+}
+
+/**
+ * Search entities for autocomplete in the page editor
+ * Used when typing [[ to link to entities
+ */
+export function searchRefs(query: string): Promise<RefSearchResponse> {
+	return apiGet<RefSearchResponse>('/pages/search/refs', { q: query });
+}
+
+/**
+ * Append a markdown block to a page THROUGH Yjs (researcher-plan D4).
+ *
+ * Safe when the page is open in an editor: the server applies the insert to the
+ * authoritative Yjs doc and broadcasts it, so an open editor merges the block
+ * instead of being clobbered by a content replace.
+ */
+export function appendToPage(pageId: string, markdown: string): Promise<{ content: string }> {
+	return apiSend<{ content: string }>('POST', `/pages/${encodeURIComponent(pageId)}/append`, {
+		markdown,
+	});
+}
+
+// ============================================================================
+// Backlinks / References API
+// ============================================================================
+
+/** A page that links TO the queried page (an inbound reference). */
+export interface Backlink {
+	id: string;
+	title: string;
+	icon: string | null;
+	/** One-line plain-text snippet of the surrounding context. */
+	snippet: string;
+	updated_at: string;
+}
+
+/** Get inbound references (pages that link to the given page). */
+export async function getPageBacklinks(pageId: string): Promise<Backlink[]> {
+	const data = await apiGet<{ backlinks?: Backlink[] }>(`/pages/${pageId}/backlinks`);
+	return data.backlinks ?? [];
+}
+
+// ============================================================================
+// Setup state API
+// ============================================================================
+
+export interface SetupStep {
+	id: string;
+	title: string;
+	done: boolean;
+	/** Server-authored copy for the step's current state — render verbatim. */
+	detail?: string;
+	/**
+	 * Cosmetic hint only (e.g. "ipv6_direct", "byo", or a network class).
+	 * Behavior must key off `done`; unknown/missing kinds render like today.
+	 */
+	kind?: string;
+}
+
+/** A collector that is paired and running but missing a permission it needs. */
+export interface DegradedCollector {
+	device_id: string;
+	label?: string | null;
+	/** Capability names the collector reports NOT having, e.g. "full_disk_access". */
+	denied: string[];
+	stale: boolean;
+	checked_at?: string | null;
+}
+
+export interface SetupState {
+	setup: SetupStep[];
+	/** The box is up: claimed, and linked to an account on an appliance. */
+	setup_complete: boolean;
+	onboarding: SetupStep[];
+	/** The box has something to keep a record of — at least one source. */
+	onboarding_complete: boolean;
+	/** Collectors running with a denied permission — a ✓ over one of these lies. */
+	degraded?: DegradedCollector[];
+	/** The interview has an answer but no document yet — show "underway". */
+	interview_started?: boolean;
+	/** `new` | `onboarding` | `active`. `active` means finished OR dismissed —
+	 *  both stop the redirect. Backed by app_user_profile.onboarding_status,
+	 *  which already tracked this life stage before a second flag was added. */
+	onboarding_status: string;
+}
+
+/**
+ * Remember that onboarding was declined — or offer it again with `false`.
+ *
+ * The app routes on this, so a skip that wasn't persisted would put the same
+ * page back in front of someone on every launch.
+ */
+export async function skipOnboarding(skipped = true): Promise<void> {
+	await apiSend('POST', '/setup/skip-onboarding', { skipped });
+}
+
+// ---- Getting started: one room, one derived truth (api/getting_started.rs) ----
+
+export type GettingStartedStepId = 'connect_ai' | 'introductions' | 'connect_world' | 'timeline' | 'interview';
+
+export interface GettingStartedStep {
+	id: GettingStartedStepId;
+	title: string;
+	status: 'done' | 'open' | 'skipped';
+	/** How a done step got done, where it matters ("subscription" | "byo"). */
+	via?: string;
+	/** Server-authored copy for the step's current state — render verbatim. */
+	detail?: string;
+	/** Started but not done (the interview has begun, no document yet). */
+	underway?: boolean;
+	/** The person moved past this step themselves (skip/continue). */
+	acknowledged?: boolean;
+	/** Integrations in place — on the step that counts them. */
+	connected?: number;
+	/** What is actually feeding the record, named. */
+	sources?: string[];
+}
+
+export interface GettingStartedState {
+	ai_connected: boolean;
+	steps: GettingStartedStep[];
+	first_day: string | null;
+	graduated: boolean;
+	/** The interview has begun inside the room, at this instant (ISO). */
+	interview_started_at: string | null;
+}
+
+/** Raw fetch on purpose: the store reads "unsupported" off `404|Not Found` in
+ *  this message, which request()'s server-supplied text would not carry. */
+export async function getGettingStarted(): Promise<GettingStartedState> {
+	const res = await fetch(`${API_BASE}/getting-started`);
+	if (!res.ok) throw new Error(`Failed to get getting-started state: ${res.statusText}`);
+	return res.json();
+}
+
+/** Skip (or un-skip) one step. Answers with the new state. */
+export function skipGettingStartedStep(
+	step: GettingStartedStepId,
+	skipped = true
+): Promise<GettingStartedState> {
+	return apiSend<GettingStartedState>('POST', '/getting-started/skip', { step, skipped });
+}
+
+/** Begin the interview inside the getting-started room. Answers with the new state. */
+export function startGettingStartedInterview(): Promise<GettingStartedState> {
+	return apiSend<GettingStartedState>('POST', '/getting-started/interview');
+}
+
+export function getSetupState(): Promise<SetupState> {
+	return apiGet<SetupState>('/setup/state');
+}
+
+
+// ============================================================================
+// Tier 2 wrappers — routed through the shared request() layer (ApiError + status).
+// Inputs are typed precisely; outputs use a generic passthrough (<T = unknown>)
+// so each call site reuses the response type it already declares locally.
+// ============================================================================
+
+// ── Assistant profile ────────────────────────────────────────────────────────
+// ── Assistant memories (What I've learned) ──
+// The machine's per-note memory, visible and editable. Every live note rides
+// in the system prompt of every conversation.
+
+export interface AssistantMemory {
+	id: number;
+	/** facts | manner | practices */
+	lane: string;
+	/** 'ai' until the person edits — then 'human', and the machine can no longer revise it. */
+	author: string;
+	body: string;
+	created_at: string;
+	updated_at: string;
+}
+
+export function listAssistantMemories(): Promise<AssistantMemory[]> {
+	return apiGet<AssistantMemory[]>('/assistant/memories');
+}
+
+/** Rewrite one memory in your own words. It becomes yours. */
+export function editAssistantMemory(id: number, body: string): Promise<AssistantMemory> {
+	return apiSend<AssistantMemory>('PUT', `/assistant/memories/${id}`, { body });
+}
+
+/** Remove a memory from every future conversation (soft-retired with provenance). */
+export async function retireAssistantMemory(id: number): Promise<void> {
+	await apiSend('DELETE', `/assistant/memories/${id}`);
+}
+
+export function getAssistantProfile<T = unknown>(): Promise<T> {
+	return apiGet<T>('/assistant-profile');
+}
+export function updateAssistantProfile<T = unknown>(patch: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('PUT', '/assistant-profile', patch);
+}
+
+/**
+ * Change some of your UI preferences, keeping the rest. The server replaces
+ * `ui_preferences` whole, so this reads them first; a failed read throws
+ * rather than writing, because writing the patch alone would erase every
+ * other preference.
+ */
+export async function updateUiPreferences(patch: Record<string, unknown>): Promise<void> {
+	const profile = await getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>();
+	await updateAssistantProfile({ ui_preferences: { ...(profile?.ui_preferences ?? {}), ...patch } });
+}
+
+// ── Billing / wallet ─────────────────────────────────────────────────────────
+export function getBillingLinkStatus<T = unknown>(): Promise<T> {
+	return apiGet<T>('/billing/link/status');
+}
+export function startBillingLink<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/billing/link/start');
+}
+export function openBillingPortal<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/billing/portal');
+}
+/** A Stripe Checkout URL for the account this box is linked to. */
+export function subscribeBilling<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/billing/subscribe');
+}
+export function getBillingState<T = unknown>(): Promise<T> {
+	return apiGet<T>('/billing/state');
+}
+export function setBillingAutoTopup<T = unknown>(enabled: boolean): Promise<T> {
+	return apiSend<T>('POST', '/billing/auto-topup', { enabled });
+}
+export function getBillingUsage<T = unknown>(): Promise<T> {
+	return apiGet<T>('/billing/usage');
+}
+export function getByoKey<T = unknown>(): Promise<T> {
+	return apiGet<T>('/settings/byo-key');
+}
+export function setByoKey<T = unknown>(body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/settings/byo-key', body);
+}
+export function deleteByoKey<T = unknown>(sudoRequestId?: string): Promise<T> {
+	return apiSend<T>('DELETE', '/settings/byo-key', { sudo_request_id: sudoRequestId });
+}
+
+// ── Chats (extras beyond createChat/updateChat/deleteChat above) ──────────────
+export function listChats<T = unknown>(): Promise<T> {
+	return apiGet<T>('/chats');
+}
+/** A chat and its stored transcript. `signal` lets a view abandon the load
+ *  when it navigates away mid-fetch. */
+export function getChat<T = unknown>(id: string, signal?: AbortSignal): Promise<T> {
+	return request<T>(`/chats/${encodeURIComponent(id)}`, { signal });
+}
+export function getChatUsage<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/chats/${encodeURIComponent(id)}/usage`);
+}
+/** One piece of the next message's request: a prompt section, a tool, or a
+ *  message as it replays. `tokens` is an estimate (four characters a token). */
+export interface NextTurnPart {
+	name: string;
+	tokens: number;
+	/** Prompt sections only: before the cache breakpoint. */
+	cached?: boolean;
+	text?: string;
+}
+/** One of the chat's latest model calls and what it read from cache. */
+export interface CallReading {
+	at: string;
+	step: number;
+	prompt_tokens: number;
+	cache_read_tokens: number;
+	/** The most the cache could have served: the longest earlier request
+	 *  this one started with. */
+	reusable_tokens: number;
+	/** Where this call first left the one before it; empty when it only
+	 *  added to it. */
+	diverged_at: string;
+}
+export interface NextTurnContext {
+	model: string;
+	mode: string;
+	sections: NextTurnPart[];
+	tools: NextTurnPart[];
+	messages: NextTurnPart[];
+	recent_calls: CallReading[];
+}
+/** What the chat's next message would be sent with, built by the send's own
+ *  code (`chat::next_turn_preview`). `inputs` is what the composer would send
+ *  beside the message (`chatInstances.turnInputs`). */
+export function getNextTurnContext(id: string, inputs: object): Promise<NextTurnContext> {
+	return apiSend<NextTurnContext>('POST', `/chats/${encodeURIComponent(id)}/context`, inputs);
+}
+/** What a URL's thing is called and wears now (`refs::resolve_identities`). */
+export interface RefIdentity {
+	url: string;
+	kind: string;
+	title: string;
+	icon: string | null;
+	color: string | null;
+	state: 'live' | 'trashed' | 'gone' | 'unknown';
+}
+export function resolveRefs(urls: string[]): Promise<{ refs: RefIdentity[] }> {
+	return apiSend('POST', '/refs/resolve', { urls });
+}
+
+/** The chats with a turn running on the box right now, from any device. */
+export function listLiveChats(): Promise<{ running: string[] }> {
+	return apiGet('/chats/live');
+}
+/** The person has this chat on screen: every reply in it so far is read. */
+export function markChatSeen(id: string): Promise<unknown> {
+	return apiSend('POST', `/chats/${encodeURIComponent(id)}/seen`, {});
+}
+export function setChatTitle<T = unknown>(body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/chats/title', body);
+}
+export function cancelChat<T = unknown>(chatId: string): Promise<T> {
+	return apiSend<T>('POST', '/chat/cancel', { chatId });
+}
+export function compactChat<T = unknown>(id: string, force = true): Promise<T> {
+	return apiSend<T>('POST', `/chats/${encodeURIComponent(id)}/compact`, { force });
+}
+export function getChatPermissions<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/chats/${encodeURIComponent(id)}/permissions`);
+}
+export function addChatPermission<T = unknown>(id: string, body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', `/chats/${encodeURIComponent(id)}/permissions`, body);
+}
+export function removeChatPermission<T = unknown>(id: string, entityId: string): Promise<T> {
+	return apiSend<T>(
+		'DELETE',
+		`/chats/${encodeURIComponent(id)}/permissions/${encodeURIComponent(entityId)}`,
+	);
+}
+
+// ── Models ───────────────────────────────────────────────────────────────────
+export function listModels<T = unknown>(): Promise<T> {
+	return apiGet<T>('/models');
+}
+export function getModel<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/models/${encodeURIComponent(id)}`);
+}
+export function getRecommendedModels<T = unknown>(): Promise<T> {
+	return apiGet<T>('/models/recommended');
+}
+
+// ── Block pages (the document contract) ─────────────────────────────────────
+
+/** Something the contract's converter changed or could not carry over. */
+export interface DocumentNote {
+	at: string;
+	message: string;
+}
+
+/** A page's text as markdown, live from the server's copy, whatever its format. */
+export function getPageMarkdown(
+	pageId: string,
+): Promise<{ format: 'markdown' | 'tree'; markdown: string }> {
+	return apiGet(`/pages/${encodeURIComponent(pageId)}/markdown`);
+}
+
+// ── Page versions (yjs history) ──────────────────────────────────────────────
+
+/** One version of a page, as `GET /api/pages/versions/:id` returns it. */
+export interface PageVersionDetail {
+	id: string;
+	page_id: string;
+	version_number: number;
+	/**
+	 * The whole Yjs state, base64, for a markdown page's browser restore;
+	 * null for a block page's version, which the server restores.
+	 */
+	snapshot: string | null;
+	content_preview: string | null;
+	created_at: string;
+	created_by: 'user' | 'ai' | 'auto';
+	description?: string | null;
+	/** What the snapshot holds; absent from a server older than block pages. */
+	format?: PageFormat;
+	/** The version as markdown, either format. */
+	markdown?: string;
+	/** A block version's canonical HTML, without block ids. */
+	html?: string | null;
+}
+
+/** What putting a version back did: the version it recorded, and what converting changed. */
+export interface RestoredVersion {
+	/**
+	 * The version "Put back vN" became; null when the page already matched,
+	 * or when History could not take the entry (the page is put back either way).
+	 */
+	version_number: number | null;
+	/** Whether the page changed; false when it already read as the version. */
+	changed?: boolean;
+	notes: DocumentNote[];
+}
+
+export function createPageVersion<T = unknown>(pageId: string, body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', `/pages/${encodeURIComponent(pageId)}/versions`, body);
+}
+export function listPageVersions<T = unknown>(pageId: string, limit?: number): Promise<T> {
+	return apiGet<T>(`/pages/${encodeURIComponent(pageId)}/versions`, { limit });
+}
+export function getPageVersion<T = PageVersionDetail>(versionId: string): Promise<T> {
+	return apiGet<T>(`/pages/versions/${encodeURIComponent(versionId)}`);
+}
+
+/**
+ * Put a block page back as `versionId` left it. The server keeps the page as
+ * it stands first, writes only the blocks that differ, and records the result
+ * as "Put back vN".
+ */
+export function restorePageVersionRequest(pageId: string, versionId: string): Promise<RestoredVersion> {
+	return apiSend<RestoredVersion>(
+		'POST',
+		`/pages/${encodeURIComponent(pageId)}/versions/${encodeURIComponent(versionId)}/restore`,
+		{},
+	);
+}
+
+/**
+ * Send a copy this device kept of a block page that is not the page's
+ * document (its Yjs state, base64): one from before the page moved to
+ * blocks, or one of an earlier document of it, with the `lineage` it was
+ * kept under (null when its store named none). The server keeps it as a
+ * version when it holds typing the page never had, and says which; `kept`
+ * is null when it held none.
+ */
+export function sendDeviceCopy(
+	pageId: string,
+	state: string,
+	lineage: string | null = null,
+): Promise<{ kept: { version_number: number } | null }> {
+	return apiSend('POST', `/pages/${encodeURIComponent(pageId)}/device-copy`, lineage === null ? { state } : { state, lineage });
+}
+
+// ── Setup (extras beyond getSetupState) ──────────────────────────────────────
+export function setupLinkPoll<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/setup/link/poll');
+}
+export function setupSubscribeStart<T = unknown>(): Promise<T> {
+	return apiSend<T>('POST', '/setup/subscribe/start');
+}
+export function setupLoginStart<T = unknown>(email: string): Promise<T> {
+	return apiSend<T>('POST', '/setup/login/start', { email });
+}
+
+// ── Sudo (privilege elevation) ───────────────────────────────────────────────
+export function requestSudo<T = unknown>(action: string, actionPayload?: unknown): Promise<T> {
+	return apiSend<T>('POST', '/sudo/request', { action, action_payload: actionPayload });
+}
+export function getSudoStatus<T = unknown>(id: string): Promise<T> {
+	return apiGet<T>(`/sudo/status/${encodeURIComponent(id)}`);
+}
+
+// ── Data lake ────────────────────────────────────────────────────────────────
+export function getLakeSummary<T = unknown>(): Promise<T> {
+	return apiGet<T>('/lake/summary');
+}
+export function getLakeStreams<T = unknown>(): Promise<T> {
+	return apiGet<T>('/lake/streams');
+}
+
+// ── System / telemetry / usage ───────────────────────────────────────────────
+export function getSystemTelemetry<T = unknown>(): Promise<T> {
+	return apiGet<T>('/system/telemetry');
+}
+/** One row of the box-local AI-call log. Metadata only — never content. */
+export interface AiCallRow {
+	id: string;
+	created_at: string;
+	feature: string | null;
+	model: string | null;
+	prompt_tokens: number;
+	completion_tokens: number;
+	reasoning_tokens: number;
+	/**
+	 * Micros-USD, authoritative ONLY when `route === 'wallet'`. Our gateway is
+	 * the only upstream that reports a price, so a BYO row is 0-as-unknown —
+	 * render it as "your key", never as "$0.00".
+	 */
+	cost_micros: number;
+	/** `wallet` | `byo` — which purse paid. */
+	route: string;
+}
+
+/** GET /api/telemetry/ai-calls — one page of the call log, newest first. */
+export function getAiCallsPage(opts: {
+	offset: number;
+	limit: number;
+	search?: string;
+	dir?: 'asc' | 'desc';
+}): Promise<{ items: AiCallRow[]; total: number }> {
+	return apiGet<{ items: AiCallRow[]; total: number }>('/telemetry/ai-calls', {
+		offset: opts.offset,
+		limit: opts.limit,
+		search: opts.search,
+		dir: opts.dir
+	});
+}
+export function getUsageSummary<T = unknown>(): Promise<T> {
+	return apiGet<T>('/usage/summary');
+}
+export function getSubscription<T = unknown>(fresh = false): Promise<T> {
+	return apiGet<T>('/subscription', fresh ? { fresh: 1 } : undefined);
+}
+
+// ── Narrative identity (wiki) ────────────────────────────────────────────────
+// Read-only: the document is edited on its page. (The PUT died with the
+// retired abridged copy, 2026-09-01.)
+export function getNarrativeIdentity<T = unknown>(): Promise<T> {
+	return apiGet<T>('/wiki/narrative-identity');
+}
+
+// ── Devices / pairing (extras beyond pairMint/pairDeny/pairStatus) ────────────
+export function listDevices<T = unknown>(): Promise<T> {
+	return apiGet<T>('/devices');
+}
+
+// ── Misc singletons ──────────────────────────────────────────────────────────
+export function getDeveloperTables<T = unknown>(): Promise<T> {
+	return apiGet<T>('/developer/tables');
+}
+export function getDriveMedia<T = unknown>(): Promise<T> {
+	return apiGet<T>('/drive/media');
+}
+export function searchUnsplash<T = unknown>(body: Record<string, unknown>): Promise<T> {
+	return apiSend<T>('POST', '/unsplash/search', body);
+}
+
+// ============================================================================
+// Publications — pages the owner shared through the door (api::publications)
+// ============================================================================
+
+/** What a link shares: an applet's face or a page. */
+export type ShareProducer = { kind: 'applet' | 'page' | 'chat'; id: string };
+
+function producerParams(p: ShareProducer): Record<string, string> {
+	return { [`${p.kind}_id`]: p.id };
+}
+
+/** One shared link. `link` is null until the door has started, and after revoke. */
+export interface Publication {
+	id: string;
+	producer_kind: 'applet' | 'page' | 'chat';
+	producer_id: string;
+	title: string;
+	size_bytes: number;
+	card_title: string | null;
+	created_at: string;
+	updated_at: string;
+	expires_at: string | null;
+	revoked_at: string | null;
+	open_count: number;
+	last_opened_at: string | null;
+	/** Asks your server for its data each time it is opened. */
+	is_live: boolean;
+	link: string | null;
+}
+
+/** A query a shared page runs, with what it returns right now. */
+export interface SharedQuery {
+	sql: string;
+	row_count: number;
+	sample: Record<string, unknown>[];
+}
+
+/** What sharing an applet's page would send, before anything leaves. */
+export interface SharePreview {
+	title: string;
+	/** The page as it will appear, or null when it cannot be shared as it is. */
+	html: string | null;
+	/** Why it cannot be shared, and what to change. */
+	problem: string | null;
+	size_bytes: number;
+	image_count: number;
+	links: string[];
+	looks_private: string[];
+	/** People, places and things a page names; only the names leave. */
+	names: string[];
+	/** Images not stored in Drive (from another site, or a file that never arrived), left out of the shared copy. */
+	images_left_out: number;
+	/**
+	 * A block page's applets, audio, video and files, which stay on the
+	 * server. Absent from a server older than block pages.
+	 */
+	embeds_left_out?: number;
+	/** A chat: messages that go, and attachments that stay on the server. */
+	message_count: number;
+	attachments_left_out: number;
+	/** The page reads data, so it can be shared as a snapshot or live. */
+	reads_data: boolean;
+	queries: SharedQuery[];
+}
+
+export function listPublications(): Promise<Publication[]> {
+	return apiGet<Publication[]>('/publications');
+}
+
+export function previewPublication(producer: ShareProducer): Promise<SharePreview> {
+	return apiGet<SharePreview>('/publications/preview', producerParams(producer));
+}
+
+/**
+ * `expiresInDays`: 0 never expires; omitted uses the server's default (30).
+ * `live`: for a page that reads data, ask the server when opened instead of
+ * carrying a snapshot.
+ */
+export function createPublication(
+	producer: ShareProducer,
+	expiresInDays?: number,
+	live = false
+): Promise<Publication> {
+	return apiSend<Publication>('POST', '/publications', {
+		...producerParams(producer),
+		expires_in_days: expiresInDays,
+		live
+	});
+}
+
+export function updatePublication(id: string): Promise<Publication> {
+	return apiSend<Publication>('POST', `/publications/${encodeURIComponent(id)}/update`);
+}
+
+export function revokePublication(id: string): Promise<Publication> {
+	return apiSend<Publication>('DELETE', `/publications/${encodeURIComponent(id)}`);
+}

@@ -1,0 +1,265 @@
+[package]
+name = "virtues"
+# Inherited, not restated: two copies of one number drift apart, and a bump
+# that misses one ships a box that reports the wrong version.
+version.workspace = true
+edition = "2021"
+authors = ["Virtues Team <team@virtues.com>"]
+description = "The Virtues server: ingestion, the record, the wiki and the assistant"
+license.workspace = true
+repository = "https://github.com/virtues-os/virtues"
+keywords = ["etl", "data-pipeline", "personal-data", "timeseries"]
+categories = ["database", "data-structures"]
+build = "build.rs"
+default-run = "virtues"
+
+[lib]
+name = "virtues"
+path = "src/lib.rs"
+
+[[bin]]
+name = "virtues"
+path = "src/main.rs"
+
+[[bin]]
+name = "virtues-prod-seed"
+path = "src/bin/prod_seed.rs"
+
+
+[features]
+# Forwards the dev-local transport profile in `virtues-helpers`.
+# Enable for local development (`cargo run --features dev-transport`);
+# never enable in release builds.
+dev-transport = ["virtues-helpers/dev-transport"]
+
+
+[dependencies]
+# Shared registry
+virtues-registry = { path = "../crates/virtues-registry" }
+
+# Single shared utility crate: crypto, auth, contract, db, dedup, ids, ios, ...
+virtues-helpers = { path = "../crates/virtues-helpers" }
+virtues-qairt = { path = "../crates/virtues-qairt" }
+# iroh reach layer: the box is an iroh Endpoint that serves this axum app over
+# iroh (LAN-direct → hole-punch → our relay). Replaces the hand-rolled relay.
+# Improv wire format, shared with the desktop client that drives it. Protocol
+# only — the `client` feature (btleplug) must never be enabled for the box.
+virtues-improv = { path = "../crates/virtues-improv" }
+virtues-iroh = { path = "../crates/virtues-iroh" }
+virtues-door = { path = "../crates/virtues-door" }
+# Wire-protocol types shared with every paired-device daemon (iOS, desktop
+# client, etc.). Pure data + serde; no I/O.
+
+# CLI
+clap = { version = "4.5", features = ["derive"] }
+# QR rendering for `virtues claim` (subscribe-from-phone path) + pair-only
+# auth "+ Add device" modal (SVG output, in-process so tokens never leak to a
+# third-party QR generator).
+qrcode = { version = "0.14", default-features = false, features = ["svg"] }
+
+
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io", "rt"] }
+# The box's own maps: read tiles out of local .pmtiles archives (maps/).
+pmtiles = { version = "0.24", default-features = false, features = ["mmap-async-tokio"] }
+async-trait = "0.1"
+
+# Database
+sqlx = { version = "0.8", features = ["postgres", "runtime-tokio", "migrate", "chrono", "json", "macros", "uuid", "rust_decimal"] }
+
+# Vector search (pgvector extension — Rust bindings round-trip vector(N) via sqlx)
+# 0.4.2 moved to sqlx 0.9 — a second sqlx in the graph and every Vector
+# column stops satisfying `sqlx::Type<Postgres>`. Lift the bound with sqlx.
+pgvector = { version = "0.4, <0.4.2", features = ["sqlx", "halfvec"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Logging (box-local only — no metrics exporter; Virtues collects no central telemetry)
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# HTTP Server
+axum = { version = "0.7", features = ["macros", "multipart", "ws"] }
+axum-extra = { version = "0.9", features = ["cookie"] }
+# The box serves no TLS — see [[localhost-daemon-trust]] in MEMORY.md. We
+# keep rustls as a direct dep because outbound HTTPS (reqwest → atlas) still
+# needs the ring CryptoProvider installed at startup (rustls 0.23 requires it
+# once per process). `default-features = false` + `ring` avoids aws-lc-sys,
+# which GCC 11 in our cross containers refuses to build (GCC bug 95189).
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+mime_guess = "2.0"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
+async-stream = "0.3"
+tokio-stream = "0.1"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+chrono-tz = "0.10"
+iana-time-zone = "0.1"          # box's own system tz (home_timezone source)
+tzf-rs = "0.4"                  # offline coords → IANA tz (per-day user-location tz)
+uuid = { version = "1.10", features = ["v4", "serde"] }
+
+# OAuth
+oauth2 = "4.4"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls-no-provider", "stream"] }
+rustls-native-certs = "0.8"
+
+# Financial integrations
+plaid = "9.0.1"
+
+# Image processing (the day's picture: decode the model's PNG, resize, JPEG)
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+
+# Environment
+dotenv = "0.15"
+
+# Scheduler
+tokio-cron-scheduler = "0.13"
+# The same cron parser tokio-cron-scheduler uses underneath, taken directly so
+# slot prediction and slot firing cannot disagree about an edge case. Already
+# in the lock as its transitive dependency — this pins nothing new.
+croner = "2.2"
+
+# Encryption for credentials
+ring = "0.17"
+base64 = "0.22"
+# Splits an agent key's SSH_ORIGINAL_COMMAND into words (cli/agent_key.rs).
+shlex = "2"
+hex = "0.4"
+
+ # HMAC signing for OAuth state tokens
+hmac = "0.12"
+sha2 = "0.10"
+
+# WordPiece tokenization for the Dragon NPU path (`search/qnn_client.rs`): the
+# QNN daemon is token-in, so we tokenize + pack int32 IDs here before the RPC.
+# Local `from_file` only — no HTTP feature (we ship the tokenizer.json).
+tokenizers = { version = "0.20", default-features = false, features = ["onig"] }
+
+# `virtues backup` / `virtues restore` — single self-contained tarball
+# containing pg_dump + lake archives + env. `tar` reads/writes streaming
+# archives; `flate2` is the gzip layer.
+tar = "0.4"
+flate2 = "1.0"
+
+# `virtues upgrade` downgrade guard — semver ordering so a stale/hostile
+# "latest" or an explicit older `--version` can't silently roll the box back.
+semver = "1"
+
+# Unicode text segmentation for slug generation
+unicode-segmentation = "1.11"
+
+# Random generation (for OAuth state + BOCPD)
+rand = { version = "0.9", features = ["small_rng"] }
+fake = { version = "2.9", features = ["derive", "chrono", "uuid"] }
+
+# URL encoding and validation
+urlencoding = "2.1"
+url = "2.5"
+
+# HTML escaping for XSS prevention
+html-escape = "0.2"
+
+# Regular expressions
+regex = "1.0"
+
+# Document extraction (researcher-plan D1): pdfium binds the system/dev
+# libpdfium at runtime (no compile-time link); zip + quick-xml parse .docx.
+pdfium-render = "0.8"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+quick-xml = "0.36"
+
+# Static initialization
+lazy_static = "1.5"
+
+# Host telemetry for the web System view (CPU/mem/disk/net/thermal). The Jetson
+# GPU is read separately via tegrastats; sysinfo covers the cross-platform rest.
+sysinfo = "0.33"
+
+# Time handling for cookies
+time = "0.3"
+
+# MCP Server
+schemars = "1.0"
+
+# Geospatial/clustering
+geo = "0.28"  # Geospatial calculations (Haversine distance)
+
+# Local inference needs no client crate: the llama-server embedding sidecar
+# (:18181, installed + pinned by tools/virtues-installer) speaks
+# OpenAI-compatible JSON, handled by the existing reqwest dep in
+# search/embedder.rs.
+futures = "0.3"
+
+# Changepoint detection
+changepoint = "0.15"  # Bayesian Online Changepoint Detection
+rv = "0.19"  # Probability distributions for changepoint priors
+
+# Self-registering transforms
+inventory = "0.3"
+
+# Interactive CLI setup
+dialoguer = "0.11"
+console = "0.15"
+indicatif = "0.17"
+
+# Sandboxing
+tempfile = "3.12"
+
+# Terminal: in-process PTY for the developer terminal websocket
+portable-pty = "0.9"
+
+# Yjs/CRDT support
+yrs = "0.28"
+# The page document contract: the sync server checks every update to a tree
+# page against it before applying it.
+virtues-document = { path = "../crates/virtues-document" }
+moka = { version = "0.12", features = ["sync"] }
+similar = "2.7.0"
+
+# Markdown rendering: a shared page is frozen to HTML (api::publish_page).
+pulldown-cmark = { version = "0.10", default-features = false, features = ["simd", "html"] }
+
+bytes = "1.7"
+age = { version = "0.12.1", features = ["armor"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# getifaddrs(3) for the BYO-transport auto-notice in net_check (already in the
+# tree transitively; zero new build cost).
+libc = "0.2"
+# BLE wifi provisioning (maintenance::ble_provision) — the Improv service the
+# appliance serves while unclaimed. bluer is the official BlueZ binding; it
+# pulls libdbus-sys, so building on Linux needs libdbus-1-dev (CI installs it;
+# a box needs only libdbus-1-3, which systemd/NM already require). Dev Macs
+# compile the module's no-op stub and skip this dep entirely.
+bluer = { version = "0.17", features = ["bluetoothd"] }
+
+[build-dependencies]
+chrono = "0.4"
+
+[dev-dependencies]
+# Testing
+#
+# testcontainers was here for integration-test Docker spin-ups but was
+# never actually `use`d. Removed because its bollard→hyper-rustls path
+# force-activates `rustls/aws_lc_rs` via cargo feature unification,
+# dragging aws-lc-sys into the release build (which can't compile under
+# the GCC 11 in our cross images — GCC bug 95189). Re-add via a separate
+# integration-tests crate if you need it back.
+dotenv = "0.15"
+
+# Async testing
+tokio-test = "0.4"
+# A WebSocket client, to drive the Yjs sync server the way a browser does.
+# Already in the tree through axum's `ws`.
+tokio-tungstenite = "0.24"
+

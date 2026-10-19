@@ -1,0 +1,100 @@
+#!/usr/bin/env node
+/**
+ * Stamp `build/.virtues-bundle.json` — the bundle's self-description.
+ *
+ * The box serves the static build from disk and hands this file out at
+ * `GET /api/web-bundle/version`, so a client can ask "is there newer UI, and
+ * can my shell run it?" without downloading anything first.
+ *
+ * The bundle describes ITSELF rather than inheriting the box's version. That
+ * matters: once a client caches a bundle, the box can be upgraded while the
+ * client still runs the previous one, and reporting the box's number would
+ * assert something the client never loaded. See agents/record/spa-delivery.md and
+ * agents/record/mac-silent-outage.md ("no component asserts a fact it didn't observe").
+ *
+ * Runs as part of `pnpm build`, after vite, so it lands in the adapter's
+ * output directory.
+ */
+
+import { createHash } from 'node:crypto';
+import { readFileSync, writeFileSync, readdirSync, lstatSync } from 'node:fs';
+import { join, dirname, relative } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const WEB_ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
+const BUILD_DIR = join(WEB_ROOT, 'build');
+const MANIFEST = join(BUILD_DIR, '.virtues-bundle.json');
+
+/** Same channel rules as $lib/build.ts and the box's codename::channel(). */
+function deriveChannel(raw) {
+	if (!raw || raw === 'dev') return 'dev';
+	if (raw.includes('staging')) return 'staging';
+	if (raw.startsWith('edge')) return 'edge';
+	if (raw.includes('-')) return 'dev';
+	return 'stable';
+}
+
+/**
+ * Content hash over the built files, sorted for determinism.
+ *
+ * The version tag alone cannot answer "is this the same bundle?" — local and
+ * dev builds all report `dev`, and two builds of one tag can differ. The hash
+ * is what a client actually compares, so a same-tag rebuild still updates and
+ * an identical rebuild does not.
+ *
+ * The `.gz` siblings precompress.mjs writes are an encoding of these files,
+ * not content, and the phone's OTA tarball excludes them — so they are left
+ * out here too, and the hash of a bundle is the hash of what a client unpacks.
+ * The manifest itself is left out, as the client leaves it out, so stamping
+ * an already-stamped build gives the same hash.
+ *
+ * A symlink fails the build. The box's tarball skips symlinks
+ * (virtues-core/src/api/web_bundle.rs), so a hash that followed one would
+ * cover a file no client receives, and every client would reject the bundle
+ * after unpacking it.
+ */
+function hashTree(dir) {
+	const files = [];
+	(function walk(d) {
+		for (const entry of readdirSync(d)) {
+			const p = join(d, entry);
+			const st = lstatSync(p);
+			if (st.isSymbolicLink()) {
+				console.error(
+					`✗ ${relative(dir, p)} is a symlink. The box's OTA tarball skips symlinks, ` +
+						'so this bundle could never match its own contentHash on a client. ' +
+						'Copy the file into the build instead.'
+				);
+				process.exit(1);
+			}
+			if (st.isDirectory()) walk(p);
+			else if (!p.endsWith('.gz') && p !== MANIFEST) files.push(p);
+		}
+	})(dir);
+
+	const hash = createHash('sha256');
+	for (const p of files.sort()) {
+		hash.update(relative(dir, p));
+		hash.update(readFileSync(p));
+	}
+	return hash.digest('hex').slice(0, 16);
+}
+
+const contract = JSON.parse(readFileSync(join(WEB_ROOT, 'bundle-contract.json'), 'utf8'));
+const rawVersion = process.env.GIT_DESCRIBE || process.env.VIRTUES_BUILD_VERSION || 'dev';
+const rawSha = process.env.GIT_COMMIT || 'dev';
+
+const manifest = {
+	version: rawVersion.replace(/^v/, ''),
+	sha: rawSha === 'dev' ? 'dev' : rawSha.slice(0, 7),
+	channel: deriveChannel(rawVersion),
+	minShellVersion: contract.minShellVersion,
+	// Written last so it covers every other emitted file but not itself.
+	contentHash: hashTree(BUILD_DIR)
+};
+
+writeFileSync(MANIFEST, JSON.stringify(manifest, null, 2) + '\n');
+console.log(
+	`∴ bundle manifest ${manifest.version} (${manifest.contentHash}) · ` +
+		`minShell ${manifest.minShellVersion}`
+);

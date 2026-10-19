@@ -1,0 +1,11 @@
+name = "Plaid Transactions"
+description = "Brings in new transactions as your bank posts them."
+owner = "system"
+command = ["plaid_transactions_sync"]
+triggers = ["cron", "manual"]
+schedule = "0 */30 * * * *"
+per_credential = true
+source = { id = "plaid" }
+
+# Ontologies this applet writes — drives "what would fill this stream".
+writes = ["financial_transaction"]

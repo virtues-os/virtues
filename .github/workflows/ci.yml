@@ -1,0 +1,560 @@
+# Compile + test gate for staging/main pushes and PRs.
+#
+# Exists primarily to compile the Linux-only code paths (the getifaddrs
+# BYO-transport detection in net_check, the /proc SSH-ancestry walk in
+# cli/link, the kernel WG manager) that a macOS dev machine never builds —
+# release-linux.yml only fires on version tags, so without this workflow
+# nothing checks Linux until release time.
+
+name: CI
+
+# Skips changes that cannot affect the build. A docs-only PR was costing a full
+# Rust compile plus a Postgres service on a paid runner, twice (once for the PR,
+# once when the merge landed on staging). Keep this list to things with no code
+# path — anything that even might be compiled or shipped must NOT be listed here.
+#
+# Safe because `staging` has no required status checks; if branch protection is
+# ever added, `paths-ignore` on `pull_request` means the check never reports and
+# such PRs can never merge. Use a skip-job that reports success instead.
+#
+# The two lists below are duplicated on purpose — GitHub Actions does not
+# support YAML anchors/aliases in workflow files. Keep them in sync.
+on:
+  push:
+    branches: [main, staging]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/images/**"
+      - LICENSE
+  # PRs toward a release branch: `wave` into `staging`, `staging` into `main`.
+  pull_request:
+    branches: [main, staging]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
+      - ".github/images/**"
+      - LICENSE
+
+# Read-only unless a job says otherwise; no job here writes anything.
+permissions:
+  contents: read
+
+# A new push to a PR supersedes the run on the old head, so that run is
+# cancelled. Pushes to staging and main queue instead of cancelling: release
+# tags are cut from those commits, and each one should keep a finished run.
+concurrency:
+  group: ci-${{ github.head_ref || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  # The frontend had NO CI at all until 2026-08-17. `pnpm check` and the airlock's
+  # router tests ran only on whichever laptop happened to run them, which meant
+  # the tests written for the most load-bearing file in the product could rot
+  # without anything noticing. Its own job rather than steps on `rust`: it shares
+  # nothing with that job, needs no Postgres, and finishes in a fraction of the
+  # time, so a type error in a Svelte file should not wait on a Rust build.
+  # Validates the workflow files themselves. A YAML parse is NOT a validation:
+  # `0b7b4bb5` duplicated a `draft` key inside one `with:` block, which YAML
+  # accepts (keeping the last value) and GitHub Actions rejects — taking the
+  # whole file with it. `release-linux.yml` was unparseable for six hours, no
+  # release could be cut, and v0.1.7 got a tag with no binaries behind it while
+  # virtues.com/sh kept serving v0.1.6.
+  #
+  # Nothing announced it. An invalid workflow produces a run named by its file
+  # path with zero jobs, which reads as noise; it was found only by going
+  # looking for why a tag would not build. This job turns that into a red check
+  # on the PR that introduces it.
+  #
+  # Runner labels live in .github/actionlint.yaml — Blacksmith's are not
+  # GitHub's and actionlint cannot know them.
+  actions:
+    name: Workflow files are valid
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      # A pinned release, checksum-verified by install-action, rather than a
+      # script piped into bash from the tip of actionlint's main branch.
+      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: actionlint@1.7.12
+      - name: actionlint
+        run: |
+          # -shellcheck= turns OFF the shellcheck pass. Deliberate: it reports
+          # style in `run:` blocks (SC2129, SC2155) across four workflows that
+          # have shipped fine for months, and a job that is red on the day it
+          # lands is a job everyone learns to ignore. What is kept is the class
+          # that actually cost a release — schema, duplicate keys, expression
+          # syntax, jobs referencing jobs that do not exist. Drop the flag if
+          # the shell style is ever worth fixing.
+          actionlint -color -shellcheck=
+
+
+  web:
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # Versions pinned to match release-linux.yml — CI that passes on a
+      # different toolchain than the one that ships is CI about a different
+      # program.
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      # The page grammar's countable limits (agents/build/design-grammar.md §9),
+      # as a ratchet against a frozen baseline: 419 hex literals accumulated in
+      # a document whose §6 says "Nothing else." Fails only on an INCREASE; the
+      # script says why it is not a wall.
+      #
+      # First in this job, before pnpm install, because it needs neither node
+      # nor pnpm — only awk and find. It reads apps/web/src, so it belongs to
+      # the web job rather than beside the other shell ratchets in `rust`:
+      # there it sat behind cargo build, clippy and a Postgres service, which
+      # is a paid runner spent to report a CSS nit.
+      - name: No new design grammar violations
+        run: tools/design-lint.sh
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      # The airlock's routing rules (apps/web/src-tauri/ui/). No dependencies —
+      # node's own test runner, reading `connect.html` and evaluating the marked
+      # region. Run BEFORE svelte-check: these are the rules that decide whether
+      # a box can be set up at all, and they take under a second.
+      - name: Airlock router tests
+        run: node --test "apps/web/src-tauri/ui/*.test.mjs"
+
+      # Errors fail; warnings do not. There are ~113 warnings today (mostly
+      # `@reference` at-rules and a11y advisories) and gating on them would mean
+      # this job is red on arrival and therefore ignored. Errors are the signal.
+      - name: svelte-check
+        working-directory: apps/web
+        run: pnpm check
+
+  # The over-the-air UI loop, end to end, on real artifacts: a real `pnpm
+  # build`, packed by the box's own tarball code, unpacked and verified by the
+  # shell's own apply code. Each half has unit tests over hand-made trees; this
+  # is the one place the two halves meet a real build, which is where a
+  # mismatch in what gets hashed, skipped or required actually shows up.
+  #
+  # Also the only CI run of src-tauri's unit tests: it is outside the cargo
+  # workspace, so `rust`'s `cargo test --workspace` never reaches it. Linux
+  # builds it fine with the Tauri system packages release-linux-desktop.yml
+  # installs, and on Linux its frontendDist is the checked-in `ui/`, so the
+  # tests need no web build of their own.
+  ota:
+    name: OTA pipeline
+    runs-on: blacksmith-8vcpu-ubuntu-2204
+    env:
+      SQLX_OFFLINE: 'true'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      # wasm32: `pnpm build` builds the page editor's markdown converter
+      # (apps/web/scripts/build-converter.mjs).
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-12
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ota
+          workspaces: |
+            . -> target
+            apps/web/src-tauri -> target
+
+      # libdbus for the box (bluer); the rest are Tauri's Linux packages,
+      # the same list release-linux-desktop.yml builds the app with.
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libdbus-1-dev pkg-config \
+            libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      # A release-shaped stamp, so the manifest orders as a real bundle would.
+      - name: Build the web bundle
+        working-directory: apps/web
+        env:
+          GIT_DESCRIBE: v0.0.0-ci.1
+        run: pnpm build
+
+      - name: Box packs the bundle
+        env:
+          OTA_BUILD_DIR: ${{ github.workspace }}/apps/web/build
+          OTA_TARBALL_OUT: ${{ runner.temp }}/bundle.tar.gz
+        run: |
+          cargo test -p virtues --lib -- --exact api::web_bundle::tests::real_build_tarball_for_the_shell --nocapture
+          # The test returns early when its env is missing; make sure it did not.
+          test -s "$OTA_TARBALL_OUT"
+
+      - name: Shell applies the box's bundle
+        env:
+          OTA_TARBALL: ${{ runner.temp }}/bundle.tar.gz
+        run: cargo test --manifest-path apps/web/src-tauri/Cargo.toml --lib real_box_bundle_applies -- --nocapture
+
+      - name: Shell unit tests
+        run: cargo test --manifest-path apps/web/src-tauri/Cargo.toml --lib
+
+  # Pages are a Yjs tree under one contract, crates/virtues-document/
+  # contract.json, read by two implementations: the Rust crate (the model's
+  # HTML in, canonical HTML and the Yjs tree out) and the editor's Tiptap
+  # schema in apps/web/src/lib/document. Each has unit tests against itself;
+  # this is the one place the two meet. The crate's corpus goes through both,
+  # and the job fails when canonical HTML is not a fixed point in the browser,
+  # when either side's Yjs reads back differently in the other, or when the
+  # server's check of an update would refuse what Tiptap wrote for any case,
+  # pasted input included. A drift there is a block the model writes back
+  # unchanged and moves, a page one side opens differently from how the other
+  # wrote it, or an editor the server disconnects for its own paste.
+  #
+  # Without DOCUMENT_CONFORMANCE_BIN the conformance cases skip (and say so),
+  # so a local `pnpm vitest run` that does not build the binary is not this
+  # check. Every other vitest file runs here too, both projects (`unit` and
+  # the mounted components'): this job is where vitest runs in CI, so it
+  # names no paths, and a new test file is run without being listed
+  # (`src/lib/ci.test.ts` holds it to that).
+  #
+  # The editor converts pasted markdown with the crate's own converter,
+  # compiled to WebAssembly (crates/virtues-document-wasm); vitest's global
+  # setup builds it, and `converter.test.ts` holds it to the native build
+  # byte for byte over the corpus.
+  document-conformance:
+    name: Document contract conformance
+    runs-on: blacksmith-4vcpu-ubuntu-2204
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-12
+        with:
+          toolchain: stable
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: document-conformance
+
+      - name: Build the conformance binary
+        run: cargo build -p virtues-document --bin document-conformance
+
+      - name: Install web dependencies
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      - name: Rust and the editor agree on the corpus
+        working-directory: apps/web
+        env:
+          DOCUMENT_CONFORMANCE_BIN: ${{ github.workspace }}/target/debug/document-conformance
+        run: pnpm vitest run
+
+  rust:
+    runs-on: blacksmith-8vcpu-ubuntu-2204
+    # A real Postgres for the #[sqlx::test] tests (action_templates,
+    # scheduler) — sqlx spins up throwaway databases per test, so the user
+    # must be a superuser. pgvector image because migrations CREATE
+    # EXTENSION vector; pg18 matches what the installer provisions on boxes.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg18
+        env:
+          POSTGRES_USER: virtues
+          POSTGRES_PASSWORD: virtues
+          POSTGRES_DB: virtues
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U virtues"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # Sqlx queries are checked against the recorded schema under .sqlx/ —
+      # offline mode keeps the BUILD from needing a DB (same as
+      # release-linux); the live URL below is only for the test binaries.
+      SQLX_OFFLINE: 'true'
+      DATABASE_URL: postgres://virtues:virtues@localhost:5432/virtues
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history, not the default depth 1: the append-only migrations
+          # step runs `git merge-base` against the PR base, and a shallow
+          # checkout grafts HEAD parentless — merge-base then has nothing to
+          # walk and the step dies before its first comparison (it did, on
+          # this check's first real PR). ~266 MiB of pack, seconds on the
+          # runner's network.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-12
+        with:
+          toolchain: stable
+          components: clippy
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          shared-key: ci
+
+      # BEFORE the build, which is the whole point of it being its own step.
+      # These were installed further down, inside the step that sets up
+      # postgresql-client — so they arrived long after `cargo build` had
+      # already failed on them. `bluer` (the Improv/BLE service the appliance
+      # serves while unclaimed) pulls libdbus-sys, which is a pkg-config build
+      # script, so this is a hard prerequisite of compiling the box at all on
+      # Linux. Nothing caught it for weeks because BLE landed on `wave` and
+      # `wave` does not run CI.
+      - name: Install libdbus headers (bluer/BLE provisioning)
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+
+      - name: Build (debug — exercises the Linux cfg paths)
+        run: cargo build -p virtues -p virtues-installer -p virtues-client -p virtues-iroh
+
+      - name: Clippy
+        run: cargo clippy -p virtues -p virtues-installer
+
+      # The page converter without its Yjs half, as the browser's WebAssembly
+      # build compiles it (crates/virtues-document-wasm). Nothing else builds
+      # the crate with `yjs` off, so a converter path that reached into yrs
+      # would first fail in the web build.
+      - name: The page converter alone
+        run: |
+          cargo clippy -p virtues-document --no-default-features --all-targets -- -D warnings
+          cargo test -p virtues-document --no-default-features --lib
+
+      # A ratchet over the repo's most-repeated bug: a query whose error is
+      # discarded answers with a plausible value and never surfaces. Fails only
+      # on NEW ones — see the script for why it is not a wall.
+      - name: No new swallowed query errors
+        run: tools/check-swallowed-queries.sh
+
+      # The box parses the Improv pair packet in Rust; the iPhone builds it in
+      # Swift. Nothing compiles the two together, so they drifted for four days
+      # and BLE pairing failed at parse_rpc every time.
+      - name: Improv wire shapes agree across languages
+        run: tools/check-improv-wire.py
+
+      # The same ratchet over the UI-copy rules in agents/build/voice.md. The
+      # tree carries a real backlog, so this fails only when a count goes UP:
+      # new copy may not add a passive with no actor, a fourth name for the
+      # server, or a dev word on a screen. Lower one and commit the baseline.
+      - name: No new copy-voice regressions
+        run: tools/check-copy.py
+
+      # Create the one thing `#[sqlx::test]`'s throwaway databases SHARE.
+      #
+      # Roles are cluster-wide, not per-database, and migration 0052 does
+      # check-then-create on `virtues_face_reader`. So N tests migrating their
+      # scratch DBs in parallel can all see the role missing and race to CREATE
+      # it: one wins, the losers die with `duplicate key value violates unique
+      # constraint "pg_authid_rolname_index"`, and that takes the whole suite
+      # down. It is timing-dependent, so it shows up as a flaky `cargo test`
+      # that passes on re-run — the worst kind of red.
+      #
+      # Creating it once, serially, before the suite makes that IF NOT EXISTS
+      # short-circuit in every test, so no test ever mutates a cluster-wide
+      # object. Cheaper than serialising the tests (`--test-threads=1` would
+      # slow every run to fix a two-statement problem) and it keeps the sqlx
+      # tests exercising real migrations against a real schema.
+      #
+      # Why here and not in the migration: 0052 is already applied on live
+      # boxes, so editing it changes its checksum and `sqlx::migrate` refuses to
+      # run on the next upgrade. It also never races in production, where
+      # migrations run once, serially — this is a test-harness artifact, so the
+      # test harness is where it belongs.
+      #
+      # (Locally this is invisible: a dev box has already run migrations, so the
+      # role exists and the same tests pass — which is exactly why this reached
+      # CI unnoticed.)
+      # The backup drill (`cli::restore::drill`) shells out to pg_dump and
+      # pg_restore, and pg_dump REFUSES to dump from a server newer than itself.
+      # The runner image ships an older postgresql-client than the pg18 service
+      # container above, so without this the drill fails on a version check that
+      # has nothing to do with backup. Pin the client to the server's major.
+      - name: Install postgresql-client-18 (for pg_dump/pg_restore)
+        run: |
+          sudo install -d /usr/share/postgresql-common/pgdg
+          sudo curl -fsSL -o /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+            https://www.postgresql.org/media/keys/ACCC4CF8.asc
+          echo "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
+            https://apt.postgresql.org/pub/repos/apt $(lsb_release -cs)-pgdg main" \
+            | sudo tee /etc/apt/sources.list.d/pgdg.list
+          sudo apt-get update
+          # `git` is pinned here only to make the dependency explicit —
+          # `applet_git_import` shells out to it, and the box needs it for the
+          # same feature. The runner image already ships 2.52, so this is a
+          # no-op assertion rather than a fix.
+          #
+          # It was briefly mistaken FOR a fix: the test failed with "git init …
+          # failed to spawn: No such file or directory (os error 2)", which
+          # reads as a missing binary. `os error 2` on spawn also means the
+          # *working directory* does not exist, and that was the real cause —
+          # see the create_dir_all in applet_git_import.rs. Read the apt log
+          # before believing a package is missing.
+          sudo apt-get install -y postgresql-client-18 git
+          # Installing the package is not enough: the runner already ships an
+          # older postgresql-client, and /usr/bin/pg_dump keeps resolving to it.
+          # Put the versioned bindir ahead of it for every later step.
+          echo "/usr/lib/postgresql/18/bin" >> "$GITHUB_PATH"
+          export PATH="/usr/lib/postgresql/18/bin:$PATH"
+          # Assert, do not merely print. The first version of this step ended
+          # with a bare `pg_dump --version`, which faithfully reported 14.20 and
+          # was read by nobody; the failure surfaced two steps later as an
+          # unrelated-looking test failure.
+          got="$(pg_dump --version | grep -oE '[0-9]+' | head -1)"
+          echo "pg_dump major: $got"
+          if [ "$got" != "18" ]; then
+            echo "::error::pg_dump is $got, but the service container is 18 — pg_dump refuses to dump from a newer server"
+            exit 1
+          fi
+
+      - name: Pre-create the shared cluster roles
+        run: |
+          # BOTH roles the migrations create, not just one. 0052 makes
+          # virtues_face_reader and 0054 makes virtues_applet_writer, and each
+          # races the same way — this step originally covered only the first,
+          # so the second stayed latent until enough parallel sqlx tests
+          # existed to hit it. Adding tests is what surfaced it.
+          for role in virtues_face_reader virtues_applet_writer; do
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "DO \$\$ BEGIN
+              IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '$role') THEN
+                CREATE ROLE $role NOLOGIN;
+              END IF;
+            END \$\$;"
+            psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "GRANT $role TO CURRENT_USER;"
+          done
+
+      # Does `.sqlx/` still describe the real schema?
+      #
+      # The build above runs with SQLX_OFFLINE=true, so every `sqlx::query!` is
+      # validated against the recorded JSON in `.sqlx/` rather than against
+      # Postgres. That is the right default — it keeps the build and the release
+      # from needing a database — but it means the cache is the *only* thing
+      # asserting those queries are valid, and nothing was asserting the cache.
+      #
+      # The failure that shape allows is the worst kind this repo has:
+      # drop a column that `api/wiki.rs` selects, forget to regenerate, and the
+      # stale cache still says the column exists. `cargo check` passes. Clippy
+      # passes. CI is green. The release builds. Then `GET /api/wiki/people/:id`
+      # 500s on a real box, and the first person to find out is whoever is
+      # running it. Same shape as migration 52 and the pdfium 404: green here,
+      # broken there.
+      #
+      # `prepare --check` regenerates against the migrated service container and
+      # fails if the result differs from what is committed. It cannot be
+      # satisfied by discipline — that is the point. Fix is one command:
+      #   cargo sqlx prepare --workspace
+      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
+        with:
+          tool: sqlx-cli
+
+      - name: Verify the sqlx cache matches the schema
+        env:
+          SQLX_OFFLINE: 'false'
+        run: |
+          sqlx migrate run --source virtues-core/migrations
+          cargo sqlx prepare --check --workspace
+
+      # An applied migration's file is part of the fleet's history. sqlx
+      # checksums the BYTES, so editing one after boxes have applied it —
+      # even a comment — makes their next `migrate run` refuse with
+      # "previously applied but has been modified", which on a box is a boot
+      # refusal. Not hypothetical: a docs path-sweep (b75a20ce) edited
+      # comments inside 0005 + three atlas migrations after staging.65-.71
+      # had shipped them; caught by hand (9f9538f3) one prerelease before it
+      # bricked every upgrade. New files are welcome; .sql.pending
+      # placeholders may be consumed; everything else is append-only. A
+      # deliberate squash is the one exception, and it edits this step
+      # knowingly.
+      - name: Applied migrations are append-only
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          git fetch --no-tags origin "$BASE_REF"
+          base=$(git merge-base FETCH_HEAD HEAD)
+          drift=$(git diff --name-status --no-renames "$base" HEAD -- \
+                    virtues-core/migrations services/virtues-atlas/migrations \
+                  | grep -E '^\s*[MD]\s' | grep -E '\.sql$' || true)
+          if [ -n "$drift" ]; then
+            echo "✖ applied migration files modified or deleted:"
+            echo "$drift"
+            echo "Migrations are append-only once merged — revert the edit; new behavior gets a NEW migration."
+            exit 1
+          fi
+          echo "✓ migrations are append-only against $base"
+
+      # Two drift classes sqlx cannot see, because the SQL is built from
+      # string arrays at runtime: (1) dynamic INSERT/upsert column lists that
+      # name columns the schema no longer has (the 2026-08-17 renames left
+      # seven of these), and (2) the model-facing catalog in sql_query.rs
+      # advertising columns that exist but that NO writer populates — the
+      # agent then queries forever-NULL columns (eight found in the
+      # 2026-08-28 audit, including a ref_count that did not exist at all).
+      # Needs the migrated service Postgres from the step above.
+      - name: Dynamic SQL + model catalog match the schema
+        run: python3 tools/check-dynamic-inserts.py
+
+      # `--workspace`, not `-p virtues`. This used to test the one package, so
+      # virtues-registry, virtues-helpers, virtues-iroh and virtues-installer
+      # had their tests skipped entirely — a failing registry test sat on green
+      # staging until someone ran it by hand. A test that never runs is worse
+      # than no test: it reads as coverage.
+      #
+      # api::code::tests::test_timeout needs the code-execution sandbox
+      # runtime, which isn't provisioned on a bare runner — it's an
+      # environment-dependent timing test, not a unit test. Everything else
+      # runs DB-free or against the service Postgres above.
+      #
+      # NOTE: the Tauri mobile plugins and src-tauri are in the workspace
+      # `exclude` list, so `--workspace` still does not reach them. src-tauri's
+      # unit tests run in the `ota` job; the plugins only in the mobile build.
+      - name: Unit tests
+        run: cargo test --workspace -- --skip api::code::tests::test_timeout
+
+      # Audit the live models release against the installer's expected asset
+      # list (config.rs `models_release_assets`). Exists because libpdfium
+      # was wired into the install flow with no asset ever uploaded to
+      # models-1 — every real install then 404'd on its last step while CI
+      # stayed green. The test is #[ignore]d (network) so local `cargo test`
+      # stays offline; CI runs it by name here.
+      - name: Models-release asset audit
+        run: cargo test -p virtues-installer -- --ignored models_release_serves_every_expected_asset

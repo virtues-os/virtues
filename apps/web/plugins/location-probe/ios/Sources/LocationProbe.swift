@@ -1,0 +1,874 @@
+import CoreLocation
+import Foundation
+import SQLite3
+import UIKit
+
+// SQLite wants to copy bound strings, not borrow them.
+private let SQLITE_TRANSIENT = unsafeBitCast(-1, to: sqlite3_destructor_type.self)
+
+// The Rust outbox enqueue, bound by symbol name (no bridging header/modulemap).
+// Defined in the reach plugin's `ffi.rs`; the whole app links one static lib.
+@_silgen_name("virtues_enqueue")
+private func virtues_enqueue(_ stream: UnsafePointer<CChar>, _ json: UnsafePointer<CChar>) -> Int32
+
+// Drain the outbox to the box, blocking up to N seconds. Called from the
+// background (sig-loc wake) while holding an OS background-task assertion.
+@_silgen_name("virtues_drain_blocking")
+private func virtues_drain_blocking(_ timeoutSecs: Int32) -> Int32
+
+// Move share-sheet saves onto the outbox (the reach plugin's ShareInbox.swift).
+@_silgen_name("virtues_share_inbox_drain")
+private func virtues_share_inbox_drain() -> Int32
+
+// Hand the latest fix to the audio plugin for its place gate (any thread; it
+// locks). Cheap — a few comparisons — so it runs on every callback, before
+// the log throttle: the gate wants the freshest fix, not one per 15 s.
+@_silgen_name("virtues_audio_location")
+private func virtues_audio_location(_ lat: Double, _ lon: Double, _ accuracyM: Double)
+
+// A geofence verdict for one muted place: 1 = inside, 0 = outside.
+@_silgen_name("virtues_audio_region")
+private func virtues_audio_region(_ placeId: UnsafePointer<CChar>, _ inside: Int32)
+
+/// ISO-8601 with fractional seconds so distinct fixes get distinct timestamps
+/// (the outbox derives a per-record id from the record, incl. this).
+private let isoMillis: ISO8601DateFormatter = {
+  let f = ISO8601DateFormatter()
+  f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+  return f
+}()
+
+/// The whole point of the spike.
+///
+/// A single, process-wide `CLLocationManager` owner that:
+///   1. can be started from the app's AppDelegate on a COLD background relaunch
+///      (i.e. before any webview exists), and again from a JS plugin command;
+///   2. registers significant-location-change so iOS relaunches the terminated
+///      app into the background on movement;
+///   3. writes every callback straight to SQLite, recording the app state and
+///      the launch reason — so you can later prove a row was written while the
+///      app was not on screen.
+///
+/// Nothing here is Tauri-specific: it is the same CoreLocation you would write
+/// in the native Swift app. The test is whether Tauri's launch lifecycle still
+/// reaches `start()` on a background relaunch.
+public final class LocationProbe: NSObject, CLLocationManagerDelegate {
+  public static let shared = LocationProbe()
+
+  /// Created in `configure()`, on the main thread, never in `init`.
+  /// CoreLocation delivers delegate callbacks on the run loop of the thread
+  /// that CREATED the manager, and `shared` can be first touched off-main:
+  /// Tauri runs plugin commands on its `ipc` queue, and the audio plugin's
+  /// init (reached from its `resume` command at launch) pushes its muted
+  /// places here before `start` gets to run. A manager born on that queue
+  /// hears nothing: permission granted, updates started, and not one fix,
+  /// auth change or error ever arrives.
+  private var manager: CLLocationManager!
+  private var configured = false
+  private var updating = false
+  /// An explicit opt-in asked for permission in this process. Only then does a
+  /// While Using grant schedule the later ask for Always.
+  private var wantPrompt = false
+
+  /// `requestPermission` callers waiting for the person's answer. Main thread
+  /// only, like every other touch of `manager`.
+  private var authWaiters: [(String) -> Void] = []
+  /// Long enough for a person to read the sheet; short enough that a sheet iOS
+  /// never showed (a missing usage string) cannot hang the caller for good.
+  private let authWaitTimeout: TimeInterval = 120
+
+  // MARK: - The ask for Always
+  //
+  // Background relaunch (significant-location change on a terminated app)
+  // needs Always, and iOS grants it only as an upgrade from While Using. That
+  // upgrade is never asked inside the callback that reports the While Using
+  // grant: there it appears the instant the first sheet closes, stacked on
+  // whatever the screen asks next (Setup asks for several permissions in a
+  // row), and a sheet the person did not see coming is the one they refuse.
+  //
+  // Instead the grant records a due time, and the ask happens on the first
+  // real foreground after it: a launch, or a return from the background —
+  // never `didBecomeActive` alone, which also fires when any system sheet
+  // closes. Until then While Using still collects while the app is alive
+  // (`allowsBackgroundLocationUpdates`, blue pill); only relaunch waits.
+  private static let alwaysDueKey = "virtues.location.always_due_at"
+  private let alwaysDelay: TimeInterval = 600
+  private var launchActivationSeen = false
+  private var enteredForeground = false
+
+  /// Which callbacks are sent. A fix reporting at least `stepSpeed` that has
+  /// moved `minStep` (and further than its own error radius) from the last
+  /// sent one goes after `minStepInterval`; any other, one per
+  /// `minFixInterval`. Time alone drew a drive as 200-300 m chords across
+  /// blocks. The speed gate is what keeps a still phone on 15 s: indoors its
+  /// Wi-Fi fixes hop 30-120 m with no speed, and an error-radius guard alone
+  /// let 13% of them through, and stay detection ends a stay on two far
+  /// fixes in a row.
+  private var lastFixAt: Date?
+  private var lastFix: CLLocation?
+  private let minFixInterval: TimeInterval = 15
+  private let minStep: CLLocationDistance = 20
+  private let minStepInterval: TimeInterval = 2
+  private let stepSpeed: CLLocationSpeed = 1
+  /// The local log keeps the 15 s cadence: the shared log is its newest 5000
+  /// rows, and a drive's dense fixes would push the diagnostics out of it.
+  private var lastLoggedAt: Date?
+
+  // MARK: - Power modes (motion-adaptive duty cycle)
+  //
+  // GPS at 10m accuracy 24/7 is the single biggest hardware burn and a phone is
+  // stationary most of the day. `coarse` (cell/Wi-Fi positioning, GNSS chip off)
+  // is entered when stationary. In coarse mode location may be the app's ONLY
+  // residency assertion (audio off, or audio session dead) — that is fine:
+  // residency comes from updates being ACTIVE, not from their accuracy.
+  // Updates are never stopped — only accuracy/filter are modulated — so
+  // background residency and the sig-loc relaunch path are untouched.
+
+  private enum PowerMode { case precise, coarse }
+  private var mode: PowerMode = .precise
+  /// Last position that counted as movement; displacement is measured from here.
+  private var moveAnchor: CLLocation?
+  private var lastMovedAt = Date()
+  private let stationaryAfter: TimeInterval = 300
+  private let moveThreshold: CLLocationDistance = 60
+  private let movingSpeed: CLLocationSpeed = 1.5
+
+  // MARK: - Still check (a floor under the fix cadence)
+  //
+  // Coarse mode's 100 m filter means a phone that sits still records nothing
+  // for hours, and "sitting still" then looks exactly like "collector dead" —
+  // which is how a dead manager went unnoticed for ten days. So the 5-minute
+  // drain timer also asks: no fix logged for `stillCheckAfter`? Then ask for
+  // one reading at 100 m accuracy with the filter off, log the first fresh fix
+  // flagged `still`, and restore the mode. iOS answers a 100 m ask with GNSS
+  // (single-digit-meter fixes), so the check is spaced to every third tick,
+  // ~15 min; a 1 km ask does not reliably produce a fresh fix at all (about
+  // a third of checks got one). Motion logic is skipped for the window: a
+  // still fix against a coarse anchor could read as movement and buy 5 min
+  // of GNSS.
+  private var stillCheckStartedAt: Date?
+  /// Longer than two 300 s timer periods even with their leeway (~720 s) and
+  /// shorter than three (>= 900 s), so a still phone checks every third tick.
+  private let stillCheckAfter: TimeInterval = 780
+  private let stillCheckWindow: TimeInterval = 20
+
+  /// Guards against overlapping background drains.
+  private var isDraining = false
+
+  /// Pace background drains at the audio-chunk cadence: with endpoint parking
+  /// (reach plugin) every background drain is a fresh QUIC dial, and location
+  /// fixes alone are too small to earn one every 15s while moving. The first
+  /// drain after launch goes immediately — a cold sig-loc relaunch may not
+  /// live long enough to wait out an interval.
+  private var lastBgDrainAt: Date?
+  private let minBgDrainInterval: TimeInterval = 300
+
+  /// Fallback drain pacing: background drains are otherwise TRIGGERED by
+  /// location callbacks and audio-chunk nudges. An audio-off user in coarse
+  /// mode gets neither while stationary (3km accuracy + 100m filter can mean
+  /// zero callbacks for hours) — queued health/calendar/location rows would sit
+  /// all day. This timer is the floor. We can run one because one residency
+  /// assertion (audio session or active location updates) always holds. The
+  /// generous leeway lets iOS coalesce the wakeup; `maybeDrainInBackground`
+  /// already no-ops in foreground, dedupes, and rate-limits.
+  private var drainTimer: DispatchSourceTimer?
+  private let drainTimerQueue = DispatchQueue(label: "com.virtues.locdrain", qos: .utility)
+
+  /// Set by the AppDelegate: "user" for a normal launch, "location" when the
+  /// app was relaunched by the OS for a location event (launchOptions carried
+  /// `.location`). This is the flag that proves cold-relaunch collection.
+  public var launchReason: String = "user"
+
+  private override init() { super.init() }
+
+  /// Start collecting. `prompt = false` (launch auto-resume) starts only if
+  /// already authorized and never shows a dialog; `prompt = true` (explicit
+  /// "Enable" opt-in) requests permission when undetermined. Idempotent.
+  public func start(prompt: Bool) {
+    if !Thread.isMainThread {
+      DispatchQueue.main.async { [weak self] in self?.start(prompt: prompt) }
+      return
+    }
+    configure()
+    wantPrompt = wantPrompt || prompt
+
+    if launchReason == "user", appStateString() == "background" {
+      launchReason = "background-launch"
+    }
+
+    switch currentStatus() {
+    case .authorizedAlways, .authorizedWhenInUse:
+      beginUpdates()
+    case .notDetermined:
+      if prompt { manager.requestWhenInUseAuthorization() }  // the answer lands in didChange
+    default:
+      break  // denied / restricted — nothing to do
+    }
+  }
+
+  /// The explicit opt-in, answered: prompts if undetermined, starts collecting
+  /// on a grant, and calls `done` with the person's answer (see
+  /// `authorizationString`). The callback iOS makes as the manager is created
+  /// still reads `not_determined` and is not an answer, so only a determined
+  /// status settles it. The While Using answer settles it; Always comes later.
+  public func requestPermission(_ done: @escaping (String) -> Void) {
+    if !Thread.isMainThread {
+      DispatchQueue.main.async { [weak self] in self?.requestPermission(done) }
+      return
+    }
+    configure()
+    guard currentStatus() == .notDetermined else {
+      start(prompt: true)
+      done(authorizationString())
+      return
+    }
+    var fired = false
+    let settle: (String) -> Void = { status in
+      if fired { return }
+      fired = true
+      done(status)
+    }
+    authWaiters.append(settle)
+    // A settled waiter left in the list is inert; the next answer clears it.
+    DispatchQueue.main.asyncAfter(deadline: .now() + authWaitTimeout) { [weak self] in
+      guard let self = self else { return }
+      settle(self.authorizationString())
+    }
+    start(prompt: true)
+  }
+
+  /// The authorization as a plain word for the UI: `not_determined`,
+  /// `when_in_use`, `always`, `denied` or `restricted`. Main thread.
+  public func authorizationString() -> String {
+    configure()
+    switch currentStatus() {
+    case .notDetermined: return "not_determined"
+    case .authorizedWhenInUse: return "when_in_use"
+    case .authorizedAlways: return "always"
+    case .restricted: return "restricted"
+    case .denied: return "denied"
+    @unknown default: return "denied"
+    }
+  }
+
+  /// Called from plugin init (didFinishLaunching, main thread). Watches for the
+  /// foregrounds on which a due ask for Always may run; see `alwaysDueKey`.
+  public func installAlwaysEscalation() {
+    let nc = NotificationCenter.default
+    nc.addObserver(self, selector: #selector(onWillEnterForeground),
+      name: UIApplication.willEnterForegroundNotification, object: nil)
+    nc.addObserver(self, selector: #selector(onDidBecomeActive),
+      name: UIApplication.didBecomeActiveNotification, object: nil)
+  }
+
+  @objc private func onWillEnterForeground() { enteredForeground = true }
+
+  @objc private func onDidBecomeActive() {
+    // The process's first activation is a launch; later ones count only after a
+    // real return from the background.
+    let isLaunch = !launchActivationSeen
+    launchActivationSeen = true
+    guard isLaunch || enteredForeground else { return }
+    enteredForeground = false
+    escalateIfDue()
+  }
+
+  private func escalateIfDue() {
+    let d = UserDefaults.standard
+    guard d.object(forKey: Self.alwaysDueKey) != nil else { return }
+    guard Date().timeIntervalSince1970 >= d.double(forKey: Self.alwaysDueKey) else { return }
+    d.removeObject(forKey: Self.alwaysDueKey)
+    configure()
+    // iOS shows the upgrade sheet once per install; a person who has since
+    // chosen Always, Never or Ask Next Time in Settings is not asked again.
+    if currentStatus() == .authorizedWhenInUse {
+      writeMarker(source: "ask=always")
+      manager.requestAlwaysAuthorization()
+    }
+  }
+
+  /// One-time manager configuration (safe to call before authorization).
+  private func configure() {
+    if configured { return }
+    configured = true
+    manager = CLLocationManager()
+    manager.delegate = self
+    manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+    manager.allowsBackgroundLocationUpdates = true
+    manager.pausesLocationUpdatesAutomatically = false
+    manager.showsBackgroundLocationIndicator = true
+  }
+
+  /// Begin location services. Idempotent. Significant-location-change is the one
+  /// service that relaunches a terminated app into the background; continuous
+  /// updates give finer callbacks while the process is alive.
+  private func beginUpdates() {
+    if updating { return }
+    updating = true
+    manager.startMonitoringSignificantLocationChanges()
+    manager.startUpdatingLocation()
+    applyRegions(around: manager.location)
+    startDrainTimer()
+    writeMarker(source: "start(reason=\(launchReason))")
+  }
+
+  private func startDrainTimer() {
+    if drainTimer != nil { return }
+    let t = DispatchSource.makeTimerSource(queue: drainTimerQueue)
+    t.schedule(deadline: .now() + minBgDrainInterval, repeating: minBgDrainInterval,
+               leeway: .seconds(60))
+    t.setEventHandler { [weak self] in
+      self?.maybeStillCheck()
+      self?.maybeDrainInBackground()
+    }
+    drainTimer = t
+    t.resume()
+  }
+
+  private func currentStatus() -> CLAuthorizationStatus {
+    if #available(iOS 14.0, *) { return manager.authorizationStatus }
+    return CLLocationManager.authorizationStatus()
+  }
+
+  // MARK: - Muted-place regions (the audio plugin's places, as OS geofences)
+  //
+  // The audio plugin gates chunk writing on "inside a muted place", fed by the
+  // fixes above. Fixes alone miss two cases: coarse mode (a stationary phone's
+  // 3 km cell fix proves nothing about a 100 m circle) and a cold relaunch
+  // whose first fix is fuzzy. A monitored `CLCircularRegion` covers both — the
+  // OS resolves the crossing with whatever radios it has and relaunches the
+  // app for it. iOS allows 20 regions per app, so the 20 nearest the last fix
+  // are registered and the pick is redone once we have moved a kilometer.
+  // Regions only inform the gate; nothing here starts recording.
+
+  struct MutedRegion {
+    let id: String
+    let center: CLLocationCoordinate2D
+    let radius: CLLocationDistance
+  }
+  private let regionPrefix = "virtues.place."
+  private let maxRegions = 20
+  private let regionRepickDistance: CLLocationDistance = 1000
+  private var wantedRegions: [MutedRegion] = []
+  private var regionsPickedAt: CLLocation?
+
+  /// Replace the wanted set. Main-thread confined like the rest of the manager.
+  func setRegions(_ rs: [MutedRegion]) {
+    if !Thread.isMainThread {
+      DispatchQueue.main.async { [weak self] in self?.setRegions(rs) }
+      return
+    }
+    wantedRegions = rs
+    regionsPickedAt = nil
+    // Before `start`, only remember them: `beginUpdates` applies the set.
+    guard configured else { return }
+    applyRegions(around: manager.location)
+  }
+
+  private func refreshRegions(around l: CLLocation) {
+    guard !wantedRegions.isEmpty else { return }
+    if let at = regionsPickedAt, l.distance(from: at) < regionRepickDistance { return }
+    applyRegions(around: l)
+  }
+
+  private func applyRegions(around l: CLLocation?) {
+    guard CLLocationManager.isMonitoringAvailable(for: CLCircularRegion.self) else { return }
+    var pick = wantedRegions
+    if pick.count > maxRegions, let l = l {
+      pick.sort {
+        l.distance(from: CLLocation(latitude: $0.center.latitude, longitude: $0.center.longitude))
+          < l.distance(from: CLLocation(latitude: $1.center.latitude, longitude: $1.center.longitude))
+      }
+      pick = Array(pick.prefix(maxRegions))
+    } else if pick.count > maxRegions {
+      pick = Array(pick.prefix(maxRegions))
+    }
+    regionsPickedAt = l
+    let wantIds = Set(pick.map { regionPrefix + $0.id })
+    // Only our own regions are touched; the manager may hold others some day.
+    let ours = manager.monitoredRegions.filter { $0.identifier.hasPrefix(regionPrefix) }
+    for r in ours where !wantIds.contains(r.identifier) {
+      manager.stopMonitoring(for: r)
+    }
+    let have = Set(ours.map { $0.identifier })
+    let cap = manager.maximumRegionMonitoringDistance
+    for p in pick {
+      let ident = regionPrefix + p.id
+      let region = CLCircularRegion(center: p.center, radius: min(p.radius, cap), identifier: ident)
+      region.notifyOnEntry = true
+      region.notifyOnExit = true
+      if !have.contains(ident) { manager.startMonitoring(for: region) }
+      // A verdict now, not on the next crossing: the phone may already be
+      // inside (a place muted while standing in it, or a relaunch there).
+      manager.requestState(for: region)
+    }
+    writeMarker(source: "regions=\(pick.count)/\(wantedRegions.count)")
+  }
+
+  private func placeId(of region: CLRegion) -> String? {
+    guard region.identifier.hasPrefix(regionPrefix) else { return nil }
+    return String(region.identifier.dropFirst(regionPrefix.count))
+  }
+
+  private func pushVerdict(_ region: CLRegion, inside: Bool) {
+    guard let id = placeId(of: region) else { return }
+    id.withCString { virtues_audio_region($0, inside ? 1 : 0) }
+  }
+
+  public func locationManager(_ m: CLLocationManager, didEnterRegion region: CLRegion) {
+    pushVerdict(region, inside: true)
+    writeMarker(source: "region-enter=\(region.identifier)")
+  }
+
+  public func locationManager(_ m: CLLocationManager, didExitRegion region: CLRegion) {
+    pushVerdict(region, inside: false)
+    writeMarker(source: "region-exit=\(region.identifier)")
+  }
+
+  public func locationManager(_ m: CLLocationManager, didDetermineState state: CLRegionState, for region: CLRegion) {
+    switch state {
+    case .inside: pushVerdict(region, inside: true)
+    case .outside: pushVerdict(region, inside: false)
+    case .unknown: break
+    @unknown default: break
+    }
+  }
+
+  public func locationManager(_ m: CLLocationManager, monitoringDidFailFor region: CLRegion?, withError error: Error) {
+    writeMarker(source: "region-fail=\(region?.identifier ?? "?") \(error.localizedDescription)")
+  }
+
+  // MARK: - CLLocationManagerDelegate
+
+  public func locationManager(_ m: CLLocationManager, didUpdateLocations locs: [CLLocation]) {
+    guard let l = locs.last else { return }
+    virtues_audio_location(l.coordinate.latitude, l.coordinate.longitude, l.horizontalAccuracy)
+    refreshRegions(around: l)
+    if stillCheckStartedAt != nil {
+      stillCheckSaw(l)
+      return
+    }
+    updateMotion(l)  // mode logic sees every callback, before the log throttle
+    if !isDue(l) { return }
+    record(l, still: false)
+  }
+
+  private func isDue(_ l: CLLocation) -> Bool {
+    guard let at = lastFixAt else { return true }
+    let since = Date().timeIntervalSince(at)
+    if since >= minFixInterval { return true }
+    guard since >= minStepInterval, l.speed >= stepSpeed, l.horizontalAccuracy >= 0,
+      let prev = lastFix else { return false }
+    return l.distance(from: prev) >= max(minStep, l.horizontalAccuracy)
+  }
+
+  /// Log one fix locally, enqueue it for the box, and ride its wake.
+  private func record(_ l: CLLocation, still: Bool) {
+    // A still fix is proof of presence, not news: it rides the next upload
+    // (the audio chunk's nudge, or the drain timer) instead of calling one.
+    let now = Date()
+    lastFixAt = now
+    lastFix = l
+    // Local rolling log (device-screen "recent activity" + background badge).
+    if still || lastLoggedAt.map({ now.timeIntervalSince($0) >= minFixInterval }) ?? true {
+      lastLoggedAt = now
+      write(lat: l.coordinate.latitude, lon: l.coordinate.longitude, source: still ? "still" : "update")
+    }
+    // Durable delivery: full-field record → shared outbox → box.
+    enqueueFix(l, still: still)
+    // If this fix arrived while backgrounded (incl. a cold sig-loc relaunch),
+    // drain to the box now — the foreground loop won't run until next launch.
+    if !still { maybeDrainInBackground() }
+  }
+
+  /// Drain-timer tick: start a still check if no fix has been logged lately.
+  private func maybeStillCheck() {
+    if !Thread.isMainThread {
+      DispatchQueue.main.async { [weak self] in self?.maybeStillCheck() }
+      return
+    }
+    guard updating, stillCheckStartedAt == nil else { return }
+    if let last = lastFixAt, Date().timeIntervalSince(last) < stillCheckAfter { return }
+    let started = Date()
+    stillCheckStartedAt = started
+    // Precise mode already asks for better; only loosen the filter there.
+    if mode == .coarse { manager.desiredAccuracy = kCLLocationAccuracyHundredMeters }
+    manager.distanceFilter = kCLDistanceFilterNone
+    DispatchQueue.main.asyncAfter(deadline: .now() + stillCheckWindow) { [weak self] in
+      guard let self = self, self.stillCheckStartedAt == started else { return }
+      self.finishStillCheck(with: nil)
+    }
+  }
+
+  private func stillCheckSaw(_ l: CLLocation) {
+    // A cached fix from before the check proves nothing about now. The first
+    // fresh one ends it: waiting for a better one is what wakes GNSS.
+    guard let started = stillCheckStartedAt, l.horizontalAccuracy >= 0,
+      l.timestamp >= started.addingTimeInterval(-1) else { return }
+    finishStillCheck(with: l)
+  }
+
+  private func finishStillCheck(with fix: CLLocation?) {
+    guard stillCheckStartedAt != nil else { return }
+    stillCheckStartedAt = nil
+    applySettings(mode)
+    guard let fix = fix else {
+      // Console only: a marker per miss would, every 5 min, push real fixes
+      // out of the 300-row window the device screen reads.
+      NSLog("[LocationProbe] still check: no fresh fix in %.0fs", stillCheckWindow)
+      return
+    }
+    record(fix, still: true)
+  }
+
+  /// On a background/sig-loc wake, hold an OS background-task assertion and run
+  /// a bounded drain so queued fixes reach the box before iOS suspends us.
+  /// No-op in the foreground (the plugin's 20s loop handles that).
+  private func maybeDrainInBackground() {
+    // Callers: main-thread delegate callbacks AND the fallback drain timer's
+    // utility queue — hop to main so isDraining/lastBgDrainAt have one writer.
+    if !Thread.isMainThread {
+      DispatchQueue.main.async { [weak self] in self?.maybeDrainInBackground() }
+      return
+    }
+    if appStateString() == "active" { return }
+    if isDraining { return }
+    if let last = lastBgDrainAt, Date().timeIntervalSince(last) < minBgDrainInterval { return }
+    lastBgDrainAt = Date()
+    isDraining = true
+
+    var bg: UIBackgroundTaskIdentifier = .invalid
+    bg = UIApplication.shared.beginBackgroundTask(withName: "virtues-drain") {
+      // Expiration: iOS is reclaiming the process — end the assertion.
+      if bg != .invalid { UIApplication.shared.endBackgroundTask(bg); bg = .invalid }
+    }
+    let budget = Int32(min(max(UIApplication.shared.backgroundTimeRemaining - 3, 5), 25))
+    NSLog("[LocationProbe] bg drain start, budget=%ds", budget)
+
+    DispatchQueue.global(qos: .utility).async { [weak self] in
+      // Shares first. This is the wake that fires most — whenever the phone
+      // moves — so it is the one that lets a share made while the app is
+      // closed reach the box without the app ever being opened.
+      _ = virtues_share_inbox_drain()
+      let rc = virtues_drain_blocking(budget)
+      NSLog("[LocationProbe] bg drain done rc/count=%d", rc)
+      DispatchQueue.main.async {
+        self?.isDraining = false
+        if bg != .invalid { UIApplication.shared.endBackgroundTask(bg); bg = .invalid }
+      }
+    }
+  }
+
+  /// Build a box-shaped location record and enqueue it into the Rust outbox.
+  private func enqueueFix(_ l: CLLocation, still: Bool) {
+    // `still` marks a still-check reading: proof of presence, not movement.
+    var raw: [String: Any] = ["app_state": appStateString()]
+    if still { raw["still"] = true }
+    // Battery beside every fix, so the box can measure drain per hour by build
+    // and by mic state; nothing on the phone records it otherwise. Monitoring
+    // is enabled at launch by ReachMonitor; -1 means unknown and is left out.
+    let level = UIDevice.current.batteryLevel
+    if level >= 0 {
+      raw["battery_level"] = (Double(level) * 100).rounded() / 100
+      raw["battery_state"] = batteryStateString()
+    }
+    var rec: [String: Any] = [
+      "timestamp": isoMillis.string(from: l.timestamp),
+      "latitude": l.coordinate.latitude,
+      "longitude": l.coordinate.longitude,
+      "altitude": l.altitude,
+      "horizontal_accuracy": l.horizontalAccuracy,
+      "vertical_accuracy": l.verticalAccuracy,
+      "speed": max(l.speed, 0),
+      // Provenance: whether this fix was captured while the app was active or
+      // running autonomously in the background. The box stores `raw_data` into
+      // metadata.ios_raw, so this lands as a queryable signal (no box change).
+      "raw_data": raw,
+    ]
+    if l.course >= 0 { rec["course"] = l.course }
+    if let floor = l.floor { rec["floor_level"] = floor.level }
+
+    guard
+      let data = try? JSONSerialization.data(withJSONObject: rec),
+      let json = String(data: data, encoding: .utf8)
+    else { return }
+
+    let rc = "location".withCString { s in json.withCString { j in virtues_enqueue(s, j) } }
+    if rc != 0 { NSLog("[LocationProbe] enqueue failed rc=%d", rc) }
+  }
+
+  /// Motion-adaptive mode switching. Runs on every delegate callback.
+  private func updateMotion(_ l: CLLocation) {
+    let moved: Bool
+    if let a = moveAnchor {
+      // Coarse fixes are cell/Wi-Fi positioned with km-scale horizontalAccuracy
+      // and speed = -1, so an accuracy-sized threshold would be unreachable for
+      // any sub-3km trip (walk to a café, short drive) — coarse mode would
+      // never escalate back. Cap the threshold at 500m: real short trips
+      // escape, and a spurious tower-jitter escalation self-corrects (5 min
+      // stationary in precise drops right back to coarse).
+      let threshold = mode == .coarse ? max(200, min(l.horizontalAccuracy, 500)) : moveThreshold
+      moved = l.distance(from: a) > threshold || l.speed > movingSpeed
+    } else {
+      moved = true
+    }
+    if moved {
+      moveAnchor = l
+      lastMovedAt = Date()
+      if mode == .coarse { apply(.precise, reason: "movement") }
+      return
+    }
+    if mode == .precise, Date().timeIntervalSince(lastMovedAt) > stationaryAfter {
+      apply(.coarse, reason: "stationary")
+    }
+  }
+
+  private func apply(_ new: PowerMode, reason: String) {
+    if mode == new { return }
+    mode = new
+    // A still check restores `mode` when it ends; let it, rather than cut it short.
+    if stillCheckStartedAt == nil { applySettings(new) }
+    // Lands in the rolling log → visible under Recent activity, and greppable
+    // in the device console for the battery A/B.
+    writeMarker(source: "mode=\(new == .precise ? "precise" : "coarse") (\(reason))")
+  }
+
+  private func applySettings(_ m: PowerMode) {
+    switch m {
+    case .precise:
+      manager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+      manager.distanceFilter = kCLDistanceFilterNone
+    case .coarse:
+      manager.desiredAccuracy = kCLLocationAccuracyThreeKilometers
+      manager.distanceFilter = 100
+    }
+  }
+
+  public func locationManagerDidChangeAuthorization(_ m: CLLocationManager) {
+    let status = currentStatus()
+    writeMarker(source: "auth=\(status.rawValue)")
+    if status != .notDetermined, !authWaiters.isEmpty {
+      let answer = authorizationString()
+      let waiting = authWaiters
+      authWaiters.removeAll()
+      waiting.forEach { $0(answer) }
+    }
+    switch status {
+    case .authorizedWhenInUse:
+      // Background relaunch needs Always, asked on a later foreground rather
+      // than here (see `alwaysDueKey`). Only after an explicit opt-in: a
+      // person who chose While Using in Settings is not nagged.
+      let d = UserDefaults.standard
+      if wantPrompt, d.object(forKey: Self.alwaysDueKey) == nil {
+        d.set(Date().timeIntervalSince1970 + alwaysDelay, forKey: Self.alwaysDueKey)
+      }
+      beginUpdates()
+    case .authorizedAlways:
+      beginUpdates()
+    default:
+      break
+    }
+  }
+
+  public func locationManager(_ m: CLLocationManager, didFailWithError error: Error) {
+    writeMarker(source: "error=\(error.localizedDescription)")
+  }
+
+  // MARK: - Reads (for the JS viewer)
+
+  /// The newest `limit` rows. `fixesOnly` leaves out the 0,0 marker rows (this
+  /// probe's own events and other plugins' diagnostics), so a burst of them
+  /// cannot crowd the fixes out of a screen's window.
+  public func readRows(limit: Int, fixesOnly: Bool = false) -> [[String: Any]] {
+    var out: [[String: Any]] = []
+    withDB { db in
+      var stmt: OpaquePointer?
+      let filter = fixesOnly ? "WHERE NOT (lat = 0 AND lon = 0) " : ""
+      let sql =
+        "SELECT ts, lat, lon, source, app_state, launch_reason FROM rows \(filter)ORDER BY id DESC LIMIT ?"
+      if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+        sqlite3_bind_int(stmt, 1, Int32(limit))
+        while sqlite3_step(stmt) == SQLITE_ROW {
+          out.append([
+            "ts": text(stmt, 0),
+            "lat": sqlite3_column_double(stmt, 1),
+            "lon": sqlite3_column_double(stmt, 2),
+            "source": text(stmt, 3),
+            "appState": text(stmt, 4),
+            "launchReason": text(stmt, 5),
+          ])
+        }
+      }
+      sqlite3_finalize(stmt)
+    }
+    return out
+  }
+
+  // MARK: - Writes
+
+  /// MetricKit payload storage (Metrics.swift). Own table in the same
+  /// diagnostics DB — a payload is a ~daily multi-KB JSON blob, not a row of
+  /// the location log.
+  public func writeMetric(kind: String, json: String) {
+    let ts = ISO8601DateFormatter().string(from: Date())
+    withDB { db in
+      var stmt: OpaquePointer?
+      sqlite3_exec(
+        db,
+        "CREATE TABLE IF NOT EXISTS metrics(id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT, kind TEXT, json TEXT)",
+        nil, nil, nil)
+      if sqlite3_prepare_v2(db, "INSERT INTO metrics (ts, kind, json) VALUES (?,?,?)", -1, &stmt, nil)
+        == SQLITE_OK {
+        sqlite3_bind_text(stmt, 1, ts, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 2, kind, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 3, json, -1, SQLITE_TRANSIENT)
+        sqlite3_step(stmt)
+      }
+      sqlite3_finalize(stmt)
+    }
+  }
+
+  private func writeMarker(source: String) {
+    write(lat: 0, lon: 0, source: source)
+  }
+
+  /// Another plugin's line for the log (see `virtues_diag_note`). The caller
+  /// has already written it to the console.
+  func note(_ line: String) {
+    write(lat: 0, lon: 0, source: line, console: false)
+  }
+
+  /// The log is a rolling one: rows older than `rowsKeep` go, checked on the
+  /// first write of a process and every `pruneEvery` writes after it.
+  private let rowsKeep: TimeInterval = 7 * 24 * 3600
+  private let pruneEvery = 500
+  private var writesSincePrune = 0
+
+  private func write(lat: Double, lon: Double, source: String, console: Bool = true) {
+    let ts = ISO8601DateFormatter().string(from: Date())
+    let state = appStateString()
+    let reason = launchReason
+    let prune = writesSincePrune == 0
+    writesSincePrune = (writesSincePrune + 1) % pruneEvery
+    withDB { db in
+      var stmt: OpaquePointer?
+      let sql =
+        "INSERT INTO rows (ts, lat, lon, source, app_state, launch_reason) VALUES (?,?,?,?,?,?)"
+      if sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK {
+        sqlite3_bind_text(stmt, 1, ts, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_double(stmt, 2, lat)
+        sqlite3_bind_double(stmt, 3, lon)
+        sqlite3_bind_text(stmt, 4, source, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 5, state, -1, SQLITE_TRANSIENT)
+        sqlite3_bind_text(stmt, 6, reason, -1, SQLITE_TRANSIENT)
+        sqlite3_step(stmt)
+      }
+      sqlite3_finalize(stmt)
+      if prune {
+        // `ts` is ISO-8601 in UTC, so text order is time order. Batched, on
+        // main: a table that was never pruned can hold months of rows, and
+        // the oldest come first in id order, so each pass clears a slice and
+        // the backlog drains over the following prunes.
+        let cutoff = ISO8601DateFormatter().string(from: Date().addingTimeInterval(-rowsKeep))
+        let sql = "DELETE FROM rows WHERE id IN (SELECT id FROM rows WHERE ts < ? ORDER BY id LIMIT 5000)"
+        var del: OpaquePointer?
+        if sqlite3_prepare_v2(db, sql, -1, &del, nil) == SQLITE_OK {
+          sqlite3_bind_text(del, 1, cutoff, -1, SQLITE_TRANSIENT)
+          sqlite3_step(del)
+        }
+        sqlite3_finalize(del)
+      }
+    }
+    if console {
+      NSLog("[LocationProbe] %@ state=%@ reason=%@ (%f,%f)", source, state, reason, lat, lon)
+    }
+  }
+
+  // MARK: - SQLite plumbing
+
+  private func dbPath() -> String {
+    let dir = try! FileManager.default.url(
+      for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
+    return dir.appendingPathComponent("location_probe.sqlite").path
+  }
+
+  private func withDB(_ body: (OpaquePointer) -> Void) {
+    var db: OpaquePointer?
+    if sqlite3_open(dbPath(), &db) == SQLITE_OK, let db = db {
+      // Writes happen on main and the screen's reads on a Tauri worker, each
+      // on its own connection: wait out the other's lock briefly instead of
+      // dropping the row or returning a short read.
+      sqlite3_busy_timeout(db, 250)
+      sqlite3_exec(
+        db,
+        """
+        CREATE TABLE IF NOT EXISTS rows(
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          ts TEXT, lat REAL, lon REAL,
+          source TEXT, app_state TEXT, launch_reason TEXT
+        )
+        """, nil, nil, nil)
+      body(db)
+    }
+    if let db = db { sqlite3_close(db) }
+  }
+
+  private func text(_ stmt: OpaquePointer?, _ col: Int32) -> String {
+    guard let c = sqlite3_column_text(stmt, col) else { return "" }
+    return String(cString: c)
+  }
+
+  private func batteryStateString() -> String {
+    switch UIDevice.current.batteryState {
+    case .unplugged: return "unplugged"
+    case .charging: return "charging"
+    case .full: return "full"
+    case .unknown: return "unknown"
+    @unknown default: return "unknown"
+    }
+  }
+
+  fileprivate func appStateString() -> String {
+    let read: () -> String = {
+      switch UIApplication.shared.applicationState {
+      case .active: return "active"
+      case .inactive: return "inactive"
+      case .background: return "background"
+      @unknown default: return "unknown"
+      }
+    }
+    if Thread.isMainThread { return read() }
+    return DispatchQueue.main.sync(execute: read)
+  }
+}
+
+/// C-ABI from the audio plugin: one line for the rolling diagnostics log
+/// (`rows`, as a 0,0 marker). Any thread; the write happens on main, where
+/// the row's app state is read.
+@_cdecl("virtues_diag_note")
+func virtues_diag_note(_ text: UnsafePointer<CChar>) {
+  let line = String(cString: text)
+  DispatchQueue.main.async { LocationProbe.shared.note(line) }
+}
+
+/// C-ABI push from the audio plugin: the muted places to monitor as regions.
+/// JSON array of {id, lat, lon, radius_m}; an empty array clears them.
+@_cdecl("virtues_location_set_regions")
+func virtues_location_set_regions(_ json: UnsafePointer<CChar>) {
+  let str = String(cString: json)
+  guard let data = str.data(using: .utf8),
+        let arr = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]] else {
+    NSLog("[LocationProbe] set_regions: unparseable payload")
+    return
+  }
+  let rs: [LocationProbe.MutedRegion] = arr.compactMap { o in
+    guard let id = o["id"] as? String,
+          let lat = (o["lat"] as? NSNumber)?.doubleValue,
+          let lon = (o["lon"] as? NSNumber)?.doubleValue,
+          CLLocationCoordinate2DIsValid(CLLocationCoordinate2D(latitude: lat, longitude: lon)) else { return nil }
+    let radius = (o["radius_m"] as? NSNumber)?.doubleValue ?? 100
+    return LocationProbe.MutedRegion(
+      id: id, center: CLLocationCoordinate2D(latitude: lat, longitude: lon), radius: radius)
+  }
+  LocationProbe.shared.setRegions(rs)
+}

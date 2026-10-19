@@ -1,0 +1,388 @@
+//! AI proxies via bearer-auth + entitlement::charge() (WS-6b).
+//!
+//! Migrated paths for Vercel AI Gateway upstream:
+//! - POST /v1/ai/chat/completions   (streaming + non-streaming)
+//! - POST /v1/ai/completions         (text completion)
+//! - GET  /v1/ai/models              (model catalog)
+//!
+//! There is no embeddings route. Boxes embed locally (the embedding sidecar);
+//! the old `/v1/ai/embeddings` proxy sat here with zero callers after that
+//! pivot and was removed 2026-08-24.
+//!
+//! Streaming chat (`stream: true`) hands off to `routes/streaming.rs` with
+//! an `entitlement::charge()` callback fired once the upstream emits
+//! `[DONE]`. The home server's agent loop (core `BearerClient::stream`)
+//! drives this path. This is the only LLM proxy — there is no legacy
+//! `/v1/chat/*` route.
+//!
+//! Cost model: authoritative cost is Vercel AI Gateway's `usage.cost`
+//! (see `extract_cost_micros`), present on every response on both the
+//! streaming and non-streaming paths; when absent we fall back to token counts
+//! × the live gateway catalog price (`catalog.rs`), and if THAT is cold we
+//! serve the call **unbilled** rather than invent a rate. USD → micros →
+//! charge after success.
+//! Charge race window (between successful response and DB UPDATE) is
+//! tolerated; failed charges are logged but do not propagate back to
+//! the customer.
+//!
+//! PRIVACY: we do not log prompts or completions. Only usage counts and
+//! resolved cost. Lint 8 enforces no events tables in this schema.
+
+use axum::{
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{IntoResponse, Json, Response},
+    routing::{get, post},
+    Router,
+};
+use serde_json::{json, Value};
+use std::sync::Arc;
+
+use crate::bearer_auth::BearerAuth;
+use crate::entitlement::{self, Account};
+use crate::providers::{calculate_cost, get_provider_config, merge_provider_options, upstream_body};
+use crate::AppState;
+
+/// The box names the conversation a call belongs to (`X-Virtues-Session`) so
+/// the provider can route it to the server already holding its prompt cache.
+/// That header is what the gateway forwards to providers that support session
+/// affinity (`x-session-affinity`, AI Gateway docs, "Improve cache hits with
+/// cache affinity"). It asks for an opaque value with no personal data, never
+/// reused across unrelated sessions. So the proxy sends a hash of account plus
+/// session rather than the box's chat id. Two boxes with the same fixed chat
+/// id (`chat_getting_started`) then never share a key.
+///
+/// `None` when the box sent nothing usable. A box that predates the header
+/// gets exactly the request it always got.
+pub(crate) fn session_affinity(headers: &HeaderMap, account_id: &str) -> Option<String> {
+    use sha2::{Digest, Sha256};
+    let session = headers.get("x-virtues-session")?.to_str().ok()?;
+    if session.is_empty() || session.len() > 128 {
+        return None;
+    }
+    let digest = Sha256::digest(format!("{account_id}\n{session}").as_bytes());
+    Some(digest[..16].iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Pre-flight budget gate. AI cost is only known after the response, so we
+/// charge post-success — but we must still refuse to *start* a call when the
+/// wallet can't plausibly cover it, otherwise a $0 account chats for free
+/// (charges just get logged-and-dropped). BearerAuth already enforced expiry;
+/// here we gate empty balance so the box surfaces wallet_empty ("Add credits")
+/// before burning upstream spend. There is no per-day wall — the only ceiling
+/// is the monthly top-up cap enforced atlas-side.
+fn budget_gate(acct: &Account) -> Option<Response> {
+    if acct.balance_micros <= 0 {
+        return Some(err(StatusCode::PAYMENT_REQUIRED, "wallet_empty", "wallet empty — add credits"));
+    }
+    None
+}
+
+pub fn router() -> Router<Arc<AppState>> {
+    Router::new()
+        .route("/v1/ai/chat/completions", post(chat_completions))
+        .route("/v1/ai/completions", post(completions))
+        .route("/v1/ai/models", get(list_models))
+}
+
+/// The body is opaque JSON. The proxy reads `model` and `stream`, rewrites
+/// the handful of keys it owns (`providers::upstream_body`), and forwards
+/// the rest untouched, so it serves every released box at once and a field
+/// it has never heard of still reaches the gateway. It never logs the body:
+/// a value could be prompt text.
+async fn chat_completions(
+    State(state): State<Arc<AppState>>,
+    BearerAuth(ent): BearerAuth,
+    headers: HeaderMap,
+    Json(request): Json<Value>,
+) -> Response {
+    let pool = &state.db;
+
+    let model = match request.get("model").and_then(Value::as_str) {
+        Some(m) if !m.is_empty() => m.to_string(),
+        _ => return err(StatusCode::BAD_REQUEST, "invalid_request", "`model` is required"),
+    };
+    let stream = request.get("stream").and_then(Value::as_bool).unwrap_or(false);
+
+    // Pre-flight budget gate (empty wallet / daily cap). The actual charge
+    // happens after the response, since AI cost is only known then.
+    if let Some(resp) = budget_gate(&ent) {
+        return resp;
+    }
+
+    // X-Virtues-Purpose is accepted but ignored (v3 no-op). X-Virtues-Session
+    // is read, hashed and forwarded; see `session_affinity`.
+    let affinity = session_affinity(&headers, &ent.account_id);
+
+    // Streaming: hand off to streaming.rs with a charge callback that
+    // applies the resolved cost via entitlement::charge() once the
+    // upstream stream emits [DONE].
+    if stream {
+        let pool_clone = pool.clone();
+        let account_id = ent.account_id.clone();
+        let result = crate::routes::streaming::create_streaming_response(
+            &state.stream_client,
+            &state.config,
+            &state.catalog,
+            &model,
+            request,
+            affinity.as_deref(),
+            move |cost_micros| async move {
+                if let Err(e) =
+                    entitlement::settle(&pool_clone, &account_id, cost_micros).await
+                {
+                    tracing::warn!("ai stream settle failed: {e}");
+                }
+            },
+        )
+        .await;
+        return match result {
+            Ok(resp) => resp,
+            // ProxyError implements IntoResponse — let it render itself.
+            Err(e) => e.into_response(),
+        };
+    }
+
+    let provider = get_provider_config(&model, &state.config);
+    let body = upstream_body(request, &provider.model_name, false, state.catalog.enforce_zdr(&model));
+
+    let mut upstream = state
+        .http_client
+        .post(&provider.endpoint)
+        .header("Authorization", format!("Bearer {}", provider.api_key))
+        .header("Content-Type", "application/json");
+    if let Some(affinity) = &affinity {
+        upstream = upstream.header("x-session-affinity", affinity);
+    }
+    let upstream = upstream.json(&body).send().await;
+
+    let resp = match upstream {
+        Ok(r) => r,
+        Err(e) => return err(StatusCode::BAD_GATEWAY, "upstream_error", &e.to_string()),
+    };
+
+    let status = resp.status();
+    let body: Value = match resp.json().await {
+        Ok(v) => v,
+        Err(e) => return err(StatusCode::BAD_GATEWAY, "upstream_parse_error", &e.to_string()),
+    };
+
+    if status.is_success() {
+        let cost_micros = extract_cost_micros(&state.catalog, &body, &model);
+        if cost_micros > 0 {
+            // Post-paid settle: debit the true cost (the response already went
+            // out). The pre-flight gate refuses the next call if this puts the
+            // wallet in the red.
+            match entitlement::settle(pool, &ent.account_id, cost_micros).await {
+                Ok(balance) => tracing::debug!(model = %model, balance, "ai chat settled"),
+                Err(e) => tracing::warn!("ai chat settle failed (response already returned): {e}"),
+            }
+        }
+    }
+
+    (
+        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(body),
+    )
+        .into_response()
+}
+
+async fn completions(
+    State(state): State<Arc<AppState>>,
+    BearerAuth(ent): BearerAuth,
+    headers: HeaderMap,
+    Json(request): Json<Value>,
+) -> Response {
+    let pool = &state.db;
+
+    if let Some(resp) = budget_gate(&ent) {
+        return resp;
+    }
+
+    let model = request
+        .get("model")
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let provider = get_provider_config(&model, &state.config);
+    let _ = &headers;
+
+    // Same zero-retention enforcement as the chat paths. This route forwards
+    // the caller's body verbatim, so the option is merged into whatever
+    // providerOptions the caller sent rather than written over them.
+    let mut request = request;
+    if let Some(obj) = request.as_object_mut() {
+        let callers = obj.remove("providerOptions");
+        if let Some(merged) = merge_provider_options(callers, state.catalog.enforce_zdr(&model)) {
+            obj.insert("providerOptions".to_string(), merged);
+        }
+    }
+
+    let upstream = state
+        .http_client
+        .post(provider.endpoint.replace("/chat/completions", "/completions"))
+        .header("Authorization", format!("Bearer {}", provider.api_key))
+        .header("Content-Type", "application/json")
+        .json(&request)
+        .send()
+        .await;
+
+    forward_then_charge(pool, &state.catalog, &ent.account_id, &model, upstream).await
+}
+
+/// The models a box should offer, and which one fills each slot.
+///
+/// `data` is the picker: every priced language model the gateway carries, its
+/// facts derived from the gateway for all of them equally. `recommended:true`
+/// marks the five slot models — the whole of what we vouch for. Everything
+/// else is the BYO path: selectable, with the provider's own capability claims.
+/// The box sections on the flag.
+///
+/// `slots` is the live slot map. Boxes resolve a slot as:
+///
+///   1. the user's `app_assistant_profile` override — their choice always wins
+///   2. this map — so swapping the Lite model is a cloud change, not a release
+///   3. the box's compiled `default_model_for_slot` — the offline floor
+///
+/// That middle layer is the point: model ids churn faster than we ship boxes.
+///
+/// Open to ALL callers — no bearer. The list is public data (the gateway
+/// serves the same catalog unauthenticated) plus our slot picks; requiring a
+/// key here left every unlinked box on its 2-model compiled floor, because the
+/// box-side fetch 401'd forever. Completions stay gated; this never charges.
+async fn list_models(State(state): State<Arc<AppState>>) -> Response {
+    use virtues_registry::models::{default_model_for_slot, ModelSlot};
+
+    let payload = json!({
+        "object": "list",
+        "data": state.catalog.picker(),
+        "slots": {
+            "lite":     default_model_for_slot(ModelSlot::Lite),
+            "standard": default_model_for_slot(ModelSlot::Standard),
+            "deep":     default_model_for_slot(ModelSlot::Deep),
+            "image":    default_model_for_slot(ModelSlot::Image),
+            // Boxes from before the 2026-10-05 Standard/Deep rename require
+            // `chat` and `coding` to parse the slot map at all — a missing
+            // field fails their whole catalog. `coding` was never called, so
+            // it carries the Standard model.
+            // TODO(2026-10-05): drop once every box that checks in runs a release with the rename.
+            "chat":     default_model_for_slot(ModelSlot::Standard),
+            "coding":   default_model_for_slot(ModelSlot::Standard),
+        },
+        // Tells the box whether `input_cost_per_1k` is real or absent, so it can
+        // say "pricing unavailable" rather than render a confident zero.
+        "catalog_cold": state.catalog.is_cold(),
+    });
+    Json(payload).into_response()
+}
+
+/// Shared post-upstream tail for paid AI calls that extract usage from
+/// the response.
+async fn forward_then_charge(
+    pool: &sqlx::PgPool,
+    catalog: &crate::catalog::Catalog,
+    account_id: &str,
+    model: &str,
+    upstream: Result<reqwest::Response, reqwest::Error>,
+) -> Response {
+    let resp = match upstream {
+        Ok(r) => r,
+        Err(e) => return err(StatusCode::BAD_GATEWAY, "upstream_error", &e.to_string()),
+    };
+    let status = resp.status();
+    let body: Value = resp.json().await.unwrap_or_else(|_| json!({}));
+
+    if status.is_success() {
+        let cost_micros = extract_cost_micros(catalog, &body, model);
+        if cost_micros > 0 {
+            if let Err(e) = entitlement::settle(pool, account_id, cost_micros).await {
+                tracing::warn!("ai settle failed: {e}");
+            }
+        }
+    }
+
+    (
+        StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        Json(body),
+    )
+        .into_response()
+}
+
+/// Resolve cost in micros from an AI Gateway response.
+///
+/// **Authoritative source: Vercel AI Gateway's `usage.cost` field**
+/// (USD float, returned in every chat/completions response). This avoids
+/// the staleness bug class that comes from maintaining our own per-model
+/// pricing table — provider price changes flow through automatically.
+///
+/// Fallback: if the field is missing (older endpoints, non-Vercel
+/// upstreams, embeddings) we compute from `prompt_tokens` +
+/// `completion_tokens` using the registry pricing in
+/// `crates/virtues-registry`.
+fn extract_cost_micros(catalog: &crate::catalog::Catalog, body: &Value, model: &str) -> i64 {
+    // Authoritative: gateway-reported cost.
+    if let Some(cost) = body
+        .get("usage")
+        .and_then(|u| u.get("cost"))
+        .and_then(|c| c.as_f64())
+    {
+        return entitlement::usd_to_micros(cost);
+    }
+
+    // Fallback: live catalog pricing × token usage.
+    let (prompt, completion) = body
+        .get("usage")
+        .map(|u| {
+            (
+                u.get("prompt_tokens").and_then(|t| t.as_u64()).unwrap_or(0) as u32,
+                u.get("completion_tokens")
+                    .and_then(|t| t.as_u64())
+                    .unwrap_or(0) as u32,
+            )
+        })
+        .unwrap_or((0, 0));
+    // `None` = we don't know the rate. Charge nothing rather than invent one;
+    // `calculate_cost` has already logged the blind spot.
+    match calculate_cost(catalog, model, prompt, completion) {
+        // Shared formula — no local duplicate (see entitlement::usd_to_micros).
+        Some(cost_usd) => entitlement::usd_to_micros(cost_usd),
+        None => 0,
+    }
+}
+
+fn err(status: StatusCode, code: &str, message: &str) -> Response {
+    (
+        status,
+        Json(json!({ "error": { "code": code, "message": message } })),
+    )
+        .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::session_affinity;
+    use axum::http::HeaderMap;
+
+    fn headers(session: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("x-virtues-session", session.parse().unwrap());
+        h
+    }
+
+    /// Stable per conversation, distinct per account, and never the raw id.
+    #[test]
+    fn the_affinity_key_is_a_per_account_hash_of_the_session() {
+        let a = session_affinity(&headers("chat_getting_started"), "acct_a").unwrap();
+        assert_eq!(a, session_affinity(&headers("chat_getting_started"), "acct_a").unwrap());
+        assert_ne!(a, session_affinity(&headers("chat_getting_started"), "acct_b").unwrap());
+        assert_ne!(a, session_affinity(&headers("chat_other"), "acct_a").unwrap());
+        assert!(!a.contains("chat"), "the chat id does not reach the gateway");
+        assert_eq!(a.len(), 32);
+    }
+
+    #[test]
+    fn no_header_means_no_affinity() {
+        assert_eq!(session_affinity(&HeaderMap::new(), "acct_a"), None);
+        assert_eq!(session_affinity(&headers(&"x".repeat(129)), "acct_a"), None);
+    }
+}

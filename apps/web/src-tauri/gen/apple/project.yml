@@ -1,0 +1,219 @@
+name: virtues
+options:
+  bundleIdPrefix: com.virtues
+  deploymentTarget:
+    iOS: 26.2
+fileGroups: [../../src]
+configs:
+  debug: debug
+  release: release
+settingGroups:
+  app:
+    base:
+      PRODUCT_NAME: Virtues
+      PRODUCT_BUNDLE_IDENTIFIER: com.virtues.app
+      # The generated project carries this but this spec did not, so
+      # regenerating with xcodegen SILENTLY DROPPED IT and broke signing —
+      # verified 2026-08-13 by generating into a scratch dir and diffing
+      # against the committed pbxproj. Anything the pbxproj has and this file
+      # lacks is lost on the next `tauri ios init`; keep them in step.
+      DEVELOPMENT_TEAM: 4YV9K677RY
+targetTemplates:
+  app:
+    type: application
+    sources:
+      - path: Sources
+    scheme:
+      environmentVariables:
+        RUST_BACKTRACE: full
+        RUST_LOG: info
+    settings:
+      groups: [app]
+targets:
+  virtues_iOS:
+    type: application
+    platform: iOS
+    sources:
+      - path: Sources
+      - path: Assets.xcassets
+      # Icon Composer bundle — the layered icon (light / dark / clear / tinted).
+      # Xcode 26 hands a `.icon` to actool directly; iOS needs no equivalent of
+      # the macOS precompile, because unlike `tauri build` the Xcode build IS
+      # the actool invocation.
+      #
+      # NOT YET IN THE GENERATED PROJECT. Adding it here only takes effect when
+      # the pbxproj is regenerated, and regenerating was not safe to do blind —
+      # see DEVELOPMENT_TEAM above. Until then iOS ships the flat
+      # AppIcon.appiconset, which is correct, just not layered. To finish:
+      # regenerate, confirm AppIcon.icon lands in the Resources build phase and
+      # DEVELOPMENT_TEAM survived, then archive once to verify.
+      - path: ../../icons/AppIcon.icon
+      - path: virtues_iOS
+      - path: assets
+        buildPhase: resources
+        type: folder
+      - path: LaunchScreen.storyboard
+    info:
+      path: virtues_iOS/Info.plist
+      properties:
+        LSRequiresIPhoneOS: true
+        UILaunchStoryboardName: LaunchScreen
+        UIRequiredDeviceCapabilities: [arm64, metal]
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        # Both keys are overwritten at build time from the merged Tauri config
+        # (`version` in tauri.ios.conf.json) — editing them here has no effect.
+        # iOS keeps its own version line because the retired native app already
+        # shipped 1.1 to TestFlight and App Store Connect refuses an upload at
+        # or below the highest version on the record; the base config's version
+        # tracks the desktop app. Since CFBundleVersion is derived from the same
+        # string, every re-upload needs a `version` bump, not just a new build.
+        CFBundleShortVersionString: 1.2.0
+        CFBundleVersion: "1.2.0"
+        NSLocationWhenInUseUsageDescription: "Virtues records your location to build your personal timeline."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "Virtues records your location in the background to build your personal timeline, even when the app is closed."
+        NSLocationAlwaysUsageDescription: "Virtues records your location in the background to build your personal timeline, even when the app is closed."
+        # HealthKit read access — collected on this device and synced to your box.
+        NSHealthShareUsageDescription: "Virtues reads your health data (heart rate, steps, sleep, and more) to build your personal timeline — stored on your own box, not Virtues' servers."
+        # NSHealthUpdateUsageDescription is NOT here — see ../../Info.ios.plist.
+        # App Store validation demands it alongside the entitlement, and this
+        # file cannot deliver it: xcodegen only runs at `tauri ios init`, so
+        # edits here never reach an already-generated project.
+        # Calendar (EventKit) read access.
+        NSCalendarsUsageDescription: "Virtues reads your calendar events to build your personal timeline — stored on your own box, not Virtues' servers."
+        NSCalendarsFullAccessUsageDescription: "Virtues reads your calendar events to build your personal timeline — stored on your own box, not Virtues' servers."
+        # Contacts read access.
+        NSContactsUsageDescription: "Virtues reads your contacts to build your personal timeline and understand who's in your life — stored on your own box, not Virtues' servers."
+        # Microphone — continuous ambient recording, transcribed on your box.
+        NSMicrophoneUsageDescription: "Virtues records ambient audio to build your personal timeline — the sounds and moments of your day. Recordings and transcripts are stored on your own box, not Virtues' servers."
+        # FinanceKit read access — without a usage string the API SIGABRTs.
+        # Both keys (Apple's documented one + the one the prod app used) for safety.
+        NSFinancialDataUsageDescription: "Virtues reads your Apple Card, Apple Cash, and connected account transactions to build your personal timeline — stored on your own box, not Virtues' servers."
+        NSFinanceUsageDescription: "Virtues reads your Apple Card, Apple Cash, and connected account transactions to build your personal timeline — stored on your own box, not Virtues' servers."
+        UIBackgroundModes:
+          - location
+          - audio
+          - processing
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.virtues.ios.sync
+        # Permit the WKWebView to load the in-process iroh loopback
+        # (http://127.0.0.1:7117) and its WebSocket — otherwise ATS blocks it.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        # Reaching the box on the LAN (pair consume + iroh direct dial) trips
+        # iOS local-network privacy; without this the connection is blocked.
+        NSLocalNetworkUsageDescription: "Virtues connects to your box on your local network to pair and sync your data."
+        # Bonjour service types the app browses to auto-find the box on the LAN.
+        NSBonjourServices:
+          - _http._tcp
+    entitlements:
+      path: virtues_iOS/virtues_iOS.entitlements
+      properties:
+        com.apple.developer.healthkit: true
+        com.apple.developer.healthkit.access: []
+        # Must be the ARRAY ["financial-data"] (matching the App ID's registered
+        # capability + the prod app's entitlements) — NOT `true`. A bool value
+        # mismatches the provisioning profile ("doesn't match the entitlements
+        # file's value"). With the correct value, automatic signing attaches it.
+        com.apple.developer.financekit: [financial-data]
+        # Shared with VirtuesControls (and the share extension, once wired):
+        # the Control Center override and its mirrors live in this group's
+        # defaults. Registered in the portal 2026-10-07.
+        com.apple.security.application-groups: [group.com.virtues.app]
+    scheme:
+      environmentVariables:
+        RUST_BACKTRACE: full
+        RUST_LOG: info
+    settings:
+      base:
+        ENABLE_BITCODE: false
+        ARCHS: [arm64]
+        # Network.framework is linked NORMALLY (strongly) on purpose. It was
+        # briefly weak-linked to dodge the iOS 26-only
+        # `nw_path_is_ultra_constrained` symbol, but that only converted a
+        # loud launch-time abort into a null-pointer segfault the moment
+        # netdev enumerated interfaces — the symbol was genuinely being
+        # called. The real fix is the vendored netdev patch (see the
+        # [patch.crates-io] block in ../../Cargo.toml), which resolves that
+        # symbol at runtime. Strong linking is kept so any FUTURE missing
+        # symbol fails immediately and visibly instead of segfaulting later.
+        VALID_ARCHS: arm64 
+        LIBRARY_SEARCH_PATHS[arch=x86_64]: $(inherited) $(PROJECT_DIR)/Externals/x86_64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
+        LIBRARY_SEARCH_PATHS[arch=arm64]: $(inherited) $(PROJECT_DIR)/Externals/arm64/$(CONFIGURATION) $(SDKROOT)/usr/lib/swift $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift/$(PLATFORM_NAME) $(DEVELOPER_DIR)/Toolchains/XcodeDefault.xctoolchain/usr/lib/swift-5.0/$(PLATFORM_NAME)
+        # false: on iOS 14+ the Swift runtime (incl. libswiftCore /
+        # libswift_Concurrency) ships in the OS. Embedding it (the stale Tauri
+        # template default) embedded libswift_Concurrency without libswiftCore
+        # once the Finance plugin pulled in async/await → dyld crash at launch.
+        ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES: false
+        EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
+      groups: [app]
+    dependencies:
+      - target: VirtuesControls
+      - framework: libapp.a
+        embed: false
+      - sdk: CoreGraphics.framework
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: QuartzCore.framework
+      - sdk: Security.framework
+      # iroh/reqwest's resolver stack (hickory-resolver, netdev,
+      # system_configuration) calls SystemConfiguration for proxy/DNS/interface
+      # discovery — must be linked or the app fails at link time.
+      - sdk: SystemConfiguration.framework
+      - sdk: UIKit.framework
+      - sdk: WebKit.framework
+    preBuildScripts:
+      - script: pnpm tauri ios xcode-script -v --platform ${PLATFORM_DISPLAY_NAME:?} --sdk-root ${SDKROOT:?} --framework-search-paths "${FRAMEWORK_SEARCH_PATHS:?}" --header-search-paths "${HEADER_SEARCH_PATHS:?}" --gcc-preprocessor-definitions "${GCC_PREPROCESSOR_DEFINITIONS:-}" --configuration ${CONFIGURATION:?} ${FORCE_COLOR} ${ARCHS:?}
+        name: Build Rust Code
+        basedOnDependencyAnalysis: false
+        outputFiles:
+          - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
+          - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a
+  # The Control Center control (pause / record anyway). Added to the pbxproj
+  # by hand, never by `xcodegen generate` (see agents/plan/bookmarks-plan.md
+  # §1 for what regenerating drops); this entry mirrors it so the spec stays
+  # truthful. Info.plist and entitlements are referenced, not generated.
+  VirtuesControls:
+    type: app-extension
+    platform: iOS
+    deploymentTarget: "18.0"
+    sources:
+      - path: VirtuesControls
+        excludes: [Info.plist, VirtuesControls.entitlements]
+    settings:
+      base:
+        APPLICATION_EXTENSION_API_ONLY: YES
+        ARCHS: [arm64]
+        CODE_SIGN_ENTITLEMENTS: VirtuesControls/VirtuesControls.entitlements
+        CURRENT_PROJECT_VERSION: 0
+        ENABLE_USER_SCRIPT_SANDBOXING: NO
+        INFOPLIST_FILE: VirtuesControls/Info.plist
+        MARKETING_VERSION: 0
+        PRODUCT_BUNDLE_IDENTIFIER: com.virtues.app.controls
+        SKIP_INSTALL: YES
+        DEVELOPMENT_TEAM: 4YV9K677RY
+    # App Store refuses an extension whose version differs from its app's,
+    # and Tauri writes the version into the app's Info.plist only.
+    postBuildScripts:
+      - name: Stamp the app's version
+        inputFiles:
+          - $(SRCROOT)/virtues_iOS/Info.plist
+          - $(TARGET_BUILD_DIR)/$(INFOPLIST_PATH)
+        outputFiles:
+          - $(DERIVED_FILE_DIR)/version-stamp
+        script: |
+          set -e
+          APP="${SRCROOT}/virtues_iOS/Info.plist"
+          OUT="${TARGET_BUILD_DIR}/${INFOPLIST_PATH}"
+          V=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$APP")
+          B=$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" "$APP")
+          /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $V" -c "Set :CFBundleVersion $B" "$OUT"
+          touch "${DERIVED_FILE_DIR}/version-stamp"

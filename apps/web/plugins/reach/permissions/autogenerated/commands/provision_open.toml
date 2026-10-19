@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-provision-open"
+description = "Enables the provision_open command without any pre-configured scope."
+commands.allow = ["provision_open"]
+
+[[permission]]
+identifier = "deny-provision-open"
+description = "Denies the provision_open command without any pre-configured scope."
+commands.deny = ["provision_open"]

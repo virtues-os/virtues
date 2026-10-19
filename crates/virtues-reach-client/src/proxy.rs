@@ -1,0 +1,215 @@
+//! The loopback reach helper — serve the box over iroh to a local HTTP client.
+//!
+//! Desktop binds `127.0.0.1:7117`; mobile binds an in-process loopback port. For
+//! each inbound TCP connection we open an iroh bi-stream to the box and raw-splice
+//! the two. The box serves each bi-stream as a hyper HTTP/1 connection, so
+//! keep-alive works end-to-end. The local client talks plain loopback HTTP —
+//! same-origin cookies/CSRF untouched — while the transport is iroh (LAN-direct →
+//! hole-punched → relay).
+//!
+//! [`build_client`] is split out so a single warm [`VirtuesIrohClient`] can be
+//! shared between the loopback and the upload path (`client.request()`).
+
+use anyhow::{anyhow, bail, Context, Result};
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::net::TcpListener;
+use virtues_iroh::{
+    build_endpoint, iroh_port, EndpointAddr, EndpointId, RelayUrl, SecretKey, VirtuesIrohClient,
+};
+
+use crate::model::PairedBox;
+
+/// Build a warm iroh client to the box from a paired record. Re-resolves the
+/// box's LAN host so reach is DHCP-proof (only the NodeId is frozen). Reusable
+/// for both the loopback and direct `request()` uploads.
+pub async fn build_client(rec: &PairedBox) -> Result<Arc<VirtuesIrohClient>> {
+    let node_id_hex = rec
+        .box_node_id
+        .clone()
+        .ok_or_else(|| anyhow!("this pairing is missing the box's iroh identity — re-pair to fix it."))?;
+    let secret_hex = rec
+        .device_secret_hex
+        .clone()
+        .ok_or_else(|| anyhow!("this pairing is missing the device secret — re-pair to fix it."))?;
+    let box_id: EndpointId = node_id_hex.parse().context("parse box EndpointId")?;
+
+    // Reach paths, in preference order: direct LAN/VPN addrs (no relay, no
+    // discovery, no third party) and/or the relay (remote). iroh negotiates the
+    // best path from whatever we supply.
+    let relay: Option<RelayUrl> = rec.relay_url.as_deref().and_then(|s| s.parse().ok());
+
+    let mut direct: Vec<SocketAddr> =
+        rec.box_direct_addrs.iter().filter_map(|s| s.parse().ok()).collect();
+    for a in resolve_box_lan(&rec.box_url).await {
+        if !direct.contains(&a) {
+            direct.push(a);
+        }
+    }
+    if direct.is_empty() && relay.is_none() {
+        bail!(
+            "no way to reach the box — couldn't resolve it on this network and no relay. \
+             Reach it on the same network as the box, or claim it for remote access."
+        );
+    }
+
+    let seed: [u8; 32] = hex::decode(secret_hex.trim())
+        .context("decode device secret")?
+        .as_slice()
+        .try_into()
+        .map_err(|_| anyhow!("device secret is not 32 bytes"))?;
+    let secret = SecretKey::from_bytes(&seed);
+
+    // `Some(relay)` → our relay (remote, upgrades to direct when reachable);
+    // `None` → relay disabled (LAN-direct only). The client binds an ephemeral
+    // port (only the box pins one).
+    let endpoint = build_endpoint(secret, relay.clone(), None)
+        .await
+        .context("bind iroh endpoint")?;
+    let mut addr = EndpointAddr::new(box_id);
+    for a in &direct {
+        addr = addr.with_ip_addr(*a);
+    }
+    if let Some(r) = relay {
+        addr = addr.with_relay_url(r);
+    }
+    Ok(Arc::new(VirtuesIrohClient::new(endpoint, addr)))
+}
+
+/// Bind `bind` and splice each inbound TCP connection to the box over iroh.
+/// Loops until the listener errors unrecoverably. Callers spawn this on a task.
+pub async fn serve_loopback(client: Arc<VirtuesIrohClient>, bind: SocketAddr) -> Result<()> {
+    let listener = TcpListener::bind(bind)
+        .await
+        .with_context(|| format!("bind {bind}"))?;
+    serve_on(listener, client).await
+}
+
+/// Splice inbound connections on an already-bound listener. Split out so a host
+/// can bind the port *synchronously* (before pointing a webview at it, so the
+/// first request queues rather than gets refused) and then serve on a task.
+pub async fn serve_on(listener: TcpListener, client: Arc<VirtuesIrohClient>) -> Result<()> {
+    tracing::info!(addr = ?listener.local_addr().ok(), "reach helper: serving box over iroh");
+    loop {
+        let (mut tcp, _peer) = match listener.accept().await {
+            Ok(x) => x,
+            Err(e) => {
+                tracing::debug!(error = %e, "accept error");
+                continue;
+            }
+        };
+        let client = client.clone();
+        tokio::spawn(async move {
+            if let Err(e) = client.proxy_stream(&mut tcp).await {
+                tracing::debug!(error = %format!("{e:#}"), "proxy stream ended");
+            }
+        });
+    }
+}
+
+/// Like [`serve_on`] but fetches the *current* client from `provider` per inbound
+/// connection, so a rebuilt client (after a network-change recovery that swaps the
+/// process-global warm client) is picked up **without** restarting the listener.
+/// `provider` returns `None` while unpaired / mid-rebuild — we just drop that
+/// connection (the local HTTP client retries).
+pub async fn serve_on_provider<F>(listener: TcpListener, provider: F) -> Result<()>
+where
+    F: Fn() -> Option<Arc<VirtuesIrohClient>> + Send + Sync + 'static,
+{
+    tracing::info!(addr = ?listener.local_addr().ok(), "reach helper: serving box over iroh (live client)");
+    let provider = Arc::new(provider);
+    loop {
+        let (mut tcp, _peer) = match listener.accept().await {
+            Ok(x) => x,
+            Err(e) => {
+                tracing::debug!(error = %e, "accept error");
+                continue;
+            }
+        };
+        let provider = provider.clone();
+        // No client right now (parked endpoint on app resume, mid-rebuild) —
+        // hold the accepted connection briefly instead of dropping it. Browser
+        // fetches don't retry a reset, so dropping turns every app resume into
+        // a window of dead requests; a rebuild lands in ~1-3s.
+        tokio::spawn(async move {
+            let mut client = provider();
+            if client.is_none() {
+                for _ in 0..30 {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                    client = provider();
+                    if client.is_some() {
+                        break;
+                    }
+                }
+            }
+            let Some(client) = client else {
+                return; // still nothing after 3s (unpaired / build failed) — drop
+            };
+            if let Err(e) = client.proxy_stream(&mut tcp).await {
+                tracing::debug!(error = %format!("{e:#}"), "proxy stream ended");
+            }
+        });
+    }
+}
+
+/// The origin a server reported for itself after joining a network over its
+/// Bluetooth owner session (`http://192.168.1.50:8000`), normalized for
+/// `PairedBox::box_url` — or `None` when it is not something to dial.
+///
+/// Only a plain `http`/`https` origin with a host passes; a path, query or
+/// credentials are dropped rather than stored. The value is a HINT for where
+/// to find the server on the LAN ([`resolve_box_lan`] turns its host into the
+/// iroh address), never an identity: every dial still has to reach the
+/// server's own EndpointId, so a wrong address can only fail to connect.
+pub fn lan_origin(reported: &str) -> Option<String> {
+    let u = url::Url::parse(reported.trim()).ok()?;
+    if !matches!(u.scheme(), "http" | "https") {
+        return None;
+    }
+    let host = u.host_str().filter(|h| !h.is_empty())?;
+    // IPv6 hosts come back bracketed from `host_str`, which is the form an
+    // origin needs.
+    Some(match u.port() {
+        Some(p) => format!("{}://{host}:{p}", u.scheme()),
+        None => format!("{}://{host}", u.scheme()),
+    })
+}
+
+/// Resolve the box's LAN host (from the paired `box_url`) to `IP:iroh_port`
+/// socket addresses to dial by NodeId. Re-resolved on each build, so a DHCP
+/// lease change never strands us. Best-effort: empty when the host can't be
+/// resolved (off-LAN, or the OS can't resolve `.local`), in which case reach
+/// falls back to the relay if one is present.
+pub async fn resolve_box_lan(box_url: &str) -> Vec<SocketAddr> {
+    let host = match url::Url::parse(box_url).ok().and_then(|u| u.host_str().map(str::to_owned)) {
+        Some(h) => h,
+        None => return Vec::new(),
+    };
+    // Bind the result before matching so the borrow of `host` ends at the await.
+    let resolved = tokio::net::lookup_host((host.as_str(), iroh_port())).await;
+    match resolved {
+        Ok(iter) => iter.collect(),
+        Err(e) => {
+            tracing::debug!(host, error = %e, "could not resolve box LAN host");
+            Vec::new()
+        }
+    }
+}
+
+#[cfg(test)]
+mod lan_origin_tests {
+    use super::lan_origin;
+
+    #[test]
+    fn a_reported_origin_is_kept_as_an_origin_and_nothing_else() {
+        assert_eq!(lan_origin("http://192.168.1.50:8000").as_deref(), Some("http://192.168.1.50:8000"));
+        assert_eq!(lan_origin(" http://10.0.0.7:8000/ ").as_deref(), Some("http://10.0.0.7:8000"));
+        assert_eq!(lan_origin("http://u:p@10.0.0.7:8000/x?y").as_deref(), Some("http://10.0.0.7:8000"));
+        assert_eq!(lan_origin("http://[fe80::1]:8000").as_deref(), Some("http://[fe80::1]:8000"));
+        // The box sends "" when it has no address yet; that must not
+        // overwrite a working one.
+        assert_eq!(lan_origin(""), None);
+        assert_eq!(lan_origin("file:///etc/passwd"), None);
+        assert_eq!(lan_origin("not a url"), None);
+    }
+}

@@ -1,0 +1,349 @@
+//! day_summary_eod: end-of-day summary action.
+//!
+//! Runs once per day (via cron trigger, with a SQL condition gating to the
+//! user's maintenance hour). Resolves sleep, scores novelty/autonomic/topic/
+//! entity signals on each wiki_event, then writes the day's page, once.
+//!
+//! All heavy lifting lives in `virtues-core` — this binary just glues the
+//! pieces together and owns the stdin/stdout JSON contract.
+
+use anyhow::{Context, Result};
+use chrono::{NaiveDate, Timelike};
+use serde_json::json;
+use virtues_helpers::{output, read_input};
+
+#[tokio::main]
+async fn main() -> Result<()> {
+    virtues_applets::init_tracing();
+
+    let input = read_input()?;
+    let pool = virtues_helpers::connect_from_env("virtues-action-day_summary_eod").await?;
+
+    // If an explicit date is supplied in config, skip the maintenance-hour gate
+    // — manual / tool invocations with a date are always intentional.
+    let explicit_date = input
+        .config
+        .get("date")
+        .and_then(|v| v.as_str())
+        .map(|s| {
+            NaiveDate::parse_from_str(s, "%Y-%m-%d")
+                .with_context(|| format!("invalid config.date: {s}"))
+        })
+        .transpose()?;
+
+    // Cron-triggered runs arrive every hour. Gate to the user's local maintenance
+    // hour (DEFAULT_MAINTENANCE_HOUR = 4am, in the box's home_timezone) so the whole
+    // chain runs ONCE a day, on the COMPLETED prior day.
+    //
+    // The chain is nightly, not hourly, because the detective is now a best-model
+    // Chat call. You cannot fuse a day that is not over — its distribution of
+    // novelty, its context boundaries, are only knowable once — and re-running a
+    // premium call 23×/day to rebuild a half-day it would discard tonight is pure
+    // waste. So every non-maintenance tick is a no-op. The live "today" view is a
+    // separate, deterministic, zero-LLM read of visits+calendar+sleep and needs
+    // nothing from this action.
+    let date = match explicit_date {
+        // A date was named: the caller means it. Run the chain for that day.
+        Some(d) => d,
+        None => {
+            let (tz, hour) = load_user_maintenance(&pool).await;
+            let now_local = chrono::Utc::now().with_timezone(&tz);
+            let yesterday = now_local.date_naive() - chrono::Duration::days(1);
+
+            // Two jobs share this hourly tick, and their ORDER is the whole of
+            // what follows.
+            //
+            // THE BACKLOG. `narrated_at` has been written since day segmentation
+            // shipped and never read as a work queue, so a box that was asleep,
+            // restarting, or erroring during the maintenance hour lost that day
+            // *permanently* — the chain only ever looked at `yesterday`, and
+            // nothing ever went back. Days older than yesterday are definitively
+            // settled, so they can be fused at any hour. One day per tick, oldest
+            // first: the chain is two LLM calls deep, and an hourly cron drains a
+            // backlog soon enough without risking a run that blows its timeout.
+            //
+            // The queue lives in `day_summary` (next to the segmenter's own gate,
+            // which it reuses) and keys on three things — none of them the day's
+            // EVENT COUNT, which is what the first version keyed on and how it
+            // lost days:
+            //   1. `narrated_at IS NULL` — the day has not been written up;
+            //   2. raw EVIDENCE — the same sources/shape test the segmenter
+            //      applies, so a sparse day is never offered (and never jams the
+            //      oldest-first queue), while a day whose cut failed and left zero
+            //      events is still seen, because its visits and audio are still
+            //      there;
+            //   3. an ATTEMPT BUDGET with exponential backoff — a deterministic
+            //      failure costs `MAX_NARRATION_ATTEMPTS` calls spread over days,
+            //      not one an hour until the day silently ages out.
+            //
+            // YESTERDAY, at the maintenance hour, once its late collector data
+            // (audio still transcribing, final visits) has landed.
+            //
+            // THE BACKLOG USED TO GO FIRST, unconditionally, and that starves the
+            // one day anybody is going to read. The backlog reaches ninety days
+            // back and drains at one day per hour, so any import — a phone's
+            // history, a mail archive, a re-cut — puts months of Junes in front
+            // of last night, and `yesterday` is simply never reached: not at the
+            // maintenance hour, not at any hour, until the whole backlog is gone.
+            // It is not a stall anyone sees, either, because the applet reports
+            // success every hour while writing 1997.
+            //
+            // Measured on a real box on 2026-09-22: the nine most recent days had
+            // no article and no events, `narration_attempts = 0` — never even
+            // offered — while that day's runs wrote July 15th through 23rd.
+            //
+            // So the freshest day goes first and is NOT preemptable. It costs the
+            // backlog one slot in twenty-four, and it bounds how stale the day
+            // page can be at one day rather than at the length of the queue.
+            let is_maintenance_hour = now_local.hour() as i32 == hour;
+
+            // Ask of yesterday exactly what the queue asks of every other day.
+            // Before this existed the maintenance hour ran the chain on yesterday
+            // no matter what, so a day that had failed its eight attempts was
+            // retried nightly forever — the attempt ceiling governed the backlog
+            // and not the one day it ran most often.
+            //
+            // On an error, treat it as due: the check is a guard on the normal
+            // path, not a gate in front of it, and a box that cannot read
+            // `wiki_days` has a larger problem than one wasted pair of calls.
+            let yesterday_due = if is_maintenance_hour {
+                match virtues::api::day_summary::day_is_due(&pool, yesterday).await {
+                    Ok(due) => due,
+                    Err(e) => {
+                        tracing::warn!(error = %e, "due check failed; running yesterday anyway");
+                        true
+                    }
+                }
+            } else {
+                false
+            };
+
+            let date = if yesterday_due {
+                tracing::info!(date = %yesterday, "the maintenance hour — writing up yesterday");
+                yesterday
+            } else {
+                let pending =
+                    match virtues::api::day_summary::next_catchup_day(&pool, yesterday).await {
+                        Ok(d) => d,
+                        Err(e) => {
+                            // Never let the repair path take down the normal path.
+                            tracing::warn!(error = %e, "catch-up scan failed");
+                            None
+                        }
+                    };
+                match pending {
+                    Some(pending) => {
+                        tracing::info!(date = %pending, "catching up an unnarrated day");
+                        pending
+                    }
+                    None => {
+                        // Nothing to do: either it is not the maintenance hour and
+                        // the backlog is empty, or it is and yesterday is already
+                        // written (or parked).
+                        let skip = if is_maintenance_hour {
+                            "skipped: yesterday is written and the backlog is empty".to_string()
+                        } else {
+                            format!(
+                                "skipped: local hour {}, maintenance {}",
+                                now_local.hour(),
+                                hour
+                            )
+                        };
+                        tracing::info!(%skip, "nothing due — no-op");
+                        return output(&skip, &input.config);
+                    }
+                }
+            };
+
+            // Count the attempt BEFORE the chain runs, so a run that times out or
+            // dies mid-way still counts and the backoff still applies. Yesterday's
+            // maintenance-hour run counts too: if it fails, the day enters the
+            // catch-up queue tomorrow already on attempt two. Explicit-date runs
+            // never reach here — they are the owner's decision, not the queue's.
+            match virtues::api::day_summary::record_narration_attempt(&pool, date).await {
+                Ok(n) if n >= virtues::api::day_summary::MAX_NARRATION_ATTEMPTS => {
+                    tracing::warn!(
+                        date = %date,
+                        attempts = n,
+                        "last automatic attempt for this day — if it fails again the day \
+                         is PARKED (narrated_at stays NULL) until an explicit-date run or \
+                         new evidence re-cuts it"
+                    );
+                }
+                Ok(n) => tracing::info!(date = %date, attempts = n, "automatic attempt"),
+                // Bookkeeping must not stop the work; the worst case is one extra retry.
+                Err(e) => tracing::warn!(error = %e, date = %date, "could not record the attempt"),
+            }
+            date
+        }
+    };
+
+    tracing::info!(date = %date, "day_summary_eod starting");
+
+    // ─────────────────────────────────────────────────────────────────────
+    // ORDER IS LOad-BEARING. Do not move a scoring step above step 1.
+    //
+    // `segment_day_events` SEGMENTS the day: it deletes every auto event
+    // (`delete_auto_events_for_day` — `WHERE is_user_added = false`) and
+    // re-inserts fresh rows carrying only 14 columns, none of which is a
+    // score. So anything computed before it is written to rows that are about
+    // to be dropped.
+    //
+    // This is exactly what used to happen: sleep → novelty → autonomic →
+    // topic/entity all ran FIRST, and the summary then deleted the rows
+    // holding every value they had just computed. The result was that
+    // `embedding`, `novelty_z`, `local_novelty_z`, `lof_raw`, `avg_hr`,
+    // `hr_z`, `autonomic_z`, `topic_novelty` and `entity_novelty` were NULL
+    // after every single cron run — and because `novelty::load_baseline`
+    // requires `embedding IS NOT NULL` on PAST events, the baseline could
+    // never accumulate either. The scoring subsystem had never persisted a
+    // value. Seed data hand-populates these columns, which is why nobody
+    // noticed.
+    //
+    // Segment first. Then score what actually exists.
+    // Guarded by `virtues-core/tests/day_pipeline.rs` — if you reorder this,
+    // that test fails.
+    // ─────────────────────────────────────────────────────────────────────
+
+    // 0. Roll audio chunks up into context sessions BEFORE the detective reads
+    //    them. Mechanical (changepoint on loudness + speaker count, no LLM), so it
+    //    is cheap enough to run each pass; idempotent per day. Without this the
+    //    detective drowns in 271 five-minute chunks instead of ~20 sessions.
+    let audio_sessions = virtues::sessionize::audio::sessionize_day(&pool, date)
+        .await
+        .context("audio sessionization failed")?;
+
+    // 1. Segment the day into events — THE DETECTIVE (LLM, Standard slot). Fuses the
+    //    dossier of clean rollups into a gapless timeline. DESTRUCTIVE — replaces
+    //    all auto events, in one transaction, so a failed cut leaves the old events
+    //    standing rather than an empty day. Idempotent: if the day's sources are
+    //    unchanged since the last cut, this returns 0 immediately and makes no
+    //    model call.
+    let events = virtues::api::day_summary::segment_day_events(&pool, date)
+        .await
+        .context("day segmentation failed")?;
+
+    // 2. Sleep resolution. Must follow the segmentation: a sleep event has
+    //    `is_user_added = false`, so the delete in step 1 eats it too.
+    virtues::dayline::sleep::resolve_sleep_events(&pool, date).await;
+
+    // 2b. Settle the raw spine into its final shape: absorb sub-15-min Unknown
+    //     slivers into neighbours and label location-change gaps as Transit
+    //     (`is_transit`). AFTER sleep (so it also cleans the short Unknown tails
+    //     sleep's split leaves behind) and BEFORE scoring (so transit blocks are
+    //     annotated and scored like any event — mode descriptive, salience decisive).
+    let gap_ops = virtues::dayline::gaps::classify_day_gaps(&pool, date)
+        .await
+        .context("gap classification failed")?;
+
+    // 3. Annotate the surviving events from their own time windows: avg_hr
+    //    (the input autonomic scoring has always lacked), the entity refs
+    //    that overlap them, and which ontologies actually had data.
+    let annotated = virtues::dayline::annotate::annotate_events_for_day(&pool, date)
+        .await
+        .context("event annotation failed")?;
+
+    // 4. Novelty scoring — writes `wiki_events.embedding`, which is the
+    //    baseline cache the NEXT night's novelty run reads, and which step 5
+    //    (autonomic) reads for *today's* events in this same run. That second
+    //    reader is the reason this column exists rather than the scorer just
+    //    reading `search_vectors`: the search index is populated by a separate
+    //    15-minute cron and will not have seen these ids yet.
+    //    Note this is NOT the project magnet's input — that reads
+    //    `search_vectors` directly (see magnet.rs) and is unaffected by
+    //    anything in this chain.
+    let novelty_count = virtues::dayline::novelty::compute_novelty_for_day(&pool, date)
+        .await
+        .context("novelty scoring failed")?;
+
+    // 5. Autonomic scoring (HR against a contextual baseline). Needs step 3's
+    //    avg_hr and step 4's embeddings; before this reorder it had neither.
+    let autonomic_count =
+        virtues::dayline::autonomic_scoring::compute_autonomic_for_day(&pool, date)
+            .await
+            .context("autonomic scoring failed")?;
+
+    // 6. Topic/entity novelty. Needs the topics step 1 now emits and the
+    //    entities step 3 attaches; before this it scored empty arrays.
+    let topic_entity_count =
+        virtues::dayline::topic_entity_novelty::compute_topic_entity_novelty(&pool, date)
+            .await
+            .context("topic/entity novelty scoring failed")?;
+
+    // 7. Write the day's page (`day_article::write_day`: a Lite scout, the
+    //    Standard writer, a Lite check). It reads the day's own record, not the
+    //    events, and writes a day once: a day already written, not over, held
+    //    by the owner's rewrite, or whose page is theirs or open comes back as
+    //    an outcome rather than an error, and the summary line says which.
+    let narration = virtues::api::day_summary::narrate_day(&pool, date)
+        .await
+        .context("day narration failed")?;
+    let narrated = matches!(
+        narration,
+        virtues::api::day_summary::NarrateOutcome::Written(_)
+    );
+
+    // Stash the last processed date in config so subsequent cron runs can
+    // short-circuit in a condition or observe progress. Also strip any
+    // `date` override that the caller passed in — the runner persists the
+    // returned config back to app_applets.config, and a sticky `date` would
+    // trap subsequent scheduled runs on the override's date forever. Chat
+    // tools and manual-trigger with a date are always one-shot.
+    let mut config = input.config.clone();
+    if let Some(obj) = config.as_object_mut() {
+        obj.remove("date");
+    }
+    config["last_date"] = json!(date.format("%Y-%m-%d").to_string());
+
+    // Every count here must be "rows actually written", never "rows seen".
+    // The old `topic_entity=N` reported events *considered*, so it stayed
+    // cheerfully non-zero while the function scored nothing at all — the same
+    // failure mode as avg_hr, in production, undetected. A metric that can't
+    // go to zero can't tell you anything.
+    let summary = format!(
+        "{date}: audio_sessions={audio_sessions} events={events} gap_ops={gap_ops} annotated={annotated} \
+         novelty={novelty_count} autonomic={autonomic_count} topic_entity={topic_entity_count} \
+         narrated={narrated} narration={}",
+        narration.label()
+    );
+    output(&summary, &config)
+}
+
+/// Pick "yesterday" in the user's configured timezone. Falls back to UTC.
+#[allow(dead_code)]
+async fn resolve_user_yesterday(pool: &sqlx::PgPool) -> NaiveDate {
+    let (tz, _hour) = load_user_maintenance(pool).await;
+    let now_local = chrono::Utc::now().with_timezone(&tz);
+    now_local.date_naive() - chrono::Duration::days(1)
+}
+
+/// The local hour the nightly chain runs at. 4am: the day is definitively over,
+/// late collector data (audio chunks still transcribing, final visits) has
+/// settled, it is before the user wakes so the autobiography is ready for them,
+/// and the box is idle. A fixed default until a real per-user setting is migrated.
+const DEFAULT_MAINTENANCE_HOUR: i32 = 4;
+
+/// Load the user's timezone and maintenance hour from `app_user_profile`.
+/// Defaults: UTC timezone, 8am maintenance hour.
+///
+/// This used to `SELECT home_timezone, update_check_hour` — but `update_check_hour`
+/// ships in NO migration and does not exist on the box, so the whole query errored
+/// on the missing column and the `.ok()` swallowed it, silently dropping
+/// `home_timezone` too. The nightly then ran at 8am **UTC** for everyone, ignoring
+/// the user's timezone entirely (and near midnight, resolving the wrong
+/// "yesterday"). Read only the column that exists; the maintenance hour is a fixed
+/// default until a configurable setting is actually migrated + wired.
+async fn load_user_maintenance(pool: &sqlx::PgPool) -> (chrono_tz::Tz, i32) {
+    let row: Option<(Option<String>,)> =
+        sqlx::query_as("SELECT home_timezone FROM app_user_profile LIMIT 1")
+            .fetch_optional(pool)
+            .await
+            .ok()
+            .flatten();
+
+    let tz = row
+        .and_then(|(tz_str,)| tz_str)
+        .and_then(|s| s.parse::<chrono_tz::Tz>().ok())
+        .unwrap_or(chrono_tz::UTC);
+    (tz, DEFAULT_MAINTENANCE_HOUR)
+}

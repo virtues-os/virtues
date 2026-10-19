@@ -1,0 +1,413 @@
+name: Release Mac App
+
+# Builds the Tauri desktop app (apps/web/src-tauri) into a signed + notarized
+# universal DMG and attaches it to a GitHub Release. Bundles the
+# virtues-collector (Swift) helper sidecar; networking (reach) runs in-process
+# since 45e13811, so there is no virtues-client sidecar anymore.
+#
+# This replaces the old native-Xcode pipeline (apps/mac-source/mac.xcodeproj),
+# which was removed when the app moved to Tauri.
+#
+# Signing + notarization are handled natively by `tauri build` when these env
+# vars are present (mapped from existing repo secrets):
+#   APPLE_CERTIFICATE          <- APPLE_CERTIFICATE_BASE64  (base64 .p12)
+#   APPLE_CERTIFICATE_PASSWORD <- APPLE_CERTIFICATE_PASSWORD
+#   APPLE_SIGNING_IDENTITY     <- APPLE_DEVELOPER_ID        ("Developer ID Application: …")
+#   APPLE_ID                   <- APPLE_ID
+#   APPLE_PASSWORD             <- APPLE_APP_PASSWORD         (app-specific password)
+#   APPLE_TEAM_ID              <- APPLE_TEAM_ID
+# Without them the build still succeeds, unsigned (for local/test tags).
+#
+# The job runs in the `release` environment, which admits only release tags
+# (`mac-v*`, `mac-edge` and the other channels' tags). Keep the APPLE_* and
+# TAURI_SIGNING_* secrets there, not at repository level, so a branch push, a
+# PR or a dispatch from a branch never sees the signing identity. For the same
+# reason a dispatch has to be run from a tag ref: from a branch the job is
+# refused before it starts.
+
+on:
+  push:
+    tags:
+      # Stable: `mac-v0.1.0` (prerelease:false, updates the rolling `mac-latest`
+      # that virtues.com/downloads/mac serves).
+      - 'mac-v*'
+      # Edge: rolling `mac-edge`, force-pushed each test build → one prerelease
+      # release that overwrites itself (mirrors the box's `edge`).
+      - 'mac-edge'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version (e.g. 0.1.0) or "edge"'
+        required: true
+        type: string
+
+jobs:
+  build-and-release:
+    runs-on: blacksmith-6vcpu-macos-15
+    environment: release
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # Tags, for the version stamp on the Mac's own copy of the web app
+          # (apps/web/scripts/bake-desktop-ui.sh): unstamped, it reads `dev`
+          # and refuses every over-the-air update from its server.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Resolve version + channel from the tag:
+      #   • `mac-edge` (or dispatch "edge") → edge channel, prerelease, rolling;
+      #     version taken from tauri.conf.json since the tag carries none.
+      #   • `mac-v0.1.0` → stable, prerelease:false, also updates `mac-latest`.
+      #
+      # That fallback used to read `virtues-core/Cargo.toml` — the BOX version —
+      # so the Mac app inherited a number belonging to a different product on a
+      # different release line. It broke twice over on 2026-08-17: the box reset
+      # to 0.1.0, which would have walked the app backwards from 1.0.21 (and an
+      # app version that goes backwards makes updaters stop seeing later builds
+      # as newer), and virtues-core stopped carrying a literal at all — it now
+      # inherits from the workspace, so the grep would have matched nothing and
+      # produced an empty version.
+      #
+      # tauri.conf.json is the app's own version and the one macOS actually
+      # reads out of the bundle. Parsed with jq rather than a regex over the
+      # file, because "the first line that looks like a version" is how the
+      # wrong field gets picked the day someone adds one above it.
+      #
+      # The input arrives through env, never spliced into the script, and the
+      # version is held to a semver shape before it becomes an output: every
+      # later step splices VERSION and TAG into shell, so this is the one place
+      # their contents get checked.
+      - name: Resolve version + channel
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            RAW="$INPUT_VERSION"
+          else
+            RAW="${GITHUB_REF#refs/tags/}"
+          fi
+          if [[ "$RAW" == "mac-edge" || "$RAW" == "edge" ]]; then
+            IS_EDGE=true
+            VERSION="$(jq -r .version apps/web/src-tauri/tauri.conf.json)"
+            if [[ -z "$VERSION" || "$VERSION" == "null" ]]; then
+              echo "::error::could not read .version from apps/web/src-tauri/tauri.conf.json"
+              exit 1
+            fi
+            TAG="mac-edge"
+          else
+            IS_EDGE=false
+            VERSION="${RAW#mac-v}"
+            TAG="mac-v${VERSION}"
+          fi
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]]; then
+            echo "::error::'$VERSION' is not a version (want X.Y.Z, from mac-vX.Y.Z or a dispatch input)"
+            exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "IS_EDGE=$IS_EDGE" >> "$GITHUB_OUTPUT"
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "channel: edge=$IS_EDGE  version=$VERSION  tag=$TAG"
+
+      # A version may only ever go UP, per channel. The updater compares semver,
+      # so publishing a manifest at or below what is already live either does
+      # nothing or — if an installed build sits between the two — offers users a
+      # DOWNGRADE that silently reverts fixes. That is not hypothetical: the
+      # tree sat at 1.0.15 while `mac-latest` served 1.0.20 from July, so every
+      # locally built app was told to "update" backwards into the old release.
+      #
+      # Nothing enforced monotonicity before, and care is not a mechanism.
+      - name: Version must exceed what is published
+        run: |
+          TAG="${{ steps.version.outputs.TAG }}"
+          VERSION="${{ steps.version.outputs.VERSION }}"
+          CHANNEL_TAG="$([ "${{ steps.version.outputs.IS_EDGE }}" = "true" ] && echo mac-edge || echo mac-latest)"
+
+          URL="https://github.com/${{ github.repository }}/releases/download/$CHANNEL_TAG/latest.json"
+          LIVE="$(curl -fsSL "$URL" | jq -r .version 2>/dev/null || true)"
+
+          if [ -z "$LIVE" ] || [ "$LIVE" = "null" ]; then
+            echo "no published manifest on $CHANNEL_TAG yet — nothing to compare"
+            exit 0
+          fi
+
+          # sort -V puts the greater last; equal versions fail too.
+          HIGHEST="$(printf '%s\n%s\n' "$LIVE" "$VERSION" | sort -V | tail -1)"
+          if [ "$VERSION" = "$LIVE" ] || [ "$HIGHEST" != "$VERSION" ]; then
+            echo "::error::$TAG publishes $VERSION but $CHANNEL_TAG already serves $LIVE."
+            echo "::error::A release must be strictly greater. Bump the version and retag."
+            exit 1
+          fi
+          echo "✓ $VERSION > $LIVE on $CHANNEL_TAG"
+
+      # Stamp the tag-derived version into tauri.conf.json so the bundler names
+      # the DMG `Virtues_<VERSION>_universal.dmg` to match the tag. Without this
+      # the bundler uses the static `"version"` in the config and every build
+      # was misnamed (e.g. mac-v1.0.16 → Virtues_1.0.15_universal.dmg).
+      - name: Stamp app version from tag
+        working-directory: apps/web/src-tauri
+        run: |
+          tmp="$(mktemp)"
+          jq --arg v "${{ steps.version.outputs.VERSION }}" '.version = $v' tauri.conf.json > "$tmp"
+          mv "$tmp" tauri.conf.json
+          echo "tauri.conf.json version → $(jq -r .version tauri.conf.json)"
+
+      # wasm32 for the page editor's markdown converter, which the UI bake's
+      # `pnpm build` builds (apps/web/scripts/build-converter.mjs).
+      - name: Install Rust (universal targets)
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-12
+        with:
+          toolchain: stable
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: ". -> target"
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          # 22, not 20: @ai-sdk/svelte declares engines.node >=22, so pnpm hard-fails
+          # the install (ERR_PNPM_UNSUPPORTED_ENGINE). release-linux.yml was moved to 22
+          # and this was left behind — which is why no Mac release has built since the
+          # dependency landed, and why three weeks of collector work never shipped.
+          node-version: '22'
+
+      # ── Stage both sidecars for the universal build ───────────────────────
+      # `tauri build --target universal-apple-darwin` compiles EACH arch as its
+      # own cargo invocation, and the tauri build script checks for a PER-ARCH
+      # sidecar (binaries/<name>-aarch64-apple-darwin and -x86_64-apple-darwin).
+      # We stage both per-arch files plus the lipo'd -universal one (used for the
+      # final bundle), for each helper.
+
+      # The collector reaches the box over iroh via VirtuesIrohMac.xcframework
+      # (uniffi FFI). It's gitignored (a build artifact), so generate it here —
+      # universal, since both darwin targets are installed above — BEFORE the
+      # Swift build links against it.
+      - name: Build iroh FFI xcframework (macOS, universal)
+        run: crates/virtues-iroh-ffi/build-macos.sh
+
+      # Bake the real build identity into the collector so `--version` reports
+      # the release + commit instead of a placeholder (update manifold Phase 1).
+      #
+      # Shares one generator with tools/build-mac-app.sh. It used to be an
+      # inline `sed` living only here, so the local build stamped nothing and
+      # shipped a collector that claimed 1.0.0 forever — the divergence is the
+      # reason this is a script and not three substitutions.
+      - name: Stamp collector version + commit
+        run: |
+          tools/stamp-mac-version.sh "${{ steps.version.outputs.VERSION }}"
+          grep -E 'current|buildDate|gitCommit' apps/mac-source/Sources/Version.swift
+
+      - name: Build virtues-collector sidecar (Swift)
+        working-directory: apps/mac-source
+        run: |
+          swift build -c release --arch arm64
+          swift build -c release --arch x86_64
+          ARM="$(swift build -c release --arch arm64 --show-bin-path)/virtues-collector"
+          X86="$(swift build -c release --arch x86_64 --show-bin-path)/virtues-collector"
+          OUT="$GITHUB_WORKSPACE/apps/web/src-tauri/binaries"
+          mkdir -p "$OUT"
+          cp "$ARM" "$OUT/virtues-collector-aarch64-apple-darwin"
+          cp "$X86" "$OUT/virtues-collector-x86_64-apple-darwin"
+          lipo -create "$ARM" "$X86" -output "$OUT/virtues-collector-universal-apple-darwin"
+          chmod +x "$OUT"/virtues-collector-*
+
+      - name: Install web deps (tauri CLI + plugins)
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      - name: Build signed + notarized universal app
+        working-directory: apps/web
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_BASE64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_DEVELOPER_ID }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # Self-updater signing (minisign) — orthogonal to Apple codesigning.
+          # With `bundle.createUpdaterArtifacts: true`, tauri also emits a signed
+          # `Virtues.app.tar.gz` + `.sig` here. Notarization does NOT invalidate
+          # this signature (tauri#7703).
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm tauri build --target universal-apple-darwin
+
+      - name: Locate DMG
+        id: dmg
+        run: |
+          DMG=$(find apps/web/src-tauri/target/universal-apple-darwin/release/bundle/dmg -name '*.dmg' | head -1)
+          [ -n "$DMG" ] || { echo "no DMG produced"; exit 1; }
+          echo "path=$DMG" >> "$GITHUB_OUTPUT"
+          echo "Found DMG: $DMG"
+
+      # Tauri notarizes + staples the .app, but NOT the DMG. A downloaded DMG
+      # that isn't itself notarized triggers Gatekeeper's "Apple cannot check
+      # it" prompt — so notarize + staple the DMG too. notarytool accepts the
+      # DMG because the executables inside are already Developer-ID signed +
+      # hardened; the DMG wrapper needs no separate codesign.
+      - name: Notarize + staple the DMG
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_APP_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit "${{ steps.dmg.outputs.path }}" \
+            --apple-id "$APPLE_ID" --password "$APPLE_PASSWORD" --team-id "$APPLE_TEAM_ID" --wait
+          xcrun stapler staple "${{ steps.dmg.outputs.path }}"
+
+      # Gate: refuse to publish unless the app is Developer ID signed AND the DMG
+      # is notarized + stapled. If the APPLE_* secrets are missing, tauri builds
+      # unsigned and this fails here — so a misconfigured run never ships an
+      # unsigned release.
+      - name: Verify signed + notarized
+        run: |
+          APP=$(find apps/web/src-tauri/target/universal-apple-darwin/release/bundle/macos -name '*.app' | head -1)
+          [ -n "$APP" ] || { echo "no .app produced"; exit 1; }
+          echo "== codesign =="
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          if ! codesign -dvv "$APP" 2>&1 | grep -q "Authority=Developer ID Application"; then
+            echo "::error::app is NOT Developer ID signed — are the APPLE_* secrets set?"
+            exit 1
+          fi
+          echo "== notarization staple =="
+          if ! xcrun stapler validate "${{ steps.dmg.outputs.path }}"; then
+            echo "::error::DMG is not notarized/stapled"
+            exit 1
+          fi
+          # externalBin / #11992 guard: every sidecar must be validly signed
+          # inside the bundle, or the updater would ship a broken app that
+          # Gatekeeper rejects on relaunch. (--deep above already walks them;
+          # this asserts each explicitly so a regression fails loudly.)
+          # virtues-client is gone on purpose — reach runs in-process since
+          # 45e13811 — so only the collector remains.
+          echo "== sidecars signed (externalBin guard) =="
+          for s in virtues-collector; do
+            codesign --verify --strict "$APP/Contents/MacOS/$s" \
+              || { echo "::error::sidecar $s is not validly signed"; exit 1; }
+          done
+          echo "✓ signed + notarized"
+
+      # Stable, version-independent filename so download pages point at a fixed
+      # URL — mac-latest/Virtues.dmg (stable) or mac-edge/Virtues.dmg (edge).
+      - name: Stable-named copy for the download URL
+        id: stable
+        run: |
+          STABLE="$(dirname "${{ steps.dmg.outputs.path }}")/Virtues.dmg"
+          cp "${{ steps.dmg.outputs.path }}" "$STABLE"
+          echo "path=$STABLE" >> "$GITHUB_OUTPUT"
+
+      # Updater manifest, now for BOTH channels. `tauri build` already emitted a
+      # signed `*.app.tar.gz` + `.sig` (createUpdaterArtifacts + TAURI_SIGNING_*).
+      # We copy them to fixed names and compose `latest.json` pointing at the
+      # channel's own rolling tag — the endpoint the app's updater polls.
+      #
+      # Edge used to be skipped so the updater could not pull a rolling test
+      # build. The app now picks its endpoint from a stored channel, so that
+      # guard has moved to where it belongs: nothing reaches mac-edge/latest.json
+      # unless the user has explicitly selected Nightly. Skipping it here only
+      # meant edge users had no update path at all.
+      #
+      # One universal artifact serves both arches.
+      - name: Generate updater manifest (latest.json)
+        id: updater
+        run: |
+          BUNDLE="apps/web/src-tauri/target/universal-apple-darwin/release/bundle"
+          TARGZ=$(find "$BUNDLE" -name '*.app.tar.gz' | head -1)
+          SIG=$(find "$BUNDLE" -name '*.app.tar.gz.sig' | head -1)
+          if [ -z "$TARGZ" ] || [ -z "$SIG" ]; then
+            echo "::error::updater artifacts (.app.tar.gz/.sig) missing — check createUpdaterArtifacts + TAURI_SIGNING_PRIVATE_KEY"
+            exit 1
+          fi
+          DIR="$(dirname "$TARGZ")"
+          # tauri already names these `Virtues.app.tar.gz`/`.sig`; only copy when
+          # a rename is actually needed (cp onto itself errors under `set -e`).
+          [ "$TARGZ" = "$DIR/Virtues.app.tar.gz" ] || cp "$TARGZ" "$DIR/Virtues.app.tar.gz"
+          [ "$SIG" = "$DIR/Virtues.app.tar.gz.sig" ] || cp "$SIG" "$DIR/Virtues.app.tar.gz.sig"
+          CHANNEL_TAG=$([ "${{ steps.version.outputs.IS_EDGE }}" = "true" ] && echo "mac-edge" || echo "mac-latest")
+          URL="https://github.com/virtues-os/virtues/releases/download/$CHANNEL_TAG/Virtues.app.tar.gz"
+          jq -n \
+            --arg version "${{ steps.version.outputs.VERSION }}" \
+            --arg notes "Performance, reliability, and self-update improvements." \
+            --arg pubdate "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            --arg sig "$(cat "$DIR/Virtues.app.tar.gz.sig")" \
+            --arg url "$URL" \
+            '{version:$version, notes:$notes, pub_date:$pubdate, platforms:{"darwin-aarch64":{signature:$sig,url:$url},"darwin-x86_64":{signature:$sig,url:$url}}}' \
+            > "$DIR/latest.json"
+          echo "targz=$DIR/Virtues.app.tar.gz" >> "$GITHUB_OUTPUT"
+          echo "sig=$DIR/Virtues.app.tar.gz.sig" >> "$GITHUB_OUTPUT"
+          echo "manifest=$DIR/latest.json" >> "$GITHUB_OUTPUT"
+          echo "== latest.json =="; cat "$DIR/latest.json"
+
+      # The channel release: `mac-v0.1.0` (stable, permanent, prerelease:false)
+      # or `mac-edge` (rolling, prerelease:true). Both carry the versioned DMG
+      # and the stable Virtues.dmg so each channel has a fixed download URL.
+      #
+      # make_latest:false is load-bearing: the repo-global `releases/latest`
+      # pointer belongs exclusively to the Linux box's bare `v*` stable (it's
+      # what virtues.com/sh + bootstrap.sh + virtues-installer resolve). The Mac
+      # app has its OWN rolling pointer (`mac-latest`, below) that its updater +
+      # virtues.com/downloads/mac use — it never needs the global flag. Without
+      # this, a `prerelease:false` mac-v* would auto-grab `releases/latest` and
+      # `curl virtues.com/sh` 404s (no bootstrap.sh on a mac DMG release).
+      - name: Publish channel release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          name: ${{ steps.version.outputs.IS_EDGE == 'true' && 'Virtues for Mac (Edge)' || format('Virtues for Mac v{0}', steps.version.outputs.VERSION) }}
+          tag_name: ${{ steps.version.outputs.TAG }}
+          prerelease: ${{ steps.version.outputs.IS_EDGE == 'true' }}
+          make_latest: false
+          body: |
+            ## Virtues for Mac ${{ steps.version.outputs.IS_EDGE == 'true' && '(Edge — rolling test build)' || format('v{0}', steps.version.outputs.VERSION) }}
+
+            Universal (Intel + Apple Silicon) Tauri app. Bundles the
+            `virtues-collector` (data) helper; networking runs in-process.
+
+            ### Install
+            1. Download the `.dmg`, open it, drag **Virtues** to Applications.
+            2. Launch it and enter the 6-char code from `virtues pair` on your server.
+          # `mac-edge` is its own rolling pointer, so the updater artifacts have
+          # to ride on this release for Nightly to have anything to poll. On a
+          # stable build these same files also go to `mac-latest` below, which
+          # is the endpoint the Main channel reads.
+          files: |
+            ${{ steps.dmg.outputs.path }}
+            ${{ steps.stable.outputs.path }}
+            ${{ steps.updater.outputs.targz }}
+            ${{ steps.updater.outputs.sig }}
+            ${{ steps.updater.outputs.manifest }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # Stable builds also update the rolling `mac-latest` that
+      # virtues.com/downloads/mac 302s to. Edge skips this — `mac-edge` IS the
+      # rolling edge pointer.
+      - name: Update mac-latest (stable only)
+        if: steps.version.outputs.IS_EDGE == 'false'
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: mac-latest
+          make_latest: false
+          name: Virtues for Mac (Latest)
+          body: |
+            Automatically tracks the latest stable Mac build.
+            Current version: v${{ steps.version.outputs.VERSION }}
+
+            Stable download: `Virtues.dmg` (same file, version-independent URL).
+            Self-update manifest: `latest.json` (+ `Virtues.app.tar.gz`/`.sig`).
+          files: |
+            ${{ steps.dmg.outputs.path }}
+            ${{ steps.stable.outputs.path }}
+            ${{ steps.updater.outputs.targz }}
+            ${{ steps.updater.outputs.sig }}
+            ${{ steps.updater.outputs.manifest }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

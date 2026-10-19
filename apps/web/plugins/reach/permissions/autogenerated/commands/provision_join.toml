@@ -1,0 +1,13 @@
+# Automatically generated - DO NOT EDIT!
+
+"$schema" = "../../schemas/schema.json"
+
+[[permission]]
+identifier = "allow-provision-join"
+description = "Enables the provision_join command without any pre-configured scope."
+commands.allow = ["provision_join"]
+
+[[permission]]
+identifier = "deny-provision-join"
+description = "Denies the provision_join command without any pre-configured scope."
+commands.deny = ["provision_join"]

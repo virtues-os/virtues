@@ -1,0 +1,368 @@
+//! Stream health — per-stream ingest freshness, so a silent stall surfaces on
+//! its own instead of being found by hand.
+//!
+//! Nothing in the app told anyone when a stream stopped. Messages went dark for
+//! three days, the calendar sync died for two weeks, and finance dropped every
+//! batch — all invisible until someone queried the tables directly. This turns
+//! that into an at-a-glance signal.
+//!
+//! Driven off the ontology registry (`registered_ontologies()`), so a new
+//! stream shows up here automatically — there is no second list to keep in sync.
+//!
+//! # Status — self-calibrating, no hardcoded per-stream cadence
+//!
+//!   never   — 0 rows ever. The source was never connected.
+//!   live    — something arrived in the last 24h.
+//!   stalled — nothing in 24h, but it WAS flowing in the last 30 days. The alarm.
+//!   idle    — has data, but nothing in 30 days. Genuinely quiet, or long dead.
+//!
+//! The alarm window was 7 days, which meant it cleared itself: a stream that
+//! stopped and was not noticed within the week turned `idle`, the same word
+//! as a stream with nothing to say, and nothing anywhere said it had broken.
+//! 30 days keeps a stopped stream an alarm long enough for someone to see it
+//! (and for `api::attention` to tell them).
+//!
+//! The 24h/30d split is deliberately coarse: it fires on the failures we
+//! actually hit (a stream that was flowing and stopped) and tolerates a
+//! legitimately quiet stream by calling it `idle`, not `stalled`. A stream's
+//! own rhythm — not a global threshold — is what a later version would compare
+//! against; this is the honest floor that already catches the real cases.
+
+use crate::database::Database;
+use crate::Result;
+use serde::{Deserialize, Serialize};
+use sqlx::Row;
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StreamHealth {
+    /// Registry name, e.g. `communication_message`.
+    pub name: String,
+    pub display_name: String,
+    /// `never` | `live` | `stalled` | `idle` | `blocked`.
+    ///
+    /// `blocked` outranks every freshness verdict: it means the applet that
+    /// writes this stream is failing, so the emptiness has a known cause and
+    /// must not be drawn as quiet.
+    pub status: String,
+    pub total: i64,
+    pub count_24h: i64,
+    pub count_7d: i64,
+    /// Newest event time (the stream's own timestamp column).
+    pub last_event: Option<chrono::DateTime<chrono::Utc>>,
+    /// Newest ingest time (`created_at`) — how fresh the *pipe* is, which can
+    /// lag the event time when a derivation falls behind.
+    pub last_ingest: Option<chrono::DateTime<chrono::Utc>>,
+    /// Sources that declare they write this stream, by display name. Answers
+    /// "what would fill this" — the question a page showing an empty stream
+    /// could not previously answer at all.
+    pub provided_by: Vec<String>,
+    /// True when at least one of those sources is actually connected. This is
+    /// the axis that was missing: `total == 0` alone cannot tell "nothing
+    /// provides this" from "provided, but switched off or not yet delivered".
+    pub connected: bool,
+    /// No source writes it, yet rows exist — the box computed it from other
+    /// streams (a sessionizer). "Connect something" is the wrong advice here,
+    /// so the UI must not offer it.
+    pub derived: bool,
+    /// Why this stream is `blocked`, verbatim from the failing applet's last
+    /// run. `None` for every other status.
+    pub blocked_reason: Option<String>,
+    /// For the stays stream only: how much of the week's tracked time its
+    /// stays account for. Fixes keep arriving when the stay detector breaks,
+    /// so this is the only number on the page that shows that failure.
+    pub coverage: Option<crate::entity_resolution::places::StayCoverage>,
+}
+
+/// The arrivals window: the UTC date `days[0]` refers to, and its length.
+/// Sent so the client labels the axis from the same calendar the server bucketed
+/// on — deriving it from a local `new Date()` shifts every tick and tooltip by a
+/// day for anyone west of UTC after 18:00, which undercuts the exact reading the
+/// grid exists for.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StreamDaysResponse {
+    pub start: chrono::NaiveDate,
+    pub days: i64,
+    pub streams: Vec<StreamDays>,
+}
+
+/// One stream's arrivals, one cell per day, oldest first.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StreamDays {
+    pub name: String,
+    pub display_name: String,
+    /// The provider that actually wrote these rows, from `source_provider` on
+    /// the data itself — ground truth, not the manifest's claim. One entry per
+    /// (stream, provider) pair, so a stream two sources both write (bookmarks
+    /// from a Mac and from GitHub) is two rows, each with its own shape.
+    pub provider: String,
+    /// `days[i]` is the row count for `from + i` days. Zero-filled, so the
+    /// caller can render a fixed grid without reconciling sparse dates.
+    pub days: Vec<i64>,
+}
+
+/// Daily arrival counts per stream over a window.
+///
+/// A scalar "last seen" per stream cannot show the only thing that matters at a
+/// glance: whether streams stopped *together*. Nineteen rows all reading `Jul 7`
+/// is one event — a device stopped — but as a list it reads as nineteen
+/// problems. Given a day axis the same data draws a vertical cliff across every
+/// row that device feeds, and the shape says it without a word.
+///
+/// It also exposes rhythm, which a scalar cannot: a calendar that only fills on
+/// weekdays is healthy, a heart rate that only fills on weekdays is a phone left
+/// at home.
+pub async fn stream_days(db: &Database, days: i64) -> Result<StreamDaysResponse> {
+    let days = days.clamp(7, 365);
+    let streams: Vec<_> = virtues_registry::ontologies::registered_ontologies()
+        .into_iter()
+        .filter(|o| o.table_name.starts_with("data_"))
+        .collect();
+    let today = chrono::Utc::now().date_naive();
+    let start = today - chrono::Duration::days(days - 1);
+    if streams.is_empty() {
+        return Ok(StreamDaysResponse { start, days, streams: vec![] });
+    }
+
+    // One UNION ALL, grouped per provider per day. Grouping on the data's own
+    // `source_provider` rather than on the manifest's declared `writes` means
+    // the grid shows what actually happened: if a stream is fed by two sources,
+    // or by one the manifest never claimed, the rows are still right. The
+    // declared map stays useful for the opposite question — what would fill a
+    // stream that has no rows at all — which no observation can answer.
+    //
+    // `table_name` is a compile-time registry constant, never user input, so
+    // interpolation is injection-safe; the freshness query above relies on the
+    // same argument.
+    let sql = streams
+        .iter()
+        .map(|o| {
+            format!(
+                "SELECT '{name}' AS name, \
+                        source_provider AS provider, \
+                        (created_at AT TIME ZONE 'UTC')::date AS day, \
+                        count(*)::int8 AS n \
+                   FROM {table} \
+                  WHERE created_at >= (($1::date)::timestamptz) \
+                  GROUP BY 1, 2, 3",
+                name = o.name,
+                table = o.table_name,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" UNION ALL ");
+
+    let rows = sqlx::query(&sql).bind(start).fetch_all(db.pool()).await?;
+
+    let width = days as usize;
+
+    // (stream, provider) -> daily counts.
+    let mut acc: std::collections::HashMap<(String, String), Vec<i64>> =
+        std::collections::HashMap::new();
+    for r in rows {
+        let name: String = r.get("name");
+        let provider: String = r.get("provider");
+        let day: chrono::NaiveDate = r.get("day");
+        let n: i64 = r.get("n");
+        let i = (day - start).num_days();
+        if i < 0 || i as usize >= width {
+            continue;
+        }
+        acc.entry((name, provider))
+            .or_insert_with(|| vec![0i64; width])[i as usize] = n;
+    }
+
+    let display: std::collections::HashMap<&str, &str> = streams
+        .iter()
+        .map(|o| (o.name, o.display_name))
+        .collect();
+
+    let mut out: Vec<StreamDays> = acc
+        .into_iter()
+        .map(|((name, provider), days)| StreamDays {
+            display_name: display.get(name.as_str()).copied().unwrap_or("").to_string(),
+            provider,
+            days,
+            name,
+        })
+        .collect();
+    // Stable order: provider, then stream, so the grid does not reshuffle
+    // between polls.
+    out.sort_by(|a, b| a.provider.cmp(&b.provider).then(a.name.cmp(&b.name)));
+    Ok(StreamDaysResponse { start, days, streams: out })
+}
+
+/// Freshness for every ingest stream, worst-first (stalled → idle → never →
+/// live) so the caller leads with what needs attention.
+pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
+    // Ingest streams only. Chats/pages are user content in the same registry,
+    // not sources, so a quiet project must not read as a broken pipe.
+    let streams: Vec<_> = virtues_registry::ontologies::registered_ontologies()
+        .into_iter()
+        .filter(|o| o.table_name.starts_with("data_"))
+        .collect();
+    if streams.is_empty() {
+        return Ok(vec![]);
+    }
+
+    // One UNION ALL over the registry — a 0-row table still returns its row
+    // (count 0 → `never`), which a group-over-rows form would silently drop.
+    // `table_name` / `timestamp_column` are compile-time-static registry values
+    // (never user input), so interpolating them is injection-safe.
+    let sql = streams
+        .iter()
+        .map(|o| {
+            format!(
+                "SELECT '{name}' AS name, '{disp}' AS display_name, \
+                   count(*)::int8 AS total, \
+                   count(*) FILTER (WHERE created_at > now() - interval '24 hours')::int8 AS c24, \
+                   count(*) FILTER (WHERE created_at > now() - interval '7 days')::int8  AS c7, \
+                   count(*) FILTER (WHERE created_at > now() - interval '30 days')::int8 AS c30, \
+                   max({ts})::timestamptz AS last_event, \
+                   max(created_at)::timestamptz AS last_ingest \
+                 FROM {table}",
+                name = o.name,
+                disp = o.display_name.replace('\'', "''"),
+                ts = o.timestamp_column,
+                table = o.table_name,
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(" UNION ALL ");
+
+    let rows = sqlx::query(&sql).fetch_all(db.pool()).await?;
+
+    let mut out: Vec<StreamHealth> = rows
+        .into_iter()
+        .map(|r| {
+            let total: i64 = r.get("total");
+            let c24: i64 = r.get("c24");
+            let c7: i64 = r.get("c7");
+            let c30: i64 = r.get("c30");
+            let status = if total == 0 {
+                "never"
+            } else if c24 > 0 {
+                "live"
+            } else if c30 > 0 {
+                "stalled"
+            } else {
+                "idle"
+            };
+            let name: String = r.get("name");
+            let writers = crate::applet_templates::sources_writing(&name);
+            StreamHealth {
+                display_name: r.get("display_name"),
+                status: status.to_string(),
+                total,
+                count_24h: c24,
+                count_7d: c7,
+                last_event: r.get("last_event"),
+                last_ingest: r.get("last_ingest"),
+                provided_by: writers
+                    .iter()
+                    .map(|id| {
+                        crate::applet_templates::lookup_source(id)
+                            .map(|s| s.display_name)
+                            .unwrap_or_else(|| id.clone())
+                    })
+                    .collect(),
+                // Filled in below — needs one query, not one per stream.
+                connected: false,
+                blocked_reason: None,
+                coverage: None,
+                derived: writers.is_empty() && total > 0,
+                name,
+            }
+        })
+        .collect();
+
+    // Which sources are actually connected. One pass over both tables rather
+    // than a lookup per stream: OAuth and API-key sources mint a credential,
+    // device sources (iOS, Mac) pair into app_device and never do — a stream
+    // fed by an iPhone would look unconnected if only credentials were checked.
+    let live_sources: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
+        "SELECT source_id FROM credentials WHERE status = 'active' \
+         UNION \
+         SELECT source_id FROM app_device WHERE source_id IS NOT NULL AND revoked_at IS NULL",
+    )
+    .fetch_all(db.pool())
+    .await?
+    .into_iter()
+    .collect();
+
+    for s in &mut out {
+        let ids = crate::applet_templates::sources_writing(&s.name);
+        s.connected = ids.iter().any(|id| live_sources.contains(id));
+    }
+
+    // Streams whose writer is failing. Without this, freshness alone decides
+    // the verdict — and a stream whose applet has errored on every run for
+    // three days has exactly the row counts of one with nothing to say, so it
+    // was reported as `idle`. That is the surface on /home and /sources, which
+    // means this is where "blocked" was being rendered as "quiet".
+    //
+    // Applied after the freshness pass so it overrides it: a known cause always
+    // outranks an inference from counts. `live` is left alone — rows arriving
+    // now means the pipe works, whatever the last run said.
+    for (ontology, reason) in blocked_streams(db).await? {
+        for s in out.iter_mut().filter(|s| s.name == ontology) {
+            if s.status != "live" {
+                s.status = "blocked".to_string();
+                s.blocked_reason = Some(reason.clone());
+            }
+        }
+    }
+
+    fn rank(s: &str) -> u8 {
+        match s {
+            "blocked" => 0,
+            "stalled" => 1,
+            "idle" => 2,
+            "never" => 3,
+            _ => 4, // live
+        }
+    }
+    out.sort_by(|a, b| rank(&a.status).cmp(&rank(&b.status)).then(a.name.cmp(&b.name)));
+    if let Some(visits) = out.iter_mut().find(|s| s.name == "location_visit" && s.total > 0) {
+        let since = chrono::Utc::now() - chrono::Duration::days(7);
+        visits.coverage = Some(crate::entity_resolution::places::stay_coverage(db.pool(), since).await?);
+    }
+
+    Ok(out)
+}
+
+/// Ontologies whose writing applet's most recent run failed, mapped to that
+/// run's error text.
+///
+/// Keyed on the LATEST run per applet rather than a failure count: one error
+/// followed by a success is a transient the user need not see, while a failing
+/// latest run means the stream is not being written right now. The error text
+/// is passed through verbatim — "Permission denied (os error 13)" is exactly
+/// the sentence that shortens the next diagnosis.
+///
+/// Errors propagate. An empty map must mean "every writer's last run
+/// succeeded"; a failed query must never be able to say that.
+async fn blocked_streams(db: &Database) -> Result<Vec<(String, String)>> {
+    let rows = sqlx::query(
+        "SELECT a.id AS applet_id, r.error AS error
+           FROM app_applets a
+           JOIN LATERAL (
+                SELECT status, error FROM app_applet_runs
+                 WHERE applet_id = a.id
+                 ORDER BY created_at DESC LIMIT 1
+           ) r ON TRUE
+          WHERE a.enabled AND a.archived_at IS NULL AND r.status = 'error'",
+    )
+    .fetch_all(db.pool())
+    .await?;
+
+    let mut out = Vec::new();
+    for row in rows {
+        let applet_id: String = row.get("applet_id");
+        let error: Option<String> = row.get("error");
+        let reason = error.unwrap_or_else(|| "last run failed".to_string());
+        for ontology in crate::applet_templates::ontologies_written_by_applet_id(&applet_id) {
+            out.push((ontology, reason.clone()));
+        }
+    }
+    Ok(out)
+}

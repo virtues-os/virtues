@@ -1,0 +1,48 @@
+//! Output helpers shared across modules.
+//!
+//! Thin layer over `cliclack` and `console`. The point is consistency: one
+//! place for the section-header format, the success/warn/error iconography,
+//! the indent rules. Modules that need a custom prompt go through cliclack
+//! directly; everything else uses these.
+
+use console::style;
+use std::process;
+
+use crate::brand;
+
+/// Print a top-level section header (e.g. "∴ Installing").
+pub fn section(title: &str) {
+    println!();
+    println!("  {}  {}", style(brand::mark()).bold().green(), style(title).bold());
+}
+
+/// A successful step under the current section.
+pub fn ok(msg: &str) {
+    println!("  {}  {}", style("✓").green(), msg);
+}
+
+/// A skipped/no-op step ("already configured").
+pub fn skip(msg: &str) {
+    println!("  {}  {}", style("·").dim(), style(msg).dim());
+}
+
+/// Work about to happen, announced before it starts. For the few steps long
+/// enough that silence reads as a hang but which don't shell out to a command
+/// (those get `run_step`'s spinner instead).
+pub fn info(msg: &str) {
+    println!("  {}  {}", style("·").cyan(), msg);
+}
+
+/// A non-fatal warning.
+pub fn warn(msg: &str) {
+    println!("  {}  {}", style("⚠").yellow(), style(msg).yellow());
+}
+
+/// Fatal error — print + exit with non-zero code. Never returns.
+pub fn die(msg: &str) -> ! {
+    eprintln!();
+    eprintln!("  {}  {}", style("✖").red().bold(), style(msg).red());
+    eprintln!();
+    process::exit(1);
+}
+

@@ -1,0 +1,1601 @@
+//! The wiki: entities, memories, notes, the lifeline, articles, days and
+//! events, and the home-page loops.
+
+use axum::{
+    extract::{Path, Query, State},
+    http::StatusCode,
+    response::{IntoResponse, Response},
+    routing::{delete, get, post, put},
+    Json,
+    Router,
+};
+use serde::Deserialize;
+
+use super::{api_response, error_response, success_message};
+use crate::error::Error;
+use crate::server::AppState;
+
+/// This area's authenticated routes. Merged into the protected router, whose
+/// `route_layer` requires a resolved `AuthUser`.
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        // Timeline day (location chunks for movement map)
+        .route("/api/timeline/day/:date", get(timeline_get_day_handler))
+        // The Timeline: one local day whole, and which days have a record
+        .route("/api/timeline/days/:date", get(timeline_day_handler))
+        .route("/api/timeline/recorded", get(timeline_recorded_handler))
+        // Today streams — location/calendar/audio spans, pre-synthesis (homepage)
+        .route("/api/today/:date/streams", get(today_streams_handler))
+        // Home-page loops — weather · upcoming calendar · unnamed-place backlog
+        .route("/api/weather/current", get(weather_now_handler))
+        .route("/api/calendar/upcoming", get(calendar_upcoming_handler))
+        .route("/api/places/unnamed", get(unnamed_places_handler))
+        // Entities API - Places
+        .route(
+            "/api/entities/places",
+            get(list_places_handler).post(create_place_handler),
+        )
+        .route(
+            "/api/entities/places/:id",
+            get(get_place_handler)
+                .put(update_place_handler)
+                .delete(delete_place_handler),
+        )
+        // Fold this place into another; the named places close enough to be it
+        .route("/api/entities/places/:id/merge", post(merge_place_handler))
+        .route("/api/entities/places/:id/nearby", get(nearby_places_handler))
+        .route(
+            "/api/assistant/memories",
+            get(list_assistant_memories_handler),
+        )
+        .route(
+            "/api/assistant/memories/:id",
+            put(edit_assistant_memory_handler)
+                .delete(retire_assistant_memory_handler),
+        )
+        .route(
+            "/api/wiki/notes/:subject_type/:subject_id",
+            get(list_notes_handler).post(create_note_handler),
+        )
+        .route(
+            "/api/wiki/notes/:id/resolve",
+            put(resolve_note_handler),
+        )
+        .route(
+            "/api/wiki/notes-open-count",
+            get(open_notes_count_handler),
+        )
+        .route(
+            "/api/wiki/lifeline",
+            get(lifeline_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/clock",
+            get(lifeline_clock_handler),
+        )
+        .route(
+            "/api/wiki/lifeline/feed",
+            get(lifeline_feed_handler),
+        )
+        .route(
+            "/api/wiki/history",
+            get(history_feed_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/history",
+            get(article_history_handler),
+        )
+        .route(
+            "/api/wiki/subjects/:subject_type/:subject_id/backlinks",
+            get(subject_backlinks_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id",
+            get(get_article_handler).post(write_article_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/maintenance",
+            put(set_article_maintenance_handler),
+        )
+        .route(
+            "/api/wiki/articles/:subject_type/:subject_id/revert",
+            post(revert_article_handler),
+        )
+        .route(
+            "/api/entities/people",
+            post(create_person_handler),
+        )
+        .route(
+            "/api/entities/people/:id",
+            delete(delete_person_handler),
+        )
+        .route(
+            "/api/entities/orgs/:id",
+            delete(delete_org_handler),
+        )
+        .route(
+            "/api/entities/people/:id/reclassify-as-org",
+            post(reclassify_person_handler),
+        )
+        // Fold this person into another; the people who share a number with them
+        .route("/api/entities/people/:id/merge", post(merge_person_handler))
+        .route("/api/entities/people/:id/same", get(same_people_handler))
+        // ── Wiki API ────────────────────────────────────────────────────
+        //
+        // TWO ADDRESSING SHAPES, and both are right. Don't unify them.
+        //
+        //   generic   /api/wiki/articles/:subject_type/:subject_id
+        //             /api/wiki/notes/:subject_type/:subject_id
+        //             /api/wiki/subjects/:subject_type/:subject_id/backlinks
+        //   per-kind  /api/wiki/person/:id, /place/:id, /organization/:id
+        //
+        // The test is whether the PAYLOAD varies by kind. An article is the
+        // same row whatever it is about, so its route takes the subject as a
+        // parameter and one handler serves every rung. An entity's own fields
+        // are not: a person has a relationship, a place has coordinates, an
+        // organization has a type. A generic entity route would return a union
+        // the client has to discriminate anyway — the per-kind route has
+        // already done that, in the one place it costs nothing.
+        //
+        // What was genuinely wrong here was duplicate SPELLINGS of one route,
+        // not the shape: organizations had four routes for two handlers.
+        //
+        // Wiki - Person
+        // Mention review queue (entity resolution HITL)
+        .route("/api/wiki/people", get(wiki_list_people_handler))
+        .route(
+            "/api/wiki/person/:id",
+            get(wiki_get_person_handler).put(wiki_update_person_handler),
+        )
+        .route("/api/wiki/person/:id/gloss", get(wiki_person_gloss_handler))
+        // Wiki - Place
+        .route("/api/wiki/places", get(wiki_list_places_handler))
+        .route(
+            "/api/wiki/place/:id",
+            get(wiki_get_place_handler).put(wiki_update_place_handler),
+        )
+        // Wiki - Organization. The table is `wiki_orgs` and the id prefix is
+        // `org_`, but the ROUTE spells it out, matching `subject_type =
+        // 'organization'` everywhere else. `/orgs` and `/org/:id` also existed,
+        // pointed at these same handlers, and no client has ever called either.
+        .route(
+            "/api/wiki/organizations",
+            get(wiki_list_organizations_handler),
+        )
+        .route(
+            "/api/wiki/organization/:id",
+            get(wiki_get_organization_handler).put(wiki_update_organization_handler),
+        )
+        // Wiki - Narrative Identity. Read-only: the document is edited on its
+        // page, and the retired abridged copy took its PUT with it.
+        .route(
+            "/api/wiki/narrative-identity",
+            get(wiki_get_narrative_identity_handler),
+        )
+        // Wiki - Chapter (the life's partition, written by the interview or
+        // drawn on the Getting started timeline; PUT replaces the whole list)
+        .route(
+            "/api/wiki/chapters",
+            get(crate::api::narrative_draft::chapters_handler)
+                .put(wiki_replace_chapters_handler),
+        )
+        // Wiki - Day
+        .route("/api/wiki/days", get(wiki_list_days_handler))
+        .route("/api/wiki/activity", get(wiki_day_activity_handler))
+        .route("/api/wiki/on-this-day", get(wiki_on_this_day_handler))
+        .route(
+            "/api/wiki/entity/:id/records",
+            get(wiki_entity_records_handler),
+        )
+        .route(
+            "/api/wiki/entity/:id/records/facets",
+            get(wiki_entity_record_facets_handler),
+        )
+        .route("/api/wiki/day/:date", get(wiki_get_day_handler))
+        // Wiki - Rewrite this page: start one, and read how it is going
+        .route(
+            "/api/wiki/day/:date/rewrite",
+            get(wiki_get_day_rewrite_handler).post(wiki_rewrite_day_handler),
+        )
+        // Wiki - Paint this day: a picture of a place the page names
+        .route("/api/wiki/day/:date/picture", post(wiki_paint_day_handler))
+        .route(
+            "/api/wiki/stories",
+            get(wiki_list_stories_handler).post(wiki_create_story_handler),
+        )
+        .route(
+            "/api/wiki/story/:id",
+            get(wiki_get_story_handler)
+                .put(wiki_update_story_handler)
+                .delete(wiki_delete_story_handler),
+        )
+        .route(
+            "/api/wiki/story/:id/article",
+            post(wiki_start_story_article_handler),
+        )
+        .route(
+            "/api/wiki/chapter/:id",
+            put(wiki_update_chapter_handler)
+                .delete(wiki_delete_chapter_handler),
+        )
+        .route("/api/wiki/me", get(wiki_me_handler))
+        .route("/api/wiki/years", get(wiki_list_years_handler))
+        .route(
+            "/api/wiki/year/:year",
+            get(wiki_get_year_handler).put(wiki_update_year_handler),
+        )
+        .route(
+            "/api/wiki/year/:year/article",
+            post(wiki_write_year_article_handler),
+        )
+        // Wiki - Temporal Events
+        .route(
+            "/api/wiki/day/:date/events",
+            get(wiki_get_day_events_handler),
+        )
+        .route("/api/wiki/events", post(wiki_create_event_handler))
+        .route(
+            "/api/wiki/events/:id",
+            put(wiki_update_event_handler).delete(wiki_delete_event_handler),
+        )
+        .route(
+            "/api/wiki/day/:day_id/auto-events",
+            delete(wiki_delete_auto_events_handler),
+        )
+        // Wiki - Day Sources (ontology data)
+        .route(
+            "/api/wiki/day/:date/sources",
+            get(wiki_get_day_sources_handler),
+        )
+        // Wiki - Day facts (the weather and the heard hours above the title)
+        .route(
+            "/api/wiki/day/:date/facts",
+            get(wiki_get_day_facts_handler),
+        )
+        // Wiki - What the day holds for the first time (the margin's "new")
+        .route(
+            "/api/wiki/day/:date/firsts",
+            get(wiki_get_day_firsts_handler),
+        )
+        // Wiki - Days whose pages read like this one's
+        .route(
+            "/api/wiki/day/:date/similar",
+            get(wiki_get_similar_days_handler),
+        )
+        // Wiki - Your numbers for a day, against the days before it
+        .route(
+            "/api/wiki/day/:date/measures",
+            get(wiki_get_day_measures_handler),
+        )
+        // Wiki - Day Streams (dynamic ontology queries)
+        .route(
+            "/api/wiki/day/:date/streams",
+            get(wiki_get_day_streams_handler),
+        )
+}
+
+
+// =============================================================================
+// Entities API - Places
+// =============================================================================
+
+/// List all known places
+pub async fn list_places_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::entities::list_places(state.db.pool()).await)
+}
+
+/// Create a place by hand — the phone's "Mute here" and its Google-places door.
+pub async fn create_place_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::entities::CreatePlaceRequest>,
+) -> Response {
+    api_response(crate::api::entities::create_place(state.db.pool(), request).await)
+}
+
+/// Get a specific place by ID
+pub async fn get_place_handler(
+    State(state): State<AppState>,
+    Path(place_id): Path<String>,
+) -> Response {
+    api_response(crate::api::entities::get_place(state.db.pool(), place_id).await)
+}
+
+#[derive(Debug, Deserialize)]
+pub struct MergePlaceRequest {
+    /// The place (or person) that survives; the one in the path is folded into it.
+    pub into: String,
+}
+
+/// Fold the place in the path into `into`.
+pub async fn merge_place_handler(
+    State(state): State<AppState>,
+    Path(place_id): Path<String>,
+    Json(req): Json<MergePlaceRequest>,
+) -> Response {
+    match crate::api::entities::merge_places(state.db.pool(), &req.into, &place_id).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "id": req.into }))).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// The named places near this one, as "Same as…?" choices.
+pub async fn nearby_places_handler(
+    State(state): State<AppState>,
+    Path(place_id): Path<String>,
+) -> Response {
+    api_response(crate::api::entities::nearby_named_places(state.db.pool(), &place_id).await)
+}
+
+/// Update an existing place
+pub async fn update_place_handler(
+    State(state): State<AppState>,
+    Path(place_id): Path<String>,
+    Json(request): Json<crate::api::entities::UpdatePlaceRequest>,
+) -> Response {
+    api_response(crate::api::entities::update_place(state.db.pool(), place_id, request).await)
+}
+
+/// Delete a place
+pub async fn delete_place_handler(
+    State(state): State<AppState>,
+    Path(place_id): Path<String>,
+) -> Response {
+    match crate::api::entities::delete_place(state.db.pool(), place_id).await {
+        Ok(_) => success_message("Place deleted successfully"),
+        Err(e) => error_response(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreateEntityBody {
+    pub name: String,
+}
+
+/// Create a person by hand.
+pub async fn create_person_handler(
+    State(state): State<AppState>,
+    Json(b): Json<CreateEntityBody>,
+) -> Response {
+    match crate::api::entities::create_person(state.db.pool(), &b.name).await {
+        Ok(id) => api_response(Ok::<_, crate::error::Error>(
+            serde_json::json!({ "id": id, "route": format!("/person/{id}") }),
+        )),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Delete a person, and everything that pointed at them.
+pub async fn delete_person_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::entities::delete_person(state.db.pool(), id).await {
+        Ok(()) => success_message("Person deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Delete an organization, and everything that pointed at it.
+pub async fn delete_org_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::entities::delete_organization(state.db.pool(), id).await {
+        Ok(()) => success_message("Organization deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+#[derive(serde::Deserialize)]
+pub struct LifelineQuery {
+    pub from: Option<String>,
+    pub to: Option<String>,
+    pub buckets: Option<i32>,
+    /// Comma-separated lane ids; absent = every lane.
+    pub lanes: Option<String>,
+    /// Comma-separated lane ids to split into their member tables.
+    pub expand: Option<String>,
+    /// Comma-separated `lane:measure_id` pairs — what each lane should plot
+    /// instead of a row count. Unknown pairs fall back to the default.
+    pub measures: Option<String>,
+    /// Feed paging.
+    pub limit: Option<i64>,
+    pub offset: Option<i64>,
+    /// IANA zone the day-clock's hours are read in. One zone for the whole
+    /// raster, so travel shows as a dislocation rather than being normalised
+    /// away. Unknown names fall back to UTC.
+    pub tz: Option<String>,
+}
+
+/// Per-lane density over a window — the lifeline's only data source.
+pub async fn lifeline_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LifelineQuery>,
+) -> Response {
+    // No window given = the whole life. Computed from the data, because a
+    // lifeline that defaults to the last 365 days is not a lifeline.
+    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
+        Ok(s) => s,
+        Err(e) => return error_response(e),
+    };
+    let to = q
+        .to
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .unwrap_or(span_to);
+    let from = q
+        .from
+        .and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+        .map(|d| d.with_timezone(&chrono::Utc))
+        .unwrap_or(span_from);
+    let csv = |v: Option<String>| {
+        v.map(|s| {
+            s.split(',')
+                .map(|x| x.trim().to_string())
+                .filter(|x| !x.is_empty())
+                .collect::<Vec<_>>()
+        })
+    };
+    let lanes = csv(q.lanes);
+    let expand = csv(q.expand);
+    let measures = csv(q.measures);
+
+    api_response(
+        crate::api::lifeline::get_lifeline(
+            state.db.pool(),
+            from,
+            to,
+            q.buckets.unwrap_or(365),
+            lanes,
+            expand,
+            measures,
+        )
+        .await,
+    )
+}
+
+/// Time-of-day against date — the lifeline's primary band.
+pub async fn lifeline_clock_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LifelineQuery>,
+) -> Response {
+    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
+        Ok(s) => s,
+        Err(e) => return error_response(e),
+    };
+    let parse = |s: Option<String>, fallback: chrono::DateTime<chrono::Utc>| {
+        s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or(fallback)
+    };
+    api_response(
+        crate::api::lifeline::get_clock(
+            state.db.pool(),
+            parse(q.from, span_from),
+            parse(q.to, span_to),
+            q.buckets.unwrap_or(720),
+            q.tz.as_deref().unwrap_or("UTC"),
+        )
+        .await,
+    )
+}
+
+/// The records inside a window — what a selection actually contains.
+pub async fn lifeline_feed_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LifelineQuery>,
+) -> Response {
+    let (span_from, span_to) = match crate::api::lifeline::corpus_span(state.db.pool()).await {
+        Ok(s) => s,
+        Err(e) => return error_response(e),
+    };
+    let parse = |s: Option<String>, fallback: chrono::DateTime<chrono::Utc>| {
+        s.and_then(|s| chrono::DateTime::parse_from_rfc3339(&s).ok())
+            .map(|d| d.with_timezone(&chrono::Utc))
+            .unwrap_or(fallback)
+    };
+    let lanes = q.lanes.map(|s| {
+        s.split(',')
+            .map(|x| x.trim().to_string())
+            .filter(|x| !x.is_empty())
+            .collect::<Vec<_>>()
+    });
+    api_response(
+        crate::api::lifeline::get_feed(
+            state.db.pool(),
+            parse(q.from, span_from),
+            parse(q.to, span_to),
+            lanes,
+            q.limit.unwrap_or(50),
+            q.offset.unwrap_or(0),
+        )
+        .await,
+    )
+}
+
+/// Notes on a subject.
+/// GET /api/assistant/memories — the live memories, lane-grouped.
+pub async fn list_assistant_memories_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::assistant_memories::list_memories(state.db.pool()).await)
+}
+
+/// PUT /api/assistant/memories/:id — the person rewrites one in their words.
+pub async fn edit_assistant_memory_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(req): Json<crate::api::assistant_memories::EditMemoryRequest>,
+) -> Response {
+    api_response(crate::api::assistant_memories::edit_memory(state.db.pool(), id, &req.body).await)
+}
+
+/// DELETE /api/assistant/memories/:id — soft-retire with provenance.
+pub async fn retire_assistant_memory_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+) -> Response {
+    api_response(
+        crate::api::assistant_memories::retire_memory(state.db.pool(), id)
+            .await
+            .map(|_| serde_json::json!({ "retired": true })),
+    )
+}
+
+pub async fn list_notes_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Query(q): Query<NotesQuery>,
+) -> Response {
+    api_response(
+        crate::api::wiki_notes::list_notes(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+            q.include_resolved.unwrap_or(false),
+        )
+        .await,
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub struct NotesQuery {
+    pub include_resolved: Option<bool>,
+}
+
+/// Open notes across the whole record — the Overview's what-changed count.
+pub async fn open_notes_count_handler(State(state): State<AppState>) -> Response {
+    api_response(
+        crate::api::wiki_notes::count_open_total(state.db.pool())
+            .await
+            .map(|n| serde_json::json!({ "open": n })),
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub struct CreateNoteBody {
+    pub body: String,
+    pub kind: Option<String>,
+    /// The passage the note sits beside: `{"quote": "...", "sentence": n}`.
+    pub anchor: Option<serde_json::Value>,
+}
+
+/// Leave a note on a subject.
+pub async fn create_note_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Json(b): Json<CreateNoteBody>,
+) -> Response {
+    api_response(
+        crate::api::wiki_notes::create_note(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+            b.kind.as_deref().unwrap_or("memo"),
+            &b.body,
+            b.anchor.as_ref(),
+        )
+        .await,
+    )
+}
+
+#[derive(serde::Deserialize)]
+pub struct ResolveNoteBody {
+    pub resolution: String,
+}
+
+/// Accept or dismiss a note.
+pub async fn resolve_note_handler(
+    State(state): State<AppState>,
+    Path(id): Path<i64>,
+    Json(b): Json<ResolveNoteBody>,
+) -> Response {
+    match crate::api::wiki_notes::resolve_note(state.db.pool(), id, &b.resolution).await {
+        Ok(()) => success_message("Note closed"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// One article's edit history, with diffs.
+pub async fn article_history_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+) -> Response {
+    api_response(
+        crate::api::wiki_articles::get_article_history(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+        )
+        .await,
+    )
+}
+
+/// The wiki's History room: every recent edit to any article.
+pub async fn history_feed_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LimitQuery>,
+) -> Response {
+    api_response(
+        crate::api::wiki_articles::get_history_feed(state.db.pool(), q.limit.unwrap_or(50)).await,
+    )
+}
+
+/// Everything that mentions this subject.
+pub async fn subject_backlinks_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+) -> Response {
+    api_response(
+        crate::api::wiki_articles::get_subject_backlinks(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+        )
+        .await,
+    )
+}
+
+/// Write a subject's article, now, because someone asked for it.
+///
+/// A plain handler rather than a trip through the applet runner. The applet
+/// path looked available — `entity_article` declares a `manual` trigger — but
+/// it ships `default_enabled = false` and `prepare_run` refuses disabled
+/// applets, so the button would 404 on a fresh box; its singleton concurrency
+/// gate turns a second click into a `skipped` run, which is wrong for
+/// per-subject work; and its entry point takes no target, so there is no way to
+/// say *this one*. The applet stays the cron host; this is the door.
+///
+/// Synchronous on purpose: it is one model call the user is waiting for, and
+/// returning 202 would mean polling `app_applet_runs` to find out whether your
+/// own click worked.
+/// GET one subject's article row — the join, not the prose. The frontend
+/// uses `page_id` to open the article in the page editor.
+pub async fn get_article_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+) -> Response {
+    match crate::api::wiki_articles::get_article(state.db.pool(), &subject_type, &subject_id).await
+    {
+        Ok(Some(a)) => Json(a).into_response(),
+        Ok(None) => StatusCode::NOT_FOUND.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+pub async fn write_article_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+) -> Response {
+    api_response(
+        crate::api::entity_article_gen::write_entity_article_now(
+            state.db.pool(),
+            &subject_type,
+            &subject_id,
+        )
+        .await,
+    )
+}
+
+/// The owner's own page: their name, their document, and the apparatus.
+///
+/// Also the one place that ensures they have a row among the people of their
+/// own wiki — nothing else ever created one.
+pub async fn wiki_me_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::me::get_me(state.db.pool()).await)
+}
+
+/// The stories: subjects the person named because they mattered.
+pub async fn wiki_list_stories_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::stories::list_stories(state.db.pool()).await)
+}
+
+pub async fn wiki_get_story_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::stories::get_story(state.db.pool(), &id).await)
+}
+
+/// Start a story. Only the person may: the editor's constitution forbids it
+/// from creating a subject, because naming one is a claim about what mattered.
+pub async fn wiki_create_story_handler(
+    State(state): State<AppState>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let title = body.get("title").and_then(|v| v.as_str()).unwrap_or("");
+    api_response(crate::api::stories::create_story(state.db.pool(), title).await)
+}
+
+pub async fn wiki_update_story_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(fields): Json<crate::api::stories::StoryFields>,
+) -> Response {
+    api_response(crate::api::stories::update_story(state.db.pool(), &id, &fields).await)
+}
+
+pub async fn wiki_delete_story_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    match crate::api::stories::delete_story(state.db.pool(), &id).await {
+        Ok(()) => success_message("Removed"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Give a story a page. Seeded with THEIR words, not a machine draft — a story
+/// has nothing beneath it to draft from, and the editor fills it by searching.
+pub async fn wiki_start_story_article_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::stories::start_article(state.db.pool(), &id).await)
+}
+
+/// Edit a chapter. There has never been a way to change one.
+pub async fn wiki_update_chapter_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(edit): Json<crate::api::narrative_draft::ChapterEdit>,
+) -> Response {
+    api_response(crate::api::narrative_draft::update_chapter(state.db.pool(), &id, &edit).await)
+}
+
+/// Replace every chapter with the timeline the person drew in Getting started.
+/// Refused once the chapters have pages of their own; see `replace_chapters`.
+pub async fn wiki_replace_chapters_handler(
+    State(state): State<AppState>,
+    Json(req): Json<crate::api::narrative_draft::ReplaceChapters>,
+) -> Response {
+    api_response(
+        crate::api::narrative_draft::replace_chapters(state.db.pool(), &req.chapters)
+            .await
+            .map(|chapters| serde_json::json!({ "chapters": chapters })),
+    )
+}
+
+/// Unname a chapter, leaving the years it covered as an unnamed stretch.
+pub async fn wiki_delete_chapter_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::narrative_draft::delete_chapter(state.db.pool(), &id).await)
+}
+
+/// Every year of the life, newest first. Derived — opening the index writes
+/// nothing.
+pub async fn wiki_list_years_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::years::list_years(state.db.pool()).await)
+}
+
+/// One year's page. Creates its row on the way, which is the lazy half of the
+/// partition: every year is there to read, and none is written until asked for.
+pub async fn wiki_get_year_handler(
+    State(state): State<AppState>,
+    Path(year): Path<i32>,
+) -> Response {
+    api_response(crate::api::years::get_year(state.db.pool(), year).await)
+}
+
+/// Set what only the person can say about a year.
+pub async fn wiki_update_year_handler(
+    State(state): State<AppState>,
+    Path(year): Path<i32>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let title = body.get("title").and_then(|v| v.as_str());
+    let summary = body.get("summary").and_then(|v| v.as_str());
+    match crate::api::years::update_year(state.db.pool(), year, title, summary).await {
+        Ok(()) => success_message("Saved"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Write a year's first article.
+pub async fn wiki_write_year_article_handler(
+    State(state): State<AppState>,
+    Path(year): Path<i32>,
+) -> Response {
+    api_response(crate::api::years::write_year_article(state.db.pool(), year).await)
+}
+
+/// Put a named version of an article back.
+///
+/// Rule 4 of the wiki's paradigm: every edit is a revision you can read AND
+/// revert. Answers `{ changed, saved, message }`: `changed` is false when the
+/// page already says that version; `saved` is false when the page is put back
+/// but its save failed and waits for a retry; `message` is a sentence
+/// the app shows as it is. What changed, counted, goes on the version the
+/// revert cuts.
+pub async fn revert_article_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let Some(version) = body.get("version_number").and_then(|v| v.as_i64()) else {
+        return error_response(Error::InvalidInput(
+            "version_number is required".to_string(),
+        ));
+    };
+    use crate::api::wiki_editor::RevertOutcome;
+    match crate::api::wiki_editor::revert_article(
+        state.db.pool(),
+        &state.yjs_state,
+        &subject_type,
+        &subject_id,
+        version,
+    )
+    .await
+    {
+        Ok(RevertOutcome::Changed { saved: true, .. }) => Json(serde_json::json!({
+            "changed": true,
+            "saved": true,
+            "message": "Your server put that version back.",
+        }))
+        .into_response(),
+        Ok(RevertOutcome::Changed { saved: false, .. }) => Json(serde_json::json!({
+            "changed": true,
+            "saved": false,
+            "message": "Your server put that version back but couldn't save it yet. \
+                        It saves it again on its own, so check back in a minute.",
+        }))
+        .into_response(),
+        Ok(RevertOutcome::Unchanged) => Json(serde_json::json!({
+            "changed": false,
+            "saved": true,
+            "message": "The page already says this, so nothing changed.",
+        }))
+        .into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Set how an article is maintained: always, auto, or never.
+pub async fn set_article_maintenance_handler(
+    State(state): State<AppState>,
+    Path((subject_type, subject_id)): Path<(String, String)>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    let mode = body.get("maintenance").and_then(|v| v.as_str()).unwrap_or("");
+    match crate::api::wiki_articles::set_maintenance(
+        state.db.pool(),
+        &subject_type,
+        &subject_id,
+        mode,
+    )
+    .await
+    {
+        Ok(()) => success_message(match mode {
+            "always" => "The record will revisit this whenever anything changes",
+            "never" => "The record will leave this article alone",
+            _ => "The record will keep this up to date",
+        }),
+        Err(e) => error_response(e),
+    }
+}
+
+
+/// Reclassify a person as an organization.
+///
+/// Returns the new org id so the caller can navigate to it — the person route
+/// it came from stops resolving the moment this succeeds.
+pub async fn reclassify_person_handler(
+    State(state): State<AppState>,
+    Path(person_id): Path<String>,
+) -> Response {
+    match crate::api::entities::reclassify_person_as_organization(state.db.pool(), person_id).await {
+        Ok(org_id) => api_response(Ok::<_, crate::error::Error>(
+            serde_json::json!({ "id": org_id, "route": format!("/org/{org_id}") }),
+        )),
+        Err(e) => error_response(e),
+    }
+}
+
+// ============================================================================
+// Wiki API Handlers
+// ============================================================================
+
+// --- Person ---
+
+/// Get a person by ID. An id merged into someone else opens them, so a link
+/// written before the merge still lands on the person it meant.
+pub async fn wiki_get_person_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    let pool = state.db.pool();
+    match crate::api::wiki::get_person(pool, id.clone()).await {
+        Err(Error::NotFound(msg)) => match crate::api::entities::merged_into(pool, &id).await {
+            Ok(Some(survivor)) => api_response(crate::api::wiki::get_person(pool, survivor).await),
+            Ok(None) => error_response(Error::NotFound(msg)),
+            Err(e) => error_response(e),
+        },
+        other => api_response(other),
+    }
+}
+
+/// Fold the person in the path into `into`. Same request shape as places.
+pub async fn merge_person_handler(
+    State(state): State<AppState>,
+    Path(person_id): Path<String>,
+    Json(req): Json<MergePlaceRequest>,
+) -> Response {
+    match crate::api::entities::merge_people(state.db.pool(), &req.into, &person_id).await {
+        Ok(()) => (StatusCode::OK, Json(serde_json::json!({ "id": req.into }))).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// The people who share a number or address with this one, as "Same as…?"
+/// choices.
+pub async fn same_people_handler(
+    State(state): State<AppState>,
+    Path(person_id): Path<String>,
+) -> Response {
+    api_response(crate::api::entities::people_sharing_a_handle(state.db.pool(), &person_id).await)
+}
+
+#[derive(Deserialize)]
+pub struct PersonGlossQuery {
+    /// The day page asking, `YYYY-MM-DD`.
+    pub date: String,
+}
+
+/// A person as of one day: the facts behind a day page's gloss card.
+pub async fn wiki_person_gloss_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<PersonGlossQuery>,
+) -> Response {
+    match q.date.parse::<chrono::NaiveDate>() {
+        Ok(date) => api_response(crate::api::wiki::person_gloss(state.db.pool(), &id, date).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", q.date))),
+    }
+}
+
+/// List all people
+pub async fn wiki_list_people_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::wiki::list_people(state.db.pool()).await)
+}
+
+/// Update a person by ID
+pub async fn wiki_update_person_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<crate::api::wiki::UpdateWikiPersonRequest>,
+) -> Response {
+    api_response(crate::api::wiki::update_person(state.db.pool(), id, request).await)
+}
+
+// --- Place ---
+
+/// Get a place by ID
+pub async fn wiki_get_place_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::wiki::get_wiki_place(state.db.pool(), id).await)
+}
+
+/// List all places (wiki view)
+pub async fn wiki_list_places_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::wiki::list_wiki_places(state.db.pool()).await)
+}
+
+/// Update a place by ID (wiki fields)
+pub async fn wiki_update_place_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<crate::api::wiki::UpdateWikiPlaceRequest>,
+) -> Response {
+    api_response(crate::api::wiki::update_wiki_place(state.db.pool(), id, request).await)
+}
+
+// --- Organization ---
+
+/// Get an organization by ID
+pub async fn wiki_get_organization_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::wiki::get_organization(state.db.pool(), id).await)
+}
+
+/// List all organizations
+pub async fn wiki_list_organizations_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::wiki::list_organizations(state.db.pool()).await)
+}
+
+/// Update an organization by ID
+pub async fn wiki_update_organization_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(request): Json<crate::api::wiki::UpdateWikiOrganizationRequest>,
+) -> Response {
+    api_response(crate::api::wiki::update_organization(state.db.pool(), id, request).await)
+}
+
+// --- Narrative Identity ---
+
+/// Get narrative identity
+pub async fn wiki_get_narrative_identity_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::wiki::get_narrative_identity(state.db.pool()).await)
+}
+
+// --- Day ---
+
+#[derive(Deserialize)]
+pub struct WikiDayQuery {
+    pub start_date: Option<chrono::NaiveDate>,
+    pub end_date: Option<chrono::NaiveDate>,
+}
+
+/// Get a day by date
+pub async fn wiki_get_day_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => {
+            api_response(crate::api::wiki_days::get_or_create_day(state.db.pool(), parsed_date).await)
+        }
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
+
+
+/// A refusal the day page keys its copy on: `{ "error": code }`, the shape
+/// the client's `request()` builds its message from.
+fn day_rewrite_refusal(status: StatusCode, code: &str) -> Response {
+    (status, Json(serde_json::json!({ "error": code }))).into_response()
+}
+
+/// Where a day's Rewrite this page stands.
+///
+/// `state` is this server's memory of the day's latest rewrite since it
+/// started: `idle` when it has none, which is also what a rewrite a restart
+/// interrupted reads as. `has_page` and `has_your_edits` are read from the
+/// page on every ask.
+pub async fn wiki_get_day_rewrite_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    let Ok(date) = date.parse::<chrono::NaiveDate>() else {
+        return error_response(Error::InvalidInput(format!("Invalid date format: {date}")));
+    };
+    let page = match crate::api::day_summary::day_page(state.db.pool(), date).await {
+        Ok(page) => page,
+        Err(e) => return error_response(e),
+    };
+    let mut body = serde_json::json!({
+        "state": "idle",
+        "has_page": page.is_some(),
+        "has_your_edits": page.as_ref().is_some_and(|p| p.has_your_edits),
+    });
+    if let Some(status) = state.day_rewrites.status(date) {
+        use crate::api::day_rewrites::RewriteStatus;
+        body["state"] = serde_json::json!(status.state());
+        body["started_at"] = serde_json::json!(status.started_at());
+        match status {
+            RewriteStatus::Running { .. } => {}
+            RewriteStatus::Done {
+                finished_at,
+                before_version,
+                after_version,
+                ..
+            } => {
+                body["finished_at"] = serde_json::json!(finished_at);
+                body["before_version"] = serde_json::json!(before_version);
+                body["after_version"] = serde_json::json!(after_version);
+            }
+            RewriteStatus::Failed {
+                finished_at,
+                code,
+                message,
+                ..
+            } => {
+                body["finished_at"] = serde_json::json!(finished_at);
+                body["code"] = serde_json::json!(code);
+                body["message"] = serde_json::json!(message);
+            }
+        }
+    }
+    Json(body).into_response()
+}
+
+/// Rewrite this page: write a past day's page again, from its record.
+///
+/// What can be refused without a model call is refused here, with the code
+/// the page keys its copy on: `not_over` (422), `no_page` (404),
+/// `pending_suggestion` (409: the page holds a suggestion its owner has not
+/// accepted or rejected yet, which a rewrite from the record would decide;
+/// asked before consent, which would not let the rewrite through),
+/// `needs_consent` (409: the page may hold the owner's words and
+/// `replace_edits` is not true), `rewrite_in_progress` (409: a rewrite of
+/// this day is running, and the GET beside this reports it) and `busy` (409:
+/// another writer holds the day, such as the nightly narration, which the GET
+/// knows nothing about). Otherwise the day's lock moves into a task of its
+/// own and this answers 202 at once. The task outlives the request, runs the
+/// rewrite to its end (`REWRITE_TIME_LIMIT` bounds only the writer inside
+/// it), and records how it ended for the GET.
+pub async fn wiki_rewrite_day_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> Response {
+    use crate::api::day_summary::{self, RewriteOutcome};
+
+    let Ok(date) = date.parse::<chrono::NaiveDate>() else {
+        return error_response(Error::InvalidInput(format!("Invalid date format: {date}")));
+    };
+    let replace_edits = body
+        .get("replace_edits")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let pool = state.db.pool();
+
+    match day_summary::day_is_over(pool, date).await {
+        Ok(true) => {}
+        Ok(false) => return day_rewrite_refusal(StatusCode::UNPROCESSABLE_ENTITY, "not_over"),
+        Err(e) => return error_response(e),
+    }
+    let page = match day_summary::day_page(pool, date).await {
+        Ok(None) => return day_rewrite_refusal(StatusCode::NOT_FOUND, "no_page"),
+        Ok(Some(page)) => page,
+        Err(e) => return error_response(e),
+    };
+    match day_summary::holds_pending_suggestion(&state.yjs_state, &page.page_id).await {
+        Ok(true) => return day_rewrite_refusal(StatusCode::CONFLICT, "pending_suggestion"),
+        Ok(false) => {}
+        Err(e) => return error_response(e),
+    }
+    if page.has_your_edits && !replace_edits {
+        return day_rewrite_refusal(StatusCode::CONFLICT, "needs_consent");
+    }
+    let lock = match day_summary::try_lock_day(pool, date).await {
+        Ok(Some(lock)) => lock,
+        Ok(None) => {
+            return day_rewrite_refusal(StatusCode::CONFLICT, state.day_rewrites.locked_out(date))
+        }
+        Err(e) => return error_response(e),
+    };
+    // Only the lock's holder gets here. The registry can still say running
+    // for a moment after a rewrite lets the day go and before it records how
+    // it ended; the GET then reports that ending.
+    let Some(guard) = state.day_rewrites.try_begin(date) else {
+        lock.release().await;
+        return day_rewrite_refusal(StatusCode::CONFLICT, "rewrite_in_progress");
+    };
+    let started_at = guard.started_at();
+
+    // The server's own YjsState, the one open editors are connected to.
+    let pool = pool.clone();
+    let yjs = state.yjs_state.clone();
+    tokio::spawn(async move {
+        let outcome = day_summary::rewrite_day_page(&pool, &yjs, date, replace_edits, lock).await;
+        match &outcome {
+            RewriteOutcome::Rewritten { .. } => {
+                tracing::info!(date = %date, ?outcome, "rewrite this page finished")
+            }
+            other => tracing::warn!(date = %date, outcome = ?other, "rewrite this page did not land"),
+        }
+        guard.finish(&outcome);
+    });
+
+    (
+        StatusCode::ACCEPTED,
+        Json(serde_json::json!({ "state": "running", "started_at": started_at })),
+    )
+        .into_response()
+}
+
+/// Paint this day: a picture of one place the day's page names, set into the
+/// page at the end of its section (`api::day_picture`).
+///
+/// `style` is `oil`, `watercolor`, `pencil` or `gouache`; without one, the
+/// owner's choice, and oil when they chose none. Answers when it is done,
+/// which takes about twenty seconds: `{painted: true}`, or `{painted: false,
+/// reason}` with `nothing_to_paint`, `busy` (another writer holds the day),
+/// `billing` or `failed`. The painting runs in a task of its own, so a client
+/// that stops waiting does not stop it between the paid image and the page.
+pub async fn wiki_paint_day_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    body: Option<Json<serde_json::Value>>,
+) -> Response {
+    use crate::api::day_picture::{self, PaintOutcome, Style};
+
+    let Ok(date) = date.parse::<chrono::NaiveDate>() else {
+        return error_response(Error::InvalidInput(format!("Invalid date format: {date}")));
+    };
+    let pool = state.db.pool().clone();
+    let asked = body
+        .as_ref()
+        .and_then(|Json(b)| b.get("style"))
+        .and_then(|v| v.as_str())
+        .and_then(Style::parse);
+    let style = match asked {
+        Some(style) => style,
+        None => match day_picture::chosen_style(&pool).await {
+            Ok(chosen) => chosen.unwrap_or(Style::Oil),
+            Err(e) => return error_response(e),
+        },
+    };
+
+    let yjs = state.yjs_state.clone();
+    let drive = state.drive_config.clone();
+    let outcome = tokio::spawn(async move { day_picture::paint_day(&pool, &yjs, &drive, date, style).await })
+        .await
+        .unwrap_or_else(|e| PaintOutcome::Failed(format!("the painting stopped: {e}")));
+    Json(match outcome.reason() {
+        None => serde_json::json!({ "painted": true }),
+        Some(reason) => serde_json::json!({ "painted": false, "reason": reason }),
+    })
+    .into_response()
+}
+
+/// List days in a date range
+pub async fn wiki_list_days_handler(
+    State(state): State<AppState>,
+    Query(query): Query<WikiDayQuery>,
+) -> Response {
+    let today = chrono::Utc::now().date_naive();
+    let start_date = query
+        .start_date
+        .unwrap_or(today - chrono::Duration::days(30));
+    let end_date = query.end_date.unwrap_or(today);
+    api_response(crate::api::wiki_days::list_days(state.db.pool(), start_date, end_date).await)
+}
+
+/// Per-day activity counts for the wiki calendar heatmap
+pub async fn wiki_day_activity_handler(
+    State(state): State<AppState>,
+    Query(query): Query<WikiDayQuery>,
+) -> Response {
+    let today = chrono::Utc::now().date_naive();
+    let start_date = query
+        .start_date
+        .unwrap_or(today - chrono::Duration::days(365));
+    let end_date = query.end_date.unwrap_or(today);
+    api_response(crate::api::wiki_days::day_activity(state.db.pool(), start_date, end_date).await)
+}
+
+#[derive(Deserialize)]
+pub struct OnThisDayQuery {
+    pub date: Option<chrono::NaiveDate>,
+}
+
+/// Past years' entries for the same calendar date
+pub async fn wiki_on_this_day_handler(
+    State(state): State<AppState>,
+    Query(query): Query<OnThisDayQuery>,
+) -> Response {
+    let date = query.date.unwrap_or_else(|| chrono::Utc::now().date_naive());
+    api_response(crate::api::wiki_days::on_this_day(state.db.pool(), date).await)
+}
+
+#[derive(Deserialize)]
+pub struct EntityRecordsQuery {
+    pub offset: Option<i64>,
+    pub limit: Option<i64>,
+    pub search: Option<String>,
+    /// Comma-separated raw source_types to include (empty/absent = all).
+    pub types: Option<String>,
+    /// "asc" for oldest-first; anything else is newest-first.
+    pub dir: Option<String>,
+}
+
+/// One page of the records linked to an entity (the entity page's evidence feed)
+pub async fn wiki_entity_records_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Query(q): Query<EntityRecordsQuery>,
+) -> Response {
+    let types: Vec<String> = q
+        .types
+        .as_deref()
+        .unwrap_or("")
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(String::from)
+        .collect();
+    api_response(
+        crate::api::wiki::get_entity_records_page(
+            state.db.pool(),
+            &id,
+            q.offset.unwrap_or(0),
+            q.limit.unwrap_or(10),
+            q.search.as_deref().unwrap_or(""),
+            &types,
+            q.dir.as_deref() != Some("asc"),
+        )
+        .await,
+    )
+}
+
+/// Facet counts over all of an entity's records, for the chip rail
+pub async fn wiki_entity_record_facets_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+) -> Response {
+    api_response(crate::api::wiki::get_entity_record_facets(state.db.pool(), &id).await)
+}
+
+// =============================================================================
+// Wiki Temporal Events API
+// =============================================================================
+
+/// Get events for a day by date
+pub async fn wiki_get_day_events_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => {
+            api_response(crate::api::wiki_events::get_events_by_date(state.db.pool(), parsed_date).await)
+        }
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
+/// Create a temporal event
+pub async fn wiki_create_event_handler(
+    State(state): State<AppState>,
+    Json(request): Json<crate::api::wiki_events::CreateTemporalEventRequest>,
+) -> Response {
+    match crate::api::wiki_events::create_temporal_event(state.db.pool(), request).await {
+        Ok(event) => (StatusCode::CREATED, Json(event)).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Update a temporal event
+pub async fn wiki_update_event_handler(
+    State(state): State<AppState>,
+    Path(event_id): Path<String>,
+    Json(request): Json<crate::api::wiki_events::UpdateTemporalEventRequest>,
+) -> Response {
+    api_response(crate::api::wiki_events::update_temporal_event(state.db.pool(), event_id, request).await)
+}
+
+/// Delete a temporal event
+pub async fn wiki_delete_event_handler(
+    State(state): State<AppState>,
+    Path(event_id): Path<String>,
+) -> Response {
+    match crate::api::wiki_events::delete_temporal_event(state.db.pool(), event_id).await {
+        Ok(_) => success_message("Event deleted"),
+        Err(e) => error_response(e),
+    }
+}
+
+/// Delete all auto-generated events for a day (regeneration support)
+pub async fn wiki_delete_auto_events_handler(
+    State(state): State<AppState>,
+    Path(day_id): Path<String>,
+) -> Response {
+    match crate::api::wiki_events::delete_auto_events_for_day(state.db.pool(), day_id).await {
+        Ok(count) => (
+            StatusCode::OK,
+            Json(serde_json::json!({ "deleted": count })),
+        )
+            .into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// One local day of the Timeline (`YYYY-MM-DD`): its bounds and zone, stays,
+/// track, nights, conversations, steps and calendar.
+pub async fn timeline_day_handler(State(state): State<AppState>, Path(date): Path<String>) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(d) => api_response(crate::api::timeline::get_day(state.db.pool(), d).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct TimelineDaysQuery {
+    pub from: chrono::NaiveDate,
+    pub to: chrono::NaiveDate,
+}
+
+/// The days in `from`..=`to` (`YYYY-MM-DD`, at most 62) with a location fix or
+/// a recorded conversation: the Timeline month's dots.
+pub async fn timeline_recorded_handler(State(state): State<AppState>, Query(q): Query<TimelineDaysQuery>) -> Response {
+    let span = (q.to - q.from).num_days();
+    if !(0..62).contains(&span) {
+        return error_response(Error::InvalidInput("to must be on or after from, at most 62 days on".into()));
+    }
+    api_response(crate::api::timeline::recorded_days(state.db.pool(), q.from, q.to).await)
+}
+
+/// Get timeline location chunks for a day (movement map)
+pub async fn timeline_get_day_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => {
+            api_response(crate::api::wiki_days::get_timeline_day(state.db.pool(), parsed_date).await)
+        }
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
+/// Optional `?tz=` query — the viewing device's IANA zone, used to anchor an
+/// in-progress "today" to where the owner currently is. See agents/record/timezone-model.md.
+#[derive(Debug, Deserialize, Default)]
+pub struct DaySourcesQuery {
+    pub tz: Option<String>,
+}
+
+/// Get the three raw record streams (location, calendar, audio) for a day, as
+/// spans — the homepage's "day before synthesis" view.
+pub async fn today_streams_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Query(query): Query<DaySourcesQuery>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(
+            crate::api::wiki_streams::get_today_streams(state.db.pool(), parsed_date, query.tz.as_deref()).await,
+        ),
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
+/// `?limit=N` for the small home-page list endpoints.
+#[derive(Debug, Deserialize, Default)]
+pub struct LimitQuery {
+    pub limit: Option<i64>,
+}
+
+/// Current weather for the home masthead (null until the weather_sync cron runs).
+pub async fn weather_now_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::home::get_current_weather(state.db.pool()).await)
+}
+
+/// The next few calendar events (holidays/birthdays filtered).
+pub async fn calendar_upcoming_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LimitQuery>,
+) -> Response {
+    api_response(crate::api::home::get_calendar_upcoming(state.db.pool(), q.limit.unwrap_or(5)).await)
+}
+
+/// Places visited but never named — the home "name this place" ask.
+pub async fn unnamed_places_handler(
+    State(state): State<AppState>,
+    Query(q): Query<LimitQuery>,
+) -> Response {
+    api_response(crate::api::home::get_unnamed_places(state.db.pool(), q.limit.unwrap_or(3)).await)
+}
+
+/// Get data sources (ontology records) for a day
+pub async fn wiki_get_day_sources_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Query(query): Query<DaySourcesQuery>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(
+            crate::api::wiki_streams::get_day_sources(state.db.pool(), parsed_date, query.tz.as_deref()).await,
+        ),
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}
+
+/// The day's facts for the strip under its Abstract: weather, coverage, chats.
+pub async fn wiki_get_day_facts_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(crate::api::day_article::day_facts(state.db.pool(), parsed_date).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
+}
+
+#[derive(Deserialize)]
+pub struct DayMeasuresQuery {
+    /// Your pins, comma-separated: `lane:id` measures and `unusual`. Named
+    /// `keys` for good: apps update apart from the server, and an app that
+    /// asks by another name gets nothing back from an older one.
+    pub keys: Option<String>,
+}
+
+/// Your numbers for a day page: your pins, every measure a day can show, for
+/// the day and the days before it, and the one furthest from its usual when
+/// you pinned `unusual`.
+pub async fn wiki_get_day_measures_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+    Query(q): Query<DayMeasuresQuery>,
+) -> Response {
+    let pins: Vec<String> = q
+        .keys
+        .unwrap_or_default()
+        .split(',')
+        .map(|k| k.trim().to_string())
+        .filter(|k| !k.is_empty())
+        .collect();
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(crate::api::lifeline::day_measures(state.db.pool(), parsed_date, &pins).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
+}
+
+/// The places and people a day holds for the first time in the record.
+pub async fn wiki_get_day_firsts_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(crate::api::wiki::day_firsts(state.db.pool(), parsed_date).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
+}
+
+/// Days whose pages read like this one's, nearest first.
+pub async fn wiki_get_similar_days_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => api_response(crate::api::day_article::similar_days(state.db.pool(), parsed_date, 3).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
+}
+
+/// Get all ontology data streams for a day (dynamic query across all ontologies)
+pub async fn wiki_get_day_streams_handler(
+    State(state): State<AppState>,
+    Path(date): Path<String>,
+) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(parsed_date) => {
+            api_response(crate::api::wiki_streams::get_day_streams(state.db.pool(), parsed_date).await)
+        }
+        Err(_) => error_response(Error::InvalidInput(format!(
+            "Invalid date format: {}",
+            date
+        ))),
+    }
+}

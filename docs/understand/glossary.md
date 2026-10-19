@@ -1,0 +1,111 @@
+---
+title: Glossary
+description: The words Virtues uses for the parts of your life it holds - records, days, events, articles, pages, projects, applets - and what each one actually means.
+updated: 2026-09-21
+---
+
+Virtues names things deliberately, and uses one word per thing. This is that
+vocabulary, in roughly the order you meet it.
+
+## The machine
+
+**Server** (or **server**) - the machine in your home running Virtues OS. It
+holds your data, does the thinking, and answers your devices. Nothing about it
+depends on us being reachable.
+
+**Device** - a phone or laptop paired with your server. Each one has its own
+key, and the server keeps a list of which keys are allowed. That list is the
+whole of authentication; there's no password to steal. See
+[Reaching your server](/docs/operate/reach).
+
+**Channel** - the release line your server follows, stable or prerelease. See
+[Upgrading](/docs/operate/upgrading).
+
+## What comes in
+
+**Source** - somewhere your life is already recorded that the server can pull
+from: a calendar, a mail account, a health app, a bank, your phone's location.
+Connecting a source is what starts the flow.
+
+**Record** - one thing a source observed. A message sent, a place visited, a
+song played, a transaction, a heart rate sample, a recording. Records are the
+raw material and the server keeps them as they were; everything else is derived
+and can be rebuilt.
+
+**Lake** - where the large things live: recordings, uploads, files. The
+database holds the structure of your life, and the lake holds its bytes.
+
+## What the server makes of it
+
+Everything below is *derived* from your records. It can be recomputed, which
+is why rebuilding an index or re-running a day is safe.
+
+**Event** - a bounded stretch of a day. A meeting, a drive, a walk, a meal.
+The server assembles events out of records that arrive incomplete, out of order,
+and sometimes contradicting each other.
+
+**Day** - the unit of narrative, and the one most worth reading. A day carries
+its own timeline of events and a written account of what happened, generated
+overnight from everything the server saw.
+
+**Article** - the page the wiki writes about one subject: a day, a year, a
+chapter, a person, a place, an organization or a story. Your server writes each
+day's article overnight. For a person, place, organization or year, choose
+Write the article on its page. Turn on the Wiki Editor applet and your server
+also writes your chapters and stories, and keeps every article current as new
+records arrive. Any sentence you write stays as you wrote it.
+
+**Note** - a smaller observation attached to a subject: a correction, an
+appraisal, something worth remembering about it.
+
+**Ref** - a pointer from something the server wrote back to the record it came
+from. Refs are what make a claim checkable rather than merely plausible; when
+the server tells you something about your life, a ref is how you see why it
+thinks so.
+
+**Wiki** - your encyclopedia, where all of your information is collected. Days
+and their events on one axis, people, places, and organizations on the other,
+articles accumulating on both - and your chapters and narrative identity
+giving the whole thing its coordinates.
+
+## What you author about yourself
+
+These are not derived and are never recomputed. The machine may write each one
+only while it is empty; from then on it is yours.
+
+**Narrative identity** - the account of who you are that grounds everything
+the models see: your history, in your own words, arranged from the interview
+and edited on its page from then on.
+
+**Chapter** - your own division of your life into named eras, rough years and
+all, given in the interview. Every day the record holds falls inside exactly
+one chapter; each chapter has a page of its own.
+
+## What you make
+
+**Page** - a document you write, versioned as you go, and shareable.
+
+**Project** - a working lens over your life: a place to gather material
+around a question, with chat that's grounded in what you gathered rather than
+in everything. A project holds chats, pages and files, and never another
+project.
+
+## What you can build
+
+**Applet** - a small program running on your server on a schedule or on demand:
+pulling from a source, computing something, keeping a record of its own. Some
+ship with Virtues, and some are written on the server - including by asking for
+them in chat. Each run is recorded, so an applet that quietly stops working is
+visible rather than silent.
+
+## Words we're careful with
+
+**Observed, authored, generated** - the distinction between what a sensor
+recorded, what a person wrote, and what a model produced. It matters most in
+the last case: something the server generated is never treated as evidence on its
+own, which is why generated text carries refs back to records.
+
+**Derived** - anything the server computed and could compute again. Indexes,
+events, summaries. The opposite of your records, which are the only things
+that can't be regenerated and which backups exist to protect. See
+[Backup & restore](/docs/operate/backup-and-restore).

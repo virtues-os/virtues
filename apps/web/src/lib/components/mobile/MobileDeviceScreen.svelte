@@ -1,0 +1,1281 @@
+<script lang="ts">
+	/**
+	 * Settings — the native collector dashboard (iOS/Android shell only).
+	 *
+	 * This phone as a data collector. The list keeps every stream to one line
+	 * — name, state, a chevron — and each stream's controls (enable, stop,
+	 * when, where, notify) live on its own page (`MobileStreamPage`). The
+	 * page and the list read the same status objects, so they cannot
+	 * disagree.
+	 *
+	 * Around the streams: the link to the server, Sync with Recent activity
+	 * as a row beneath it (the full log is its own page — it used to sit
+	 * inline as three runs and a strip of dots, which made the settings list
+	 * scroll past a log nobody had asked to read), the profile, and About.
+	 * The radio counters that used to headline the Sync card are the battery
+	 * bench's instruments, not settings; they sit under About now.
+	 */
+	import Icon from "$lib/components/Icon.svelte";
+	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { confirmAction } from "$lib/stores/dialog.svelte";
+	import { invoke } from "@tauri-apps/api/core";
+	import { getVersion } from "@tauri-apps/api/app";
+	import { onMount } from "svelte";
+	import MobileStreamPage from "./MobileStreamPage.svelte";
+	import MobileAudioSettings from "./MobileAudioSettings.svelte";
+	import { boxApiVersion } from "$lib/boxApi";
+	import {
+		audioState,
+		type AudioStatus,
+		type HealthStatus,
+		type OutboxStats,
+		type StreamKey,
+		type StreamStatus,
+	} from "$lib/mobile/deviceTypes";
+
+	interface ProbeRow {
+		ts: string;
+		lat: number;
+		lon: number;
+		source: string;
+		appState: string;
+		launchReason: string;
+	}
+
+	interface ReachStatus {
+		paired: boolean;
+		session?: string;
+		reachable: boolean; // live: box actually answered a probe just now
+		path?: string;
+	}
+
+	/** Radio-hygiene counters — the battery A/B harness (reach plugin). */
+	interface RadioStats {
+		drains: number;
+		dials: number;
+		records: number;
+		bytes: number;
+		parks: number;
+		last_drain_at: number | null;
+		/** No warm endpoint right now — the radio is free to idle. */
+		parked: boolean;
+	}
+
+	/** A collapsed run of consecutive near-identical fixes. */
+	interface LogRun {
+		ts: string;
+		lat: number;
+		lon: number;
+		appState: string;
+		launchReason: string;
+		count: number;
+	}
+
+	let rows = $state<ProbeRow[]>([]);
+	let reach = $state<ReachStatus | null>(null);
+	let sync = $state<OutboxStats | null>(null);
+	let health = $state<HealthStatus | null>(null);
+	let healthSync = $state<OutboxStats | null>(null);
+	let cal = $state<StreamStatus | null>(null);
+	let calSync = $state<OutboxStats | null>(null);
+	let contacts = $state<StreamStatus | null>(null);
+	let contactsSync = $state<OutboxStats | null>(null);
+	let finance = $state<StreamStatus | null>(null);
+	let financeSync = $state<OutboxStats | null>(null);
+	let audio = $state<AudioStatus | null>(null);
+	let audioSync = $state<OutboxStats | null>(null);
+	let radio = $state<RadioStats | null>(null);
+	let togglingAudio = $state(false);
+	let forgetting = $state(false);
+	let version = $state<string>("");
+	let loading = $state(true);
+	let starting = $state(false);
+	/** `authorized` | `unregistered` | `denied` | `not_determined` |
+	 *  `unavailable`, from PushRegistrar.swift. Null until read. */
+	let push = $state<string | null>(null);
+	let allowingPush = $state(false);
+	let enablingHealth = $state(false);
+	let enablingCycle = $state(false);
+	/** The box's `api_version`; null until asked, or when it cannot be reached. */
+	let boxApi = $state<number | null>(null);
+	let enablingCal = $state(false);
+	let enablingContacts = $state(false);
+	let enablingFinance = $state(false);
+	let error = $state<string | null>(null);
+	/** Which stream's page is open, if any. */
+	let open = $state<StreamKey | null>(null);
+	/** The Recent activity page. */
+	let activityOpen = $state(false);
+
+	/** Location fixes only — the probe also writes 0,0 marker rows (start,
+	 * mode changes, regions) for the field log, which are not places. */
+	const fixes = $derived(rows.filter((r) => !(r.lat === 0 && r.lon === 0)));
+	const enabled = $derived(fixes.length > 0);
+	const lastTs = $derived(fixes[0]?.ts ?? null);
+	const lastFix = $derived(fixes[0] ? { lat: fixes[0].lat, lon: fixes[0].lon } : null);
+
+	// Connection verdict from LIVE reach status (probe + iroh path), not just the
+	// stored "paired" flag — so it can't claim "connected" when the box is
+	// actually unreachable.
+	const conn = $derived.by(() => {
+		if (!reach) return { label: "Checking…", sub: "", tone: "idle" };
+		if (!reach.paired)
+			return { label: "Not paired", sub: "Pair this phone to your server to sync", tone: "off" };
+		if (reach.session === "rejected")
+			return { label: "Access rejected", sub: "Re-pair this phone", tone: "off" };
+		if (!reach.reachable)
+			return { label: "Can’t reach your server", sub: "Paired, but offline right now", tone: "off" };
+		const via =
+			reach.path === "direct"
+				? "Direct · on your network"
+				: reach.path === "relay"
+					? "Via relay"
+					: "Connected";
+		return { label: "Connected to your server", sub: via, tone: "on" };
+	});
+
+	// The other half of the connection. `conn` is this phone reaching the
+	// server; this is the server reaching this phone. It gets its own row
+	// because its failure is silent everywhere else: with notifications off,
+	// Apple still accepts a push for this phone and reports success, so a
+	// server that cannot reach you looks exactly like one with nothing to say.
+	//
+	// `authorized` means the server HAS this phone's address, not merely that
+	// iOS said yes — `unregistered` is the gap between the two, and this row
+	// must not claim the server can reach a phone it cannot.
+	const notif = $derived.by(() => {
+		switch (push) {
+			case "authorized":
+				return { label: "Notifications on", sub: "Your server can reach this phone", tone: "on", action: null };
+			case "unregistered":
+				return {
+					label: "Notifications allowed",
+					sub: "Your server doesn’t have this phone’s address yet",
+					tone: "off",
+					action: "Try again",
+				};
+			case "not_determined":
+				return {
+					label: "Notifications",
+					sub: "Let your server reach this phone when something needs you",
+					tone: "idle",
+					action: "Allow",
+				};
+			case "denied":
+				return {
+					label: "Notifications off",
+					sub: "Turn them on for Virtues in Settings",
+					tone: "off",
+					action: null,
+				};
+			default:
+				return null; // unavailable, or not read yet: no row, not a fault
+		}
+	});
+
+	async function readPush() {
+		push = (await invoke<{ status: string }>("plugin:location-probe|push_status").catch(() => null))?.status ?? null;
+	}
+
+	/// Only ever from the button. The OS sheet appears the first time; after
+	/// that iOS answers from Settings, and this just re-registers and reports.
+	async function allowPush() {
+		allowingPush = true;
+		try {
+			push = (await invoke<{ status: string }>("plugin:location-probe|request_push")).status;
+		} catch {
+			await readPush();
+		} finally {
+			allowingPush = false;
+		}
+	}
+
+	// Collapse consecutive fixes at the same rounded coord + state into one run,
+	// so a stationary phone shows "7 fixes" not 30 identical lines.
+	const runs = $derived.by<LogRun[]>(() => {
+		const out: LogRun[] = [];
+		for (const r of fixes) {
+			const last = out[out.length - 1];
+			const sameSpot =
+				last &&
+				last.appState === r.appState &&
+				Math.abs(last.lat - r.lat) < 0.0005 &&
+				Math.abs(last.lon - r.lon) < 0.0005;
+			if (sameSpot) {
+				last.count++;
+			} else {
+				out.push({
+					ts: r.ts,
+					lat: r.lat,
+					lon: r.lon,
+					appState: r.appState,
+					launchReason: r.launchReason,
+					count: 1,
+				});
+			}
+		}
+		return out;
+	});
+	/** The activity row's one line, and the page's status. */
+	const activityLine = $derived(
+		fixes.length === 0
+			? "No location fixes yet"
+			: `${fixes.length} location fixes · last ${rel(lastTs ?? "")}`,
+	);
+
+	/** Share the log: the same table the page reads, as text for a bug report. */
+	let sharing = $state(false);
+	let shareNote = $state<string | null>(null);
+
+	/**
+	 * The log as plain text, oldest first. Marker rows (what the recorder and
+	 * the location probe did, with the app state at the time) are kept as
+	 * written, except that a muted place's id becomes "muted place 1", 2 and so
+	 * on for this file; a fix keeps only its time and state. No coordinate or
+	 * place id leaves the phone this way: the person sharing it may not be
+	 * sharing where they were. Row times are UTC; the header gives the
+	 * phone's offset so a "it cut out at 3:40" report can be lined up.
+	 */
+	function logText(all: ProbeRow[], status: AudioStatus | null): string {
+		const now = new Date();
+		const off = -now.getTimezoneOffset();
+		const hh = String(Math.floor(Math.abs(off) / 60)).padStart(2, "0");
+		const mm = String(Math.abs(off) % 60).padStart(2, "0");
+		const head = [
+			`Virtues ${version || "?"} log, ${now.toISOString()} (phone clock UTC${off >= 0 ? "+" : "-"}${hh}:${mm}; times below are UTC)`,
+			navigator.userAgent,
+			status
+				? `audio: ${status.enabled ? "on" : "off"}, ${status.recording ? "recording" : "not recording"}, mic ${status.mic ?? "?"}` +
+					(status.mutedBy ? `, muted by ${status.mutedBy}` : "") +
+					(status.pausedReason ? `, paused for ${status.pausedReason}` : "") +
+					(status.override ? `, override ${status.override}` : "")
+				: "audio: unknown",
+			"",
+		];
+		const places = new Map<string, number>();
+		const placeLabel = (id: string) => {
+			if (!places.has(id)) places.set(id, places.size + 1);
+			return `muted place ${places.get(id)}`;
+		};
+		const lines = all
+			.slice()
+			.reverse()
+			.map((r) => {
+				const marker = r.lat === 0 && r.lon === 0;
+				const launch = r.launchReason && r.launchReason !== "user" ? ` [launched for ${r.launchReason}]` : "";
+				const what = marker
+					? r.source.replace(/virtues\.place\.[^\s]+/g, placeLabel)
+					: `location fix (${r.source})`;
+				return `${r.ts}  ${r.appState}${launch}  ${what}`;
+			});
+		return [...head, ...lines, ""].join("\n");
+	}
+
+	async function shareLog() {
+		sharing = true;
+		shareNote = null;
+		try {
+			// The status is read now, not taken from the screen's last load: the
+			// header has to describe the moment the log was shared.
+			const [resp, status] = await Promise.all([
+				invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
+					payload: { limit: 5000 },
+				}),
+				invoke<AudioStatus>("plugin:audio|status").catch(() => null),
+			]);
+			const text = logText(resp.rows ?? [], status);
+			const d = new Date();
+			const day = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+			const name = `virtues-log-${day}.txt`;
+			const file = new File([text], name, { type: "text/plain" });
+			if (navigator.canShare?.({ files: [file] })) {
+				await navigator.share({ files: [file], title: name });
+			} else if (typeof navigator.share === "function") {
+				await navigator.share({ title: name, text });
+			} else {
+				await navigator.clipboard.writeText(text);
+				shareNote = "Copied the log. Paste it into your message.";
+			}
+		} catch (e) {
+			// Closing the share sheet is a choice, not a failure.
+			if (e instanceof DOMException && e.name === "AbortError") return;
+			shareNote = "Couldn't share the log. Try again.";
+		} finally {
+			sharing = false;
+		}
+	}
+
+	async function load() {
+		if (!mobileLayout.isNativeShell) {
+			loading = false;
+			return;
+		}
+		loading = true;
+		error = null;
+		// Outside the Promise.all below: that array is positional, and a push
+		// status the OS cannot read must not take the whole screen down with it.
+		const pushRead = readPush();
+		try {
+			const [
+				rowsResp,
+				reachResp,
+				syncResp,
+				healthResp,
+				healthSyncResp,
+				calResp,
+				calSyncResp,
+				contactsResp,
+				contactsSyncResp,
+				financeResp,
+				financeSyncResp,
+				audioResp,
+				audioSyncResp,
+				radioResp,
+				ver,
+				boxVer,
+			] = await Promise.all([
+				// A page's worth of history now that the log has a page; 60 was
+				// sized for an inline strip that showed three runs.
+				// Fixes only: marker rows (the probe's events, the recorder's
+				// diagnostics) would otherwise crowd fixes out of the window that
+				// decides whether Location reads as on.
+				invoke<{ rows: ProbeRow[] }>("plugin:location-probe|read_rows", {
+					payload: { limit: 300, fixesOnly: true },
+				}),
+				invoke<ReachStatus>("plugin:reach|reach_status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "location" }).catch(() => null),
+				invoke<HealthStatus>("plugin:health|status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "healthkit" }).catch(() => null),
+				invoke<StreamStatus>("plugin:eventkit|status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "eventkit" }).catch(() => null),
+				invoke<StreamStatus>("plugin:contacts|status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "contacts" }).catch(() => null),
+				invoke<StreamStatus>("plugin:finance|status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "financekit" }).catch(() => null),
+				invoke<AudioStatus>("plugin:audio|status").catch(() => null),
+				invoke<OutboxStats>("plugin:reach|outbox_stats", { stream: "microphone" }).catch(() => null),
+				invoke<RadioStats>("plugin:reach|radio_stats").catch(() => null),
+				getVersion().catch(() => ""),
+				boxApiVersion().catch(() => null),
+			]);
+			rows = (rowsResp.rows ?? []).slice().reverse(); // newest first
+			reach = reachResp;
+			sync = syncResp;
+			health = healthResp;
+			healthSync = healthSyncResp;
+			cal = calResp;
+			calSync = calSyncResp;
+			contacts = contactsResp;
+			contactsSync = contactsSyncResp;
+			finance = financeResp;
+			financeSync = financeSyncResp;
+			audio = audioResp;
+			audioSync = audioSyncResp;
+			radio = radioResp;
+			version = ver;
+			boxApi = boxVer;
+			await pushRead;
+		} catch (e) {
+			error = String(e);
+		} finally {
+			loading = false;
+		}
+	}
+
+	async function enableLocation() {
+		starting = true;
+		error = null;
+		try {
+			await invoke("plugin:location-probe|start_probe");
+			setTimeout(load, 800);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			starting = false;
+		}
+	}
+
+	async function enableHealth() {
+		enablingHealth = true;
+		error = null;
+		try {
+			health = await invoke<HealthStatus>("plugin:health|enable");
+			setTimeout(load, 1500);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			enablingHealth = false;
+		}
+	}
+
+	/**
+	 * Cycle tracking needs a box at `api_version` 5. A box below that drops
+	 * the cycle types while the phone's anchors move past them, which loses
+	 * them for good, so the switch stays off until the box can store them.
+	 */
+	const CYCLE_MIN_BOX_API = 5;
+	const cycleBoxReady = $derived(boxApi !== null && boxApi >= CYCLE_MIN_BOX_API);
+
+	/**
+	 * The Cycle row stays off this screen until the box has somewhere to show
+	 * what it collects (the Cycle room, slice 5 of
+	 * agents/plan/cycle-tracking-plan.md). Waiting loses nothing: turning
+	 * Cycle on backfills the whole Health history. A phone that already has
+	 * it on keeps the row, so it can see its own state.
+	 */
+	// TODO(2026-10-17): set to the box api_version that ships the Cycle room.
+	const CYCLE_ROOM_BOX_API: number | null = null;
+	const cycleRowShown = $derived(
+		!!health?.cycle ||
+			(CYCLE_ROOM_BOX_API !== null && boxApi !== null && boxApi >= CYCLE_ROOM_BOX_API),
+	);
+
+	async function enableCycle() {
+		if (!cycleBoxReady) return;
+		enablingCycle = true;
+		error = null;
+		try {
+			health = await invoke<HealthStatus>("plugin:health|enable_cycle");
+			setTimeout(load, 1500);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			enablingCycle = false;
+		}
+	}
+
+	async function enableCalendar() {
+		enablingCal = true;
+		error = null;
+		try {
+			cal = await invoke<StreamStatus>("plugin:eventkit|enable");
+			setTimeout(load, 1500);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			enablingCal = false;
+		}
+	}
+
+	async function enableContacts() {
+		enablingContacts = true;
+		error = null;
+		try {
+			contacts = await invoke<StreamStatus>("plugin:contacts|enable");
+			setTimeout(load, 1500);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			enablingContacts = false;
+		}
+	}
+
+	async function enableFinance() {
+		enablingFinance = true;
+		error = null;
+		try {
+			finance = await invoke<StreamStatus>("plugin:finance|enable");
+			setTimeout(load, 2000);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			enablingFinance = false;
+		}
+	}
+
+	/// The one stream that records people who never consented gets a real
+	/// consent beat before the OS dialog: the first Enable opens the
+	/// interstitial; only its confirm actually starts recording. Once
+	/// authorized, the button is a plain pause control and the interstitial
+	/// never returns.
+	let audioConsentOpen = $state(false);
+
+	/// "The user has recording switched on" — capturing, or paused for a
+	/// reason they did not choose (CarPlay). One derivation for the control
+	/// and its label, so they cannot disagree: a label reading Resume over a
+	/// handler that calls disable is exactly the re-evict this guards.
+	const audioOn = $derived(!!(audio?.recording || audio?.pausedReason));
+
+	/// What the mic is doing right now. `now` ticks with the poll below so an
+	/// "until 7:00 AM" line and a crossed boundary both stay current.
+	let now = $state(new Date());
+	const audioNow = $derived(audioState(audio, now));
+
+	/// The mic is always on, so the page's job is to say whether anything is
+	/// being kept this minute. Re-read the plugin while the Audio page is open.
+	$effect(() => {
+		if (open !== "audio") return;
+		const tick = async () => {
+			if (document.visibilityState !== "visible") return;
+			const s = await invoke<AudioStatus>("plugin:audio|status").catch(() => null);
+			// Swap only on a real change: a fresh object every tick re-renders the
+			// settings, and resetting a time field mid-pick loses what was typed.
+			if (s && JSON.stringify(s) !== JSON.stringify(audio)) audio = s;
+			now = new Date();
+		};
+		const id = setInterval(tick, 3000);
+		return () => clearInterval(id);
+	});
+
+	async function toggleAudio() {
+		togglingAudio = true;
+		error = null;
+		try {
+			audio = await invoke<AudioStatus>(audioOn ? "plugin:audio|disable" : "plugin:audio|enable");
+			setTimeout(load, 2000);
+		} catch (e) {
+			error = String(e);
+		} finally {
+			togglingAudio = false;
+		}
+	}
+
+	/// End the Control Center override: back to your hours and places. The
+	/// mic never stopped, so this needs no restart.
+	async function endOverride() {
+		togglingAudio = true;
+		error = null;
+		try {
+			audio = await invoke<AudioStatus>("plugin:audio|set_override", { mode: null });
+		} catch (e) {
+			error = String(e);
+		} finally {
+			togglingAudio = false;
+		}
+	}
+
+	function audioAction() {
+		if (!audio?.authorized) audioConsentOpen = !audioConsentOpen;
+		else void toggleAudio();
+	}
+
+	/// Unpair this device: clear the Keychain-stored pairing (seed + box info), so
+	/// the app forgets the box entirely. Since the pairing survives app deletion
+	/// (Keychain), this is the only way to fully reset — useful for switching boxes
+	/// or a clean re-pair. Reloads into the pairing flow afterward.
+	async function unpairDevice() {
+		const ok = await confirmAction({
+			title: "Unpair this device?",
+			body: "This clears the saved connection to your server. You'll need to pair again to reconnect. Nothing on your server changes.",
+			confirmLabel: "Unpair",
+			danger: true,
+		});
+		if (!ok) return;
+		forgetting = true;
+		error = null;
+		try {
+			await invoke("plugin:reach|forget");
+			// Drop the just-paired marker too — it exists to bridge the launch
+			// that paired, and surviving an unpair would resurrect the pairing
+			// in the eyes of mobileLayout.
+			try {
+				localStorage.removeItem("virtues-just-paired");
+			} catch {
+				/* best effort */
+			}
+			// Go to the connect shell, don't reload. `reload()` re-requests the
+			// URL we are already on — the SPA root — so the app came back up
+			// unpaired, with no way to pair, and the only escape was force
+			// quitting. The shell confirms pairing with the plugin before it
+			// redirects, so landing here after a forget stays here.
+			window.location.replace("/connect.html");
+		} catch (e) {
+			error = String(e);
+			forgetting = false;
+		}
+	}
+
+	let syncingNow = $state(false);
+	async function syncNow() {
+		syncingNow = true;
+		error = null;
+		try {
+			// One collector serves both opt-ins; cycle tracking can be on alone.
+			if (health?.authorized || health?.cycle) await invoke("plugin:health|collect").catch(() => {});
+			if (cal?.authorized) await invoke("plugin:eventkit|collect").catch(() => {});
+			if (contacts?.authorized) await invoke("plugin:contacts|collect").catch(() => {});
+			if (finance?.authorized) await invoke("plugin:finance|collect").catch(() => {});
+			await invoke("plugin:reach|drain_now");
+			await load();
+		} catch (e) {
+			error = String(e);
+		} finally {
+			syncingNow = false;
+		}
+	}
+
+	function fmtBytes(n: number): string {
+		if (n >= 1024 * 1024 * 1024) return `${(n / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+		if (n >= 1024 * 1024) return `${(n / (1024 * 1024)).toFixed(1)} MB`;
+		if (n >= 1024) return `${(n / 1024).toFixed(0)} KB`;
+		return `${n} B`;
+	}
+
+	function rel(ts: string): string {
+		const t = new Date(ts).getTime();
+		if (Number.isNaN(t)) return ts;
+		const s = Math.round((Date.now() - t) / 1000);
+		if (s < 60) return `${s}s ago`;
+		const m = Math.round(s / 60);
+		if (m < 60) return `${m}m ago`;
+		const h = Math.round(m / 60);
+		if (h < 24) return `${h}h ago`;
+		return `${Math.round(h / 24)}d ago`;
+	}
+
+	// ── The streams, as the list and the pages both see them ────────────
+	function syncWord(s: OutboxStats | null): string {
+		if (!s) return "";
+		if (s.failing > 0) return ` · ${s.failing} retrying`;
+		if (s.queued > 0) return ` · ${s.queued} syncing`;
+		return " · synced";
+	}
+
+	interface StreamMeta {
+		key: StreamKey;
+		title: string;
+		icon: string;
+		/** What it collects — the sub-line while off, and the page's sentence. */
+		what: string;
+		description: string;
+		note?: string;
+	}
+	const STREAMS: StreamMeta[] = [
+		{
+			key: "location",
+			title: "Location",
+			icon: "ri:map-pin-line",
+			what: "Where you are, through the day",
+			description:
+				"Fixes from the phone's location services, including while the app is in the background. They become the visits and movements in your record, and they keep the app alive for the other streams.",
+		},
+		{
+			key: "health",
+			title: "Health",
+			icon: "ri:heart-pulse-line",
+			what: "Steps, sleep, heart rate",
+			description: "What the Health app already keeps - steps, sleep, heart rate, workouts - copied to your server as it lands.",
+		},
+		{
+			key: "cycle",
+			title: "Cycle",
+			icon: "ri:drop-line",
+			what: "Periods, symptoms, wrist temperature",
+			description:
+				"Your periods, spotting, ovulation tests, symptoms and your watch's nightly wrist temperature, copied from the Health app to your server. Your assistant can't read any of it.",
+			note: "This app never asks Health for sexual activity or pregnancy tests.",
+		},
+		{
+			key: "calendar",
+			title: "Calendar",
+			icon: "ri:calendar-line",
+			what: "Events & invitations",
+			description: "Your calendars' events and invitations. They are plans, not evidence; the record checks them against what actually happened.",
+		},
+		{
+			key: "contacts",
+			title: "Contacts",
+			icon: "ri:contacts-book-line",
+			what: "Names for the people in your record",
+			description: "Your address book, so your server knows the people in messages, calls and calendars by name.",
+		},
+		{
+			key: "finance",
+			title: "Finance",
+			icon: "ri:bank-card-line",
+			what: "Accounts & transactions",
+			description: "Accounts and transactions from Apple Wallet and Apple Card, through the phone's Finance framework.",
+		},
+		{
+			key: "audio",
+			title: "Audio",
+			icon: "ri:mic-line",
+			what: "Ambient sound & transcripts",
+			description:
+				"Records the sound of your day while your phone is with you. Your server has the recordings transcribed.",
+			// iOS suspends the wake word while any app holds the mic; ours never lets go.
+			note: "“Hey Siri” is off while recording. Hold the side button instead.",
+		},
+	];
+
+	function streamOn(k: StreamKey): boolean {
+		switch (k) {
+			case "location":
+				return enabled;
+			case "health":
+				return !!health?.authorized;
+			case "cycle":
+				return !!health?.cycle;
+			case "calendar":
+				return !!cal?.authorized;
+			case "contacts":
+				return !!contacts?.authorized;
+			case "finance":
+				return !!finance?.authorized;
+			case "audio":
+				return !!audio?.recording;
+		}
+	}
+
+	function streamStatus(k: StreamKey): string {
+		const meta = STREAMS.find((s) => s.key === k)!;
+		if (loading && k === "location") return "Checking…";
+		switch (k) {
+			case "location":
+				return enabled ? `On · ${fixes.length} recent${lastTs ? ` · ${rel(lastTs)}` : ""}` : "Off";
+			case "health":
+				return health?.authorized ? `On${syncWord(healthSync)}` : meta.what;
+			case "cycle":
+				return health?.cycle ? `On${syncWord(healthSync)}` : meta.what;
+			case "calendar":
+				return cal?.authorized ? `On${syncWord(calSync)}` : meta.what;
+			case "contacts":
+				return contacts?.authorized ? `On${syncWord(contactsSync)}` : meta.what;
+			case "finance":
+				return finance?.authorized ? `On${syncWord(financeSync)}` : meta.what;
+			case "audio":
+				if (!audioNow) return meta.what;
+				return audioNow.live ? `${audioNow.label}${syncWord(audioSync)}` : audioNow.label;
+		}
+	}
+
+	function streamSync(k: StreamKey): OutboxStats | null {
+		switch (k) {
+			case "location":
+				return sync;
+			case "health":
+			case "cycle":
+				return healthSync;
+			case "calendar":
+				return calSync;
+			case "contacts":
+				return contactsSync;
+			case "finance":
+				return financeSync;
+			case "audio":
+				return audioSync;
+		}
+	}
+
+	function streamAction(k: StreamKey): { label: string; onclick: () => void; disabled?: boolean } | null {
+		switch (k) {
+			case "location":
+				return enabled ? null : { label: starting ? "Enabling…" : "Enable", onclick: enableLocation, disabled: starting };
+			case "health":
+				return health?.authorized
+					? null
+					: { label: enablingHealth ? "Enabling…" : "Enable", onclick: enableHealth, disabled: enablingHealth };
+			case "cycle":
+				if (health?.cycle) return null;
+				return {
+					label: enablingCycle ? "Enabling…" : "Enable",
+					onclick: enableCycle,
+					disabled: enablingCycle || !cycleBoxReady,
+				};
+			case "calendar":
+				return cal?.authorized
+					? null
+					: { label: enablingCal ? "Enabling…" : "Enable", onclick: enableCalendar, disabled: enablingCal };
+			case "contacts":
+				return contacts?.authorized
+					? null
+					: { label: enablingContacts ? "Enabling…" : "Enable", onclick: enableContacts, disabled: enablingContacts };
+			case "finance":
+				return finance?.authorized
+					? null
+					: { label: enablingFinance ? "Enabling…" : "Enable", onclick: enableFinance, disabled: enablingFinance };
+			case "audio":
+				if (audio?.override && audio.enabled) {
+					const label = audio.override === "silence" ? "Resume" : "Mute again";
+					return { label: togglingAudio ? "…" : label, onclick: endOverride, disabled: togglingAudio };
+				}
+				return {
+					label: togglingAudio ? "…" : audioOn ? "Stop" : audio?.authorized ? "Resume" : "Enable",
+					onclick: audioAction,
+					disabled: togglingAudio,
+				};
+		}
+	}
+
+	const shownStreams = $derived(STREAMS.filter((s) => s.key !== "cycle" || cycleRowShown));
+	const openMeta = $derived(open ? STREAMS.find((s) => s.key === open)! : null);
+
+	onMount(load);
+	// Notifications are switched on or off in Settings, outside the app, so the
+	// row goes stale the moment the owner leaves to fix it. Re-read on return.
+	onMount(() => {
+		const onVisible = () => {
+			if (document.visibilityState === "visible" && mobileLayout.isNativeShell) readPush();
+		};
+		document.addEventListener("visibilitychange", onVisible);
+		return () => document.removeEventListener("visibilitychange", onVisible);
+	});
+</script>
+
+<div class="device">
+	<div class="group-label">Connection</div>
+	<div class="card">
+		<div class="stream">
+			<div class="s-icon" class:on={conn.tone === "on"}>
+				<Icon icon="ri:links-line" width={18} />
+			</div>
+			<div class="s-body">
+				<div class="s-title">{conn.label}</div>
+				<div class="s-sub">{conn.sub}</div>
+			</div>
+			<span class="dot" class:on={conn.tone === "on"} class:off={conn.tone === "off"}></span>
+		</div>
+		{#if notif}
+			<div class="stream">
+				<div class="s-icon" class:on={notif.tone === "on"}>
+					<Icon icon="ri:notification-3-line" width={18} />
+				</div>
+				<div class="s-body">
+					<div class="s-title">{notif.label}</div>
+					<div class="s-sub">{notif.sub}</div>
+				</div>
+				{#if notif.action}
+					<button class="s-action" onclick={allowPush} disabled={allowingPush}>
+						{allowingPush ? "Asking…" : notif.action}
+					</button>
+				{:else}
+					<span class="dot" class:on={notif.tone === "on"} class:off={notif.tone === "off"}></span>
+				{/if}
+			</div>
+		{/if}
+	</div>
+
+	<!-- "This phone", not "Streams": under a page titled Settings, the group
+	     label is what says these rows are about the device in hand. -->
+	<div class="group-label">This phone</div>
+	<div class="card">
+		{#each shownStreams as s (s.key)}
+			{@const on = streamOn(s.key)}
+			<button class="stream link" type="button" onclick={() => (open = s.key)}>
+				<div class="s-icon" class:on>
+					<Icon icon={s.icon} width={18} />
+				</div>
+				<div class="s-body">
+					<div class="s-title">{s.title}</div>
+					<div class="s-sub">{streamStatus(s.key)}</div>
+				</div>
+				{#if on}
+					<span class="dot on" class:hollow={s.key === "audio" && !!audio?.mutedBy}></span>
+				{/if}
+				<Icon icon="ri:arrow-right-s-line" width={18} class="chev" />
+			</button>
+		{/each}
+	</div>
+
+	<div class="group-label">Sync</div>
+	<div class="card">
+		<div class="stream">
+			<div class="s-icon" class:on={!!sync && sync.queued === 0}>
+				<Icon icon="ri:refresh-line" width={18} />
+			</div>
+			<div class="s-body">
+				<div class="s-title">
+					{#if !sync}—{:else if sync.queued === 0}Synced to your server{:else}{sync.queued} waiting to sync{/if}
+				</div>
+				<div class="s-sub">
+					{#if sync && sync.failing > 0}{sync.failing} retrying{:else}Uploaded over your private link{/if}
+				</div>
+			</div>
+			<button class="s-action" onclick={syncNow} disabled={syncingNow}>
+				{syncingNow ? "Syncing…" : "Sync now"}
+			</button>
+		</div>
+		<!-- What the phone has recorded lately, as a door (VIR-348). It sits
+		     under Sync because that is the question it answers: is anything
+		     being kept, and when was the last of it. -->
+		<button class="stream link" type="button" onclick={() => (activityOpen = true)}>
+			<div class="s-icon" class:on={enabled}>
+				<Icon icon="ri:history-line" width={18} />
+			</div>
+			<div class="s-body">
+				<div class="s-title">Recent activity</div>
+				<div class="s-sub">{loading ? "Loading…" : activityLine}</div>
+			</div>
+			<Icon icon="ri:arrow-right-s-line" width={18} class="chev" />
+		</button>
+	</div>
+
+	<!-- The profile lives on the box (name, appearance); this is its only door
+	     on the phone since the drawer's gear went. A route push, so the way
+	     back is the drawer, like every other page on the phone. -->
+	<div class="group-label">You</div>
+	<div class="card">
+		<button
+			class="stream link"
+			type="button"
+			onclick={() => windowShellStore.openTabFromRoute("/virtues/you", { label: "Profile" })}
+		>
+			<div class="s-icon">
+				<Icon icon="ri:user-line" width={18} />
+			</div>
+			<div class="s-body">
+				<div class="s-title">Profile</div>
+				<div class="s-sub">Your name, and how the app looks</div>
+			</div>
+			<Icon icon="ri:arrow-right-s-line" width={18} class="chev" />
+		</button>
+	</div>
+
+	<div class="group-label">About</div>
+	<div class="card">
+		<div class="about">
+			<span>App version</span><span class="v">{version || "—"}</span>
+		</div>
+		<div class="about">
+			<span>Recorded points</span><span class="v">{fixes.length}</span>
+		</div>
+		{#if radio}
+			<div class="about">
+				<span>{radio.parked ? "Radio resting" : "Link active"}</span>
+				<span class="v">{radio.drains} uploads · {fmtBytes(radio.bytes)}</span>
+			</div>
+		{/if}
+		<button class="danger-row" onclick={unpairDevice} disabled={forgetting} type="button">
+			{forgetting ? "Unpairing…" : "Unpair this device"}
+		</button>
+	</div>
+</div>
+
+{#if open && openMeta}
+	<MobileStreamPage
+		title={openMeta.title}
+		icon={openMeta.icon}
+		status={streamStatus(open)}
+		on={streamOn(open)}
+		live={open === "audio" && audio?.authorized ? !!audioNow?.live : null}
+		statusNote={open === "audio" ? audioNow?.explain : null}
+		description={openMeta.description}
+		note={openMeta.note}
+		action={streamAction(open)}
+		sync={streamSync(open)}
+		{error}
+		onBack={() => {
+			open = null;
+			audioConsentOpen = false;
+		}}
+	>
+		{#if open === "audio"}
+			{#if audioConsentOpen && !audio?.authorized}
+				<!-- The consent beat this one stream earns. -->
+				<div class="consent">
+					<p>
+						The microphone stays on while your phone is with you. It records the sound of
+						your day, and everyone in the room. Your server has a cloud AI model
+						transcribe the recordings and keeps the transcripts in your record.
+					</p>
+					<p>
+						Recording hours can silence any part of the week, and a place can be marked
+						"never record here". Other people's voices will still be in the record: in
+						some places, recording a conversation needs everyone's consent. That part is
+						yours to honor.
+					</p>
+					<div class="consent-actions">
+						<button
+							class="s-action"
+							onclick={() => {
+								audioConsentOpen = false;
+								void toggleAudio();
+							}}
+							disabled={togglingAudio}
+						>
+							Turn the microphone on
+						</button>
+						<button class="s-action quiet" onclick={() => (audioConsentOpen = false)}>Not now</button>
+					</div>
+				</div>
+			{/if}
+			{#if audio?.authorized}
+				<MobileAudioSettings
+					{audio}
+					fix={lastFix}
+					onStatus={(s) => (audio = s)}
+					onError={(m) => (error = m)}
+				/>
+			{/if}
+		{/if}
+	</MobileStreamPage>
+{/if}
+
+{#if activityOpen}
+	<!-- Every run, newest first, in the stream page's frame: the same back
+	     header and status card the streams get, no primary action beyond a
+	     refresh. Consecutive fixes at one spot are one run with a count, so
+	     a phone that sat on a desk all afternoon is one line, not forty. -->
+	<MobileStreamPage
+		title="Recent activity"
+		icon="ri:history-line"
+		status={activityLine}
+		on={enabled}
+		description="Location fixes this phone has recorded, newest first. This list collapses fixes at the same spot into one run with a count; a filled dot means the app was in the background when it recorded."
+		action={{ label: loading ? "Loading…" : "Refresh", onclick: load, disabled: loading }}
+		{error}
+		onBack={() => (activityOpen = false)}
+	>
+		<!-- For a bug report: what the recorder and the location probe did
+		     lately, as a text file. Above the list so it is never 300 runs
+		     down. -->
+		<div class="card share">
+			<button class="stream link" type="button" onclick={shareLog} disabled={sharing}>
+				<div class="s-icon">
+					<Icon icon="ri:file-text-line" width={18} />
+				</div>
+				<div class="s-body">
+					<div class="s-title">{sharing ? "Preparing…" : "Share the log"}</div>
+					<div class="s-sub">{shareNote ?? "What recording and location did lately, without your locations or places"}</div>
+				</div>
+			</button>
+		</div>
+		<div class="card activity">
+			{#if loading && runs.length === 0}
+				<div class="empty">Loading…</div>
+			{:else if runs.length === 0}
+				<div class="empty">No location fixes yet. Turn on Location to see them here.</div>
+			{:else}
+				{#each runs as r, i (i)}
+					<div class="log">
+						<span class="l-dot" class:bg={r.appState !== "active"}></span>
+						<div class="l-body">
+							<div class="l-top">
+								<span class="l-time">{rel(r.ts)}</span>
+								<span class="l-state">{r.appState === "active" ? "in use" : "background"}</span>
+								{#if r.count > 1}<span class="l-count">×{r.count}</span>{/if}
+							</div>
+							<div class="l-sub">
+								{r.lat.toFixed(4)}, {r.lon.toFixed(4)}
+								{#if r.launchReason && r.launchReason !== "none"}· {r.launchReason}{/if}
+							</div>
+						</div>
+					</div>
+				{/each}
+			{/if}
+		</div>
+	</MobileStreamPage>
+{/if}
+
+<style>
+	.device {
+		padding-bottom: 8px;
+	}
+	.group-label {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		font-size: 11px;
+		color: var(--color-foreground-muted);
+		margin: 18px 4px 8px;
+	}
+	.card {
+		background: var(--color-surface);
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+		overflow: hidden;
+	}
+
+	.stream {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		padding: 12px 14px;
+		border-bottom: 1px solid var(--color-border);
+	}
+	.stream:last-child {
+		border-bottom: 0;
+	}
+	.stream.link {
+		width: 100%;
+		border-left: 0;
+		border-right: 0;
+		border-top: 0;
+		background: transparent;
+		color: inherit;
+		text-align: left;
+		cursor: pointer;
+	}
+	.stream.link:last-child {
+		border-bottom: 0;
+	}
+	.stream :global(.chev) {
+		color: var(--color-foreground-muted);
+		flex: none;
+		margin-right: -4px;
+	}
+	.s-icon {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 30px;
+		height: 30px;
+		flex: none;
+		border-radius: 8px;
+		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
+		color: var(--color-foreground-muted);
+	}
+	.s-icon.on {
+		background: color-mix(in srgb, var(--color-primary) 16%, transparent);
+		color: var(--color-primary);
+	}
+	.s-body {
+		flex: 1;
+		min-width: 0;
+	}
+	.s-title {
+		font-size: 15px;
+		font-weight: 550;
+	}
+	.s-sub {
+		font-size: 12px;
+		color: var(--color-foreground-muted);
+		margin-top: 1px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.s-action {
+		border: 1px solid var(--color-primary);
+		color: var(--color-primary);
+		background: transparent;
+		border-radius: 8px;
+		padding: 7px 14px;
+		font-size: 13px;
+		font-weight: 600;
+		cursor: pointer;
+	}
+	.s-action:disabled {
+		opacity: 0.5;
+	}
+	.s-action.quiet {
+		border-color: var(--color-border);
+		color: var(--color-foreground-muted);
+	}
+	.dot {
+		width: 8px;
+		height: 8px;
+		flex: none;
+		border-radius: 50%;
+		background: var(--color-foreground-muted);
+	}
+	.dot.on {
+		background: var(--color-success);
+	}
+	/* On, but deliberately keeping nothing right now (a muted place or hour). */
+	.dot.on.hollow {
+		background: transparent;
+		box-shadow: inset 0 0 0 2px var(--color-success);
+	}
+
+	/* The consent interstitial on the Audio page: plain sentences, then the choice. */
+	.consent {
+		margin-top: 16px;
+		padding: 14px;
+		border: 1px solid var(--color-border);
+		border-radius: 12px;
+	}
+	.consent p {
+		margin: 0 0 10px;
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+	.consent-actions {
+		display: flex;
+		gap: 10px;
+		margin-top: 2px;
+	}
+
+	/* Recent activity: one run per line, on its own page. */
+	.card.share,
+	.card.activity {
+		margin-top: 16px;
+	}
+	.log {
+		display: flex;
+		align-items: flex-start;
+		gap: 10px;
+		padding: 10px 14px;
+		border-bottom: 1px solid var(--color-border);
+		color: var(--color-foreground-muted);
+	}
+	.log:last-child {
+		border-bottom: 0;
+	}
+	.l-dot {
+		width: 8px;
+		height: 8px;
+		flex: none;
+		border-radius: 50%;
+		margin-top: 6px;
+		background: color-mix(in srgb, var(--color-foreground) 22%, transparent);
+	}
+	.l-dot.bg {
+		background: var(--color-success);
+	}
+	.l-body {
+		flex: 1;
+		min-width: 0;
+	}
+	.l-top {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.l-time {
+		font-size: 13px;
+		color: var(--color-foreground);
+		font-weight: 500;
+	}
+	.l-state {
+		font-size: 11px;
+		color: var(--color-foreground-muted);
+	}
+	.l-count {
+		font-size: 11px;
+		font-weight: 600;
+		color: var(--color-foreground-muted);
+		font-variant-numeric: tabular-nums;
+	}
+	.l-sub {
+		font-size: 12px;
+		font-variant-numeric: tabular-nums;
+		margin-top: 1px;
+	}
+	.about {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+		padding: 12px 14px;
+		border-bottom: 1px solid var(--color-border);
+		font-size: 14px;
+	}
+	.about .v {
+		color: var(--color-foreground-muted);
+		font-variant-numeric: tabular-nums;
+		text-align: right;
+	}
+	.danger-row {
+		display: block;
+		width: 100%;
+		padding: 12px 14px;
+		border: none;
+		background: transparent;
+		color: var(--color-error);
+		font-size: 14px;
+		font-weight: 600;
+		text-align: left;
+		cursor: pointer;
+	}
+	.danger-row:disabled {
+		opacity: 0.5;
+	}
+	.empty {
+		padding: 14px;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+</style>

@@ -1,0 +1,233 @@
+/**
+ * Pages Store
+ *
+ * Domain-specific store for page management. Provides:
+ * - Page CRUD operations with automatic cache invalidation
+ * - Pinned/recent page tracking (localStorage-backed)
+ * - Sidebar items computation (pinned first, then recent)
+ * - Optimistic updates for responsive UI
+ *
+ * Coordinates with windowShellStore for space-related operations.
+ */
+
+import { createPage, updatePage, deletePage, listPages, type PageSummary, type Page } from '$lib/api/client';
+import { windowShellStore } from './window-shell.svelte';
+
+const PINNED_STORAGE_KEY = 'virtues-pinned-pages';
+const RECENT_STORAGE_KEY = 'virtues-recent-pages';
+const MAX_RECENT = 20;
+const MAX_SIDEBAR_ITEMS = 8;
+
+class PagesStore {
+	loading = $state(false);
+
+	// Pages list state (for PagesView)
+	pages = $state<PageSummary[]>([]);
+	pagesLoading = $state(false);
+	pagesError = $state<string | null>(null);
+
+	// Pinned/Recent tracking (persisted to localStorage)
+	pinnedPageIds = $state<Set<string>>(new Set());
+	recentPageIds = $state<string[]>([]);
+
+	constructor() {
+		this.loadPinnedRecent();
+	}
+
+	private loadPinnedRecent(): void {
+		if (typeof window === 'undefined') return;
+
+		try {
+			const pinnedRaw = localStorage.getItem(PINNED_STORAGE_KEY);
+			if (pinnedRaw) {
+				this.pinnedPageIds = new Set(JSON.parse(pinnedRaw));
+			}
+
+			const recentRaw = localStorage.getItem(RECENT_STORAGE_KEY);
+			if (recentRaw) {
+				this.recentPageIds = JSON.parse(recentRaw);
+			}
+		} catch (e) {
+			console.error('[PagesStore] Failed to load pinned/recent from localStorage:', e);
+		}
+	}
+
+	private persistPinnedRecent(): void {
+		if (typeof window === 'undefined') return;
+
+		try {
+			localStorage.setItem(PINNED_STORAGE_KEY, JSON.stringify([...this.pinnedPageIds]));
+			localStorage.setItem(RECENT_STORAGE_KEY, JSON.stringify(this.recentPageIds));
+		} catch (e) {
+			console.error('[PagesStore] Failed to persist pinned/recent to localStorage:', e);
+		}
+	}
+
+	/**
+	 * Toggle pin status for a page
+	 */
+	togglePin(pageId: string): void {
+		const newSet = new Set(this.pinnedPageIds);
+		if (newSet.has(pageId)) {
+			newSet.delete(pageId);
+		} else {
+			newSet.add(pageId);
+		}
+		this.pinnedPageIds = newSet;
+		this.persistPinnedRecent();
+	}
+
+	/**
+	 * Check if a page is pinned
+	 */
+	isPinned(pageId: string): boolean {
+		return this.pinnedPageIds.has(pageId);
+	}
+
+	/**
+	 * Mark a page as recently accessed
+	 */
+	markAsRecent(pageId: string): void {
+		// Remove if exists, add to front
+		const filtered = this.recentPageIds.filter(id => id !== pageId);
+		this.recentPageIds = [pageId, ...filtered].slice(0, MAX_RECENT);
+		this.persistPinnedRecent();
+	}
+
+	/**
+	 * Get sidebar items: pinned first, then recent to fill remaining slots
+	 */
+	getSidebarItems(maxItems: number = MAX_SIDEBAR_ITEMS): PageSummary[] {
+		// Get pinned pages (that still exist in pages list)
+		const pinnedPages = this.pages.filter(p => this.pinnedPageIds.has(p.id));
+
+		// Get recent pages (excluding pinned, that still exist)
+		const recentPages = this.recentPageIds
+			.filter(id => !this.pinnedPageIds.has(id))
+			.map(id => this.pages.find(p => p.id === id))
+			.filter((p): p is PageSummary => p !== undefined);
+
+		// Combine: pinned first, then recent to fill remaining slots
+		const remaining = Math.max(0, maxItems - pinnedPages.length);
+		return [...pinnedPages, ...recentPages.slice(0, remaining)];
+	}
+
+	async init() {
+		// Delegate to workspace store
+		await windowShellStore.init();
+	}
+
+	async refresh() {
+		// Folder/view listing removed — nothing to refresh here anymore.
+	}
+
+	/**
+	 * Create a new page
+	 */
+	async createNewPage(title: string = 'Untitled', spaceId?: string): Promise<Page> {
+		// Don't auto-add for system space
+		const sId = windowShellStore.isSystemSpace
+			? undefined
+			: (spaceId || windowShellStore.activeShellId);
+		const page = await createPage(title, '', sId);
+
+		// Invalidate the Pages view cache so the sidebar refreshes
+		windowShellStore.invalidateViewCache('page');
+
+		await this.refresh();
+		return page;
+	}
+
+	/**
+	 * Save page content and metadata. Handles all side effects:
+	 * - API call
+	 * - Optimistic local update (registry)
+	 * - Cache invalidation (smart folders)
+	 * - Space items reload (sidebar)
+	 */
+	async savePage(pageId: string, updates: {
+		title?: string;
+		content?: string;
+		icon?: string | null;
+		icon_color?: string | null;
+		cover_url?: string | null;
+		tags?: string | null;
+	}): Promise<void> {
+		await updatePage(pageId, updates);
+
+		// Sidebar refresh (only if visible fields changed). `icon_color` counts:
+		// the tab and the sidebar row both draw the icon in it.
+		if (updates.title || 'icon' in updates || 'icon_color' in updates) {
+			windowShellStore.invalidateViewCache('page');
+		}
+	}
+
+	/**
+	 * Update a page locally (optimistic update for title/icon changes)
+	 * Used for immediate UI feedback before debounced save
+	 */
+	updatePageLocally(pageId: string, updates: Partial<PageSummary & { icon?: string | null }>): void {
+		if (this.pages.some((p) => p.id === pageId)) {
+			this.pages = this.pages.map((p) => (p.id === pageId ? { ...p, ...updates } : p));
+		}
+	}
+
+	/**
+	 * Delete a page. Handles all side effects:
+	 * - Close any open tabs for this page
+	 * - API call
+	 * - Local list update
+	 * - Cache invalidation
+	 * - Space items reload
+	 * - IndexedDB cleanup (Yjs offline persistence)
+	 */
+	async removePage(pageId: string): Promise<void> {
+		// Close any open tabs for this page
+		windowShellStore.closeTabsByRoute(`/page/${pageId}`);
+		// API call
+		await deletePage(pageId);
+		// Update local list
+		this.removePageFromList(pageId);
+		// Cache invalidation
+		windowShellStore.invalidateViewCache('page');
+		await this.refresh();
+		// The Yjs offline doc (IndexedDB, keyed by page id) is deliberately
+		// kept: delete is a trip to Recently deleted now, and a restore
+		// reopens the page against the same doc. Ids are never reused, so a
+		// leftover doc after a purge is a few KB, not a hazard.
+	}
+
+	/**
+	 * Load all pages (for PagesView flat list)
+	 */
+	async loadPages(): Promise<void> {
+		this.pagesLoading = true;
+		this.pagesError = null;
+		try {
+			const response = await listPages();
+			this.pages = response.pages;
+		} catch (e) {
+			console.error('[PagesStore] Failed to load pages:', e);
+			this.pagesError = e instanceof Error ? e.message : 'Failed to load pages';
+			// Keep the last good list; a failed reload is not an empty one.
+		} finally {
+			this.pagesLoading = false;
+		}
+	}
+
+	/**
+	 * Add a page to the list (optimistic update)
+	 */
+	addPage(page: PageSummary): void {
+		this.pages = [page, ...this.pages];
+	}
+
+	/**
+	 * Remove a page from the list (optimistic update)
+	 */
+	removePageFromList(pageId: string): void {
+		this.pages = this.pages.filter(p => p.id !== pageId);
+	}
+}
+
+export const pagesStore = new PagesStore();

@@ -1,0 +1,710 @@
+<script lang="ts">
+	/**
+	 * Settings → Software → Updates.
+	 *
+	 * Checks on open rather than on a timer: a background poll means the box
+	 * making periodic outbound calls to GitHub on its own initiative, which
+	 * isn't something an appliance holding someone's whole life should do
+	 * unprompted.
+	 *
+	 * Applying restarts the box. That is not a page reload — the binary is
+	 * swapped and migrations run, and every connected device drops, not just
+	 * the one that pressed the button. Hence the confirm that names the blast
+	 * radius, and the waiting state afterwards: the request cannot report a
+	 * result, because the process serving it is the process being replaced.
+	 * The only honest signal is the box going away and coming back.
+	 */
+	import { onMount, onDestroy } from 'svelte';
+	import Icon from '$lib/components/Icon.svelte';
+	import Button from '$lib/components/Button.svelte';
+	import {
+		getUpdateStatus,
+		setUpdateChannel,
+		applyUpdate,
+		type UpdateStatus
+	} from '$lib/api/client';
+	import { confirmAction } from '$lib/stores/dialog.svelte';
+	import { autoUpdateOf, setAutoUpdate, type AutoUpdateStatus } from '$lib/api/autoUpdate';
+	import { reloadApp } from '$lib/reload';
+
+	let status = $state<UpdateStatus | null>(null);
+	let loading = $state(true);
+	let switching = $state(false);
+	let auto = $state<AutoUpdateStatus | null>(null);
+	let autoSaving = $state(false);
+	let autoError = $state<string | null>(null);
+
+	/** null = idle. Otherwise the box is being replaced under us. */
+	let restart = $state<{ phase: 'going' | 'back'; error?: string; detail?: string } | null>(null);
+	let applyError = $state<string | null>(null);
+	let watchTimer: ReturnType<typeof setTimeout> | null = null;
+
+	onDestroy(() => {
+		if (watchTimer) clearTimeout(watchTimer);
+	});
+
+	async function check() {
+		loading = true;
+		try {
+			status = await getUpdateStatus();
+			// An older server doesn't report it; the row just doesn't show.
+			auto = autoUpdateOf(status);
+		} catch (err) {
+			console.error('[updates] check failed:', err);
+			status = null;
+		} finally {
+			loading = false;
+		}
+	}
+
+	async function toggleAuto() {
+		if (!auto || autoSaving) return;
+		autoSaving = true;
+		autoError = null;
+		try {
+			auto = await setAutoUpdate(!auto.enabled);
+		} catch (err) {
+			autoError = err instanceof Error ? err.message : String(err);
+		} finally {
+			autoSaving = false;
+		}
+	}
+
+	/** `v0.1.10-3f2a9c1` -> `v0.1.10`: the slot id carries the commit for disk, not for people. */
+	const releaseName = (slot: string) => slot.replace(/-[0-9a-f]{7,}$/, '');
+
+	const when = (iso: string) =>
+		new Date(iso).toLocaleString(undefined, {
+			month: 'short',
+			day: 'numeric',
+			hour: 'numeric',
+			minute: '2-digit'
+		});
+
+	const hourLabel = (h: number) =>
+		new Date(2000, 0, 1, h).toLocaleTimeString(undefined, { hour: 'numeric' });
+
+	async function switchChannel(channel: 'stable' | 'prerelease') {
+		if (switching || status?.channel === channel) return;
+		switching = true;
+		try {
+			await setUpdateChannel(channel);
+			await check();
+		} catch (err) {
+			console.error('[updates] channel switch failed:', err);
+		} finally {
+			switching = false;
+		}
+	}
+
+	async function install() {
+		if (restart) return;
+		applyError = null;
+
+		// Two genuinely different waits, so two different warnings. On the
+		// stable channel the box fetches releases ahead of time, which turns
+		// this from a download into a restart — quoting "a minute or two" for
+		// something that takes fifteen seconds teaches people to discount the
+		// next estimate, and the estimate matters most when it's the long one.
+		const ok = await confirmAction({
+			title: status?.latest ? `Install ${status.latest}?` : 'Install this update?',
+			body: staged
+				? 'This release is already downloaded. Your server runs its migrations ' +
+					'and restarts, which takes well under a minute. Every device connected ' +
+					'to it drops, phones and other browsers included, not just this window. ' +
+					'You lose nothing, and they reconnect on their own.'
+				: 'Your server downloads the release, swaps its binary and runs ' +
+					'migrations, so it stops serving for a minute or two. Every device ' +
+					'connected to it drops, phones and other browsers included, not just ' +
+					'this window. You lose nothing, and they reconnect on their own.',
+			confirmLabel: 'Install and restart',
+			cancelLabel: 'Not now'
+		});
+		if (!ok) return;
+
+		try {
+			// The build the box is running now, so the watcher can tell a box
+			// that came back on the new release from one that rolled back.
+			const before = await probe();
+			await applyUpdate();
+			restart = { phase: 'going' };
+			watchForBox(before?.build ?? null);
+		} catch (err) {
+			// The box's own words. A bare "update failed" is what sends someone
+			// to SSH into the box to find out what actually happened.
+			applyError = err instanceof Error ? err.message : String(err);
+		}
+	}
+
+	/** `/health`, and the build the box stamps on every response. `null` when it doesn't answer. */
+	async function probe(): Promise<{ ok: boolean; build: string | null } | null> {
+		try {
+			const res = await fetch('/health', { cache: 'no-store' });
+			return { ok: res.ok, build: res.headers.get('x-virtues-box-build') };
+		} catch {
+			return null;
+		}
+	}
+
+	/**
+	 * The box's record of an install that started after `since`, if it failed.
+	 * `virtues activate` writes it whether Settings or the night started it.
+	 */
+	async function failedInstallSince(since: number) {
+		try {
+			const install = autoUpdateOf(await getUpdateStatus())?.install;
+			if (install && !install.ok && new Date(install.at).getTime() >= since) return install;
+		} catch {
+			// No record to read; the caller says what it can without one.
+		}
+		return null;
+	}
+
+	/**
+	 * Watch the box through the restart.
+	 *
+	 * `/health` is the probe rather than the update endpoint: it's the cheapest
+	 * thing that proves the new binary is genuinely serving, and it's what the
+	 * box itself considers "up".
+	 *
+	 * Going down and coming back is not success on its own. An activation that
+	 * fails flips the box back to the release it had and restarts that, which
+	 * looks exactly the same from here, and this screen used to say "Back up"
+	 * and then offer the same update again. So success is the build stamp
+	 * changing. A box that comes back on the same build failed, and the box's
+	 * own record of the attempt says why.
+	 *
+	 * A box that never goes down means the upgrade didn't start, or is still
+	 * downloading. That is only a failure once the box records one, or the
+	 * wait runs out.
+	 */
+	function watchForBox(before: string | null) {
+		const startedAt = Date.now();
+		// Long enough to cover a download and a migration on a slow box; short
+		// enough that a genuinely stuck upgrade doesn't spin forever.
+		const LIMIT_MS = 10 * 60 * 1000;
+		let sawItGo = false;
+
+		const failed = (install: { to: string; error: string | null } | null) => {
+			restart = {
+				phase: 'going',
+				error: install
+					? `Your server couldn't install ${releaseName(install.to)}, so it went back to the version it had. Nothing changed, and you can try again.`
+					: "Your server didn't install the update. It's still running the version it had, and nothing changed. Try again in a few minutes.",
+				detail: install?.error ?? undefined
+			};
+			void check();
+		};
+
+		const poll = async () => {
+			const now = await probe();
+			const alive = !!now?.ok;
+			// Older servers send no stamp; for them, coming back is all there is.
+			const moved = before === null || (!!now?.build && now.build !== before);
+
+			if (!alive) {
+				sawItGo = true;
+				restart = { phase: 'going' };
+			} else if (moved) {
+				// On the new build (whether or not a poll caught it down). A
+				// reload is right here: the served assets changed underneath.
+				restart = { phase: 'back' };
+				setTimeout(() => reloadApp(), 1200);
+				return;
+			} else if (sawItGo) {
+				// Back on the build it had: the activation rolled back.
+				failed(await failedInstallSince(startedAt));
+				return;
+			} else {
+				// Still up on the old build: downloading, or refused before it
+				// stopped anything. A refusal is on the box's record.
+				const refused = await failedInstallSince(startedAt);
+				if (refused) {
+					failed(refused);
+					return;
+				}
+			}
+
+			if (Date.now() - startedAt > LIMIT_MS) {
+				failed(null);
+				return;
+			}
+			watchTimer = setTimeout(poll, 2000);
+		};
+
+		watchTimer = setTimeout(poll, 2000);
+	}
+
+	onMount(check);
+
+	// A box on prerelease is normally *ahead* of the newest stable tag, and the
+	// upgrade path refuses to move backwards. Switching to stable therefore means
+	// "stop taking prereleases" — it doesn't roll anything back. Saying so is the
+	// difference between a considered design and an apparently broken setting.
+	const aheadOfStable = $derived(status?.channel === 'prerelease');
+
+	// The box fetches stable releases on a schedule, so by the time anyone opens
+	// this screen the update is usually already here.
+	const staged = $derived(status?.staged ?? null);
+</script>
+
+<section class="updates">
+	<header>
+		<h3>Updates</h3>
+		<Button variant="secondary" size="sm" icon="ri:refresh-line" {loading} onclick={check}>
+			Check again
+		</Button>
+	</header>
+
+	{#if restart}
+		<!-- Takes over the section while the box is being replaced. Everything
+		     below it is about a box that is, right now, not there. -->
+		<div class="state restarting" class:failed={!!restart.error}>
+			{#if restart.error}
+				<p>
+					<Icon icon="ri:error-warning-line" width="14" />
+					{restart.error}
+				</p>
+				{#if restart.detail}
+					<p class="how">Your server said: {restart.detail}</p>
+				{/if}
+				<Button variant="secondary" size="sm" onclick={() => (restart = null)}>Done</Button>
+			{:else if restart.phase === 'back'}
+				<p>
+					<Icon icon="ri:check-line" width="14" />
+					Back up. Reloading…
+				</p>
+			{:else}
+				<p>
+					<Icon icon="ri:loader-4-line" width="14" class="spin" />
+					Installing. Your server is restarting and will be back in a minute or two.
+				</p>
+				<p class="how">
+					Other devices drop too, and reconnect on their own.
+				</p>
+			{/if}
+		</div>
+	{/if}
+
+	{#if status}
+		<dl class="facts">
+			<dt>Running</dt>
+			<dd class="running">
+				<!-- RELEASE IDENTITY, not the build counter. This row used to
+				     print `current` (the crate version), which is the same
+				     string on every prerelease build — so a box on `edge` was
+				     told it was running "0.3.0", the number of a release it is
+				     ahead of. `codename::version()` exists precisely so every
+				     surface says the same word; this one wasn't asking. -->
+				<span class="ver">{status.running_version}</span>
+				{#if status.running_channel && status.running_channel !== 'stable'}
+					<span class="track">{status.running_channel}</span>
+				{/if}
+				<span class="counter">build {status.current}</span>
+			</dd>
+			<dt>Channel</dt>
+			<dd>
+				<!-- A SELECT, NOT A TOGGLE. Two buttons side by side read as a
+				     preference with two equally good answers; one of these ships
+				     unreviewed builds to the machine holding someone's record.
+				     A select has a default and makes the other option a
+				     deliberate reach, which is the honest shape of this
+				     decision. -->
+				<div class="channel-picker">
+					<select
+						id="channel"
+						disabled={switching}
+						value={status.channel}
+						onchange={(e) =>
+							switchChannel(e.currentTarget.value as 'stable' | 'prerelease')}
+					>
+						<option value="stable">Main — released builds</option>
+						<option value="prerelease">Staging — unreleased, may break</option>
+					</select>
+					{#if status.channel === 'prerelease'}
+						<span class="risk">
+							<Icon icon="ri:alert-line" width="13" />
+							Unreviewed builds install on this server
+						</span>
+					{/if}
+				</div>
+			</dd>
+		</dl>
+
+		{#if auto}
+			<div class="auto">
+				<div class="auto-row">
+					<div>
+						<p class="auto-title">Install updates automatically</p>
+						<p class="note">
+							Your server installs new releases on its channel around {hourLabel(auto.hour)}
+							and restarts. Connected devices reconnect on their own.
+						</p>
+					</div>
+					<button
+						class="switch"
+						class:on={auto.enabled}
+						role="switch"
+						aria-checked={auto.enabled}
+						aria-label="Install updates automatically"
+						disabled={autoSaving}
+						onclick={toggleAuto}
+					></button>
+				</div>
+				{#if auto.install && !auto.install.ok}
+					<p class="note auto-failed">
+						Your server couldn't install {releaseName(auto.install.to)} on
+						{when(auto.install.at)} and went back to {auto.install.from}. It tries again
+						when a newer release comes out, or you can install it below.
+					</p>
+					{#if auto.install.error}<p class="note">{auto.install.error}</p>{/if}
+				{:else if auto.problem}
+					<p class="note auto-failed">{auto.problem}</p>
+				{:else if auto.install}
+					<p class="note">
+						Installed {releaseName(auto.install.to)} automatically on {when(auto.install.at)}.
+					</p>
+				{/if}
+				{#if autoError}
+					<p class="note auto-failed">Couldn't change this setting: {autoError}. Try again.</p>
+				{/if}
+			</div>
+		{/if}
+
+		{#if status.check_error}
+			<!-- "Couldn't check" and "up to date" are very different claims, and
+			     showing the second when the first is true is the kind of lie that
+			     leaves a box unpatched. -->
+			<p class="state error">
+				<Icon icon="ri:error-warning-line" width="14" />
+				Couldn't check for updates — {status.check_error}
+			</p>
+		{:else if status.running_ahead}
+			<!-- Neither "up to date" nor "update available" is true here, and
+			     both were lies: this box came off a later track than the channel
+			     it follows, so the newest tag on that channel is probably behind
+			     it. Say what is running, say what the channel holds, and let the
+			     owner decide. -->
+			<p class="state ahead">
+				<Icon icon="ri:git-branch-line" width="14" />
+				This box runs <strong>{status.running_version}</strong>, from the
+				{status.running_channel} track — ahead of
+				{status.latest ?? 'the latest release'} on Main. Nothing to install;
+				Main will catch up.
+			</p>
+		{:else if status.update_available}
+			<div class="state available">
+				<p>
+					<Icon icon={staged ? 'ri:check-double-line' : 'ri:download-cloud-line'} width="14" />
+					{#if status.latest}<strong>{status.latest}</strong>{:else}An update{/if}
+					{staged ? 'is downloaded and ready' : 'is available'}
+				</p>
+				<p class="warn">
+					{#if staged}
+						Already fetched and checked against this server, so installing is a
+						restart — under a minute. It disconnects every device using the
+						box, not just this one.
+					{:else}
+						The box downloads it, restarts and runs migrations, which
+						disconnects every device using it — not just this one.
+					{/if}
+				</p>
+				<Button
+					variant="primary"
+					size="sm"
+					class="self-start"
+					icon={staged ? 'ri:restart-line' : 'ri:download-2-line'}
+					disabled={!!restart}
+					onclick={install}
+				>
+					{staged ? 'Install and restart' : 'Download and install'}
+				</Button>
+				{#if applyError}
+					<!-- The box's own reason, verbatim. The common one is that this
+					     is a dev checkout with no /usr/local/bin/virtues, which is
+					     worth saying plainly rather than dressing up as a failure. -->
+					<p class="apply-error">
+						<Icon icon="ri:error-warning-line" width="14" />
+						{applyError}
+					</p>
+					<p class="how">You can always run it on the server yourself:</p>
+					<code>sudo virtues upgrade</code>
+				{/if}
+			</div>
+		{:else}
+			<p class="state ok">
+				<Icon icon="ri:check-line" width="14" />
+				Up to date
+			</p>
+		{/if}
+
+		{#if aheadOfStable}
+			<p class="note">
+				On Staging you're usually ahead of the last stable release. Switching
+				back to Main stops new prereleases; it doesn't move your server backwards,
+				so nothing changes until stable catches up.
+			</p>
+		{/if}
+	{:else if !loading}
+		<p class="state error">Couldn't reach your server for update status.</p>
+	{/if}
+</section>
+
+<style>
+	/* No gutter of its own any more. It used to carry one — hand-matched to the
+	   Page shell's — because Settings rendered it as a bare sibling of a
+	   Page-shelled view. It now lives inside SoftwareView's `<Page>`, which
+	   owns the measure, so duplicating it here would double the inset. */
+	.updates {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	header {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+	}
+
+	h3 {
+		font-size: 14px;
+		font-weight: 600;
+		margin: 0;
+	}
+
+	.facts {
+		display: grid;
+		grid-template-columns: auto 1fr;
+		gap: 8px 16px;
+		align-items: center;
+		margin: 0;
+		font-size: 13px;
+	}
+
+	dt {
+		color: var(--color-foreground-subtle);
+	}
+
+	dd {
+		margin: 0;
+	}
+
+	.running {
+		display: flex;
+		align-items: baseline;
+		flex-wrap: wrap;
+		gap: 8px;
+	}
+
+	.ver {
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* The track is the fact people misread; give it a shape, not just a word. */
+	.track {
+		font-size: 11px;
+		padding: 1px 6px;
+		border-radius: 999px;
+		border: 1px solid var(--color-border);
+		color: var(--color-foreground-muted);
+	}
+
+	.counter {
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+	}
+
+	.ahead {
+		color: var(--color-foreground-muted);
+	}
+
+	.channel-picker {
+		display: inline-flex;
+		align-items: center;
+		gap: 10px;
+		flex-wrap: wrap;
+	}
+
+	.channel-picker select {
+		font: inherit;
+		font-size: 13px;
+		padding: 4px 8px;
+		border-radius: 6px;
+		border: 1px solid var(--color-border);
+		background: var(--color-background);
+		color: var(--color-foreground);
+	}
+
+	.risk {
+		display: inline-flex;
+		align-items: center;
+		gap: 4px;
+		font-size: 12px;
+		color: #d9a441;
+	}
+
+	.state {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		font-size: 13px;
+		margin: 0;
+	}
+
+	.state.ok {
+		color: var(--success);
+	}
+
+	.state.error {
+		color: var(--error);
+	}
+
+	.available {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+		padding: 12px;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		background: var(--color-surface-elevated);
+		font-size: 13px;
+	}
+
+	.available p {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin: 0;
+	}
+
+	.available code {
+		display: block;
+		padding: 6px 10px;
+		border-radius: 6px;
+		background: var(--color-background);
+		font-family: var(--font-mono, monospace);
+		font-size: 12px;
+	}
+
+	.how,
+	.warn,
+	.note {
+		color: var(--color-foreground-subtle);
+		font-size: 12px;
+	}
+
+	.note {
+		margin: 0;
+		line-height: 1.5;
+	}
+
+	/* The one affirmative action in this section carries `Button`'s `primary`,
+	   so it is the filled one beside an outlined "Check again" — the same claim
+	   the hand-rolled rule here used to make in its own colors. */
+
+	.auto {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+
+	.auto-row {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 16px;
+	}
+
+	.auto-row p {
+		margin: 0;
+	}
+
+	.auto-title {
+		font-size: 13px;
+	}
+
+	.auto-failed {
+		color: var(--error);
+	}
+
+	.switch {
+		width: 44px;
+		height: 26px;
+		border-radius: 13px;
+		background: var(--color-border);
+		position: relative;
+		flex: none;
+		border: 0;
+		cursor: pointer;
+		transition: background 150ms ease;
+		padding: 0;
+	}
+	.switch.on {
+		background: var(--color-success);
+	}
+	.switch::after {
+		content: '';
+		position: absolute;
+		top: 3px;
+		left: 3px;
+		width: 20px;
+		height: 20px;
+		border-radius: 50%;
+		background: var(--color-background);
+		transition: transform 150ms ease;
+	}
+	.switch.on::after {
+		transform: translateX(18px);
+	}
+	.switch:focus-visible {
+		outline: 2px solid var(--color-foreground);
+		outline-offset: 3px;
+	}
+	.switch:disabled {
+		opacity: 0.6;
+		cursor: default;
+	}
+
+	.apply-error {
+		color: var(--error);
+	}
+
+	.restarting {
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 4px;
+		padding: 12px;
+		border: 1px solid var(--color-border);
+		border-radius: 8px;
+		background: var(--color-surface-elevated);
+	}
+
+	.restarting p {
+		display: flex;
+		align-items: center;
+		gap: 6px;
+		margin: 0;
+	}
+
+	.restarting.failed {
+		color: var(--error);
+		border-color: color-mix(in srgb, var(--error) 40%, transparent);
+	}
+
+	.restarting :global(.spin) {
+		animation: spin 1s linear infinite;
+	}
+
+	@keyframes spin {
+		to {
+			transform: rotate(360deg);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.restarting :global(.spin) {
+			animation: none;
+		}
+	}
+</style>
