@@ -59,7 +59,7 @@ the old names, so they stay.
 
 ## Getting it onto a box
 
-**Bundled boxes move themselves.** On `virtues upgrade` and the nightly
+**Bundled boxes switch models automatically.** On `virtues upgrade` and the nightly
 `virtues auto-update`, `cli::model_set` (root):
 
 1. retires the reranker sidecar older installs ran;
@@ -80,7 +80,7 @@ reads embedding settings from there through `box_env::var`), and then, under
 `search_index_meta.rescore_pending`, forgets the old event embeddings and
 rescores every day. Settings → Search shows the progress.
 
-**Dragon boxes don't move.** Their NPU models change only with the installer:
+**Dragon boxes do not switch automatically.** Their NPU models change only with the installer:
 
 ```
 curl -sSL https://virtues.com/sh | sudo VIRTUES_VERSION=<tag> sh

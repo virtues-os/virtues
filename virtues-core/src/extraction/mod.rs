@@ -1,4 +1,4 @@
-//! Document text extraction (researcher-plan D1).
+//! Document text extraction (agents/record/researcher.md D1).
 //!
 //! Universal, native-text-only extraction over drive files: every text-bearing
 //! upload is extracted, chunked, and (via the `uploaded_document` ontology)

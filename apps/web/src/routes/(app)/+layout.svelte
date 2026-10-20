@@ -78,7 +78,7 @@
 		// shown it is the new one. One rule on the phone and the Mac (a Mac is
 		// almost never relaunched; closing its window only hides it). Only in
 		// the app itself: Setup and the recovery screens hold state a reload
-		// would lose, like an open Bluetooth link. agents/plan/local-ui-plan.md.
+		// would lose, like an open Bluetooth link. agents/record/local-ui.md.
 		void bundleUpdateReady().then((ready) => {
 			if (ready && document.hidden && nothingToLose()) reloadApp();
 		});
@@ -471,7 +471,7 @@
 			{:else}
 				<!-- The phone draws this in MobileShell; the desktop here, now
 				     that the Mac keeps its own copy of the app up when the
-				     server goes away (agents/plan/local-ui-plan.md). -->
+				     server goes away (agents/record/local-ui.md). -->
 				{#if reachability.unreachable}
 					<ServerUnreachableBar />
 				{/if}

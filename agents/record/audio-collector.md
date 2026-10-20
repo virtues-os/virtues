@@ -6,11 +6,11 @@ Tauri iOS app; the code is `apps/web/plugins/audio/ios/Sources/Audio.swift`,
 and its comments carry the per-decision reasoning in more detail than this
 page. Replaces `agents/plan/audio-collector-plan.md` (deleted).
 
-Audio is the hardest collector, and not because of the recording API. It is
-the only continuous, high-volume, binary stream, and it lives inside iOS's
+Audio is the hardest collector. The difficulty is not the recording API: audio
+is the only continuous, high-volume, binary stream, and it lives inside iOS's
 audio-session lifecycle, which decides whether the app runs at all.
 
-## The mechanic everything rests on
+## Recording keeps the app running in the background
 
 **A live recording session is itself the background keepalive.** With the
 `audio` background mode and an active capture, iOS lets the app run
@@ -19,15 +19,15 @@ gone and the app is suspended within the normal grace period.
 
 The first design assumed a stop could be repaired from outside: location wakes,
 the processing task and a self-heal timer would each call an idempotent
-`ensureRecording()` and bring the mic back. Research on 2026-07-10 refuted
-that, and the refutation reshaped the collector:
+`ensureRecording()` and bring the mic back. Research on 2026-07-10 showed
+that this does not work, and the collector was redesigned around that finding:
 
-1. **The mic can never be started from the background.** Apple's own answer
-   (error `561145187`, `cannotStartRecording`; DTS: background audio only
-   continues a session created in the foreground). Not under
-   `beginBackgroundTask`, not while alive on continuous location, not on a
-   significant-location cold relaunch. iOS gates on *why* the process is
-   awake, and location is not a mic grant.
+1. **The mic can never be started from the background.** This is Apple's
+   documented behavior (error `561145187`, `cannotStartRecording`; DTS:
+   background audio only continues a session created in the foreground). It
+   holds under `beginBackgroundTask`, while the app is alive on continuous
+   location, and on a significant-location cold relaunch. iOS checks *why* the
+   process is awake, and a location wake does not grant mic access.
 2. **Chunking by `AVAudioRecorder` stop→start dies at the first background
    boundary**, because each new recorder is a background start. There is also
    a known silent death around ninety minutes in the restart-loop pattern.
@@ -36,15 +36,15 @@ The location-wake → `ensureRecording()` path survived that research for a
 while, as a best-effort retry. It was removed on 2026-10-13, along with every
 other background retry on a timer: see "The background rule" below.
 
-## The capture graph: splice, don't restart
+## The capture graph: swap files without restarting
 
 One `AVAudioEngine` is armed in the foreground and **never stopped**. A tap on
 the input node converts to 16 kHz mono and writes AAC (~24 kbps) into an
-`AVAudioFile`; at each five-minute boundary the tap swaps in a new file. No
-stop, no gap, no background start. Each rotated file is a standalone `.m4a`,
+`AVAudioFile`; at each five-minute boundary the tap swaps in a new file. The
+engine never stops, so there is no gap and no background start. Each rotated file is a standalone `.m4a`,
 so the box pipeline did not change.
 
-Two traps inside that sentence:
+That design has two traps:
 
 - **The file is finalized by deallocation.** `AVAudioFile` writes its `moov`
   atom in its destructor. Holding any second strong reference past the swap
@@ -58,17 +58,17 @@ Two traps inside that sentence:
 
 Chunk length is five minutes because length trades only two things: shorter
 loses less to a hard kill mid-chunk, longer gives the transcriber a coherent
-scene. The keepalive makes mid-chunk kills rare, so coherence wins.
+scene. The keepalive makes mid-chunk kills rare, so we chose the longer length.
 
 ## Capability statement
 
-Not true 24/7. Delivered: **continuous background recording for as long as the
+Recording is not truly 24/7. What the collector delivers: **continuous background recording for as long as the
 session survives, once armed in the foreground; after a call, a kill or a
 refused re-arm, capture resumes when the app is next foregrounded.** A gap
 notification fires after five minutes of unintended silence (never during a
 call or a CarPlay pause) so the owner knows to open the app. The products that
-avoid this ceiling do it with pendant hardware and on-device buffering — a
-hardware decision, not a software one.
+avoid this ceiling do it with pendant hardware and on-device buffering, which
+is a hardware choice that a phone app cannot make.
 
 ## Session configuration and coexistence
 
@@ -77,14 +77,14 @@ hardware decision, not a software one.
 the plan went through two wrong versions before this one.
 
 - **`.mixWithOthers`** means we never interrupt and are never interrupted by
-  other media, so the session stays live and the background-start wall is only
-  met on real interruptions (calls, Siri, alarms). The mic hears music played
+  other media, so the session stays live and the background-start restriction only
+  applies on real interruptions (calls, Siri, alarms). The mic hears music played
   through a speaker as ambience regardless, so yielding to media buys nothing.
   The old "stop when another app plays audio" gate was deleted: pointless, and
   its notification is only delivered to foreground apps anyway.
 - **`.allowBluetoothA2DP`** is output-only, so iOS cannot route our input to
   AirPods; the user's audio stays high-quality on them. `.allowBluetooth`
-  (HFP) is the poison pill: it grabs the AirPods mic in mono call mode.
+  (HFP) must never be set: it grabs the AirPods mic in mono call mode.
 - **`.defaultToSpeaker` is not in the category.** Re-activating in the
   background while another app owns the AirPods route would mean seizing it,
   which iOS refuses (`cannotInterruptOthers`) on every retry — recording wedged
@@ -137,7 +137,7 @@ pruned after seven days. Each row carries the app state and launch reason. The
 Recent activity page shares it as a text file, with every coordinate removed
 and each muted place's id replaced by a number for that file.
 
-**CarPlay: release, don't coexist.** A record session on a CarPlay route evicts
+**CarPlay: release the session while a car is connected.** A record session on a CarPlay route evicts
 the car's audio to the phone speaker, and every re-arm re-evicted it. So while
 a car port is present the engine stops and the session is released, gating
 every re-arm vector including foreground. Route reads are asymmetric: a
@@ -148,14 +148,14 @@ backstop.
 
 ## Silence and ambience
 
-"No talking" is not silence. The earlier app discarded chunks below −50 dB and
-threw away wind, traffic and the dog — the ambient signal that makes a day
-narratable. Now every chunk is kept. Only a genuinely dead chunk (average below
+A chunk with no speech is not treated as silence. The earlier app discarded
+chunks below −50 dB and threw away wind, traffic and the dog — ambient sound
+that helps describe a day. Now every chunk is kept. Only a genuinely dead chunk (average below
 −60 dBFS **and** peak below −50) ships metadata-only: the period stays covered
-on the timeline, but the bytes never ride the radio. On the box a VAD pass
+on the timeline, but the bytes are never uploaded. On the box a VAD pass
 runs before any paid transcription call, so a quiet room is not billed.
 
-## Mute: schedule and places, never release
+## Mute by schedule and place without releasing the mic
 
 Quiet hours, later generalized to a weekly schedule and muted places, **mute
 without releasing**. The graph stays armed and only chunk writing stops,
@@ -168,7 +168,7 @@ collector — otherwise both are the same thing: no rows.
 
 Audio is the one stream that can fill a phone. The outbox refuses microphone
 enqueues past ~1 GiB of live pages (about three days of non-silent backlog)
-with its own return code. It is back-pressure, never eviction: once a row is
+with its own return code. The outbox refuses new chunks and never evicts accepted ones: once a row is
 accepted the device deletes its `.m4a`, so the row is the only copy and must
 not be dropped to make room. A refused chunk keeps its file; an orphan sweep
 re-offers kept chunks on each arm, stops at the first capacity refusal, and
@@ -194,4 +194,4 @@ An always-on ambient mic is a Guideline 2.5.4 rejection pattern. What review
 needs: a visible in-app recording state and control, a usable app with audio
 off, a strong usage string, and review notes saying the audio lands on the
 owner's own box. The orange mic indicator is permanently on while recording;
-it is a trust surface the UI has to own, not a bug.
+this is expected, and the UI has to explain it to the person.

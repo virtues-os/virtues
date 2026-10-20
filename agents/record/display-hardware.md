@@ -1,12 +1,12 @@
 # The Dragon Q6A panel — measured behavior
 
-> **Record, 2026-08-26/27.** Bench findings from making the box's screen
+> **Recorded 2026-08-26/27.** Bench findings from making the box's screen
 > sleep and wake on real hardware (board "Rosy Swallow", HDMI panel). Extracted
 > from `agents/plan/display-plan.md` on 2026-08-28 because these facts exist
-> **nowhere in the source tree** and would have died with the plan when it was
-> filed. Everything here was observed, not reasoned.
+> **nowhere in the source tree** and would have been lost when the plan was
+> filed. Everything here was observed on the hardware.
 
-## The panel lies about itself, twice
+## The panel reports a wrong EDID in two ways
 
 **After any forced off → `detect` cycle, the connector cannot re-read EDID.**
 `msm_dp_bridge_get_modes` fails (rc=0, reproducibly, clean cycles included) and
@@ -18,8 +18,8 @@ real EDID.
 1920×1080-preferred after a cold boot and 1024×600-preferred after a single
 hotplug, in one afternoon.
 
-This is the entire reason the EDID pin exists. `install.rs` shows the fix; only
-this record explains the disease.
+This is why the EDID pin exists. `install.rs` contains the fix; this document
+is the only place that explains the cause.
 
 **Pin per panel model, not per box.** "Capture the EDID at firstboot" is the
 obvious design and it is wrong here: firstboot could capture either of the two
@@ -32,14 +32,14 @@ A `ddcutil detect` scan threw GENI i2c DMA errors and left the DDC line wedged;
 recovery required a physical power cycle. **A brightness feature must never
 ship a probe.** This warning appears in no source file.
 
-Related, and the reason brightness is not a missing feature but an impossible
-one: `/sys/class/backlight/` is empty (HDMI panel, nothing on a kernel PWM) and
-the panel does not speak DDC/CI. Off and on is the entire vocabulary the
-hardware offers.
+Brightness control cannot be built on this hardware: `/sys/class/backlight/`
+is empty (HDMI panel, nothing on a kernel PWM) and
+the panel does not speak DDC/CI. The hardware supports only off
+and on.
 
-## The bootloader finding
+## The bootloader ignores extlinux.conf
 
-On the Q6A, **`/boot/extlinux/extlinux.conf` is decorative.** The Qualcomm boot
+On the Q6A, **`/boot/extlinux/extlinux.conf` has no effect.** The Qualcomm boot
 chain bakes bootargs into the device tree, so the documented
 `/etc/kernel/cmdline` + `u-boot-update` flow writes an append line nothing
 reads.
@@ -50,7 +50,7 @@ a kernel cmdline argument. Without this note the installer's approach looks
 arbitrary, and someone will helpfully "fix" it back to a cmdline that has no
 effect.
 
-## Forcing the connector off is off-label on purpose
+## Why sleep forces the connector off instead of using DPMS
 
 The by-the-book path is DPMS through the compositor, which would mean
 compiling and shipping cage with `wlr-output-power-management-v1` forever —
@@ -65,7 +65,7 @@ and archived on that box at `/home/radxa/panel-edid.bin`.
 
 **This repository does not ship it.** The installer references
 `edid/virtues-panel-1080.bin` guarded by `[ -f … ]`, so on any box without the
-file the pin silently no-ops and the panel is free to lie again. Checking the
+file the pin silently no-ops and the panel can report a wrong EDID again. Checking the
 blob in next to the unit template that references it is real work with a
 hardware verification step, not a documentation change — it is recorded here as
 a gap, and this base64 is the only surviving copy:
@@ -77,7 +77,7 @@ AP///////wBI9BFSAQQAAAUXAQSlNR54AoBCrFEwtCUQUFMAAAABAQEBAQEBAQEBAQEBAQEBKDaAoHA4
 Restore with `base64 -d` into a 128-byte file; verify the md5 above before
 trusting it.
 
-## Sleep and wake, as it actually works
+## How sleep and wake work
 
 Sleep forces the connector off while the kiosk unit keeps running (cage
 survives losing its outputs, and starts with none); wake forces `detect`, and
@@ -86,16 +86,17 @@ privilege model (`system_display::sleep_engine`).
 
 **The sleep marker carries the connector name** for a reason worth keeping: an
 upgrade restarts `virtues.service` while the display unit keeps running, and
-without adoption the successor process believes the glass is awake — leaving
+without adoption the successor process believes the screen is awake — leaving
 the panel dark until someone SSHes in.
 
-**Sleep is a precedence state, not a cron toggle.** A screen asleep during a
+**Sleep is a state that interruptions override; it is not a plain scheduled
+toggle.** A screen asleep during a
 storage fault, an update, or a held case button violates the duty-list
-contract. The button case is the sharp one: a hold against dark glass gets no
+contract. The button case is the most serious: a hold on a dark screen gets no
 countdown, which is the exact failure the countdown exists to prevent. The
 server owns the schedule and overrides it whenever an interruption is active.
 
-## Bench residue
+## Tools left installed on the bench board
 
 `wlopm` and `ddcutil` are apt-installed on the bench board. Harmless, but see
 above — do not run `ddcutil` against the panel again.

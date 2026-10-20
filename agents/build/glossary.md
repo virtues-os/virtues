@@ -1,55 +1,56 @@
 # Glossary — the timeline vocabulary
 
-One vocabulary for a life in time. This page is the contract: what the timeline
-drawing can show, the system must be able to name — and everything here is
-named once, so schemas, prompts, UI copy, and docs use these words and no
-synonyms. The full argument lives in the timeline artifact ("The Lifeline"); this
-page is only the law it settled.
+This page defines the words we use for time in a person's life. Anything the
+timeline drawing can show needs a name here, and each thing has exactly one
+name, so schemas, prompts, UI copy, and docs use these words and no synonyms.
+The reasoning behind these choices is in the timeline artifact ("The
+Lifeline"); this page lists only the decisions.
 
 ## The three axes
 
-Everything sorts along three axes. They generate the whole map.
+Every item in the timeline can be placed on three axes.
 
 | Axis | Question it answers |
 |---|---|
-| **Time** (granularity) | how big is this — from a timestamp to infinity |
-| **Tense** | what do we owe it — record it, ground on it, or test it |
-| **Subject vs. attachment** | is it on the clock at all |
+| **Time** (granularity) | how long a span is — from a single timestamp to a whole life and beyond |
+| **Tense** | what we do with it — record it, use it as context, or check it later |
+| **Subject vs. attachment** | whether it has a place on the timeline at all |
 
 ## Temporal primitives
 
 A **temporal primitive** is one value on the time axis: a kind of span that can
-be a subject in its own right. The ladder, in order — and whether each earns a
-page. The test: **a primitive earns a page only if it says something the
-primitive below cannot.**
+be a subject in its own right. The table lists them from shortest to longest
+and says whether each gets its own page. The rule: **a primitive gets a page
+only if it says something the primitive below it cannot.**
 
-| Primitive | What it is | Earns a page? |
+| Primitive | What it is | Gets a page? |
 |---|---|---|
-| infinitesimal | a record's timestamp | no — signal, not life |
-| session | one continuous observation (a visit, a recording) | no — evidence for events |
-| event | a bounded stretch of a day | no — a line, not a page |
-| **day** | the unit of narrative | **yes** — the atom of story |
-| week | a rhythm you feel, not a story you tell | refused |
-| month · quarter | a window, not a unit | refused |
-| **year** | the other unit people narrate | **yes** |
+| infinitesimal | a record's timestamp | no — it is a raw data point |
+| session | one continuous observation (a visit, a recording) | no — sessions are evidence used to build events |
+| event | a bounded stretch of a day | no — an event is one line on a day page |
+| **day** | the smallest span people tell stories about | **yes** — the basic unit of the day pages |
+| week | a recurring routine; people rarely describe a week as a story | no |
+| month · quarter | a calendar range used for filtering | no |
+| **year** | the other span people commonly tell stories about | **yes** |
 | **chapter** | a partition of the life — 5–10 in view at any age | **yes** — named by the person |
-| **story** | a throughline at any scale — narrative or investigative | **yes** — declared |
+| **story** | a throughline at any scale — narrative or investigative | **yes** — declared by the person |
 | **life** | who this person is | **yes** — exactly one |
-| ∞ (telos) | what it is all for | no — a direction, not a page |
+| ∞ (telos) | the person's long-term purpose | no — it is a direction, so it has no page |
 
 - **Chapter** is a *partition*: contiguous, exclusive, tiles the life. It
-  answers "where am I right now." Boundaries are shifts the record can notice;
-  a person names them. The partition is **normalized, not linear**: a life
-  reads in 5–10 chapters at any age — new ones open at the front, older ones
-  concatenate behind (university and the first job blur into "the twenties"),
-  so resolution matches distance and the count stays human-scaled. Merges are
-  offered, never silent.
-- **Story** is a *throughline*: non-contiguous, overlapping, resumes — at any
-  scale. An afternoon (the recital), a year (learning to juggle), a trait
-  (learning patience) — and the throughline may be a *question* rather than a
-  narrative: an investigation worked through the person's own data, the
-  kind a project holds ("why do I get sad at work sometimes"). Declared by
-  the person, never inferred.
+  answers "where am I right now." The system can detect likely boundaries
+  from changes in the data; the person names the chapters. The partition is
+  **normalized**: a life is shown as 5–10 chapters at any age. New chapters
+  open at the front and older ones merge behind (university and the first job
+  become "the twenties"), so older periods get coarser and the count stays
+  small enough to read. The system offers a merge to the person; it never
+  merges chapters silently.
+- **Story** is a *throughline*: it can be non-contiguous, can overlap other
+  stories, and can resume after a pause, at any scale. Examples: an afternoon
+  (the recital), a year (learning to juggle), a trait (learning patience). A
+  story can also be a *question*: an investigation through the person's own
+  data, like the ones a project contains ("why do I get sad at work
+  sometimes"). The person declares a story; the system never infers one.
 - A day's page is written once on its own, when the day closes, and again
   only when the person asks (Rewrite this page). Years and chapters are
   revised by the wiki editor, when it is on, as the days beneath them are
@@ -58,7 +59,7 @@ primitive below cannot.**
 
 ## Tense
 
-Time says how big a thing is; **tense** says what you owe it.
+Time says how long a thing is. **Tense** says what the system does with it.
 
 | | Past | Present | Future |
 |---|---|---|---|
@@ -68,27 +69,30 @@ Time says how big a thing is; **tense** says what you owe it.
 | Can it be wrong? | yes — so it must cite | no — only stale | not yet — graded when now arrives |
 | Fails by | confident wrong facts | a stale core | a promise never revisited |
 
-- **The past is the only tense that can be wrong.** A claim about what
-  happened is checkable, therefore falsifiable, therefore owes a warrant it
-  can show. Citation is the past tense's native machinery.
-- **The present is assembled, never stored.** You can author the past and
-  declare the future; you cannot author the present. The **brief** is the
-  present tense's one page: where the chapter stands, what is open, what has
-  been salient, what is worth asking — derived from the settled record, read
-  all day, never revised.
-- **The future is sorted by what closes it, not by duration.** Its job is
-  creating the comparison — when now crosses a plan, the record can answer
-  whether it happened. Four kinds collapse to one primitive, the
-  **commitment**: a body, a horizon, three exits (*done*, *abandoned*,
-  *superseded*). An **aspiration** is not future tense at all — it never
-  starts and never finishes; it belongs to the life, as direction.
-- Two lines to hold: no task manager (no badges, counts, or nagging — a
-  commitment that slips is data about a person), and never volunteer the
-  grade (make the comparison available; never pronounce on it).
+- **Only claims about the past can be wrong.** A claim about what happened
+  can be checked, so it must cite the evidence it rests on. Citations are how
+  the past tense is built.
+- **The present is assembled on demand and never stored.** A person can write
+  about the past and declare plans for the future, but nobody writes the
+  present. The **brief** is the one present-tense page: where the current
+  chapter stands, what is open, what has stood out recently, and what is
+  worth asking. It is derived from settled data, read during the day, and
+  never revised.
+- **Future items are grouped by what closes them, not by how long they
+  last.** Their purpose is to allow a comparison later: when a planned date
+  arrives, the system can check whether it happened. All four kinds reduce to
+  one primitive, the **commitment**: a body, a horizon, and three ways to
+  close (*done*, *abandoned*, *superseded*). An **aspiration** is not a
+  future-tense item at all. It never starts or finishes; it is part of the
+  life page, as a direction.
+- Two rules: we do not build a task manager (no badges, counts, or reminders
+  to nag; a commitment that slips is just data about the person), and the
+  system never offers a grade unprompted (it makes the comparison available
+  and does not comment on it).
 
 ## Subjects and attachments
 
-Not everything with a page is on the clock.
+Some things with a page have no place on the timeline.
 
 | Kind | What it is | Its tense |
 |---|---|---|
@@ -99,16 +103,16 @@ Not everything with a page is on the clock.
 | Attachment · citation | record R mentions subject S at time T | the referring record's own |
 | Attachment · rule | a standing constraint that outranks context | none — rules do not expire |
 
-- The temporal-primitive ladder is just the time-shaped subjects, listed in
-  order. Entities are not on that axis at all; a day and a person are the same
-  *kind* of thing — a subject that can hold a page.
-- **A subject is real when it can be cited, not when it can be stored.** A
-  story that cannot point at the events it recruited is a caption, not a
-  claim.
+- The temporal primitives are the time-shaped subjects, listed in order.
+  Entities are not on the time axis at all. A day and a person are the same
+  *kind* of thing: a subject that can have a page.
+- **A subject counts only if other things can cite it.** Storing it is not
+  enough. A story that cannot link to the events it is built from is only a
+  caption; it makes no checkable claim.
 
-**"Entity" is one of the three shapes, never a synonym for "subject."** This
-matters more than it sounds, because the two words meet in the schema and mean
-different things there:
+**"Entity" is one of the three shapes. Never use it as a synonym for
+"subject."** The two words both appear in the schema and mean different things
+there:
 
 | column | what it holds | why |
 |---|---|---|
@@ -126,10 +130,10 @@ hangs off it.
 
 ## Project
 
-**Project** is a working lens over the record: material gathered around a
-question, with chat grounded in what was gathered rather than in
-everything. It is a workspace, not a subject: it is not on the clock and
-earns no article. In code it is `app_projects`, its contents are
+A **project** is a workspace over the person's data: material gathered
+around a question, with chat grounded in that material instead of in
+everything. It is not a subject: it has no place on the timeline and gets no
+article. In code it is `app_projects`, its contents are
 `app_project_items`, a chat is bound to one by `app_chats.project_id`, the
 API is `/api/projects`, and the routes are `/projects` and `/project/{id}`;
 ids keep the `nb_` prefix. A project cannot contain a project. It was
@@ -149,44 +153,46 @@ Every span of text or drawing carries exactly one provenance.
 
 ## Gaps
 
-**"Gap" without a qualifier is banned.** The four kinds answer different
-questions and are closed by different actors.
+**Never write "gap" without a qualifier.** There are four kinds, they mean
+different things, and different actors close them.
 
 | Gap | What is missing | Closed by |
 |---|---|---|
 | **unobserved** | the record itself | a source — or acceptance |
 | **unnamed** | a chapter over real record | the person — the drag-and-name gesture |
 | **uncitable** | the join from a story to its events | the system — let a story cite what it recruited |
-| **unplanned** | anything past the horizon | a commitment — or nobody, by choice; information, not failure |
+| **unplanned** | anything past the horizon | a commitment, or nobody if the person chooses; an unplanned gap is information and not a failure |
 
-Gaps are drawn, never hidden. A gap is an invitation: observation creates
-unnamed gaps, naming creates chapters, chapters give context, context makes
-the brief worth reading.
+The timeline always draws gaps and never hides them. Each gap prompts the next
+step: observation creates unnamed gaps, naming them creates chapters, chapters
+provide context, and that context makes the brief useful.
 
 ## Prudential context
 
-The shape of what a person actually carries — and the budget for what the box
-holds in mind.
+These terms describe what a person actually remembers, and they set the
+budget for what the box keeps in a model's context.
 
 | Term | Meaning |
 |---|---|
 | **base context** | who I am — loaded always, at no distance |
 | **cached context** | the last hours and days — full resolution, no act of recall |
-| **salience** | what survives coarsening with distance — the surprising and the costly; measurable |
-| **significance** | what survives longest — weight the person assigns; declared, never inferred |
+| **salience** | what stays visible as the view gets coarser with distance: surprising or costly events; computed from data |
+| **significance** | what stays visible longest: weight the person assigns; declared by the person, never inferred |
 
-The two renderings of the line are named: **the mind** (logarithmic — space
-spent by distance from now, the way memory holds a life) and **the record**
-(linear — every year the same width, the way the archive holds it). Both are
-true; the projection is a toggle, never a setting buried in preferences.
-The record needs a **window** — a resolution control stepping through the
-ladder (life, decade, year, month, week, day) — and the mind refuses one.
-That asymmetry is the argument: linear cannot hold a life and an afternoon
-in one frame; log holds both and so carries no zoom.
+The timeline has two named projections. **The mind** is logarithmic: space is
+allocated by distance from now, the way memory treats a life. **The record**
+is linear: every year gets the same width, the way an archive stores it. Both
+are valid, and switching between them is a visible toggle on the timeline, not
+a setting in preferences. The linear projection needs a **window**, a
+resolution control that steps through life, decade, year, month, week, and
+day. The logarithmic projection has no window, because it already shows a
+whole life and a single afternoon in one frame; a linear scale cannot.
 
-One curve serves two consumers: rendered, it is the mind projection's
-geometry (space is attention, band is resolution); assembled as prose, it is
-the brief. Salience needs its own mark — height was tried on the spine and read
-as noise, so the spine draws uniform and the encoding is open. Resolution must match distance — "yesterday you…",
-"last week you…", "in 2015 you…" — a sentence at the wrong granularity is
-wrong tonally even when factually right.
+The same curve is used twice. Rendered, it gives the mind projection its
+geometry (horizontal space shows attention, each band shows a resolution).
+Written out as prose, it becomes the brief. Salience needs its own visual
+encoding: we tried mapping it to height on the spine and it looked like noise,
+so the spine is drawn at a uniform height and the encoding is still undecided.
+The wording of a sentence must match its distance from now — "yesterday
+you…", "last week you…", "in 2015 you…". A sentence at the wrong granularity
+sounds wrong even when the facts are right.

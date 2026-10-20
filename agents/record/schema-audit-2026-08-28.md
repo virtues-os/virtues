@@ -5,8 +5,8 @@
 *Four parallel audits (app_\*, data_\*, wiki_\*/search_\*, infra + the chain)
 over the 82 tables of the post-squash schema, each column checked against
 actual reads and writes in the code, with row counts from a fielded box.
-Verdicts carry file:line evidence; this doc is the consolidated result.
-Nothing here has been fixed yet — this is the map, not the surgery.*
+Each finding cites file:line evidence; this doc consolidates the four audits.
+Nothing here has been fixed yet — this doc lists problems and changes no code.*
 
 ## A. Broken right now (fix before any cleanup)
 
@@ -40,9 +40,9 @@ Nothing here has been fixed yet — this is the map, not the surgery.*
    selected and rendered (`ai_calls.rs:167,240`).
 7. **The API usage limiter can never fire.** `app_usage_limits` is seeded
    at boot and read, but `app_api_usage` (the counter it compares against)
-   is written from only 3 call sites and holds 0 rows — `check_limit`
+   is written from only 3 call sites and has 0 rows — `check_limit`
    always sees 0. Wire it or delete the subsystem (see D).
-8. **`credentials.last_seen_at` lies in the UI** — only bumped on token
+8. **`credentials.last_seen_at` shows a wrong value in the UI** — only bumped on token
    refresh, so api_key/Plaid credentials in daily use render "never seen."
 9. **The model-facing catalog advertises columns nothing writes**:
    `ref_count`, `url` (app_session), `event_type`/`conference_url`
@@ -55,7 +55,8 @@ Nothing here has been fixed yet — this is the map, not the surgery.*
     still select the squashed `act_id`/`chapter_id` via
     `try_get(...).ok().flatten()` — the idiom converts schema drift into
     permanent silent `None` (~20 uses across wiki.rs and
-    entity_article_gen.rs). It is why bug #1 was the *loud* variant.
+    entity_article_gen.rs). Bug #1 failed loudly only because those two
+    sites used `fetch_one` + `?` instead of this idiom.
 
 ## B. Dead — drop outright (zero risk)
 
@@ -98,7 +99,7 @@ Nothing here has been fixed yet — this is the map, not the surgery.*
   end-to-end returning `[]` forever.
 - `app_assistant_profile.embedding_model_id`, `app_auth_user.is_owner`,
   `app_ai_calls.chat_id`, `app_notebook_items.similarity`,
-  `app_page_versions.content_preview` (holds a label, not a preview),
+  `app_page_versions.content_preview` (stores a label instead of a preview),
   `app_mcp_tools.server_name` (dies with the table).
 - `data_calendar_event`: `event_type`, `conference_url`,
   `conference_platform`, `recurrence_rule`, `timezone`, `block_type` +
@@ -133,7 +134,7 @@ highest-write table in the schema), `idx_backup_archived_file_increment`
 `idx_app_applet_runs_parent`, `idx_calendar_block_type`, plus the two
 `dirty_at` partials.
 
-## D. Decisions (product calls, not code calls)
+## D. Decisions that need a product call
 
 1. **`app_api_usage` + `app_usage_limits` + `Tier`** — a full quota
    subsystem enforcing nothing. Wire `record_service_usage` into every
@@ -142,7 +143,7 @@ highest-write table in the schema), `idx_backup_archived_file_increment`
 2. **`wiki_stories`** — complete read path + UI, zero writers, by design
    ("stories are hand-authored and there is no pipeline"). Ship the
    writer or cut the surface.
-3. **`app_erasure`** (0003) — deliberately reserved pre-fielding with a
+3. **`app_erasure`** (0003) — reserved pre-fielding with a
    38-line rationale; sweeper never built. Keep-as-reserved or cut.
 4. **Gmail 30-day cold start** — 488 emails vs 171k messages is by design
    (no backfill path). Decide whether backfill is wanted.
@@ -152,7 +153,7 @@ highest-write table in the schema), `idx_backup_archived_file_increment`
 6. **`data_communication_email` recipient columns** — keep only if
    recipient-side entity resolution is planned (sender-only today).
 
-## E. Systemic diseases (why it got out of hand — fix the class)
+## E. Recurring causes, and the fix for each class
 
 1. **Aspirational schema.** Columns, CHECK values, and whole subsystems
    built for futures that never arrived: CHECKs admitting `'zstd'`,
@@ -166,12 +167,12 @@ highest-write table in the schema), `idx_backup_archived_file_increment`
    that disagree in both directions, and nothing verifies `key_columns`
    name real, written columns. Add the inverse check to
    `tools/check-dynamic-inserts.py`: every advertised column must exist
-   AND appear in some writer. That single test retires the whole
-   phantom-column class.
+   AND appear in some writer. That one test catches every phantom
+   column.
 3. **`try_get(...).ok().flatten()`** turns schema drift into silent nulls.
-   Every use is a latent bug #1. Replace with typed gets + `?` per the
+   Every use can fail the way bug #1 did. Replace with typed gets + `?` per the
    swallowed-query rule; the ghost `act_id`/`chapter_id` selects go first.
-4. **The rename never finished.** Survivors: bare-adjective booleans
+4. **The rename was never finished.** Survivors: bare-adjective booleans
    (`enabled` ×4, `active` vs `is_active` coexisting, `auto_update`,
    `user_hidden`…), `_time`/`timestamp` instants
    (`authorized_timestamp`, `last_modified_time`, `min/max_timestamp`,
@@ -186,8 +187,8 @@ highest-write table in the schema), `idx_backup_archived_file_increment`
 5. **Four bespoke singleton patterns** (fixed-UUID+CHECK ×3 — one missing
    its CHECK; `singleton boolean` PK; a boolean column *named `id`* in
    0004; partial unique index) with inconsistent seeding. Pick one
-   (the named `singleton boolean` is the honest one), convert on touch.
-6. **Duplicated truth**: `started_at`+`created_at` pairs written from one
+   (the named `singleton boolean` is the clearest), convert on touch.
+6. **Duplicated data**: `started_at`+`created_at` pairs written from one
    INSERT (`app_applet_runs`, `app_device`), hand-maintained
    `message_count`, legacy+new model-id column pairs resolved by fallback
    chains in three places, the audio triad storing the same words three
@@ -195,18 +196,19 @@ highest-write table in the schema), `idx_backup_archived_file_increment`
    (`lake_objects` vs `backup_archived_file`) never reconciled — the
    147-row gap has no owner and one drift direction is undetectable.
    Add a `virtues doctor` reconciliation check.
-7. **Prefix-fence gaps**: `extracted_document_chunks` holds owner document
+7. **Prefix-fence gaps**: `extracted_document_chunks` stores owner document
    text, is a first-class ontology, and is structurally unreachable by
    `sql_query` (unprefixed). Rename `data_document_chunk` + catalog entry
-   — the one rename that unlocks capability. `credentials`/`box_secrets`
-   stay unprefixed on purpose (the fence IS the security property).
+   — this is the one rename that adds a capability. `credentials`/`box_secrets`
+   stay unprefixed on purpose (being outside the fence is what keeps
+   `sql_query` from reading them).
 
 ## F. Suggested sequence
 
 1. Fix A1–A4 (four small commits; A1 gets a wiring test in the
    `rules_reach_the_assembled_prompt` mold).
 2. Add the two guard tests (catalog↔writer check; catalog↔registry
-   reconciliation) — they freeze the phantom-column class before cleanup.
+   reconciliation) — they stop new phantom columns from appearing before cleanup.
 3. One cleanup migration: B tables + C columns/indexes + narrow the
    aspirational CHECKs. Sweep API structs/client types that serialized
    the dropped columns.

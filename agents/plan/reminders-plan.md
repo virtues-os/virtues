@@ -9,13 +9,13 @@ so. The step is the owner's: enable Push Notifications on the App ID in the
 developer portal first, *then* add the entitlement — the other order breaks
 signing. Phases 2 (signer) and 3 (reminders) are not built.
 
-An applet can be woken, can check a condition, and can write to the record.
-It cannot *reach the owner*. `applets-next-plan.md` (Persona) names this precisely
+An applet can be woken, can check a condition, and can write data.
+It cannot *reach the owner*. `applets-next-plan.md` (Persona) states this
 when it marks Persona "v2 — not yet authorable": *no inbound wake, no channel,
 no send capability — a model following the recipe today authors dead
 manifests.* This plan builds the channel.
 
-## The thesis
+## Background: keys and addresses
 
 A connection has two halves: **a key**, which is how a thing proves it is
 itself, and **an address**, which is how you reach it. The box models keys
@@ -25,7 +25,7 @@ address for anything. Every path into the box is something else dialing in.
 
 A reminder is the first thing that needs the box to go the other way.
 
-## What this is NOT
+## Scope
 
 **Revised 2026-10-05 by [notifications-plan.md](notifications-plan.md).** A
 reminder is still the owner's object and the owner's word: they say a sentence
@@ -36,10 +36,9 @@ push destination. "No notifications room" no longer holds; "no category
 matrix, no per-source toggles" still does, and is enforced there.
 
 A reminder is an applet row: it can be listed, opened, edited and deleted like
-any other, and the reason it is inspectable is not a design principle — it is
-that the owner wrote it.
+any other. It is inspectable because the owner wrote it.
 
-## What is already decided, and not restated here
+## Decisions already made elsewhere
 
 - **Wake and condition** — `agents/record/applets.md` (wake/gate/life). *Trigger =
   who wakes you; condition = what you check once awake.* Data triggers
@@ -62,21 +61,22 @@ Earlier drafting assumed most reminders could be evaluated on the phone
 (`UNLocationNotificationTrigger` and calendar triggers fire with no network at
 all). **That assumption is wrong for this product and the idea is dropped.**
 The overwhelming majority of conditions worth reminding about need the box:
-they are SQL over the record, or they need inference, or they span sources.
+they are SQL over the owner's data, or they need inference, or they span sources.
 A phone cannot evaluate "a charge over $500 posted" or "Nick finally replied
 about the lease". Keeping a second, local mechanism for the thin slice iOS can
-evaluate would be two mechanisms for one concept, and the thin slice does not
-earn it.
+evaluate would be two mechanisms for one concept, and the thin slice is not
+worth it.
 
-So: **the box decides, APNs carries, the phone displays.** One path.
+So **the box decides, APNs delivers, and the phone displays.** There is one
+path.
 
 Holding the iroh endpoint up to let the box dial the phone was also considered
-and dropped. Two reasons, either sufficient. First, measured from the code:
+and dropped, for two reasons; either one is enough. First, measured from the code:
 backgrounded, the drain loop ticks at 300s, holds to `CONSTRAINED_DRAIN_SECS`
 (900s) on an expensive radio, and **parks the endpoint entirely when the outbox
 is empty** — so the phone is reachable roughly 3–8% of the time when it has
-data to send and 0% when it does not. Those windows exist because the phone has
-an errand, not because it is listening. Second, an iOS notification-service
+data to send and 0% when it does not. The phone opens those windows only when it
+has something to send; it is never listening. Second, an iOS notification-service
 extension is a **separate process** and cannot inherit the app's endpoint, so
 holding one up would not speed the notification path by a single millisecond.
 
@@ -94,8 +94,8 @@ replaces a contentless-wake-plus-fetch design:
 **plaintext**: Apple and our signer can read every reminder in transit, and the
 manual must say so in those words. Encryption to a key only the device holds
 arrives in v2 with the notification-service extension (see Phases); only then
-does the claim become *"content is encrypted, so transit does not matter"* — a
-property rather than a promise. Until v2 ships, no surface may claim the
+can the docs claim *"content is encrypted, so transit does not matter"*,
+because encryption enforces it. Until v2 ships, no surface may claim the
 payload is private.
 
 Budget the payload well under 4KB: AEAD overhead plus base64 expands it in v2,
@@ -113,15 +113,14 @@ global capability. Three tiers, one code path:
 1. Box holds its own APNs credential (a DIY owner with their own Apple team and
    their own build) → signs locally, never touches our cloud.
 2. Box has an account → our signer relays.
-3. Neither → no push. Reminders wait in the record and the app finds them.
+3. Neither → no push. Reminders wait on the box and the app finds them.
 
-`VIRTUES_PUSH_SIGNER_URL` plus the local-p8 path is what makes tier 1 real
-rather than rhetorical, and it is the difference between a default and a
-dependency.
+`VIRTUES_PUSH_SIGNER_URL` plus the local-p8 path is what makes tier 1 actually
+work, so our signer is a default and not a hard dependency.
 
-**What the signer sees, stated plainly.** Blind tickets were considered and
-refused (see Refuted), so the signer is not unable to correlate — it is built to
-keep nothing. Per request it sees the calling box's `api_key` (so, the account),
+**What the signer sees.** Blind tickets were considered and
+rejected (see Rejected options), so the signer could correlate requests; it is
+designed to store nothing instead. Per request it sees the calling box's `api_key` (so, the account),
 the device's APNs token, the request's source IP, and in phase 2 the reminder
 text. It calls APNs, hands the status straight back to the box, and stores
 nothing: feedback is **request/response, not callback**, so no correlation is
@@ -132,10 +131,10 @@ locally.
 
 Time Sensitive is a self-serve capability, not one of the request-a-form
 entitlements (that is Critical Alerts, a much harder ask). It is policed at App
-Review by usage. The justification is the canonical one: a reminder the owner
+Review by usage. The justification is the standard one: a reminder the owner
 asked for, in their own words.
 
-**Per reminder, never global.** If everything is time-sensitive the owner's
+**Set per reminder, never globally.** If everything is time-sensitive the owner's
 notification summary stops working and they turn the app off, which is worse
 than a reminder landing an hour late. The authoring model proposes it; the
 owner overrides it.
@@ -158,8 +157,8 @@ uses the same words for a different thing. This is the collision the
 
 ## Invariants live in the evaluator, never in a prompt
 
-A prohibition in a system prompt is routed around; a missing slot is not. So
-anything that must always hold is structural, and only interpretation is left
+A model routes around a prohibition in a system prompt, but it cannot use a
+slot that does not exist. So anything that must always hold is structural, and only interpretation is left
 to the authoring model.
 
 | Rule | Where it lives |
@@ -167,9 +166,9 @@ to the authoring model.
 | **A reminder never fires about a row older than itself.** | Evaluator injects an `occurred_at` floor. The authored SQL never sees the choice. Connect a finance source, it backfills two years, and without this the owner gets forty notifications about 2024 — which costs their trust in every reminder afterwards, permanently. |
 | **Fire once per subject, not per evaluation.** | Evaluator, keyed on reminder + subject. The model declares *what the subject is* (a transaction id, an email id, a day) because that is a real grain decision; the dedupe itself is bookkeeping. |
 | **One-shot vs standing** | `until`, already in the schema. Model fills it, UI shows it, owner corrects it. |
-| **Downtime collapse** | Evaluator. Box off for a day, six became true: fire the most recent, collapse the rest, say how many. Same instinct as `apns-collapse-id`. The model has no business knowing the box was off. |
+| **Downtime collapse** | Evaluator. If the box was off for a day and six became true, fire the most recent, collapse the rest, say how many. Same idea as `apns-collapse-id`. The model does not need to know the box was off. |
 
-## Failure is silent unless built otherwise
+## Silent failures
 
 The worst case is not latency. Typical delivery is about a second; a summary
 can hold it to the next digest (time-sensitive fixes that); an offline device
@@ -182,8 +181,8 @@ errors touch a device row:
 
 - **410 Unregistered** — device. But the response carries a **timestamp** for
   when the token died: if our `push_address_at` is newer, a stale send raced a
-  fresh registration and we must **not** delete it. An event alone is not the
-  guard; the time floor is.
+  fresh registration and we must **not** delete it. The time comparison is
+  the guard; the 410 event alone is not enough.
 - **400 BadDeviceToken** — *configuration*, usually a sandbox/production
   mismatch. Treat it as "device gone" and every debug build unregisters a
   tester's phone.
@@ -192,7 +191,7 @@ errors touch a device row:
 - **413** — payload. See the budget note above.
 - **429 / 503** — retry, back off, touch nothing.
 
-And the genuinely silent case is not an error at all: **if the owner disabled
+And the truly silent case is not an error at all: **if the owner disabled
 notifications, APNs returns 200 and nothing displays.** Only the phone knows,
 so the phone says so, as an explicit `null` address on every foreground.
 Surface it in Devices in plain words —
@@ -200,7 +199,7 @@ Surface it in Devices in plain words —
 worthless if nothing says so. Re-register on every launch, so most of this
 heals itself the next time the app is opened.
 
-## Two payload shapes, one key, two concepts
+## Out-of-band wake on the same key
 
 The same APNs key also gives the box an **out-of-band wake** for a device whose
 iroh socket has wedged (iroh#4289, still open) — the one channel that is not
@@ -209,8 +208,8 @@ push, budgeted and rare, which is fine because it is needed rarely.
 
 **Keep it a separate concept in the schema and the vocabulary even though it
 rides the same key.** A wake that says "your phone thinks it is offline" is
-plumbing; a reminder is the owner's object. Sharing a pipe is fine; sharing a
-name is how `credentials` ended up holding two opposite trust directions.
+plumbing; a reminder is the owner's object. Sharing the transport is fine. Sharing
+a name is how `credentials` ended up storing two opposite trust directions.
 
 ## Phases
 
@@ -236,13 +235,13 @@ name is how `credentials` ended up holding two opposite trust directions.
    `applets-next-plan.md`) for anything ingest-shaped; cron + condition
    covers the rest at a latency cost, exactly as that plan says.
 
-**v2, deferred on purpose: the encrypted payload + notification-service
+**v2, deferred: the encrypted payload + notification-service
 extension.** Everything above is unchanged by it — same column, same signer,
 same registration, same error handling. Encryption changes only what goes in
 the `alert` field. The Swift is about thirty lines; the cost is the plumbing
 around it (a second Xcode target inside a Tauri-generated project, an App Group
 and shared keychain access group for the key, a key minted at pair time, and a sane fallback body for when the extension times out and iOS
-shows the payload unmodified). Do it when the feature has earned it.
+shows the payload unmodified). Build it once the feature has proven useful.
 
 **The crypto itself is about an hour, and is not the reason to defer.**
 `virtues_helpers::crypto::seal_aes_256_gcm` already exists, is CI-linted, and
@@ -253,16 +252,16 @@ missing piece is a shared key, and it needs no agreement protocol: mint 32
 random bytes at pair time and hand them over the iroh channel the
 raw-public-key handshake has already authenticated, keychain on the device and
 `TokenEncryptor` at rest on the box, exactly as `credentials` does it. **Do not
-derive it from the device's iroh key** — that is one key doing authentication
-and encryption, the same conflation this plan's own thesis is about. The
-tradeoff to accept knowingly is no forward secrecy: a stolen device key
+derive it from the device's iroh key** — that would make one key do both
+authentication and encryption, the same kind of mixed role the Background
+section warns about. The tradeoff we accept is no forward secrecy: a stolen device key
 decrypts past pushes, which is tolerable because whoever holds it also holds
-that device's iroh credential and therefore the whole record. Overhead is 28
+that device's iroh credential and therefore all of the owner's data. Overhead is 28
 bytes plus base64, so a 200-character reminder is about 300 bytes against a
-4KB budget. So the v1/v2 line is binary and it is drawn at the extension, not
-at the encryption: build the NSE and encryption comes free with it.
+4KB budget. So the v1/v2 boundary is the extension: once the NSE is built,
+encryption adds almost no work.
 
-## Refuted
+## Rejected options
 
 - **Local-only notifications** (`UNLocationNotificationTrigger`, calendar
   triggers) as a tier. Covers a thin slice; a second mechanism for one concept
@@ -277,34 +276,33 @@ at the encryption: build the NSE and encryption comes free with it.
   the text in the push: it put a cold iroh dial on the user-visible path and
   failed precisely when the box was unreachable.
 - **Mac-first notifications** (for reminders; a Mac banner for a fix that can
-  only happen on that Mac is allowed by `notifications-plan.md`). Free to build and genuinely zero-infrastructure,
+  only happen on that Mac is allowed by `notifications-plan.md`). Free to build and zero-infrastructure,
   but a desktop banner is a weak product surface and would not have told us
   whether the feature is any good. Dropped 2026-09-22.
 - **A channel list — Telegram, Slack, Discord, Signal, email — with the owner's
-  own credential.** Tempting, and more sovereign than APNs in one real sense
+  own credential.** It is more independent than APNs in one way
   (the box talks straight to the service and we are nowhere in the path). But
-  it answers "who delivers this" with a settings screen, and the first thing to
-  ship should be the box's own voice on the owner's own phone. Keep it in the
-  back pocket: once a destination field exists, each sink is about a day.
-- **Linq / iMessage as the channel.** Bidirectional and genuinely more than a
+  it turns delivery into a settings screen, and the first version should push
+  from the box to the owner's own phone. Keep it in reserve: once a destination field exists, each sink is about a day.
+- **Linq / iMessage as the channel.** It is bidirectional and does more than a
   notification system — a reply loop, no app required, reaches every Apple
-  device the owner owns. Refused on identity, not capability: **every reminder
-  would transit a vendor's servers in the clear**, which inverts the one claim
-  the product is built on, kills the DIY tier (no self-hoster gets an account),
+  device the owner owns. It was rejected for privacy reasons, not capability:
+  **every reminder would transit a vendor's servers in the clear**, which
+  contradicts the product's core privacy claim, kills the DIY tier (no self-hoster gets an account),
   and brings an A2P compliance stack — opt-out keywords, line reputation,
   volume ramps — to the job of telling someone their own reminder. Possible
-  v2 as an **inbound** door (the owner texting their box is the owner's act,
-  not the box publishing their record) or as an explicit per-reminder opt-out
-  of the house.
+  v2 as an **inbound** channel (the owner chooses to text their own box; the box
+  is not sending their data out) or as an explicit per-reminder opt-out of the
+  default.
 - **Web Push / VAPID.** The only architecture needing no Apple team key, no
-  signer and no entitlement — the box would sign with its own key. Refused
+  signer and no entitlement — the box would sign with its own key. Rejected
   because it does not work in a WKWebView, so it would require owners to
-  install a home-screen PWA *instead of* the App Store app. A product fork, not
-  a feature.
+  install a home-screen PWA *instead of* the App Store app. That would fork the
+  product.
 - **Blind tickets** (Privacy Pass at the signer). A week of work for a property
   that egress IP undermines anyway: it removes the durable database join but
-  the signer still sees where the request came from. Say plainly what the
-  signer sees instead. Revisit only if it becomes a real objection.
+  the signer still sees where the request came from. Instead, document what the
+  signer sees (see "Who signs"). Revisit only if it becomes a real objection.
 
 ## Open
 
@@ -315,5 +313,5 @@ at the encryption: build the NSE and encryption comes free with it.
 - What `apns-expiration` should be. It is the whole of "how long we keep
   trying" and nobody has picked a number.
 - Whether a fired reminder lands in chat as something the owner can answer
-  ("did it" / "remind me tomorrow"), or simply ends. That is the difference
-  between a reminder app and an assistant that remembered something.
+  ("did it" / "remind me tomorrow"), or simply ends. That choice decides
+  whether this is a plain reminder app or part of the assistant.

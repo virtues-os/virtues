@@ -32,7 +32,7 @@ The fallback fires because the timezone is **NULL** — nothing populates it
 is to populate *both* timezones below and to make the fallback window a correct
 24h as defense-in-depth.
 
-## Principles we keep
+## Principles
 
 - **All timestamps stored in UTC** (`TIMESTAMPTZ`). Timezone is applied only at
   the edges — day boundaries, cron, display, novelty hour-bucketing.
@@ -45,8 +45,8 @@ as one IANA string on the singleton profile, renamed `profile.timezone →
 home_timezone`.
 
 - **Source:** the server reads its *own* system timezone (`iana-time-zone` crate →
-  IANA string from `/etc/localtime`) at onboarding. Literally "the location of the
-  server." Stable; does not move when the owner travels.
+  IANA string from `/etc/localtime`) at onboarding. This is the location of the
+  server. Stable; does not move when the owner travels.
 - **Cloud caveat:** a datacenter box reads `UTC`, which is wrong. Appliance is the
   primary deploy, so server-self is the default; for cloud, set explicitly at
   onboarding (owner picks, or cross-check the pairing device's reported zone via
@@ -59,17 +59,18 @@ home_timezone`.
 This is the one that makes the page "feel local to where they were." It is the
 timezone the owner was *physically in* on that day, recorded per wiki day.
 
-The signal of record is **the first located point of the day** — "where you woke
+The source signal is **the first located point of the day** — "where you woke
 up". The same value is used live (today) and at the EOD lock, so they agree even
 on a travel day. The resolution ladder is:
 
 1. **Locked `start_timezone`** — if a summary already ran for the day (past days,
-   and today after EOD), use the stored value. Authoritative, cheap.
+   and today after EOD), use the stored value. This value is final and cheap to read.
 2. **`tzf-rs(first located point of the day)`** — the dense GPS track
    (`data_location_point`, ~15s cadence) resolved offline via **`tzf-rs`**
-   (`coords → IANA`, microseconds, no-cloud). Deliberately the *first* point
-   (init), not modal: deterministic at day-start, never drifts as the day unfolds.
-   A move taken *during* today surfaces as **tomorrow**, not a mid-day re-anchor.
+   (`coords → IANA`, microseconds, no-cloud). It uses the *first* point (init)
+   instead of the modal zone, so the result is fixed at day start and does not
+   change during the day. A move taken *during* today shows up as **tomorrow**'s
+   zone; today is not re-anchored mid-day.
 3. **Viewing device's zone** (`Intl…timeZone`, sent as `?tz=` on the today fetch)
    — fallback for an in-progress *today only* with no located points yet (web-only
    / location off). Never applied to a past day (it would render history in the
@@ -96,7 +97,7 @@ US evening onto the next day.
   crosses zones mid-flight anchors to where it began. Sub-day precision = the
   deferred `data_timezone` work.
 
-## The whole model
+## Model summary
 
 ```
 profile.home_timezone           ← box location; server's own system tz; stable
@@ -193,7 +194,7 @@ first-point zone (origin, "woke up in"), but until the EOD lock writes
 `start_timezone`, the *frontend* has no per-day zone (`page.start_timezone` is
 NULL) and renders the Time column in the browser zone (destination). So the
 *which-records* boundary is correct but the displayed times are off by the travel
-offset for the rest of that one day; it self-heals at the EOD lock, and all
+offset for the rest of that one day; it corrects itself at the EOD lock, and all
 day-page components (table, dayline, timeline) share the same fallback so they
 stay internally consistent. Closing it fully means surfacing the server's resolved
 zone on the today fetch (or locking `start_timezone` at first access) — deferred;

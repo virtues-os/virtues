@@ -8,7 +8,7 @@ anyone copying cookies out of developer tools. Nothing here is built into the
 product. The scripts lived in a scratch directory and are described below so
 the numbers can be reproduced.
 
-## The question
+## Where the browser should run
 
 Where does the browser run? On the owner's device (a webview in the Tauri app)
 or on the box (a headless Chromium the core drives over the DevTools protocol,
@@ -34,7 +34,7 @@ asleep. The spike tested whether the box can carry it.
 
 ## What was measured
 
-**Rendering is software.** `SystemInfo.getInfo` reports ANGLE on SwiftShader
+**Rendering is done in software.** `SystemInfo.getInfo` reports ANGLE on SwiftShader
 (Vulkan), WebGL `unavailable_software`, and no hardware GPU. The Adreno driver
 is never touched.
 
@@ -120,11 +120,12 @@ Whatever the cause, the shipped shape must have all three fixes:
 - Shared memory left in `/dev/shm`, where the cgroup is charged for it.
 - The user agent set at launch.
 
-## The live view failed the owner's eye test
+## The live view was too slow and blurry to use
 
 Later the same day the owner opened the live view to log in to X. It ran
 `dragon2` (on office Wi-Fi) → a Tailscale DERP relay → a Mac. The
-verdict: about 2 fps, blurry, unusable. Nothing about the box can fix it:
+owner found it unusable: about 2 fps and blurry. No change on the box can fix
+this, for these reasons:
 
 - The source renders at 1× in software.
 - Frames are JPEG at quality 60.
@@ -141,10 +142,10 @@ where Claude's desktop browser, Atlas, Comet and Dia run it. The box engine
 above remains the option for unattended browsing that nobody watches, such as
 an applet. **Do not rebuild a streamed tab as the owner's browser.**
 
-## What it suggests
+## Suggested directions
 
 These are directions for a plan, not decisions. The live-tab and source-login
-items below are superseded by the verdict above; the box engine stands only
+items below are superseded by the outcome above; the box engine stands only
 for unattended work.
 
 - **One engine, on the box.** A pinned Chrome for Testing arm64 build, fetched
@@ -176,7 +177,7 @@ for unattended work.
 - **Keep logged-in profiles away from the assistant.** The assistant should
   browse in a profile without the owner's sessions. Our own agent loop gets the
   raw model's prompt-injection rate, not a vendor harness's.
-- **A streamed browser is not a daily browser.** It is fine for logging in,
+- **A streamed browser cannot serve as an everyday browser.** It is fine for logging in,
   watching the assistant and taking over from it. It has no password-manager
   autofill and it is a video of a page. If a native everyday browser is wanted,
   it is a device webview, and the box engine is still the one the assistant

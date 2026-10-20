@@ -2,8 +2,8 @@
 
 **Written 2026-09-29.** A fourth chat mode, "Local", beside Chat, Deep research
 and Sudo: a turn runs Qwen3-0.6B on the Dragon's NPU and nowhere else. It is
-framed as a demonstration of where fully local AI is today, not as a
-companion, and a card at the top of the chat says what it gets wrong. Built
+presented as a demonstration of what fully local AI can do today rather than
+as a companion, and a card at the top of the chat says what it gets wrong. Built
 2026-09-28 (first in `v0.1.10-staging.87`); local chats became saved chats
 on 2026-09-29. Spikes ran 2026-09-24 to 09-28. Supersedes
 `agents/plan/local-model-plan.md` (deleted). The code is
@@ -11,20 +11,20 @@ on 2026-09-29. Spikes ran 2026-09-24 to 09-28. Supersedes
 
 ---
 
-## Why a demonstration, not a feature
+## Why Local mode is a demonstration
 
 People asked for a 100% local mode, "even if it takes 45 minutes". The
-spikes answer that the Dragon cannot run a model good enough for the
+spikes showed that the Dragon cannot run a model good enough for the
 conversations people actually bring: relationships, faith, health, and
 rewriting messages.
 
-**What the box can run.** Only the NPU. The CPU belongs to the app, so CPU
+**What the box can run.** Only the NPU is available. The CPU is reserved for the app, so CPU
 inference (including streaming a large mixture-of-experts model off the NVMe)
 is out. The GPU has no compute driver: `msm_dpu` is display-only and there is
 no Vulkan ICD. The NPU runs fixed, precompiled graphs and tops out at a 4k
 context.
 
-**What those models do.** Eleven real owner conversations (advice, rewriting,
+**How the models performed.** Eleven real owner conversations (advice, rewriting,
 factual and arithmetic questions) went through
 Qwen3-0.6B, Qwen3-1.7B and MiniCPM5-1B on a Mac, at the NPU build's Q8
 precision, with and without instructions and background. The failure classes,
@@ -37,7 +37,7 @@ in order of how much they matter:
   do not exist, and kept doing it when told not to. The prompt now asks for
   frequencies in words.
 - **Deciding for the person.** Asked a yes/no judgment call about the person's
-  own life, they answered with a flat verdict until a prompt forced the reply to end on a
+  own life, they answered with a flat yes or no until a prompt forced the reply to end on a
   question — and that fix broke other answers.
 - **Missing the task.** A draft returned unchanged when asked to rewrite it; a
   personal text message read as a business email.
@@ -47,9 +47,9 @@ in order of how much they matter:
 Prompt tuning moved failures around rather than removing them. Qwen3-1.7B
 with instructions was the best of the set and still unfit for personal
 advice. MiniCPM5-1B scores well on public hallucination benchmarks and did
-worst here: those benchmarks measure trivia, not advice.
+worst here: those benchmarks measure trivia recall and do not test advice.
 
-**0.6B over 1.7B.** Both are unfit for advice, so the demo takes the one that
+**Why 0.6B rather than 1.7B.** Both are unfit for advice, so the demo takes the one that
 fits every Dragon: +1.7 GB of RAM against +2.9 GB (5 GB boards exist), 7.5
 tok/s against 5.5, a 0.7 GB download against 1.7 GB.
 
@@ -77,13 +77,13 @@ cores for no gain; off, it is 0.13 cores at the same speed.
 FastRPC driver freed reserved DMA pages, logged `BUG: Bad page state` sixty
 times, and the box stopped answering on every interface until power-cycled.
 It was not an OOM, so a memory cgroup would not have helped: the fault is in
-the cDSP's address space. What follows from it: the mode loads exactly one
+the cDSP's address space. As a result, the mode loads exactly one
 pinned bundle, proven to load on a 5 GB Dragon beside `qnnd`, with no setting
 to change it; and the hardware watchdog (8a5ef0ab) reboots a hung Dragon.
 
 ## How a turn runs
 
-**No daemon.** Each turn is one run of Qualcomm's `genie-t2t-run`, started by
+**There is no daemon.** Each turn is one run of Qualcomm's `genie-t2t-run`, started by
 core, reading a prompt file and streaming the reply. The model's 1.7 GB
 returns to the box when the turn ends. One turn at a time; a turn is refused
 below ~2.2 GB free memory, or when the prompt would leave under 768 tokens of
@@ -91,8 +91,8 @@ the 4096 for the reply, rather than truncating history. Reply length is capped
 (768, or 2048 with thinking) because the model does not always write an end
 token and would otherwise hold the NPU for about ten minutes.
 
-**The sandbox is the network claim.** `genie-t2t-run` is closed source, so
-what it does cannot be read. Every turn runs under `unshare --net
+**The sandbox is what backs the no-network claim.** `genie-t2t-run` is closed
+source, so we cannot read what it does. Every turn runs under `unshare --net
 --map-current-user`: a namespace whose only interface is a loopback that is
 down. The NPU is a device node, not a network, so the model still reaches it.
 A box that refuses unprivileged user namespaces is not offered the mode,
@@ -103,7 +103,7 @@ namespace, which needs no unit and no install step.
 **What the model is given.** Only `SAFETY_PROMPT`: no chat prompt, no
 background about the owner, no record access, no tools, no model choice, no
 gateway, no billing row. A model this small misuses what it is given, and the
-demonstration is the model itself.
+point of the demonstration is to show the model on its own.
 
 **Stored like any chat.** Since c3a895a0 a local chat is an ordinary chat that
 happens to be answered on the box. The user's message goes through the same
@@ -111,14 +111,15 @@ happens to be answered on the box. The user's message goes through the same
 `local/qwen3-0.6b` with its reasoning, and the model reads history back from
 the box. **So a saved local chat reaches everything a saved chat reaches:
 titles, day summaries, search, and a later cloud turn if the person switches
-the chat's mode** — and titles and summaries are written by cloud models. Its
-replies are written on the server; its words do not stay there. The card says
+the chat's mode** — and titles and summaries are written by cloud models. The
+replies are generated on the server, but the text can leave it through those
+features. The card says
 exactly that ("It writes its replies on your server, not in a data center.
 Your server keeps the chat like any other.") and no longer claims nothing
 leaves. A temporary chat in Local mode keeps nothing, as any temporary chat.
 
 The first build (4113dd07) did the opposite: local chats were ghost chats by
-construction, locked to Local so their history could never ride a cloud turn.
+design, locked to Local so their history could never ride a cloud turn.
 That was dropped the next day in favor of Local being a mode like the others.
 
 ## Recipe and traps
@@ -136,10 +137,10 @@ That was dropped the next day in favor of Local being a mode like the others.
   v68 the link logs `wtshare ... small.is_shared()` errors; the binaries still
   work.
 - **Two runtimes.** AI Hub compiles with QAIRT 2.45, which needs the 2.45
-  runtime; `qnnd` stays on 2.42. A 2.45 runtime loads 2.42 binaries, not the
-  reverse. Both are fetched from Qualcomm by Range request and never
+  runtime; `qnnd` stays on 2.42. A 2.45 runtime loads 2.42 binaries; a 2.42
+  runtime cannot load 2.45 binaries. Both are fetched from Qualcomm by Range request and never
   re-hosted (`virtues-qairt`, the `GENIE` set); `HEAD` is refused with 403.
-- **The runtime set is eight files, not six.** Without
+- **The runtime set needs eight files.** Two are easy to miss. Without
   `libQnnHtpNetRunExtensions.so`, Genie logs "Unable to open backend extension
   library" and fails with device error 14001. It also needs the
   `libcdsprpc.so` link `qnnd` uses.
@@ -149,7 +150,7 @@ That was dropped the next day in favor of Local being a mode like the others.
   length, never by searching for `[BEGIN]: `, because a person can type that.
   With thinking off the model can still open with a stray `</think>`.
 
-## The ceiling is the silicon
+## Hardware limit
 
 Hexagon v68 takes 8-bit weights at a 4k context. Newer Qualcomm NPUs (v73+)
 take 4-bit weights and 2–8B models, which is the only route found to a local

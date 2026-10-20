@@ -1,10 +1,14 @@
 # The wiki editor — constitution and briefs
 
-**How the wiki's prose is instructed.** The design is
-[agents/record/article-resolution.md](../record/article-resolution.md); this says
-what must be true when you touch the prompts.
+This doc describes how the prompts that write the wiki's prose are organized.
+The "constitution" is the shared prompt file every article uses
+(`virtues-core/prompts/wiki/constitution.md`, loaded as `CONSTITUTION` in
+`virtues-core/src/api/wiki_editor.rs`); a "brief" is the per-subject-kind
+prompt added after it. The design is
+[agents/record/article-resolution.md](../record/article-resolution.md); this
+doc lists what must stay true when you change the prompts.
 
-## The text is not in this file
+## Where the prompt files live
 
 The prompts live beside the code and are compiled in:
 
@@ -16,65 +20,68 @@ The prompts live beside the code and are compiled in:
 | [`virtues-core/prompts/wiki/story.md`](../../virtues-core/prompts/wiki/story.md) | the brief for a story — a subject they named, with nothing beneath it |
 | [`virtues-core/prompts/wiki/entity.md`](../../virtues-core/prompts/wiki/entity.md) | the brief for a person, place or organization |
 
-Two subject kinds have **no** brief, and both absences are refusals rather
-than gaps. The life page is the person's, in the first person, and the editor
-may not touch it. The day has its own released narrate prompt and joins this
-door when its revision does. `brief_for` returning `None` is what makes each
-refusal structural — a rule in a prompt is something a model weighs against
-its other rules, and a missing brief is not.
+Two subject kinds have **no** brief, and in both cases that is intentional.
+The life page belongs to the person, is written in the first person, and the
+editor may not touch it. The day has its own released narrate prompt and will
+move to this system when that prompt is next revised. `brief_for` returning
+`None` enforces both exclusions in code: a model weighs a rule in a prompt
+against its other rules, but it cannot work around a brief that does not
+exist.
 
 A system prompt is **constitution + brief**, concatenated, plus the active
 `wiki_rules`. The turn's opening message carries the subject, its authored
 fields, the person's sentences and removals, what changed since the last
 edition, and the tool budget.
 
-They are `.md` files rather than Rust string constants so that the thing
-reviewed is the thing that runs. `include_str!` from outside the crate is an
+They are `.md` files rather than Rust string constants so that the text people
+review is exactly the text that runs. `include_str!` from outside the crate is an
 established pattern here (`applets/sources.toml`). **Never paraphrase a prompt
 into a doc** — that is how the two prompts we already had drifted apart.
 
-## Why one constitution and many briefs
+## Why there is one constitution and many briefs
 
-There were two editors before this — the day narrator and the entity article
-writer — with two prompts restating the same policy in different words, and
-each drift between them was invisible until prose came out wrong. Years,
-stories and chapters would have made five.
+Before this there were two editors, the day narrator and the entity article
+writer, with two prompts restating the same policy in different words. Each
+difference between them went unnoticed until the generated prose came out
+wrong. Adding years, stories and chapters the same way would have made five.
 
-So: one constitution carries the policy, one brief per subject kind carries
-what *that page* is. A rule that belongs to every article goes in the
+So one constitution holds the shared policy, and one brief per subject kind
+describes what *that kind of page* is. A rule that belongs to every article goes in the
 constitution. A rule about what a year looks like goes in the year brief. If
-you find yourself writing "don't infer" into a brief, it belongs one
-level up.
+you find yourself writing "don't infer" into a brief, it belongs in the
+constitution instead.
 
-## What is settled
+## Decisions already made
 
-- **Second person, past tense.** Not an open question: it is settled here,
-  and the day prompt already writes that way. The wiki has its own style;
-  no house style governs it. The objection worth knowing — that an article
-  about you, addressed to you, can read as a report on a subject — is answered
-  by the observe-never-infer rule and by refusing to flatter, not by switching
-  to the third person and giving the wiki a third voice.
-- **The three voices are deliberate.** A day is second person (a mirror you
-  read at night); an entity is third person about the entity and second about
-  the owner; the life document is first person, theirs, and is **never**
-  machine-edited.
-- **Editing, not rewriting.** The entity prompt's "this is an edition, not an
-  append: rewrite the whole article" is superseded. A whole-document rewrite in
-  a CRDT discards concurrent edits by construction and makes every revision
-  diff at 100%, which shows the person nothing.
+- **Second person, past tense.** This is decided, and the day prompt already
+  writes that way. The wiki has its own style; no house style governs it. One
+  objection is worth knowing: an article about you, addressed to you, can sound
+  like a report on a subject. The answer is the observe-never-infer rule and
+  avoiding flattery, not switching to the third person, which would give the
+  wiki a third point of view.
+- **The three points of view are intentional.** A day is second person
+  (something you read back at night); an entity is third person about the
+  entity and second person about the owner; the life document is first person,
+  written by the owner, and is **never** edited by the machine.
+- **The editor edits; it does not rewrite.** The entity prompt's "this is an
+  edition, not an append: rewrite the whole article" is superseded. A
+  whole-document rewrite in a CRDT always discards concurrent edits and makes
+  every revision a 100% diff, which tells the person nothing about what
+  changed.
 
 ## Changing a prompt
 
 1. Edit the `.md`. The constants pick it up at build time.
-2. **Read the diff as the model will.** These are instructions, not prose;
-   a sentence that reads as advice will be followed as a rule.
+2. **Read the diff the way the model will.** These are instructions: the
+   model will follow a sentence written as advice as if it were a rule.
 3. A changed constitution does not retroactively fix written articles. Use the
-   bulk `update_requested_at` path to re-edit a rung deliberately, or leave
-   them — an article is not wrong because the rules improved.
-4. Prompts are not migrations, but they are close: every box gets the new text
-   on upgrade and applies it to pages that already exist.
+   bulk `update_requested_at` path to re-edit one level of the hierarchy on
+   purpose, or leave them; an article is not wrong just because the rules
+   improved.
+4. Prompts are not migrations, but they behave similarly: every box gets the
+   new text on upgrade and applies it to pages that already exist.
 
-## Articles that hold blocks
+## Articles stored as block pages
 
 An article becomes a block page when the server first builds its live
 document (`api/block_move.rs`, `first_open`, behind `VIRTUES_TREE_ARTICLES=1`
@@ -127,47 +134,49 @@ whole revised article as markdown. What changes is the server's half of
 Find/replace (`apply_text_edit`) is the one text path a block page refuses:
 its anchors are markdown the page does not hold.
 
-## Notes, and what may not be one
+## Notes, and what may not be a note
 
-A `wiki_notes` row is the machine's only channel into the record: a cited
-proposal about a subject, which a person accepts or dismisses. The writer that
+A `wiki_notes` row is the only way the machine can propose a change to the
+person's wiki: a cited proposal about a subject, which a person accepts or
+dismisses. The writer that
 leaves them nightly is not built yet ([wiki-notes-plan.md](../plan/wiki-notes-plan.md));
 these rules hold for it and for anything else that writes a note.
 
 - **Cite or reject.** A machine note without `source_refs` cannot exist —
   `wiki_notes_machine_must_cite` is a CHECK, and `write_machine_notes` refuses
-  it by name first. The asymmetry is the design: a cited note is useful even
-  when wrong, because it is checkable in seconds; a bare claim with a
-  confidence is worthless when wrong. A citation is a record route, not the
-  model's own reasoning restated.
-- **Only a pass that held a whole session writes one** — a finished day, a
-  chat thread. Never a sweep over isolated rows: a fragment cannot tell sarcasm
-  from statement, or when a thing was said from when it happened. That is what
-  killed semantic entity resolution.
+  it by name first. The reason: a cited note is useful even when wrong,
+  because it can be checked in seconds, while an uncited claim with a
+  confidence score is worthless when wrong. A citation points to a source row
+  in the data; restating the model's own reasoning is not a citation.
+- **Only a pass that read a whole session writes one** — a finished day, a
+  chat thread. Never a sweep over isolated rows: a fragment cannot distinguish
+  sarcasm from a statement, or when something was said from when it happened.
+  That is the problem that caused semantic entity resolution to be removed.
 - **If it's about today, it isn't a note.** *"You had coffee with Maya"* is the
   day. *"Maya mentioned she's leaving in March"* is a note, because March isn't
   today.
 - **If the article wouldn't change, it isn't a note.** So the writer is handed
   the current article of each subject in play. Silence is the default.
 - **The writer never writes `wiki_refs`.** Not at low confidence, not flagged.
-  The graph stays deterministic and user-authored.
-- **Notes never age out.** They leave by `accepted`, `dismissed` or `absorbed`
-  — events, never timers.
+  The graph stays deterministic and written by the user.
+- **Notes never expire.** They are removed only when `accepted`, `dismissed`
+  or `absorbed` — by an event, never by a timer.
 - **Volume is capped in code** (`MAX_NOTES_PER_RUN`), and the cap logs when it
-  binds. Raising it is the wrong fix for a bar that is too low.
+  is reached. If the cap is being hit because the quality threshold is too low,
+  raise the threshold rather than the cap.
 
-## Events are evidence, not article subjects
+## Events are not article subjects
 
 `wiki_events` carries its own summary and may be a note's subject. It never
-gets an article, a revision history or a maintenance setting. Articles are for
-things a person would name; that is what keeps their number bounded. Do not
+gets an article, a revision history or a maintenance setting. Articles are only
+for things a person would name, which keeps the number of articles bounded. Do not
 add `event` to `wiki_articles.subject_type` or give it a brief.
 
-## A prompt with no caller is a comment
+## Do not add prompts that nothing calls
 
-The failure class this doc exists to prevent: a brief or a maintenance
-function that describes the right design — edit through the same find/replace
-path the assistant uses on pages, in an applet's AGENT phase, so edits are
-reviewable diffs rather than rewrites — while nothing calls it. It reads as a
-plan, returns nothing, and its applet ships disabled, for months. **Do not add
+The failure this doc exists to prevent: a brief or a maintenance function that
+describes the right design (edit through the same find/replace path the
+assistant uses on pages, in an applet's AGENT phase, so edits are reviewable
+diffs rather than rewrites) while nothing calls it. It looks like working code,
+does nothing, and its applet ships disabled for months. **Do not add
 a brief for a subject kind until something actually runs it.**

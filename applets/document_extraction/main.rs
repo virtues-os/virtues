@@ -1,4 +1,4 @@
-//! Document extraction cron action (researcher-plan D1).
+//! Document extraction cron action (agents/record/researcher.md D1).
 //!
 //! Drains `app_drive_files.extraction_status = 'pending'`: native-text extract
 //! (pdfium / docx / text / html — no OCR), paragraph-aware chunking, upsert

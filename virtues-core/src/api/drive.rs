@@ -96,7 +96,7 @@ pub struct DriveFile {
     pub is_folder: bool,
     pub parent_id: Option<String>,
     pub sha256_hash: Option<String>,
-    /// Universal-extraction state (researcher-plan D1):
+    /// Universal-extraction state (agents/record/researcher.md D1):
     /// pending | extracting | done | no_text | failed | skipped
     pub extraction_status: String,
     pub deleted_at: Option<Timestamp>,
@@ -629,7 +629,7 @@ pub async fn upload_file(
                 .map(|m| m.to_string())
         });
 
-    // Universal extraction (researcher-plan D1): text-bearing uploads queue
+    // Universal extraction (agents/record/researcher.md D1): text-bearing uploads queue
     // for the document_extraction cron; everything else is 'skipped'.
     let extraction_status =
         if crate::extraction::doc_kind(mime_type.as_deref(), &actual_filename).is_some() {

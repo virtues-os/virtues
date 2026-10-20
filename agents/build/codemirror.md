@@ -1,15 +1,16 @@
 # CodeMirror: the chat composer
 
-CodeMirror 6 is the chat composer's kernel, and nothing else's. Pages are
+CodeMirror 6 is the editor kernel for the chat composer and is used nowhere
+else. Pages are
 edited in the block editor ([document.md](document.md)); the decision for
 pages is [record/editor-kernel-2026-10-07.md](../record/editor-kernel-2026-10-07.md),
 and [record/editor-kernel-2026-09-14.md](../record/editor-kernel-2026-09-14.md)
 still governs the composer.
 
-**The document is the message:** a markdown string, exactly what the model
-receives. No Yjs, no live preview of headings or emphasis, no slash
-commands: a message box that renders while you type reads as a word
-processor.
+**The editor's document is the message itself:** a markdown string, exactly
+what the model receives. There is no Yjs, no live preview of headings or
+emphasis, and no slash commands, because a message box that renders formatting
+while you type behaves like a word processor.
 
 ## Files
 
@@ -33,8 +34,9 @@ Everything is under `apps/web/src/lib/codemirror/`.
 ## Links
 
 `ref-links.ts` renders every `[label](url)` (entity, file, internal path or
-external URL) with one widget: a plain link that belongs to the prose
-(`.cm-ref-link`, dotted hairline). No pill, no chip, no favicon; the `@` is
-stripped for display. The target surfaces in a hover preview
-(`RefPreview.svelte` over `RefCard.svelte`), never in inline chrome; what
-kind of record a route names is `getEntityTypeFromRoute` (`lib/utils/refRoutes.ts`).
+external URL) with one widget: a plain link styled as part of the prose
+(`.cm-ref-link`, dotted hairline). There is no pill, chip or favicon; the `@` is
+stripped for display. The target appears in a hover preview
+(`RefPreview.svelte` over `RefCard.svelte`), never in inline chrome.
+`getEntityTypeFromRoute` (`lib/utils/refRoutes.ts`) determines what kind of
+record a route names.

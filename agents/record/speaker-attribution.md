@@ -2,7 +2,7 @@
 
 **Written 2026-09-29.** Four days of spikes (2026-09-24 to 09-27) on telling
 the owner's voice apart from everyone else's in the phone's ambient audio, and
-the decision that came out of them. What shipped is the small part:
+the decision that came out of them. Only a small part shipped:
 transcripts mark a change of voice as `[Speaker]:` with no number, and older
 numbered tags are flattened where narrators read them
 (`virtues-core/src/transcript.rs`). The design for the rest is parked in
@@ -20,10 +20,10 @@ consistent and are not, and the narrator built stories on that consistency.
 
 ## What was measured
 
-**Gemini cannot carry attribution.** Asked for per-turn timestamps on 300 s
+**Gemini cannot attribute speakers reliably.** Asked for per-turn timestamps on 300 s
 clips, `gemini-3-flash` returned timelines ending at 177–191 s. Its speaker
-labels matched real voices with 52–72% purity, where 50% is chance. The inverse
-does work: split a chunk into voice turns on the box and send them as ordered
+labels matched real voices with 52–72% purity, where 50% is chance. The reverse
+approach does work: split a chunk into voice turns on the box and send them as ordered
 audio parts in one request, and each part comes back transcribed. That path
 recovered 76–92% of the single-shot word count, and that recall gap is its
 open cost.
@@ -53,7 +53,7 @@ leave-one-site-out.
 
 **The voice model stopped being the limit once the features were right.**
 Every sliding-window system converged on frame F1 ≈ 0.70 and turn F1 ≈ 0.79,
-whatever the embedder. The ceiling was elsewhere:
+whatever the embedder. Speech detection set the limit:
 
 | Speech detector | Speech P / R | ResNet34 windows: frame F1 / turn F1 |
 |---|---|---|
@@ -69,20 +69,21 @@ owner talked over. Marking stretches where segmentation-3.0 reports overlap as
 *unsure* kept frames labeled "owner" that sit more than 0.75 s from any owner
 speech under 1.5% of all owner-labeled frames. The owner was never labeled while silent in any turn checked by hand.
 
-**Real audio, with the owner listening.** 40 random chunks from one box over
+**Real audio, rated by the owner.** 40 random chunks from one box over
 30 days, with the owner rating clips blind:
 - More than one voice recurred across the month. Loudness alone did not say
   which one was the owner.
 - The owner picked two clusters as their own: their normal voice and a
   quiet variant, about 19 dB lower (phone in a pocket or bag).
-- An owner print must hold one centroid per recording condition. A
+- An owner print must store one centroid per recording condition. A
   loud-only print recognized 13% of the quiet voice.
 - Adding the quiet centroid alone made a non-owner voice clear the
   threshold 13% of the time. Requiring the owner to beat the voices they
   rejected by a margin of 0.1 fixed it: 0% for that voice, 95% / 91% for
   the owner's two conditions.
 - In the blind check, every "owner" label was correct (6 of 6). Every error
-  was the pipeline withholding the label, never asserting it.
+  was a missing owner label; the pipeline never applied the owner label
+  wrongly.
 
 **Runtime facts, all measured on a Dragon Q6A:**
 - WeSpeaker ResNet34 compiles for the Hexagon v68 NPU through Qualcomm AI Hub
@@ -112,7 +113,7 @@ speech under 1.5% of all owner-labeled frames. The owner was never labeled while
 - DiariZen and Sortformer, the end-to-end diarizers, are out: too slow on the
   CPU, and transformers the integer-only NPU cannot run accurately.
 
-## The decision
+## Why the work was paused
 
 The pipeline worked, and its errors fell on the safe side. It was still
 paused. What it would change is narrator output, and that was never measured.
@@ -128,8 +129,8 @@ Building it means:
 
 The one known harm, numbered tags implying the same people across chunks, is
 removed by dropping the numbers. That shipped instead. The question to reopen
-it: do day articles *still* invent who-said-what once the tags carry no false
-continuity? If they do, the cheapest next step the data supports is to label
+it: do day articles *still* invent who-said-what once the tags no longer number
+speakers? If they do, the cheapest next step the data supports is to label
 whole chunks that are nearly one voice. 22 of the 40 sampled chunks were at
 least 90% or at most 7% owner, even with the loud-only print. That keeps the single-shot transcription and needs
 no turn splitting.

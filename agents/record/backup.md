@@ -8,17 +8,17 @@ in `cli/upgrade.rs`, and the `backup_volumes` applet. User-facing behavior is
 in `docs/operate/backup-and-restore.md`. What is still open is
 `agents/plan/backup-plan.md`.
 
-## The gap it closed
+## The problem
 
-A box held exactly one copy of the owner's life archive. `virtues backup` and
+A box had exactly one copy of the owner's life archive. `virtues backup` and
 `virtues restore` existed but ran only by hand, the restore path had never run
 under test, nothing pruned the tarballs, and each tarball was plaintext gzip
-containing `VIRTUES_ENCRYPTION_KEY`. Cloud providers give durability away
-without anyone noticing; the moment data leaves the cloud that obligation
-transfers to the owner. Self-hosting without a backup is strictly worse than
-the cloud on the one axis nobody forgives — a dead NVMe, a theft, a fire.
+containing `VIRTUES_ENCRYPTION_KEY`. Cloud providers handle durability without the user having to think about it;
+once data leaves the cloud, the owner is responsible for it. Self-hosting
+without a backup is worse than the cloud for the failures that lose data for
+good — a dead NVMe, a theft, a fire.
 
-**A live bug came first.** Backup and restore each hardcoded the lake at
+**A live bug was fixed first.** Backup and restore each hardcoded the lake at
 `/var/lib/virtues/lake`, while nine other sites read `STORAGE_PATH` with two
 different defaults. They agreed only because the installer wrote the same
 path. The first thing anyone does with a bigger drive is set `STORAGE_PATH` —
@@ -27,7 +27,7 @@ directory. One resolver, `storage::lake::lake_root()`, replaced all of them
 before anything else was built. Restore also refuses to replace a directory
 that does not look like a lake.
 
-## What survived from the first version
+## What was kept from the first version
 
 The manifest (per-file sha256 and size, written last); `pg_dump --format=custom
 --no-owner --no-acl`; **dump-then-copy-lake ordering** — files landing between
@@ -42,27 +42,27 @@ embedded migrations, digests verified).
 because migrations only roll forward and the old binary is expected to boot
 against the newer schema. So a migration that damages data leaves rollback
 restoring *code onto damaged data* — the one failure release slots cannot
-cover. Only a dump taken before `migrate` closes it.
+cover. Only a dump taken before `migrate` covers it.
 
-That makes it the data half of a release slot, not a backup tier: owned by
+So the dump is the data half of a release slot and is not a backup tier. It is owned by
 `upgrade`, written after the migration preflight passes (no cost on a release
 that was going to be refused) and before the service stops, named
 `pre-upgrade-<from>-<to>.dump`, pruned in lockstep with slots, unencrypted
-because the box already holds the key. The upgrade refuses up front when the
-dump will not fit — filling the disk and *then* failing a migration is strictly
-worse than not upgrading — and `rollback` prints the dump's path so the
-artifact is usable rather than hidden.
+because the box already has the key. The upgrade refuses up front when the
+dump will not fit — filling the disk and *then* failing a migration is
+worse than not upgrading — and `rollback` prints the dump's path so the owner
+can find and use it.
 
 ## Pillar 2 — one artifact type, split by mutability
 
 The first design mirrored the lake file by file. Encryption changed the
-arithmetic before it was built: an age header and an encrypt call per object,
+cost calculation before it was built: an age header and an encrypt call per object,
 on a lake of many small stream files, is slower than bundling and the worst
 possible USB write pattern. Re-archiving the whole lake every run is no better
 — hundreds of gigabytes over a bus that drops under sustained load on ARM, to
 capture a day's change.
 
-So two artifacts with opposite lifetimes:
+So there are two artifacts with opposite lifetimes:
 
 ```
 <mount>/virtues/<host>/archives/
@@ -70,18 +70,18 @@ So two artifacts with opposite lifetimes:
   lake-<ts>.tar.gz.age   Lake files added since the last run. NEVER pruned.
 ```
 
-Increments are never pruned, structurally rather than cautiously: the lake is
+Increments are never pruned. This follows from the lake's structure: the lake is
 append-only, so each file exists in exactly one increment. When a volume fills,
 the run refuses instead of pruning, because by then the only things left to
 prune are irreplaceable.
 
 **The box cannot read its own increments** — they are encrypted to a key it
 does not hold — so `backup_archived_file` records box-side what shipped where.
-The drive stays authoritative about which increments exist: each run
+The drive is the source of truth for which increments exist: each run
 reconciles against the directory, and rows for a vanished increment are
-dropped and their files re-sent. A wiped or swapped drive heals itself.
+dropped and their files re-sent. A wiped or swapped drive is refilled automatically.
 
-Consequences, stated so nobody discovers them mid-incident: a restore is the
+Two consequences to know before an incident: a restore is the
 newest `full-*` plus **every** increment in order; and an old full replayed
 against all increments yields an old database and a current lake — the same
 orphan-bytes condition as the dump ordering, coherent for the same reason.
@@ -93,15 +93,15 @@ lake and no way back.
 
 Mount points move between boots and between drives, so a volume's identity is
 its filesystem UUID (`storage_volume.fs_uuid`), resolved through
-`/dev/disk/by-uuid`; `mount_path` is an observation, not identity. The OS
+`/dev/disk/by-uuid`; `mount_path` only records where the volume was last seen mounted. The OS
 mounts, the daemon reads a path; it never shells out to `mount(8)`. `roles`
-exists and holds only `backup`. **Absence is never an outage**: an unplugged
+exists and contains only `backup`. **A missing drive is never treated as an outage**: an unplugged
 drive is a skipped run and a warning, which is the entire reason removable
 media is acceptable for backups and not for live storage.
 
-## Pillar 4 — retention by space, not by count
+## Pillar 4 — retention by free space instead of by count
 
-Keep-N is the wrong knob. The archive grows around 95 GB a year and the drive
+Keeping the newest N archives does not work. The archive grows around 95 GB a year and the drive
 does not grow at all; pick N=7 and you either strand a terabyte or overflow in
 year three. Fulls are pruned oldest-first only while free space is tight,
 pruning happens *before* the write (pruning after can never free room for the
@@ -116,14 +116,14 @@ irrelevant: ext4, exFAT, whatever NTFS it shipped with. Backups write under
 the owner's other files and one drive can serve two boxes. Torn writes are
 `.partial` plus `rename(2)`; restore ignores a `.partial`.
 
-## Not building
+## Not being built
 
 | | Why |
 |---|---|
 | Volume router, `volume` columns on lake tables | Backup-only needs one root |
 | Mover / tiering engine | At ~95 GB/year a 2 TB drive is 20 years of lake; tiering bites only at 8–20 TB, a permanent appliance component |
-| Removable volumes holding live lake data | USB on ARM drops under load: a dropped backup write retries, a dropped lake write corrupts. Synology and TrueNAS both refuse USB in pools |
-| Changes to storage keys | Keys are load-bearing (encryption-key derivation reads the date out of the key) |
+| Removable volumes storing live lake data | USB on ARM drops under load: a dropped backup write retries, a dropped lake write corrupts. Synology and TrueNAS both refuse USB in pools |
+| Changes to storage keys | Other code depends on the key format (encryption-key derivation reads the date out of the key) |
 | A restore button | Restore needs the service stopped; the box cannot do it to itself. The UI shows the CLI recipe instead |
 
 The composability rule: everything the volume system does must reduce to "the
@@ -132,26 +132,26 @@ becomes *required* — if virtues cannot run pointed at a directory — DIY is
 broken. DIY users already have LVM, ZFS or mergerfs and want `STORAGE_PATH` on
 their pool; an app-level abstraction would fight them.
 
-## Key escrow: virtues never holds the key
+## Key escrow: virtues never stores the key
 
 Archives are encrypted with `age`, and the box stores only the public half. It
 cannot read its own backups: a stolen box yields a key and nothing to decrypt,
 a stolen drive yields ciphertext and no key. The recovery secret is printed
-once and cannot be printed again, by construction.
+once and, by design, cannot be printed again.
 
-The invariant is absolute on purpose — not for any user, not opt-in. The moment
-virtues holds keys for *some* users, a hosted archive can no longer say "we
-cannot read your data", only "we choose not to". The first is a property of
-the system; the second is a promise, and promises erode. The answer to a lost
-key is not a better code but more copies in places the owner controls that are
-not the box.
+This rule has no exceptions: it applies to every user and there is no opt-in.
+If virtues stored keys for *some* users, a hosted archive could no longer say
+"we cannot read your data", only "we choose not to". The first is enforced by
+the system; the second depends on policy, which can change. The fix for a lost
+key is more copies of the recovery secret, kept in places the owner controls
+other than the box.
 
-## The one-way door
+## The archive format is fixed
 
-**The archive format closed on 2026-07-25.** Encryption, streaming and
+**The archive format was frozen on 2026-07-25.** Encryption, streaming and
 manifest-last all landed before anything scheduled a backup, while there were
 no artifacts in the wild worth preserving. Any layout change now needs a
 compatibility shim; `restore` already carries the first, sniffing the age magic
 so pre-encryption archives still open. Manifest signing was dropped from this
-door rather than built: age's AEAD authenticates the whole archive, so
+format instead of built: age's AEAD authenticates the whole archive, so
 tampering fails at decryption, and the per-member digests catch our own bugs.

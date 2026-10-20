@@ -1,4 +1,4 @@
-//! Document annotations API (researcher-plan D2).
+//! Document annotations API (agents/record/researcher.md D2).
 //!
 //! Highlights + margin notes on drive files, global to the file. Anchoring is
 //! quote-based (quote_text + prefix/suffix context) so the passage re-finds in
@@ -73,7 +73,7 @@ pub async fn list_annotations(pool: &PgPool, file_id: &str) -> Result<Vec<Annota
     .map_err(|e| Error::Database(format!("Failed to list annotations: {e}")))
 }
 
-/// Render a file's highlights as markdown (researcher-plan D4.3).
+/// Render a file's highlights as markdown (agents/record/researcher.md).
 ///
 /// Each highlight becomes a blockquote plus a citation ref that lands back on
 /// the mark, so an exported set of notes stays traceable to its source.

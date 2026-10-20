@@ -17,7 +17,7 @@ nothing marks a top-up PaymentIntent as one today (no metadata), so tagging it
 at creation comes first. (The fix is deployed; production had no
 subscription the old handler had flipped.)
 
-**The way to fix a lapsed payment sits behind the payment.**
+**An owner with a lapsed payment cannot reach the page that fixes it.**
 `billing_portal.rs::resolve_active_customer` refuses unless the latest
 subscription status is exactly `active`, so a `past_due` owner cannot open the
 Stripe portal to update their card. Un-gate the portal for any account with a
@@ -28,26 +28,28 @@ hosted AI stops.
 
 - **What "delete my account" means.** There is no route for it in atlas.
   Proposed in the archived onboarding plan: atlas forgets you, and the box
-  keeps working on the LAN and over the relay. It is the sovereignty claim in
-  its most testable form, and cheap to settle before there are many accounts.
+  keeps working on the LAN and over the relay. This is the most direct test of
+  the claim that the box does not depend on us, and it is cheap to settle
+  before there are many accounts.
 - **Multi-box policy.** Since atlas `0015`, keys are scoped per box, so a
   second box no longer rotates the first box's credential, and entitlement is
   checked per account. The de facto policy is therefore "one subscription
-  covers every box on the account, with nothing capping the count." Ratify
-  that or change it; nobody chose it.
+  covers every box on the account, with nothing capping the count." Nobody
+  chose this policy; confirm it or change it.
 - **Store entitlement pre-provisioning.** A buyer who pays for box and
   subscription at virtues.com should never see a payment screen during setup.
   Nothing creates an account or entitlement at purchase time today (atlas has
   only `/preorder/checkout`).
-- **Where the subscription is offered.** Unresolved contradiction.
+- **Where the subscription is offered.** Two sources contradict each other.
   `connect.html` ("setup never mentions money") and the open-relay decision say
   setup's only questions are network and ownership, and the subscription is
   offered the first time hosted AI is invoked. `agents/plan/setup-plan.md`
   and the built stepper (`routes/(onboarding)/setup/[[step]]/+page.svelte`,
   `StepSubscription.svelte`) make Subscription a required step with no skip,
   passable by subscribing, signing in, or bringing your own AI. Either the
-  airlock comment and the record's principle are narrowed to "the airlock
-  never mentions money," or the step gains a skip. Decide, then fix the loser.
+  airlock comment and the open-relay record's principle are narrowed to "the
+  airlock never mentions money," or the step gains a skip. Decide, then change
+  the side that loses.
 
 ## Lifecycle
 
@@ -65,7 +67,7 @@ hosted AI stops.
 
 ## Pairing
 
-- **One pairing doctrine.** Four narratives still coexist: the BLE codeless
+- **One pairing model.** Four descriptions still coexist: the BLE codeless
   session, the LAN six-digit form fed by `virtues pair`, the `virtues pair`
   URL, and the phone handoff QR. They are all one thing: a token minted where
   you already have access, carried to the new device. Make `virtues pair` mint
@@ -75,7 +77,8 @@ hosted AI stops.
 - **Offer to save the setup phrase to the password manager.** The save screen
   in `connect.html` (`blePhraseSaved`) now gates Continue on an attestation,
   with Copy and Print. Writing the phrase through the platform credential API
-  would turn "did you save it" into "your Mac saved it." The app must still
+  would let the Mac's password manager store it, so the screen would no longer
+  need to ask whether the owner saved it. The app must still
   never persist or email the phrase itself.
 
 ## Relay

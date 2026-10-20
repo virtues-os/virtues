@@ -1,13 +1,13 @@
 # Applet architecture
 
 The implementation contract for the applet system: how core loads, reconciles
-and runs applets. What an applet *is* and why it has this shape is the record,
+and runs applets. What an applet *is* and why it has this shape is in the design record,
 [`applets.md`](../record/applets.md). How to write one is
 [`applets/AUTHORING.md`](../../applets/AUTHORING.md) (builtin, compiled) and
 [`applets/AGENTS.md`](../../applets/AGENTS.md) (chat-authored, declarative).
 This page does not repeat either.
 
-## Shape is derived
+## An applet's shape is derived from its fields
 
 There is no `runtime` field. `command` makes a subprocess, `agent` an agent
 loop (after the subprocess, if both are set), and a `face/index.html` with
@@ -82,8 +82,8 @@ endpoints and paths, never secrets. An applet whose folder does not resolve
 under the shipped root runs jailed under `systemd-run` (`NoNewPrivileges`,
 read-only system, memory and time ceilings); in a Linux release build a
 missing `systemd-run` refuses the run rather than running it unjailed. The
-jail limits blast radius; it is not an authority boundary, and `build_command`
-says why.
+jail limits blast radius but is not an authority boundary; the comment on
+`build_command` explains why.
 
 **Faces** are served by `server/faces.rs` into a `sandbox="allow-scripts"`
 iframe with an opaque origin, and every file carries a CSP `sandbox
@@ -96,7 +96,7 @@ folders are not.
 
 Fork-per-trigger via `tokio::process` costs no dependency and ~50–100 ms per
 run. Containers were rejected: Docker on macOS is a multi-gigabyte VM, a cold
-container start is slower than a fork, and a registry and image pipeline buy
+container start is slower than a fork, and a registry and image pipeline add
 nothing when the owner is the only one installing extensions. Work that must
 outlive a core restart does not belong in an in-process supervisor, which
 dies with core.

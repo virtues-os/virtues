@@ -17,8 +17,8 @@ the path the copy called "LAN-only by choice." The Mac finds the box over mDNS
 and never connects to it. The code screen asks for six digits that exist
 nowhere. Subscribing afterward opens a checkout screen that polls for the
 payment with no timeout. No screen can say what is wrong, because by the
-product's own story nothing is: every screen does what it says. The story is
-the defect.
+product's own design nothing is wrong: every screen does what it says. The
+defect is in the design: skipping the subscription also removed connectivity.
 
 ## Why skipping money broke connectivity
 
@@ -36,16 +36,16 @@ the free path degraded not to "LAN-only" but to "works if your router happens
 to be friendly." That is a property of the owner's access point, which they
 cannot inspect and no error message can name.
 
-**The failure class: a paywall on the connectivity substrate is
-indistinguishable from a bug.** The owner experiences it as one, and so does
-everyone who tries to diagnose it.
+**The failure class: a paywall in front of basic connectivity looks exactly
+like a bug.** The owner experiences it as one, and so does everyone who tries
+to diagnose it.
 
 ## What the relay was actually doing
 
 Inspection of the live host on 2026-08-31 found stock n0 `iroh-relay` on one
 hostname, with admission enforced by an `[access.http]` hook: every client
 connection triggered a real-time callout to atlas `/relay/authorize` carrying
-the client's EndpointId, answered from account data. Two consequences.
+the client's EndpointId, answered from account data. This had two consequences.
 
 - The per-box SNI and HMAC control plane described in older prose did not
   exist in the running system. The box's relay config was just a URL. Per-box
@@ -55,9 +55,9 @@ the client's EndpointId, answered from account data. Two consequences.
   in real time. The relay could not read payload, but its front door reported
   every connection to the billing system.
 
-So most of the work was deletion.
+So most of the work was deleting code.
 
-## The decision
+## What we decided
 
 - **The relay admits any endpoint.** Rendezvous is never metered: candidate
   exchange and hole-punch assist are a few packets, and they are what make
@@ -65,22 +65,22 @@ So most of the work was deletion.
 - **Relayed payload gets one flat per-client cap, the same for everyone.**
   Tiers were rejected because tiering requires the relay to know who
   subscribes, which rebuilds the linkage being deleted. The cap is set about
-  thirty times above the heaviest real stream (iOS audio). Its job is to bound
-  abuse, not to meter customers. If tiering is ever forced, the shape to use
+  thirty times above the heaviest real stream (iOS audio). The cap exists to
+  limit abuse. It is not used for billing. If tiering is ever forced, the shape to use
   is an atlas-signed offline voucher verified at the relay with no callout,
   never the authorize hook.
-- **Abuse needs no identity.** An iroh relay is not a proxy: it carries
+- **Limiting abuse does not require knowing who the client is.** An iroh relay is not a proxy: it carries
   encrypted traffic between two endpoints that both chose to talk and cannot
   reach any third-party server. The worst abuse is two strangers using it as a
   free pipe, a bandwidth problem the cap bounds. Stock `iroh-relay` 1.0 has no
   per-IP knob, so the per-client bucket plus a global accept rate is the whole
   defense.
 - **The subscription gates hosted AI and services, nothing else.**
-  Reachability, like the record, is something the owner owns. Atlas
+  The owner owns reachability, in the same way they own their data. Atlas
   entitlement still guards checkout, top-ups and the billing portal, where the
   money is.
-- **The relay URL ships in the box binary, named out loud, with a real off
-  switch.** Resolve order is stored config, then `VIRTUES_RELAY_URL`, then the
+- **The relay URL ships in the box binary, Settings shows it, and it has a
+  real off switch.** Resolve order is stored config, then `VIRTUES_RELAY_URL`, then the
   baked default, the last only on a box install so a dev checkout never homes
   on production. The off switch is an explicit word (`off`, `none`,
   `disabled`), so an empty env var and "off" stay different states. Settings
@@ -117,26 +117,26 @@ So most of the work was deletion.
   `virtues pair` instead of promising digits on a display that never prints
   one.
 
-Linked boxes from before the change needed nothing: they already held a relay
+Linked boxes from before the change needed nothing: they already had a relay
 URL, and removing admission was invisible to them.
 
-## The rule this earned
+## Rule: delete a gate's data with the gate
 
 **When admission logic is deleted, its registry goes in the same change.**
-Deleting a gate and keeping its data is strictly worse than keeping both or
-dropping both: the liability stays and the justification leaves. For one day
-atlas held a map from every EndpointId to an account that no code needed.
+Deleting a gate and keeping its data is worse than keeping both or dropping
+both: the data is still a liability, and nothing uses it any more. For one day
+atlas stored a map from every EndpointId to an account that no code needed.
 
 ## What atlas is now
 
-Accounts, billing, hosted-AI keys and update manifests. It holds no map from
+Accounts, billing, hosted-AI keys and update manifests. It stores no map from
 an EndpointId to an account and sees no traffic, volume or timing. With
 admission gone and checkout out of the airlock, setup no longer depends on
 atlas or Stripe webhooks being up.
 
 Do not describe the relay as "blind" in copy. It cannot read content, but it
-does see which EndpointIds talk, from which addresses, and how much. The true
-wording lives in `docs/operate/reach.md`.
+does see which EndpointIds talk, from which addresses, and how much. The accurate
+wording is in `docs/operate/reach.md`.
 
 The subscription's other half, offering it at first hosted-AI use rather than
 in setup, was superseded by the setup stepper's required Subscription step.

@@ -1,11 +1,12 @@
-# The fleet update model (north star)
+# The fleet update model
 
-How a solo dev keeps a growing pile of apps versioned and in-control without
-drowning. One mental model; every new app slots into it. How the web payload
+How a solo developer keeps a growing number of apps versioned and under control
+without being overwhelmed. There is one mental model, and every new app fits
+into it. How the web payload
 actually reaches each client is [spa-delivery.md](../record/spa-delivery.md);
 the app↔box floor is [version-compat-plan.md](../plan/version-compat-plan.md).
 
-## The one idea
+## Core idea
 
 > **A thin native shell you ship rarely + a fast web payload you push freely,
 > with a version contract between them.** Maximize the surface you can update on
@@ -13,7 +14,7 @@ the app↔box floor is [version-compat-plan.md](../plan/version-compat-plan.md).
 > control — the box is the escape hatch for everything else.
 
 Tauri is what makes this possible: one `apps/web` codebase becomes the Mac,
-Windows and Linux desktop apps and the iPhone app. Lean on it.
+Windows and Linux desktop apps and the iPhone app. Use it as much as possible.
 
 ## Two layers, per client
 
@@ -46,7 +47,7 @@ codebase, one version, push anytime.
 | Mac collector | rides the mac shell | bundled in the DMG |
 | Relay | Manual infra | ssh + pinned version |
 
-**The liberating fact:** the *only* hard store gate in the whole fleet is **iOS
+**Key point:** the *only* hard store gate in the whole fleet is **iOS
 App Store**. The Mac ships through our own updater feed; everything else we
 push. So "store-gated native" is essentially just iOS.
 
@@ -68,9 +69,10 @@ almost never ship.
 
 ---
 
-## The one contract
+## What all tiers share
 
-You don't unify *delivery* — each tier keeps its native transport. You unify:
+Delivery is not unified — each tier keeps its native transport. Two things are
+unified:
 
 1. **Identity** — every artifact reports `{version, sha, channel}` the same way,
    and devices report theirs to the box, so the Devices page answers "what's
@@ -78,7 +80,7 @@ You don't unify *delivery* — each tier keeps its native transport. You unify:
 2. **A compatibility floor** — one min-version check at the one edge that matters
    (**app ↔ box**), plus `minShellVersion` for the web-payload↔shell edge.
 
-That's the whole discipline. Everything else is per-tier native mechanism.
+That is everything the tiers share. Everything else is per-tier native mechanism.
 
 ## Solo-dev rules of thumb
 
@@ -96,7 +98,7 @@ That's the whole discipline. Everything else is per-tier native mechanism.
 - **The box is the escape hatch.** It can tell an old client "you're too old,
   here's what to do" — so a stale store app is never a dead end.
 
-## What is still open, in leverage order
+## Open work, highest leverage first
 
 1. **The app ↔ box floor.** A shell runs ahead of its box as the ordinary
    case — phones update themselves, boxes when their owner (or the nightly
@@ -107,5 +109,5 @@ That's the whole discipline. Everything else is per-tier native mechanism.
 2. **One origin on the Mac.** The Mac bakes the SPA for setup and recovery but
    runs the box's live copy once paired, so with the box unreachable it can
    show the reconnect screen and none of the owner's documents. See
-   `local-ui-plan.md`.
+   [local-ui.md](../record/local-ui.md).
 3. **Keep shrinking the collectors into the box.**

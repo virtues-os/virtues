@@ -7,11 +7,11 @@
 > **Scope decision (locked):** No on-box LLM *generation* this round (revisit in
 > a few years as edge chips improve). The big chat model stays in the cloud
 > (Vercel AI Gateway). So the board only has to run two small encoder models —
-> embedding + rerank — and the choice rides on just **two user-facing moments.**
+> embedding + rerank — and the choice depends on just **two user-facing moments.**
 
 ---
 
-## The two moments that matter (and nothing else)
+## The two user-facing moments this bench measures
 
 1. **Live rerank, mid-chat.** Every semantic search the agent runs reranks ~30
    candidates *before* the cloud LLM answers — so rerank latency is additive to
@@ -24,7 +24,7 @@
 That's it. Indexing-at-rest, NPU, perf-per-watt sweeps, generative throughput —
 **all out of scope** for this decision (see "Explicitly not testing" at the end).
 
-The reframe that keeps this honest: local rerank only matters **relative to the
+How to interpret the results: local rerank only matters **relative to the
 cloud LLM's time-to-first-token** (seconds). If rerank p95 is well under the
 **~300–500ms perceptibility threshold**, the board is a non-factor for chat and
 you choose on the PDF number + cost/heat. The benchmark exists to find out which
@@ -195,8 +195,9 @@ needed; out of scope here.)
 2. **Test B wall-clock** — is the 100-page foreground wait tolerable on CPU? If
    yes on both, the embed backend barely matters either.
 3. If 1 and 2 both come back "fine on both boards" (likely), **choose on cost,
-   heat, power, availability, and ecosystem — not these benchmarks.** The point
-   of running them is to *earn the right* to say the inference perf is a wash.
+   heat, power, availability, and ecosystem — not these benchmarks.** The
+   benchmarks exist to show, with measurements, that inference performance does
+   not separate the boards.
 
 ---
 

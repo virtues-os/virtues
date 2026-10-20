@@ -4,9 +4,9 @@ Written 2026-09-29, corrected 2026-10-05. Built August to September 2026. The
 mobile app runs a UI bundle baked into its binary and is built to upgrade it
 over the air from the box it is paired with, forward only, with rollback on a
 failed boot. **No device ever completed that loop before 2026-10-05**: see
-"It never worked end to end" below. The Mac half (the Mac taking its own copy
+"Why the update loop never completed before 2026-10-05" below. The Mac half (the Mac taking its own copy
 of the SPA) is built on `wave`, unreleased, and owned by
-`agents/plan/local-ui-plan.md`.
+[local-ui.md](local-ui.md).
 
 The code:
 
@@ -23,13 +23,13 @@ The code:
 
 On mobile the baked bundle can only change through an App Store release, so a
 UI fix that is ready today waits days. The box already has the newer build.
-OTA is the path from one to the other, over the link the app already has to
-the box: no CDN, no cloud.
+OTA moves the newer build from the box to the phone over the link the app
+already has to the box, with no CDN or cloud service involved.
 
 The box is the only source because it is the only source guaranteed to carry
 the API the bundle it serves was built against.
 
-## The premise that died
+## The original assumption, and why we dropped it
 
 The design began from a stronger claim: if the box is the only place a bundle
 can come from, the UI can never be ahead of the box, and a class of bug
@@ -37,7 +37,7 @@ becomes impossible. The motivating case was a phone build calling a day
 endpoint with a `tz` parameter the box had no handler for. The box ignored the
 unknown parameter, and the phone showed the wrong midnight with no error.
 
-That invariant was retired on 2026-09-14, knowingly. A phone updates on
+We dropped that invariant on purpose on 2026-09-14. A phone updates on
 Apple's cadence and a box when its owner runs `virtues upgrade`, so a shell
 newer than its box is the ordinary state. "Take whatever the box serves" then
 meant a fresh App Store build OTAs itself *backwards* on first launch, and
@@ -47,8 +47,8 @@ were never tested together. So the bundle only moves forward: an offer must
 be provably newer than anything the device can already serve, and an App
 Store update that overtakes the overlay puts the device back on its baked
 build. The client runs whichever of {baked, box-served} is newer, and the
-UI-ahead-of-box class is possible again. The structural answer, if it
-returns, is a bundle declaring a minimum *box* version, mirroring
+UI-ahead-of-box class is possible again. If we want to rule this class out
+again, the fix is a bundle declaring a minimum *box* version, mirroring
 `minShellVersion`. Nothing enforces that today.
 
 ## The safety rules
@@ -57,8 +57,8 @@ returns, is a bundle declaring a minimum *box* version, mirroring
    compiled into a separately versioned binary. Each bundle declares
    `minShellVersion`; the shell exports `COMMAND_SURFACE_VERSION`; a bundle
    needing more than the shell has is never applied. The same constant backs
-   `shellSupports()` in `bridge.ts`, which features use to degrade
-   deliberately instead of failing inside an unknown command. This defect was
+   `shellSupports()` in `bridge.ts`, which features use to fall back to
+   reduced behavior instead of failing inside an unknown command. This defect was
    live before OTA existed: the Mac already rendered box-served JS against its
    own binary with no negotiation. `minShellVersion` is 9: no shell below
    surface 9 can run a box bundle at all (it served new chunks as
@@ -79,8 +79,8 @@ returns, is a bundle declaring a minimum *box* version, mirroring
    fetched again until the box offers a different build.
 4. **Fail-safe resolution.** Every lookup answers "use the baked bundle"
    unless an overlay is provably good: pointer present, directory there,
-   `index.html` inside, manifest parses. Corrupt state is the default path,
-   not an error path. The worst case is a white screen for up to two
+   `index.html` inside, manifest parses. Corrupt state falls through to the
+   baked bundle like any missing overlay; it is not handled as an error. The worst case is a white screen for up to two
    watchdog periods on the Mac (on a phone, until the app is next opened),
    then the version the app shipped with.
 
@@ -95,8 +95,8 @@ up.
 Found 2026-08-05: web storage is partitioned by origin. The Mac served the UI
 from `http://localhost:7117` when the box answered and from `tauri://localhost`
 (the baked build) when it did not, so an offline fallback booted against an
-empty IndexedDB and showed none of the documents that were its reason to
-exist. It was reverted the same day, and the comment at the Mac's launch
+empty IndexedDB and showed none of the documents it was meant to show
+offline. It was reverted the same day, and the comment at the Mac's launch
 branch in `main.rs` says not to re-add it alone.
 
 The same trap applied to OTA: serving an overlay from a new scheme adds a
@@ -105,18 +105,18 @@ therefore moved once, before OTA shipped, from Tauri's `tauri://localhost` to
 its own `virtues://localhost` (Tauri gives no hook to intercept its own
 scheme). That cost one IndexedDB reset, which was a cache: pages persist on
 the box and re-sync. From then on the origin never moves, so applying a
-bundle cannot cost local state. **The rule: one origin across every state a
-client can be in.** `local-ui-plan.md` applies it to the Mac.
+bundle cannot cost local state. **A client must use one origin in every state
+it can be in.** [local-ui.md](local-ui.md) records how it applies it to the Mac.
 
-## Apple's position
+## App Store rules
 
 App Store rules on downloaded executable code carve out JavaScript, HTML and
 CSS run by WebKit, the same basis as Expo Updates, CodePush and Capacitor Live
 Updates. Native code still ships only through the store. The same reasoning
 rules out the phone simply pointing a webview at the box the way the Mac did:
 a remote-URL wrapper invites the minimum-functionality guideline, pays a cold
-load over the loopback on cellular, and makes a collector's UI hostage to
-connectivity.
+load over the loopback on cellular, and makes a collector's UI unusable without a
+connection.
 
 ## What was built, against the original checklist
 
@@ -129,15 +129,15 @@ connectivity.
   client never displays a version it has not loaded.
 - The boot-ok beacon and rollback.
 
-Owned by `local-ui-plan.md`: the Mac adopting the resolver (built on `wave`,
+Recorded in [local-ui.md](local-ui.md): the Mac adopting the resolver (built on `wave`,
 unreleased) and the offline copy pass. The mobile path is compiled for
 `cfg(mobile)`, so it covers Android builds too; everything above was written
 against iOS.
 
-## It never worked end to end
+## Why the update loop never completed before 2026-10-05
 
 Found 2026-10-05, when a Mac running the own-copy build stayed on its baked UI
-through a box upgrade. Three defects, each enough on its own:
+through a box upgrade. Three defects, each of which broke the loop on its own:
 
 1. **The box build had no `index.html`.** `pnpm build` writes only SvelteKit's
    `200.html`; the iOS and Mac bakes each copied it to `index.html` for their

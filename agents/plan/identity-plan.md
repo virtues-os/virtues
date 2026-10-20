@@ -3,7 +3,7 @@
 **Status: proposed, not built.** For the owner's review. Supersedes the "entity
 merge" line in [wiki-notes-plan.md](wiki-notes-plan.md). Settled elsewhere and
 assumed here: identity is deterministic or owner-made, never a model's guess
-(the ER research that killed semantic entity resolution).
+(the ER research that rejected semantic entity resolution).
 
 ## What is wrong, measured on one box (2026-10-05)
 
@@ -21,22 +21,23 @@ assumed here: identity is deterministic or owner-made, never a model's guess
 1. **Every unseen sender becomes a person.** `resolve_or_create_person_with_name`
    (`entity_resolution/people.rs:686`) and its calendar twin mint a
    `wiki_people` row for any email address they have not seen. Nothing checks
-   whether a human is on the other end. `entities.rs:363` already names the
-   bug; the only remedy is reclassifying one row at a time by hand.
+   whether a human is on the other end. A comment at `entities.rs:363` already
+   describes the bug; the only fix today is reclassifying one row at a time by
+   hand.
 2. **Identity is one address.** The id is a hash of the email
    (`people.rs:749`), so one human with three addresses is three people.
 3. **Relays become people.** A notification sent "via" a service from a
    no-reply address is one row, named after whoever it relayed first.
 4. **Contacts fold in, but the duplicates stay.** A phone contact matches by
    email first and phone second (`ios_ingest/contacts.rs:164`). Its data is
-   merged into the first match, and the other rows that already hold its other
-   addresses survive. Later lookups by address then pick an arbitrary
+   merged into the first match, and the other rows that already store its other
+   addresses are kept. Later lookups by address then pick an arbitrary
    `LIMIT 1` match. The phone match is a substring `LIKE`, which can join
    people who only share digits.
 5. **Nothing can merge.** `reclassify_person_as_organization` exists; merge
    does not.
 
-## The model: what was observed, apart from who it is
+## Data model: identifiers stored separately from subjects
 
 Three layers, in ELT terms:
 
@@ -58,12 +59,12 @@ without knowing anything happened.
 
 This also replaces the slowest query on the box: the `handle_owner` CTE in
 `resolve_message_senders` (83 slow-query warnings in three days) unnests every
-person's handles on every batch. An indexed identifier table is a lookup.
+person's handles on every batch. With an indexed identifier table it becomes an index lookup.
 
 ## Rules
 
-**Creating a person needs two-way contact.** An identifier earns a person only
-when the owner has written to it, it is on a contact card, or it shares a
+**Creating a person needs two-way contact.** A person is created for an identifier
+only when the owner has written to it, it is on a contact card, or it shares a
 meeting with the owner. A one-way sender gets no person. If it carries
 automated signals, it is filed under an organization keyed by its domain.
 
@@ -95,13 +96,13 @@ Automated signals, any one of which is enough:
 4. A redirect row keeps `/person/<loser>` opening the survivor, including links
    already written into articles.
 
-Undo is reassigning the identifiers back, which the assignment table makes
-mechanical.
+To undo a merge, reassign the identifiers back; with the assignment table
+that is a plain update.
 
 ## Order
 
-1. **Stop the bleeding.** The two-way creation rule and the automated signals,
-   at the resolver. No schema change. New junk stops.
+1. **Stop creating bad rows.** Add the two-way creation rule and the automated
+   signals to the resolver. No schema change. This stops new junk rows.
 2. **One-time cleanup.** Reclassify existing people whose every identifier
    is automated and never written to, with a dry-run count first.
 3. **Identifiers and assignments.** The two tables, backfilled from existing
@@ -109,7 +110,7 @@ mechanical.
    Contacts match on exact normalized values only.
 4. **Merge,** with redirects and undo, and the suggestion queue in the UI.
 
-Steps 1–2 are small and make the People list honest. Steps 3–4 are the real
+Steps 1–2 are small and make the People list accurate. Steps 3–4 are the real
 fix and need a migration each.
 
 ## Open

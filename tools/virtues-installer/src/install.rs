@@ -239,7 +239,7 @@ pub async fn install_inference(cfg: &InstallConfig) -> Result<()> {
 }
 
 /// libpdfium — native PDF text extraction for the `document_extraction`
-/// action (researcher-plan D1). Mode-independent (CPU parse; runs the same on
+/// action (agents/record/researcher.md D1). Mode-independent (CPU parse; runs the same on
 /// the Dragon and a DIY box), SHA-verified from the models bucket like every
 /// other model asset, skipped when already present.
 pub async fn install_pdfium(cfg: &InstallConfig) -> Result<()> {

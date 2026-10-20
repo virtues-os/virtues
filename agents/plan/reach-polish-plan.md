@@ -8,9 +8,10 @@ this plan when they ship.
   in-process reach plugin and its `:7117` loopback reads the warm client per
   connection, so a rebuild would reach it, but nothing ever calls
   `recover_connection` on desktop. Only `ReachMonitor.swift` (iOS) does. Wire
-  sleep/wake and network-change events on macOS to the same function. This
-  overlaps the "same recovery" goal of `local-ui-plan.md`; whichever lands
-  first owns it.
+  sleep/wake and network-change events on macOS to the same function. The Mac's
+  page now stays up when the box is gone and shows the reconnect banner
+  ([record/local-ui.md](../record/local-ui.md)); this item is the native
+  reconnect underneath it.
 - **No recovery counter.** `stats.rs` counts a rebuild as an ordinary `dials`
   increment, so a wedge recovery cannot be told apart from a cold build.
   Count pokes that healed and rebuilds separately; that is the only way to

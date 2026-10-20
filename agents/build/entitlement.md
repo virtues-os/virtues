@@ -11,7 +11,7 @@
 > collapsed to a **linked prepaid ledger** in
 > [`0005_accounts_ledger.sql`](../../services/virtues-api/migrations/0005_accounts_ledger.sql),
 > which drops the `vouchers` and `entitlements` tables outright. Section 1
-> states plainly what was traded away. The voucher design is preserved as
+> states what was traded away. The voucher design is preserved as
 > history in [§12](#12-the-voucher-model-superseded) because it is still the
 > intended v2 destination.
 
@@ -19,16 +19,16 @@
 
 ## 1. The privacy posture — read this first
 
-**As shipped, identity and usage are linkable by whoever holds both databases.**
+**As shipped, anyone with access to both databases can link identity to usage.**
 
 Atlas assigns each customer an opaque `account_id`, and **shares that same
 `account_id` with virtues-api**, which keys the wallet on it. A subpoena of both
 databases joins on that column: Atlas turns `account_id` into a Stripe customer
 and an email; virtues-api turns it into a spend history. There is no
-cryptographic obstacle to that join — the wall the earlier spec described was
-removed deliberately, not breached.
+cryptographic obstacle to that join. The separation the earlier spec described
+was removed as a design decision; nobody broke through it.
 
-What remains true, and is the part worth defending:
+These properties still hold and are worth protecting:
 
 - **`account_id` is an opaque random string** (`acct_<32hex>`) — never a Stripe
   id, never an email.
@@ -36,7 +36,7 @@ What remains true, and is the part worth defending:
   It never stores prompts, completions, or any personal data.
 - **The proxy knows nothing about people** on its own. It needs Atlas to turn an
   account into a person.
-- **No map from a network identity to an account.** Atlas once held
+- **No map from a network identity to an account.** Atlas once stored
   `iroh_endpoints` — every box's and every paired device's EndpointId, keyed to
   the account, refreshed on each pairing change — to answer the relay's
   admission callout. Callout and table are both deleted (migration 0018), so
@@ -48,9 +48,9 @@ What is *not* true today, and must not be claimed:
 - ~~"A subpoena of both databases cannot tie usage to a person."~~ It can.
 
 Blind unlinkability ([RFC 9474](https://www.rfc-editor.org/rfc/rfc9474.html))
-remains the documented v2 goal. Until it ships, the honest claim is
-*data minimization* — we hold little, and none of it is content — not
-*structural unlinkability*.
+remains the documented v2 goal. Until it ships, the accurate claim is
+*data minimization*: we store little, and none of it is content. We cannot
+claim *structural unlinkability*.
 
 **Lint 10** (`tools/arch-lint.sh`) still enforces the narrower rule that
 survives: Atlas's *customer-identity* columns (`stripe_customer_id`,
@@ -92,7 +92,7 @@ ledger(id PK, account_id FK, micros, kind, ts, ...)      -- append-only, source 
 blocklist(key_hash PK, reason_code, blocked_at, expires_at)
 ```
 
-**`accounts.balance_micros` is a projection**, not the truth: it must always
+**`accounts.balance_micros` is a projection** of the ledger. It must always
 equal `SUM(ledger.micros)` for that account, and is rebuildable from the ledger
 at any time. The ledger is append-only; nothing is ever updated in place.
 
@@ -166,9 +166,10 @@ month boundaries make renewal accounting and the sweeper simple.
 
 ## 6. What the linked model gave up, and got back
 
-The voucher model bought structural unlinkability at the cost of every
-operation that needs to address one customer. Collapsing it reverses both
-columns of that trade.
+The voucher model provided structural unlinkability, but it made every
+operation that needs to address one customer impossible or awkward. The linked
+model reverses both sides: those operations now work, and unlinkability is
+gone.
 
 | Capability | Voucher model | Linked model (ships today) |
 |---|---|---|
@@ -233,7 +234,8 @@ voucher model.
 
 - **virtues-api sweeper** (`sweeper.rs`): hourly. Deletes `accounts` past
   `expires_at + ACCOUNT_GRACE_DAYS` (which cascades to `device_keys` and
-  `ledger`), and expired `blocklist` rows. Space reclamation, not privacy work.
+  `ledger`), and expired `blocklist` rows. It exists to reclaim space; it does
+no privacy work.
 - **Atlas**: no sweeper. It stores no usage and no per-call state.
 
 ---
@@ -304,12 +306,14 @@ preserved.
 - **Blind unlinkability (v2).** Restoring the property §1 says we gave up, via
   [RFC 9474](https://www.rfc-editor.org/rfc/rfc9474.html) blind signatures
   rather than the old disposable-voucher scheme. This is the one deferred item
-  with a user-visible promise attached, so it should not drift quietly.
+  with a user-visible promise attached, so it should not be dropped without
+anyone noticing.
 
 **Daily-cap propagation** is no longer deferred or latent: Atlas addresses the
 account directly, so a change to `customers.daily_cap_micros` can be pushed with
 the next `POST /internal/credit`. The voucher model's "privacy-preserving
-latency" was a consequence of the wall and went away with it.
+latency" was caused by the separation between the two databases, and it went
+away when the separation did.
 
 ## 11. Behavioral blocklist
 
@@ -347,8 +351,9 @@ unrecoverable.
 
 ## 12. The voucher model (superseded)
 
-Kept because it is the intended v2 destination, not because it describes
-anything running today. Every table and endpoint named here is deleted.
+This section is kept because the voucher model is the intended v2 destination.
+It does not describe anything running today. Every table and endpoint named
+here is deleted.
 
 Atlas and virtues-api shared **no column**. The bridge between them was a
 **disposable voucher** that neither side retained as a link:
@@ -364,12 +369,11 @@ Atlas and virtues-api shared **no column**. The bridge between them was a
    bearer, marked the voucher redeemed, and **discarded which bearer redeemed
    it**.
 
-The voucher was a relay baton: it passed from billing to the gate *through the
-user's own home server*, and the instant it was spent both sides forgot it. The
-two halves touched a shared object for a moment and kept no record of the touch.
+The voucher passed from billing to the gate *through the user's own home
+server*, and once it was spent neither side kept any link to the other.
 `vouchers.redeemed_at` recorded **that** a voucher was spent, never **which
-bearer** spent it, and that discard is what kept the chain from ever living in
-one place.
+bearer** spent it. Discarding the bearer is what kept the full identity-to-usage
+chain from ever being stored in one place.
 
 Renewal was the OAuth refresh pattern — `bearer_expired` (402) → renew → retry —
 which is why the client had a renew-and-retry path and why `renew.rs` still

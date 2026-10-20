@@ -9,7 +9,7 @@ through the connect page (c436001b); once someone is in the app, a skipped step
 opens as a tab (9329c6d2). A server goes by "Virtues NNNN" before it has an
 owner and "<name>'s server" after (0135ba1f). Shipped in PR #100.
 
-How the flow works is in [onboarding.md](../build/onboarding.md#setup). Its four laws are there too. Delete this file when the list below is empty.
+How the flow works, and the four rules it follows, are in [onboarding.md](../build/onboarding.md#setup). Delete this file when the list below is empty.
 
 ## Open
 
@@ -27,10 +27,10 @@ How the flow works is in [onboarding.md](../build/onboarding.md#setup). Its four
 - **Explain Bluetooth before the system prompt.** Today the OS sheet is the
   first mention of Bluetooth anywhere in Setup. One screen in our own words
   before it (from the [establishing-screen specimen](specimens/establishing-screen/README.md)).
-- **Where the subscription is offered** — unresolved. Setup makes Subscription
+- **Where the subscription is offered.** Not decided. Setup makes Subscription
   a required step with no skip; `connect.html` and the open-relay record say
   setup never mentions money and the subscription is offered the first time
-  hosted AI is used. Decide once; tracked in [account-plan.md](account-plan.md).
+  hosted AI is used. Pick one; tracked in [account-plan.md](account-plan.md).
 - **Paying outside the US.** US storefront iPhone apps may link out to web
   checkout, which is what Subscription does. Anywhere else needs in-app
   purchase or a regional arrangement. Decide before the iOS app is sold
@@ -52,5 +52,5 @@ How the flow works is in [onboarding.md](../build/onboarding.md#setup). Its four
 - **Answering the interview out loud**: needs a transcription route for the
   web app. Until then touch screens point at the keyboard's dictation.
 - **Your city as the drawing**: needs an image route and storage, and a
-  drawing that gets the city wrong costs more than it delights. Decide before
-  building.
+  drawing that gets the city wrong does more harm than a correct one does good.
+  Decide before building.

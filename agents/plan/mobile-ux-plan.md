@@ -33,11 +33,11 @@ table (`UniversalDataGrid`), Return as newline on phone
   toolbar or the native callout on touch. Slot it into the pages-editor
   roadmap rather than a separate track.
 
-## Decisions still owed
+## Open decisions
 
 - **Pinch-zoom is disabled** on mobile (`hooks.client.ts` sets
   `maximum-scale=1, user-scalable=no`), and 15px inputs rely on that to avoid
-  iOS auto-zoom. Needs a conscious accessibility sign-off; if zoom returns,
+  iOS auto-zoom. This needs an explicit accessibility sign-off; if zoom returns,
   inputs go to 16px first.
 - **iPad gets the phone UI** (`__VIRTUES_MOBILE__` is injected for every iOS
   device, no idiom check). Deferred; the desktop layout (sidebar, split) is

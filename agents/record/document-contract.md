@@ -16,7 +16,7 @@ order, and what was left.
 | 0, foundations | `yrs` 0.18 to 0.28 and `y-sync` dropped; `crates/virtues-document` (contract, ingest, tree, ops, render, converter) and the conformance corpus both sides read; the contract on the page socket (`?contract=N`, 4426 below a page's contract, 4422 for an update outside it, checked before it is applied or relayed); `API_VERSION` 2 |
 | 1, the server handles both formats | `app_pages.format` (migration 0048); every writer of markdown converts it for a block page; History cut and restored on the server; publishing a block page; `API_VERSION` 3 |
 | 2, the editor | `DocumentEditor.svelte` on `lib/document/`, with every CodeMirror feature kept, replaced or cut by name (the table below); markdown converts in the page (the crate compiled to WebAssembly); a file's block lands at its final address and its bytes follow (`API_VERSION` 4) |
-| 3, the model's tools | `get_page_content` as canonical HTML with block ids and a read base; `edit_page` as block ops judged against what reads showed (`check_ops`); durable read bases (`app_page_read_bases`) |
+| 3, the model's tools | `get_page_content` as canonical HTML with block ids and a read base; `edit_page` as block ops checked against what reads showed (`check_ops`); durable read bases (`app_page_read_bases`) |
 | 4, widgets | mentions, media, headings 1 to 6, table alignment, callouts, applets |
 | 5, user pages | `virtues pages convert`, the startup switch, "Before blocks" and "Moved to blocks", a device's `v2-<id>` copy sent once |
 | 6, articles | contract 2 (`footnote`, `figure`, `veil`); the writers' door (`YjsState::draft`, `revise_ops`); an article moves at first open; migration 0051 |
@@ -70,7 +70,7 @@ slice 7 turns block pages on rather than wait for the gate:
 
 - `VIRTUES_TREE_PAGES` and `VIRTUES_CONVERT_PAGES` are on unless set to `0`
   (`pages::on_unless_zero`), kept as kill switches. A user page created
-  with no format holds blocks; startup moves every markdown user page.
+  with no format is a block page; startup moves every markdown user page.
   `VIRTUES_TREE_ARTICLES` and `VIRTUES_CONVERT_ARTICLES` stay off unless
   set to `1`, and an opened article still moves at its first open only
   with them on.
@@ -90,7 +90,7 @@ writing markdown all still reach them.
 
 ## Left open
 
-- **The gate, passed over.** Block pages default on without it. Still
+- **The release gate was skipped.** Block pages default on without it. Still
   worth running: a physical iPhone in the Tauri web view (dictation,
   selection handles, IME composition while the model edits the same block,
   the keyboard accessory, a widget's controls by touch); Android if its app
@@ -111,17 +111,17 @@ writing markdown all still reach them.
   Whether to move it anyway, losing what the move reports, is open.
 - The converter's `regex` is a quarter of its WebAssembly module; a small
   content-match automaton would save about 85 KB gzip.
-- An upload's state is held in memory and lost on a restart; a table
+- An upload's state is kept in memory and lost on a restart; a table
   (`app_media_uploads`) would let any device finish one.
 - A table row too long for any read is listed whole; an edit that takes
   the blocks in its cells is refused until they are read by id.
 - `revise_ops`'s similarity threshold (0.5) is unmeasured.
 - `escape_md` escapes more than it must (14 of 126 articles on the measured
   box).
-- Ten day pages hold rows of pipes with no rule row; whatever wrote them
+- Ten day pages contain rows of pipes with no rule row; whatever wrote them
   should write the rule row.
-- A page that moves when read moves on a read; serving a converted copy
-  without moving would take a second path.
+- Reading a markdown page moves it; serving a converted copy without
+  moving the page would need a second code path.
 
 ## Parity with the CodeMirror editor
 
@@ -146,7 +146,7 @@ What a markdown page's editor did, and what a block page does instead.
 | Typed `![name](url)` draws what its address is: an image, audio, a video, a file | Kept: the input rule in `schema.ts`, by `kindOfLink`; `![name\|600](url)` is an image's width (`altWidth`) |
 | Link menu, hover preview of a ref and of a link elsewhere | Kept: `links.ts`; on a read-only page a tap opens a link; ⌘ or Ctrl-click off a link is a plain click, never a selection of the whole block |
 | Selection toolbar: never during a drag, a keyboard selection waits | Kept: `toolbar.ts` |
-| Ask AI, a code block included | Kept: `treeAiSession.ts`; the words a rewrite will replace are washed while the model thinks (`setAiTelegraph`); in a code block it replaces the selection, across a code block's edge it is not offered; on an article the model reads each source as its marker, its note after the context, and a veiled phrase inside `⟦ ⟧`, a rewrite writes the words replacing a sourced sentence before that sentence's source (which no suggestion can hold, so it stays), leaves out a marker naming any other, and writes `⟦…⟧` veiled |
+| Ask AI, a code block included | Kept: `treeAiSession.ts`; the words a rewrite will replace are washed while the model thinks (`setAiTelegraph`); in a code block it replaces the selection, across a code block's edge it is not offered; on an article the model reads each source as its marker, its note after the context, and a veiled phrase inside `⟦ ⟧`, a rewrite writes the words replacing a sourced sentence before that sentence's source (which no suggestion can contain, so it stays), leaves out a marker naming any other, and writes `⟦…⟧` veiled |
 | Copy: a selection is its markdown; a range of table cells is tab-separated text | Kept: `clipboardText` in `markdown.ts`; a copy inside one list item is its blocks |
 | The platform's undo (shake, three fingers, Edit > Undo) | Kept: `editor.ts` routes `historyUndo` to y-undo, as ⌘Z does |
 | Focus and typewriter | Kept: `focus.ts` |

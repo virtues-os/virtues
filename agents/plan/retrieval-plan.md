@@ -20,8 +20,8 @@ delta). `search()` is safe because it uses rerank scores as order only and then
 min-max normalizes. Anything that needs an **absolute** threshold is not:
 
 - the magnet still admits by `rerank − anchor_baseline ≥ DELTA`, injecting
-  known-irrelevant anchor docs (`magnet.rs`) — a pragmatic hack from the spike,
-  not best practice;
+  known-irrelevant anchor docs (`magnet.rs`) — a workaround from the spike that
+  should be replaced;
 - the wiki-retrieval relevance cutoff will need the same.
 
 Give the reranker client (`search/reranker.rs`) a per-backend calibration so
@@ -62,9 +62,10 @@ Questions it answers:
 - Does RRF over 2–3 phrasings beat single-query recall enough to justify the
   fan-out, measured rather than assumed?
 
-## 4. Write the two-engine doctrine down
+## 4. Document the two-engine rule
 
-*Prose/aboutness → `search()`; structured/time → SQL; no third path.* It is the
-antidote to retrieval methods multiplying (the magnet's bespoke ANN was the one
-violation, now retired). It belongs in `agents/build/` as a short section, so a
+Questions about prose or aboutness go to `search()`; structured and time-based
+questions go to SQL; there is no third path. The rule keeps retrieval methods
+from multiplying (the magnet's own ANN was the only exception, and it has been
+removed). It belongs in `agents/build/` as a short section, so a
 new retrieval feature is a thin caller of one of the two engines.

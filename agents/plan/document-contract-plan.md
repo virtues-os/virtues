@@ -7,7 +7,7 @@ server both read. Decided in
 measured in [record/document-contract-spike-2026-10-07.md](../record/document-contract-spike-2026-10-07.md).
 The chat composer is not part of this and stays on CodeMirror.
 
-**Death condition:** every page is a tree page, the CodeMirror page editor and
+**Delete this plan when:** every page is a tree page, the CodeMirror page editor and
 the Y.Text page paths are deleted, and a record describes what shipped.
 
 Revised 2026-10-07 after three read-only audits of the first draft (claims
@@ -65,22 +65,23 @@ From the spike and the audits. Each is owned by a slice below.
    must skip remote transactions or every client rewrites ids.
 8. **HTML has no self-closing custom elements;** `<virtues-applet .../>`
    swallows what follows. Ingest refuses it by name.
-9. **A wait's result written at a held place races undo and every device.**
-   A paste that waited on the server's converter, or an upload that waited
-   for its address, was written after the wait at a place held for it, and
-   each review round found the next thing the hold did not carry: the
-   selection, landing order, undo, another device's edit. Nothing in the
-   editor lands after a wait: a paste converts in the page (the crate's
+9. **A result written into the page after a wait races undo and every
+   device.** A paste that waited on the server's converter, or an upload that
+   waited for its address, was written after the wait at a position reserved
+   for it, and each review round found something else the reservation did not
+   preserve: the selection, landing order, undo, another device's edit. Now
+   the editor writes nothing after a wait: a paste converts in the page (the crate's
    converter compiled to WebAssembly), and a file's block goes in at once at
    its final address, its bytes following outside the page.
-10. **A read base filled from the page, not from what a read showed, lets a
-   write take what no read showed.** Each late review round found the next
-   way through: a block too long for any read counted as seen, a delete
-   stood alone and its rewrite came in the next edit, a callout was taken
-   whole around a list read in part. A read's text and its base are read
-   off one value (`virtues_document::Shown`), the base holds each block on
-   its own (`Seen`), and a batch is judged by what it does to the page
-   (`check_ops`), not op by op.
+10. **If a read base is filled from the page instead of from what a read
+   showed, a write can change blocks that no read showed.** Each late review
+   round found another case: a block too long for any read was counted as
+   seen; a delete arrived alone and its rewrite came in the next edit; a whole
+   callout was taken although only part of a list inside it had been read.
+   Now a read's text and its base both come from one value
+   (`virtues_document::Shown`), the base stores each block separately
+   (`Seen`), and a batch is checked by its effect on the whole page
+   (`check_ops`) instead of op by op.
 
 ## Slices
 
@@ -100,7 +101,7 @@ the device checks pass. Until then tree pages exist only behind a flag.
   airlock's `node --test`, no vitest today).
 - **Version guard, built on what local-ui shipped** (`api_version.rs`
   `API_VERSION`, `boxApi.ts` `MIN_BOX_API`; see
-  [local-ui-plan.md](local-ui-plan.md)), not on the unbuilt
+  [record/local-ui.md](../record/local-ui.md)), not on the unbuilt
   [version-compat-plan.md](version-compat-plan.md):
   - the websocket URL carries the client's contract version; a client that
     sends none is contract 0;
@@ -141,8 +142,8 @@ Tree pages are created only by tests and the flag in this slice.
 - **Publishing:** `api/publish_page.rs` decodes `yjs_state` as Y.Text and
   would publish a tree page blank. Port its rules, not just the HTML: refs go
   out as names, the names are listed for the Share sheet, Drive images are
-  inlined, outside images counted. A mention leaves as its label; an applet
-  leaves as a static snapshot or not at all. Day article veil spans
+  inlined, outside images counted. A mention is published as its label; an
+  applet is published as a static snapshot or not at all. Day article veil spans
   (`⟦…⟧`, `publish_page.rs:47`) keep their handling.
 - **The chat's page context:** `api/chat.rs` tells the model to use
   find/replace with an empty `find` for a full rewrite. Tree pages get the new
@@ -156,9 +157,9 @@ reusing `RefPicker`, `SlashMenu`, `SelectionToolbar`, `PageOutline`,
 Typography uses the `--md-*` tokens ([build/design-grammar.md](../build/design-grammar.md)
 makes them the one definition the read path and the editor share).
 
-Parity with today's editor, each kept or cut by name. What was built
-keeps that table in [build/document.md](../build/document.md#parity-with-the-codemirror-editor),
-which outlives this plan:
+Parity with today's editor: each feature below is explicitly kept or cut.
+[build/document.md](../build/document.md#parity-with-the-codemirror-editor)
+keeps the table of what was built, and outlives this plan:
 
 - task lists and the `/task` keyword (page checkboxes stay page
   content); slash commands; find-in-page; word and
@@ -189,8 +190,8 @@ which outlives this plan:
     content-match automaton, as ProseMirror's `ContentMatch`, would save
     about 85 KB gzip.
   - Open, needs a migration: a page's file is stored under its own id, so
-    the same file given twice is stored twice, and how an upload stands is
-    held in memory (stalled past 2 minutes as failed, `STALLED_AFTER`),
+    the same file given twice is stored twice, and upload status is
+    kept in memory (stalled past 2 minutes as failed, `STALLED_AFTER`),
     lost on a restart. A table `app_media_uploads` (id with a CHECK on its
     shape, the bound Drive file never changed once set, state read from
     timestamps) keeps content-addressed storage and lets any device "Choose
@@ -216,31 +217,32 @@ which outlives this plan:
   carry no id (`page_reads::opens`). An edit that would take the blocks in
   its cells is refused until they are read by id, and the refusal names
   them; opening a row through its cells, so one read shows them in place,
-  is for reading, not safety.
+  would make reading easier but does not change safety.
 - **Read bases are durable** (a table, not the doc cache) and keyed by a hash
   of the tree, which changes on deletion (trap 6). A write whose base is gone
   is refused if its block changed, not guessed at. Per-block revisions are
-  the alternative to weigh: survive anything, but can refuse only, never
-  merge.
+  the alternative to weigh: they survive anything, but they can only refuse a
+  write, never merge it.
 - **An empty `find` replaces the whole page with no check today**
   (`server/yjs.rs`, `apply_text_edit`). The new tool has no unchecked
   whole-page write.
 - The four page tools share the chat mode's "pages" group budget, 2,400
   characters (`api/chat_mode.rs`, `tool_definitions_stay_inside_their_budgets`),
-  which binds before the sudo total.
+  which runs out before the sudo total does.
 - The CLI: `virtues page edit --find --replace` and `page get` (`cli/data.rs`)
   get the block form; find/replace stays for markdown pages until slice 7.
   Applets get `edit_page` too ([applets/AGENTS.md](../../applets/AGENTS.md)).
 - **Measure before default:** fixed real edit tasks on real pages, run
   against the production chat models and the applet runner's, counting
   refusals, recoveries on retry, and wrong edits.
-- Replacing a block that holds an inline widget is a whole-block swap in the
-  spike; patch the text around the widget so a person's caret holds.
+- Replacing a block that contains an inline widget is a whole-block swap in
+  the spike; patch the text around the widget so a person's caret stays in
+  place.
 
 ### 4. Widgets and contract coverage
 
-Each: a contract entry, a node view, a markdown export rule, conformance
-cases.
+Each needs a contract entry, a node view, a markdown export rule and
+conformance cases.
 
 - **Mention** as an inline atom. Its export must match today's syntax byte
   for byte, `[@Label](/type/id)`, because backlinks search `content` for
@@ -262,14 +264,14 @@ cases.
 
 ### Gate: new pages default to the tree
 
-Slices 0 to 4 shipped, the device checks below passed, the model measurement
-acceptable. Then `kind = 'page'` pages are created as `tree`.
+When slices 0 to 4 have shipped, the device checks below have passed and the
+model measurement is acceptable, `kind = 'page'` pages are created as `tree`.
 
 ### 5. Move user pages
 
-- Dry run on a copy of a real box. The bar: no character lost, no item's
-  number changed (an ordered list keeps each one, `listItem.value`), every
-  change reported. (The spike's 179-page corpus was mostly articles; about 57 were
+- Dry run on a copy of a real box. It passes when no character is lost, no
+  item's number changes (an ordered list keeps each one, `listItem.value`), and every
+  change is reported. (The spike's 179-page corpus was mostly articles; about 57 were
   user pages.)
 - Per page: evict the doc from the cache and drain its queued save
   (`DocCache.held`, the save queue) so no Y.Text save lands after the flip;
@@ -313,22 +315,22 @@ written by machines.
 
 **Built** on the integration branch (2026-10-11), as
 [build/document.md](../build/document.md) describes ("Articles"): contract
-2's `footnote`, `figure` and `veil`; the writers' door
+2's `footnote`, `figure` and `veil`; the writers' entry point
 (`YjsState::draft`, `write_draft`, `revise_ops`); the edition as the export,
 compared by re-projection; the move at first open and in the run
 (`virtues pages convert --articles`); migration 0051 (the constraint
 dropped, `updated_at` kept on a change of format by the trigger, not by
 turning it off, and `tree_lineage`); and the readers made escape-aware.
-The dry run on a copy of a real box (126 articles, 95 day pages) met the
-bar: no text or address lost, every article's syntax counted on the bar,
-every untouched article still untouched, and the day page's readers read
+The dry run on a copy of a real box (126 articles, 95 day pages) passed:
+no text or address was lost, every article's syntax was counted in the
+check, every untouched article stayed untouched, and the day page's readers read
 every day page's export as its markdown. Applied to a copy with no server,
 the run moved the 7 opened articles and left 119 to their first open, and
 a second run moved nothing; every article kept its letters and digits, no
-page's `updated_at` moved and no article row's, and no article read as its
-owner's that did not before. The export ends in a newline the writers'
-markdown lacks on 100 of them, named in the report as its own kind. That
-copy predates 0046 and holds no notes, so no note's anchor was measured.
+page's `updated_at` moved and no article row's, and no article that read as
+machine-written before read as owner-edited after. On 100 of them the export
+ends in a newline the writers' markdown lacks; the report lists that as a
+separate category. That copy predates 0046 and contains no notes, so no note's anchor was measured.
 
 Open before it ships:
 
@@ -355,7 +357,7 @@ Open before it ships:
   126 articles) are the measure for narrowing it.
 - A read of an unborn article moves it; a read could serve a converted copy
   without moving, at the cost of a second path.
-- Ten day pages on the measured box hold rows of pipes with no rule row,
+- Ten day pages on the measured box contain rows of pipes with no rule row,
   which no markdown renderer draws as a table; the move keeps them as one
   paragraph of pipes, as the page drew them before. Whatever wrote them
   should write the rule row.
@@ -403,7 +405,7 @@ Open before it ships:
 - A page's file uploaded from the phone, the laptop showing it arrive; the
   phone's app closed mid-upload, the laptop saying it never finished.
 - [mobile-ux-plan.md](mobile-ux-plan.md) defers the phone editor to a "pages
-  editor roadmap" that does not exist; this plan is it.
+  editor roadmap" that does not exist; this plan is that roadmap.
 
 ## Other plans this touches
 

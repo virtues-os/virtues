@@ -1,8 +1,8 @@
 # Bookmarks
 
 Written 2026-09-29. v1 built 2026-08-04/07; X and Instagram sync and the image
-pass added 2026-09-22. How saves are captured, made findable, and kept honest
-about whose words are whose. The code is `crates/virtues-helpers/src/bookmarks.rs`
+pass added 2026-09-22. This covers how saves are captured, how they are made
+findable, and how the owner's words are kept separate from machine-written text. The code is `crates/virtues-helpers/src/bookmarks.rs`
 (the shared normalizer), `virtues-core/src/api/bookmarks.rs`,
 `bookmark_enrichment.rs`, `bookmark_media.rs`, `fetch/`, and the source
 applets. What is still open is `agents/plan/bookmarks-plan.md`.
@@ -14,9 +14,10 @@ day-source config, a citation chip — and zero producers. Meanwhile "save the
 twenty interesting things I hit today and find them again later" was a top
 request, especially from designers.
 
-## The paradigm
+## Design
 
-**Everything becomes text; the Omni slot is the eye; one index.** A save is
+**Every save becomes text, the Omni slot describes images, and everything goes
+into one index.** A save is
 normalized to a row immediately — free, instant, searchable by title. A
 budgeted background sweep then writes an *extraction record* into the row's
 embed text. Machine text and user text stay segregated, and the user's reason
@@ -46,7 +47,8 @@ caps around 800 and its pagination dies after a few pages; its folders endpoint
 returns 20 ids and refuses to paginate. Neither platform offers a read API a
 personal appliance can use for its own saves.
 
-**The share sheet: the extension writes, the app sends.** A share extension
+**How the share sheet works: the extension writes files and the app sends
+them.** A share extension
 is a separate process with a small memory ceiling and a short life, and on iOS
 the box connection is served inside the app's own process — the extension
 cannot reach it, and giving it its own endpoint would mean hole-punching inside
@@ -58,8 +60,8 @@ outbox road audio uses. The box's `ios_ingest` arm keeps the picture in Drive
 for the image pass. An iOS Shortcut was rejected as a stopgap: the webhook
 wants the paired device's credential, which lives inside the app.
 
-**What `url` holds for a screenshot** — decided 2026-08-05: where the thing
-*is*, not where it came from. A screenshot with no source gets the in-app
+**What `url` contains for a screenshot** — decided 2026-08-05: the place the
+item can be opened now, rather than the place it came from. A screenshot with no source gets the in-app
 viewer route `/drive/file_{id}`; a share with a source URL keeps that URL *and*
 the image as a Drive asset named in `metadata.asset_id`. Provenance goes to
 `source_platform`. Identity is the image's content hash. Two alternatives were
@@ -69,14 +71,15 @@ nullable `url` (every consumer assumes one). Signed CDN image URLs expire
 within hours, so saved-post images are copied into Drive at ingest; the sweep
 would otherwise always arrive to a dead link.
 
-## Retrieval: captions into the text stack, not a multimodal space
+## Retrieval: image captions go into the text index instead of a multimodal space
 
 Researched 2026-07-28. Caption-plus-hybrid retrieval lands within about 3 nDCG
 of full visual retrieval in the best head-to-head; Pinterest routes VLM
 captions into production search; no vector vendor recommends one shared
 text-and-image space, because it degrades text geometry. And here BM25 and the
 reranker are text-side regardless, so a text representation must exist anyway.
-A second engine is the magnet disease (`agents/record/ir-notes.md`). A
+A second engine would bring back the magnet problem described in
+`agents/record/ir-notes.md`. A
 multimodal embedder was evaluated and rejected: multi-billion parameters,
 cloud-or-GPU only, forks the index, marginal measured gain. A similarity-only
 CLIP-class sidecar for "more like this" stays the v2 hedge, never fused into
@@ -102,12 +105,13 @@ highest-leverage practice found (human-rated 4.15 vs 2.21 for literal
 captions). Pages go to the Lite slot, images to the Omni slot; both write the
 same record, so an image is found by the same text search as a page.
 
-**There is no `why` field in the machine schema**, by design: significance is
-user-sourced, enforced by schema shape. The record is derived and disposable —
+**There is no `why` field in the machine schema**, by design: only the owner
+says why an item matters, and the schema enforces that by having no field for
+the model to fill. The extraction record is derived and disposable —
 `enrichment_model` names what produced it, and it can be thrown away and re-run
 when models improve.
 
-**The fetcher is native** (`fetch/`): the box's residential IP is why caption
+**The fetcher runs on the box** (`fetch/`): the box's residential IP is why caption
 tracks and paywall-lite pages resolve at all, and a fetch that stays on the box
 tells no third party what the owner saved. A paid extraction escalation tier
 was planned and then measured out on 2026-08-07: of 34 URLs spanning docs,
@@ -125,17 +129,18 @@ because a reel's content is visual and musical and a transcript indexes the
 wrong thing. Long-form is never ingested: link, metadata, thumbnail caption and
 the free transcript, composed by the Lite slot, since long-form saves are
 saves of ideas whose text already exists. A full visual pass happens only on
-demand. A screenshot of a frame is first-class marginalia: user-picked,
-one image instead of twenty minutes of video, and a timestamp link back.
+demand. A screenshot of a frame is treated as a full note in its own right: the user
+picked it, it is one image instead of twenty minutes of video, and it carries a
+timestamp link back.
 
-## The note, in three layers of friction
+## The note: three ways to capture it, from least to most friction
 
 1. **Capture-time note** in owned doors. The save fires on one tap; the note
    never blocks it.
 2. **Containers are the native note for synced sources.** Almost no source has
    a note field; almost every source has a container. Browser folder paths and
-   GitHub topics and language are harvested as tags. X folders are dead as a
-   signal (above); GitHub star lists have no public API.
+   GitHub topics and language are harvested as tags. X folders cannot be read
+   (see above); GitHub star lists have no public API.
 3. **Review-time elicitation.** An Inbox room was designed and rejected on
    2026-08-07: an unread count nobody clears, existing mainly to host a prompt.
    The note is simply present on the detail view, which leads with it and
@@ -143,7 +148,7 @@ one image instead of twenty minutes of video, and a timestamp link back.
    was meant for the home page, which was removed on 2026-10-06; it has no
    surface yet.
 
-"Why" left the vocabulary the same day. It is interrogative, presumes one
+We dropped the word "why" the same day. It is a question, presumes one
 reason, and does not describe what people write — todos, pointers, fragments.
 The column is `note`; the prompt is "What's this for?".
 
@@ -154,8 +159,9 @@ thousands of browser bookmarks at once. So ingest and enrichment are decoupled:
 sync writes cheap rows only, and enrichment is a queued sweep that drains
 newest-first under a per-run and daily cap (200 by default), with bounded
 retries so a permanently broken URL is not re-fetched and re-billed forever.
-The cap's job is less to save money than to make a first sync visible and
-interruptible. Asset-backed rows are held out of the page claim entirely, so
+The cap's main purpose is to make a first sync visible and interruptible;
+saving money is secondary. Asset-backed rows are excluded from the page claim
+entirely, so
 they burn no retries on a pass that cannot read them.
 
 ## Market notes (surveyed 2026-07-28)
@@ -163,7 +169,7 @@ they burn no retries on a pass that cannot read them.
 Pocket (2025) and Omnivore (2024) died; survivors — mymind, Raindrop,
 Readwise Reader, Karakeep — are subscription-funded, self-hosted or
 AI-pivoting. Nobody does visual or video understanding beyond YouTube
-transcripts; privacy and local AI are a selling point, not a niche; auto-tag,
+transcripts; privacy and local AI are a mainstream selling point; auto-tag,
 summary, semantic search and chat with citations are table stakes, all from
 existing infrastructure here. Rejected: an email-in door, and importers for
 dead apps — most incoming users have no bookmark system.

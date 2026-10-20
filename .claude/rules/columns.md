@@ -9,8 +9,8 @@ paths:
 # Column naming
 
 Loaded because you are in SQL or in Rust that talks to it. This schema is
-shown to a model at runtime and drives a table-driven UI, so a column name is
-an interface, not a label.
+shown to a model at runtime and drives a table-driven UI, so code and the
+model both depend on each column name the way they depend on an interface.
 
 Renaming 21 columns on 2026-08-17/18 established these. The schema had **seven**
 names for "when this happened" and had grown a configuration field to paper over
@@ -23,11 +23,11 @@ it.
 - `is_` / `has_` for booleans; no bare adjectives (`active` → `is_active`).
 - A unit suffix on every quantity: `_cents`, `_ms`, `_bytes`, `_meters`.
 - Prefixes stay: `app_` product state, `data_` ingested, `wiki_` derived,
-  `search_` indexes. Not decoration — this schema is shown to an LLM at runtime
+  `search_` indexes. They do real work: this schema is shown to an LLM at runtime
   and drives a table-driven UI, so the prefix is a namespace the model matches.
 - `data_*` singular (one observation); everything else plural.
 
-**Renames the compiler cannot check.** `sqlx::query` is untyped, so a renamed
+**The compiler cannot check a rename.** `sqlx::query` is untyped, so a renamed
 column breaks at runtime, not build time. When you rename one, sweep: SQL
 strings, `row.get("…")` accessors **including nested generics like
 `::<DateTime<Utc>, _>`** (a `[^>]*` regex silently misses those), the

@@ -10,7 +10,7 @@ what was built, and what is left, is [record/document-contract.md](../record/doc
 
 ## One editor, two formats on the server
 
-`app_pages.format` says how the server holds a page.
+`app_pages.format` says how the server stores a page.
 
 | Format | Document | In the app |
 |---|---|---|
@@ -28,10 +28,10 @@ opened). A user page in markdown moves as the app opens it: `GET
 suggestion its blocks cannot) stays markdown, logged with why, is tried
 again at its next open, and opens read only.
 
-The app has no markdown editor. The server still holds markdown pages, edits
+The app has no markdown editor. The server still stores markdown pages, edits
 them for the model, the CLI and the writers, and binds the Y.Text of one for
 an older app that sends `contract=0`, which is how such an app edits it.
-The app's floor (`MIN_BOX_API` in `lib/boxApi.ts`, 4) is the box that holds
+The app's floor (`MIN_BOX_API` in `lib/boxApi.ts`, 4) is the box that stores
 pages in blocks under contract 2; below it the app shows "Your server needs
 an update".
 
@@ -64,26 +64,26 @@ the contract reaches boxes before the apps that carry it.
   an empty tree; the server always writes at least one block.
 - **Ids arrive with remote changes.** UniqueID skips transactions from the
   shared document (`isChangeOrigin`), or every client rewrites ids.
-- **Decorations, not nodes, for anything transient**: find matches,
+- **Anything transient is a decoration, never a node**: find matches,
   focus dimming, Shiki colours (`code.ts`), the assistant's caret, trail
   and flash (`presence.ts`). None reaches the shared document or another
   device.
 - **Nothing waits between the person's action and the page.** A paste, a
   drop and files given (pasted, dropped or picked) change the page once, in
   the edit the person makes, an undo step of its own (`ownUndoStep` in
-  `history.ts`); no result of a wait is ever written at a place held for
+  `history.ts`); no result of a wait is ever written at a place reserved for
   it. Markdown converts in the page (`converter.ts`), and a file's block
   goes in at its final address with the bytes following outside the page
   (`media.ts`, `uploads.ts`). Undo is plain y-undo, and other devices'
   edits are the CRDT's to merge.
-- **A place held while a person chooses is an anchor** (`anchor.ts`),
+- **A place reserved while a person chooses is an anchor** (`anchor.ts`),
   never a number: the link panel and menu, the applet list, the mention
   picker, the file dialog, the inline writer. Another device's edit reaches
   the editor as one step over the whole document, which collapses a mapped
   position, and an open `/` or `@` is placed again from the caret, which
   the binding keeps as one (`triggers.ts`). What acts on a link or a
   selection checks it still reads as it did, and leaves it alone if not.
-- **What the binding drops, the editor keeps** (`KeptThroughOthersEdits` in
+- **The editor keeps what the binding drops** (`KeptThroughOthersEdits` in
   `anchor.ts`). The binding places the selection again as text or a node
   only, and its one step clears the marks waiting to be typed: selected
   table cells and a gap cursor are placed again from anchors taken before
@@ -120,8 +120,8 @@ the contract reaches boxes before the apps that carry it.
   workspace's own source and `Cargo.lock` (`crates/virtues-document-wasm`,
   built by `scripts/build-converter.mjs`, never committed), and called
   synchronously inside a paste, a drop and the inline writer's end. There
-  is no second markdown parser in TypeScript, and `converter.test.ts` holds
-  the module to the native build byte for byte over the corpus's markdown
+  is no second markdown parser in TypeScript, and `converter.test.ts` checks
+  the module against the native build byte for byte over the corpus's markdown
   and every case's export. The editor mounts once the module has loaded,
   failed or taken three seconds (`converterSettled`); without one,
   markdown pastes as its text and the person is told once. A writer's
@@ -170,13 +170,13 @@ the contract reaches boxes before the apps that carry it.
   HTML, nor any rule on a block dragged from another page.
 - **Markdown is written in TypeScript** (`markdown.ts`), only for text
   copied out of a page (`clipboardTextSerializer`): the crate's
-  `render::markdown` rule for rule, held to the same bytes by the
+  `render::markdown` rule for rule, checked for the same bytes by the
   conformance corpus.
 - **A paste lands as whole blocks** (`placeConverted` in `paste.ts`): one
   paragraph joins the text at the caret; anything else splits the
   paragraph there and steps out of the lists around it, so a pasted heading
   never merges into the line it was pasted on.
-- **A file's block holds its final address from the start**
+- **A file's block has its final address from the start**
   (`addFiles` in `media.ts`): `/drive/<id>` with a Drive id made in the
   browser (`mintFileId`: `file_` and 16 hex digits, the shape every Drive id
   takes), so the page's markdown, copies, versions and publishing carry
@@ -192,13 +192,13 @@ the contract reaches boxes before the apps that carry it.
   is stopped, not waited on, and one whose request is dropped (a reset
   connection) is stopped at once. What a request says of the file counts
   only while it is the latest to begin for its id (`PageFileUpload`): a
-  file sent again while the server still holds the request that carried it
+  file sent again while the server is still handling the request that carried it
   before (a phone moved from Wi-Fi to cellular) reads as arriving whatever
   the older request says after. A stop is missing an hour after it
-  (`FAILED_KEPT`), on the next look: no device holding the file is still
+  (`FAILED_KEPT`), on the next look: no device that has the file is still
   trying, and a publish no longer waits on it. A box out of space stops an upload short of a refusal (507):
   emptying the Drive trash makes room, and the same file sent again is
-  stored. Room is judged once, after the file already at its address is
+  stored. Room is checked once, after the file already at its address is
   looked for (`drive::store_system_file`): a retry of a file stored before
   its answer was lost is answered stored however full the box is, and an
   upload that loses the last room to another is a 507, never a refusal.
@@ -223,8 +223,8 @@ the contract reaches boxes before the apps that carry it.
   apps' web views ask nothing before one: a reload the person asks for
   ("Reload for the latest", Relaunch) waits and says why, and the app
   reloads itself (a new UI, a new build, a stale chunk) only while none is
-  (`tauri/quietReload.ts`). Quitting the desktop app is not held, by
-  decision: holding it took a runtime patch to the windowing library's app
+  (`tauri/quietReload.ts`). Quitting the desktop app is not delayed, by
+  decision: delaying it took a runtime patch to the windowing library's app
   delegate, installed for every Mac user, for an edge a person can recover
   from. A file stopped by a quit shows Try again on its block, here or on
   another device. A reload the person asks for offers to go anyway. A
@@ -235,7 +235,7 @@ the contract reaches boxes before the apps that carry it.
   block is already on every device. At most three files are sent at once,
   fewer than the connections a browser opens to a server, and each is said
   to be coming before its bytes can be (`POST /api/media/uploads`,
-  `media::page_file_announced`): the browser holds requests past its
+  `media::page_file_announced`): the browser queues requests beyond its
   connections where the server cannot see them, and every other device,
   and a share of the page, would take such a file for one never sent. The
   Share sheet on the device sending an image does not share its page until
@@ -244,7 +244,7 @@ the contract reaches boxes before the apps that carry it.
   delete, its page closed) may be in a page this device does not show, so
   its file goes on, at stake, until the server says no page names it
   (`GET /api/media/uploads/named`, `media::page_files_named`, which reads
-  the docs the server holds before the rows); then it is let go, not at
+  the docs the server has loaded before the rows); then it is let go, not at
   stake and not sent, until the block is back in a page here (redo, a
   paste), which sends it again, with Try again on its card if that fails
   (`followFileBlocks` in `media.ts`, `uploadBlocksLeft` and
@@ -267,14 +267,14 @@ the contract reaches boxes before the apps that carry it.
 - **A batch takes only what reads showed.** A read's text and what its
   base learns are read off one value (`virtues_document::Shown`, built by
   `read_by_id`, `children_window` and `page_reads::markdown_window`), and
-  the base holds each block on its own as last shown (`Seen`): its own
+  the base stores each block on its own as last shown (`Seen`): its own
   attributes and text, a stub where each block inside it goes, which of
   those blocks no read showed inside it (an opened read counts the blocks
   past its window without showing them, and one shown elsewhere is no block
   shown there, nor one a later read shows standing anywhere else, inside
   another block or at the page's top level), and
   whether it was shown as HTML or only as markdown. A
-  read on among the blocks inside one shows them there (`Shown::inside`). A batch with a base is judged by
+  read on among the blocks inside one shows them there (`Shown::inside`). A batch with a base is checked by
   what it does to the page, the page before it against the page it would
   leave (`check_ops`, and again inside `apply_ops`): a block it takes off was
   shown as it stands, and, taken with a block around it, shown inside that
@@ -286,7 +286,7 @@ the contract reaches boxes before the apps that carry it.
   text block merged with a change made since and holding the merge at the
   batch's end (an attribute both changed, a heading's level or a code
   block's language, is refused; a later op writing over the merge is
-  judged as any write over); a block listed
+  checked as any write over); a block listed
   as too long for any read goes only by an op deleting it, while it hashes as
   listed, never with a block around it, even when a markdown read showed
   it; a block shown only as markdown is not taken off the page while the
@@ -294,7 +294,7 @@ the contract reaches boxes before the apps that carry it.
   another kind (a mention as a link, audio, a video or a file as an image
   at its address, a callout as a quote opening `[!TONE]`:
   `FromMarkdown` in `ops.rs`); a block written back by the id of one
-  deleted since the read is refused. What a block taken out leaves its parent unable to hold is judged
+  deleted since the read is refused. What a block taken out leaves its parent unable to hold is checked
   at the batch's end, so its only paragraph deleted before the item around
   it lands. So a list read in part is replaced
   or deleted once reads have shown all of it, whatever else the batch
@@ -316,9 +316,9 @@ the contract reaches boxes before the apps that carry it.
   that waits only on reads of blocks no read has shown says so
   (`read_first`), and the turn's guard does not count it toward closing
   `edit_page` (`agent/guard.rs`); sent again unchanged it is refused as
-  ever. An edit's base holds what
+  ever. An edit's base stores what
   it wrote as written, in a block someone else changed since too
-  (`Seen::advance`). `page_editor_unseen_tests.rs` holds all of this to
+  (`Seen::advance`). `page_editor_unseen_tests.rs` tests all of this against
   random pages, reads, a person's edits and moves and the model's, with a
   refusal showing more than a read holds and less, as a box's does, and
   fails on any refusal a model doing what it says cannot get past. An
@@ -351,7 +351,7 @@ the contract reaches boxes before the apps that carry it.
 - **An update that waits on items the page lacks is refused**
   (`check_update`): what waits is outside the check's sight. The page's
   socket asks its client to sync once per state of the page (`Asking` in
-  `server/yjs.rs`): a client holding edits that follow ones nobody has
+  `server/yjs.rs`): a client with edits that follow ones nobody has
   answers every request with them, and is asked again once the page
   changes. A saved tree
   holding what the contract refuses is put back inside it when the page is
@@ -407,7 +407,7 @@ articles instead ([Articles](#articles)). All move pages only while block
 pages are on (unless `VIRTUES_TREE_PAGES=0`). `--dry-run` runs in the CLI's own process against
 `DATABASE_URL` and writes no page, so it runs on a copy of a box;
 `--apply` runs in the server through the console door
-(`POST /api/console/pages/convert`), since only the server holds the pages'
+(`POST /api/console/pages/convert`), since only the server has the pages'
 live docs and their queued saves. The CLI finds that server by its port
 alone, so `--apply` opens the database `DATABASE_URL` points at and names
 it by its name and when its Postgres server started
@@ -421,7 +421,7 @@ moves nothing, as it does a request naming none (`page_convert::apply_on`).
   History takes no version of it; it moves on the run after it is put back.
 - **Each page, in its write turn:** its queued save is written
   (`YjsState::save_page_now`); the row is read, the Y.Text of its state or
-  `content` for a page nobody opened; it is converted and judged
+  `content` for a page nobody opened; it is converted and checked
   (`block_move::convert`, the one conversion every move makes) as its
   markdown editor showed it (`migrate::measure_as` with `Dialect::Page`:
   raw HTML and comments are the text they read as, `<u>…</u>` on a line is
@@ -434,7 +434,7 @@ moves nothing, as it does a request naming none (`page_convert::apply_on`).
   item was written with (`2019.`, `2021.`); a run of spaces, a tab or a
   line's indent, a table row's cells past its header's, a code block's info
   past its language and a NUL (written as U+FFFD) are noted, and a backslash
-  typed at a line's end stays, before the line break it ends; judged
+  typed at a line's end stays, before the line break it ends; checked
   against the source too, every raw run of HTML, every backslash at a
   line's end and every address kept or noted, an email autolink's as
   `mailto:`);
@@ -459,8 +459,8 @@ moves nothing, as it does a request naming none (`page_convert::apply_on`).
   the converter refuses, a saved state that does not read, blocks that
   would lose a character of the text, a pending suggestion the blocks
   cannot hold, a page that changed between read and flip three times
-  running, with what converting it last found. Nothing of it is written
-  but the restore point of a flip that then failed, which the report names;
+  running, with what converting it last found. Nothing is written for it
+  except the restore point of a flip that then failed, which the report names;
   the restore point cut for a flip that found the page changed is dropped
   (`pages::drop_before_blocks`), as the next attempt keeps the page as it
   then is. A run is idempotent and resumable: only markdown pages are read,
@@ -493,8 +493,8 @@ moves nothing, as it does a request naming none (`page_convert::apply_on`).
   and keeps what it adds as the owner's version, "Typed on a device before
   the move to blocks" (`pages::keep_device_copy`), the person is told, and
   the copy is deleted from the device. A version from
-  before the move, put back, is converted and judged on the server as the
-  move judges a page, its pending suggestions still suggestions, and
+  before the move, put back, is converted and checked on the server as the
+  move checks a page, its pending suggestions still suggestions, and
   History shows its notes, text or an address its blocks lost among them
   (`pages::restore_version`, `VersionHistoryPanel.svelte`). A version of an
   article put back is its owner's edit, as typing is
@@ -572,7 +572,7 @@ make every article its owner's. The wiki editor's side is in
 someone opened it, so narration can write a day nobody has read. When the
 server first builds an unopened article's document (`DocCache::get_or_create`,
 for a socket, a `GET`, a chat or CLI read, or a machine write), it moves it
-(`block_move::first_open`): converts and judges it, keeps it as it was
+(`block_move::first_open`): converts and checks it, keeps it as it was
 ("Before blocks"), flips the row against the read with a fresh lineage and
 the article's rebased edition in one transaction, and versions the blocks
 ("Moved to blocks"). Neither version is an edit in History's article feed
@@ -602,7 +602,7 @@ again at its next open.
   place (`block_move::anchors_lost`): its quote a whole sentence of a
   paragraph before and none after, split as the day page splits them
   (`block_move::day_sentences`) and read as it reads them
-  (`block_move::plain_sentence`, held to `dayNotes.plainSentence` by
+  (`block_move::plain_sentence`, checked against `dayNotes.plainSentence` by
   `lib/wiki/plain-sentences.json`): no case folded, a single `~` and `__`
   as the page draws them, so a move that redraws the sentence holds the
   article back. A ref the editor wrote either way (`[@Nick](/person/id)`,
@@ -645,8 +645,8 @@ the writers wrote them, and with what would read as markup escaped
 | wiki article views, tables, headings | Streamdown, which reads escapes; `Markdown.svelte` draws a ref's label without its `@`, in either form |
 | search, embeddings, backlinks | `content`: a moved article re-indexes once |
 
-`apps/web/src/lib/wiki/articleExport.test.ts` holds the day page's readers
-to the crate's article corpus (`crates/virtues-document/tests/corpus/articles.json`):
+`apps/web/src/lib/wiki/articleExport.test.ts` tests the day page's readers
+against the crate's article corpus (`crates/virtues-document/tests/corpus/articles.json`):
 every page reads the same as its export.
 
 **Sharing an article** (`api/publish_page.rs`) leaves its sources on the

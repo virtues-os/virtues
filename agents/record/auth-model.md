@@ -19,7 +19,7 @@ that already has access.
 
 Virtues stores concentrated personal data (financial, health, comms). Email/
 password auth assumes a recoverable account boundary — "I forgot my password,
-reset to my email." That assumption costs you: every password is now a leak
+reset to my email." That assumption has costs: every password is now a leak
 risk, every magic-link URL is a single-use bearer token in flight, the email
 provider becomes a soft factor in the trust chain, and the login page itself
 is a continuously-present surface to brute-force.
@@ -27,30 +27,30 @@ is a continuously-present surface to brute-force.
 A single-tenant appliance has a stronger primitive available: **physical
 proximity to the box**. We treat that as the root of trust. Everything else
 descends from it via pair tokens. This is the same primitive Plex, Tailscale,
-Apple Continuity, and most modern consumer infra use; it's just rare in
-self-hosted because the legacy SaaS auth model leaked into self-hosted
-templates.
+Apple Continuity, and most modern consumer infra use; it is rare in
+self-hosted software because self-hosted templates copied the SaaS auth
+model.
 
 ## The money plane: how the box pays for AI
 
-Pair-only governs getting *into* the box. A separate, equally-deliberate token
+Pair-only governs getting *into* the box. A separate token
 model governs how the box *pays for AI* — across three services: the **box**
 (consumer), **atlas** (the money/identity plane: Stripe, accounts), and
-**virtues-api** (the metered-usage plane: the AI wallet). The whole design
-exists to keep one promise: the cloud can never tie your spend to your identity.
+**virtues-api** (the metered-usage plane: the AI wallet). The design goal
+is that the cloud can never tie your spend to your identity.
 
-Three properties make it elegant:
+Three properties of the design achieve this:
 
 1. **The two tokens never cross.** The `billing_token` (stable "I'm a paying
    customer," box↔atlas) and the `bearer` (ephemeral monthly, box↔api, funded by
    a voucher) live in separate planes. atlas never sees your bearer; virtues-api
    never sees your billing_token *or your identity*.
 
-2. **The voucher is a privacy seam, not just a credential.** The only thing
+2. **The voucher also separates spend from identity.** The only thing
    crossing atlas→api is a voucher's *value* — amount, hash, expiry. No customer,
    no Stripe ID, no email. virtues-api literally cannot tie AI spend to a paying
-   identity. That's the "make the server layer extinct" doctrine realized in the
-   money plane — a real architectural property, not marketing.
+   identity. This applies the "make the server layer extinct" principle to the
+   money plane, and the architecture enforces it.
 
 3. **Everything is hashed at rest, claimed atomically.** `billing_token`,
    `bearer`, the magic-link token, `device_code` — all SHA-256 in the DB, raw
@@ -65,12 +65,12 @@ Three properties make it elegant:
                                                                 (metered AI)
 ```
 
-Note the deliberate asymmetry with the box's own auth: device access is
+Note the asymmetry with the box's own auth: device access is
 **pair-only** (no email, no magic links — proximity is the root of trust),
 because the box holds your data. The *account* identity at atlas — a billing
 relationship, not a data boundary — uses an email magic-link, because that's the
-right primitive for "prove you're the person paying Stripe." Two planes, two
-roots of trust, chosen on purpose.
+right primitive for "prove you're the person paying Stripe." The two planes
+use different roots of trust by design.
 
 ## Schema (4 + 3 tables)
 
@@ -125,8 +125,8 @@ $ sudo -u virtues virtues link
 7. Polling /api/pair/status/:id sees 'consumed', shows "iPhone · Safari paired", closes.
 ```
 
-The Confirm step exists specifically to defeat shoulder-surf-the-QR. The QR
-alone is inert until the minting device explicitly authorizes it.
+The Confirm step stops someone who sees the QR over your shoulder from using
+it. The QR alone does nothing until the minting device explicitly authorizes it.
 
 ### Revoke a device
 
@@ -188,7 +188,7 @@ bump the timestamp, so a polling check doesn't keep an idle session alive.
 | Token leakage via server logs | Raw tokens are never logged. Only SHA-256(token) is persisted in `app_pair_token`. |
 | Shoulder-surfing the QR | Web-minted tokens start `pending` and require the minting device to explicitly confirm before they become `authorized`. |
 | Network died mid-consume | The consume path uses a single transaction; partial failure leaves the token unconsumed and retryable until TTL. |
-| Stolen device — read access | Inherent to "logged in." Mitigated by: 8h idle timeout, easy revoke from any other device (Settings → Devices). The auth-event log is recorded and readable at `GET /api/audit/auth`, but has no UI — so noticing an unfamiliar pairing depends on the Devices list, not on a log anyone reads. |
+| Stolen device — read access | Unavoidable for any logged-in device. Mitigated by: 8h idle timeout, easy revoke from any other device (Settings → Devices). The auth-event log is recorded and readable at `GET /api/audit/auth`, but has no UI — so noticing an unfamiliar pairing depends on the Devices list, not on a log anyone reads. |
 | Stolen device — irreversible actions | Sudo gate on `export_data`, `change_byo_key`, `wipe_box`, `revoke_last_device`. A thief without physical access to the box can't approve. |
 | Clickjacking the Add-Device modal | `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` on every response. |
 | CSRF on state-changing requests | Double-submit cookie: `virtues.csrf-token` (NOT HttpOnly) + `X-CSRF-Token` header. Client-side `hooks.client.ts` wraps `fetch` to auto-attach. Exempt: `/api/pair/consume` (anonymous, body-token = capability), `/auth/signout` (idempotent, kills only own session), `/webhook/*`, `/internal/*`, `/oauth/callback`. |

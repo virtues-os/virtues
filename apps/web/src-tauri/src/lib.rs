@@ -60,7 +60,7 @@ pub mod web_bundle;
 /// |   | `status` gain `mic`/`enabled` and `permission` (Setup's Connections) |
 /// | 8 | `bundle_update_ready` on both shells, and `ota_check_now` on the Mac:
 /// |   | a staged UI bundle applies by reloading while hidden, each page load
-/// |   | pinned to one bundle (`checkForNewUi` in `routes/(app)/+layout.svelte`, local-ui-plan.md) |
+/// |   | pinned to one bundle (`checkForNewUi` in `routes/(app)/+layout.svelte`, agents/record/local-ui.md) |
 /// | 9 | a shell that can run a bundle the box serves: overlay files typed by
 /// |   | extension, and only a navigation starts a page load. Below 9 every new
 /// |   | chunk was served as `text/html` and the bundle booted white |
@@ -321,7 +321,7 @@ pub fn baked_bundle_version<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Opt
 /// Answer one request on the `virtues://` scheme: the app's own copy of the UI.
 ///
 /// Shared by both shells (the phone since it was built; the Mac since
-/// 2026-09-29, agents/plan/local-ui-plan.md), so the two can never serve the
+/// 2026-09-29, agents/record/local-ui.md), so the two can never serve the
 /// app two different ways. Airlock pages from the binary; then the page's
 /// pinned overlay bundle; then the build baked into the binary.
 ///

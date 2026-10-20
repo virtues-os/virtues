@@ -12,9 +12,9 @@ The code: `crates/virtues-iroh/src/client.rs` (`network_change`),
 `apps/web/plugins/location-probe/ios/Sources/ReachMonitor.swift` (the
 triggers). This is why they look the way they do.
 
-## The wedge
+## Why the connection wedged
 
-The symptom was total: pages, chat and uploads all dead, and only a force-quit
+Everything failed at once: pages, chat and uploads all stopped, and only a force-quit
 brought them back. The cause is an open upstream bug,
 [n0-computer/iroh#4289](https://github.com/n0-computer/iroh/issues/4289)
 ("Failed socket rebind kills noq EndpointDriver"), still open on 2026-09-29
@@ -36,10 +36,10 @@ A first fix that dropped the connection on drain errors was aimed at the wrong
 layer. **The wedge is in the endpoint's socket, not the connection**, and the
 only escape is a new endpoint.
 
-## Two layers
+## Recovery in two layers
 
 `network_change()` cannot report or repair a failed rebind, so one API call is
-not enough. The shape is poke, verify, rebuild.
+not enough. Recovery has three steps: poke, verify, rebuild.
 
 - **Poke.** `Endpoint::network_change()` on every path change and every
   foreground: rebind, re-run net-report, reconnect the relay. This heals the
@@ -55,8 +55,8 @@ not enough. The shape is poke, verify, rebuild.
 persisted with the pairing (Keychain on iOS, a `0600` file elsewhere) and the
 EndpointId is derived from it, so a rebuilt endpoint is the same device to the
 box. Pairing and the box's allowlist survive, and a rebuild costs a dial, not
-a re-pair. Had the key been regenerated, recovery would have looked like a
-stranger and been refused.
+a re-pair. If the key were regenerated, the box would see an unknown device
+after recovery and refuse it.
 
 ## Structural choices
 
@@ -91,7 +91,7 @@ is suspended (at the cost of a roughly 50 MB memory cap), and rebind logic
 that it needs even with the extension (rebinding on send errors, throttled,
 with its relay on a separate TCP connection that survives UDP death).
 
-Decided 2026-07-09: no Network Extension. It buys only "socket alive while the
+Decided 2026-07-09: no Network Extension. Its only benefit is "socket alive while the
 app is fully suspended," which a wake-then-dial model does not need:
 background sync happens when location or a background task wakes the app, and
 it dials fresh. What fixes the wedge is the portable half, rebind on change,

@@ -1,34 +1,35 @@
 # Design constraints
 
-The shell's job is to **earn trust through calm**. This is an appliance holding
-one person's mail, money, health and days. Twitchy accents, cramped boxes and
-near-miss alignment don't just look unpolished — they read as *unfinished*, and
-unfinished is not what anyone wants holding their entire life.
+The shell should look **calm and finished**, because people have to trust it.
+This appliance stores one person's mail, money, health and days. Jittery
+accents, cramped boxes and near-miss alignment make it look *unfinished*, and
+nobody wants an unfinished product storing their whole life.
 
 This file exists because the same mistakes kept recurring across sessions.
-Written-down constraints are the only thing that stops a generative process
-producing the statistical average of every SaaS dashboard.
+Without written constraints, generated UI drifts toward the average SaaS
+dashboard.
 
 ---
 
-## The organising idea
+## Sidebar and pane
 
-**The sidebar is the desk. The pane is the page.**
+**The sidebar (called "the desk") stays quiet; the pane (called "the page")
+holds the content.**
 
-- The desk is quiet. Chrome on it whispers: no borders, no fills, no badges,
-  and no colour of its own. Type and spacing do the work.
-- The page is crisp. Borders, fills and structure are allowed here, because
-  this is where the work is.
-- **Nothing on the desk may out-shout the page.** That one rule kills most of
-  what has gone wrong: bordered search fields, saturated modifier badges,
-  coloured strips on pinned rows.
+- The sidebar is quiet: no borders, no fills, no badges, and no colour of its
+  own. Type and spacing create the structure.
+- The pane can use borders, fills and structure, because that is where the
+  work happens.
+- **Nothing in the sidebar may be more prominent than the pane.** This one rule
+  prevents most of the past mistakes: bordered search fields, saturated
+  modifier badges, coloured strips on pinned rows.
 
 ---
 
 ## The shell
 
 A rail of rooms, and one panel beside it that the selected room fills. The
-rail is the spine and does not move; the panel swaps. Defined in
+rail stays fixed; the panel's contents change with the selected room. Defined in
 `apps/web/src/lib/sidebar/rooms.ts`.
 
 The rail, top to bottom, in three gap-separated groups:
@@ -42,7 +43,7 @@ The rail, top to bottom, in three gap-separated groups:
 | utility | **Developer** | `/virtues/developer/sql` |
 | utility | **Settings** | `/virtues/you` |
 
-- **Home is the ground.** It sits alone above the first gap and at the top
+- **Home is the only room in the `ground` group.** It sits alone above the first gap and at the top
   of the rail. It was called Chats until its panel held pages, projects and
   applets too; a user reads the panel's title as the name of the place, so
   the room is named for the place, not one of its contents. Its tile opens
@@ -75,43 +76,43 @@ row or a pinned row reveals inline controls (pin, more). Both need the
 keyboard path and the touch fallback the interaction rules below require.
 
 **Pinned replaces the Desk.** "Desk" is retired as a name: the verb is pin and
-unpin, the section is Pinned. The desk in the organizing idea above is the
-metaphor for the chrome, not a section of it.
+unpin, the section is Pinned. "The desk" in [Sidebar and pane](#sidebar-and-pane)
+is a name for the sidebar chrome as a whole, not a section of it.
 
 ---
 
-## Anti-slop rules
+## Prohibited patterns
 
-Every one of these was violated in this codebase and had to be undone. They are
-listed as prohibitions because that is how they failed.
+Every one of these was shipped in this codebase and had to be undone, so they
+are written as prohibitions.
 
 1. **No coloured left-edge strips.** A 2–4px accent bar on the leading edge of a
-   row is among the most reliable tells of machine-made UI. It was tried on
-   pinned rows; at 2px on a 32px row, three pixels from a 16px icon, colour
-   isn't identity, it's lint.
+   row is one of the most common signs of machine-made UI. It was tried on
+   pinned rows; at 2px on a 32px row, three pixels from a 16px icon, the colour
+   identified nothing and looked like a stray mark.
 2. **Separation goes whitespace → 3–5% lightness → elevation, and you stop at
-   the first one that reads.** Do not reach for a 1px rule. There are no
+   the first one that works.** Do not reach for a 1px rule. There are no
    hairline separators in the sidebar.
 3. **Nothing in the chrome recedes.** A recessed tab strip was tried, on the
    reasoning that the browser tab model needs one — and it does, which is why
    the browser tab model was abandoned rather than the rule bent. Recessing the
    sidebar (200px wide, full height, lower half empty) turned the emptiness
-   into a visible object; *the void was invisible while the sidebar matched the
-   page*. Recessing only the strip left a dark band beside a light panel for no
+   into a visible object; *the empty space was not noticeable while the sidebar
+   matched the page*. Recessing only the strip left a dark band beside a light panel for no
    gain once tabs became pills. The sidebar sits on `--surface-elevated`, a 4%
    step, and that is the only shift in the shell.
 4. **8pt grid. No off-grid values.** No `12.5px`, `13px`, `26px`, `30px`,
    `34px`. Radii are the one exception (6px, matching Tailwind).
 5. **No monospace as decoration.** IBM Plex Mono is for code and data. A
    keyboard hint is not code. A shortcut label is not code.
-6. **No uppercase + serif + wide tracking.** It signals "considered" while doing
-   no work. It appeared on a *back button* at 11px/0.14em, which is the
+6. **No uppercase + serif + wide tracking.** It looks deliberate but does
+   nothing useful. It appeared on a *back button* at 11px/0.14em, which is the
    opposite of what an exit should be.
 7. **One left edge.** Every icon in the sidebar starts at the same x; every
-   label starts at the same x. Near-misses (12 / 16 / 20px) read as sloppiness
-   the eye can feel but not name.
-8. **Non-semantic colour is prohibited.** Colour means something or it isn't
-   used. A merely-compacted tab does not get the theme accent.
+   label starts at the same x. Near-misses (12 / 16 / 20px) look sloppy even
+   when the reader can't say why.
+8. **Non-semantic colour is prohibited.** Use colour only when it carries a
+   meaning. A merely-compacted tab does not get the theme accent.
 
 ---
 
@@ -132,7 +133,7 @@ per theme where it varies.
 | `--hover-bg` / `--active-bg` | fg mix 7% / 12% | The interaction ramp. |
 
 **Never use a surface token for an interaction state.** `--surface-elevated` is
-#F5F5F5 against a #FFFFFF parent — a 4% shift that reads as nothing happening.
+#F5F5F5 against a #FFFFFF parent — a 4% shift that is too small to see.
 Hovers, selections and active states come from the foreground-mix ramp, which is
 defined against the text colour and therefore legible in all sixteen themes.
 This bug shipped twice: dead hovers across 39 rules, and an active tab rendered
@@ -150,18 +151,17 @@ This bug shipped twice: dead hovers across 39 rules, and an active tab rendered
 | Body / prose | EB Garamond | — | the page, not the chrome |
 
 **The serif appears in the chrome exactly once**, in the mark. Serif navigation
-was considered and declined; concentrating the typographic identity in one
-deliberate place is more disciplined than spreading it across eight rows.
+was considered and rejected; the serif is used in one place instead of across
+eight rows.
 
-Lowercase `virtues`, not `Virtues` — a capital V is too much weight for
+Lowercase `virtues`, not `Virtues` — a capital V adds too much weight to
 something meant to sit quietly. And at nav size, not larger: a wordmark bigger
-than everything around it is a logo demanding attention, and this one has no
-job beyond saying whose desk this is. The serif and the ∴ carry the identity;
-scale would only make it loud.
+than everything around it draws attention, and its only job is to identify the
+app. The serif and the ∴ identify it; a larger size would only make it louder.
 
-**Icons assist, labels lead.** Eight identical 16px icons at full contrast in a
-column is what makes a sidebar look like every other sidebar; the words should
-carry a contents page.
+**Labels are primary; icons support them.** Eight identical 16px icons at full
+contrast in a column make a sidebar look like every other sidebar; the labels
+should do the work, as they do in a table of contents.
 
 ---
 
@@ -193,7 +193,7 @@ carry a contents page.
 - **Pins as a shelf of nav rows (the Desk).** Two visual treatments were
   tried (plain rows, then colored ribbons) and neither solved the actual
   problem: a pinned "Pages" and a nav "Pages" render identically, so the
-  section read as a duplicate of the nav directly beneath it. The `app_pins`
+  section looked like a duplicate of the nav directly beneath it. The `app_pins`
   table, its API and the reorder endpoint stayed through that. Pinning came
   back as **Pinned** at the top of the Home panel (see The shell), reached
   by a pin control on the thing itself rather than a tab menu: what gets

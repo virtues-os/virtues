@@ -1,19 +1,19 @@
-# Applets: make them keep their promise
+# Applets: make scheduled applets run reliably and show their results
 
 **Status:** Planned 2026-10-06. Nothing built. Written against `wave` after an
 audit of the whole applets surface (10 areas, each finding checked against the
 code by a second reader). File and line links below are from that day.
 
-## The promise
+## Goal
 
-Describe it once in chat, then forget it. It shows up when it should, and you
-never have to wonder whether it worked.
+You describe an applet once in chat and then do not need to think about it
+again. It runs at the time it says, and you can always see whether it worked.
 
-Today none of that holds. A user report (2026-10-06): a daily report applet,
+Today none of that is true. A user report (2026-10-06): a daily report applet,
 shown as "On · Daily at 9pm" in the list and "Daily at 10:15am" on its own page,
 never ran at either time, and the owner could not tell where its output would
-have gone. The owner rebuilt it from scratch, which is what an untrustworthy
-feature teaches.
+have gone. The owner rebuilt it from scratch because they could not trust the
+existing one.
 
 ## What is wrong
 
@@ -102,7 +102,7 @@ feature teaches.
 | Area | Target |
 |---|---|
 | **Creating** | The AI makes it and it is on. The server refuses anything that would not run (no `cron` with a schedule, bad cron, schedule on a face-only applet) and normalizes what it can. The tool result states the next three run times with zone and where results appear, so the AI can say so. The guide tells the model a face cannot load outside hosts. |
-| **Chat card** | A receipt that stays true: what it does, when ("Every day at 9:00pm, New York time"), where results show up, its spending cap, and Turn off and Undo. It reads live state, so it changes when the applet does. |
+| **Chat card** | A summary card that reads live state: what it does, when ("Every day at 9:00pm, New York time"), where results show up, its spending cap, and Turn off and Undo. It updates when the applet changes. |
 | **New chat screen** | Home is a new chat, so this is where you already are. "From your applets", above the composer while the thread is empty: what arrived since you last looked, newest first, and anything that did not run, in a sentence ("Didn't run at 9:00pm: your server was off"). |
 | **Applets list** | Only the owner's applets. Each row: name, what it last produced and when, when it runs next with zone, and a plain state (on, off, can't run). |
 | **Applet page** | Its output first: the face, or the latest reports. Then one sentence for when it runs, a history of every scheduled time and what happened, and simple controls (time picker, on/off, cap). Changes go through the same path as chat. No cron, no manifest. |
@@ -110,7 +110,7 @@ feature teaches.
 
 ## Order of work
 
-### 0. Stop the damage (must reach stable before 2026-10-25)
+### 0. Fix the bugs that damage data (must reach stable before 2026-10-25)
 
 - Exact folder lookup instead of prefix.
 - Reconcile keeps a shipped applet's sync state; cursors move to their own field.
@@ -129,7 +129,7 @@ schedule either runs on schedule or is refused with a sentence.
 ### 1. Creating and the chat card
 
 - Remove the Allow prompt and the Enable step; add the default cap.
-- The receipt card, reading live state.
+- The summary card, reading live state.
 - Runs start clean (the applet's prompt and notes, not the authoring chat).
 - Faces: guide and check cover outside hosts; one applet shape from every
   endpoint; token refresh; theme.
@@ -138,7 +138,7 @@ schedule either runs on schedule or is refused with a sentence.
 a card that says when and where in the owner's zone, and a first run whose
 output does not depend on the chat it came from.
 
-### 2. Results reach you
+### 2. Show results and missed runs
 
 - A record for every scheduled time: ran, skipped and why, failed and why.
 - "From your applets" on the new chat screen.
@@ -154,7 +154,7 @@ the run, and a run missed while the box was off shows as a sentence.
 Rebuilt to the target above, using the shared list and tab components
 (UniversalDataGrid, route-driven SubNav). Mockups first.
 
-### 4. Plumbing out
+### 4. Move syncs and upkeep out of Applets
 
 Syncs and ingest under their connection in Sources; upkeep in System. The
 "Show built-in" toggle goes.

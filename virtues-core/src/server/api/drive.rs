@@ -312,7 +312,7 @@ pub async fn download_drive_file_handler(
     }
 }
 
-// ── Annotations (document highlights + margin notes, researcher-plan D2) ──
+// ── Annotations (document highlights + margin notes, agents/record/researcher.md D2) ──
 
 /// GET /api/annotations?file_id=… — list a file's annotations.
 #[derive(Debug, Deserialize)]

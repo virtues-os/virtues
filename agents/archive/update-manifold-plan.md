@@ -21,7 +21,7 @@ The audit (2026-07-19) found the fleet has:
   the box's `min_ios_version` (`apps/ios/.../DeviceManager.swift:195`), and restore
   refusing a newer backup schema against a **hardcoded** `KNOWN_MAX_MIGRATION = 9`
   (`cli/restore.rs:159`) that must be hand-bumped and already drifts.
-- **No cloud version discipline** — atlas + virtues-api ship as `:latest` via manual
+- **No cloud versioning process** — atlas + virtues-api ship as `:latest` via manual
   `docker pull`+restart over SSM; the one "notify Atlas to roll a version" hook
   (`register-version` in `docker-build.yml`) POSTs to an endpoint that **does not
   exist** and is `continue-on-error`.
@@ -33,7 +33,7 @@ There is no single artifact that says "release R = {box vX, api vY, mac vZ, …}
 these are the versions that are known to work together." Building that — and the
 negotiation that enforces it at each boundary — is this project.
 
-## Two problems, named
+## The two problems
 
 - **The manifold** — the *delivery* surface. One spoke per node-type (box, cloud,
   mac desktop, mobile shell, mobile SPA, iOS collector, relay, model bucket), each
@@ -44,9 +44,10 @@ negotiation that enforces it at each boundary — is this project.
   non-atomically-updated components talk, carrying a declared, negotiated
   version/capability contract instead of an implicit one.
 
-The manifold makes a release coherent; the lattice makes a partial rollout safe.
+The manifold keeps the components of a release consistent with each other; the
+lattice keeps a partial rollout safe.
 
-## The fleet inventory (grounded, 2026-07-19)
+## The fleet inventory (checked against the code, 2026-07-19)
 
 | Node | Artifact | Delivery today | Version identity | Gap |
 |------|----------|----------------|------------------|-----|
@@ -62,18 +63,18 @@ The manifold makes a release coherent; the lattice makes a partial rollout safe.
 
 ## Design principles
 
-1. **Identity before orchestration.** You cannot coordinate what you cannot name.
-   Every artifact must carry the same shape of build identity before anything
+1. **Establish identity before orchestration.** Components cannot be coordinated
+   until each one reports what build it is. Every artifact must carry the same shape of build identity before anything
    negotiates on it.
 2. **Declare compatibility once, enforce at every edge.** The compatibility matrix
    lives in one signed manifest; each boundary reads it, rather than each pair
    inventing its own check.
-3. **Refuse, don't brick.** Every boundary and every swap fails *before* committing,
+3. **Refuse an update rather than leave a broken install.** Every boundary and every swap fails *before* committing,
    with a specific reason — never half-applied. (The box paradigm's Pillar 2/3,
    generalized.)
-4. **Non-atomic by assumption.** Never require two components to update together.
+4. **Assume components never update together.** Never require two components to update together.
    Every edge must degrade or refuse gracefully across a version skew window.
-5. **One spine, many spokes.** Keep each node's native transport (Tauri updater,
+5. **One shared identity, many delivery mechanisms.** Keep each node's native transport (Tauri updater,
    App Store, systemd, docker) — unify the *identity, channel, and manifest*, not
    the delivery mechanism.
 
@@ -102,11 +103,11 @@ Concrete first fixes (all cheap, all unblock the rest):
 
 ### 1.2 One channel model, fleet-wide
 
-Reuse the box's proven scheme everywhere: `stable` (`v*` / `mac-v*`), `staging.N` /
+Reuse the box's existing scheme everywhere: `stable` (`v*` / `mac-v*`), `staging.N` /
 `edge` (any `-` identifier → prerelease). Cloud images get **version tags**, not
 `:latest`; the relay pins an `iroh-relay` version instead of `^1`.
 
-### 1.3 The fleet release manifest (the keystone)
+### 1.3 The fleet release manifest (the central piece)
 
 A single signed JSON, published per fleet release, that pins every component and
 declares the matrix. This is the artifact that does not exist today.
@@ -184,7 +185,7 @@ dotted-integer `compareVersions` with real semver (pre-release aware).
 ### 2.3 Resolve the migration-lineage contradiction
 
 Pillar 2 says *refuse on divergence*; the runtime says `set_ignore_missing(true)`.
-Resolve deliberately:
+Resolve it explicitly:
 - Keep `ignore_missing` for the **dev multi-branch boot** convenience it was added for.
 - Add the explicit `virtues migrate --check` **preflight** in the *upgrade* path
   (applies nothing, exits non-zero with the precise lineage reason) — this is where
@@ -205,8 +206,8 @@ say "0.3 box needs 0.2+ api but 1.1+ app" in one reviewed place.
 2. **Box 5 pillars** — per `update-paradigm.md` order (preflight + slots first).
 3. **Lattice core** — hello-frame handshake, bidirectional `min_peers`, fix the
    migration preflight + `KNOWN_MAX` drift.
-4. **Cloud discipline** — one registry, digest-pinned deploy action, rollback.
-5. **Fleet release manifest** — the keystone; ties nodes + `compat` together.
+4. **Cloud deploy process** — one registry, digest-pinned deploy action, rollback.
+5. **Fleet release manifest** — the central piece; ties nodes + `compat` together.
 6. **Mobile** — SPA OTA (build the parked plan) + iOS CI/TestFlight + pick one iOS
    codebase.
 7. **Relay hygiene** — unit-in-git = unit-on-host, pinned version, deploy script.
@@ -222,6 +223,6 @@ the lattice (3) depends on the identity spine (1).
 - **Manifest signing**: reuse the mac minisign key, or a dedicated fleet key?
 - **Cloud deploy trigger**: does a `v*` fleet tag auto-roll the cloud, or stay
   operator-gated (blast radius)?
-- **Auto-update posture**: box is deliberately opt-in today — does the manifold keep
+- **Auto-update posture**: box is opt-in by design today — does the manifold keep
   every node pull-only, or introduce atlas-scheduled windows (the `system_update.rs`
   comment already claims this, unbuilt)?

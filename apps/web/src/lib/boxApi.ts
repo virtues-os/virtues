@@ -9,7 +9,7 @@
  * `MIN_BOX_API`. Below it, the app shows one screen, "Your server needs an
  * update" (`/server-update`), rather than running half-broken. Raise it only
  * deliberately, with a release note: every box below it stops opening this
- * app until it updates. See agents/plan/local-ui-plan.md.
+ * app until it updates. See agents/record/local-ui.md.
  *
  * It is a constant in code, not a bundle-manifest field, on purpose: a bundle
  * the box pushes over the air always matches that box, so only a copy baked

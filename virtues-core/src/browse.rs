@@ -9,7 +9,7 @@
 //!
 //! The worker never sees the chat or the owner's record and holds no tool but
 //! the browser's, so a page that tells the model what to do can steer only the
-//! browsing. Plan and measurements: agents/plan/browser-subagent-plan.md.
+//! browsing. Design and measurements: agents/record/browser-subagent.md.
 
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};

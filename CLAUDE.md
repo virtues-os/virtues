@@ -8,8 +8,8 @@ stash, and one working tree, and all of them are shared. A git command that is
 harmless when one human runs it can destroy another agent's work here.
 
 Worktrees are **not** used (one `make dev` serves everyone, and a stray worktree
-has already been swept into someone's commit). So isolation is unavailable, and
-discipline replaces it.
+has already been swept into someone's commit). So agents are not isolated from
+each other, and the rules below are what keep their work apart.
 
 ### The three branches
 
@@ -34,7 +34,7 @@ branch from it.
 >
 > This note said "no stable release exists" for days after that stopped being
 > true, and an agent copied the claim into a user-facing docs page. **Any
-> statement here about what is released is stale by construction** — read it
+> statement here about what is released is always out of date** — read it
 > off the repo instead:
 >
 > ```sh
@@ -49,7 +49,7 @@ Why `wave` exists rather than working on `staging` directly: `staging.N`
 prereleases cut from `staging`, and real boxes install them with
 `virtues upgrade --pre`. Half-finished work must not land there.
 
-### Never — these destroy other agents' work
+### Commands that destroy other agents' work
 
 | Command | What it does to everyone else |
 |---|---|
@@ -118,7 +118,7 @@ Other rules that follow from a shared tree:
   clean to everyone here. It applies to every ratchet, `check-swallowed-queries.sh`
   and `design-lint.sh` today, and to `check-manual.py` or the arch lint the moment either grows one.
 
-### Merging up
+### Merging `wave` into `staging`
 
 From `wave`, when a slice is green: open a PR to `staging`. Never delete
 `wave` afterward — keep committing to it.
@@ -210,7 +210,8 @@ this stop being true when we ship?** Describing + permanent is a record;
 prescribing + permanent is build; prescribing + temporary is a plan. There is
 no fourth genre — a description of something temporary is just a record of it.
 
-The rules that keep it from rotting back into the 63-file pile this replaced:
+The rules that stop it from growing back into the unreadable 63-file pile it
+replaced:
 
 - **Delete a plan when the thing ships.** What survives is a record and a
   manual page, never a plan describing an intention that is now a fact. Nothing
@@ -262,7 +263,31 @@ and the web API client.
   re-adding it, and then keep it to a few lines. A comment that has become
   false is a bug: fix it when you notice it.
 
-### Never commit anything from a real life
+### Writing style
+
+These rules cover every piece of prose in the repo: UI strings, the manual,
+`agents/`, model prompts, code comments, commit messages, and agent memory.
+
+- Write plain, direct English, the way an engineer explains work to a peer.
+  Use complete sentences in subject-verb-object order.
+- Don't write aphorisms or "X, not Y" / "not X but Y" contrasts for effect.
+  State what the thing does. A literal factual contrast is fine.
+- Don't use courtroom or ceremonial words for ordinary software: verdict,
+  testify, witness, covenant, doctrine, law, vows, "by construction" (say "by
+  design"), "on the record". A test fails; it doesn't "decline".
+- Headings are literal titles ("Why the vector test failed"), not clipped
+  fragments ("The thesis", "One word, many worlds").
+- Explain a method once. Don't praise the project's own honesty or rigor
+  ("honest", "deliberately", "to be precise").
+- Don't use "salient", "register" (for tone), "the bet is", "reads more like
+  X than Y", or "held" (for stored data).
+- "The record" never acts. Name the real actor: you, your server, the wiki
+  editor, the day-summary job.
+- UI strings also use sentence case, second person, sentences under about 25
+  words, and hyphens or periods instead of em dashes. An error says what
+  happened and how to fix it.
+
+### Never commit real personal data
 
 No real names, phone numbers, addresses, emails, employers, account numbers, or
 coordinates — in code, comments, docs, tests, seeds, or **commit messages**. Use
@@ -298,13 +323,13 @@ de-identification unchanged.
 ### Rules that load when they apply
 
 Three sets of rules used to live here and now load only when you open a file
-they govern (`.claude/rules/`, `paths:` frontmatter). They are not optional and
-not lesser — they are conditional, and an always-on file is where a conditional
-rule goes to be ignored:
+they govern (`.claude/rules/`, `paths:` frontmatter). They are just as
+mandatory as this file. They load conditionally because a conditional rule in
+an always-loaded file tends to get ignored:
 
 | Rule | Loads when you touch | What it governs |
 |---|---|---|
-| `columns.md` | `*.sql`, Rust under `virtues-core/` | the seven-names-for-one-thing law, and the sweep a rename needs because `sqlx::query` is untyped |
+| `columns.md` | `*.sql`, Rust under `virtues-core/` | the rule against seven names for one thing, and the sweep a rename needs because `sqlx::query` is untyped |
 | `query-errors.md` | any `*.rs` | why `.ok()` on a `fetch_*` turns a broken query into a plausible number |
 | `migrations.md` | `virtues-core/migrations/**` | claiming a number, the pre-squash citations, and the `.sql.pending` rename that has to happen |
 

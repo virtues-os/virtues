@@ -1,18 +1,18 @@
-# Speaker attribution — who said it
+# Speaker attribution: labeling who said each line
 
 **Status: PARKED 2026-09-29.** Transcripts now write `[Speaker]:` with no
 number, and old numbered tags are flattened where narrators read them
 (`virtues-core/src/transcript.rs`). Everything below is paused until day
 articles show they still invent who-said-what without numbered tags. The
-measured findings that outlive this plan (the sherpa-onnx front-end bug, the
+measured findings that stay useful after this plan (the sherpa-onnx front-end bug, the
 QAIRT 2.45 compatibility, tract running segmentation-3.0) are recorded in
 [`agents/record/speaker-attribution.md`](../record/speaker-attribution.md). If
 reopened, start from section 12 and the chunk-level labeling suggested there.
 
 ## The problem
 
-A transcript line is written as fact about a life, and the most common thing
-it gets wrong is *whose* line it is. `transcription_resolution` asks Gemini
+Transcript lines are stored as facts about what was said, and their most
+common error is *who* said the line. `transcription_resolution` asks Gemini
 for `[Speaker 1]:` / `[Speaker 2]:` tags. Those tags are local to one 5-minute
 chunk: `Speaker 1` in one chunk is whoever Gemini heard first, so across a
 conversation the owner's lines and the other person's swap. In the 2026-09-24
@@ -21,8 +21,8 @@ invented claims (who said what, who wanted what).
 The narrator cannot repair this, because the input does not say which voice
 is the owner.
 
-The fix is acoustic, not a prompt. The 2026-07-16 tests already showed Gemini
-does no real voice matching: it keeps the same confidence when handed a
+The fix has to work on the audio itself; a prompt change cannot fix it. The
+2026-07-16 tests already showed Gemini does no real voice matching: it keeps the same confidence when handed a
 synthetic decoy voice as a reference.
 
 ## What the spike measured
@@ -59,7 +59,7 @@ recur across the whole 19 days:
 | 3D-Speaker CAM++ | 29 / 38 | 23 / 38 | 15 | **0.22** |
 | WeSpeaker ResNet34 | 28 / 38 | 24 / 38 | 17 | 0.39 |
 
-3D-Speaker CAM++ separates the two voices more widely and holds its clusters
+3D-Speaker CAM++ separates the two voices more widely and keeps its clusters stable
 across distance thresholds 0.70–0.85, where ResNet34 merges them at 0.85.
 ~~Pick 3D-Speaker CAM++.~~ **Superseded by section 7.** These embeddings came
 through sherpa-onnx's extractor, which feeds both models the wrong features, so
@@ -69,9 +69,9 @@ front-end before either model is picked on box data.
 **4. "The dominant voice is the owner" does not hold on real data.** A single
 clip can have one dominant voice, yet across days other recurring voices can be
 as prevalent as the wearer's, and a chunk can hold no wearer speech at all.
-Loudness makes a voice likelier to be the wearer's, which is a prior, not
-proof. **Without enrollment, nothing may be labeled "You".** A wrong label is
-worse than no label.
+Loudness makes a voice likelier to be the wearer's, but it does not prove
+it. **Without enrollment, nothing may be labeled "You".** No label is better
+than a wrong label.
 
 **5. Gemini's timestamps cannot carry attribution.** We asked `gemini-3-flash`
 for per-turn `{start, end, speaker, text}` on 5 conversation chunks. On 300 s
@@ -80,7 +80,7 @@ audio comes after that point. We embedded each returned segment and compared
 it to the two voice centroids. Gemini's S1/S2 matched the voices with **52–72%
 purity**, where 50% is chance. Stretching the timeline to the clip length did
 not help. Any design of the form "Gemini transcribes, then we map lines to
-times" is dead with this model.
+times" does not work with this model.
 
 **6. The inverse works: diarize on the box, then have Gemini transcribe the
 turns.** We cut a chunk into voice turns on the box and sent them as ordered
@@ -88,10 +88,10 @@ audio parts in *one* request, each part preceded by a text tag `[T7]`. The
 gateway accepted 39 and 42 parts. Gemini returned exactly one entry per part.
 Word count reached **92% and 76%** of the single-shot transcript, and the
 call was cheaper (\$0.0053–0.0061 vs \$0.009–0.010) because silence is not
-sent. With this approach alignment holds by construction: the label on each
+sent. With this approach, alignment holds by design: the label on each
 line comes from the part it was transcribed from. One short part came back at
-13 words per second, which means words bled across a part boundary. Guard
-against this; do not ignore it.
+13 words per second, which means words bled across a part boundary. The
+pipeline needs a guard against this (gate 4).
 
 ### Second spike: a labeled benchmark (2026-09-24, evening)
 
@@ -154,7 +154,8 @@ pooling plus the dense layer run on the CPU. That split reproduces the
 full model exactly in float, but **on the device it is broken**: all 1,406
 layers run on the NPU at 4.6 ms, yet the output matches float at a cosine of
 only 0.66–0.77. EER goes 2.2% → 12.2%, the same at int8 and w8a16. The
-layout checks out, so this is the conversion, not precision. CAM++ is
+layout checks out, so the cause is the conversion step, not quantization
+precision. CAM++ is
 CPU-only.
 
 **9. Cost on the dragon's CPU, measured with onnxruntime:**
@@ -191,7 +192,8 @@ fires on onsets. It is right for "skip Gemini on a silent chunk" and wrong for
 boundaries. Segmentation-3.0 plus ResNet34 windows matches the full pyannote
 pipeline at about 1/200th of the CPU.
 
-**11. Overlap sets the turn ceiling, and it is crosstalk, not confusion.**
+**11. Overlapping speech sets the turn ceiling; the errors come from
+crosstalk, not from mistaking one voice for another.**
 Turn F1 stays at ~0.80 even with perfect boundaries.
 - 96% of false "You" turns are another person's turn that the owner talks over
   for more than 30% of it.
@@ -200,8 +202,8 @@ Turn F1 stays at ~0.80 even with perfect boundaries.
 Segmentation-3.0 also outputs overlap, as its two-speaker powerset classes.
 At p ≥ 0.2 it finds overlap at 69% precision and 71% recall.
 
-Marking overlapped stretches **unsure** instead of forcing a label changes
-the picture. At the frame level, with no gold turns, as production would run
+Marking overlapped stretches **unsure** instead of forcing a label cuts the
+false "You" rate sharply. At the frame level, with no gold turns, as production would run
 (pyannote speech mask, 0.5 s median filter, You runs under 1 s dropped, τ
 chosen on the other sites):
 
@@ -232,21 +234,22 @@ multi-speaker, 15 single-speaker. Corrected ResNet34 windows, pyannote mask.
 - **Two voices recur across the month**, in 25 and 28 of 40 chunks, at a
   centroid cosine of 0.29. Beyond them is a long tail of one-off voices.
 - **Loudness does not identify the owner.** Both voices have the same median
-  level. Within the 8 chunks holding both, one is louder in 6, by a median of
-  5.5 dB. That is a prior, not an answer.
+  level. Within the 8 chunks containing both, one is louder in 6, by a median of
+  5.5 dB. Loudness is a weak hint and cannot identify the owner on its own.
 - **Unsure is 8% of speech,** half of AMI's crosstalk, as expected.
 - **The owner picked their voice from clips, and picked two clusters.** One is
   the loud voice (−22 dB). The other is a **quiet variant** of the same
   voice (−41 dB, phone in a pocket or bag), at cosine 0.48 to the loud one and
   seen in 10 of 40 chunks, 9 of them alongside the loud one.
   - "Which voice is yours?" works as designed.
-  - The **multi-centroid print is required, not an optimization**: a
+  - The **multi-centroid print is required**: a
     loud-only print labels just 13% of the quiet voice as the owner.
 - **Blind spot check of 15 pipeline turns, owner listening:**
   - "You": 6 of 6 correct.
   - "other": 4 of 5 correct; the fifth was the owner, quiet.
   - "unsure": 2 of 3 were the owner alone.
-  - Every error was the pipeline withholding "You", never asserting it.
+  - In every error, the pipeline failed to label the owner "You"; it never
+    labeled anyone else "You".
 - **Adding the quiet centroid alone is unsafe.** Then 13% of the other
   recurring voice clears τ. The margin rule fixes it: the owner's best
   centroid must beat every *known* other voice by 0.1, the voices the owner
@@ -283,7 +286,8 @@ path: symphonia decode, a Rust fbank front-end, then tract.
     boards without the NPU. It loads in tract (section 1) and costs about
     210 ms per window, twice CAM++. That doubles the CPU cost below, which is
     one more reason to prefer the NPU.
-  - Either way there is no ONNX Runtime, so the existing rule holds.
+  - Neither path uses ONNX Runtime, so the existing no-ONNX-Runtime rule
+    holds.
   - The ONNX file is 25 MB, too big for `include_bytes!`. Fetch it with a
     pinned SHA in the release build, as the QAIRT libraries are fetched, and
     ship it next to `applets-bin/`.
@@ -339,11 +343,11 @@ path: symphonia decode, a Rust fbank front-end, then tract.
   - A turn that is mostly unsure is written with no owner claim (see Open
     decisions for the label).
   - Every remaining turn is an unknown voice, clustered within the chunk.
-- **What this buys on AMI (section 11):**
+- **Results on AMI (section 11):**
   - A "You" line far from any owner speech is under 1.5% of You frames.
   - Every false-You turn checked had the owner really talking.
   - The owner's own speech is labeled You about two-thirds of the time. The
-    rest is unsure or crosstalk, and that is the price of never guessing.
+    rest is unsure or crosstalk. That is the trade-off for not guessing.
 
 ### Transcription paths
 
@@ -367,7 +371,7 @@ summary, entities and scene keep the same schema and are not dropped.
 - The turn structure goes in `metadata.turns: [{id, start, end, voice,
   score, text}]`. This also gives transcripts real timing for the first time,
   which citations and playback can use later.
-- **Stable across chunks.** The owner is stable by construction. For other
+- **Stable across chunks.** The owner label is stable by design. For other
   voices, keep a rolling cache of the last 30 minutes of voice centroids from
   earlier chunks' `metadata.turns`. A new unknown voice that matches one of
   those centroids takes that voice's label, so `[Speaker 2]` means the same
@@ -385,17 +389,17 @@ or the relay, can be deleted from Settings, and deleting it re-labels nothing
 that has already been written.
 
 1. **Primary: "Which voice is yours?"** The box already clusters its own audio
-   (step 3 above). After a few days it holds 2–3 recurring voices. The app
+   (step 3 above). After a few days it has found 2–3 recurring voices. The app
    plays three 4-second clips of each and the owner taps the one that is
    theirs. These clips are recorded in the conditions the model will see
    (pocket, table, car), which a read-aloud sample is not. The owner can name
-   the other voices in the same question. This is an identity question in the
-   shape of [narrative-resolution-plan.md](narrative-resolution-plan.md).
+   the other voices in the same question. This follows the identity-question pattern
+   in [narrative-resolution-plan.md](narrative-resolution-plan.md).
 2. **Fallback: read aloud.** Settings › Microphone (or Setup's optional
    interview step) records 30 s of the owner reading a passage on the same
    phone mic, for a box that has no history yet.
 3. **Several centroids from day one, and the "not me" answers are kept.**
-   The owner's print holds one centroid per condition (up to 5), because
+   The owner's print stores one centroid per condition (up to 5), because
    pocket audio is a different channel. On the box that was a separate cluster
    at −41 dB against −22 dB (section 12). Ask about every recurring voice,
    including a quiet one that sounds like the owner muffled.
@@ -411,7 +415,7 @@ Until a voiceprint exists, output is exactly what it is today.
 
 A migration (claim its number first) adds `app_voiceprint (id, label,
 is_owner, model, centroids real[][], source, created_at, updated_at)`.
-`centroids` holds 1–5 embeddings: 256 floats for ResNet34, 512 for CAM++.
+`centroids` contains 1–5 embeddings: 256 floats for ResNet34, 512 for CAM++.
 `model` names the embedder and its front-end, because a print is meaningless
 to any other model. A model change means re-enrolling from stored clips, not
 converting prints. Prints from the NPU and CPU paths of the same model are
@@ -438,7 +442,7 @@ exported to a model.
 
 1. **Fbank parity and a guard against the wrong front-end.** The Rust
    front-end matches `kaldi-native-fbank` with the pinned options. A committed
-   test holds the EER on a fixed labeled window set. The set cannot be
+   test checks the EER on a fixed labeled window set. The set cannot be
    box audio (voiceprints never leave the box), so it comes from AMI or
    VoxCeleb. The test fails if EER drifts above its baseline, so a silent
    front-end change like section 7's breaks CI instead of shipping.
@@ -450,7 +454,7 @@ exported to a model.
    is real work. Levers: pad parts to the nearest low-energy frame instead of
    ±0.25 s, keep "unknown voice" turns, and merge turns under 2 s. If the gate
    fails, stop and do not ship lower recall.
-4. **Bleed guard.** Hold each part to a characters-per-second budget, as the
+4. **Bleed guard.** Limit each part to a characters-per-second budget, as the
    existing hallucination guard does for the whole chunk. A part over budget
    gets its text set to `""` and is flagged in `metadata`.
 5. **Attribution accuracy on labeled turns.** The owner labels about 50 turns
@@ -458,7 +462,7 @@ exported to a model.
    - Set the "You" threshold so that **no turn where the owner is silent is
      labeled You.** Count that the way section 11 does: You frames more than
      0.75 s from any owner speech stay under 1%.
-   - Let recall fall where it falls.
+   - This gate puts no floor on recall.
    - Report crosstalk separately, as turns labeled You where the owner and
      someone else both talk. On AMI, turn precision cannot reach 98% for a
      reason unrelated to confusing voices: the "errors" are the owner really
@@ -485,7 +489,7 @@ exported to a model.
    the way gte and ColBERT are. Measured on the spare dragon on 2026-09-25:
    - **Getting the binary:** AI Hub no longer emits `qnn_context_binary`.
      Compile with `--target_runtime precompiled_qnn_onnx`, and the output zip
-     holds `model.bin`. That file is the raw QNN context binary and loads in
+     contains `model.bin`. That file is the raw QNN context binary and loads in
      `virtues-qnnd` unchanged. The wrapper ONNX's Q/DQ nodes carry the
      input/output scale and offset, which the daemon also reads from the
      binary.

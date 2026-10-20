@@ -3778,7 +3778,7 @@ mod tests {
         assert_eq!(generation, 1);
     }
 
-    // ── append (researcher-plan D4.1) ───────────────────────────────────────
+    // ── append (agents/record/researcher.md D4.1) ───────────────────────────────────────
 
     #[test]
     fn append_separates_blocks_with_a_blank_line() {

@@ -456,7 +456,7 @@
 			width: "12%",
 			minWidth: "90px",
 			hideOnMobile: true,
-			// Honest per-file extraction state (researcher-plan D1): text-bearing
+			// Honest per-file extraction state (agents/record/researcher.md D1): text-bearing
 			// files show where they are in the corpus pipeline; others show —.
 			getValue: (file) => extractionLabel(file),
 		},

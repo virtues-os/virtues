@@ -210,7 +210,7 @@ pub async fn delete_page_handler(
 
 /// POST /api/pages/:id/append — append a markdown block to a page THROUGH Yjs.
 ///
-/// The synthesis-bridge write path (researcher-plan D4): sending a highlight
+/// The synthesis-bridge write path (agents/record/researcher.md D4): sending a highlight
 /// into a page must not clobber an editor that's currently open on it, so this
 /// goes through the authoritative Yjs doc (transaction + broadcast) rather than
 /// a REST content replace.

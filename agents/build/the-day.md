@@ -1,8 +1,9 @@
 # The Day Page
 
-> "The page should feel like opening a leather journal that somehow already has today's entry written in it — but you get to correct it, annotate it, beautify it, and eventually, over months, it becomes the most honest record of your life that exists."
-
-One sentence: **The day page is a mirror you read at night.**
+The day page is an account of one day that the system writes and the person
+reads, usually in the evening. The person can correct it, annotate it and
+restyle it, and over months the pages add up to a detailed account of their
+life.
 
 ---
 
@@ -35,7 +36,7 @@ built.
 
 - Full-width, ~120-160px tall, above the title
 - **Topical, not narrative**: highest-novelty concrete noun from the day (a bungalow, a kayak, a coffee cup on a patio)
-- Not generated on days with no salient novelty — absence is fine
+- Not generated on days with no notable novelty; a day without a sketch is fine
 - User picks global style in settings: pen & ink, watercolor, architectural marker, oil painting, pencil
 - Uses space `accent_color` as single color accent against monochrome linework
 - **Cost**: ~$0.04/image via DALL-E 3 or Midjourney API through Virtues Bridge. One per user per night = ~$1.20/month/user
@@ -79,9 +80,9 @@ Dimensions (a radar of user-defined axes) and a topology view are not built.
 
 ### 5. Autobiography (system voice)
 
-The autobiography is the **meaning layer** — synthesis, not chronology. Event summaries already capture what happened and when (the fact layer). The autobiography's job is to surface what connected, what was unusual, and what the day was *about*. These serve different embedding targets: event concat answers "find days where I went to the noodle bar," the autobiography answers "find days that felt like this one" or "days where work and personal life collided."
+The autobiography is the **meaning layer**: it synthesizes the day instead of retelling it in order. Event summaries already capture what happened and when (the fact layer). The autobiography's job is to surface what connected, what was unusual, and what the day was *about*. These serve different embedding targets: event concat answers "find days where I went to the noodle bar," the autobiography answers "find days that felt like this one" or "days where work and personal life collided."
 
-**Tone**: Warm but precise — closer to a perceptive friend reflecting your day back to you than either a surveillance report or a therapist's notes. It should earn its length by saying something the user couldn't have written themselves: cross-domain connections, baseline comparisons, behavioral patterns surfaced from data.
+**Tone**: Warm and precise. It must not sound like a surveillance report or a therapist's notes. Its length is justified only if it tells the user something they couldn't have written themselves: connections across data types, comparisons with their baseline, behavioral patterns found in the data.
 
 **What good looks like** (epigraph: *The Trader Joe's detour*):
 
@@ -89,17 +90,17 @@ The autobiography is the **meaning layer** — synthesis, not chronology. Event 
 
 **Why this works** (the bar the system should clear):
 
-1. **Universally recognizable.** "Went in for milk, left with $300 of stuff" is a near-universal moment. The autobiography honors the small anomaly rather than dramatizing a constructed life-pivot. If the format works on the Trader Joe's run, it works on every day.
-2. **Cross-ontology causal beat with timestamps and numbers.** Location (first visit), financial (transaction amount + duration), audio (voice memo with specific quote), biometric (HRV deviation) — four ontologies, one paragraph, each anchored to a number that could be verified.
-3. **A baseline comparison the system actually computes.** "Your baseline Friday grocery run takes 18 minutes and averages $45" is the system openly drawing on history — its legitimate vantage point. Stated plainly. No fake neutrality.
-4. **The user's own voice is the totem.** *"I just bought enough snacks to survive a winter"* is the photo-album trigger — the line that, surfaced in a year as an "on this day" memory, brings the whole afternoon back. The system's only editorial act is *picking the right line*; it does not write it.
-5. **The closer is data, not interpretation.** "HRV that evening was 12% above your Friday baseline" lands as a fact, not a verdict. The reader infers what the splurge did to them. The narrator never says "it settled you" or "it stressed you out" — those are pronouncements the AI cannot honestly make.
+1. **Most people will recognize it.** "Went in for milk, left with $300 of stuff" happens to almost everyone. The autobiography gives weight to a small anomaly instead of inventing a dramatic turning point. If the format works for an ordinary grocery run, it works for any day.
+2. **One sequence of events across data types, with timestamps and numbers.** Location (first visit), financial (transaction amount + duration), audio (voice memo with specific quote), biometric (HRV deviation) — four ontologies in one paragraph, each tied to a number that could be verified.
+3. **A baseline comparison the system actually computes.** "Your baseline Friday grocery run takes 18 minutes and averages $45" shows the system using the person's history, which it has and should use. It says so directly and does not pretend to be neutral.
+4. **The user's own words are the anchor.** *"I just bought enough snacks to survive a winter"* is the line that, shown a year later as an "on this day" memory, brings the whole afternoon back. The system's only editorial choice is *picking the right line*; it does not write it.
+5. **The last sentence states data and leaves the interpretation to the reader.** "HRV that evening was 12% above your Friday baseline" is a fact. The reader works out what the splurge did to them. The narrator never says "it settled you" or "it stressed you out", because the AI has no evidence for claims like those.
 
-**What it deliberately doesn't do**:
-- No mom-narration ("and then you went to the store, and then you came home")
-- No fabricated sensory ambiance (no "the aisles smelled of cardamom") — the system has no ontology for that
-- No pronouncement of meaning ("the splurge was really about something else")
-- No fake neutrality (the narrator openly draws on baseline data; selection is the interpretation, owned)
+**What it does not do**:
+- No step-by-step narration ("and then you went to the store, and then you came home")
+- No invented sensory detail (no "the aisles smelled of cardamom") — the system has no data source for that
+- No statements about what something meant ("the splurge was really about something else")
+- No pretended neutrality (the narrator openly uses baseline data; choosing what to include is itself the interpretation, and the narrator does not hide that)
 
 **Length**: 120-180 words. Long enough to synthesize a real day, short enough to read over morning coffee. Also the sweet spot for the local embedding model; longer dilutes the semantic signal. System prompt should target this explicitly: no preamble, no sign-off, just prose.
 
@@ -129,7 +130,7 @@ The autobiography is the **meaning layer** — synthesis, not chronology. Event 
 #### Left column (~35% width): Time-proportional vertical strip
 
 - Thin colored bars, height proportional to event duration
-- A 3-hour block is visually 3x the height of a 1-hour block — proportionality is honesty
+- A 3-hour block is visually 3x the height of a 1-hour block, so the strip shows durations accurately
 - Each rect shows: time range, one-word label, colored bar
 - **Sleep events**: Small/compressed rects, muted styling
 - **Transit events**: Small/compressed rects, muted styling
@@ -250,7 +251,7 @@ See the **Dayline Scoring** section below for the full novelty signal specificat
 
 **What it measures**: What happened throughout the day, when, and for how long.
 
-**Why a timeline, not an arc**: There's no single "Y axis" for a day's narrative. Salience? Heart rate? Productivity? Energy? Moral weight? Too many competing dimensions. The honest representation is a flat timeline with labeled events — the X axis IS the shape.
+**Why a timeline, not an arc**: There's no single "Y axis" for a day's narrative. Importance? Heart rate? Productivity? Energy? Moral weight? There are too many competing dimensions. A flat timeline with labeled events shows the day without inventing a single measure; the sequence along the X axis is the shape.
 
 **Implementation**: LLM identifies 8-16 events during virtues-api summary generation. Stored in `wiki_events` with `auto_label`, `start_time`, `end_time`, `auto_location`. Displayed in the day page's Data view as:
 
@@ -291,7 +292,7 @@ See the **Dayline Scoring** section below for the full novelty signal specificat
 > `autonomic_z` is still computed (`dayline/autonomic_scoring.rs`), and no
 > view draws it.
 
-### The Core Insight
+### What a wearable cannot compute
 
 Wearables can tell you "your HR was 78." But they can't tell you:
 
@@ -303,9 +304,9 @@ That requires three things no wearable has:
 2. **Personal history** — what does your body usually do during similar events? (12 weeks of embedded events paired with HR)
 3. **Embedding similarity** — matching today's event to historically similar events (embedding infrastructure)
 
-The dayline has all three. The embedding space IS the activity classifier. "Design standup with Maya and David about onboarding drop-off" captures everything — meeting type, people, topic — in one 768-dimensional vector. No explicit categories needed.
+The dayline has all three. The embedding space acts as the activity classifier. "Design standup with Maya and David about onboarding drop-off" captures everything — meeting type, people, topic — in one 768-dimensional vector. No explicit categories needed.
 
-### The Three Questions (Dayline)
+### Three questions the scoring answers
 
 The scoring was designed to answer three questions about each day. The day line draws Q1 only; Q0 and Q2 are not on the page.
 
@@ -313,12 +314,12 @@ The scoring was designed to answer three questions about each day. The day line 
 Sleep architecture (phases, depth, fragmentation) and morning readiness score. The foundation — where the day begins. This is DATA, not a scored signal.
 
 **Q1: "What was different about today?"**
-The **novelty** signal. Semantic/cognitive unusualness — new people, new places, unusual topics, novel combinations. Z-scored against 12 weeks of personal history using embedding similarity with day-of-week weighted average. This is the narrative arc of the day.
+The **novelty** signal. Semantic/cognitive unusualness — new people, new places, unusual topics, novel combinations. Z-scored against 12 weeks of personal history using embedding similarity with day-of-week weighted average. This signal tracks how unusual each part of the day was.
 
 **Q2: "How did my body handle it?"**
-The **autonomic** signal. Physiological response compared to personal baseline for contextually similar events. Z-scored using embedding-weighted HR comparison. This is the physical reality beneath the narrative.
+The **autonomic** signal. Physiological response compared to personal baseline for contextually similar events. Z-scored using embedding-weighted HR comparison. This signal measures how the body responded.
 
-Q1 and Q2 are the two scored signals (+/-3 sigma). Q0 is contextual data (sleep phases + readiness score) that frames the scored signals. The relationship between Q1 and Q2 is where the unique insight lives — routine events that stressed you, novel experiences you handled with ease.
+Q1 and Q2 are the two scored signals (+/-3 sigma). Q0 is contextual data (sleep phases + readiness score) that gives context to the scored signals. The most useful information comes from comparing Q1 and Q2: routine events that stressed you, and novel experiences you handled with ease.
 
 ### Novelty Signal — "How unusual is this event's content?"
 
@@ -330,7 +331,7 @@ Q1 and Q2 are the two scored signals (+/-3 sigma). Q0 is contextual data (sleep 
 | **Question** | "Is this event unusual IN MY LIFE?" |
 | **Output** | `novelty_z` on `wiki_events` (+/-3 sigma clamped) |
 
-The centroid approach works for novelty because you're asking a global question. Every past event defines what "normal" looks like. The centroid IS your normal. Distance from it IS unusualness.
+The centroid approach works for novelty because you're asking a global question. Every past event contributes to what "normal" looks like. The centroid represents your normal, and distance from it measures unusualness.
 
 **What's captured:** Semantic/cognitive novelty — new topics, new people, new places, unusual combinations.
 
@@ -361,7 +362,7 @@ weight = embedding_similarity x recency
 - **Embedding similarity (space):** `exp(-distance^2 / 2*sigma^2)` — standups weight heavily for other standups, near-zero for runs
 - **Recency (time):** `exp(-days_ago / 21)` — 3-week half-life exponential decay, because your body changes over time
 
-No circadian normalization — the raw circadian shape IS part of the autonomic story. The afternoon dip is real. Morning freshness is real.
+No circadian normalization. The raw circadian shape is part of the autonomic signal, because the afternoon dip and morning freshness are real physiological effects.
 
 **Context-gated HR/HRV composite:**
 
@@ -391,7 +392,7 @@ Same formula applies independently for HRV. Both hr_z and hrv_z are stored separ
 
 **Discordance detection:** When hr_z and hrv_z disagree by >1.5 sigma, flag the event — these are often the most interesting (early illness, overtraining, hidden stress).
 
-### The Demand vs Supply Narrative
+### Reading the two signals together: demand vs supply
 
 Read together, the two signals tell a demand-vs-supply story. The day line does not draw the autonomic signal, so this reading is not on the page:
 
@@ -405,24 +406,24 @@ Read together, the two signals tell a demand-vs-supply story. The day line does 
 | **Low** | **High** | **Routine situation, body activated. Hidden stress. Something's off.** |
 | Low | Low | Normal day, normal body. Autopilot. |
 
-The **low novelty + high autonomic stress** case is the killer insight no wearable can surface. "You were doing your usual commute but your HR was 2 sigma above your commute baseline. What was different?" Maybe anxiety, poor sleep, a stressful text. Nothing on the page flags it yet.
+The **low novelty + high autonomic stress** case is the one no wearable can detect on its own. "You were doing your usual commute but your HR was 2 sigma above your commute baseline. What was different?" Maybe anxiety, poor sleep, a stressful text. Nothing on the page flags it yet.
 
 When the autonomic line crosses below the novelty line — **strain** (the moment demands more than your body is equipped for). When autonomic is below novelty — **surplus** (you have capacity for what's happening).
 
-### The Exercise Paradox — Solved
+### Scoring exercise against similar exercise
 
 The naive "battery drain" model breaks during exercise: running at HR 152 would show as maximally depleted, even though runners feel great.
 
-The embedding-based approach dissolves this entirely:
+The embedding-based approach avoids this problem:
 
 - "45-minute run on the usual loop" — find similar past runs in embedding space
 - Similar runs had avg HR: [148, 152, 145, 150, 147] — mean 148.4, std 2.6
 - Today's run HR: 152
 - Autonomic z-score: (152 - 148.4) / 2.6 = **+0.9 sigma** — slightly harder than usual, not an outlier
 
-Compare to naive resting-HR approach: 152 vs resting 62 = +90 bpm = absurd outlier.
+Compare to naive resting-HR approach: 152 vs resting 62 = +90 bpm = an implausible outlier.
 
-The embedding normalizes exercise automatically because similar events (other runs) ALSO had high HR. The comparison is always apples-to-apples.
+The embedding normalizes exercise automatically because similar events (other runs) also had high HR. The comparison is always between similar activities.
 
 ### Why Different Methods for Different Signals
 
@@ -457,7 +458,7 @@ But HRV is sparse (every 1-3 hours from Apple Watch, requires stillness). For V1
 
 ### What about a "battery" model?
 
-We explored and rejected the battery/drain model (Garmin Body Battery style). The problem: every day produces the same monotonic curve — charge overnight, drain all day. The variation is small and boring. Per-event physiological deviation is a fundamentally richer signal.
+We explored and rejected the battery/drain model (Garmin Body Battery style). The problem: every day produces the same monotonic curve — charge overnight, drain all day. The day-to-day variation is small and tells the person little. Per-event physiological deviation carries much more information.
 
 ### Apple Watch Data Availability
 
@@ -478,13 +479,13 @@ We explored and rejected the battery/drain model (Garmin Body Battery style). Th
 
 - **Days 1-3:** Insufficient baseline. No autonomic z-scores computed.
 - **Days 4-14:** Building baseline. Autonomic scores computed but flagged as "calibrating" (low confidence due to small sample size).
-- **Day 14+:** Fully personalized. Require N>=5 similar events (combined weight above threshold) to compute autonomic z-score for an event. Events with no similar history fall back to showing no autonomic signal (honest > fabricated).
+- **Day 14+:** Fully personalized. Require N>=5 similar events (combined weight above threshold) to compute autonomic z-score for an event. Events with no similar history show no autonomic signal (showing nothing is better than showing an invented score).
 
 ---
 
 ## Event HR Annotation Pipeline
 
-Not chicken-and-egg — sequential pipeline:
+The steps run in sequence, so no step waits on a later one:
 
 ```
 1. Apple Watch -> data_health_heart_rate (raw HR samples, every 5-10 min)
@@ -497,19 +498,19 @@ Not chicken-and-egg — sequential pipeline:
 
 ---
 
-## Spacetime: The Unifying Principle
+## How each signal weights similarity and time
 
-Both scoring methods operate in spacetime — but weight the dimensions differently:
+Both scoring methods use two dimensions, embedding similarity ("space") and time, but weight them differently:
 
 **Novelty** emphasizes **space** (embedding distance from centroid). Time is implicit (the 12-week window defines the baseline, with DoW weighting). The question is spatial: "where does this event sit in the landscape of my life?"
 
 **Autonomic** emphasizes **both space AND time** equally. The composite kernel weights by embedding similarity (space) AND recency (time). The question is spatiotemporal: "how does my body respond to events LIKE this, RECENTLY?"
 
-This duality — spatial novelty vs spatiotemporal autonomic response — is core to the personal OS. Every signal in a person's life has both a "what" dimension (semantic content) and a "when" dimension (temporal context). The day line draws the novelty side only.
+Every signal in a person's life has both a "what" dimension (semantic content) and a "when" dimension (temporal context), and the two methods weight them differently. The day line draws the novelty side only.
 
 ---
 
-## What Makes This Unique
+## Comparison with existing products
 
 No existing product combines:
 1. LLM-generated event classification (semantic understanding of WHAT happened)
@@ -519,7 +520,7 @@ No existing product combines:
 
 Wearables have #3 partially (HR data) but lack #1 and #2 (they don't know what you were doing). Life-logging apps have #1 but lack #3 (they don't have physiological data). The dayline integrates all four.
 
-The "surprise divergence" — routine event with unusual physiological response — is the signature insight. It surfaces something the user couldn't see from either data source alone. It requires the totality of a life's data.
+The "surprise divergence" — a routine event with an unusual physiological response — is the main result this combination makes possible. It shows something the user couldn't see from either data source alone, and it needs many kinds of data combined.
 
 ---
 
@@ -576,7 +577,7 @@ Both HR and HRV are needed for the full picture.
 
 **Cannot distinguish excitement from stress.** High sympathetic activation (elevated HR, low HRV) could mean stress (negative) OR excitement (positive). The embedding comparison normalizes for activity type but can't detect valence within the same activity type. "Stressed about standup" and "excited about standup" look the same physiologically.
 
-**Stimulant effects are honest, not intuitive.** Caffeine depletes autonomic reserve while boosting subjective alertness. Our model shows the physiological truth. For habitual users, this self-corrects: the baseline includes their usual caffeine response, so only DEVIATIONS from their caffeine pattern register. For non-habitual users, the model correctly shows "your body is stressed by this unfamiliar substance."
+**Stimulant effects can look counterintuitive.** Caffeine depletes autonomic reserve while boosting subjective alertness, and the model shows the physiological effect. For habitual users, this corrects itself: the baseline includes their usual caffeine response, so only DEVIATIONS from their caffeine pattern show up. For non-habitual users, the model correctly shows "your body is stressed by this unfamiliar substance."
 
 **Cannot measure cognitive performance or emotional state.** No wrist sensor captures working memory, reaction time, creativity, mood, or motivation. The autonomic score is a physiological proxy (~70-80% correlated with subjective energy reports per Firstbeat validation data). The 20-30% gap is mostly stimulant effects and post-exercise endorphins.
 
@@ -587,7 +588,7 @@ Both HR and HRV are needed for the full picture.
 No view draws the autonomic signal at present. If one does, it uses **"Autonomic"** as the line name with **"Stress / Recovery"** as the axis labels.
 
 - **"Autonomic"** — scientifically precise (we ARE measuring the autonomic nervous system), entering common vocabulary alongside terms like serotonin and cortisol
-- **"Stress" (+Y)** — physiologically honest. Exercise, caffeine, mental load are all stressors. One syllable, instant recognition. Tooltip: "Sympathetic activation"
+- **"Stress" (+Y)** — physiologically accurate. Exercise, caffeine, mental load are all stressors. One syllable, instant recognition. Tooltip: "Sympathetic activation"
 - **"Recovery" (-Y)** — warm, intuitive. Tooltip: "Parasympathetic dominance"
 - Column name: `autonomic_z`
 - Morning score: **"Readiness"** (0-100 on wiki_days) — industry standard, measures starting autonomic state
@@ -659,9 +660,9 @@ virtues-api LLM call (generate_day_summary)
 
 ## W6H: The Seven Experiential Dimensions (Reference)
 
-The W6H dimensions are the irreducible questions you'd ask to fully reconstruct any moment of lived experience. They aren't lenses you choose to apply — they're structural features of any situated moment. Sleep has a `who` whether you measure it or not. A meeting has a `whom` and `where` whether sensors are present or not.
+The W6H dimensions are the basic questions you'd ask to fully reconstruct any moment of lived experience. Every moment has these features, whether or not anything measures them. Sleep has a `who` whether you measure it or not. A meeting has a `whom` and `where` whether sensors are present or not.
 
-W6H is used as color commentary by the day summary LLM — a fun afterthought on how complete the day feels across experiential dimensions. Not a core scoring mechanism.
+The day summary LLM uses W6H only for a light secondary comment on how complete the day feels across these dimensions. It is not a core scoring mechanism.
 
 | Dim | Question | What it captures | Example ontologies |
 |-----|----------|-----------------|-------------------|
@@ -675,7 +676,7 @@ W6H is used as color commentary by the day summary LLM — a fun afterthought on
 
 ### Classical Heritage
 
-The impulse to decompose human acts into these questions is ancient. The *septem circumstantiae* (seven circumstances) of classical rhetoric — attributed to Hermagoras of Temnos (1st century BC), refined by Cicero and Thomas Aquinas — asked *Quis, quid, ubi, quibus auxiliis, cur, quomodo, quando*. The original Latin categories overlap considerably (how / by what means / why blur together), and the mapping to our W6H is loose, not literal. But the core insight is the same: a finite set of orthogonal questions can fully characterize any situated human experience.
+The impulse to decompose human acts into these questions is ancient. The *septem circumstantiae* (seven circumstances) of classical rhetoric — attributed to Hermagoras of Temnos (1st century BC), refined by Cicero and Thomas Aquinas — asked *Quis, quid, ubi, quibus auxiliis, cur, quomodo, quando*. The original Latin categories overlap considerably (how / by what means / why blur together), and the mapping to our W6H is loose, not literal. Both rest on the same idea: a small fixed set of independent questions can describe any situated human experience.
 
 ---
 
