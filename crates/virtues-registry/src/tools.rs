@@ -655,6 +655,7 @@ Rules:
 - In a JOIN, qualify every column (m.occurred_at); bare shared names like occurred_at, date, id fail as ambiguous.
 - A table is an instant (occurred_at) or a span (started_at/ended_at), never both.
 - created_at/updated_at are when WE wrote the row; filter time on occurred_at or started_at/ended_at.
+- HEALTH tables keep samples deleted in Apple Health: filter deleted_at_source IS NULL.
 
 Data row -> person (or wiki_places / wiki_orgs):
 SELECT p.name, COUNT(*) FROM data_communication_message m

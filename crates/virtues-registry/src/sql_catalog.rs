@@ -122,10 +122,9 @@ pub fn prompt_block() -> String {
 
 /// Static table metadata — descriptions, key queryable columns, and the fence
 /// that decides which tables the model can see at all.
-/// A sample deleted in Apple Health stays as a tombstone with
-/// `deleted_at_source` set.
-const HEALTH_TOMBSTONE: &str = "filter deleted_at_source IS NULL";
-
+///
+/// The health tables carry no note. The `deleted_at_source` filter they all
+/// need is a single rule in the `sql_query` description in `tools.rs`.
 pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     let mut m = HashMap::new();
 
@@ -137,49 +136,49 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "health",
         key_columns: &["bpm", "occurred_at"],
         join_hint: None,
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
     m.insert("data_health_hrv", TableMetadata {
         description: "Heart rate variability measurements in milliseconds",
         category: "health",
         key_columns: &["hrv_ms", "occurred_at"],
         join_hint: None,
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
     m.insert("data_health_steps", TableMetadata {
         description: "Step count records (may have multiple per day)",
         category: "health",
         key_columns: &["step_count", "occurred_at"],
         join_hint: None,
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
     m.insert("data_health_sleep", TableMetadata {
         description: "Sleep sessions with duration and quality metrics",
         category: "health",
         key_columns: &["started_at", "ended_at", "duration_minutes", "sleep_quality_score", "sleep_stages"],
         join_hint: None,
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
     m.insert("data_health_workout", TableMetadata {
         description: "Exercise and workout sessions",
         category: "health",
         key_columns: &["workout_type", "started_at", "ended_at", "duration_minutes", "calories_burned", "distance_km", "avg_heart_rate", "max_heart_rate"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_health_workout' AND er.source_id = data_health_workout.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
     m.insert("data_health_active_energy", TableMetadata {
         description: "Active energy burned, in kilocalories",
         category: "health",
         key_columns: &["kcal", "occurred_at"],
         join_hint: None,
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
     m.insert("data_health_distance", TableMetadata {
         description: "Distance moved, in meters",
         category: "health",
         key_columns: &["meters", "occurred_at"],
         join_hint: None,
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
 
     // ============================================================================
