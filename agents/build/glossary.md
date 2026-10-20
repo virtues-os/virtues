@@ -85,10 +85,11 @@ Time says how long a thing is. **Tense** says what the system does with it.
   close (*done*, *abandoned*, *superseded*). An **aspiration** is not a
   future-tense item at all. It never starts or finishes; it is part of the
   life page, as a direction.
-- Two rules: we do not build a task manager (no badges, counts, or reminders
-  to nag; a commitment that slips is just data about the person), and the
-  system never offers a grade unprompted (it makes the comparison available
-  and does not comment on it).
+- Two rules. First, the **task** list (Home > Tasks, `app_tasks`) is where
+  commitments become visible, and it never nags: no badges, no counts, no
+  reminder the person did not ask for. A commitment that slips is just data
+  about the person. Second, the system never offers a grade unprompted (it
+  makes the comparison available and does not comment on it).
 
 ## Subjects and attachments
 

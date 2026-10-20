@@ -511,6 +511,8 @@ impl ToolExecutor {
             // back through this executor as the `browser_*` calls below.
             crate::browse::TOOL => Ok(crate::browse::run_tool(&self._pool, &arguments, context).await),
             super::send_imessage::TOOL => Ok(super::send_imessage::run(&self._pool, &arguments, context).await),
+            super::tasks::CREATE_TOOL => Ok(super::tasks::create(&self._pool, &arguments, context).await),
+            super::tasks::UPDATE_TOOL => Ok(super::tasks::update(&self._pool, &arguments, context).await),
             name if crate::browser::TOOLS.contains(&name) => {
                 Ok(crate::browser::run_tool(name, arguments).await)
             }

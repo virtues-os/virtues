@@ -121,6 +121,7 @@
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
 	import SentMessageCard from "$lib/components/chat/SentMessageCard.svelte";
+	import TaskCard from "$lib/components/chat/TaskCard.svelte";
 	import Show from "$lib/components/chat/show/Show.svelte";
 	import AppletProposalCard from '$lib/components/chat/AppletProposalCard.svelte';
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
@@ -2138,6 +2139,14 @@
 													to={out?.to ?? sent.input?.to ?? ""}
 													text={out?.text ?? sent.input?.text ?? ""}
 													onOpenPerson={(id) => windowShellStore.openRouteInSplitOrActive(`/person/${id}`)}
+												/>
+											{:else if (part.type === "tool-create_task" || part.type === "tool-update_task") && (part as any).state === "output-available"}
+												{@const out = (part as any).output}
+												<!-- The tasks themselves, with working checkboxes. A failed
+												     call falls through to the error branch below. -->
+												<TaskCard
+													tasks={out?.tasks ?? (out?.task ? [out.task] : [])}
+													verb={part.type === "tool-create_task" ? "added" : "updated"}
 												/>
 											{:else if part.type === "tool-generate_image"}
 												{@const gen = part as any}

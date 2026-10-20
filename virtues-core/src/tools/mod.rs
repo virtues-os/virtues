@@ -28,6 +28,7 @@ mod web_search;
 pub(crate) mod send_imessage;
 pub(crate) mod sql_query;
 pub(crate) mod sql_write;
+pub(crate) mod tasks;
 pub(crate) mod shell;
 pub(crate) mod sql_sudo;
 pub(crate) mod sudo_gate;

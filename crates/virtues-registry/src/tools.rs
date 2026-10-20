@@ -97,8 +97,75 @@ pub fn default_tools() -> Vec<ToolConfig> {
     ]
     .into_iter()
     .chain(browser_tools())
-    .chain([send_imessage_tool()])
+    .chain([send_imessage_tool(), create_task_tool(), update_task_tool()])
     .collect()
+}
+
+/// Add tasks to the to-do list the owner and the assistant share (virtues-core
+/// `tools/tasks.rs`). Not gated: a task is cheap to undo, and its history says
+/// the assistant made it.
+fn create_task_tool() -> ToolConfig {
+    ToolConfig {
+        id: "create_task".to_string(),
+        name: "Add a task".to_string(),
+        description: "Add tasks to your list".to_string(),
+        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). Never for things only mentioned in passing. Titles: short, in their words. The chat shows the tasks."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["tasks"],
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["title"],
+                        "properties": {
+                            "title": { "type": "string" },
+                            "notes": { "type": "string" },
+                            "due": { "type": "string", "description": "Only if said: 2026-10-23 or 2026-10-23T17:00, owner's time" },
+                            "for": { "type": "string", "enum": ["owner", "assistant"] },
+                            "project_id": { "type": "string" }
+                        }
+                    }
+                },
+                "origin": { "type": "string", "enum": ["asked", "own"] }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:checkbox-circle-line".to_string(),
+        display_order: 46,
+        is_system: false,
+    }
+}
+
+/// Change one task: its fields, its status, or a note in its history.
+fn update_task_tool() -> ToolConfig {
+    ToolConfig {
+        id: "update_task".to_string(),
+        name: "Update a task".to_string(),
+        description: "Edit, finish or dismiss a task".to_string(),
+        llm_description: r#"Change one task by id: fields, status, or a note in its history. Working one assigned to you: "active", then a note on what you did and where, then "done"; if blocked, "open" with a note why. due "none" clears it."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": { "type": "string" },
+                "title": { "type": "string" },
+                "notes": { "type": "string" },
+                "due": { "type": "string" },
+                "for": { "type": "string", "enum": ["owner", "assistant"] },
+                "project_id": { "type": "string" },
+                "status": { "type": "string", "enum": ["open", "active", "done", "dismissed"] },
+                "note": { "type": "string" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:checkbox-circle-line".to_string(),
+        display_order: 47,
+        is_system: false,
+    }
 }
 
 /// Send an iMessage as the owner, through Messages on their Mac (virtues-core

@@ -1,6 +1,7 @@
 # Tasks: one list for the owner and their assistant
 
-**Status:** Planned 2026-10-20. Nothing is built yet.
+**Status:** Slices 1 and 2 built on `wave` 2026-10-20, not yet on
+`staging`. Left: slice 3, and the drag-to-reorder question below.
 
 Tasks is a plain to-do list in Home, between Pages and Applets. The owner
 and the assistant work from the same list. Think of a light version of
@@ -117,13 +118,12 @@ The list follows Apple Reminders, not a data grid.
   the assignee is the assistant, and a source chip when there is a source.
   `active` shows as a quiet in-progress dot. A row never has more than
   that.
-- **Actions:** click the checkbox to complete, × on hover (swipe on phone)
-  to dismiss, drag to reorder within a group, and click a row to open the
-  detail.
+- **Actions:** click the checkbox to complete, × to dismiss (on hover;
+  always drawn on a phone), and click a row to open the detail.
 
 ### Detail
 
-The detail opens as a side pane, or full screen on the phone. It holds the
+The detail opens in place under its row, on desktop and phone alike. It holds the
 editable title and notes, the facts as inline pickers, and the history
 underneath. Two actions:
 
@@ -199,11 +199,12 @@ feature that ships.
 
 ## Slices
 
-1. **Core list.** The tables, the API, the Tasks view and detail, the
-   sidebar change, and adding and editing by hand. Useful alone.
-2. **Assistant.** `create_task` and `update_task`, Hand to assistant, the
+1. **Core list** (built). The tables, the API,
+   the Tasks view and detail, the sidebar change, and adding and editing
+   by hand. Useful alone.
+2. **Assistant** (built). `create_task` and `update_task`, Hand to assistant, the
    history pane, the brief line, and the glossary edit.
-3. **Background work.** Assistant tasks that come due run headless through
+3. **Background work** (not started). Assistant tasks that come due run headless through
    the applet runner, under the same spending cap as applets.
 
 Each slice is one PR to `staging`.
@@ -233,6 +234,14 @@ Each of these adds columns or a producer. None of them changes the object.
   An email task closes when the owner replies in its thread. This slice
   adds a `confidence` column and a `lapses_on` date, and adds `heard`,
   `synced` and `email` to `origin`.
+
+## Open
+
+- **Drag to reorder** is not built. Groups sort by date, then time, then
+  `sort_order`, so a drag could only change the order of tasks due the same
+  day or of undated ones, and a dragged task would jump back whenever its
+  date sorted it elsewhere. Build it only if manual order is wanted, and
+  then for the No date group alone. The column is already there.
 
 ## Decided
 

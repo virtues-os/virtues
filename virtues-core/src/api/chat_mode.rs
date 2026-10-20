@@ -431,6 +431,7 @@ pub(crate) mod tests {
             ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], 2_400),
             ("search", &["semantic_search", "web_search"], 2_000),
             ("self", &["update_memory"], 800),
+            ("tasks", &["create_task", "update_task"], 1_500),
             ("sql_write", &["sql_write"], 600),
             // Drawn inside the reply. The kinds and their column contracts are
             // the description; trimming it means dropping a kind.
@@ -439,8 +440,10 @@ pub(crate) mod tests {
             // catalog (sql_catalog::prompt_block), so a new table or a longer
             // note lands here. Trimmed from 9.6k on 2026-09-29 with no column
             // dropped: failures were 6 unknown columns and 5 ambiguous joins
-            // in 1,422 calls, so the columns stay and the prose went.
-            ("sql_query", &["sql_query"], 6_500),
+            // in 1,422 calls, so the columns stay and the prose went. Raised
+            // 150 on 2026-10-20 for app_tasks, the one table the task tools
+            // read through it.
+            ("sql_query", &["sql_query"], 6_650),
             // Mode-only tools, each set just above its 2026-09-29 size.
             ("shell", &["shell"], 1_500),
             ("dispatch", &["dispatch_subagents"], 3_300),
@@ -450,9 +453,9 @@ pub(crate) mod tests {
         // (mode's wire name, total ceiling). Chat's is the sum of its group
         // ceilings; the rest sit just above their 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 19_900),
-            ("sudo", 20_100),
-            ("deep_research", 13_100),
+            ("chat", 21_550),
+            ("sudo", 21_750),
+            ("deep_research", 13_250),
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),

@@ -10,7 +10,8 @@
 	 * never nag, and a number is the first step toward that.
 	 */
 	import type { Tab } from "$lib/tabs/types";
-	import type { Task, TaskPatch } from "$lib/api/client";
+	import { listTaskEvents, type Task, type TaskEvent, type TaskPatch } from "$lib/api/client";
+	import { askVirtues } from "$lib/stores/pendingPrompt.svelte";
 	import { tasksStore } from "$lib/stores/tasks.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -74,8 +75,13 @@
 		return names;
 	});
 
+	// The assistant changes tasks from chats, so the list reloads whenever
+	// its tab comes forward, not only when it first opens.
+	$effect(() => {
+		if (active) void tasksStore.load();
+	});
+
 	onMount(() => {
-		void tasksStore.load();
 		if (!projectStore.loaded) void projectStore.load();
 		const timer = setInterval(() => (today = isoDay(new Date())), 60_000);
 		return () => clearInterval(timer);
@@ -165,8 +171,93 @@
 
 	let expanded = $state<string | null>(null);
 
+	let history = $state<TaskEvent[]>([]);
+
 	function toggleExpanded(t: Task) {
 		expanded = expanded === t.id ? null : t.id;
+		history = [];
+		if (expanded) void loadHistory(t.id);
+	}
+
+	async function loadHistory(id: string) {
+		try {
+			const events = await listTaskEvents(id);
+			if (expanded === id) history = events;
+		} catch (e) {
+			toast.error("Your server couldn't load this task's history", { description: errorText(e) });
+		}
+	}
+
+	/** One line of history, as the owner reads it. */
+	function eventLine(e: TaskEvent): string {
+		const who = e.author === "assistant" ? "The assistant" : "You";
+		const body = e.body as Record<string, unknown>;
+		switch (e.kind) {
+			case "created":
+				return `${who} added this`;
+			case "status": {
+				const to = String(body.to ?? "");
+				const said: Record<string, string> = {
+					done: "finished it",
+					dismissed: "dismissed it",
+					active: "started on it",
+					open: "reopened it",
+				};
+				return `${who} ${said[to] ?? "changed its status"}`;
+			}
+			case "edited": {
+				const fields = Object.keys(body);
+				if (fields.length === 1 && fields[0] === "assignee") {
+					return body.assignee === "assistant" ? `${who} handed it to the assistant` : `${who} took it back`;
+				}
+				const names: Record<string, string> = {
+					title: "title",
+					notes: "notes",
+					assignee: "assignee",
+					due_on: "date",
+					due_at: "time",
+					project_id: "project",
+				};
+				const changed = [...new Set(fields.map((f) => names[f] ?? f))];
+				return `${who} changed the ${changed.join(" and ")}`;
+			}
+			default:
+				return String(body.text ?? "");
+		}
+	}
+
+	function eventTime(e: TaskEvent): string {
+		return new Date(e.created_at).toLocaleString("en-US", {
+			month: "short",
+			day: "numeric",
+			hour: "numeric",
+			minute: "2-digit",
+		});
+	}
+
+	function openChat(chatId: string) {
+		windowShellStore.openTabFromRoute(`/chat/${chatId}`, { focusExisting: true });
+	}
+
+	/**
+	 * Give the task to the assistant and start it on the work: a new chat,
+	 * every time, so nothing from an older conversation rides along. The
+	 * history links whichever chat does the work.
+	 */
+	async function handToAssistant(t: Task) {
+		try {
+			await tasksStore.update(t.id, { assignee: "assistant" });
+		} catch (e) {
+			toast.error("Your server couldn't hand that task over", { description: errorText(e) });
+			return;
+		}
+		const notes = t.notes ? `\n\nNotes: ${t.notes}` : "";
+		askVirtues(`Please take this task (${t.id}): ${t.title}${notes}`, t.project_id);
+	}
+
+	function takeBack(t: Task) {
+		void save(t.id, { assignee: "owner" }, "Your server couldn't take that task back");
+		void loadHistory(t.id);
 	}
 
 	function saveTitle(t: Task, value: string) {
@@ -395,6 +486,33 @@
 						</button>
 					{/if}
 				</div>
+				{#if !isClosed}
+					<div class="hand">
+						{#if t.assignee === "owner"}
+							<button type="button" class="hand-btn" onclick={() => handToAssistant(t)}>
+								<Icon icon="ri:send-plane-line" width="14" />
+								Hand to assistant
+							</button>
+						{:else}
+							<button type="button" class="hand-btn" onclick={() => takeBack(t)}>Take back</button>
+						{/if}
+					</div>
+				{/if}
+				{#if history.length > 0}
+					<ol class="history" aria-label="History">
+						{#each history as e (e.id)}
+							<li class:note={e.kind === "note"}>
+								<span class="history-line">{eventLine(e)}</span>
+								<span class="history-meta">
+									{eventTime(e)}
+									{#if e.chat_id}
+										· <button type="button" class="link" onclick={() => openChat(e.chat_id!)}>chat</button>
+									{/if}
+								</span>
+							</li>
+						{/each}
+					</ol>
+				{/if}
 			</div>
 		{/if}
 	</li>
@@ -620,6 +738,50 @@
 		gap: 0.375rem;
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
+	}
+	.hand {
+		display: flex;
+		gap: 0.5rem;
+	}
+	.hand-btn {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.375rem;
+		padding: 0.25rem 0.625rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-full);
+		background: transparent;
+		color: var(--color-foreground);
+		font: inherit;
+		font-size: 0.8125rem;
+		cursor: pointer;
+	}
+	.hand-btn:hover {
+		background: color-mix(in srgb, var(--wash-ink) 5%, transparent);
+	}
+	.history {
+		list-style: none;
+		margin: 0.25rem 0 0;
+		padding: 0.5rem 0 0;
+		border-top: 1px solid var(--color-border);
+		display: flex;
+		flex-direction: column;
+		gap: 0.25rem;
+		font-size: 0.8125rem;
+	}
+	.history li {
+		display: flex;
+		justify-content: space-between;
+		gap: 1rem;
+		color: var(--color-foreground-muted);
+	}
+	.history li.note .history-line {
+		color: var(--color-foreground);
+	}
+	.history-meta {
+		flex-shrink: 0;
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
 	}
 	.fact input,
 	.fact select {

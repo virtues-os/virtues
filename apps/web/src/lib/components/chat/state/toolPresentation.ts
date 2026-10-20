@@ -200,6 +200,28 @@ const TOOLS: Record<string, Presentation> = {
 			return to ? `${verb} a message to ${fit(to, short)}` : `${verb} a message`;
 		},
 	},
+	// Drawn in the reply as the tasks themselves (TaskCard); these are their
+	// lines in the thinking block.
+	create_task: {
+		noun: "Tasks",
+		depth: 4,
+		say: (input, live) => {
+			const n = Array.isArray(input.tasks) ? input.tasks.length : 1;
+			const what = n === 1 ? "a task" : `${n} tasks`;
+			return live ? `Adding ${what}` : `Added ${what}`;
+		},
+	},
+	update_task: {
+		noun: "Tasks",
+		depth: 4,
+		say: (input, live) => {
+			const status = typeof input.status === "string" ? input.status : "";
+			if (status === "done") return live ? "Finishing a task" : "Finished a task";
+			if (status === "dismissed") return live ? "Dismissing a task" : "Dismissed a task";
+			if (status === "active") return live ? "Starting on a task" : "Started on a task";
+			return live ? "Updating a task" : "Updated a task";
+		},
+	},
 	get_page_content: { noun: "a page", depth: 4, say: ["Reading a page", "Read a page"] },
 	create_page: { noun: "a new page", depth: 4, say: ["Writing a new page", "Wrote a new page"] },
 	edit_page: { noun: "a page", depth: 4, say: ["Editing a page", "Edited a page"] },
