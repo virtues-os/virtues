@@ -165,7 +165,7 @@
 			>
 				<p class="kick"><span class="kind">Person</span><span>· as of {day(date)}</span></p>
 				{#if veil.hiding}
-					<p class="quiet">Veiled. Hold V to read.</p>
+					<p class="quiet">Hidden. Hold V to show it.</p>
 				{:else}
 					<div class="who">
 						<PersonPicture {name} picture={gloss?.picture} size={40} />

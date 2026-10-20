@@ -330,7 +330,7 @@
 		{:else if places.length === 0}
 			Add a place to stop recording there. While you're inside it, Virtues doesn't record.
 		{:else}
-			While you're inside one of these places, Virtues doesn't record. Your record notes the gap, never the place.
+			While you're inside one of these places, Virtues doesn't record. Your history shows a gap but not where you were.
 		{/if}
 	</p>
 {/if}
@@ -379,7 +379,7 @@
 			<p class="about-text">
 				When your recording hours or a place you've added stop recording, Virtues keeps
 				nothing. The mic stays on, so your iPhone's orange microphone dot stays lit and recording
-				picks up again on its own. Your record notes the gap, never the place.
+				picks up again on its own. Your history shows a gap but not where you were.
 			</p>
 		</div>
 	</div>

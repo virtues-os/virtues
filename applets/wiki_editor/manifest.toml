@@ -1,5 +1,5 @@
 name = "Wiki Editor"
-description = "Keeps the wiki's articles true as the record grows."
+description = "Keeps the wiki's articles accurate as new data arrives."
 owner = "system"
 command = ["wiki_editor"]
 triggers = ["cron", "manual", "tool"]

@@ -106,8 +106,8 @@
 	<header class="mast">
 		<h1>Chapters</h1>
 		<p class="standfirst">
-			Your life, divided the way you divided it. You named every chapter yourself,
-			and every day the record holds falls inside exactly one of them.
+			Your life, divided into the chapters you chose. You named each one yourself,
+			and every day in your history falls inside exactly one of them.
 		</p>
 	</header>
 

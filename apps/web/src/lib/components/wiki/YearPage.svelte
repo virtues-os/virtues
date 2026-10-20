@@ -170,9 +170,9 @@
 		{:else if page.state === 'thin'}
 			<section class="state">
 				<p class="quiet">
-					The record for {page.year} runs from {first ? when(first) : '—'} to {last
+					Your data for {page.year} runs from {first ? when(first) : '—'} to {last
 						? when(last)
-						: '—'} — {page.days_recorded}
+						: '—'}: {page.days_recorded}
 					{page.days_recorded === 1 ? 'day' : 'days'}, {page.days_narrated} written up.
 				</p>
 				{#if page.days_narrated > 0 && !page.has_article}

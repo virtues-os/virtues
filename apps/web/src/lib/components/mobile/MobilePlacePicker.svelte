@@ -183,7 +183,7 @@
 						<div class="r-title">
 							{naming.kind === "here" ? "Where you are now" : `Somewhere you've been ${naming.place.ref_count} times`}
 						</div>
-						<div class="r-sub">Give it a name. The name is what the record will call it.</div>
+						<div class="r-sub">Give it a name. Virtues uses this name for the place everywhere.</div>
 					</div>
 				</div>
 				<div class="row static name-row">

@@ -889,9 +889,9 @@ pub async fn set_article_maintenance_handler(
     .await
     {
         Ok(()) => success_message(match mode {
-            "always" => "The record will revisit this whenever anything changes",
-            "never" => "The record will leave this article alone",
-            _ => "The record will keep this up to date",
+            "always" => "The wiki editor will revisit this whenever anything changes",
+            "never" => "The wiki editor will leave this article alone",
+            _ => "The wiki editor will keep this up to date",
         }),
         Err(e) => error_response(e),
     }

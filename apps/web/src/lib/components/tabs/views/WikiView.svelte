@@ -662,7 +662,7 @@
 						</div>
 						<aside class="sec-aside">
 							<p class="aside-note">
-								Named by you, never inferred. Every day the record holds falls inside
+								You name every chapter yourself. Each day in your history falls inside
 								exactly one.
 							</p>
 							<a class="aside-link" href="/wiki/chapters">All chapters →</a>
@@ -675,7 +675,7 @@
 						<h2>On this day</h2>
 						{#if onThisDay.length === 0}
 							<p class="quiet">
-								No earlier years share this date yet - the record is young.
+								No earlier years have data for this date yet.
 							</p>
 						{:else}
 							<ul class="otd">
@@ -733,8 +733,8 @@
 						<h2>What changed</h2>
 						{#if recentEdits.length === 0}
 							<p class="quiet">
-								No article edits yet. When the record writes or maintains an
-								article, the edit lands here - with its diff, in History.
+								No article edits yet. When AI writes or updates an
+								article, the edit shows up here, and its diff is in History.
 							</p>
 						{:else}
 							<ul class="wc">
@@ -743,7 +743,7 @@
 										<button class="wc-row" onclick={() => windowShellStore.openTabFromRoute(e.route)}>
 											<span class="wc-title">{e.title}</span>
 											<span class="wc-meta">
-												{e.author === 'ai' ? 'the record' : 'you'} ·
+												{e.author === 'ai' ? 'AI' : 'you'} ·
 												{new Date(e.at).toLocaleDateString('en-US', {
 													month: 'short',
 													day: 'numeric',

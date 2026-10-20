@@ -103,9 +103,9 @@
 			>
 				<Icon icon="ri:lock-2-line" class="mt-0.5 flex-none text-foreground-muted" />
 				<p class="text-xs leading-relaxed text-foreground-muted">
-					<span class="text-foreground">Read-only.</span> This is the raw record of what your
-					devices sent - your server derives everything else from it. Data can be re-derived from
-					evidence, never the other way round, so you can't edit or delete anything
+					<span class="text-foreground">Read-only.</span> This is the raw data your devices
+					sent, and your server builds everything else from it. Your server can rebuild derived data
+					from this raw data but not the reverse, so you can't edit or delete anything
 					here by hand.
 				</p>
 			</div>

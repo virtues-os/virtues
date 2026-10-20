@@ -103,20 +103,15 @@
 		<div class="body">
 			<div class="prose">
 
-				<!-- THE PREMISE. Two claims: capability (you can hold this yourself)
-				     and title (it is your property — "yours by right", the
-				     private-property register without the legalism of "entitled").
-				     The against-triple names what extraction becomes; the FOR side
-				     is deliberately not stated here — the rest of the letter (the
-				     ledger beside it, the wiki, the asks) IS the for side, shown
-				     rather than listed. The triple chains into vice-is-repetitive,
-				     which explains it. -->
+				<!-- THE PREMISE. The data is the person's, and companies use it
+				     against them (ads, algorithms, addictions). The ledger beside it,
+				     the wiki and the asks show the other side, so this paragraph
+				     doesn't list it. -->
 				<p class="p2">
-					The data of your life is yours by right, and yours to hold. It's the most
-					intimate thing you have, and today it's turned against you: into ads,
-					algorithms, and addictions. Vice is repetitive and profitable, which is why so
-					much is arranged to produce it. Virtue asks for harder things: attention,
-					memory, honesty, intimacy.
+					Your life's data belongs to you. It's the most personal thing you have, and
+					today companies use it against you: for ads, algorithms, and addictions. Bad
+					habits are easy to sell, so most apps are built to encourage them. Good habits
+					take more work: attention, memory, honesty, and intimacy.
 				</p>
 
 				<!-- THE GIFT. What holding the record BUYS, straight after the
@@ -205,23 +200,12 @@
 		</ul>
 
 		<div class="body">
-			<!-- THE FOUNDER'S LAST LINE. After the asks the letter has finished
-			     arguing; what is left is why the person who wrote it started: the
-			     hard word, what it means, then what follows from it, as two
-			     sentences. As one ("subsidiarity: nothing is more local than your
-			     own life") the colon promised a definition and gave a conclusion. It used to open the
-			     letter ("I'm Adam Jace, and I started Virtues because I believe in
-			     digital subsidiarity") with the definition in the margin; the
-			     letter now opens on its premise and the name is on the signature
-			     (2026-09-28). "I built the thing I wished existed. If it's useful
-			     to you, reach out :)" was cut the same day; the contact pills
-			     below say it. The grievance close ("Technology has
-			     exploited you long enough…") was cut on 2026-09-08; Herbert carries the grievance
-			     now, below. -->
+			<!-- THE FOUNDER'S LAST LINE. Why the founder started Virtues: the
+			     term, what it means, and what Virtues does about it, in two plain
+			     sentences. The Herbert quote below carries the grievance. -->
 			<p class="close">
-				I started Virtues because I believe in digital subsidiarity: what's yours
-				belongs at the most local level that can hold it. Nothing is more local than
-				your own life.
+				I started Virtues because I believe in digital subsidiarity: your data should
+				stay as close to you as possible. Virtues keeps it on a server in your home.
 			</p>
 		</div>
 

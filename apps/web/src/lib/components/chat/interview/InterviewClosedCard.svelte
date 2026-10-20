@@ -54,14 +54,14 @@
 		chaptersError
 			? "Your server couldn't write the chapters. Everything you said is safe."
 			: chaptersWritten > 0
-				? `${chaptersWritten} ${chaptersWritten === 1 ? 'chapter' : 'chapters'}, a page each.`
-				: 'Every chapter you named, a page each.'
+				? `${chaptersWritten} ${chaptersWritten === 1 ? 'chapter' : 'chapters'}, each on its own page.`
+				: 'Each chapter you named has its own page.'
 	);
 
 	const lede = $derived(
 		chaptersError
-			? 'These are your words, on one page. Nothing rewrites them but you, and you can edit the page whenever you like.'
-			: 'These are your words, in two places. Nothing rewrites them but you, and you can edit either page whenever you like.'
+			? 'These are your words, on one page. Only you can change them, and you can edit the page whenever you like.'
+			: 'These are your words, in two places. Only you can change them, and you can edit either page whenever you like.'
 	);
 </script>
 
@@ -69,7 +69,7 @@
 	<p class="eyebrow">
 		{standing
 			? alreadyExisted
-				? 'This interview is closed. The document already stood.'
+				? 'This interview is closed. Your document already existed.'
 				: 'This interview is closed'
 			: alreadyExisted
 				? 'Already written'
@@ -81,7 +81,7 @@
 	<div class="doors">
 		<button type="button" class="door" onclick={openDocument}>
 			<span class="door-title">In your own words</span>
-			<span class="door-note">Your account, in the first person.</span>
+			<span class="door-note">Your story, written in the first person.</span>
 			<Icon icon="ri:arrow-right-up-line" width="14" class="door-arrow" />
 		</button>
 		{#if chaptersError}

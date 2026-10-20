@@ -37,7 +37,7 @@
 //! and the evidence fingerprint actually moved — then one article per applet
 //! run, at most one run an hour. And it is disclosed where it is read rather
 //! than in a settings page: every article carries a colophon saying "The
-//! record wrote this and keeps it current", with the off switch in that line.
+//! wiki editor wrote this and keeps it current", with the off switch in that line.
 
 use sqlx::PgPool;
 

@@ -777,7 +777,7 @@
 
 	const heads: Record<Beat, { h: string; s: string }> = {
 		a: { h: 'If your life were a book', s: 'What would its chapters be?' },
-		b: { h: 'Where did your life turn?', s: 'A move, a school, a person, a loss. Each turn begins a chapter.' },
+		b: { h: 'What were the turning points in your life?', s: 'For example, a move, a new school, a relationship or a loss. Each turning point starts a new chapter.' },
 		c: { h: 'Now draw yours', s: '' },
 		e: { h: 'Now draw yours', s: '' },
 	};

@@ -70,8 +70,8 @@
 	<header class="mast">
 		<h1>{me?.name ?? 'You'}</h1>
 		<p class="standfirst">
-			Your own page. Everything else here is written from the record; this is
-			written by you, in your own words, and the record never edits it.
+			Your own page. Your server writes everything else here from your data.
+			You write this page in your own words, and only you can edit it.
 		</p>
 	</header>
 
@@ -94,8 +94,8 @@
 		<div class="empty">
 			<p class="empty-lead">Nothing written yet.</p>
 			<p class="empty-body">
-				Your document is written from the interview - a conversation, not a
-				form. When you close it there, it lands here and on its own page,
+				Your document is written from the interview, a conversation with your
+				assistant. When you close the interview, the document appears here and on its own page,
 				in your words and in the first person.
 			</p>
 			<button class="btn primary" onclick={openInterview}>Open the interview</button>
@@ -137,7 +137,7 @@
 				{:else}
 					<!-- Not a settings field: the year partition starts at the birth
 					     date, so a life with none begins at its first record. -->
-					No birth date yet — your years begin where the record does.
+					No birth date yet, so your years start at your earliest data.
 				{/if}
 			</p>
 		</section>

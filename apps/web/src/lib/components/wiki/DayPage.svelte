@@ -1389,7 +1389,7 @@
 							{:else if currentDateSlug === todaySlug}
 								<p class="empty-state-text">Your day is still in progress.</p>
 							{:else}
-								<p class="empty-state-text">Your record holds nothing from this day.</p>
+								<p class="empty-state-text">Your server has no data from this day.</p>
 							{/if}
 						</div>
 					{/if}

@@ -602,18 +602,18 @@ fn ask_line(s: &Step) -> String {
         // Plainly, as a list: these five are the most important thing on the
         // screen, and buried in a sentence they read as decoration. The
         // person still answers in one message, in their own order.
-        "introductions" => "Your assistant would like to know who it is talking to. Answer in one message, however you like to write it:\n\n- Your name, first and last\n- What you would like to be called\n- What to call your assistant, which answers to Ari unless you say otherwise\n- The city you live in\n- Your birth date, with the year\n\nThe birth date is not idle curiosity: the whole record is laid out against it.".into(),
+        "introductions" => "Your assistant would like to know who it is talking to. Answer in one message, however you like to write it:\n\n- Your name, first and last\n- What you would like to be called\n- What to call your assistant, which answers to Ari unless you say otherwise\n- The city you live in\n- Your birth date, with the year\n\nYour birth date matters because your server lays out your whole history by your age.".into(),
         /* What each of the three actually BUYS, because "connect your
          * integrations" is a chore and "years of your own messages" is a
          * reason. One is enough to begin; the record is only as full as what
          * feeds it, and that is the honest argument for a second. */
         "connect_world" => match s.connected {
             Some(n) if n > 0 => format!(
-                "Next, your integrations: what the record is written from. You have {n} connected, and you can add as many as you like. Your computer holds years of your messages and browsing and needs no account. Your phone holds where you went and who you called. Google holds your mail and calendar. What they hold comes to your server and stays there. Only the part your assistant needs to answer you goes out, under zero data retention."
+                "Next, your integrations: the sources your server writes your history from. You have {n} connected, and you can add as many as you like. Your computer holds years of your messages and browsing and needs no account. Your phone holds where you went and who you called. Google holds your mail and calendar. What they hold comes to your server and stays there. Only the part your assistant needs to answer you goes out, under zero data retention."
             ),
-            _ => "Next, your integrations: what the record is written from. Your computer holds years of your messages and browsing and needs no account. Your phone holds where you went and who you called. Google holds your mail and calendar. One is enough to begin, and the record is only as full as what feeds it. What they hold comes to your server and stays there. Only the part your assistant needs to answer you goes out, under zero data retention.".into(),
+            _ => "Next, your integrations: the sources your server writes your history from. Your computer holds years of your messages and browsing and needs no account. Your phone holds where you went and who you called. Google holds your mail and calendar. One is enough to begin, and each one you add fills in more of your life. What they hold comes to your server and stays there. Only the part your assistant needs to answer you goes out, under zero data retention.".into(),
         },
-        "interview" => "Last comes your story. The record can hold what happened; only you can say what it meant. This is an interview with your assistant of about twenty minutes, one question at a time. Stop wherever you like; your place waits.".into(),
+        "interview" => "Last comes your story. Your integrations show what happened, and the interview asks you what it meant. This is an interview with your assistant of about twenty minutes, one question at a time. You can stop at any point, and your progress is saved.".into(),
         _ => String::new(),
     }
 }

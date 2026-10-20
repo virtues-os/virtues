@@ -95,9 +95,9 @@ export async function keepMarkdownCopy(
 	}
 }
 
-/** What the person is told when a copy of an earlier document held typing the page never had. */
+/** What the person is told when a copy of an earlier document had typing the page never had. */
 export const EARLIER_COPY_NOTICE =
-	"This device held typing from an earlier copy of this page that never reached your server. It's in this page's History now.";
+	"This device had typing from an earlier copy of this page that never reached your server. It's in this page's History now.";
 
 /** Every store this device keeps, by name; null where the browser can't list them. */
 async function storeNames(): Promise<string[] | null> {

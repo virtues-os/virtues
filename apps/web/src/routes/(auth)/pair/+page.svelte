@@ -73,8 +73,8 @@
 						Finish this in the Virtues app
 					</div>
 					<p>
-						This link pairs an app, not a browser tab. Virtues authenticates a
-						device by a key the app holds, and a browser has none to offer.
+						This link pairs the Virtues app. It can't pair a browser tab, because Virtues
+						identifies each device by a key stored in the app, and a browser doesn't have one.
 					</p>
 				</div>
 			</div>

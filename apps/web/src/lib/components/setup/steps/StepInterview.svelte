@@ -424,7 +424,7 @@
 {:else if phase === "intro"}
 	<StepFrame
 		title="Tell your story"
-		subtitle="The record holds what happened. Only you can say what it meant."
+		subtitle="Your data shows what happened. This interview asks you what it meant."
 	>
 		<p class="facts">Six parts, about twenty minutes · Skip any question · Finish later and pick up where you left off</p>
 		{#if chapters.length > 0}
