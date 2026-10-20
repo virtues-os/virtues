@@ -639,6 +639,30 @@ function delimitedRules(type: MarkType, delims: string[]): PasteRule[] {
 	return delims.map((delim) => onPlainText(markPasteRule({ find: delimited(delim), type })));
 }
 
+/**
+ * A mark's typed rule, its delimiters read as CommonMark reads emphasis:
+ * the opening one is followed by no space and the closing one follows
+ * none. Tiptap's own takes `2 * 3 *` as emphasis, so `2 * 3 * 4` would turn
+ * ` 3 ` italic; it stays text, as the converter reads it.
+ */
+function flanking(type: MarkType, delim: string): InputRule {
+	const d = escapeRegExp(delim);
+	const c = escapeRegExp(delim[0]);
+	return markInputRule({ find: new RegExp(`(?:^|\\s)(${d}(?![\\s${c}])([^${c}]*[^\\s${c}])${d})$`), type });
+}
+
+/** Typed and pasted rules for a mark written between each of `delims`. */
+function delimitedMark(delims: string[]): Partial<MarkConfig> {
+	return {
+		addInputRules() {
+			return delims.map((delim) => flanking(this.type, delim));
+		},
+		addPasteRules() {
+			return delimitedRules(this.type, delims);
+		},
+	};
+}
+
 function markBase(name: string): Mark | undefined {
 	switch (name) {
 		case 'link':
@@ -655,35 +679,21 @@ function markBase(name: string): Mark | undefined {
 				markdownLinks: true,
 			});
 		case 'bold':
-			return Bold.extend({
-				addPasteRules() {
-					return delimitedRules(this.type, ['**', '__']);
-				},
-			});
+			return Bold.extend(delimitedMark(['**', '__']));
 		case 'italic':
-			return Italic.extend({
-				addPasteRules() {
-					return delimitedRules(this.type, ['*', '_']);
-				},
-			});
+			return Italic.extend(delimitedMark(['*', '_']));
 		case 'underline':
 			return Underline;
 		// Each with a second key beside Tiptap's own (⌘⇧S, ⌘E).
 		case 'strike':
 			return Strike.extend({
+				...delimitedMark(['~~']),
 				addKeyboardShortcuts() {
 					return { ...this.parent?.(), 'Mod-Shift-x': () => this.editor.commands.toggleStrike() };
 				},
-				addPasteRules() {
-					return delimitedRules(this.type, ['~~']);
-				},
 			});
 		case 'highlight':
-			return Highlight.extend({
-				addPasteRules() {
-					return delimitedRules(this.type, ['==']);
-				},
-			});
+			return Highlight.extend(delimitedMark(['==']));
 		case 'veil':
 			return Veil;
 		case 'code':

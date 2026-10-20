@@ -930,6 +930,34 @@ function sendAtOnce(editor: Editor, text: string) {
 	editor.view.someProp('handleTextInput', (f) => f(editor.view, from, to, text, () => editor.state.tr.insertText(text, from, to)));
 }
 
+describe('typed emphasis', () => {
+	/** The first paragraph's text runs, each with its mark names. */
+	const runs = (editor: Editor) =>
+		editor.state.doc.child(0).content.content.map((n) => [n.text, n.marks.map((m) => m.type.name)]);
+
+	// Tiptap's own rules take any two delimiters, so `2 * 3 *` turned ` 3 `
+	// italic. A delimiter with a space on its inner side is text, as the
+	// paste rules and the converter read it.
+	it.each(['2 * 3 * 4', 'a == b == c', 'x ** y **'])('leaves %s as text', (text) => {
+		const editor = track(htmlEditor('<p></p>'));
+		editor.commands.setTextSelection(1);
+		typeIn(editor, text);
+		expect(runs(editor)).toEqual([[text, []]]);
+	});
+
+	it.each([
+		['*it*', 'it', 'italic'],
+		['**b**', 'b', 'bold'],
+		['~~s~~', 's', 'strike'],
+		['==h==', 'h', 'highlight'],
+	])('formats %s', (typed, text, mark) => {
+		const editor = track(htmlEditor('<p></p>'));
+		editor.commands.setTextSelection(1);
+		typeIn(editor, typed);
+		expect(runs(editor)).toEqual([[text, [mark]]]);
+	});
+});
+
 describe('typed triggers', () => {
 
 	it('opens on `/` at a block start, follows the query, and closes on a space', () => {

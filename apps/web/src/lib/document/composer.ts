@@ -18,10 +18,10 @@
  * nested item first). `@` opens the ref picker. There are no slash commands.
  */
 
-import { Editor, Extension, markInputRule, type InputRule, type MarkConfig } from '@tiptap/core';
+import { Editor, Extension } from '@tiptap/core';
 import { ListKeymap } from '@tiptap/extension-list';
 import { Placeholder, UndoRedo } from '@tiptap/extensions';
-import { Fragment, Slice, type MarkType, type Node as PmNode, type Schema } from '@tiptap/pm/model';
+import { Fragment, Slice, type Node as PmNode, type Schema } from '@tiptap/pm/model';
 import { Plugin, TextSelection, type EditorState } from '@tiptap/pm/state';
 import { findWrapping } from '@tiptap/pm/transform';
 import MentionNode from '$lib/components/pages/nodes/MentionNode.svelte';
@@ -31,7 +31,7 @@ import { messageMarkdown } from './markdown';
 import { holdsOnlyMessage, MESSAGE, messageText, readMessage, textBlocks, type Reading } from './message';
 import { svelteNodeView } from './nodeviews.svelte';
 import { htmlSlice, looksLikeMarkdown, placeConverted } from './paste';
-import { contractExtensions, escapeRegExp, isRoute } from './schema';
+import { contractExtensions, isRoute } from './schema';
 import { closeTrigger, pickedRange, putBackQuery, triggers } from './triggers';
 
 /** Pasted text longer than this becomes an attachment rather than a wall in the composer. */
@@ -242,26 +242,6 @@ const LineSigns = Extension.create({
 	},
 });
 
-/**
- * A mark's typed rule, its delimiters read as CommonMark reads emphasis:
- * the opening one is followed by no space and the closing one follows
- * none. Tiptap's own takes `2 * 3 *` as emphasis; a message sends what was
- * typed, so `2 * 3 * 4` must stay text.
- */
-function flanking(type: MarkType, delim: string): InputRule {
-	const d = escapeRegExp(delim);
-	const c = escapeRegExp(delim[0]);
-	return markInputRule({ find: new RegExp(`(?:^|\\s)(${d}(?![\\s${c}])([^${c}]*[^\\s${c}])${d})$`), type });
-}
-
-/** A mark whose typed rules are `flanking`, for each of `delims`. */
-function typedMark(delims: string[]): Partial<MarkConfig> {
-	return {
-		addInputRules() {
-			return delims.map((delim) => flanking(this.type, delim));
-		},
-	};
-}
 
 /** Text as the composer takes it with no markdown read in it: its lines as they are. */
 function textSlice(schema: Schema, text: string): Slice {
@@ -449,10 +429,6 @@ export function createComposer(o: ComposerOptions): Composer {
 							return { ...this.parent?.(), autolink: false, linkOnPaste: false };
 						},
 					},
-					bold: typedMark(['**', '__']),
-					italic: typedMark(['*', '_']),
-					strike: typedMark(['~~']),
-					highlight: typedMark(['==']),
 				},
 			},
 			MESSAGE,
