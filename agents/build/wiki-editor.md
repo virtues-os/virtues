@@ -43,7 +43,7 @@ stories and chapters would have made five.
 So: one constitution carries the policy, one brief per subject kind carries
 what *that page* is. A rule that belongs to every article goes in the
 constitution. A rule about what a year looks like goes in the year brief. If
-you find yourself writing "observe, never infer" into a brief, it belongs one
+you find yourself writing "don't infer" into a brief, it belongs one
 level up.
 
 ## What is settled

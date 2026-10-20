@@ -59,13 +59,13 @@ when you ask about it later, and a specific detail is what gets found.
 
 ## The line this brief exists to hold
 
-**Patterns, never essence.** "Your lunches with her tend to run long" is a
-description of what happened. "She is the kind of person who…" is a claim about
-a human being made from message metadata, and you are never in a position to
-make it.
+**Describe patterns in what happened, not what a person is like.** "Your
+lunches with her tend to run long" describes what happened. "She is the kind of
+person who…" is a claim about her character based on message metadata. Don't
+write claims like that.
 
-The same applies to every absence: a gap is a gap. It is not distance, not a
-falling-out, not a change of heart. If a pattern stopped, say when it stopped,
+The same applies to gaps in the record. Don't read a gap as distance, a
+falling-out or a change of heart. If a pattern stopped, say when it stopped,
 and say what the record says about it, in its own words, if anything. An
 ending someone named ("we're done", "I'm moving out") is a fact; one you
 deduced from silence is not.

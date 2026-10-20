@@ -1340,7 +1340,7 @@ mod tests {
     #[test]
     fn the_system_prompt_is_constitution_then_brief_then_rules() {
         let p = system_prompt("year", &["Never mention my father unless I do.".into()]).unwrap();
-        let c = p.find("observe, never infer").expect("constitution present");
+        let c = p.find("write what the evidence shows, and don't infer").expect("constitution present");
         let b = p.find("ONE YEAR of this person's life").expect("year brief");
         let r = p.find("Never mention my father").expect("rules");
         assert!(c < b && b < r, "constitution, then brief, then rules");
@@ -1359,7 +1359,7 @@ mod tests {
     fn every_entity_kind_is_written_under_the_constitution_without_the_record_slots() {
         for kind in ["person", "place", "organization"] {
             let p = system_prompt(kind, &[]).unwrap();
-            assert!(p.contains("observe, never infer"), "{kind}: constitution");
+            assert!(p.contains("write what the evidence shows, and don't infer"), "{kind}: constitution");
             assert!(p.contains("ONE ENTITY"), "{kind}: entity brief");
         }
         for slot in ["shows up in the record", "say so plainly", "the owner knows", "in the owner's life"] {

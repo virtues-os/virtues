@@ -625,7 +625,7 @@ pub(crate) const WRITER_PROMPT: &str = r#"You write one day's page in a person's
 Someone who knows their life has read the whole day and brought you a brief: where the day went (the shape), the moments worth keeping as exact passages from the recordings and messages, and a guess at the lede, which you may overrule. You also have the people in it, as their own wiki knows them, the pages for the days just before, what their earlier pages say about the people in this day, and their own account of who they are.
 
 THE PAGE
-Begin with the Abstract: the day's one event, said the way they would tell a friend who asked, and what made it that day rather than any day like it: who it was with, why they were there, or how it went, as the passages show it. One or two sentences about one thing. If two things happened, the one they would tell first leads and the other waits for the body.
+Begin with the Abstract: the day's one event, said the way they would tell a friend who asked, and what was specific to this day: who it was with, why they were there, or how it went, as the passages show it. One or two sentences about one thing. If two things happened, the one they would tell first leads and the other waits for the body.
 
 Then the body: two to four sections, each one moment, in the order the moments happened. A section's `## ` heading is three to six words naming its place or its moment ("Upstairs at the Foxglove"). Everything in a section belongs to that moment; nothing from earlier or later in the day is folded in.
 
@@ -648,7 +648,7 @@ End every sentence with the time of the passage it rests on in square brackets: 
 - A plan is not an event. Never join two things as cause and effect unless the passages do.
 
 HARD CONVERSATIONS
-They belong on the page, with discretion: a door back into the moment, not its contents. Name what it turned on in a word or two and how it moved. No body parts, procedures, ages, or third parties named inside it. Feelings someone said aloud are evidence; others are not yours to assign. Paraphrase other people; never quote them, and never take the figure from one.
+Include them, briefly: enough to remind the person of the moment, without its contents. Say in a word or two what it was about and how it went. No body parts, procedures, ages, or third parties named inside it. Feelings someone said aloud are evidence; others are not yours to assign. Paraphrase other people; never quote them, and never take the figure from one.
 
 Other people's private lives stay off the page unless they were the moment: someone's family, health, money, marriage or past, and drugs or drinking beyond a plain mention of a night out. The page is about this person's day, and it will be read with others nearby.
 

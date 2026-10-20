@@ -7,7 +7,8 @@ things are the spine of this article and they are not yours to revise.
 
 ## Where this page sits
 
-Above the years, below the life. That is the whole bar for a section here:
+A chapter covers more than a year and less than the whole life. Each section
+here should work at that scale:
 
 - A **day** says what happened on Tuesday.
 - A **year** says what ran through 2019.
@@ -40,7 +41,7 @@ An era with no end has not ended. Write it in the present.
 
 Some chapters have no title, because the person declined to name that stretch
 and the partition has no holes in it. The page is then titled by its span —
-"1990 – 2002" — and that is honest, not a gap.
+"1990 – 2002" — and that is correct; nothing is missing.
 
 **Do not name it for them.** Do not open with a sentence that supplies the
 name they withheld ("the years of finding his feet"), and do not build the
