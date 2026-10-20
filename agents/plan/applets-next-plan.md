@@ -3,6 +3,9 @@
 The applet primitive, its authoring loop and the gate are built; the record is
 [applets.md](../record/applets.md). Two things it designed are not.
 
+The loop and the gate do not hold today; [applets-refactor-plan.md](applets-refactor-plan.md)
+fixes them first, and data triggers land on its change door.
+
 ## Data triggers
 
 A wake on new rows: `trigger = data:<table>`, carrying the new rows as the

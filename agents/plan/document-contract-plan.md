@@ -160,8 +160,8 @@ Parity with today's editor, each kept or cut by name. What was built
 keeps that table in [build/document.md](../build/document.md#parity-with-the-codemirror-editor),
 which outlives this plan:
 
-- task lists and the `/task` keyword (`tasks-plan.md` keeps
-  page checkboxes as page content); slash commands; find-in-page; word and
+- task lists and the `/task` keyword (page checkboxes stay page
+  content); slash commands; find-in-page; word and
   link counts (`PageStatusBar`); code blocks with language picker, copy and
   Shiki highlighting; table menus (add, delete, align); the link menu (open
   beside, turn into embed, `LinkEditorPopover`); focus and typewriter mode;
@@ -377,9 +377,8 @@ Open before it ships:
   `language.ts`, `theme.ts`. Grep importers before each deletion.
 - The Y.Text page paths in `server/yjs.rs`, the find/replace form of
   `edit_page` and of `virtues page edit`, `format = 'markdown'`.
-- Docs: [build/codemirror.md](../build/codemirror.md) cut to the composer and
-  the calendar quick-add (`calendar-plan.md` calls
-  CodeMirror the house kernel), its stale entries (`createReadOnlyEditor`,
+- Docs: [build/codemirror.md](../build/codemirror.md) cut to the composer,
+  its stale entries (`createReadOnlyEditor`,
   `PublicPageViewer`) gone with it; `build/README.md`'s row;
   [build/wiki-editor.md](../build/wiki-editor.md)'s find/replace path;
   [build/the-day.md](../build/the-day.md)'s "CodeMirror later". A new build
@@ -410,8 +409,6 @@ Open before it ships:
 
 - [publishing-plan.md](publishing-plan.md): its guest checklist ticks (wave
   2) and co-editing on the page CRDT (wave 4) should target block ops.
-- `tasks-plan.md`: its note about page checkboxes moves from
-  `build/codemirror.md` to the document build doc.
 - [day-article-plan.md](day-article-plan.md): the article is a block page
   once opened, since slice 6.
 
