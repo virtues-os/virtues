@@ -195,7 +195,8 @@ const TOOLS: Record<string, Presentation> = {
 		depth: 4,
 		say: (input, live, short) => {
 			const to = typeof input.to === "string" ? input.to.trim() : "";
-			const verb = live ? "Sending" : "Sent";
+			const later = typeof input.at === "string" && input.at.trim() !== "";
+			const verb = later ? (live ? "Scheduling" : "Scheduled") : live ? "Sending" : "Sent";
 			return to ? `${verb} a message to ${fit(to, short)}` : `${verb} a message`;
 		},
 	},

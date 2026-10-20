@@ -1,28 +1,26 @@
 //! Send an iMessage as the owner, from the chat.
 //!
 //! The box holds the record and the Mac holds Messages. This tool works out
-//! who `to` names and which thread the owner already has with them, then asks
-//! the Mac app to send `text` into it, over the socket the app's browser
-//! already keeps open (`browser::call`). It is offered only while that app is
-//! connected (`ChatMode::tools`).
+//! who `to` names and which thread the owner already has with them, and puts
+//! the message in the outbox (`outbox.rs`), which sends it through the Mac
+//! app after the undo window or at the time asked for. It is offered only
+//! while that app is connected (`ChatMode::tools`).
 //!
-//! It does not ask first: the owner's call, 2026-10-20. A send cannot be
-//! taken back, so instead it never guesses who. A name that fits two people,
-//! or nobody, comes back as an error naming who it could be, and the model
-//! asks the owner.
+//! It does not ask first: the owner's call, 2026-10-20. The card in the chat
+//! can cancel it for five seconds. And it never guesses who: a name that fits
+//! two people, or nobody, comes back as an error naming who it could be, and
+//! the model asks the owner.
 
-use std::time::Duration;
-
+use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use serde_json::{json, Value};
 use sqlx::PgPool;
 
-use super::ToolResult;
+use super::{ToolContext, ToolResult};
 
 pub const TOOL: &str = "send_imessage";
 
-/// Messages may be cold: the app's script launches it and retries the thread
-/// for about four seconds before it falls back to the handle.
-const SEND_WAIT: Duration = Duration::from_secs(30);
+/// How far ahead a message can be scheduled.
+const MAX_AHEAD: chrono::Duration = chrono::Duration::days(30);
 
 /// Longer than any text message a person writes; a model that produces more
 /// has gone wrong.
@@ -39,7 +37,7 @@ struct Target {
     chat_id: Option<String>,
 }
 
-pub async fn run(pool: &PgPool, args: &Value) -> ToolResult {
+pub async fn run(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolResult {
     let to = args.get("to").and_then(|v| v.as_str()).unwrap_or("").trim();
     let text = args.get("text").and_then(|v| v.as_str()).unwrap_or("").trim();
     if to.is_empty() {
@@ -52,35 +50,106 @@ pub async fn run(pool: &PgPool, args: &Value) -> ToolResult {
         return ToolResult::error(format!("That is longer than {MAX_CHARS} characters. Shorten it."));
     }
 
+    let now = Utc::now();
+    let scheduled = match args.get("at").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
+        None => None,
+        Some(raw) => match parse_at(raw, context.timezone.as_deref(), now) {
+            Ok(at) => Some(at),
+            Err(why) => return ToolResult::error(why),
+        },
+    };
+
     let target = match resolve(pool, to).await {
         Ok(Ok(t)) => t,
         Ok(Err(why)) => return ToolResult::error(why),
         Err(e) => return ToolResult::error(format!("Could not read your contacts: {e}")),
     };
 
-    let sent = crate::browser::call(
-        "imessage_send",
-        json!({ "chat_id": target.chat_id.clone().unwrap_or_default(), "handle": target.handle, "text": text }),
-        SEND_WAIT,
+    let recipient = target.name.clone().unwrap_or_else(|| target.handle.clone());
+    let send_at = scheduled.unwrap_or_else(|| now + crate::outbox::UNDO_WINDOW);
+    let queued = crate::outbox::enqueue(
+        pool,
+        crate::outbox::NewMessage {
+            chat_id: context.chat_id.as_deref(),
+            person_id: target.person_id.as_deref(),
+            recipient: &recipient,
+            handle: &target.handle,
+            thread_id: target.chat_id.as_deref(),
+            body: text,
+            send_at,
+        },
     )
     .await;
-    if let Err(e) = sent {
-        return ToolResult::error(e);
-    }
+    let queued = match queued {
+        Ok(q) => q,
+        Err(e) => return ToolResult::error(format!("Could not queue the message: {e}")),
+    };
 
+    let note = if scheduled.is_some() {
+        "Scheduled. The chat shows the owner the message and when it goes, with a way to cancel. \
+         Confirm the time in a few words; do not repeat the message."
+    } else {
+        "It goes in a few seconds; the chat shows the owner the message with a way to cancel. \
+         Confirm in a few words; do not repeat the message."
+    };
     ToolResult::success(json!({
-        "sent": true,
-        "to": target.name.clone().unwrap_or_else(|| target.handle.clone()),
+        "outbox_id": queued.id,
+        "state": queued.state,
+        "to": recipient,
         "person_id": target.person_id,
         "handle": target.handle,
         "text": text,
-        "sent_at": chrono::Utc::now().to_rfc3339(),
-        "note": "The chat shows the owner what was sent. Confirm in a few words; do not repeat the message.",
+        "send_at": queued.send_at.to_rfc3339(),
+        "scheduled": scheduled.is_some(),
+        "note": note,
     }))
+}
+
+/// A time to send at: RFC 3339 with an offset, or a local date and time in the
+/// owner's timezone. Within a minute of now counts as now.
+fn parse_at(raw: &str, tz: Option<&str>, now: DateTime<Utc>) -> Result<DateTime<Utc>, String> {
+    let at = if let Ok(at) = DateTime::parse_from_rfc3339(raw) {
+        at.with_timezone(&Utc)
+    } else {
+        let local = ["%Y-%m-%dT%H:%M:%S", "%Y-%m-%dT%H:%M", "%Y-%m-%d %H:%M"]
+            .iter()
+            .find_map(|f| NaiveDateTime::parse_from_str(raw, f).ok())
+            .ok_or_else(|| format!("\"{raw}\" is not a time. Pass `at` as 2026-10-21T09:00 in the owner's time."))?;
+        let tz: chrono_tz::Tz = tz.and_then(|t| t.parse().ok()).unwrap_or(chrono_tz::UTC);
+        tz.from_local_datetime(&local)
+            .earliest()
+            .ok_or_else(|| format!("{raw} does not exist in {tz} (the clocks skip it). Pick another time."))?
+            .with_timezone(&Utc)
+    };
+    if at < now - chrono::Duration::minutes(1) {
+        return Err(format!("{} has already passed. Ask the owner when to send it.", at.to_rfc3339()));
+    }
+    if at > now + MAX_AHEAD {
+        return Err("That is more than 30 days away. Messages can be scheduled up to 30 days ahead.".into());
+    }
+    Ok(at.max(now))
 }
 
 /// `Ok(Err(..))` is an answer for the model: nobody, or more than one person.
 async fn resolve(pool: &PgPool, to: &str) -> sqlx::Result<Result<Target, String>> {
+    // A thread id from the record, which is how an unnamed group is reached:
+    // the model finds the thread by who is in it, then passes its id.
+    if to.contains(";-;") || to.contains(";+;") {
+        let title: Option<(Option<String>,)> = sqlx::query_as(
+            "SELECT metadata->>'group_title' FROM data_communication_message
+              WHERE thread_id = $1 ORDER BY occurred_at DESC LIMIT 1",
+        )
+        .bind(to)
+        .fetch_optional(pool)
+        .await?;
+        let Some((title,)) = title else {
+            return Ok(Err(format!("There is no thread {to} in the owner's messages.")));
+        };
+        // absent-ok: most groups have no name; the thread was found, so it exists.
+        let name = title.filter(|t| !t.is_empty()).unwrap_or_else(|| "the group".into());
+        return Ok(Ok(Target { person_id: None, name: Some(name), handle: String::new(), chat_id: Some(to.into()) }));
+    }
+
     // A phone number or an email: send to it, naming the person if it is theirs.
     if let Some(handle) = virtues_helpers::handles::normalize_handle(to) {
         let owner: Option<(String, String)> = sqlx::query_as(
@@ -99,9 +168,13 @@ async fn resolve(pool: &PgPool, to: &str) -> sqlx::Result<Result<Target, String>
     let people = matching_people(pool, to).await?;
     let person = match people.as_slice() {
         [] => {
+            if let Some(group) = named_group(pool, to).await? {
+                return Ok(Ok(group));
+            }
             return Ok(Err(format!(
-                "Nobody in the owner's people is called \"{to}\". Ask the owner who they mean, \
-                 or pass a phone number or email."
+                "Nobody in the owner's people, and no group chat, is called \"{to}\". Ask the owner who \
+                 they mean, or pass a phone number or email. For a group with no name, find its thread_id \
+                 in data_communication_message (is_group_message) by who is in it, and pass that."
             )))
         }
         [one] => one,
@@ -187,6 +260,20 @@ async fn matching_people(pool: &PgPool, to: &str) -> sqlx::Result<Vec<Person>> {
     Ok(rows(first))
 }
 
+/// A group chat by the name someone gave it in Messages, newest first. Most
+/// groups have no name; those are reached by thread id.
+async fn named_group(pool: &PgPool, to: &str) -> sqlx::Result<Option<Target>> {
+    let row: Option<(String, String)> = sqlx::query_as(
+        "SELECT thread_id, metadata->>'group_title' FROM data_communication_message
+          WHERE is_group_message AND lower(metadata->>'group_title') = lower($1)
+          ORDER BY occurred_at DESC LIMIT 1",
+    )
+    .bind(to)
+    .fetch_optional(pool)
+    .await?;
+    Ok(row.map(|(thread, title)| Target { person_id: None, name: Some(title), handle: String::new(), chat_id: Some(thread) }))
+}
+
 /// The most recent one-to-one thread with any of these handles: theirs to the
 /// owner, or (through the recipient refs) the owner's to them that went
 /// unanswered. Returns the thread's GUID and the handle it was seen under.
@@ -259,6 +346,18 @@ mod tests {
     }
 
     #[test]
+    fn a_local_time_is_the_owners() {
+        let now = Utc.with_ymd_and_hms(2026, 10, 20, 12, 0, 0).unwrap();
+        let at = parse_at("2026-10-21T09:00", Some("America/Chicago"), now).unwrap();
+        assert_eq!(at, Utc.with_ymd_and_hms(2026, 10, 21, 14, 0, 0).unwrap());
+        let at = parse_at("2026-10-21T09:00:00-05:00", None, now).unwrap();
+        assert_eq!(at, Utc.with_ymd_and_hms(2026, 10, 21, 14, 0, 0).unwrap());
+        assert!(parse_at("2026-10-19T09:00", Some("America/Chicago"), now).is_err());
+        assert!(parse_at("2027-01-01T09:00", None, now).is_err());
+        assert!(parse_at("tomorrow at nine", None, now).is_err());
+    }
+
+    #[test]
     fn a_phone_goes_before_an_email() {
         let hs = vec!["nick@example.com".to_string(), "+15125550101".to_string()];
         assert_eq!(fallback_handle(&hs), "+15125550101");
@@ -290,6 +389,27 @@ mod tests {
         // No thread yet: the handle is the way in.
         assert_eq!(t.chat_id, None);
         assert_eq!(t.handle, "+15125550102");
+    }
+
+    #[sqlx::test]
+    async fn a_group_is_reached_by_its_name_or_its_thread(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO data_communication_message
+               (id, message_id, thread_id, channel, body, from_identifier, from_handle, is_group_message,
+                occurred_at, source_stream_id, source_table, source_provider, metadata)
+             VALUES ('g1', 'g1', 'any;+;chat100', 'imessage', 'hi', '+15125550101', '+15125550101', true,
+                     now(), 'g1', 'messages', 'mac', '{\"group_title\": \"Dinner Club\"}'),
+                    ('g2', 'g2', 'any;+;chat200', 'imessage', 'hi', '+15125550102', '+15125550102', true,
+                     now(), 'g2', 'messages', 'mac', '{}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let t = resolve(&pool, "dinner club").await.unwrap().unwrap();
+        assert_eq!((t.name.as_deref(), t.chat_id.as_deref()), (Some("Dinner Club"), Some("any;+;chat100")));
+        let t = resolve(&pool, "any;+;chat200").await.unwrap().unwrap();
+        assert_eq!((t.name.as_deref(), t.handle.as_str()), (Some("the group"), ""));
+        assert!(resolve(&pool, "any;+;chat999").await.unwrap().is_err());
     }
 
     #[sqlx::test]

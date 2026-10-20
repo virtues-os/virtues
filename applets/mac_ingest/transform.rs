@@ -421,6 +421,13 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
                 "group_title": group_title,
                 "attachment_count": m.get("attachment_count"),
                 "date_read": m.get("date_read"),
+                // Whether the owner's own message went out. The collector reads
+                // the last few minutes of them again, so these settle after the
+                // first read: `outbox.rs` reads them to say "Delivered".
+                "is_sent": m.get("is_sent"),
+                "is_delivered": m.get("is_delivered"),
+                "date_delivered": m.get("date_delivered"),
+                "send_error": m.get("error"),
                 // The reaction KIND (liked/loved/laughed/…) — reply_to_message_id says
                 // what it reacted to, this says what it was.
                 "reaction_type": reaction_type,

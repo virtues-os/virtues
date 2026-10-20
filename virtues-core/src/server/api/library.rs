@@ -41,6 +41,10 @@ pub fn routes() -> Router<AppState> {
             "/api/messages/:id/attachments/:index",
             get(get_message_attachment_handler),
         )
+        // A message the assistant is sending as the owner (`outbox.rs`): where
+        // it stands, for the chat's card, and the card's Cancel.
+        .route("/api/messages/outbox/:id", get(get_outbox_message_handler))
+        .route("/api/messages/outbox/:id/cancel", post(cancel_outbox_message_handler))
         // Sidebar pins API
         .route(
             "/api/pins",
@@ -160,6 +164,25 @@ pub async fn get_message_attachment_handler(
             .into_response(),
         Err(e) => error_response(e),
     }
+}
+
+/// GET /api/messages/outbox/:id — a sent or scheduled message, as it stands.
+pub async fn get_outbox_message_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    api_response(outbox_row(crate::outbox::get(state.db.pool(), &id).await, &id))
+}
+
+/// POST /api/messages/outbox/:id/cancel — stop a message that has not gone.
+/// Answers with the row: `cancelled` when it was stopped, its own state when
+/// it had already gone.
+pub async fn cancel_outbox_message_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    api_response(outbox_row(crate::outbox::cancel(state.db.pool(), &id).await, &id))
+}
+
+fn outbox_row(
+    row: sqlx::Result<Option<crate::outbox::Outgoing>>,
+    id: &str,
+) -> crate::error::Result<crate::outbox::Outgoing> {
+    row?.ok_or_else(|| crate::error::Error::NotFound(format!("no message {id}")))
 }
 
 /// PATCH /api/bookmarks/:id/note — write the user's marginalia.

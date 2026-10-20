@@ -184,6 +184,7 @@ class MessageMonitor {
         // whatever happens to message sync below (several paths return early).
         // Declared after the close above, so it runs before it.
         defer { runAttachmentJobs(db: db) }
+        defer { recheckRecentOwnMessages(db: db) }
         
         // The cursor is chat.db's ROWID, not the message date.
         //
@@ -199,36 +200,7 @@ class MessageMonitor {
         print("Syncing messages after row \(fromRowId)")
 
         // Query for messages
-        let query = """
-            SELECT
-                m.guid as message_id,
-                c.guid as chat_id,
-                -- `m.handle_id` is a ROWID into `handle`, not an address. Selecting it
-                -- raw shipped every message with from_identifier="173" instead of a
-                -- phone number or email, so resolve it here.
-                h.id as handle,
-                m.text,
-                m.attributedBody,
-                m.service,
-                m.is_from_me,
-                m.date,
-                m.date_read,
-                m.date_delivered,
-                m.is_read,
-                m.is_delivered,
-                m.is_sent,
-                m.cache_has_attachments,
-                c.display_name as group_title,
-                m.associated_message_guid,
-                m.associated_message_type,
-                m.expressive_send_style_id,
-                (SELECT COUNT(*) FROM message_attachment_join WHERE message_id = m.ROWID) as attachment_count,
-                -- Needed to join attachments on afterwards. Local to chat.db; never uploaded.
-                m.ROWID as row_id
-            FROM message m
-            LEFT JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
-            LEFT JOIN chat c ON cmj.chat_id = c.ROWID
-            LEFT JOIN handle h ON m.handle_id = h.ROWID
+        let query = Self.messageSelect + "\n" + """
             WHERE m.ROWID > ?
             ORDER BY m.ROWID ASC
             LIMIT ?
@@ -630,6 +602,89 @@ class MessageMonitor {
         return out
     }
 
+    /// Every column `parseMessageRow` reads, in its order, and the joins they
+    /// need. Callers add their own WHERE.
+    private static let messageSelect = """
+            SELECT
+                m.guid as message_id,
+                c.guid as chat_id,
+                -- `m.handle_id` is a ROWID into `handle`, not an address. Selecting it
+                -- raw shipped every message with from_identifier="173" instead of a
+                -- phone number or email, so resolve it here.
+                h.id as handle,
+                m.text,
+                m.attributedBody,
+                m.service,
+                m.is_from_me,
+                m.date,
+                m.date_read,
+                m.date_delivered,
+                m.is_read,
+                m.is_delivered,
+                m.is_sent,
+                m.cache_has_attachments,
+                c.display_name as group_title,
+                m.associated_message_guid,
+                m.associated_message_type,
+                m.expressive_send_style_id,
+                (SELECT COUNT(*) FROM message_attachment_join WHERE message_id = m.ROWID) as attachment_count,
+                -- Needed to join attachments on afterwards. Local to chat.db; never uploaded.
+                m.ROWID as row_id,
+                m.error
+            FROM message m
+            LEFT JOIN chat_message_join cmj ON m.ROWID = cmj.message_id
+            LEFT JOIN chat c ON cmj.chat_id = c.ROWID
+            LEFT JOIN handle h ON m.handle_id = h.ROWID
+        """
+
+    /// How far back the owner's own messages are read again for their
+    /// delivery state.
+    private static let deliveryRecheckWindow: TimeInterval = 15 * 60
+
+    /// Read the owner's recent messages again, for what changed after they
+    /// were first read.
+    ///
+    /// A message is written to chat.db when it is sent and marked delivered,
+    /// or failed, a moment later: an UPDATE to a row the ROWID cursor has
+    /// already passed. The assistant sends through Messages and shows whether
+    /// a message was delivered, so the last few minutes of the owner's own
+    /// messages are read again each tick. The queue re-sends a row only when
+    /// its delivery state changed.
+    private func recheckRecentOwnMessages(db: OpaquePointer?) {
+        guard let db, let watermark = lastRowId else { return }
+        let sql = Self.messageSelect + "\n" + """
+            WHERE m.is_from_me = 1 AND m.ROWID <= ? AND m.date >= ?
+            ORDER BY m.ROWID ASC
+            LIMIT 200
+            """
+        var stmt: OpaquePointer?
+        defer { sqlite3_finalize(stmt) }
+        guard sqlite3_prepare_v2(db, sql, -1, &stmt, nil) == SQLITE_OK, let stmt else {
+            print("⚠️ Could not prepare the delivery recheck: \(String(cString: sqlite3_errmsg(db)))")
+            return
+        }
+        sqlite3_bind_int64(stmt, 1, watermark)
+        let since = Date().addingTimeInterval(-Self.deliveryRecheckWindow)
+        sqlite3_bind_int64(stmt, 2, Int64(dateToCoreDateTimestamp(since)))
+
+        var messages: [Message] = []
+        var rowIds: [Int64] = []
+        while sqlite3_step(stmt) == SQLITE_ROW {
+            messages.append(parseMessageRow(statement: stmt))
+            rowIds.append(sqlite3_column_int64(stmt, 19))
+        }
+        guard !messages.isEmpty else { return }
+        // The queue replaces attachment metadata on conflict, so read it again
+        // too, or a re-read photo message would lose its attachments.
+        let attachmentsByRow = fetchAttachments(db: db, rowIds: rowIds)
+        for i in messages.indices {
+            messages[i].attachmentInfo = attachmentsByRow[rowIds[i]]
+        }
+        for message in messages {
+            queue.addMessage(message)
+        }
+    }
+
     private func parseMessageRow(statement: OpaquePointer) -> Message {
         // Extract all fields from the query result
         let messageId = sqlite3_column_type(statement, 0) != SQLITE_NULL
@@ -698,6 +753,11 @@ class MessageMonitor {
         let attachmentCount: Int? = sqlite3_column_type(statement, 18) != SQLITE_NULL
             ? Int(sqlite3_column_int(statement, 18))
             : nil
+
+        // Column 19 is the ROWID, read by the caller.
+        let sendError: Int? = sqlite3_column_type(statement, 20) != SQLITE_NULL
+            ? Int(sqlite3_column_int(statement, 20))
+            : nil
         
         return Message(
             messageId: messageId,
@@ -718,7 +778,8 @@ class MessageMonitor {
             groupTitle: groupTitle,
             associatedMessageGuid: associatedMessageGuid,
             associatedMessageType: associatedMessageType,
-            expressiveSendStyleId: expressiveSendStyleId
+            expressiveSendStyleId: expressiveSendStyleId,
+            sendError: sendError
         )
     }
 

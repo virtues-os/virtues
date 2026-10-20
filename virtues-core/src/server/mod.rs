@@ -243,6 +243,10 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
     // day page / timeline fill as the lake does. See `maintenance::entity_resolver`.
     crate::maintenance::entity_resolver::spawn(client.database.clone());
 
+    // Messages the assistant sends as the owner: each waits out its undo
+    // window or its scheduled time, then goes through the Mac app.
+    crate::outbox::spawn(pool.clone());
+
     // Hours — the screen's sleep schedule, enforced server-side because sleep
     // is a precedence state (a held button must wake dark glass). No-op off
     // an appliance. See api::system_display::sleep_engine.

@@ -39,6 +39,7 @@ pub mod box_env;
 pub mod box_secrets;
 pub mod net_check;
 pub mod observe;
+pub mod outbox;
 pub mod peer_addr;
 pub mod relay;
 pub mod scheduler;

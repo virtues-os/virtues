@@ -510,7 +510,7 @@ impl ToolExecutor {
             // The chat's browsing task, run by its own loop, whose steps come
             // back through this executor as the `browser_*` calls below.
             crate::browse::TOOL => Ok(crate::browse::run_tool(&self._pool, &arguments, context).await),
-            super::send_imessage::TOOL => Ok(super::send_imessage::run(&self._pool, &arguments).await),
+            super::send_imessage::TOOL => Ok(super::send_imessage::run(&self._pool, &arguments, context).await),
             name if crate::browser::TOOLS.contains(&name) => {
                 Ok(crate::browser::run_tool(name, arguments).await)
             }

@@ -102,20 +102,22 @@ pub fn default_tools() -> Vec<ToolConfig> {
 }
 
 /// Send an iMessage as the owner, through Messages on their Mac (virtues-core
-/// `tools/send_imessage.rs`). Offered only while the Mac app is connected, and
-/// it does not ask first (the owner's call, 2026-10-20).
+/// `tools/send_imessage.rs`, then `outbox.rs`). Offered only while the Mac app
+/// is connected. It does not ask first (the owner's call, 2026-10-20); the
+/// chat's card can cancel it for five seconds, or until a scheduled time.
 fn send_imessage_tool() -> ToolConfig {
     ToolConfig {
         id: "send_imessage".to_string(),
         name: "Send a message".to_string(),
         description: "Send an iMessage from your Mac".to_string(),
-        llm_description: "Send a text message as the owner, through Messages on their Mac, into the thread they already have with that person. Use it when the owner asks you to message, text or tell someone something. It sends at once and cannot be undone, so send only what the owner asked for, to the person they named. Write `text` as the owner would write it, in the first person, with no greeting or sign-off they did not ask for. `to` is a person's name as the owner says it, a person id from their records, or a phone number or email. If a name could be more than one person, the tool sends nothing and lists them: ask the owner which one. Group chats are not supported. The chat shows the owner the sent message, so do not repeat it in your reply.".to_string(),
+        llm_description: "Send a text message as the owner, through Messages on their Mac, into the thread they already have with that person. Use it when the owner asks you to message, text or tell someone something. It goes about five seconds after the call (the owner can cancel it in the chat until then), or at `at` when the owner names a time (\"text Nick at 9am\"). Send only what the owner asked for, to the person they named. Write `text` as the owner would write it, in the first person, with no greeting or sign-off they did not ask for. `to` is a person's name as the owner says it, a person id from their records, a phone number or email, or a group chat: its name as set in Messages, or, for a group with no name, its thread_id from data_communication_message (find it by who is in it). If a name could be more than one person, the tool sends nothing and lists them: ask the owner which one. The chat shows the owner the sent message, so do not repeat it in your reply.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["to", "text"],
             "properties": {
-                "to": { "type": "string", "description": "A name, a person id, or a phone number or email" },
-                "text": { "type": "string", "description": "The message, exactly as it will be sent" }
+                "to": { "type": "string", "description": "A name, a person id, a phone number or email, a group chat's name, or a thread_id" },
+                "text": { "type": "string", "description": "The message, exactly as it will be sent" },
+                "at": { "type": "string", "description": "Only when the owner names a time: when to send, as a local date and time in the owner's timezone (2026-10-21T09:00). Up to 30 days ahead" }
             }
         }),
         tool_type: ToolType::Builtin,

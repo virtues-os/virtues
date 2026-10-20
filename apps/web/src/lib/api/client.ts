@@ -1191,7 +1191,7 @@ export function reextractDriveFile(fileId: string): Promise<DriveFile> {
 	return apiSend<DriveFile>('POST', `/drive/files/${fileId}/reextract`);
 }
 
-// ── Annotations (document highlights + margin notes, researcher-plan D2) ──
+// ── Annotations (document highlights + margin notes, agents/record/researcher.md D2) ──
 
 export interface AnnotationRect {
 	x: number;
@@ -1400,6 +1400,34 @@ export async function uploadDriveFile(
  */
 export function messageAttachmentPath(messageId: string, index: number): string {
 	return `${API_BASE}/messages/${encodeURIComponent(messageId)}/attachments/${index}`;
+}
+
+/**
+ * A message the assistant is sending as the owner, as the box's outbox holds
+ * it (`virtues-core/src/outbox.rs`). `pending` can still be cancelled.
+ */
+export interface OutboxMessage {
+	id: string;
+	person_id: string | null;
+	recipient: string;
+	/** Empty for a group chat, which is reached by its thread alone. */
+	handle: string;
+	thread_id: string | null;
+	body: string;
+	send_at: string;
+	state: "pending" | "sending" | "sent" | "delivered" | "failed" | "cancelled";
+	error: string | null;
+	sent_at: string | null;
+	delivered_at: string | null;
+}
+
+export async function getOutboxMessage(id: string): Promise<OutboxMessage> {
+	return request<OutboxMessage>(`/messages/outbox/${encodeURIComponent(id)}`);
+}
+
+/** Answers with the row: `cancelled`, or the state it had already reached. */
+export async function cancelOutboxMessage(id: string): Promise<OutboxMessage> {
+	return request<OutboxMessage>(`/messages/outbox/${encodeURIComponent(id)}/cancel`, { method: "POST" });
 }
 
 /**
@@ -2094,7 +2122,7 @@ export function searchRefs(query: string): Promise<RefSearchResponse> {
 }
 
 /**
- * Append a markdown block to a page THROUGH Yjs (researcher-plan D4).
+ * Append a markdown block to a page THROUGH Yjs (agents/record/researcher.md D4).
  *
  * Safe when the page is open in an editor: the server applies the insert to the
  * authoritative Yjs doc and broadcasts it, so an open editor merges the block
