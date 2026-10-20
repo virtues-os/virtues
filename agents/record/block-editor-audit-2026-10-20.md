@@ -31,7 +31,7 @@ Steps start from the test page; "at X" means the caret is placed there.
 | Enter at the end of a nested item | at end of a level-2 item, Enter | pass: a new level-2 item |
 | Enter on an empty item | then Enter, Enter | pass: lifts a level, then leaves the list |
 | Backspace at an item's start | at start of a level-2 item, or the last top item | pass: lifts it a level, or to a paragraph; no join |
-| Backspace at the first item that has children | at start of the first top item, which holds a nested list | open: becomes a paragraph, and its children and the rest of the items become two bullet lists side by side |
+| Backspace at the first item that has children | at start of the first top item, which holds a nested list | **fixed** in 1861cda2a: it became a paragraph and left its children and the rest of the items as two bullet lists side by side. Now one list |
 | Enter and Backspace on to-dos | Enter at end of a ticked item, Enter on an empty one, Backspace at start | pass: new unticked item; leaves the list; lifts to a paragraph |
 | Enter and Backspace in a quote | Enter twice at the end; Backspace at start | pass: leaves the quote; lifts the line out |
 | Enter in a heading | Enter at its start, middle and end | pass: paragraph above; split heading; paragraph below |
@@ -73,12 +73,13 @@ Steps start from the test page; "at X" means the caret is placed there.
 
 ## Still open
 
-- Backspace at the start of a first item that has children leaves two lists
-  of one kind side by side. They look like one list and export as two
-  (`continuesList`). The same happens when `[] ` starts a to-do right under
-  another to-do list.
 - At phone width, `PageOutline`'s centered title overlaps the toolbar icons.
   It is the page toolbar's layout, not the editor's: something has to give
   way below a width, and which one is a design decision.
 - Long-press menus and real cross-app pastes need a device and the apps
   themselves.
+
+Fixed after the audit, in 1861cda2a: Backspace at the start of a first item
+that has children, and `[] ` typed right under a to-do list, each left two
+lists of one kind side by side, which looked like one and exported as two
+(`continuesList`). Each now leaves one list.
