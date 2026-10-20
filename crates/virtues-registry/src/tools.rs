@@ -500,7 +500,7 @@ fn update_memory_tool() -> ToolConfig {
         id: "update_memory".to_string(),
         name: "Memory".to_string(),
         description: "Keep, revise, or retire one memory that persists across conversations".to_string(),
-        llm_description: r#"Keep one note in <memory>. The user reads and edits every note: write only what you want them to read. Lanes: facts (their world), manner (how to speak with them), practices (what they hold to, how you help). add: one durable fact, at most 500 chars. revise / retire: your own notes by id; [theirs] notes are the user's. Never store their narrative identity or secrets."#.to_string(),
+        llm_description: r#"Keep one note in <memory>. The user reads and edits every note: write only what you want them to read. Write each note to them, in the second person ("you", "your"), with no ids or phone numbers. Lanes: facts (their world), manner (how to speak with them), practices (what they hold to, how you help). add: one durable fact, at most 500 chars. revise / retire: your own notes by id; [theirs] notes are the user's. Never store their narrative identity or secrets."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {

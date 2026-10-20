@@ -63,7 +63,6 @@ ALLOW = (
     "GAP: debts are collected",
     "What these runs spent with the model",
     "your server goes by the model id",
-    "Every model the gateway carries",
 )
 
 # A past participle, for finding passives. "ne" and "nt" are NOT endings

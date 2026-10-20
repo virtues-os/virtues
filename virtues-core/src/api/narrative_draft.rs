@@ -1174,9 +1174,14 @@ impl RuleInput {
 
 #[derive(Debug, serde::Deserialize)]
 pub struct SaveRules {
-    /// Exactly what the person confirmed, in the wording they left it in. The
-    /// proposals are thrown away; only this is stored.
+    /// Exactly what the person confirmed, in the wording they left it in.
     pub rules: Vec<RuleInput>,
+    /// Leave the interview's pending proposals in place. Settings edits the
+    /// rules in force and must not discard proposals the person has not been
+    /// shown yet; the interview's close sends false, because that screen is
+    /// where proposals are kept or dropped.
+    #[serde(default)]
+    pub keep_proposed: bool,
 }
 
 /// Rules the drafter heard the person ask for, kept inactive until they
@@ -1249,39 +1254,29 @@ pub async fn rules_handler(
     }
 }
 
-/// Replace the rule set with exactly what was confirmed.
+/// Replace the rule set with exactly what was sent.
 ///
-/// A replace rather than an append: this is the screen where someone reviews
-/// every rule their box obeys, so leaving it must mean the list now says what
-/// they saw. An append would let a rule they unticked survive invisibly, which
-/// is the one failure this table exists to prevent.
-pub async fn save_rules_handler(
-    axum::extract::State(state): axum::extract::State<crate::server::AppState>,
-    _user: crate::middleware::auth::AuthUser,
-    axum::Json(req): axum::Json<SaveRules>,
-) -> impl axum::response::IntoResponse {
-    use axum::{response::IntoResponse as _, Json};
-    let pool = state.db.pool();
+/// A replace rather than an append: both screens that save here show every
+/// rule the box obeys, so saving must mean the list now says what the person
+/// saw. An append would let a rule they removed survive invisibly, which is
+/// the one failure this table exists to prevent.
+///
+/// The replace also drops pending proposals unless `keep_proposed` is set.
+pub async fn save_rules(pool: &PgPool, req: &SaveRules) -> Result<()> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| Error::Database(format!("save rules: {e}")))?;
 
-    let mut tx = match pool.begin().await {
-        Ok(t) => t,
-        Err(e) => {
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response()
-        }
+    let clear = if req.keep_proposed {
+        "DELETE FROM wiki_rules WHERE NOT (id LIKE 'proposed_%' AND NOT active)"
+    } else {
+        "DELETE FROM wiki_rules"
     };
-
-    if let Err(e) = sqlx::query("DELETE FROM wiki_rules").execute(&mut *tx).await {
-        tracing::error!(error = %e, "rules: clear failed");
-        return (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({ "error": e.to_string() })),
-        )
-            .into_response();
-    }
+    sqlx::query(clear)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| Error::Database(format!("clear rules: {e}")))?;
 
     for (i, input) in req.rules.iter().enumerate() {
         let (rule, kind) = input.parts();
@@ -1292,24 +1287,29 @@ pub async fn save_rules_handler(
         // The column has a CHECK; sending anything else would fail the whole
         // transaction and lose the rules that were fine.
         let kind = if kind == "defend" { "defend" } else { "avoid" };
-        if let Err(e) = sqlx::query("INSERT INTO wiki_rules (id, rule, kind) VALUES ($1, $2, $3)")
+        sqlx::query("INSERT INTO wiki_rules (id, rule, kind) VALUES ($1, $2, $3)")
             .bind(format!("rule_{i:03}"))
             .bind(rule)
             .bind(kind)
             .execute(&mut *tx)
             .await
-        {
-            tracing::error!(error = %e, "rules: insert failed");
-            return (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response();
-        }
+            .map_err(|e| Error::Database(format!("insert rule: {e}")))?;
     }
 
-    if let Err(e) = tx.commit().await {
-        tracing::error!(error = %e, "rules: commit failed");
+    tx.commit()
+        .await
+        .map_err(|e| Error::Database(format!("save rules: {e}")))
+}
+
+pub async fn save_rules_handler(
+    axum::extract::State(state): axum::extract::State<crate::server::AppState>,
+    _user: crate::middleware::auth::AuthUser,
+    axum::Json(req): axum::Json<SaveRules>,
+) -> impl axum::response::IntoResponse {
+    use axum::{response::IntoResponse as _, Json};
+
+    if let Err(e) = save_rules(state.db.pool(), &req).await {
+        tracing::error!(error = %e, "rules: save failed");
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({ "error": e.to_string() })),
@@ -1317,7 +1317,7 @@ pub async fn save_rules_handler(
             .into_response();
     }
 
-    tracing::info!(count = req.rules.len(), "rules saved");
+    tracing::info!(count = req.rules.len(), keep_proposed = req.keep_proposed, "rules saved");
     (
         axum::http::StatusCode::OK,
         Json(serde_json::json!({ "saved": req.rules.len() })),
@@ -1346,6 +1346,46 @@ mod proposed_rules_tests {
             list_proposed_rules(&pool).await.unwrap().into_iter().map(|r| r.rule).collect();
         assert_eq!(active, vec!["never suggest bars"]);
         assert_eq!(proposed, vec!["never raise the move"]);
+    }
+
+    /// Settings saves the rules in force with `keep_proposed`, and must leave
+    /// a proposal the person has not been shown; the interview's close sends
+    /// false and drops whatever it did not keep.
+    #[sqlx::test]
+    async fn a_settings_save_keeps_pending_proposals_and_the_close_drops_them(pool: PgPool) {
+        propose_rules(&pool, &["my ex".into()]).await.unwrap();
+        let save = |keep_proposed| SaveRules {
+            rules: vec![RuleInput::Kinded {
+                rule: "no work email on Sundays".into(),
+                kind: "defend".into(),
+            }],
+            keep_proposed,
+        };
+        let state = |pool: PgPool| async move {
+            let active: Vec<(String, String)> = list_rules(&pool)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|r| (r.kind, r.rule))
+                .collect();
+            let proposed: Vec<String> =
+                list_proposed_rules(&pool).await.unwrap().into_iter().map(|r| r.rule).collect();
+            (active, proposed)
+        };
+        let in_force = vec![("defend".to_string(), "no work email on Sundays".to_string())];
+
+        save_rules(&pool, &save(true)).await.unwrap();
+        assert_eq!(state(pool.clone()).await, (in_force.clone(), vec!["my ex".to_string()]));
+
+        save_rules(&pool, &save(false)).await.unwrap();
+        assert_eq!(state(pool.clone()).await, (in_force, Vec::<String>::new()));
+    }
+
+    /// A request from a client that predates the flag still drops proposals.
+    #[test]
+    fn keep_proposed_defaults_to_false() {
+        let req: SaveRules = serde_json::from_str(r#"{"rules":["my ex"]}"#).unwrap();
+        assert!(!req.keep_proposed);
     }
 }
 

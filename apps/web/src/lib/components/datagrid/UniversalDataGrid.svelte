@@ -1316,33 +1316,48 @@
 						colIndex: i % cardCols,
 						total
 					} as RowMeta}
-					<button
-						class="card"
-						class:animate-in={animateMount}
+					{@const open = !!expandDetail && expandedId === item.id}
+					<!-- The cell holds the card and, when it is open, the same
+					     expandDetail the table draws. The detail cannot go inside
+					     the card: it carries buttons, and the card is a button. -->
+					<div
+						class="card-cell"
+						class:card-open={open}
 						animate:flip={{ duration: motionMs, easing: cubicOut }}
-						style:--stagger="{staggerMs(meta.rowIndex, meta.colIndex)}ms"
-						onclick={() => handleRowClick(item)}
-						oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
-						onkeydown={(e) => handleKeyDown(e, item)}
-						aria-label={`Open ${getItemLabel(item)}`}
 					>
-						{#if card}
-							{@render card(item, meta)}
-						{:else}
-							<div class="card-content">
-								{#each visibleColumns.slice(0, 2) as col, ci}
-									{@const value = getValue(item, col)}
-									{#if ci === 0}
-										<span class="card-title">{value || '—'}</span>
-									{:else if col.format === 'badge' && value}
-										<span class="badge {getBadgeClass(value, col)}">{value}</span>
-									{:else if value}
-										<span class="card-meta">{value}</span>
-									{/if}
-								{/each}
+						<button
+							class="card"
+							class:animate-in={animateMount}
+							style:--stagger="{staggerMs(meta.rowIndex, meta.colIndex)}ms"
+							onclick={() => handleRowClick(item)}
+							oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
+							onkeydown={(e) => handleKeyDown(e, item)}
+							aria-label={`Open ${getItemLabel(item)}`}
+							aria-expanded={expandDetail ? open : undefined}
+						>
+							{#if card}
+								{@render card(item, meta)}
+							{:else}
+								<div class="card-content">
+									{#each visibleColumns.slice(0, 2) as col, ci}
+										{@const value = getValue(item, col)}
+										{#if ci === 0}
+											<span class="card-title">{value || '—'}</span>
+										{:else if col.format === 'badge' && value}
+											<span class="badge {getBadgeClass(value, col)}">{value}</span>
+										{:else if value}
+											<span class="card-meta">{value}</span>
+										{/if}
+									{/each}
+								</div>
+							{/if}
+						</button>
+						{#if open && expandDetail}
+							<div class="card-detail">
+								{@render expandDetail(item, meta)}
 							</div>
 						{/if}
-					</button>
+					</div>
 				{/each}
 					</div>
 					{/if}
@@ -2001,9 +2016,13 @@
 	/* ============================================
 	   CARD GRID VIEW
 	   ============================================ */
+	/* Dense, for an open card's full-width detail: sparse placement would push
+	   the cards after it below the detail and leave holes in its row. With
+	   every item one cell wide, dense and sparse place alike. */
 	.card-grid {
 		display: grid;
 		grid-template-columns: repeat(auto-fill, minmax(var(--grid-min, 200px), 1fr));
+		grid-auto-flow: row dense;
 		gap: 0.75rem;
 		padding-top: 1rem;
 	}
@@ -2048,6 +2067,28 @@
 		.wall {
 			columns: 1;
 		}
+	}
+
+	/* A card's cell in the grid. It stretches to the row like the card did, and
+	   the card fills it, so a row of cards still shares one height. */
+	.card-cell {
+		display: flex;
+		flex-direction: column;
+	}
+
+	.card-cell > .card {
+		flex: 1 1 auto;
+	}
+
+	/* Open, the cell steps aside so the card keeps its column and the detail
+	   takes the whole next row, directly under it. A cell with no box gives
+	   flip nothing to move, so an open card skips the reorder animation. */
+	.card-cell.card-open {
+		display: contents;
+	}
+
+	.card-detail {
+		grid-column: 1 / -1;
 	}
 
 	.card {

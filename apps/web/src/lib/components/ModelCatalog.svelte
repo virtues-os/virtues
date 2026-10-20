@@ -1,38 +1,35 @@
 <!--
-	Every model the gateway carries, as a table, at the bottom of Settings →
-	Assistant.
-
-	The slot pickers above it are for choosing. At ~240 language models a
-	dropdown is no place to compare anything, so this table is for finding:
-	prices, context, capabilities, and the two retention facts (ZDR, training)
-	as columns to sort and filter on. A row expands to the same choose/Use
-	recommended controls the pickers have. Both write through `modelSlots`.
-
-	This was a separate Settings page ("Models") until 2026-09-25. Two places
-	holding one setting, each with its own words for it, is what made going
-	back to the recommendation hard to find.
+	Every model the box's catalog lists, as a table to compare and choose from.
+	It is the page behind "Compare all" in the Assistant page's Models section,
+	and the two write through one store, `modelSlots`.
 
 	Every fact here is the gateway's, fetched live. Nothing on this page is
-	hand-maintained (see api/model_catalog.rs for what happened when it was).
+	hand-maintained (see api/model_catalog.rs for why).
 
-	The Retention column reports the posture AFTER enforcement, not the
-	gateway's raw tri-state: virtues-api sets `zeroDataRetention` on every call
-	whose model has any zero-retention endpoint, so a `some` model is held to
-	those endpoints and is zero-retention here. Only `none` (no such endpoint
-	exists) is retained, and choosing one is a per-slot decision that leaves
-	every other slot untouched.
+	Retention and training mark only the exception. virtues-api asks for zero
+	retention on every call except to a model with no zero-retention provider
+	(`enforce_zdr` in services/virtues-api/src/catalog.rs), so `all`, `some`
+	and a missing value all show nothing. Only `none` is marked, and it affects
+	only the roles that use it. A cold box's built-in rows carry no posture at
+	all, and virtues-api may know better, so those read as unknown.
+
+	On a box with its own AI key every AI call skips virtues-api
+	(virtues_api/client.rs), so retention and training are hidden there, not
+	shown wrong.
 -->
 <script lang="ts">
 	import { onMount } from "svelte";
-	import { Badge, Button } from "$lib";
+	import { Button, Card } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import UniversalDataGrid, {
 		type Column,
 	} from "$lib/components/datagrid/UniversalDataGrid.svelte";
-	import type { FilterDef } from "$lib/components/datagrid/types";
+	import type { FilterDef, FilterValue } from "$lib/components/datagrid/types";
 	import {
 		modelSlots,
 		type CatalogModel,
+		type SaveError,
+		type SlotConfig,
 	} from "$lib/stores/modelSlots.svelte";
 
 	onMount(() => modelSlots.load());
@@ -44,102 +41,137 @@
 		modelSlots.models.map((m) => ({ ...m, id: m.model_id })),
 	);
 
-	// The table lists language models, so the Image slot has no row to choose
-	// from here. Its picker above is the only control for it.
-	const TABLE_SLOTS = $derived(
-		modelSlots.slots.filter((s) => s.key !== "image"),
-	);
+	/** The roles a catalog row can fill. Pictures is not one of them: the
+	 *  catalog lists language models. */
+	const ROLE_SLOTS = $derived(modelSlots.slots.filter((s) => s.language));
 
-	/** Slot chips for a row. The recommended model keeps its chip while a
-	 *  choice overrides it, so the table always shows where "Use recommended"
-	 *  goes. */
-	function slotChips(m: ModelRow): { label: string; chosen: boolean }[] {
-		const out: { label: string; chosen: boolean }[] = [];
-		for (const s of TABLE_SLOTS) {
-			if (modelSlots.chosen[s.key] === m.model_id)
-				out.push({ label: `${s.label} · your choice`, chosen: true });
+	/** A role's failed save, on the row it concerns: the model the person
+	 *  tried to choose, or the one a failed "go back" left in place. */
+	function errorOnRow(slot: SlotConfig, m: ModelRow): SaveError | undefined {
+		const e = modelSlots.saveErrors[slot.key];
+		if (!e) return undefined;
+		const here = e.attempted === m.model_id || (e.attempted === null && e.kept === m.model_id);
+		return here ? e : undefined;
+	}
+
+	/** Plain words under a model's name: the roles it runs or is
+	 *  recommended for. */
+	function roleMarks(m: ModelRow): string[] {
+		const out: string[] = [];
+		for (const s of ROLE_SLOTS) {
+			if (modelSlots.chosen[s.key] === m.model_id) out.push(`Your ${s.mark} model`);
 			if (modelSlots.recommended[s.key] === m.model_id)
-				out.push({ label: `${s.label} · recommended`, chosen: false });
+				out.push(`Recommended for ${s.phrase}`);
 		}
 		return out;
 	}
 
-	// ── Retention rendering ──────────────────────────────────────────────────
-	// What this column reports is the posture AFTER our enforcement, not the
-	// gateway's raw tri-state. The box asks the gateway for zero-retention
-	// routing on every call whose model has any, so `some` — retention depends
-	// on which endpoint gets picked — resolves to zero retention in practice,
-	// and showing "varies" would understate what we actually do. Only `none`,
-	// where no zero-retention endpoint exists at all, is genuinely retained.
-	function zdrText(v: string | null | undefined): string {
-		if (v === "all" || v === "some") return "Zero retention";
-		if (v === "none") return "Retained";
-		return "—";
+	// ── Retention and training ───────────────────────────────────────────
+	/** Hidden on a box with its own AI key: none of it reaches those calls. */
+	const showPosture = $derived(!modelSlots.byoKey);
+
+	type Posture = "zero" | "open" | "unknown";
+	function retention(v: string | null | undefined): Posture {
+		if (v === "none") return "open";
+		if (v == null && modelSlots.catalogCold) return "unknown";
+		return "zero";
 	}
-	function trainingText(v: string | null | undefined): string {
-		if (v === "all") return "No training";
-		if (v === "some") return "Varies by route";
-		if (v === "none") return "May train";
-		return "—";
+	const RETENTION_LABEL: Record<Posture, string> = {
+		zero: "Zero retention",
+		open: "Not zero retention",
+		unknown: "Unknown",
+	};
+	/** The cell. Empty for zero retention, which is the norm. */
+	function retentionMark(v: string | null | undefined): string {
+		const p = retention(v);
+		return p === "zero" ? "" : RETENTION_LABEL[p];
 	}
-	function zdrDetail(v: string | null | undefined): string {
-		if (v === "all")
-			return "Every provider that serves this model is zero-data-retention.";
+	function retentionSentence(v: string | null | undefined): string {
+		const p = retention(v);
+		if (p === "unknown") return "Your server doesn't have this model's retention details yet.";
+		if (p === "open")
+			return "None of this model's providers has agreed to keep nothing. Only the roles that use it send requests there, so choose it only if that's acceptable to you.";
+		if (v === "all") return "This model's providers keep nothing after they answer.";
 		if (v === "some")
-			return "Only some endpoints serving this model are zero-data-retention, so your server pins every request to those and never uses the others.";
-		if (v === "none")
-			return "No zero-data-retention endpoint exists for this model. Choosing it means the provider keeps this slot's requests; every other slot stays zero-retention.";
-		return "Nobody has reported how this model handles retention. Your server requires zero retention on every call, so a provider that won't agree never gets the request.";
+			return "Virtues sends your requests only to this model's providers that keep nothing.";
+		return "Virtues asks for zero retention on every request to this model.";
 	}
 
+	const TRAINING_LABEL: Record<string, string> = {
+		all: "No training",
+		some: "Varies",
+		none: "Might train",
+		unknown: "Unknown",
+	};
+	function trainingKey(v: string | null | undefined): string {
+		return v === "all" || v === "some" || v === "none" ? v : "unknown";
+	}
+	/** The cell. Empty for no training, which is the norm. */
+	function trainingMark(v: string | null | undefined): string {
+		const k = trainingKey(v);
+		return k === "all" ? "" : TRAINING_LABEL[k];
+	}
+	function trainingSentence(v: string | null | undefined): string {
+		if (v === "some") return "Some of this model's providers might train on requests.";
+		if (v === "none") return "This model's providers might train on requests.";
+		return "";
+	}
+
+	// ── Figures ──────────────────────────────────────────────────────────
 	function perM(per1k: number | null | undefined): string {
-		if (per1k == null) return "—";
+		if (per1k == null) return "";
 		const v = per1k * 1000;
 		return `$${v >= 100 ? v.toFixed(0) : v.toFixed(2)}`;
 	}
-	function ctxText(ctx: number | null | undefined): string {
-		if (!ctx) return "—";
-		if (ctx >= 1_000_000) return `${(ctx / 1_000_000).toFixed(ctx % 1_000_000 ? 1 : 0)}M`;
-		return `${Math.round(ctx / 1000)}K`;
+	function tokens(n: number | null | undefined): string {
+		if (!n) return "";
+		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n % 1_000_000 ? 1 : 0)}M`;
+		return `${Math.round(n / 1000)}K`;
+	}
+	function cardFigures(m: ModelRow): string {
+		const parts: string[] = [];
+		if (m.input_cost_per_1k != null) parts.push(`${perM(m.input_cost_per_1k)} in`);
+		if (m.output_cost_per_1k != null) parts.push(`${perM(m.output_cost_per_1k)} out`);
+		if (m.context_window) parts.push(`${tokens(m.context_window)} context`);
+		return parts.join(" · ");
 	}
 
 	const CAPS: { key: keyof CatalogModel; label: string; icon: string }[] = [
-		{ key: "supports_tools", label: "tools", icon: "ri:tools-line" },
-		{ key: "supports_vision", label: "vision", icon: "ri:eye-line" },
-		{ key: "supports_pdf", label: "pdf", icon: "ri:file-text-line" },
-		{ key: "supports_audio", label: "audio", icon: "ri:mic-line" },
+		{ key: "supports_tools", label: "Tools", icon: "ri:tools-line" },
+		{ key: "supports_vision", label: "Images", icon: "ri:eye-line" },
+		{ key: "supports_pdf", label: "PDFs", icon: "ri:file-text-line" },
+		{ key: "supports_audio", label: "Audio", icon: "ri:mic-line" },
 	];
 	function capList(m: ModelRow): typeof CAPS {
 		return CAPS.filter((c) => m[c.key]);
 	}
 
-	// Columns feed search/sort/group; cells come from the tableRow snippet.
-	const columns: Column<ModelRow>[] = [
-		{ key: "display_name", label: "Model", icon: "ri:cpu-line", width: "26%", minWidth: "200px" },
-		// Searchable/groupable but not a column — the id is in the detail row.
+	// Columns feed search, sort and group; cells come from the tableRow snippet.
+	const ALL_COLUMNS: Column<ModelRow>[] = [
+		{ key: "display_name", label: "Model", width: "26%", minWidth: "200px" },
+		// Searchable but not a column: the id is in the expanded row.
 		{ key: "model_id", label: "Id", hidden: true },
 		{ key: "provider", label: "Provider", width: "11%", minWidth: "90px", groupable: true },
 		{
 			key: "zdr",
 			label: "Retention",
-			icon: "ri:shield-check-line",
-			width: "13%",
-			minWidth: "110px",
+			width: "11%",
+			minWidth: "90px",
 			groupable: true,
-			groupOrder: ["Zero retention", "Retained", "—"],
-			getValue: (m) => zdrText(m.zdr),
+			groupOrder: [RETENTION_LABEL.zero, RETENTION_LABEL.open, RETENTION_LABEL.unknown],
+			getValue: (m) => RETENTION_LABEL[retention(m.zdr)],
 		},
 		{
 			key: "no_training",
 			label: "Training",
-			width: "11%",
-			minWidth: "95px",
+			width: "10%",
+			minWidth: "90px",
 			hideOnMobile: true,
-			getValue: (m) => trainingText(m.no_training),
+			getValue: (m) => TRAINING_LABEL[trainingKey(m.no_training)],
 		},
 		{
 			key: "input_cost_per_1k",
-			label: "In $/M",
+			label: "Input",
 			width: "8%",
 			minWidth: "70px",
 			format: "number",
@@ -147,18 +179,18 @@
 		},
 		{
 			key: "output_cost_per_1k",
-			label: "Out $/M",
+			label: "Output",
 			width: "8%",
-			minWidth: "75px",
+			minWidth: "70px",
 			format: "number",
 			hideOnMobile: true,
 			getValue: (m) => (m.output_cost_per_1k == null ? null : m.output_cost_per_1k * 1000),
 		},
 		{
 			key: "context_window",
-			label: "Context",
-			width: "8%",
-			minWidth: "70px",
+			label: "Context (tokens)",
+			width: "10%",
+			minWidth: "100px",
 			format: "number",
 			getValue: (m) => m.context_window ?? null,
 		},
@@ -172,32 +204,13 @@
 			getValue: (m) => capList(m).map((c) => c.label).join(" "),
 		},
 	];
-
-	const RETENTION_OPTIONS = [
-		{ value: "all", label: "Zero retention" },
-		{ value: "some", label: "Zero retention (pinned)" },
-		{ value: "none", label: "Retained" },
-	];
+	const POSTURE_KEYS = new Set(["zdr", "no_training"]);
+	const columns = $derived(
+		showPosture ? ALL_COLUMNS : ALL_COLUMNS.filter((c) => !POSTURE_KEYS.has(String(c.key))),
+	);
 
 	const filters = $derived.by<FilterDef<ModelRow>[]>(() => [
-		{
-			id: "zdr",
-			label: "Retention",
-			kind: "enum",
-			field: "zdr",
-			options: RETENTION_OPTIONS,
-		},
-		{
-			id: "no_training",
-			label: "Training",
-			kind: "enum",
-			field: "no_training",
-			options: [
-				{ value: "all", label: "No training" },
-				{ value: "some", label: "Varies by route" },
-				{ value: "none", label: "May train" },
-			],
-		},
+		...(showPosture ? postureFilters() : []),
 		{
 			id: "provider",
 			label: "Provider",
@@ -208,29 +221,54 @@
 				.map((p) => ({ value: p, label: p })),
 		},
 	]);
+	function postureFilters(): FilterDef<ModelRow>[] {
+		return [
+			{
+				id: "zdr",
+				label: "Retention",
+				kind: "enum",
+				options: (["zero", "open", "unknown"] as Posture[]).map((p) => ({
+					value: p,
+					label: RETENTION_LABEL[p],
+				})),
+				predicate: (m: ModelRow, v: FilterValue) => retention(m.zdr) === v,
+			},
+			{
+				id: "no_training",
+				label: "Training",
+				kind: "enum",
+				options: ["all", "some", "none", "unknown"].map((k) => ({
+					value: k,
+					label: TRAINING_LABEL[k],
+				})),
+				predicate: (m: ModelRow, v: FilterValue) => trainingKey(m.no_training) === v,
+			},
+		];
+	}
 </script>
 
-<section id="model-catalog" class="space-y-3 scroll-mt-6">
-	<div>
-		<h2 class="text-sm font-medium text-foreground">All models</h2>
-		<p class="text-xs text-foreground-subtle mt-0.5">
-			Every model the gateway carries. Requests go only to zero-retention
-			endpoints wherever the model has any. Open a row to choose it for a slot.
+<div class="catalog">
+	{#if modelSlots.byoKey}
+		<p class="note">
+			Your own AI key is on, so your provider runs every AI request, at its own
+			prices and under its own retention terms.
 		</p>
-	</div>
+	{/if}
 
 	{#if modelSlots.catalogCold}
-		<!-- Two rows with no explanation reads as "the catalog is two models".
-		     Say what this list actually is and that it heals itself. -->
-		<div
-			class="flex items-start gap-2 rounded-md border border-border bg-surface-alt px-3 py-2 text-xs text-foreground-muted"
-		>
-			<Icon icon="ri:cloud-off-line" class="mt-0.5 shrink-0" width="14" />
-			<span>
-				Showing the built-in defaults. This server hasn't loaded the live
-				catalog yet. It retries every few minutes; the full list appears as
-				soon as the cloud is reachable.
-			</span>
+		<div class="cold">
+			<p class="note">
+				Showing the built-in models only. Your server checks for the full list
+				every 5 minutes.
+			</p>
+			<div>
+				<Button
+					variant="ghost"
+					size="sm"
+					loading={modelSlots.loading}
+					onclick={() => modelSlots.load(true)}>Check again</Button
+				>
+			</div>
 		</div>
 	{/if}
 
@@ -243,149 +281,236 @@
 		error={modelSlots.error}
 		onRetry={() => modelSlots.load(true)}
 		onRefresh={() => modelSlots.load(true)}
-		emptyIcon="ri:cpu-line"
-		emptyMessage="Your server hasn't reached the cloud yet, so there are no models to list. Refresh once it's back online."
-		loadingMessage="Loading the catalog..."
-		searchPlaceholder="Search models..."
+		loadingMessage="Loading the models"
+		searchPlaceholder="Search models"
 		defaultViewMode="table"
 	>
 		{#snippet tableRow(m: ModelRow)}
-			<td class="px-3 py-2.5">
-				<div class="flex items-center gap-2 flex-wrap">
-					<span class="text-sm font-medium text-foreground truncate">{m.display_name}</span>
-					{#each slotChips(m) as chip}
-						<!-- Filled = the person's choice for that slot. Outline = what
-						     Virtues recommends for it, shown even while overridden. -->
-						{#if chip.chosen}
-							<Badge variant="primary">{chip.label}</Badge>
-						{:else}
-							<Badge outline>{chip.label}</Badge>
-						{/if}
-					{/each}
-				</div>
-			</td>
-			<td class="px-3 py-2.5 text-sm text-foreground-muted">{m.provider}</td>
-			<td class="px-3 py-2.5">
-				{#if m.zdr === "all" || m.zdr === "some"}
-					<Badge variant="success">Zero retention</Badge>
-				{:else if m.zdr === "none"}
-					<Badge variant="warning">Retained</Badge>
-				{:else}
-					<span class="text-sm text-foreground-subtle">—</span>
+			{@const marks = roleMarks(m)}
+			<td class="cell">
+				<span class="model-name">{m.display_name}</span>
+				{#if marks.length}
+					<span class="model-marks">{marks.join(" · ")}</span>
 				{/if}
 			</td>
-			<td class="px-3 py-2.5 hide-mobile">
-				{#if m.no_training === "all"}
-					<Badge variant="success">No training</Badge>
-				{:else}
-					<span
-						class="text-sm {m.no_training
-							? 'text-foreground-muted'
-							: 'text-foreground-subtle'}">{trainingText(m.no_training)}</span
-					>
-				{/if}
-			</td>
-			<td class="px-3 py-2.5 text-sm font-mono text-foreground-muted">
-				{perM(m.input_cost_per_1k)}
-			</td>
-			<td class="px-3 py-2.5 text-sm font-mono text-foreground-muted hide-mobile">
-				{perM(m.output_cost_per_1k)}
-			</td>
-			<td class="px-3 py-2.5 text-sm font-mono text-foreground-muted">
-				{ctxText(m.context_window)}
-			</td>
-			<td class="px-3 py-2.5 hide-mobile">
-				<div class="flex items-center gap-1.5 text-foreground-muted">
-					{#each capList(m) as cap}
-						<Icon icon={cap.icon} width="14" aria-label={cap.label} />
+			<td class="cell quiet">{m.provider}</td>
+			{#if showPosture}
+				<td class="cell quiet">{retentionMark(m.zdr)}</td>
+				<td class="cell quiet hide-mobile">{trainingMark(m.no_training)}</td>
+			{/if}
+			<td class="cell quiet figure">{perM(m.input_cost_per_1k)}</td>
+			<td class="cell quiet figure hide-mobile">{perM(m.output_cost_per_1k)}</td>
+			<td class="cell quiet figure">{tokens(m.context_window)}</td>
+			<td class="cell quiet hide-mobile">
+				<span class="caps">
+					{#each capList(m) as cap (cap.key)}
+						<span class="cap" role="img" title={cap.label} aria-label={cap.label}>
+							<Icon icon={cap.icon} width="14" />
+						</span>
 					{/each}
-				</div>
+				</span>
 			</td>
 		{/snippet}
 
 		{#snippet card(m: ModelRow)}
-			<div class="flex flex-col items-center gap-2 text-center">
-				<span class="text-sm font-medium text-foreground break-all">{m.display_name}</span>
-				<span class="text-xs text-foreground-muted">{m.provider}</span>
-				{#if m.zdr === "all" || m.zdr === "some"}
-					<Badge variant="success">Zero retention</Badge>
-				{:else if m.zdr === "none"}
-					<Badge variant="warning">Retained</Badge>
-				{/if}
-				<span class="text-xs font-mono text-foreground-muted">
-					{perM(m.input_cost_per_1k)} / {perM(m.output_cost_per_1k)} · {ctxText(
-						m.context_window,
-					)}
+			{@const marks = roleMarks(m)}
+			{@const figures = cardFigures(m)}
+			{@const kept = showPosture ? retentionMark(m.zdr) : ""}
+			<Card padding="sm" class="model-card">
+				<span class="card-body">
+					<span class="model-name">{m.display_name}</span>
+					<span class="model-marks">{m.provider}</span>
+					{#if marks.length}
+						<span class="model-marks">{marks.join(" · ")}</span>
+					{/if}
+					{#if figures}
+						<span class="model-marks figure">{figures}</span>
+					{/if}
+					{#if kept}
+						<span class="model-marks">{kept}</span>
+					{/if}
 				</span>
-			</div>
+			</Card>
 		{/snippet}
 
 		{#snippet expandDetail(m: ModelRow)}
-			<div class="px-4 py-3 space-y-3 bg-surface-alt/50">
-				<div class="flex items-center gap-3 flex-wrap">
-					<span class="text-xs font-mono text-foreground-muted">{m.model_id}</span>
+			<div class="detail">
+				<div class="facts">
+					<span class="model-id">{m.model_id}</span>
 					{#if m.max_output_tokens}
-						<span class="text-xs text-foreground-muted">
-							max output {ctxText(m.max_output_tokens)}
-						</span>
+						<span>Up to {tokens(m.max_output_tokens)} output tokens</span>
 					{/if}
-					{#each capList(m) as cap}
-						<span class="text-xs text-foreground-muted flex items-center gap-1">
-							<Icon icon={cap.icon} width="12" />{cap.label}
-						</span>
-					{/each}
+					{#if capList(m).length}
+						<span>{capList(m).map((c) => c.label).join(", ")}</span>
+					{/if}
 				</div>
-				<p class="text-xs text-foreground-muted max-w-prose">
-					{zdrDetail(m.zdr)}
-					{#if m.no_training === "all"}
-						Providers don't train on request data.
-					{:else if m.no_training === "some"}
-						Whether providers train on request data varies by route.
-					{:else if m.no_training === "none"}
-						Providers may train on request data.
-					{/if}
-				</p>
-				<div class="flex items-center gap-2 flex-wrap">
-					{#each TABLE_SLOTS as slot}
+				{#if showPosture}
+					<p class="posture">
+						{retentionSentence(m.zdr)}
+						{trainingSentence(m.no_training)}
+					</p>
+				{/if}
+				<div class="roles">
+					{#each ROLE_SLOTS as slot (slot.key)}
 						{@const isChosen = modelSlots.chosen[slot.key] === m.model_id}
-						{@const isRecommended = modelSlots.recommended[slot.key] === m.model_id}
-						<!-- Secondary, not primary: going back to Recommended is a real
-						     action but not what this page is for, and claret read as a
-						     warning here. -->
-						<Button
-							variant={isChosen ? "secondary" : "ghost"}
-							onclick={(e: MouseEvent) => {
-								// The row click owns expand/collapse; this must not also toggle it.
-								e.stopPropagation();
-								modelSlots.choose(slot, isChosen ? null : m.model_id);
-							}}
-						>
-							{#if isChosen}
-								<Icon icon="ri:arrow-go-back-line" width="13" />
-								Use recommended for {slot.label.toLowerCase()}
-							{:else if isRecommended && !modelSlots.chosen[slot.key]}
-								<!-- Already this model, by recommendation. Choosing it
-								     keeps it when the recommendation moves. -->
-								<Icon icon="ri:pushpin-line" width="13" />
-								Keep for {slot.label.toLowerCase()}
-							{:else}
-								<Icon icon="ri:pushpin-line" width="13" />
-								Use for {slot.label.toLowerCase()}
+						{@const saveError = errorOnRow(slot, m)}
+						<div class="role">
+							<div class="role-control">
+								{#if isChosen}
+									<span class="chosen">Chosen for {slot.phrase}</span>
+									<Button
+										variant="ghost"
+										size="sm"
+										onclick={() => modelSlots.choose(slot, null)}
+										>Go back to the recommended model</Button
+									>
+								{:else}
+									<Button
+										variant="secondary"
+										size="sm"
+										onclick={() => modelSlots.choose(slot, m.model_id)}
+										>Use for {slot.phrase}</Button
+									>
+								{/if}
+							</div>
+							{#if saveError}
+								<p class="role-error" role="alert">{saveError.message}</p>
 							{/if}
-						</Button>
+						</div>
 					{/each}
-					<span class="text-xs text-foreground-subtle">
-						A slot on Recommended changes when Virtues recommends a different model. Your choice stays until you change it.
-					</span>
 				</div>
 			</div>
 		{/snippet}
 	</UniversalDataGrid>
-</section>
+</div>
 
 <style>
-	/* Matches the grid's own hideOnMobile header behavior, which a custom
-	   tableRow has to mirror cell-by-cell. */
+	.catalog {
+		display: flex;
+		flex-direction: column;
+		gap: 16px;
+	}
+
+	.cold {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.note {
+		margin: 0;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+		max-width: 60ch;
+	}
+
+	.cell {
+		padding: 12px;
+		vertical-align: top;
+		font-size: 13px;
+	}
+	.quiet {
+		color: var(--color-foreground-muted);
+	}
+	.figure {
+		font-variant-numeric: tabular-nums;
+	}
+
+	.model-name {
+		display: block;
+		font-size: 14px;
+		font-weight: 500;
+		color: var(--color-foreground);
+	}
+	.model-marks {
+		display: block;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+
+	.caps {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.cap {
+		display: inline-flex;
+	}
+
+	/* The card body. The grid's card is an unstyled button; the surface is
+	   the Card inside it, stretched so a row of cards shares one height. */
+	.card-body {
+		display: flex;
+		flex-direction: column;
+	}
+	:global(.v-card.model-card) {
+		flex: 1 1 auto;
+	}
+	:global(.card:hover .v-card.model-card),
+	:global(.card[aria-expanded="true"] .v-card.model-card) {
+		border-color: var(--color-border-strong);
+	}
+
+	/* Capped and pinned left: in a table wider than its pane, the cell spans
+	   the whole scroll width, and the controls would wrap off screen. */
+	.detail {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		padding: 16px 12px;
+		max-width: 40rem;
+		position: sticky;
+		left: 0;
+	}
+	.facts {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		column-gap: 16px;
+		row-gap: 8px;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+	.model-id {
+		color: var(--color-foreground);
+		user-select: text;
+	}
+	.posture {
+		margin: 0;
+		font-size: 15px;
+		color: var(--color-foreground);
+		max-width: 60ch;
+	}
+
+	.roles {
+		display: flex;
+		flex-wrap: wrap;
+		column-gap: 16px;
+		row-gap: 8px;
+	}
+	.role {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+	}
+	.role-control {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 8px;
+	}
+	.chosen {
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+	.role-error {
+		margin: 0;
+		font-size: 12px;
+		color: var(--color-error);
+		max-width: 40ch;
+	}
+
+	/* Matches the grid's own hideOnMobile header, which a custom tableRow
+	   has to mirror cell by cell. */
 	@media (max-width: 768px) {
 		.hide-mobile {
 			display: none;

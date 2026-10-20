@@ -196,9 +196,10 @@ days in `<circumstances>` stand in for it.
 Prose vocabulary: "your life story" (never "portrait" — a portrait is
 painted by another's hand of a sitting subject, which is the exact
 connotation the doctrine forbids; the word also names a deleted feature).
-The two machine-facing surfaces get first-person UI names on purpose —
-theirs is "In your own words," the machine's is "What I've learned" —
-**voice marks ownership**.
+The person's surface is named in their voice, "In your own words". The
+machine's is plainly "Memory", a section of Settings > Assistant, because
+settings headings are plain (`Section.svelte`); ownership is marked per note
+instead, where a note the person has edited reads "· yours".
 
 **Precedence**, stated once in the prompt (`prompt_blocks.rs::precedence_line`):
 rules outrank everything and are absolute; narrative identity outranks the
@@ -213,8 +214,9 @@ Three lanes — **facts** (their world: the dog's name), **manner** (concise,
 numbered lists), **practices** (what they're holding to) — as per-note rows
 (`api/assistant_memories.rs`) with add/revise/retire, per-lane caps (12
 facts, 8 each of the others; a full lane refuses new notes until one is
-retired), and a page in Settings the person can read and edit. A note the
-person wrote is marked `[theirs]` and the machine never revises it. A
+retired), and a section in Settings the person can read and edit. A note
+the person has edited is marked `[theirs]` in the prompt and "· yours" on the
+page, and the memory tool never revises or retires it. A
 machine channel about the person that the person cannot see is the thing
 this product deleted once already. The test for what goes here vs the NI:
 could a stranger who spent 200 hours beside you learn it? Then memory.

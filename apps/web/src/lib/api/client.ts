@@ -1155,9 +1155,14 @@ export async function getNarrativeRules(): Promise<{ rules: NarrativeRule[]; pro
 }
 
 /** `POST /api/narrative/rules`: replace the whole set with exactly these.
- *  Proposals not included are dropped. */
-export async function saveNarrativeRules(rules: { rule: string; kind: 'avoid' | 'defend' }[]): Promise<void> {
-	await apiSend('POST', '/narrative/rules', { rules });
+ *  The interview's pending proposals are dropped unless `keepProposed`, which
+ *  Settings always sends: it edits the rules in force, and proposals belong to
+ *  the interview's close. */
+export async function saveNarrativeRules(
+	rules: { rule: string; kind: 'avoid' | 'defend' }[],
+	{ keepProposed = false }: { keepProposed?: boolean } = {},
+): Promise<void> {
+	await apiSend('POST', '/narrative/rules', { rules, keep_proposed: keepProposed });
 }
 
 // =============================================================================
@@ -2239,7 +2244,7 @@ export function getSetupState(): Promise<SetupState> {
 // ============================================================================
 
 // ── Assistant profile ────────────────────────────────────────────────────────
-// ── Assistant memories (What I've learned) ──
+// ── Assistant memories (the Memory section of Settings > Assistant) ──
 // The machine's per-note memory, visible and editable. Every live note rides
 // in the system prompt of every conversation.
 

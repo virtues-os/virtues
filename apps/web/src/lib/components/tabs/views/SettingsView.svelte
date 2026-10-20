@@ -11,7 +11,7 @@
 	and nothing nests a tab group inside a tab group.
 
 	  You          /virtues/you            — profile, theme
-	  Assistant    /virtues/assistant      — name, models (pickers + catalog), style
+	  Assistant    /virtues/assistant      — name, style, rules, memory, models (+ /models: the catalog)
 	  Billing      /virtues/billing        — subscription, balance, routing, and
 	                                         the AI calls that draw it down
 	  System       /virtues/system         — the machine, measured (read-only)
@@ -50,6 +50,7 @@
 
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
+	import ModelCatalogView from '$lib/components/tabs/views/ModelCatalogView.svelte';
 	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 	import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
@@ -70,9 +71,8 @@
 		'/virtues/account': '/virtues/you',
 		'/virtues/profile': '/virtues/you',
 		'/virtues/account/assistant': '/virtues/assistant',
-		// Models was its own section until 2026-09-25. The catalog table is the
-		// bottom of Assistant now, under the slot pickers it serves.
-		'/virtues/models': '/virtues/assistant',
+		// The model catalog is Assistant's sub-page, beside the pickers it serves.
+		'/virtues/models': '/virtues/assistant/models',
 		// Billing and Usage merged into Plan (2026-08-31): one subject seen from
 		// two ends — what you are on, what is left, what drew it down. Both of
 		// their own doors redirect too, because they were live sections with
@@ -192,7 +192,7 @@
 	];
 
 	// (section, sub) are a pure function of the route. `raw` is everything after
-	// `/virtues/`; segment 1 = section, segment 2 = sub-section (Developer only).
+	// `/virtues/`; segment 1 = section, segment 2 = sub-section (Assistant, Devices, Developer).
 	const raw = $derived(tab.route.replace(/^\/virtues\/?/, ''));
 	const section = $derived<Section>(
 		SECTIONS.includes(raw.split('/')[0]) ? (raw.split('/')[0] as Section) : 'you'
@@ -220,7 +220,11 @@
 		{#if section === 'you'}
 			<ProfileView {tab} {active} />
 		{:else if section === 'assistant'}
-			<AssistantView {tab} {active} />
+			{#if sub === 'models'}
+				<ModelCatalogView />
+			{:else}
+				<AssistantView />
+			{/if}
 		{:else if section === 'billing'}
 			<BillingView {tab} {active} />
 		{:else if section === 'system'}
