@@ -1419,6 +1419,16 @@ export interface OutboxMessage {
 	error: string | null;
 	sent_at: string | null;
 	delivered_at: string | null;
+	/** Files sent after the text, by reference; the bytes stay on the box. */
+	attachments: OutboxAttachment[];
+}
+
+export interface OutboxAttachment {
+	/** `/drive/<id>` or `/api/messages/<id>/attachments/<n>`. */
+	ref: string;
+	filename: string;
+	mime_type: string;
+	size_bytes: number;
 }
 
 export async function getOutboxMessage(id: string): Promise<OutboxMessage> {

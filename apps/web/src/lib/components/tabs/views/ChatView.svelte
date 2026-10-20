@@ -2131,6 +2131,7 @@
 																handle: out.handle,
 																body: out.text,
 																send_at: out.send_at,
+																attachments: out.attachments ?? [],
 															}
 														: undefined}
 													scheduled={out?.scheduled ?? false}

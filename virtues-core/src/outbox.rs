@@ -58,10 +58,16 @@ pub struct Outgoing {
     pub error: Option<String>,
     pub sent_at: Option<DateTime<Utc>>,
     pub delivered_at: Option<DateTime<Utc>>,
+    /// `[{ref, filename, mime_type, size_bytes}]`, as [`attachment`] made them.
+    pub attachments: serde_json::Value,
 }
 
 const COLUMNS: &str =
-    "id, person_id, recipient, handle, thread_id, body, send_at, state, error, sent_at, delivered_at";
+    "id, person_id, recipient, handle, thread_id, body, send_at, state, error, sent_at, delivered_at, attachments";
+
+/// The most a message can carry in files, all told. They cross to the Mac as
+/// base64 in one websocket frame.
+pub const MAX_ATTACHMENT_BYTES: usize = 25 * 1024 * 1024;
 
 pub struct NewMessage<'a> {
     pub chat_id: Option<&'a str>,
@@ -71,14 +77,15 @@ pub struct NewMessage<'a> {
     pub thread_id: Option<&'a str>,
     pub body: &'a str,
     pub send_at: DateTime<Utc>,
+    pub attachments: serde_json::Value,
 }
 
 /// Queue a message, and wake the worker so it learns the new due time.
 pub async fn enqueue(pool: &PgPool, m: NewMessage<'_>) -> sqlx::Result<Outgoing> {
     let id = crate::ids::generate_id("outbox", &[&uuid::Uuid::new_v4().to_string()]);
     let row = sqlx::query_as::<_, Outgoing>(&format!(
-        "INSERT INTO app_message_outbox (id, chat_id, person_id, recipient, handle, thread_id, body, send_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        "INSERT INTO app_message_outbox (id, chat_id, person_id, recipient, handle, thread_id, body, send_at, attachments)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING {COLUMNS}"
     ))
     .bind(&id)
@@ -89,10 +96,64 @@ pub async fn enqueue(pool: &PgPool, m: NewMessage<'_>) -> sqlx::Result<Outgoing>
     .bind(m.thread_id)
     .bind(m.body)
     .bind(m.send_at)
+    .bind(&m.attachments)
     .fetch_one(pool)
     .await?;
     wake().notify_one();
     Ok(row)
+}
+
+/// A file the owner has, by the reference the model passes: a drive file
+/// (`/drive/<id>` or the bare id) or an iMessage attachment in the record
+/// (`/api/messages/<id>/attachments/<n>`). `Err` is a sentence for the model.
+pub async fn fetch_attachment(pool: &PgPool, raw: &str) -> Result<(String, String, Vec<u8>), String> {
+    let raw = raw.trim();
+    let path = raw.strip_prefix("/api").unwrap_or(raw);
+    let storage = crate::storage::Storage::file(crate::storage::lake::lake_root().to_string_lossy().into_owned())
+        .map_err(|e| format!("Your server's storage is unavailable: {e}"))?;
+
+    if let Some(rest) = path.strip_prefix("/messages/") {
+        let (message_id, index) = rest
+            .split_once("/attachments/")
+            .and_then(|(id, n)| Some((id, n.parse::<usize>().ok()?)))
+            .ok_or_else(|| format!("{raw} is not a message attachment. Use /api/messages/<id>/attachments/<n>."))?;
+        let (bytes, mime) = crate::storage::message_media::load_attachment(pool, &storage, message_id, index)
+            .await
+            .map_err(|e| format!("Could not read {raw}: {e}"))?;
+        let filename = message_attachment_name(pool, message_id, index, &mime).await;
+        return Ok((filename, mime, bytes));
+    }
+
+    let id = crate::api::refs::split_ref(path).map(|(_, id)| id).unwrap_or(path);
+    let config = crate::api::DriveConfig::new(std::sync::Arc::new(storage));
+    let (file, bytes) = crate::api::drive::download_file(pool, &config, id)
+        .await
+        .map_err(|e| format!("Could not read {raw}: {e}"))?;
+    let mime = file.mime_type.clone().unwrap_or_else(|| "application/octet-stream".into());
+    Ok((file.filename, mime, bytes))
+}
+
+/// The name chat.db gave the file, or one made from its type.
+async fn message_attachment_name(pool: &PgPool, message_id: &str, index: usize, mime: &str) -> String {
+    let named: Option<(Option<String>,)> = sqlx::query_as(
+        "SELECT metadata->'attachments'->$2::int->>'filename' FROM data_communication_message WHERE id = $1",
+    )
+    .bind(message_id)
+    .bind(index as i32)
+    .fetch_optional(pool)
+    .await
+    // absent-ok: a missing name only costs the file its original name.
+    .unwrap_or(None);
+    named
+        .and_then(|(n,)| n)
+        .and_then(|n| std::path::Path::new(&n).file_name().and_then(|f| f.to_str()).map(str::to_string))
+        .unwrap_or_else(|| format!("attachment.{}", mime.rsplit('/').next().unwrap_or("bin")))
+}
+
+/// Read and check one file, for the outbox row: everything but the bytes.
+pub async fn attachment(pool: &PgPool, raw: &str) -> Result<serde_json::Value, String> {
+    let (filename, mime, bytes) = fetch_attachment(pool, raw).await?;
+    Ok(json!({ "ref": raw.trim(), "filename": filename, "mime_type": mime, "size_bytes": bytes.len() }))
 }
 
 pub async fn get(pool: &PgPool, id: &str) -> sqlx::Result<Option<Outgoing>> {
@@ -187,9 +248,22 @@ async fn send_due(pool: &PgPool) -> sqlx::Result<()> {
             return Ok(());
         };
 
+        let files = match files_for(pool, &m.attachments).await {
+            Ok(f) => f,
+            Err(why) => {
+                sqlx::query("UPDATE app_message_outbox SET state = 'failed', error = $2, updated_at = now() WHERE id = $1")
+                    .bind(&m.id)
+                    .bind(why)
+                    .execute(pool)
+                    .await?;
+                continue;
+            }
+        };
         // absent-ok: no thread means a first message, sent to the handle.
-        let args = json!({ "chat_id": m.thread_id.clone().unwrap_or_default(), "handle": m.handle, "text": m.body });
-        let outcome = crate::browser::call("imessage_send", args, SEND_WAIT).await;
+        let args = json!({ "chat_id": m.thread_id.clone().unwrap_or_default(), "handle": m.handle, "text": m.body, "files": files });
+        // Each file is its own hand-off to Messages.
+        let wait = SEND_WAIT + Duration::from_secs(15) * m.attachments.as_array().map_or(0, |a| a.len() as u32);
+        let outcome = crate::browser::call("imessage_send", args, wait).await;
         match outcome {
             Ok(_) => {
                 sqlx::query("UPDATE app_message_outbox SET state = 'sent', sent_at = now(), updated_at = now() WHERE id = $1")
@@ -209,48 +283,109 @@ async fn send_due(pool: &PgPool) -> sqlx::Result<()> {
     }
 }
 
-/// Match each sent message to the owner's own message in chat.db, once the
-/// collector has synced it, and settle it by what chat.db says.
+/// The files to send, read now: `[{filename, data_base64}]`.
+async fn files_for(pool: &PgPool, attachments: &serde_json::Value) -> Result<Vec<serde_json::Value>, String> {
+    use base64::Engine;
+    let mut files = Vec::new();
+    let mut total = 0;
+    for a in attachments.as_array().into_iter().flatten() {
+        let raw = a.get("ref").and_then(|r| r.as_str()).unwrap_or("");
+        let (filename, _, bytes) =
+            fetch_attachment(pool, raw).await.map_err(|why| format!("{why} Nothing was sent."))?;
+        total += bytes.len();
+        if total > MAX_ATTACHMENT_BYTES {
+            return Err("The files are larger than 25 MB together. Nothing was sent.".into());
+        }
+        files.push(json!({ "filename": filename, "data_base64": base64::engine::general_purpose::STANDARD.encode(bytes) }));
+    }
+    Ok(files)
+}
+
+/// Match each sent message to the owner's own messages in chat.db, once the
+/// collector has synced them, and settle it by what chat.db says.
 ///
-/// The match is the thread (or, for a first message, a thread ending in the
-/// handle), the exact text, and a time after the send. A failed send that
-/// shows up anyway is settled too: chat.db is the better witness.
+/// Messages makes one message of the text and one of each file. The text is
+/// matched by thread (or, for a first message, a thread ending in the
+/// handle), exact words, and a time after the send; the files are the
+/// owner's next messages in that thread that carry one. The send is
+/// delivered only when every part is, and failed when any part is: the text
+/// arriving says nothing about the photo after it. A failed send that shows
+/// up anyway is settled too: chat.db is the better witness.
 async fn settle_delivered(pool: &PgPool) -> sqlx::Result<()> {
+    type Row = (
+        String,
+        bool,
+        Option<String>,
+        Option<bool>,
+        Option<DateTime<Utc>>,
+        Option<i64>,
+        i32,
+        i64,
+        i64,
+        Option<String>,
+        Option<DateTime<Utc>>,
+    );
     let since = Utc::now() - DELIVERY_WATCH;
-    let rows: Vec<(String, String, Option<bool>, Option<DateTime<Utc>>, Option<i64>)> = sqlx::query_as(
-        "SELECT DISTINCT ON (o.id)
-                o.id, m.id,
-                (m.metadata->>'is_delivered')::boolean,
-                (m.metadata->>'date_delivered')::timestamptz,
-                (m.metadata->>'send_error')::bigint
-           FROM app_message_outbox o
-           JOIN data_communication_message m
-             ON (m.thread_id = o.thread_id
-                 OR (o.thread_id IS NULL AND m.thread_id LIKE '%;' || o.handle))
-            AND m.body = o.body
-            AND (m.metadata->>'is_from_me')::boolean
-            AND m.occurred_at >= COALESCE(o.sent_at, o.send_at) - interval '2 minutes'
-            AND m.occurred_at >= $1
-          WHERE o.state IN ('sent', 'failed')
-            AND o.send_at >= $1
-            AND (o.state = 'sent' OR o.message_id IS NULL)
-          ORDER BY o.id, m.occurred_at",
+    let rows: Vec<Row> = sqlx::query_as(
+        "WITH open AS (
+             SELECT * FROM app_message_outbox
+              WHERE state IN ('sent', 'failed') AND send_at >= $1
+                AND (state = 'sent' OR message_id IS NULL)
+         ), mine AS (
+             SELECT o.id AS oid, m.id AS mid, m.body, m.has_attachments, m.occurred_at,
+                    COALESCE((m.metadata->>'is_delivered')::boolean, false) AS delivered,
+                    (m.metadata->>'date_delivered')::timestamptz AS delivered_at,
+                    COALESCE((m.metadata->>'send_error')::bigint, 0) AS err
+               FROM open o
+               JOIN data_communication_message m
+                 ON (m.thread_id = o.thread_id
+                     OR (o.thread_id IS NULL AND m.thread_id LIKE '%;' || o.handle))
+                AND (m.metadata->>'is_from_me')::boolean
+                AND m.occurred_at >= COALESCE(o.sent_at, o.send_at) - interval '2 minutes'
+                AND m.occurred_at >= $1
+         )
+         SELECT o.id, o.body <> '', t.mid, t.delivered, t.delivered_at, t.err,
+                jsonb_array_length(o.attachments),
+                COALESCE(f.delivered_n, 0), COALESCE(f.failed_n, 0), f.first_mid, f.last_delivered_at
+           FROM open o
+           LEFT JOIN LATERAL (
+                SELECT * FROM mine
+                 WHERE mine.oid = o.id AND o.body <> '' AND mine.body = o.body
+                 ORDER BY occurred_at LIMIT 1
+           ) t ON true
+           LEFT JOIN LATERAL (
+                SELECT count(*) FILTER (WHERE delivered) AS delivered_n,
+                       count(*) FILTER (WHERE err <> 0) AS failed_n,
+                       min(mid) AS first_mid,
+                       max(delivered_at) AS last_delivered_at
+                  FROM (SELECT * FROM mine
+                         WHERE mine.oid = o.id AND mine.has_attachments
+                         ORDER BY occurred_at
+                         LIMIT jsonb_array_length(o.attachments)) x
+           ) f ON true
+          WHERE t.mid IS NOT NULL OR f.first_mid IS NOT NULL",
     )
     .bind(since)
     .fetch_all(pool)
     .await?;
 
-    for (outbox_id, message_id, delivered, delivered_at, send_error) in rows {
-        // chat.db writes 0 for "not yet", which reads as 2001-01-01.
-        let delivered_at = delivered_at.filter(|at| at.timestamp() > 978_393_600);
+    for (outbox_id, has_text, text_id, text_delivered, text_at, text_err, files, files_delivered, files_failed, file_id, file_at) in rows {
         // absent-ok: chat.db writes no error for a message that went.
-        let (state, error): (&str, Option<&str>) = if send_error.unwrap_or(0) != 0 {
+        let (state, error): (&str, Option<&str>) = if text_err.unwrap_or(0) != 0 {
             ("failed", Some("Messages couldn't deliver this. Open it in Messages to try again."))
-        } else if delivered == Some(true) {
+        } else if files_failed > 0 {
+            ("failed", Some("Messages couldn't deliver the attachment. Open it in Messages to try again."))
+        } else if (!has_text || text_delivered == Some(true)) && files_delivered >= i64::from(files) {
             ("delivered", None)
         } else {
             ("sent", None)
         };
+        // chat.db writes 0 for "not yet", which reads as 2001-01-01.
+        let delivered_at = [text_at, file_at]
+            .into_iter()
+            .flatten()
+            .filter(|at| at.timestamp() > 978_393_600)
+            .max();
         sqlx::query(
             "UPDATE app_message_outbox
                 SET state = $2, error = COALESCE($3, CASE WHEN $2 = 'failed' THEN error END),
@@ -263,7 +398,7 @@ async fn settle_delivered(pool: &PgPool) -> sqlx::Result<()> {
         .bind(&outbox_id)
         .bind(state)
         .bind(error)
-        .bind(&message_id)
+        .bind(text_id.or(file_id))
         .bind(delivered_at)
         .execute(pool)
         .await?;
@@ -284,6 +419,7 @@ mod tests {
             thread_id: Some("any;-;+15125550101"),
             body: "Running ten minutes late",
             send_at,
+            attachments: json!([]),
         }
     }
 
@@ -330,6 +466,76 @@ mod tests {
         let settled = get(&pool, &m.id).await.unwrap().unwrap();
         assert_eq!(settled.state, "delivered");
         assert!(settled.delivered_at.is_some());
+    }
+
+    #[sqlx::test]
+    async fn a_message_of_files_alone_settles_on_its_attachment(pool: PgPool) {
+        let mut only_files = message(Utc::now() - chrono::Duration::seconds(30));
+        only_files.body = "";
+        only_files.attachments = json!([{ "ref": "/drive/dr_x", "filename": "a.png", "mime_type": "image/png", "size_bytes": 1 }]);
+        let m = enqueue(&pool, only_files).await.unwrap();
+        sqlx::query("UPDATE app_message_outbox SET state = 'sent', sent_at = now() - interval '20 seconds' WHERE id = $1")
+            .bind(&m.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO data_communication_message
+               (id, message_id, thread_id, channel, body, from_identifier, from_handle, has_attachments,
+                occurred_at, source_stream_id, source_table, source_provider, metadata)
+             VALUES ('m3', 'm3', 'any;-;+15125550101', 'imessage', '[Photo]', 'me', '', true,
+                     now() - interval '10 seconds', 'm3', 'messages', 'mac',
+                     '{\"is_from_me\": true, \"is_delivered\": true}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        settle_delivered(&pool).await.unwrap();
+        assert_eq!(get(&pool, &m.id).await.unwrap().unwrap().state, "delivered");
+    }
+
+    #[sqlx::test]
+    async fn the_text_arriving_says_nothing_about_the_photo(pool: PgPool) {
+        let mut with_photo = message(Utc::now() - chrono::Duration::seconds(30));
+        with_photo.attachments = json!([{ "ref": "/drive/dr_x", "filename": "a.png", "mime_type": "image/png", "size_bytes": 1 }]);
+        let m = enqueue(&pool, with_photo).await.unwrap();
+        sqlx::query("UPDATE app_message_outbox SET state = 'sent', sent_at = now() - interval '20 seconds' WHERE id = $1")
+            .bind(&m.id)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let own = |id: &str, body: &str, files: bool, meta: &str| {
+            format!(
+                "INSERT INTO data_communication_message
+                   (id, message_id, thread_id, channel, body, from_identifier, from_handle, has_attachments,
+                    occurred_at, source_stream_id, source_table, source_provider, metadata)
+                 VALUES ('{id}', '{id}', 'any;-;+15125550101', 'imessage', '{body}', 'me', '', {files},
+                         now() - interval '10 seconds', '{id}', 'messages', 'mac', '{meta}')"
+            )
+        };
+        sqlx::query(&own("t1", "Running ten minutes late", false, r#"{"is_from_me": true, "is_delivered": true}"#))
+            .execute(&pool)
+            .await
+            .unwrap();
+        // The text alone: still waiting on the photo.
+        settle_delivered(&pool).await.unwrap();
+        assert_eq!(get(&pool, &m.id).await.unwrap().unwrap().state, "sent");
+
+        sqlx::query(&own("f1", "[Photo]", true, r#"{"is_from_me": true, "is_delivered": false, "send_error": 25}"#))
+            .execute(&pool)
+            .await
+            .unwrap();
+        settle_delivered(&pool).await.unwrap();
+        let settled = get(&pool, &m.id).await.unwrap().unwrap();
+        assert_eq!(settled.state, "failed");
+        assert!(settled.error.unwrap().contains("attachment"));
+    }
+
+    #[sqlx::test]
+    async fn a_reference_to_nothing_is_refused_before_anything_queues(pool: PgPool) {
+        assert!(attachment(&pool, "/drive/dr_none").await.is_err());
+        assert!(attachment(&pool, "/api/messages/none/attachments/0").await.is_err());
+        assert!(attachment(&pool, "/api/messages/none/attachments/x").await.is_err());
     }
 
     #[sqlx::test]

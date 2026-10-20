@@ -43,8 +43,13 @@ pub async fn run(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolResu
     if to.is_empty() {
         return ToolResult::error("Say who the message is for in `to`.");
     }
-    if text.is_empty() {
-        return ToolResult::error("There is nothing to send: `text` is empty.");
+    let refs: Vec<&str> = args
+        .get("attachments")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|r| r.as_str()).filter(|r| !r.trim().is_empty()).collect())
+        .unwrap_or_default();
+    if text.is_empty() && refs.is_empty() {
+        return ToolResult::error("There is nothing to send: `text` is empty and there are no attachments.");
     }
     if text.chars().count() > MAX_CHARS {
         return ToolResult::error(format!("That is longer than {MAX_CHARS} characters. Shorten it."));
@@ -65,6 +70,23 @@ pub async fn run(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolResu
         Err(e) => return ToolResult::error(format!("Could not read your contacts: {e}")),
     };
 
+    // Read every file now, so a reference that resolves to nothing is the
+    // model's to fix, not a failed send later.
+    let mut attachments = Vec::new();
+    let mut total = 0;
+    for r in &refs {
+        match crate::outbox::attachment(pool, r).await {
+            Ok(a) => {
+                total += a["size_bytes"].as_u64().unwrap_or(0) as usize;
+                attachments.push(a);
+            }
+            Err(why) => return ToolResult::error(why),
+        }
+    }
+    if total > crate::outbox::MAX_ATTACHMENT_BYTES {
+        return ToolResult::error("The files are larger than 25 MB together. Send fewer, or smaller ones.");
+    }
+
     let recipient = target.name.clone().unwrap_or_else(|| target.handle.clone());
     let send_at = scheduled.unwrap_or_else(|| now + crate::outbox::UNDO_WINDOW);
     let queued = crate::outbox::enqueue(
@@ -77,6 +99,7 @@ pub async fn run(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolResu
             thread_id: target.chat_id.as_deref(),
             body: text,
             send_at,
+            attachments: json!(attachments),
         },
     )
     .await;
@@ -89,8 +112,9 @@ pub async fn run(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolResu
         "Scheduled. The chat shows the owner the message and when it goes, with a way to cancel. \
          Confirm the time in a few words; do not repeat the message."
     } else {
-        "It goes in a few seconds; the chat shows the owner the message with a way to cancel. \
-         Confirm in a few words; do not repeat the message."
+        "It goes in five seconds unless the owner cancels it on the card the chat shows them. \
+         Say it is on its way, not that it was sent or delivered, in a few words; do not repeat \
+         the message."
     };
     ToolResult::success(json!({
         "outbox_id": queued.id,
@@ -99,6 +123,7 @@ pub async fn run(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolResu
         "person_id": target.person_id,
         "handle": target.handle,
         "text": text,
+        "attachments": queued.attachments,
         "send_at": queued.send_at.to_rfc3339(),
         "scheduled": scheduled.is_some(),
         "note": note,

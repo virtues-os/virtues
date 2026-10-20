@@ -21,8 +21,10 @@
 	import {
 		cancelOutboxMessage,
 		getOutboxMessage,
+		type OutboxAttachment,
 		type OutboxMessage,
 	} from "$lib/api/client";
+	import { backendUrl } from "$lib/config/backend";
 	import { openExternal } from "$lib/tauri/bridge";
 
 	interface Props {
@@ -56,6 +58,7 @@
 	});
 	const recipient = $derived(row.recipient || to);
 	const body = $derived(row.body || text);
+	const files = $derived<OutboxAttachment[]>(row.attachments ?? []);
 	const canOpen = $derived(Boolean(row.handle) && ["sent", "delivered", "failed"].includes(phase));
 
 	// ── Following the row ────────────────────────────────────────────────────
@@ -118,6 +121,13 @@
 		} finally {
 			cancelling = false;
 		}
+	}
+
+	/** Where the box serves a file the message carried. */
+	function fileUrl(ref: string): string {
+		if (ref.startsWith("/api/")) return backendUrl(ref);
+		const id = ref.replace(/^\/drive\//, "").split(/[?#]/)[0];
+		return backendUrl(`/api/drive/files/${encodeURIComponent(id)}/download`);
 	}
 
 	function openInMessages() {
@@ -207,7 +217,20 @@
 			{/if}
 		</span>
 	</figcaption>
-	<blockquote>{body}</blockquote>
+	{#if body}<blockquote>{body}</blockquote>{/if}
+	{#if files.length}
+		<ul class="files">
+			{#each files as file (file.ref)}
+				<li>
+					{#if file.mime_type.startsWith("image/")}
+						<img src={fileUrl(file.ref)} alt={file.filename} loading="lazy" />
+					{:else}
+						<span class="filename">{file.filename}</span>
+					{/if}
+				</li>
+			{/each}
+		</ul>
+	{/if}
 	{#if phase === "failed" && row.error}
 		<p class="note error">{row.error}</p>
 	{:else if cancelError}
@@ -296,6 +319,38 @@
 	[data-state="sending"] blockquote,
 	[data-state="cancelled"] blockquote {
 		color: var(--color-foreground-muted);
+	}
+
+	.files {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+		margin: 0.5rem 0 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.files img {
+		display: block;
+		width: 96px;
+		height: 96px;
+		object-fit: cover;
+		border-radius: 8px;
+		border: 1px solid var(--color-border);
+	}
+
+	.filename {
+		font-family: var(--font-sans);
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+
+	/* Not gone yet: the files read as not sent, like the words. */
+	[data-state="writing"] .files,
+	[data-state="pending"] .files,
+	[data-state="sending"] .files,
+	[data-state="cancelled"] .files {
+		opacity: 0.6;
 	}
 
 	.note {
