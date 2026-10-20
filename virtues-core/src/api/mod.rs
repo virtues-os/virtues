@@ -60,6 +60,7 @@ pub mod updates;
 pub mod live_turn;
 pub mod turn_recorder;
 pub mod pins;
+pub mod tasks;
 pub mod trash;
 pub mod visits;
 pub mod publications;

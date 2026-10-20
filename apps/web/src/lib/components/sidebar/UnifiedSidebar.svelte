@@ -83,6 +83,14 @@
 				run: handleNewPage,
 			},
 			{
+				// ⌘⇧T is the temporary chat's, so a task takes E.
+				id: "task.new",
+				keys: "mod+shift+e",
+				label: "New task",
+				group: "Create",
+				run: handleNewTask,
+			},
+			{
 				id: "chat.new",
 				keys: "mod+n",
 				label: "New chat",
@@ -148,6 +156,12 @@
 		const { pagesStore } = await import("$lib/stores/pages.svelte");
 		const page = await pagesStore.createNewPage();
 		windowShellStore.openTabFromRoute(`/page/${page.id}`, { label: page.title });
+	}
+
+	async function handleNewTask() {
+		const { tasksStore } = await import("$lib/stores/tasks.svelte");
+		tasksStore.requestAdd();
+		windowShellStore.openTabFromRoute("/tasks", { label: "Tasks", focusExisting: true });
 	}
 
 	function toggleCollapse() {

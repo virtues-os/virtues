@@ -2061,6 +2061,81 @@ export interface PageListResponse {
 	offset: number;
 }
 
+// ============================================================================
+// Tasks — the to-do list the owner and the assistant share (/api/tasks)
+// ============================================================================
+
+export type TaskActor = 'owner' | 'assistant';
+export type TaskStatus = 'open' | 'active' | 'done' | 'dismissed';
+
+export interface Task {
+	id: string;
+	title: string;
+	notes: string | null;
+	assignee: TaskActor;
+	status: TaskStatus;
+	/** The day it is due, `YYYY-MM-DD`; always set when `due_at` is. */
+	due_on: string | null;
+	/** A time, only when one was given. */
+	due_at: string | null;
+	project_id: string | null;
+	/** Who created it: typed into the list, asked for in chat, or the assistant's own. */
+	origin: 'owner' | 'chat' | 'assistant';
+	/** An app URL (`/page/page_…`) the task came from. */
+	source_url: string | null;
+	sort_order: number;
+	closed_at: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface TaskEvent {
+	id: number;
+	task_id: string;
+	author: TaskActor;
+	kind: 'created' | 'edited' | 'status' | 'note';
+	body: Record<string, unknown>;
+	chat_id: string | null;
+	created_at: string;
+}
+
+export interface NewTask {
+	title: string;
+	notes?: string | null;
+	assignee?: TaskActor;
+	due_on?: string | null;
+	due_at?: string | null;
+	project_id?: string | null;
+}
+
+/** A partial edit: `null` clears a field, an absent key leaves it. */
+export type TaskPatch = Partial<
+	Pick<Task, 'title' | 'notes' | 'assignee' | 'status' | 'due_on' | 'due_at' | 'project_id' | 'sort_order'>
+>;
+
+export function listTasks(
+	status: 'open' | 'closed' | 'all' = 'open',
+	filter: { assignee?: TaskActor; project_id?: string } = {},
+): Promise<Task[]> {
+	return apiGet('/tasks', { status, ...filter });
+}
+
+export function createTask(task: NewTask): Promise<Task> {
+	return apiSend('POST', '/tasks', task);
+}
+
+export function updateTask(id: string, patch: TaskPatch): Promise<Task> {
+	return apiSend('PATCH', `/tasks/${id}`, patch);
+}
+
+export function addTaskNote(id: string, text: string): Promise<TaskEvent> {
+	return apiSend('POST', `/tasks/${id}/notes`, { text });
+}
+
+export function listTaskEvents(id: string): Promise<TaskEvent[]> {
+	return apiGet(`/tasks/${id}/events`);
+}
+
 export interface RefSearchResult {
 	id: string;
 	name: string;

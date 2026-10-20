@@ -695,6 +695,7 @@ fn protected_routes(state: &AppState) -> Router<AppState> {
         .merge(api::chat::routes())
         .merge(api::drive::routes())
         .merge(api::pages::routes())
+        .merge(api::tasks::routes())
         .merge(api::library::routes())
         // The box's own maps: tiles out of local .pmtiles archives, never a
         // tile provider. agents/plan/offline-maps-plan.md

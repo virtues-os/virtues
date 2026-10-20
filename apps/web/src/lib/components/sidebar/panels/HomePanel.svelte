@@ -8,15 +8,16 @@
 	 *
 	 * Doors first, then groups, and the order is the order of reach:
 	 *
-	 *   doors     New chat, Pages, Applets, Search. The verb, the places, and
-	 *             last the door that leaves the panel for the palette.
+	 *   doors     New chat, Pages, Tasks, Applets. The verb, then the places.
+	 *             Search is not a door: it is the ⌘K palette, reached from
+	 *             anywhere, and a door to it here only repeated the chord.
 	 *             Pages and Applets each lived on the rail as a room of their
 	 *             own and were rooms nobody walked to — a page is written the
 	 *             way a chat is started, and an applet is run from a
 	 *             conversation, so their doors stand beside the
 	 *             conversation's. Pages carries a `+` on hover, the same shape
 	 *             as the Projects label: the word is the list, the plus is
-	 *             the new one.
+	 *             the new one. Tasks carries the same plus.
 	 *   Pinned    what the user chose to keep, in their own order. This was
 	 *             the Desk, behind the Home tile; the shelf is more useful
 	 *             where a pin is reached for than in a room you walk to first.
@@ -31,7 +32,7 @@
 	 *             the chats AND the pages, blended by when they last moved,
 	 *             newest first, capped. No "All chats" door under the list:
 	 *             the panel ends where the recents end, and the full lists
-	 *             are rooms of their own (Pages above, All chats via search).
+	 *             are rooms of their own (Pages above, All chats via ⌘K).
 	 *             Two groups, not three: "Yesterday" was a calendar fact
 	 *             nobody navigated by, and it cost a heading and a fold for
 	 *             one day's worth of rows. Grouping is not reordering — a
@@ -60,7 +61,6 @@
 	import { chatActivity } from '$lib/stores/chatActivity.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
-	import { search } from '$lib/stores/search.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { promptText } from '$lib/stores/dialog.svelte';
 	import { deleteChat, type PageSummary, type Pin, type ProjectSummary } from '$lib/api/client';
@@ -245,11 +245,6 @@
 		windowShellStore.openTabFromRoute('/', { label: 'New chat' });
 	}
 
-	/** Search is the ⌘K palette: one field over chats, pages and projects. */
-	function openSearch() {
-		search.show();
-	}
-
 	function openPages() {
 		windowShellStore.openTabFromRoute('/page', { label: 'Pages', focusExisting: true });
 	}
@@ -260,6 +255,18 @@
 		const { pagesStore } = await import('$lib/stores/pages.svelte');
 		const page = await pagesStore.createNewPage();
 		windowShellStore.openTabFromRoute(`/page/${page.id}`, { label: page.title });
+	}
+
+	function openTasks() {
+		windowShellStore.openTabFromRoute('/tasks', { label: 'Tasks', focusExisting: true });
+	}
+
+	async function newTask(e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		const { tasksStore } = await import('$lib/stores/tasks.svelte');
+		tasksStore.requestAdd();
+		openTasks();
 	}
 
 	function openApplets() {
@@ -664,9 +671,9 @@
 <svelte:window onkeydown={onKeydown} />
 
 <!-- The doors sit in the flow above the groups, told apart from them by air,
-     not a rule. They wear Atlas like every nav door in the shell. "Search"
-     is not a field here — the field is the ⌘K palette, which has the room
-     for results across chats, pages and projects. -->
+     not a rule. They wear Atlas like every nav door in the shell. Search
+     has no door here: it is the ⌘K palette, which has the room for results
+     across chats, pages and projects. -->
 <div class="panel-doors">
 	<button type="button" class="panel-row panel-door" onclick={newChat}>
 		<AtlasIcon name="new-chat" size={16} bare />
@@ -696,13 +703,33 @@
 			</button>
 		</span>
 	</div>
+	<!-- No count beside the word, ever: the list never nags from the
+	     sidebar (agents/plan/tasks-plan.md). -->
+	<div
+		class="panel-row panel-door panel-row-has-actions"
+		role="link"
+		tabindex="0"
+		onclick={openTasks}
+		onkeydown={(e) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				openTasks();
+			}
+		}}
+	>
+		<AtlasIcon name="tasks" size={16} bare />
+		<span class="panel-row-text">Tasks</span>
+		<span class="row-actions">
+			<button type="button" class="row-action" aria-label="New task" title="New task" onclick={newTask}>
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+					<path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+				</svg>
+			</button>
+		</span>
+	</div>
 	<button type="button" class="panel-row panel-door" onclick={openApplets}>
 		<AtlasIcon name="applets" size={16} bare />
 		<span class="panel-row-text">Applets</span>
-	</button>
-	<button type="button" class="panel-row panel-door" onclick={openSearch}>
-		<AtlasIcon name="search" size={16} bare />
-		<span class="panel-row-text">Search</span>
 	</button>
 </div>
 

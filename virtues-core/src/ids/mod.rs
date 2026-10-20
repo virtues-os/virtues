@@ -98,6 +98,9 @@ pub const CHAPTER_PREFIX: &str = "chapter";
 // Sidebar pins (user's globally-pinned URLs)
 pub const PIN_PREFIX: &str = "pin";
 
+// Tasks (the shared to-do list, app_tasks)
+pub const TASK_PREFIX: &str = "task";
+
 // Project Layer (Organization system)
 //
 // Projects were "notebooks" until migration 0029 renamed them. The VALUE stays
