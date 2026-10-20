@@ -9,8 +9,6 @@ Slice 2 built 2026-10-16, uncommitted. None of it is released.
 - **Verified** end to end against a fake browser host (below).
 - **Left:** release, and a first real browse on dragon. The owner skipped
   the sign-in bench task.
-- Not in `agents/plan/README.md`. Add the README row only after that file's
-  current uncommitted edit lands.
 
 The chat model stops driving the browser itself. It hands the browsing to a
 second loop with one call, `browse(task)`. That loop runs on a cheap model,
