@@ -159,6 +159,19 @@ where
                 let _ = tx.send(Message::Text(reply.to_string()));
                 continue;
             }
+            // A message for Messages, not a step in the page: beside the
+            // queue, which a handoff can hold for minutes.
+            if req.get("op").and_then(|o| o.as_str()) == Some("imessage_send") {
+                let (app, tx) = (app.clone(), tx.clone());
+                tauri::async_runtime::spawn(async move {
+                    let reply = match crate::messages_send::send(&app, &req["args"]).await {
+                        Ok(result) => json!({ "id": req["id"], "ok": true, "result": result }),
+                        Err(error) => json!({ "id": req["id"], "ok": false, "error": error }),
+                    };
+                    let _ = tx.send(Message::Text(reply.to_string()));
+                });
+                continue;
+            }
             let _ = jobs.send(req);
         }
     }

@@ -25,6 +25,7 @@
 
 mod executor;
 mod web_search;
+pub(crate) mod send_imessage;
 pub(crate) mod sql_query;
 pub(crate) mod sql_write;
 pub(crate) mod shell;
@@ -84,10 +85,11 @@ pub fn get_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// The owner's browser: `browse`, which the chat is offered only while it is
-/// connected (`ChatMode::tools`), and the browsing agent's own tools.
+/// What the Mac app does for the chat: `browse` and `send_imessage`, which the
+/// chat is offered only while the app is connected (`ChatMode::tools`), and
+/// the browsing agent's own tools.
 fn is_browser_tool(id: &str) -> bool {
-    id == crate::browse::TOOL || crate::browser::TOOLS.contains(&id)
+    id == crate::browse::TOOL || id == send_imessage::TOOL || crate::browser::TOOLS.contains(&id)
 }
 
 /// Get ALL tool definitions including system tools (for action runners).

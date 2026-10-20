@@ -120,6 +120,7 @@
 	import InterviewClosedCard from "$lib/components/chat/interview/InterviewClosedCard.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
+	import SentMessageCard from "$lib/components/chat/SentMessageCard.svelte";
 	import Show from "$lib/components/chat/show/Show.svelte";
 	import AppletProposalCard from '$lib/components/chat/AppletProposalCard.svelte';
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
@@ -2114,6 +2115,19 @@
 													status={status === "running" ? 'running' : isError ? 'error' : 'success'}
 													code={toolPart.input?.code || ''}
 													output={toolPart.output ?? (isError ? { error: status === "unfinished" ? "This didn't finish." : toolPart.errorText } : undefined)}
+												/>
+											{:else if part.type === "tool-send_imessage" && ((part as any).state === "output-available" || ((part as any).state === "input-available" && isStreaming))}
+												{@const sent = part as any}
+												{@const out = sent.state === "output-available" ? sent.output : undefined}
+												<!-- The message itself, once the model has written it. A
+												     failed send falls through to the error branch below. -->
+												<SentMessageCard
+													sending={!out}
+													to={out?.to ?? sent.input?.to ?? ""}
+													text={out?.text ?? sent.input?.text ?? ""}
+													personId={out?.person_id}
+													sentAt={out?.sent_at}
+													onOpenPerson={(id) => windowShellStore.openRouteInSplitOrActive(`/person/${id}`)}
 												/>
 											{:else if part.type === "tool-generate_image"}
 												{@const gen = part as any}

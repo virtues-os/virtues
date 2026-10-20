@@ -97,7 +97,33 @@ pub fn default_tools() -> Vec<ToolConfig> {
     ]
     .into_iter()
     .chain(browser_tools())
+    .chain([send_imessage_tool()])
     .collect()
+}
+
+/// Send an iMessage as the owner, through Messages on their Mac (virtues-core
+/// `tools/send_imessage.rs`). Offered only while the Mac app is connected, and
+/// it does not ask first (the owner's call, 2026-10-20).
+fn send_imessage_tool() -> ToolConfig {
+    ToolConfig {
+        id: "send_imessage".to_string(),
+        name: "Send a message".to_string(),
+        description: "Send an iMessage from your Mac".to_string(),
+        llm_description: "Send a text message as the owner, through Messages on their Mac, into the thread they already have with that person. Use it when the owner asks you to message, text or tell someone something. It sends at once and cannot be undone, so send only what the owner asked for, to the person they named. Write `text` as the owner would write it, in the first person, with no greeting or sign-off they did not ask for. `to` is a person's name as the owner says it, a person id from their records, or a phone number or email. If a name could be more than one person, the tool sends nothing and lists them: ask the owner which one. Group chats are not supported. The chat shows the owner the sent message, so do not repeat it in your reply.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["to", "text"],
+            "properties": {
+                "to": { "type": "string", "description": "A name, a person id, or a phone number or email" },
+                "text": { "type": "string", "description": "The message, exactly as it will be sent" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:chat-1-line".to_string(),
+        display_order: 48,
+        is_system: false,
+    }
 }
 
 /// The owner's browser, a window in the Mac app (virtues-core `browser.rs`).

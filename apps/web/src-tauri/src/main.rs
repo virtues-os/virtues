@@ -10,6 +10,8 @@
 mod browser;
 #[cfg(target_os = "macos")]
 mod browser_host;
+#[cfg(target_os = "macos")]
+mod messages_send;
 use browser::{browser_login, browser_pane_agent, browser_pane_bounds, browser_pane_go, browser_pane_open};
 
 use serde::{Deserialize, Serialize};

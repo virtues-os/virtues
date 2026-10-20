@@ -188,6 +188,17 @@ const TOOLS: Record<string, Presentation> = {
 			return "You took a step in the browser";
 		},
 	},
+	// Drawn in the reply as the message itself (SentMessageCard); this is
+	// its line in the thinking block.
+	send_imessage: {
+		noun: "Messages",
+		depth: 4,
+		say: (input, live, short) => {
+			const to = typeof input.to === "string" ? input.to.trim() : "";
+			const verb = live ? "Sending" : "Sent";
+			return to ? `${verb} a message to ${fit(to, short)}` : `${verb} a message`;
+		},
+	},
 	get_page_content: { noun: "a page", depth: 4, say: ["Reading a page", "Read a page"] },
 	create_page: { noun: "a new page", depth: 4, say: ["Writing a new page", "Wrote a new page"] },
 	edit_page: { noun: "a page", depth: 4, say: ["Editing a page", "Edited a page"] },

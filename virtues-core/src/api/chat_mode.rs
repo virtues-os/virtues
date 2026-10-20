@@ -23,7 +23,16 @@ use crate::api::getting_started;
 /// `the_chat_search_cap_is_the_one_the_prompt_states` holds it to. Deep
 /// research, sudo and skills are uncapped here; their ceilings are steps,
 /// cost and time.
-pub(crate) const CHAT_TOOL_CAPS: &[(&str, u32)] = &[("web_search", 4)];
+pub(crate) const CHAT_TOOL_CAPS: &[(&str, u32)] = &[
+    ("web_search", 4),
+    // A message is sent the moment it is called. A turn that wants more than
+    // this is a loop, not a request.
+    (crate::tools::send_imessage::TOOL, 3),
+];
+
+/// What the chat can do through the Mac app while it is connected: its
+/// browser, and Messages.
+const MAC_TOOLS: &[&str] = &[crate::browse::TOOL, crate::tools::send_imessage::TOOL];
 
 /// Chat's tools: every model-facing tool but `think`. The chat model reasons
 /// natively, so a `think` call buys nothing it would not have thought anyway
@@ -178,7 +187,7 @@ impl ChatMode {
             Self::Chat => {
                 let mut tools = chat_tools();
                 if crate::browser::connected() {
-                    tools.extend(tools_named(&[crate::browse::TOOL]));
+                    tools.extend(tools_named(MAC_TOOLS));
                 }
                 tools
             }
@@ -187,7 +196,7 @@ impl ChatMode {
                 let mut tools = chat_tools();
                 tools.extend(tools_named(crate::tools::SUDO_ONLY_TOOLS));
                 if crate::browser::connected() {
-                    tools.extend(tools_named(&[crate::browse::TOOL]));
+                    tools.extend(tools_named(MAC_TOOLS));
                 }
                 tools
             }
