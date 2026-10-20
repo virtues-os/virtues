@@ -88,7 +88,7 @@ export function fitWords(text: string, maxc: number): string {
 	return acc ? `${acc}…` : "";
 }
 
-export type RibbonKind = "place" | "transit" | "gap";
+export type RibbonKind = "place" | "transit" | "gap" | "sleep";
 
 export interface RibbonSpan {
 	s: number;
@@ -97,6 +97,33 @@ export interface RibbonSpan {
 	title: string;
 	/** A gap between two stretches, faded in the colour of the one before. */
 	held: boolean;
+}
+
+/** The pieces of `x` that none of `cover` overlaps. */
+function minus(x: { s: number; e: number }, cover: { s: number; e: number }[]): { s: number; e: number }[] {
+	let pieces = [x];
+	for (const c of cover)
+		pieces = pieces.flatMap((p) =>
+			c.e <= p.s || c.s >= p.e ? [p] : [...(c.s > p.s ? [{ s: p.s, e: c.s }] : []), ...(c.e < p.e ? [{ s: c.e, e: p.e }] : [])],
+		);
+	return pieces;
+}
+
+/** What the Location lane draws: the stays and gaps with the time in bed
+ *  cut out of them, the time in bed in the sleep colour, and the trips over
+ *  both, so a stay at home starts at wake-up (the owner's call, 2026-10-08:
+ *  the morning's real change is waking, not the place). */
+export function locationStretches(
+	sections: { s: number; e: number; kind: string; title: string }[],
+): { s: number; e: number; kind: RibbonKind; title: string }[] {
+	const sleeps = sections.filter((x) => x.kind === "sleep");
+	const trips = sections.filter((x) => x.kind === "transit");
+	return [
+		...sections.flatMap((x) =>
+			x.kind === "sleep" ? [] : x.kind === "transit" ? [{ ...x, kind: "transit" as const }] : minus(x, sleeps).map((p) => ({ ...p, kind: x.kind as RibbonKind, title: x.title })),
+		),
+		...sleeps.flatMap((n) => minus(n, trips).map((p) => ({ ...p, kind: "sleep" as const, title: "In Bed" }))),
+	];
 }
 
 /** Location as one ribbon (main.js:1319-1322): every stretch, and across a
@@ -179,7 +206,7 @@ export interface Lanes {
 	a: number;
 	b: number;
 	ribbon: RibbonSpan[];
-	nights: { s: number; e: number }[];
+	nights: { s: number; e: number; est?: boolean }[];
 	/** Every window the mic recorded. */
 	voice: { s: number; e: number }[];
 	conversations: ScrubConversation[];
@@ -232,10 +259,8 @@ export function laneData(derived: DerivedWindow | null, voice: VoiceWindow[], lw
 	return {
 		a,
 		b,
-		ribbon: ribbon(
-			sections.flatMap((x) => (x.kind === "sleep" ? [] : [{ s: x.s, e: x.e, kind: x.kind, title: x.title }])),
-		),
-		nights: sections.filter((x) => x.kind === "sleep").map((x) => ({ s: x.s, e: x.e })),
+		ribbon: ribbon(locationStretches(sections)),
+		nights: sections.filter((x) => x.kind === "sleep").map((x) => ({ s: x.s, e: x.e, ...(x.src === "estimated" ? { est: true } : {}) })),
 		voice: windows.map((w) => ({ s: w.s, e: w.e })),
 		conversations,
 		steps: (lw?.steps ?? []).map((x) => ({ t: t(x.occurred_at), v: x.step_count })),

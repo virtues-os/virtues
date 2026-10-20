@@ -52,9 +52,31 @@ describe("the inspector", () => {
 		expect(inspector[2].rows).toEqual([]);
 	});
 
-	it("shows a name only when the person gave one", () => {
+	it("titles a place by the person's name, else the box's title, else Unnamed place", () => {
 		expect(placeTitle({ id: "x", latitude: 0, longitude: -30, is_named: false, place_name: "Location 1.0, 2.0" })).toBe("Unnamed place");
 		expect(placeTitle({ id: "w", latitude: 0, longitude: -30, is_named: true, place_name: "The Studio" })).toBe("The Studio");
+		// The box's title (Home, the map's match, a city) stands in until the person names it...
+		expect(placeTitle({ id: "c", latitude: 0, longitude: -30, is_named: false, place_name: "Location 1.0, 2.0", title: "Riverton" })).toBe("Riverton");
+		// ...and the person's own name wins over it.
+		expect(placeTitle({ id: "h", latitude: 0, longitude: -30, is_named: true, place_name: "The Farm", title: "Home" })).toBe("The Farm");
+		// A place asked about that only its city names is Unknown; one the map
+		// named keeps that name while it's asked whether it's Work.
+		const asked = { id: "q", latitude: 0, longitude: -30, is_named: false, place_name: null, asked: true };
+		expect(placeTitle({ ...asked, title: "Riverton", title_source: "city" })).toBe("Unknown · Riverton");
+		expect(placeTitle({ ...asked, title: "Unnamed place", title_source: "none" })).toBe("Unknown");
+		expect(placeTitle({ ...asked, title: "Blue Door", title_source: "map" })).toBe("Blue Door");
+		expect(placeTitle({ ...asked, asked: false, title: "Riverton", title_source: "city" })).toBe("Riverton");
+	});
+
+	it("says where an Unknown stay's title came from", () => {
+		const w: DerivedWindow = {
+			last_stay_before: null,
+			places: [{ id: "q", latitude: 0, longitude: -30, is_named: false, place_name: null, title: "Riverton", title_source: "city", asked: true }],
+			spans: [{ id: "s", kind: "stay", started_at: at("10:00"), ended_at: at("11:00"), timeline_place_id: "q", metadata: {} }],
+			moments: [],
+		};
+		const [sec] = buildInspector(w, day.start, day.end);
+		expect([sec.title, sec.source]).toEqual(["Unknown · Riverton", "city"]);
 	});
 
 	it("gives a conversation its windows, a night its source, a quiet stay its audio note", () => {

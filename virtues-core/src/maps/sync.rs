@@ -33,8 +33,11 @@ use super::maps_root;
 const BUDGET_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 /// Of that, bytes allowed for home files.
 const HOME_BUDGET_BYTES: u64 = 2 * 1024 * 1024 * 1024;
-/// Days in a square before it earns home detail.
-const HOME_MIN_DAYS: u32 = 7;
+/// Days in a square before it earns home detail: the businesses, hotels and
+/// other named places of zooms 14-15, which the street files leave out. Two,
+/// as for street detail: a weekend away is when the Timeline's place names
+/// and questions need them, and a week left a short trip with nothing named.
+const HOME_MIN_DAYS: u32 = 2;
 /// Days in a square that make it a home however long ago they were.
 const LIVED_THERE_DAYS: u32 = 90;
 /// Days in a z5 square before it earns street-level detail. One day is a
@@ -146,7 +149,7 @@ pub fn select(index: &Index, presence: &Presence) -> Vec<IndexFile> {
         .cloned()
         .collect();
 
-    // Home: squares with a week or more, places lived in first, then by score.
+    // Home: squares with HOME_MIN_DAYS or more, places lived in first, then by score.
     let mut home: Vec<(&(u32, u32), &SquareDays)> =
         presence.iter().filter(|(_, d)| d.days() >= HOME_MIN_DAYS).collect();
     home.sort_by(|a, b| {
@@ -621,9 +624,18 @@ mod tests {
     }
 
     #[test]
-    fn a_short_trip_gets_street_level_only() {
+    fn a_two_day_trip_gets_its_places_too() {
         let presence = Presence::from([((37, 48), days(&[40, 41]))]);
-        assert_eq!(names(&select(&index(), &presence)), ["assets.tar", "visited-z5-9-12.pmtiles", "world.pmtiles"]);
+        assert_eq!(
+            names(&select(&index(), &presence)),
+            ["assets.tar", "home-z7-37-48.pmtiles", "visited-z5-9-12.pmtiles", "world.pmtiles"]
+        );
+    }
+
+    #[test]
+    fn a_day_driving_through_gets_nothing() {
+        let presence = Presence::from([((37, 48), days(&[40]))]);
+        assert_eq!(names(&select(&index(), &presence)), ["assets.tar", "world.pmtiles"]);
     }
 
     #[test]
