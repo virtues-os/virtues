@@ -13,15 +13,20 @@
 //! to the webview arrive trusted, even with the window in the background. Both
 //! are in agents/record/browser-spike.md and agents/record/webkit-agent-spike.md.
 //!
+//! The app names the ops it handles beyond the browser in the socket URL
+//! (`/ws/browser?ops=imessage_send`). An app that names none is one released
+//! before those ops existed, and the box must not send it any (`supports`).
+//!
 //! One host at a time. A second app connecting replaces the first, which is the
 //! right answer for "the Mac I just opened" and harmless otherwise.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
+use axum::extract::Query;
 use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use base64::Engine;
@@ -52,6 +57,8 @@ pub const HANDOFF_WAIT: Duration = Duration::from_secs(15 * 60);
 struct Host {
     id: u64,
     tx: mpsc::UnboundedSender<String>,
+    /// The ops beyond the browser that this app said it handles.
+    ops: HashSet<String>,
     pending: HashMap<u64, oneshot::Sender<Result<Value, String>>>,
 }
 
@@ -65,6 +72,20 @@ fn host() -> &'static Mutex<Option<Host>> {
 /// Whether an app with a browser is connected right now.
 pub fn connected() -> bool {
     host().lock().map(|h| h.is_some()).unwrap_or(false)
+}
+
+/// Whether the connected app handles `op`. False with no app connected, and
+/// for every op an older app, which names none, would refuse as unknown.
+pub fn supports(op: &str) -> bool {
+    host().lock().map(|h| h.as_ref().is_some_and(|h| h.ops.contains(op))).unwrap_or(false)
+}
+
+/// The `ops` query value, `imessage_send,other`, as a set. Absent means none.
+fn parse_ops(query: &HashMap<String, String>) -> HashSet<String> {
+    query
+        .get("ops")
+        .map(|v| v.split(',').map(str::trim).filter(|o| !o.is_empty()).map(str::to_string).collect())
+        .unwrap_or_default()
 }
 
 /// Send one operation to the connected browser and wait for its answer.
@@ -146,24 +167,29 @@ pub async fn run_tool(name: &str, args: Value) -> ToolResult {
 }
 
 /// `GET /ws/browser` — the app's side of the wire.
-pub async fn ws_handler(ws: WebSocketUpgrade, headers: HeaderMap) -> Response {
+pub async fn ws_handler(
+    ws: WebSocketUpgrade,
+    headers: HeaderMap,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
     // A page from another origin must not register itself as the owner's
     // browser. The app's shell connects with no Origin at all.
     if let Some(refused) = crate::server::refuse_foreign_socket(&headers, "browser", &[]) {
         return refused;
     }
-    ws.on_upgrade(serve).into_response()
+    let ops = parse_ops(&query);
+    ws.on_upgrade(move |socket| serve(socket, ops)).into_response()
 }
 
-async fn serve(mut socket: WebSocket) {
+async fn serve(mut socket: WebSocket, ops: HashSet<String>) {
     let me = NEXT_ID.fetch_add(1, Ordering::Relaxed);
     let (tx, mut outbox) = mpsc::unbounded_channel::<String>();
     if let Ok(mut slot) = host().lock() {
         // Dropping the old host drops its pending senders, so any call waiting
         // on it ends with "disconnected" rather than its timeout.
-        *slot = Some(Host { id: me, tx, pending: HashMap::new() });
+        *slot = Some(Host { id: me, tx, ops: ops.clone(), pending: HashMap::new() });
     }
-    tracing::info!("browser connected");
+    tracing::info!(?ops, "browser connected");
 
     loop {
         tokio::select! {
@@ -203,4 +229,25 @@ fn answer(text: &str) {
         Err(v.get("error").and_then(|e| e.as_str()).unwrap_or("the browser failed").to_string())
     };
     let _ = waiter.send(result);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn query(pairs: &[(&str, &str)]) -> HashMap<String, String> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn an_app_that_names_no_ops_supports_none() {
+        assert!(parse_ops(&query(&[])).is_empty());
+        assert!(parse_ops(&query(&[("ops", "")])).is_empty());
+    }
+
+    #[test]
+    fn the_ops_an_app_names_are_the_ops_it_supports() {
+        let ops = parse_ops(&query(&[("ops", "imessage_send, later_op")]));
+        assert_eq!(ops, HashSet::from(["imessage_send".to_string(), "later_op".to_string()]));
+    }
 }

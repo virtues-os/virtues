@@ -30,9 +30,24 @@ pub(crate) const CHAT_TOOL_CAPS: &[(&str, u32)] = &[
     (crate::tools::send_imessage::TOOL, 3),
 ];
 
-/// What the chat can do through the Mac app while it is connected: its
-/// browser, and Messages.
-const MAC_TOOLS: &[&str] = &[crate::browse::TOOL, crate::tools::send_imessage::TOOL];
+/// What the chat can do through the Mac app: its browser whenever an app is
+/// connected, and Messages only when that app says it can send. An app
+/// released before sending existed connects too, and would refuse every send.
+fn mac_tools(connected: bool, can_send: bool) -> Vec<&'static str> {
+    let mut tools = Vec::new();
+    if connected {
+        tools.push(crate::browse::TOOL);
+        if can_send {
+            tools.push(crate::tools::send_imessage::TOOL);
+        }
+    }
+    tools
+}
+
+/// `mac_tools` for the app connected right now.
+fn connected_mac_tools() -> Vec<&'static str> {
+    mac_tools(crate::browser::connected(), crate::browser::supports(crate::outbox::SEND_OP))
+}
 
 /// Chat's tools: every model-facing tool but `think`. The chat model reasons
 /// natively, so a `think` call buys nothing it would not have thought anyway
@@ -186,18 +201,14 @@ impl ChatMode {
             // cannot use is one it will try anyway.
             Self::Chat => {
                 let mut tools = chat_tools();
-                if crate::browser::connected() {
-                    tools.extend(tools_named(MAC_TOOLS));
-                }
+                tools.extend(tools_named(&connected_mac_tools()));
                 tools
             }
             // Everything chat has, plus `shell`; deletes ask (`sudo_gate`).
             Self::Sudo => {
                 let mut tools = chat_tools();
                 tools.extend(tools_named(crate::tools::SUDO_ONLY_TOOLS));
-                if crate::browser::connected() {
-                    tools.extend(tools_named(MAC_TOOLS));
-                }
+                tools.extend(tools_named(&connected_mac_tools()));
                 tools
             }
             // No other edit/act tools — see `DEEP_RESEARCH_TOOLS`.
@@ -276,6 +287,17 @@ pub(crate) mod tests {
             )
             .expect("fixture skill parses"),
         )
+    }
+
+    #[test]
+    fn send_imessage_is_offered_only_to_an_app_that_can_send() {
+        let send = crate::tools::send_imessage::TOOL;
+        assert!(mac_tools(false, false).is_empty());
+        assert!(mac_tools(false, true).is_empty());
+        let older_app = mac_tools(true, false);
+        assert!(older_app.contains(&crate::browse::TOOL));
+        assert!(!older_app.contains(&send));
+        assert_eq!(mac_tools(true, true), vec![crate::browse::TOOL, send]);
     }
 
     fn all_modes() -> Vec<ChatMode> {

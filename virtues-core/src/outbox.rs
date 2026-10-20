@@ -39,6 +39,13 @@ const IDLE: Duration = Duration::from_secs(30);
 /// for about four seconds before it falls back to the handle.
 const SEND_WAIT: Duration = Duration::from_secs(30);
 
+/// The op the Mac app sends a message with. An app names it when it connects
+/// if it can (`browser::supports`).
+pub const SEND_OP: &str = "imessage_send";
+
+/// Why a due send failed on an app that cannot send.
+const APP_TOO_OLD: &str = "Your Mac app needs an update to send messages.";
+
 fn wake() -> &'static Notify {
     static WAKE: OnceLock<Notify> = OnceLock::new();
     WAKE.get_or_init(Notify::new)
@@ -233,6 +240,11 @@ async fn send_due(pool: &PgPool) -> sqlx::Result<()> {
             .await?;
             return Ok(());
         }
+        if !crate::browser::supports(SEND_OP) {
+            // An older app refuses the op as unknown. Don't hand it one.
+            fail_due_unsendable(pool).await?;
+            return Ok(());
+        }
         // Claim one: the UPDATE is the lock, so a cancel that lands first wins.
         let Some(m) = sqlx::query_as::<_, Outgoing>(&format!(
             "UPDATE app_message_outbox SET state = 'sending', updated_at = now()
@@ -263,7 +275,7 @@ async fn send_due(pool: &PgPool) -> sqlx::Result<()> {
         let args = json!({ "chat_id": m.thread_id.clone().unwrap_or_default(), "handle": m.handle, "text": m.body, "files": files });
         // Each file is its own hand-off to Messages.
         let wait = SEND_WAIT + Duration::from_secs(15) * m.attachments.as_array().map_or(0, |a| a.len() as u32);
-        let outcome = crate::browser::call("imessage_send", args, wait).await;
+        let outcome = crate::browser::call(SEND_OP, args, wait).await;
         match outcome {
             Ok(_) => {
                 sqlx::query("UPDATE app_message_outbox SET state = 'sent', sent_at = now(), updated_at = now() WHERE id = $1")
@@ -281,6 +293,18 @@ async fn send_due(pool: &PgPool) -> sqlx::Result<()> {
             }
         };
     }
+}
+
+/// Fail every due send: the connected app is too old to send any of them.
+async fn fail_due_unsendable(pool: &PgPool) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE app_message_outbox SET state = 'failed', error = $1, updated_at = now()
+          WHERE state = 'pending' AND send_at <= now()",
+    )
+    .bind(APP_TOO_OLD)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 /// The files to send, read now: `[{filename, data_base64}]`.
@@ -421,6 +445,18 @@ mod tests {
             send_at,
             attachments: json!([]),
         }
+    }
+
+    #[sqlx::test]
+    async fn an_app_that_cannot_send_fails_only_what_is_due(pool: PgPool) {
+        let due = enqueue(&pool, message(Utc::now() - chrono::Duration::seconds(1))).await.unwrap();
+        let later = enqueue(&pool, message(Utc::now() + chrono::Duration::minutes(5))).await.unwrap();
+        fail_due_unsendable(&pool).await.unwrap();
+
+        let due = get(&pool, &due.id).await.unwrap().unwrap();
+        assert_eq!(due.state, "failed");
+        assert_eq!(due.error.as_deref(), Some(APP_TOO_OLD));
+        assert_eq!(get(&pool, &later.id).await.unwrap().unwrap().state, "pending");
     }
 
     #[sqlx::test]
