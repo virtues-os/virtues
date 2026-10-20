@@ -208,7 +208,9 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "communication",
         key_columns: &["subject", "body", "body_preview", "from_email", "from_name", "to_emails", "direction", "is_read", "is_starred", "has_attachments", "labels", "thread_id", "occurred_at"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_communication_email' AND er.source_id = data_communication_email.id JOIN wiki_people ON er.entity_id = wiki_people.id AND er.entity_type = 'person'"),
-        note: None,
+        // The model reads `labels` as text[] and writes `labels && ARRAY[...]`,
+        // which Postgres rejects for jsonb.
+        note: Some("labels and to_emails are jsonb arrays of strings: filter with labels ? 'IMPORTANT' or labels ?| ARRAY['A','B'], never ANY(labels) or &&"),
     });
     m.insert("data_communication_message", TableMetadata {
         description: "Chat messages (iMessage, SMS, etc.)",
