@@ -1,21 +1,21 @@
 ---
 title: Glossary
-description: The words Virtues uses for the parts of your life it holds - records, days, events, articles, pages, projects, applets - and what each one actually means.
-updated: 2026-09-21
+description: The words Virtues uses for the parts of your life it stores - records, days, events, articles, pages, projects, applets - and what each one means.
+updated: 2026-10-20
 ---
 
-Virtues names things deliberately, and uses one word per thing. This is that
-vocabulary, in roughly the order you meet it.
+Virtues uses one word for each thing. This page defines those words, roughly
+in the order you'll meet them.
 
 ## The machine
 
-**Server** (or **server**) - the machine in your home running Virtues OS. It
-holds your data, does the thinking, and answers your devices. Nothing about it
-depends on us being reachable.
+**Server** - the machine in your home running Virtues OS. It stores your data,
+runs the processing, and answers your devices. It keeps working when our
+services are unreachable.
 
 **Device** - a phone or laptop paired with your server. Each one has its own
 key, and the server keeps a list of which keys are allowed. That list is the
-whole of authentication; there's no password to steal. See
+only authentication, so there's no password to steal. See
 [Reaching your server](/docs/operate/reach).
 
 **Channel** - the release line your server follows, stable or prerelease. See
@@ -23,89 +23,88 @@ whole of authentication; there's no password to steal. See
 
 ## What comes in
 
-**Source** - somewhere your life is already recorded that the server can pull
-from: a calendar, a mail account, a health app, a bank, your phone's location.
-Connecting a source is what starts the flow.
+**Source** - a place where your life is already recorded that the server can
+pull from: a calendar, a mail account, a health app, a bank, your phone's
+location. Data starts coming in when you connect a source.
 
-**Record** - one thing a source observed. A message sent, a place visited, a
+**Record** - one thing a source observed: a message sent, a place visited, a
 song played, a transaction, a heart rate sample, a recording. Records are the
-raw material and the server keeps them as they were; everything else is derived
-and can be rebuilt.
+raw material, and the server keeps them unchanged. Everything else is derived
+from them and can be rebuilt.
 
-**Lake** - where the large things live: recordings, uploads, files. The
-database holds the structure of your life, and the lake holds its bytes.
+**Lake** - where large files live: recordings, uploads, files. The database
+stores the structured data, and the lake stores the files.
 
 ## What the server makes of it
 
-Everything below is *derived* from your records. It can be recomputed, which
-is why rebuilding an index or re-running a day is safe.
+Everything in this section is *derived* from your records. It can be
+recomputed, which is why rebuilding an index or re-running a day is safe.
 
-**Event** - a bounded stretch of a day. A meeting, a drive, a walk, a meal.
-The server assembles events out of records that arrive incomplete, out of order,
+**Event** - a bounded stretch of a day: a meeting, a drive, a walk, a meal.
+The server assembles events from records that arrive incomplete, out of order,
 and sometimes contradicting each other.
 
-**Day** - the unit of narrative, and the one most worth reading. A day carries
-its own timeline of events and a written account of what happened, generated
-overnight from everything the server saw.
+**Day** - the main unit you read. A day has its own timeline of events and a
+written account of what happened, generated overnight from everything the
+server collected.
 
 **Article** - the page the wiki writes about one subject: a day, a year, a
 chapter, a person, a place, an organization or a story. Your server writes each
 day's article overnight. For a person, place, organization or year, choose
-Write the article on its page. Turn on the Wiki Editor applet and your server
-also writes your chapters and stories, and keeps every article current as new
-records arrive. Any sentence you write stays as you wrote it.
+Write the article on its page. If you turn on the Wiki Editor applet, your
+server also writes your chapters and stories, and keeps every article current
+as new records arrive. Any sentence you write stays as you wrote it.
 
 **Note** - a smaller observation attached to a subject: a correction, an
-appraisal, something worth remembering about it.
+assessment, something worth remembering about it.
 
-**Ref** - a pointer from something the server wrote back to the record it came
-from. Refs are what make a claim checkable rather than merely plausible; when
-the server tells you something about your life, a ref is how you see why it
-thinks so.
+**Ref** - a link from something the server wrote back to the record it came
+from. Refs let you check a claim: when the server tells you something about
+your life, the ref shows the record it based that on.
 
-**Wiki** - your encyclopedia, where all of your information is collected. Days
-and their events on one axis, people, places, and organizations on the other,
-articles accumulating on both - and your chapters and narrative identity
-giving the whole thing its coordinates.
+**Wiki** - your encyclopedia, where all of your information is collected. It
+is organized by days and their events in one direction, and by people, places
+and organizations in the other, with articles on both. Your chapters and
+narrative identity provide the overall structure.
 
-## What you author about yourself
+## What you write about yourself
 
-These are not derived and are never recomputed. The machine may write each one
-only while it is empty; from then on it is yours.
+These are not derived and are never recomputed. The server can write each one
+only while it is empty. After that, only you edit it.
 
-**Narrative identity** - the account of who you are that grounds everything
-the models see: your history, in your own words, arranged from the interview
-and edited on its page from then on.
+**Narrative identity** - your account of who you are, which every model sees as
+context: your history, in your own words. It starts from the interview, and
+you edit it on its page after that.
 
-**Chapter** - your own division of your life into named eras, rough years and
-all, given in the interview. Every day the record holds falls inside exactly
-one chapter; each chapter has a page of its own.
+**Chapter** - a named era of your life, with rough years, that you give in the
+interview. Every day in your record falls inside exactly one chapter, and each
+chapter has its own page.
 
 ## What you make
 
-**Page** - a document you write, versioned as you go, and shareable.
+**Page** - a document you write. It keeps versions as you go and can be
+shared.
 
-**Project** - a working lens over your life: a place to gather material
-around a question, with chat that's grounded in what you gathered rather than
-in everything. A project holds chats, pages and files, and never another
-project.
+**Project** - a place to collect material around a question, with chat that
+answers from what you collected instead of from your whole record. A project
+contains chats, pages and files. Projects can't contain other projects.
 
 ## What you can build
 
-**Applet** - a small program running on your server on a schedule or on demand:
-pulling from a source, computing something, keeping a record of its own. Some
-ship with Virtues, and some are written on the server - including by asking for
-them in chat. Each run is recorded, so an applet that quietly stops working is
-visible rather than silent.
+**Applet** - a small program that runs on your server on a schedule or on
+demand. It can pull from a source, compute something, or keep a record of its
+own. Some ship with Virtues, and some are written on the server, including by
+asking for one in chat. Every run is recorded, so you can see when an applet
+stops working.
 
-## Words we're careful with
+## Terms with specific meanings
 
-**Observed, authored, generated** - the distinction between what a sensor
-recorded, what a person wrote, and what a model produced. It matters most in
-the last case: something the server generated is never treated as evidence on its
-own, which is why generated text carries refs back to records.
+**Observed, authored, generated** - the difference between what a sensor
+recorded, what a person wrote, and what a model produced. The server never
+treats generated text as evidence on its own, which is why generated text
+carries refs back to records.
 
-**Derived** - anything the server computed and could compute again. Indexes,
-events, summaries. The opposite of your records, which are the only things
-that can't be regenerated and which backups exist to protect. See
+**Derived** - anything the server computed and could compute again: indexes,
+events, summaries. Your records are the opposite. They are the only data that
+can't be regenerated, and backups exist to protect them. See
 [Backup & restore](/docs/operate/backup-and-restore).

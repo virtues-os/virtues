@@ -1,7 +1,7 @@
 ---
 title: Faster search on a GPU or NPU
 description: Search runs on your server's CPU by default. If the machine has a GPU or NPU, run the embedding model there with llama.cpp and point Virtues at it - the steps for NVIDIA, AMD, Intel, other GPUs, and NPUs.
-updated: 2026-10-08
+updated: 2026-10-20
 ---
 
 Search runs on your server's CPU unless you change it. The installer sets up a
@@ -9,9 +9,8 @@ small local engine and its model, and that is enough for everyday use: a few
 minutes of work a day for a typical record.
 
 A GPU or NPU can make two things faster: every search, and the first index
-of your history, which on a CPU can take hours. How much depends on the
-hardware. The installer tells you when it
-finds one and links here. Setting it up takes about ten minutes, and you can
+of your history, which on a CPU can take hours. How much faster depends on the
+hardware. The installer tells you when it finds one and links here. Setting it up takes about ten minutes, and you can
 do it any time after installing.
 
 ## How it works
@@ -19,8 +18,8 @@ do it any time after installing.
 You run the embedding model on the accelerator with
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`, then point
 Virtues at it with one command. Virtues never installs GPU or NPU software for
-you, because it can't test every machine. What it does is check the server you
-give it before switching.
+you, because we can't test every machine. It does check the server you give
+it before switching to it.
 
 The same four steps apply to every accelerator below. Only the llama.cpp build
 you download in step 1 changes.
@@ -96,7 +95,7 @@ hangs, which is why the Dragon uses its NPU instead.
 
 ## NPUs
 
-Most NPUs need their vendor's runtime, not llama.cpp. Any server works if it
+Most NPUs need their vendor's runtime instead of llama.cpp. Any server works if it
 offers an OpenAI-style `/v1/embeddings` endpoint on your machine or network:
 run the same model there, then do step 4 with its URL. On a Radxa Dragon,
 Virtues already runs search on the NPU, and none of this applies.
