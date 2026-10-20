@@ -21,7 +21,7 @@
 
 import { Extension, InputRule, isiOS, isMacOS, type Editor, type Range } from '@tiptap/core';
 import type { Node as PmNode, ResolvedPos } from '@tiptap/pm/model';
-import { NodeSelection, Selection, TextSelection, type EditorState, type Transaction } from '@tiptap/pm/state';
+import { NodeSelection, Plugin, PluginKey, Selection, TextSelection, type EditorState, type Transaction } from '@tiptap/pm/state';
 import type { MenuCommand } from '$lib/components/menuCommand';
 import type { Applet } from '$lib/api/client';
 import type { Anchor } from './anchor';
@@ -473,12 +473,66 @@ export const pageInputRules = Extension.create({
 	},
 });
 
+/** What the input rules last did, while Backspace may still take it back. */
+type Undoable = { plugin: Plugin; stored: { from: number; to: number } };
+
+const undoableKey = new PluginKey<Undoable | null>('shortcutUndoable');
+
+/**
+ * Backspace right after a typed shortcut (`# `, `- `, `1. `, `[] `, `> `,
+ * a fence, `**bold**`) takes it back: the block is what it was, the
+ * characters typed are text, and the next Backspace deletes one of them.
+ *
+ * Tiptap keeps what its input rules did until the next change, and UniqueID
+ * gives the block the rule made an id in a change of its own, appended at
+ * once, which Tiptap took for the next change: the shortcut could not be
+ * taken back. That change only sets ids, so what the rule did is handed
+ * back to Tiptap after it. Any other change, or the caret moving, ends it.
+ */
+export const ShortcutBackspace = Extension.create({
+	name: 'shortcutBackspace',
+	// Ahead of every other Backspace: the list's, a block edge's, a heading's.
+	priority: 1001,
+	addKeyboardShortcuts() {
+		return { Backspace: ({ editor }) => editor.commands.undoInputRule() };
+	},
+	addProseMirrorPlugins() {
+		const rulesOf = (state: EditorState) => state.plugins.filter((p) => p.spec.isInputRules);
+		return [
+			new Plugin<Undoable | null>({
+				key: undoableKey,
+				state: {
+					init: () => null,
+					apply(tr, prev, _old, state) {
+						for (const plugin of rulesOf(state)) {
+							const stored = tr.getMeta(plugin);
+							if (stored) return { plugin, stored };
+						}
+						if (!prev || (!tr.docChanged && !tr.selectionSet)) return prev;
+						const { from, to } = prev.stored;
+						const idsOnly =
+							tr.getMeta('appendedTransaction') &&
+							!tr.selectionSet &&
+							tr.mapping.map(from, -1) === from &&
+							tr.mapping.map(to, 1) === to;
+						return idsOnly ? prev : null;
+					},
+				},
+				appendTransaction(_trs, _old, state) {
+					const kept = undoableKey.getState(state);
+					if (!kept || kept.plugin.getState(state)) return null;
+					return state.tr.setMeta(kept.plugin, kept.stored);
+				},
+			}),
+		];
+	},
+});
+
 /**
  * Backspace at the start of a heading makes it a paragraph, as removing
  * its `#` would in markdown; one more Backspace joins it to the
- * block above. The block keeps its id: it is the same block, now text. An
- * input rule that just made the heading is undone first, giving back what
- * was typed.
+ * block above. The block keeps its id: it is the same block, now text. A
+ * heading an input rule just made is `ShortcutBackspace`'s.
  */
 export const HeadingBackspace = Extension.create({
 	name: 'headingBackspace',
@@ -491,7 +545,6 @@ export const HeadingBackspace = Extension.create({
 				const { state } = editor;
 				const { $from, empty } = state.selection;
 				if (!empty || $from.parentOffset !== 0 || $from.parent.type.name !== 'heading') return false;
-				if (editor.commands.undoInputRule()) return true;
 				const paragraph = state.schema.nodes.paragraph;
 				if (!$from.node(-1).canReplaceWith($from.index(-1), $from.index(-1) + 1, paragraph)) return false;
 				const heading = $from.parent;
@@ -757,6 +810,63 @@ export function indentCode(editor: Editor, by: -1 | 1): boolean {
 	if (tr.docChanged) editor.view.dispatch(tr.scrollIntoView());
 	return true;
 }
+
+/** Whether the caret is in a list item, at any depth. */
+function inItem(editor: Editor): boolean {
+	return itemAt(editor) !== null;
+}
+
+/**
+ * Tab and ⇧Tab where a writer means them as indent: in a code block they
+ * indent and outdent, Tab at a bare caret putting two spaces there as a
+ * code editor does; in a list item they nest it and take it out a level.
+ * Both are taken there even when the item cannot move (the first item of
+ * a list), so the key never sends the focus out of the page to the next
+ * control. Anywhere else they are the table's or the browser's.
+ *
+ * ⌘A in a code block selects its code first, and the whole page only when
+ * the code is already selected, as a code editor inside a page does.
+ */
+export const IndentKeys = Extension.create({
+	name: 'indentKeys',
+	// Ahead of the list's and the table's Tab.
+	priority: 1000,
+	addKeyboardShortcuts() {
+		const inCode = (editor: Editor) => {
+			const { $from, $to } = editor.state.selection;
+			return !!$from.parent.type.spec.code && $from.sameParent($to);
+		};
+		return {
+			Tab: ({ editor }) => {
+				if (!editor.isEditable) return false;
+				if (inCode(editor)) {
+					if (!editor.state.selection.empty) return indentCode(editor, 1);
+					editor.view.dispatch(editor.state.tr.insertText(CODE_INDENT).scrollIntoView());
+					return true;
+				}
+				if (!inItem(editor)) return false;
+				indentItem(editor);
+				return true;
+			},
+			'Shift-Tab': ({ editor }) => {
+				if (!editor.isEditable) return false;
+				if (inCode(editor)) return indentCode(editor, -1);
+				if (!inItem(editor)) return false;
+				outdentItem(editor);
+				return true;
+			},
+			'Mod-a': ({ editor }) => {
+				const { $from, from, to } = editor.state.selection;
+				if (!inCode(editor)) return false;
+				const start = $from.start();
+				const end = $from.end();
+				if (from === start && to === end) return false;
+				editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, start, end)));
+				return true;
+			},
+		};
+	},
+});
 
 /**
  * ⌥↑ ⌥↓ move, ⇧⌥↑ ⇧⌥↓ copy and ⌘⇧K delete the caret's list item or block,

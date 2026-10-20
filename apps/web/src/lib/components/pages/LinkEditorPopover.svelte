@@ -1,19 +1,25 @@
 <script lang="ts">
+	import { untrack } from "svelte";
 	import Button from "$lib/components/Button.svelte";
 	import { linkEditor } from "$lib/stores/linkEditor.svelte";
 	import { inComposition } from "$lib/utils/ime";
 
 	let labelInput = $state<HTMLInputElement | null>(null);
+	let hrefInput = $state<HTMLInputElement | null>(null);
 
 	/** On touch the panel's buttons are a thumb's 44pt (design-grammar §6): `lg` is 48px, `sm` 32px. */
 	const touch = typeof window !== "undefined" && !!window.matchMedia?.("(pointer: coarse)").matches;
 
-	// The label is what the reader sees, so it is what someone usually came to
-	// fix; select it so a correction can just be typed over.
+	// A new link (⌘K on words) has its words and needs an address: the focus
+	// goes there, so a pasted URL lands in it, not over the words. An existing
+	// link's label is what the reader sees, so it is what someone usually came
+	// to fix; it is selected so a correction can just be typed over.
 	$effect(() => {
-		if (labelInput) {
-			labelInput.focus();
-			labelInput.select();
+		// Read once, as the panel opens: not again as the address is typed.
+		const input = untrack(() => linkEditor.href) ? labelInput : hrefInput;
+		if (input) {
+			input.focus();
+			input.select();
 		}
 	});
 
@@ -50,6 +56,7 @@
 	<label class="field">
 		<span class="field-label">Link</span>
 		<input
+			bind:this={hrefInput}
 			bind:value={linkEditor.href}
 			class="field-input"
 			type="text"

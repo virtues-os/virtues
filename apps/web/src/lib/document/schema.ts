@@ -424,8 +424,15 @@ function nodeBase(name: string): Node | undefined {
  * address) runs on plain text only and never in inline code, as every
  * mark's does (`onPlainText`, `outsideCodeSpans`): pasted HTML carries its
  * own links, and the text of inline code is what the code says.
+ *
+ * Typing just after a link is not part of it: the stock link is inclusive
+ * whenever autolink is on, so every word typed after a link went into it.
+ * Autolink reads a typed address afresh at each space and needs no help.
  */
 const TypedLink = Link.extend({
+	inclusive() {
+		return false;
+	},
 	addPasteRules() {
 		return (this.parent?.() ?? []).map((rule) => notFromAPage(onPlainText(outsideCodeSpans(rule))));
 	},

@@ -410,6 +410,34 @@ describe('a click below the last block', () => {
 			expect(shape(editor), html).toBe(typed);
 		}
 	});
+
+	// The page scrolls a box the editor sits in, with padding under it and
+	// blank space under a short page: a click there blurred the editor.
+	it('below the editor, on the blank page around it, ends in the last text too; a control there keeps its click', () => {
+		const { doc } = pageDoc('<p>Intro</p><p>Last line</p>');
+		const scroller = document.createElement('div');
+		scroller.style.overflowY = 'auto';
+		const page = document.createElement('div');
+		const title = document.createElement('button');
+		const element = document.createElement('div');
+		page.append(title, element);
+		scroller.append(page);
+		document.body.append(scroller);
+		const provider = fakeProvider(doc);
+		cleanups.push(provider.destroy);
+		const editor = track(createPageEditor({ element, doc: { ydoc: doc, provider }, editable: true, placeholder: 'Write' }));
+		const last = editor.view.dom.lastElementChild!.getBoundingClientRect();
+		const click = (on: Element) => {
+			const down = new MouseEvent('mousedown', { button: 0, clientX: 10, clientY: last.bottom + 100, bubbles: true, cancelable: true });
+			on.dispatchEvent(down);
+			return down.defaultPrevented;
+		};
+		editor.commands.setTextSelection(1);
+		expect(click(title), 'a control').toBe(false);
+		expect(editor.state.selection.from).toBe(1);
+		expect(click(page), 'the page under the editor').toBe(true);
+		expect(editor.state.selection.from).toBe(posIn(editor, 'Last line', 9));
+	});
 });
 
 describe('moving a block while another device edits', () => {
@@ -751,6 +779,17 @@ describe('the insert menu', () => {
 		}
 		expect(filterCommands(commands, 'text')[0]?.label).toBe('Text');
 		expect(filterCommands(commands, 'paragraph')[0]?.label).toBe('Text');
+	});
+
+	it('matches letters typed in order, after every name that holds the query', () => {
+		expect(filterCommands(commands, 'nmbr')[0]?.label).toBe('Numbered list');
+		expect(filterCommands(commands, 'bul li')[0]?.label).toBe('Bulleted list');
+		expect(filterCommands(commands, 'cdblk')[0]?.label).toBe('Code block');
+		// A word's middle starts no match: `umb` is in no name's word start.
+		expect(filterCommands(commands, 'umb').map((c) => c.label)).toEqual(['Numbered list']);
+		expect(filterCommands(commands, 'mbr')).toEqual([]);
+		// What holds the query comes first.
+		expect(filterCommands(commands, 'li')[0]?.label).toBe('Bulleted list');
 	});
 
 	it('shows headings 4 to 6 only once they are asked for', () => {
@@ -2796,6 +2835,28 @@ describe('code highlighting', () => {
 	});
 });
 
+describe('code highlighting, kept', () => {
+	// A drag dropped where it started, or a block replaced by its copy, makes
+	// a new document equal to the old one: the colours were mapped away, and
+	// with nothing to say the code had changed they were never drawn again.
+	it('is drawn again after a change that puts back the same code', async () => {
+		const html = '<p>Intro</p><pre data-language="rust"><code>fn kept() {}</code></pre>';
+		const editor = track(htmlEditor(html, [codeHighlight(async (code) => [[{ content: code, color: 'rgb(9, 8, 7)', offset: 0 }]])]));
+		const coloured = () => editor.view.dom.querySelectorAll('[style*="rgb(9, 8, 7)"]').length;
+		await settle(250);
+		expect(coloured()).toBeGreaterThan(0);
+		let at = -1;
+		editor.state.doc.forEach((node, offset) => {
+			if (node.type.name === 'codeBlock') at = offset;
+		});
+		const block = editor.state.doc.nodeAt(at)!;
+		editor.view.dispatch(editor.state.tr.replaceWith(at, at + block.nodeSize, block.copy(block.content)));
+		expect(coloured(), 'mapped away by the change').toBe(0);
+		await settle(250);
+		expect(coloured()).toBeGreaterThan(0);
+	});
+});
+
 describe('the assistant on the page', () => {
 	it('flashes the blocks a chat edit wrote, by id, then lets them go', async () => {
 		vi.useFakeTimers();
@@ -3729,5 +3790,121 @@ describe('nothing in the editor lands after a wait', () => {
 		expect(tree.lastChild?.type.name).toBe('image');
 		expect(tree.lastChild?.attrs.src).toBe(src);
 		expect(`/drive/${transfers[0].id}`).toBe(src);
+	});
+});
+
+describe('keys a writer reaches for', () => {
+	const apple = () => /Mac|iP(hone|[oa]d)/.test(navigator.platform);
+
+	/** Press `key` in the editor, as the browser delivers it; whether the editor took it. */
+	function press(editor: Editor, key: string, mods: { shift?: boolean; mod?: boolean } = {}): boolean {
+		const event = new KeyboardEvent('keydown', {
+			key,
+			code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
+			shiftKey: !!mods.shift,
+			metaKey: !!mods.mod && apple(),
+			ctrlKey: !!mods.mod && !apple(),
+			bubbles: true,
+			cancelable: true,
+		});
+		editor.view.dom.dispatchEvent(event);
+		return event.defaultPrevented;
+	}
+
+	// The stock link is inclusive while autolink is on: every word typed
+	// after a link went into it.
+	it('typing just after a link is not part of it', () => {
+		const editor = track(htmlEditor('<p>See <a href="https://example.com/a">the notes</a>. Then</p>'));
+		editor.commands.setTextSelection(posIn(editor, 'the notes', 9));
+		typeIn(editor, 'x');
+		const at = posIn(editor, 'notesx', 5);
+		expect(editor.state.doc.nodeAt(at)?.text).toContain('x');
+		expect(editor.state.doc.nodeAt(at)?.marks.map((m) => m.type.name)).toEqual([]);
+		expect(editor.state.doc.nodeAt(at - 1)?.marks.map((m) => m.type.name)).toEqual(['link']);
+	});
+
+	// Tab in a code block, and on an item with none above it to nest under,
+	// was nobody's: the browser moved the focus to the next control.
+	it('Tab and Shift-Tab indent code and nest list items, and never send the focus out of the page', async () => {
+		const { doc } = pageDoc('<ul><li><p>First</p></li><li><p>Second</p></li></ul><pre><code>a = 1</code></pre><p>Plain</p>');
+		const { editor } = bind(doc);
+		await settle();
+		editor.commands.setTextSelection(posIn(editor, 'a = 1'));
+		expect(press(editor, 'Tab')).toBe(true);
+		expect(editor.state.selection.$from.parent.textContent).toBe('  a = 1');
+		expect(press(editor, 'Tab', { shift: true })).toBe(true);
+		expect(editor.state.selection.$from.parent.textContent).toBe('a = 1');
+
+		const before = editor.getJSON();
+		editor.commands.setTextSelection(posIn(editor, 'First', 2));
+		expect(press(editor, 'Tab'), 'the first item, which cannot nest').toBe(true);
+		expect(editor.getJSON()).toEqual(before);
+		editor.commands.setTextSelection(posIn(editor, 'Second', 2));
+		expect(press(editor, 'Tab')).toBe(true);
+		expect(editor.state.doc.firstChild?.childCount).toBe(1);
+		expect(press(editor, 'Tab', { shift: true })).toBe(true);
+		expect(editor.state.doc.firstChild?.childCount).toBe(2);
+
+		editor.commands.setTextSelection(posIn(editor, 'Plain', 2));
+		expect(press(editor, 'Tab'), 'a paragraph leaves Tab to the browser').toBe(false);
+	});
+
+	it('Cmd-A in a code block selects its code, and pressed again the page', async () => {
+		const { doc } = pageDoc('<p>Intro</p><pre><code>a = 1\nb = 2</code></pre>');
+		const { editor } = bind(doc);
+		await settle();
+		editor.commands.setTextSelection(posIn(editor, 'b = 2'));
+		press(editor, 'a', { mod: true });
+		const { from, to } = editor.state.selection;
+		expect(editor.state.doc.textBetween(from, to, '|')).toBe('a = 1\nb = 2');
+		press(editor, 'a', { mod: true });
+		expect(editor.state.selection.from).toBe(0);
+		expect(editor.state.selection.to).toBe(editor.state.doc.content.size);
+	});
+
+	// UniqueID gives the block a rule made its id in a change of its own,
+	// which Tiptap took for the next edit: Backspace emptied the line.
+	it('Backspace right after a typed shortcut gives back what was typed, the block keeping its id', async () => {
+		for (const [typed, made] of [
+			['# ', 'heading'],
+			['- ', 'bulletList'],
+			['1. ', 'orderedList'],
+			['> ', 'blockquote'],
+			['[] ', 'taskList'],
+		]) {
+			const { doc } = pageDoc('<p>Intro</p><p></p>');
+			const { editor } = bind(doc);
+			await settle();
+			const id = editor.state.doc.child(1).attrs[contract.id.attr];
+			editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+			typeIn(editor, typed);
+			expect(editor.state.doc.child(1).type.name, typed).toBe(made);
+			expect(press(editor, 'Backspace'), typed).toBe(true);
+			const line = editor.state.doc.child(1);
+			expect([line.type.name, line.textContent], typed).toEqual(['paragraph', typed]);
+			expect(line.attrs[contract.id.attr], typed).toBe(id);
+			// The next Backspace is the browser's own, deleting a character.
+			expect(press(editor, 'Backspace'), typed).toBe(false);
+		}
+	});
+
+	it('a shortcut is final once more is typed', async () => {
+		const { doc } = pageDoc('<p>Intro</p><p></p>');
+		const { editor } = bind(doc);
+		await settle();
+		editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+		typeIn(editor, '# T');
+		expect(press(editor, 'Backspace')).toBe(false);
+		expect(editor.state.doc.child(1).type.name).toBe('heading');
+		expect(editor.state.doc.child(1).textContent).toBe('T');
+	});
+
+	it('the caret keeps lines of the page around it as it nears the scroller\'s edge', () => {
+		const { doc } = pageDoc('<p>Intro</p>');
+		const { editor } = bind(doc);
+		const margin = editor.view.someProp('scrollMargin');
+		const threshold = editor.view.someProp('scrollThreshold');
+		expect(margin).toBeGreaterThanOrEqual(48);
+		expect(threshold).toBeGreaterThanOrEqual(48);
 	});
 });
