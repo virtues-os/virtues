@@ -127,7 +127,7 @@
 		if (e.pointerType !== 'touch' || !e.isPrimary || contextMenu.visible) return;
 		// Don't fight iOS text selection / editor long-press behavior.
 		const el = e.target as HTMLElement | null;
-		if (el?.closest('input, textarea, [contenteditable="true"], .cm-editor')) return;
+		if (el?.closest('input, textarea, [contenteditable="true"]')) return;
 		lpTarget = e.target;
 		lpX = e.clientX;
 		lpY = e.clientY;

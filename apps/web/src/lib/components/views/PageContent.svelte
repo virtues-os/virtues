@@ -969,8 +969,7 @@
 		}
 	}
 
-	/* Page Header — title hugs the body so it reads as one document
-	   (the editor's own .cm-content adds ~8px on top of this). */
+	/* Page Header — title hugs the body so it reads as one document. */
 	.page-header {
 		display: flex;
 		align-items: flex-start;

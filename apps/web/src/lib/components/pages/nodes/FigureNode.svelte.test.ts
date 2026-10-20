@@ -10,7 +10,7 @@ import { flushSync, mount, unmount } from "svelte";
 import type { ViewState } from "$lib/document/nodeviews.svelte";
 
 vi.mock("$lib/stores/contextMenu.svelte", () => ({ contextMenu: { show() {} } }));
-vi.mock("$lib/codemirror/extensions/long-press", () => ({ onContextGesture() {} }));
+vi.mock("$lib/components/contextMenu/gesture", () => ({ onContextGesture() {} }));
 
 const { default: FigureNode } = await import("./FigureNode.svelte");
 const { veil } = await import("$lib/stores/veil.svelte");

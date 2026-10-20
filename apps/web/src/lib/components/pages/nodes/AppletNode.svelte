@@ -14,7 +14,7 @@
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import FaceFrame from "$lib/components/applets/FaceFrame.svelte";
-	import { onContextGesture } from "$lib/codemirror/extensions/long-press";
+	import { onContextGesture } from "$lib/components/contextMenu/gesture";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import { getApplet } from "$lib/api/client";
 	import { DEFAULT_APPLET_HEIGHT } from "$lib/document/applet";

@@ -168,10 +168,11 @@ the contract reaches boxes before the apps that carry it.
   (`wordLists`). A drop is read as the same data pasted: markdown text
   dropped is converted, and the plain-text rules never run on dropped
   HTML, nor any rule on a block dragged from another page.
-- **Markdown is written in TypeScript** (`markdown.ts`), only for text
-  copied out of a page (`clipboardTextSerializer`): the crate's
-  `render::markdown` rule for rule, checked for the same bytes by the
-  conformance corpus.
+- **Markdown is written in TypeScript** (`markdown.ts`), for text copied
+  out of a page (`clipboardTextSerializer`) and for a chat message
+  (`messageMarkdown`, below): the crate's `render::markdown` rule for rule,
+  checked for the same bytes by the conformance corpus. A message differs
+  only in its text, which is written as typed.
 - **A paste lands as whole blocks** (`placeConverted` in `paste.ts`): one
   paragraph joins the text at the caret; anything else splits the
   paragraph there and steps out of the lists around it, so a pasted heading
@@ -667,6 +668,85 @@ merged in as a second copy: it is sent once (`keptCopy.ts`'s
 `keepEarlierTreeCopies`) and kept as a version only when it holds typing
 the page never had ("Typed on a device in an earlier copy of this page").
 
+## The chat composer
+
+The chat composer runs on the same kernel as a block page: Tiptap on
+ProseMirror, with the contract's own node and mark specs
+(`contractExtensions(extras, MESSAGE)`), but no Yjs and no ids. Its undo is
+plain prosemirror-history. It holds part of the contract (`MESSAGE` in
+`message.ts`): paragraphs, line breaks, bullet and numbered lists, a quote,
+a code block, mentions, and bold, italic, strike, highlight, inline code and
+links. Headings, tables, media, applets and to-dos are left out, so `# `
+and `- [ ] ` stay the text they are.
+
+**What is sent is markdown with the words as typed.** The thread shows a
+user's message as plain text (`UserMessage.svelte`), and the model reads
+what the person wrote, so `messageMarkdown` writes the page export's
+structure (list markers, fences, `> `, mark delimiters, `[label](url)`, a
+mention as `[@label](route)`) and never escapes text: `snake_case` and
+`2 * 3 * 4` go as typed. A line break is a new line and paragraphs are a
+blank line apart. A list, a quote or a fence directly under a paragraph,
+and anything under a fence, is written on the next line, since markdown
+reads them without a blank line. On send (`outgoingMessage`) the `@` comes
+off a mention (`[Label](url)`, what the thread and the model have always
+read), a trailing empty list item goes, and a fence typed as text and left
+open is closed.
+
+**A draft is that markdown** (`virtues.draft.<id>` in `localStorage`,
+`new` for an unsent chat, none for a ghost chat; `chat/state/drafts.ts`). It
+is read back by the page's converter as a paste (`readMessage`), and the
+reading is used only when it writes back as the same text; otherwise the
+draft opens as its text, line for line (`textBlocks`). So nothing a draft or
+a prefill holds is changed by opening it. A composer that opens before the
+converter has loaded shows the text and reads it again once the converter
+is there, unless the person has typed by then.
+
+**Keys.** Enter sends on a desktop and breaks the line on a phone, whose
+send button sends. Shift+Enter breaks the line everywhere: in a list it
+starts the next item (an item opening with `[ ] ` starts the next one with
+it), on an empty item it ends the list, and on an empty last line of a
+quote it ends the quote. Cmd+Enter (Ctrl+Enter) sends from anywhere,
+including a code block. In a code block Enter and Shift+Enter are new lines
+that keep the line's indent, Tab indents two spaces and Shift+Tab takes them
+back; Enter on a line of three backticks (and a language) opens one. Tab
+nests a list item and otherwise moves focus; Shift+Tab outdents a nested
+item and otherwise cycles the chat's mode. Escape closes the ref picker,
+then leaves the field. There are no slash commands.
+
+**Typing.** A list's or a quote's sign typed at the start of a line, after
+a line break, starts the list or quote there (`LineSigns`), as it does at
+the start of a paragraph. Marks typed with their delimiters read them as
+CommonMark reads emphasis (`flanking`): the opening one is followed by no
+space and the closing one follows none, so `2 * 3 * 4` stays text. An
+address typed is not made a link (`autolink` off); `[label](url)` typed is
+one.
+
+**`@`** opens the ref picker (`triggers.ts`, as in a page), and a pick
+replaces the `@` and what was typed after it with a mention (a route) or a
+link (an address elsewhere), drawn by the page's `MentionNode`. A space
+follows it unless it is alone on its line.
+
+**Paste.** Files are attachments, and so is text longer than 1,500
+characters (`Pasted Text.txt`). In a code block the text goes in as it is.
+Text that reads as markdown (a block's sign, or bold, a link or a highlight
+in a line, and no line of code) is converted and placed as a page's paste is
+(`placeConverted`), when the result holds only what a message does;
+anything else, and a paste with Shift, goes in as its text, line for line.
+Pasted HTML is read as its text. A copy out of the composer is what it would
+send.
+
+**The field.** The editor's height is reported to `ChatInput.svelte`,
+which animates the box to it up to 200 px and scrolls past that. On a phone
+the editable carries `enterkeyhint=enter`, autocorrect and sentence
+capitalization on, and spellcheck off; dictation types into it like any
+text field.
+
+`composer.corpus.ts` holds typed messages and what is sent for each,
+measured against the CodeMirror composer this one replaced on 2026-10-20
+([record/editor-kernel-2026-10-20.md](../record/editor-kernel-2026-10-20.md));
+`composer.test.ts` holds the composer to it, with its drafts, keys, refs and
+pastes.
+
 ## Where things are
 
 | File | What |
@@ -678,7 +758,8 @@ the page never had ("Typed on a device in an earlier copy of this page").
 | `lib/document/paste.ts`, `media.ts`, `media-kind.ts`, `place.ts`, `links.ts`, `tables.ts` | paste, files given, what a link draws, a block put into text, links, tables |
 | `lib/document/converter.ts`, `crates/virtues-document-wasm` | the markdown converter, in the page |
 | `lib/document/uploads.ts`, `history.ts` | files on their way to the server; a paste or files as an undo step of their own |
-| `lib/document/markdown.ts` | the markdown export, for text copied out |
+| `lib/document/markdown.ts` | the markdown export, for text copied out and a chat message |
+| `lib/document/composer.ts`, `message.ts` | the chat composer; a message's part of the contract, its markdown in and out |
 | `lib/document/toolbar.ts`, `gesture.ts`, `resize.ts`, `print.ts` | the selection toolbar's manners, menus from the keyboard, size handles, printing |
 | `lib/document/anchor.ts` | places that hold through every device's edits |
 | `lib/document/suggestions.ts`, `presence.ts` | proposals, carets and the assistant |

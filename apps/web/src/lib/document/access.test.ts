@@ -51,7 +51,7 @@ import { inComposition } from '$lib/utils/ime';
 import { listenForMenuKeys, type MenuKeyTarget } from '$lib/components/contextMenu/keys';
 import { holdsActiveDescendant, pointFocusAt } from '$lib/components/contextMenu/activeDescendant';
 import { floatingMiddleware } from '$lib/floating/core/middleware';
-import { onContextGesture } from '$lib/codemirror/extensions/long-press';
+import { onContextGesture } from '$lib/components/contextMenu/gesture';
 import { filterCommands } from '$lib/components/menuCommand';
 import { codeAt, createPageEditor, editorAttributes, setPageEditorState } from './editor';
 import { contract, contractExtensions } from './schema';
@@ -1246,7 +1246,7 @@ describe('on a phone', () => {
 		// The next tap is a tap.
 		document.body.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
 		expect(backdrop).toHaveBeenCalledOnce();
-		for (const file of ['../components/contextMenu/ContextMenuProvider.svelte', '../codemirror/extensions/long-press.ts']) {
+		for (const file of ['../components/contextMenu/ContextMenuProvider.svelte', '../components/contextMenu/gesture.ts']) {
 			expect(read(file), file).toMatch(/swallowLift\(\);/);
 		}
 	});

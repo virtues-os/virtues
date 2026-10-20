@@ -10,7 +10,7 @@
 -->
 <script lang="ts">
 	import { onMount } from "svelte";
-	import { onContextGesture } from "$lib/codemirror/extensions/long-press";
+	import { onContextGesture } from "$lib/components/contextMenu/gesture";
 	import type { ViewState } from "$lib/document/nodeviews.svelte";
 
 	let { view }: { view: ViewState } = $props();

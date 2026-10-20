@@ -5,10 +5,8 @@
  * because load-bearing citations recur in prose and must disappear into the
  * text.
  *
- * - Ref.svelte (.ref-link, .ref-link--quiet)  — rendered output: chat answers, previews, the day biography
- * - CodeMirror (.cm-ref-link, codemirror/extensions/ref-links.css)
- *                                             — the chat composer (editable),
- *                                               the same dotted hairline as .ref-link--quiet
+ * - Ref.svelte (.ref-link, .ref-link--quiet)  — rendered output: chat answers, previews, the day biography,
+ *                                               and a mention in a page or the chat composer (MentionNode)
  */
 
 :root {

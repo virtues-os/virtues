@@ -4,8 +4,8 @@
 	import { Spring } from "svelte/motion";
 	import RefPicker, { type EntityResult } from "./RefPicker.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
-	import { closeOpenFence, createComposerEditor, type ComposerEditor } from "$lib/codemirror/composer";
-	import { createRefPicker, insertRef } from "$lib/codemirror/extensions/ref-picker";
+	import { createComposer, type Composer } from "$lib/document/composer";
+	import { outgoingMessage } from "$lib/document/message";
 	import { ATTACH_ACCEPT } from "$lib/components/chat/state/attachments.svelte";
 	import { AGENT_MODES, getModeById, nextMode, type AgentMode, type AgentModeId } from "$lib/config/agentModes";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
@@ -122,14 +122,14 @@
 		input.value = ""; // allow re-picking the same file
 	}
 
-	// The composer is a CodeMirror instance — the same kernel as Pages, in a
-	// smaller configuration (see lib/codemirror/composer.ts). The document is
-	// the message: a markdown string, no DOM to serialize.
+	// The composer runs on the block editor's kernel, holding part of the
+	// page contract (lib/document/composer.ts). `value` is the message's
+	// markdown, as it is sent and as its draft is kept.
 	let inputEl: HTMLDivElement;
-	let editor: ComposerEditor | null = null;
+	let editor: Composer | null = null;
 	let isFocused = $state(false);
 	let inputIsEmpty = $state(true);
-	// Mirror of the editor document, so an external `value` set can be told
+	// Mirror of the editor's markdown, so an external `value` set can be told
 	// apart from our own echo of a keystroke.
 	let docText = "";
 
@@ -144,10 +144,9 @@
 	// Bottom-align the controls once the field wraps past a single line.
 	const isMultiline = $derived(inputHeight.current > MIN_HEIGHT + 6);
 
-	// `@` picker — detection lives in the ref-picker extension; the panel is
-	// the same RefPicker component, anchored above the pill as before.
+	// `@` picker: the editor's `@` trigger opens it; the panel is the
+	// RefPicker component, anchored above the pill.
 	let showEntityPicker = $state(false);
-	let entityPickerFrom = 0;
 
 	// Can we submit? (has content, or staged refs/attachments allow an empty send)
 	const canSubmit = $derived((!inputIsEmpty || allowEmptySubmit) && !sendDisabled);
@@ -186,7 +185,7 @@
 				(active as HTMLElement).isContentEditable
 			);
 			if (!isOtherInputFocused) {
-				editor.view.focus();
+				editor.focus();
 			}
 		}
 	});
@@ -197,7 +196,7 @@
 	$effect(() => {
 		if (editor && value !== docText) {
 			docText = value;
-			editor.setDoc(value);
+			editor.setMarkdown(value);
 		}
 	});
 
@@ -220,45 +219,28 @@
 
 	function handleEntityPickerSelect(entity: EntityResult) {
 		if (!editor) return;
-		// Always the inline form. Pages hand files to the media widgets as
-		// `![label](url)`; a message attaches files through the attach path
-		// instead, so a picked file is a link here like any other ref.
-		insertRef(editor.view, entityPickerFrom, entity.name, entity.url);
+		// Always inline: a message attaches files through the attach path, so
+		// a picked file is a ref here like any other.
+		editor.insertRef(entity.name, entity.url);
 		showEntityPicker = false;
 	}
 
-	function closeEntityPicker() {
+	/** The picker closed; with nothing picked, what was typed in its box goes back after the `@`. */
+	function closeEntityPicker(typed?: string) {
+		if (!showEntityPicker) return;
 		showEntityPicker = false;
-		editor?.view.focus();
-	}
-
-	// What gets sent. The document is already markdown; three transforms only.
-	// The ref label: the picker writes `[@Label](url)` (the Pages form) and
-	// the thread and the model have always seen `[Label](url)`, so the `@`
-	// comes off here. A trailing empty list marker: on the phone Return
-	// continues the list, so the natural last keystroke before Send leaves a
-	// bare `- ` on its own line, which is never intended content. And a fence
-	// left open gets its closing line, so the message is well-formed markdown
-	// for anything that renders it later.
-	const TRAILING_EMPTY_MARKER = /\n\s*(?:[-*+]|\d+[.)])(?:\s+\[[ xX]\])?\s*$/;
-	function outgoingContent(): string {
-		const text = docText
-			.replace(/\[@([^\]]+)\]\(/g, "[$1](")
-			.replace(/\s+$/, "")
-			.replace(TRAILING_EMPTY_MARKER, "")
-			.trim();
-		return closeOpenFence(text);
+		editor?.closeRef(typed);
 	}
 
 	function handleSubmit() {
-		const content = outgoingContent();
+		const content = outgoingMessage(docText);
 		if ((!content && !allowEmptySubmit) || disabled) return;
 
 		onSubmit?.(content);
 
 		docText = "";
 		value = "";
-		editor?.setDoc("");
+		editor?.setMarkdown("");
 		inputIsEmpty = true;
 		inputHeight.target = MIN_HEIGHT;
 	}
@@ -272,7 +254,7 @@
 	// shell new enough to answer shows it.
 	let showMic = $state(false);
 	function dictate() {
-		editor?.view.focus();
+		editor?.focus();
 		void startDictation();
 	}
 
@@ -281,21 +263,21 @@
 		if (target.tagName === "BUTTON" || target.closest("button")) {
 			return;
 		}
-		editor?.view.focus();
+		editor?.focus();
 	}
 
 	onMount(() => {
-		editor = createComposerEditor({
-			parent: inputEl,
-			doc: value,
+		editor = createComposer({
+			element: inputEl,
+			markdown: value,
 			placeholder,
 			disabled,
 			isMobile: () => mobileLayout.isMobile,
 			onSubmit: handleSubmit,
-			onChange: (doc) => {
-				docText = doc;
-				value = doc;
-				inputIsEmpty = !doc.trim();
+			onChange: (markdown) => {
+				docText = markdown;
+				value = markdown;
+				inputIsEmpty = !markdown.trim();
 			},
 			onFocusChange: (f) => {
 				isFocused = f;
@@ -310,20 +292,9 @@
 				}
 				return false;
 			},
-			extensions: [
-				createRefPicker({
-					onOpen: (_coords, from) => {
-						entityPickerFrom = from;
-						showEntityPicker = true;
-					},
-					onClose: () => {
-						showEntityPicker = false;
-					},
-					onQueryChange: () => {
-						// RefPicker has its own search input; nothing to relay.
-					},
-				}),
-			],
+			onMentionOpen: () => {
+				showEntityPicker = true;
+			},
 		});
 		docText = value;
 		inputIsEmpty = !value.trim();
@@ -385,10 +356,10 @@
 			/>
 		{/if}
 
-		<!-- The editor mounts here. The box's height is the spring; the
-		     editor's own scroller stays unclipped and this box scrolls once
-		     the content passes the cap, so the caret scrolls into view
-		     through the nearest scrollable ancestor as CodeMirror expects. -->
+		<!-- The editor mounts here. The box's height is the spring; this box
+		     scrolls once the content passes the cap, so the caret scrolls
+		     into view through the nearest scrollable ancestor, as
+		     ProseMirror expects. -->
 		<div
 			id="chat-input"
 			bind:this={inputEl}
@@ -562,13 +533,76 @@
 		font-family: var(--font-sans);
 	}
 
-	/* The editor fills the animated box; the box, not the editor, clips. */
-	.chat-input :global(.cm-editor) {
-		height: auto;
-		background: transparent;
+	/* The message as typed: body text at the old box's size and rhythm, its
+	   blocks tight, the way a message reads in the thread. */
+	.chat-input :global(.composer-prose) {
+		font-size: 1rem;
+		line-height: 1.5;
+		padding: 0.125rem 0.25rem;
+		outline: none;
+		white-space: pre-wrap;
+		overflow-wrap: anywhere;
 	}
-	.chat-input :global(.cm-scroller) {
-		overflow: visible;
+	.chat-input :global(.composer-prose > * + *),
+	.chat-input :global(.composer-prose li > * + *) {
+		margin-top: 0.375rem;
+	}
+	.chat-input :global(.composer-prose p) {
+		margin: 0;
+	}
+	.chat-input :global(.composer-prose ul),
+	.chat-input :global(.composer-prose ol) {
+		margin: 0;
+		padding-left: 1.5rem;
+	}
+	.chat-input :global(.composer-prose ul) {
+		list-style: disc;
+	}
+	.chat-input :global(.composer-prose ol) {
+		list-style: decimal;
+	}
+	.chat-input :global(.composer-prose li > * + *) {
+		margin-top: 0;
+	}
+	.chat-input :global(.composer-prose blockquote) {
+		margin: 0;
+		padding-left: 0.75rem;
+		border-left: 2px solid var(--color-border-strong);
+		color: var(--color-foreground-muted);
+	}
+	.chat-input :global(.composer-prose pre) {
+		margin: 0;
+		padding: 0.5rem 0.625rem;
+		border-radius: 0.375rem;
+		background: var(--color-surface-elevated);
+		/* design-ok: a code block is code; a fixed advance is the content */
+		font-family: var(--font-mono);
+		font-size: 0.875rem;
+		white-space: pre-wrap;
+	}
+	.chat-input :global(.composer-prose :not(pre) > code) {
+		padding: 0.0625rem 0.25rem;
+		border-radius: 0.25rem;
+		background: var(--color-surface-elevated);
+		/* design-ok: inline code is code; a fixed advance is the content */
+		font-family: var(--font-mono);
+		font-size: 0.875em;
+	}
+	.chat-input :global(.composer-prose a) {
+		color: inherit;
+		text-decoration: underline dotted;
+		text-underline-offset: 0.2em;
+	}
+	.chat-input :global(.composer-prose mark) {
+		background: var(--color-highlight);
+		color: var(--color-highlight-foreground, inherit);
+	}
+	.chat-input :global(.composer-prose p.is-editor-empty:first-child::before) {
+		content: attr(data-placeholder);
+		float: left;
+		height: 0;
+		pointer-events: none;
+		color: var(--color-foreground-subtle);
 	}
 
 	/* Round icon buttons that sit inside the pill */

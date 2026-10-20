@@ -161,7 +161,6 @@ describe('listenForWebLinks', () => {
 	});
 
 	it('leaves a link in an editor to the editor', () => {
-		press(link(PAGE, 'cm-editor'), 'click');
 		press(link(PAGE, 'ProseMirror'), 'contextmenu');
 		expect(taken).toBe(false);
 		expect(openExternal).not.toHaveBeenCalled();

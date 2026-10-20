@@ -254,8 +254,8 @@ conformance cases.
 - **Media:** image width, audio, video, file. The converter must classify
   Drive embeds by the alt text's extension, as `media-widgets.ts` does, not
   treat an extensionless URL as an image (the spike did).
-- **Headings `h1`–`h6`** ([build/codemirror.md](../build/codemirror.md)
-  supports six today; dropping to three is a regression) and **table column
+- **Headings `h1`–`h6`** (the CodeMirror editor supported six; dropping to
+  three is a regression) and **table column
   alignment**.
 - **Callout**, exported as `> [!type]`.
 - **Applet**, mounting `components/applets/FaceFrame.svelte`. After
@@ -379,7 +379,8 @@ Open before it ships:
   `language.ts`, `theme.ts`. Grep importers before each deletion.
 - The Y.Text page paths in `server/yjs.rs`, the find/replace form of
   `edit_page` and of `virtues page edit`, `format = 'markdown'`.
-- Docs: [build/codemirror.md](../build/codemirror.md) cut to the composer,
+- Docs: `build/codemirror.md` cut to the composer (deleted since, with the
+  composer's move: [record/editor-kernel-2026-10-20.md](../record/editor-kernel-2026-10-20.md)),
   its stale entries (`createReadOnlyEditor`,
   `PublicPageViewer`) gone with it; `build/README.md`'s row;
   [build/wiki-editor.md](../build/wiki-editor.md)'s find/replace path;

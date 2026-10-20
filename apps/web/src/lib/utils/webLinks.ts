@@ -18,7 +18,7 @@
  *
  * An anchor needs nothing of its own: `listenForWebLinks` takes the click,
  * middle click and right-click on any `<a href>` to the web. Editors own
- * their links (`document/links.ts`, `codemirror/extensions/ref-links.ts`) and
+ * their links (`document/links.ts`) and
  * call `openWebLink` themselves. In a browser, and in the phone app, a link
  * opens as it always has.
  *
@@ -130,7 +130,7 @@ function linkOf(e: MouseEvent): string | null {
 	if (e.defaultPrevented) return null;
 	const a = (e.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
 	if (!a || a.hasAttribute('download')) return null;
-	if (a.closest('.ProseMirror, .cm-editor, [contenteditable="true"]')) return null;
+	if (a.closest('.ProseMirror, [contenteditable="true"]')) return null;
 	const url = a.href;
 	return isWebLink(url) || isAppLink(url) ? url : null;
 }

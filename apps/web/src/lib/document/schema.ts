@@ -574,7 +574,7 @@ function onPlainText(rule: PasteRule): PasteRule {
 	});
 }
 
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Where each code span (`` `x` ``) is in `text`, as CommonMark pairs backtick runs: `[from, to)`. */
 function codeSpans(text: string): [number, number][] {
@@ -1199,15 +1199,24 @@ function markPriorities(): Record<string, number> {
 	return out;
 }
 
-export function contractExtensions(extras: Extras = {}): Extensions {
+/**
+ * Part of the contract: the node and mark names an editor holds, for an
+ * editor that holds less than a page (the chat composer). Each keeps its
+ * page spec; a node's content may name only nodes in the part.
+ */
+export type ContractPart = { nodes: readonly string[]; marks: readonly string[] };
+
+export function contractExtensions(extras: Extras = {}, part?: ContractPart): Extensions {
 	const extensions: Extensions = [ContractGuard, DropsReadAsPastes];
 	for (const [name, spec] of Object.entries(contract.nodes)) {
+		if (part && !part.nodes.includes(name)) continue;
 		const config = { ...nodeConfig(name, spec), ...(extras.nodes?.[name] ?? {}) };
 		const base = nodeBase(name);
 		extensions.push(base ? base.extend(config) : Node.create(config));
 	}
 	const priority = markPriorities();
 	for (const [name, spec] of Object.entries(contract.marks)) {
+		if (part && !part.marks.includes(name)) continue;
 		const config = { ...markConfig(name, spec), priority: priority[name], ...(extras.marks?.[name] ?? {}) };
 		const base = markBase(name);
 		extensions.push(base ? base.extend(config) : Mark.create(config));

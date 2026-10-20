@@ -51,7 +51,7 @@ vi.mock('$lib/utils/refRoutes', () => ({ fileIcon: () => 'ri:file-line' }));
 vi.mock('$lib/document/links', () => ({ shareableHref: (src: string) => src }));
 vi.mock('$lib/stores/contextMenu.svelte', () => ({ contextMenu: { show() {} } }));
 vi.mock('$lib/stores/linkEditor.svelte', () => ({ linkEditor: { show() {} } }));
-vi.mock('$lib/codemirror/extensions/long-press', () => ({ onContextGesture() {} }));
+vi.mock('$lib/components/contextMenu/gesture', () => ({ onContextGesture() {} }));
 
 const { default: MediaNode } = await import('./MediaNode.svelte');
 const { resetUploads, startUpload, uploadBlocksBack, uploadBlocksLeft, uploadsAtStake, watchUpload, SENDER_TRIES_FOR_MS, ASK_SLOWER_MS, CHECK_AFTER_MS } =

@@ -37,7 +37,8 @@ copy of a bound page's text, the raw-markdown toggle, and the
 lines. What the chat composer reaches stayed: caret, keybindings, list
 renumber, mouse freeze, ref links, the ref picker, inline marks, empty-mark
 tidy, code context, the highlight parser, long press, the language and the
-theme ([build/codemirror.md](../build/codemirror.md)).
+theme, until the composer moved too
+([editor-kernel-2026-10-20.md](editor-kernel-2026-10-20.md)).
 
 What took their places:
 

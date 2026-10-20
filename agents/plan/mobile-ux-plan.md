@@ -8,7 +8,7 @@ menus (`ContextMenuProvider`, with the OS callout suppressed in `app.css`),
 safe-area offsets on every `<Toaster>`, split view blocked on phone
 (`window-shell.svelte.ts`), phone lists defaulting to cards with a scrolling
 table (`UniversalDataGrid`), Return as newline on phone
-(`lib/codemirror/composer.ts`), and an inset-safe focus-mode exit.
+(`lib/document/composer.ts`), and an inset-safe focus-mode exit.
 
 ## Open
 

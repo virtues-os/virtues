@@ -21,8 +21,7 @@
  * (`swallowLift`), or either would close it.
  */
 
-// Relative, not `$lib`: CodeMirror reaches this without the app's aliases.
-import { swallowLift } from '../../components/contextMenu/lift';
+import { swallowLift } from './lift';
 
 const HOLD_MS = 450;
 const DRIFT_PX = 8;
