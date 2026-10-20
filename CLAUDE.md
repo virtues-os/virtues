@@ -288,23 +288,9 @@ Examples, fixtures, seeds, prompts and docs quote only invented text, and
 never "based on a real day": `.claude/rules/fixtures.md` holds the rules and
 loads when you open one.
 
-Two checks hold the line, at commit, commit message and push (pre-commit,
-commit-msg and pre-push in `tools/githooks/`). `tools/privacy-guard.py`
-matches against hashes of the owner's real record: phones, emails, names,
-every text the record holds, places, location points, the exact second of
-every sample (also shifted by whole days), (date, steps) and (date, amount)
-pairs, and short facts the owner adds with `privacy-guard.py fact`. Its
-denylist is built by `tools/privacy-guard.py build`, kept in
-`~/.config/virtues-guard/`, never in the repo or CI, and rebuilt weekly.
-On the owner's machine `git config virtues.guardRequired true` makes a missing
-or week-old denylist refuse the commit. `tools/check-pii.py` needs no real
-data: it refuses phones and emails outside the fictional blocks (service
-addresses go in `tools/pii-allowlist.txt`), personal author addresses, and the
-file types a life is exported as (recordings, GPS photos, traces, Health
-exports, databases, notebooks, archives, new files over 500 KB). CI runs it on
-every commit of every push (`.github/workflows/privacy.yml`, no paths filter).
-Never skip a hook: `--no-verify`, `-c core.hooksPath` and `commit-tree` are
-blocked for agents. A generic false hit is the owner's to accept, by hash.
+No tool checks this for you. Before committing, read your own diff for
+anything that came from a real life, including commit messages and anything
+paraphrased: the larger leaks were rewordings that no pattern matcher catches.
 
 Write the FAILURE CLASS, not the incident. Every one of those comments was
 valuable because it narrated a real bug, and every one survived

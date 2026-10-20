@@ -61,9 +61,6 @@ None of those makes it fiction.
 
 ## What enforces it
 
-The git hooks run `tools/privacy-guard.py` (the owner's record, by hash) and
-`tools/check-pii.py` (contact patterns, file types) on every commit, commit
-message and push, and `.github/workflows/privacy.yml` runs check-pii on every
-push in CI. A refusal names the kind and the line, never the real value. Fix
-it by replacing the content with fiction. Never skip a hook; a generic false
-hit is accepted by hash by the owner (`tools/privacy-guard.py allow --last`).
+You do. No hook or CI job checks fixtures for real data, so read every value
+you add against the rules above before committing. When unsure whether
+something is invented, replace it with something that plainly is.
