@@ -133,8 +133,7 @@
 				     daily-page line ("a page will be waiting for you") moved to the
 				     reveal's door, where tomorrow is real. The asks below are this
 				     paragraph's proof, and the letter ends on them — a closing
-				     essay-paragraph was a second summit, cut 2026-08-24 (its lines
-				     are banked in agents/build/voice.md). -->
+				     essay-paragraph was a second summit, cut 2026-08-24. -->
 				<p class="p3">
 					Every day, Virtues writes the wiki of your life: where you went, who you spoke
 					with, the places you keep going back to, the stories that matter most. You can
@@ -217,8 +216,7 @@
 			     (2026-09-28). "I built the thing I wished existed. If it's useful
 			     to you, reach out :)" was cut the same day; the contact pills
 			     below say it. The grievance close ("Technology has
-			     exploited you long enough…") went to the bank in
-			     agents/build/voice.md on 2026-09-08; Herbert carries the grievance
+			     exploited you long enough…") was cut on 2026-09-08; Herbert carries the grievance
 			     now, below. -->
 			<p class="close">
 				I started Virtues because I believe in digital subsidiarity: what's yours

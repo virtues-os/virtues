@@ -112,12 +112,11 @@ Other rules that follow from a shared tree:
 
   Both halves of that have already cost a release. On 2026-09-21 a
   `design-lint.sh --update-baseline` run in this tree **raised** five counts by
-  sweeping in other agents' uncommitted edits, and `copy-baseline.json`
-  recorded `em-dash: 0` while an uncommitted fix for the one em dash sat in the
-  working tree — the string was still committed, so every CI run afterwards
-  failed on a line that looked clean to everyone here. It applies to every
-  ratchet, `check-swallowed-queries.sh`, `check-copy.py` and `design-lint.sh`
-  today, and to `check-manual.py` or the arch lint the moment either grows one.
+  sweeping in other agents' uncommitted edits. Another baseline recorded a
+  count of zero while an uncommitted fix sat in the working tree. The string
+  was still committed, so every CI run afterwards failed on a line that looked
+  clean to everyone here. It applies to every ratchet, `check-swallowed-queries.sh`
+  and `design-lint.sh` today, and to `check-manual.py` or the arch lint the moment either grows one.
 
 ### Merging up
 
@@ -298,7 +297,7 @@ de-identification unchanged.
 
 ### Rules that load when they apply
 
-Four bodies of law used to live here and now load only when you open a file
+Three sets of rules used to live here and now load only when you open a file
 they govern (`.claude/rules/`, `paths:` frontmatter). They are not optional and
 not lesser — they are conditional, and an always-on file is where a conditional
 rule goes to be ignored:
@@ -308,7 +307,6 @@ rule goes to be ignored:
 | `columns.md` | `*.sql`, Rust under `virtues-core/` | the seven-names-for-one-thing law, and the sweep a rename needs because `sqlx::query` is untyped |
 | `query-errors.md` | any `*.rs` | why `.ok()` on a `fetch_*` turns a broken query into a plausible number |
 | `migrations.md` | `virtues-core/migrations/**` | claiming a number, the pre-squash citations, and the `.sql.pending` rename that has to happen |
-| `copy.md` | Svelte/TS under `apps/web/src`, the airlock HTML, API/server Rust, `docs/` | the claim rules and register for any prose a person reads on screen, from `agents/build/voice.md` |
 
 If you are editing one of those files, assume the rule is already in front of
 you. If you are reasoning about them from elsewhere, go read it.

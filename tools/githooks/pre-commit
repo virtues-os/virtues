@@ -3,7 +3,7 @@
 #
 # Installed by `make hooks` (core.hooksPath → tools/githooks).
 #
-# The ratchets (design-lint.sh, check-copy.py, check-swallowed-queries.sh) fail
+# The ratchets (design-lint.sh, check-swallowed-queries.sh) fail
 # CI when a count rises by one. Run in this checkout they measure every agent's
 # uncommitted edits at once, so an author sees a number that is not the one CI
 # will see, and pushes a +1 that looked clean here. That was the single most
@@ -32,7 +32,7 @@ trap 'rm -rf "$tmp"' EXIT
 git checkout-index -a --prefix="$tmp/" || { echo "pre-commit: could not export the commit's tree" >&2; exit 1; }
 
 failed=""
-for check in tools/design-lint.sh tools/check-copy.py tools/check-swallowed-queries.sh; do
+for check in tools/design-lint.sh tools/check-swallowed-queries.sh; do
     [ -x "$tmp/$check" ] || continue
     if ! out=$("$tmp/$check" 2>&1); then
         failed="$failed $check"

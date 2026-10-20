@@ -425,8 +425,7 @@ progress bar over them. A new step obeys them before it ships.
    entrance, one exit (`setup.css` tokens, `motion.ts` for Svelte). Every
    button gives under the finger.
 4. **One voice and one alignment.** Titles, sentences and the way forward on
-   the center line (`StepFrame` centers by default); copy through
-   [voice.md](voice.md).
+   the center line (`StepFrame` centers by default).
 
 ---
 

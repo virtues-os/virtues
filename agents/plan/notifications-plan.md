@@ -84,7 +84,7 @@ How the familiar names map:
   key, ever. A reopened `fix` is a new raise, rate-limited against flapping.
 - `body` — **consequence first, cause second** (rule 5 of the silent-outage
   record): *"Messages has not arrived since Tue · Full Disk Access is off on
-  this Mac."* Owner-facing copy follows `agents/build/voice.md`.
+  this Mac."*
 - `observed_at` — when the producer saw it (rule 2: every claim carries when
   it was observed). "Unknown" is a real state and is reported as one (rule 1).
 - `actions` — what can be done from the notification itself: open the fix

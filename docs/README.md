@@ -24,8 +24,7 @@ people and agents building Virtues. Pages here are written for the people
   newest first in the manifest. virtues.com/changelog redirects to the first
   one, so a new note goes at the top of its section. Write each from the
   commits between tags, and leave out fixes to bugs no stable release had.
-- **Follow the style guides**: the claim rules and copy style in
-  `../agents/build/voice.md`, and the website's `DESIGN.md`. Keep pages short,
+- **Follow the website's `DESIGN.md`.** Keep pages short,
   specific and technical, and get the facts right.
 - **Claim only what ships.** A manual page describes the released system. If a
   feature is half-built, its page stays `"planned"` in the manifest until the

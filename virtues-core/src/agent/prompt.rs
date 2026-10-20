@@ -399,10 +399,8 @@ pub fn build_getting_started_prompt(assistant_name: &str, user_name: &str, state
 
 /// The assistant's character: the lines every chat carries.
 ///
-/// A perceptive friend who has read the record and refuses to flatter. This
-/// character line lives HERE and nowhere else — agents/build/voice.md used to
-/// claim it as a house voice for every surface, and that claim was cut
-/// 2026-09-21; the assistant is a named character, not the product speaking.
+/// The character line lives here and nowhere else. The assistant is a named
+/// character, not the product speaking, so no other surface borrows it.
 ///
 /// There is one character. Until migration 0035 the owner picked one of four
 /// stored personas (Standard, Concierge, Analyst, Coach) or wrote their own,
