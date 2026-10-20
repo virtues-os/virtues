@@ -27,7 +27,7 @@ import type { Applet } from '$lib/api/client';
 import type { Anchor } from './anchor';
 import { kindOfMime, mediaNode } from './media';
 import { insertBlockAt } from './place';
-import { contract, isRoute } from './schema';
+import { contract, isRoute, joinListsAround } from './schema';
 import { cellAt, moveRow } from './tables';
 
 export interface TreeCommand extends MenuCommand {
@@ -390,7 +390,8 @@ function withoutIds(node: PmNode): PmNode {
  * The bulleted item `$from` starts the text of, made a to-do: `- [ ] `
  * typed is a to-do, as GFM reads it. A list holds one
  * kind of item, so the item becomes a to-do list of its own, between the
- * items before and after it. It keeps its id: it is the same item.
+ * items before and after it, or joins a to-do list just above or below
+ * the bulleted one. It keeps its id: it is the same item.
  */
 function makeTask(tr: Transaction, $from: ResolvedPos, checked: boolean): boolean {
 	const { schema } = tr.doc.type;
@@ -417,6 +418,7 @@ function makeTask(tr: Transaction, $from: ResolvedPos, checked: boolean): boolea
 	const start = $from.before(-2);
 	tr.replaceWith(start, $from.after(-2), [before, task, after].filter((n): n is PmNode => n !== null));
 	tr.setSelection(TextSelection.create(tr.doc, start + (before?.nodeSize ?? 0) + 3));
+	joinListsAround(tr, start + (before?.nodeSize ?? 0));
 	return true;
 }
 
@@ -557,6 +559,49 @@ export const HeadingBackspace = Extension.create({
 				return true;
 			},
 		};
+	},
+});
+
+/**
+ * Backspace at the start of a list's first item makes it a paragraph, as
+ * Tiptap's list keys do, its nested list going on with the items after it
+ * as one list. Tiptap lifts the item out whole, which leaves the nested
+ * list and the rest of the list side by side: one list to look at, two to
+ * markdown (`continuesList` in markdown.ts). The list keeps its id and its
+ * items keep theirs; the nested list's items move into it.
+ */
+export const ListBackspace = Extension.create({
+	name: 'listBackspace',
+	// Ahead of `ListKeymap`, which lifts the item and stops there.
+	priority: 1000,
+	addKeyboardShortcuts() {
+		const lift = (editor: Editor) => {
+			const { $from, empty } = editor.state.selection;
+			if (!empty || $from.parentOffset !== 0 || $from.depth < 3) return false;
+			const item = $from.node(-1);
+			const list = $from.node(-2);
+			if (!['listItem', 'taskItem'].includes(item.type.name) || $from.index(-1) !== 0 || $from.index(-2) !== 0) return false;
+			// A nested list's first item goes up a level and keeps its own items.
+			if (['listItem', 'taskItem'].includes($from.node(-3).type.name)) return false;
+			if (list.childCount < 2 || item.lastChild?.type !== list.type) return false;
+			const parentStart = $from.start(-3);
+			// The nested list lands after the item's other blocks.
+			const nested = $from.index(-3) + item.childCount - 1;
+			return editor
+				.chain()
+				.liftListItem(item.type.name)
+				.command(({ tr }) => {
+					const parent = tr.doc.resolve(parentStart).parent;
+					if (parent.maybeChild(nested)?.type !== list.type || parent.maybeChild(nested + 1)?.type !== list.type) return true;
+					let pos = parentStart;
+					for (let i = 0; i < nested; i++) pos += parent.child(i).nodeSize;
+					tr.join(pos + parent.child(nested).nodeSize);
+					tr.setNodeMarkup(pos, undefined, list.attrs);
+					return true;
+				})
+				.run();
+		};
+		return { Backspace: ({ editor }) => lift(editor), 'Mod-Backspace': ({ editor }) => lift(editor) };
 	},
 });
 

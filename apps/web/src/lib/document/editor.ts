@@ -24,7 +24,16 @@ import type * as Y from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import type { AiIntent } from '$lib/ai/inlineComplete';
 import { contract, contractExtensions, idTypes, newId, type Extras } from './schema';
-import { BlockEdges, BlockMoves, HeadingBackspace, IndentKeys, ShortcutBackspace, TodoKeys, pageInputRules } from './commands';
+import {
+	BlockEdges,
+	BlockMoves,
+	HeadingBackspace,
+	IndentKeys,
+	ListBackspace,
+	ShortcutBackspace,
+	TodoKeys,
+	pageInputRules,
+} from './commands';
 import { TableKeys } from './tables';
 import { localUser, renderCaret, renderSelection } from './presence';
 import { pageNodeViews } from './views';
@@ -314,6 +323,7 @@ export function createPageEditor(o: PageEditorOptions): Editor {
 		pageInputRules,
 		ShortcutBackspace,
 		HeadingBackspace,
+		ListBackspace,
 		IndentKeys,
 		BlockEdges,
 		BlockMoves,

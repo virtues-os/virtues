@@ -3899,6 +3899,77 @@ describe('keys a writer reaches for', () => {
 		expect(editor.state.doc.child(1).textContent).toBe('T');
 	});
 
+	// The item went out of the list whole: its nested list and the items
+	// after it were two lists side by side, which export as two.
+	it('Backspace on a first item that holds a nested list leaves one list after it', async () => {
+		for (const [html, kind] of [
+			['<ul><li><p>First</p><ul><li><p>Child</p></li></ul></li><li><p>Second</p></li></ul>', 'bulletList'],
+			[
+				'<ul data-type="taskList"><li data-type="taskItem" data-checked="false"><p>First</p><ul data-type="taskList"><li data-type="taskItem" data-checked="true"><p>Child</p></li></ul></li><li data-type="taskItem" data-checked="false"><p>Second</p></li></ul>',
+				'taskList',
+			],
+		]) {
+			const { doc } = pageDoc(html);
+			const { editor } = bind(doc);
+			await settle();
+			const list = editor.state.doc.child(0);
+			const ids = [list.child(0).child(1).child(0), list.child(1)].map((item) => item.attrs[contract.id.attr]);
+			editor.commands.setTextSelection(posIn(editor, 'First'));
+			expect(press(editor, 'Backspace'), kind).toBe(true);
+			await settle();
+			const top = editor.state.doc;
+			expect(top.childCount, kind).toBe(2);
+			expect([top.child(0).type.name, top.child(0).textContent], kind).toEqual(['paragraph', 'First']);
+			const after = top.child(1);
+			expect(after.type.name, kind).toBe(kind);
+			expect(after.attrs[contract.id.attr], kind).toBe(list.attrs[contract.id.attr]);
+			expect(
+				Array.from({ length: after.childCount }, (_, i) => [after.child(i).textContent, after.child(i).attrs[contract.id.attr]]),
+				kind,
+			).toEqual([
+				['Child', ids[0]],
+				['Second', ids[1]],
+			]);
+		}
+	});
+
+	// Tiptap's to-do rule joins only an item of the type it wraps in, and
+	// the node beside a new to-do is a list: each typed to-do was a list.
+	it('a to-do typed under a to-do list joins it', async () => {
+		for (const typed of ['[] ', '- [ ] ']) {
+			const { doc } = pageDoc('<ul data-type="taskList"><li data-type="taskItem" data-checked="false"><p>Book seats</p></li></ul><p></p>');
+			const { editor } = bind(doc);
+			await settle();
+			const id = editor.state.doc.child(0).attrs[contract.id.attr];
+			editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+			typeIn(editor, typed);
+			typeIn(editor, 'Pack');
+			await settle();
+			const top = editor.state.doc;
+			expect(top.childCount, typed).toBe(1);
+			expect(top.child(0).type.name, typed).toBe('taskList');
+			expect(top.child(0).attrs[contract.id.attr], typed).toBe(id);
+			expect([top.child(0).child(0).textContent, top.child(0).child(1).textContent], typed).toEqual(['Book seats', 'Pack']);
+			expect(new Set([top.child(0).child(0).attrs[contract.id.attr], top.child(0).child(1).attrs[contract.id.attr]]).size, typed).toBe(2);
+		}
+	});
+
+	it('a to-do typed over a to-do list joins it, and Backspace takes it back', async () => {
+		const { doc } = pageDoc('<p>Intro</p><p></p><ul data-type="taskList"><li data-type="taskItem" data-checked="false"><p>Pack</p></li></ul>');
+		const { editor } = bind(doc);
+		await settle();
+		const id = editor.state.doc.child(2).attrs[contract.id.attr];
+		editor.commands.setTextSelection(posIn(editor, 'Intro', 5) + 2);
+		typeIn(editor, '[] ');
+		const list = editor.state.doc.child(1);
+		expect(editor.state.doc.childCount).toBe(2);
+		expect([list.type.name, list.childCount, list.attrs[contract.id.attr]]).toEqual(['taskList', 2, id]);
+		expect(press(editor, 'Backspace')).toBe(true);
+		expect(editor.state.doc.childCount).toBe(3);
+		expect([editor.state.doc.child(1).type.name, editor.state.doc.child(1).textContent]).toEqual(['paragraph', '[] ']);
+		expect(editor.state.doc.child(2).attrs[contract.id.attr]).toBe(id);
+	});
+
 	it('the caret keeps lines of the page around it as it nears the scroller\'s edge', () => {
 		const { doc } = pageDoc('<p>Intro</p>');
 		const { editor } = bind(doc);

@@ -40,13 +40,15 @@ import type {
 	Schema,
 	TagParseRule,
 } from '@tiptap/pm/model';
-import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
+import { Plugin, PluginKey, TextSelection, type Transaction } from '@tiptap/pm/state';
 import {
 	AddMarkStep,
 	AddNodeMarkStep,
 	AttrStep,
 	ReplaceAroundStep,
 	ReplaceStep,
+	canJoin,
+	findWrapping,
 	type Step,
 } from '@tiptap/pm/transform';
 import { ySyncPluginKey } from '@tiptap/y-tiptap';
@@ -62,7 +64,15 @@ import HorizontalRule from '@tiptap/extension-horizontal-rule';
 import Image, { inputRegex as imageInputRegex } from '@tiptap/extension-image';
 import Italic from '@tiptap/extension-italic';
 import Link from '@tiptap/extension-link';
-import { BulletList, ListItem, OrderedList, TaskItem, TaskList, orderedListInputRegex } from '@tiptap/extension-list';
+import {
+	BulletList,
+	ListItem,
+	OrderedList,
+	TaskItem,
+	TaskList,
+	inputRegex as taskInputRegex,
+	orderedListInputRegex,
+} from '@tiptap/extension-list';
 import Paragraph from '@tiptap/extension-paragraph';
 import Strike from '@tiptap/extension-strike';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
@@ -287,6 +297,24 @@ const CountingOrderedList = OrderedList.extend({
 });
 
 /**
+ * The list starting at `pos` joined to a list of its own kind just before
+ * or just after it. Two lists of one kind side by side look like one list
+ * and export as two (`continuesList` in markdown.ts). The list that was
+ * there keeps its id: the one before, or else the one after.
+ */
+export function joinListsAround(tr: Transaction, pos: number): void {
+	const list = tr.doc.nodeAt(pos);
+	if (!list) return;
+	const end = pos + list.nodeSize;
+	const after = tr.doc.nodeAt(end);
+	if (after?.type === list.type && canJoin(tr.doc, end)) {
+		tr.join(end);
+		tr.setNodeMarkup(pos, undefined, after.attrs);
+	}
+	if (tr.doc.resolve(pos).nodeBefore?.type === list.type && canJoin(tr.doc, pos)) tr.join(pos);
+}
+
+/**
  * Tiptap's to-do, its box ticked without taking the keyboard. The stock
  * box focuses the editor before it writes the tick, which on a phone raises
  * the keyboard over half the screen for someone only reading the page, and
@@ -303,6 +331,24 @@ const CountingOrderedList = OrderedList.extend({
  * (`TodoKeys` in commands.ts).
  */
 const QuietTaskItem = TaskItem.extend({
+	// Tiptap's typed `[ ] `, joining the to-do list it makes to one just
+	// above or below. The stock rule joins only an item of the type it
+	// wraps in, and the node beside a new to-do is a list.
+	addInputRules() {
+		return [
+			new InputRule({
+				find: taskInputRegex,
+				handler: ({ state, range, match }) => {
+					const tr = state.tr.delete(range.from, range.to);
+					const block = tr.doc.resolve(range.from).blockRange();
+					const wrapping = block && findWrapping(block, this.type, { checked: match[match.length - 1] === 'x' });
+					if (!block || !wrapping) return null;
+					tr.wrap(block, wrapping);
+					joinListsAround(tr, block.start);
+				},
+			}),
+		];
+	},
 	addNodeView() {
 		// The stock view itself, not `this.parent`: the contract extends this
 		// extension again, and Tiptap hands that level this one as its parent,
