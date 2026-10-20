@@ -22,12 +22,13 @@
 import { Extension, InputRule, isiOS, isMacOS, type Editor, type Range } from '@tiptap/core';
 import type { Node as PmNode, ResolvedPos } from '@tiptap/pm/model';
 import { NodeSelection, Plugin, PluginKey, Selection, TextSelection, type EditorState, type Transaction } from '@tiptap/pm/state';
+import type { EditorView } from '@tiptap/pm/view';
 import type { MenuCommand } from '$lib/components/menuCommand';
 import type { Applet } from '$lib/api/client';
 import type { Anchor } from './anchor';
 import { kindOfMime, mediaNode } from './media';
 import { insertBlockAt } from './place';
-import { contract, isRoute, joinListsAround } from './schema';
+import { contract, isRoute, joinLists, joinListsAround } from './schema';
 import { cellAt, moveRow } from './tables';
 
 export interface TreeCommand extends MenuCommand {
@@ -378,7 +379,7 @@ function makeTable(tr: Transaction, $from: ResolvedPos, delimiter: string): bool
  * Ids cleared through `node`: a copy is a new block, and the editor gives
  * it ids of its own.
  */
-function withoutIds(node: PmNode): PmNode {
+export function withoutIds(node: PmNode): PmNode {
 	if (node.isText) return node;
 	const attrs = contract.id.attr in node.attrs ? { ...node.attrs, [contract.id.attr]: null } : node.attrs;
 	const children: PmNode[] = [];
@@ -775,6 +776,77 @@ export function moveBlock(editor: Editor, by: -1 | 1): boolean {
 	tr.setSelection(shifted(state, tr.doc, by < 0 ? -neighbour.nodeSize : neighbour.nodeSize));
 	editor.view.dispatch(tr.scrollIntoView());
 	return true;
+}
+
+/**
+ * The block or list item a page position is in, as the drag handle takes
+ * it: the innermost list item around `pos`, or else the block at the top of
+ * the page. `pos` may be a block's own position (an image, a rule), as
+ * `posAtCoords` gives for a node with no text.
+ */
+export function unitAround(doc: PmNode, pos: number): { from: number; to: number; node: PmNode } | null {
+	const $pos = doc.resolve(Math.max(0, Math.min(pos, doc.content.size)));
+	for (let d = $pos.depth; d > 1; d--) {
+		if (ITEMS.includes($pos.node(d).type.name)) return { from: $pos.before(d), to: $pos.after(d), node: $pos.node(d) };
+	}
+	if ($pos.depth >= 1) return { from: $pos.before(1), to: $pos.after(1), node: $pos.node(1) };
+	const node = $pos.nodeAfter;
+	return node?.isBlock ? { from: $pos.pos, to: $pos.pos + node.nodeSize, node } : null;
+}
+
+/**
+ * Move the block or list item at `from`..`to` to `target`, a position in
+ * the page as it stands, where the drag handle drops it. Like `moveBlock`,
+ * it is taken out and put back in two edits, so it keeps its id and an
+ * edit another device makes meanwhile never lands in a neighbour. A list
+ * item dropped outside a list goes in as a list of its own; the lists a
+ * move leaves or makes side by side are joined, as typing joins them.
+ * Nothing moves when `target` is inside what moves or at either end of it.
+ */
+export function moveUnitTo(view: EditorView, from: number, to: number, target: number): boolean {
+	const { state } = view;
+	if (target >= from && target <= to) return false;
+	const node = state.doc.nodeAt(from);
+	if (!node || from + node.nodeSize !== to) return false;
+
+	const out = state.tr.deleteRange(from, to);
+	const gap = out.mapping.map(from);
+	joinLists(out, gap);
+	const at = out.mapping.map(target);
+	view.dispatch(out.setMeta('uiEvent', 'drop'));
+
+	const tr = view.state.tr;
+	const before = tr.doc;
+	tr.replaceRangeWith(at, at, node);
+	if (tr.doc.eq(before)) return true;
+	const placed = placedAt(tr.doc, node, tr.mapping.map(at, -1));
+	if (placed !== null) {
+		tr.setSelection(NodeSelection.create(tr.doc, placed));
+		const $placed = tr.doc.resolve(placed);
+		if (node.type.isInGroup('list')) joinListsAround(tr, placed);
+		else if ($placed.depth > 0 && $placed.parent.type.isInGroup('list')) joinListsAround(tr, $placed.before());
+	}
+	view.dispatch(tr.setMeta('uiEvent', 'drop').scrollIntoView());
+	return true;
+}
+
+/**
+ * Where `node` went in, put in near `near`: found by its id, which it kept,
+ * as a list item wrapped in a list of its own sits a level below where it
+ * was put.
+ */
+function placedAt(doc: PmNode, node: PmNode, near: number): number | null {
+	const id = node.attrs[contract.id.attr];
+	let found: number | null = null;
+	if (id) {
+		doc.nodesBetween(Math.max(0, near - 2), Math.min(doc.content.size, near + node.nodeSize + 2), (n, pos) => {
+			if (found !== null) return false;
+			if (n.attrs[contract.id.attr] === id && n.type === node.type) found = pos;
+			return found === null;
+		});
+	}
+	if (found === null && doc.nodeAt(near)?.type === node.type) found = near;
+	return found;
 }
 
 /**

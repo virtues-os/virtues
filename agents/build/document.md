@@ -88,6 +88,13 @@ the contract reaches boxes before the apps that carry it.
   only, and its one step clears the marks waiting to be typed: selected
   table cells and a gap cursor are placed again from anchors taken before
   the edit, and a mark turned on at the caret stays on.
+- **A moved block is the same block.** ⌥↑ and ⌥↓ (`moveBlock`) and a drop
+  from the grip beside a block (`drag-handle.ts`, `moveUnitTo`) take it out
+  and put it back in, two edits and one undo step: it keeps its id, and an
+  edit another device makes meanwhile is lost with the move rather than
+  landing in a neighbour. Lists a move leaves or makes side by side are
+  joined. The grip shows only with a pointer that hovers; there is none on
+  a phone.
 - **A numbered item keeps its number.** An item whose number is not one
   past the item before it (the list's `start`, for the first) carries its
   own: `value` on `listItem`, HTML's `<li value>`, and the items after it

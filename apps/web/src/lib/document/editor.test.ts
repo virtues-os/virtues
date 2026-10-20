@@ -96,7 +96,7 @@ import * as Y from 'yjs';
 import { filterCommands, menuKey } from '$lib/components/menuCommand';
 import { createPageEditor } from './editor';
 import { contract, contractExtensions, ITEM_NUMBER, itemNumbers } from './schema';
-import { appletCommands, insertEntity, moveBlock, treeCommands, type TreeCommandHost } from './commands';
+import { appletCommands, insertEntity, moveBlock, moveUnitTo, treeCommands, unitAround, type TreeCommandHost } from './commands';
 import { pickedRange, putBackQuery, triggers, triggerState } from './triggers';
 import { fileIcon, parseRef } from '$lib/utils/refRoutes';
 import { clearFind, find, findMatches, findNext, findPrevious, findState, selectionEchoes, setFindQuery } from './find';
@@ -517,6 +517,77 @@ describe('moving a block while another device edits', () => {
 		expect(laptop.state.selection.$from.parentOffset).toBe(2);
 		laptop.commands.undo();
 		expect(texts(laptop)).toEqual(['One', 'Two', 'Three']);
+	});
+
+	describe('dropped from the drag handle', () => {
+		const shape = (e: Editor) => {
+			const out: string[] = [];
+			e.state.doc.forEach((n) => out.push(n.type.name));
+			return out;
+		};
+
+		it('lands where it is dropped with its id, words typed into a neighbour meanwhile staying in it, and one undo puts it back', async () => {
+			const d = await twoDevices('<p>One</p><p>Two</p><p>Three</p>');
+			const one = d.laptop.state.doc.child(0);
+			const id = one.attrs[contract.id.attr];
+			typeAtEnd(d.phone, 'Two', ' from phone');
+			expect(moveUnitTo(d.laptop.view, 0, one.nodeSize, d.laptop.state.doc.content.size)).toBe(true);
+			await d.exchange();
+			for (const editor of [d.laptop, d.phone]) expect(texts(editor)).toEqual(['Two from phone', 'Three', 'One']);
+			expect(d.laptop.state.doc.child(2).attrs[contract.id.attr]).toBe(id);
+			expect(d.laptop.state.selection).toBeInstanceOf(NodeSelection);
+			d.laptop.commands.undo();
+			expect(texts(d.laptop)).toEqual(['One', 'Two from phone', 'Three']);
+		});
+
+		it('moves nothing when dropped inside itself or at either of its ends', async () => {
+			const { laptop } = await twoDevices('<p>One</p><p>Two</p>');
+			const size = laptop.state.doc.child(0).nodeSize;
+			const before = laptop.state.doc;
+			for (const target of [0, 2, size]) expect(moveUnitTo(laptop.view, 0, size, target)).toBe(false);
+			expect(laptop.state.doc).toBe(before);
+		});
+
+		it('joins the two lists a block leaves side by side, which would export as two', async () => {
+			const { laptop } = await twoDevices('<ul><li><p>A</p></li></ul><p>Gap</p><ul><li><p>B</p></li></ul><p>End</p>');
+			const from = laptop.state.doc.child(0).nodeSize;
+			moveUnitTo(laptop.view, from, from + laptop.state.doc.child(1).nodeSize, laptop.state.doc.content.size);
+			expect(shape(laptop)).toEqual(['bulletList', 'paragraph', 'paragraph']);
+			expect(laptop.state.doc.child(0).childCount).toBe(2);
+			expect(texts(laptop)).toEqual(['A', 'B', 'End', 'Gap']);
+		});
+
+		it('puts a list item dropped outside its list in a list of its own, and joins it to a list it lands beside', async () => {
+			const { laptop } = await twoDevices('<ul><li><p>A</p></li><li><p>B</p></li></ul><p>End</p>');
+			const item = laptop.state.doc.child(0).child(0).nodeSize;
+			moveUnitTo(laptop.view, 1, 1 + item, laptop.state.doc.content.size);
+			expect(shape(laptop)).toEqual(['bulletList', 'paragraph', 'bulletList']);
+			expect(texts(laptop)).toEqual(['B', 'End', 'A']);
+
+			const { laptop: beside } = await twoDevices('<ul><li><p>A</p></li><li><p>B</p></li></ul><p>End</p>');
+			const listEnd = beside.state.doc.child(0).nodeSize;
+			moveUnitTo(beside.view, 1, 1 + item, listEnd);
+			expect(shape(beside)).toEqual(['bulletList', 'paragraph']);
+			expect(texts(beside)).toEqual(['B', 'A', 'End']);
+		});
+
+		it('takes away a list whose only item it moves', async () => {
+			const { laptop } = await twoDevices('<ul><li><p>A</p></li></ul><p>B</p>');
+			const item = laptop.state.doc.child(0).child(0).nodeSize;
+			moveUnitTo(laptop.view, 1, 1 + item, laptop.state.doc.content.size);
+			expect(shape(laptop)).toEqual(['paragraph', 'bulletList']);
+			expect(texts(laptop)).toEqual(['B', 'A']);
+		});
+
+		it('takes the innermost list item under the pointer, or else the block at the top of the page', async () => {
+			const { laptop } = await twoDevices('<p>Lead</p><ul><li><p>A</p><ul><li><p>B</p></li></ul></li></ul>');
+			const { doc } = laptop.state;
+			const nested = unitAround(doc, posIn(laptop, 'B', 0));
+			expect(nested?.node.type.name).toBe('listItem');
+			expect(nested?.node.textContent).toBe('B');
+			expect(unitAround(doc, posIn(laptop, 'A', 0))?.node.textContent).toBe('AB');
+			expect(unitAround(doc, posIn(laptop, 'Lead', 1))).toMatchObject({ from: 0, node: { type: { name: 'paragraph' } } });
+		});
 	});
 });
 

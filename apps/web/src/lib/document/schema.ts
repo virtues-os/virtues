@@ -296,6 +296,14 @@ const CountingOrderedList = OrderedList.extend({
 	},
 });
 
+/** Join the lists either side of `pos` when they are the same kind. */
+export function joinLists(tr: Transaction, pos: number): void {
+	const $pos = tr.doc.resolve(pos);
+	const before = $pos.nodeBefore;
+	const after = $pos.nodeAfter;
+	if (before && after && before.type === after.type && before.type.isInGroup('list') && canJoin(tr.doc, pos)) tr.join(pos);
+}
+
 /**
  * The list starting at `pos` joined to a list of its own kind just before
  * or just after it. Two lists of one kind side by side look like one list

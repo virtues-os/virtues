@@ -40,6 +40,7 @@ import { pageNodeViews } from './views';
 import { clipboardText } from './markdown';
 import { ProposalsPasted, ProposalsRead, TypingOutsideDeletions } from './suggestions';
 import { KeptThroughOthersEdits } from './anchor';
+import { DragHandle } from './drag-handle';
 import { scrollerOf } from './outline';
 
 /** What the editor binds to: a `TreeDocument`, or anything with its document and caret channel. */
@@ -316,7 +317,13 @@ export function createPageEditor(o: PageEditorOptions): Editor {
 					}),
 				]
 			: []),
-		Dropcursor,
+		Dropcursor.configure({ color: false, width: 2, class: 'doc-dropcursor' }),
+		DragHandle.configure({
+			dragStarted: (view) => (dragSource = view),
+			dragEnded: (view) => {
+				if (dragSource === view) dragSource = null;
+			},
+		}),
 		Gapcursor,
 		ListKeymap,
 		Placeholder.configure({ placeholder: o.placeholder }),

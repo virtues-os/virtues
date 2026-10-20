@@ -66,13 +66,13 @@ import { Extension } from '@tiptap/core';
 import { DOMParser as PmDOMParser, Fragment, Slice, type Node as PmNode, type Schema } from '@tiptap/pm/model';
 import { Plugin, TextSelection, type Selection, type Transaction } from '@tiptap/pm/state';
 import { CellSelection } from '@tiptap/pm/tables';
-import { canJoin, canSplit } from '@tiptap/pm/transform';
+import { canSplit } from '@tiptap/pm/transform';
 import type { EditorView } from '@tiptap/pm/view';
 import { toast } from 'svelte-sonner';
 import { convertNow, type ConvertResult } from './converter';
 import { readsAsCode } from './code-text';
 import { ownUndoStep } from './history';
-import { contract, ITEM_NUMBER, itemNumbers } from './schema';
+import { contract, ITEM_NUMBER, itemNumbers, joinLists } from './schema';
 
 /** Markdown as the blocks a paste makes, now: the page's converter by default. */
 export type Convert = (markdown: string) => ConvertResult;
@@ -294,14 +294,6 @@ export function htmlSlice(schema: Schema, html: string): Slice {
 
 function isList(node: PmNode): boolean {
 	return node.type.isInGroup('list');
-}
-
-/** Join the lists either side of `pos` when they are the same kind. */
-function joinLists(tr: Transaction, pos: number): void {
-	const $pos = tr.doc.resolve(pos);
-	const before = $pos.nodeBefore;
-	const after = $pos.nodeAfter;
-	if (before && after && before.type === after.type && isList(before) && canJoin(tr.doc, pos)) tr.join(pos);
 }
 
 /**

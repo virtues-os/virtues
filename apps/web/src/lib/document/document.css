@@ -825,3 +825,48 @@
 		break-inside: avoid;
 	}
 }
+
+/* The block grip (drag-handle.ts), left of the block under the pointer.
+   Placed by a transform from the editor host's corner. */
+.doc-grip {
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 24px;
+	border-radius: 4px;
+	color: var(--color-foreground-subtle);
+	cursor: grab;
+	opacity: 0;
+	pointer-events: none;
+	transition:
+		opacity 0.12s ease,
+		background 0.12s ease,
+		color 0.12s ease;
+}
+.doc-grip.is-shown {
+	opacity: 1;
+	pointer-events: auto;
+}
+.doc-grip:hover {
+	background: var(--hover-bg);
+	color: var(--color-foreground-muted);
+}
+.doc-grip:active {
+	cursor: grabbing;
+}
+@media (hover: none) {
+	.doc-grip {
+		display: none;
+	}
+}
+
+/* Where a dragged block will land. */
+.doc-dropcursor {
+	background: var(--color-primary);
+	border-radius: 1px;
+}
