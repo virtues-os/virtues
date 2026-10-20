@@ -898,14 +898,23 @@
 
 	/* One classic top bar: TOC trigger (left) + page actions (right). Relative so
 	   the outline drawer anchors to it and spans the full width. */
+	/* Three columns: projects, the outline's title, the page's actions. The
+	   title sits centred while the row has room and shortens before it
+	   reaches either side, so on a narrow column it never covers an icon. */
 	.page-topbar {
 		position: relative;
-		display: flex;
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
 		z-index: var(--z-sticky);
 	}
+	.page-topbar :global(.page-projects) {
+		grid-column: 1;
+		justify-self: start;
+		max-width: 100%;
+	}
 	.page-topbar :global(.page-toolbar) {
-		flex: 1;
+		grid-column: 3;
 	}
 
 	/* Body - editor + optional references rail, side by side */

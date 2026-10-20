@@ -87,26 +87,26 @@
 {/if}
 
 <style>
-	/* No box of its own — the trigger sits inline in the top bar, the drawer
-	   anchors to the bar (.page-topbar is the positioned ancestor). */
+	/* No box of its own: the trigger is a cell of the top bar's grid, and
+	   the drawer anchors to the bar (.page-topbar is the positioned ancestor). */
 	.page-outline {
 		display: contents;
 	}
 
-	/* Centered in the top bar (icons sit at the far right of the same row). */
+	/* The middle column of the top bar's grid (.page-topbar): centred, and
+	   as narrow as the row needs, down to its chevron. */
 	.outline-bar {
 		all: unset;
 		box-sizing: border-box;
-		position: absolute;
-		left: 50%;
-		top: 50%;
-		transform: translate(-50%, -50%);
+		grid-column: 2;
+		justify-self: center;
 		z-index: var(--z-sticky);
 		display: inline-flex;
 		align-items: center;
 		gap: 3px;
-		max-width: 42ch;
-		padding: 5px 8px 5px 12px;
+		min-width: 0;
+		max-width: min(42ch, 100%);
+		padding: 5px 6px 5px 10px;
 		border-radius: 7px;
 		cursor: pointer;
 		font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
@@ -120,7 +120,12 @@
 		color: var(--color-foreground);
 		background: var(--hover-bg);
 	}
+	/* The chevron is what opens the outline when the title has no room. */
+	.outline-bar > :global(:not(.outline-current)) {
+		flex-shrink: 0;
+	}
 	.outline-current {
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
