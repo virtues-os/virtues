@@ -34,7 +34,7 @@
 
 # <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h1-virtues-dark.svg"><img alt="Virtues" src=".github/images/headings/h1-virtues-light.svg" height="40"></picture>
 
-Self-hosted personal AI over the record of your own life.
+A self-hosted AI that works from the data of your own life.
 
 [![CI](https://github.com/virtues-os/virtues/actions/workflows/ci.yml/badge.svg)](https://github.com/virtues-os/virtues/actions/workflows/ci.yml)
 [![License: BUSL-1.1 + MIT](https://img.shields.io/badge/License-BUSL--1.1%20%2B%20MIT-blue.svg)](LICENSE)
@@ -42,132 +42,151 @@ Self-hosted personal AI over the record of your own life.
 
 [Website](https://virtues.com) · [Docs](https://virtues.com/docs) · [Pre-order the server](https://virtues.com/pre-order) · [Discord](https://discord.gg/sSQKzDWqgv)
 
-Virtues is a server you run at home. It pulls in what you already generate —
-messages, calendar, health, location, transactions, recordings, files — keeps
-it in one Postgres database on your own disk, and turns it into three things: a
-written account of each day, a wiki of the people and places in it, and an
-assistant that answers from your actual data. Search runs on your own
-hardware. The model that writes is the only thing that leaves, through a
-metered proxy that keeps nothing. No inbound port, no hostname: your devices
-reach the server by key.
+Virtues is a server you run at home. It collects data you already produce
+(messages, calendar, health, location, transactions, recordings, and files)
+and stores it in one Postgres database on your own disk. From that data it
+produces three things: a written account of each day, a wiki of the people and
+places in your life, and an assistant that answers questions from your data.
 
-*Early software. The [releases page](https://github.com/virtues-os/virtues/releases)
-says what exists; expect rough edges, and expect us to say where they are.*
+Search runs on your own hardware. The only data that leaves the server is what
+gets sent to the language model, and it goes through a metered proxy that
+doesn't store it. The server opens no inbound ports and has no public
+hostname. Your devices connect to it with a cryptographic key.
+
+*Virtues is early software and has rough edges. The
+[releases page](https://github.com/virtues-os/virtues/releases) lists what is
+available today.*
 
 <a id="diy-quickstart"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-diy-quickstart-dark.svg"><img alt="DIY quickstart" src=".github/images/headings/h2-diy-quickstart-light.svg" height="28"></picture>
 
-Two ways to run it. **Do it yourself**: the software on your own Linux machine,
-installed with one command — the path this README covers.
-**[The Virtues Server](https://virtues.com/pre-order)**: the same software on a
-board we build, open for pre-order. Either way you can leave with your data.
+There are two ways to run Virtues. You can install the software on your own
+Linux machine with one command, which is what this README covers. Or you can
+pre-order [the Virtues Server](https://virtues.com/pre-order), which is the
+same software on hardware we build. In both cases you can take your data with
+you if you stop using it.
 
-Five steps on a spare Linux machine — a VM is fine.
+Setup takes five steps on a spare Linux machine. A VM works.
 
-**1. Install.** When it asks how search should run, take the default: the
-server's CPU, with the embedding model Virtues recommends and keeps current.
+**1. Install.** When the installer asks how search should run, keep the
+default. It runs search on the server's CPU with the embedding model we
+recommend, and keeps that model up to date.
 
 ```bash
 curl -sSL https://virtues.com/sh | sudo sh
 ```
 
-**2. Pair a device.** The installer ends by printing a 6-digit code — a
-browser cannot pair, so enter it in the desktop or phone app from
-[virtues.com/downloads](https://virtues.com/downloads). Pairing puts your
-device's key on the server's allowlist; that key is how you reach it from
-anywhere, and a fresh code is one command away:
+**2. Pair a device.** The installer finishes by printing a 6-digit code. Enter
+it in the desktop or phone app from
+[virtues.com/downloads](https://virtues.com/downloads); a web browser can't
+pair. Pairing adds your device's key to the server's allowlist, and that key
+is what lets the device reach the server from anywhere. To get a new code:
 
 ```bash
 sudo virtues pair
 ```
 
-**3. Connect an account.** The app asks for one after pairing. Search runs
-locally, but everything that reaches outside goes through the account: the
-model that writes your days and answers questions, web search, the sign-in
-flows for Google, Strava and the rest, bank data, and the relay that lets your
-devices reach the server from outside your home network. Bringing your own
-model key replaces only the first of those. From the server itself, the same
-step is:
+**3. Connect an account.** The app asks you to connect a Virtues account after
+pairing. Search runs locally, but everything that needs the internet goes
+through this account:
+
+- the language model that writes your days and answers your questions
+- web search
+- sign-in for Google, Strava, and other sources
+- bank data
+- the relay that lets your devices reach the server when you're away from home
+
+If you bring your own model API key, it replaces only the language model. To
+do this step from the server instead:
 
 ```bash
 sudo virtues subscribe
 ```
 
 **4. Connect a source** in the app: Google, Plaid, Strava, or the phone app
-for HealthKit and location. The record starts filling from there, and the
-search index builds as data lands.
+for HealthKit and location. Data starts arriving right away, and the search
+index updates as it comes in.
 
-**5. Wait a day.** Each day is written after it ends, so the first page worth
-reading arrives tomorrow. `virtues status` shows what is flowing in the
-meantime; `virtues doctor` explains anything that isn't.
+**5. Wait a day.** The server writes each day after it ends, so your first
+full day page appears tomorrow. In the meantime, `virtues status` shows which
+data is coming in, and `virtues doctor` explains anything that isn't working.
 
-Search on the CPU is enough for everyday use. If the machine has a GPU or
-NPU, the installer links to [the guide](docs/setup/accelerators.md) for
-running search there; [the full install](#the-full-install) covers running
-your own embedding server.
+Search on the CPU is fast enough for everyday use. If your machine has a GPU
+or NPU, the installer links to [a guide](docs/setup/accelerators.md) for
+running search on it. To run your own embedding server, see
+[the full install](#the-full-install).
 
 <a id="what-it-does"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-what-it-does-dark.svg"><img alt="What it does" src=".github/images/headings/h2-what-it-does-light.svg" height="28"></picture>
 
-**It writes your days.** After a day ends, the server rebuilds it from evidence
-— visits, movement, device presence, audio, messages, purchases, sleep — into a
-timeline, then writes the diary. Plans are not evidence: a calendar entry with
-no physical trace behind it becomes an honest *Unknown*, not a confident
-memory. Each event is scored for novelty against your own history, never a
-population norm. [Design notes](agents/build/the-day.md).
+**It writes up each day.** After a day ends, the server builds a timeline from
+your data (visits, movement, which devices were nearby, audio, messages,
+purchases, and sleep) and then writes a diary entry from that timeline.
+Calendar entries don't count on their own. If a meeting is on your calendar
+but nothing else shows you were there, the timeline marks it *Unknown*. Each
+event also gets a novelty score that compares it with your own history.
+[Design notes](agents/build/the-day.md).
 
-**It keeps a wiki of the people and places in them.** The Sarah in your
-calendar, contacts and messages resolves to one person with a page of her own.
+**It keeps a wiki of the people and places in your life.** If the same person
+appears in your calendar, contacts, and messages, the wiki merges them into
+one person with one page.
 
-**It answers from your data.** The agent has read-only SQL over your tables,
-semantic search over the record, a Python sandbox, web research, and page
-editing. Claude, GPT or Gemini; three modes — full tools, conversation only,
-read-only research.
+**It answers questions from your data.** The assistant can run SQL queries on
+your tables, search your data by meaning, run Python, search the web, and edit
+pages. It works with Claude, GPT, or Gemini. Normal chat has every tool and
+asks before any action that changes something. Deep research uses read-only
+tools and writes its findings up as a page.
 
-**Where the data goes.** It stays on your server. Embedding must run on a
-local address; the installer refuses a public one. GPS is reduced to
-distance and pace before anything is sent. The assistant is the exception and
-the point: a question, or the nightly day-writing, sends the relevant part of
-your record to a model provider — voice as audio, not as transcript. Point it
-at a local model and that stops too. The relay cannot read your traffic; that
-is physics. The inference boundary is a contract with a provider, which is a
-different kind of promise.
-[The privacy boundary](agents/build/privacy-boundary.md)
-says exactly what crosses and what never does.
+**Where your data goes.** Your data stays on your server, with one exception:
+the assistant. When you ask a question, or when the server writes up a day, it
+sends the relevant part of your data to a model provider. Audio goes as audio,
+not as a transcript. GPS tracks are reduced to distance and pace before
+anything is sent. If you point the assistant at a local model, nothing leaves.
+The embedding server must run on a local address, and the installer rejects a
+public one.
+
+The relay can't read your traffic because it never has the keys. Model
+providers can read what they receive, so what happens to it depends on each
+provider's data-retention terms.
+[The privacy boundary](agents/build/privacy-boundary.md) lists exactly what
+leaves the server and what doesn't.
 
 <a id="why-its-shaped-this-way"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-why-it-s-shaped-this-way-dark.svg"><img alt="Why it's shaped this way" src=".github/images/headings/h2-why-it-s-shaped-this-way-light.svg" height="28"></picture>
 
-**Virtues of the digital age.** The name does not mean *use technology to live
-virtuously*. Virtues change with the age, and ours asks for ones the old lists
-never named. Owning the data of your own life is the first: what is held about
-you is what can be used to move you, and someone who cannot read their own
-record cannot notice being moved.
+**The name.** Each era asks for some virtues that older lists didn't include.
+We think owning the data of your own life is one of ours. Companies that
+collect data about you can use it to influence you, and if you can't see that
+data yourself, you can't tell when it's happening.
 
-**Digital subsidiarity** is that virtue as software. A matter belongs to the
-smallest authority competent to handle it, so the record of a life belongs
-where the life is lived — not in a datacenter that can read it, not with a
-company that will outlive its interest in keeping it.
+**Digital subsidiarity.** Subsidiarity is the principle that a decision should
+be made by the smallest group able to handle it. Applied to personal data, it
+means your data should live with you, not in a company's datacenter where the
+company can read it and may stop caring about it.
 
-Every structural decision follows, and each is an incapability rather than a
-promise: the record is on your disk; retrieval runs against local endpoints
-only; nothing inbound is opened at home; the relay moves sealed bytes it has no
-key to read; we are not on your allowlist.
+Where we could, we designed the system so that we have no way into your
+server, so you don't have to rely on our promises:
 
-Essays in [the Library](https://virtues.com/library). Engineering record in
-[`agents/`](agents/).
+- Your data is stored on your own disk.
+- Search only runs against embedding servers on local addresses.
+- Your home network opens no inbound ports.
+- The relay forwards encrypted traffic and has no key to decrypt it.
+- Our devices are not on your server's allowlist.
+
+Essays are in [the Library](https://virtues.com/library). Engineering notes
+are in [`agents/`](agents/).
 
 <a id="the-ontology"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-the-ontology-dark.svg"><img alt="The ontology" src=".github/images/headings/h2-the-ontology-light.svg" height="28"></picture>
 
-The schema is not an implementation detail here — it *is* the interface. It is
-shown to a language model at runtime and it drives a table-driven UI, so a
-column name is a term of art in two directions at once.
+The database schema matters more here than in most apps. The assistant reads
+it at runtime to write its queries, and the UI builds its tables from it, so
+column names need to make sense to both a language model and a person.
 
-Everything ingested lands in one of a couple of dozen **registered
-ontologies** — the list is
-[`crates/virtues-registry/src/ontologies.rs`](crates/virtues-registry/src/ontologies.rs),
-and it is what a life looks like once it is normalized:
+All incoming data is stored in one of about two dozen **registered
+ontologies**, listed in
+[`crates/virtues-registry/src/ontologies.rs`](crates/virtues-registry/src/ontologies.rs).
+These are the main ones:
 
 | Family | Tables |
 |---|---|
@@ -178,26 +197,32 @@ and it is what a life looks like once it is normalized:
 | Attention | `data_activity_app_session`, `data_activity_web_browsing`, `data_content_document`, `data_content_bookmark`, `data_content_conversation` |
 | Voice | `data_audio_session` |
 
-Table prefixes are a namespace, not decoration: `data_` is ingested, `wiki_` is
-the derived entity graph (`wiki_people`, `wiki_places`, `wiki_orgs`,
-`wiki_events`, `wiki_days`), `narrative_` is the life structure
-(`narrative_telos` → `narrative_acts` → `narrative_chapters` → days), `app_` is
-product state, `search_` is the indexes, `elt_` is pipeline plumbing.
+Each table prefix tells you what kind of data the table holds:
 
-The column names follow a law, because the schema once had **seven** different
-names for "when this happened":
+| Prefix | Contents |
+|---|---|
+| `data_` | Data collected from your sources |
+| `wiki_` | The entity graph derived from that data: `wiki_people`, `wiki_places`, `wiki_orgs`, `wiki_events`, `wiki_days` |
+| `narrative_` | The structure of your life story: `narrative_telos` → `narrative_acts` → `narrative_chapters` → days |
+| `app_` | App state |
+| `search_` | Search indexes |
+| `elt_` | Pipeline internals |
 
-- `occurred_at` — an instant, when the thing happened. `started_at` / `ended_at`
-for a span.
-- `created_at` / `updated_at` — when *we* wrote the row. Never the event; that
-conflation is what produced `created_time` sitting beside `created_at`.
-- `is_` / `has_` for booleans, never a bare adjective.
-- A unit suffix on every quantity: `_cents`, `_ms`, `_bytes`, `_meters`.
+Column names follow strict rules. We added them after the schema ended up with
+**seven** different column names for "when this happened":
 
-The agent's `sql_query` tool reads a catalog of this schema and queries it
-read-only, which is the concrete mechanism behind "an AI with real context".
-Adding a data type means adding an ontology and a text extractor; the UI and
-the search index follow from the descriptor.
+- `occurred_at` is when something happened. Use `started_at` / `ended_at` for
+something that lasted a while.
+- `created_at` / `updated_at` record when the server wrote the row, never when
+the event happened. Mixing the two up is how a table once ended up with both
+`created_time` and `created_at`.
+- Booleans start with `is_` or `has_`, such as `is_active` rather than `active`.
+- Every quantity has a unit suffix: `_cents`, `_ms`, `_bytes`, `_meters`.
+
+The assistant's `sql_query` tool reads a description of this schema and runs
+read-only queries against it. That is how the assistant answers from your data.
+To add a new data type, you add an ontology and a text extractor; the UI and
+the search index are generated from the ontology's descriptor.
 
 <a id="architecture"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-architecture-dark.svg"><img alt="Architecture" src=".github/images/headings/h2-architecture-light.svg" height="28"></picture>
@@ -209,22 +234,23 @@ the search index follow from the descriptor.
   <img alt="Sources flow into Virtues Core, one Rust binary on port 8000 holding Postgres and a file store and never an external API key. Core calls your own embedding endpoint — /v1/embeddings on 18181, loopback, LAN or VPN only — and reaches model providers solely through virtues-api on port 9002, which holds the external keys and enforces a budget." src=".github/images/architecture/architecture-light.svg" width="100%">
 </picture>
 
-**Core** is one Rust binary against one Postgres database: ingestion, entity
-resolution, the wiki, pages, chat, and the web UI it serves. It never touches
-an external API key.
+**Core** is a single Rust binary that talks to a single Postgres database. It
+handles ingestion, entity resolution, the wiki, pages, chat, and serves the
+web UI. It never has access to an external API key.
 
-**Retrieval is one HTTP contract, not code we ship.** Core consumes an
-OpenAI-style `/v1/embeddings` endpoint and cannot tell what is behind it. On
-your machine the installer runs the recommended model on the CPU and keeps it
-current, or you run your own server and the installer probes what you point it
-at and pins the model's fingerprint — so a silently swapped model can't
-quietly corrupt your index. On our own board it runs on the NPU.
+**Search uses a standard HTTP API.** Core calls an OpenAI-compatible
+`/v1/embeddings` endpoint and doesn't care what runs behind it. By default the
+installer runs the recommended model on the CPU and keeps it up to date. If you
+run your own embedding server instead, the installer tests it and records the
+model's fingerprint. If the model is later swapped, Core notices the change
+before it can corrupt your index. On the Virtues Server, embedding runs on the
+NPU.
 
-**virtues-api** is the metered edge, and **atlas** owns identity and funding
-(Stripe on one side, an opaque account id on the other; it never sees usage).
-Both live in this repo under `services/`. There is **no managed hosting** —
-nobody runs a server for you; those two services exist so the one you run
-doesn't have to hold anyone's API keys.
+**virtues-api** is the proxy that meters model usage. **atlas** manages
+accounts and payments: it knows your Stripe customer and an anonymous account
+ID, but never sees your usage. Both are in this repo under `services/`. We
+don't offer managed hosting. These two services exist so that your server
+doesn't need to hold anyone's API keys.
 
 | Source | Streams | Method |
 |---|---|---|
@@ -248,27 +274,28 @@ doesn't have to hold anyone's API keys.
 | Requirement | What, and why |
 |---|---|
 | **Host OS** | Debian 13+, Ubuntu 24.04 LTS+, or Fedora 40+, `x86_64` or `aarch64`, with systemd and root. A VM is fine; a container is not. |
-| **Hardware** | 8 GB RAM and an SSD. **No GPU required** — the model that writes is remote, and the one local retrieval model runs on the CPU. |
-| **Storage** | NVMe or SATA SSD. The installer classifies *and measures* the disk first: eMMC is workable to ~100k items, microSD is slow and wears out, NFS/SMB is a corruption risk. |
-| **Inference** | One `/v1/embeddings` endpoint, on loopback, LAN, or VPN — never a public address. The installer runs one on the CPU by default. |
-| **Network** | Outbound 443 only. No port forwarding, no inbound rule, no hostname. |
+| **Hardware** | 8 GB RAM and an SSD. **No GPU required.** The language model runs remotely, and the one local model (for search) runs on the CPU. |
+| **Storage** | NVMe or SATA SSD. The installer checks the disk type and benchmarks it first. eMMC works up to about 100k items, microSD is slow and wears out, and NFS/SMB can corrupt the database. |
+| **Inference** | One `/v1/embeddings` endpoint on loopback, LAN, or VPN. Public addresses are rejected. By default the installer runs one on the CPU. |
+| **Network** | Outbound port 443 only. You don't need port forwarding, inbound firewall rules, or a hostname. |
 
-Machines that clear the bar: a mini PC with 16 GB and an NVMe slot; a used
-small-form-factor desktop; an aarch64 SBC with 8 GB and NVMe over PCIe — not
-microSD. Full reasoning behind each number in
-[What to run it on](docs/setup/requirements.md).
+Good choices include a mini PC with 16 GB of RAM and an NVMe slot, a used
+small-form-factor desktop, or an aarch64 single-board computer with 8 GB of
+RAM and NVMe over PCIe (not microSD).
+[What to run it on](docs/setup/requirements.md) explains each requirement.
 
 <a id="inference"></a>
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-inference-dark.svg"><img alt="Inference" src=".github/images/headings/h3-inference-light.svg" height="22"></picture>
 
-**Only if you want your own server.** The first thing the installer asks,
-before it touches a package or a disk, is how search should run. The default
-runs the recommended embedding model on the CPU. We don't install GPU or NPU
-inference software on hardware we can't test, so for those you run the
-server and we validate it at the door.
+**This section only applies if you run your own embedding server.** Before it
+installs any packages or touches the disk, the installer asks how search
+should run. The default runs the recommended embedding model on the CPU. We
+don't install GPU or NPU inference software, because we can't test it on
+every machine. If you want to use a GPU or NPU, you run the embedding server
+yourself and the installer checks that it works.
 
-[llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` speaks the
-contract. This is the invocation our own systemd unit uses:
+[llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server` supports
+the required API. This is the command our own systemd unit runs:
 
 ```bash
 # embedder — -ngl 0 keeps it on the CPU (its math overflows fp16 on some GPU paths)
@@ -276,14 +303,15 @@ llama-server --embedding --pooling mean -m embeddinggemma-2-Q8_0.gguf \
   --host 127.0.0.1 --port 18181 -c 2048 -b 2048 -ub 2048 -np 1 --cache-ram 0 -ngl 0
 ```
 
-`-np 1` and `--cache-ram 0` take the server from ~2.5 GB resident to ~1 GB.
-Known-good embedders: **embeddinggemma-2** (768; needs llama.cpp b11507+),
-gte-small (384), bge-small-en-v1.5 (384), e5-small-v2 (384),
-nomic-embed-text-v1.5 (768).
+`-np 1` and `--cache-ram 0` cut the server's memory use from about 2.5 GB to
+about 1 GB. These embedding models are known to work (dimensions in
+parentheses): **embeddinggemma-2** (768; needs llama.cpp b11507+), gte-small
+(384), bge-small-en-v1.5 (384), e5-small-v2 (384), and nomic-embed-text-v1.5
+(768).
 
-[Setting up inference](docs/inference.md) is the full page: the exact contract,
-the prompt-prefix and dimension rules, what the fingerprint pin protects you
-from, and how to change model later without losing your record.
+[Setting up inference](docs/inference.md) covers the details: the exact API,
+the rules for prompt prefixes and dimensions, what the fingerprint check
+protects against, and how to switch models later without losing data.
 
 <a id="the-command"></a>
 <a id="install-in-one-command"></a>
@@ -293,61 +321,65 @@ from, and how to change model later without losing your record.
 curl -sSL https://virtues.com/sh | sudo sh
 ```
 
-`virtues.com/sh` is the newest stable release, `sh-pre` the prerelease channel,
-and the one you install on is remembered —
-[Installing](docs/setup/install.md) covers pinning a version and reading the
-script before you run it. On a Virtues Server you run neither: the boot medium
-arrives flashed.
+`virtues.com/sh` installs the newest stable release, and `virtues.com/sh-pre`
+installs the newest prerelease. The server remembers which channel you
+installed from. [Installing](docs/setup/install.md) explains how to pin a
+specific version and how to read the script before running it. The Virtues
+Server doesn't need this step; it ships with the software already installed.
 
-In about ten minutes it asks how you want inference and validates your
-endpoints, measures the disk, installs Postgres 18 + pgvector and Avahi,
-advertises the machine on the LAN as `virtues.local`, starts `virtues.service`
-— which mints and keeps the Ed25519 secret that *is* this server's identity —
-and prints a **6-digit pair code**.
+The install takes about ten minutes. The installer:
+
+1. asks how to run search and checks any embedding server you point it at
+2. benchmarks the disk
+3. installs Postgres 18 with pgvector, and Avahi
+4. advertises the machine on your local network as `virtues.local`
+5. starts `virtues.service`, which generates the Ed25519 key that identifies
+   this server
+6. prints a **6-digit pairing code**
 
 ```bash
 sudo virtues pair   # prints a fresh code, any time
 ```
 
-Enter it in the desktop or mobile app
-([virtues.com/downloads](https://virtues.com/downloads)). **A browser cannot
-pair** — authentication is a held Ed25519 key and a browser tab has none. The
-one exception is a browser running *on the server*, trusted as the loopback
-console at `http://localhost:8000`.
+Enter the code in the desktop or mobile app
+([virtues.com/downloads](https://virtues.com/downloads)). **A web browser
+can't pair**, because signing in requires an Ed25519 key stored on the device
+and a browser tab doesn't have one. The one exception is a browser running on
+the server itself, which is trusted at `http://localhost:8000`.
 
-The [releases page](https://github.com/virtues-os/virtues/releases) carries
-more than the server. The tag says which line a release belongs to:
+The [releases page](https://github.com/virtues-os/virtues/releases) includes
+more than the server. The tag tells you which product a release is for:
 
 | Tag | What it is |
 |---|---|
-| `vX.Y.Z` | The server, stable. The only line `virtues.com/sh` and GitHub's *Latest* point at. |
-| `vX.Y.Z-staging.N` | Server prereleases, cut from `staging`. `virtues upgrade --pre` installs the newest. |
-| `mac-vX.Y.Z` | The Mac app. Its numbers are its own line and never compare with the server's. |
-| `mac-latest` | The newest stable Mac build under a fixed URL, which the app's updater and the download page read. |
-| `models-1` | The model and library files the installer downloads. Not a software release. |
+| `vX.Y.Z` | Stable server releases. `virtues.com/sh` and GitHub's *Latest* label point only at these. |
+| `vX.Y.Z-staging.N` | Server prereleases, built from the `staging` branch. `virtues upgrade --pre` installs the newest one. |
+| `mac-vX.Y.Z` | The Mac app. Its version numbers are separate from the server's and can't be compared with them. |
+| `mac-latest` | The newest stable Mac build at a fixed URL, used by the app's updater and the download page. |
+| `models-1` | Model and library files that the installer downloads. This isn't a software release. |
 
 <a id="commands"></a>
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-commands-dark.svg"><img alt="Commands" src=".github/images/headings/h3-commands-light.svg" height="22"></picture>
 
 | Command | What it does |
 |---|---|
-| `virtues status` | Health in one screen: identity, inference, subscription, devices. `--json` for the same thing in a stable shape, which is what to paste into a support thread |
-| `virtues doctor` | How inference resolved, whether each endpoint is actually serving, whether the server is reachable — every finding with the command that diagnoses it |
-| `virtues pair` | Print a code to connect a device |
-| `virtues device ls` / `add` / `rm <id>` | Who can reach this server. Revoking is real: the next dial is refused |
-| `virtues subscribe` | Connect the server to a subscription, so the assistant can reach a model |
-| `virtues sudo` | Approve a pending sensitive action — proves physical access |
-| `virtues upgrade` / `rollback` | Move between releases on this server's channel — nothing updates itself |
-| `virtues channel` | Print or set the release channel this server follows |
-| `virtues backup` / `restore` | Snapshot and restore server state |
-| `virtues configure-inference` | Re-validate the embedding endpoint after a model change, and offer to re-embed |
-| `virtues reindex` | Rebuild the derived search index from source data |
-| `virtues uninstall` | Leave. Prints the full manifest of what it found before touching anything |
+| `virtues status` | Shows server health on one screen: identity, inference, subscription, and devices. Add `--json` for machine-readable output to paste into a support thread |
+| `virtues doctor` | Checks which embedding server is configured, whether each endpoint responds, and whether the server is reachable. Each problem comes with the command to investigate it |
+| `virtues pair` | Prints a code for connecting a device |
+| `virtues device ls` / `add` / `rm <id>` | Lists, adds, or removes the devices that can reach this server. A removed device is refused on its next connection attempt |
+| `virtues subscribe` | Connects the server to a subscription so the assistant can use a language model |
+| `virtues sudo` | Approves a pending sensitive action. Running it proves you have physical access to the server |
+| `virtues upgrade` / `rollback` | Moves between releases on this server's channel. The server never updates itself |
+| `virtues channel` | Shows or sets the release channel this server follows |
+| `virtues backup` / `restore` | Takes and restores snapshots of the server's data |
+| `virtues configure-inference` | Re-checks the embedding server after a model change, and offers to re-embed your data |
+| `virtues reindex` | Rebuilds the search index from your data |
+| `virtues uninstall` | Removes Virtues. It lists everything it found before deleting anything |
 
-One rule for all of them: `sudo virtues …`. The daemon runs as its own
-`virtues` user and owns the database, so commands that touch it re-exec
-themselves as that user; the ones that change the machine — `upgrade`,
-`restore`, `uninstall` — stay root.
+Run all of them as `sudo virtues …`. The server runs as its own `virtues`
+user, which owns the database, so commands that read or change the database
+switch to that user automatically. Commands that change the machine itself
+(`upgrade`, `restore`, `uninstall`) keep running as root.
 
 <a id="where-things-live"></a>
 ### <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h3-where-things-live-dark.svg"><img alt="Where things live" src=".github/images/headings/h3-where-things-live-light.svg" height="22"></picture>
@@ -355,64 +387,70 @@ themselves as that user; the ones that change the machine — `upgrade`,
 | What | Where |
 |---|---|
 | Binary | `/usr/local/bin/virtues` |
-| Config | `/var/lib/virtues/virtues.env` — edit, then `sudo systemctl restart virtues` |
-| Data | `/var/lib/virtues` — the Postgres cluster and the file store. `DATA_DIR` at install moves it |
+| Config | `/var/lib/virtues/virtues.env`. After editing, run `sudo systemctl restart virtues` |
+| Data | `/var/lib/virtues`, which holds the Postgres cluster and the file store. Set `DATA_DIR` at install to put it somewhere else |
 | Models | `/var/lib/virtues/models` |
 | Units | `virtues`, plus `virtues-embed` when search runs on the CPU |
 | Ports | `8000` server · `5432` Postgres · `18181` embedding |
 | Logs | `journalctl -u virtues -f` |
 
-**When something breaks:** [When something breaks](docs/operate/recovery.md) is
-the owner's page; [agents/build/recovery.md](agents/build/recovery.md) is the
-longer runbook behind it.
+**If something breaks**, start with
+[When something breaks](docs/operate/recovery.md).
+[agents/build/recovery.md](agents/build/recovery.md) is the longer runbook it
+is based on.
 
-**The manual** is in [`docs/`](docs/) and publishes to
-[virtues.com/docs](https://virtues.com/docs): what to run it on, inference,
-installing, reaching your server, upgrading, backup and restore, the CLI.
+**The manual** is in [`docs/`](docs/) and is published at
+[virtues.com/docs](https://virtues.com/docs). It covers hardware, inference,
+installing, reaching your server, upgrading, backup and restore, and the CLI.
 
 <a id="reaching-your-server"></a>
 <a id="reaching-your-box"></a>
 <a id="connect-from-another-machine-v02-preview"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-reaching-your-server-dark.svg"><img alt="Reaching your server" src=".github/images/headings/h2-reaching-your-server-light.svg" height="28"></picture>
 
-**There is no URL that reaches your server.** Reaching it requires holding a
-paired Ed25519 key, not knowing an address.
+**Your server has no public URL.** To connect to it, a device needs a paired
+Ed25519 key. Knowing an address isn't enough.
 
-It is an **iroh endpoint** whose Ed25519 `EndpointId` *is* its identity —
-mutual-key auth, no certificate authority. A paired device dials that identity
-and iroh finds a path: direct on your LAN, hole-punched across NATs, or bounced
-off our relay when neither works. The server dials *out* to the relay, so nothing
-inbound is ever opened at home, and it works behind CGNAT, café wifi, and
-IPv6-only ISPs — anywhere outbound 443 reaches. The relay moves sealed bytes it
-has no key to read; it does see which two keys are talking and how much passes
-between them, which is why we call it encrypted end-to-end rather than blind
+The server is an **iroh endpoint**, identified by its Ed25519 `EndpointId`.
+Both sides authenticate with keys, so no certificate authority is involved. A
+paired device connects to that ID, and iroh finds a route: directly on your
+local network, through NAT hole-punching, or through our relay when neither
+works. The server connects out to the relay, so your home network never opens
+an inbound port. This works behind CGNAT, on café wifi, and on IPv6-only
+ISPs, anywhere outbound port 443 is allowed.
+
+The relay forwards encrypted traffic and has no key to decrypt it. It can see
+which two keys are connected and how much data passes between them. That's
+why we describe it as end-to-end encrypted, and don't claim it sees nothing
 ([design notes](agents/archive/networking-relay-tee.md)).
 
-Pairing is **local-first** — no passwords, no email, no magic links: you walk to
-the machine, run `virtues pair`, and the code puts the new device's key on the
-allowlist. Access is enforced twice —
-iroh refuses an unpaired key *before HTTP exists*, and the app-layer bearer
-remains the authorization keystone on top. Revocation is real:
-`virtues device rm <id>` de-allowlists a key and the next dial is refused. Day
-to day you type none of this; the apps hold the key and do the dialing, and on
-your home network it answers directly on `:8000`.
+Pairing happens **in person**, with no passwords, email, or magic links. You go
+to the machine, run `virtues pair`, and enter the code on the new device, which
+adds its key to the allowlist. Access is checked at two layers: iroh rejects
+an unpaired key before any HTTP request is processed, and the app then checks
+a bearer token on every request. To remove a device, run
+`virtues device rm <id>`; its next connection attempt is refused. In daily use
+you don't type any of this. The apps store the key and handle the connection,
+and on your home network they connect directly on port `8000`.
 
 <a id="build-on-it"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-build-on-it-dark.svg"><img alt="Build on it" src=".github/images/headings/h2-build-on-it-light.svg" height="28"></picture>
 
-**Applets** are the extension system — ingestion and behavior as supervised
-subprocesses, in any language, declared by a `manifest.toml`. A new data source
-is an applet; so is a scheduled job. See
-[`applets/AUTHORING.md`](applets/AUTHORING.md).
+**Applets** are how you extend Virtues. An applet is a subprocess, written in
+any language and described by a `manifest.toml`, that the server starts and
+supervises. New data sources and scheduled jobs are both written as applets.
+See [`applets/AUTHORING.md`](applets/AUTHORING.md).
 
-**Pages** are collaborative documents (ProseMirror + Yjs) with `[[entity]]`
-links into the graph, version history, and AI editing. **Drive** is file storage
-on the server's own disk. Every entity has a URL, which is what makes the web UI's tabs and split panes work.
+**Pages** are collaborative documents (ProseMirror + Yjs) with version history,
+AI editing, and `[[entity]]` links to people, places, and other wiki entries.
+**Drive** stores files on the server's own disk. Every entity has its own URL,
+which is how the web UI supports tabs and split panes.
 
 <a id="development"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-development-dark.svg"><img alt="Development" src=".github/images/headings/h2-development-light.svg" height="28"></picture>
 
-For working on the codebase itself, not for running Virtues in production.
+This section is for working on the code. To run Virtues for real, use the
+install above.
 
 **Prerequisites:** a recent stable Rust toolchain, Node 22+ and pnpm. The dev
 loop below is written for macOS on Apple Silicon: `make db` provisions
@@ -431,24 +469,24 @@ make init   # .env with a fresh encryption key
 make dev    # postgres + api :9002 + core :8000 + web :5173 + embed
 ```
 
-One command runs the whole stack; Ctrl-C stops it. First run fetches the ~320 MB
-embedding model into `.data/`.
+`make dev` runs the whole stack, and Ctrl-C stops it. The first run downloads
+the embedding model (about 320 MB) into `.data/`.
 
 ```bash
-make dev WITH_EMBED=0   # skip the sidecar (search off) — UI-only or low-RAM
+make dev WITH_EMBED=0   # skip the embedding sidecar (search off), for UI work or low RAM
 make dev-info           # per-tab commands, for split logs
 make dev-link           # a login URL for the local stack
 make help               # every target
 ```
 
-Two things that surprise everyone: there is **no `./target`** — the virtues
-repos share one cargo target directory set by an untracked `.cargo/config.toml`
-— and the crate is `virtues`, not `virtues-core`, so tests are
-`cargo test -p virtues --lib`.
+Two things often catch people out. First, there is **no `./target`**
+directory: the virtues repos share one cargo target directory, set by an
+untracked `.cargo/config.toml`. Second, the crate is named `virtues`, not
+`virtues-core`, so run tests with `cargo test -p virtues --lib`.
 
-Several agents work in this one checkout at the same time, which makes a few
-ordinary git commands destructive here. [`CLAUDE.md`](CLAUDE.md) is the working
-agreement: branch discipline, how to commit safely, and how to claim a
+Several agents work in this checkout at the same time, so some ordinary git
+commands can destroy someone else's work here. [`CLAUDE.md`](CLAUDE.md)
+explains the branching rules, how to commit safely, and how to claim a
 migration number.
 
 <a id="the-repo"></a>
@@ -457,13 +495,13 @@ migration number.
 
 ```
 virtues/
-├── virtues-core/            # The heart: Rust daemon (crate `virtues`) — API, ingest, agent, wiki, dayline
-├── applets/                 # Extension system: ingestion + behavior as subprocesses
+├── virtues-core/            # The Rust server (crate `virtues`): API, ingestion, assistant, wiki, day timeline
+├── applets/                 # Built-in applets: data sources and jobs that run as subprocesses
 ├── crates/                  # Shared libraries: iroh transport, reach client, NPU daemon, registry
-├── services/                # The metered cloud edge: virtues-api, atlas
-├── apps/                    # Clients: web (also the Tauri iOS/desktop app), desktop helper, mac collector
-├── docs/                    # The public manual — publishes to virtues.com/docs
-├── agents/                  # The workshop: build contracts, records, plans (never published)
+├── services/                # Cloud services: virtues-api (model proxy), atlas (accounts)
+├── apps/                    # Clients: web (also the Tauri iOS/desktop app), desktop helper, Mac collector
+├── docs/                    # The user manual, published at virtues.com/docs
+├── agents/                  # Internal docs: build guides, records, plans (not published)
 ├── tools/                   # bootstrap.sh + virtues-installer (virtues.com/sh)
 └── masters/, deploy/
 ```
@@ -471,20 +509,21 @@ virtues/
 <a id="security"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-security-dark.svg"><img alt="Security" src=".github/images/headings/h2-security-light.svg" height="28"></picture>
 
-Please report vulnerabilities privately — GitHub → **Security** → *Report a
-vulnerability* — rather than in a public issue. What the relay can and cannot
-see is on [the reach page](docs/operate/reach.md); where data leaves the box is
-[the privacy boundary](agents/build/privacy-boundary.md).
+Please report vulnerabilities privately through GitHub (**Security** →
+*Report a vulnerability*), not in a public issue.
+[The reach page](docs/operate/reach.md) explains what the relay can and can't
+see, and [the privacy boundary](agents/build/privacy-boundary.md) lists where
+data leaves the server.
 
 <a id="license"></a>
 ## <picture><source media="(prefers-color-scheme: dark)" srcset=".github/images/headings/h2-license-dark.svg"><img alt="License" src=".github/images/headings/h2-license-light.svg" height="28"></picture>
 
-- **Everything by default** — [BUSL-1.1](LICENSE): source-available, free to
-self-host for personal or internal organizational use, **not** for offering a
-hosted service or commercial hardware product. Each version converts to Apache
-2.0 four years after its first public release.
-- **The native plugins, the Mac collector and the data registry** — MIT, under
-the `LICENSE` in each directory: [`apps/web/plugins/`](apps/web/plugins/LICENSE),
+- **Most of the repo** is under [BUSL-1.1](LICENSE). The source is available,
+and you can self-host it for free for personal or internal organizational use.
+You can't use it to offer a hosted service or sell a hardware product. Each
+version becomes Apache 2.0 four years after its first public release.
+- **The native plugins, the Mac collector, and the data registry** are MIT,
+under the `LICENSE` in each directory: [`apps/web/plugins/`](apps/web/plugins/LICENSE),
 [`apps/mac-source/`](apps/mac-source/LICENSE) and
 [`crates/virtues-registry/`](crates/virtues-registry/LICENSE).
 
@@ -492,7 +531,3 @@ A directory is BUSL-1.1 unless it carries its own `LICENSE`. Vendored
 third-party code keeps its upstream license, filed beside it; the models and
 libraries a server downloads are listed in
 [`THIRD_PARTY_NOTICES.txt`](THIRD_PARTY_NOTICES.txt).
-
----
-
-<p align="center"><i>Your data. Your infrastructure. Your narrative.</i></p>
