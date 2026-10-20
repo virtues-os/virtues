@@ -5,11 +5,12 @@ edition.workspace = true
 authors.workspace = true
 license.workspace = true
 
-# uniffi wrapper that exposes `virtues-iroh`'s VirtuesIrohClient to Swift (iOS)
-# and Kotlin (Android later). It reuses the Rust client's `request()` — including
-# the redial-once + "don't FIN before read" QUIC handling — rather than
-# reimplementing that framing in Swift. Built as a staticlib, wrapped in an
-# XCFramework, and linked by the iOS app (see build-ios.sh).
+# uniffi wrapper that exposes `virtues-iroh`'s VirtuesIrohClient to Swift (the
+# Mac collector, apps/mac-source) and Kotlin (Android later). It reuses the Rust
+# client's `request()` — including the redial-once + "don't FIN before read" QUIC
+# handling — rather than reimplementing that framing in Swift. Built as a
+# staticlib, wrapped in an XCFramework by build-macos.sh. The iOS app does not
+# use it: its reach plugin links `virtues-iroh` directly as a Rust crate.
 
 [lib]
 name = "virtues_iroh_ffi"

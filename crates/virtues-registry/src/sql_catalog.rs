@@ -287,7 +287,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         // FinanceKit rows written before the phone sent a direction are all
         // positive, deposits and card payments included; the lifeline's spend
         // and income skip them, and a model's query has to as well.
-        note: Some("amounts in cents; positive = money out; group by merchant_category (Plaid, and apple_finance where the card sent a merchant code) or transaction_type (apple_finance); apple_finance rows with NULL transaction_type have no direction, so leave them out of spend and income"),
+        note: Some("cents; positive = money out; group by merchant_category (Plaid, or apple_finance with a merchant code) or transaction_type (apple_finance); NULL transaction_type (apple_finance) = no direction: not spend or income"),
     });
     m.insert("data_financial_asset", TableMetadata {
         description: "Investment holdings (stocks, crypto, etc.)",

@@ -68,13 +68,15 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        # Both keys are overwritten at build time from the merged Tauri config
-        # (`version` in tauri.ios.conf.json) — editing them here has no effect.
-        # iOS keeps its own version line because the retired native app already
-        # shipped 1.1 to TestFlight and App Store Connect refuses an upload at
-        # or below the highest version on the record; the base config's version
-        # tracks the desktop app. Since CFBundleVersion is derived from the same
-        # string, every re-upload needs a `version` bump, not just a new build.
+        # Both keys are overwritten at build time — editing them here has no
+        # effect. CFBundleShortVersionString comes from `version` in
+        # tauri.ios.conf.json. iOS keeps its own version line because the
+        # retired native app already shipped 1.1 to TestFlight and App Store
+        # Connect refuses an upload at or below the highest version on the
+        # record; the base config's version tracks the desktop app.
+        # CFBundleVersion is a UTC timestamp that tools/ios-release.sh passes as
+        # `bundle.iOS.bundleVersion`, so a re-upload of one version only needs
+        # a new build.
         CFBundleShortVersionString: 1.2.0
         CFBundleVersion: "1.2.0"
         NSLocationWhenInUseUsageDescription: "Virtues records your location to build your personal timeline."
@@ -177,6 +179,26 @@ targets:
         outputFiles:
           - $(SRCROOT)/Externals/x86_64/${CONFIGURATION}/libapp.a
           - $(SRCROOT)/Externals/arm64/${CONFIGURATION}/libapp.a
+    # Added to the pbxproj by hand; the script and its reasons live there.
+    # Tauri's API-key signing archives unsigned and keeps only the entitlements
+    # a signature carries, so each embedded extension is ad-hoc signed with its
+    # own <Name>/<Name>.entitlements after the embed (tauri-apps/tauri#15663).
+    postBuildScripts:
+      - name: Keep extension entitlements on an unsigned archive
+        basedOnDependencyAnalysis: false
+        script: |
+          set -e
+          [ "${CODE_SIGNING_ALLOWED:-YES}" = NO ] || exit 0
+          for appex in "${CODESIGNING_FOLDER_PATH}"/PlugIns/*.appex; do
+            [ -d "$appex" ] || continue
+            name=$(basename "$appex" .appex)
+            ent="${SRCROOT}/${name}/${name}.entitlements"
+            if [ ! -f "$ent" ]; then
+              echo "error: ${name}.appex has no entitlements file at ${ent}"
+              exit 1
+            fi
+            /usr/bin/codesign --force --sign - --entitlements "$ent" "$appex"
+          done
   # The Control Center control (pause / record anyway). Added to the pbxproj
   # by hand, never by `xcodegen generate` (see agents/plan/bookmarks-plan.md
   # §1 for what regenerating drops); this entry mirrors it so the spec stays

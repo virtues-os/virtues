@@ -75,11 +75,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      # A pinned release, checksum-verified by install-action, rather than a
-      # script piped into bash from the tip of actionlint's main branch.
-      - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
-        with:
-          tool: actionlint@1.7.12
+      # A pinned release, checked against its sha256, rather than a script
+      # piped into bash from the tip of actionlint's main branch.
+      # (install-action carries no actionlint manifest: it falls back to
+      # cargo-binstall, which cannot find a Go tool.)
+      - name: Install actionlint 1.7.12
+        run: |
+          curl -fsSLo /tmp/actionlint.tgz https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  /tmp/actionlint.tgz" | sha256sum -c -
+          sudo tar -xzf /tmp/actionlint.tgz -C /usr/local/bin actionlint
       - name: actionlint
         run: |
           # -shellcheck= turns OFF the shellcheck pass. Deliberate: it reports

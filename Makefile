@@ -7,7 +7,7 @@
 .DEFAULT_GOAL := help
 .PHONY: help init hooks commit migration dev dev-info dev-core dev-api dev-web dev-embed _embed-ensure _embed-run \
         dev-link dev-reset dev-wipe-mac dev-clean dev-pull dev-real db db-stop deploy-atlas deploy-virtues-api deploy-rollback mac-app mac-dev web-test \
-        iroh-ffi-ios iroh-ffi-mac ios-release release-staging flash
+        iroh-ffi-mac ios-release release-staging flash
 
 
 # Mac dev is FULLY LOCAL by default and never touches prod: `make dev` runs a
@@ -447,19 +447,14 @@ dev-wipe-mac: ## Unpair this Mac (clear keychain bundle + ~/.virtues/bundle.json
 dev-clean: dev-wipe-mac dev-reset ## Full local reset: unpair this Mac + drop/recreate dev dbs (fresh e2e from scratch)
 	@echo "✓ clean slate — run 'make dev' to bring the local stack back up"
 
-# ── iroh client FFI (uniffi Rust→Swift; consumed by the iOS app + Mac collector)
-# The clients reach the box over iroh via a generated xcframework (gitignored —
-# a build artifact). Regenerate it before building a client. `make mac-app` runs
-# the macOS one automatically; iOS devs run `make iroh-ffi-ios` before opening
-# Xcode. Both are idempotent.
-
 web-test: ## Run the frontend checks CI runs (airlock router tests + svelte-check)
 	@node --test "apps/web/src-tauri/ui/*.test.mjs"
 	@cd apps/web && pnpm check
 
-iroh-ffi-ios: ## Build VirtuesIroh.xcframework for the iOS app (run before Xcode)
-	crates/virtues-iroh-ffi/build-ios.sh
-
+# ── iroh client FFI (uniffi Rust→Swift; consumed by the Mac collector) ───────
+# The collector reaches the box over iroh via a generated xcframework (gitignored —
+# a build artifact). `make mac-app` regenerates it; this target does it alone.
+# The iOS app needs none: its reach plugin links `virtues-iroh` as a Rust crate.
 iroh-ffi-mac: ## Build VirtuesIrohMac.xcframework for the Mac collector
 	crates/virtues-iroh-ffi/build-macos.sh
 

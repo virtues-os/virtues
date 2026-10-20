@@ -3,9 +3,11 @@
 # generated Swift bindings, consumed by the Mac collector (apps/mac-source) so it
 # reaches the box over iroh (no bearer — auth is the device's allowlisted key).
 #
-# Produces under crates/virtues-iroh-ffi/generated/:
-#   - VirtuesIrohMac.xcframework   (macos-arm64[ + x86_64] slice)
-#   - VirtuesIroh.swift            (uniffi-generated Swift wrapper; same as iOS)
+# Produces:
+#   - crates/virtues-iroh-ffi/generated/VirtuesIrohMac.xcframework
+#       (macos-arm64[ + x86_64] slice)
+#   - apps/mac-source/Sources/Core/VirtuesIroh.swift
+#       (uniffi-generated Swift wrapper, committed)
 #
 # Requires: rustup target aarch64-apple-darwin (and optionally x86_64), xcodebuild.
 # Idempotent; safe to re-run.

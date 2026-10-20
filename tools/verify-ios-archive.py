@@ -11,11 +11,16 @@ while the source PNGs looked fine to a casual check. What App Store validation
 reads is the compiled `Assets.car`, so that is what this reads.
 
 Usage:
-    tools/verify-ios-archive.py <build-dir> <expected-version>
+    tools/verify-ios-archive.py <build-dir> <expected-version> [--build N] [--unsigned]
+
+`--build` also requires that CFBundleVersion. `--unsigned` is for a build made
+with `tauri ios build --no-sign` (the workflow's dry run): it skips the checks
+that need a distribution signature and keeps the rest.
 
 Exits non-zero with a one-line reason on the first failure.
 """
 
+import argparse
 import json
 import plistlib
 import subprocess
@@ -29,14 +34,33 @@ def fail(msg: str) -> "NoReturn":  # noqa: F821
     raise SystemExit(1)
 
 
-def check_version(app: Path, expected: str) -> None:
+# The app target's name in the Xcode project, which names the archive and the
+# app's entitlements file.
+SCHEME = "virtues_iOS"
+
+# Entitlements App Store validation or the OS will not take without a purpose
+# string. A missing HealthKit string fails the upload with a 409 (both of them,
+# though this app never writes to Health); a missing FinanceKit one SIGABRTs on
+# the first FinanceKit call.
+PURPOSE_STRINGS = {
+    "com.apple.developer.healthkit": (
+        "NSHealthShareUsageDescription",
+        "NSHealthUpdateUsageDescription",
+    ),
+    "com.apple.developer.financekit": ("NSFinancialDataUsageDescription",),
+}
+
+
+def check_version(app: Path, expected: str, build: "str | None" = None) -> None:
     with (app / "Info.plist").open("rb") as fh:
         info = plistlib.load(fh)
     got = info.get("CFBundleShortVersionString")
     if got != expected:
         fail(f"archive says {got}, expected {expected}")
-    build = info.get("CFBundleVersion")
-    print(f"  version {got} (build {build})")
+    got_build = info.get("CFBundleVersion")
+    if build is not None and got_build != build:
+        fail(f"archive is build {got_build}, expected {build}")
+    print(f"  version {got} (build {got_build})")
 
 
 def check_extensions(app: Path) -> None:
@@ -100,28 +124,98 @@ def check_icons(app: Path) -> None:
 
 
 def check_signing(build_dir: Path) -> None:
+    """Every bundle in the export is distribution-signed, the app for TestFlight.
+
+    Read per bundle because the summary lists the app and each extension
+    separately. "Apple Distribution" is matched as a substring so a
+    cloud-managed certificate (the CI path, which signs with an App Store
+    Connect API key) passes under whatever label the summary gives it, while a
+    development certificate still fails.
+    """
     summary = build_dir / "DistributionSummary.plist"
     if not summary.is_file():
         fail(f"no DistributionSummary.plist in {build_dir}")
     with summary.open("rb") as fh:
         data = plistlib.load(fh)
 
-    entry = next(iter(data.values()), None)
-    if not entry:
+    records = next(iter(data.values()), None)
+    if not records:
         fail("DistributionSummary.plist has no entries")
-    rec = entry[0]
 
-    cert_type = rec.get("certificate", {}).get("type")
-    if cert_type != "Apple Distribution":
-        fail(f"signed with '{cert_type}', expected Apple Distribution")
+    for rec in records:
+        name = rec.get("name", "?")
+        cert_type = rec.get("certificate", {}).get("type") or ""
+        if "Apple Distribution" not in cert_type:
+            fail(f"{name} signed with '{cert_type}', expected Apple Distribution")
+        ents = rec.get("entitlements", {})
+        if ents.get("get-task-allow") is not False:
+            fail(f"{name}: get-task-allow is true — that is a debug build")
+        if name.endswith(".app") and ents.get("beta-reports-active") is not True:
+            fail(f"{name}: beta-reports-active is not set — this build cannot go to TestFlight")
 
-    ents = rec.get("entitlements", {})
-    if ents.get("beta-reports-active") is not True:
-        fail("beta-reports-active is not set — this build cannot go to TestFlight")
-    if ents.get("get-task-allow") is not False:
-        fail("get-task-allow is true — that is a debug build")
+    print(f"  {len(records)} bundle(s) signed Apple Distribution, TestFlight-eligible")
 
-    print(f"  signed {cert_type}, TestFlight-eligible")
+
+def source_entitlements(project: Path, name: str) -> dict:
+    """The entitlements a bundle was declared with: `<name>/<name>.entitlements`.
+
+    The same convention the app target's "Keep extension entitlements on an
+    unsigned archive" phase uses to find an extension's file.
+    """
+    path = project / name / f"{name}.entitlements"
+    if not path.is_file():
+        fail(f"no entitlements file at {path} to check {name} against")
+    with path.open("rb") as fh:
+        return plistlib.load(fh)
+
+
+def check_purpose_strings(app: Path, project: Path) -> None:
+    with (app / "Info.plist").open("rb") as fh:
+        info = plistlib.load(fh)
+    declared = source_entitlements(project, SCHEME)
+    keys = [
+        key
+        for ent, required in PURPOSE_STRINGS.items()
+        if declared.get(ent)
+        for key in required
+    ]
+    missing = [key for key in keys if not str(info.get(key) or "").strip()]
+    if missing:
+        fail(f"Info.plist lacks {', '.join(missing)}, which the declared entitlements require")
+    print(f"  {len(keys)} purpose string(s) present for the declared entitlements")
+
+
+def signed_entitlements(bundle: Path) -> dict:
+    out = subprocess.run(
+        ["codesign", "-d", "--entitlements", "-", "--xml", str(bundle)],
+        capture_output=True,
+    )
+    if out.returncode != 0:
+        fail(f"{bundle.name} is not signed: {out.stderr.decode().strip().splitlines()[-1:]}")
+    return plistlib.loads(out.stdout) if out.stdout.strip() else {}
+
+
+def check_entitlements(app: Path, project: Path) -> None:
+    """Every bundle is signed with every entitlement its target declares.
+
+    The CI path signs with an App Store Connect API key, where Tauri archives
+    unsigned and `xcodebuild -exportArchive` keeps only the entitlements an
+    existing signature carries. Tauri covers the app binary and the Xcode
+    project covers the extensions, and a gap in either does not fail the build,
+    the upload or TestFlight processing: the extension just loses its app group
+    and misbehaves on the phone (tauri-apps/tauri#15663). This is the one
+    place it can be seen before upload.
+    """
+    bundles = [(app, SCHEME)] + [
+        (appex, appex.stem) for appex in sorted((app / "PlugIns").glob("*.appex"))
+    ]
+    for bundle, name in bundles:
+        want = source_entitlements(project, name)
+        got = signed_entitlements(bundle)
+        wrong = sorted(key for key, value in want.items() if got.get(key) != value)
+        if wrong:
+            fail(f"{bundle.name} is signed without {', '.join(wrong)} from {name}.entitlements")
+    print(f"  {len(bundles)} bundle(s) carry their declared entitlements")
 
 
 def check_nested_platforms(app: Path) -> None:
@@ -175,20 +269,28 @@ def check_nested_platforms(app: Path) -> None:
 
 
 def main() -> int:
-    if len(sys.argv) != 3:
-        fail("usage: verify-ios-archive.py <build-dir> <expected-version>")
-    build_dir = Path(sys.argv[1])
-    expected = sys.argv[2]
+    parser = argparse.ArgumentParser(description="Verify a built iOS archive and its IPA.")
+    parser.add_argument("build_dir", type=Path)
+    parser.add_argument("expected_version")
+    parser.add_argument("--build", help="the CFBundleVersion the build was given")
+    parser.add_argument("--unsigned", action="store_true", help="built with --no-sign")
+    args = parser.parse_args()
+    build_dir = args.build_dir
+    expected = args.expected_version
+    # gen/apple, where the Xcode project and the entitlements files live.
+    project = build_dir.parent
 
-    app = build_dir / "virtues_iOS.xcarchive/Products/Applications/Virtues.app"
+    app = build_dir / f"{SCHEME}.xcarchive/Products/Applications/Virtues.app"
     if not app.is_dir():
         fail(f"no archived app at {app}")
 
-    check_version(app, expected)
+    check_version(app, expected, args.build)
     check_extensions(app)
     check_icons(app)
     check_nested_platforms(app)
-    check_signing(build_dir)
+    check_purpose_strings(app, project)
+    if not args.unsigned:
+        check_signing(build_dir)
 
     # And again on the IPA, because the IPA is what gets uploaded and it is
     # EXPORTED from the archive rather than being the archive. On 2026-08-27 a
@@ -208,9 +310,12 @@ def main() -> int:
             if not payload:
                 fail(f"{ipa.name} has no Payload/*.app")
             print("  — and the exported IPA:")
-            check_version(payload[0], expected)
+            check_version(payload[0], expected, args.build)
             check_extensions(payload[0])
             check_nested_platforms(payload[0])
+            check_purpose_strings(payload[0], project)
+            if not args.unsigned:
+                check_entitlements(payload[0], project)
     return 0
 
 

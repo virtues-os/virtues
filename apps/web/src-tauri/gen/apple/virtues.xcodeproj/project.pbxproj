@@ -219,6 +219,7 @@
 				F5D4DD44D8C94C19108D9AA0 /* Resources */,
 				0E2A42DCF4B1F90487E4DBD7 /* Frameworks */,
 				0E914C07C72C439895E03E90 /* Embed Foundation Extensions */,
+				8660456630FF80E1C79F8449 /* Keep extension entitlements on an unsigned archive */,
 			);
 			buildRules = (
 			);
@@ -349,6 +350,25 @@
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
 			shellScript = "# App Store refuses an extension whose version differs from its app's, and Tauri\n# writes the version into the app's Info.plist only. Copy it onto the built\n# extension before signing.\nset -e\nAPP=\"${SRCROOT}/virtues_iOS/Info.plist\"\nOUT=\"${TARGET_BUILD_DIR}/${INFOPLIST_PATH}\"\nV=$(/usr/libexec/PlistBuddy -c \"Print :CFBundleShortVersionString\" \"$APP\")\nB=$(/usr/libexec/PlistBuddy -c \"Print :CFBundleVersion\" \"$APP\")\n/usr/libexec/PlistBuddy -c \"Set :CFBundleShortVersionString $V\" -c \"Set :CFBundleVersion $B\" \"$OUT\"\ntouch \"${DERIVED_FILE_DIR}/version-stamp\"\n";
+		};
+		8660456630FF80E1C79F8449 /* Keep extension entitlements on an unsigned archive */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Keep extension entitlements on an unsigned archive";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "# Tauri archives with CODE_SIGNING_ALLOWED=NO when it signs with an App Store\n# Connect API key (.github/workflows/release-ios.yml), and\n# `xcodebuild -exportArchive` keeps only the entitlements an existing signature\n# carries. Tauri signs the app binary for that reason but not the extensions,\n# so without this they reach TestFlight without their app group\n# (tauri-apps/tauri#15663). An ad-hoc signature carries them through export,\n# which re-signs with the real certificate.\n#\n# It runs here, after the embed, because an extension target writes its App\n# Intents metadata after its own script phases and would break a signature made\n# there. Each extension's entitlements are found by its name because that mode\n# also blanks CODE_SIGN_ENTITLEMENTS. A normally signed build skips this.\nset -e\n[ \"${CODE_SIGNING_ALLOWED:-YES}\" = NO ] || exit 0\nfor appex in \"${CODESIGNING_FOLDER_PATH}\"/PlugIns/*.appex; do\n  [ -d \"$appex\" ] || continue\n  name=$(basename \"$appex\" .appex)\n  ent=\"${SRCROOT}/${name}/${name}.entitlements\"\n  if [ ! -f \"$ent\" ]; then\n    echo \"error: ${name}.appex has no entitlements file at ${ent}\"\n    exit 1\n  fi\n  /usr/bin/codesign --force --sign - --entitlements \"$ent\" \"$appex\"\ndone\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

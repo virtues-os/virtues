@@ -87,9 +87,12 @@ That's the whole discipline. Everything else is per-tier native mechanism.
   Tauri bumps — the things that *require* a store release anyway.
 - **Keep the collectors dumb.** Every bit of logic you push into the box is a bit
   you can fix without an App Store round-trip.
-- **Automate only the iOS build.** `make ios-release` builds and signs the IPA;
-  upload stays a manual Transporter drag because it publishes under a personal
-  Apple ID. Automating metadata/screenshots/review-submission is not worth it.
+- **Automate the iOS build up to TestFlight, no further.** An `ios-vX.Y.Z` tag
+  runs `.github/workflows/release-ios.yml`: the `make ios-release` build,
+  signed with the team's App Store Connect API key, verified, and uploaded.
+  `make ios-release` still builds locally, for a Transporter drag under a
+  personal Apple ID. Automating metadata/screenshots/review-submission is not
+  worth it.
 - **The box is the escape hatch.** It can tell an old client "you're too old,
   here's what to do" — so a stale store app is never a dead end.
 

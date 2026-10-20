@@ -1,0 +1,292 @@
+name: Release iOS App
+
+# Builds the Tauri iOS app (apps/web/src-tauri) with tools/ios-release.sh, the
+# script `make ios-release` runs, verifies the exported IPA with
+# tools/verify-ios-archive.py, and uploads it to TestFlight. It stops there:
+# testers, review submission and release stay in App Store Connect, by hand.
+#
+# What runs it:
+#   • a tag `ios-vX.Y.Z` — a release. X.Y.Z must equal `version` in
+#     apps/web/src-tauri/tauri.ios.conf.json: bump it there, commit, and tag
+#     that commit. A tag build runs the workflow file of the tagged commit.
+#   • a dispatch from such a tag, or a re-run — the same version again. The
+#     build number (CFBundleVersion) is a UTC timestamp, so a re-upload needs
+#     no new tag and no version bump.
+#   • a dispatch from a branch, or the weekly schedule — a dry run: built
+#     unsigned (`--no-sign`), verified, never uploaded. The schedule builds
+#     `staging`, so a build that broke shows up before release day, and its
+#     Rust cache is the only one a tag build can read (see the cache step). It
+#     runs the default branch's copy of this file: nothing happens until this
+#     file reaches `main`.
+#
+# Signing is an App Store Connect API key, which Tauri hands to xcodebuild
+# (APPLE_API_KEY / APPLE_API_ISSUER / APPLE_API_KEY_PATH). Tauri archives
+# unsigned and the export signs with a cloud-managed Apple Distribution
+# certificate and automatic profiles, so no certificate or profile is kept
+# here. The Mac's APPLE_CERTIFICATE_* secrets are a Developer ID certificate and
+# cannot sign an App Store build. Use an Admin key: App Manager and Developer
+# keys have been reported to fail the export with "Cloud signing permission
+# error", and App Store Connect has no per-key switch for cloud-managed
+# certificates.
+#
+# Secrets, in the `release` environment only, which admits tag refs alone, so a
+# branch, a PR or a branch dispatch never sees them:
+#   APP_STORE_CONNECT_KEY_ID      the key's ID (10 characters)
+#   APP_STORE_CONNECT_ISSUER_ID   the issuer ID shown above the list of keys
+#   APP_STORE_CONNECT_KEY         the contents of AuthKey_<key id>.p8
+# The environment's tag policy must include `ios-v*`.
+
+on:
+  push:
+    tags:
+      - 'ios-v*'
+  workflow_dispatch:
+  schedule:
+    # Mondays, 09:17 UTC.
+    - cron: '17 9 * * 1'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-ios-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    name: Build, verify, upload
+    if: github.repository == 'virtues-os/virtues'
+    runs-on: blacksmith-6vcpu-macos-15
+    timeout-minutes: 150
+    # Only an `ios-v*` tag gets the environment, and with it the key. Anything
+    # else runs with no environment at all, which is what makes it a dry run.
+    environment: ${{ startsWith(github.ref, 'refs/tags/ios-v') && 'release' || '' }}
+    env:
+      RELEASE: ${{ startsWith(github.ref, 'refs/tags/ios-v') }}
+      IPA: apps/web/src-tauri/gen/apple/build/arm64/Virtues.ipa
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # The schedule builds what the next release would ship, not the
+          # default branch it is started from.
+          ref: ${{ github.event_name == 'schedule' && 'staging' || '' }}
+          # Tags, for the version stamp on the app's own copy of the web app
+          # (tools/ios-release.sh): unstamped, it reads `dev` and takes no
+          # over-the-air update.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # The tag has to match the config rather than be stamped over it, so the
+      # committed config always names what TestFlight has. The Mac line drifted
+      # exactly this way: the tree sat versions behind its own releases.
+      #
+      # The tag is held to a version shape before it reaches GITHUB_ENV, since
+      # later steps splice VERSION into shell.
+      - name: Resolve version + build number
+        id: version
+        run: |
+          CONF=apps/web/src-tauri/tauri.ios.conf.json
+          CONF_VERSION="$(jq -r .version "$CONF")"
+          if [[ "$RELEASE" == "true" ]]; then
+            VERSION="${GITHUB_REF_NAME#ios-v}"
+            if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::'$GITHUB_REF_NAME' is not ios-vX.Y.Z (an App Store version is three numbers)"
+              exit 1
+            fi
+            if [[ "$VERSION" != "$CONF_VERSION" ]]; then
+              echo "::error::$GITHUB_REF_NAME builds $VERSION, but $CONF says $CONF_VERSION."
+              echo "::error::Set its version to $VERSION, commit, and tag that commit."
+              exit 1
+            fi
+          else
+            VERSION="$CONF_VERSION"
+            echo "IOS_UNSIGNED=1" >> "$GITHUB_ENV"
+          fi
+          BUILD_NUMBER="$(date -u +%Y%m%d%H%M)"
+          {
+            echo "VERSION=$VERSION"
+            echo "BUILD_NUMBER=$BUILD_NUMBER"
+          } >> "$GITHUB_ENV"
+          echo "artifact=ios-$VERSION-$BUILD_NUMBER" >> "$GITHUB_OUTPUT"
+          echo "iOS $VERSION ($BUILD_NUMBER), release=$RELEASE"
+
+      # The deployment target needs an iOS SDK at least as new, and nothing
+      # promises the runner's default Xcode has one. Take the newest release
+      # Xcode installed, and fail here rather than an hour into the build.
+      - name: Select Xcode
+        run: |
+          WANT="$(jq -r .bundle.iOS.minimumSystemVersion apps/web/src-tauri/tauri.ios.conf.json)"
+          BEST=""
+          BEST_SDK=""
+          for x in /Applications/Xcode*.app; do
+            case "$x" in *[Bb]eta*) continue ;; esac
+            sdk="$(DEVELOPER_DIR="$x/Contents/Developer" xcrun --sdk iphoneos --show-sdk-version 2>/dev/null || true)"
+            [ -n "$sdk" ] || continue
+            if [ -z "$BEST_SDK" ] || [ "$(printf '%s\n%s\n' "$BEST_SDK" "$sdk" | sort -V | tail -1)" = "$sdk" ]; then
+              BEST="$x"
+              BEST_SDK="$sdk"
+            fi
+          done
+          if [ -z "$BEST" ] || [ "$(printf '%s\n%s\n' "$WANT" "$BEST_SDK" | sort -V | head -1)" != "$WANT" ]; then
+            echo "::error::no Xcode on this runner has an iOS SDK >= $WANT (newest: ${BEST:-none}, SDK ${BEST_SDK:-none})"
+            ls -d /Applications/Xcode*.app || true
+            exit 1
+          fi
+          echo "DEVELOPER_DIR=$BEST/Contents/Developer" >> "$GITHUB_ENV"
+          DEVELOPER_DIR="$BEST/Contents/Developer" xcodebuild -version
+          echo "iOS SDK $BEST_SDK (need $WANT)"
+
+      # `tauri ios build` refuses to start without an iOS simulator runtime,
+      # even for a device build, and asks before installing one, which CI
+      # cannot answer.
+      - name: iOS platform
+        run: |
+          if xcrun simctl list runtimes --json | jq -e '[.runtimes[] | select(.name | startswith("iOS"))] | length > 0' >/dev/null; then
+            xcrun simctl list runtimes | grep iOS
+          else
+            echo "no iOS runtime installed; downloading one"
+            xcodebuild -downloadPlatform iOS
+          fi
+
+      # aarch64-apple-ios for the app; wasm32 for the page editor's markdown
+      # converter, which the UI bake builds (apps/web/scripts/build-converter.mjs).
+      - name: Install Rust (iOS targets)
+        uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-12
+        with:
+          toolchain: stable
+          targets: aarch64-apple-ios,wasm32-unknown-unknown
+
+      # A tag build can read only caches made on the default branch, never one
+      # another tag made, so only the schedule (which runs there) saves. See
+      # warm-release-caches.yml for the same trap on the Linux release.
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          # src-tauri, with its own Cargo.lock, builds the app.
+          workspaces: apps/web/src-tauri -> target
+          save-if: ${{ github.event_name == 'schedule' }}
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4.3.0
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          # 22: @ai-sdk/svelte declares engines.node >=22 (see release-mac.yml).
+          node-version: '22'
+
+      # For tools/strip-icon-alpha.py, which ios-release.sh runs.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install Pillow
+        run: python3 -m pip install --quiet 'Pillow==12.0.0'
+
+      - name: Install web deps (tauri CLI + plugins)
+        working-directory: apps/web
+        run: pnpm install --frozen-lockfile
+
+      # Tauri reads APPLE_API_KEY / APPLE_API_ISSUER / APPLE_API_KEY_PATH;
+      # altool finds AuthKey_<id>.p8 through API_PRIVATE_KEYS_DIR. The key file
+      # sits in the runner's temp directory, never in the workspace. Both IDs
+      # are held to Apple's shapes before they reach a filename or GITHUB_ENV.
+      - name: App Store Connect key
+        if: env.RELEASE == 'true'
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_ISSUER_ID }}
+          KEY_P8: ${{ secrets.APP_STORE_CONNECT_KEY }}
+        run: |
+          missing=()
+          [ -n "$KEY_ID" ] || missing+=(APP_STORE_CONNECT_KEY_ID)
+          [ -n "$ISSUER_ID" ] || missing+=(APP_STORE_CONNECT_ISSUER_ID)
+          [ -n "$KEY_P8" ] || missing+=(APP_STORE_CONNECT_KEY)
+          if [ "${#missing[@]}" -gt 0 ]; then
+            echo "::error::missing from the release environment: ${missing[*]} (see the header of release-ios.yml)"
+            exit 1
+          fi
+          if [[ ! "$KEY_ID" =~ ^[A-Z0-9]{10}$ ]]; then
+            echo "::error::APP_STORE_CONNECT_KEY_ID is not a 10-character key ID"
+            exit 1
+          fi
+          if [[ ! "$ISSUER_ID" =~ ^[0-9a-fA-F-]{36}$ ]]; then
+            echo "::error::APP_STORE_CONNECT_ISSUER_ID is not an issuer UUID"
+            exit 1
+          fi
+          DIR="$RUNNER_TEMP/private_keys"
+          KEY="$DIR/AuthKey_$KEY_ID.p8"
+          mkdir -p "$DIR"
+          (umask 077 && printf '%s\n' "$KEY_P8" > "$KEY")
+          if ! grep -q 'BEGIN PRIVATE KEY' "$KEY"; then
+            echo "::error::APP_STORE_CONNECT_KEY is not the contents of a .p8 file"
+            exit 1
+          fi
+          {
+            echo "APPLE_API_KEY=$KEY_ID"
+            echo "APPLE_API_ISSUER=$ISSUER_ID"
+            echo "APPLE_API_KEY_PATH=$KEY"
+            echo "API_PRIVATE_KEYS_DIR=$DIR"
+          } >> "$GITHUB_ENV"
+
+      # VERSION is already in the config, so the script is not given one.
+      # BUILD_NUMBER, IOS_UNSIGNED and the key arrive through GITHUB_ENV. A
+      # failed verification deletes the IPA, so the upload below has nothing
+      # to send.
+      - name: Build + verify (tools/ios-release.sh)
+        run: tools/ios-release.sh
+
+      # The upload is where App Store validation runs: an IPA it refuses fails
+      # here. It returns once Apple has the build; processing takes minutes
+      # more, and TestFlight emails when the build is ready or if processing
+      # failed. Not passing --wait keeps the runner from billing for that.
+      # `--upload-app -t ios` because every altool in Xcode 26 accepts it.
+      - name: Upload to TestFlight
+        if: env.RELEASE == 'true'
+        run: |
+          xcrun altool --upload-app -f "$IPA" -t ios \
+            --api-key "$APPLE_API_KEY" --api-issuer "$APPLE_API_ISSUER"
+
+      # TestFlight cannot hand a build back, and the archive's dSYMs are what
+      # symbolicate a crash report from it. A local build keeps both in
+      # gen/apple/build; a runner is wiped, so keep them here.
+      - name: Collect the IPA and archive
+        if: always() && env.RELEASE == 'true'
+        run: |
+          OUT="$RUNNER_TEMP/ios-artifact"
+          mkdir -p "$OUT"
+          if [ -f "$IPA" ]; then
+            cp "$IPA" "$OUT/"
+          fi
+          ARCHIVE=apps/web/src-tauri/gen/apple/build/virtues_iOS.xcarchive
+          if [ -d "$ARCHIVE" ]; then
+            ditto -c -k --sequesterRsrc --keepParent "$ARCHIVE" "$OUT/virtues_iOS.xcarchive.zip"
+          fi
+          ls -la "$OUT"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always() && env.RELEASE == 'true'
+        with:
+          name: ${{ steps.version.outputs.artifact }}
+          path: ${{ runner.temp }}/ios-artifact
+          if-no-files-found: ignore
+          retention-days: 30
+
+      - name: Summary
+        run: |
+          {
+            if [ "$RELEASE" = "true" ]; then
+              echo "### iOS $VERSION ($BUILD_NUMBER) is uploaded to TestFlight"
+              echo
+              echo "App Store Connect is processing it. Testers and review submission are done there, by hand."
+            else
+              echo "### iOS $VERSION ($BUILD_NUMBER): dry run passed"
+              echo
+              echo "Built unsigned and verified. Nothing was uploaded."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
