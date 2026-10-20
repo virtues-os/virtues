@@ -33,7 +33,7 @@ host    all   virtues   ::1/128        scram-sha-256
 ```
 
 then `ALTER ROLE virtues WITH PASSWORD 'virtues';` to match `.env`, and
-`SELECT pg_reload_conf();`. Scoped to `virtues` deliberately: `adamjace` and
+`SELECT pg_reload_conf();`. Scoped to `virtues` deliberately: your macOS user and
 `postgres` are login roles with no password, so a blanket rule locks them out
 of TCP.
 
