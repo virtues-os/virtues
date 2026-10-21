@@ -30,6 +30,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/chats/title", post(generate_chat_title_handler))
         .route("/api/chats/live", get(live_chats_handler))
+        .route("/api/chat/opening", get(chat_opening_handler))
         .route("/api/chats/:id/seen", post(mark_chat_seen_handler))
         // Chat Usage & Compaction API
         .route("/api/chats/:id/usage", get(get_chat_usage_handler))
@@ -203,6 +204,11 @@ pub async fn delete_chat_handler(
 /// A turn outlives the tab that started it, so only the box can say.
 pub async fn live_chats_handler(State(state): State<AppState>) -> Response {
     Json(serde_json::json!({ "running": state.live_turns.running() })).into_response()
+}
+
+/// GET /api/chat/opening - What the box says first on an empty new chat.
+pub async fn chat_opening_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::chat_opening::current(state.db.pool()).await)
 }
 
 /// POST /api/chats/:id/seen - The person has this chat on screen.

@@ -56,6 +56,8 @@
 	import Composing from "$lib/components/chat/Composing.svelte";
 	import ConversationRail from "$lib/components/chat/ConversationRail.svelte";
 	import RestingMark from "$lib/components/chat/RestingMark.svelte";
+	import NewChatSky from "$lib/components/chat/NewChatSky.svelte";
+	import type { ChatOpening } from "$lib/api/client";
 	// Getting started — the room after the founder's letter. Same shape as
 	// the interview: the id decides everything, the top of the room is
 	// synthetic and rebuilt from derived state, the cards do the work.
@@ -607,6 +609,10 @@
 
 	// Chat instance - fetched from shared store to survive remounts
 	let chat = $state<Chat>(null!);
+	/** What the box said first on this empty chat, if anything (NewChatSky). */
+	let opening = $state<ChatOpening | null>(null);
+	/** Set only while the first send that replies to the opening is going out. */
+	let openingForSend: string | null = null;
 	let currentChatConversationId = $state<string | null>(null);
 	/** This view is showing the getting-started room. */
 	const inRoom = $derived(isGettingStartedChat(currentChatConversationId));
@@ -642,6 +648,7 @@
 				getChatMode: () => chatMode,
 				getTemporary: () => isGhost,
 				getThink: () => localThink,
+				getOpening: () => openingForSend,
 			});
 			// The draft this conversation left behind, if the composer is empty.
 			if (!isGhost && !input) {
@@ -1632,6 +1639,19 @@
 			// later Claude turn failed; Grok did not care). An attachment on
 			// its own is a complete message — no filler words on the person's
 			// behalf.
+			// Replying to the box's opening: it becomes the chat's first turn
+			// here and, from its id, on the box (store_opening in chat.rs).
+			if (opening?.id && opening.text && chat.messages.length === 0 && !isGhost && !isLocal) {
+				chat.messages = [
+					{
+						id: `${opening.id}_${conversationId}`,
+						role: "assistant",
+						parts: [{ type: "text", text: opening.text }],
+					},
+				];
+				openingForSend = opening.id;
+			}
+
 			await chat.sendMessage(
 				files.length > 0
 					? messageToSend
@@ -1641,6 +1661,8 @@
 			);
 
 			handedOff = true;
+			openingForSend = null;
+			opening = null;
 
 			if (chat.messages.length >= 2 && !isGhost && !titleDone) {
 				await generateTitle();
@@ -2390,25 +2412,14 @@
 						{#await import("$lib/components/chat/ThreeBody.svelte") then { default: ThreeBody }}
 							<ThreeBody onClose={() => (threeBodyOpen = false)} />
 						{/await}
-					{:else if isEmpty && !isGhost && attachments.count === 0}
-						<!-- The opening image: the mark assembling itself in the space
-						     a conversation will fill. Both layouts left this expanse
-						     blank — the phone docks the composer to the bottom, the
-						     desktop floats it at center, and either way a new chat
-						     opened onto nothing at all (VIR-313). Positioned off the
-						     midpoint, so it sits above the composer in both. It yields to
-						     staged attachments: the row of chips grows upward from the
-						     composer and would otherwise collide with the word, and once
-						     someone has dropped a file the blank canvas has done its job.
-						     Decorative, so hidden from the tree and transparent to
-						     touches. -->
-						<div class="init-hero" aria-hidden="true" out:fade={{ duration: 200 }}>
-							<svg class="init-mark" viewBox="0 0 12 10.5" width="19.87" height="17.39" fill="currentColor">
-								<circle class="init-dot init-dot-1" cx="6" cy="2.4" r="1.5" />
-								<circle class="init-dot init-dot-2" cx="2.6" cy="8.1" r="1.5" />
-								<circle class="init-dot init-dot-3" cx="9.4" cy="8.1" r="1.5" />
-							</svg>
-							<span class="init-word">Virtues</span>
+					{:else if isEmpty && !isGhost && !isLocal && attachments.count === 0}
+						<!-- The opening: today as a small sky and the box's first
+						     sentence, or the mark and word when the day has neither.
+						     Positioned off the midpoint, so it sits above the composer
+						     on the phone and the desktop alike. It yields to staged
+						     attachments, whose chips grow upward from the composer. -->
+						<div class="init-hero" out:fade={{ duration: 200 }}>
+							<NewChatSky bind:opening />
 						</div>
 					{/if}
 
@@ -2716,16 +2727,9 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	/* ── The phone's opening image ──
-	   The ∴ mark and wordmark, seated in the upper half of the empty room —
-	   above center so the (bottom-docked) composer and rising keyboard never
-	   crowd it. Mark and word sit on one line, the mark a touch under the
-	   word's size so the two read as one lockup. The entrance is the mark
-	   ASSEMBLING: three dots settle into the trivet one by one, then the
-	   word surfaces beside them. All
-	   keyframes are from-only with `backwards` fill — an explicit `to` with
-	   a fill-mode is what once pinned a disabled button solid ink (see the
-	   airlock's rise animation for the same rule). */
+	/* ── The opening ──
+	   Seated above center, so the phone's bottom-docked composer and rising
+	   keyboard never crowd it. What it draws is NewChatSky's. */
 	.init-hero {
 		position: absolute;
 		left: 0;
@@ -2735,59 +2739,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		gap: 0.5rem;
 		pointer-events: none;
 		color: var(--color-foreground);
 	}
-
-	.init-mark {
-		overflow: visible;
-	}
-
-	.init-word {
-		/* The masthead's register, verbatim: serif, never bold, hairline
-		   stroke for logo presence at text weight. */
-		font-family: var(--font-serif);
-		font-size: 1.375rem;
-		font-weight: 400;
-		letter-spacing: 0.03em;
-		-webkit-text-stroke: 0.2px currentColor;
-	}
-
-	@media (prefers-reduced-motion: no-preference) {
-		.init-dot {
-			animation: init-dot-settle 0.55s cubic-bezier(0.22, 1, 0.36, 1) backwards;
-			transform-origin: center;
-			transform-box: fill-box;
-		}
-		.init-dot-1 {
-			animation-delay: 0.15s;
-		}
-		.init-dot-2 {
-			animation-delay: 0.32s;
-		}
-		.init-dot-3 {
-			animation-delay: 0.49s;
-		}
-		.init-word {
-			animation: init-word-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.75s backwards;
-		}
-	}
-
-	@keyframes init-dot-settle {
-		from {
-			opacity: 0;
-			transform: scale(0.3) translateY(3px);
-		}
-	}
-
-	@keyframes init-word-rise {
-		from {
-			opacity: 0;
-			transform: translateY(8px);
-		}
-	}
-
 
 	.page-container {
 		height: 100%;

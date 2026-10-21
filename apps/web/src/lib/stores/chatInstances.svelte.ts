@@ -119,6 +119,8 @@ export interface TurnInputs {
     projectId?: string;
     activePage?: ActivePageContext;
     model?: string;
+    /** The box's opening turn this first message replies to (chat_opening.rs). */
+    opening?: string;
 }
 
 /** Live status of one worker the turn started, from transient `data-subagent` events. */
@@ -160,6 +162,8 @@ interface CreateChatConfig {
     getTemporary?: () => boolean; // Getter for temporary/ghost mode (don't persist server-side)
     /** Local mode only: whether the small model reasons before answering. */
     getThink?: () => boolean;
+    /** The opening turn the next send replies to, on a new chat's first send. */
+    getOpening?: () => string | null;
 }
 
 class ChatInstanceStore {
@@ -225,7 +229,7 @@ class ChatInstanceStore {
      * @param config - Configuration including conversationId and getModel getter
      */
     getOrCreate(config: CreateChatConfig): Chat {
-        const { conversationId, getModel, getProjectId, getActivePageContext, getPersona, getAgentMode, getChatMode, getTemporary, getThink } = config;
+        const { conversationId, getModel, getProjectId, getActivePageContext, getPersona, getAgentMode, getChatMode, getTemporary, getThink, getOpening } = config;
         const existing = this.instances.get(conversationId);
 
         if (existing) {
@@ -244,6 +248,7 @@ class ChatInstanceStore {
             const agentMode = getAgentMode?.() || 'chat';
             // Omitted unless the person picked one — see getModel above.
             const model = getModel();
+            const opening = getOpening?.();
             return {
                 persona: getPersona?.() || 'default',
                 agentMode,
@@ -260,7 +265,8 @@ class ChatInstanceStore {
                 ...(projectId && { projectId }),
                 // Include active page context if a page is bound
                 ...(activePage && { activePage }),
-                ...(model && { model })
+                ...(model && { model }),
+                ...(opening && { opening })
             };
         };
 

@@ -2542,6 +2542,16 @@ export function resolveRefs(urls: string[]): Promise<{ refs: RefIdentity[] }> {
 	return apiSend('POST', '/refs/resolve', { urls });
 }
 
+/** What the box says first on an empty new chat; nulls when nothing stands out. */
+export interface ChatOpening {
+	id: string | null;
+	text: string | null;
+	event_id: string | null;
+}
+export function getChatOpening(): Promise<ChatOpening> {
+	return apiGet('/chat/opening');
+}
+
 /** The chats with a turn running on the box right now, from any device. */
 export function listLiveChats(): Promise<{ running: string[] }> {
 	return apiGet('/chats/live');
