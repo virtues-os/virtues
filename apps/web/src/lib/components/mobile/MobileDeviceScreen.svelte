@@ -671,13 +671,13 @@
 			title: "Calendar",
 			icon: "ri:calendar-line",
 			what: "Events & invitations",
-			description: "Your calendars' events and invitations. They are plans, not evidence; the record checks them against what actually happened.",
+			description: "Your calendars' events and invitations. Your server compares these plans with what actually happened.",
 		},
 		{
 			key: "contacts",
 			title: "Contacts",
 			icon: "ri:contacts-book-line",
-			what: "Names for the people in your record",
+			what: "Names for the people in your data",
 			description: "Your address book, so your server knows the people in messages, calls and calendars by name.",
 		},
 		{
@@ -971,7 +971,7 @@
 					</p>
 					<p>
 						Recording hours can silence any part of the week, and a place can be marked
-						"never record here". Other people's voices will still be in the record: in
+						"never record here". Other people's voices will still be in your recordings. In
 						some places, recording a conversation needs everyone's consent. That part is
 						yours to honor.
 					</p>

@@ -1,7 +1,7 @@
 {
   "$schema": "https://schemas.tauri.app/capability/schema.json",
   "identifier": "mac",
-  "description": "The Mac's main window. Every page it shows is the app's OWN copy, at virtues://localhost (src-tauri serve_ui; agents/plan/local-ui-plan.md), which Tauri treats as local, so there is no `remote` block: no page the box serves is ever given the app's commands on a Mac. That is the point of the split from default.json (Windows and Linux, which still load the box's copy and so still need the remote grant). Same permissions otherwise; build.rs checks both files against APP_COMMANDS.",
+  "description": "The Mac's main window. Every page it shows is the app's OWN copy, at virtues://localhost (src-tauri serve_ui; agents/record/local-ui.md), which Tauri treats as local, so there is no `remote` block: no page the box serves is ever given the app's commands on a Mac. That is the point of the split from default.json (Windows and Linux, which still load the box's copy and so still need the remote grant). Same permissions otherwise; build.rs checks both files against APP_COMMANDS.",
   "platforms": [
     "macOS"
   ],
@@ -52,6 +52,7 @@
     "core:webview:allow-set-webview-zoom",
     "core:webview:allow-print",
     "opener:default",
+    { "identifier": "opener:allow-open-url", "allow": [{ "url": "sms:*" }] },
     "updater:default",
     "notification:default",
     "shell:allow-open"

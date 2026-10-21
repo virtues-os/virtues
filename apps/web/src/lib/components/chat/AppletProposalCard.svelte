@@ -117,7 +117,7 @@
 			<TextAction quiet onclick={open}>Open</TextAction>
 		{:else if dismissed}
 			<span class="state">
-				Left off. You can turn it on any time.
+				Not turned on. You can turn it on any time.
 			</span>
 			<TextAction quiet onclick={open}>Open</TextAction>
 		{:else}

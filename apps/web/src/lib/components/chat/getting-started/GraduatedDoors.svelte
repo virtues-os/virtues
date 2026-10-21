@@ -58,14 +58,14 @@
 		if (storyDone) {
 			out.push({
 				label: "In your own words",
-				note: "Your account, in the first person.",
+				note: "Your story, written in the first person.",
 				go: () => windowShellStore.openRouteBeside("/wiki/identity", "In your own words"),
 			});
 		}
 		if (!flowing) {
 			out.push({
 				label: "Connect something",
-				note: "The record is only as full as what feeds it.",
+				note: "Each source you connect adds more of your life.",
 				go: () => windowShellStore.navigate("/sources", { label: "Sources" }),
 			});
 		}

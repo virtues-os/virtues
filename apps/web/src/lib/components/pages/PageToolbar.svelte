@@ -29,6 +29,8 @@
 		onIconColorSelect?: (value: string | null) => void;
 		onCoverSelect: (url: string | null) => void;
 		onCopyMarkdown: () => void;
+		/** The page's counts, said at the foot of ⋯ (block pages). */
+		counts?: { words: number; characters: number; links: number } | null;
 		/** Open the page's markdown, read only (block pages). */
 		onViewMarkdown?: () => void;
 		/** Print the page (block pages, which print as A4). */
@@ -52,6 +54,7 @@
 		onIconColorSelect,
 		onCoverSelect,
 		onCopyMarkdown,
+		counts = null,
 		onViewMarkdown,
 		onPrint,
 		onShare,
@@ -259,6 +262,14 @@
 							onclick={() => (showDeleteConfirm = true)}
 						/>
 					{/if}
+					{#if counts}
+						<div class="overflow-divider"></div>
+						<p class="overflow-counts">
+							{counts.words.toLocaleString()} {counts.words === 1 ? "word" : "words"} ·
+							{counts.characters.toLocaleString()} {counts.characters === 1 ? "character" : "characters"} ·
+							{counts.links.toLocaleString()} {counts.links === 1 ? "link" : "links"}
+						</p>
+					{/if}
 				</div>
 			{/snippet}
 		</Popover>
@@ -350,6 +361,14 @@
 		height: 1px;
 		background: var(--color-border-subtle, var(--color-border));
 		margin: 4px 0;
+	}
+
+	.overflow-counts {
+		margin: 0;
+		padding: 4px 10px 6px;
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
 	}
 
 	.delete-confirm {

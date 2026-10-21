@@ -4,14 +4,15 @@
 with HTML as the language the model reads and writes, without the silent
 losses that ruled ProseMirror out on 2026-09-14
 ([editor-kernel-2026-09-14.md](editor-kernel-2026-09-14.md))? For the model's
-path, measured here: yes. This record is evidence, not a decision. The
-2026-09-14 decision stands until a decision record replaces it.
+path, measured here: yes. This document reports measurements and makes no
+decision. The 2026-09-14 decision stands until a decision record replaces it.
 
 ## Why it was reopened
 
 The 2026-09-14 spike measured ProseMirror with **markdown as the stored
 document**: parse on open, serialize on save. Reformat-on-open was the
-disqualifier, and the record asked for new evidence before reopening.
+reason it was rejected, and that document asked for new evidence before
+reopening the question.
 
 Two things are new. The requirements grew: pages with many widgets (applets),
 documents in the Notion or Google Docs sense, A4 output, multiplayer. And the
@@ -19,8 +20,8 @@ pain is now on CodeMirror's side. Every block widget there is a foreign
 object the editor measures and routes the caret around: margin on a widget
 root teleported the caret to position 0, late-loading images broke arrow
 keys, entity cards were removed for cursor fragility, width-breaking was
-shelved. None of those is a bug list; it is the shape of a text editor
-asked to hold components.
+shelved. These are not separate bugs; they all follow from using a text
+editor to contain components.
 
 The design tested here was not tested on 2026-09-14: **the tree is the stored
 document**. Nothing converts on open. HTML is produced from the tree for the
@@ -35,7 +36,7 @@ A scratch build, not in this tree, sized to answer the open questions:
   marks, each with its content expression, attributes and their types, and
   the HTML it reads from and renders to. Widgets are nodes like any other:
   `<virtues-applet ref="…">` (block), `<virtues-mention to="…" label="…">`
-  (inline), `<aside data-tone="…">` (a callout that holds real blocks).
+  (inline), `<aside data-tone="…">` (a callout that contains real blocks).
 - **Rust server**, reading that file at build time: content expressions
   compiled to regexes; a strict HTML ingest; a writer and reader for the Yjs
   XML tree in the exact shape Tiptap's binding uses; block-id edit ops;
@@ -70,7 +71,7 @@ was the test DOM (happy-dom) keeping the newline after `<pre>`, which a real
 browser drops. These only matter for HTML pasted in the browser; the model's
 writes are parsed in Rust alone.
 
-### What a refusal replaces
+### What the Rust parser refuses and ProseMirror silently changes
 
 Rust refused all 19 out-of-contract inputs with a message naming the tag or
 attribute. ProseMirror's parser accepted all 19 and changed each silently:
@@ -115,13 +116,14 @@ The markdown export, read back through the same converter, gives the
 identical tree for 176/179 pages and 125/132 docs. The misses: whitespace
 that moves across a mark edge (6), and four list-shape edge cases. The
 export is a one-way projection for search, embeddings and the model's
-reading, so this is a quality bar, not a fidelity requirement.
+reading, so round-trip identity here is a quality target rather than a
+requirement.
 
 ### Writing while someone else is typing
 
 - The model edits by block id. A replace of a text block with one of the
   same type is applied as a text diff inside it, so a person's caret
-  elsewhere in that block holds. A block that holds an inline widget is
+  elsewhere in that block stays in place. A block that contains an inline widget is
   swapped whole instead; patching around the widget is not built.
 - A read returns a version. A write that names it is merged per block
   against what has changed since: edits to different words both land; edits
@@ -137,7 +139,7 @@ reading, so this is a quality bar, not a fidelity requirement.
 ### A new hazard: an old client deletes what it cannot read
 
 Measured (`skew.test.ts`): an editor whose schema lacks a node type, opening
-a document that holds one, **deletes that element from the shared document**,
+a document that contains one, **deletes that element from the shared document**,
 for every client. Tiptap's binding cannot build the node and its error path
 removes the Yjs element. Phones carry a bundled web app that updates on its
 own schedule, so a widget added on the server would be destroyed by the
@@ -148,7 +150,7 @@ is not handled: the server's markdown export would skip it.
 
 ### Devices and print
 
-- Desktop Chromium: typing, formatting, tables, task lists, a callout holding
+- Desktop Chromium: typing, formatting, tables, task lists, a callout containing
   a list, widget controls writing their attributes through Yjs, two users
   with carets.
 - iOS 26.5 simulator, Safari: typing; Return inside a task item makes a new
@@ -209,7 +211,7 @@ web/      vitest run            conformance (70 cases), version skew, string att
 
 ## Corrections (2026-10-07, same day)
 
-A read-only audit of this record against the code found these statements
+A read-only audit of this document against the code found these statements
 wrong as written. The measurements of the spike itself are unaffected.
 
 - **"About 11 server files write page text."** Most of those only pass a

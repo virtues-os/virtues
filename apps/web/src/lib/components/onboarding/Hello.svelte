@@ -8,7 +8,7 @@
 	- THE MARK FORMS AS AN ARGUMENT. The harness opened on one breathing drop
 	  and a blue orb blooming out of it — the generic "AI is thinking" glow,
 	  and three seconds of waiting before anything happened. The ∴ is logic
-	  before it is a logo (voice.md), and the house already moves it that way
+	  before it is a logo, and the house already moves it that way
 	  (the rail mark's hover, ThinkingMark): premise, premise, therefore. So
 	  the two base dots land, then the apex, each with one ink ring that
 	  spreads and dries. The whole mark is on the page in about a second.

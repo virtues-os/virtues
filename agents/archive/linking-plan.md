@@ -4,10 +4,10 @@
 > UX, security, technology, design, and the decisions still open. Written
 > 2026-08-11, the day linking's absence was discovered as a wall: a box
 > onboarded and paired at an office was unreachable by the app in the same
-> minute, because reach rides the relay and the relay rides the account.
+> minute, because reach goes through the relay and the relay requires the account.
 > Companion to [onboarding.md](../build/onboarding.md).
 
-## Where it sits
+## Position in the onboarding sequence
 
 ```
 1. WIFI    over BLE               the box gets a network       (built, proven)
@@ -15,26 +15,27 @@
 3. PAIR    with the on-screen code the owner's device gets access (built, proven)
 ```
 
-Linking comes **before** pairing, and the ordering is a discovery, not a
-preference. Linking needs only box-outbound internet plus the owner's phone on
-*any* network — it is immune to hostile LANs by construction. Pairing rides a
+Linking comes **before** pairing. We arrived at this ordering after the other
+order failed in the field. Linking needs only box-outbound internet
+plus the owner's phone on *any* network, so a hostile LAN cannot block it. Pairing rides a
 shared LAN, the relay (post-link), or BLE (RPC 0x83, the first device — built
 2026-08-11). Do them in the other order and a dorm/office box ends up
 paired-but-unreachable (observed live); in this order, the relay exists by the
-time anything needs it, and the local network's goodwill stops mattering.
+time anything needs it, and the local network's behavior no longer matters.
 
-## Core narrative
+## Narrative and copy
 
 Plain words on every surface: **get online → link your account → pair your
-phone.** Step 2 is where generic hardware becomes *someone's* box. The account is
-**billing + reach, never data custody** — that sentence is doctrine, UI copy,
-and security invariant all at once, and it appears verbatim on the link page:
+phone.** Step 2 ties the box to an owner's account. The account is
+**billing + reach, never data custody**. That sentence is a product rule, UI
+copy, and a security invariant, and it appears verbatim on the link page:
 
 > *Your data lives on your box. Your subscription pays for what connects it:
 > remote reach, the AI wallet, integrations.*
 
 Money appears exactly once in onboarding, here, and only for people who
-actually owe it (see personas). Tone: dignified confirmation, not SaaS upsell.
+actually owe it (see personas). The tone confirms what the user is doing; it
+should not read as a SaaS upsell.
 The display asks for one verb per screen; this screen's verb is **Link**.
 
 ## The flow
@@ -47,9 +48,9 @@ the api key in the vault. **No callback exists and none may be added** — the
 box speaks outbound only; atlas must never gain the ability to reach into a
 box.
 
-The human-facing closure is physical: within one poll interval of finishing on
-the phone, **the box's screen advances to the pair code**. The thing you just
-claimed visibly wakes up. The atlas success page points at it: *"Done — Quaint
+The user sees completion on the box itself: within one poll interval of
+finishing on the phone, **the box's screen advances to the pair code**, so the
+user watches the box they just linked respond. The atlas success page points at it: *"Done — Quaint
 Tern is showing a pairing code now. Open the Virtues app."*
 
 ```
@@ -72,7 +73,7 @@ display S2: QR + code ──scan──▶ atlas /init?code=…
                           display S3: the pair code
 ```
 
-## Personas — the branch that decides everything
+## Personas
 
 1. **Store buyer (the intended majority).** Bought box + subscription at
    virtues.com. They already have an account and already paid. Link = sign in →
@@ -81,31 +82,32 @@ display S2: QR + code ──scan──▶ atlas /init?code=…
    the store to pre-provision the entitlement at purchase (P2 work, atlas
    side).
 2. **Fresh account (gift, resale, DIY-appliance).** Sign-in creates the account
-   implicitly (email OTP — no password ceremony); checkout; link.
+   implicitly (email OTP — no password); checkout; link.
 3. **Existing member, additional box.** Sign in → covered → tap.
    **Policy decision (open, recommendation below): one subscription covers the
    account's boxes.** Usage caps already meter the real marginal cost (AI
    spend); boxes are endpoints; per-box pricing punishes the best customers.
 4. **BYO-AI members.** BYO is a setting inside the one subscription, not a
-   cheaper tier ([pricing doctrine](../../docs)); BYO users still link — the key
+   cheaper tier ([pricing model](../../docs)); BYO users still link — the key
    still buys relay reach and integrations. Nothing branches here.
 5. **DIY free.** Never sees this step. No display, no forced sub; LAN + BYO
-   transport (the doctrine's auto-noticed overlays) are their reach story.
+   transport (auto-noticed overlays) are how they reach the box.
    `virtues status` prints link state and the URL for the ones who want in.
 
-## Prescribe, never enforce
+## The display guides the order; the app never blocks pairing
 
 The display *sequences* — no code is shown until linked — but the **app can
 always pair regardless** (its pair path does not check `linked`). This is
-deliberate and load-bearing: a soft-force. Support cases, refunds-in-progress,
-dev boxes, and atlas outages must never brick a physically-owned machine at
-screen 2. The screen is the guided path; the app is the sovereign fallback.
-An appliance owner who refuses the subscription owns slower, LAN-only
-hardware — not a brick.
+intentional, and other parts of the design depend on it: the display steers
+the user, but nothing forces them. Support cases, refunds-in-progress, dev
+boxes, and atlas outages must never brick a physically-owned machine at
+screen 2. The screen shows the guided path; the app is the fallback that
+always works. An appliance owner who refuses the subscription ends up with
+slower, LAN-only hardware that still works.
 
 ## Security
 
-- **Proximity remains the authority.** The `user_code` appears only on
+- **Physical proximity is still the proof of ownership.** The `user_code` appears only on
   physical surfaces (display, box TTY). Seeing it = standing at the box — the
   same argument as the pair code.
 - **Code-phishing, both directions.** Attacker shows *their* code to a victim
@@ -122,12 +124,12 @@ hardware — not a brick.
 - **Key custody + scope.** The api key lives in the vault (`box_secrets`,
   encrypted) and buys billing, wallet, relay config — it cannot read record
   data; no server surface exchanges it for data access. Atlas compromise
-  blast radius: billing disruption and relay disruption. Not data. Keep it
-  provably so.
+  blast radius: billing disruption and relay disruption. It does not expose
+  data, and the design must keep it that way.
 - **Payments** are Stripe-hosted; card data never nears box or atlas beyond
   Stripe's own tokens.
 
-## Technology — built vs. owed
+## Technology: what is built and what remains
 
 **Built today (2026-08-11):** display screens resequenced 1/2/3; `linked`
 gate (api key presence) in display state; screen-2 QR + code; the display's
@@ -143,11 +145,11 @@ expiry; stops at linked/claimed).
 - **Box identity in `/init/start`** — the box now POSTs `{name, label,
   model, endpoint_id, version}`; atlas-side rendering is P2.
 - **Captive-network hint on screen 1** — display state carries the nmcli
-  `connectivity` verdict + `wifi_ssid`, and screen 1 names portal/limited
+  `connectivity` result + `wifi_ssid`, and screen 1 names portal/limited
   joins ("wants a browser sign-in") instead of silently reading as offline.
 
 **P1.5 — the claim grant over BLE (box-side BUILT 2026-08-11):**
-The keystone that merges wifi + link into one tap. Vendor RPC `0x82
+This is the piece that merges wifi + link into one tap. Vendor RPC `0x82
 ClaimGrant [grant]`: the signed-in app asks atlas for a pre-approved
 `device_code` and hands it to the box over the same BLE session as the wifi
 credentials (either order). The box stores it as its in-flight link
@@ -163,13 +165,13 @@ PairConsume [code, kind, source, label, endpoint_id]`. The box redeems the
 pair code against its OWN `POST /api/pair/consume` over loopback — one
 enrollment implementation, BLE is just the wire — and streams the consume
 JSON back as chunked results (ScanWifi's stream shape; the Improv frame's
-1-byte length caps a packet at 255 data bytes). Kills the shared-LAN
+1-byte length caps a packet at 255 data bytes). This removes the shared-LAN
 requirement for the first device: client isolation at an office blocked the
 LAN consume POST live on 2026-08-11 while BLE sat there working. Security
 unchanged — the code still proves the person reads the box's glass; and
 because loopback is exempt from the consume handler's per-IP limiter, the
 BLE leg carries its own 10-per-30-min attempt budget so radio range never
-becomes a free brute-force lane. First device only by construction: a
+becomes a free brute-force lane. It serves the first device only, by design: a
 successful pair claims the box and the reconciler stops the BLE service.
 
 **App-side status (2026-08-11):** the connect shell now HAS step 2 — it shows
@@ -191,7 +193,7 @@ Still owed for grant + BLE-pair to fire end-to-end (P2, app + atlas):
 **P2 — atlas-side:**
 - The `/init` page: personas, box naming, implicit account creation, the
   entitled/not branch, success page pointing back at glass + app deep link
-  (`virtues://` scheme — the user provably has the app by step 2).
+  (`virtues://` scheme — the user must already have the app by step 2).
 - Store checkout pre-provisions the entitlement (persona 1's no-payment
   guarantee).
 - Two-sided confirmation (nice-to-have): atlas sees the box's redeeming poll,
@@ -202,14 +204,14 @@ Still owed for grant + BLE-pair to fire end-to-end (P2, app + atlas):
 
 The existing-account door no longer opens a browser. The airlock hosts the
 whole sign-in itself — email → six-digit OTP → approve the box's in-flight
-`user_code` — because atlas auth is OTP with **no password ceremony**, which
+`user_code` — because atlas auth is OTP with **no password**, which
 removes the one thing a webview couldn't safely host. Checkout remains
 browser-only on purpose (Apple Pay, card autofill, URL-bar trust chrome), and
 every inline failure keeps a "sign in with the browser instead" escape.
 
 The sign-in half was already built: `/account/login` + `/account/login/verify`
 (routes/account.rs, migration 0013) exist for exactly this pre-link window and
-deliberately answer identically whether or not the address has an account (no
+answer identically whether or not the address has an account (no
 customer oracle). The airlock calls them as-is. What 2026-08-24 added is the
 last leg — `POST /init/approve` (routes/link.rs): a session-authed approve of
 the box's in-flight link, keyed on the short `user_code`. It is `login_verify`
@@ -229,7 +231,7 @@ What the airlock calls (`connect.html`, INLINE SIGN-IN region):
 
 Errors are HTTP 4xx/5xx with `{error:{code,message}}` bodies. The codes the
 airlock acts on:
-- **`no_subscription`** (402) → the one deliberate browser hand-off, checkout.
+- **`no_subscription`** (402) → the one intended browser hand-off, checkout.
   The airlock also short-circuits on `entitled:false` at verify, so most
   unpaid accounts never hit approve at all; the 402 re-check exists because a
   session can be minted before checkout completes.
@@ -271,7 +273,7 @@ Operational notes:
 - **Completion is still the box's.** Approve only flips the device link; the
   box's own poll redeems it, and the airlock watches (BLE 0x84 going empty
   *and the box reporting linked*, or `/api/box/identity.linked`) for up to 45s
-  before moving on to pairing regardless — prescribe, never enforce. An
+  before moving on to pairing regardless; the airlock guides but never blocks. An
   ok-and-empty BLE answer alone is not treated as "landed" (it also means "not
   minted yet"); the box must confirm.
 
@@ -285,14 +287,14 @@ Operational notes:
 
 The three screens must read as one system: split layout, one verb headline,
 mono for things typed or scanned, the box's codename in the corner of every
-screen (two-box lesson). No spinners, no animation — the panel is furniture
-(24/7 doctrine). Screen 2's code renders large (`58YE-E24F` class strings);
+screen (two-box lesson). No spinners, no animation — the panel stays on 24/7,
+so it should sit still like furniture. Screen 2's code renders large (`58YE-E24F` class strings);
 the QR carries `verification_uri_complete` so scanning skips typing entirely,
 and the URL + code beneath serve the no-camera case.
 
-The atlas page inherits the product's restraint (white-on-white, hairlines,
-serif headline, single accent — the established micro-craft direction), not a
-generic checkout theme. It is the first Virtues *web* surface most owners see;
+The atlas page uses the product's restrained style (white-on-white, hairlines,
+serif headline, single accent — the established micro-craft direction) instead
+of a generic checkout theme. It is the first Virtues *web* surface most owners see;
 it should feel like the display's sibling.
 
 ## Testing plan (dev@virtues.com)

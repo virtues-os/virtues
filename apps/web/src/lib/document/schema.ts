@@ -40,13 +40,15 @@ import type {
 	Schema,
 	TagParseRule,
 } from '@tiptap/pm/model';
-import { Plugin, PluginKey, TextSelection } from '@tiptap/pm/state';
+import { Plugin, PluginKey, TextSelection, type Transaction } from '@tiptap/pm/state';
 import {
 	AddMarkStep,
 	AddNodeMarkStep,
 	AttrStep,
 	ReplaceAroundStep,
 	ReplaceStep,
+	canJoin,
+	findWrapping,
 	type Step,
 } from '@tiptap/pm/transform';
 import { ySyncPluginKey } from '@tiptap/y-tiptap';
@@ -62,7 +64,15 @@ import HorizontalRule from '@tiptap/extension-horizontal-rule';
 import Image, { inputRegex as imageInputRegex } from '@tiptap/extension-image';
 import Italic from '@tiptap/extension-italic';
 import Link from '@tiptap/extension-link';
-import { BulletList, ListItem, OrderedList, TaskItem, TaskList, orderedListInputRegex } from '@tiptap/extension-list';
+import {
+	BulletList,
+	ListItem,
+	OrderedList,
+	TaskItem,
+	TaskList,
+	inputRegex as taskInputRegex,
+	orderedListInputRegex,
+} from '@tiptap/extension-list';
 import Paragraph from '@tiptap/extension-paragraph';
 import Strike from '@tiptap/extension-strike';
 import { Table, TableCell, TableHeader, TableRow } from '@tiptap/extension-table';
@@ -286,6 +296,32 @@ const CountingOrderedList = OrderedList.extend({
 	},
 });
 
+/** Join the lists either side of `pos` when they are the same kind. */
+export function joinLists(tr: Transaction, pos: number): void {
+	const $pos = tr.doc.resolve(pos);
+	const before = $pos.nodeBefore;
+	const after = $pos.nodeAfter;
+	if (before && after && before.type === after.type && before.type.isInGroup('list') && canJoin(tr.doc, pos)) tr.join(pos);
+}
+
+/**
+ * The list starting at `pos` joined to a list of its own kind just before
+ * or just after it. Two lists of one kind side by side look like one list
+ * and export as two (`continuesList` in markdown.ts). The list that was
+ * there keeps its id: the one before, or else the one after.
+ */
+export function joinListsAround(tr: Transaction, pos: number): void {
+	const list = tr.doc.nodeAt(pos);
+	if (!list) return;
+	const end = pos + list.nodeSize;
+	const after = tr.doc.nodeAt(end);
+	if (after?.type === list.type && canJoin(tr.doc, end)) {
+		tr.join(end);
+		tr.setNodeMarkup(pos, undefined, after.attrs);
+	}
+	if (tr.doc.resolve(pos).nodeBefore?.type === list.type && canJoin(tr.doc, pos)) tr.join(pos);
+}
+
 /**
  * Tiptap's to-do, its box ticked without taking the keyboard. The stock
  * box focuses the editor before it writes the tick, which on a phone raises
@@ -303,6 +339,24 @@ const CountingOrderedList = OrderedList.extend({
  * (`TodoKeys` in commands.ts).
  */
 const QuietTaskItem = TaskItem.extend({
+	// Tiptap's typed `[ ] `, joining the to-do list it makes to one just
+	// above or below. The stock rule joins only an item of the type it
+	// wraps in, and the node beside a new to-do is a list.
+	addInputRules() {
+		return [
+			new InputRule({
+				find: taskInputRegex,
+				handler: ({ state, range, match }) => {
+					const tr = state.tr.delete(range.from, range.to);
+					const block = tr.doc.resolve(range.from).blockRange();
+					const wrapping = block && findWrapping(block, this.type, { checked: match[match.length - 1] === 'x' });
+					if (!block || !wrapping) return null;
+					tr.wrap(block, wrapping);
+					joinListsAround(tr, block.start);
+				},
+			}),
+		];
+	},
 	addNodeView() {
 		// The stock view itself, not `this.parent`: the contract extends this
 		// extension again, and Tiptap hands that level this one as its parent,
@@ -424,8 +478,15 @@ function nodeBase(name: string): Node | undefined {
  * address) runs on plain text only and never in inline code, as every
  * mark's does (`onPlainText`, `outsideCodeSpans`): pasted HTML carries its
  * own links, and the text of inline code is what the code says.
+ *
+ * Typing just after a link is not part of it: the stock link is inclusive
+ * whenever autolink is on, so every word typed after a link went into it.
+ * Autolink reads a typed address afresh at each space and needs no help.
  */
 const TypedLink = Link.extend({
+	inclusive() {
+		return false;
+	},
 	addPasteRules() {
 		return (this.parent?.() ?? []).map((rule) => notFromAPage(onPlainText(outsideCodeSpans(rule))));
 	},
@@ -521,7 +582,7 @@ function onPlainText(rule: PasteRule): PasteRule {
 	});
 }
 
-const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+export const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
 /** Where each code span (`` `x` ``) is in `text`, as CommonMark pairs backtick runs: `[from, to)`. */
 function codeSpans(text: string): [number, number][] {
@@ -578,6 +639,30 @@ function delimitedRules(type: MarkType, delims: string[]): PasteRule[] {
 	return delims.map((delim) => onPlainText(markPasteRule({ find: delimited(delim), type })));
 }
 
+/**
+ * A mark's typed rule, its delimiters read as CommonMark reads emphasis:
+ * the opening one is followed by no space and the closing one follows
+ * none. Tiptap's own takes `2 * 3 *` as emphasis, so `2 * 3 * 4` would turn
+ * ` 3 ` italic; it stays text, as the converter reads it.
+ */
+function flanking(type: MarkType, delim: string): InputRule {
+	const d = escapeRegExp(delim);
+	const c = escapeRegExp(delim[0]);
+	return markInputRule({ find: new RegExp(`(?:^|\\s)(${d}(?![\\s${c}])([^${c}]*[^\\s${c}])${d})$`), type });
+}
+
+/** Typed and pasted rules for a mark written between each of `delims`. */
+function delimitedMark(delims: string[]): Partial<MarkConfig> {
+	return {
+		addInputRules() {
+			return delims.map((delim) => flanking(this.type, delim));
+		},
+		addPasteRules() {
+			return delimitedRules(this.type, delims);
+		},
+	};
+}
+
 function markBase(name: string): Mark | undefined {
 	switch (name) {
 		case 'link':
@@ -594,35 +679,21 @@ function markBase(name: string): Mark | undefined {
 				markdownLinks: true,
 			});
 		case 'bold':
-			return Bold.extend({
-				addPasteRules() {
-					return delimitedRules(this.type, ['**', '__']);
-				},
-			});
+			return Bold.extend(delimitedMark(['**', '__']));
 		case 'italic':
-			return Italic.extend({
-				addPasteRules() {
-					return delimitedRules(this.type, ['*', '_']);
-				},
-			});
+			return Italic.extend(delimitedMark(['*', '_']));
 		case 'underline':
 			return Underline;
 		// Each with a second key beside Tiptap's own (⌘⇧S, ⌘E).
 		case 'strike':
 			return Strike.extend({
+				...delimitedMark(['~~']),
 				addKeyboardShortcuts() {
 					return { ...this.parent?.(), 'Mod-Shift-x': () => this.editor.commands.toggleStrike() };
 				},
-				addPasteRules() {
-					return delimitedRules(this.type, ['~~']);
-				},
 			});
 		case 'highlight':
-			return Highlight.extend({
-				addPasteRules() {
-					return delimitedRules(this.type, ['==']);
-				},
-			});
+			return Highlight.extend(delimitedMark(['==']));
 		case 'veil':
 			return Veil;
 		case 'code':
@@ -1146,15 +1217,24 @@ function markPriorities(): Record<string, number> {
 	return out;
 }
 
-export function contractExtensions(extras: Extras = {}): Extensions {
+/**
+ * Part of the contract: the node and mark names an editor holds, for an
+ * editor that holds less than a page (the chat composer). Each keeps its
+ * page spec; a node's content may name only nodes in the part.
+ */
+export type ContractPart = { nodes: readonly string[]; marks: readonly string[] };
+
+export function contractExtensions(extras: Extras = {}, part?: ContractPart): Extensions {
 	const extensions: Extensions = [ContractGuard, DropsReadAsPastes];
 	for (const [name, spec] of Object.entries(contract.nodes)) {
+		if (part && !part.nodes.includes(name)) continue;
 		const config = { ...nodeConfig(name, spec), ...(extras.nodes?.[name] ?? {}) };
 		const base = nodeBase(name);
 		extensions.push(base ? base.extend(config) : Node.create(config));
 	}
 	const priority = markPriorities();
 	for (const [name, spec] of Object.entries(contract.marks)) {
+		if (part && !part.marks.includes(name)) continue;
 		const config = { ...markConfig(name, spec), priority: priority[name], ...(extras.marks?.[name] ?? {}) };
 		const base = markBase(name);
 		extensions.push(base ? base.extend(config) : Mark.create(config));

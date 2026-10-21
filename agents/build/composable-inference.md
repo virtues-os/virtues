@@ -1,16 +1,16 @@
 # Composable Inference
 
-How the box gets embeddings, and how the search index defends
-itself against a model it was not built with. Code:
+How the box gets embeddings, and how the search index protects
+itself against vectors from a model it was not built with. Code:
 `tools/virtues-installer/src/mode.rs` (the choice, validation, fingerprint),
 `tools/virtues-installer/src/install.rs` (the env it writes),
 `virtues-core/src/search/embedder.rs` (the boot guard, widths),
 `virtues-core/src/database/mod.rs::ensure_embedding_dims`,
 `virtues-core/src/cli/{configure_inference,reindex}.rs`.
 
-## The architecture in one sentence
+## Architecture overview
 
-**Virtues consumes one HTTP contract and defends its index.** An OpenAI-style
+**Virtues calls one HTTP API and protects its index from mismatched models.** An OpenAI-style
 `/v1/embeddings` endpoint. Search doesn't rerank: the fused dense + BM25 order
 is the ranking (`search::query` has the measurements). Where the endpoint comes
 from is decided once, at install (`InferenceMode`), and there are three answers:
@@ -21,10 +21,10 @@ from is decided once, at install (`InferenceMode`), and there are three answers:
 | **Bundled** | any other machine; the default | the CPU `llama-server` sidecar we build and smoke-test in CI: EmbeddingGemma 2 (Q8_0, 768-d native) on `:18181`, kept current by `virtues upgrade` ([model-migration.md](model-migration.md)) | the interactive picker, or `VIRTUES_INFERENCE=bundled` |
 | **Manual** | any other machine | whatever the user runs — llama.cpp, Ollama, LM Studio, a vendor NPU server | the picker: recipes, then URLs, a probe, and a pinned fingerprint |
 
-There is deliberately **no managed GPU/NPU mode for arbitrary hardware**: we
+We do not offer a **managed GPU/NPU mode for arbitrary hardware**: we
 never install or babysit inference software on machines we cannot test. Either
 it is our board (and our daemon), or it is the CPU trial with zero hardware
-variance, or the user owns the endpoint and we validate it at the door. The
+variance, or the user owns the endpoint and we validate it at install time. The
 bundled path is labelled "not for production" because it is slow on large
 corpora; the daily-use path off our board is Manual.
 
@@ -52,7 +52,7 @@ Written by the installer into the box env file; read by core.
   and IPv6 ULA pass). This *is* the "no cloud embedding APIs" rule.
   `VIRTUES_ALLOW_REMOTE_INFERENCE=1` is the logged override.
 - **Validation runs before any system mutation**: dims probe, a p50 latency
-  verdict, and the fingerprint.
+  check, and the fingerprint.
 - **Prompt prefixes are a property of the model**, so they are configured next
   to it and never defaulted: unset means no prefix, the only safe assumption
   about an unknown model. The installer resolves them by a ladder — explicit
@@ -84,8 +84,8 @@ A width is a property of a model; nothing in the binary asserts one.
 
 In Manual mode the embedder re-embeds two fixed probe strings at boot and
 refuses to serve if their fingerprint differs from `VIRTUES_EMBED_FINGERPRINT`.
-Mismatch is **a hard stop on writes plus a user-chosen recovery** — never
-automatic, never silent.
+A mismatch **stops all writes until the user chooses a recovery**; recovery
+is never automatic or silent.
 
 | Command | When | What it does |
 |---|---|---|

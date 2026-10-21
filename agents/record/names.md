@@ -1,9 +1,9 @@
-# Names have one owner
+# Chat, page and project names have one owner
 
 Shipped on `wave` 2026-09-30 → 10-01 in four slices (`006666c4`, `50fc8707`,
 `690661ea`, and the slice 4 commit). The rule: **a chat, page or project's
-name, icon and color belong to it. Anything that points at it holds the URL
-and asks.**
+name, icon and color belong to it. Anything that points at it stores only the
+URL and looks the name up.**
 
 ## What was wrong (swept 2026-09-30)
 
@@ -37,7 +37,7 @@ Two worse bugs came out of the same sweep:
 
 Writes go through `renameRef(url, title)` and `setRefLook(url, {icon, color})`.
 Renaming or re-iconing from a pin, a tab or a sidebar row changes the thing
-itself. A pin has no name of its own unless nothing stands behind it (an
+itself. A pin has no name of its own unless its target has no name to look up (an
 external URL, an app screen), and a tab never has one: a tab with no record
 behind it offers no Rename.
 

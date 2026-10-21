@@ -49,8 +49,16 @@
 	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 	import { setup } from '$lib/components/setup/setup.svelte';
 	import { roomForRoute, roomsInGroup, type Room } from '$lib/sidebar/rooms';
+	import { appletsStore } from '$lib/stores/applets.svelte';
 
 	const setupRooms = roomsInGroup('setup');
+
+	/** Applets that need you, counted against the room that holds them. */
+	function attention(room: Room): number {
+		if (room.id === 'home') return appletsStore.problems;
+		if (room.id === 'settings') return appletsStore.builtInProblems;
+		return 0;
+	}
 	const primary = roomsInGroup('primary');
 	const library = roomsInGroup('library');
 	const utility = roomsInGroup('utility');
@@ -138,8 +146,12 @@
 	function activate(room: Room) {
 		if (room.panel.kind === 'none') {
 			// A room with no panel is its page: open it, or bring forward the
-			// tab already holding it, and leave the sidebar as it was.
+			// tab already holding it, full width. The last room's panel closes,
+			// or it would stay open beside a page that has none, with nothing on
+			// the page to close it. Only the rail tile does this: switching tabs
+			// leaves the sidebar as it was.
 			windowShellStore.openTabFromRoute(room.href, { label: room.label, focusExisting: true });
+			sidebarState.collapsed = true;
 			return;
 		}
 		if (room.id === selectedId) {
@@ -196,7 +208,11 @@
 			class:setup={room.group === 'setup'}
 			aria-label={room.label}
 			aria-pressed={isSelected(room)}
-			title={room.group === 'setup' ? `${room.label} · ${setupCount} done · ${room.chord}` : `${room.label} · ${room.chord}`}
+			title={room.group === 'setup'
+				? `${room.label} · ${setupCount} done · ${room.chord}`
+				: attention(room) > 0
+					? `${room.label} · ${attention(room)} ${attention(room) === 1 ? 'applet needs' : 'applets need'} you · ${room.chord}`
+					: `${room.label} · ${room.chord}`}
 			onclick={() => activate(room)}
 		>
 			<span class="rail-tile">
@@ -204,6 +220,12 @@
 					<SetupRing size={20} />
 				{:else}
 					<AtlasIcon name={room.icon} size={20} stroke={1.0} bare />
+				{/if}
+				<!-- Your applets live in Home, so one that needs you marks Home;
+				     a built-in one marks Settings, where it's kept. Only while
+				     something is broken. -->
+				{#if attention(room) > 0}
+					<span class="rail-problem" aria-hidden="true"></span>
 				{/if}
 			</span>
 			<span class="rail-label" aria-hidden={compact}>{room.label}</span>
@@ -391,6 +413,19 @@
 	.rail-tile {
 		display: grid;
 		place-items: center;
+		position: relative;
+	}
+
+	/* Off the glyph's top-right corner, not on it: at 8px over the glyph
+	   it covered the roof of the Home icon. */
+	.rail-problem {
+		position: absolute;
+		top: -2px;
+		right: -4px;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--color-error);
 	}
 
 	.rail-label {

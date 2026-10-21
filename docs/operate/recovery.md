@@ -1,12 +1,11 @@
 ---
 title: When something breaks
 description: Diagnosing a Virtues server that won't start, won't answer, or is behaving strangely - services, logs, health commands, and where everything lives.
-updated: 2026-09-14
+updated: 2026-10-20
 ---
 
-Start here when the server is misbehaving. You're reading this on the web rather
-than on the server for a reason: the machine that's broken is the worst place to
-keep its own troubleshooting guide.
+Start here when the server isn't working properly. This guide is on the web
+so you can read it when the server itself is down.
 
 Almost everything below needs a terminal on the server, over SSH or at the
 keyboard.
@@ -27,7 +26,7 @@ sudo journalctl -u virtues -n 100 --no-pager
 
 Everything logs to the journal. There is no Virtues log file to hunt for.
 
-A restart fixes more than it should:
+A restart often fixes the problem:
 
 ```bash
 sudo systemctl restart virtues
@@ -39,9 +38,9 @@ sudo systemctl restart virtues
 virtues status
 ```
 
-Identity, subscription, and paired devices in one screen. When you want to
-hand someone the whole picture rather than describe it, `virtues status --json`
-prints the same thing in a stable form that's easy to paste.
+This shows identity, subscription and paired devices on one screen. To send
+someone the full details, `virtues status --json` prints the same information
+in a stable format that's easy to paste.
 
 ```bash
 virtues doctor
@@ -52,15 +51,15 @@ was found, whether this build links CUDA, and whether each model is present or
 would need downloading. It doesn't touch the database, so it still answers
 when other things are broken.
 
-These commands read the database, and the database belongs to the `virtues`
-service user. You don't have to think about that: run them as yourself and
-they re-launch themselves as the right user, printing a line to say so.
+These commands read the database, which belongs to the `virtues` service
+user. You can run them as yourself: they restart as the right user and print
+a line to say so.
 
 ## When the server crashes
 
-If the server exits abnormally, it reports that to us: the exit status and the
-last 50 lines of the journal, so a crash on your server is something we can fix
-rather than something you have to notice and report. Nothing else on a running
+If the server exits abnormally, it sends us the exit status and the last 50
+lines of the journal, so we can fix the crash without you having to report
+it. Nothing else on a running
 server is sent to us unprompted, apart from checking for updates.
 
 To turn the crash report off, set it in the server's configuration and restart:
@@ -70,8 +69,7 @@ sudo sh -c 'echo VIRTUES_DIAG=off >> /var/lib/virtues/virtues.env'
 sudo systemctl restart virtues
 ```
 
-Either way the journal itself is the full account, and it stays on your
-machine:
+Either way, the full log stays in the journal on your machine:
 
 ```bash
 sudo journalctl -u virtues -n 200 --no-pager
@@ -79,8 +77,8 @@ sudo journalctl -u virtues -n 200 --no-pager
 
 ## The pieces
 
-Beyond the main service, a server runs an inference sidecar - and on hardware
-with an NPU, one daemon replaces it:
+Besides the main service, a server runs an inference sidecar. On hardware
+with an NPU, a single daemon replaces it:
 
 | Unit | What it is |
 |---|---|
@@ -99,7 +97,7 @@ journalctl -u virtues-embed -n 50
 ```
 
 **If the on-server screen shows an old version of the interface after an
-upgrade**, it's the kiosk holding a cached copy rather than anything deeper:
+upgrade**, the kiosk is showing a cached copy. Restart it:
 
 ```bash
 sudo systemctl restart virtues-display
@@ -122,9 +120,9 @@ an upgrade swap versions atomically and roll back with one flip.
 
 ## An upgrade went wrong
 
-The upgrade path is built so that failures before the switch leave the server
-untouched, and failures after it flip straight back. If you're on a release
-that's misbehaving:
+A failure before an upgrade switches releases leaves the server unchanged,
+and a failure after the switch rolls straight back. If the release you're on
+isn't working properly:
 
 ```bash
 sudo virtues rollback
@@ -137,9 +135,8 @@ full model.
 
 ## You can't reach the server
 
-If the server is healthy but your phone or laptop can't get to it, that's a
-different problem with its own page -
-see [Reaching your server](/docs/operate/reach). The short version: check that
+If the server is healthy but your phone or laptop can't reach it, see
+[Reaching your server](/docs/operate/reach). In short: check that
 the device is still on the allowlist with `virtues device ls`, and re-pair
 with `virtues pair` if it isn't.
 
@@ -159,15 +156,15 @@ To rebuild the index from your source data:
 virtues reindex
 ```
 
-Your data isn't touched by either. The index is derived, so rebuilding it is
-recoverable by definition, just slow.
+Neither command changes your data. The index is derived from it, so
+rebuilding is always safe, just slow.
 
 ## Starting over
 
-`virtues restore` replaces the server's state from a backup. It's destructive and
-there's no dry run, so read [Backup & restore](/docs/operate/backup-and-restore)
-before reaching for it - particularly the part about needing the key you were
-shown once.
+`virtues restore` replaces the server's state from a backup. It overwrites
+your current data and there's no dry run, so read
+[Backup & restore](/docs/operate/backup-and-restore) before you use it,
+especially the part about the recovery key, which is shown only once.
 
 To remove Virtues from the machine entirely, `sudo virtues uninstall` prints
 everything it found before touching any of it and asks you to type the server's

@@ -1,7 +1,7 @@
 # Page grammar
 
-[design.md](design.md) governs the **shell** — the desk, the chrome, the
-sidebar. This governs the **page**: everything rendered in the pane. Where the
+[design.md](design.md) covers the **shell**: the window chrome and the
+sidebar. This file covers the **page**: everything rendered in the pane. Where the
 two touch (the 8pt grid, the interaction ramp), design.md wins; on radius this
 file wins, and says why below.
 
@@ -9,52 +9,56 @@ This file exists because Getting Started was redesigned eight times on
 2026-09-04 and every review was taste against taste. The first grammar,
 written mid-way, described a printed book page — hairlines, oldstyle numerals,
 a shoulder column, 6px cards — and the user called every build of it "an old
-Windows XP thing." The lesson, so it is not re-learned: the reader responds to
-atmosphere, depth and real controls, not to bare pages; "academic" means the
-serif, the pictures and the lines — never small gray type and rules.
+Windows XP thing." What we learned: the user responds to atmosphere, depth and
+real controls, and dislikes bare pages. "Academic" here means the serif, the
+pictures and the lines. It does not mean small gray type and rules.
 
 What replaced it was a **spread** — a painting in the margin beside the work.
-That is gone too; see [Struck](#struck) for why, which is the more useful half.
-What the pages actually share now is a grammar of **authorship**: who is
-speaking in each block. That is §2.
+That was removed too; [Removed designs](#removed-designs) explains why, and
+that explanation is the more useful part. What the pages share now is a
+convention for **authorship**: each block shows who is speaking. §2 describes
+it.
 
-Precedence, always: the user's words, then this file, then taste. Write
-against the code, never against this file's last revision — every claim below
-was checked against the tree on 2026-09-16, and the ones that were not are how
-this document went stale the first time.
+Order of precedence: the user's instructions, then this file, then personal
+taste. Check claims against the code, not against an earlier revision of this
+file. Every claim below was checked against the tree on 2026-09-16; unchecked
+claims are how this document went stale the first time.
 
 ---
 
 ## 1. One sentence per page
 
-Every page has a sentence, written down before anything is drawn. Every object
-on the page either **advances** it or **proves** it. An object that does
-neither is cut, however handsome.
+Every page has one sentence that states its purpose, written down before
+anything is drawn. Every object on the page must either **develop** that
+sentence or **support** it with evidence. Remove an object that does neither,
+however good it looks.
 
-- A day article: *yesterday, written down.* The autobiography advances it; the
-  dayline and the sources prove it.
+- A day article: *yesterday, written down.* The autobiography develops it; the
+  dayline and the sources support it.
 - The Getting Started room: *your server is reading your life.* The four steps
-  advance it; the introductions it writes back prove it.
+  develop it; the introductions it writes back support it.
 
 The sentence may appear once, under the title, in the sans. It is the only
 prose the page writes for itself; a row or a step gets at most one line under
-its title. **Nothing is written to fill a slot** — a section with nothing to
+its title. **Do not write text just to fill a slot.** A section with nothing to
 say does not render, and a measure that needs a week of history before it
-means anything stays silent for that week rather than scoring noise.
+means anything shows nothing for that week instead of a meaningless score.
 
-## 2. Framed or unframed
+## 2. Framed and unframed blocks
 
-**A rule is the box talking; a card is you answering.** That is the only
-decoration a page has, and it is load-bearing — so a new block has to pick a
-side before it picks a style. (It was first written for the home page's turns
-of a meeting; that page is gone, see [Struck](#struck), and the rule stayed.)
+**An unframed block is the box speaking; a framed card is where you answer.**
+This is the only decoration a page has, and it carries meaning, so decide which
+kind a new block is before you choose its style. (The rule was first written
+for the home page, which was laid out as turns in a conversation. That page is
+gone, see [Removed designs](#removed-designs), and the rule still applies.)
 
 In the code the distinction is **framed or unframed**, and nothing else. The
 box's turns are unframed: a serif line at the page's measure, flush to the
 paper, no border and no ground of its own. Your turn is framed: `--color-surface`
 inside a 1px `--color-border` at 12px, because it is a surface you write on and
-the border is the only affordance the question needs. (No hairline is literally
-drawn — "rule" names the turn, not a `<hr>`. Do not add one.)
+the border is the only affordance the question needs. (Older notes call the
+unframed turn a "rule". No hairline is actually drawn, so do not add an
+`<hr>`.)
 
 **The measure.** One column: the page is `max-width: 920px`, `.work` is
 `56 / 56 / 48 / 64`, and every turn is capped at `40em`. A chart alone takes the
@@ -67,20 +71,20 @@ hand-rolled the page shell and padded inside the centered block, which landed
 its text about 48px further in than every neighboring room *even though both
 claimed 72rem*, so the columns fail to line up when you move between tabs. Its
 own sections had run 72 / 54 / 50 / 44rem before that, shifting the column on
-every tab change inside one room. Two measures exist and no more: a gridded one
-and a prose one. And when a layout responds to width, **ask the container, not
-the viewport** — what runs out of space is the pane, and in split view a pane
-is nothing like the window.
+every tab change inside one room. There are exactly two measures: one for
+grids and one for prose. When a layout responds to width, **use a container
+query, not a viewport media query.** The pane is what runs out of space, and in
+split view a pane is much narrower than the window.
 
 **Three page genres**, so a reader knows which grammar applies before styling
 anything:
 
 - **The article** — the wiki's day, person, place, year. A centered title page
   (h1, meta, a 3rem hairline), one 48rem measure, `.section-title` sections
-  that hide when empty, and rails either side for contents and notes. It reads;
-  it does not converse.
-- **The room** — chat, and Getting Started since 2026-09-13. The thread *is*
-  the page. Nothing is placed beside it; a picture sits inside the column at
+  that hide when empty, and rails either side for contents and notes. It is for
+  reading, with no conversation on the page.
+- **The room** — chat, and Getting Started since 2026-09-13. The thread is the
+  whole page. Nothing is placed beside it; a picture sits inside the column at
   the measure of the words (`getting-started/RoomCover.svelte`).
 - **The tools** — Settings, the lists. `Card` for surfaces,
   `UniversalDataGrid` for rows, the type scale below, and no page furniture of
@@ -89,8 +93,8 @@ anything:
 ## 3. Sequence and progress
 
 A sequence with state is numbered **on the reading axis** — as headings in the
-thread, the way a conversational form numbers each question — never as an
-ornament beside it. `getting-started/StepEyebrow.svelte` is the shape:
+thread, the way a conversational form numbers each question — and not as a
+decoration beside it. `getting-started/StepEyebrow.svelte` is the shape:
 `1 of 4 · Connect AI`, set as an `<h2>` so the room has the hierarchy of an
 authored page rather than a caption strip. The last heading is where you are; a
 step settled before it was ever asked still gets its heading, carried by its
@@ -102,14 +106,14 @@ large (the interview, the manual). Controls sit on their own line under the
 words they belong to, never butted against a sentence
 (`getting-started/ui/Choices.svelte`) — one rhythm everywhere in a room.
 
-**Progress is counted in words, not in marks.** Per-step marks — one glyph per
-step, inked for done and hollow for later — were tried and read as stray
-punctuation: the inked run came out as `— ——`, a typo rather than a measure.
-A folio fraction (`1 of 4`, `3 of 7`) says the same thing and cannot be
-misread.
+**Show progress as text.** Per-step marks — one glyph per step, inked for done
+and hollow for later — were tried and looked like stray punctuation: the inked
+run rendered as `— ——`, which looked like a typo. A fraction (`1 of 4`,
+`3 of 7`) gives the same information and cannot be misread.
 
-Struck, each built first: chips, a progress rule, an accordion, and the
-vertical claret-dot stepper that replaced all three. See [Struck](#struck).
+These were built and then removed: chips, a progress rule, an accordion, and
+the vertical claret-dot stepper that replaced all three. See
+[Removed designs](#removed-designs).
 
 ## 4. Type
 
@@ -143,18 +147,18 @@ One scale:
 rather than on it; reading it off `--md-h2-size` put the room's two serif
 headings on one scale for free. The same applies to the markdown tokens: they
 are the single definition both the read path and the editor cite, and changing
-one there moves page and editor together — which is the whole WYSIWYG
-guarantee.
+one there moves page and editor together. That is what keeps the editor
+WYSIWYG.
 
-**Two voices to a surface, not five.** The mobile drawer carried five text
-stylings and a bordered card, and read as assembled rather than designed; what
-ships has a 16px row and a 13px muted caption, with the serif masthead as the
-single exception. A surface that needs a third voice usually needs fewer
-things on it.
+**Use at most two text styles on a surface.** The mobile drawer had five text
+styles and a bordered card, and looked assembled from parts. What ships has a
+16px row and a 13px muted caption, with the serif masthead as the single
+exception. A surface that needs a third text style usually has too many things
+on it.
 
-**A section heading outranks the rows under it.** Overview headings were once
-11px serif — *smaller than their own body text* — which is why nothing on that
-page read as structure.
+**A section heading is larger than the rows under it.** Overview headings were
+once 11px serif — *smaller than their own body text* — so nothing on that page
+looked like structure.
 
 **Figures are lining and tabular** (`font-variant-numeric: tabular-nums`)
 wherever numbers sit in a column or update in place, so `0` and `10` occupy the
@@ -163,17 +167,17 @@ same width and a row of cards agrees on a baseline instead of twitching.
 Prohibitions, each of which has shipped:
 
 - **The serif is never bold and never italic.** We ship the serif with no bold and no italic.
-  Hierarchy comes from size and from the weight of the ink, not from shouting.
+  Hierarchy comes from size and ink weight.
 - **No uppercase serif with tracking.** A settings heading was set 12px
   uppercase letterspaced in the lightest ink on the page, on the theory that it
   is a label you scan past. On an `<h2>`, which this app sets in the serif, that
   produced faux small caps in a face we ship without a small-cap cut — stretched capitals
-  with tracking added to keep them apart. It read as decoration, and **it was
-  the loudest, ugliest thing on every settings page precisely because it was
-  trying to be quiet.** A heading, set like a heading.
+  with tracking added to keep them apart. It looked like decoration, and **it
+  was the most conspicuous thing on every settings page, although the intent
+  was to make it quiet.** Set a heading as an ordinary heading.
 - **No mono outside a chart's own labels and a clock time.** Mono kickers
-  ("recents", "map") at 9.5–10.5px were the single strongest tell of the dated
-  register.
+  ("recents", "map") at 9.5–10.5px were the clearest sign of the old, dated
+  style.
 - **Nothing under 11px in HTML.** A chart's SVG labels are the exemption and
   the only one.
 - **No half-pixel sizes** (`12.5`, `13.5`).
@@ -183,7 +187,7 @@ Prohibitions, each of which has shipped:
 Paper and ink from the theme tokens, never literals in the pane. A chart's own
 paint is the exception, and even there the values are token-derived.
 
-**One accent, two meanings, and no third.** In the pane `--color-primary` is
+**One accent color, with two meanings.** In the pane `--color-primary` is
 the only color the page carries, and it means either *now* — the deck's live
 head and its open clip, the novelty marker — or *pressable* — a link, a save.
 Nothing else is colored.
@@ -192,33 +196,34 @@ The one exception is the filled action: claret (`--color-secondary`), on the
 single `Button variant="primary"` a page is allowed. Claret is never a rule, a
 fill, a border for emphasis, or a second button.
 
-**Color never implies a category that isn't real.** The deck draws nine lanes
-and separates them by form and weight alone, because a hue on a lane would
-assert a kinship the record does not have.
+**Do not use color to suggest a category that does not exist.** The deck draws
+nine lanes and separates them by form and weight alone, because a hue on a lane
+would suggest a relationship the data does not have.
 
 **Semantic color appears only on a state a person can act on.** The deck's
 `blocked` lane is drawn at full opacity in the warning hue while `never` and
 `silent` both fade, because `blocked` is the one the reader can fix and the
 other two are varieties of "nothing to report." Neutral facts keep
 `color: inherit`: tinting an applet's ordinary lifecycle text in the warning
-hue made every applet's normal state read as a problem and left nothing
-distinct for the state that *is* one. Warning is not error, either — a run
-that stopped at its budget ceiling did what it was told, and should read as
-*held*, not *broken*.
+hue made every applet's normal state look like a problem and left nothing
+distinct for the state that *is* one. A warning is also different from an
+error: a run that stopped at its budget ceiling did what it was told, and
+should look paused, not broken.
 
-**Say it once.** A condition is stated in one place, in one register. The
-attention list used to give every row a red border, a red fill and red text —
-severity stated three times, which is how a list of two broken connections
-became the loudest thing on a page otherwise made of hairlines and one accent.
+**State a condition once.** Show it in one place, in one style. The attention
+list used to give every row a red border, a red fill and red text, stating the
+severity three times. As a result a list of two broken connections was the
+most prominent thing on a page otherwise made of hairlines and one accent.
 The fix: color appears once per row as a small mark, the remedy is the page's
 ordinary quiet button, and no warning glyph sits beside a sentence that already
 says what is wrong.
 
-**The accent means interactive, never decorative.** An accent tint plus an
-accent border is the register of every onboarding widget ever shipped; a
+**The accent marks interactive things only; do not use it as decoration.** An
+accent tint plus an accent border is the generic onboarding-widget style; a
 status surface gets a neutral foreground wash and no border. A standing offer
-is drawn in the info tokens, not the accent — acting-on-this is the buttons'
-register, and a chip that is merely informative must not borrow it.
+is drawn in the info tokens, not the accent. The accent tells the reader that
+something can be pressed, so a chip that only gives information must not use
+it.
 
 **Never hardcode the ink on a filled button.** Its text is
 `--color-background`, not `white`: on the dark themes the primary hue is light,
@@ -244,22 +249,22 @@ you met depended on which page you had opened.
   and 10px from before the rule — `tools/design-lint.sh` holds that count as a
   baseline, so do not add to them.
 - **No shadows in the pane.** A card is a hairline (`--color-border`) on
-  `--color-surface`, and it reads as separate because it can be acted on, never
-  as grouping.
-- **Elevation is for something that floats over the page, not for something
-  that fills it.** The mobile drawer sat on `--surface-elevated` so the two
-  planes would read as different materials — but it covers the screen, so on a
-  warm theme "elevated" simply read as the page turning beige when the menu
-  opened. A full-bleed plane takes the page's own paint and gets its depth from
+  `--color-surface`. A card marks something you can act on; do not use one
+  only to group content.
+- **Use elevation only for things that float over the page.** Do not use it for
+  a plane that fills the page. The mobile drawer sat on `--surface-elevated` so
+  the two planes would look like different materials — but it covers the
+  screen, so on a warm theme "elevated" just looked like the page turning beige
+  when the menu opened. A full-bleed plane takes the page's own paint and gets its depth from
   the fact that it slides. (Interaction states are a separate matter and come
   from the foreground-mix ramp — see design.md; a surface token is a 3–4% shift
-  that reads as nothing happening.)
+  that is too small to notice.)
 - **Do not hand-roll a bordered box.** A sweep on 2026-08-31 found 22
   hand-rolled `rounded-lg border border-border` blocks across nine files,
-  disagreeing about padding and about whether they carry a ground at all. None
-  of those disagreements were decisions; they are what happens when a shape is
-  copied rather than named, and they are why the settings surface read as
-  assembled rather than designed. `<Card>` is one padded surface, `<Card list>`
+  disagreeing about padding and about whether they carry a ground at all.
+  Nobody chose those differences. They came from copying the markup instead of
+  using a shared component, and they made the settings surface look
+  inconsistent. `<Card>` is one padded surface, `<Card list>`
   is rows divided by hairlines each padding itself, and `list` drops the
   container padding on purpose — a divided list whose container is also padded
   puts a gutter outside the first divider. Not every bordered box is a `Card`:
@@ -267,8 +272,8 @@ you met depended on which page you had opened.
   image rather than chrome.
 - **8pt grid.** Gaps of 8 · 12 · 16 · 20 · 24 · 32 · 40 · 48 · 56 · 64. A turn
   opens 48px below the last; the head clears 40px before the first turn. (The
-  10px under a title's sentence is the one off-grid survivor, and is baselined
-  rather than blessed.)
+  10px under a title's sentence is the one remaining off-grid value. It is
+  recorded in the lint baseline, which does not mean it is approved.)
 - **Buttons are pills**, 40px tall at `0 22px` with the 8pt grid either side
   (32px and 48px). Use `Button`: it was written in Tailwind utilities while 192
   of the app's 227 components are scoped CSS against the theme tokens, which is
@@ -292,11 +297,11 @@ you met depended on which page you had opened.
   never resolved at all. Its `inline` flag is for an action sitting
   mid-sentence, which keeps `font: inherit` so it does not break the line it
   is in; that is also the touch exception below.
-- **Touch targets move into the control, not around it.** Under
+- **On touch screens, enlarge the control itself, not the space around it.** Under
   `(pointer: coarse)` a list row zeroes its own padding and the button inside it
   takes that padding instead, so the 44pt floor is cleared by the thing you
   press rather than by the space beside it. An inline prose link is the one
-  honest exception — a 44pt box around it reaches into the lines above and
+  exception — a 44pt box around it reaches into the lines above and
   below and swallows their taps. A list row is not an exception.
 
 ## 7. Motion
@@ -315,12 +320,12 @@ doubled the ghosting and is gone. A picture fades in on arrival rather than on
 load when it has no load event to wait for — a one-ink mask has no `img.onload`,
 so it fades on the next animation frame instead.
 
-**The unintended animation is the jump, and it is the one to hunt.** Three
-rules, each of which cost a visible lurch:
+**Look for layout jumps; they are the most common unintended animation.**
+Three rules, each written after a visible jump shipped:
 
 - **A placeholder takes the real layout's shape.** Skeleton rows in the table's
-  own geometry mean nothing reflows when the data lands — that is the whole
-  difference between "loading" and "jumping."
+  own geometry mean nothing reflows when the data lands, so the page loads
+  without jumping.
 - **Pin the height of anything whose contents swap.** A toolbar that trades
   search controls for selection controls moves everything below it unless it
   carries a `min-height`.
@@ -342,16 +347,16 @@ twelve instances a second. The fix was to mount it once outside the `Page`
 shell in a `.host` that is `display: none` when settled, never unmounted.
 
 Getting Started left the page on 2026-09-13 and is a chat room now, and the
-home page is gone too, so neither half of that pair remains. The rule outlives
-the example: phase is a thing a component reports, not a thing a parent
-remounts it to change.
+home page is gone too, so neither half of that pair remains. The rule still
+applies: a component reports its own phase, and a parent must not remount it to
+change that phase.
 
 ## 9. The checklist
 
-Before a page ships, count. Every row is meant to be greppable, and the ones
-that are already counted are counted by `tools/design-lint.sh` — a ratchet
-against a frozen baseline, not a wall, because a check that is red on day one
-gets switched off by the end of the week. Escape a line it is wrong about with
+Before a page ships, count each row in the table below. Every row is meant to
+be greppable, and `tools/design-lint.sh` already counts some of them. The lint
+is a ratchet against a frozen baseline instead of a hard failure, because a
+check that fails on day one gets switched off by the end of the week. Escape a line it is wrong about with
 `design-ok: <why>` in a comment on or above it.
 
 | | Limit |
@@ -376,10 +381,10 @@ gets switched off by the end of the week. Escape a line it is wrong about with
 | keyframe animations in the pane (`arrive`, `wipe`, `pulse`), from-only | 3 |
 | animating files with no `prefers-reduced-motion` answer | 0 |
 
-## Struck
+## Removed designs
 
-Kept because the reasoning outlives the thing. Do not rebuild any of these
-without answering what killed it.
+These are kept for the reasoning. Do not rebuild any of them without addressing
+the reason it was removed.
 
 **The home page** (`/home`, the Daily Office; removed 2026-10-06). A
 dateline, a novelty line, the day's streams as a deck with a map, recents, an
@@ -393,17 +398,17 @@ streams live on the Timeline; a day's account is the wiki's day article.
 page was to be a spread: the work on the left in one measure, and on the right
 a painting set in the page's margin as a 12px card — sticky, pane-tall, with a
 line on it, up to three figures, and two ways onward. It was the one framed
-object Home and the setup spread shared, which was its entire justification.
+object Home and the setup spread shared, and that was the only reason for it.
 Getting Started became a chat room on 2026-09-13; Home shed the painting on
 2026-09-08 and kept only the two adjacent-page doors. With one page left there
-was no "shared" left, and a single page carrying a framed painting for itself
-is a decoration rather than a grammar. The component, its line bank and its
-plates directory are all gone from the tree. Three arrangements had already
-been struck inside it and stay struck: a painting as a ground behind the text
+was nothing left to share, and a framed painting on a single page is only
+decoration. The component, its line bank and its plates directory are all gone
+from the tree. Three arrangements had already been removed inside it and stay
+removed: a painting as a ground behind the text
 column, a painting as a band cut by the page, a painting faded into the paper.
 
 **The full-width picture over a room.** The room's first cover was an oil
-painting running the pane's full width, which made the page read as two
+painting running the pane's full width, which made the page look like two
 products stacked — a cinematic band over a column of chat. What ships sits
 *inside* the column, at the measure of the words. It is also a mask rather than
 a picture: one ink, so the PNG carries only its alpha and the page paints it
@@ -413,18 +418,17 @@ component — the drawing simply trails off into the page at its edges.
 
 **The vertical stepper.** A rail of 20px dots — filled ink with a check for
 done, filled claret with the number for now, hollow for later — with the
-current step opening in place. It was itself the survivor of three struck
-alternatives (chips, a progress rule, an accordion). It died with the Getting
-Started page on 2026-09-13: progress that lives on the reading axis (§3) needs
-no rail, and a rail beside a chat thread is an ornament competing with the
-thread.
+current step opening in place. It had replaced three earlier alternatives
+(chips, a progress rule, an accordion). It was removed with the Getting Started
+page on 2026-09-13: progress shown on the reading axis (§3) needs no rail, and
+a rail beside a chat thread distracts from the thread.
 
 **The mono kicker.** Small-caps-ish mono labels at 9.5–10.5px over sections
-("recents", "map"). The single strongest tell of the dated register.
+("recents", "map"). The clearest sign of the old, dated style.
 
 **The 12px uppercase letterspaced serif label.** See §4 — faux small caps in a
-face with no small-cap cut, loudest thing on the page while trying to be
-quiet.
+face with no small-cap cut. It was the most conspicuous thing on the page,
+although it was meant to be quiet.
 
 **The wrapper fade** (`.rv`). A second fade around a page that already staggers
 its blocks in. Doubled the ghosting.
@@ -434,12 +438,12 @@ its blocks in. Doubled the ghosting.
 **A day** (`wiki/DayPage.svelte`). Two views, Article and Data. The Article
 is the date as its title with the year and weather under it, the Abstract,
 your numbers, then the writer's sections with a margin beside them that holds
-section times, what the record computes, and your notes. Data is the day line,
+section times, computed values, and your notes. Data is the day line,
 Places, the event timeline and the day's records, each a `.section` that does
 not render when it is empty. There is no frontispiece and there is no
 right-hand card.
 
 **The Getting Started room** (`chat/getting-started/`). A seeded chat whose
-steps are derived from the record rather than stored. The cover mask, then the
+steps are derived from your data instead of stored. The cover mask, then the
 thread: each step an `<h2>` on the reading axis, its controls on their own line
-beneath the words, and the introductions it writes back as the proof.
+beneath the words, and the introductions it writes back as evidence.

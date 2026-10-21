@@ -15,6 +15,9 @@
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 	import { listDayActivity, listDays, type DayActivityApi } from '$lib/wiki/api';
 	import { ledeSentence } from '$lib/wiki/lede';
+	import { veilMarks } from '$lib/wiki/dayArticle';
+	import { veiled } from '$lib/actions/veil';
+	import { veil } from '$lib/stores/veil.svelte';
 
 	interface Props {
 		onOpenDay: (slug: string) => void;
@@ -26,6 +29,8 @@
 		slug: string;
 		dayLabel: string; // "Mon 28"
 		lede: string | null;
+		/** The lede's ⟦ ⟧-marked phrases, hidden while the veil is on. */
+		phrases: string[];
 		narrated: boolean;
 		eventCount: number;
 	}
@@ -77,13 +82,15 @@
 				}
 				const narrated = day.article != null && day.article !== '';
 				if (narrated) group.narratedCount += 1;
+				const marked = veilMarks(ledeSentence(day.article) ?? '');
 				group.days.push({
 					slug: day.date,
 					dayLabel: date.toLocaleDateString('en-US', {
 						weekday: 'short',
 						day: 'numeric',
 					}),
-					lede: ledeSentence(day.article),
+					lede: marked.markdown || null,
+					phrases: marked.phrases,
 					narrated,
 					eventCount: countByDate.get(day.date)?.event_count ?? 0,
 				});
@@ -120,7 +127,10 @@
 							<button class="day" onclick={() => onOpenDay(day.slug)}>
 								<span class="day-date">{day.dayLabel}</span>
 								{#if day.lede}
-									<span class="day-lede">{day.lede}</span>
+									<span
+										class="day-lede"
+										use:veiled={{ hiding: veil.hiding, phrases: day.phrases }}>{day.lede}</span
+									>
 								{:else}
 									<span class="day-stub">Unwritten</span>
 								{/if}

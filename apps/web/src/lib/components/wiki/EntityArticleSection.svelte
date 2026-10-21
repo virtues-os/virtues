@@ -121,8 +121,8 @@
 			     longer means "you edited it once": editing an article does not
 			     take the record's pen away, so this line must not imply it. -->
 			{maintained
-				? 'The record wrote this and keeps it current'
-				: 'The record wrote this and no longer updates it. New evidence arrives as notes'}{revisedLabel
+				? 'The wiki editor wrote this and keeps it current'
+				: 'The wiki editor wrote this and no longer updates it. New information is added as notes'}{revisedLabel
 				? ` · revised ${revisedLabel}`
 				: ''}
 			{#if canWrite}
@@ -131,8 +131,8 @@
 					inline
 					onclick={toggleMaintenance}
 					title={maintained
-						? 'The record revises this article as new evidence arrives, leaving anything you wrote untouched. Turning it off stops that.'
-						: 'Let the record keep this updated. It edits around your own sentences rather than over them.'}
+						? 'The wiki editor revises this article as new data arrives and leaves anything you wrote untouched. Turn this off to stop it.'
+						: 'Let the wiki editor keep this updated. It edits around your sentences and leaves them as you wrote them.'}
 				>
 					{maintained ? 'Keeping this updated' : 'Keep this updated'}
 				</TextAction>
@@ -141,16 +141,16 @@
 					inline
 					onclick={openInEditor}
 					title={maintained
-						? 'Edit freely. Your sentences stay yours, and the record edits around them.'
+						? 'Edit freely. The wiki editor keeps your sentences as you wrote them and edits around them.'
 						: 'Open in the editor.'}
 				>Edit</TextAction>
 			{/if}
 		</p>
 		{#if maintained && canWrite}
 			<p class="regime-hint">
-				Anything you write here stays as you wrote it - the record edits around your
-				sentences, and History lists every change it makes, listed in History, where you can put any
-				version back.
+				Anything you write here stays as you wrote it. The wiki editor edits around your
+				sentences. History lists every change it makes, and you can restore any
+				version from there.
 			</p>
 		{/if}
 	</div>

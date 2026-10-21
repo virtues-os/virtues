@@ -962,7 +962,7 @@
 					</p>
 					<p class="prose-note warn">
 						One caution. A key from your employer sends your personal life through systems
-						they can read. Your own key gives you the vendor and the bill, not more privacy.
+						they can read. Your own key lets you choose the vendor and pay the bill directly, but it adds no privacy.
 						Whoever runs the endpoint still sees every call.
 					</p>
 

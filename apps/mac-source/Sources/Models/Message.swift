@@ -24,6 +24,9 @@ struct Message {
     let associatedMessageGuid: String?
     let associatedMessageType: Int?
     let expressiveSendStyleId: String?
+    /// chat.db's `message.error`: non-zero when Messages could not deliver one
+    /// of the owner's own messages (the red "Not Delivered").
+    let sendError: Int?
     var uploaded: Bool = false
     
     init(
@@ -45,7 +48,8 @@ struct Message {
         groupTitle: String? = nil,
         associatedMessageGuid: String? = nil,
         associatedMessageType: Int? = nil,
-        expressiveSendStyleId: String? = nil
+        expressiveSendStyleId: String? = nil,
+        sendError: Int? = nil
     ) {
         self.id = nil
         self.messageId = messageId
@@ -67,6 +71,7 @@ struct Message {
         self.associatedMessageGuid = associatedMessageGuid
         self.associatedMessageType = associatedMessageType
         self.expressiveSendStyleId = expressiveSendStyleId
+        self.sendError = sendError
         self.uploaded = false
     }
     
@@ -97,6 +102,10 @@ struct Message {
         
         if let dateDelivered = dateDelivered {
             dict["date_delivered"] = ISO8601DateFormatter().string(from: dateDelivered)
+        }
+
+        if let sendError = sendError, sendError != 0 {
+            dict["error"] = sendError
         }
         
         if let attachmentCount = attachmentCount {

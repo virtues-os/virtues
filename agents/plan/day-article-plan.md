@@ -1,12 +1,12 @@
-# Day article: the page written from the day itself
+# Day article: a page written from the day's own data
 
 Status: **Partly built**, unreleased. Slices 1, 2 and 5 are on `wave`
 (2549d156, 1c7535e3, 3757013e, f2e2fe26); 3 (backfill) and 4 (photo figure)
 are open. Spiked end to end 2026-09-24 → 09-28. Supersedes the narration half
 of `api/day_summary.rs`; segmentation (the timeline) stays.
 
-**Redesigned 2026-10-06 and again 2026-10-07**, each time from a specimen
-the owner settled in review. What is built is below under "The page",
+**Redesigned 2026-10-06 and again 2026-10-07**, each time from a mockup
+the owner approved in review. What is built is below under "The page",
 "Figures" and "Frontend". Gone:
 the fact strip, the Notes dropdown, the dateline's "heard N of 24 hours" bar,
 the Veil button, the Dayline's Sleep and Autonomic modes, Data's AI Chats
@@ -20,30 +20,30 @@ summary → the narrator. Four lossy hops, each told to be "factual", so each
 removed what made the day matter. A day that mattered came out as a list of
 apps, messages and errands.
 
-Significance is the model's judgment, not a rubric we compute. The work is the
-shape of what it reads and the prompt it reads it under.
+The model judges what was significant; we do not compute a score for it. Our
+work is choosing what input the model reads and the prompt it reads it with.
 
 ## What the spike established
 
-- **Read the day, not summaries of it.** Full transcripts (silence dropped),
+- **The writer reads the day's data directly instead of summaries.** Full transcripts (silence dropped),
   messages grouped by thread, the owner's own words, the day's people as the
   wiki knows them, the owner's narrative identity as a lens, the pages for the
   days before, and an explicit list of hours with no recording.
-- **Continuity finds the thread.** Narrating oldest first, with the previous
-  days' *new* pages as context, is what surfaced the day's significant event on
-  a day whose audio never mentioned it. It is the single biggest quality lever.
+- **Previous days' pages provide continuity.** Narrating oldest first, with the
+  previous days' *new* pages as context, is what surfaced the day's significant event on
+  a day whose audio never mentioned it. It is the change that improved quality the most.
 - **Every sentence cites its evidence.** The writer tags each sentence
   (`[17:59]`, `[msg 19:40]`, `[gap]`); a light checker deletes sentences their
   evidence does not support. Tagging plus deletion made weak writers produce
   *short* pages rather than *wrong* ones.
 - **Do not over-verify.** A strict checker plus repair plus "every conversation
-  gets a clause" produced an accurate inventory, not a page. The light check
-  stays; strictness does not.
+  gets a clause" produced an accurate list of events instead of a readable page. We kept the
+  light check and dropped the strict one.
 - **Model.** Bake-off of 14 models, ZDR enforced: the Chat slot's
   `grok-4.7` writes the best pages for the price (~$0.06–0.15/day). Sonnet 5
   invented and ignored the discretion rule; Opus is best and ~3× the cost.
   Chat already defaults to grok-4.7, so the narrator needs no new slot.
-- **Facts are computed, never written.** "First time at X" was false in the
+- **Code computes facts; the writer does not state them.** "First time at X" was false in the
   spike (X had come up 7 times before); the weather station recorded no rain on
   a day the conversation talked about a storm. Anything stated as a fact about
   the day comes from code.
@@ -68,7 +68,7 @@ opens it in the Pages editor. The ⋯ menu holds the rest, in this order:
   your notes, and the names and words in a card; while it is on, holding `V`
   lifts it.
 - **Pictures**: Oil · Watercolor · Pencil · Gouache · Off, saved as
-  `ui_preferences.day_pictures` (absent reads as oil).
+  `ui_preferences.day_pictures` (oil when unset).
 
 Focus starts on the menu's first row, ↑ and ↓ move, and Esc hands focus back
 to ⋯. The rewrite's and the painting's status lines sit above the Abstract.
@@ -78,8 +78,8 @@ Article, top to bottom:
 1. **Title**: the weekday and date, "Saturday, March 14", which opens the
    date picker. Under it a dateline: the year · the weather
    ("2026 · 73° / 51°", the day's high and low in °F from the weather
-   records, left out when the day has none). No coverage line: what was
-   recorded is the margin's to say, and Data's.
+   records, left out when the day has none). There is no coverage line: the
+   margin and Data show what was recorded.
 2. **Abstract**: one or two plain sentences: the day's one event and what
    made it that day. Body size. Its first letter is a two-line drop cap
    (`initial-letter: 2`, a float where unsupported) and the rest of its first
@@ -97,24 +97,24 @@ Article, top to bottom:
    workouts), never for sleep, steps, speech heard or a rate.
    - **Most unusual today** (the pin `unusual`, chosen on the server in
      `lifeline::day_measures`): among the measures whose lane no other pin
-     shows, those with a value today and at least 7 days before holding 4 or
+     shows, those with a value today and at least 7 days before with 4 or
      more distinct values, the one furthest from its usual by
      |today − median| / IQR, when that is at least 1. Its cell puts a small
      claret "Most unusual today" over the winner's label and draws today's
      bar in claret; with no winner it reads "Nothing stood out".
    - Before you pin any: steps, people who messaged you, messages sent,
-     screen time and the unusual pin, where your record holds them.
+     screen time and the unusual pin, where your data includes them.
    - **Edit numbers** hangs in the margin beside the strip (under it with no
      margin) and opens the picker: "Your numbers · n of 5", "The same five
      on every day.", the unusual pin first, then "In your record" (each
-     measure, "From <source>", its 31 days, the most-held first), then "Not
+     measure, "From <source>", its 31 days, the ones with the most data first), then "Not
      in your record yet" (what would give it, such as "Needs Apple Health on
      your phone", and Connect it, which opens Sources). At five, the rest are
      disabled under "Uncheck one to choose another." One request
      (`/api/wiki/day/:date/measures`) brings every measure's 31 days, so the
      picker asks nothing more. Pins live in `ui_preferences.day_measures`.
 4. Body: up to three sections, headings of 3–6 words naming a thing or a
-   moment (never a bare proper noun). Tables are allowed where the day holds
+   moment (never a bare proper noun). Tables are allowed where the day has
    a list. Figures sit at the end of their section (see Figures).
 5. Previous / next day as plain text: "← Saturday, October 3" and its
    Abstract, clamped to three lines; a neighbor with no page reads "No page
@@ -125,13 +125,13 @@ A day with no page still shows your numbers and your notes, then says why it
 has no page.
 
 **The margin** sits beside the text column on a wide screen and drops under
-its block on a narrow one. The writer writes none of it:
+its block on a narrow one. Code produces all of it; the writer produces none:
 
 | | What it says | From |
 |---|---|---|
 | **Section times** | the section's span, quiet, beside its heading | the `[^cx-N]` footnotes code writes after the writer (`day_article::render`) |
 | **Gaps** | "Nothing recorded" and a 12-hour span after a short dashed rule, for every stretch of 30 minutes or more inside the day the microphone did not record; beside the first paragraph whose evidence starts at or after the gap ends, gaps that land on one paragraph sharing one mark | `coverage` from `/api/wiki/day/:date/facts` (recording spans merged within 10 minutes), placed by `recordingGaps` and `placeMarks` (`lib/wiki/dayArticle.ts`). An older page's paragraph that only says "Nothing was recorded between…" is dropped from the body. |
-| **Firsts** | a claret "new", then "The Ashgrove Museum / First visit in your record", "First visit in your record" alone for a place with no real name, or "First message from Nick"; beside the paragraph whose evidence spans the moment, one to a paragraph, three to a page, people and named places first | `/api/wiki/day/:date/firsts` (`wiki::day_firsts`): a place whose earliest visit, or a person whose earliest message, falls on the day, once that kind's record has run 14 days before it |
+| **Firsts** | a claret "new", then "The Ashgrove Museum / First visit in your record", "First visit in your record" alone for a place with no real name, or "First message from Nick"; beside the paragraph whose evidence spans the moment, one to a paragraph, three to a page, people and named places first | `/api/wiki/day/:date/firsts` (`wiki::day_firsts`): a place whose earliest visit, or a person whose earliest message, falls on the day, once that kind of data has been collected for 14 days before it |
 | **Your hand** | your notes | below |
 
 **Your hand.** Handwriting on the page is only ever yours (the
@@ -144,14 +144,14 @@ what they were about. Nothing reads a day's notes yet; feeding them to the
 writer is open.
 
 **Evidence on click.** Click a sentence (or a table, a photo, a figure with
-a source) and a card shows the record's own words: a message as sent, or the
+a source) and a card shows the source's own words: a message as sent, or the
 recording's turns nearest the sentence, with the words the sentence shares
 with them marked (`sharedRanges`, `lib/wiki/recordWords.ts`: content words,
 stopwords dropped, a light stem). A sentence that shares no content word
 with its sources says "This sentence shares no words with its source."
 On a wide screen the card opens in the margin beside its sentence; with no
-margin it is a popover, and on a phone a sheet. Its anatomy
-is the person card's: a kicker (kind · time · who; "Voices not identified"
+margin it is a popover, and on a phone a sheet. Its layout
+matches the person card's: a kicker (kind · time · who; "Voices not identified"
 on a recording), the body, one row of actions (Open in Data · n of N ·
 Write a note). ← and → step to the previous and next sentence or figure with
 a source; Esc closes. It reads the writer's `[^ev-N]` tags; nothing shows
@@ -181,10 +181,10 @@ the shapes below.
 - Marginalia are GFM footnotes rendered as sidenotes (the Tufte/Gwern
   convention); inline under the paragraph on a phone. Labels carry the kind:
   `[^ev-3]` evidence, `[^cx-1]` context.
-- Evidence footnotes hold a ref to the record item (message id, transcription
+- Evidence footnotes contain a ref to the record item (message id, transcription
   id), so the page can open it in Data.
 - A figure is a fenced block of `key: value` lines that the page renders as
-  DayFigure, at the end of the section that holds its time:
+  DayFigure, at the end of the section that covers its time:
 
   ````md
   ```figure
@@ -216,9 +216,9 @@ the shapes below.
    rest of that conversation; unsupported sentences are deleted. No repair
    pass. The Abstract is checked loosely against the body and never rewritten.
 4. **Names** (code): every person's name resolves to a person record or
-   appears in the day's record, else its sentence goes.
+   appears in the day's data; otherwise its sentence is deleted.
 5. **Figures** (code): the writer's quote or exchange is kept only when the
-   record bears it out, and the day's route is added when the day travelled
+   source data supports it, and the day's route is added when the day travelled
    (see Figures).
 6. **Render** (code): tags → evidence footnotes; section time spans →
    context footnotes. The margin's gaps and firsts are not in the markdown:
@@ -238,38 +238,37 @@ forward on the first pass. The intended follow-on, a day re-narrating when the
 day before it is rewritten, is **not built**: a rewritten day's next three
 pages keep what they read of the old one. A backfill of the last three weeks
 runs once, oldest first, then the novelty index re-embeds all of it together
-(the embedding detects the writer's voice; a mixed corpus would light up every
+(the embedding detects the writer's style; a mixed corpus would mark every
 new day as novel).
 
 ## Rewrite this page
 
-Built on `wave` 2026-10-07: the server door and the day page's action, the
+Built on `wave` 2026-10-07: the server endpoint and the day page's action, the
 first row of the ⋯ menu on a past day that has a page (`DayPage.svelte`,
 `lib/wiki/dayRewrite.ts`). The row reads "Writing this page…" and Edit is
-disabled while the rewrite runs; how it went is said in a line above the
-Abstract. The owner's way to write a past day's page again, from the same
-record and the same writer (`day_summary::rewrite_day_page`), when the page
-is wrong or the writer has improved.
+disabled while the rewrite runs; a line above the Abstract shows the result.
+It lets the owner regenerate a past day's page from the same data with the
+same writer (`day_summary::rewrite_day_page`), when the page is wrong or the
+writer has improved.
 
 - **One writer per day.** Narration and the rewrite both take a session
   advisory lock on the date, on a connection detached from the pool
-  (`try_lock_day`). It saves money, not pages; the guards above and the
-  CRDT's staleness check still do that.
-- **The request answers at once.** `POST /api/wiki/day/:date/rewrite` refuses
+  (`try_lock_day`). The lock prevents paying for the same day twice; it does
+  not protect pages. The guards above and the CRDT's staleness check do that.
+- **The request returns immediately.** `POST /api/wiki/day/:date/rewrite` refuses
   what needs no model call (`not_over` 422, `no_page` 404,
-  `pending_suggestion` 409 while a block page holds a suggestion the owner
-  has not accepted or rejected, which a new draft from the record would
-  decide, `needs_consent` 409, `rewrite_in_progress` 409 while a rewrite of
+  `pending_suggestion` 409 while a block page has a suggestion the owner
+  has not accepted or rejected, which a new draft would overwrite, `needs_consent` 409, `rewrite_in_progress` 409 while a rewrite of
   the day runs, `busy` 409 while another writer such as narration holds
   it), takes the lock, and hands
   it to a task; `GET` on the same path reads how it went from an in-memory
   board (`DayRewrites`). A restart forgets the board, and an interrupted
   rewrite is not resumed, because resuming would pay again.
-- **Time limit on the writer only.** Its model calls get 20 minutes
+- **Only the writer has a time limit.** Its model calls get 20 minutes
   (`REWRITE_TIME_LIMIT`). Once a draft exists the write runs to the end,
   because one stopped partway could leave the page changed in open editors
   but not saved, versioned or recorded.
-- **Consent.** A page that may hold the owner's words (a human edit or a
+- **Consent.** A page that may contain the owner's words (a human edit or a
   version put back, upkeep off, text that is no longer what the server last
   wrote, or, on a page from before narration recorded its edition, any
   version at all) is rewritten only when they agree to replace them.
@@ -277,19 +276,19 @@ is wrong or the writer has improved.
   section. The page is read again, kept as a restore point (fail closed), and
   replaced by line through the server's own `YjsState`, so open editors
   receive it; any change since the rewrite began refuses it. The rewrite's
-  version is credited to the record, and History shows one entry whose undo
+  version is credited to the server, and History shows one entry whose undo
   puts the old page back.
 - **Bookkeeping**, in one transaction: the edition (`machine_text`), the
   owner's edit stamp cleared unless an edit landed after the write, and
-  `narrated_at` restamped, which, with the wiki editor on, earns the year
-  and chapter one revision each at their next interval. Upkeep is not
-  changed. A draft that is on the page but not saved yet is a rewrite made:
-  it is versioned and recorded, and the save queue lands it.
-- Notes are untouched; a note whose sentence went sits beside the Abstract.
+  `narrated_at` restamped, which, with the wiki editor on, schedules one
+  revision each for the year and chapter at their next interval. Upkeep is not
+  changed. A draft that is on the page but not saved yet counts as a
+  completed rewrite: it is versioned and recorded, and the save queue saves it.
+- Notes are untouched; a note whose sentence was removed sits beside the Abstract.
 
 ## Figures
 
-Purpose: show what prose cannot. None is the default. A page carries at most
+Figures show what prose cannot. By default a page has none. A page carries at most
 the one figure its writer chose, the route when the day travelled, and now
 and then a picture.
 
@@ -302,7 +301,7 @@ and then a picture.
   hard conversation: `Quote: "<the words, exactly>" [17:59]`, under 25
   words, or `Exchange: [msg 21:44] [msg 21:45]`, two to four messages in a
   row from one thread. The line never stays in the prose. Code keeps a quote
-  only when its words stand verbatim in a passage it cites (veil marks
+  only when its words appear verbatim in a passage it cites (veil marks
   dropped, curly quotes straightened, spaces collapsed; 3 to 35 words), and
   an exchange only when its messages are consecutive in one thread;
   otherwise there is no figure. A quote's `who` is "You" for the owner's
@@ -324,7 +323,7 @@ and then a picture.
   quiet." Nothing draws without location data.
 - **The weekly picture** (`api/day_picture.rs`): about once a week, a
   painting of one place a page names, set into its section.
-  - Only what an image model can draw truthfully: a well-known public place
+  - Only what an image model can draw accurately: a well-known public place
     the page names (a church, an airport, a stadium, a museum, a skyline),
     or one of a short list of generic settings (an airport gate, the view
     from a plane window, a train platform, a beach, a park, a rainy street,
@@ -339,7 +338,7 @@ and then a picture.
     subject is on the page, or is a generic setting the page's words support,
     and is no home or medical place; neither scene nor caption names a person
     from the page or a veiled phrase other than the subject; the caption is
-    25 words at most. A failed check is nothing to paint, never a retry.
+    25 words at most. A failed check means nothing is painted, and it is not retried.
   - The Image slot paints it (about $0.067) in the owner's style: oil by
     default, watercolor, pencil or gouache, or no pictures at all (the
     ⋯ menu's Pictures choice). Every prompt carries the guardrails: no text,
@@ -347,7 +346,7 @@ and then a picture.
     1400 px, in the media store, and set in as a `picture` figure at the end
     of its section under "Painted from the record" ("Drawn from the record"
     for pencil), its caption veiling the place as the page does.
-  - It is written the way a rewrite writes: under the day's lock, through
+  - It is saved the same way as a rewrite: under the day's lock, through
     the editor's document, after a restore point, as a version credited to
     the server ("Added a picture" in History). The edition (`machine_text`)
     takes the picture only when the page equals it, so a picture never makes
@@ -359,7 +358,7 @@ and then a picture.
     says in a line above the Abstract. Otherwise a daily tick in the core
     (`day_picture::spawn`, off in a dev checkout unless
     `VIRTUES_DAY_PICTURES=1`) paints when pictures are on and no page dated
-    in the last seven days holds a picture and none was painted in that
+    in the last seven days has a picture and none was painted in that
     time: it walks that week's past days with pages, most unlike the usual
     first, skipping pages whose upkeep is off, and asks the director about
     three at most.
@@ -372,55 +371,56 @@ and then a picture.
   recorded and retried; deleting the message removes the image). iOS cannot
   read iMessage.
 - Later, a cheap scout with `sql_query` (≤5 queries, query saved with the
-  figure) may propose a comparison against the owner's own baseline. Never a
-  causal claim.
+  figure) may propose a comparison against the owner's own baseline. It must never
+  make a causal claim.
 - A replay of the day's moment, as a still or a clip (tabled, below).
 
 Collections (questions asked, songs, purchases) are **tables in the prose**,
 written by the writer, not figures.
 
 Tried and rejected on the page: a coverage chart as the figure, a sky
-ribbon, a month of dots (presence was every day; nothing to see). Rejected
-2026-10-07 in the redesign's specimen: a painting as the page's header, and
+ribbon, a month of dots (there was data every day, so it showed nothing). Rejected
+2026-10-07 in the redesign's mockup: a painting as the page's header, and
 a symbolic ink tailpiece (an object from the day, drawn at the page's end).
 
 ### Tabled: a replay of the day's moment
 
-The idea is right and the execution isn't there yet, so it waits. What it is: a
-small illustrated replay of one salient moment (a kite that would not fly, a
+The idea is good but the execution is not ready, so it is on hold. It is a
+small illustrated replay of one notable moment (a kite that would not fly, a
 cake that collapsed, a wrong turn on purpose), anchored to the recording
 or message it came from, with the source quoted beside it. Data charts become
 the exception, roughly weekly, when a real pattern turns up.
 
 What four spikes (2026-09-29) established:
 
-- **Data figures as HTML are cheap and reliable, but read as data science.**
+- **Data figures as HTML are cheap and reliable, but look like data-science charts.**
   Lite (`gpt-6-luna`) wrote five working figures at ~$0.002 each against Chat's
   ~$0.058, when the host sets `window.DATA` from read-only queries and the model
   writes only the view. Both models turned "a route" into distance-over-time
   unless the brief named the form.
-- **A director beats an artist.** Lite reads the source lines and writes a scene
-  script (stage, light, cast, props, two to five beats) in a fixed vocabulary for
+- **Having the model write a scene script for an engine works better than
+  having it draw.** Lite reads the source lines and writes a scene script (stage, light, cast, props, two to five beats) in a fixed vocabulary for
   ~$0.0003; an engine acts it out. Scripts were thin (props missing from the
   scene) and once stated a joke as fact in the caption, so captions
   need the sentence check.
-- **Pixel art and vector puppetry are off-brand.** Tried: 8-bit sprites in two
+- **Pixel art and vector puppetry do not fit the product's look.** Tried: 8-bit sprites in two
   palettes, then shadow theater, Greek black-figure frieze, manuscript
   marginalia, an annotated scientific plate with chronophotographic ghosts, and
   a single self-drawing line.
-- **Painted stills are close.** The Image slot model made usable watercolor,
+- **Painted stills came closest.** The Image slot model made usable watercolor,
   oil, charcoal and notebook-pen pictures of each moment at $0.067 and ~12 s,
-  first try; the page can bring them to life for free (bloom, push, draw-on).
+  first try; the page can animate them at no cost (bloom, push, draw-on).
   They invent the surroundings (city, dog breed, clothes), so a real reference
   photo of recurring people and pets is the next step there. The weekly
   picture uses painted stills for places only (above); a moment with its
   people or pets stays here.
-- **Video: only Veo passes zero data retention.** Seedance and Kling have no ZDR
+- **Video: only Veo meets the zero-data-retention requirement.** Seedance and Kling have no ZDR
   provider on the gateway and were refused. Veo 3.1 Lite: 4 s at 720p, $0.12,
-  ~40 s, medium kept intact; it declined one scene on moderation with no reason.
+  ~40 s, and it kept the painting's medium; it refused one scene on moderation
+  grounds without giving a reason.
 
-Open before resuming: a look that is unmistakably Virtues (none of the above
-was), a cast that stays recognizable across days, and whether a replay is daily
+Open before resuming: a visual style that is clearly Virtues' own (none of the
+above was), a cast that stays recognizable across days, and whether a replay is daily
 or only when the day has a picturable moment.
 
 ## Frontend
@@ -435,16 +435,16 @@ DayHand; DayFigure. Data, top to bottom:
    events on its own clock, local midnight to local midnight, so a
    daylight-saving day is 23 or 25 hours wide and an event that ends at
    midnight ends at the right edge. Each known event is a block from its
-   start to its end, as tall as it was unlike the owner's usual: above the
-   line when unlike, below when more usual than usual, clamped at ±3. The
+   start to its end, with its height showing how unusual it was for the owner:
+   above the line when unusual, below when more typical than usual, clamped at ±3. The
    score is `local_novelty_z`, else `novelty_z` (`usualScore`), the same one
    the event timeline's badge reads. Unknown stretches stay empty; an event
    nobody scored is an outline on the line. Hover gives its label, its times,
    and "Unlike your usual", "Like your usual", "Your server hasn't scored
    this" or "Most unlike your usual". Under it, a thin lane per stream
    (Audio, Location, Messages, Health, Screen), filled where that stream
-   recorded something, from the day's lifeline lanes. What was heard is read
-   here now.
+   recorded something, from the day's lifeline lanes. The Audio lane now shows
+   what was heard.
 3. **Places** (`DayPlaces`), when the day has location: the stops on a strip
    across the day's clock and the track and stops on a map; hovering the
    strip moves a dot along the track. A stop nobody named reads "Unnamed
@@ -461,14 +461,15 @@ The timeline's words come from the segmenter (`SEGMENT_PROMPT`,
 `day_summary.rs`). Its dossier opens with a `<you>` block naming the owner,
 so the owner is "you" and never a companion. A label is 2–6 specific words
 that use the day's people and what came before, naming a person only where
-the record puts them (on the thread, on the call, in a corroborated calendar
+the data places them (on the thread, on the call, in a corroborated calendar
 entry). A summary is one or two plain sentences on what mattered: who, what
 was said or done, and where only when the place has a real name; never
 distances, speeds, coordinates, message counts, silence or ambient noise.
-Days cut before that prompt keep their old words until they are cut again:
+Days segmented before that prompt keep their old words until they are
+segmented again:
 `virtues day-summary --segment-only --from YYYY-MM-DD --to YYYY-MM-DD`
-re-cuts a range oldest first, one Chat-slot call a day, then rescores what it
-cut, since each day's novelty is measured against the days before it.
+re-segments a range oldest first, one Chat-slot call a day, then rescores what
+it segmented, since each day's novelty is measured against the days before it.
 
 Open on the page:
 
@@ -477,7 +478,7 @@ Open on the page:
   names a city yet, so the dateline carries no place. A place-naming agent
   is open.
 - Custom measures described in a sentence, and practices with a check-in
-  (the specimen showed both).
+  (the mockup showed both).
 - A clip or video of the day's moment (see Figures).
 
 ## Slices

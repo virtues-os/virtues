@@ -5,7 +5,8 @@ iOS app well enough to clear guideline 2.1.
 
 ## The problem
 
-Pairing is limited to the LAN, and not by any check we could relax:
+Pairing is limited to the LAN by how the box is exposed, and there is no check
+we could relax to change that:
 
 - `/api/pair/consume` is plain HTTP to the box's own origin. The box has no TLS
   surface and no public inbound port (`virtues-core/src/server/mod.rs`).
@@ -17,7 +18,7 @@ Pairing is limited to the LAN, and not by any check we could relax:
 There is no co-location logic to remove. `consume_handler` performs no IP or
 subnet validation, and the client's `normalize_server`
 (`apps/web/plugins/reach/src/lib.rs`) accepts any `http(s)` origin. "Same
-Wi-Fi" is UI copy, not enforcement. So a box that *is* publicly reachable
+Wi-Fi" appears only in UI copy; nothing enforces it. So a box that *is* publicly reachable
 already pairs from anywhere — the missing piece was only a code that lives long
 enough for a review cycle.
 
@@ -25,7 +26,7 @@ Existing code lifetimes are far too short: `oneoff` is 5–30 min, `standing`
 rotates every ~20 min. A reviewer may open the app days after submission, and
 resubmissions add rounds.
 
-## The mechanism
+## How the review code works
 
 `VIRTUES_REVIEW_PAIR_CODE` in **`/var/lib/virtues/virtues.env`** — the file
 the unit actually reads (`EnvironmentFile=-/var/lib/virtues/virtues.env`), and
@@ -38,7 +39,7 @@ nominal 10-year expiry.
 
 Nothing else changes. `claim_pair_token` already accepts any authorized,
 unexpired row and only consumes `kind = 'oneoff'`, so a review code is
-multi-use and permanent for free. The `'review'` value in the `kind` CHECK
+multi-use and permanent with no further code. The `'review'` value in the `kind` CHECK
 constraint arrived as `0058_review_pair_code.sql`, which folded into
 `0001_initial.sql` in the 2026-08-18 squash — there is no separate migration to
 look for any more, and no release since carries the one without the other.
@@ -49,19 +50,19 @@ longer, higher-entropy token would be untypeable there. Startup refuses
 anything that is not exactly 6 digits rather than installing a code a reviewer
 cannot enter.
 
-### Why the env gate is the whole safety story
+### Why the env var is the main safety control
 
 A 1M keyspace on a public origin is acceptable only because two things hold at
 once. First, `/api/pair/consume` is rate-limited to **10 attempts per IP per
 30-minute window**, which puts a single-source sweep of the space far out of
-reach. Second, such a box holds synthetic seed data — a successful guess exposes
+reach. Second, such a box stores synthetic seed data — a successful guess exposes
 a fake life. Absent the env var no review row is ever created, so customer boxes
 cannot grow a permanent remote-pairing credential. **Never set this variable on a
-box holding a real person's data.** An active review code logs a warning on every
+box that stores a real person's data.** An active review code logs a warning on every
 boot for exactly this reason.
 
-> **And the first of those two did not hold, for the whole life of this
-> document.** `rate_limit_ip` believes `X-Forwarded-For` only when
+> **The first of those two conditions was false from the time this document
+> was written until the 2026-09-03 fix.** `rate_limit_ip` believes `X-Forwarded-For` only when
 > `VIRTUES_TRUSTED_PROXY` is set — off by default, and correctly so, because a
 > stock box has no proxy and would otherwise let a LAN client mint a fresh
 > budget per request. Behind Caddy, with the variable unset, `consume_handler`
@@ -72,8 +73,8 @@ boot for exactly this reason.
 > 401s, no 429. Unlimited guesses against a 1M keyspace, where a hit earns a
 > permanent allowlisted iroh device.
 >
-> **`VIRTUES_TRUSTED_PROXY=1` is therefore load-bearing on a review box, not a
-> tuning knob** — it is provisioning step 6a, and the box now logs
+> **`VIRTUES_TRUSTED_PROXY=1` is therefore required on a review box; it is not
+> an optional tuning setting.** It is provisioning step 6a, and the box now logs
 > `REVIEW PAIR CODE IS UNRATE-LIMITED` at boot when the review code is active
 > without it. Trusting the header is safe here specifically because the code
 > takes the **right-most** entry: a client can prepend arbitrary hops, but
@@ -93,9 +94,9 @@ one. Rotation is a one-line env change plus a restart; see
 ## Current demo box
 
 **The live box's address, instance ID, security-group ID, and current pair code
-are deliberately not in this repo.** They live in the private ops note alongside
-the App Review submission record. This file describes the *shape* of the box, not
-its coordinates.
+are not in this repo.** They live in the private ops note alongside the App
+Review submission record. This file describes how the box is set up, but not its
+address or identifiers.
 
 The demo box is a small VPS at the same provider as the cloud server (moved
 off AWS on 2026-10-05), with nothing else on it: a box install beside billing
@@ -129,8 +130,8 @@ row must produce a 429.
 3. Caddy in front: `demo-<rand>.virtues.ch { reverse_proxy 127.0.0.1:8000 }`.
    Port 80 must stay open for the ACME http-01 challenge.
 4. 4 GB swap. 4 GB RAM is enough at rest (Postgres + `virtues` + two Q8_0 CPU
-   sidecars ≈ 2.5–3 GB) but the seed index build wants headroom. Slow is fine
-   here; OOM is not.
+   sidecars ≈ 2.5–3 GB) but the seed index build wants headroom. Slowness is
+   acceptable here; running out of memory is not.
 5. Install `virtues` from any current release (`gh release list`), pinning it
    with `VIRTUES_VERSION=vX.Y.Z`. Over a non-interactive ssh or remote-run there is no TTY, and the installer
    asks two questions — so both answers have to arrive as environment:
@@ -144,8 +145,8 @@ row must produce a 429.
    enabled and started before that step regardless. `VIRTUES_INFERENCE=bundled`
    is the one that is easy to miss: without it the installer reaches the
    Inference step, finds neither our hardware nor a terminal to ask on, and
-   **exits 0** having installed nothing — a failure that reads as success in a
-   log you are only skimming.
+   **exits 0** having installed nothing — a failure that looks like success if
+   you only skim the log.
 
    **On a release older than the libgomp fix, add `apt-get install -y libgomp1`
    afterwards.** `llama-server` links `libgomp.so.1`, a minimal Ubuntu cloud
@@ -162,7 +163,7 @@ row must produce a 429.
 6a. `VIRTUES_TRUSTED_PROXY=1` in the same file. **Not optional on this box** —
    without it the pair-code rate limit does not run at all behind Caddy, which
    is the whole safety argument for a 6-digit code on a public origin. See
-   [Why the env gate is the whole safety story](#why-the-env-gate-is-the-whole-safety-story).
+   [Why the env var is the main safety control](#why-the-env-var-is-the-main-safety-control).
    Prove it after the restart: eleven bad codes in a row must give ten 401s and
    then a 429.
 6b. `VIRTUES_PUBLIC_ORIGINS=https://demo.virtues.com,https://demo-<rand>.virtues.ch`
@@ -249,7 +250,8 @@ Give them the URL and the code, and say the app requires a paired server with
 the demo instance standing in for one. Reviewers do not SSH anywhere or run
 `virtues pair` — they type an address and six digits.
 
-**The bare hostname works now — and it did not, for one whole rejection.**
+**The bare hostname works now. Before the fix described here it did not, and
+that caused one App Review rejection.**
 `normalize_server` (`apps/web/plugins/reach/src/lib.rs`) used to turn any
 scheme-less name into `http://<host>:8000` — right for `virtues.local` or a
 LAN IP, wrong for every public demo server, whose security group opens only
@@ -277,7 +279,7 @@ read-only `CXCallObserver` (`callActive()`: suppress the "recording paused"
 nudge while a phone call owns the mic). Resolved by **removing China from the
 app's territories in App Store Connect**, not by touching the recorder. The
 obvious code substitute — "a notified interruption hold is standing" — was
-tried and reverted the same day: the hold is deliberately cleared by
+tried and reverted the same day: by design the hold is cleared by
 foreground, route change and media-services reset, all of which happen
 mid-call, so the nudge would fire during exactly the call it exists to stay
 quiet for. `CXCallObserver.calls` is the only signal that answers "is a call
@@ -311,10 +313,10 @@ Delete any probe chats off the server before shooting the drawer. Recents shows
 them, and "Reply with exactly: PREFLIGHT OK" is not what you want in a store
 listing.
 
-## Alternative not taken
+## Alternative considered: in-app demo mode
 
 An in-app demo mode (canned local data, no box, no pairing) would remove the
 hosted-box dependency, survive review rounds without a babysat server, avoid
-holding a reviewer's personal data, and double as a pre-purchase try-before-you-buy.
+storing a reviewer's personal data, and double as a pre-purchase try-before-you-buy.
 It is real product work, which is why the demo box came first. Worth revisiting
 if review rounds become routine.

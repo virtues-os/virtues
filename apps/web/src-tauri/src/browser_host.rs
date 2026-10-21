@@ -87,14 +87,20 @@ pub fn start(app: AppHandle, paired: fn() -> bool) {
     });
 }
 
+/// The ops this app handles beyond the browser, named in the socket URL. The
+/// box offers a tool that needs one only to an app that names it, so an op
+/// added to `serve` must be added here too.
+const OPS: &str = "imessage_send";
+
 fn endpoint(paired: fn() -> bool) -> Option<String> {
     // A dev override, for driving the browser from a scratch core without
     // pairing. Debug builds only: a release app talks to its own box.
     #[cfg(debug_assertions)]
     if let Ok(url) = std::env::var("VIRTUES_BROWSER_WS") {
-        return Some(url);
+        let sep = if url.contains('?') { '&' } else { '?' };
+        return Some(format!("{url}{sep}ops={OPS}"));
     }
-    paired().then(|| format!("ws://127.0.0.1:{}/ws/browser", tauri_plugin_reach::loopback_port()))
+    paired().then(|| format!("ws://127.0.0.1:{}/ws/browser?ops={OPS}", tauri_plugin_reach::loopback_port()))
 }
 
 async fn serve<S>(app: &AppHandle, socket: tokio_tungstenite::WebSocketStream<S>)
@@ -157,6 +163,19 @@ where
                     Err(e) => json!({ "id": req["id"], "ok": false, "error": e }),
                 };
                 let _ = tx.send(Message::Text(reply.to_string()));
+                continue;
+            }
+            // A message for Messages, not a step in the page: beside the
+            // queue, which a handoff can hold for minutes.
+            if req.get("op").and_then(|o| o.as_str()) == Some("imessage_send") {
+                let (app, tx) = (app.clone(), tx.clone());
+                tauri::async_runtime::spawn(async move {
+                    let reply = match crate::messages_send::send(&app, &req["args"]).await {
+                        Ok(result) => json!({ "id": req["id"], "ok": true, "result": result }),
+                        Err(error) => json!({ "id": req["id"], "ok": false, "error": error }),
+                    };
+                    let _ = tx.send(Message::Text(reply.to_string()));
+                });
                 continue;
             }
             let _ = jobs.send(req);

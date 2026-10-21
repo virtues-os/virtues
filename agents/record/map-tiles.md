@@ -2,19 +2,19 @@
 
 Written 2026-09-29; the design built 2026-09-25 to 09-29 (2d6f3950, 1ee9fa7f,
 5cb80a62, e2733059). Every Leaflet map (`MovementMap`) draws its
-basemap from Protomaps files the box holds itself, so no tile provider learns
+basemap from Protomaps files stored on the box itself, so no tile provider learns
 which streets anyone looks at and the maps work offline. `$lib/map/atlas.ts`
 is the one seam: `atlasLayer(style)` returns the basemap layer, or null when
-the box holds no files. Until the first cut runs on the cloud server
+the box has no files. Until the first cut runs on the cloud server
 ([cloud-consolidation-plan.md](../plan/cloud-consolidation-plan.md)), no real
 box has files and the maps draw their own background only.
 
-## Everybody downloads the same bytes
+## Every box in a square downloads the same file
 
 A box never asks for *its* area. It downloads fixed, pre-cut files, and every
 box in the same square takes the identical file. A full log of every download
 could only say which squares a box took, which is coarser than what its IP
-address already tells any server it talks to. The residual, travel, is covered
+address already tells any server it talks to. The remaining leak, travel, is covered
 by keeping no logs: the virtues-api maps routes sit outside `TraceLayer` (checked at
 `RUST_LOG=debug`: no line from either), and the server's Caddy must not log
 them either. The whole planet at z12 (18 GB) or z13
@@ -40,9 +40,9 @@ square.
 
 The unit is **days present**: a UTC day counts for a square when
 `data_location_point` has points in six or more distinct ten-minute buckets
-there. Not summed visit durations (visits overlap; on the demo copy their
-durations summed to about seven times their union), and not visit counts,
-which reward errands. score = Σ 0.5^(age ÷ 365 days). Home takes the top z7
+there. It does not use summed visit durations (visits overlap; on the demo
+copy their durations summed to about seven times their union), or visit
+counts, which reward errands. score = Σ 0.5^(age ÷ 365 days). Home takes the top z7
 squares with 7+ days, or 90+ lifetime days whatever their age, within 2 GB;
 visited takes z5 squares with 2+ days (one day is a drive-through); home plus
 visited is capped at 4 GB, lowest score evicted first. Files refresh when the
@@ -54,14 +54,14 @@ sha256, swapped atomically.
 `deploy/maps/cut.py`, a monthly timer on the cloud server, cuts the newest
 Protomaps build into `/srv/maps/<build>/`; virtues-api serves `/v1/maps/index`
 and `/v1/maps/<build>/<file>` (with `Range`) behind `BearerAuth`. A lapsed
-subscription gets a 402, so no new files, but what the box holds keeps
+subscription gets a 402, so no new files, but the files the box already has keep
 working. A free self-hosted box can point `VIRTUES_MAPS_SOURCE` at its own copy
 of the same layout. The files are OpenStreetMap data under the ODbL; the index
 carries the licence line and every map shows `© OpenStreetMap` in a compact ⓘ.
 
 Map POIs are display only. A visit is never named from a nearby café on the
-map: a nearest-POI label is a guess, and the place-name resolver was killed
-for exactly that.
+map: a nearest-POI label is a guess, and the place-name resolver was removed
+for that reason.
 
 ## Before Protomaps
 

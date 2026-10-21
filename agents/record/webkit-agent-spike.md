@@ -10,7 +10,7 @@ localhost control port exposing the calls the assistant's tools would make
 It lived in a scratch directory. Tauri's Mac webview is this same WKWebView,
 and wry hands it to native code, so the findings carry over.
 
-## What answered yes
+## What worked
 
 **Playwright's accessibility snapshot runs in WebKit unchanged.**
 - The setup: Playwright 1.63's injected script (Apache-2.0), run through
@@ -62,7 +62,7 @@ Nothing was posted or liked.
 
 **The login hands its session to native code.**
 - The owner logged in to X with a password inside the spike's webview.
-- `WKHTTPCookieStore` then held `auth_token` (HttpOnly, 40 chars), `ct0` (160)
+- `WKHTTPCookieStore` then contained `auth_token` (HttpOnly, 40 chars), `ct0` (160)
   and `cf_clearance`, all readable natively.
 - Those are the two values `x_bookmarks_sync` needs. The device → box handoff
   is a POST to the existing connect route.
@@ -152,7 +152,7 @@ Logging in inside the app replaces the developer-tools paste for X.
   there it is objc2 calls for the content world, `takeSnapshot`, the
   `NSEvent`s and the cookie store.
 
-## What it settles
+## Conclusions
 
 The assistant can drive a WKWebView tab: trusted input, from the background,
 without stealing focus, using Playwright's snapshot. Copy in the snapshot

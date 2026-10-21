@@ -20,7 +20,7 @@
 	import type { DocStats } from "$lib/components/pages/stats";
 	import type { OutlineNav, PageHeading } from "$lib/components/pages/outline";
 	import PageCoverImage from "$lib/components/pages/PageCoverImage.svelte";
-	import PageStatusBar from "$lib/components/pages/PageStatusBar.svelte";
+	import PageStatusNote from "$lib/components/pages/PageStatusNote.svelte";
 	import PageToolbar from "$lib/components/pages/PageToolbar.svelte";
 	import PageProjects from "$lib/components/pages/PageProjects.svelte";
 	import PageOutline from "$lib/components/pages/PageOutline.svelte";
@@ -108,7 +108,6 @@
 	let showCoverPicker = $state(false);
 	let loading = $state(false);
 	let saving = $state(false);
-	let hasSaved = $state(false);
 	let saveError = $state(false);
 	let error = $state<string | null>(null);
 	let saveTimeout: ReturnType<typeof setTimeout> | null = null;
@@ -261,16 +260,6 @@
 			isTyping = false;
 		}, 1000);
 	}
-
-	// Reset hasSaved after a delay so the checkmark fades
-	$effect(() => {
-		if (hasSaved) {
-			const timeout = setTimeout(() => {
-				hasSaved = false;
-			}, 3000);
-			return () => clearTimeout(timeout);
-		}
-	});
 
 	// Reset copied state after a delay
 	$effect(() => {
@@ -524,7 +513,6 @@
 			if (pageData && title !== pageData.title) {
 				// Set typing state for title changes too
 				isTyping = true;
-				hasSaved = false;
 				saveError = false;
 				if (typingTimeout) clearTimeout(typingTimeout);
 				typingTimeout = setTimeout(() => {
@@ -563,7 +551,6 @@
 
 		saving = true;
 		saveError = false;
-		hasSaved = false;
 
 		try {
 			// Use store method - handles API call, cache invalidation, and sidebar refresh
@@ -574,8 +561,6 @@
 				icon,
 				cover_url: coverUrl,
 			});
-
-			hasSaved = true;
 
 			// Update internal state to match saved title
 			if (pageData) {
@@ -708,6 +693,7 @@
 					save();
 				}}
 				onCopyMarkdown={copyMarkdown}
+				counts={treeDoc ? { words: wordCount, characters: charCount, links: linkCount } : null}
 				onViewMarkdown={format === "tree" ? () => (viewingMarkdown = true) : undefined}
 				onPrint={format === "tree" && canPrint ? printPage : undefined}
 				onDelete={deletePage}
@@ -853,20 +839,9 @@
 			{/if}
 			</div>
 
-			<!-- Bottom Status Bar: a block page's, which is edited here -->
+			<!-- Said only when there is something to act on: a block page's, which is edited here -->
 			{#if treeDoc}
-			<PageStatusBar
-				{linkCount}
-				{wordCount}
-				{charCount}
-				{saving}
-				{isTyping}
-				{hasSaved}
-				{isConnected}
-				{isSynced}
-				{saveError}
-				{connectionGracePeriod}
-			/>
+			<PageStatusNote {isConnected} {saveError} {connectionGracePeriod} />
 			{/if}
 		</div>
 	{/if}
@@ -890,6 +865,7 @@
 <style>
 	/* Page Layout - flex column to pin status bar at bottom */
 	.page-layout {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		height: 100%;
@@ -898,14 +874,23 @@
 
 	/* One classic top bar: TOC trigger (left) + page actions (right). Relative so
 	   the outline drawer anchors to it and spans the full width. */
+	/* Three columns: projects, the outline's title, the page's actions. The
+	   title sits centred while the row has room and shortens before it
+	   reaches either side, so on a narrow column it never covers an icon. */
 	.page-topbar {
 		position: relative;
-		display: flex;
+		display: grid;
+		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
 		z-index: var(--z-sticky);
 	}
+	.page-topbar :global(.page-projects) {
+		grid-column: 1;
+		justify-self: start;
+		max-width: 100%;
+	}
 	.page-topbar :global(.page-toolbar) {
-		flex: 1;
+		grid-column: 3;
 	}
 
 	/* Body - editor + optional references rail, side by side */
@@ -969,13 +954,13 @@
 		}
 	}
 
-	/* Page Header — title hugs the body so it reads as one document
-	   (the editor's own .cm-content adds ~8px on top of this). */
+	/* Page Header: a step of room under the title, which stays a clear size
+	   above the page's own first heading (36px over --md-h1-size, 26px). */
 	.page-header {
 		display: flex;
 		align-items: flex-start;
 		gap: 12px;
-		margin-bottom: 0.5rem;
+		margin-bottom: 1rem;
 	}
 
 	/* 400, and it must stay equal to the shared copy's title (normal weight,
@@ -983,11 +968,12 @@
 	   and its reader.
 	   The 500 was never drawn either way: the serif ships one cut and the request
 	   resolves back to the regular in silence (agents/build/typography.md). At
-	   32px in full ink above the body the title already leads the document. */
+	   36px, the page title's size on the type scale (agents/build/design-grammar.md),
+	   in full ink above the body the title leads the document. */
 	.page-title-input {
 		flex: 1;
 		font-family: var(--font-serif, Georgia, serif);
-		font-size: 2rem;
+		font-size: 2.25rem;
 		font-weight: 400;
 		line-height: 1.2;
 		color: var(--color-foreground);
@@ -1015,8 +1001,8 @@
 		cursor: pointer;
 		transition: all 150ms;
 		flex-shrink: 0;
-		/* Offset to align icon with first line of title (title: 2rem * 1.2 line-height = 38.4px, icon: 28px) */
-		margin-top: 5px;
+		/* Centres the 28px icon on the title's first line (2.25rem * 1.2 = 43.2px). */
+		margin-top: 8px;
 	}
 
 	.page-icon-btn:hover {

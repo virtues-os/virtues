@@ -3,31 +3,32 @@
 **Shipped 2026-08-04 (P0–P4).** A source stopped being a row in one
 compiled-in TOML file and became a *package*: a directory carrying its own
 `[[source]]` declaration plus the applets that serve it, discoverable in the
-shipped root or the state root. Git is one way to deliver a package, not the
-model. What is still open (P5, `oauth_direct`) is
+shipped root or the state root. Git is one way to deliver a package; the
+package model does not depend on it. What is still open (P5, `oauth_direct`) is
 [`../plan/sources-packages-plan.md`](../plan/sources-packages-plan.md).
 
 ## Why a package is a git repo
 
-Installing a third party's repo was made a first-class action, not an escape
-hatch, for two reasons:
+Installing a third party's repo was made a supported, first-class action for
+two reasons:
 
 1. **Uniform updatability.** There were four update mechanisms (box release,
    Apple/Sparkle, reconcile-from-disk, nothing at all for imports). A package
    at a pinned ref makes "update" one verb.
-2. **It forces the git path to be finished.** An optional path rots; making it
-   load-bearing makes the tests and the jail ship-blocking.
+2. **It forces the git path to be finished.** Optional code paths stop being
+   maintained. Making git the way packages arrive makes its tests and the jail
+   ship-blocking.
 
-Two audiences, one system: the trust tier is a visible property of a package,
-and the dangerous path is not reachable by accident. The Catalog stays a
+One system serves both audiences. The trust tier is a visible property of a
+package, and the dangerous path cannot be reached by accident. The Catalog stays a
 curated shelf with no paste-a-URL box; stranger-repo install is sudo-gated.
 
 ## What the 2026-08-04 sweep found
 
-Each finding became a phase. All are fixed; the failure classes are the part
-worth keeping.
+Each finding became a phase. All are fixed; the failure classes are recorded
+here because they can recur.
 
-- **The git importer worked zero percent.** It queried a dropped column
+- **The git importer failed on every import.** It queried a dropped column
   (`app_applets.dir`) before cloning. `sqlx::query_as` is unchecked, so it
   compiled and failed at runtime on every import, and three pure-function unit
   tests with no integration test hid it.
@@ -55,19 +56,20 @@ worth keeping.
 | P3 | importer fixed with its integration test; provenance columns (`repo_url`, `git_ref`, `commit`, `imported_at`, `forked_from`); slug includes host and owner; URL policy (no `git://`/`http://`, private-range deny, timeout); pin by commit | `340a55bc`, `d04daa7e` |
 | P4 | argv policy by provenance; sudo-gated import with an on-screen trust warning; imported `command` packages run in the `systemd-run` jail rather than being banned | `48cee3f2` |
 
-## Decisions that stand
+## Decisions still in effect
 
 - **Shipped applets are packages pinned to the release version.** Built-ins have
   no independent update verb; they move when the box moves.
-- **Fork provenance now, fork UI later.** `forked_from = <url>@<sha>` is
+- **Fork provenance is recorded now; the fork UI comes later.** `forked_from = <url>@<sha>` is
   recorded; diff/rebase is deferred.
-- **Build the jail; don't ban the capability.** Native third-party code stays
-  supported; it stops being root. The pattern is `code_interpreter`'s
+- **Third-party native code runs in a jail instead of being banned.** Native
+  third-party code stays supported, and it no longer runs unconfined. The pattern is `code_interpreter`'s
   (`PrivateNetwork`/`MemoryMax`, refuses to run unsandboxed in release).
 - **No package-carried global migrations.** Package DDL stays in its private
   `applet_<slug>` schema and never enters the `sqlx::migrate!` lineage; one
   shared counter under a lock already cost a box hours.
-- **No registry.** Git URLs; sharing is v2.
+- **There is no registry.** Packages are addressed by git URLs; sharing is
+  planned for v2.
 
 ## Adjacent items from the same sweep
 
@@ -78,5 +80,5 @@ worth keeping.
   `SET LOCAL ROLE` (`tools/sql_query.rs`), default-deny, SELECT on
   `data_*`/`wiki_*` only.
 - The face `MAX_ROWS` cap is an outer `LIMIT` wrapper around caller SQL
-  (`server/faces.rs`). The read-only transaction and role grants are what hold;
-  the wrapper is not a control.
+  (`server/faces.rs`). The read-only transaction and role grants enforce the
+  limits; the wrapper is not a security control.

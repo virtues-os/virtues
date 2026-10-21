@@ -89,6 +89,12 @@
 		go(`/page/${page.id}`, page.title);
 	}
 
+	async function newTask() {
+		const { tasksStore } = await import("$lib/stores/tasks.svelte");
+		tasksStore.requestAdd();
+		go("/tasks", "Tasks");
+	}
+
 	/** The list has scrolled under the doors; draw the rule between them. */
 	let scrolled = $state(false);
 
@@ -180,6 +186,15 @@
 				<span class="row-text">Pages</span>
 			</button>
 			<button class="row-plus" onclick={newPage} aria-label="New page">
+				<Icon icon="ri:add-line" width={20} />
+			</button>
+		</div>
+		<div class="row row-split">
+			<button class="row-main" onclick={() => go("/tasks", "Tasks")}>
+				<AtlasIcon name="tasks" bare />
+				<span class="row-text">Tasks</span>
+			</button>
+			<button class="row-plus" onclick={newTask} aria-label="New task">
 				<Icon icon="ri:add-line" width={20} />
 			</button>
 		</div>

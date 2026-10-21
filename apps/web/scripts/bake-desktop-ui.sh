@@ -3,7 +3,7 @@
 # build-ios`, the iPhone's.
 #
 # The app shows this copy for everything, at virtues://localhost, and uses its
-# server for data only (agents/plan/local-ui-plan.md). The server keeps it
+# server for data only (agents/record/local-ui.md). The server keeps it
 # current over the air; this is the build the app ships with and falls back to.
 #
 # Out: apps/web/build-desktop/ by default, or the `--out` directory (both

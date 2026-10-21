@@ -138,7 +138,8 @@ impl SemanticSearchTool {
 
         // Document-chunk hits cite the FILE VIEWER at the right page (with a
         // quote snippet for passage landing), not the raw record route — the
-        // researcher-plan trust loop. One batch lookup for all doc hits.
+        // see agents/record/researcher.md, decisions 3 and 8. One batch lookup
+        // for all doc hits.
         let doc_chunk_ids: Vec<String> = results
             .iter()
             .filter(|r| r.ontology == "uploaded_document")

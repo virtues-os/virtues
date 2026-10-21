@@ -5,10 +5,11 @@ pipeline, the web UI, and the docs against the code. The three findings most
 likely to be wrong were re-checked by hand. Line numbers are as of `wave` that
 day. Counts are from one box and describe failure classes, not a person.
 
-## Verdict
+## Summary
 
-The bones are right and the day is healthy. Everything around the day is thin,
-and the machinery that should thicken it is quietly broken.
+The wiki's structure is sound and day articles work. Every other kind of
+article is sparse, and the jobs that should fill them in are broken without
+reporting any error.
 
 - **Days work.** Every recent day has a full article (mean 2.5k characters),
   nothing is orphaned, every link resolves, and the logs show no wiki errors.
@@ -16,22 +17,22 @@ and the machinery that should thicken it is quietly broken.
   of a record that runs back years. Only people have articles; no place,
   organization or year does. The one story and the chapters are stubs that have not moved
   since September.
-- **The editor that should grow it runs without its rules and starves.** The
-  revision agent never sees the constitution, and day articles block its
+- **The wiki editor runs without its writing rules and rarely gets a turn.**
+  The revision agent never sees the constitution, and day articles block its
   queue.
 - **Chat could not reach any of it** until 2026-10-02, and the fix is not on a
   box yet.
 
-## The good
+## What works
 
 - **One subject registry** (`api/subjects.rs`) drives briefs, routes, tables
-  and link checks. Adding a kind is a row.
+  and link checks. Adding a kind means adding one row.
 - **One constitution plus a brief per kind**, compiled in
   (`wiki_editor.rs:17-24`). Every brief is used.
-- **Ownership is enforced by the server, not the prompt.** A machine edit that
+- **The server enforces ownership; it does not rely on the prompt.** A machine edit that
   drops a sentence the person wrote is refused (`wiki_editor.rs:215-320`), and
   this is well tested.
-- **Links are checked against the name behind the id**, not just existence
+- **Links are checked against the name behind the id**, in addition to checking that the target exists
   (`wiki_editor.rs:494`, `entity_article_gen.rs:450`). On the box, 0 of 313
   subject links were dead.
 - **Cost gates exist:** first drafts only on request, a pause after a human
@@ -43,11 +44,11 @@ and the machinery that should thicken it is quietly broken.
 - **Retrieval steps 1–2 match their plan** (`search/wiki_first.rs`,
   `query.rs:524`, `indexer.rs:355`).
 
-## The bad
+## Problems
 
 ### Coverage (live box)
 
-- **The time axis is short.** Most person refs and messages predate the first
+- **Day pages cover a short span of time.** Most person refs and messages predate the first
   day page. No year rows exist.
 - **A run of days inside that range is missing**, each with messages but no
   `wiki_days` row. Two empty days were retried 6–7 times.
@@ -82,7 +83,7 @@ and the machinery that should thicken it is quietly broken.
 
 ### Backend
 
-- **Concurrent first drafts can corrupt the record of what was written.** Both
+- **Concurrent first drafts can corrupt the stored history of what was written.** Both
   first-draft paths check and then create with no lock
   (`entity_article_gen.rs:73`, `years.rs:293`). `create_article` hands back an
   existing article silently, and `record_edition` then stores text that never
@@ -93,8 +94,8 @@ and the machinery that should thicken it is quietly broken.
   `years.rs:227`.
 - **Three link validators** (`sanitize_links`, `dead_links`,
   `day_article.rs:737`), and year drafts run none of them.
-- **Notes have no machine writer.** The constitution calls them the editor's
-  channel; `write_machine_notes` is called only from tests.
+- **No machine code writes notes.** The constitution describes notes as the
+  editor's channel; `write_machine_notes` is called only from tests.
 
 ### UI
 
@@ -128,7 +129,7 @@ and the machinery that should thicken it is quietly broken.
   - A dead `"always"` arm sits at `server/api/wiki.rs:881`.
   - `circumstances.rs:442` points at a block that does not exist.
 
-## The ugly
+## Serious bugs
 
 1. **Revisions are written without the rules.** The `wiki_editor` applet's
    agent is told "the rules for writing it are in your instructions above".
@@ -137,7 +138,7 @@ and the machinery that should thicken it is quietly broken.
    `wiki_editor::system_prompt` is called only by the two first-draft paths.
    So every revision, and every chapter or story first write, ignores the
    house style and the person's "never write about X". Verified by hand.
-2. **Day articles starve the editor.** `due_articles` (`wiki_editor.rs:586`)
+2. **Day articles use up all of the editor's slots.** `due_articles` (`wiki_editor.rs:586`)
    selects day and life articles. The applet skips kinds without a brief and
    records no pass for them (`applets/wiki_editor/main.rs:40`). Every day older
    than 30 days stays due and sorts first, so the three slots per run fill with
@@ -156,22 +157,22 @@ and the machinery that should thicken it is quietly broken.
    later disappears refuses every revision after.
 6. **Deleted stories and chapters stay searchable.** Their deletes bypass
    `delete_article` (`stories.rs:132`, `narrative_draft.rs:789`, `let _ =`).
-7. **The only chat tool that writes to the wiki cites a string, not a record**
+7. **The only chat tool that writes to the wiki cites a plain string instead of a record**
    (`tools/executor.rs:815`), against the editor's own citation rule.
 8. **Day and year tabs likely fail to restore from a URL.** The id gains a
    second prefix on the way back (`day_day_…`; `tabs/registry.ts:448,486`).
-   Read from code, not reproduced.
+   Found by reading the code; not reproduced.
 
 ## Fix order
 
 Ranked by impact over effort. The first four are small.
 
 1. Hand `system_prompt(kind, standing_rules)` to the editor agent, with a test
-   that the run's prompt contains the constitution. (Ugly 1)
-2. Limit `due_articles` to kinds with a brief, in SQL. (Ugly 2)
+   that the run's prompt contains the constitution. (Serious bug 1)
+2. Limit `due_articles` to kinds with a brief, in SQL. (Serious bug 2)
 3. Release the date fix and the wiki lead; re-run step 0 of
-   `wiki-retrieval-plan.md`. (Ugly 3)
-4. Make the dossier truncation char-safe and put the link list first. (Ugly 4)
+   `wiki-retrieval-plan.md`. (Serious bug 3)
+4. Make the dossier truncation char-safe and put the link list first. (Serious bug 4)
 5. Back-fill days before the first day page and fill the missing run. This is the largest
    gain in what the wiki knows. It needs a cost estimate first.
 6. Clean the subject tables: merge duplicates, move services to
@@ -184,8 +185,8 @@ Ranked by impact over effort. The first four are small.
 9. UI: errors distinct from not-found through `client.ts`; a refetch instead of
    reload; year article controls; sidebar `activeWhen` on detail pages; one
    link parser.
-10. Docs: fix the manual's Article entry first, then the narrative-resolution
-    premise, then one name for a day's text.
+10. Docs: fix the manual's Article entry first, then the assumption in
+    `narrative-resolution-plan.md`, then one name for a day's text.
 
 ## Not measured
 

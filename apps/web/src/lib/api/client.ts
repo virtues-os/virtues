@@ -604,8 +604,36 @@ export interface AppletLogEntry {
 	cost_micros: number;
 }
 
+/** A page an applet's runs wrote, with the last time one of them did. */
+export interface AppletPage {
+	page_id: string;
+	title: string;
+	written_at: string;
+	run_id: string;
+}
+
+/** The pages an applet wrote, most recently written first. */
+export function getAppletPages(id: string): Promise<AppletPage[]> {
+	return apiGet<AppletPage[]>(`/applets/${encodeURIComponent(id)}/pages`);
+}
+
 export function getAppletLog(id: string, limit = 50): Promise<AppletLogEntry[]> {
 	return apiGet<AppletLogEntry[]>(`/applets/${encodeURIComponent(id)}/log`, { limit });
+}
+
+/** One applet's runs on one day (in the box's timezone), counted by outcome. */
+export interface RunDay {
+	applet_id: string;
+	/** `YYYY-MM-DD`, the box-local day the runs started on. */
+	day: string;
+	status: AppletRun['status'];
+	runs: number;
+}
+
+/** Every applet's run counts per day for the last `days` days, in one request.
+ *  Drives the Applets list's "Last 7 days" column and each applet's history. */
+export function getRunsByDay(days = 30): Promise<RunDay[]> {
+	return apiGet<RunDay[]>('/runs/by-day', { days });
 }
 
 /** Say something to an applet — the `message` wake. Returns once the run row
@@ -1155,9 +1183,14 @@ export async function getNarrativeRules(): Promise<{ rules: NarrativeRule[]; pro
 }
 
 /** `POST /api/narrative/rules`: replace the whole set with exactly these.
- *  Proposals not included are dropped. */
-export async function saveNarrativeRules(rules: { rule: string; kind: 'avoid' | 'defend' }[]): Promise<void> {
-	await apiSend('POST', '/narrative/rules', { rules });
+ *  The interview's pending proposals are dropped unless `keepProposed`, which
+ *  Settings always sends: it edits the rules in force, and proposals belong to
+ *  the interview's close. */
+export async function saveNarrativeRules(
+	rules: { rule: string; kind: 'avoid' | 'defend' }[],
+	{ keepProposed = false }: { keepProposed?: boolean } = {},
+): Promise<void> {
+	await apiSend('POST', '/narrative/rules', { rules, keep_proposed: keepProposed });
 }
 
 // =============================================================================
@@ -1186,7 +1219,7 @@ export function reextractDriveFile(fileId: string): Promise<DriveFile> {
 	return apiSend<DriveFile>('POST', `/drive/files/${fileId}/reextract`);
 }
 
-// ── Annotations (document highlights + margin notes, researcher-plan D2) ──
+// ── Annotations (document highlights + margin notes, agents/record/researcher.md D2) ──
 
 export interface AnnotationRect {
 	x: number;
@@ -1395,6 +1428,44 @@ export async function uploadDriveFile(
  */
 export function messageAttachmentPath(messageId: string, index: number): string {
 	return `${API_BASE}/messages/${encodeURIComponent(messageId)}/attachments/${index}`;
+}
+
+/**
+ * A message the assistant is sending as the owner, as the box's outbox holds
+ * it (`virtues-core/src/outbox.rs`). `pending` can still be cancelled.
+ */
+export interface OutboxMessage {
+	id: string;
+	person_id: string | null;
+	recipient: string;
+	/** Empty for a group chat, which is reached by its thread alone. */
+	handle: string;
+	thread_id: string | null;
+	body: string;
+	send_at: string;
+	state: "pending" | "sending" | "sent" | "delivered" | "failed" | "cancelled";
+	error: string | null;
+	sent_at: string | null;
+	delivered_at: string | null;
+	/** Files sent after the text, by reference; the bytes stay on the box. */
+	attachments: OutboxAttachment[];
+}
+
+export interface OutboxAttachment {
+	/** `/drive/<id>` or `/api/messages/<id>/attachments/<n>`. */
+	ref: string;
+	filename: string;
+	mime_type: string;
+	size_bytes: number;
+}
+
+export async function getOutboxMessage(id: string): Promise<OutboxMessage> {
+	return request<OutboxMessage>(`/messages/outbox/${encodeURIComponent(id)}`);
+}
+
+/** Answers with the row: `cancelled`, or the state it had already reached. */
+export async function cancelOutboxMessage(id: string): Promise<OutboxMessage> {
+	return request<OutboxMessage>(`/messages/outbox/${encodeURIComponent(id)}/cancel`, { method: "POST" });
 }
 
 /**
@@ -2018,6 +2089,81 @@ export interface PageListResponse {
 	offset: number;
 }
 
+// ============================================================================
+// Tasks — the to-do list the owner and the assistant share (/api/tasks)
+// ============================================================================
+
+export type TaskActor = 'owner' | 'assistant';
+export type TaskStatus = 'open' | 'active' | 'done' | 'dismissed';
+
+export interface Task {
+	id: string;
+	title: string;
+	notes: string | null;
+	assignee: TaskActor;
+	status: TaskStatus;
+	/** The day it is due, `YYYY-MM-DD`; always set when `due_at` is. */
+	due_on: string | null;
+	/** A time, only when one was given. */
+	due_at: string | null;
+	project_id: string | null;
+	/** Who created it: typed into the list, asked for in chat, or the assistant's own. */
+	origin: 'owner' | 'chat' | 'assistant';
+	/** An app URL (`/page/page_…`) the task came from. */
+	source_url: string | null;
+	sort_order: number;
+	closed_at: string | null;
+	created_at: string;
+	updated_at: string;
+}
+
+export interface TaskEvent {
+	id: number;
+	task_id: string;
+	author: TaskActor;
+	kind: 'created' | 'edited' | 'status' | 'note';
+	body: Record<string, unknown>;
+	chat_id: string | null;
+	created_at: string;
+}
+
+export interface NewTask {
+	title: string;
+	notes?: string | null;
+	assignee?: TaskActor;
+	due_on?: string | null;
+	due_at?: string | null;
+	project_id?: string | null;
+}
+
+/** A partial edit: `null` clears a field, an absent key leaves it. */
+export type TaskPatch = Partial<
+	Pick<Task, 'title' | 'notes' | 'assignee' | 'status' | 'due_on' | 'due_at' | 'project_id' | 'sort_order'>
+>;
+
+export function listTasks(
+	status: 'open' | 'closed' | 'all' = 'open',
+	filter: { assignee?: TaskActor; project_id?: string } = {},
+): Promise<Task[]> {
+	return apiGet('/tasks', { status, ...filter });
+}
+
+export function createTask(task: NewTask): Promise<Task> {
+	return apiSend('POST', '/tasks', task);
+}
+
+export function updateTask(id: string, patch: TaskPatch): Promise<Task> {
+	return apiSend('PATCH', `/tasks/${id}`, patch);
+}
+
+export function addTaskNote(id: string, text: string): Promise<TaskEvent> {
+	return apiSend('POST', `/tasks/${id}/notes`, { text });
+}
+
+export function listTaskEvents(id: string): Promise<TaskEvent[]> {
+	return apiGet(`/tasks/${id}/events`);
+}
+
 export interface RefSearchResult {
 	id: string;
 	name: string;
@@ -2089,7 +2235,7 @@ export function searchRefs(query: string): Promise<RefSearchResponse> {
 }
 
 /**
- * Append a markdown block to a page THROUGH Yjs (researcher-plan D4).
+ * Append a markdown block to a page THROUGH Yjs (agents/record/researcher.md D4).
  *
  * Safe when the page is open in an editor: the server applies the insert to the
  * authoritative Yjs doc and broadcasts it, so an open editor merges the block
@@ -2239,7 +2385,7 @@ export function getSetupState(): Promise<SetupState> {
 // ============================================================================
 
 // ── Assistant profile ────────────────────────────────────────────────────────
-// ── Assistant memories (What I've learned) ──
+// ── Assistant memories (the Memory section of Settings > Assistant) ──
 // The machine's per-note memory, visible and editable. Every live note rides
 // in the system prompt of every conversation.
 

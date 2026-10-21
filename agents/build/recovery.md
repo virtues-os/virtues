@@ -8,10 +8,10 @@
 > [`docs/operate/recovery.md`](../../docs/operate/recovery.md) and ships to
 > `virtues.com/docs/operate/recovery`. Anything an owner reads belongs there;
 > **this file is for the people and agents working on the box** — it carries the
-> operator-only material (atlas-side actions, the diagnostic surface, the honest
-> list of what is described-but-not-implemented) and the pointers into source.
+> operator-only material (atlas-side actions, the diagnostic surface, the
+> list of what is described but not implemented) and the pointers into source.
 >
-> When the two disagree, **the manual is written from source and wins.**
+> When the two disagree, **the manual wins, because it is written from source.**
 
 If you are triaging a live box and want one thing to paste:
 
@@ -68,7 +68,7 @@ The installer writes `<data_dir>/virtues.env` and points the unit's
 migrates wins. That fallback is why backups work; it is not a claim that
 `/etc/virtues/env` exists. **Two doc comments in the tree still say
 `/etc/virtues/env` as if it were the only path** (`middleware/auth.rs:41`,
-`api/pair.rs:1310`). They are describing an intent, not a box.
+`api/pair.rs:1310`). They describe an intended layout that no real box has.
 
 `VIRTUES_ENV_FILE` overrides both candidates, for installs that moved
 `DATA_DIR`.
@@ -95,7 +95,7 @@ What actually reaches the box:
   to it over that iroh stream (`crates/virtues-reach-client/src/proxy.rs`,
   `server/mod.rs:1183`). That is the loopback origin the paired web UI is
   served from on a laptop — **not** `localhost:8000`.
-- **A plain browser cannot pair and is not a client.** It holds no iroh key, so
+- **A plain browser cannot pair and is not a client.** It has no iroh key, so
   a browser pointed at `http://<box-ip>:8000` from another machine is refused
   like any stranger.
 
@@ -129,11 +129,11 @@ anti-lockout guard; nothing was deleted. Pair a second device from the box
 first, then revoke.
 
 **On appliance hardware there is a physical fallback**: the button behind the
-case. A long press forgets every paired device — and nothing else. It is
-deliberately *not* a factory reset: it shares exactly one action with the app's
+case. A long press forgets every paired device — and nothing else. By
+design it is *not* a factory reset: it shares exactly one action with the app's
 `/api/pair/reopen-onboarding`, and the claim phrase freezes at first claim and
-never returns to the screen, which is what stops a screwdriver from being a
-takeover. See `virtues-core/src/maintenance/reset_button.rs`.
+never returns to the screen. That is what prevents someone with a screwdriver
+from taking over the box. See `virtues-core/src/maintenance/reset_button.rs`.
 
 ---
 
@@ -267,8 +267,8 @@ to us unless someone says so. Its "pre-set `VIRTUES_DIAG=off` before installing"
 workaround was guarding against a request that is never made.
 
 Also note that installer bugs hide in both directions — dev and CI each mask a
-different class of them (see [installer env divergence](deployment.md#installer-env-divergence)); green
-CI is not evidence the installer works.
+different class of them (see [installer env divergence](deployment.md#installer-env-divergence)); passing
+CI does not show that the installer works.
 
 ---
 
@@ -293,8 +293,8 @@ dump, the lake, the applet state, the env file (i.e. the encryption key), and a
 the tarball is as sensitive as the box itself.**
 
 The box keeps only the **public** half of the age keypair at
-`/var/lib/virtues/backup-recipient` — so a box cannot decrypt its own backups,
-deliberately. The secret half is shown once by `--init-key` and cannot be
+`/var/lib/virtues/backup-recipient`, so by design a box cannot decrypt its own
+backups. The secret half is shown once by `--init-key` and cannot be
 recovered from the box. Archives are standard [age](https://age-encryption.org)
 files and open with the `age` CLI anywhere.
 
@@ -307,8 +307,8 @@ virtues volumes                                  # register and inspect destinat
 virtues backup --allow-missing-key               # dev boxes only; the result cannot decrypt itself
 ```
 
-A backup nobody has ever opened is a hope. `--verify` is the cheap way to stop
-it being one.
+A backup that nobody has ever opened has not been shown to restore. `--verify`
+is the cheap way to check one.
 
 ## Restoring
 
@@ -355,7 +355,7 @@ virtues pair
 Then revoke the old box's devices from the new box (`virtues device rm`).
 
 Note that a restore brings the old box's **identity** with it — the database
-holds the iroh secret. If you are imaging hardware rather than migrating one
+stores the iroh secret. If you are imaging hardware rather than migrating one
 box, that is `virtues deprovision` followed by `virtues image-check`, not this;
 see [appliance-image.md](appliance-image.md).
 
@@ -428,20 +428,20 @@ directly and Virtues leaves the AI path.
 
 ## Source-connect and networks
 
-The OAuth return hop goes back to the box, so **where the browser is matters —
-but less than it used to.**
+The OAuth return hop goes back to the box, so **the browser's location matters,
+though less than it used to.**
 
 `services/virtues-api/src/routes/oauth.rs` classifies the `return_url`:
 
-- **Loopback** (`localhost`, `127.0.0.1`) gets the seamless 302, deliberately.
+- **Loopback** (`localhost`, `127.0.0.1`) gets the seamless 302 by design.
   That covers a browser on the box *and* the desktop helper's
   `127.0.0.1:7117` origin — so connecting a source through the desktop app works
   off-LAN.
 - **A private IP or a `.local` name** gets the "Almost done — continue on my
-  home network" interstitial. The click still fails when you are away; the point
-  is that it fails legibly instead of hanging on a TCP timeout.
+  home network" interstitial. The click still fails when you are away, but it
+  fails with a clear message instead of hanging on a TCP timeout.
 
-So: a browser aimed straight at the box's LAN address needs you to be home. The
+In short, a browser aimed straight at the box's LAN address needs you to be home. The
 apps do not.
 
 ---
@@ -491,7 +491,7 @@ virtues status --json
 Emits `{schema_version, virtues_version, diag_enabled, box_id, auth, sudo,
 pair, billing, actions, network, recent_events}` — device count, pending and
 consumed sudo requests, pair-token counts, auto-top-up and BYO state, applet
-health, and the last 10 auth events. Deliberately excluded: secrets of any kind,
+health, and the last 10 auth events. Excluded by design: secrets of any kind,
 user content, and paired-device IPs — so it is safe to paste.
 
 If the daemon won't start far enough to run it:

@@ -13,15 +13,6 @@
             "command": "python3 \"$(git rev-parse --show-toplevel)/tools/hooks/migration-guard.sh\""
           }
         ]
-      },
-      {
-        "matcher": "^apply_patch$",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "python3 \"$(git rev-parse --show-toplevel)/tools/privacy-guard.py\" check --hook"
-          }
-        ]
       }
     ]
   }

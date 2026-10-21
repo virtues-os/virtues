@@ -101,6 +101,25 @@ fn chapters_line(
     ))
 }
 
+/// The task list in one line: theirs by when it is due, and yours.
+fn tasks_line(overdue: i64, due_today: i64, mine: i64, theirs: i64) -> Option<String> {
+    if mine == 0 && theirs == 0 {
+        return None;
+    }
+    let mut parts = vec![format!("{mine} open")];
+    if overdue > 0 {
+        parts.push(format!("{overdue} overdue"));
+    }
+    if due_today > 0 {
+        parts.push(format!("{due_today} due today"));
+    }
+    let mut line = format!("Their task list (app_tasks): {}.", parts.join(", "));
+    if theirs > 0 {
+        line.push_str(&format!(" Assigned to you: {theirs} open."));
+    }
+    Some(line)
+}
+
 /// Sub-section registry — one list, so assembly, the error policy, and the
 /// audit test iterate the same names.
 pub(crate) const SECTIONS: &[&str] = &[
@@ -110,6 +129,7 @@ pub(crate) const SECTIONS: &[&str] = &[
     "place",
     "spine",
     "calendar",
+    "tasks",
     "people",
     "threads",
     "sleep",
@@ -323,6 +343,23 @@ async fn build_section(
             }
             Ok((!items.is_empty())
                 .then(|| format!("Calendar (today and tomorrow):\n{}", items.join("\n"))))
+        }
+        "tasks" => {
+            // Counts, never titles: enough to know the list is there and how
+            // it stands, and a line that only changes when the list does. The
+            // titles are one sql_query away when a turn is about them.
+            let (overdue, due_today, mine, theirs): (i64, i64, i64, i64) = sqlx::query_as(
+                r#"SELECT
+                       COUNT(*) FILTER (WHERE assignee = 'owner' AND due_on < $1),
+                       COUNT(*) FILTER (WHERE assignee = 'owner' AND due_on = $1),
+                       COUNT(*) FILTER (WHERE assignee = 'owner'),
+                       COUNT(*) FILTER (WHERE assignee = 'assistant')
+                   FROM app_tasks WHERE status IN ('open', 'active')"#,
+            )
+            .bind(today)
+            .fetch_one(pool)
+            .await?;
+            Ok(tasks_line(overdue, due_today, mine, theirs))
         }
         "people" => {
             // Recency, never significance: who has been AROUND these two
@@ -612,6 +649,17 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
+        // tasks: one overdue, one for the assistant
+        sqlx::query(
+            "INSERT INTO app_tasks (id, title, origin, due_on) VALUES ('task_t1', 'Renew passport', 'owner', '2000-01-01')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO app_tasks (id, title, origin, assignee) VALUES ('task_t2', 'Check the reply', 'assistant', 'assistant')")
+            .execute(&pool)
+            .await
+            .unwrap();
         // sources
         sqlx::query(
             "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
@@ -636,6 +684,7 @@ mod tests {
             "Draft essay",
             "Garden",
             "Connected sources: Google.",
+            "Their task list (app_tasks): 1 open, 1 overdue. Assigned to you: 1 open.",
         ] {
             assert!(block.contains(needle), "missing {needle:?} in:\n{block}");
         }

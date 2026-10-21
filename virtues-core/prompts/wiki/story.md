@@ -29,8 +29,8 @@ So the work is research, and it is most of the work:
 
 If the record has little to say, the article is short and says so. A story the
 person named and the box cannot evidence is still theirs: their sentence
-stands, and you add nothing under it rather than padding it out. That is not a
-failure — it is the honest state of a record that does not know everything.
+stands, and you add nothing under it rather than padding it out. This is
+expected: the record does not cover everything.
 
 ## The shape
 

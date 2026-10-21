@@ -10,6 +10,8 @@
 mod browser;
 #[cfg(target_os = "macos")]
 mod browser_host;
+#[cfg(target_os = "macos")]
+mod messages_send;
 use browser::{browser_login, browser_pane_agent, browser_pane_bounds, browser_pane_go, browser_pane_open};
 
 use serde::{Deserialize, Serialize};
@@ -259,7 +261,7 @@ fn is_own_page(url: &url::Url, loopback_port: u16) -> bool {
     match url.scheme() {
         "tauri" => url.host_str() == Some("localhost"),
         // The app's own copy of the UI (`serve_ui`, the phone's scheme), since
-        // 2026-09-29: agents/plan/local-ui-plan.md.
+        // 2026-09-29: agents/record/local-ui.md.
         "virtues" => url.host_str() == Some("localhost"),
         "about" => matches!(url.as_str(), "about:blank" | "about:srcdoc"),
         "http" | "https" => match url.host_str() {
@@ -1664,7 +1666,7 @@ fn main() {
     // The app's own copy of the UI, on the phone's scheme and through the
     // phone's handler (`virtues_lib::serve_ui`): baked build, OTA overlay from
     // the box, each page load pinned to one bundle. macOS only: Windows and
-    // Linux bake no UI yet. See agents/plan/local-ui-plan.md.
+    // Linux bake no UI yet. See agents/record/local-ui.md.
     #[cfg(target_os = "macos")]
     let builder = builder.register_uri_scheme_protocol("virtues", |ctx, request| {
         virtues_lib::serve_ui(ctx.app_handle(), &request)
@@ -1808,7 +1810,7 @@ fn main() {
             // the phone's: drop an overlay a newer app build has overtaken
             // (pointers only, before any page exists), then look for a newer
             // bundle on the box off the launch path. A staged bundle applies at
-            // the next page load. See agents/plan/local-ui-plan.md.
+            // the next page load. See agents/record/local-ui.md.
             #[cfg(target_os = "macos")]
             {
                 if let Some(dir) = virtues_lib::ui_data_dir(app.handle()) {
@@ -1843,7 +1845,7 @@ fn main() {
             // none of the documents that were the entire point. Offline needs
             // ONE origin across all four states (box up, box down, baked
             // bundle, OTA bundle) — see "The origin problem" in
-            // agents/record/spa-delivery.md and agents/plan/local-ui-plan.md.
+            // agents/record/spa-delivery.md and agents/record/local-ui.md.
             // Do not re-add the fallback alone; it looks like it works and
             // does not.
             // A SINGLE fast probe (not the multi-retry loop): reachable boxes
@@ -1865,7 +1867,7 @@ fn main() {
                 // the existing box, exactly as it does on the phone.
                 WebviewUrl::App("connect.html#setup".into())
             } else if cfg!(target_os = "macos") {
-                // THE MAC IS ITS OWN COPY (2026-09-29, agents/plan/local-ui-plan.md).
+                // THE MAC IS ITS OWN COPY (2026-09-29, agents/record/local-ui.md).
                 // It shows the app it carries (`virtues://`, served by
                 // `serve_ui` from the baked build or an OTA overlay) and uses
                 // the box for data only, exactly as the phone does. Unpaired, it

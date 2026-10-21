@@ -17,6 +17,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { backendUrl } from "$lib/config/backend";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
+	import { initials } from "$lib/utils/initials";
 	import { refIcon } from "$lib/utils/refRoutes";
 	import { getRefSummary, type RefSummary } from "$lib/utils/refSummary";
 
@@ -68,7 +69,9 @@
 	const typeLabel = $derived((type && TYPE_LABEL[type]) || "Reference");
 
 	const title = $derived(summary?.name || label);
-	const cover = $derived(summary?.avatarUrl || "");
+	// A person's picture is usually a box path, which an <img> in the Mac and
+	// phone apps' own copies only reaches through `backendUrl`.
+	const cover = $derived(summary?.avatarUrl ? backendUrl(summary.avatarUrl) : "");
 
 	// Caption: type/domain, then address, then every fact value we fetched.
 	// Quiet, natural case; may wrap to a second line.
@@ -91,12 +94,6 @@
 
 	// Monogram fallback so an image-less person/org still has a visual anchor
 	// with real mass (Gmail/Notion style) instead of a floating glyph.
-	function initials(name: string): string {
-		const parts = name.trim().split(/\s+/).filter(Boolean);
-		if (!parts.length) return "?";
-		if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-		return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-	}
 	const usesMonogram = $derived(!cover && (type === "person" || type === "org"));
 </script>
 

@@ -4,7 +4,7 @@ The first, cheapest, zero-risk step of [the update manifold](update-manifold-pla
 No behavior change, no gating — just make **every artifact state its identity**, get
 each device to **report it to the box**, and **show the fleet on the Devices page**.
 
-This is deliberately the invisible-plumbing step given a visible destination: when
+This step is mostly invisible plumbing, but it ends in something visible: when
 it's done, the Devices page shows every paired thing's version at a glance.
 
 ## Scope
@@ -13,7 +13,7 @@ it's done, the Devices page shows every paired thing's version at a glance.
 reporting it to the box; the box storing it per-device; the Devices page rendering it.
 
 **Out (later phases, don't build here):**
-- The *verdict* — "update required" / "supported" badges. That's a min-version compare
+- The *status* — "update required" / "supported" badges. That's a min-version compare
   (Phase 3, the lattice); this phase only *displays* versions.
 - "Update available" nudges — needs a latest-version source (App Store feed / fleet
   manifest); deferred.
@@ -21,7 +21,7 @@ reporting it to the box; the box storing it per-device; the Devices page renderi
 
 ## The canonical identity
 
-One shape, everywhere. Reuse what the box already bakes.
+Every artifact uses the same shape. Reuse what the box already bakes.
 
 ```
 version   semver "0.3.0"        from the git tag (GIT_DESCRIBE)
@@ -35,11 +35,12 @@ every artifact reports it uniformly.
 
 ## Per-artifact stamping
 
-The box is the reference — already correct. The work is the five stragglers.
+The box already stamps its identity correctly and serves as the reference. The
+work is in the other five artifacts.
 
 Locations are given as file + symbol, never file + line. Every line number this
 table carried had rotted by 2026-09-16 — `/health` had moved 780 lines — and a
-pointer that is confidently wrong is worse than one you have to grep for.
+wrong line number misleads a reader more than a symbol they have to grep for.
 
 | Artifact | Where | State today | Do |
 |----------|-------|-------------|----|
@@ -86,7 +87,7 @@ Sensor / box     box         0.3.0           stable    —
 v1 = **display only**: `version · channel · last seen`. That alone answers "is the
 phone way behind the browser?" at a glance. The **badge** (🟢 supported / 🔴 update
 required) is the first thing Phase 3 lights up — it slots into this same row when the
-min-version compare exists. Don't build the verdict here; leave room for it.
+min-version compare exists. Don't build the status badge here; leave room for it.
 
 Optional, cheap add: the box already reads cloud `/health`; surface atlas/api versions
 in `SystemInfoView` so the box's own "upstream" is visible too.
@@ -99,9 +100,9 @@ in `SystemInfoView` so the box's own "upstream" is visible too.
   at pair time) after the client sends a request post-upgrade.
 - No gating, no refusal, no new migration. Pure additive display.
 
-## Why first
+## Why this phase comes first
 
 It's a day or two, risk-free, and it's the prerequisite for *everything* downstream:
 the lattice's min-version checks (Phase 3) and every future bug report both need "what
-is this thing?" to have an answer. This step makes that answer exist — and puts it on
+is this thing?" to have an answer. This step provides that answer and shows it on
 a screen.

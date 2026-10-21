@@ -172,7 +172,7 @@ html-escape = "0.2"
 # Regular expressions
 regex = "1.0"
 
-# Document extraction (researcher-plan D1): pdfium binds the system/dev
+# Document extraction (agents/record/researcher.md D1): pdfium binds the system/dev
 # libpdfium at runtime (no compile-time link); zip + quick-xml parse .docx.
 pdfium-render = "0.8"
 zip = { version = "2", default-features = false, features = ["deflate"] }

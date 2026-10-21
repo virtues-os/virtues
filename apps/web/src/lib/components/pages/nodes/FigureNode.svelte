@@ -16,7 +16,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { backendUrl } from "$lib/config/backend";
-	import { onContextGesture } from "$lib/codemirror/extensions/long-press";
+	import { onContextGesture } from "$lib/components/contextMenu/gesture";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import { veiled } from "$lib/actions/veil";
 	import { veil } from "$lib/stores/veil.svelte";

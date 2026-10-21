@@ -11,7 +11,7 @@
 	and nothing nests a tab group inside a tab group.
 
 	  You          /virtues/you            — profile, theme
-	  Assistant    /virtues/assistant      — name, models (pickers + catalog), style
+	  Assistant    /virtues/assistant      — name, style, rules, memory, models (+ /models: the catalog)
 	  Billing      /virtues/billing        — subscription, balance, routing, and
 	                                         the AI calls that draw it down
 	  System       /virtues/system         — the machine, measured (read-only)
@@ -22,6 +22,7 @@
 	               /virtues/devices/this   — the machine you're on (local panel)
 	               /virtues/devices/:id    — another device, as the box knows it
 	  Shared links /virtues/shared         — every link shared through the door
+	  Applets      /virtues/applets        — every applet, built-in ones included
 	  Display      /virtues/display        — the screen on the box, and what it shows
 	  Developer    /virtues/developer      — SQL · Terminal
 
@@ -50,6 +51,7 @@
 
 	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
 	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
+	import ModelCatalogView from '$lib/components/tabs/views/ModelCatalogView.svelte';
 	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 	import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
@@ -59,6 +61,7 @@
 	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
+	import ManageApplets from '$lib/components/applets/ManageApplets.svelte';
 	import SearchSettingsView from '$lib/components/tabs/views/SearchSettingsView.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -70,9 +73,8 @@
 		'/virtues/account': '/virtues/you',
 		'/virtues/profile': '/virtues/you',
 		'/virtues/account/assistant': '/virtues/assistant',
-		// Models was its own section until 2026-09-25. The catalog table is the
-		// bottom of Assistant now, under the slot pickers it serves.
-		'/virtues/models': '/virtues/assistant',
+		// The model catalog is Assistant's sub-page, beside the pickers it serves.
+		'/virtues/models': '/virtues/assistant/models',
 		// Billing and Usage merged into Plan (2026-08-31): one subject seen from
 		// two ends — what you are on, what is left, what drew it down. Both of
 		// their own doors redirect too, because they were live sections with
@@ -177,6 +179,7 @@
 		| 'search'
 		| 'devices'
 		| 'shared'
+		| 'applets'
 		| 'display'
 		| 'developer';
 
@@ -187,12 +190,13 @@
 		'search',
 		'devices',
 		'shared',
+		'applets',
 		'display',
 		'developer',
 	];
 
 	// (section, sub) are a pure function of the route. `raw` is everything after
-	// `/virtues/`; segment 1 = section, segment 2 = sub-section (Developer only).
+	// `/virtues/`; segment 1 = section, segment 2 = sub-section (Assistant, Devices, Developer).
 	const raw = $derived(tab.route.replace(/^\/virtues\/?/, ''));
 	const section = $derived<Section>(
 		SECTIONS.includes(raw.split('/')[0]) ? (raw.split('/')[0] as Section) : 'you'
@@ -220,7 +224,11 @@
 		{#if section === 'you'}
 			<ProfileView {tab} {active} />
 		{:else if section === 'assistant'}
-			<AssistantView {tab} {active} />
+			{#if sub === 'models'}
+				<ModelCatalogView />
+			{:else}
+				<AssistantView />
+			{/if}
 		{:else if section === 'billing'}
 			<BillingView {tab} {active} />
 		{:else if section === 'system'}
@@ -231,6 +239,14 @@
 			<DisplayView />
 		{:else if section === 'shared'}
 			<SharedLinksView />
+		{:else if section === 'applets'}
+			<!-- Padding on the scroller, the 72rem measure inside it: the same
+			     box model as the Applets page in Home, so the two line up. -->
+			<div class="applets-settings">
+				<div class="measure">
+					<ManageApplets {tab} />
+				</div>
+			</div>
 		{:else if section === 'devices'}
 			{#if !sub}
 				<DevicesView {tab} {active} />
@@ -278,5 +294,15 @@
 		flex: 1;
 		overflow-y: auto;
 		min-height: 0;
+	}
+
+	.applets-settings {
+		padding: 48px;
+	}
+
+	.measure {
+		max-width: 72rem;
+		width: 100%;
+		margin: 0 auto;
 	}
 </style>

@@ -1,11 +1,11 @@
-# The Mac — what is left
+# Mac app — remaining work
 
 The built half (monotonic version counter, three-state permissions with an
 observation time, silent staged updates, one `mac-latest` channel, the
 command-surface version) and the outage that prompted it are in
-[mac-silent-outage.md](../record/mac-silent-outage.md). Where the Mac's
-interface comes from (the box's live SPA or its own baked copy) is owned by
-`local-ui-plan.md`, not here.
+[mac-silent-outage.md](../record/mac-silent-outage.md). The Mac showing its
+own copy of the app instead of the box's is recorded in
+[record/local-ui.md](../record/local-ui.md).
 
 ## Open
 
@@ -29,7 +29,7 @@ interface comes from (the box's live SPA or its own baked copy) is owned by
 
 ## Not doing
 
-- A changelog in the app. The box is the product surface.
+- A changelog in the app. Release notes belong on the box's interface.
 - A forced relaunch, even for security fixes.
-- A per-device channel override: it is how a fleet comes to disagree with
-  itself.
+- A per-device channel override: it would let devices owned by one person
+  end up on different channels and versions.

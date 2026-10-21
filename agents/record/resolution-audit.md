@@ -1,4 +1,4 @@
-# Resolution — a six-front audit
+# Resolution — an audit across six areas
 
 **Status:** Findings only, 2026-08-17. Nothing here is fixed. Six read-only
 agents swept entity resolution, the narrative identity stack, day/event
@@ -7,18 +7,19 @@ current at HEAD `c8889713` plus this session's uncommitted work; verify before
 acting.
 
 The sweep was prompted by finding that `wiki_rules` had been written since
-migration 0101 and read by nothing. That turned out not to be a bug but **a
-pattern**, and the pattern is the most important thing in this document.
+migration 0101 and read by nothing. That turned out to be one case of **a
+wider pattern**, and that pattern is the most important finding in this
+document.
 
 ---
 
-## 1. The disease: data written and never read, or read and never written
+## 1. Data written and never read, or read and never written
 
 Roughly twenty-five columns and five whole tables. Grouped by how they fail.
 
-### 1a. Read but never written — these manufacture false facts
+### 1a. Read but never written — these produce false facts
 
-The worst class, because the value is not missing, it is **wrong and confident**.
+This is the worst class, because the value is present, **wrong, and treated as fact**.
 
 | column | read at | reality |
 |---|---|---|
@@ -29,7 +30,7 @@ The worst class, because the value is not missing, it is **wrong and confident**
 | `wiki_days.snapshot` | `api/wiki.rs:1148` | no producer |
 
 `entity_article_gen.rs` passing `- Visits on record: 0` into a prompt is the
-sharpest version: the model is being told, as fact, something no code has ever
+clearest example: the model is being told, as fact, something no code has ever
 computed, and it will write prose around it.
 
 ### 1b. Written but never read
@@ -42,7 +43,7 @@ computed, and it will write prose around it.
 `lof_raw`, `confidence`, `hrv_z` · `search_embeddings.text_hash` ·
 `search_index_meta.fingerprint` · `wiki_people/orgs/places.article_ref_count`
 
-Two deserve singling out:
+Two are worth calling out:
 
 - **`wiki_narrative_identity.document`** is the prose a person is told to "read
   and correct." It is written once and returned only in a transient POST
@@ -52,7 +53,7 @@ Two deserve singling out:
   744 events and read by nobody, while the visible "Most Novel" badge uses the
   worse statistic (§2).
 
-### 1c. Five tables: zero rows, zero writers, advertised anyway
+### 1c. Five tables with zero rows and zero writers, still offered to the agent
 
 `wiki_acts`, `wiki_chapters`, `wiki_stories`, `wiki_telos`, `wiki_years`.
 
@@ -72,9 +73,9 @@ error.
 
 ---
 
-## 2. Doctrine violations: model output re-entering as evidence
+## 2. Rule violations: model output fed back in as evidence
 
-`OBSERVE, NEVER INFER` holds at the graph boundary — verified. Every
+The `OBSERVE, NEVER INFER` rule holds at the graph boundary; we verified it. Every
 `INSERT INTO wiki_refs` is deterministic, retrieval never writes edges, and
 `api/wiki_notes.rs:19` explicitly forbids the writer touching refs. **The
 violations are all in the day pipeline, where model prose is fed back in as
@@ -84,19 +85,20 @@ fact.**
    `dayline/embedding_ops.rs:79` embeds `summary.trim()`;
    `dayline/novelty.rs:96-99` embeds `e.event_summary` verbatim;
    `day_summary.rs:424-430` picks `max(novelty_z)` and `:448` injects "(the most
-   unusual beat of the day)" back into the narration prompt. **Model output
-   ranks model output, and the ranking then steers the article.**
+   unusual beat of the day)" back into the narration prompt. **Model output is
+   used to rank model output, and that ranking then steers the article.**
    `EventTimeline.svelte:167` still renders the badge.
 2. **`day_summary.rs:1371-1400`** — `data_audio_session.content` (model-stitched
    summaries) enters the dossier as evidence with no provenance tag, while
    `SEGMENT_PROMPT:39` tells the detective audio content "tells you what a
-   stretch actually was." `attention-plan.md` names this field as inadmissible.
+   stretch actually was." `attention-plan.md` lists this field as one that must not be used as
+   evidence.
 3. **`day_summary.rs:1578`** — `recent_event_case_file` feeds 14 days of prior
    model prose into the narration prompt, while `NARRATE_PROMPT` claims "every
    sentence must trace to the dossier." The narrate call never sees a dossier.
 
-The two strongest inference vectors — audio content and the case file — are
-precisely the two with no hedge in the prompt.
+The two largest sources of inferred content — audio content and the case
+file — are exactly the two that the prompt gives no caveat for.
 
 ---
 
@@ -107,15 +109,15 @@ when a record's text becomes empty, the branch writes a placeholder and
 `continue`s, so it never enters `docs` and the stale-chunk deletion at `:452-483`
 never runs. Chunk 0 keeps its old `content` and `search_vectors` row; chunks
 1..N are untouched. **Delete the body of a message and retrieval still returns
-and cites it.** High, and it is a privacy claim this product cannot afford to
-get wrong.
+and cites it.** Severity: high, because this breaks a privacy claim the
+product makes.
 
 **Merchant names collapse into one org.** `entity_resolution/places.rs:363` —
 `normalize_merchant_name`'s suffix list contains `"*"` and `" CO"`, truncating at
 the *first* match: `"SQ *BLUE BOTTLE"` → `"Sq"`. Every Square/Toast/PayPal
 merchant collapses into one shared `wiki_orgs` row that then accumulates
-unrelated refs. Silent, irreversible graph corruption from a *deterministic*
-writer — and `original_name`, the only record of the pre-normalization string,
+unrelated refs. This is silent, irreversible graph corruption from a
+*deterministic* writer, and `original_name`, the only record of the pre-normalization string,
 is write-only (§1b), so it cannot be undone.
 
 **Retrieval recall is silently capped at 40.** `search/query.rs:507,540` sets
@@ -123,13 +125,14 @@ is write-only (§1b), so it cannot be undone.
 nothing in the repo ever sets it — measured on the live DB: `LIMIT 200` returns
 40 rows; `SET hnsw.ef_search=250` returns 200. The dense arm contributes 40
 candidates, the lexical arm 200, and fusion never accounts for the 5×
-asymmetry. One `SET LOCAL` away, and it re-caps the bug `ir-notes.md` §2.2
-claims was fixed.
+asymmetry. The fix is one `SET LOCAL`. The cap also brings back the
+starvation bug that `ir-notes.md` §2.2 claims was fixed.
 
-**The score-scale schism survives**, relocated. `query.rs:758-783`: candidates
+**The score-scale mismatch is still present**, in a different place. `query.rs:758-783`: candidates
 with empty content are excluded from reranking but stay in the result set with
 their fused z-score, while reranked peers are overwritten with raw reranker
-output; `:779` sorts the mixed set. Latent today (3 rows), not fixed.
+output; `:779` sorts the mixed set. It affects only 3 rows today, and it is
+not fixed.
 
 **Other correctness:** DST-skipped local midnight silently falls through to a
 UTC day (`day_summary.rs:126-158`); visits spanning midnight are invisible to
@@ -158,7 +161,8 @@ outer date list.
 
 ## 5. Regressions from this session
 
-Mine, and they would have shipped.
+The session that wrote this audit introduced these, and they would have
+shipped.
 
 1. **Rule capture was removed at the moment enforcement landed.** Moving `rules`
    to `stage: 'queue'` means no question ever asks for a rule
@@ -169,12 +173,12 @@ Mine, and they would have shipped.
    global DELETE-and-reinsert (`narrative_draft.rs:318`) and `DraftReview` never
    loads existing rules. The new URL routing made `draft` re-enterable from the
    strip, widening a bug that already existed.
-3. **The reveal clobbers the person's own words.** `RevealSection` triggers
+3. **The reveal overwrites the person's own words.** `RevealSection` triggers
    `applet_narrative_identity_draft`, which overwrites
    `wiki_narrative_identity.content` — distilled from the interview minutes
    earlier — with a paragraph guessed from observed data. Three writers own that
-   column with no arbitration.
-4. **The census collision.** `pub mod census;` was added to `api/mod.rs`, a hot
+   column, and nothing decides which write wins.
+4. **The census module declaration was committed without its file.** `pub mod census;` was added to `api/mod.rs`, a hot
    shared file, while `api/census.rs` stayed untracked. It rode into another
    agent's commit on a file-level pathspec and broke CI, which they spent three
    runs backing out (`92c493b4`). `cargo check` stayed green throughout because
@@ -193,13 +197,13 @@ Mine, and they would have shipped.
   `onboarding-paradigm.md` are 100% box setup — zero hits for
   `interview|letter|reveal`. The app's `/onboarding` is the narrative flow.
   Rename the docs to `setup-*.md`.
-- **Status headers lie in both directions:** `wiki-plan.md` (since recorded as [wiki-consolidation.md](wiki-consolidation.md)) says "unbuilt" (0081–0083
+- **Status headers are wrong in both directions:** `wiki-plan.md` (since recorded as [wiki-consolidation.md](wiki-consolidation.md)) says "unbuilt" (0081–0083
   shipped); `references.md` says "no implementation yet" (four components exist).
 - **`the-day.md`'s whole Autobiography layer** rests on `wiki_days.autobiography`,
   dropped today in 0106.
 - **`README.md` claims "every doc is listed here"**; nine are not, including the
   largest doc in the repo.
-- **`write_machine_notes` still has zero production callers** — the note covenant
+- **`write_machine_notes` still has zero production callers** — the note contract
   that `wiki-plan.md` builds on (now [wiki-notes-plan.md](../plan/wiki-notes-plan.md)) has no producer, and the uniqueness constraint it
   requires does not exist.
 - **Gap:** the six-step post-setup onboarding flow has no doc at all.
@@ -216,14 +220,14 @@ Mine, and they would have shipped.
 | the unit of a day | "story" / "event" / "day" |
 
 "Resolution" is already the most overloaded word in the schema, in four
-unrelated senses. Adopting it as the umbrella name needs a deliberate decision,
-not a default.
+unrelated senses. Using it as the umbrella name should be an explicit
+decision.
 
 ---
 
 ## 7. Suggested order
 
-**Stop-the-bleeding (small, and each closes something actively wrong):**
+**Urgent fixes first (small, and each fixes something actively wrong):**
 
 1. `hnsw.ef_search` — one `SET LOCAL`, recovers 5× dense recall.
 2. Empty-text records must delete their stale chunks — privacy.
@@ -231,16 +235,16 @@ not a default.
 4. Land census as one commit (file + declaration + route), or delete the client calls.
 5. Fix the three session regressions in §5.
 
-**Then the systemic one:**
+**Then the systemic fix:**
 
 6. A schema-coverage check in CI. Every column: written by anything? read by
    anything? This is what turns §1 from a recurring silent failure into a build
    error, and it is worth more than fixing any individual column on the list.
 
-**Then doctrine:**
+**Then the observe-never-infer violations:**
 
 7. Stop embedding model summaries for novelty; stop feeding audio content and
    the case file into prompts as evidence.
 
-**Then hygiene:** the dead columns, the five empty tables, the doc renames and
+**Then cleanup:** the dead columns, the five empty tables, the doc renames and
 status corrections.

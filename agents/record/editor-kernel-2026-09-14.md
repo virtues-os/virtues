@@ -1,10 +1,10 @@
-# Editor kernel: CodeMirror, not ProseMirror
+# Editor kernel: choosing CodeMirror over ProseMirror
 
 **Decided 2026-09-14.** Every text surface that hands markdown to the model
 or takes markdown from it runs on CodeMirror. The document is a markdown
-string on every surface. No surface holds a tree that the markdown is a
-serialization of. This record is the evidence, so the question does not get
-reopened on the strength of "everyone uses ProseMirror."
+string on every surface. No surface stores a tree that the markdown is a
+serialization of. This document gives the evidence, so that the question is
+not reopened just because "everyone uses ProseMirror."
 
 ## Why it came up
 
@@ -58,7 +58,7 @@ Default ProseMirror has no table, task-list, or strikethrough nodes: tables
 flatten to a paragraph, task boxes and `~~` become escaped literal text. The
 TipTap stack carries those and recovers most of the docs corpus.
 
-The remaining failures are the finding. Each is silent: the output is a
+The remaining failures are the main result. Each is silent: the output is a
 plausible document and nothing errors.
 
 - **Silent deletion.** A literal `<time>` in prose is gone after the TipTap
@@ -77,7 +77,7 @@ plausible document and nothing errors.
 Raw HTML blocks survived both converters. Ref links are ordinary markdown
 links and survived both.
 
-## Why churn is the disqualifier here
+## Why reformatting on open rules out a tree editor here
 
 The percentages say the converter works for pages as people write them today
 and fails at the edges the model and power users produce. That would be
@@ -87,17 +87,17 @@ reasons that have nothing to do with the percentages.
 The model's edit tools anchor on exact text spans. An editor that reformats
 a page on open means the model's next edit misses its anchor. Pages
 collaborate over a Yjs text buffer, so a reformat is a write the other side
-did not make. The string stops being the shared thing, and the string being
-the shared thing is the whole premise of a person and a model working the
-same document.
+did not make. The string would no longer be the shared state, and a person
+and a model working on the same document depends on the string being the
+shared state.
 
-The failure class is the one this repo already refuses in queries: a lossy
-step produces a plausible result and nothing surfaces. With a tree editor
-that is the steady state, not a bug to fix.
+This is the same failure class the repo already forbids in queries: a lossy
+step produces a plausible result and nothing reports it. With a tree editor
+this happens routinely, and it cannot be fixed as a single bug.
 
-## What a tree editor would have won
+## What a tree editor would have added
 
-Two things, honestly: dragging blocks, and tabbing through table cells the
+Two things: dragging blocks, and tabbing through table cells the
 way Notion does. Both are rendering conveniences. The WYSIWYG preference is
 real, and the CodeMirror answer to it is the reveal-on-touch live preview
 Pages already have, pushed further where it is worth it.
@@ -105,13 +105,13 @@ Pages already have, pushed further where it is worth it.
 ## TipTap versus ProseMirror
 
 ProseMirror is a kernel (model, state, view, transforms, schema) by the same
-author as CodeMirror, MIT, sponsorship-funded. TipTap is the batteries on top:
+author as CodeMirror, MIT, sponsorship-funded. TipTap is a layer on top of it:
 each node or mark as an extension, framework bindings, a Yjs extension, and
-since v3 an official markdown extension. The venture business is the cloud
+since v3 an official markdown extension. Its commercial business is the cloud
 services and a shifting set of paid extensions. For this decision the
 difference was only whose converter we would maintain. TipTap's handled GFM
 better and carried the three silent failures above. Either way the
-serializer becomes a file we own forever.
+serializer becomes a file we maintain indefinitely.
 
 ## Consequences
 

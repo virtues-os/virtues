@@ -15,13 +15,32 @@ export interface MenuCommand {
 	searchOnly?: boolean;
 }
 
-/** The commands a query matches, in the order given. */
+/**
+ * Whether `query`'s characters come in `name` in order, the first at the
+ * start of one of its words: `nmbr` and `num li` in "numbered list", not
+ * `umb`.
+ */
+function inOrder(name: string, query: string): boolean {
+	let i = 0;
+	for (let at = 0; at < name.length && i < query.length; at++) {
+		if (name[at] !== query[i]) continue;
+		if (i === 0 && at > 0 && /\w/.test(name[at - 1])) continue;
+		i++;
+	}
+	return i === query.length;
+}
+
+/**
+ * The commands a query matches, in the order given: those whose name or a
+ * keyword holds it first, then those that hold its letters in order.
+ */
 export function filterCommands<T extends MenuCommand>(commands: T[], query: string): T[] {
 	if (!query) return commands.filter((cmd) => !cmd.searchOnly);
 	const q = query.toLowerCase();
-	return commands.filter(
-		(cmd) => cmd.label.toLowerCase().includes(q) || cmd.keywords?.some((k) => k.includes(q)),
-	);
+	const names = (cmd: T) => [cmd.label.toLowerCase(), ...(cmd.keywords ?? [])];
+	const holding = commands.filter((cmd) => names(cmd).some((n) => n.includes(q)));
+	const loose = commands.filter((cmd) => !holding.includes(cmd) && names(cmd).some((n) => inOrder(n, q)));
+	return [...holding, ...loose];
 }
 
 /** What a key does in an open insert menu: close it, reach the next or the previous command, or run the one reached. */

@@ -6,7 +6,7 @@
 > [linking-plan.md](linking-plan.md) is the deep dive on step 2.
 > Written 2026-08-12.
 
-## Where we are
+## Current state
 
 "Proven" means it ran on hardware.
 
@@ -17,19 +17,19 @@ three-step display. Device-authorization link flow, box side.
 
 **Built, never observed.** The relay's **in-process rebind** on link — the claim
 that reach activates in seconds without a restart, waiting on one completed
-checkout. **`0x83`** pairing over BLE, which is not a nicety: a Mac and a box on
+checkout. **`0x83`** pairing over BLE, which is required: a Mac and a box on
 the same coworking wifi cannot reach each other, so LAN pairing is unavailable in
 any office. **`0x82`** claim grant, box side only.
 
 **Missing.** Atlas `/init` has no identity fork, so an existing subscriber pays
 twice; it ignores the box identity the box now sends, and expires codes in ~2
-minutes. The app holds no account session, so it can vouch for nobody. The whole
+minutes. The app holds no account session, so it cannot vouch for any device. The whole
 *join a claimed box* story — no recovery code, no trigger, no emailed code —
 which means an owner who loses their only device is locked out of data they
 physically possess. Replacing a pairing is silent. There is no consumer factory
 reset. `virtues.com/link` 404s.
 
-## Phase 1 — one screen, one password
+## Phase 1 — setup on one screen with one password
 
 **The deliverable, stated as the thing a person does:** install the app, sign in
 once, and then a single screen — *"Set up Quaint Tern on your-wifi?"* — with
@@ -40,8 +40,8 @@ Everything below exists to make that screen possible; nothing else is Phase 1.
 
 **1.1 Consumer factory reset.** The gate for all of it. Today the only reset is
 `virtues reset` over SSH, which an appliance owner does not have — so a lost
-setup race, a resale, a hand-me-down, or any mistake has no way back. Small, and
-it unblocks more than its size.
+setup race, a resale, a hand-me-down, or any mistake has no way back. It is a
+small change that unblocks a lot.
 
 **1.2 Atlas: sessions.** *(done — `routes/account.rs`)* Email, six digits,
 opaque revocable token. A session may exist before payment.
@@ -53,7 +53,7 @@ two and the grant can be scoped to a box, which is what stops a second box
 evicting the first.
 
 **1.4 `POST /init/grant`.** Session-authed, mints a pre-approved `device_code`
-for a named box. Blocked on 1.3 — deliberately, since making a second link one
+for a named box. Blocked on 1.3 on purpose, because making a second link one
 tap while it still destroys the first box would be worse than not building it.
 
 **1.5 In-app payment.** Apple Pay / Stripe sheet in the app. Money appears once,
@@ -63,7 +63,7 @@ before the box is ever touched, and only for people who owe it.
 
 **1.7 The app: one screen.** Sign-in, then the single setup screen with three
 ticks as they land (joined / linked / paired). The Wi-Fi picker offers "already
-on ethernet" as an option — wiring the box removes a password, not a stage. Auto-select when exactly one box
+on ethernet" as an option — wiring the box removes the password, but the step stays. Auto-select when exactly one box
 needs setup; prefill the network this machine is on; neutral headline until
 discovery decides — "Looking for your box", not "Set up your box", which alarms
 someone who has owned a box for months and is only installing the Mac app.
@@ -72,9 +72,9 @@ someone who has owned a box for months and is only installing the Mac app.
 lost race is visible while it happens rather than discovered later.
 
 **1.9 Confirm before replacing a pairing.** Single-box clients are a sound
-design; silent replacement is not. Two pairings have already been lost this way.
+design, but replacing a pairing silently is a bug. Two pairings have already been lost this way.
 
-### `0x85 GetLinkUrl` — cut
+### `0x85 GetLinkUrl` was dropped
 
 Handing the app the box's `…/init?code=…` so a browser opens prefilled. It was
 the cheap fix for a three-surface link step that no longer exists: with sign-in
@@ -94,9 +94,9 @@ account itself: someone who bought hardware and a subscription together, someone
 changing a card, someone who wants to sign in from a desktop. The `/init` page
 survives for that, not as a setup fallback.
 
-**2.1 Atlas `/init` earns its fork.** One email field. Render the box identity
+**2.1 Atlas `/init` gets the identity fork.** One email field. Render the box identity
 the box already sends, so the page says *"Link **Quaint Tern** · Dragon
-Q6A"* — the anti-phishing property, not decoration. Then branch: active
+Q6A"*. This is the anti-phishing check. Then branch: active
 subscription → one tap and **no payment screen ever**; otherwise checkout with
 the email prefilled. Without this an existing subscriber pays twice.
 
@@ -106,18 +106,19 @@ the box-side ghost-code bug (`api/display.rs`), not atlas expiry. Left here as a
 correction: the diagnosis was wrong, so re-open anything that rested on it.
 
 **2.3 Decide what "delete my account" means.** Proposed — atlas forgets you and
-your box keeps working on the LAN forever. It is the sovereignty claim in its
-most testable form, and it is cheap to settle now and expensive later.
+your box keeps working on the LAN forever. It is the most testable form of the
+claim that the owner controls the box, and it is cheap to settle now and expensive later.
 
 *Data minimization holds throughout.* Sessions added a session table and a code
 table — no new personal data, since atlas already holds the email for Stripe.
 The invariant is unchanged: **atlas knows who pays and which boxes are theirs,
 never anything from inside a box.**
 
-## Phase 3 — the phrase · **ship gate**
+## Phase 3 — the setup phrase (required before shipping)
 
-Not a recovery system. One secret, generated at first boot, that gates every
-claim after the first ([paradigm §1–3](../build/onboarding-paradigm.md)).
+This phase adds one secret, generated at first boot, that gates every claim
+after the first ([paradigm §1–3](../build/onboarding-paradigm.md)). It is not a
+general recovery system.
 
 **3.1 The phrase.** Four words from a wordlist, stored **hashed** on the box
 (verified, never recovered). Shown on the panel *only while the box is unclaimed*
@@ -130,7 +131,7 @@ secret.
 **3.2 Setup requires it.** The BLE setup session is claimed with the phrase; only
 that live connection may link and pair. Guessing is budgeted **globally on the
 box** with exponential backoff — a BLE central can change its address between
-attempts, so per-device throttling is theatre — plus a tighter per-connection cap
+attempts, so per-device throttling would not stop anyone — plus a tighter per-connection cap
 so one session cannot burn the budget at once.
 
 **3.3 Reset setup, on the button.** ✅ **BUILT 2026-08-17** —
@@ -140,15 +141,16 @@ evdev node and acts on a **three-second hold**. **Data and phrase survive.** So
 a resetter gets a box they cannot claim, and the owner gets their box back by
 typing what they saved.
 
-Narrowed while building it: it forgets **paired devices only**, not the account
+The scope was narrowed during the build: it forgets **paired devices only**, not the account
 and not the network — see [onboarding-paradigm.md](../build/onboarding-paradigm.md) §3
 for why those two made recovery harder while adding no security.
 
-**3.4 Erase, not on the button.** Wiping the record for resale is an
-authenticated action in the app (CLI for DIY). A physical gesture that destroys a
-life record is a vandalism vector.
+**3.4 Erase lives in the app, not on the button.** Wiping the box's data for
+resale is an authenticated action in the app (CLI for DIY). If a physical
+gesture could erase a person's whole history, anyone with access to the box
+could destroy it.
 
-**3.5 The app's save ceremony.** Straight after the phrase is entered and
+**3.5 The app's save-the-phrase step.** Straight after the phrase is entered and
 *before* setup runs: "Save this — it's how you get back in", with copy and
 save-to-password-manager as the primary action, print as a third. The app must
 **not persist it** (a stolen laptop would then hold the thing that survives every
@@ -156,13 +158,13 @@ reset) and must **not email it** (the permanent key, routed through the
 most-attacked channel a person owns).
 
 **Why this gates shipping:** without it, anyone who can open the case owns the
-box. With it, they can only inconvenience you.
+box. With it, they can only reset it, which inconveniences the owner.
 
 **Deleted by this phase**, and left here so it is not rediscovered: the
 three-proof model, the emailed recovery code, the power-cycle trigger, and the
-separate recovery code. One mechanism replaced four.
+separate recovery code. The phrase replaced all four mechanisms.
 
-## Phase 4 — the rest
+## Phase 4 — remaining items
 
 Defer the collectors screen; ask for a permission when a feature needs it, not
 six times before the product has shown anything. `virtues.com/link` → redirect
@@ -193,16 +195,16 @@ without users, but the gap only grows.
 
 ## Billing correctness
 
-Found by review, 2026-08-12; none of it is onboarding, all of it is the money
-path onboarding sells.
+Found by review, 2026-08-12. None of it is onboarding code, but all of it is in
+the payment path that onboarding leads into.
 
 **Refunds are scoped to the customer, not the subscription.** `charge.refunded`
 and `charge.dispute.created` both land in `set_status(..., "refunded")`, which is
 `UPDATE subscriptions … WHERE stripe_customer_id = $1`. Top-ups are off-session
 charges against that same customer, so refunding a $10 goodwill top-up marks the
 $20/mo subscription refunded — 402ing the portal and top-ups, and dropping the
-box off the relay. We do not choose to have refunds; disputes and support
-gestures arrive regardless. Separate the objects: a refund against a **top-up**
+box off the relay. Refunds will happen whether or not we plan for them:
+disputes and support goodwill refunds arrive regardless. Separate the objects: a refund against a **top-up**
 debits the wallet, a refund or dispute against a **subscription invoice** changes
 subscription status.
 
@@ -216,14 +218,15 @@ anything gift-card-shaped.
 paths.
 
 **Every recovery path for a lapsed subscription is gated on the subscription
-being active**, including the billing portal — so the way to fix your payment
-sits behind your payment. Add a grace window on `past_due` and un-gate the
+being active**, including the billing portal — so a user cannot reach the page
+that fixes their payment until their payment is fixed. Add a grace window on `past_due` and un-gate the
 portal.
 
 **A second link destroys the first box.** `/init/login` resolving an existing
 email deletes that account's device keys and rotates the api key, so box #1 goes
 dark; a fresh link instead mints a *new* Stripe customer, which silently
-double-charges. Multi-box is not an open question — it is a destructive default.
+double-charges. So multi-box is not an open question: the current default
+destroys the first box.
 
 ## Failure modes and degradation
 
@@ -236,14 +239,14 @@ is currently discovered in the field rather than designed.
 | Android | no Improv client exists; panel codes only |
 | Ethernet | step 1 disappears; box is online at first boot |
 | Two unclaimed boxes in range | never auto-select; show both by codename |
-| Subscription lapses | LAN keeps working. "Prescribe, never enforce" says so; nothing implements or tests it |
+| Subscription lapses | LAN keeps working. The paradigm's guide-but-never-block rule says so; nothing implements or tests it |
 | Setup abandoned after wifi | the box currently mints a device-auth session every 15 min against atlas, forever. Needs backoff |
 | Fresh box, no NTP | wrong clock breaks TLS to atlas and every expiry check. Guard explicitly |
 
 **Observability.** Everything diagnosed in two days came from a live SSH
 session. An owner who gets stuck produces nothing we can ask for. A local setup
-log, readable in the app, would change every support conversation — and is the
-difference between a bug report and a shrug.
+log, readable in the app, would change every support conversation, because a
+stuck owner could then send us a usable bug report.
 
 ## Known defects
 
@@ -279,7 +282,7 @@ account. The account gate applied to DIY boxes.
   own "never auto-select two unclaimed boxes" row is already violated.
 - Screen 1 computes and serializes `ap_ssid`/`ap_passphrase` that nothing
   renders, while `setup_ap::spawn` still runs: a network whose credentials
-  appear nowhere. Dead SoftAP residue.
+  appear nowhere. This is leftover SoftAP code.
 - `subscription.rs` derives `is_active` from api-key *presence*, so the box
   reports "active" through lapse, rotation, deletion, and hijack.
 
@@ -291,9 +294,9 @@ account. The account gate applied to DIY boxes.
 2. **Second box in a household — joinable by a trusted device with no physical
    act?** Makes multi-box trivial; widens what a stolen phone reaches.
 3. **Does the ambient panel ever offer "add a device"?** Trusted-device vouching
-   may cover it, in which case the panel stays furniture.
+   may cover it, in which case the panel stays ambient-only.
 
-## Done looks like
+## Completion criteria
 
 - A Mac, out of the box: install, sign in, one screen, box open. No codes.
 - A phone joining later: one tap from the Mac, no physical act.

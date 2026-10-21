@@ -120,6 +120,8 @@
 	import InterviewClosedCard from "$lib/components/chat/interview/InterviewClosedCard.svelte";
 	import { setupStateStore } from "$lib/stores/setupState.svelte";
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
+	import SentMessageCard from "$lib/components/chat/SentMessageCard.svelte";
+	import TaskCard from "$lib/components/chat/TaskCard.svelte";
 	import Show from "$lib/components/chat/show/Show.svelte";
 	import AppletProposalCard from '$lib/components/chat/AppletProposalCard.svelte';
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
@@ -1278,7 +1280,7 @@
 			items.push({
 				id: "temporary",
 				label: "Temporary chat",
-				description: "Not saved, not remembered",
+				description: "Isn't saved or remembered",
 				icon: "ri:ghost-line",
 				checked: isGhost,
 				dividerAfter: true,
@@ -2115,6 +2117,37 @@
 													code={toolPart.input?.code || ''}
 													output={toolPart.output ?? (isError ? { error: status === "unfinished" ? "This didn't finish." : toolPart.errorText } : undefined)}
 												/>
+											{:else if part.type === "tool-send_imessage" && ((part as any).state === "output-available" || ((part as any).state === "input-available" && isStreaming))}
+												{@const sent = part as any}
+												{@const out = sent.state === "output-available" ? sent.output : undefined}
+												<!-- The message itself, once the model has written it. A
+												     failed send falls through to the error branch below. -->
+												<SentMessageCard
+													outboxId={out?.outbox_id}
+													initial={out
+														? {
+																state: out.state,
+																recipient: out.to,
+																person_id: out.person_id,
+																handle: out.handle,
+																body: out.text,
+																send_at: out.send_at,
+																attachments: out.attachments ?? [],
+															}
+														: undefined}
+													scheduled={out?.scheduled ?? false}
+													to={out?.to ?? sent.input?.to ?? ""}
+													text={out?.text ?? sent.input?.text ?? ""}
+													onOpenPerson={(id) => windowShellStore.openRouteInSplitOrActive(`/person/${id}`)}
+												/>
+											{:else if (part.type === "tool-create_task" || part.type === "tool-update_task") && (part as any).state === "output-available"}
+												{@const out = (part as any).output}
+												<!-- The tasks themselves, with working checkboxes. A failed
+												     call falls through to the error branch below. -->
+												<TaskCard
+													tasks={out?.tasks ?? (out?.task ? [out.task] : [])}
+													verb={part.type === "tool-create_task" ? "added" : "updated"}
+												/>
 											{:else if part.type === "tool-generate_image"}
 												{@const gen = part as any}
 												{#if gen.state === "output-available" && gen.output?.url}
@@ -2378,7 +2411,7 @@
 						>
 							<Icon icon="ri:ghost-line" width="22" class="ghost-hero-glyph" />
 							<h1 class="ghost-hero-title">Temporary Chat</h1>
-							<p class="ghost-hero-note">Not saved, not remembered. Closing the tab ends it.</p>
+							<p class="ghost-hero-note">This chat isn't saved, and your assistant won't remember it. Closing the tab ends it.</p>
 						</div>
 					{/if}
 

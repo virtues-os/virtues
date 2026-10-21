@@ -1,9 +1,9 @@
-# IR & the magnet: how retrieval actually works, and where to take it
+# Retrieval (IR) and the magnet: how the stack works and what to change
 
 *Notebooks were renamed to projects on 2026-09-21 (`app_notebooks` → `app_projects`, `/notebook/…` → `/project/…`); the names below are as they were.*
 
 *Working notes — 2026-07-22. A grounded map of the retrieval stack as it exists,
-the non-obvious truths a full read exposed, and a ranked set of improvements with
+the non-obvious facts a full read turned up, and a ranked set of improvements with
 spikes. Written after cutting `wiki_stories` from v1 (see
 [stories-plan.md](../archive/stories-plan.md), now shelved) and fixing the notebook magnet
 (branch `fix/notebook-magnet-drop-stories`). File references are to
@@ -18,14 +18,14 @@ spikes. Written after cutting `wiki_stories` from v1 (see
   seams**, not the algorithm.
 - The retrieval substrate has **two engines by data type**: semantic IR
   (`search()`) for prose/aboutness, deterministic SQL for structured/time. That
-  split is healthy — name it and enforce it.
+  split is sound, and it should be documented and enforced.
 - The biggest single lever is a small refactor: **split `search()` into a
   vector-capable recall stage + a rerank/finalize stage.** It unlocks the magnet
   collapse, multi-query fan-out, and "days like this" — all as thin callers.
 
 ---
 
-## 1. The stack as it really is
+## 1. The current retrieval stack
 
 ### 1.1 Recall → fusion → conditional rerank (`search/query.rs`)
 
@@ -64,9 +64,9 @@ Final output is clamped small: `recall_limit = (limit*2).clamp(10, 20)` — i.e.
   exact-match should arguably weigh more.
 - **`VIRTUES_RERANK_GAP = 1.5`** (z-score units) — the "confident enough to skip
   rerank" threshold. Self-documented in the code as a SciFact-derived placeholder
-  that "can't transplant to a personal corpus." A guess.
+  that "can't transplant to a personal corpus." It is a guess.
 
-### 1.3 The models (fleet-dependent — this matters)
+### 1.3 The models (they differ across the fleet)
 
 - **Embedder** (`search/embedder.rs`): no hardcoded model. **Dragon/NPU** =
   `gte-small`, 384-d native, untruncated (`virtues-qnnd`, :18181). Default
@@ -102,7 +102,8 @@ then word-windows it (`WINDOW_WORDS=96 ≈ 128 tokens`, `OVERLAP_WORDS=14`,
   (identity, last 3 day-autobiographies, active sources) *is* pre-stuffed via
   plain SQL.
 - **Notebook-grounded chat** = `ScopeMode::Exclusive` — hard-filters to the
-  notebook's members; empty scope returns honest zero, never falls open.
+  notebook's members; an empty scope returns zero results and never falls
+  back to an unscoped search.
   `ScopeMode::Weighted` instead adds a flat `+1.0` z-boost to members.
 - **Day/home layer = 100% deterministic**, time-bounded SQL per ontology
   (`data_health_*`, `data_financial_transaction`, `wiki_events`, …). **No
@@ -114,9 +115,9 @@ then word-windows it (`WINDOW_WORDS=96 ≈ 128 tokens`, `OVERLAP_WORDS=14`,
 
 ---
 
-## 2. Non-obvious truths the mapping exposed
+## 2. Non-obvious findings from the mapping
 
-### 2.1 The reranker score-scale schism is the root disease
+### 2.1 The two rerankers use incompatible score scales
 
 The reranker client is model-agnostic, but the fleet runs two rerankers with
 **incompatible score scales**: sidecar cross-encoder (unbounded logits;
@@ -129,8 +130,8 @@ trace to this one fact:
   `sigmoid` saturated to 1.000, everything admitted);
 - `query.rs`'s rerank-gap (1.5) and its sigmoid also assume a scale.
 
-The magnet bug was never a magnet bug — it was **fleet heterogeneity with no
-score-calibration layer.**
+The magnet code itself was not the cause. The cause was **the fleet running
+different rerankers with no score-calibration layer.**
 
 ### 2.2 The magnet is a duplicate engine, and it has a hidden bug
 
@@ -145,10 +146,10 @@ magnet's hybrid arm is **silently starved to 20 candidates** while asking for 60
 Events are embedded but the day layer only reads them by time SQL. "What did I do
 like today, last year?" works **only** if the chat model happens to choose
 `semantic_search` — there's no deterministic bridge from the temporal spine into
-similarity retrieval. A one-directional gap exactly where the meaning-making
-payoff should be.
+similarity retrieval. The gap is in the place where finding similar days by
+meaning would be most useful.
 
-### 2.4 The transaction embed-text degenerates
+### 2.4 The transaction embed text is nearly empty
 
 Designed as `merchant_name || ' ' || category_labels`, but on the box `category`
 is empty everywhere, so it collapses to the bare token `"Coffee Shop "`. Amount,
@@ -176,8 +177,8 @@ multi-query fan-out).
 | NPU daemon | one `virtues-qnnd` serves both, partial concurrency | not a bottleneck at these latencies |
 
 **No query-expansion LLM is needed.** Chat is already agentic — the model
-generates the query, so it can emit a few facets in the same tool call. Zero new
-model round-trips; works whether chat runs local or cloud.
+generates the query, so it can emit a few facets in the same tool call. This adds
+no model round-trips and works whether chat runs local or cloud.
 
 ### 4.2 The pipeline
 
@@ -248,15 +249,15 @@ information need — provide multiple when the question is broad or vague." Keep
 accepting a bare `query` string, mapped to `queries:[query]`, for back-compat.
 `tools/semantic_search.rs` reads the array and calls `search_multi`.
 
-### 4.6 Decisions pinned
+### 4.6 Decisions
 
 - **Variants:** cap 4; 2–3 is the sweet spot; the model chooses.
 - **Rerank:** always rerank the fused pool (one ~70ms call; fusion mixed scales so
-  the gap-skip is meaningless here) — quietly retires one uncalibrated constant.
+  the gap-skip is meaningless here), which removes one uncalibrated constant.
 - **Filters/scope:** `Filters` pass straight through Stage A, so Exclusive
   grounding + date/entity filters work unchanged across all variants.
 - **Degenerate:** near-duplicate variants just reinforce the same docs (harmless);
-  all-empty → honest zero.
+  all-empty → zero results.
 
 ---
 

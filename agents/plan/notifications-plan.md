@@ -4,7 +4,7 @@
 need already exists (see **Producers**); the table, the router and the
 surfaces do not.
 
-## The failure this exists to fix
+## Problem
 
 A Mac collector has lost Full Disk Access to an update **three times**, and
 each time iMessage went dark for days with nobody told: six days from
@@ -12,15 +12,15 @@ each time iMessage went dark for days with nobody told: six days from
 days cited in `api/box_status.rs`, and two days from 2026-09-29, after the
 collector binary was replaced and its grant stopped applying.
 
-Detection was not the problem in the last two. The collector writes an honest
+Detection was not the problem in the last two. The collector writes an accurate
 `health.json` and uploads it with every batch (`Uploader.swift`,
 `collectorHealthPayload()`); `mac_ingest` records the denied grant on the
 device row; `box_status.rs` computes a `degraded` list; `/api/streams/health`
 marks streams `stalled` and `blocked`. The web app fetches `degraded` into
-`setupState` **and renders it nowhere.** Every signal ended in a place nobody
-watches.
+`setupState` **and renders it nowhere.** Every one of these signals ended somewhere
+nobody looks.
 
-The general shape: **the box can detect, but it has no way to reach the owner,
+In general, **the box can detect, but it has no way to reach the owner,
 so each feature that needs to invents a partial one or none.** The Mac app has
 its own update-failure banner (`record_update_failure`, `main.rs`). Backups have
 "no Home warning" (`backup-plan.md`). iOS dead letters want a line on the
@@ -28,21 +28,22 @@ device screen (`ios-durability-plan.md`). Applets cannot reach anyone at all —
 `applets-next-plan.md` marks Persona unauthorable for want of a channel.
 Reminders were designing their own delivery.
 
-## The thesis
+## Goal
 
-**One notification object. Many producers write it. One router decides
-delivery. Many destinations display it.**
+**There is one notification object. Many producers write it, one router
+decides how it is delivered, and many destinations display it.**
 
 A producer says *what happened, about what, and how to fix it*. It never says
-where it goes, whether to push, or how loudly. That is how a stream failing
-three hundred times becomes one notification, and how a new kind of producer
-gets correct delivery for free.
+where it goes, whether to push, or how loudly. This is what lets a stream that fails
+three hundred times produce one notification, and lets a new kind of producer
+get correct delivery without extra work.
 
 ## What a notification is
 
-Three properties. They are deliberately few: every kind of thing on the
-owner-facing list — error, warning, success, new feature, cost, reminder,
-applet message — is a combination of them, not a category of its own. A
+A notification has three properties. There are only three because every kind
+of thing on the owner-facing list — error, warning, success, new feature, cost,
+reminder, applet message — is a combination of them rather than its own
+category. A
 category per source is the toggle matrix that `reminders-plan.md` set out to
 avoid, and it is still the thing to avoid.
 
@@ -84,7 +85,7 @@ How the familiar names map:
   key, ever. A reopened `fix` is a new raise, rate-limited against flapping.
 - `body` — **consequence first, cause second** (rule 5 of the silent-outage
   record): *"Messages has not arrived since Tue · Full Disk Access is off on
-  this Mac."* Owner-facing copy follows `agents/build/voice.md`.
+  this Mac."*
 - `observed_at` — when the producer saw it (rule 2: every claim carries when
   it was observed). "Unknown" is a real state and is reported as one (rule 1).
 - `actions` — what can be done from the notification itself: open the fix
@@ -94,7 +95,7 @@ How the familiar names map:
 
 ## Asks are not notifications
 
-The resolution and maintenance items — name a salient new place, who is this
+The resolution and maintenance items — name a frequently visited new place, who is this
 voice, are these the same person, add context to this day — are real and
 valuable, and **they already have a home: `narrative-resolution-plan.md`'s
 open-question queue.** "A place visited above N times with no label" is one
@@ -121,13 +122,13 @@ Producers never decide delivery. The core does, by the three properties:
 | `fyi` from the system | in the app only |
 | `fyi` from the owner (reminders, applets) | wherever the rule says |
 
-Invariants, all in the router and none in a producer or a prompt. The first
-three are lifted from `reminders-plan.md`'s evaluator, so every producer gets
+These invariants all live in the router, never in a producer or a prompt. The
+first three are lifted from `reminders-plan.md`'s evaluator, so every producer gets
 them rather than only reminders:
 
 - **Push on the raise, never again while it stays open.**
-- **Downtime collapse.** Box off for a day, six became true: deliver the most
-  recent and say how many.
+- **Downtime collapse.** If the box was off for a day and six became true,
+  deliver the most recent and say how many.
 - **Never about something older than the rule** that raised it — a backfill
   must not produce forty notifications about last year.
 - **Mute a rule or a subject, never a category.** An owner may silence one
@@ -150,7 +151,7 @@ declares **how much a third party can read**, and that decides what it gets:
 
 A pointer is contentless: *"Something needs you on your Virtues."*
 
-**Mac banner vs `reminders-plan.md`'s refusal.** That plan dropped
+**The Mac banner and `reminders-plan.md`'s decision against it.** That plan dropped
 "Mac-first notifications" on 2026-09-22 as a weak surface for *reminders*, and
 that stands. A Full Disk Access fix is different: the grant can only be given
 on that Mac, so that Mac is the right place to say so. The update-failure
@@ -159,12 +160,12 @@ banner already works this way.
 **The webhook comes first among external destinations.** It needs nothing
 from us, works for a self-hosted box with no account, and covers "other apps"
 generically. Email and Slack are each about a day once destinations exist.
-iMessage through a vendor stays refused for the reason `reminders-plan.md`
+iMessage through a vendor stays out for the reason `reminders-plan.md`
 gives: every message would cross a vendor's servers in the clear.
 
-**Replies are the long-term payoff** — answering *done* to a reminder from the
-lock screen, or a text reply. Not in scope; `actions` on the row is what keeps
-the door open.
+**Replies are the main long-term goal** — answering *done* to a reminder from the
+lock screen, or a text reply. They are not in scope; `actions` on the row is what
+makes them possible later.
 
 ## Producers
 
@@ -186,15 +187,16 @@ the door open.
 | Applet notify | as declared · owner | a new applet capability |
 
 A stalled stream with no known cause stays in the app because a false
-"Messages has stopped" on a quiet day costs more trust than the true one buys
-— the same reason the nearest-place guess was cut. It earns a push when
-stalled is measured against each stream's own rhythm rather than a flat 24h.
+"Messages has stopped" on a quiet day loses more of the owner's trust than a
+correct one gains — the same reason the nearest-place guess was cut. It can be
+pushed once stalled is measured against each stream's own rhythm rather than a
+flat 24h.
 
-**Who notices when the reporter is dead.** A dead collector is noticed by the
+**Detecting a dead reporter.** A dead collector is noticed by the
 box (the device went quiet). A dead box can only be noticed by a client that
 fails to reach it, or by atlas missing a heartbeat — which would tell our
-cloud when an owner's box is down. That is the owner's trade to make, not a
-default; see Open.
+cloud when an owner's box is down. The owner should choose that tradeoff; it
+should not be on by default. See Open.
 
 ## What changes elsewhere
 
@@ -238,5 +240,5 @@ default; see Open.
   worded if so.
 - Snooze length, and whether a snoozed `fix` re-raises when it gets worse
   (stalled → two days stalled).
-- Whether the full list belongs in Settings, Home, or its own room. The bet is
-  Home holds "Needs you" and nothing else needs a room.
+- Whether the full list belongs in Settings, Home, or its own room. The current
+  assumption is that Home shows "Needs you" and nothing else needs a room.

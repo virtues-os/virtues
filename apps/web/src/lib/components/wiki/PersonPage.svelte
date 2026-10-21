@@ -309,8 +309,8 @@
 					</button>
 				{:else}
 					<button class="bond-invite" type="button" onclick={startBondEdit}>
-						The record shows how often you cross paths. Only you can say what
-						{page.name} means — write it in a sentence.
+						Your data shows how often you see {page.name}. Write a sentence about what
+						this person means to you.
 					</button>
 				{/if}
 			</div>

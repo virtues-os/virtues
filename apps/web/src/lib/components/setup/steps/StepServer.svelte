@@ -14,7 +14,7 @@
 	            for (`tryOpenWithoutWords`): a server that predates the
 	            four words opens here, and there is nothing to save
 	  words     the four words its screen shows
-	  keep      the words ARE the recovery phrase (one name, copy.md):
+	  keep      the words ARE the recovery phrase (one name everywhere):
 	            shown back, copied or written down, and ticked before going on
 
 	Errors branch on `BoxRadioError.code`; their messages are already

@@ -343,7 +343,7 @@
 {/snippet}
 
 <!-- "Computer", not "Mac": this sheet is served to any device, and a PC
-     user can reach it (agents/build/voice.md, UI copy). -->
+     user can reach it. -->
 <Modal open={open} onClose={handleClose} title={deviceType === "mac" ? "Add your computer" : `Add your ${displayName || "iPhone"}`} width="md">
 	{#if deviceType === "ios"}
 		<!-- iOS Flow: QR Code Primary + Manual Fallback -->

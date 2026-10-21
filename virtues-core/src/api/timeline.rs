@@ -34,6 +34,9 @@ pub struct TimelineDay {
     /// Nights overlapping the day: the one it woke from and the one it went
     /// to bed in.
     pub nights: Vec<NightSpan>,
+    /// Nights Apple Health didn't record, estimated from the person's usual
+    /// night; the client cuts each where the day's record shows them awake.
+    pub estimated_nights: Vec<EstimatedNight>,
     pub sessions: Vec<AudioSession>,
     pub steps: Vec<StepBin>,
     /// A busy 10 minutes for this person: the 92nd percentile of their step
@@ -41,6 +44,10 @@ pub struct TimelineDay {
     /// than one peak setting its ceiling. 1 when nothing was ever counted.
     pub step_scale: f64,
     pub calendar: Vec<CalendarEvent>,
+    /// Each stay's place by id: its title (the person's name, Home or Work,
+    /// the map's clear match, else its city) and where that came from
+    /// (`place_review::titles`).
+    pub place_titles: std::collections::HashMap<String, super::place_review::PlaceTitle>,
 }
 
 #[derive(Debug, Serialize)]
@@ -63,6 +70,15 @@ pub struct NightSpan {
     pub started_at: DateTime<Utc>,
     pub ended_at: DateTime<Utc>,
     pub asleep_minutes: i64,
+}
+
+/// A night estimated from the person's usual night (`dayline::sleep::UsualNight`).
+#[derive(Debug, Serialize)]
+pub struct EstimatedNight {
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    /// How many recorded nights the usual night was taken from.
+    pub from_nights: usize,
 }
 
 #[derive(Debug, Serialize)]
@@ -100,7 +116,7 @@ pub struct CalendarEvent {
 
 pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
     let zone = crate::timezone::day_timezone(pool, date).await?;
-    let (start, end) = super::day_summary::day_bounds(date, Some(&zone));
+    let (start, end) = crate::timezone::day_window(pool, date).await?;
 
     let stays = sqlx::query(
         r#"SELECT v.id, v.started_at, v.ended_at, v.latitude, v.longitude,
@@ -171,7 +187,23 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
         .into_iter()
         .filter(|n| n.start < end)
         .map(|n| NightSpan { started_at: n.start, ended_at: n.end, asleep_minutes: n.asleep_minutes })
-        .collect();
+        .collect::<Vec<_>>();
+
+    // The night this day woke from and the one it went to bed into, where
+    // Apple Health recorded neither: the usual night, never in the future.
+    let tz: chrono_tz::Tz = zone.parse().unwrap_or(chrono_tz::UTC);
+    let now = Utc::now();
+    let estimated_nights = match crate::dayline::sleep::usual_night_before(pool, start, tz).await? {
+        Some(u) => [Some(date), date.succ_opt()]
+            .into_iter()
+            .flatten()
+            .filter_map(|d| u.ending_on(d, tz))
+            .filter(|(s, e)| *e <= now && *s < end && *e > start)
+            .filter(|(s, e)| !nights.iter().any(|n| n.started_at < *e && n.ended_at > *s))
+            .map(|(s, e)| EstimatedNight { started_at: s, ended_at: e, from_nights: u.nights })
+            .collect(),
+        None => Vec::new(),
+    };
 
     let sessions = sqlx::query(
         "SELECT s.id, s.started_at, s.ended_at, s.speaker_mode, s.content, t.title \
@@ -259,6 +291,11 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
     })
     .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
 
+    let mut place_ids: Vec<String> = stays.iter().filter_map(|s| s.place_id.clone()).collect();
+    place_ids.sort();
+    place_ids.dedup();
+    let place_titles = super::place_review::titles(pool, &place_ids).await?;
+
     Ok(TimelineDay {
         date,
         zone,
@@ -268,11 +305,13 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
         points,
         last_point_before,
         nights,
+        estimated_nights,
         sessions,
         steps,
         // absent-ok: no step was ever counted, so any scale draws nothing.
         step_scale: step_scale.unwrap_or(1.0).max(1.0),
         calendar,
+        place_titles,
     })
 }
 

@@ -2,8 +2,8 @@
  * drafts — the composer's text, kept across a closed tab, a reload, a quit.
  *
  * Each open tab already keeps its own composer; what was lost was the draft on
- * a closed tab, a reload, or a quit. The composer's document is a string, so it
- * is stored per conversation and removed the moment a send empties the input.
+ * a closed tab, a reload, or a quit. The composer reports its message as
+ * markdown, a string, so it is stored per conversation and removed the moment a send empties the input.
  * Ghost chats persist nothing, drafts included — the caller enforces that.
  */
 

@@ -1,24 +1,24 @@
-# Publishing: virtues introduces, the box serves
+# Publishing: shared pages served by the box
 
 > **STATUS 2026-10-06: wave 1 core sharing built; the loader is live at `s.virtues.ch`.** A page is
 > served **by the box**. A visitor's browser reaches it as an iroh endpoint
 > (iroh compiled to WebAssembly) through the relay we already run, encrypted
-> end to end; virtues introduces the two and, once a direct transport for
-> browsers lands, drops out of the path. The publication primitive, the face
-> as the medium, and the doctrine carry over from the 09-01 plan.
+> end to end. virtues connects the two and, once a direct transport for
+> browsers lands, is no longer in the path. The publication primitive, the face
+> as the medium, and the access rules carry over from the 09-01 plan.
 > The chat tool `publish_to_github` was removed on 2026-10-10 (never run,
 > no stored token on the main box); GitHub returns, if at all, as a virtues
 > GitHub App destination below.
 
-## The ask
+## Goal
 
-Anyone, not just someone who runs a website: make a page in virtues (a trip
-for two, an invitation, a plan) and send a link that opens on any phone.
+Anyone, including people who do not run a website, can make a page in virtues
+(a trip for two, an invitation, a plan) and send a link that opens on any phone.
 
 The test every design below has to pass:
 
 > A person with a virtues box and nothing else (no GitHub, no domain, no idea
-> what a token is) gets a working link in one sheet, and no company holds or
+> what a token is) gets a working link in one sheet, and no company stores or
 > can read what they shared.
 
 Every "bring your own" option fails the first half. Every hosted option
@@ -50,20 +50,20 @@ the content lives, which turns a home server into a client of ours.
 | Tailscale Funnel | Relay forwards TLS to the node, which holds the cert. | A public URL per node. |
 | ngrok | Relay terminates TLS. | Free tier shows an interstitial, because free tunnels became a phishing host. |
 
-What the comps settle:
+What these products show:
 
-1. **Relay-forwards, device-holds-the-cert is the mainstream answer**, run at
-   consumer scale by Home Assistant, Synology and Plex. It is not exotic.
-2. **Nabu Casa is the business model already proven:** open core, a paid
-   relay that cannot read, the subscription funds the project.
+1. **A relay that forwards TLS to a device that has the cert is the common
+   design**, run at consumer scale by Home Assistant, Synology and Plex.
+2. **Nabu Casa has already proven the business model:** open core, a paid
+   relay that cannot read the traffic, and the subscription funds the project.
 3. **"The server must be on" is accepted.** Synology and Plex links die with
    the server and nobody treats that as a defect.
-4. **Everyone who shares uses links with expiry, served by the device.** None
-   uploads the content to the vendor.
+4. **Every product that shares uses links with expiry, served by the device.**
+   None of them uploads the content to the vendor.
 5. **The two extremes fail the test above.** Tor fails "opens on any phone";
    a terminating tunnel (Cloudflare, ngrok) fails "no company can read it".
-6. **The phishing tax is real** (ngrok's interstitial). A shared domain needs
-   a reputation plan from day one.
+6. **Shared public domains attract phishing** (hence ngrok's interstitial). A
+   shared domain needs a reputation plan from day one.
 
 ### iroh already reaches browsers
 
@@ -85,21 +85,23 @@ Checked 2026-10-05 against the iroh docs and the n0 issue tracker:
   (CRDT key-value documents built on both). `iroh-docs` is the candidate for
   box-to-box collaboration later.
 
-This is the introducer model already shipped as a library: dial a key, the
-relay introduces and carries until a direct path exists, nobody in the path
-can read. It also means virtues keeps **one** networking idea: owner devices,
-other boxes and strangers' browsers are all iroh endpoints.
+This is the model we want, already shipped as a library: a client dials a
+key, the relay connects the two sides and forwards traffic until a direct path
+exists, and nobody in the path can read the content. It also means virtues
+uses **one** networking stack: owner devices, other boxes and strangers'
+browsers are all iroh endpoints.
 
 ### We built the relay once already
 
 `48abf48e` built a blind L4 SNI-passthrough relay, a box client, per-box ACME
 and TLS hot-swap, so any browser could reach the box. `e56f0963` replaced it
-with iroh, because the owner's own apps hold keys and iroh gives them direct
+with iroh, because the owner's own apps have keys and iroh gives them direct
 and hole-punched paths with no CA in the loop. That was right for **owner
 reach** and stays right. Publishing is a different reader, a stranger with a
-browser, and for that reader the retired design is the only one that works.
+browser, and for that reader the retired design is the only one of the two
+that works.
 
-What the archive learned, which binds the Funnel option below
+Lessons from the archived design, which apply to the Funnel option below
 ([networking-relay-tee.md](../archive/networking-relay-tee.md),
 [relay-control-plane.md](../archive/relay-control-plane.md)):
 
@@ -108,7 +110,7 @@ What the archive learned, which binds the Funnel option below
   that bucket. Plex buys from a commercial CA for this reason. Apply for a
   rate-limit override early; plan a second CA.
 - **Whoever runs DNS can mint a cert for a box's name.** virtues could
-  impersonate a box. The answer is detectability, not denial: CAA records
+  impersonate a box. We cannot prevent this, but we can make it detectable: CAA records
   bound to our ACME account (RFC 8657), plus Certificate Transparency
   monitoring wired as a real alert. Owners who want no such trust use their
   own domain.
@@ -116,35 +118,35 @@ What the archive learned, which binds the Funnel option below
   audits). Do not describe the relay as anything more than "forwards bytes it
   cannot decrypt, and sees which box and when."
 
-## Doctrine
+## Rules
 
-> **The higher level may name, carry, and introduce. It may never hold or
-> read.**
+> **virtues's servers may name a box, carry its traffic, and connect visitors
+> to it. They never store or read the content.**
 
 | Role | Who |
 |---|---|
-| Holds the page | the box |
+| Stores the page | the box |
 | Reads it | the visitor's browser |
 | Names it | the box's own key (its EndpointId, in the link); a domain only for the own-domain option |
-| Introduces and carries it | the iroh relay, end to end encrypted, until a direct path exists |
+| Connects and relays it | the iroh relay, end to end encrypted, until a direct path exists |
 
-> **If virtues.com vanished tomorrow, does the box still hold everything and
-> still work for its owner?**
+> **If virtues.com shut down tomorrow, would the box still store everything
+> and still work for its owner?**
 
 Yes, under this design: links stop resolving, nothing is lost. That is the
 same answer Synology and Home Assistant give.
 
 ## The design
 
-### Carry: an iroh endpoint in the visitor's browser
+### Transport: an iroh endpoint in the visitor's browser
 
 - **The link** comes in two forms (decided below), and both always work:
   `virtues.ch/<handle>#<token>` and the self-contained
   `s.virtues.ch/#<door-key>.<token>`. The part after `#` never leaves the
   browser. The door key **is** the door's public key (the door runs on the
   box with its own key, see wave 1), so dialing it authenticates the door: a
-  server that does not hold that key cannot complete the handshake, virtues
-  included. No certificate, no CA, no per-box DNS name.
+  server that does not have that key cannot complete the handshake, including
+  virtues. The link needs no certificate, no CA and no per-box DNS name.
 - **The loader** is one static page: iroh compiled to WebAssembly plus a
   renderer. The same bytes for every box and every page, no content. It is
   the one thing virtues serves, so it stays small, open, version-pinned, and
@@ -152,20 +154,20 @@ same answer Synology and Home Assistant give.
 - **The relay** is the `iroh-relay` already on OVH (`relay.virtues.ch`,
   open to any endpoint with rate limits since 2026-08-31). Browser traffic is
   relayed until a direct transport exists; the relay sees two EndpointIds and
-  byte counts, never content.
+  byte counts, but not the content.
 - **On the box**, the door is a second iroh endpoint that accepts **any**
   EndpointId on `virtues/publish/1`. The core's endpoint is untouched:
   `crates/virtues-iroh/src/server.rs` still closes any peer not on the
   allowlist before a byte of HTTP, and `relay::maybe_spawn` still hands only
   allowlisted devices the full API.
-- **Direct later, same link:** when a WebRTC (or WebTransport) custom
+- **Direct connections later, with the same link:** when a WebRTC (or WebTransport) custom
   transport is mature, the loader adds it and most visits hole-punch to the
-  box. virtues then only introduces, which is the north star. Nothing about
-  the link, the box or the door changes.
+  box. virtues then only connects the two endpoints, which is the end goal.
+  The link, the box and the door do not change.
 - **Handles** are the short form: atlas maps a box's handle to its door
   key, and nothing else. The token stays after `#`, so virtues never learns
   which page, and a short id that maps to the token itself is refused
-  (it would make virtues hold the secret).
+  (it would make virtues store the secret).
 
 ### Funnel: a public site on your own domain (later)
 
@@ -177,9 +179,9 @@ and virtues cannot mint a cert for the name. A shared virtues domain would
 need the Public Suffix List, a CA with headroom, CAA plus CT monitoring, and
 one hostname per box with pages at paths, as the archive above records.
 
-### The door
+### The door process
 
-A **separate process**, its own unix user, systemd-sandboxed
+The door is a **separate process**, its own unix user, systemd-sandboxed
 (`ProtectSystem=strict`, `NoNewPrivileges`, no network except the iroh
 stream), **with no database credentials and no API**. It serves:
 
@@ -190,7 +192,8 @@ stream), **with no database credentials and no API**. It serves:
   and nothing else.
 
 A complete compromise of the door yields what the owner already chose to
-publish. If a design ever needs the door to hold more, the design is wrong.
+publish. Reject any design that needs the door to have access to more than
+this.
 
 ### What a publication is
 
@@ -210,7 +213,7 @@ answer "was this ever opened."
 
 ### The share sheet
 
-The person publishes; the model never does. A **Share** button on the face or
+Only the person can publish; the model cannot. A **Share** button on the face or
 page opens one sheet:
 
 - the page as it will appear;
@@ -237,34 +240,34 @@ agent is a prompt-injection path. No guest writes until that marking exists.
 All take the same frozen bundle:
 
 - **Download HTML**: always, including the free open-source build.
-- **GitHub**: a pasted fine-grained token is the wrong front door; nobody
-  makes one (the token-based `publish_to_github` tool was removed for that
-  reason). The right one is a **virtues GitHub App** connected by device
+- **GitHub**: asking the owner to paste a fine-grained token does not work,
+  because nobody makes one (the token-based `publish_to_github` tool was
+  removed for that reason). The planned path is a **virtues GitHub App** connected by device
   flow (a code, approve, pick repos on GitHub's own screen), scoped to the
-  chosen repos, no secret on the box and no proxy. Never the owner's ambient
-  `gh` login: it covers every repo.
+  chosen repos, no secret on the box and no proxy. Do not use the owner's
+  ambient `gh` login: it covers every repo.
 - **S3-compatible storage** (R2, B2, any bucket) for people who want a copy
   off their own box.
 
 These live under **Publish to…**, a destination connector kind, not among the
 data sources.
 
-## What "answers strangers" costs
+## Security cost of accepting connections from strangers
 
 Today nothing reaches the box's HTTP code until iroh has checked the peer's
 key. With a door, anyone on the internet can send bytes to code on the box.
 
 | Exposure | Answer |
 |---|---|
-| Discovery | the introducer path has no hostname per box, nothing reaches CT logs; pages are unguessable tokens, uniform "not found" |
+| Discovery | the relay path has no hostname per box, nothing reaches CT logs; pages are unguessable tokens, uniform "not found" |
 | A bug in the public code path | separate door process, no DB credentials, sandboxed |
 | Floods on a home uplink and a Q6A CPU | per-box caps at the gateway; one-tap pause on the box |
 | Guest writes as prompt injection | off by default; edit links; rows marked as guest input |
-| One box's phishing tarring the loader domain | the loader shows content in a sandboxed frame under a banner naming the box; refuse a revoked EndpointId at the loader; unroute on abuse |
+| Phishing from one box damaging the loader domain's reputation | the loader shows content in a sandboxed frame under a banner naming the box; refuse a revoked EndpointId at the loader; unroute on abuse |
 | Relay metadata (which box, when) | stated plainly; a direct transport removes the relay from most visits |
 | Visitor IPs landing on the owner's box | not passed through by default; say so either way |
 | Box off or asleep | the gateway's offline page; an encrypted fallback copy is a later option, never the default |
-| Legal notices | land on virtues as the router; the response is unrouting, never reading |
+| Legal notices | go to virtues as the router; the response is to stop routing that door key, without reading the content |
 
 ## Rejected
 
@@ -274,7 +277,8 @@ key. With a door, anyone on the internet can send bytes to code on the box.
 - **virtues hosts encrypted blobs, key in the URL fragment** (Excalidraw,
   Proton). Blind, but the content lives on our servers, the box is not the
   server, and link previews die. It was the default of the previous draft.
-- **A terminating tunnel** (Cloudflare Tunnel, ngrok). The vendor reads.
+- **A terminating tunnel** (Cloudflare Tunnel, ngrok). The vendor can read
+  the traffic.
 - **Tor only.** Fails "opens on any phone".
 - **Our own WebRTC stack on the box** (`str0m` beside iroh). A second
   networking system for one feature; iroh's custom-transport route gives the
@@ -284,8 +288,9 @@ key. With a door, anyone on the internet can send bytes to code on the box.
   previews. Kept for own-domain public sites only.
 - **Port forwarding** as the path. Exposes the home IP and needs router
   skills; it stays possible for experts with their own domain.
-- **The owner's ambient `gh` login on the box.** Every repo, held by a login
-  the service user cannot see, and absent on every other box.
+- **The owner's ambient `gh` login on the box.** It covers every repo, it
+  belongs to a login the service user cannot see, and it is absent on every
+  other box.
 
 ## The work, in waves
 
@@ -314,12 +319,12 @@ They ship together because they share one rule: the door serves only what
 the owner approved, whether a frozen file, a declared query or a card, and
 the Share sheet shows all three before anything leaves.
 
-**The door is its own iroh endpoint.** It holds its own key, homes on the
+**The door is its own iroh endpoint.** It has its own key, homes on the
 relay itself, and the link names *its* EndpointId, not the box's. Public
 traffic therefore never reaches the core process: the core writes bundles
 into a directory the door reads, and (for live pages) answers the door's
 declared-query requests on a local socket. A compromise of the door cannot
-speak as the box, because it never held the box's key.
+speak as the box, because it never had the box's key.
 
 Wire protocol on `virtues/publish/1`: one bi-stream per request, a JSON
 request line (`{"op":"page","token":…}`, later `"query"` and `"card"`), a
@@ -349,7 +354,7 @@ in sync (`iroh-docs`, or the page editor's existing CRDT). Hard. A privacy
 fact the sheet must state: data synced to another box cannot be pulled back
 by revoking.
 
-### Also on the way
+### Other planned work
 
 - **Pages publish through the door (built 2026-10-06, a5b6b59d; verified on
   the spare box at `staging.93`: names only, outside image left out, the door
@@ -373,8 +378,8 @@ office NAT with client isolation loaded 5/5, first paint ~0.57 s (connect
 iOS Safari (Simulator, iOS 26.5) loads it too, first paint ~0.73 s. The
 loader is 0.95 MB gzipped before `wasm-opt`. A link to a key nobody holds
 never connects. **A stopped box makes `connect` hang**: the relay does not
-report an absent peer, so the loader owns a timeout and the "offline"
-message. Still open: a real phone on cellular.
+report an absent peer, so the loader implements a timeout and the
+"offline" message. Still open: a real phone on cellular.
 
 **The sandboxed door on a real box, 2026-10-06** (spare Q6A, the same
 `systemd-run` properties `crate::door` uses): it ran as a DynamicUser, homed
@@ -400,19 +405,19 @@ page isn't available right now".
   that holds account and billing sessions (GitHub keeps
   `githubusercontent.com` apart for the same reason). **Live at
   `https://s.virtues.ch/` since 2026-10-06**, static files behind the Caddy
-  that already serves the API (iroh-relay holds ports 80 and 443 on the relay
+  that already serves the API (iroh-relay uses ports 80 and 443 on the relay
   host itself). Headers and file hashes: `apps/loader/README.md`. A link to
   the spare box's test door opened through it in ~0.6 s.
 - **Link format: a box handle, with the self-contained form always valid.**
   - `virtues.ch/<handle>#<token>`, about 35 characters. The handle is a name
     for the box, like a username; atlas maps it to the door key. That is
-    *naming*, which the doctrine allows; the token never leaves the browser.
+    *naming*, which the rules above allow; the token never leaves the browser.
     The trust it costs: virtues could point a handle at an impostor door,
     the same trust anyone places in DNS.
   - `s.virtues.ch/#<door-key>.<token>`, about 81 characters with the key in
-    base64url (43) and a 128-bit token (22). virtues holds nothing; this is
+    base64url (43) and a 128-bit token (22). virtues stores nothing; this is
     the form for anyone who wants no trust in virtues at all. Both forms
-    work forever, so no link ever breaks because the format moved on.
+    stay valid permanently, so a format change never breaks a link.
   - The core builds the long form today (`api::publications::link_for`);
     handles need atlas and come later.
 - **One door key per box.** Anyone holding two of a box's links can tell
@@ -420,7 +425,7 @@ page isn't available right now".
 - **The door key is the box's link identity.** Losing it ends every link the
   box ever shared, so it goes into backups and restores, and "new door key"
   is an explicit "end all my links" action. **Built 2026-10-06:** the key
-  lives sealed in `box_secrets` and each page in `app_publications.page`
+  is stored sealed in `box_secrets` and each page in `app_publications.page`
   (0044); the core rebuilds the bundle directory from the database before
   starting the door, so a restored box serves its links again. Settings has a
   Shared links page listing every link with turn-off. ("New door key" as a
@@ -428,8 +433,8 @@ page isn't available right now".
 - **Publishing is part of the subscription**, as Nabu Casa's remote access
   is. The DIY path (own relay, own domain) arrives with wave 3.
 - **Abuse policy is deferred.** Before any public launch: a stated policy
-  (virtues routes and never reads; on a valid report it stops routing a
-  door key) and terms to match.
+  (virtues routes traffic and does not read it; on a valid report it stops
+  routing a door key) and terms to match.
 
 ## Open questions
 
@@ -437,7 +442,7 @@ page isn't available right now".
   the OVH relay. The spike measures what a page costs.
 - **Link previews.** Is a generic card acceptable for the default path, or
   does the share sheet offer an owner-written preview (title, one image) that
-  the loader domain serves, which would mean virtues holds that much?
+  the loader domain serves, which would mean virtues stores that much?
 - **Handles.** Chosen by the owner or assigned; how they are claimed,
   changed, and released, and what an old handle does after a change.
 
@@ -450,7 +455,7 @@ page isn't available right now".
   the handshake, proving the link authenticates the box.
 - With the box unplugged, the link shows the offline page within seconds;
   with it back, the page returns without republishing.
-- The door process, given a deliberately poisoned request set (path
+- The door process, given a malicious request set (path
   traversal, oversized headers, other publications' tokens), serves nothing
   outside the requested publication, proven by a test.
 - The share sheet names every image and every dereferenced entity in a page
@@ -459,10 +464,11 @@ page isn't available right now".
 - A frozen bundle renders identically on screen, in the print dialog, and as
   a downloaded file opened with the network off.
 
-## Death condition
+## When to delete this plan
 
-Delete when a person with only a box can make a page, share a link, update
-it and revoke it. What survives: a manual page on sharing, and a record of
-the three decisions worth keeping: *the face's constraints are publishing's
-constraints*; *virtues may name, carry and introduce, never hold or read*;
-and *the box is the server; virtues introduces, and carries only until it no longer has to*.
+Delete this plan when a person with only a box can make a page, share a link,
+update it and revoke it. Replace it with a manual page on sharing and a record
+of three decisions: a published page has the same constraints as a face;
+virtues may name a box, relay its traffic and connect visitors to it, but
+never stores or reads the content; and the box is the server, with virtues
+relaying traffic only until a direct connection exists.

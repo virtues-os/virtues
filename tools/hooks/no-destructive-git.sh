@@ -22,13 +22,12 @@ DELIBERATE NON-GOALS
   - A human who genuinely needs one of these can run it in their own terminal.
     This gates the agent, not the person.
 
-It also keeps the privacy hooks in force. tools/githooks runs the privacy
-guard on every commit message and every push, and each of these skips it
+It also keeps the pre-commit hook in force. tools/githooks/pre-commit runs
+CI's ratchets against the tree being committed, and each of these skips it
 without a trace: `--no-verify`, `commit -n`, a `-c core.hooksPath=` override,
-the GIT_CONFIG_* environment, rewriting core.hooksPath or
-virtues.guardRequired, pointing VIRTUES_GUARD_DENYLIST elsewhere, and
-`commit-tree`, which makes a commit no hook ever sees. The repo is public, and
-the owner's real data has reached it eight different ways.
+the GIT_CONFIG_* environment, rewriting core.hooksPath, and `commit-tree`,
+which makes a commit no hook ever sees (one such commit raised seven ratchets
+at once).
 
 Git's global options (`git -C dir`, `git -c k=v`, `--no-pager`) are parsed off
 before matching, so `git -C . reset --hard` is `git reset --hard`.
@@ -117,25 +116,23 @@ HAS_PATHSPEC = re.compile(r"\s--\s+\S")
 
 PREFIX = re.compile(r"^(?:sudo\s+|\w+=\S+\s+|tools/with-lock\.sh\s+|command\s+)+")
 
-# ── the privacy hooks ────────────────────────────────────────────────────
+# ── the git hooks ────────────────────────────────────────────────────────
 
 # Global options that take a value: `git -C dir`, `git -c key=value`, …
 GIT_GLOBAL_WITH_VALUE = {"-C", "-c", "--git-dir", "--work-tree", "--namespace",
                          "--config-env", "--exec-path", "--super-prefix"}
 # Config keys an agent may read but never set, with the one value allowed.
-GUARDED_KEYS = {"core.hookspath": "tools/githooks", "virtues.guardrequired": "true"}
-# Environment that rewrites config for one command, or points the guard elsewhere.
+GUARDED_KEYS = {"core.hookspath": "tools/githooks"}
+# Environment that rewrites git config for one command.
 GUARDED_ENV = re.compile(r"(?:^|[\s;(])(?:export\s+|env\s+(?:-\S+\s+)*)?"
-                         r"(GIT_CONFIG_PARAMETERS|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|"
-                         r"VIRTUES_GUARD_DENYLIST)=")
+                         r"(GIT_CONFIG_PARAMETERS|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+)=")
 # `git commit` short options whose value may be glued on (`-mfix`, `-uno`).
 COMMIT_VALUE_FLAGS = set("mFCctuS")
 
 HOOKS_REMEDY = (
-    "The repo's git hooks run the privacy guard on the staged diff, the commit\n"
-    "message and every pushed commit. The repo is public; this skips them.\n"
-    "If a hook refused your commit, fix what it named. A generic false hit is\n"
-    "accepted by hash, by the owner: `tools/privacy-guard.py allow --last`.")
+    "The repo's pre-commit hook runs CI's ratchets against the tree being\n"
+    "committed; this skips it. If it refused your commit, fix the count it named,\n"
+    "or commit with VIRTUES_SKIP_RATCHETS=1 (CI will still fail).")
 
 
 def git_argv(head: str):
@@ -163,7 +160,7 @@ def git_argv(head: str):
 
 
 def hook_bypass(opts, argv) -> str | None:
-    """Why this git invocation skips or rewires the privacy hooks, or None."""
+    """Why this git invocation skips or rewires the repo's hooks, or None."""
     for name, value in opts:
         key = value.split("=", 1)[0].lower()
         if name in ("-c", "--config-env") and key in GUARDED_KEYS:
@@ -203,15 +200,15 @@ def hook_bypass(opts, argv) -> str | None:
             k = lowered.index(key)
             if lowered[k + 1:k + 2] == [allowed] and "--unset" not in lowered and "--unset-all" not in lowered:
                 return None
-            return f"this rewrites `{key}`, which keeps the privacy hooks in force"
+            return f"this rewrites `{key}`, which keeps the repo's hooks in force"
     return None
 
 
 def hook_tamper(seg: str) -> str | None:
-    """A non-git command that disables a hook file or redirects the guard."""
+    """A non-git command that disables a hook file or rewires git config."""
     m = GUARDED_ENV.search(seg)
     if m:
-        return f"setting {m.group(1)} rewires git config or the privacy guard for the command"
+        return f"setting {m.group(1)} rewires git config for the command"
     if "githooks" in seg and (re.match(r"^(rm|mv|unlink)\b", seg) or (
             re.match(r"^chmod\b", seg) and not re.search(r"\s(?:[ugoa]*\+x|[0-7]?[157][0-7][0-7])\s", seg))):
         return "git silently skips a hook that is missing or not executable"

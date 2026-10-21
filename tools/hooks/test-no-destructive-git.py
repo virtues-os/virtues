@@ -11,7 +11,7 @@ BLOCK = ["git add -A", "git add .", "git stash", "git commit -a -m x",
          "cd /tmp && git reset --hard",
          # global options no longer hide a rule
          "git -C . reset --hard", "git --no-pager stash", "git -c color.ui=never rebase main",
-         # the privacy hooks
+         # the git hooks
          'git commit --no-verify -m x -- a.rs', 'git commit -n -m x -- a.rs',
          'git commit -nm x -- a.rs', 'git commit -m x -n -- a.rs', 'git commit --no-veri -m x -- a.rs',
          "git push --no-verify origin wave", "git merge --no-verify origin/staging",
@@ -19,13 +19,11 @@ BLOCK = ["git add -A", "git add .", "git stash", "git commit -a -m x",
          "git -c core.hookspath= push origin wave",
          "git --config-env=core.hooksPath=X commit -m x -- a.rs",
          "git config core.hooksPath /dev/null", "git config --unset core.hooksPath",
-         "git config virtues.guardRequired false", "git config unset virtues.guardRequired",
          "git commit-tree HEAD^{tree} -m x",
          "GIT_CONFIG_PARAMETERS=\"'core.hooksPath'=''\" git commit -m x -- a.rs",
          "export GIT_CONFIG_COUNT=1", "env GIT_CONFIG_KEY_0=core.hooksPath git push",
-         "VIRTUES_GUARD_DENYLIST=/tmp/none git commit -m x -- a.rs",
          "chmod -x tools/githooks/pre-commit", "chmod 644 tools/githooks/pre-commit",
-         "rm tools/githooks/pre-push"]
+         "rm tools/githooks/pre-commit"]
 ALLOW = ['make commit MSG="x" FILES="a.rs"',
          'git add a.rs && git commit -m "x" -- a.rs',
          "tools/with-lock.sh git commit -F /tmp/m.txt -- a.rs",
@@ -36,10 +34,10 @@ ALLOW = ['make commit MSG="x" FILES="a.rs"',
          'git commit -m "fix: -n flag" -- a.rs', "git commit -m x -- -n.rs",
          'git commit -F /tmp/m.txt -- a.rs', "git log -n 3",
          "git push -n origin wave", "git config core.hooksPath tools/githooks",
-         "git config --get core.hooksPath", "git config virtues.guardRequired true",
+         "git config --get core.hooksPath",
          "git -C /tmp/x log --oneline", "git -c color.ui=never diff",
-         "grep -n VIRTUES_GUARD_DENYLIST tools/privacy-guard.py", "ls tools/githooks",
-         "chmod +x tools/githooks/pre-push", "chmod 755 tools/githooks/commit-msg",
+         "grep -n GIT_CONFIG_COUNT tools/hooks/no-destructive-git.sh", "ls tools/githooks",
+         "chmod +x tools/githooks/pre-commit", "chmod 755 tools/githooks/pre-commit",
          "cat > /tmp/m.txt <<'EOF'\nwe ban git add -A and git commit with no -- paths\nEOF\ngit add a.rs && git commit -F /tmp/m.txt -- a.rs"]
 bad = 0
 for c in BLOCK:

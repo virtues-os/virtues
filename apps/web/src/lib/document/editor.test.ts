@@ -96,7 +96,7 @@ import * as Y from 'yjs';
 import { filterCommands, menuKey } from '$lib/components/menuCommand';
 import { createPageEditor } from './editor';
 import { contract, contractExtensions, ITEM_NUMBER, itemNumbers } from './schema';
-import { appletCommands, insertEntity, moveBlock, treeCommands, type TreeCommandHost } from './commands';
+import { appletCommands, insertEntity, moveBlock, moveUnitTo, treeCommands, unitAround, type TreeCommandHost } from './commands';
 import { pickedRange, putBackQuery, triggers, triggerState } from './triggers';
 import { fileIcon, parseRef } from '$lib/utils/refRoutes';
 import { clearFind, find, findMatches, findNext, findPrevious, findState, selectionEchoes, setFindQuery } from './find';
@@ -410,6 +410,34 @@ describe('a click below the last block', () => {
 			expect(shape(editor), html).toBe(typed);
 		}
 	});
+
+	// The page scrolls a box the editor sits in, with padding under it and
+	// blank space under a short page: a click there blurred the editor.
+	it('below the editor, on the blank page around it, ends in the last text too; a control there keeps its click', () => {
+		const { doc } = pageDoc('<p>Intro</p><p>Last line</p>');
+		const scroller = document.createElement('div');
+		scroller.style.overflowY = 'auto';
+		const page = document.createElement('div');
+		const title = document.createElement('button');
+		const element = document.createElement('div');
+		page.append(title, element);
+		scroller.append(page);
+		document.body.append(scroller);
+		const provider = fakeProvider(doc);
+		cleanups.push(provider.destroy);
+		const editor = track(createPageEditor({ element, doc: { ydoc: doc, provider }, editable: true, placeholder: 'Write' }));
+		const last = editor.view.dom.lastElementChild!.getBoundingClientRect();
+		const click = (on: Element) => {
+			const down = new MouseEvent('mousedown', { button: 0, clientX: 10, clientY: last.bottom + 100, bubbles: true, cancelable: true });
+			on.dispatchEvent(down);
+			return down.defaultPrevented;
+		};
+		editor.commands.setTextSelection(1);
+		expect(click(title), 'a control').toBe(false);
+		expect(editor.state.selection.from).toBe(1);
+		expect(click(page), 'the page under the editor').toBe(true);
+		expect(editor.state.selection.from).toBe(posIn(editor, 'Last line', 9));
+	});
 });
 
 describe('moving a block while another device edits', () => {
@@ -489,6 +517,77 @@ describe('moving a block while another device edits', () => {
 		expect(laptop.state.selection.$from.parentOffset).toBe(2);
 		laptop.commands.undo();
 		expect(texts(laptop)).toEqual(['One', 'Two', 'Three']);
+	});
+
+	describe('dropped from the drag handle', () => {
+		const shape = (e: Editor) => {
+			const out: string[] = [];
+			e.state.doc.forEach((n) => out.push(n.type.name));
+			return out;
+		};
+
+		it('lands where it is dropped with its id, words typed into a neighbour meanwhile staying in it, and one undo puts it back', async () => {
+			const d = await twoDevices('<p>One</p><p>Two</p><p>Three</p>');
+			const one = d.laptop.state.doc.child(0);
+			const id = one.attrs[contract.id.attr];
+			typeAtEnd(d.phone, 'Two', ' from phone');
+			expect(moveUnitTo(d.laptop.view, 0, one.nodeSize, d.laptop.state.doc.content.size)).toBe(true);
+			await d.exchange();
+			for (const editor of [d.laptop, d.phone]) expect(texts(editor)).toEqual(['Two from phone', 'Three', 'One']);
+			expect(d.laptop.state.doc.child(2).attrs[contract.id.attr]).toBe(id);
+			expect(d.laptop.state.selection).toBeInstanceOf(NodeSelection);
+			d.laptop.commands.undo();
+			expect(texts(d.laptop)).toEqual(['One', 'Two from phone', 'Three']);
+		});
+
+		it('moves nothing when dropped inside itself or at either of its ends', async () => {
+			const { laptop } = await twoDevices('<p>One</p><p>Two</p>');
+			const size = laptop.state.doc.child(0).nodeSize;
+			const before = laptop.state.doc;
+			for (const target of [0, 2, size]) expect(moveUnitTo(laptop.view, 0, size, target)).toBe(false);
+			expect(laptop.state.doc).toBe(before);
+		});
+
+		it('joins the two lists a block leaves side by side, which would export as two', async () => {
+			const { laptop } = await twoDevices('<ul><li><p>A</p></li></ul><p>Gap</p><ul><li><p>B</p></li></ul><p>End</p>');
+			const from = laptop.state.doc.child(0).nodeSize;
+			moveUnitTo(laptop.view, from, from + laptop.state.doc.child(1).nodeSize, laptop.state.doc.content.size);
+			expect(shape(laptop)).toEqual(['bulletList', 'paragraph', 'paragraph']);
+			expect(laptop.state.doc.child(0).childCount).toBe(2);
+			expect(texts(laptop)).toEqual(['A', 'B', 'End', 'Gap']);
+		});
+
+		it('puts a list item dropped outside its list in a list of its own, and joins it to a list it lands beside', async () => {
+			const { laptop } = await twoDevices('<ul><li><p>A</p></li><li><p>B</p></li></ul><p>End</p>');
+			const item = laptop.state.doc.child(0).child(0).nodeSize;
+			moveUnitTo(laptop.view, 1, 1 + item, laptop.state.doc.content.size);
+			expect(shape(laptop)).toEqual(['bulletList', 'paragraph', 'bulletList']);
+			expect(texts(laptop)).toEqual(['B', 'End', 'A']);
+
+			const { laptop: beside } = await twoDevices('<ul><li><p>A</p></li><li><p>B</p></li></ul><p>End</p>');
+			const listEnd = beside.state.doc.child(0).nodeSize;
+			moveUnitTo(beside.view, 1, 1 + item, listEnd);
+			expect(shape(beside)).toEqual(['bulletList', 'paragraph']);
+			expect(texts(beside)).toEqual(['B', 'A', 'End']);
+		});
+
+		it('takes away a list whose only item it moves', async () => {
+			const { laptop } = await twoDevices('<ul><li><p>A</p></li></ul><p>B</p>');
+			const item = laptop.state.doc.child(0).child(0).nodeSize;
+			moveUnitTo(laptop.view, 1, 1 + item, laptop.state.doc.content.size);
+			expect(shape(laptop)).toEqual(['paragraph', 'bulletList']);
+			expect(texts(laptop)).toEqual(['B', 'A']);
+		});
+
+		it('takes the innermost list item under the pointer, or else the block at the top of the page', async () => {
+			const { laptop } = await twoDevices('<p>Lead</p><ul><li><p>A</p><ul><li><p>B</p></li></ul></li></ul>');
+			const { doc } = laptop.state;
+			const nested = unitAround(doc, posIn(laptop, 'B', 0));
+			expect(nested?.node.type.name).toBe('listItem');
+			expect(nested?.node.textContent).toBe('B');
+			expect(unitAround(doc, posIn(laptop, 'A', 0))?.node.textContent).toBe('AB');
+			expect(unitAround(doc, posIn(laptop, 'Lead', 1))).toMatchObject({ from: 0, node: { type: { name: 'paragraph' } } });
+		});
 	});
 });
 
@@ -753,6 +852,17 @@ describe('the insert menu', () => {
 		expect(filterCommands(commands, 'paragraph')[0]?.label).toBe('Text');
 	});
 
+	it('matches letters typed in order, after every name that holds the query', () => {
+		expect(filterCommands(commands, 'nmbr')[0]?.label).toBe('Numbered list');
+		expect(filterCommands(commands, 'bul li')[0]?.label).toBe('Bulleted list');
+		expect(filterCommands(commands, 'cdblk')[0]?.label).toBe('Code block');
+		// A word's middle starts no match: `umb` is in no name's word start.
+		expect(filterCommands(commands, 'umb').map((c) => c.label)).toEqual(['Numbered list']);
+		expect(filterCommands(commands, 'mbr')).toEqual([]);
+		// What holds the query comes first.
+		expect(filterCommands(commands, 'li')[0]?.label).toBe('Bulleted list');
+	});
+
 	it('shows headings 4 to 6 only once they are asked for', () => {
 		const labels = filterCommands(commands, '').map((c) => c.label);
 		expect(labels).not.toContain('Heading 4');
@@ -819,6 +929,34 @@ function sendAtOnce(editor: Editor, text: string) {
 	const { from, to } = editor.state.selection;
 	editor.view.someProp('handleTextInput', (f) => f(editor.view, from, to, text, () => editor.state.tr.insertText(text, from, to)));
 }
+
+describe('typed emphasis', () => {
+	/** The first paragraph's text runs, each with its mark names. */
+	const runs = (editor: Editor) =>
+		editor.state.doc.child(0).content.content.map((n) => [n.text, n.marks.map((m) => m.type.name)]);
+
+	// Tiptap's own rules take any two delimiters, so `2 * 3 *` turned ` 3 `
+	// italic. A delimiter with a space on its inner side is text, as the
+	// paste rules and the converter read it.
+	it.each(['2 * 3 * 4', 'a == b == c', 'x ** y **'])('leaves %s as text', (text) => {
+		const editor = track(htmlEditor('<p></p>'));
+		editor.commands.setTextSelection(1);
+		typeIn(editor, text);
+		expect(runs(editor)).toEqual([[text, []]]);
+	});
+
+	it.each([
+		['*it*', 'it', 'italic'],
+		['**b**', 'b', 'bold'],
+		['~~s~~', 's', 'strike'],
+		['==h==', 'h', 'highlight'],
+	])('formats %s', (typed, text, mark) => {
+		const editor = track(htmlEditor('<p></p>'));
+		editor.commands.setTextSelection(1);
+		typeIn(editor, typed);
+		expect(runs(editor)).toEqual([[text, [mark]]]);
+	});
+});
 
 describe('typed triggers', () => {
 
@@ -2796,6 +2934,28 @@ describe('code highlighting', () => {
 	});
 });
 
+describe('code highlighting, kept', () => {
+	// A drag dropped where it started, or a block replaced by its copy, makes
+	// a new document equal to the old one: the colours were mapped away, and
+	// with nothing to say the code had changed they were never drawn again.
+	it('is drawn again after a change that puts back the same code', async () => {
+		const html = '<p>Intro</p><pre data-language="rust"><code>fn kept() {}</code></pre>';
+		const editor = track(htmlEditor(html, [codeHighlight(async (code) => [[{ content: code, color: 'rgb(9, 8, 7)', offset: 0 }]])]));
+		const coloured = () => editor.view.dom.querySelectorAll('[style*="rgb(9, 8, 7)"]').length;
+		await settle(250);
+		expect(coloured()).toBeGreaterThan(0);
+		let at = -1;
+		editor.state.doc.forEach((node, offset) => {
+			if (node.type.name === 'codeBlock') at = offset;
+		});
+		const block = editor.state.doc.nodeAt(at)!;
+		editor.view.dispatch(editor.state.tr.replaceWith(at, at + block.nodeSize, block.copy(block.content)));
+		expect(coloured(), 'mapped away by the change').toBe(0);
+		await settle(250);
+		expect(coloured()).toBeGreaterThan(0);
+	});
+});
+
 describe('the assistant on the page', () => {
 	it('flashes the blocks a chat edit wrote, by id, then lets them go', async () => {
 		vi.useFakeTimers();
@@ -3729,5 +3889,192 @@ describe('nothing in the editor lands after a wait', () => {
 		expect(tree.lastChild?.type.name).toBe('image');
 		expect(tree.lastChild?.attrs.src).toBe(src);
 		expect(`/drive/${transfers[0].id}`).toBe(src);
+	});
+});
+
+describe('keys a writer reaches for', () => {
+	const apple = () => /Mac|iP(hone|[oa]d)/.test(navigator.platform);
+
+	/** Press `key` in the editor, as the browser delivers it; whether the editor took it. */
+	function press(editor: Editor, key: string, mods: { shift?: boolean; mod?: boolean } = {}): boolean {
+		const event = new KeyboardEvent('keydown', {
+			key,
+			code: key.length === 1 ? `Key${key.toUpperCase()}` : key,
+			shiftKey: !!mods.shift,
+			metaKey: !!mods.mod && apple(),
+			ctrlKey: !!mods.mod && !apple(),
+			bubbles: true,
+			cancelable: true,
+		});
+		editor.view.dom.dispatchEvent(event);
+		return event.defaultPrevented;
+	}
+
+	// The stock link is inclusive while autolink is on: every word typed
+	// after a link went into it.
+	it('typing just after a link is not part of it', () => {
+		const editor = track(htmlEditor('<p>See <a href="https://example.com/a">the notes</a>. Then</p>'));
+		editor.commands.setTextSelection(posIn(editor, 'the notes', 9));
+		typeIn(editor, 'x');
+		const at = posIn(editor, 'notesx', 5);
+		expect(editor.state.doc.nodeAt(at)?.text).toContain('x');
+		expect(editor.state.doc.nodeAt(at)?.marks.map((m) => m.type.name)).toEqual([]);
+		expect(editor.state.doc.nodeAt(at - 1)?.marks.map((m) => m.type.name)).toEqual(['link']);
+	});
+
+	// Tab in a code block, and on an item with none above it to nest under,
+	// was nobody's: the browser moved the focus to the next control.
+	it('Tab and Shift-Tab indent code and nest list items, and never send the focus out of the page', async () => {
+		const { doc } = pageDoc('<ul><li><p>First</p></li><li><p>Second</p></li></ul><pre><code>a = 1</code></pre><p>Plain</p>');
+		const { editor } = bind(doc);
+		await settle();
+		editor.commands.setTextSelection(posIn(editor, 'a = 1'));
+		expect(press(editor, 'Tab')).toBe(true);
+		expect(editor.state.selection.$from.parent.textContent).toBe('  a = 1');
+		expect(press(editor, 'Tab', { shift: true })).toBe(true);
+		expect(editor.state.selection.$from.parent.textContent).toBe('a = 1');
+
+		const before = editor.getJSON();
+		editor.commands.setTextSelection(posIn(editor, 'First', 2));
+		expect(press(editor, 'Tab'), 'the first item, which cannot nest').toBe(true);
+		expect(editor.getJSON()).toEqual(before);
+		editor.commands.setTextSelection(posIn(editor, 'Second', 2));
+		expect(press(editor, 'Tab')).toBe(true);
+		expect(editor.state.doc.firstChild?.childCount).toBe(1);
+		expect(press(editor, 'Tab', { shift: true })).toBe(true);
+		expect(editor.state.doc.firstChild?.childCount).toBe(2);
+
+		editor.commands.setTextSelection(posIn(editor, 'Plain', 2));
+		expect(press(editor, 'Tab'), 'a paragraph leaves Tab to the browser').toBe(false);
+	});
+
+	it('Cmd-A in a code block selects its code, and pressed again the page', async () => {
+		const { doc } = pageDoc('<p>Intro</p><pre><code>a = 1\nb = 2</code></pre>');
+		const { editor } = bind(doc);
+		await settle();
+		editor.commands.setTextSelection(posIn(editor, 'b = 2'));
+		press(editor, 'a', { mod: true });
+		const { from, to } = editor.state.selection;
+		expect(editor.state.doc.textBetween(from, to, '|')).toBe('a = 1\nb = 2');
+		press(editor, 'a', { mod: true });
+		expect(editor.state.selection.from).toBe(0);
+		expect(editor.state.selection.to).toBe(editor.state.doc.content.size);
+	});
+
+	// UniqueID gives the block a rule made its id in a change of its own,
+	// which Tiptap took for the next edit: Backspace emptied the line.
+	it('Backspace right after a typed shortcut gives back what was typed, the block keeping its id', async () => {
+		for (const [typed, made] of [
+			['# ', 'heading'],
+			['- ', 'bulletList'],
+			['1. ', 'orderedList'],
+			['> ', 'blockquote'],
+			['[] ', 'taskList'],
+		]) {
+			const { doc } = pageDoc('<p>Intro</p><p></p>');
+			const { editor } = bind(doc);
+			await settle();
+			const id = editor.state.doc.child(1).attrs[contract.id.attr];
+			editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+			typeIn(editor, typed);
+			expect(editor.state.doc.child(1).type.name, typed).toBe(made);
+			expect(press(editor, 'Backspace'), typed).toBe(true);
+			const line = editor.state.doc.child(1);
+			expect([line.type.name, line.textContent], typed).toEqual(['paragraph', typed]);
+			expect(line.attrs[contract.id.attr], typed).toBe(id);
+			// The next Backspace is the browser's own, deleting a character.
+			expect(press(editor, 'Backspace'), typed).toBe(false);
+		}
+	});
+
+	it('a shortcut is final once more is typed', async () => {
+		const { doc } = pageDoc('<p>Intro</p><p></p>');
+		const { editor } = bind(doc);
+		await settle();
+		editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+		typeIn(editor, '# T');
+		expect(press(editor, 'Backspace')).toBe(false);
+		expect(editor.state.doc.child(1).type.name).toBe('heading');
+		expect(editor.state.doc.child(1).textContent).toBe('T');
+	});
+
+	// The item went out of the list whole: its nested list and the items
+	// after it were two lists side by side, which export as two.
+	it('Backspace on a first item that holds a nested list leaves one list after it', async () => {
+		for (const [html, kind] of [
+			['<ul><li><p>First</p><ul><li><p>Child</p></li></ul></li><li><p>Second</p></li></ul>', 'bulletList'],
+			[
+				'<ul data-type="taskList"><li data-type="taskItem" data-checked="false"><p>First</p><ul data-type="taskList"><li data-type="taskItem" data-checked="true"><p>Child</p></li></ul></li><li data-type="taskItem" data-checked="false"><p>Second</p></li></ul>',
+				'taskList',
+			],
+		]) {
+			const { doc } = pageDoc(html);
+			const { editor } = bind(doc);
+			await settle();
+			const list = editor.state.doc.child(0);
+			const ids = [list.child(0).child(1).child(0), list.child(1)].map((item) => item.attrs[contract.id.attr]);
+			editor.commands.setTextSelection(posIn(editor, 'First'));
+			expect(press(editor, 'Backspace'), kind).toBe(true);
+			await settle();
+			const top = editor.state.doc;
+			expect(top.childCount, kind).toBe(2);
+			expect([top.child(0).type.name, top.child(0).textContent], kind).toEqual(['paragraph', 'First']);
+			const after = top.child(1);
+			expect(after.type.name, kind).toBe(kind);
+			expect(after.attrs[contract.id.attr], kind).toBe(list.attrs[contract.id.attr]);
+			expect(
+				Array.from({ length: after.childCount }, (_, i) => [after.child(i).textContent, after.child(i).attrs[contract.id.attr]]),
+				kind,
+			).toEqual([
+				['Child', ids[0]],
+				['Second', ids[1]],
+			]);
+		}
+	});
+
+	// Tiptap's to-do rule joins only an item of the type it wraps in, and
+	// the node beside a new to-do is a list: each typed to-do was a list.
+	it('a to-do typed under a to-do list joins it', async () => {
+		for (const typed of ['[] ', '- [ ] ']) {
+			const { doc } = pageDoc('<ul data-type="taskList"><li data-type="taskItem" data-checked="false"><p>Book seats</p></li></ul><p></p>');
+			const { editor } = bind(doc);
+			await settle();
+			const id = editor.state.doc.child(0).attrs[contract.id.attr];
+			editor.commands.setTextSelection(editor.state.doc.content.size - 1);
+			typeIn(editor, typed);
+			typeIn(editor, 'Pack');
+			await settle();
+			const top = editor.state.doc;
+			expect(top.childCount, typed).toBe(1);
+			expect(top.child(0).type.name, typed).toBe('taskList');
+			expect(top.child(0).attrs[contract.id.attr], typed).toBe(id);
+			expect([top.child(0).child(0).textContent, top.child(0).child(1).textContent], typed).toEqual(['Book seats', 'Pack']);
+			expect(new Set([top.child(0).child(0).attrs[contract.id.attr], top.child(0).child(1).attrs[contract.id.attr]]).size, typed).toBe(2);
+		}
+	});
+
+	it('a to-do typed over a to-do list joins it, and Backspace takes it back', async () => {
+		const { doc } = pageDoc('<p>Intro</p><p></p><ul data-type="taskList"><li data-type="taskItem" data-checked="false"><p>Pack</p></li></ul>');
+		const { editor } = bind(doc);
+		await settle();
+		const id = editor.state.doc.child(2).attrs[contract.id.attr];
+		editor.commands.setTextSelection(posIn(editor, 'Intro', 5) + 2);
+		typeIn(editor, '[] ');
+		const list = editor.state.doc.child(1);
+		expect(editor.state.doc.childCount).toBe(2);
+		expect([list.type.name, list.childCount, list.attrs[contract.id.attr]]).toEqual(['taskList', 2, id]);
+		expect(press(editor, 'Backspace')).toBe(true);
+		expect(editor.state.doc.childCount).toBe(3);
+		expect([editor.state.doc.child(1).type.name, editor.state.doc.child(1).textContent]).toEqual(['paragraph', '[] ']);
+		expect(editor.state.doc.child(2).attrs[contract.id.attr]).toBe(id);
+	});
+
+	it('the caret keeps lines of the page around it as it nears the scroller\'s edge', () => {
+		const { doc } = pageDoc('<p>Intro</p>');
+		const { editor } = bind(doc);
+		const margin = editor.view.someProp('scrollMargin');
+		const threshold = editor.view.someProp('scrollThreshold');
+		expect(margin).toBeGreaterThanOrEqual(48);
+		expect(threshold).toBeGreaterThanOrEqual(48);
 	});
 });

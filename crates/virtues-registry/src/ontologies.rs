@@ -1549,7 +1549,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             is_activation_signal: false,
             model_access: ModelAccess::Default,
         },
-        // ===== Documents (researcher-plan D1) =====
+        // ===== Documents (agents/record/researcher.md D1) =====
         // One row per retrieval chunk of an extracted drive file. Universal
         // extraction: every text-bearing upload lands here via the
         // document_extraction cron; the generic indexer embeds rows for free.
@@ -1590,7 +1590,7 @@ pub fn registered_ontologies() -> Vec<OntologyDescriptor> {
             is_activation_signal: false,
             model_access: ModelAccess::Default,
         },
-        // Highlights + margin notes on documents (researcher-plan D2). Your
+        // Highlights + margin notes on documents (agents/record/researcher.md D2). Your
         // own marks are dense signal — embedding quote + note makes "what did
         // I highlight about X" work, and annotations out-rank raw text.
         OntologyDescriptor {

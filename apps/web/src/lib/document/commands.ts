@@ -21,13 +21,14 @@
 
 import { Extension, InputRule, isiOS, isMacOS, type Editor, type Range } from '@tiptap/core';
 import type { Node as PmNode, ResolvedPos } from '@tiptap/pm/model';
-import { NodeSelection, Selection, TextSelection, type EditorState, type Transaction } from '@tiptap/pm/state';
+import { NodeSelection, Plugin, PluginKey, Selection, TextSelection, type EditorState, type Transaction } from '@tiptap/pm/state';
+import type { EditorView } from '@tiptap/pm/view';
 import type { MenuCommand } from '$lib/components/menuCommand';
 import type { Applet } from '$lib/api/client';
 import type { Anchor } from './anchor';
 import { kindOfMime, mediaNode } from './media';
 import { insertBlockAt } from './place';
-import { contract, isRoute } from './schema';
+import { contract, isRoute, joinLists, joinListsAround } from './schema';
 import { cellAt, moveRow } from './tables';
 
 export interface TreeCommand extends MenuCommand {
@@ -378,7 +379,7 @@ function makeTable(tr: Transaction, $from: ResolvedPos, delimiter: string): bool
  * Ids cleared through `node`: a copy is a new block, and the editor gives
  * it ids of its own.
  */
-function withoutIds(node: PmNode): PmNode {
+export function withoutIds(node: PmNode): PmNode {
 	if (node.isText) return node;
 	const attrs = contract.id.attr in node.attrs ? { ...node.attrs, [contract.id.attr]: null } : node.attrs;
 	const children: PmNode[] = [];
@@ -390,7 +391,8 @@ function withoutIds(node: PmNode): PmNode {
  * The bulleted item `$from` starts the text of, made a to-do: `- [ ] `
  * typed is a to-do, as GFM reads it. A list holds one
  * kind of item, so the item becomes a to-do list of its own, between the
- * items before and after it. It keeps its id: it is the same item.
+ * items before and after it, or joins a to-do list just above or below
+ * the bulleted one. It keeps its id: it is the same item.
  */
 function makeTask(tr: Transaction, $from: ResolvedPos, checked: boolean): boolean {
 	const { schema } = tr.doc.type;
@@ -417,6 +419,7 @@ function makeTask(tr: Transaction, $from: ResolvedPos, checked: boolean): boolea
 	const start = $from.before(-2);
 	tr.replaceWith(start, $from.after(-2), [before, task, after].filter((n): n is PmNode => n !== null));
 	tr.setSelection(TextSelection.create(tr.doc, start + (before?.nodeSize ?? 0) + 3));
+	joinListsAround(tr, start + (before?.nodeSize ?? 0));
 	return true;
 }
 
@@ -473,12 +476,66 @@ export const pageInputRules = Extension.create({
 	},
 });
 
+/** What the input rules last did, while Backspace may still take it back. */
+type Undoable = { plugin: Plugin; stored: { from: number; to: number } };
+
+const undoableKey = new PluginKey<Undoable | null>('shortcutUndoable');
+
+/**
+ * Backspace right after a typed shortcut (`# `, `- `, `1. `, `[] `, `> `,
+ * a fence, `**bold**`) takes it back: the block is what it was, the
+ * characters typed are text, and the next Backspace deletes one of them.
+ *
+ * Tiptap keeps what its input rules did until the next change, and UniqueID
+ * gives the block the rule made an id in a change of its own, appended at
+ * once, which Tiptap took for the next change: the shortcut could not be
+ * taken back. That change only sets ids, so what the rule did is handed
+ * back to Tiptap after it. Any other change, or the caret moving, ends it.
+ */
+export const ShortcutBackspace = Extension.create({
+	name: 'shortcutBackspace',
+	// Ahead of every other Backspace: the list's, a block edge's, a heading's.
+	priority: 1001,
+	addKeyboardShortcuts() {
+		return { Backspace: ({ editor }) => editor.commands.undoInputRule() };
+	},
+	addProseMirrorPlugins() {
+		const rulesOf = (state: EditorState) => state.plugins.filter((p) => p.spec.isInputRules);
+		return [
+			new Plugin<Undoable | null>({
+				key: undoableKey,
+				state: {
+					init: () => null,
+					apply(tr, prev, _old, state) {
+						for (const plugin of rulesOf(state)) {
+							const stored = tr.getMeta(plugin);
+							if (stored) return { plugin, stored };
+						}
+						if (!prev || (!tr.docChanged && !tr.selectionSet)) return prev;
+						const { from, to } = prev.stored;
+						const idsOnly =
+							tr.getMeta('appendedTransaction') &&
+							!tr.selectionSet &&
+							tr.mapping.map(from, -1) === from &&
+							tr.mapping.map(to, 1) === to;
+						return idsOnly ? prev : null;
+					},
+				},
+				appendTransaction(_trs, _old, state) {
+					const kept = undoableKey.getState(state);
+					if (!kept || kept.plugin.getState(state)) return null;
+					return state.tr.setMeta(kept.plugin, kept.stored);
+				},
+			}),
+		];
+	},
+});
+
 /**
  * Backspace at the start of a heading makes it a paragraph, as removing
  * its `#` would in markdown; one more Backspace joins it to the
- * block above. The block keeps its id: it is the same block, now text. An
- * input rule that just made the heading is undone first, giving back what
- * was typed.
+ * block above. The block keeps its id: it is the same block, now text. A
+ * heading an input rule just made is `ShortcutBackspace`'s.
  */
 export const HeadingBackspace = Extension.create({
 	name: 'headingBackspace',
@@ -491,7 +548,6 @@ export const HeadingBackspace = Extension.create({
 				const { state } = editor;
 				const { $from, empty } = state.selection;
 				if (!empty || $from.parentOffset !== 0 || $from.parent.type.name !== 'heading') return false;
-				if (editor.commands.undoInputRule()) return true;
 				const paragraph = state.schema.nodes.paragraph;
 				if (!$from.node(-1).canReplaceWith($from.index(-1), $from.index(-1) + 1, paragraph)) return false;
 				const heading = $from.parent;
@@ -504,6 +560,49 @@ export const HeadingBackspace = Extension.create({
 				return true;
 			},
 		};
+	},
+});
+
+/**
+ * Backspace at the start of a list's first item makes it a paragraph, as
+ * Tiptap's list keys do, its nested list going on with the items after it
+ * as one list. Tiptap lifts the item out whole, which leaves the nested
+ * list and the rest of the list side by side: one list to look at, two to
+ * markdown (`continuesList` in markdown.ts). The list keeps its id and its
+ * items keep theirs; the nested list's items move into it.
+ */
+export const ListBackspace = Extension.create({
+	name: 'listBackspace',
+	// Ahead of `ListKeymap`, which lifts the item and stops there.
+	priority: 1000,
+	addKeyboardShortcuts() {
+		const lift = (editor: Editor) => {
+			const { $from, empty } = editor.state.selection;
+			if (!empty || $from.parentOffset !== 0 || $from.depth < 3) return false;
+			const item = $from.node(-1);
+			const list = $from.node(-2);
+			if (!['listItem', 'taskItem'].includes(item.type.name) || $from.index(-1) !== 0 || $from.index(-2) !== 0) return false;
+			// A nested list's first item goes up a level and keeps its own items.
+			if (['listItem', 'taskItem'].includes($from.node(-3).type.name)) return false;
+			if (list.childCount < 2 || item.lastChild?.type !== list.type) return false;
+			const parentStart = $from.start(-3);
+			// The nested list lands after the item's other blocks.
+			const nested = $from.index(-3) + item.childCount - 1;
+			return editor
+				.chain()
+				.liftListItem(item.type.name)
+				.command(({ tr }) => {
+					const parent = tr.doc.resolve(parentStart).parent;
+					if (parent.maybeChild(nested)?.type !== list.type || parent.maybeChild(nested + 1)?.type !== list.type) return true;
+					let pos = parentStart;
+					for (let i = 0; i < nested; i++) pos += parent.child(i).nodeSize;
+					tr.join(pos + parent.child(nested).nodeSize);
+					tr.setNodeMarkup(pos, undefined, list.attrs);
+					return true;
+				})
+				.run();
+		};
+		return { Backspace: ({ editor }) => lift(editor), 'Mod-Backspace': ({ editor }) => lift(editor) };
 	},
 });
 
@@ -680,6 +779,77 @@ export function moveBlock(editor: Editor, by: -1 | 1): boolean {
 }
 
 /**
+ * The block or list item a page position is in, as the drag handle takes
+ * it: the innermost list item around `pos`, or else the block at the top of
+ * the page. `pos` may be a block's own position (an image, a rule), as
+ * `posAtCoords` gives for a node with no text.
+ */
+export function unitAround(doc: PmNode, pos: number): { from: number; to: number; node: PmNode } | null {
+	const $pos = doc.resolve(Math.max(0, Math.min(pos, doc.content.size)));
+	for (let d = $pos.depth; d > 1; d--) {
+		if (ITEMS.includes($pos.node(d).type.name)) return { from: $pos.before(d), to: $pos.after(d), node: $pos.node(d) };
+	}
+	if ($pos.depth >= 1) return { from: $pos.before(1), to: $pos.after(1), node: $pos.node(1) };
+	const node = $pos.nodeAfter;
+	return node?.isBlock ? { from: $pos.pos, to: $pos.pos + node.nodeSize, node } : null;
+}
+
+/**
+ * Move the block or list item at `from`..`to` to `target`, a position in
+ * the page as it stands, where the drag handle drops it. Like `moveBlock`,
+ * it is taken out and put back in two edits, so it keeps its id and an
+ * edit another device makes meanwhile never lands in a neighbour. A list
+ * item dropped outside a list goes in as a list of its own; the lists a
+ * move leaves or makes side by side are joined, as typing joins them.
+ * Nothing moves when `target` is inside what moves or at either end of it.
+ */
+export function moveUnitTo(view: EditorView, from: number, to: number, target: number): boolean {
+	const { state } = view;
+	if (target >= from && target <= to) return false;
+	const node = state.doc.nodeAt(from);
+	if (!node || from + node.nodeSize !== to) return false;
+
+	const out = state.tr.deleteRange(from, to);
+	const gap = out.mapping.map(from);
+	joinLists(out, gap);
+	const at = out.mapping.map(target);
+	view.dispatch(out.setMeta('uiEvent', 'drop'));
+
+	const tr = view.state.tr;
+	const before = tr.doc;
+	tr.replaceRangeWith(at, at, node);
+	if (tr.doc.eq(before)) return true;
+	const placed = placedAt(tr.doc, node, tr.mapping.map(at, -1));
+	if (placed !== null) {
+		tr.setSelection(NodeSelection.create(tr.doc, placed));
+		const $placed = tr.doc.resolve(placed);
+		if (node.type.isInGroup('list')) joinListsAround(tr, placed);
+		else if ($placed.depth > 0 && $placed.parent.type.isInGroup('list')) joinListsAround(tr, $placed.before());
+	}
+	view.dispatch(tr.setMeta('uiEvent', 'drop').scrollIntoView());
+	return true;
+}
+
+/**
+ * Where `node` went in, put in near `near`: found by its id, which it kept,
+ * as a list item wrapped in a list of its own sits a level below where it
+ * was put.
+ */
+function placedAt(doc: PmNode, node: PmNode, near: number): number | null {
+	const id = node.attrs[contract.id.attr];
+	let found: number | null = null;
+	if (id) {
+		doc.nodesBetween(Math.max(0, near - 2), Math.min(doc.content.size, near + node.nodeSize + 2), (n, pos) => {
+			if (found !== null) return false;
+			if (n.attrs[contract.id.attr] === id && n.type === node.type) found = pos;
+			return found === null;
+		});
+	}
+	if (found === null && doc.nodeAt(near)?.type === node.type) found = near;
+	return found;
+}
+
+/**
  * Copy the caret's list item or block, or every one the selection touches,
  * above (`-1`) or below (`1`) them, the selection going into the copy, as
  * ⇧⌥↑ and ⇧⌥↓ copy lines in a code editor. The copies are new
@@ -757,6 +927,63 @@ export function indentCode(editor: Editor, by: -1 | 1): boolean {
 	if (tr.docChanged) editor.view.dispatch(tr.scrollIntoView());
 	return true;
 }
+
+/** Whether the caret is in a list item, at any depth. */
+function inItem(editor: Editor): boolean {
+	return itemAt(editor) !== null;
+}
+
+/**
+ * Tab and ⇧Tab where a writer means them as indent: in a code block they
+ * indent and outdent, Tab at a bare caret putting two spaces there as a
+ * code editor does; in a list item they nest it and take it out a level.
+ * Both are taken there even when the item cannot move (the first item of
+ * a list), so the key never sends the focus out of the page to the next
+ * control. Anywhere else they are the table's or the browser's.
+ *
+ * ⌘A in a code block selects its code first, and the whole page only when
+ * the code is already selected, as a code editor inside a page does.
+ */
+export const IndentKeys = Extension.create({
+	name: 'indentKeys',
+	// Ahead of the list's and the table's Tab.
+	priority: 1000,
+	addKeyboardShortcuts() {
+		const inCode = (editor: Editor) => {
+			const { $from, $to } = editor.state.selection;
+			return !!$from.parent.type.spec.code && $from.sameParent($to);
+		};
+		return {
+			Tab: ({ editor }) => {
+				if (!editor.isEditable) return false;
+				if (inCode(editor)) {
+					if (!editor.state.selection.empty) return indentCode(editor, 1);
+					editor.view.dispatch(editor.state.tr.insertText(CODE_INDENT).scrollIntoView());
+					return true;
+				}
+				if (!inItem(editor)) return false;
+				indentItem(editor);
+				return true;
+			},
+			'Shift-Tab': ({ editor }) => {
+				if (!editor.isEditable) return false;
+				if (inCode(editor)) return indentCode(editor, -1);
+				if (!inItem(editor)) return false;
+				outdentItem(editor);
+				return true;
+			},
+			'Mod-a': ({ editor }) => {
+				const { $from, from, to } = editor.state.selection;
+				if (!inCode(editor)) return false;
+				const start = $from.start();
+				const end = $from.end();
+				if (from === start && to === end) return false;
+				editor.view.dispatch(editor.state.tr.setSelection(TextSelection.create(editor.state.doc, start, end)));
+				return true;
+			},
+		};
+	},
+});
 
 /**
  * ⌥↑ ⌥↓ move, ⇧⌥↑ ⇧⌥↓ copy and ⌘⇧K delete the caret's list item or block,

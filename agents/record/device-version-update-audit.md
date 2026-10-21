@@ -3,12 +3,12 @@
 Four parallel investigations: the Devices page data model, the version-identity
 inventory, every update mechanism, and the map of user-facing status surfaces.
 This records what is true today, with the defects numbered for fixing. The
-proposal at the end is the consolidation argument.
+proposal at the end argues for consolidating them.
 
-## The one-line diagnosis
+## Summary
 
-Every surface renders a *different* truth honestly — nothing is lying, and
-nothing is authoritative. And every update mechanism except the box's fails
+Each surface correctly shows a *different* version fact, and none of them is
+the authoritative one. And every update mechanism except the box's fails
 **silently** in its most likely failure mode.
 
 ## Why the Devices page reads the way it does
@@ -17,8 +17,8 @@ The screenshot that started this: "Virtues Desktop (This device)" showing
 `0.1.5-staging.65 · staging`, `example-mac.local` showing "version unknown",
 "Local console" showing "Never".
 
-1. **The Version column answers "which UI bundle does this device's traffic
-   come from" — never "which app binary."** The only writer is
+1. **The Version column shows which UI bundle this device's traffic comes
+   from. It never shows which app binary is installed.** The only writer is
    `record_client_build` (`middleware/auth.rs:230`), fed by the
    `X-Virtues-Client` header, and the only *sender* of that header is the SPA's
    fetch monkey-patch (`apps/web/src/lib/build.ts:49`). No native client — not
@@ -27,18 +27,19 @@ The screenshot that started this: "Virtues Desktop (This device)" showing
    loads the box-served SPA** (`WebviewUrl::External(localhost:7117)`,
    `main.rs:1583`), and that SPA's baked build identity is byte-for-byte the
    box's release identity (same `GIT_DESCRIBE`, same tarball,
-   `release-linux.yml:277-279`). A hall of mirrors, not a bug in the column.
+   `release-linux.yml:277-279`). The column works as written; it shows the box's
+   version because the window is running the box's SPA.
 3. **The collector row is "version unknown" permanently.** The collector HAS a
    CI-stamped version (`apps/mac-source/Sources/Version.swift`,
    `release-mac.yml:172-183`) but `Version.userAgent` has **zero call sites**;
    its uploads carry only `Content-Type` and its pair payload has no build
-   field. The identity exists and is transmitted to nobody.
-4. **"Local console: Never · from 127.0.0.1" is fiction.** The row is inserted
+   field. The version exists but is never sent to anyone.
+4. **"Local console: Never · from 127.0.0.1" is not real data.** The row is inserted
    at server startup with a hardcoded `'127.0.0.1'` literal
    (`auth.rs:249-258`), and the loopback auth branch never bumps
    `last_seen_at` — no amount of CLI use changes it. The same branch discards
    `X-Virtues-Client`, so the box's own screen also reports nothing.
-5. **One Mac is two rows by construction**: the Tauri app ("Virtues Desktop",
+5. **One Mac always appears as two rows**: the Tauri app ("Virtues Desktop",
    hardcoded name, `reach/src/lib.rs:663`) and the collector daemon
    (`hostName`, `Config.swift:266-277`) are two separate pairings with two iroh
    keys. The box has no "machine" joining them — which is why permissions live
@@ -64,10 +65,10 @@ Seventeen distinct identities exist. The ones that matter for legibility:
 | Collector | Version.swift, CI-stamped | `virtues-collector --version` ONLY | **never** |
 | Command surface (`2`) | lib.rs const | Software App row `· surface 2` | gates OTA (mobile only) |
 
-Notable rot: `min_ios_version` published in `/health` with zero consumers;
+Other stale or unused fields: `min_ios_version` published in `/health` with zero consumers;
 `app_device.named_at` read but never written (the "owner named a device"
 onboarding tier is permanently false); desktop shell's Cargo.toml says `1.0.0`
-(inert decoy — Tauri reads the conf); `virtues device ls` doesn't select the
+(unused and misleading — Tauri reads the conf); `virtues device ls` doesn't select the
 version data sitting in the same row.
 
 ## Update mechanisms — confirmed defects
@@ -90,11 +91,12 @@ Full detail lives in the sweep transcripts; numbered here for fixing.
   not update itself" notification structurally cannot fire for U1.
 - **U4 (high).** Manual "Check for Updates…" shows **"Up to date ✓" on a
   failed check** (`main.rs:1196-1223` reads only `ready.is_some()`). The
-  box-side UI explicitly refuses this lie (`UpdateSection.svelte:249`); the
-  tray commits it.
+  box-side UI does not report "Up to date" on a failed check
+  (`UpdateSection.svelte:249`); the tray does.
 - **U5 (medium).** Edge mac releases are structurally unpublishable: edge takes
   its version from the same tauri.conf.json as stable and the workflow requires
-  strictly-greater — the channel is dead by design, not neglect.
+  strictly-greater, so the design itself prevents the channel from ever
+  publishing.
 - **U6.** 6h poll with no jitter, no wake/network-up/focus recheck.
 - **U7.** Windows/Linux: no tray, no self-update, updater plugin still
   registered, no surface saying the binary is frozen while its box-served UI
@@ -104,7 +106,7 @@ Full detail lives in the sweep transcripts; numbered here for fixing.
 
 - **U8 (medium-high).** Copy-then-kickstart, kickstart result discarded: a
   failed kickstart is *unrecoverable* — the byte-compare now says "in sync" so
-  every later launch no-ops while the old process runs from its held inode
+  every later launch no-ops while the old process runs from its open inode
   until logout.
 - **U9.** Reconcile is launch-only and the app is designed never to relaunch
   (close = hide; staged updates framed as "installs on next launch"). Weeks can
@@ -147,7 +149,7 @@ Full detail lives in the sweep transcripts; numbered here for fixing.
 - **U19.** The downgrade guard is bypassed on any box whose version string
   isn't semver (`edge`).
 
-The load-bearing pattern: **the box's update path is the only one that
+The pattern that matters most: **the box's update path is the only one that
 distinguishes "couldn't check" from "up to date." The mac path, the OTA
 confirm, and the collector reconcile all report success or say nothing.**
 
@@ -157,7 +159,7 @@ Tray · Devices · Software · System · This Mac (`/virtues/devices/this` —
 already exists, with collector card, permissions, pause/resume, Turn on this
 Mac) · iOS This device · Device detail · Sources · Display mirror.
 
-Vocabulary schisms: **four** vocabularies for channel, **three** for collector
+Inconsistent vocabularies: **four** vocabularies for channel, **three** for collector
 state, **four** for sync, **three** for box reachability, and "Up to date"
 means the mac app in the tray but the box in Software — both can be on screen,
 correctly disagreeing.
@@ -176,24 +178,24 @@ Three principles, then slices.
 1. **Report versions to the box; read them from the box.** Native shells and
    the collector each stamp their own identity onto traffic they already send;
    the box records it; Devices/Software render it. Remote legibility — "what is
-   my cofounder's Mac running" — falls out.
-2. **One machine, one row.** Introduce the machine grouping (or fold the
+   my cofounder's Mac running" — follows from this.
+2. **Show one row per machine.** Introduce the machine grouping (or fold the
    collector under the app's device) so version, permissions, and last-seen
    stop being sharded across two rows nobody can join by eye.
 3. **A check that fails must say so.** Every mechanism gets the box path's
    couldn't-check/up-to-date distinction.
 
-### Slice 1 — truth (small, high yield)
+### Slice 1 — report accurate versions (small, high yield)
 
 - Shell adds `app=<version>` to the client header (or its own
   `X-Virtues-Shell`); collector sends its already-stamped `Version.userAgent`
   on uploads and pair; box records both (and on the loopback branch too, or
-  drop the console row's fiction: kill the fake IP, hide "last seen" for it).
+  drop the console row's fake data: kill the fake IP, hide "last seen" for it).
 - Devices column splits into what it actually knows: App / UI / Collector.
 - Delete the dead `device_info.version` write; select version in
   `virtues device ls`.
 
-### Slice 2 — update honesty
+### Slice 2 — report failed update checks
 
 - U1–U4: surface check failures (counter + tray line "couldn't check"),
   route `edge` to mac-latest until mac-edge really exists, match `"staging"`.
@@ -205,9 +207,9 @@ Three principles, then slices.
   and have the SPA soft-reload on mismatch — closes kiosk-style staleness for
   every surface at once.
 
-### Slice 3 — surface diet
+### Slice 3 — fewer status surfaces
 
-- Tray shrinks to presence: status dot + one status line (door to the app),
+- The tray shrinks to a status indicator: status dot + one status line (door to the app),
   "Show Virtues", the staged-update line, Quit. Pause/resume, last-sync
   detail, check-now move to This Mac / Software — which requires first
   mirroring updater state over IPC (`shell_identity` already crosses that
@@ -219,7 +221,7 @@ Three principles, then slices.
 - Wire or delete: `min_ios_version`, `shellSupports`, `named_at`, desktop
   `bundle_boot_ok`.
 
-The tray survives — slimmer — because three of its jobs cannot move into a
+The tray stays, with fewer items, because three of its jobs cannot move into a
 webview the box serves: box-unreachable when the window is closed, quit, and
 applying a staged update.
 
@@ -231,7 +233,7 @@ identity on uploads + pair, `installed_by` provenance keyed on the daemon's
 own declaration (the desktop app's BLE pair also declares `source=mac` — a
 source-only rule would have folded one laptop under another's), the
 Collector badge + fold in Devices, the App/UI split on the detail page, the
-CLI VERSION column, the honest console row, and the dead reach-plugin version
+CLI VERSION column, the corrected console row, and the dead reach-plugin version
 key deleted. Merge/guard semantics covered by `middleware::auth` tests.
 
 Slice 2 landed as `1e20459d`: mac updater reduced to one channel with
@@ -247,11 +249,11 @@ mid-session apply from rollback), `/health` in the mobile proxy prefixes
 (U18), and the leaked visibilitychange listener.
 
 `4b8d8595`: a staged mac update applies itself after two hidden hours — the
-decided resolution of dialectic #4 (chip for the present user, invisible
+chosen resolution of dialectic #4 (chip for the present user, invisible
 restart for the absent one; the collector is a separate LaunchAgent and
 survives it).
 
-Still open, deliberately: slice 3 (tray diet + one-vocabulary-per-fact),
+Left open for later: slice 3 (smaller tray + one-vocabulary-per-fact),
 U6 (no wake/network recheck), U12 in full (mid-session pointer flip can still
 strand un-fetched lazy chunks of the OLD session — mitigated by U18's reload),
 U13 (desktop has no ShellTooOld gate), U17/U19/U21 (box-side comparison

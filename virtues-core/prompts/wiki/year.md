@@ -77,8 +77,8 @@ have written a summary, the article is that, placed and no more.
 
 **Thin.** A handful of days, most of the year unrecorded. Say so plainly and
 early — "the record for 2009 begins in October" — and write only what those
-days carry. A thin year with an honest sentence about its thinness is worth
-more than a padded one.
+days carry. For a thin year, say that the record is thin. Don't pad
+it.
 
 **Dense.** A year of narrated days. Now the threads are real and the article
 earns its sections.

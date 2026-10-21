@@ -180,7 +180,7 @@
 				{#if !s.note.ref}
 					<p class="quiet">A question you asked Virtues that day. You'll find the day's chats in Data.</p>
 				{:else if veil.hiding}
-					<p class="quiet">Veiled. Hold V to read the record.</p>
+					<p class="quiet">Hidden. Hold V to show this record.</p>
 				{:else if s.failed}
 					<p class="quiet">Couldn't load this record. Check that your server is running, then open it again.</p>
 				{:else if !s.record}

@@ -24,6 +24,7 @@ function day(over: Partial<TimelineDay> = {}): TimelineDay {
 		ended_at: iso(24 * 60),
 		stays: [],
 		points: [],
+		place_titles: {},
 		last_point_before: null,
 		nights: [],
 		sessions: [],
@@ -159,5 +160,35 @@ describe("joinDays", () => {
 		const a = deriveDay(day({ stays: [stay("x", 20 * 60, 30 * 60)] }), sources);
 		const b = deriveDay(day({ stays: [stay("x", 20 * 60, 30 * 60)] }), sources);
 		expect(joinDays([a, b]).derived.spans.filter((s) => s.kind === "stay")).toHaveLength(1);
+	});
+});
+
+describe("a night Apple Health didn't record", () => {
+	const est = (s: number, e: number) => ({ started_at: iso(s), ended_at: iso(e), from_nights: 30 });
+	const sleeps = (d: TimelineDay) => deriveDay(d, sources).derived.spans.filter((x) => x.kind === "sleep");
+
+	it("is the usual night, marked as estimated, while the person stays at the place they woke at", () => {
+		// At home from 18:00 the day before to 08:00; the usual night 22:30-06:00.
+		const d = day({ stays: [stay("home", -6 * 60, 8 * 60)], estimated_nights: [est(-90, 6 * 60)] });
+		const [n] = sleeps(d);
+		expect([n.started_at, n.ended_at, n.metadata.source]).toEqual([iso(-90), iso(6 * 60), "estimated"]);
+	});
+
+	it("is cut where the record shows the person out, and dropped when under 3 hours are left", () => {
+		// Out at another place until 01:30, then a drive home: the night starts
+		// when the drive ends, at 01:50.
+		const late = day({
+			stays: [stay("bar", -4 * 60, 90, 5000), stay("home", 90 + 20, 9 * 60)],
+			points: [fix(90), fix(95, 2500), fix(100, 4800)],
+			estimated_nights: [est(-90, 6 * 60)],
+		});
+		expect(sleeps(late).map((n) => n.started_at)).toEqual([iso(110)]);
+		// A conversation from 01:00 to 04:30 leaves less than 3 hours: no night.
+		const talky = day({
+			stays: [stay("home", -6 * 60, 8 * 60)],
+			sessions: [{ id: "c", started_at: iso(60), ended_at: iso(270), speaker_mode: 2, content: null, title: null }],
+			estimated_nights: [est(-90, 6 * 60)],
+		});
+		expect(sleeps(talky)).toEqual([]);
 	});
 });

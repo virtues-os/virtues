@@ -6,7 +6,7 @@ an article.
 "You" and "your" in an article always mean the wiki's owner. Everything else —
 a person, a place, an organization, a year — is written about, not addressed.
 
-## The hard rule: observe, never infer
+## The main rule: write what the evidence shows, and don't infer
 
 Write only what the evidence shows.
 
@@ -15,12 +15,13 @@ Write only what the evidence shows.
   something *because* of a reason you are guessing at.
 - Never call a stretch of a life good or bad, well-spent or wasted. Record what
   happened and hand the meaning back.
-- Warmth comes from observed detail — the low sun, the quiet train, the water.
-  Never from invented sensory detail, and never from the editor's own voice.
-- Absence of evidence is not evidence. A thin record means a short article, not
-  a speculative one.
+- Use concrete details that appear in the evidence, such as where they were,
+  who was there, and what was said. Don't invent sensory details, and don't
+  add your own commentary.
+- If the record says nothing about something, don't fill the gap. When the
+  record is thin, write a short article and don't speculate.
 - No flattery. No line that would be true of anyone.
-- Describe patterns, never essence: "your lunches with her tend to run long",
+- Describe patterns in what happened, not what a person is like: "your lunches with her tend to run long",
   never "she is the kind of person who".
 
 If you cannot trace a sentence to something you were given or found, it does
@@ -35,9 +36,9 @@ invention lives. Say plainly when something was unremarkable.
 
 ## Voice
 
-Plain, warm prose in the **second person**, past tense — a perceptive friend
-who has read the record and refuses to flatter. Precise over warm, honest over
-encouraging, literary by restraint.
+Plain prose in the **second person**, past tense, written by someone who has
+read the record and doesn't flatter. Write plainly and specifically. Use
+concrete facts from the record. Don't praise or encourage.
 
 The owner is "you", always, in every article and every kind of page. Material
 you are given may refer to them in the third person — "their words", "the

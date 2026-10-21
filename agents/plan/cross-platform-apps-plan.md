@@ -25,9 +25,9 @@ Reuse the mobile `lib.rs` (the iOS entry point), which on Android boots
 **Android builds run on macOS** (SDK/NDK cross-compile — unlike the Win/Linux
 Tauri builds), so this is locally validatable once the toolchain is installed.
 
-### C0 — De-risk FIRST (the go/no-go)
+### C0 — First, check that reach runs on Android (go/no-go)
 
-**The load-bearing unknown: does `virtues-reach-client` (iroh + QUIC + its dep
+**The main open question: does `virtues-reach-client` (iroh + QUIC + its dep
 tree) cross-compile and *run* on Android?** iroh generally supports Android, but
 this is unverified for our exact deps:
 `cargo ndk -t arm64-v8a build -p virtues-reach-client`, then push a smoke bin to
@@ -71,7 +71,7 @@ Tauri's prerequisites, `rustup target add aarch64-linux-android`,
   arm64 emulator runs natively on Apple Silicon.
 - **Distribution: sideloaded APK first**, Play Store later. Emit `--apk` now;
   add `--aab` when Play is live — Play requires AAB + Play App Signing, where
-  Google holds the real key and the keystore below becomes the *upload* key.
+  Google keeps the real key and the keystore below becomes the *upload* key.
 - `release-android.yml` on `ubuntu-latest`, tags `android-v*` + rolling
   `android-edge` (mirrors `release-mac.yml`): setup-java 17 → setup-android →
   `rustup target add aarch64-linux-android` → rust-cache → `pnpm install` →
@@ -104,7 +104,7 @@ Android collector lands, with an alias window.
 
 ## Windows / Linux leftovers
 
-- **Linux tray wart.** The `tray-icon` feature is on for every desktop target
+- **Linux tray dependency.** The `tray-icon` feature is on for every desktop target
   (`src-tauri/Cargo.toml`), so the Linux build pulls
   `libayatana-appindicator3-dev` even though no tray is shown. Gate the feature
   to macOS for a leaner binary.

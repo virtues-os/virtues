@@ -33,8 +33,8 @@ export const INTERVIEW_OPENING_LEAD =
 	"This lifeline is an example of what you'll make here: your life from " +
 	"beginning to end, its chapters and its turning points. Here you tell " +
 	"your assistant who you are: your temperament, your virtues and vices, " +
-	"the person you want to become. It keeps the record of your life the " +
-	"way you would.";
+	"the person you want to become. Your assistant uses it to understand " +
+	"your life the way you see it.";
 
 export const INTERVIEW_OPENING_BODY =
 	"A chapter is one of the major arcs of a life, usually about seven of " +

@@ -97,7 +97,103 @@ pub fn default_tools() -> Vec<ToolConfig> {
     ]
     .into_iter()
     .chain(browser_tools())
+    .chain([send_imessage_tool(), create_task_tool(), update_task_tool()])
     .collect()
+}
+
+/// Add tasks to the to-do list the owner and the assistant share (virtues-core
+/// `tools/tasks.rs`). Not gated: a task is cheap to undo, and its history says
+/// the assistant made it.
+fn create_task_tool() -> ToolConfig {
+    ToolConfig {
+        id: "create_task".to_string(),
+        name: "Add a task".to_string(),
+        description: "Add tasks to your list".to_string(),
+        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). Never for things only mentioned in passing. Titles: short, in their words. The chat shows the tasks."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["tasks"],
+            "properties": {
+                "tasks": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "required": ["title"],
+                        "properties": {
+                            "title": { "type": "string" },
+                            "notes": { "type": "string" },
+                            "due": { "type": "string", "description": "Only if said: 2026-10-23 or 2026-10-23T17:00, owner's time" },
+                            "for": { "type": "string", "enum": ["owner", "assistant"] },
+                            "project_id": { "type": "string" }
+                        }
+                    }
+                },
+                "origin": { "type": "string", "enum": ["asked", "own"] }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:checkbox-circle-line".to_string(),
+        display_order: 46,
+        is_system: false,
+    }
+}
+
+/// Change one task: its fields, its status, or a note in its history.
+fn update_task_tool() -> ToolConfig {
+    ToolConfig {
+        id: "update_task".to_string(),
+        name: "Update a task".to_string(),
+        description: "Edit, finish or dismiss a task".to_string(),
+        llm_description: r#"Change one task by id: fields, status, or a note in its history. Working one assigned to you: "active", then a note on what you did and where, then "done"; if blocked, "open" with a note why. due "none" clears it."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["id"],
+            "properties": {
+                "id": { "type": "string" },
+                "title": { "type": "string" },
+                "notes": { "type": "string" },
+                "due": { "type": "string" },
+                "for": { "type": "string", "enum": ["owner", "assistant"] },
+                "project_id": { "type": "string" },
+                "status": { "type": "string", "enum": ["open", "active", "done", "dismissed"] },
+                "note": { "type": "string" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:checkbox-circle-line".to_string(),
+        display_order: 47,
+        is_system: false,
+    }
+}
+
+/// Send an iMessage as the owner, through Messages on their Mac (virtues-core
+/// `tools/send_imessage.rs`, then `outbox.rs`). Offered only while the Mac app
+/// is connected. It does not ask first (the owner's call, 2026-10-20); the
+/// chat's card can cancel it for five seconds, or until a scheduled time.
+fn send_imessage_tool() -> ToolConfig {
+    ToolConfig {
+        id: "send_imessage".to_string(),
+        name: "Send a message".to_string(),
+        description: "Send an iMessage from your Mac".to_string(),
+        llm_description: "Send a text message as the owner, through Messages on their Mac, into the thread they already have with that person. Use it when the owner asks you to message, text or tell someone something. It goes about five seconds after the call (the owner can cancel it in the chat until then), or at `at` when the owner names a time (\"text Nick at 9am\"). Send only what the owner asked for, to the person they named. Each message is its own call: a send earlier in the chat sent that message only, so a new request is a new call even when it repeats an earlier one, and the chat shows the owner a card for every call. Write `text` as the owner would write it, in the first person, with no greeting or sign-off they did not ask for. `to` is a person's name as the owner says it, a person id from their records, a phone number or email, or a group chat: its name as set in Messages, or, for a group with no name, its thread_id from data_communication_message (find it by who is in it). `attachments` sends files after the text: drive files by their ref (/drive/<id>), or photos from the owner's messages as /api/messages/<id>/attachments/<n> (n is the position in that row's metadata.attachments). If a name could be more than one person, the tool sends nothing and lists them: ask the owner which one. The chat shows the owner the sent message, so do not repeat it in your reply.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["to"],
+            "properties": {
+                "to": { "type": "string", "description": "A name, a person id, a phone number or email, a group chat's name, or a thread_id" },
+                "text": { "type": "string", "description": "The message, exactly as it will be sent. Leave it out to send only files" },
+                "attachments": { "type": "array", "items": { "type": "string" }, "description": "Files to send after the text: /drive/<id>, or /api/messages/<id>/attachments/<n>. Up to 25 MB together" },
+                "at": { "type": "string", "description": "Only when the owner names a time: when to send, as a local date and time in the owner's timezone (2026-10-21T09:00). Up to 30 days ahead" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:chat-1-line".to_string(),
+        display_order: 48,
+        is_system: false,
+    }
 }
 
 /// The owner's browser, a window in the Mac app (virtues-core `browser.rs`).
@@ -500,7 +596,7 @@ fn update_memory_tool() -> ToolConfig {
         id: "update_memory".to_string(),
         name: "Memory".to_string(),
         description: "Keep, revise, or retire one memory that persists across conversations".to_string(),
-        llm_description: r#"Keep one note in <memory>. The user reads and edits every note: write only what you want them to read. Lanes: facts (their world), manner (how to speak with them), practices (what they hold to, how you help). add: one durable fact, at most 500 chars. revise / retire: your own notes by id; [theirs] notes are the user's. Never store their narrative identity or secrets."#.to_string(),
+        llm_description: r#"Keep one note in <memory>. The user reads and edits every note: write only what you want them to read. Write to them as "you", with no ids or phone numbers. Lanes: facts (their world), manner (how to speak with them), practices (what they hold to, how you help). add: one durable fact, at most 500 chars. revise / retire: your own notes by id; [theirs] notes are the user's. Never store their narrative identity or secrets."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
@@ -626,6 +722,7 @@ Rules:
 - In a JOIN, qualify every column (m.occurred_at); bare shared names like occurred_at, date, id fail as ambiguous.
 - A table is an instant (occurred_at) or a span (started_at/ended_at), never both.
 - created_at/updated_at are when WE wrote the row; filter time on occurred_at or started_at/ended_at.
+- HEALTH tables keep samples deleted in Apple Health: filter deleted_at_source IS NULL.
 
 Data row -> person (or wiki_places / wiki_orgs):
 SELECT p.name, COUNT(*) FROM data_communication_message m

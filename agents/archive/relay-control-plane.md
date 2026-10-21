@@ -2,14 +2,14 @@
 
 **Status:** the SNI/HMAC-token control plane described here was **never built**,
 and reach has since moved to iroh (dial-by-EndpointId, gated by an atlas
-subscription callout). Read it for the reasoning, not the mechanism. The one
-part that describes what shipped is *iroh caveat vs. our doctrine* below, and it
-is the honest statement of what the relay sees: **"endpoint X talks to Y, N
+subscription callout). Read it for the reasoning; the mechanism was never built. The one
+part that describes what shipped is *iroh caveat vs. our privacy goals* below, and it
+states accurately what the relay sees: **"endpoint X talks to Y, N
 bytes"** — blind to content, *not* blinded-token anonymous.
 
 Wherever the text below calls the relay RAM-only, zero-knowledge, unlinkable, or
-part of a "privacy moat", that is the aspiration of the superseded
-`agents/archive/networking-relay-tee.md` ADR, not a property of anything running. The
+part of a "privacy moat", it repeats a goal of the superseded
+`agents/archive/networking-relay-tee.md` ADR. Nothing running has that property. The
 accurate user-facing account is [the reach manual page](../../docs/operate/reach.md).
 
 Companion to `agents/archive/networking-relay-tee.md` (superseded) and memory
@@ -37,40 +37,40 @@ None of these can be fixed in isolation: they all need a thing that assigns the
 box a name, mints its auth token, and tells clients when it's reachable. That
 thing is the **relay control plane**.
 
-## Product decisions locked (2026-06-30)
+## Product decisions (2026-06-30)
 
-- **Relay is always-on critical path, not opt-in.** Off-LAN access is central
+- **The relay is always on and on the critical path; it is not opt-in.** Off-LAN access is central
   across three patterns: browser dashboard from anywhere, phone ingestion
   off-LAN, and power-user/API. Implications: phone ingestion → relay
   **reliability** is paramount (a blip = silent data loss; folds into the iOS
   at-least-once/idempotent work); browser → serve **HTTP/2 on the box** (one TLS
   conn multiplexes a page into one relay work-conn); API → stable URLs (the
   deterministic SNI below).
-- **Nabu-Casa model — depend on Virtues for v1.** No self-hostable relay, no
-  BYO-domain in v1. A documented BYO-cert / direct-expose escape is "someday,"
-  not launch. The sovereignty story for v1 IS open-source relay + blind + RAM-only
-  + auditable — so that must be true and visible.
+- **Follow the Nabu Casa model: boxes depend on Virtues-run infrastructure for v1.** No self-hostable relay, no
+  BYO-domain in v1. A documented BYO-cert / direct-expose escape may come later;
+  it is not in the launch. For v1, the user's protection rests on an open-source,
+  blind, RAM-only, auditable relay, so each of those properties must be true and visible.
 - **Any-browser-via-relay is the primary (only) client trust path.** The
-  localhost-daemon / mesh-SPKI doctrine is **retired** (supersedes
+  localhost-daemon / mesh-SPKI trust model is **dropped** (supersedes
   `project_localhost_daemon_trust`, `project_trust_model_mesh`). One path: public
   CA cert + boxhash domain; thin desktop/iOS HTTPS clients.
   **Consequence:** ACME issuance reliability is now **launch-critical** — a box
   without its ACME cert is unreachable (the self-signed bootstrap is only a
   cold-start stopgap). Review finding #12 (ACME gives up ~45s, retries every 12h)
-  is therefore must-fix, not medium.
+  is therefore must-fix rather than medium priority.
 
-## Decisions locked
+## Technical decisions
 
 - **Box domain — dedicated `virtues.ch` (NOT a subdomain of `virtues.com`).**
   Boxes live on a separate registrable domain (Plex's `plex.direct` model) so
   user-controlled content is origin/cookie/DNS/reputation-isolated from the
   primary `virtues.com` app + auth + email domain. `.ch` (Switzerland, already
-  owned) is chosen for the **Swiss privacy halo** — on-theme for a personal-data
-  sovereignty appliance, and SWITCH is a stable/neutral registry (the ccTLD
+  owned) is chosen because Switzerland is associated with privacy, which suits an appliance
+  that keeps personal data under the owner's control, and SWITCH is a stable/neutral registry (the ccTLD
   geopolitical caution that ruled out e.g. `.cr` does not apply). `virtues.world`
   is kept as a defensive/redirect domain. **Do not overclaim data residency:**
-  `.ch` is a values/brand signal — data lives on the user's box, the relay is
-  blind; it is not a "data stored in Switzerland" claim.
+  `.ch` is a brand choice. Data lives on the user's box and the relay is
+  blind; we do not claim data is stored in Switzerland.
   **PSL — eventual, non-blocking.** Submit `virtues.ch` to the Public Suffix
   List (framed as cross-tenant isolation) to also isolate boxes *from each other*;
   the separate domain already isolates them from `virtues.com` immediately, so PSL
@@ -79,25 +79,25 @@ thing is the **relay control plane**.
 - **Naming — deterministic hash, optional vanity alias.** The canonical SNI is
   `<boxhash>.virtues.ch`, where `<boxhash>` is derived from the box's existing
   identity/pubkey (not random). Stable across reinstall/recovery, matching the
-  "re-point key, balance preserved" recovery doctrine (`project_box_theft_model`,
+  "re-point key, balance preserved" recovery design (`project_box_theft_model`,
   `project_credential_billing_model`); it's private-ish and appears in CT logs at
   issuance (acceptable, not a secret). An optional **vanity alias**
   (`you.virtues.ch`) may be layered on top — atlas mints a token for it and
   the cert carries both names — but the hash stays the canonical routing/recovery
   anchor (a vanity registry adds squatting/impersonation/dispute governance, so
-  treat it as a paid nicety, not the primary name). BYO custom domain
+  treat it as a paid extra rather than the primary name). BYO custom domain
   (`box.adamsdomain.com` via one-time `_acme-challenge` CNAME delegation) is the
-  deferred sovereignty escape, not v1.
+  deferred option for owners who want their own domain; it is not in v1.
 
 - **Minting authority — atlas/virtues-api (option A).** atlas already mints the
   box's `api_key` at link (`/claim`, see `virtues-core/src/virtues_api/renew.rs`)
-  and virtues-api already holds the box relationship. It assigns the SNI, holds
+  and virtues-api already stores the box relationship. It assigns the SNI, holds
   `RELAY_SECRET`, and computes `derive_token(RELAY_SECRET, sni)` for the box. The
   box **never holds the master secret** (so a compromised box cannot mint another
   tenant's token — preserves the #3 fail-closed fix). The **relay stays stateless
-  and blind**: it holds one secret and derives the expected per-SNI token on the
-  fly — no per-box table, fits the RAM-only / zero-knowledge property that is the
-  privacy moat.
+  and blind**: it stores one secret and derives the expected per-SNI token on the
+  fly. With no per-box table, it fits the RAM-only / zero-knowledge property that the
+  privacy design depends on.
 
   Rejected alternatives: a dedicated `/relay/provision` endpoint (more auth
   surface for the same payload that can ride the link/claim channel — keep as a
@@ -173,19 +173,19 @@ PAIRING
   handled in `acme.rs`). Ownership proof = client-TLS-cert; email-token recovery
   re-points to a new client cert (see `networking-relay-tee.md`).
 
-## Recovery (deterministic naming pays off)
+## Recovery with deterministic naming
 
 Because `boxhash = H(box_identity)`, a reinstall that restores the same identity
 key gets the **same SNI** back; atlas re-mints the same token; DNS + clients keep
 working. A lost identity → email-token re-point issues a new boxhash (clients
 re-pair). Consistent with `project_box_theft_model`.
 
-## Revocation — bounded, stateless-preserving (resolves open-question #4)
+## Revocation with bounded delay and a stateless relay (resolves open-question #4)
 
 **Problem.** The relay is stateless (derives the expected token from one secret —
-no per-box table; that's the RAM-only/blind moat). So it cannot "revoke" a single
+no per-box table; the RAM-only/blind design depends on that). So it cannot "revoke" a single
 previously-valid token without *some* state or expiry. Instant revocation would
-require pushing a denylist to the relay → per-box state → erodes the moat.
+require pushing a denylist to the relay → per-box state → weakens that design.
 **Decision: bounded revocation via time-bucketed tokens** (no relay state).
 
 **Mechanism.**
@@ -197,12 +197,12 @@ require pushing a denylist to the relay → per-box state → erodes the moat.
 3. **Force periodic re-registration:** the relay drops a control connection once
    it exceeds a **max age** (~1 bucket, jittered to avoid a reconnect herd). The
    token is only checked at `Register`, so without this a long-lived connection
-   would never be re-verified and revocation would never bite. Max-age is a
+   would never be re-verified and revocation would never take effect. Max-age is a
    per-connection local timer — still no shared state.
 4. **Box refresh:** the box re-fetches its token from atlas on an interval
    `< bucket` (e.g. 12h) and presents the fresh token on each (re)connect. This
-   means the relay-client must read the *current* token at connect time, not hold
-   a single one for the process life — a small `token_source` seam on
+   means the relay-client must read the *current* token at connect time instead of
+   keeping a single one for the process life — a small `token_source` seam on
    `RelayClientConfig` (tests keep the static `token`).
 5. **atlas gate:** atlas mints the current-bucket token **only for an active,
    non-revoked account**. Revocation = atlas stops minting → the box's token
@@ -227,20 +227,20 @@ max-age eviction, refresh-rotates-token).
 
 ## Path selection — the future tiers (LAN-direct, native P2P, QUIC) and why v1 stays relay-only
 
-This section records a deep ideation (June 2026) so we don't re-litigate it. **The v1
+This section records a long design discussion (June 2026) so we don't repeat it. **The v1
 decision is unchanged: ship the blind TCP relay + ACME. Everything below is v2+.**
 
-### The governing reframe: capability vs. cost
+### Capability versus cost
 
 **LAN-direct + relay together already cover 100% of *capability*** — reach at home,
 reach from anywhere, on any device including a vanilla browser. Every "direct" path
 beyond that (IPv6-direct, NAT hole-punching, QUIC) adds **zero new reach**. It only
 changes two things: our **relay bandwidth bill** and **latency** for native-app users
 away from home. So those paths are **cost/latency optimizations layered on a complete
-system**, not missing capabilities — which is exactly why they can be deferred without
-leaving a hole. The relay's role shifts from "the road" to "the always-there floor."
+system**. No capability is missing without them, which is why they can be deferred.
+The relay stops being the main path and becomes the fallback that is always available.
 
-### "WAN-direct" is two different animals
+### Two kinds of WAN-direct connection
 
 - **WAN-direct via IPv6** — both ends have public routable v6, so they just connect.
   No hole-punching. Cheap. (This was the old WireGuard model.) Coverage is
@@ -249,8 +249,8 @@ leaving a hole. The relay's role shifts from "the road" to "the always-there flo
 - **WAN-direct via IPv4 hole-punching** — both behind NAT, need a coordinator to
   choreograph simultaneous-open (DCUtR / ICE / iroh magicsock). Complex, **70% global
   success (libp2p, independently measured) to ~90% (Tailscale/iroh, first-party)**,
-  and **structurally fails on symmetric NAT / CGNAT** — the exact networks that drove
-  us to the relay. The stubborn 10–30% tail is permanent → **the relay never goes away.**
+  and **always fails on symmetric NAT / CGNAT** — the exact networks that drove
+  us to the relay. The remaining 10–30% of connections will always fail to hole-punch → **the relay is always needed.**
 
 ### Library landscape (2025–2026)
 
@@ -261,23 +261,23 @@ leaving a hole. The relay's role shifts from "the road" to "the always-there flo
   and **official Swift bindings that run in-process on iOS with no Network Extension /
   VPN slot.** Apache-2.0 OR MIT.
 - **rust-libp2p / DCUtR** — protocol-rich but **no production iOS story** (swift-libp2p
-  is experimental); good reference for *how* hole-punching works, weak as our stack.
+  is experimental); good reference for *how* hole-punching works, a poor choice for our stack.
 - **ICE/STUN/TURN** (pion/Go, str0m/Rust + coturn/turn-rs) — the RFC-grade alternative;
   a TURN server *is* a standardized blind relay. You build the signaling yourself.
 - **Tailscale** — best *reference architecture* (magicsock / DISCO / DERP / Call-Me-Maybe);
   as a library only via Go (`tsnet`) or a system-wide Network Extension.
 
-**Verdict:** if/when we build native direct paths, it's **iroh — or nothing**. It's the
+**Conclusion:** if we build native direct paths, we use **iroh or build nothing**. It's the
 only option satisfying Rust core + real in-process iOS + blind relay + actual stability.
 Do **not** hand-build DCUtR/ICE.
 
-**iroh caveat vs. our doctrine:** iroh's relay routes by ed25519 public key, so it learns
+**iroh caveat vs. our privacy goals:** iroh's relay routes by ed25519 public key, so it learns
 *"endpoint X talks to Y, N bytes"* (blind to content, **not** blinded-token anonymous).
-That violates the `networking-relay-tee` unlinkability goal. **Lean: keep our blind L4
-relay as the privacy-maximal floor; layer iroh only for native direct paths.** With ~90%
+That violates the `networking-relay-tee` unlinkability goal. **Preferred option: keep our blind L4
+relay as the most private fallback; add iroh only for native direct paths.** With ~90%
 going direct, iroh's weaker relay metadata only ever touches bootstrap + the 10% tail.
 
-### iOS reality (decides the shape)
+### iOS constraints that decide the design
 
 In-process UDP hole-punching is **allowed and does NOT consume the VPN slot** — the slot
 is only `NEPacketTunnelProvider` (system-wide VPN). Talking to the relay or a remote peer
@@ -285,7 +285,7 @@ over the public internet is **permission-prompt-free**; only **LAN-direct** trip
 one-time "Local Network" prompt. **Background P2P is unreliable on iOS regardless** →
 relay + APNs-wake stays the background story no matter what (`project_apns_push_primitive`).
 
-### iroh in the browser — does NOT change the browser story
+### iroh in the browser does not change the browser path
 
 iroh's WASM build is real but **relay-only**: *"All connections from browsers to somewhere
 else need to flow via a relay server"* (browser sandbox can't send UDP → no hole-punch).
@@ -293,30 +293,30 @@ So for browsers iroh is architecturally **the same as our relay**, minus our unl
 plus a protocol rewrite. **Browsers stay on our relay.** (Watch item: iroh's roadmap to add
 WebTransport/WebRTC direct-from-browser — see below.)
 
-### WebTransport + `serverCertificateHashes` — cert-trust, not reachability
+### WebTransport + `serverCertificateHashes` solves cert trust only
 
 A browser primitive (shipped in **all four engines incl. Safari/iOS 26.4, March 2026**)
 that lets a browser trust a **self-signed** cert by **SHA-256 hash** passed out-of-band
 (via pairing) — native certificate pinning, no CA. Buildable directly on the Rust
 **`wtransport`** crate, **independent of iroh**. Constraints: ECDSA P-256, **cert validity
-≤ 14 days** (no revocation; short life is the substitute), hash is over the **full DER
+≤ 14 days** (no revocation; the short lifetime replaces it), hash is over the **full DER
 cert** (every rotation → new hash → must re-distribute to clients), runs over **HTTP/3
 (QUIC/UDP)**, IP-literals allowed (no DNS needed), calling page must be a secure context.
 
-**Crucial limit: it does ZERO NAT traversal.** It needs the box already reachable (LAN,
-public v6, or port-forward). It solves **cert trust**, not **reachability**.
+**Main limit: it does no NAT traversal.** It needs the box already reachable (LAN,
+public v6, or port-forward). It solves **cert trust** and does nothing for **reachability**.
 
-- **LAN-direct: genuine win.** Browser on the same network hits `https://<lan-ip>:<port>`,
+- **LAN-direct: a real improvement.** Browser on the same network hits `https://<lan-ip>:<port>`,
   pins the box hash from pairing, gets a real padlock, **no DNS / no CA / no ACME / no
   trust-on-first-use prompt.** This **supersedes the split-horizon-DNS and mDNS+local-CA
   options** for LAN-direct (Open Q #5 / todo #13). The only costs: the 14-day rotation +
-  hash-redistribution choreography, and an **iOS ≤ 26.3 fallback** (plaintext / relay).
-- **Remote: blocked by reachability**, not by the API. CGNAT box stays unreachable → relay
+  hash-redistribution steps, and an **iOS ≤ 26.3 fallback** (plaintext / relay).
+- **Remote: blocked by reachability**; the API is not the obstacle. CGNAT box stays unreachable → relay
   still required.
 
 ### Why we did NOT build "QUIC v3" (eliminate ACME everywhere) now
 
-The dream: make the **relay a QUIC/WebTransport passthrough** + have browsers pin the box
+The idea: make the **relay a QUIC/WebTransport passthrough** + have browsers pin the box
 hash even over the relay → drop ACME/public-CA for *every* path. It breaks on the
 **TCP-fallback tail**:
 
@@ -331,12 +331,12 @@ hash even over the relay → drop ACME/public-CA for *every* path. It breaks on 
    against a **public CA → needs ACME.**
 
 So even granting UDP works on most networks, **you keep a TCP relay + ACME for the tail,
-because there's no fallback and no TCP cert-pinning.** The "everything simpler" resolves to
-*"most users get a CA-free QUIC path"* — **not** *"ACME goes away."* And QUIC-relay-now is a
+because there's no fallback and no TCP cert-pinning.** The simplification only amounts to
+*"most users get a CA-free QUIC path"*; **ACME does not go away.** And QUIC-relay-now is a
 large **parallel** build (UDP flow-relaying, QUIC SNI peek, HTTP-over-WebTransport
 forwarder, 14-day hash treadmill, iOS tail) that **adds** surface rather than replacing
-anything. **Mental model: TCP is the floor because it's the only thing always allowed;
-QUIC/UDP is a fast-path you can offer where the network permits and that deletes nothing.**
+anything. **TCP is the fallback because it is the only transport always allowed. QUIC/UDP
+is a faster path we can offer where the network permits it, and it removes nothing.**
 
 > Open data question if we ever pursue QUIC-relay: pin down the real **UDP/443 blocking
 > rate** (Google/Cloudflare QUIC-fallback stats, academic reachability studies) to size the
@@ -348,7 +348,7 @@ QUIC/UDP is a fast-path you can offer where the network permits and that deletes
 |---|---|---|
 | **v1** | blind **TCP** relay + **ACME** (apex) — reaches 100% of browsers on every network today | **now** |
 | **v2a** | **WebTransport + hash** for **LAN-direct** (no DNS/CA; supersedes split-horizon/mDNS) | post-launch |
-| **v2b** | **iroh** for **native** paths (desktop/iOS/CLI/box-to-box): dial-by-key, ~90% hole-punch, mDNS LAN; our relay stays the blind floor | when relay-bandwidth cost bites |
+| **v2b** | **iroh** for **native** paths (desktop/iOS/CLI/box-to-box): dial-by-key, ~90% hole-punch, mDNS LAN; our relay stays the blind fallback | when relay-bandwidth cost bites |
 | **v3** | QUIC/WebTransport relay as a **CA-free fast-path** for the UDP-open majority; **TCP+ACME stays as the permanent tail fallback** (does NOT eliminate ACME) | evaluate after iOS-26.4 adoption is high |
 | **never** | hand-built DCUtR/ICE; requiring an agent for *any* access (browsers must always work via relay, no install) | — |
 
@@ -362,5 +362,5 @@ QUIC/UDP is a fast-path you can offer where the network permits and that deletes
 4. ~~Per-box revocation under HMAC~~ — **RESOLVED** above (bounded, time-bucketed
    tokens + max-age re-registration; epoch-in-SNI for replace-and-keep-account).
 5. LAN-direct naming (`192-168-1-50.<boxhash>.virtues.ch`) interplay with the wildcard
-   cert and rebind filters (see `networking-relay-tee.md` LAN gotcha).
+   cert and rebind filters (see the LAN caveat in `networking-relay-tee.md`).
 ```

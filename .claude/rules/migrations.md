@@ -6,8 +6,8 @@ paths:
 # Claiming a migration number
 
 Loaded because you are in the migrations directory. Three of the traps below
-have each taken a real box down; the placeholder one refuses to boot on the
-NEXT start, so it is invisible when you make it.
+have each taken a real box down. The placeholder trap makes a box refuse to boot
+on its NEXT start, so you do not see the mistake when you make it.
 
 **Claim the number before writing the SQL:**
 
@@ -16,10 +16,10 @@ make migration NAME=add_foo
 ```
 
 It takes the next number, writes a placeholder, and commits it under the lock
-— so the number is yours before anyone else looks. (The chain was squashed to
+— so the number is reserved for you before another agent can take it. (The chain was squashed to
 a single `0001_initial.sql` on 2026-08-18 and has grown since; the counter
-reads the directory, so never pick a number by hand.) Two agents reaching for the
-same number is the *default* outcome otherwise, and git will not warn you:
+reads the directory, so never pick a number by hand.) Otherwise two agents will usually
+pick the same number, and git will not warn you:
 `sqlx::migrate!` keys on the version, and renumbering after a box has applied
 it breaks that box's upgrades. Migration 52 once killed a box for 3¼ hours.
 
@@ -34,16 +34,17 @@ and they are readable there:
 git show d34f1e2b^:virtues-core/migrations/ | grep 0081
 ```
 
-Don't add new ones — cite what changed, not a number nobody can resolve — and
+Don't add new ones — describe what changed instead of citing a number nobody
+can resolve — and
 don't "fix" an old one by deleting the number, which throws away the only
-handle on when it happened.
+clue to when it happened.
 
 **`make migration` COMMITS the placeholder, so renaming it leaves a tracked
 deletion.** Stage that deletion with your migration or the next thing that
 checks the tree refuses to run — `tools/squash-migrations.sh` will not touch a
-migrations directory with uncommitted changes, correctly, because it cannot
-tell your leftover from another agent's in-flight work. Four accumulated
-before anyone noticed.
+migrations directory with uncommitted changes, which is the right behavior, because it cannot
+tell your leftover from another agent's in-flight work. Four such deletions
+accumulated before anyone noticed.
 
 **The placeholder is `.sql.pending`, and you must rename it to `.sql` once the
 SQL is written.** `sqlx::migrate!` globs `*.sql`, so a bare placeholder is a

@@ -6,7 +6,7 @@
 
 ---
 
-## The model in one sentence
+## Overview
 
 **Two shipping shapes — native Linux binary for the home box, Docker images on one server for the cloud — and nothing else.**
 
@@ -16,13 +16,13 @@
 | **Cloud sidecar** (Virtues-operated) | `atlas` + `virtues-api` services | Docker images on one dedicated server + Caddy | `docker run`, no orchestrator |
 | **Clients** | Web UI (SvelteKit), iOS app, Mac collector | Static site / App Store / signed pkg | None |
 
-That's it. No Compose, no Quadlet, no Kubernetes, no Nomad anywhere in the product. The cloud sidecar is the only thing that runs in containers, and it's there because cloud → containers is the right call for stateless services behind a TLS terminator.
+There is no Compose, no Quadlet, no Kubernetes, no Nomad anywhere in the product. The cloud sidecar is the only thing that runs in containers, and it's there because cloud → containers is the right call for stateless services behind a TLS terminator.
 
 ---
 
 ## Home box: native install via `tools/bootstrap.sh` + `virtues-installer`
 
-`curl -sSL https://virtues.com/sh | sudo sh` runs the bootstrap, which is `tools/bootstrap.sh`. The website (`virtues.com`, SvelteKit on Vercel) serves `/sh` as a **302 redirect to the latest stable GitHub Release asset** (`bootstrap.sh`, uploaded by release-linux.yml), so the script and the binaries it fetches version together — gated on the same tag — and no server-side copy exists to drift. The canonical command uses `-sSL` precisely because the endpoint is a redirect (`-L` follows it). The website route (`src/routes/sh/+server.ts`) is just:
+`curl -sSL https://virtues.com/sh | sudo sh` runs the bootstrap, which is `tools/bootstrap.sh`. The website (`virtues.com`, SvelteKit on Vercel) serves `/sh` as a **302 redirect to the latest stable GitHub Release asset** (`bootstrap.sh`, uploaded by release-linux.yml), so the script and the binaries it fetches version together — gated on the same tag — and no server-side copy exists to drift. The canonical command uses `-sSL` because the endpoint is a redirect (`-L` follows it). The website route (`src/routes/sh/+server.ts`) is just:
 
 ```ts
 // virtues.com/sh
@@ -49,7 +49,7 @@ No `make` commands and no `.env` editing. Subscription is opt-in and decoupled f
 
 The earlier plan was Podman + Quadlet on the appliance (rationale was "rootless + self-healing units"). That was abandoned because:
 
-- **Quadlet adds a layer we don't need.** systemd already gives us restart-on-failure, dependency ordering, and per-unit security hardening (`ProtectSystem=`, `PrivateTmp=`, `CapabilityBoundingSet=`). Wrapping that in Podman wrappers in Quadlet wrappers in systemd was tower-of-leaky-abstractions.
+- **Quadlet adds a layer we don't need.** systemd already gives us restart-on-failure, dependency ordering, and per-unit security hardening (`ProtectSystem=`, `PrivateTmp=`, `CapabilityBoundingSet=`). Wrapping that in Podman wrappers in Quadlet wrappers in systemd stacked leaky abstractions on top of each other.
 - **Native Postgres is simpler.** Postgres-in-container needs volume mounts, init hooks, healthchecks; native Postgres is one apt package with a vendor-maintained systemd unit.
 - **The box drives its own host.** Upgrades flip release slots, the appliance claims disks and runs a display, and the web terminal is a shell on the machine. A container would have to be granted all of that back.
 
@@ -100,7 +100,7 @@ The cloud half is the *metered* edge — Stripe billing (atlas) and the AI/web/b
 - **Maps**: a monthly systemd timer cuts the Protomaps build into `/srv/maps/<build>/` (`deploy/maps/`), mounted read-only into virtues-api, which serves it outside request tracing.
 - **Access**: SSH by key only; the firewall opens 22, 80 and 443.
 
-Why one server and not a managed platform: cost, unmetered bandwidth for the map files, and a workload small enough that one machine with backups off it is the honest shape. The relay runs on its own server so a deploy or a map download never touches remote access.
+Why one server and not a managed platform: cost, unmetered bandwidth for the map files, and a workload small enough that one machine with backups off it is the simplest fit. The relay runs on its own server so a deploy or a map download never touches remote access.
 
 ### Monitoring
 
@@ -179,7 +179,7 @@ to it.
 
 ---
 
-## What you won't find in this repo (any more)
+## Removed deployment files
 
 - `docker-compose.yml` (deleted — orphaned by native install)
 - `deploy/quadlet/` (deleted — orphaned by native install)

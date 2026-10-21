@@ -1,4 +1,4 @@
-# One wire — finishing the setup flow's keystone
+# One wire — carrying setup over one Bluetooth session
 
 > **STATUS 2026-08-24: SHIPPED AND HARDWARE-VERIFIED.** The full rehearsal
 > passed on a bench box running `v0.1.3-staging.63` (the first PR-#57 build):
@@ -25,36 +25,37 @@
 > setup).
 
 > Written 2026-08-24 after a full bench day and a four-agent audit of the
-> atlas ↔ app ↔ box coordination. The verdict that produced this plan: the
-> individual setup steps are justified and documented; the overengineering is
-> the **wire interleave** — BLE → atlas → BLE → LAN → BLE → iroh — which
-> exists only because the keystone [linking-plan.md](../archive/linking-plan.md) already
-> prescribes (RPC 0x82 ClaimGrant) was built box-side on 2026-08-11 and never
-> finished app/atlas-side. Every bench failure that day was a symptom: a BLE
+> atlas ↔ app ↔ box coordination. The audit found that the individual setup
+> steps are justified and documented, and that the overengineering is the
+> **wire interleave** — BLE → atlas → BLE → LAN → BLE → iroh. The interleave
+> exists only because the piece [linking-plan.md](../archive/linking-plan.md) already
+> specifies (RPC 0x82 ClaimGrant) was built box-side on 2026-08-11 and never
+> finished app/atlas-side. Every bench failure that day came from it: a BLE
 > session dying under a minutes-long OTP, a pair write hanging on the dead
 > link, a reach ticket frozen with `relay_url: null` against a
 > client-isolating LAN.
 >
-> The target flow, stated once: **sign in first (Mac ↔ atlas, box not
+> The target flow: **sign in first (Mac ↔ atlas, box not
 > involved), then one Bluetooth session carries everything** — Wi-Fi, a
 > pre-approved grant the box redeems outbound when it comes online, a
 > codeless session-authorized pair, and the reach ticket back. Zero codes
 > fetched or typed on the first-device path. Every code that is a device's
-> *only* channel (second devices, CLI, LAN, browser checkout) survives
-> untouched. Skip stays everywhere — prescribe, never enforce.
+> *only* channel (second devices, CLI, LAN, browser checkout) stays
+> unchanged. Every step can still be skipped: the flow recommends sign-in and
+> never requires it.
 
 ## Why sign-in can precede Wi-Fi
 
 The Mac has its own internet; sign-in is Mac ↔ atlas only. The box needs
 Wi-Fi only to *redeem* its credential — and with a grant delivered over BLE,
-its first breath of internet already carries everything it needs. Nobody
-polls, nobody waits. Today's flow has this backwards: the box must get
-online first to mint a code the app reads over BLE and carries to atlas —
-the round-trip the whole afternoon was lost in.
+its first internet connection already has everything it needs. Nothing has
+to poll or wait. Today's flow has this backwards: the box must get online
+first to mint a code the app reads over BLE and carries to atlas. The bench
+day's whole afternoon was lost to that round-trip.
 
 ## Phase 0 — per-box keys (atlas) · the prerequisite · ~1–2 days
 
-The landmine (documented in `routes/account.rs`): atlas holds **one**
+The existing bug (documented in `routes/account.rs`): atlas holds **one**
 `customers.api_key_hash` per customer, and every attach rotates it — a
 second box linking silently kills the first box's credential. This exists
 today; the grant just makes it the default path. virtues-api's half is
@@ -78,17 +79,18 @@ replacement per-box). Missing is atlas-side only:
   `box_key`, deleting only that endpoint's prior rows. `endpoint_id` is
   optional in the body — an old box degrades to the legacy whole-account
   rotation.
-- **The killer test**: two boxes on one account; rotate one; assert the
+- **The key test**: two boxes on one account; rotate one; assert the
   other's key still authenticates against both virtues-api and atlas
   billing-auth.
 
-Do this now, while prod has effectively one customer and migration is free.
+Do this now, while prod has effectively one customer and the migration costs
+nothing.
 
-## Verified facts the plan bends around (2026-08-24 code check)
+## Verified facts the plan is built around (2026-08-24 code check)
 
 - **BLE dies 0–15 s after claim.** The Improv service tears down on the next
   15 s reconcile tick once a device pairs (`ble_provision.rs:204-238`;
-  doctrine at :24). A post-pair RPC has only a race window — so nothing may
+  the rule is documented at :24). A post-pair RPC has only a race window — so nothing may
   be designed to run over BLE *after* pairing. The consequence: **pair goes
   last in the session, and its answer must be complete.**
 - **0x82 is already fully built box-side** — parser + tests
@@ -109,7 +111,8 @@ Root cause of the bench hang (see memory `reach-ticket-freeze`): the pair
 consume ticket freezes `relay_url: null` when the box isn't relay-homed yet,
 and the app has no channel to learn a later one on an isolating LAN — it
 dials a dead direct IP forever, and `:7117` drops each connection with zero
-bytes and zero messaging. Independent of everything else; ship first.
+bytes and zero messaging. It is independent of the other phases, so it
+ships first.
 
 Because BLE dies 0–15 s after claim (verified above), the fix is NOT a
 post-pair refresh RPC — it is making the pair answer itself complete, and
@@ -123,7 +126,8 @@ never pairing before the ticket can be:
   and is session-gated like 0x84.
 - **Box teardown grace**: gate the claimed-teardown on "no live setup
   session" with a ~10-minute cap, so a session that paired seconds ago isn't
-  cut mid-conversation by the 15 s tick. (Belt; pair-last is the braces.)
+  cut mid-conversation by the 15 s tick. (This is a backup; pairing last is
+  the main fix.)
 - **Box bugfix** (found in audit): `reconcile`'s late `ensure_relay_config`
   success never calls `request_rebind()` — a box that missed relay config at
   link stays `RelayMode::Disabled` until restart. One line.
@@ -134,9 +138,9 @@ never pairing before the ticket can be:
 - **App (retrofit for today's flow)**: before auto-pair fires, if the box
   reports linked but the pending ticket lacks a relay, poll 0x87 briefly and
   only then pair. `reach_status` gains a reason string so "unreachable —
-  ticket has no relay" can ever be *said*; proxy.rs stops silently
+  ticket has no relay" can be shown to the user; proxy.rs stops silently
   accept-dropping (log + backoff).
-- Skipped-link boxes get no relay by definition (LAN-only is their story);
+- Skipped-link boxes get no relay by definition (they are LAN-only);
   nothing here waits on one for them.
 
 ## Phase 2 — the 0x82 grant · sign-in first · ~2–3 days
@@ -152,7 +156,7 @@ never pairing before the ticket can be:
   get online must not strand anyone.
 - **Box**: nothing — 0x82 is verified complete (stores the grant, redeems
   outbound via the standard `/init/poll` when online, notifies `"linked"`
-  over BLE). The session ordering writes itself: wifi + grant → watch the
+  over BLE). The session order follows from this: wifi + grant → watch the
   join → watch the `"linked"` notify → **pair last**, whose answer now
   carries a complete reach ticket (Phase 1's ENDPOINT_UP wait).
 - **Entitlement re-checked at redemption**, not only at grant: a 24 h grant
@@ -163,12 +167,12 @@ never pairing before the ticket can be:
   at sign-in time. Add a session-authed checkout that just creates the
   subscription; the webhook flips `entitled`, the app notices via
   `/account/session`, then proceeds to grant. Until store pre-provisioning
-  lands, new buyers still make one browser trip — earlier and cleaner, but
-  present.
+  lands, new buyers still make one browser trip. The trip happens earlier and
+  is simpler, but it is still there.
 - **Plugin**: `improv_grant` command (already listed as owed in
   linking-plan).
 - **Airlock**: sign-in screens (email → OTP, unchanged visuals) move to
-  right after the save ceremony, **before Wi-Fi**, with a quiet "Skip for
+  right after the save-phrase step, **before Wi-Fi**, with a quiet "Skip for
   now" (skipped = no grant written; box works LAN-only; linkable later from
   app, browser, or `virtues link`). After the Wi-Fi join: write grant over
   the live session, done. The link step screen, 0x84 fetch/cache/watchers,
@@ -177,14 +181,15 @@ never pairing before the ticket can be:
 
 ## Phase 3 — codeless session pair · ~1 day
 
-The 6-digit code on the BLE path is vestige: the phrase already proved
+The 6-digit code on the BLE path is no longer needed: the phrase already proved
 line-of-sight, and today the app fetches the code over 0x85 only to hand it
 straight back over 0x83. New session-authorized pair (0x83 variant or 0x88):
 no code, same consume JSON + reach ticket in the answer. **Keep the 6-digit
 code everywhere it is a device's only channel**: second devices, CLI, LAN
-pair — unchanged. Add the deliberate revision note to
-onboarding-paradigm.md: one session-start proof now authorizes the session's
-whole conversation (same room, same minutes; a modest, named widening).
+pair — unchanged. Add a revision note to onboarding-paradigm.md: one
+session-start proof now authorizes the session's whole conversation (same
+room, same minutes). This is a small, documented widening of what the proof
+covers.
 
 ## Phase 4 — airlock cleanup · ~0.5 day
 
@@ -209,9 +214,9 @@ UART, power-cycle, complete setup — plus the isolating-LAN scenario at P1
 P0. The atlas pieces deploy via `make deploy-atlas` + SSM recreate
 (deployment.md); airlock pieces ride the app build.
 
-## What this deletes, in numbers
+## What this deletes
 
-~250 lines of link-code rotation scar tissue in connect.html, two
+~250 lines of link-code rotation workarounds in connect.html, two
 completion-watch loops, four re-read-the-code call sites, the 0x85→0x83
-hand-the-secret-back dance, and every failure mode of the form "a radio
+round-trip that hands the code back to the box, and every failure mode of the form "a radio
 session died while a human was reading email."

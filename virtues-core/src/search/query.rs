@@ -93,7 +93,7 @@ const HNSW_EF_SEARCH: i64 = CANDIDATE_POOL + CANDIDATE_POOL / 4;
 const PROJECT_BOOST: f64 = 1.0;
 
 /// How an active project shapes retrieval (user-facing: "Open" vs "Scoped"
-/// chat — see researcher-plan decision 2).
+/// chat — see agents/record/researcher.md decision 2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScopeMode {
     /// Open: search everything; project members get the additive z-boost.

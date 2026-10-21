@@ -38,6 +38,8 @@
     <string>AppIcon</string>
     <key>CFBundleIconFile</key>
     <string>AppIcon</string>
+    <key>NSAppleEventsUsageDescription</key>
+    <string>Virtues sends the messages you ask your assistant to send through Messages.</string>
     <key>NSBluetoothAlwaysUsageDescription</key>
     <string>Virtues uses Bluetooth to find your box during setup and put it on your Wi-Fi.</string>
     <key>NSLocalNetworkUsageDescription</key>

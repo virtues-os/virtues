@@ -73,6 +73,7 @@ pub const CATEGORY_ORDER: &[(&str, &str)] = &[
     ("wiki_temporal", "WIKI TEMPORAL"),
     ("wiki_reference", "WIKI REFERENCES"),
     ("wiki", "WIKI NARRATIVE"),
+    ("tasks", "TASKS"),
 ];
 
 /// The block the model reads: every queryable table, its columns, and the
@@ -122,10 +123,9 @@ pub fn prompt_block() -> String {
 
 /// Static table metadata — descriptions, key queryable columns, and the fence
 /// that decides which tables the model can see at all.
-/// A sample deleted in Apple Health stays as a tombstone with
-/// `deleted_at_source` set.
-const HEALTH_TOMBSTONE: &str = "filter deleted_at_source IS NULL";
-
+///
+/// The health tables carry no note. The `deleted_at_source` filter they all
+/// need is a single rule in the `sql_query` description in `tools.rs`.
 pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     let mut m = HashMap::new();
 
@@ -137,49 +137,49 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "health",
         key_columns: &["bpm", "occurred_at"],
         join_hint: None,
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
     m.insert("data_health_hrv", TableMetadata {
         description: "Heart rate variability measurements in milliseconds",
         category: "health",
         key_columns: &["hrv_ms", "occurred_at"],
         join_hint: None,
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
     m.insert("data_health_steps", TableMetadata {
         description: "Step count records (may have multiple per day)",
         category: "health",
         key_columns: &["step_count", "occurred_at"],
         join_hint: None,
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
     m.insert("data_health_sleep", TableMetadata {
         description: "Sleep sessions with duration and quality metrics",
         category: "health",
         key_columns: &["started_at", "ended_at", "duration_minutes", "sleep_quality_score", "sleep_stages"],
         join_hint: None,
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
     m.insert("data_health_workout", TableMetadata {
         description: "Exercise and workout sessions",
         category: "health",
         key_columns: &["workout_type", "started_at", "ended_at", "duration_minutes", "calories_burned", "distance_km", "avg_heart_rate", "max_heart_rate"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_health_workout' AND er.source_id = data_health_workout.id JOIN wiki_places ON er.entity_id = wiki_places.id AND er.entity_type = 'place'"),
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
     m.insert("data_health_active_energy", TableMetadata {
         description: "Active energy burned, in kilocalories",
         category: "health",
         key_columns: &["kcal", "occurred_at"],
         join_hint: None,
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
     m.insert("data_health_distance", TableMetadata {
         description: "Distance moved, in meters",
         category: "health",
         key_columns: &["meters", "occurred_at"],
         join_hint: None,
-        note: Some(HEALTH_TOMBSTONE),
+        note: None,
     });
 
     // ============================================================================
@@ -208,7 +208,9 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         category: "communication",
         key_columns: &["subject", "body", "body_preview", "from_email", "from_name", "to_emails", "direction", "is_read", "is_starred", "has_attachments", "labels", "thread_id", "occurred_at"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_communication_email' AND er.source_id = data_communication_email.id JOIN wiki_people ON er.entity_id = wiki_people.id AND er.entity_type = 'person'"),
-        note: None,
+        // The model reads `labels` as text[] and writes `labels && ARRAY[...]`,
+        // which Postgres rejects for jsonb.
+        note: Some("labels and to_emails are jsonb arrays of strings: filter with labels ? 'IMPORTANT' or labels ?| ARRAY['A','B'], never ANY(labels) or &&"),
     });
     m.insert("data_communication_message", TableMetadata {
         description: "Chat messages (iMessage, SMS, etc.)",
@@ -380,6 +382,15 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         key_columns: &["title", "content", "kind", "icon", "tags"],
         join_hint: Some("JOIN wiki_articles a ON a.page_id = app_pages.id"),
         note: Some("filter deleted_at IS NULL"),
+    });
+    // The task list, read here; written only through create_task and
+    // update_task so every change reaches the task's history.
+    m.insert("app_tasks", TableMetadata {
+        description: "The to-do list the owner and the assistant share. assignee is owner or assistant; status open, active (the assistant is working on it), done or dismissed; due_on is the owner's local day, due_at a time when one was given",
+        category: "tasks",
+        key_columns: &["title", "notes", "assignee", "status", "due_on", "due_at", "project_id", "closed_at"],
+        join_hint: None,
+        note: Some("open: status IN ('open','active')"),
     });
     m.insert("wiki_notes", TableMetadata {
         description: "Notes and open questions attached to a wiki subject, written by the owner or by the assistant",

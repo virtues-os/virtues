@@ -34,7 +34,7 @@
 	import { onMount, untrack } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import { backendUrl } from "$lib/config/backend";
-	import { onContextGesture } from "$lib/codemirror/extensions/long-press";
+	import { onContextGesture } from "$lib/components/contextMenu/gesture";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { linkEditor } from "$lib/stores/linkEditor.svelte";
 	import { fileIcon } from "$lib/utils/refRoutes";

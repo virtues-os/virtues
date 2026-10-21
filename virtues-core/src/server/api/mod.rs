@@ -17,6 +17,7 @@ pub mod console;
 pub mod drive;
 pub mod library;
 pub mod pages;
+pub mod tasks;
 pub mod settings;
 pub mod wiki;
 

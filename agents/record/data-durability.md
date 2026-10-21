@@ -6,22 +6,22 @@
 > implement; Track B (background reliability) is a product decision that needs
 > sign-off before work begins.
 
-## The promise we're failing
+## The problem
 
 The iOS app's stated north star is **"reliable raw data collection — zero
 silent data loss."** Today the delivery path quietly violates that in three
-ways, and a fourth (background reliability) is an architectural dead-end, not a
-bug. None of this is visible in the box's run log, which is why it's been
+ways, and a fourth (background reliability) is a limit of the architecture rather than
+a bug. None of this is visible in the box's run log, which is why it's been
 confusing: **the box logs runs as `success` while the app shows "Not reaching
 box."** That contradiction is real and explained below.
 
-The reassuring part: the repo already contains the *correct* pattern. Our
+The repo already contains the correct pattern. Our
 cron-pull sync applets (`strava_activities_sync`, `plaid_*`, `google_*`,
 `notion_pages_sync`) use deterministic `UUIDv5` ids + a cursor persisted in
 `app_actions.config` that advances only after a successful write. That is
 exactly the at-least-once + idempotent-receiver + confirmed-cursor design the
-literature prescribes. **The iOS push path is the outlier; the fix is largely to
-make it conform to a pattern we already trust.**
+literature prescribes. **The iOS push path is the only path that does not follow it,
+and most of the fix is to make it follow that pattern.**
 
 ---
 
@@ -88,7 +88,7 @@ Root cause, confirmed end to end:
   **409 skip** (prior run still active). And a hung subprocess **wedges the lock,
   which is cleared only on server restart** (`scheduler/applets.rs`
   `cleanup_stale_runs`) — so one stuck run can stall *all* of that device's
-  ingestion until the box restarts. Latent availability landmine.
+  ingestion until the box restarts. This is a latent availability risk.
 
 The webhook response itself is well-formed (axum sets `Content-Length`;
 `complete_run` is awaited before 200), so this is purely a latency race, not a
@@ -152,8 +152,8 @@ confirmed-cursor protocol can be built on what's already there.
 
 The native iOS app this audit read was deleted; collection moved to the Tauri
 app with one Rust outbox shared by every collector
-(`crates/virtues-reach-client/src/outbox.rs`, from bd54da61). That rewrite, not
-a patch series, is where Track A landed:
+(`crates/virtues-reach-client/src/outbox.rs`, from bd54da61). Track A landed in
+that rewrite rather than as a series of patches:
 
 - **A1** deterministic ids — records without a natural id get `UUIDv5(device +
   stream + canonical record)` on the device, stable across retries.
@@ -171,10 +171,10 @@ a patch series, is where Track A landed:
 - **A7** Low Power Mode throttles the drain (constrained mode) rather than
   stopping it.
 
-**Track B is moot.** WireGuard is gone; the phone reaches the box over iroh, and
+**Track B no longer applies.** WireGuard is gone; the phone reaches the box over iroh, and
 background delivery rides location wakes with endpoint parking. An out-of-band
 wake for a wedged socket is part of
 [`../plan/reminders-plan.md`](../plan/reminders-plan.md).
 
 What is still open — permanent vs transient failures, and one poison record
-holding its batch — is [`../plan/ios-durability-plan.md`](../plan/ios-durability-plan.md).
+blocking its batch — is [`../plan/ios-durability-plan.md`](../plan/ios-durability-plan.md).

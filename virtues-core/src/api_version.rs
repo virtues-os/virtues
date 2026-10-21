@@ -15,7 +15,7 @@
 //! this number only has to answer the other direction: whether a UI may use
 //! something new. A UI keeps its floor as `MIN_BOX_API`
 //! (`apps/web/src/lib/boxApi.ts`) and shows "Your server needs an update"
-//! below it. See `agents/plan/local-ui-plan.md`.
+//! below it. See `agents/record/local-ui.md`.
 //!
 //! **Raise it** when the box gains an endpoint, field or behavior a UI may
 //! come to depend on, and add a row. Never lower it; never reuse a number.

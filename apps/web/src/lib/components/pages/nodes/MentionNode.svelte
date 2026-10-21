@@ -10,7 +10,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import Ref from "$lib/components/Ref.svelte";
-	import { onContextGesture } from "$lib/codemirror/extensions/long-press";
+	import { onContextGesture } from "$lib/components/contextMenu/gesture";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import { linkEditor } from "$lib/stores/linkEditor.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";

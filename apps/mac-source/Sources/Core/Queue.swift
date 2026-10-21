@@ -123,6 +123,9 @@ class Queue {
             throw QueueError.cannotCreateTable
         }
 
+        // `error` came later than the table, as `window_title` did above.
+        sqlite3_exec(db, "ALTER TABLE messages ADD COLUMN error INTEGER", nil, nil, nil)
+
         // Bookmark snapshots. Unlike the row-per-event tables above, a snapshot
         // is one browser's ENTIRE bookmark state as a JSON records array — the
         // box reconciles (upsert + tombstone-by-absence), so a newer snapshot
@@ -711,16 +714,25 @@ class Queue {
                         date, date_read, date_delivered, is_read, is_delivered, is_sent,
                         cache_has_attachments, attachment_count, attachment_info,
                         group_title, associated_message_guid, associated_message_type,
-                        expressive_send_style_id, uploaded
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+                        expressive_send_style_id, error, uploaded
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
                 ON CONFLICT(message_id) DO UPDATE SET
                         text = excluded.text,
                         attachment_info = excluded.attachment_info,
                         attachment_count = excluded.attachment_count,
                         cache_has_attachments = excluded.cache_has_attachments,
+                        is_sent = excluded.is_sent,
+                        is_delivered = excluded.is_delivered,
+                        date_delivered = excluded.date_delivered,
+                        error = excluded.error,
                         uploaded = 0
                     WHERE messages.attachment_info IS NOT excluded.attachment_info
                        OR messages.text IS NOT excluded.text
+                       -- Delivery lands on a row already read: the owner's own
+                       -- message is written, then marked delivered or failed.
+                       OR messages.is_sent IS NOT excluded.is_sent
+                       OR messages.is_delivered IS NOT excluded.is_delivered
+                       OR messages.error IS NOT excluded.error
                 """
                 
                 var statement: OpaquePointer?
@@ -827,6 +839,12 @@ class Queue {
                 } else {
                     sqlite3_bind_null(statement, 19)
                 }
+
+                if let sendError = message.sendError {
+                    sqlite3_bind_int(statement, 20, Int32(sendError))
+                } else {
+                    sqlite3_bind_null(statement, 20)
+                }
                 
             if sqlite3_step(statement) != SQLITE_DONE {
                 print("Failed to insert message: \(String(cString: sqlite3_errmsg(self.db)))")
@@ -844,7 +862,7 @@ class Queue {
                        date, date_read, date_delivered, is_read, is_delivered, is_sent,
                        cache_has_attachments, attachment_count, attachment_info,
                        group_title, associated_message_guid, associated_message_type,
-                       expressive_send_style_id
+                       expressive_send_style_id, error
                 FROM messages
                 WHERE uploaded = 0
                 -- NEWEST FIRST. The backfill now reaches back twenty years, and
@@ -936,6 +954,10 @@ class Queue {
                 let expressiveSendStyleId: String? = sqlite3_column_type(statement, 19) != SQLITE_NULL
                     ? String(cString: sqlite3_column_text(statement, 19))
                     : nil
+
+                let sendError: Int? = sqlite3_column_type(statement, 20) != SQLITE_NULL
+                    ? Int(sqlite3_column_int(statement, 20))
+                    : nil
                 
                 let message = Message(
                     messageId: messageId,
@@ -956,7 +978,8 @@ class Queue {
                     groupTitle: groupTitle,
                     associatedMessageGuid: associatedMessageGuid,
                     associatedMessageType: associatedMessageType,
-                    expressiveSendStyleId: expressiveSendStyleId
+                    expressiveSendStyleId: expressiveSendStyleId,
+                    sendError: sendError
                 )
                 
                 messages.append((id: id, message: message))

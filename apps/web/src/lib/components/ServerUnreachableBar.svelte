@@ -4,7 +4,7 @@
 	`reachability.unreachable`.
 
 	The Mac shows its own copy of the app since 2026-09-29
-	(agents/plan/local-ui-plan.md), so the app stays up when the server goes
+	(agents/record/local-ui.md), so the app stays up when the server goes
 	away and this bar is where that is said, at launch, mid-session and after
 	sleep alike. "Fix it" opens /reconnect, which tells this computer being
 	offline from the server being off, refused or moved, and can put a moved

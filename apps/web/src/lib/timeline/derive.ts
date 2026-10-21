@@ -28,6 +28,8 @@ const MIN_HOP_MS = 10_000;
 const LONG_MS = 30 * MIN;
 const LONG_FIX_EVERY_MS = 15 * MIN;
 const LONG_MIN_PATH_M = 600;
+/** An estimated night cut shorter than this by the day's record is dropped. */
+const ESTIMATED_NIGHT_MIN_MS = 3 * 60 * MIN;
 
 type Span = { s: number; e: number };
 
@@ -100,6 +102,8 @@ export function deriveDay(day: TimelineDay, sources: Sources): DerivedDay {
 				longitude: v.longitude,
 				is_named: v.place_is_named,
 				place_name: v.place_name,
+				title: v.place_id ? day.place_titles[v.place_id]?.title : undefined,
+				title_source: v.place_id ? day.place_titles[v.place_id]?.source : undefined,
 			});
 		return { id: v.id, kind: "stay", started_at: v.started_at, ended_at: v.ended_at, timeline_place_id: placeId, metadata: {} };
 	});
@@ -120,8 +124,12 @@ export function deriveDay(day: TimelineDay, sources: Sources): DerivedDay {
 	const stepTimes = day.steps.map((b) => t(b.at));
 
 	// What lies between the stays and the nights: a drive, or a signal gap.
-	const covered = [...stays, ...nights].map((x) => ({ s: t(x.started_at), e: t(x.ended_at) }));
-	const between: DerivedSpan[] = uncovered(start, end, covered)
+	const betweenOf = (sleeps: DerivedSpan[]): DerivedSpan[] =>
+		uncovered(
+			start,
+			end,
+			[...stays, ...sleeps].map((x) => ({ s: t(x.started_at), e: t(x.ended_at) })),
+		)
 		.filter((g) => g.e - g.s >= SEAM_MS)
 		.map((g, i) => {
 			const track = trackOver(fixes, g.s, g.e);
@@ -146,6 +154,36 @@ export function deriveDay(day: TimelineDay, sources: Sources): DerivedDay {
 				},
 			};
 		});
+
+	// A night Apple Health didn't record: the usual night, cut wherever the
+	// day's record shows the person awake or elsewhere (a drive, a
+	// conversation, a stay at another place than the one they woke at), and
+	// kept only with 3 hours of it left: an estimate never contradicts the record.
+	const drives = betweenOf(nights).filter((x) => x.kind === "transit");
+	const estimated: DerivedSpan[] = (day.estimated_nights ?? []).flatMap((n, i) => {
+		const s = t(n.started_at);
+		const e = t(n.ended_at);
+		const over = (x: DerivedSpan) => t(x.started_at) < e && t(x.ended_at) > s;
+		const woke = stays.find((x) => over(x) && t(x.started_at) < e && t(x.ended_at) >= e) ?? stays.filter(over).at(-1);
+		const awake = [
+			...drives.filter(over),
+			...stays.filter((x) => over(x) && x.timeline_place_id !== woke?.timeline_place_id),
+		].map((x) => ({ s: t(x.started_at), e: t(x.ended_at) }));
+		const left = uncovered(s, e, [...awake, ...talk]).sort((a, b) => b.e - b.s - (a.e - a.s))[0];
+		if (!left || left.e - left.s < ESTIMATED_NIGHT_MIN_MS) return [];
+		return [
+			{
+				id: `night:est:${i}:${n.started_at}`,
+				kind: "sleep",
+				started_at: new Date(left.s).toISOString(),
+				ended_at: new Date(left.e).toISOString(),
+				timeline_place_id: null,
+				metadata: { source: "estimated", from_nights: n.from_nights },
+			},
+		];
+	});
+	const sleeps = [...nights, ...estimated];
+	const between = betweenOf(sleeps);
 
 	const moments: DerivedMoment[] = day.sessions
 		.filter((x) => x.speaker_mode >= 2)
@@ -190,7 +228,7 @@ export function deriveDay(day: TimelineDay, sources: Sources): DerivedDay {
 
 	return {
 		derived: {
-			spans: [...stays, ...nights, ...between].sort((a, b) => t(a.started_at) - t(b.started_at)),
+			spans: [...stays, ...sleeps, ...between].sort((a, b) => t(a.started_at) - t(b.started_at)),
 			moments,
 			last_stay_before: null,
 			places: [...places.values()],

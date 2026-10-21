@@ -121,7 +121,7 @@ async fn convert_pages_handler(
 /// 422 saying why.
 async fn convert_pages(yjs: crate::server::yjs::YjsState, user: &AuthUser, ask: ConvertPages) -> Response {
     if user.device_id != CONSOLE_DEVICE_ID {
-        return refuse(StatusCode::FORBIDDEN, "the console door takes local callers only");
+        return refuse(StatusCode::FORBIDDEN, "the console endpoint accepts only local callers");
     }
     let run = tokio::spawn(async move {
         crate::api::page_convert::apply_on(&yjs, ask.database.as_ref(), ask.which).await

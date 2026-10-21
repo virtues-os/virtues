@@ -33,6 +33,7 @@ const WikiDetailView: ViewLoader = () => import('$lib/components/tabs/views/Wiki
 const WikiListView: ViewLoader = () => import('$lib/components/tabs/views/WikiListView.svelte');
 const SourcesView: ViewLoader = () => import('$lib/components/sources/SourcesView.svelte');
 const CredentialDetailView: ViewLoader = () => import('$lib/components/tabs/views/CredentialDetailView.svelte');
+const TasksView: ViewLoader = () => import('$lib/components/tabs/views/TasksView.svelte');
 const AppletsView: ViewLoader = () => import('$lib/components/tabs/views/AppletsView.svelte');
 const AppletDetailView: ViewLoader = () => import('$lib/components/tabs/views/AppletDetailView.svelte');
 const AppletView: ViewLoader = () => import('$lib/components/tabs/views/AppletView.svelte');
@@ -596,6 +597,24 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
+	// TASKS: /tasks — the to-do list the owner and the assistant share
+	// ========================================================================
+	tasks: {
+		// The filters are sub-routes so SubNav can derive them: /tasks is Mine.
+		match: (path) => /^\/tasks(\/(assistant|all))?$/.test(path),
+		parse: () => ({
+			type: 'tasks',
+			label: 'Tasks',
+			icon: 'atlas:tasks',
+		}),
+		serialize: () => 'tasks',
+		deserialize: () => '/tasks',
+		icon: 'atlas:tasks',
+		defaultLabel: 'Tasks',
+		component: TasksView,
+	},
+
+	// ========================================================================
 	// APPLETS: /applets (legacy /actions/* still resolves)
 	// ========================================================================
 	applets: {
@@ -605,11 +624,11 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: () => ({
 			type: 'applets',
 			label: 'Applets',
-			icon: 'ri:flashlight-line',
+			icon: 'atlas:applets',
 		}),
 		serialize: () => 'applets',
 		deserialize: () => '/applets',
-		icon: 'ri:flashlight-line',
+		icon: 'atlas:applets',
 		defaultLabel: 'Applets',
 		component: AppletsView,
 	},
@@ -650,7 +669,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'applet',
 				label: 'Applet',
-				icon: 'ri:flashlight-line',
+				icon: 'atlas:applets',
 				entityId: match?.[1],
 			};
 		},
@@ -659,7 +678,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (serialized.startsWith('applet_')) return `/applet/${serialized}`;
 			return '/applets';
 		},
-		icon: 'ri:flashlight-line',
+		icon: 'atlas:applets',
 		defaultLabel: 'Applet',
 		component: AppletDetailView,
 		detailComponent: AppletDetailView,
@@ -906,6 +925,7 @@ export function parseRoute(route: string): ParsedRoute {
 		// Specific patterns first
 		'browser', // /browser?url=…
 		'source', // Source list and detail views
+		'tasks', // The shared to-do list
 		'applets', // Applets list page (must come before singular 'applet')
 		'applet-view', // Applet full-page face (must come before 'applet')
 		'applet', // Applet detail page

@@ -73,7 +73,11 @@ describe("the lane data", () => {
 
 	it("reads the stretches, the nights and who a conversation mentioned", () => {
 		const l = laneData(derived, [win(70, 80, 2, ["Ann"]), win(80, 90, 3, ["Ann", "Bo"]), win(100, 105, 1, [])], null, 0, 120 * M);
-		expect(l.ribbon.map((r) => [r.kind, r.title])).toEqual([["place", "Home"]]);
+		// The night is In Bed on the Location lane, and Home starts at wake-up.
+		expect(l.ribbon.map((r) => [r.kind, r.title, r.s / M, r.e / M])).toEqual([
+			["sleep", "In Bed", 0, 60],
+			["place", "Home", 60, 120],
+		]);
 		expect(l.nights).toEqual([{ s: 0, e: 60 * M }]);
 		expect(l.conversations).toEqual([{ s: 70 * M, e: 90 * M, title: "Dogs", speakers: 3, people: ["Ann", "Bo"] }]);
 		expect(l.voice).toHaveLength(3);

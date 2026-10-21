@@ -1,20 +1,20 @@
 # Cycle tracking
 
 **Status:** Slices 1–3 built on `wave`, unreleased and never run on a device.
-Migration 0053 holds the three raw tables (`fd07c088`), 0054 adds the missing
+Migration 0053 creates the three raw tables (`fd07c088`), 0054 adds the missing
 tombstone columns for HealthKit deletions (`0a3cfe8a`), and the phone has a
 Cycle stream gated on the box's `api_version` 5. Slices 1–3 ship without
 slice 5, but the Cycle row stays off the device screen until the box can show
 cycles (`CYCLE_ROOM_BOX_API` in `MobileDeviceScreen.svelte` is unset).
 
-The owner's menstrual cycle, read from Apple Health. **Raw first:** the box
-ingests the primitives exactly as Health stores them. Cycles, predictions,
+This plan covers the owner's menstrual cycle, read from Apple Health. **The box
+stores raw data first:** it ingests the primitives exactly as Health stores them. Cycles, predictions,
 windows and estimates come later as transforms over those rows, which can be
 rebuilt whenever a method changes. All of it stays away from the assistant
-until the owner turns access on, and the database enforces that, not the
-prompt.
+until the owner turns access on. Database grants enforce that; the prompt
+does not.
 
-## Apple keeps its answers
+## What Apple exposes
 
 Apple Health computes period predictions, a fertile window, and a
 retrospective ovulation estimate from wrist temperature. **The owner has no
@@ -57,22 +57,22 @@ These are the inputs HealthKit has no type for:
 - **Raw tables, transforms later.** Slice 1 is three tables of samples:
   `data_health_cycle_log`, `data_health_symptom` and
   `data_health_wrist_temperature`. A cycle is not a HealthKit object, so it is
-  never stored as a fact.
-- **Days, not instants.** These are all-day samples. The phone sends local
+  never stored as a row of its own.
+- **Store calendar days as well as instants.** These are all-day samples. The phone sends local
   calendar dates and the box stores `date`s next to the instants. Converting a
   UTC midnight on the box puts an entry logged while travelling on the wrong
   day.
-- **Read less.** Never request sexual activity, pregnancy tests or
+- **Request as few types as possible.** Never request sexual activity, pregnancy tests or
   progesterone tests, so they never leave the phone. Pregnancy and lactation
   wait for a second switch (slice 6). Reading them makes predictions pause
-  correctly, but they are the most dangerous rows to hold if a box is seized.
+  correctly, but they are the most dangerous rows to store if a box is seized.
 - **Wrist temperature and symptoms are behind the same gate.** A biphasic
   nightly temperature series reveals the cycle on its own. Some symptoms
-  (breast pain, vaginal dryness, hot flashes) are reproductive. Loosening a
-  gate later is easy; taking access back is not.
+  (breast pain, vaginal dryness, hot flashes) are reproductive. We can loosen
+  a gate later, but we cannot take back data a model has already read.
 - **Assistant access ships off.** These are the only `data_*` tables not
   readable by default.
-- **Not for contraception, anywhere.** We inherit Apple's framing: Apple's
+- **Never present it as contraception.** We follow Apple's framing: Apple's
   instructions say not to use it as birth control. The only contraceptive app
   with FDA clearance (Natural Cycles) has a 6.5% typical-use failure rate.
 
@@ -80,7 +80,7 @@ These are the inputs HealthKit has no type for:
 
 Three tables, each with the standard `data_health_*` tail (`source_stream_id`
 UNIQUE = `HKSample.uuid`, `source_table`, `source_provider`,
-`deleted_at_source`, `is_archived`, `metadata` holding `healthkit_raw`,
+`deleted_at_source`, `is_archived`, `metadata` storing `healthkit_raw`,
 `created_at`, `updated_at`). Each row carries both:
 
 - `started_on` / `ended_on`: the phone's calendar days, inclusive;
@@ -137,7 +137,7 @@ whole batch would fail, and the phone retries a failed batch forever (see
   adds a row to "What leaves" in `agents/build/privacy-boundary.md`. The
   on-state copy may claim zero data retention per request and nothing more.
 - **Deletes propagate** (slice 2). A sample deleted in Health is tombstoned
-  (`deleted_at_source`) on whichever table holds it, and every health reader
+  (`deleted_at_source`) on whichever table contains it, and every health reader
   skips tombstones.
   - A phone that outruns its box loses deletions. An older box logs the
     unknown `deleted` metric type and drops it, and the phone's anchor still
@@ -240,7 +240,7 @@ module beside `dayline/sleep.rs`.
   the predicted start, shifted so a logged LH surge is day 5. Off by default,
   and labeled for trying to conceive.
 
-**The bar** comes from Human Reproduction 2025 (889 cycles confirmed by LH
+**Accuracy target.** The numbers come from Human Reproduction 2025 (889 cycles confirmed by LH
 tests):
 
 | Estimate | MAE | Within the window |

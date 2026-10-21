@@ -27,7 +27,9 @@
 	margin-top: 0.75em;
 }
 
-.doc-prose p {
+/* No weight, so the gap above still reaches a paragraph after a list, a
+   quote or code; inside a block a paragraph has none of its own. */
+:where(.doc-prose p) {
 	margin: 0;
 }
 
@@ -45,6 +47,12 @@
 .doc-prose h6 {
 	margin-bottom: 0;
 	color: var(--color-foreground);
+}
+
+/* A heading sits close over what it heads: far more room above it than
+   below, so it reads as the start of its section. */
+.doc-prose > :is(h1, h2, h3, h4, h5, h6) + * {
+	margin-top: 0.5em;
 }
 
 .doc-prose h1 {
@@ -824,4 +832,49 @@
 		font-size: 0.875rem;
 		break-inside: avoid;
 	}
+}
+
+/* The block grip (drag-handle.ts), left of the block under the pointer.
+   Placed by a transform from the editor host's corner. */
+.doc-grip {
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 1;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	width: 18px;
+	height: 24px;
+	border-radius: 4px;
+	color: var(--color-foreground-subtle);
+	cursor: grab;
+	opacity: 0;
+	pointer-events: none;
+	transition:
+		opacity 0.12s ease,
+		background 0.12s ease,
+		color 0.12s ease;
+}
+.doc-grip.is-shown {
+	opacity: 1;
+	pointer-events: auto;
+}
+.doc-grip:hover {
+	background: var(--hover-bg);
+	color: var(--color-foreground-muted);
+}
+.doc-grip:active {
+	cursor: grabbing;
+}
+@media (hover: none) {
+	.doc-grip {
+		display: none;
+	}
+}
+
+/* Where a dragged block will land. */
+.doc-dropcursor {
+	background: var(--color-primary);
+	border-radius: 1px;
 }

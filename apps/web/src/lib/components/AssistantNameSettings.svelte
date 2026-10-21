@@ -1,72 +1,128 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-	import { getAssistantProfile, updateAssistantProfile } from '$lib/api/client';
+	// By path, not the `$lib` barrel, which the component tests cannot load.
+	import Button from '$lib/components/Button.svelte';
+	import Input from '$lib/components/Input.svelte';
+	import { updateAssistantProfile } from '$lib/api/client';
 
-	let name = $state('');
-	let savedName = $state('');
-	let loading = $state(true);
+	/** The server's own fallback (`assistant_profile::get_assistant_name`). */
+	const DEFAULT_NAME = 'Ari';
+	/** The name goes into every prompt ("You are {name}"), and the server sets no limit. */
+	const MAX_CHARS = 100;
+
+	let {
+		name = $bindable(DEFAULT_NAME),
+		disabled = false,
+	}: {
+		/** The saved name. Changes only once the server has it. */
+		name?: string;
+		disabled?: boolean;
+	} = $props();
+
+	// Empty until the server has answered: the default shown as a value would
+	// claim a name the server may not hold.
+	let draft = $derived(disabled ? '' : name);
+	let error = $state<string | null>(null);
+	// The field is held while a save is out, so nothing typed meanwhile is
+	// replaced when the saved name comes back.
 	let saving = $state(false);
 
-	onMount(load);
-
-	async function load() {
-		try {
-			const profile = await getAssistantProfile<{ assistant_name?: string | null }>();
-			savedName = profile.assistant_name || 'Ari';
-			name = savedName;
-		} catch (error) {
-			console.error('Failed to load assistant name:', error);
-		} finally {
-			loading = false;
-		}
+	function normalize(value: string | number) {
+		// An empty name is not "no name": the server would store '' and every
+		// prompt would read "You are .". Clearing the field goes back to the
+		// default by name, since the profile PATCH treats null as "leave alone".
+		return String(value).trim().slice(0, MAX_CHARS) || DEFAULT_NAME;
 	}
 
-	async function save() {
-		const trimmed = name.trim();
-		if (!trimmed || trimmed === savedName || saving) return;
+	/** Saves what the field holds. A failure leaves the person's words in the
+	 *  field for Try again, and rejects so the Input marks itself unsaved. */
+	async function commit(value: string | number) {
+		const next = normalize(value);
+		draft = next;
+		if (next === name) {
+			error = null;
+			return;
+		}
 
+		const previous = name;
 		saving = true;
-		const previous = savedName;
-		savedName = trimmed; // optimistic
-
 		try {
-			await updateAssistantProfile({ assistant_name: trimmed });
-		} catch (error) {
-			savedName = previous;
-			name = previous;
-			console.error('Failed to save assistant name:', error);
+			await updateAssistantProfile({ assistant_name: next });
+			name = next;
+			error = null;
+		} catch (e) {
+			error = `Your server couldn't save the name. It kept ${previous}.`;
+			throw e;
 		} finally {
 			saving = false;
 		}
 	}
 
-	function onKeydown(e: KeyboardEvent) {
+	function retry() {
+		// The error line already says what failed.
+		commit(draft).catch(() => {});
+	}
+
+	// `Input` has no `maxlength`, so the cap is held here.
+	function clamp() {
+		if (draft.length > MAX_CHARS) draft = draft.slice(0, MAX_CHARS);
+	}
+
+	function onkeydown(e: KeyboardEvent) {
+		const field = e.target as HTMLInputElement;
 		if (e.key === 'Enter') {
 			e.preventDefault();
-			(e.target as HTMLInputElement)?.blur();
+			field.blur();
+		} else if (e.key === 'Escape') {
+			draft = name;
+			error = null;
+			field.blur();
 		}
 	}
 </script>
 
-<div class="bg-surface border border-border rounded-lg">
-	<div class="flex items-center justify-between px-4 py-3 border-b border-border">
-		<h2 class="text-sm font-medium text-foreground">Name</h2>
-	</div>
-
-	<div class="p-4">
-		<div class="text-sm font-medium text-foreground mb-2">
-			Assistant name
-			<span class="font-normal text-foreground-subtle">· what you call your assistant</span>
-		</div>
-		<input
-			type="text"
-			bind:value={name}
-			onblur={save}
-			onkeydown={onKeydown}
-			disabled={loading || saving}
-			maxlength="100"
-			placeholder="Ari"
-			class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm text-foreground placeholder:text-foreground-subtle hover:border-border-strong focus:border-border-strong focus:outline-none transition-colors disabled:opacity-60"
+<section>
+	<h2 class="settings-label"><label for="assistant-name">Name</label></h2>
+	<!-- The field is name-sized; the error line under it is not. -->
+	<div class="name-field">
+		<Input
+			id="assistant-name"
+			bind:value={draft}
+			placeholder={DEFAULT_NAME}
+			autocomplete="off"
+			autoSave
+			onSave={commit}
+			oninput={clamp}
+			{onkeydown}
+			disabled={disabled || saving}
+			error={!!error}
 		/>
 	</div>
-</div>
+	{#if error}
+		<p class="field-error" role="alert">{error}</p>
+		<div>
+			<Button variant="secondary" size="sm" loading={saving} onclick={retry}>
+				Try again
+			</Button>
+		</div>
+	{/if}
+</section>
+
+<style>
+	section {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.name-field {
+		width: 20ch;
+		max-width: 100%;
+	}
+
+	.field-error {
+		margin: 0;
+		max-width: 60ch;
+		font-size: 12px;
+		color: var(--color-error);
+	}
+</style>

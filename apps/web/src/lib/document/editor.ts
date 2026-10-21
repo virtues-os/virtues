@@ -24,13 +24,24 @@ import type * as Y from 'yjs';
 import type { Awareness } from 'y-protocols/awareness';
 import type { AiIntent } from '$lib/ai/inlineComplete';
 import { contract, contractExtensions, idTypes, newId, type Extras } from './schema';
-import { BlockEdges, BlockMoves, HeadingBackspace, TodoKeys, pageInputRules } from './commands';
+import {
+	BlockEdges,
+	BlockMoves,
+	HeadingBackspace,
+	IndentKeys,
+	ListBackspace,
+	ShortcutBackspace,
+	TodoKeys,
+	pageInputRules,
+} from './commands';
 import { TableKeys } from './tables';
 import { localUser, renderCaret, renderSelection } from './presence';
 import { pageNodeViews } from './views';
 import { clipboardText } from './markdown';
 import { ProposalsPasted, ProposalsRead, TypingOutsideDeletions } from './suggestions';
 import { KeptThroughOthersEdits } from './anchor';
+import { DragHandle } from './drag-handle';
+import { scrollerOf } from './outline';
 
 /** What the editor binds to: a `TreeDocument`, or anything with its document and caret channel. */
 export interface EditorBinding {
@@ -95,11 +106,32 @@ export function endOfPage(doc: PmNode): { text: number } | { paragraphAt: number
 	}
 }
 
+/** Put the caret at the end of the page for a click below its last block; false for a click elsewhere. */
+function clickedBelowEnd(view: EditorView, event: MouseEvent): boolean {
+	if (!view.editable || event.button !== 0) return false;
+	const last = view.dom.lastElementChild;
+	if (!last || event.clientY <= last.getBoundingClientRect().bottom) return false;
+	const end = endOfPage(view.state.doc);
+	const tr = view.state.tr;
+	if ('text' in end) {
+		tr.setSelection(TextSelection.create(tr.doc, end.text));
+	} else {
+		tr.insert(end.paragraphAt, view.state.schema.nodes.paragraph.create());
+		tr.setSelection(TextSelection.create(tr.doc, end.paragraphAt + 1));
+	}
+	view.dispatch(tr.scrollIntoView());
+	view.focus();
+	event.preventDefault();
+	return true;
+}
+
 /**
  * A click below the last block puts the caret at the end of the page
  * (`endOfPage`): in its last text, else in a new paragraph after the widget
  * or table that ends it. The paragraph is the person's own edit, so it is
- * theirs to undo.
+ * theirs to undo. Below the editor's own box too, in the blank page under
+ * it (the scroller's padding, the rest of a short page): a click on the
+ * layout around the editor, never on a control or the scrollbar.
  */
 const ClickBelowEnd = Extension.create({
 	name: 'clickBelowEnd',
@@ -108,24 +140,21 @@ const ClickBelowEnd = Extension.create({
 			new Plugin({
 				props: {
 					handleDOMEvents: {
-						mousedown(view, event) {
-							if (!view.editable || event.button !== 0) return false;
-							const last = view.dom.lastElementChild;
-							if (!last || event.clientY <= last.getBoundingClientRect().bottom) return false;
-							const end = endOfPage(view.state.doc);
-							const tr = view.state.tr;
-							if ('text' in end) {
-								tr.setSelection(TextSelection.create(tr.doc, end.text));
-							} else {
-								tr.insert(end.paragraphAt, view.state.schema.nodes.paragraph.create());
-								tr.setSelection(TextSelection.create(tr.doc, end.paragraphAt + 1));
-							}
-							view.dispatch(tr.scrollIntoView());
-							view.focus();
-							event.preventDefault();
-							return true;
-						},
+						mousedown: clickedBelowEnd,
 					},
+				},
+				view(view) {
+					const scroller = scrollerOf(view.dom);
+					const down = (event: MouseEvent) => {
+						const target = event.target;
+						if (event.defaultPrevented || !(target instanceof Element)) return;
+						if (view.dom.contains(target) || !target.contains(view.dom)) return;
+						// The scroller's own scrollbar, past its content's width.
+						if (target === scroller && event.offsetX >= scroller.clientWidth) return;
+						clickedBelowEnd(view, event);
+					};
+					scroller.addEventListener('mousedown', down);
+					return { destroy: () => scroller.removeEventListener('mousedown', down) };
 				},
 			}),
 		];
@@ -288,12 +317,21 @@ export function createPageEditor(o: PageEditorOptions): Editor {
 					}),
 				]
 			: []),
-		Dropcursor,
+		Dropcursor.configure({ color: false, width: 2, class: 'doc-dropcursor' }),
+		DragHandle.configure({
+			dragStarted: (view) => (dragSource = view),
+			dragEnded: (view) => {
+				if (dragSource === view) dragSource = null;
+			},
+		}),
 		Gapcursor,
 		ListKeymap,
 		Placeholder.configure({ placeholder: o.placeholder }),
 		pageInputRules,
+		ShortcutBackspace,
 		HeadingBackspace,
+		ListBackspace,
+		IndentKeys,
 		BlockEdges,
 		BlockMoves,
 		TodoKeys,
@@ -315,6 +353,14 @@ export function createPageEditor(o: PageEditorOptions): Editor {
 			// Text copied out goes where markdown is read (the chat composer,
 			// a markdown page): its links, headings and lists as markdown.
 			clipboardTextSerializer: clipboardText,
+			// The caret keeps a few lines of the page around it as typing,
+			// arrows and Enter move it past the scroller's edge, rather than
+			// riding the edge, ProseMirror's 5px.
+			scrollThreshold: CARET_ROOM,
+			scrollMargin: CARET_ROOM,
 		},
 	});
 }
+
+/** The room, in pixels, the caret keeps from the scroller's edge: three lines of text. */
+const CARET_ROOM = 80;

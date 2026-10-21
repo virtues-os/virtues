@@ -8,9 +8,9 @@ information architecture, onboarding, copy/narrative, and feature scope._
 
 ---
 
-## The diagnosis (what's actually going on)
+## Summary of the audit findings
 
-The app is **three geological layers** that don't agree:
+The app is built from **three layers of code from different periods** that don't agree:
 
 1. **v0** — typed server URL + bearer token + WireGuard + 5-min `URLSession` uploads.
 2. **"Jan 2025 refactor"** — added DI, `ReliableTimer`, `HealthCheckCoordinator`,
@@ -24,15 +24,15 @@ hub**, wrapped in copy that **overpromises** (AI / transcribe / "your AI is
 learning") and describes a model (server URL / bearer / WireGuard) that no longer
 exists.
 
-**Net:** it's not broken (data flows), it's **fragile in the one place it can't
-afford to be** (getting data off the phone durably), and **unfocused** everywhere
-else. That combination is what reads as "janky."
+**Net:** data does flow, so the app works, but it is **fragile at getting data
+off the phone durably**, which is the one thing it must do reliably, and it is
+**unfocused** everywhere else. That combination is why the app feels "janky."
 
 ---
 
-## P0 — Fix the one job: durable delivery (data-loss)
+## P0 — Durable delivery (data loss)
 
-The app's entire purpose. _Verified 2026-07-07._
+Durable delivery is the app's entire purpose. _Verified 2026-07-07._
 
 - **[CONFIRMED — data loss] Stranded `uploading` rows.** `resetStaleUploads`
   (`SQLiteManager.swift:136`) only resets rows with `last_attempt_date < 10 min ago
@@ -47,7 +47,7 @@ The app's entire purpose. _Verified 2026-07-07._
   blob** (JSON decode preserves it; the random-UUID constructor only runs at collect
   time), so it's stable across retries and re-chunks. No client change needed; do
   NOT touch the ids.
-- **[CONFIRMED — but it's a decision + a lie in the UI] Cadence mismatch.** Upload
+- **[CONFIRMED — needs a decision, and the UI shows a false value] Cadence mismatch.** Upload
   timer is **900s / 15 min** (`BatchUploadCoordinator.swift:35`); HealthKit collects
   every 300s; the UI shows a hardcoded **"Auto Sync: Every 5 minutes"**
   (`SettingsView.swift:195`) and the doc claims 5-min. Pick the real cadence; make
@@ -64,7 +64,7 @@ no row lost, no duplicate, nothing stuck in `uploading`.
 
 ---
 
-## P1 — Stop the crashes: threading correctness
+## P1 — Threading correctness (crashes)
 
 _Verified 2026-07-07 — the "zero races" claim is false, but 2 of 5 finder claims
 were themselves wrong (verified safe). Real ones:_
@@ -105,7 +105,7 @@ were themselves wrong (verified safe). Real ones:_
 
 ---
 
-## P3 — Refocus the product: cut scope, collapse IA
+## P3 — Cut scope and simplify the information architecture
 
 The app should be a **pure collector**. Today it's collector + dashboard + diagnostics.
 
@@ -130,7 +130,7 @@ The app should be a **pure collector**. Today it's collector + dashboard + diagn
 
 ---
 
-## P4 — One honest voice: copy/narrative
+## P4 — Copy: one voice, accurate claims
 
 Pick one voice and make every claim true.
 
@@ -149,11 +149,11 @@ Pick one voice and make every claim true.
 - **Hide jargon at the UI boundary:** never show `ios_mic`, `action_id`, "allowlist",
   "node id", "webhook".
 - **Contradiction to fix:** audio described as both "30-second chunks" and "5-minute
-  chunks" — pick the truth (30s w/ 2s overlap).
+  chunks" — use the real value (30s w/ 2s overlap).
 
 ---
 
-## P5 — Truth in docs
+## P5 — Correct the docs
 
 - Rewrite `apps/ios/CLAUDE.md`: drop the false guarantees ("zero data loss / zero
   races / 100% background reliability / 5-min sync"), the v0 "enter endpoint + API key"
@@ -163,7 +163,7 @@ Pick one voice and make every claim true.
 
 ## Suggested sequencing
 
-1. **P0** (durability) — the product's reason to exist; do first, with the acceptance tests.
+1. **P0** (durability) — the app's main job; do first, with the acceptance tests.
 2. **P1** (crashes) — cheap, high-value stability.
 3. **P3** (scope/IA) — deleting the dashboard + second-manual + settings cruft removes
    whole classes of bugs and shrinks the surface P4 has to fix.

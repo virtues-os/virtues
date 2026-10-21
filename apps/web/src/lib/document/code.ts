@@ -128,8 +128,11 @@ export function codeHighlight(highlight: Highlighter = highlightCode, theme: () 
 									});
 						themes?.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] });
 						return {
+							// Any new document, an equal one included: a change that
+							// puts back the same code (a drag dropped where it started,
+							// a block replaced by its copy) maps its colours away.
 							update(v, prev) {
-								if (!v.state.doc.eq(prev.doc)) schedule();
+								if (v.state.doc !== prev.doc) schedule();
 							},
 							destroy() {
 								destroyed = true;

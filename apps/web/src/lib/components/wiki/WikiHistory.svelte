@@ -99,9 +99,9 @@
 		return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric' });
 	}
 
-	/** "the record" reads better than "ai" and is more accurate than "system". */
+	/** Author "ai" covers both the wiki editor applet and chat edits, so the label names neither. */
 	function who(author: string): string {
-		return author === 'ai' ? 'The record' : 'You';
+		return author === 'ai' ? 'AI' : 'You';
 	}
 </script>
 
@@ -109,9 +109,8 @@
 	<p class="quiet">Loading…</p>
 {:else if entries.length === 0}
 	<p class="quiet">
-		The record hasn't rewritten anything yet. The record maintains an article only when
-		you ask it to - turn on "Keep this updated" on an article and its edits will
-		appear here.
+		No AI edits yet. Turn on "Keep this updated" on an article, or ask your
+		assistant to edit one, and the edits will appear here.
 	</p>
 {:else}
 	<ul class="feed">

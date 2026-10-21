@@ -441,7 +441,9 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
             -- app_pages is named explicitly because it is neither data_ nor
             -- wiki_ and the wiki_articles join hint points at it: an article's
             -- prose lives there, so without it the hint the model is given
-            -- cannot be followed either.
+            -- cannot be followed either. app_tasks is named for the same
+            -- reason: the task tools send the model to sql_query to read the
+            -- list, and this is the role it reads as.
             FOR t IN
                 SELECT n.nspname AS schemaname, c.relname AS tablename
                 FROM pg_class c
@@ -450,7 +452,7 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
                   AND ((n.nspname = 'public'
                         AND (c.relname LIKE 'data\_%'
                              OR c.relname LIKE 'wiki\_%'
-                             OR c.relname = 'app_pages'))
+                             OR c.relname IN ('app_pages', 'app_tasks')))
                        OR n.nspname LIKE 'applet\_%')
                   AND NOT (c.relname = ANY (string_to_array(
                         coalesce(current_setting('virtues.owner_opt_in_tables', true), ''), ',')))
@@ -612,5 +614,7 @@ mod tests {
             assert!(!can_read(table).await, "{table} is readable by the assistant");
         }
         assert!(can_read("data_health_sleep").await, "the sweep still grants the rest");
+        // The task tools send the model to sql_query for the list.
+        assert!(can_read("app_tasks").await, "the assistant cannot read its task list");
     }
 }

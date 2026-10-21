@@ -8,8 +8,8 @@ stash, and one working tree, and all of them are shared. A git command that is
 harmless when one human runs it can destroy another agent's work here.
 
 Worktrees are **not** used (one `make dev` serves everyone, and a stray worktree
-has already been swept into someone's commit). So isolation is unavailable, and
-discipline replaces it.
+has already been swept into someone's commit). So agents are not isolated from
+each other, and the rules below are what keep their work apart.
 
 ### The three branches
 
@@ -34,7 +34,7 @@ branch from it.
 >
 > This note said "no stable release exists" for days after that stopped being
 > true, and an agent copied the claim into a user-facing docs page. **Any
-> statement here about what is released is stale by construction** — read it
+> statement here about what is released is always out of date** — read it
 > off the repo instead:
 >
 > ```sh
@@ -49,7 +49,7 @@ Why `wave` exists rather than working on `staging` directly: `staging.N`
 prereleases cut from `staging`, and real boxes install them with
 `virtues upgrade --pre`. Half-finished work must not land there.
 
-### Never — these destroy other agents' work
+### Commands that destroy other agents' work
 
 | Command | What it does to everyone else |
 |---|---|
@@ -112,14 +112,13 @@ Other rules that follow from a shared tree:
 
   Both halves of that have already cost a release. On 2026-09-21 a
   `design-lint.sh --update-baseline` run in this tree **raised** five counts by
-  sweeping in other agents' uncommitted edits, and `copy-baseline.json`
-  recorded `em-dash: 0` while an uncommitted fix for the one em dash sat in the
-  working tree — the string was still committed, so every CI run afterwards
-  failed on a line that looked clean to everyone here. It applies to every
-  ratchet, `check-swallowed-queries.sh`, `check-copy.py` and `design-lint.sh`
-  today, and to `check-manual.py` or the arch lint the moment either grows one.
+  sweeping in other agents' uncommitted edits. Another baseline recorded a
+  count of zero while an uncommitted fix sat in the working tree. The string
+  was still committed, so every CI run afterwards failed on a line that looked
+  clean to everyone here. It applies to every ratchet, `check-swallowed-queries.sh`
+  and `design-lint.sh` today, and to `check-manual.py` or the arch lint the moment either grows one.
 
-### Merging up
+### Merging `wave` into `staging`
 
 From `wave`, when a slice is green: open a PR to `staging`. Never delete
 `wave` afterward — keep committing to it.
@@ -211,7 +210,8 @@ this stop being true when we ship?** Describing + permanent is a record;
 prescribing + permanent is build; prescribing + temporary is a plan. There is
 no fourth genre — a description of something temporary is just a record of it.
 
-The rules that keep it from rotting back into the 63-file pile this replaced:
+The rules that stop it from growing back into the unreadable 63-file pile it
+replaced:
 
 - **Delete a plan when the thing ships.** What survives is a record and a
   manual page, never a plan describing an intention that is now a fact. Nothing
@@ -263,7 +263,31 @@ and the web API client.
   re-adding it, and then keep it to a few lines. A comment that has become
   false is a bug: fix it when you notice it.
 
-### Never commit anything from a real life
+### Writing style
+
+These rules cover every piece of prose in the repo: UI strings, the manual,
+`agents/`, model prompts, code comments, commit messages, and agent memory.
+
+- Write plain, direct English, the way an engineer explains work to a peer.
+  Use complete sentences in subject-verb-object order.
+- Don't write aphorisms or "X, not Y" / "not X but Y" contrasts for effect.
+  State what the thing does. A literal factual contrast is fine.
+- Don't use courtroom or ceremonial words for ordinary software: verdict,
+  testify, witness, covenant, doctrine, law, vows, "by construction" (say "by
+  design"), "on the record". A test fails; it doesn't "decline".
+- Headings are literal titles ("Why the vector test failed"), not clipped
+  fragments ("The thesis", "One word, many worlds").
+- Explain a method once. Don't praise the project's own honesty or rigor
+  ("honest", "deliberately", "to be precise").
+- Don't use "salient", "register" (for tone), "the bet is", "reads more like
+  X than Y", or "held" (for stored data).
+- "The record" never acts. Name the real actor: you, your server, the wiki
+  editor, the day-summary job.
+- UI strings also use sentence case, second person, sentences under about 25
+  words, and hyphens or periods instead of em dashes. An error says what
+  happened and how to fix it.
+
+### Never commit real personal data
 
 No real names, phone numbers, addresses, emails, employers, account numbers, or
 coordinates — in code, comments, docs, tests, seeds, or **commit messages**. Use
@@ -288,23 +312,9 @@ Examples, fixtures, seeds, prompts and docs quote only invented text, and
 never "based on a real day": `.claude/rules/fixtures.md` holds the rules and
 loads when you open one.
 
-Two checks hold the line, at commit, commit message and push (pre-commit,
-commit-msg and pre-push in `tools/githooks/`). `tools/privacy-guard.py`
-matches against hashes of the owner's real record: phones, emails, names,
-every text the record holds, places, location points, the exact second of
-every sample (also shifted by whole days), (date, steps) and (date, amount)
-pairs, and short facts the owner adds with `privacy-guard.py fact`. Its
-denylist is built by `tools/privacy-guard.py build`, kept in
-`~/.config/virtues-guard/`, never in the repo or CI, and rebuilt weekly.
-On the owner's machine `git config virtues.guardRequired true` makes a missing
-or week-old denylist refuse the commit. `tools/check-pii.py` needs no real
-data: it refuses phones and emails outside the fictional blocks (service
-addresses go in `tools/pii-allowlist.txt`), personal author addresses, and the
-file types a life is exported as (recordings, GPS photos, traces, Health
-exports, databases, notebooks, archives, new files over 500 KB). CI runs it on
-every commit of every push (`.github/workflows/privacy.yml`, no paths filter).
-Never skip a hook: `--no-verify`, `-c core.hooksPath` and `commit-tree` are
-blocked for agents. A generic false hit is the owner's to accept, by hash.
+No tool checks this for you. Before committing, read your own diff for
+anything that came from a real life, including commit messages and anything
+paraphrased: the larger leaks were rewordings that no pattern matcher catches.
 
 Write the FAILURE CLASS, not the incident. Every one of those comments was
 valuable because it narrated a real bug, and every one survived
@@ -312,17 +322,16 @@ de-identification unchanged.
 
 ### Rules that load when they apply
 
-Four bodies of law used to live here and now load only when you open a file
-they govern (`.claude/rules/`, `paths:` frontmatter). They are not optional and
-not lesser — they are conditional, and an always-on file is where a conditional
-rule goes to be ignored:
+Three sets of rules used to live here and now load only when you open a file
+they govern (`.claude/rules/`, `paths:` frontmatter). They are just as
+mandatory as this file. They load conditionally because a conditional rule in
+an always-loaded file tends to get ignored:
 
 | Rule | Loads when you touch | What it governs |
 |---|---|---|
-| `columns.md` | `*.sql`, Rust under `virtues-core/` | the seven-names-for-one-thing law, and the sweep a rename needs because `sqlx::query` is untyped |
+| `columns.md` | `*.sql`, Rust under `virtues-core/` | the rule against seven names for one thing, and the sweep a rename needs because `sqlx::query` is untyped |
 | `query-errors.md` | any `*.rs` | why `.ok()` on a `fetch_*` turns a broken query into a plausible number |
 | `migrations.md` | `virtues-core/migrations/**` | claiming a number, the pre-squash citations, and the `.sql.pending` rename that has to happen |
-| `copy.md` | Svelte/TS under `apps/web/src`, the airlock HTML, API/server Rust, `docs/` | the claim rules and register for any prose a person reads on screen, from `agents/build/voice.md` |
 
 If you are editing one of those files, assume the rule is already in front of
 you. If you are reasoning about them from elsewhere, go read it.

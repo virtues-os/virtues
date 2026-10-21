@@ -11,8 +11,8 @@ the Plaid Hosted Link section of `services/virtues-api/src/routes/oauth.rs`.
 ## Plaid is the general collector
 
 FinanceKit needs an iPhone and reaches only what Apple covers. Plaid is the
-path that has to work for everyone else, so it is not a nice-to-have beside
-FinanceKit.
+path that has to work for everyone else, so it is a required collector in its
+own right.
 
 ## What was wrong before the rebuild
 
@@ -44,7 +44,7 @@ relaunch Link with `receivedRedirectUri`, and mixing the two is what hung the
 old flow. The session, URL and cookie share one 30-minute lifetime, Plaid's
 own default.
 
-**Cancel is the ordinary path, and it looks like drift.** Plaid fires the
+**A cancel is the normal outcome, and it looks the same as an API change.** Plaid fires the
 completion redirect whether the person linked an account or backed out, so
 "no public token" is a cancel. It is also exactly what a renamed response
 field would look like. The callback logs the session's key set — keys only,
@@ -73,14 +73,14 @@ and bounces as a failure if it cannot, rather than handing over a dead token.
 A test asserts a Plaid exchange token is spendable exactly once.
 
 **The failure class:** a single-use ledger keyed on one table, while a second
-flow mints tokens without ever writing to it. When a guard is added to a
-shared door, enumerate every path that mints what the door checks.
+flow mints tokens without ever writing to it. When you add a check to a shared
+endpoint, list every code path that mints what the endpoint checks.
 
 ## Multi-collector reconciliation: not needed
 
 The fear was that a bank covered by both collectors would appear twice, since
 Plaid and FinanceKit write the same tables in disjoint namespaces (`plaid:*`,
-`apple_finance:*`). That overlap cannot happen, by construction:
+`apple_finance:*`). That overlap cannot happen, by design:
 
 - **FinanceKit returns only Apple Card, Apple Cash and Apple Savings**
   (US-only). It is an Apple-products API, not an aggregator.
@@ -89,22 +89,23 @@ Plaid and FinanceKit write the same tables in disjoint namespaces (`plaid:*`,
 - The lab box confirmed it on 2026-07-24: every FinanceKit account row had
   institution "Apple".
 
-The design also failed on its own terms: FinanceKit's stored payload carries
+The proposed design also could not have worked: FinanceKit's stored payload carries
 four keys (`name`, `currencyCode`, `institutionName`, `id`) — no mask, no
 last four, no account number, and `account_type` is `"other"` on every
 row — so the proposed join key (institution + mask + type + currency) was not
 derivable.
 
-Revisit only if a genuinely overlapping pair of collectors appears: a second
+Revisit only if an overlapping pair of collectors appears: a second
 aggregator, CSV/OFX import, or manual entry. The narrower real risk is linking
 the same institution twice through Plaid, which yields two Items with
-different `account_id`s. That is a connect-time warning on an `institution_id`
-an active credential already holds, not an ownership layer.
+different `account_id`s. That needs a connect-time warning on an
+`institution_id` an active credential already uses. It does not need an
+ownership layer.
 
-**Standing non-goal:** never fuzzy-match transactions across providers (equal
+**Non-goal:** never fuzzy-match transactions across providers (equal
 amounts, dates a day apart for pending versus posted, differing merchant
-strings). That is the semantic entity resolution the deterministic covenant
-removed.
+strings). That is the semantic entity resolution that was removed when entity
+resolution became deterministic.
 
 ## Traps
 

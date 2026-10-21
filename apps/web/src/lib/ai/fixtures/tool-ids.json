@@ -10,6 +10,7 @@
   "browser_type",
   "code_interpreter",
   "create_page",
+  "create_task",
   "delete_applet",
   "dispatch_subagents",
   "edit_applet",
@@ -24,6 +25,7 @@
   "revise_article",
   "run_applet",
   "semantic_search",
+  "send_imessage",
   "setup_applet",
   "shell",
   "show",
@@ -33,6 +35,7 @@
   "think",
   "update_applet_memory",
   "update_memory",
+  "update_task",
   "web_search",
   "write_it_up"
 ]

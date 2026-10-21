@@ -14,7 +14,7 @@ bootloader) is in [display-hardware.md](display-hardware.md). Open work:
   mode, service state, zoom; never the inches the panel claims), **Restart
   the screen**, the face picker, Hours, and the duty list. A box with no
   screen shows "No screen is attached to this server" rather than hiding the
-  section: a hidden section reads as broken navigation.
+  section: a hidden section looks like broken navigation.
 - **Endpoints** (`virtues-core/src/api/system_display.rs`, authenticated, none
   in the loopback `api/display.rs`): `GET /api/system/display`,
   `PUT /api/system/display/face`, `PUT /api/system/display/hours`,
@@ -23,57 +23,57 @@ bootloader) is in [display-hardware.md](display-hardware.md). Open work:
   sleep start/end). `ui_preferences` was rejected: it belongs to a device's
   session, and the kiosk has none; the face is a fact about the box.
 
-## The face hangs inside `/display`, not instead of it
+## A face renders inside `/display` and does not replace it
 
 `VIRTUES_DISPLAY_URL` is never pointed at a face. `/display` owns the state
-machine (button held, updating, storage fault, setup), and that precedence
-survives any choice the owner makes. A chosen face is a tenant of the
+machine (button held, updating, storage fault, setup), and those states take
+priority over any face the owner chooses. A chosen face fills the
 claimed-ambient slot: built-ins are components inside `/display`; an applet
 face is an iframe, and the kiosk, being loopback and so `local-console`, mints
 its own face token, re-minting at 45 minutes inside the one-hour TTL and again
-when the server comes back after being unreachable. A failed config read
-renders The Record: the glass always renders.
+when the server comes back after being unreachable. If the config read
+fails, the glass shows The Record face, so the glass always shows something.
 
 This is also the security answer to "no caller-supplied content on the glass":
 the authority is the owner's authenticated session choosing the face, and the
-face itself stays in its jail (opaque origin, CSP, the read-only
+face itself stays in its sandbox (opaque origin, CSP, the read-only
 `virtues_face_reader` role, row and time caps).
 
-**The duty list** on the Settings page is that precedence, disclosed and not
-configurable: updating, storage fault, button held, setup always interrupt
+**The duty list** on the Settings page shows that priority order, which the
+owner cannot change: updating, storage fault, button held, setup always interrupt
 whatever the face is. It also answers "why did my face disappear during the
 upgrade".
 
-## The face is a URL
+## Any paired browser can show `/display`
 
 The appliance kiosk is one consumer of `/display`, not its owner. The page
 tries two data doors in order: the loopback state feed (the box itself, which
 carries the setup phrase), then the authenticated redacted mirror
 (`GET /api/system/display`) for any paired browser (a tablet on a stand, a
 spare monitor). A browser that is neither gets "This screen isn't paired". The
-mirror never renders the phrase. This is the DIY display story; the
+mirror never renders the phrase. This is how a DIY box gets a display; the
 cage/`display.py` stack stays appliance-only, and a `virtues display install`
-for DIY boxes is deliberately unbuilt.
+for DIY boxes was left unbuilt on purpose.
 
-## Fit
+## Fitting faces to the panel
 
 Faces are written for a ~420px pane; the panel is 585×329, non-interactive and
-always on. The answer is to show, not declare: the picker previews each face at
+always on. Instead of asking faces to declare a fit, the picker previews each face at
 true size, and `virtues.js` exposes `?surface=panel` as `data-surface` so a
 face *may* adapt. A manifest fit key was rejected: the manifest silently
-discards documented keys with no loader field, and a declared fit is a claim
-the preview already tests. The glass passes `?theme=dark` always.
+discards documented keys with no loader field, and a declared fit would only
+restate what the preview already shows. The glass passes `?theme=dark` always.
 
 ## Hours
 
 Two times, box-local, or "Never sleeps"; the miniature shows "Asleep —
-backlight off until HH:MM" rather than mirroring black. Off and on is the
-whole vocabulary: this panel has no backlight control and must never be
+backlight off until HH:MM" rather than mirroring black. The only two states
+are off and on: this panel has no backlight control and must never be
 probed over DDC, so there is no brightness slider, and a software-dimming
-slider over a burning backlight would be a control that lies.
+slider over a full-power backlight would be a misleading control.
 
-The sleep engine (`system_display::sleep_engine`, appliance only) is a
-precedence state, not a cron toggle: it never sleeps an unclaimed box and
+The sleep engine (`system_display::sleep_engine`, appliance only) follows
+the same priority order instead of toggling on a cron: it never sleeps an unclaimed box and
 wakes for a button, an upgrade or a storage fault, then sleeps again when the
 interruption clears. The kiosk unit keeps running; only the connector
 toggles, and the `/run/virtues-display-asleep` marker lets a mid-sleep

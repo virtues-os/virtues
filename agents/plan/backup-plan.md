@@ -16,7 +16,7 @@ when the list is empty.
   change.
 - **"Never prune below 2" is not honored.** `prune_full_archives` keeps one
   full via `.skip(1)`, and it runs *before* the new full is written, so a tight
-  drive holds exactly one full during every write. Keep two, and refuse when
+  drive keeps exactly one full during every write. Keep two, and refuse when
   two will not fit.
 - **The local `/var/lib/virtues/backups` directory has no retention.** Only
   `pre-upgrade-*.dump` files are pruned (with release slots); every manual
@@ -26,7 +26,7 @@ when the list is empty.
 
 - **Scheduled random verification.** `virtues backup --verify <archive>`
   exists; nothing runs it. Verify one archive at random on a schedule so bit
-  rot surfaces before an incident, not during one.
+  rot is found before a restore depends on the archive.
 - **Volume probing.** `capacity_bytes`, `free_bytes` and `probed_at` on
   `storage_volume` are never refreshed by core. The device classifier and
   benchmark still live in `tools/virtues-installer/src/storage.rs`.
@@ -36,10 +36,10 @@ when the list is empty.
 - **The Home warning.** Backup age shows in the System page only. Home should
   carry one line when it is bad ("Last backup: 9 days ago", "No backup
   destination"), and onboarding should frame no destination as an unfinished
-  step. There is no push path, so a box whose owner never opens the UI hears
-  nothing.
-- **Recovery-key copies.** The key is printed once. The decided answer to loss
-  — copies into paired devices' keychains, and Settings counting how many
+  step. There is no push path, so the owner of a box who never opens the UI
+  gets no warning.
+- **Recovery-key copies.** The key is printed once. The agreed fix for a lost
+  key — copies into paired devices' keychains, and Settings counting how many
   independent copies exist — is not built.
 
 ## Drives

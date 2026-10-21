@@ -30,9 +30,9 @@ const FONT_SIZE: Record<TextSize, string> = {
 // Line-height tracks the text size: tighter for small (denser reading), airier
 // for large (more breathing room). Surfaced as `--editor-line-height`.
 const LINE_HEIGHT: Record<TextSize, string> = {
-	s: "1.55",
-	m: "1.7",
-	l: "1.8",
+	s: "1.5",
+	m: "1.6",
+	l: "1.7",
 };
 
 interface Persisted {

@@ -12,8 +12,9 @@ built. The extension is in no Xcode target. In order, each step depending on
 the one before:
 
 1. ~~Register the App Group and `com.virtues.app.share` with it.~~ Done
-   2026-10-07, for the Control Center control (audio-schedule-places-plan.md
-   slice 5), which needed the same group.
+   2026-10-07, for the Control Center control
+   ([record/audio-schedule-places.md](../record/audio-schedule-places.md)),
+   which needed the same group.
 2. ~~Add the application-groups entitlement to the app.~~ Done the same day.
    `ShareInbox` now finds the shared container; until the extension writes
    to it, there is nothing to drain.
@@ -22,7 +23,7 @@ the one before:
    Tauri-merged `Info.plist` keys (Bluetooth — BLE onboarding crashes without
    it — HealthUpdate, camera, photo library, icons) and rolls the version back.
    Review a diff containing the extension and nothing else; mirror it into
-   `project.yml` only so the spec stays truthful.
+   `project.yml` only so the spec stays accurate.
 4. Stamp the extension's version from the app's at build time. As written it
    reads `$(MARKETING_VERSION)`, which the project does not define, and it must
    equal the app's or upload fails.
@@ -54,6 +55,6 @@ migration; every future social source lands in it.
 ## 4. Browser extension auth
 
 Webhook auth accepts only a paired device's key, which a browser extension does
-not hold. Likely path: hand off to the Mac collector over native messaging
-rather than give the extension its own identity — the same "hand off, don't
-dial" answer as the share sheet.
+not hold. The likely path is to hand off to the Mac collector over native messaging
+instead of giving the extension its own identity. The share sheet uses the same
+approach: it hands data to the app, and the app talks to the box.

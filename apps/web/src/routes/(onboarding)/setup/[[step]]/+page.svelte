@@ -5,7 +5,7 @@
   (`.setup-stage`, setup.css), and every step changes on top of them: steps
   crossfade over each other rather than fading through a blank page. The
   progress is the mark itself (SetupMark), which Welcome's big ∴ flies up
-  to become. The four laws are in agents/build/onboarding.md.
+  to become. The four rules are in agents/build/onboarding.md, "Four rules for the setup flow".
 
   Ten steps: Welcome (the cold open, with light or dark), the founder's
   letter, Account, Server, Wi-Fi, Names, Subscription, Connections, Timeline,

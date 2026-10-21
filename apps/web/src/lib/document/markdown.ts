@@ -8,11 +8,15 @@
  *
  * It writes markdown only: reading markdown stays the server's one
  * converter's (`paste.ts`).
+ *
+ * `messageMarkdown` writes the chat composer's document the same way, rule
+ * for rule, but for the text: a message is shown in the thread as it was
+ * typed, so its words are written as they are, never escaped.
  */
 
 import type { Fragment, Mark, Node as PmNode, Slice } from '@tiptap/pm/model';
 import { DOMSerializer } from '@tiptap/pm/model';
-import { contract, isLabel, ITEM_NUMBER, normalizeUrl, typed } from './schema';
+import { contract, isLabel, ITEM_NUMBER, itemNumbers, normalizeUrl, typed } from './schema';
 
 /** Where inline content is written: how a break and a pipe are written so the text reads back. */
 type Lines = 'many' | 'one' | 'cell';
@@ -163,6 +167,13 @@ class Md {
 	}
 }
 
+/**
+ * Whether text is written as it is (`messageMarkdown`): no escapes, a line
+ * break as a new line, and a block markdown lets interrupt a paragraph
+ * written on the next line. Set while a message is written.
+ */
+let literal = false;
+
 const children = (n: PmNode): PmNode[] => {
 	const out: PmNode[] = [];
 	n.forEach((c) => out.push(c));
@@ -189,11 +200,34 @@ function continuesList(nodes: PmNode[], i: number, before: boolean): boolean {
 	return i > 0 && list && nodes[i - 1].type.name === name && !before;
 }
 
+/**
+ * What goes between two blocks: a blank line, or in a message a line break
+ * where markdown reads `after` as a block of its own straight under `before`
+ * (a list, a quote or a fence under a paragraph, anything under a fence), as
+ * a message is typed.
+ */
+function between(before: PmNode, after: PmNode, sep: string): string {
+	if (!literal) return sep;
+	if (before.type.name === 'codeBlock') return '\n';
+	if (before.type.name !== 'paragraph') return sep;
+	switch (after.type.name) {
+		case 'bulletList':
+		case 'blockquote':
+		case 'codeBlock':
+			return '\n';
+		case 'orderedList':
+			// Only a list numbered from 1 may interrupt a paragraph.
+			return itemNumbers(after)[0] === 1 ? '\n' : sep;
+		default:
+			return sep;
+	}
+}
+
 function childrenMd(n: PmNode, sep: string, w: Md): void {
 	const kids = children(n);
 	let alt = false;
 	kids.forEach((c, i) => {
-		if (i > 0) w.text(sep);
+		if (i > 0) w.text(between(kids[i - 1], c, sep));
 		alt = continuesList(kids, i, alt);
 		w.altList = alt;
 		blockMd(c, false, w);
@@ -216,7 +250,11 @@ function blockMd(n: PmNode, inTable: boolean, w: Md): void {
 		w.altList = false;
 		const [bullet, stop] = alt ? ['*', ')'] : ['-', '.'];
 		const items = children(n);
-		const loose = items.some((item) => item.childCount > 1);
+		// In a message, an item's blocks that need no blank line between them
+		// (a paragraph and the list under it) keep the list tight.
+		const loose = items.some((item) =>
+			literal ? children(item).some((b, k, all) => k > 0 && between(all[k - 1], b, '\n\n') !== '\n') : item.childCount > 1,
+		);
 		// Each item's number, its own where it has one: markdown writes every
 		// item's, and reads each back as written. A number below zero, which
 		// no marker writes, gives way to the count.
@@ -240,7 +278,7 @@ function blockMd(n: PmNode, inTable: boolean, w: Md): void {
 				if (k > 0) {
 					// After an empty first block, a blank line would end the item.
 					const afterEmpty = k === 1 && firstEmpty;
-					w.text(loose && !afterEmpty ? '\n\n' : '\n');
+					w.text(loose && !afterEmpty ? between(blocks[k - 1], b, '\n\n') : '\n');
 				}
 				const before = w.writes;
 				altInside = continuesList(blocks, k, altInside);
@@ -404,6 +442,7 @@ const isAsciiPunct = (c: string | undefined) => !!c && /^[!-/:-@[-`{-~]$/.test(c
 
 /** Text as markdown that reads back as the same text (render.rs `escape_md`). */
 function escapeMd(s: string, lines: Lines, before: string, body: boolean): string {
+	if (literal) return s;
 	const chars = Array.from(s, (ch) => (ch === '\n' || ch === '\r' ? ' ' : ch));
 	const last = Array.from(before);
 	let tail: [string | undefined, string | undefined] = [last.at(-2), last.at(-1)];
@@ -448,6 +487,7 @@ function escapeMd(s: string, lines: Lines, before: string, body: boolean): strin
 
 /** What would make the start of a line block syntax, escaped (render.rs `escape_line_start`). */
 function escapeLineStart(text: string, blockStart: boolean): string {
+	if (literal) return text;
 	const spaces = text.length - text.replace(/^ +/, '').length;
 	if (spaces >= 4) return blockStart ? `&#32;${text.slice(1)}` : text;
 	const rest = text.slice(spaces);
@@ -497,6 +537,7 @@ function destination(raw: string): string {
 
 /** A bare `!` before a link would read as an image's. */
 function escapeBang(out: string): string {
+	if (literal) return out;
 	return out.endsWith('!') ? `${out.slice(0, -1)}\\!` : out;
 }
 
@@ -664,6 +705,11 @@ function delimitedMd(nodes: PmNode[], lines: Lines, lineStartIn: boolean, endsBl
 				}
 			}
 		} else if (name === 'hardBreak') {
+			if (literal) {
+				out += '\n';
+				lineStart = true;
+				return;
+			}
 			// A backslash break needs a line after it.
 			const trailing = endsBlock && (lastNotBreak < 0 || idx > lastNotBreak);
 			if (lines === 'many' && !trailing) {
@@ -816,7 +862,7 @@ export function toMarkdown(blocks: Fragment | PmNode[]): string {
 		const w = new Md();
 		let alt = false;
 		nodes.forEach((n, i) => {
-			if (i > 0) w.text('\n\n');
+			if (i > 0) w.text(between(nodes[i - 1], n, '\n\n'));
 			alt = continuesList(nodes, i, alt);
 			w.altList = alt;
 			blockMd(n, false, w);
@@ -830,6 +876,23 @@ export function toMarkdown(blocks: Fragment | PmNode[]): string {
 		w.text('\n');
 		return w.toString();
 	});
+}
+
+/**
+ * A chat message as the composer sends it: the export's markdown with the
+ * text as typed (`literal`). Its structure is markdown's (a list's markers,
+ * a fence, a quote's `> `, marks' delimiters, `[label](url)`, a mention's
+ * `[@label](route)`), and its words are the person's own, `snake_case` and
+ * `2 * 3` included, since the thread shows a message as written. A line
+ * break is a new line; paragraphs are a blank line apart.
+ */
+export function messageMarkdown(blocks: Fragment | PmNode[]): string {
+	literal = true;
+	try {
+		return toMarkdown(blocks).replace(/\n$/, '');
+	} finally {
+		literal = false;
+	}
 }
 
 const isItem = (n: PmNode) => n.type.name === 'listItem' || n.type.name === 'taskItem';

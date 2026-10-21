@@ -1,21 +1,21 @@
 # Article resolution
 
-**Built 2026-09-15/16, unreleased.** The design record for the wiki's second
+**Built 2026-09-15/16, unreleased.** This document describes the wiki's second
 architecture: every subject gets an article, one editor writes and maintains
-all of them, and the person can always overrule it without ever being made
-responsible for it.
+all of them, and the person can always override the editor without having to
+maintain the article themselves.
 
-Supersedes `agents/plan/article-resolution-plan.md` (deleted). It overrules
+Supersedes `agents/plan/article-resolution-plan.md` (deleted). It replaces
 the wiki plan's one-pen rule ([wiki-consolidation.md](wiki-consolidation.md)),
-which is the main thing to know if you read that record first.
+which is the main thing to know if you read that document first.
 
 ---
 
-## The thesis
+## The wiki as a set of resolution processes
 
-The wiki is not a compression pipeline. It is a set of **resolution
-processes**, each of which takes the record and resolves it into something
-with a name:
+The wiki is a set of **resolution processes**, each of which takes the owner's
+data and resolves it into something with a name. It is not a pipeline that
+compresses days into longer periods:
 
 | resolution | what it resolves | state |
 |---|---|---|
@@ -23,34 +23,36 @@ with a name:
 | **event** | a day's rows → a gapless timeline | built, nightly |
 | **topic** | an event → 2–4 tags | built, free, rides inside event resolution |
 | **day** | a day's dossier → the day's article | built, nightly |
-| **article** | a subject + the record → that subject's article, maintained over time | this record |
+| **article** | a subject + the owner's data → that subject's article, maintained over time | this document |
 | **semantic** | a remark here → the thing it refers to there | not scoped |
 
 An earlier model folded day summaries upward into weeks, months and years.
-That framing was wrong, and the sentence that killed it is that **a year
-article is not a summary of its days**. The days are already there, each with
-a page a reader can open. A year exists to say what is only true at the scale
-of a year, which no amount of folding produces.
+That model was dropped because **a year article should not be a summary of
+its days**. The days are already there, each with
+a page a reader can open. A year article should say what is only true at the scale
+of a year, and folding day summaries together cannot produce that.
 
-## Draft is one-shot; revision is agentic
+## The first draft is one model call; revision is an agent loop
 
-The split that makes it affordable:
+This split keeps the cost down:
 
 | | how | why |
 |---|---|---|
 | **first draft** | one model call, everything in the prompt | there is no existing text to respect and nothing to go looking for |
 | **revision** | an agent loop with tools | it must read the current article, work out what is genuinely new, find the evidence, decide whether it changes anything, and make a surgical edit — none of which is knowable in advance |
 
-**The story rung is the proof.** Every other page sits on something: a day has
+**Stories show why revision needs an agent.** Every other page is built on
+existing material: a day has
 its events, a year its days, a person the records that mention them. A story —
-"Sailing", "How I learned to cook" — sits on nothing. Nobody has
-gathered its material and no list can be handed to the model. The only way to
-write it is to go and search the record, so revision *has* to be agentic; and
-once it is, years and entities are simply other subjects for the same loop.
+"Sailing", "How I learned to cook" — has no such material. Nobody has
+gathered it and no list can be handed to the model. The only way to
+write it is to search the owner's data, so revision *has* to be an agent loop;
+and once it is, years and entities are other subjects for the same loop.
 
-Picking the hardest rung first is what produced one editor instead of five.
+Designing for the hardest kind (stories) first is why there is one editor
+instead of five.
 
-## The vehicle
+## Where the editor runs
 
 The applet runner has always had two phases: a subprocess, then — if the
 manifest declares an `agent` prompt — an in-process agent loop holding
@@ -61,50 +63,50 @@ The subprocess owns the gates and the hand-over; the agent phase does the
 research and the writing. The toolset is `semantic_search`, `sql_query`,
 `get_page_content`, `think`, and `revise_article`.
 
-### Why `revise_article` and not `edit_page`
+### Why the editor uses `revise_article` instead of `edit_page`
 
 Chat edits pages through `edit_page`'s find/replace, and an early draft said
 the editor should too — an agent loop can retry a failed anchor where a batch
-job cannot. That reasoning is correct and is not the whole question.
-Find/replace gives back the retry and gives up two things this design needs: a
+job cannot. That reasoning is correct but incomplete.
+Find/replace allows the retry but loses two things this design needs: a
 guarantee the diff is small, and any enforcement of the invariant.
 `edit_page` will happily apply an edit that paraphrases a sentence the person
 wrote.
 
 So the agent returns **the whole revised article**; the server diffs it against
-the live text, checks it, and applies only what changed. A refusal comes back
+the live text, checks it, and applies only what changed. A rejected edit comes back
 as a tool error naming what failed, which the agent can act on in the same
-turn — the retry loop the find/replace argument was defending, with the
-invariant as something the server refuses rather than something the prompt
-asks for.
+turn. That keeps the retry loop the find/replace argument wanted, and the
+server enforces the invariant instead of the prompt only asking for it.
 
-`edit_page` is unchanged for chat, whose situation is the opposite: a person is
-watching, and a failed anchor costs a sentence of conversation rather than a
-silent hour.
+`edit_page` is unchanged for chat, where the situation is the opposite: a
+person is watching, and a failed anchor costs a sentence of conversation
+instead of an hour of unnoticed failure.
 
 ## What the editor is told
 
-System prompt = **one constitution** (shared by every article) + **one brief**
+System prompt = **one constitution** (`constitution.md`, shared by every article) + **one brief**
 per subject kind + the active `wiki_rules`. The prompts are `.md` files under
 `virtues-core/prompts/wiki/`, compiled in with `include_str!` so the text that
-is reviewed is the text that runs. See
+is reviewed is the same text that runs. See
 [agents/build/wiki-editor.md](../build/wiki-editor.md).
 
-The constitution's load-bearing rules: observe never infer; length follows the
-evidence, not a quota; **their lines outrank the record** — placed, never
-paraphrased, never re-explained; **their removals are final**; edit rather than
+The constitution's main rules: state only what is observed, never infer; length
+follows the evidence, with no quota; **the person's own sentences take priority
+over the source data** — placed, never paraphrased, never re-explained; **their removals are final**; edit rather than
 rewrite; link by exact id only; never write the graph; never create a subject.
 
-The register is **second person**, settled on specimens of one real dense year.
+Articles are written in the **second person**. This was chosen after comparing
+sample drafts of one dense year.
 
-## Ownership never flips
+## Owner edits never turn off machine maintenance
 
-Nobody wants to maintain their own record. They want to leave marginalia and
+Nobody wants to maintain their own wiki. They want to leave marginalia and
 touch a sentence without becoming responsible for the page. The previous
 design took the opposite view — `auto_update` was a boolean the Yjs layer
 flipped false on the first real edit, which froze the article for good.
 
-What replaces it is not a lock but a **server-enforced invariant**, computed
+The replacement is a **server-enforced invariant** instead of a lock, computed
 from the machine's own last output:
 
 ```
@@ -116,36 +118,37 @@ pruned against the live text so they cannot grow without bound. Before any
 machine edit is applied, `check_edit` refuses it unless every sentence in
 `theirs` survives verbatim and nothing in `removed` has reappeared.
 
-The invariant protects bytes. **Placement is the constitution's job**, and the
+The invariant protects the exact text. **Where the text is placed is governed by
+the constitution**, and the
 person's answer to a bad placement is revert — which restores a chosen version
 as a new version, so history is linear and nothing is ever lost. A standing
 "don't write that again" is a `wiki_rules` row scoped to the page.
 
 An earlier draft derived provenance from version history instead. The audit
-killed it: the wire values are `user`/`ai`/`auto`, no wiki component cut
+ruled it out: the wire values are `user`/`ai`/`auto`, no wiki component cut
 versions at all, a row's author names the *next* edit, and the 50-version cap
 prunes the oldest human sentence first.
 
-## Three gates before any money is spent
+## Three checks before any model call
 
 In order: **eligible** (`maintenance` is not `never`, and no human edit inside
 six hours) → **due** (`update_requested_at`, or never written, or past its
 interval — 7 days for years and stories, 30 for everything else) → **drifted**
 (the evidence fingerprint moved).
 
-The fingerprint is the attention plan's doctrine rather than a counter: a
+The fingerprint follows the attention plan's rule and is not a counter. It is a
 sha256 over labelled counts and max-timestamps of what the subject rests on,
 which differs by kind. An entity rests on its refs; a year on its narrated
 days; a chapter on the narrated days inside its span. **A story rests on
 nothing measurable** — finding out whether its material grew would mean running
 the agent's own searches, which is the expensive thing the gate exists to
 avoid — so a story is revised when the person asks or accepts a note, and not
-because the record moved underneath it.
+because the underlying data changed.
 
 A pass that changes nothing still stores the new fingerprint. Without that, a
-broken article is an hourly oscillator.
+broken article would be re-run every hour.
 
-## The rungs, as built
+## Subject kinds as built
 
 | subject | brief | first version | maintained |
 |---|---|---|---|
@@ -156,54 +159,53 @@ broken article is an hourly oscillator.
 | **person / place / org** | `entity.md` | editor, agentic | yes, within a budget |
 | **life / the self** | — | the interview write-up | **never** — the only channel is a note |
 
-Two of those rows are deliberate refusals rather than gaps.
+Two of those rows are intentional exclusions, not missing work.
 
 **The life page is never machine-edited.** It is the one place in the wiki
-where the record is not the author: written by the person, in the first
+that is not generated from the owner's data: written by the person, in the first
 person, and the editor may not touch it. `brief_for` returns `None` for
-`narrative_identity` so that the refusal is structural rather than a rule in a
+`narrative_identity` so the exclusion is enforced in code instead of by a rule in a
 prompt that a model might weigh against another rule.
 
-**The day does not join yet.** Its narrator is released and tuned, and the
+**The day is not maintained by the editor yet.** Its narrator is released and tuned, and the
 first draft stays exactly as it is. Whether the day's *revision* becomes just
 another article is the attention plan's call, not this one — but it is the
-largest remaining seam, because until it happens "one editor for every
+largest remaining gap, because until it happens "one editor for every
 subject" is true of six kinds out of seven.
 
 What the day does have (2026-10-07) is the owner's **Rewrite this page**, at
 the foot of a past day's page: a whole new first draft, written only when they
-ask (`day_summary::rewrite_day_page`). It is not revision — nothing edits
-around their sentences — so it asks first when the page may hold their words,
+ask (`day_summary::rewrite_day_page`). It is not a revision, because nothing edits
+around their sentences, so it asks first when the page may hold their words,
 keeps the page as it was as a restore point, writes through the CRDT so open
-editors receive it, and shows in History as one entry by the record whose undo
-puts the old page back. Its restamped `narrated_at` earns the day's year and
-chapter one revision each at their next interval, when the wiki editor is on.
+editors receive it, and shows in History as one machine entry (History labels these as the record's) whose undo
+puts the old page back. Its restamped `narrated_at` triggers one revision each of the day's year and
+chapter at their next interval, when the wiki editor is on.
 
-**The self is still keyed `narrative_identity`, not the self person row.** The
+**The self is still keyed `narrative_identity` instead of the self person row.** The
 plan called for re-pointing it; chat reads it on every turn, so that is a
 migration with a fallback rather than a rename, and it was left. What did ship
 is `ensure_self_person`: nothing had ever created the owner's own row, so on
 most boxes the owner was the single human their wiki had no page for, and
 every feature keyed to "the self" silently did nothing.
 
-## Failure classes found along the way
+## Failure classes found during the build
 
-Each of these cost real time, and each is a class rather than an incident.
+Each of these cost real time. Each is described as a general class of bug.
 
-**A column with a reader and no writer does not read as missing — it reads as
-wrong.** Migration 0025 dropped every wiki column in that state, and the
+**A column with a reader and no writer looks wrong instead of missing.** Migration 0025 dropped every wiki column in that state, and the
 evidence for why is the symptom list: "Total visits: 0" on a place visited
 weekly, "Interactions on record: 0" fed to the article model as fact, an empty
 Last Interaction column down the whole people table, a readiness diamond that
-never drew. A `NULL` surfaces as a hole someone notices. A zero surfaces as a
-number someone believes.
+never drew. A `NULL` shows up as a gap that someone notices. A zero shows up as a
+number that someone believes.
 
-**A write that is queued is a write that can be discarded.** `apply_text_diff`
+**A queued write can be discarded.** `apply_text_diff`
 originally left the save to the debounce. `get_or_create` then reseeded the
 doc from `content` — correct, because `yjs_state` was still NULL — and silently
-ate the first edit to every article. The fix is to persist immediately. The
-class: any cache whose "empty" state falls back to another source must be
-written through, not behind.
+lost the first edit to every article. The fix is to persist immediately. The
+class: any cache whose "empty" state falls back to another source must use
+write-through, not write-behind.
 
 **A TOML key after a table header belongs to that table.** `agent` sat below
 `[config.limits]`, so it parsed as `config.limits.agent`, the column stayed
@@ -221,18 +223,18 @@ call `record_edition`, so `machine_text` stayed NULL. The next revision would
 have diffed against nothing, marked the entire article as `theirs`, and frozen
 it permanently. Absent `machine_text` now means *unknown*, never *all theirs*.
 
-**A prompt's own example is a thing the model will reach for.** Asked to link
+**The model copies examples from its own prompt.** Asked to link
 a person, the model emitted `/person/person_abc1` — the id from the example in
 its own prompt, which exists nowhere. `check_links` now resolves every link
 before an edit is applied.
 
 **Third person crept into a second-person article**, and the cause was the fold
-input, not the prompt: material describing the owner as "they" teaches the
-voice more effectively than a rule forbidding it. Both were fixed, and the
+input, not the prompt: material describing the owner as "they" influences the
+voice more strongly than a rule forbidding it. Both were fixed, and the
 constitution now says explicitly that briefing material written in third
-person is the briefing's voice, not the article's.
+person uses the briefing's voice, which the article must not copy.
 
-**An unbounded research budget is spent on rediscovery.** A year revision hit
+**An unbounded research budget gets spent re-finding known material.** A year revision hit
 its ceiling having written nothing, across ten tool calls re-finding the days
 it had already been handed. The subprocess now hands over what changed.
 
@@ -242,51 +244,51 @@ every box would have refused to start on upgrade. Restored byte-for-byte; the
 correction moved into a doc comment. Applied migrations are immutable, comments
 included.
 
-## The shape underneath it
+## Structural decisions
 
-Three structural decisions came out of building the rungs, and each is the
-answer to a problem that had already shipped twice.
+Three structural decisions came out of building the subject kinds. Each fixes
+a problem that had already shipped twice.
 
-### One registry, because a rung is not one fact
+### One registry for subject kinds
 
 Every subject kind carries the same handful of facts: the word the schema
 calls it, the prefix its ids start with, the table its row is in, the route the
 client shows it at, the brief the editor writes it from. Those were spelled out
-in ten places, each enumerating one facet, and the cost showed up the moment a
-rung was added. Chapters needed seven sites touched; three were missed, and all
+in ten places, each enumerating one facet, and the cost showed up as soon as a
+subject kind was added. Chapters needed seven sites touched; three were missed, and all
 three were defects — `check_links` skipped chapter and story links entirely,
 `get_subject_backlinks` searched for an href nothing can write, and @-mention
 autocomplete could not produce either.
 
-`api/subjects.rs` is now the one table. **Adding a rung is a row.** It is kept
-honest from both sides: a test reads `pg_get_constraintdef` and compares the
+`api/subjects.rs` is now the one table. **Adding a subject kind means adding a row.** Tests check it against both
+sides: a test reads `pg_get_constraintdef` and compares the
 registry to the schema's CHECK in both directions, and another reads the
 client's `links.ts` and fails if its route table disagrees — the same lockstep
 the plugin ACL uses, because there is no codegen between Rust and TypeScript.
 
-Two distinctions the registry makes explicit rather than implying:
+The registry makes two distinctions explicit:
 
-**A subject's `kind` is not its id `prefix`.** `organization` is the schema's
+**A subject's `kind` and its id `prefix` are different values.** `organization` is the schema's
 word and `org_ab12` is the id. They differ for exactly one kind, and a lookup
-keyed on the wrong one returns zero rows rather than an error — which is the
-worst way for a mismatch to behave.
+keyed on the wrong one returns zero rows instead of an error, which makes the
+mismatch hard to notice.
 
-**"Entity" is one of three subject shapes, never a synonym for "subject."**
-`wiki_articles.subject_type` holds all eight; `wiki_refs.entity_type` holds
-three, because a record can only point AT an entity. A record cannot reference
-a year — a year is a partition we impose, not something an email mentions. The
-two lists are different on purpose, and aligning them, which looks like
-obvious tidying, would be wrong. `agents/build/glossary.md` carries the three
+**"Entity" names three of the subject shapes. It is not a synonym for "subject."**
+`wiki_articles.subject_type` allows all eight; `wiki_refs.entity_type` allows
+three, because a data row can only point AT an entity. A row cannot reference
+a year — a year is a partition the app imposes, not something an email mentions. The
+two lists are different on purpose. Aligning them looks like obvious tidying
+but would be wrong. `agents/build/glossary.md` carries the three
 shapes; the registry is that section in code.
 
-### Components take the wire shape
+### Components use the API types directly
 
 Every wiki component typed against a converted "page type" — an API type
-through a converter into a `PersonPage`. Reference-counting settled what the
-layer was for: thirteen of the fourteen types it exported had no consumer
+through a converter into a `PersonPage`. Counting references showed how little the
+layer was used: thirteen of the fourteen types it exported had no consumer
 outside its own directory.
 
-The reason this was a correctness problem and not a tidiness one is that
+This was a correctness problem, because
 **optional fields type-check, compile, and render as nothing**. PersonPage read
 `company`, `role`, `location` and `connectionTier` in nineteen places — a whole
 Work row that could never draw. The day page gated an entire Entities section,
@@ -296,10 +298,10 @@ below it reported how many were new.
 
 1,256 lines became 171.
 
-### A converter that computes is a boundary; one that renames is a tax
+### When to keep a converter
 
-The one converter kept is the line worth drawing. `apiToDayEvent` looks like
-the four that were deleted and is nothing like them: it parses two strings into
+One converter was kept, and it shows where to draw the line. `apiToDayEvent`
+looks like the four that were deleted but works differently: it parses two strings into
 dates, **computes** `durationMinutes` which is not on the wire at all, applies
 defaults, distinguishes `|| undefined` from `?? undefined` so an empty string
 and an absent value differ, and guards two jsonb columns that arrive untyped.
@@ -307,8 +309,8 @@ Delete it and every one of those moves into the eighty-eight call sites that
 read the result.
 
 The four that went did none of that. They renamed fields and filled in blanks
-that stayed blank. **The test is whether the translation does work the caller
-would otherwise have to do** — not whether a translation exists.
+that stayed blank. **Keep a converter only if it does work the caller would otherwise
+have to do.** A converter that only renames fields should be deleted.
 
 ## What shipped
 
@@ -316,28 +318,28 @@ Migrations `0022` (article resolution columns, subject-type vocabulary aligned
 across four disagreeing CHECK lists, `wiki_years.summary`), `0023` (the story
 subject), `0024` and `0025` (the drops).
 
-**0024 and 0025 are a one-way door.** A dropped column means the previous
+**0024 and 0025 cannot be rolled back.** A dropped column means the previous
 binary cannot boot, which takes `virtues upgrade`'s rollback with it for the
 release that carries them. Both were written only after their readers were
 removed in code — the ordering rule the
 [2026-08-28 schema audit](schema-audit-2026-08-28.md) exists to enforce — and
-anything whose sweep was unfinished was deliberately left in place, however
-dead it looked.
+anything whose sweep was unfinished was left in place on purpose, even if it
+looked unused.
 
 **The applet ships disabled** (`default_enabled = false`). Everything above was
-proven on the dev box against a real record; none of it has run on a box.
-Enabling it should be a deliberate act, and the first week of it wants
-watching: the ceiling of three articles per hourly run is a guess, and the
+tested on the dev box against real data; none of it has run on a box.
+Enable it on purpose, and watch the first week closely: the ceiling of three
+articles per hourly run is a guess, and the
 per-run cost ceiling was already raised once under pressure.
 
-## The edition as export (2026-10-11, unreleased)
+## Editions record the block export (2026-10-11, unreleased)
 
 Articles became block pages in slice 6 of
 [document-contract-plan.md](../plan/document-contract-plan.md). Provenance
 did not change its model (`diff(live, machine_text)` is what the person did),
 but the text on both sides of that diff did, and three things had to follow.
 
-**The edition is what the page says, not what the writer sent.** On a block
+**The edition is the page's exported text, not the text the writer sent.** On a block
 article the page's text is the export of its tree, which escapes what the
 writer did not (`R\&B`, `user\_name`) and writes footnote definitions in the
 order the page cites them. A writer that recorded its own markdown as
@@ -346,7 +348,7 @@ revision, and the wiki editor would freeze them all. So every writer records
 the export: the wiki editor its draft's text (`YjsState::draft`), the day's
 rewrite and the picture what the write left.
 
-**The move rebases the edition, in the flip's own transaction**
+**The move to blocks rebases the edition, in the same transaction as the switch**
 (`block_move::rebase`, `record_rebase`). An article untouched since its
 writers wrote it gets the export as its edition; an edited one, its edition
 converted on its own. Each sentence of the owner's becomes the export's
@@ -359,7 +361,7 @@ revision's `fold_provenance` drops it. The update is guarded on the edition
 as read, so a writer that recorded one meanwhile makes the move read the
 page again.
 
-**Comparisons re-project; nothing pins the export.** Pinning the export's
+**Comparisons convert both sides each time; the export format is not pinned.** Pinning the export's
 rules and re-recording every edition when they change was considered and
 rejected: one missed pass and every article freezes. Instead each "has the
 owner changed it?" converts both sides through this server's converter and

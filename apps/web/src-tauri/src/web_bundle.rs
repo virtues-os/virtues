@@ -276,7 +276,7 @@ pub fn active_bundle(app_data: &Path) -> Option<PathBuf> {
 // Pinning per page load fixes that, and is what lets a staged bundle apply
 // with a plain page reload (on both platforms: a Mac is almost never
 // relaunched, since closing its window only hides it) instead of waiting for
-// the next launch. See agents/plan/local-ui-plan.md.
+// the next launch. See agents/record/local-ui.md.
 
 /// Held while pointers move, by an apply and by a page load settling
 /// rollback, so neither sees the other half-done. Held for file writes only,

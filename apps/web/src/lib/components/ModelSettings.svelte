@@ -1,203 +1,256 @@
 <script lang="ts">
 	/**
-	 * The four slot pickers at the top of Settings → Assistant.
+	 * Models, on the Assistant page: one native select per role.
 	 *
-	 * The full catalog sits at the bottom of the same page (ModelCatalog). Both
-	 * read and write `modelSlots`, so a choice made in one shows in the other at
-	 * once. There used to be a separate Models page with its own copy of the
-	 * pin controls and its own words for them, which is how one setting came to
-	 * have five names.
+	 * A select, not a searchable picker: each role offers a handful of
+	 * models. Comparing the whole catalog is the page this section links to
+	 * (ModelCatalogView), and both write through `modelSlots`.
 	 */
 	import { onMount } from "svelte";
-	import UniversalPicker from "./UniversalPicker.svelte";
-	import TextAction from "./TextAction.svelte";
-	import {
-		modelSlots,
-		type SlotConfig,
-		type CatalogModel,
-	} from "$lib/stores/modelSlots.svelte";
+	import { Button } from "$lib";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { modelSlots, type SlotConfig } from "$lib/stores/modelSlots.svelte";
 
-	/** The Recommended row's key. Empty, because the picker needs a string and
-	 *  no model id is empty. It saves as a JSON `null`. */
+	// Every section on the Assistant page takes the assistant's name. This
+	// one's copy has no use for it yet.
+	let { assistantName = "Ari" }: { assistantName?: string } = $props();
+
+	/** The Recommended option's value. No model id is empty, and it saves
+	 *  as a JSON `null`. */
 	const RECOMMENDED = "";
-
-	type Option = Pick<CatalogModel, "model_id" | "display_name"> &
-		Partial<CatalogModel>;
 
 	onMount(() => modelSlots.load());
 
-	/** The list a slot shows: the Recommended row, then the suggested set,
-	 *  plus whatever this slot is set to now (so a catalog choice still
-	 *  displays here). Browsing all ~240 models is the table below. */
-	function optionsFor(slot: SlotConfig): Option[] {
-		const name = modelSlots.nameOf(modelSlots.recommended[slot.key]);
-		const current = modelSlots.chosen[slot.key];
-		return [
-			{
-				model_id: RECOMMENDED,
-				display_name: name ? `Recommended · ${name}` : "Recommended",
-			},
-			...modelSlots.models.filter(
-				(m) => m.recommended || m.model_id === current,
-			),
-		];
+	/** Pictures appear only while pinned: the image role is a system role,
+	 *  so the row exists to let a stored choice go back to the
+	 *  recommendation, not to invite one. */
+	const roles = $derived(
+		modelSlots.slots.filter((s) => s.language || modelSlots.chosen[s.key]),
+	);
+
+	/** Named only when the catalog lists the model. The catalog lists language
+	 *  models, so a picture model may be missing, and a bare id in the menu
+	 *  reads as a fault. */
+	function recommendedLabel(slot: SlotConfig): string {
+		const name = modelSlots.catalogName(modelSlots.recommended[slot.key]);
+		return name ? `Recommended (${name})` : "Recommended";
 	}
 
-	/** Section label for the dropdown. Empty = the ungrouped Recommended row.
-	 *  The suggested set was grouped as "Recommended" too, the same word as the
-	 *  row above it that means "follow Virtues", so it is "Suggested" now. */
-	function groupOf(model: Option): string {
-		if (model.model_id === RECOMMENDED) return "";
-		return model.recommended ? "Suggested" : "Chosen from the catalog";
+	/** The pinned model when neither the Recommended option nor a suggestion
+	 *  already offers it, so the select can show what is stored. */
+	function ownChoice(slot: SlotConfig): string | null {
+		const id = modelSlots.chosen[slot.key];
+		if (!id) return null;
+		return modelSlots.suggestedFor(slot).some((m) => m.model_id === id)
+			? null
+			: id;
 	}
 
-	function searchTextOf(model: Option): string {
-		return [model.display_name, model.provider ?? "", model.model_id].join(" ");
+	/** After the save settles, the select is set from the store. A save that
+	 *  fails within the same tick rolls the store back to the value it had,
+	 *  so Svelte sees no change and would leave the person's pick on screen. */
+	async function onChange(slot: SlotConfig, select: HTMLSelectElement) {
+		const value = select.value;
+		await modelSlots.choose(slot, value === RECOMMENDED ? null : value);
+		select.value = modelSlots.chosen[slot.key] ?? RECOMMENDED;
 	}
 
-	function scrollToCatalog() {
-		document
-			.getElementById("model-catalog")
-			?.scrollIntoView({ behavior: "smooth", block: "start" });
+	function openCatalog() {
+		windowShellStore.navigate("/virtues/assistant/models", { label: "Settings" });
 	}
 </script>
 
-<div class="bg-surface border border-border rounded-lg">
-	<div
-		class="flex items-center justify-between px-4 py-3 border-b border-border"
-	>
-		<h2 class="text-sm font-medium text-foreground">AI Models</h2>
-		{#if modelSlots.saveError}
-			<span class="text-xs text-error">{modelSlots.saveError}</span>
-		{/if}
-	</div>
+<section class="models">
+	<h2 class="settings-label">Models</h2>
 
-	{#if !modelSlots.loaded && modelSlots.loading}
-		<div class="text-center py-6 text-sm text-foreground-muted">
-			Loading models...
+	{#if !modelSlots.loaded && modelSlots.error}
+		<p class="load-error" role="alert">{modelSlots.error}</p>
+		<div>
+			<Button variant="secondary" size="sm" onclick={() => modelSlots.load(true)}>
+				Try again
+			</Button>
 		</div>
-	{:else if modelSlots.error}
-		<div class="text-center py-6 text-sm text-error">{modelSlots.error}</div>
+	{:else if !modelSlots.loaded}
+		<!-- In the rows' own shape, so nothing moves when they land. -->
+		<div class="roles" aria-busy="true">
+			{#each [0, 1, 2] as i (i)}
+				<div class="role">
+					<span class="ph ph-label"></span>
+					<span class="ph ph-select"></span>
+				</div>
+			{/each}
+		</div>
 	{:else}
-		<div class="grid grid-cols-2 gap-4 p-4">
-			{#each modelSlots.slots as slot}
-				{@const chosen = modelSlots.chosen[slot.key]}
-				{@const recommended = modelSlots.recommended[slot.key]}
-				<div>
-					<div class="text-sm font-medium text-foreground mb-2">
-						{slot.label}
-						<span class="font-normal text-foreground-subtle"
-							>· {slot.description}</span
-						>
+		<div class="roles">
+			{#each roles as slot (slot.key)}
+				{@const own = ownChoice(slot)}
+				{@const suggested = modelSlots.suggestedFor(slot)}
+				{@const saveError = modelSlots.saveErrors[slot.key]}
+				<div class="role">
+					<div class="role-words">
+						<label class="role-label" for="model-role-{slot.key}">{slot.label}</label>
+						{#if slot.caption}
+							<span class="role-caption" id="model-role-{slot.key}-caption">{slot.caption}</span>
+						{/if}
 					</div>
-					<UniversalPicker
-						items={optionsFor(slot)}
-						value={chosen ?? RECOMMENDED}
-						getKey={(m) => m.model_id || "__recommended__"}
-						getValue={(m) => m.model_id}
-						onSelect={(m) =>
-							modelSlots.choose(
-								slot,
-								m.model_id === RECOMMENDED ? null : m.model_id,
-							)}
-						width="w-full"
-						maxHeight="max-h-64"
-						searchable={true}
-						getSearchText={searchTextOf}
-						getGroup={groupOf}
-						searchPlaceholder="Search models…"
+					<select
+						id="model-role-{slot.key}"
+						aria-describedby={slot.caption ? `model-role-${slot.key}-caption` : undefined}
+						value={modelSlots.chosen[slot.key] ?? RECOMMENDED}
+						onchange={(e) => onChange(slot, e.currentTarget)}
 					>
-						{#snippet trigger(currentModel, disabled, open)}
-							<div
-								class="w-full px-3 py-2 bg-background border border-border rounded-md text-sm flex items-center justify-between hover:border-border-strong transition-colors {chosen
-									? 'text-foreground'
-									: 'text-foreground-muted'}"
-							>
-								<span class="truncate"
-									>{currentModel
-										? currentModel.display_name
-										: "Select model..."}</span
-								>
-								<svg
-									class="w-4 h-4 text-foreground-subtle shrink-0 ml-2 transition-transform {open
-										? 'rotate-180'
-										: ''}"
-									fill="none"
-									stroke="currentColor"
-									viewBox="0 0 24 24"
-								>
-									<path
-										stroke-linecap="round"
-										stroke-linejoin="round"
-										stroke-width="2"
-										d="M19 9l-7 7-7-7"
-									/>
-								</svg>
-							</div>
-						{/snippet}
-						{#snippet item(model, isSelected)}
-							{@const isRecommendedRow = model.model_id === RECOMMENDED}
-							<div
-								class="px-3 py-2 flex items-center justify-between gap-2 {isRecommendedRow
-									? 'border-b border-border'
-									: ''}"
-							>
-								<span
-									class="text-sm truncate min-w-0 {isRecommendedRow
-										? 'text-foreground-muted'
-										: 'text-foreground'}"
-									>{model.display_name}{#if model.provider && !isRecommendedRow}<span
-											class="text-foreground-subtle"
-										>
-											· {model.provider}</span
-										>{/if}</span
-								>
-								{#if isSelected}
-									<svg
-										class="w-4 h-4 text-primary shrink-0 ml-2"
-										fill="none"
-										stroke="currentColor"
-										viewBox="0 0 24 24"
-									>
-										<path
-											stroke-linecap="round"
-											stroke-linejoin="round"
-											stroke-width="2"
-											d="M5 13l4 4L19 7"
-										/>
-									</svg>
-								{/if}
-							</div>
-						{/snippet}
-					</UniversalPicker>
-					{#if chosen}
-						<div class="mt-1.5 flex items-center gap-2 flex-wrap text-xs text-foreground-subtle">
-							<span>
-								{#if recommended && recommended === chosen}
-									Your choice, same as recommended. It stays if the recommendation changes.
-								{:else if recommended}
-									Your choice. Recommended: {modelSlots.nameOf(recommended)}.
-								{:else}
-									Your choice.
-								{/if}
-							</span>
-							<TextAction quiet onclick={() => modelSlots.choose(slot, null)}>
-								Use recommended
-							</TextAction>
-						</div>
+						<option value={RECOMMENDED}>{recommendedLabel(slot)}</option>
+						{#if suggested.length}
+							<optgroup label="Suggested">
+								{#each suggested as m (m.model_id)}
+									<option value={m.model_id}>{m.display_name}</option>
+								{/each}
+							</optgroup>
+						{/if}
+						{#if own}
+							<optgroup label="Your choice">
+								<option value={own}>{modelSlots.nameOf(own)}</option>
+							</optgroup>
+						{/if}
+					</select>
+					{#if saveError}
+						<p class="role-error" role="alert">{saveError.message}</p>
 					{/if}
 				</div>
 			{/each}
 		</div>
-		<div class="px-4 pb-4 -mt-1 space-y-1.5">
-			<p class="text-xs text-foreground-subtle">
-				A slot on <span class="text-foreground-muted">Recommended</span>
-				changes when Virtues recommends a different model. Choose a model to
-				keep it until you change it.
+
+		<p class="sec-hint">
+			Recommended follows Virtues' pick as it changes. A model you choose stays
+			until you change it.
+		</p>
+		{#if modelSlots.byoKey}
+			<!-- Billing's model map is left out on purpose: it re-addresses a
+			     recommended model but passes a chosen one through unchanged
+			     (apply_byo_model, virtues_api/client.rs). -->
+			<p class="sec-hint">
+				Your own AI key is on, so your provider runs every AI request, at its own
+				prices and under its own retention terms.
 			</p>
-			<TextAction quiet onclick={scrollToCatalog}>
-				Compare all {modelSlots.models.length} models below
-			</TextAction>
-		</div>
+		{/if}
+
+		{#if modelSlots.models.length}
+			<div>
+				<Button variant="secondary" size="sm" onclick={openCatalog}>
+					Compare all {modelSlots.models.length} models
+				</Button>
+			</div>
+		{/if}
 	{/if}
-</div>
+</section>
+
+<style>
+	.models {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+	}
+
+	.roles {
+		display: flex;
+		flex-direction: column;
+		gap: 12px;
+		container-type: inline-size;
+	}
+
+	.role {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		column-gap: 16px;
+		row-gap: 8px;
+	}
+
+	.role-words {
+		display: flex;
+		flex-direction: column;
+		min-width: 0;
+	}
+
+	.role-label {
+		font-size: 15px;
+		color: var(--color-foreground);
+	}
+
+	.role-caption {
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+	}
+
+	/* DisplayView's face picker, at 14px: a model name is read, not scanned. */
+	select {
+		font: inherit;
+		font-size: 14px;
+		height: 40px;
+		padding: 0 12px;
+		border-radius: 6px;
+		border: 1px solid var(--color-border);
+		background: var(--color-surface);
+		color: var(--color-foreground);
+		/* One width for every role, so the selects line up as a column. */
+		width: 18rem;
+		max-width: 100%;
+		min-width: 0;
+	}
+
+	@media (pointer: coarse) {
+		select {
+			height: 44px;
+		}
+	}
+
+	.role-error {
+		flex-basis: 100%;
+		margin: 0;
+		font-size: 12px;
+		color: var(--color-error);
+	}
+
+	@container (max-width: 479px) {
+		.role {
+			flex-direction: column;
+			align-items: stretch;
+		}
+		select {
+			width: 100%;
+		}
+		.role-error {
+			flex-basis: auto;
+		}
+	}
+
+	.sec-hint {
+		margin: 0;
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+		max-width: 60ch;
+	}
+
+	.load-error {
+		margin: 0;
+		font-size: 12px;
+		color: var(--color-error);
+	}
+
+	/* Placeholder bars, sized like a label and a select. */
+	.ph {
+		display: block;
+		border-radius: 6px;
+		background: var(--hover-bg);
+	}
+	.ph-label {
+		width: 8rem;
+		height: 16px;
+	}
+	.ph-select {
+		width: 16rem;
+		max-width: 100%;
+		height: 40px;
+	}
+</style>

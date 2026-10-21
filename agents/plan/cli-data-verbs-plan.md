@@ -11,20 +11,20 @@ Applets stay as they are; see [record/applets.md](../record/applets.md).
 
 Most of what an applet is (a prompt on a cron, a face, a table, memory) is
 also what a general agent product ships as routines, artifacts and skills.
-What only the box has is the data, the roles that fence it, and the gate. The
-CLI is the cheapest way to offer exactly that and nothing more: the owner's
-own agent brings the reasoning, the box brings the record and the rules.
+What only the box has is the data, the database roles that restrict access to
+it, and the gate. The CLI is the cheapest way to expose exactly those and
+nothing more: the owner's own agent does the reasoning, and the box supplies
+the data and enforces its access rules.
 
-**The split.** Applets are what the box runs by itself. An outside agent is
-how the owner builds and inspects, interactively, while present. Nothing on
+**Who does what.** Applets are what the box runs by itself. An outside agent
+is how the owner builds and inspects, interactively, while present. Nothing on
 the outside agent's side (a routine, a scheduled task) wakes anything on the
-box; the box's schedule is the box's.
+box; only the box's own scheduler starts runs on the box.
 
-What it is not: a replacement for applets. A headless 7am run with a cheaper
+The verbs do not replace applets. A headless 7am run with a cheaper
 model and nobody watching still needs flat fields, the check and the limits.
-The verbs make applets thinner over time (a field the outside agent can reach
-through a verb does not need to become a manifest key); they do not remove
-them. Data triggers and Persona ([applets-next-plan.md](applets-next-plan.md))
+The verbs let applets shrink over time (a field the outside agent can reach
+through a verb does not need to become a manifest key), but applets remain. Data triggers and Persona ([applets-next-plan.md](applets-next-plan.md))
 wait on the test in slice 4 for the same reason.
 
 ## CLI first, MCP as an adapter
@@ -35,7 +35,7 @@ is read, where an MCP tool list sits in every prompt. `virtues mcp` exists for
 agents that cannot open a shell, and lists the same verbs; it is an adapter
 over the CLI's verbs, never a second definition of them.
 
-## The one door
+## One execution path for every verb
 
 Every verb is a registry tool run through `ToolExecutor::execute`. No verb
 gets its own SQL, its own role switch or its own validation:
@@ -44,11 +44,11 @@ gets its own SQL, its own role switch or its own validation:
   (`tools/sql_query.rs`); `sql_write` to `virtues_applet_writer`
   (`tools/sql_write.rs`). The CLI runs as the `virtues` service user, whose
   pool role is a superuser, so a verb that bypassed the executor would read
-  `box_secrets` and `virtues.env`. **That is the failure this door exists to
-  prevent.**
+  `box_secrets` and `virtues.env`. **Running every verb through the executor
+  prevents that.**
 - Arguments and help text come from `virtues_registry::tools::ToolConfig`
   (`parameters`, `description`). The CLI, the MCP tool list and the chat tool
-  list are three renderings of one table.
+  list are three views of one table.
 - Which tools a caller may use is a named allowlist beside
   `APPLET_RUN_ALLOWED_TOOLS` in `tools/mod.rs`, not a second list in `cli/`.
 
@@ -67,7 +67,7 @@ gets its own SQL, its own role switch or its own validation:
 | `virtues write <sql>` | `sql_write` | `applet_*` schemas only |
 | `virtues schema [table]` | the `sql_catalog` description `sql_query` already generates | what an outside agent needs first |
 
-Deliberately absent: `shell`, `sql_sudo`, `generate_image`, `code_interpreter`
+Not exposed: `shell`, `sql_sudo`, `generate_image`, `code_interpreter`
 (an outside agent has its own), `web_search` (same, and it spends the box's
 gateway money), `update_memory` and the narrative-identity tools (they write
 the owner's account of themselves).
@@ -94,30 +94,32 @@ there.
 That changes an invariant in record/applets.md, which reads "no path from
 model output to an enabled, scheduled row without a user-surface action". For
 an outside agent, **the user-surface action is the owner's approval in the
-agent's own session**. The record's wording is updated in the same change
-that ships write verbs. The chat door is unchanged: an applet authored in the
+agent's own session**. The wording in record/applets.md is updated in the same
+change that ships write verbs. The chat path is unchanged: an applet authored in the
 box's own chat still waits on the Enable card.
 
 What replaces the card as the backstop: **an applet put through the CLI with
 a prompt gets `max_llm_cost_per_day = 1.00`** when it sets none, so a
 scheduled applet a model wrote cannot run up a bill unattended. The owner can
-raise or remove it like any limit. Both are built and in the record.
+raise or remove it like any limit. Both are built and documented in
+record/applets.md.
 
-### The trap this has to close anyway
+### Headless calls are not gated
 
 `check_tool_permission` gates only when `context.chat_id` is set: **"Headless
 calls with no chat aren't gated either."** The CLI's verbs ride that headless
-path, which is now intended. What says where a write came from is the door it
-came through, not a field: writes arrive only at the console door, which
-takes only the local console and logs each call, and the default spend cap is
-applied by the CLI verb before the tool runs.
+path, which is now intended. The endpoint a write arrives on identifies where
+it came from; there is no caller field. Writes arrive only at the console
+endpoint (`POST /api/console/tool/:tool`), which accepts only the local
+console and logs each call, and the default spend cap is applied by the CLI
+verb before the tool runs.
 
 ## Reaching the box
 
 The credential decides what an agent can reach, and the CLI's role drops only
 protect anything if the credential cannot go around the CLI.
 
-| Way in | Opens | What the key can reach | Verdict |
+| Way in | Opens | What the key can reach | Decision |
 |---|---|---|---|
 | Plain SSH | nothing new | a full shell: `sudo -u virtues` is a database superuser, `virtues.env` holds the encryption key. The agent can skip the CLI, so the roles protect nothing and the only boundary is the agent's own permission prompts | **no** |
 | SSH key with a forced command | nothing new | `command="virtues …",no-pty,no-port-forwarding` in `authorized_keys`: the key can run the `virtues` CLI and nothing else, so the executor's roles are the real boundary | **first** |
@@ -128,13 +130,13 @@ protect anything if the credential cannot go around the CLI.
 the `virtues-agent` user (slice 4 says why not the login user), and
 `agent-key ls/rm` manage them. The forced command dispatches
 `SSH_ORIGINAL_COMMAND` to the CLI's verbs only (lifecycle verbs like `upgrade`
-or `reset` refused) and passes the key's name to the console door for the
+or `reset` refused) and passes the key's name to the console endpoint for the
 audit line. Limits: reachable on the LAN or over Tailscale, and only on a box
 running sshd.
 
 **Later: agent devices over iroh.** A device kind `agent`, paired with the
 standing code like any device, and a `virtues` client on the laptop that
-speaks iroh. Designed when owners want access away from home; not before.
+speaks iroh. Design this only once owners want access away from home.
 
 ## Audit
 
@@ -187,8 +189,8 @@ which is the boundary that matters. `agent-key` is box-only.
    own journal. `applet on/off` is the app's switch, `PATCH /api/applets/:id`.
    `page edit` saves the page at once (`YjsState::apply_text_edit` saves a
    machine edit without the debounce) so a read straight after sees it. A write needs the server running; the error says
-   so. No caller field on `ToolContext` was needed: the door the call came
-   through says who it is.
+   so. No caller field on `ToolContext` was needed: the endpoint the call
+   arrives on identifies the caller.
 4. **`agent-key`.** Built 2026-10-05; the spare-box test below is still to
    run. The key does not go to the owner's login (a shell) or to `virtues`,
    which the installer gives passwordless `sudo ALL` and a `nologin` shell (a
@@ -200,14 +202,14 @@ which is the boundary that matters. `agent-key` is box-only.
    `ls` and `rm` touch only lines it wrote. `agent-exec` parses
    `SSH_ORIGINAL_COMMAND` (never executes it), allows only the data verbs, and
    since its user has no database, sends every verb, reads included, to the
-   console door over loopback with the key's name in a header; the door logs
+   console endpoint over loopback with the key's name in a header; the endpoint logs
    it as `agent_key`. A folder path is refused there (it names a directory on
    the box); `applet check -` and `applet put -` take JSON. Tested locally
    with `SSH_ORIGINAL_COMMAND` set by hand against a scratch server; not yet
    through a real sshd.
 
    **The test on the spare box**: Claude Code builds three typical applets
-   using only the verbs. **Success, written down before the run: it never
+   using only the verbs. **Success criterion, set before the run: it never
    needs a manifest field the verbs cannot reach.** Every field it does need
    is listed, and that list decides how big applets have to be, and whether
    data triggers and Persona are still wanted.

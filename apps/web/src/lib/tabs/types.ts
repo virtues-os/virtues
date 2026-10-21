@@ -25,6 +25,7 @@ export type TabType =
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity
 	| 'setup' // Setup, in the app once someone is in it: /setup, /setup/{step}
 	| 'source' // Data sources: /source, /source/source_{id}
+	| 'tasks' // The shared to-do list: /tasks
 	| 'applets' // Applets list: /applets
 	| 'applet' // Applet detail: /applet/applet_{id}
 	| 'applet-view' // Applet full-page face: /applet/applet_{id}/view

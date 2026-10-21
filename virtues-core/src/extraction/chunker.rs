@@ -1,4 +1,4 @@
-//! Paragraph-aware chunking (researcher-plan D1, locked decision 7).
+//! Paragraph-aware chunking (agents/record/researcher.md D1, decision 7).
 //!
 //! ~400–600 tokens per chunk approximated as a word budget (~1.3 words/token →
 //! 300–450 words), 10–15% overlap, chunks may cross pages. Every chunk anchors:

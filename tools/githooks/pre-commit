@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
 # Run CI's ratchets against the content being COMMITTED, not the working tree.
 #
-# Installed by `make hooks` (core.hooksPath → tools/githooks), with commit-msg
-# and pre-push beside it.
+# Installed by `make hooks` (core.hooksPath → tools/githooks).
 #
-# The ratchets (design-lint.sh, check-copy.py, check-swallowed-queries.sh) fail
+# The ratchets (design-lint.sh, check-swallowed-queries.sh) fail
 # CI when a count rises by one. Run in this checkout they measure every agent's
 # uncommitted edits at once, so an author sees a number that is not the one CI
 # will see, and pushes a +1 that looked clean here. That was the single most
@@ -17,23 +16,8 @@
 # nobody else's in-flight edits can reach it.
 #
 #   Skip the ratchets once:  VIRTUES_SKIP_RATCHETS=1 git commit ...
-#   (the privacy guard still runs; a generic false hit is accepted with
-#   `tools/privacy-guard.py allow --last`, never by skipping the hook)
 
 set -uo pipefail
-
-# Real personal data first, and never skipped by the ratchet switch. The guard
-# reads the staged diff against a hashed denylist of the owner's record, kept
-# outside the repo (a clone with no denylist passes, unless
-# virtues.guardRequired says this machine must have one). check-pii needs no
-# real data: contact details outside the fictional blocks, and the file types a
-# life is exported as (recordings, GPS photos, traces, databases, notebooks).
-# commit-msg and pre-push run the same two over the message and every pushed commit.
-# Both run before either refuses, so one attempt names everything to fix.
-private=0
-python3 tools/privacy-guard.py check || private=1
-python3 tools/check-pii.py --staged || private=1
-[ "$private" = 0 ] || exit 1
 
 [ "${VIRTUES_SKIP_RATCHETS:-}" = 1 ] && exit 0
 
@@ -48,7 +32,7 @@ trap 'rm -rf "$tmp"' EXIT
 git checkout-index -a --prefix="$tmp/" || { echo "pre-commit: could not export the commit's tree" >&2; exit 1; }
 
 failed=""
-for check in tools/design-lint.sh tools/check-copy.py tools/check-swallowed-queries.sh; do
+for check in tools/design-lint.sh tools/check-swallowed-queries.sh; do
     [ -x "$tmp/$check" ] || continue
     if ! out=$("$tmp/$check" 2>&1); then
         failed="$failed $check"

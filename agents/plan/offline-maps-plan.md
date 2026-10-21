@@ -1,4 +1,4 @@
-# Offline maps — what is left
+# Offline maps — remaining work
 
 The box's own Protomaps maps are built end to end: the box serves its files,
 virtues-api serves them to boxes, the monthly cut produces them, and the box
