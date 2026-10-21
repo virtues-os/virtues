@@ -10,6 +10,7 @@
 	import type { WikiPlaceApi } from "$lib/wiki/api";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
+	import WikiCrumbs from "./WikiCrumbs.svelte";
 	import SubjectBacklinks from "./SubjectBacklinks.svelte";
 	import NotesRail from "./NotesRail.svelte";
 	import EntityRecordsSection from "./EntityRecordsSection.svelte";
@@ -106,6 +107,7 @@
 <div class="page-layout">
 	<article class="wiki-article">
 		<div class="page-content">
+			<WikiCrumbs bar parent={{ label: "Places", href: "/wiki/places" }} current={page.name} />
 			<!-- Header -->
 			<header class="page-header">
 				<h1 class="page-title">{page.name}</h1>
@@ -257,7 +259,7 @@
 		overflow-y: auto;
 		scrollbar-width: none;
 		-ms-overflow-style: none;
-		padding: 2rem;
+		padding: 0.5rem 2rem 2rem;
 	}
 
 	.wiki-article::-webkit-scrollbar {
@@ -267,7 +269,8 @@
 	.page-content {
 		max-width: 48rem;
 		margin: 0 auto;
-		padding-top: 2rem;
+		/* The crumb row above the header takes the top space. */
+		padding-top: 0.25rem;
 		padding-bottom: 4rem;
 	}
 
