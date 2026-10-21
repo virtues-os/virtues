@@ -894,9 +894,14 @@ const ContractGuard = Extension.create({
 		return [
 			new Plugin({
 				key: new PluginKey('contractGuard'),
-				filterTransaction: (tr) =>
-					tr.getMeta(ySyncPluginKey) !== undefined ||
-					tr.steps.every((step, i) => stepFits(step, tr.docs[i])),
+				filterTransaction: (tr) => {
+					if (tr.getMeta(ySyncPluginKey) !== undefined) return true;
+					const refused = tr.steps.findIndex((step, i) => !stepFits(step, tr.docs[i]));
+					if (refused < 0) return true;
+					// A command wrote what the contract refuses: a bug to find, not a state to hide.
+					console.warn('[contractGuard] an edit outside the contract was dropped', tr.steps[refused].toJSON());
+					return false;
+				},
 			}),
 		];
 	},

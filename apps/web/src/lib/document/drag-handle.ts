@@ -23,7 +23,7 @@
 
 import { Extension } from '@tiptap/core';
 import type { Node as PmNode, Slice } from '@tiptap/pm/model';
-import { NodeSelection, Plugin, PluginKey, Selection, TextSelection, type Transaction } from '@tiptap/pm/state';
+import { NodeSelection, Plugin, PluginKey, Selection, type Transaction } from '@tiptap/pm/state';
 import { dropPoint } from '@tiptap/pm/transform';
 import type { EditorView } from '@tiptap/pm/view';
 import { moveUnitTo, unitAround, withoutIds } from './commands';
@@ -204,11 +204,7 @@ class Grip {
 		if (!unit || !view.editable) return;
 		event.preventDefault();
 		const { state } = view;
-		const text = unit.node.isAtom ? null : textRange(view, unit);
-		const selection = text
-			? TextSelection.create(state.doc, text.from, text.to)
-			: NodeSelection.create(state.doc, unit.from);
-		view.dispatch(state.tr.setSelection(selection));
+		view.dispatch(state.tr.setSelection(NodeSelection.create(state.doc, unit.from)));
 		view.focus();
 	};
 

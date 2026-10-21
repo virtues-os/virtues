@@ -195,7 +195,7 @@ function pastingPlain(view: EditorView): boolean {
  * paste's HTML loads or runs.
  */
 export function isCodeEditorHtml(html: string): boolean {
-	const body = new DOMParser().parseFromString(html, 'text/html').body;
+	const body = inertHtml(html);
 	const roots = [...body.children].filter((el) => el.tagName !== 'META' && el.tagName !== 'STYLE');
 	if (roots.length !== 1) return false;
 	const root = roots[0];
@@ -285,11 +285,17 @@ export function plainSlice(schema: Schema, text: string): Slice {
 	return new Slice(Fragment.from(paragraphs), 1, 1);
 }
 
+/**
+ * HTML read in a document of its own, which loads nothing: an image the
+ * converter's output names is not fetched before it is in the page.
+ */
+export function inertHtml(html: string): HTMLElement {
+	return new DOMParser().parseFromString(html, 'text/html').body;
+}
+
 /** HTML as the slice a paste of it would insert. */
 export function htmlSlice(schema: Schema, html: string): Slice {
-	const div = document.createElement('div');
-	div.innerHTML = html;
-	return PmDOMParser.fromSchema(schema).parseSlice(div);
+	return PmDOMParser.fromSchema(schema).parseSlice(inertHtml(html));
 }
 
 function isList(node: PmNode): boolean {

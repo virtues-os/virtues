@@ -16,6 +16,7 @@ import { DOMParser as PmDOMParser, Fragment, type Node as PmNode, type Schema } 
 import { getSchema } from '@tiptap/core';
 import { convertNow, type ConvertResult } from './converter';
 import { messageMarkdown } from './markdown';
+import { inertHtml } from './paste';
 import { contractExtensions, type ContractPart } from './schema';
 
 /**
@@ -55,9 +56,7 @@ export function textBlocks(schema: Schema, text: string): Fragment {
 }
 
 function parseHtml(schema: Schema, html: string): PmNode {
-	const div = document.createElement('div');
-	div.innerHTML = html;
-	return PmDOMParser.fromSchema(schema).parse(div);
+	return PmDOMParser.fromSchema(schema).parse(inertHtml(html));
 }
 
 /** How a message's markdown was read: by the converter, as its text, or as its text with no converter to run. */

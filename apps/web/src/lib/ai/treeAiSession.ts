@@ -51,10 +51,11 @@ import type { Editor } from "@tiptap/core";
 import { Slice, type Mark, type Node as PmNode, type ResolvedPos } from "@tiptap/pm/model";
 import type { EditorState, Transaction } from "@tiptap/pm/state";
 import { canSplit } from "@tiptap/pm/transform";
-import { ySyncPluginKey, yUndoPluginKey } from "@tiptap/y-tiptap";
+import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import type * as Y from "yjs";
 import { toast } from "svelte-sonner";
 import { anchorAt, isBound, type Anchor } from "$lib/document/anchor";
+import { undoManagerOf } from "$lib/document/history";
 import type { TreeAiDriver } from "$lib/document/editor";
 import { clearAi, setAiCaret, setAiTelegraph, setAiTrail } from "$lib/document/presence";
 import { DELETION, INSERTION, PROPOSAL_ATTR, withProposalRejected } from "$lib/document/suggestions";
@@ -444,8 +445,7 @@ class TreeAiSession {
 
 	/** Make everything this session writes one undo step, apart from what came before. */
 	private holdUndo() {
-		const manager = (yUndoPluginKey.getState(this.editor.state) as { undoManager?: Y.UndoManager } | undefined)
-			?.undoManager;
+		const manager = undoManagerOf(this.editor.state);
 		if (!manager) return;
 		manager.stopCapturing();
 		this.undo = { manager, timeout: manager.captureTimeout };

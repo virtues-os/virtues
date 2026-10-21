@@ -16,6 +16,7 @@
 	// (a page's text, an org's people) is a later step needing new data.
 	import Icon from "$lib/components/Icon.svelte";
 	import { backendUrl } from "$lib/config/backend";
+	import { kindOfLink } from "$lib/document/media-kind";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
 	import { initials } from "$lib/utils/initials";
 	import { refIcon } from "$lib/utils/refRoutes";
@@ -44,8 +45,7 @@
 		}
 	});
 
-	const IMAGE_EXT = /\.(jpe?g|png|gif|webp|svg|bmp|ico|heic)$/i;
-	const isImage = $derived((mimeType?.startsWith("image/") ?? false) || IMAGE_EXT.test(label));
+	const isImage = $derived((mimeType?.startsWith("image/") ?? false) || kindOfLink("", label) === "image");
 	const fileImageUrl = $derived(
 		type === "file" && isImage && id ? backendUrl(`/api/drive/files/${id}/download`) : "",
 	);

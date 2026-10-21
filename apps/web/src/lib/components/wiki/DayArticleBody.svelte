@@ -47,6 +47,7 @@
 	import { getDayFirsts, type DayFirstsApi, type WikiNote } from "$lib/wiki/api";
 	import { stepDay } from "$lib/timeline/day";
 	import { inComposition } from "$lib/utils/ime";
+	import { scrollerOf } from "$lib/document/outline";
 	import { veiled } from "$lib/actions/veil";
 	import { veil } from "$lib/stores/veil.svelte";
 	import DayInline from "./DayInline.svelte";
@@ -156,13 +157,6 @@
 	});
 
 	/** The nearest ancestor that scrolls: the page's right edge, for the card's width. */
-	function scrollParent(el: HTMLElement): HTMLElement | null {
-		for (let p = el.parentElement; p; p = p.parentElement) {
-			if (/(auto|scroll)/.test(getComputedStyle(p).overflowY)) return p;
-		}
-		return null;
-	}
-
 	/**
 	 * In the margin when the row has one: level with the anchor's first line,
 	 * as wide as the margin and on into the page's right gutter, up to 20rem.
@@ -178,8 +172,8 @@
 		const box = root.getBoundingClientRect();
 		const rowBox = row.getBoundingClientRect();
 		const left = rowBox.left - box.left + cols[0] + (parseFloat(style.columnGap) || 0);
-		const view = scrollParent(root);
-		const right = view ? view.getBoundingClientRect().left + view.clientWidth : document.documentElement.clientWidth;
+		const view = scrollerOf(root);
+		const right = view.getBoundingClientRect().left + view.clientWidth;
 		const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 		const width = Math.min(20 * rem, Math.max(cols[1], right - (box.left + left) - rem));
 		const top = (anchor.getClientRects()[0] ?? anchor.getBoundingClientRect()).top - box.top - 4;

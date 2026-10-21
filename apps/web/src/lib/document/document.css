@@ -453,6 +453,12 @@
 	outline: none;
 }
 
+/* A block of text selected whole, as a click on its grip selects it. */
+.doc-prose :is(p, h1, h2, h3, h4, h5, h6, blockquote, pre, ul, ol, li, table).ProseMirror-selectednode {
+	border-radius: 4px;
+	background: var(--color-primary-subtle);
+}
+
 /* A rule selected, as Backspace beside it selects it before it goes. The
    other widgets draw their own selected outline. */
 .doc-prose hr.ProseMirror-selectednode {
