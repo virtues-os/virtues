@@ -187,7 +187,8 @@ Where a theme's step is large enough, a card has no border
 | Pemberley | `#F0F0F2`, a cool light gray | `#FFFFFF` | none |
 | Oxford (Virtues Light) | `#ECEAE5`, a warm gray | `#FFFFFF` | none |
 | Asgard (Virtues Dark) | `#0A0A0A` | `#161616` | none |
-| the other thirteen | `--surface-elevated` | `--page` | `--border`, until each theme gets its own pass |
+| the other twelve | each theme's own `--surface-elevated` tint, darkened to about 7 L* below the page (light) or 5 (dark) | `--page` | none |
+| Borghese | `--surface-elevated` | pure black | `--border`: nothing can sit below black, so its cards keep a line |
 
 Text uses three inks: foreground, muted and subtle.
 

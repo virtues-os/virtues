@@ -241,10 +241,12 @@
 	--surface-elevated: #FFFFFF;
 	/* The desk: the ground the cards stand on, under the sidebar and the
 	   window header. Only the work is raised, so the step between the desk
-	   and --page is what separates a card, not a line (--card-edge). Tuned in
-	   Pemberley, Oxford and Asgard; the other themes stand their cards on
-	   --surface-elevated and keep a border until each gets its own pass.
-	   Pemberley: white sheets on a cool light gray, about a 6% step. */
+	   and --page is what separates a card, not a line (--card-edge is
+	   transparent wherever the step does the job). Every theme's desk is its
+	   own --surface-elevated tint, darkened to about 7 L* below the page in
+	   a light theme and about 5 in a dark one; Borghese, whose page is pure
+	   black, keeps a border instead.
+	   Pemberley: white sheets on a cool light gray. */
 	--desk: #F0F0F2;
 	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
@@ -412,8 +414,8 @@
 	--background: #FFFFFF;
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
-	--desk: var(--surface-elevated);
-	--card-edge: var(--border);
+	--desk: #EBEBEB;
+	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Film grain + subtle navy gradient */
@@ -498,8 +500,8 @@
 	--background: #FFFFFF;
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
-	--desk: var(--surface-elevated);
-	--card-edge: var(--border);
+	--desk: #EBEBEB;
+	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Blue to peach gradient */
@@ -666,8 +668,8 @@
 	--background: #FFFFFF;
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
-	--desk: var(--surface-elevated);
-	--card-edge: var(--border);
+	--desk: #EBEBEB;
+	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Flat for this theme */
@@ -740,8 +742,8 @@
 	--background: #1a1a2e;
 	--surface: #1f1f35;
 	--surface-elevated: #25253d;
-	--desk: var(--surface-elevated);
-	--card-edge: var(--border);
+	--desk: #15152B;
+	--card-edge: transparent;
 	--surface-overlay: #2a2a45;
 
 	/* Background Treatment - Dark blue to warm gradient */
@@ -812,8 +814,8 @@
 	--background: #F7F7F4;
 	--surface: #FFFFFF;
 	--surface-elevated: #F0EFE9;
-	--desk: var(--surface-elevated);
-	--card-edge: var(--border);
+	--desk: #ECEBE5;
+	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Flat for this theme */
@@ -885,8 +887,8 @@
 	--background: #0a0a0a;
 	--surface: #171717;
 	--surface-elevated: #262626;
-	--desk: var(--surface-elevated);
-	--card-edge: var(--border);
+	--desk: #0A0A0A;
+	--card-edge: transparent;
 	--surface-overlay: #2a2a2a;
 
 	/* Background Treatment - Subtle dark gradient with hint of warmth */
@@ -960,8 +962,8 @@
 	--background: #0F1821;
 	--surface: #131E28;
 	--surface-elevated: #18242F;
-	--desk: var(--surface-elevated);
-	--card-edge: var(--border);
+	--desk: #08141E;
+	--card-edge: transparent;
 	--surface-overlay: #1D2A36;
 
 	/* Background Treatment — the grid rules the DESK, not the page.
@@ -1063,8 +1065,8 @@
 	--background: #14120B;
 	--surface: #1B1913;
 	--surface-elevated: #221E15;
-	--desk: var(--surface-elevated);
-	--card-edge: var(--border);
+	--desk: #110D05;
+	--card-edge: transparent;
 	--surface-overlay: #261F14;
 
 	/* Content Colors */
@@ -1125,6 +1127,8 @@
 	--background: #000000;
 	--surface: #000000;
 	--surface-elevated: #1a1a1a;
+	/* The page is pure black, so no desk can sit below it: the cards keep
+	   their border, which is this theme's look. */
 	--desk: var(--surface-elevated);
 	--card-edge: var(--border);
 	--surface-overlay: #1a1a1a;
@@ -1188,8 +1192,8 @@
 	--background: #292d34;
 	--surface: #2f333d;
 	--surface-elevated: #383e4a;
-	--desk: var(--surface-elevated);
-	--card-edge: var(--border);
+	--desk: #232834;
+	--card-edge: transparent;
 	--surface-overlay: #3e4451;
 
 	/* Content Colors - Slightly lighter for readability */
@@ -1323,8 +1327,8 @@
 	--background: #fdf6e3;
 	--surface: #fdf6e3;
 	--surface-elevated: #eee8d5;
-	--desk: var(--surface-elevated);
-	--card-edge: var(--border);
+	--desk: #E8E2CF;
+	--card-edge: transparent;
 	--surface-overlay: #ffffff;
 
 	/* Content Colors - Warm text hierarchy */
@@ -1391,8 +1395,8 @@
 	--background: #282a36;
 	--surface: #2d303e;
 	--surface-elevated: #343746;
-	--desk: var(--surface-elevated);
-	--card-edge: var(--border);
+	--desk: #232533;
+	--card-edge: transparent;
 	--surface-overlay: #3c3f52;
 
 	/* Content Colors */
@@ -1458,8 +1462,8 @@
 	--background: #232136;
 	--surface: #2a273f;
 	--surface-elevated: #312e47;
-	--desk: var(--surface-elevated);
-	--card-edge: var(--border);
+	--desk: #201C34;
+	--card-edge: transparent;
 	--surface-overlay: #393552;
 
 	/* Content Colors */
