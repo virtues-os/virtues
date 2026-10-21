@@ -2,8 +2,7 @@
 //! server: a tile is protobuf layers, a layer names its features' tag keys
 //! and values, and a feature's geometry is move / line / close commands on a
 //! cursor. Place names read the `pois` and `places` layers' points
-//! (`naming`); the open-water test reads the `water` layer's polygons
-//! (`water`).
+//! (`naming`); an airport's grounds read the `landuse` layer's polygons.
 
 use std::collections::HashMap;
 
@@ -100,6 +99,22 @@ pub(super) fn rings(geometry: &[u32]) -> Polygon {
         out.push(ring);
     }
     out
+}
+
+/// Even-odd over every ring of one polygon, so a point in a hole is outside.
+pub(super) fn inside(px: f64, py: f64, rings: &[Vec<(f64, f64)>]) -> bool {
+    let mut odd = false;
+    for ring in rings {
+        let n = ring.len();
+        for i in 0..n {
+            let (xi, yi) = ring[i];
+            let (xj, yj) = ring[(i + n - 1) % n];
+            if (yi > py) != (yj > py) && px < (xj - xi) * (py - yi) / (yj - yi) + xi {
+                odd = !odd;
+            }
+        }
+    }
+    odd
 }
 
 /// A point feature's points, in tile units.
@@ -336,6 +351,15 @@ mod tests {
         assert_eq!(crate::maps::tile_at(la - 1e-9, lo + 1e-9, 15), (x, y));
         let (la2, lo2) = to_lat_lon(15, x, y, 4096.0, 4096.0, 4096.0);
         assert_eq!(crate::maps::tile_at(la2 - 1e-9, lo2 + 1e-9, 15), (x + 1, y + 1));
+    }
+
+    #[test]
+    fn a_hole_is_outside_its_polygon() {
+        let square = |a: f64, b: f64| vec![(a, a), (b, a), (b, b), (a, b)];
+        let field = vec![square(1000.0, 3000.0), square(1800.0, 2200.0)];
+        assert!(inside(1500.0, 1500.0, &field));
+        assert!(!inside(2000.0, 2000.0, &field), "the hole");
+        assert!(!inside(3500.0, 3500.0, &field));
     }
 
     fn layer_of<'a>(t: &'a [u8], name: &str) -> Layer<'a> {

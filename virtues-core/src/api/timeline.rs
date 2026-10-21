@@ -116,7 +116,7 @@ pub struct CalendarEvent {
 
 pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
     let zone = crate::timezone::day_timezone(pool, date).await?;
-    let (start, end) = crate::timezone::day_window(pool, date).await?;
+    let (start, end) = super::day_summary::day_bounds(date, Some(&zone));
 
     let stays = sqlx::query(
         r#"SELECT v.id, v.started_at, v.ended_at, v.latitude, v.longitude,

@@ -5,10 +5,27 @@
  * themselves are review.ts's; this holds what the person has done with them.
  */
 import { mergePlace } from "$lib/wiki/api";
-import { asQuestion, fetchReview, sendAnswer, type Answer, type PlaceReview } from "./review";
+import { asQuestion, fetchReview, sendAnswer, type Answer, type PlaceReview, type UndoableKind } from "./review";
 
 /** How long an answer can be undone. */
 const UNDO_MS = 8000;
+
+/** Each place an answer changed and the answer it got there, so Undo
+ *  reverses that answer alone. A tap on the map is two answers: no to the
+ *  place asked about, yes to the place tapped. */
+function undoes(id: string, a: Answer, tapped: string | null): { id: string; undoes: UndoableKind }[] {
+	switch (a.kind) {
+		case "home_here":
+		case "work_here": {
+			const role: UndoableKind = a.kind === "home_here" ? "home" : "work";
+			return [{ id, undoes: role === "home" ? "not_home" : "not_work" }, ...(tapped ? [{ id: tapped, undoes: role }] : [])];
+		}
+		case "reopen":
+			return [];
+		default:
+			return [{ id, undoes: a.kind }];
+	}
+}
 
 /** What an answer said, for its Undo line. */
 export function said(a: Answer): string {
@@ -41,8 +58,8 @@ export class ReviewState {
 	/** The place whose answer the server refused. */
 	saveFailed = $state<string | null>(null);
 	/** The last answer, undoable for a few seconds: the place it was given
-	 *  at, what it said, and the places it touched. */
-	undo = $state<{ at: string; said: string; ids: string[] } | null>(null);
+	 *  at, what it said, and each place it touched with what it set there. */
+	undo = $state<{ at: string; said: string; steps: { id: string; undoes: UndoableKind }[] } | null>(null);
 	/** "No" to Home or Work: the place said no to, and the role being
 	 *  pointed to on the map. */
 	pointing = $state<{ id: string; role: "home" | "work" } | null>(null);
@@ -86,7 +103,7 @@ export class ReviewState {
 			this.pointing = null;
 			await this.load();
 			clearTimeout(this.undoTimer);
-			this.undo = a.kind === "reopen" || change ? null : { at: id, said: said(a), ids: [id, ...(done.place_id ? [done.place_id] : [])] };
+			this.undo = a.kind === "reopen" || change ? null : { at: id, said: said(a), steps: undoes(id, a, done.place_id) };
 			this.undoTimer = window.setTimeout(() => (this.undo = null), UNDO_MS);
 			if (change) this.changes++;
 			this.onanswered();
@@ -107,7 +124,7 @@ export class ReviewState {
 		if (!u) return;
 		this.undo = null;
 		clearTimeout(this.undoTimer);
-		for (const id of [...u.ids].reverse()) await this.answer(id, { kind: "reopen" });
+		for (const s of [...u.steps].reverse()) await this.answer(s.id, { kind: "reopen", undoes: s.undoes });
 		this.undo = null;
 	}
 

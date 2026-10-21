@@ -33,7 +33,6 @@ use serde::Serialize;
 
 mod mvt;
 pub(crate) mod naming;
-pub(crate) mod water;
 pub mod sync;
 
 /// Where the maps live on an installed box, beside the lake rather than in

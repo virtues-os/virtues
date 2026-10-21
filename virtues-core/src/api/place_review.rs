@@ -527,13 +527,18 @@ pub struct Answer {
     /// through; `not_this`: the map's match is wrong; `home` / `not_home` and
     /// `work` / `not_work`: whether it's home, or where the person works;
     /// `home_here` / `work_here`: not this place, but the one at `lat`,
-    /// `lon`, tapped on the map; `reopen`: forget every answer about it and
-    /// ask again.
+    /// `lon`, tapped on the map; `reopen`: Undo of the answer in `undoes`.
     pub kind: String,
     pub name: Option<String>,
     pub category: Option<String>,
     pub lat: Option<f64>,
     pub lon: Option<f64>,
+    /// For `reopen`, the answer being undone (`name`, `passing`, `not_this`,
+    /// `home`, `not_home`, `work` or `not_work`). Only that answer's change
+    /// is reversed, so undoing Home on a place the person named keeps its
+    /// name. Without it, every answer flag and Home are cleared and the name
+    /// is kept.
+    pub undoes: Option<String>,
 }
 
 /// The place an answer set Home or Work on, when it wasn't the one asked
@@ -587,10 +592,10 @@ pub async fn answer(pool: &PgPool, id: &str, a: &Answer) -> Result<Answered> {
     if let ("home_here" | "work_here", Some(lat), Some(lon)) = (a.kind.as_str(), a.lat, a.lon) {
         // Not this place: it's the one tapped on the map.
         let role = &a.kind[..4];
-        let no = Answer { kind: format!("not_{role}"), name: None, category: None, lat: None, lon: None };
+        let no = Answer { kind: format!("not_{role}"), name: None, category: None, lat: None, lon: None, undoes: None };
         Box::pin(answer(pool, id, &no)).await?;
         let there = place_at(pool, lat, lon).await?;
-        let yes = Answer { kind: role.to_string(), name: None, category: None, lat: None, lon: None };
+        let yes = Answer { kind: role.to_string(), name: None, category: None, lat: None, lon: None, undoes: None };
         Box::pin(answer(pool, &there, &yes)).await?;
         return Ok(Answered { place_id: Some(there) });
     }
@@ -661,25 +666,54 @@ pub async fn answer(pool: &PgPool, id: &str, a: &Answer) -> Result<Answered> {
         )
         .bind(id)
         .bind(name),
-        _ => {
-            let (lat, lon): (f64, f64) = sqlx::query_as("SELECT latitude, longitude FROM wiki_places WHERE id = $1")
+        _ => match a.undoes.as_deref() {
+            // A name is only undoable on a place that had none
+            // (`reviewState.svelte.ts` offers no Undo once a place is named),
+            // so it goes back to the resolver's stub.
+            Some("name") => {
+                let (lat, lon): (f64, f64) = sqlx::query_as("SELECT latitude, longitude FROM wiki_places WHERE id = $1")
+                    .bind(id)
+                    .fetch_optional(pool)
+                    .await?
+                    .ok_or_else(|| Error::NotFound(format!("No place {id}")))?;
+                sqlx::query(
+                    "UPDATE wiki_places SET name = $2, is_named = false, \
+                     metadata = COALESCE(metadata, '{}'::jsonb) - 'source', updated_at = NOW() WHERE id = $1",
+                )
                 .bind(id)
-                .fetch_optional(pool)
-                .await?
-                .ok_or_else(|| Error::NotFound(format!("No place {id}")))?;
-            sqlx::query("UPDATE app_user_profile SET home_place_id = NULL WHERE home_place_id = $1")
-                .bind(id)
-                .execute(pool)
-                .await?;
-            sqlx::query(
-                "UPDATE wiki_places SET name = CASE WHEN is_named THEN $2 ELSE name END, is_named = false, \
-                 metadata = COALESCE(metadata, '{}'::jsonb) - 'passing_through' - 'rejected_match' - 'source' \
-                     - 'is_work' - 'not_home' - 'not_work', \
-                 updated_at = NOW() WHERE id = $1",
+                .bind(stub(lat, lon))
+            }
+            Some("home") => {
+                sqlx::query("UPDATE app_user_profile SET home_place_id = NULL WHERE home_place_id = $1")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query("UPDATE wiki_places SET updated_at = NOW() WHERE id = $1").bind(id)
+            }
+            Some(kind @ ("passing" | "not_this" | "work" | "not_work" | "not_home")) => sqlx::query(
+                "UPDATE wiki_places SET metadata = COALESCE(metadata, '{}'::jsonb) - $2::text, updated_at = NOW() WHERE id = $1",
             )
             .bind(id)
-            .bind(stub(lat, lon))
-        }
+            .bind(match kind {
+                "passing" => "passing_through",
+                "not_this" => "rejected_match",
+                "work" => "is_work",
+                other => other,
+            }),
+            Some(other) => return Err(Error::InvalidInput(format!("can't undo `{other}`"))),
+            None => {
+                sqlx::query("UPDATE app_user_profile SET home_place_id = NULL WHERE home_place_id = $1")
+                    .bind(id)
+                    .execute(pool)
+                    .await?;
+                sqlx::query(
+                    "UPDATE wiki_places SET metadata = COALESCE(metadata, '{}'::jsonb) - 'passing_through' - 'rejected_match' \
+                         - 'is_work' - 'not_home' - 'not_work', \
+                     updated_at = NOW() WHERE id = $1",
+                )
+                .bind(id)
+            }
+        },
     };
     if q.execute(pool).await?.rows_affected() == 0 {
         return Err(Error::NotFound(format!("No place {id}")));
@@ -870,8 +904,11 @@ mod tests {
         .await
         .unwrap()
     }
+    fn undo(kind: &str) -> Answer {
+        Answer { kind: "reopen".into(), name: None, category: None, lat: None, lon: None, undoes: Some(kind.into()) }
+    }
     fn named(name: &str) -> Answer {
-        Answer { kind: "name".into(), name: Some(name.into()), category: Some("dining".into()), lat: None, lon: None }
+        Answer { kind: "name".into(), name: Some(name.into()), category: Some("dining".into()), lat: None, lon: None, undoes: None }
     }
 
     #[sqlx::test]
@@ -896,12 +933,12 @@ mod tests {
     #[sqlx::test]
     async fn passing_through_is_kept_and_reopening_asks_again(pool: PgPool) {
         let id = sea_place(&pool).await;
-        answer(&pool, &id, &Answer { kind: "passing".into(), name: None, category: None, lat: None, lon: None }).await.unwrap();
+        answer(&pool, &id, &Answer { kind: "passing".into(), name: None, category: None, lat: None, lon: None, undoes: None }).await.unwrap();
         assert_eq!(row(&pool, &id).await.4.as_deref(), Some("true"));
         assert!(review(&pool).await.unwrap().questions.iter().all(|q| q.id != id));
 
         answer(&pool, &id, &named("Somewhere")).await.unwrap();
-        answer(&pool, &id, &Answer { kind: "reopen".into(), name: None, category: None, lat: None, lon: None }).await.unwrap();
+        answer(&pool, &id, &undo("name")).await.unwrap();
         let (name, is_named, _, source, passing) = row(&pool, &id).await;
         assert_eq!((name.as_str(), is_named, source, passing), ("Location 0.5000, -30.5000", false, None, None));
         assert!(review(&pool).await.unwrap().questions.iter().any(|q| q.id == id));
@@ -918,16 +955,34 @@ mod tests {
         assert_eq!(asked(&review(&pool).await.unwrap()), Some("home"), "the most nights: asked, not assumed");
         assert_eq!(titles(&pool, &[id.clone()]).await.unwrap()[&id].title, "Unnamed place", "no Home until the person says so");
 
-        answer(&pool, &id, &Answer { kind: "not_home".into(), name: None, category: None, lat: None, lon: None }).await.unwrap();
+        answer(&pool, &id, &Answer { kind: "not_home".into(), name: None, category: None, lat: None, lon: None, undoes: None }).await.unwrap();
         assert_eq!(asked(&review(&pool).await.unwrap()), Some("place"), "a no is kept: asked what it was instead");
 
-        answer(&pool, &id, &Answer { kind: "home".into(), name: None, category: None, lat: None, lon: None }).await.unwrap();
+        answer(&pool, &id, &Answer { kind: "home".into(), name: None, category: None, lat: None, lon: None, undoes: None }).await.unwrap();
         let r = review(&pool).await.unwrap();
         assert!(r.confirmed.iter().any(|c| c.id == id && c.source == "home" && c.title == "Home"));
         assert_eq!(titles(&pool, &[id.clone()]).await.unwrap()[&id].title, "Home");
 
-        answer(&pool, &id, &Answer { kind: "reopen".into(), name: None, category: None, lat: None, lon: None }).await.unwrap();
-        assert_eq!(asked(&review(&pool).await.unwrap()), Some("home"), "reopened: Home is asked again");
+        answer(&pool, &id, &undo("home")).await.unwrap();
+        assert_eq!(asked(&review(&pool).await.unwrap()), Some("home"), "undone: Home is asked again");
+    }
+
+    /// Undo reverses only the answer it undoes: Home set on a place the
+    /// person named and then undone leaves the name, and an old client's
+    /// Undo without `undoes` never touches a name either.
+    #[sqlx::test]
+    async fn undoing_home_keeps_the_name_the_person_gave(pool: PgPool) {
+        let id = sea_place(&pool).await;
+        answer(&pool, &id, &named("Cedar Cabin")).await.unwrap();
+        answer(&pool, &id, &Answer { kind: "home".into(), name: None, category: None, lat: None, lon: None, undoes: None }).await.unwrap();
+        answer(&pool, &id, &undo("home")).await.unwrap();
+        let (name, is_named, _, source, _) = row(&pool, &id).await;
+        assert_eq!((name.as_str(), is_named, source.as_deref()), ("Cedar Cabin", true, Some("user")));
+        assert_eq!(set_home(&pool).await.unwrap(), None);
+
+        answer(&pool, &id, &Answer { kind: "reopen".into(), name: None, category: None, lat: None, lon: None, undoes: None }).await.unwrap();
+        assert_eq!(row(&pool, &id).await.0, "Cedar Cabin");
+        assert!(answer(&pool, &id, &undo("home_here")).await.is_err(), "a tap is undone as its two answers");
     }
 
     #[sqlx::test]
@@ -939,6 +994,7 @@ mod tests {
             category: None,
             lat: at.map(|a| a.0),
             lon: at.map(|a| a.1),
+            undoes: None,
         };
         assert!(answer(&pool, &id, &tap("home_here", None)).await.is_err(), "a tap needs where");
         let set = answer(&pool, &id, &tap("home_here", Some((0.0, -30.0)))).await.unwrap();
@@ -955,15 +1011,15 @@ mod tests {
     #[sqlx::test]
     async fn a_wrong_match_is_kept_and_an_answer_needs_a_name(pool: PgPool) {
         let id = sea_place(&pool).await;
-        answer(&pool, &id, &Answer { kind: "not_this".into(), name: Some("Riverside".into()), category: None, lat: None, lon: None }).await.unwrap();
+        answer(&pool, &id, &Answer { kind: "not_this".into(), name: Some("Riverside".into()), category: None, lat: None, lon: None, undoes: None }).await.unwrap();
         let rejected: Option<String> = sqlx::query_scalar("SELECT metadata->>'rejected_match' FROM wiki_places WHERE id = $1")
             .bind(&id)
             .fetch_one(&pool)
             .await
             .unwrap();
         assert_eq!(rejected.as_deref(), Some("Riverside"));
-        assert!(answer(&pool, &id, &Answer { kind: "name".into(), name: Some("  ".into()), category: None, lat: None, lon: None }).await.is_err());
-        assert!(answer(&pool, &id, &Answer { kind: "shrug".into(), name: None, category: None, lat: None, lon: None }).await.is_err());
+        assert!(answer(&pool, &id, &Answer { kind: "name".into(), name: Some("  ".into()), category: None, lat: None, lon: None, undoes: None }).await.is_err());
+        assert!(answer(&pool, &id, &Answer { kind: "shrug".into(), name: None, category: None, lat: None, lon: None, undoes: None }).await.is_err());
         assert!(answer(&pool, "place_none", &named("X")).await.is_err());
     }
 }
