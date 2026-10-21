@@ -24,6 +24,8 @@
 	 *             there are more, "See all" ends the list and opens All
 	 *             chats. One group: splitting off "Today" cost a heading and
 	 *             a fold for a calendar fact nobody navigated by.
+	 *             The head's filter narrows it to chats or pages, and the
+	 *             label says which.
 	 *
 	 * Every group folds, and its fold is remembered (`sidebarZones`): a folded
 	 * group is a statement about how you want the column to look, not a place
@@ -130,11 +132,54 @@
 		}));
 		return [...chats, ...pages].sort((a, b) => b.ts - a.ts);
 	});
-	const recentsShown = $derived(recents.slice(0, RECENTS_CAP));
-	const recentsMore = $derived(recents.length > RECENTS_CAP);
+	// What Recent shows: both kinds, or one. Remembered per browser, like a
+	// fold, because it says how you want the column to look.
+	type RecentFilter = 'all' | 'chat' | 'page';
+	const RECENT_FILTER_KEY = 'virtues-sidebar-recent-filter';
+	let recentFilter = $state<RecentFilter>(readRecentFilter());
 
-	function openAllChats() {
-		windowShellStore.openTabFromRoute('/chat-history', { label: 'All chats', focusExisting: true });
+	function readRecentFilter(): RecentFilter {
+		try {
+			const v = localStorage.getItem(RECENT_FILTER_KEY);
+			return v === 'chat' || v === 'page' ? v : 'all';
+		} catch {
+			return 'all';
+		}
+	}
+
+	function setRecentFilter(next: RecentFilter) {
+		recentFilter = next;
+		try {
+			localStorage.setItem(RECENT_FILTER_KEY, next);
+		} catch {
+			// Storage can be blocked; the filter still applies until reload.
+		}
+	}
+
+	const recentsFiltered = $derived(
+		recentFilter === 'all' ? recents : recents.filter((r) => r.kind === recentFilter),
+	);
+	const recentsShown = $derived(recentsFiltered.slice(0, RECENTS_CAP));
+	const recentsMore = $derived(recentsFiltered.length > RECENTS_CAP);
+	const recentLabel = $derived(
+		recentFilter === 'chat' ? 'Recent chats' : recentFilter === 'page' ? 'Recent pages' : 'Recent',
+	);
+
+	function recentFilterMenu(): ContextMenuItem[] {
+		const option = (id: RecentFilter, label: string): ContextMenuItem => ({
+			id: `recent-${id}`,
+			label,
+			role: 'menuitemradio',
+			checked: recentFilter === id,
+			action: () => setRecentFilter(id),
+		});
+		return [option('all', 'Chats and pages'), option('chat', 'Chats'), option('page', 'Pages')];
+	}
+
+	// "See all" goes to the full list of what Recent is showing.
+	function openAllRecents() {
+		if (recentFilter === 'page') openPages();
+		else windowShellStore.openTabFromRoute('/chat-history', { label: 'All chats', focusExisting: true });
 	}
 
 	/** Fold state, keyed so a future group costs one string. */
@@ -631,7 +676,7 @@
      with the fold moved onto its chevron, which made it the one head that
      went somewhere when the others folded; the doors now sit behind the
      head's ⋯, and one click means one thing across the column. -->
-{#snippet groupHead(id: string, label: string, rows: number, action?: import('svelte').Snippet)}
+{#snippet groupHead(id: string, label: string, rows: number, action?: import('svelte').Snippet, actionShown = false)}
 	<div class="group-head" class:folded={folded(id)} style={foldStyle(rows)}>
 		<button
 			type="button"
@@ -646,9 +691,24 @@
 			</svg>
 		</button>
 		{#if action}
-			<span class="group-actions">{@render action()}</span>
+			<span class="group-actions" class:shown={actionShown}>{@render action()}</span>
 		{/if}
 	</div>
+{/snippet}
+
+<!-- The filter stays in view while it is narrowing the list, so a short
+     Recent never looks like missing data. -->
+{#snippet recentHeadActions()}
+	<button
+		type="button"
+		class="row-action"
+		class:on={recentFilter !== 'all'}
+		aria-label="Filter recents"
+		title="Filter recents"
+		onclick={(e) => showMenuFromButton(e, recentFilterMenu())}
+	>
+		<Icon icon="ri:filter-3-line" width="14" />
+	</button>
 {/snippet}
 
 {#snippet chatRow(session: ChatSession)}
@@ -865,10 +925,13 @@
 	</div>
 {/if}
 
-{#if recentsShown.length > 0}
-	{@render groupHead('recent', 'Recent', recentsShown.length)}
+{#if recents.length > 0}
+	{@render groupHead('recent', recentLabel, Math.max(1, recentsShown.length), recentHeadActions, recentFilter !== 'all')}
 	<div class="sidebar-expandable fold" class:expanded={!folded('recent')} style={foldStyle(recentsShown.length)}>
 		<div class="sidebar-expandable-inner">
+			{#if recentsShown.length === 0}
+				<div class="panel-row panel-empty">{recentFilter === 'page' ? 'No pages yet' : 'No chats yet'}</div>
+			{/if}
 			{#each recentsShown as row (row.key)}
 				{#if row.kind === 'chat'}
 					{@render chatRow(row.session)}
@@ -883,7 +946,7 @@
 <!-- Hidden while Recent is folded: "See all" under a closed heading would
      point at nothing on screen. -->
 {#if recentsMore && !folded('recent')}
-	<button type="button" class="panel-row panel-more" onclick={openAllChats}>See all</button>
+	<button type="button" class="panel-row panel-more" onclick={openAllRecents}>See all</button>
 {/if}
 
 <div bind:this={spacerEl} class="fold-spacer" style="height: {foldSpacer}px" aria-hidden="true"></div>
@@ -1181,6 +1244,15 @@
 
 	.panel-more {
 		color: var(--color-foreground-muted);
+	}
+
+	.panel-empty {
+		cursor: default;
+		color: var(--color-foreground-subtle);
+	}
+
+	.panel-empty:hover {
+		background: none;
 	}
 
 	.door-meta {
