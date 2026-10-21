@@ -872,7 +872,17 @@
 						{:else if look.icon && isEmoji(look.icon)}
 							<span class="row-emoji">{look.icon}</span>
 						{:else if look.icon}
-							<Icon icon={look.icon} width="14" style="color: {clothFor({ url: pin.url, color: look.color })}" />
+							<!-- Drawn at the nav rows' size. An Atlas pick goes through
+							     AtlasIcon so it keeps the same 1.25px line as the glyphs
+							     above it; through iconify at a smaller box it thinned and
+							     shrank. -->
+							<span class="row-kind" style="color: {clothFor({ url: pin.url, color: look.color })}">
+								{#if look.icon.startsWith('atlas:')}
+									<AtlasIcon name={look.icon.slice('atlas:'.length)} size={SHELL_GLYPH_PX} bare />
+								{:else}
+									<Icon icon={look.icon} width={SHELL_GLYPH_PX} />
+								{/if}
+							</span>
 						{:else}
 							<Icon icon="shape:circle" width="14" style="color: {clothFor({ url: pin.url, color: look.color })}" />
 						{/if}
@@ -1157,6 +1167,10 @@
 	.row-emoji {
 		font-size: 14px;
 		line-height: 1;
+	}
+
+	.row-kind {
+		display: flex;
 	}
 
 
