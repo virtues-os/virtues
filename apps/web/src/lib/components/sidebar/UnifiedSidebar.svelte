@@ -175,7 +175,7 @@
 	const swapKey = $derived(sidebarRoom.selectedId);
 
 	// The sidebar is a card on the desk; the aside carries no inset of its
-	// own, and the card supplies its 12px margin.
+	// own, and the card supplies its margin (the desk gap).
 	// NOT a springy curve: an overshoot grows the aside past its final width
 	// for a few frames, so the pane beside it jumps out and back and the
 	// whole window seems to rubber-band. The aside decelerates into its width
@@ -195,7 +195,7 @@
 	);
 
 	// ── Resizing the seam ─────────────────────────────────────
-	// The aside is the desk's 12px plus the card. Closed, it is nothing: the
+	// The aside is the desk gap plus the card. Closed, it is nothing: the
 	// header's sidebar button is the way back.
 	const panelWidth = $derived(sidebarState.width);
 	const asideWidth = $derived(isCollapsed ? 0 : SIDEBAR_INSET + panelWidth);
@@ -304,7 +304,7 @@
 	const panelColumnClass = $derived.by(() =>
 		[
 			"flex flex-col",
-			"mb-3 ml-3 overflow-hidden border border-border bg-surface",
+			"mb-2 ml-2 overflow-hidden border border-border bg-surface",
 			"panel-card",
 			isCollapsed ? "pointer-events-none" : "",
 		].join(" "),
@@ -396,20 +396,20 @@
 	@reference "../../../app.css";
 	@reference "$lib/styles/sidebar.css";
 
-	/* The sidebar is its own card, 12px of desk from the pane's, with the
+	/* The sidebar is its own card, a desk gap from the pane's, with the
 	   same --card-radius so the two are never rounded differently. */
 	:global(.panel-card) { border-radius: var(--card-radius); }
 
 	/* The hit area. Always transparent — it is a target, never a mark.
 
-	   Inset by 12px at the bottom to sit inside the panel card (`mb-3`); the
+	   Inset by the desk gap at the bottom to sit inside the panel card (`mb-2`); the
 	   card's top is the aside's top, under the window header. Running past
 	   the card put its hover fill on the desk ground beside it. A seam cannot
 	   start above the thing it divides. */
 	.sidebar-resizer {
 		position: absolute;
 		top: 0;
-		bottom: 12px;
+		bottom: 8px;
 		right: 0;
 		width: 8px;
 		z-index: 20;

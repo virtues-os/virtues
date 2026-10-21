@@ -20,8 +20,13 @@ export const SIDEBAR_MAX_WIDTH = 420;
 export const SIDEBAR_DEFAULT_WIDTH = 208;
 export const SIDEBAR_COLLAPSE_AT = 148;
 
-/** The desk between the window's edge and the sidebar card (`ml-3`). */
-export const SIDEBAR_INSET = 12;
+/**
+ * The desk: the one gap between the window's edge and a card, and between
+ * any two cards (the sidebar and a pane, or two panes). `--pane-inset` in
+ * themes.css and the cards' `ml-2` / `mx-2` / `mb-2` are the same 8px.
+ */
+export const DESK_GAP_PX = 8;
+export const SIDEBAR_INSET = DESK_GAP_PX;
 
 function clampWidth(v: number): number {
 	if (!Number.isFinite(v)) return SIDEBAR_DEFAULT_WIDTH;
@@ -88,7 +93,7 @@ export const sidebarState = {
 	/**
 	 * Where the pane card starts, in px from the window's left edge: past
 	 * the desk's 12px, and when the sidebar is open past its card and the
-	 * 12px of desk between the two cards. The window header aligns the left
+	 * desk gap between the two cards. The window header aligns the left
 	 * pane's tabs to this.
 	 */
 	get cardLeft() {

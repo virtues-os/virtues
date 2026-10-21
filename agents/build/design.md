@@ -29,8 +29,9 @@ holds the content.**
 ## The shell
 
 One header row across the window, then cards on the desk: the sidebar, and
-12px of desk later the pane. In split view each pane is a card of its own,
-with the same 12px of desk between them, which is also the resize handle.
+one desk gap (8px, `--pane-inset`) later the pane. In split view each pane
+is a card of its own, with the same gap between them, which is also the
+resize handle. The window's edges get the same 8px.
 Every card is rounded on all four corners, so opening and closing the
 sidebar or a split only moves cards; nothing joins. There is no rail. The sidebar shows one room's list at a
 time, Home's unless you have stepped into another room. Defined in
@@ -229,7 +230,7 @@ per theme where it varies. The scale above says which step each one is.
 |---|---|---|
 | `--chrome-row-h` | 40px | The window header AND the panel's title row. One number. |
 | `--chrome-tab-h` | 28px | A tab, and every other control in a row. |
-| `--pane-inset` | 12px | The pane card's margin. The sidebar matches it. |
+| `--pane-inset` | 8px | The desk gap: around the cards and between any two of them. |
 | `--sidebar-interactive-height` | 28px | Sidebar rows. |
 | `--sidebar-padding-left-base` | 12px | Row inset. The panel body adds 4px. |
 | `--sidebar-icon-opacity` | 0.5 | 0.4 for children, 1.0 on hover/active. |
@@ -276,7 +277,10 @@ should do the work, as they do in a table of contents.
 
 ## Interaction
 
-- **Tabs are attached.** A tab is rounded at the top and open at the foot.
+- **Tabs are attached, and flush left.** The first tab's edge is the card's
+  edge, like a folder's tab; while the first tab is active, the card squares
+  that top-left corner so the two share one straight edge. A tab is rounded
+  at the top and open at the foot.
   The active tab is drawn as the top of its page (see [Grays](#grays)); the
   others have no fill until hovered. In split view both panes' active tabs
   are attached, and the one in the pane you are not working in has muted

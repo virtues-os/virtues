@@ -204,6 +204,7 @@
 	<div
 		class="pane-shell left-pane"
 		class:active={!isSplitEnabled || windowShellStore.activePaneId === "left"}
+		class:first-tab-active={windowShellStore.isFirstTabActive("left")}
 		style:width={isSplitEnabled ? `calc(${leftWidth}% - ${GUTTER_PX / 2}px)` : '100%'}
 		onclick={() => handlePaneClick("left")}
 		onkeydown={(e) => e.key === "Enter" && handlePaneClick("left")}
@@ -231,6 +232,7 @@
 	<div
 		class="pane-shell right-pane"
 		class:active={isSplitEnabled && windowShellStore.activePaneId === "right"}
+		class:first-tab-active={windowShellStore.isFirstTabActive("right")}
 		class:collapsed={!isSplitEnabled}
 		style:width={isSplitEnabled ? `calc(${rightWidth}% - ${GUTTER_PX / 2}px)` : '0'}
 		onclick={() => handlePaneClick("right")}
@@ -360,6 +362,11 @@
 	.tab-slot.in-right {
 		right: 0;
 		width: calc(var(--right-width) - (var(--gutter-width, 0px) / 2));
+	}
+
+	/* The first tab, active, stands flush on the card's top-left corner. */
+	.split-enabled .pane-shell.first-tab-active {
+		border-top-left-radius: 0;
 	}
 
 	/* In split, inside each card's border, and clipped to its corners. */

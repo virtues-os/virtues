@@ -36,7 +36,7 @@
 	const cardLeft = $derived(sidebarState.cardLeft);
 
 	/**
-	 * Where the sidebar's icons start: the desk's 12px, the card's 1px
+	 * Where the sidebar's icons start: the desk gap, the card's 1px
 	 * border, the panel body's 4px and a row's 12px. The ∴'s glyph starts on
 	 * that line, so the header's controls head the sidebar's own column. They
 	 * keep that place with the sidebar closed: controls that slid would move
@@ -142,14 +142,14 @@
 	}
 
 	/* The strips span exactly the cards below them: from the card's left edge
-	   to its 12px right margin. They move on the sidebar's own clock, like the
+	   to its right margin (the desk gap). They move on the sidebar's own clock, like the
 	   pane does, so a tab never slides out from over its content. */
 	.strips {
 		position: absolute;
 		top: 0;
 		bottom: 0;
 		left: var(--card-left);
-		right: 12px;
+		right: var(--pane-inset);
 		display: flex;
 		transition: left var(--motion-layout) var(--ease-premium);
 	}

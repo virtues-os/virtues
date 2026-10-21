@@ -25,6 +25,7 @@ import { parseRoute, tabRegistry } from '$lib/tabs/registry';
 import { visits } from '$lib/stores/visits.svelte';
 import { pushState, replaceState } from '$app/navigation';
 import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
+import { DESK_GAP_PX } from '$lib/stores/sidebarState.svelte';
 
 // Re-export types for convenience
 export type { Tab, TabType, PaneState };
@@ -73,11 +74,11 @@ const TAB_STORAGE_VERSION = 10; // Per-tab navigation history (browser model)
 const HISTORY_CAP = 50; // Max routes kept in a single tab's history stack
 
 /**
- * The desk between the two panes' cards in split view, the same 12px as
- * between the sidebar and the pane. SplitContainer lays the panes out with
- * it and the window header lines their tab strips up with it.
+ * The desk between the two panes' cards in split view, the same gap as
+ * between any two cards. SplitContainer lays the panes out with it and the
+ * window header lines their tab strips up with it.
  */
-export const SPLIT_GUTTER_PX = 12;
+export const SPLIT_GUTTER_PX = DESK_GAP_PX;
 
 // Input shape for tab creation — history/historyIndex are seeded internally.
 type TabInput = Omit<Tab, 'id' | 'createdAt' | 'history' | 'historyIndex'>;
@@ -817,6 +818,16 @@ class WindowShellStore {
 		const tab = pane?.tabs.find(t => t.id === pane.activeTabId);
 		if (!tab) return;
 		this.applyHistoryIndex(targetPaneId, tab.id, tab.historyIndex + 1);
+	}
+
+	/**
+	 * The pane's first tab is the one showing. Tabs start flush with their
+	 * card's left edge, so the card squares that corner to run straight up
+	 * into the tab.
+	 */
+	isFirstTabActive(paneId: string): boolean {
+		const pane = this.panes.find(p => p.id === paneId);
+		return !!pane && pane.tabs.length > 0 && pane.tabs[0].id === pane.activeTabId;
 	}
 
 	canGoBack(paneId?: string): boolean {

@@ -442,14 +442,15 @@
 	<!-- Main Content -->
 	<!-- With one pane, `main` is its card: it paints the page (`--page`) and
 	     clips the corners. In split it is only the desk, and each pane draws
-	     a card of its own, 12px apart (SplitContainer). -->
+	     a card of its own, a desk gap apart (SplitContainer). -->
 	<main
 		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-page"
-		class:mx-3={!mobileLayout.isMobile}
-		class:mb-3={!mobileLayout.isMobile}
+		class:mx-2={!mobileLayout.isMobile}
+		class:mb-2={!mobileLayout.isMobile}
 		class:pane-card={!mobileLayout.isMobile && !windowShellStore.isSplit}
 		class:border={!mobileLayout.isMobile && !windowShellStore.isSplit}
 		class:split-desk={!mobileLayout.isMobile && windowShellStore.isSplit}
+		class:first-tab-active={!mobileLayout.isMobile && !windowShellStore.isSplit && windowShellStore.isFirstTabActive('left')}
 		class:is-mobile={mobileLayout.isMobile}
 		class:border-border={!mobileLayout.isMobile}
 		style={windowShellStore.isSplit && !mobileLayout.isMobile
@@ -610,7 +611,7 @@
 		}
 	}
 
-	/* The pane is its own card, 12px of desk from the sidebar's, so opening
+	/* The pane is its own card, a desk gap from the sidebar's, so opening
 	   and closing the sidebar only moves it: the aside's width animates and
 	   the pane's margin never changes. */
 	main:not(.is-mobile) {
@@ -663,8 +664,10 @@
 	   moves. Bars stay put. overflow-x:hidden also kills sideways rubber-banding. */
 	/* The shell's cards all share --card-radius. */
 	.pane-card { border-radius: var(--card-radius); }
+	/* The first tab, active, stands flush on this corner (WindowTabBar). */
+	.pane-card.first-tab-active { border-top-left-radius: 0; }
 
-	/* In split each pane draws its own card (SplitContainer), 12px apart, so
+	/* In split each pane draws its own card (SplitContainer), a desk gap apart, so
 	   `main` is only the desk they stand on. */
 	main.split-desk {
 		background-color: transparent;

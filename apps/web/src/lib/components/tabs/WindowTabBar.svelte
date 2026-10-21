@@ -592,7 +592,9 @@
 		container-name: tabbar;
 		display: flex;
 		gap: 4px;
-		padding: 0 8px;
+		/* Flush left: the first tab's edge is the card's edge, a folder's
+		   tab, so the strip reads as the card's own top. */
+		padding: 0 8px 0 0;
 		height: var(--chrome-row-h);
 		/* Tabs stand on the card's top edge, so the strip aligns to its
 		   bottom; the + and the view's actions sit centred in the tabs' band
