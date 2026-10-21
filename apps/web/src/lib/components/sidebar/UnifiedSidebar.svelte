@@ -339,7 +339,7 @@
 				class:active={inSettings}
 				onclick={() => windowShellStore.openTabFromRoute("/virtues/you", { label: "Settings", focusExisting: true })}
 			>
-				<AtlasIcon name="settings" size={SHELL_GLYPH_PX} />
+				<AtlasIcon name="settings" size={SHELL_GLYPH_PX} bare />
 				<span class="sidebar-label">Settings</span>
 			</button>
 		</div>
@@ -502,6 +502,21 @@
 	.panel-foot {
 		flex: none;
 		padding: 0 4px 8px;
+	}
+
+	/* Settings is a door like the ones at the top of the panel, so it takes
+	   their glyph tone and their line height. */
+	.panel-foot :global(.atlas-icon) {
+		color: var(--color-foreground-muted);
+		transition: color var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.panel-foot button:is(:hover, .active) :global(.atlas-icon) {
+		color: var(--color-foreground);
+	}
+
+	.panel-foot .sidebar-label {
+		line-height: normal;
 	}
 
 	.workspace-nav {

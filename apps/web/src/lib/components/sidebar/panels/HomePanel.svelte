@@ -592,9 +592,7 @@
 		<span class="panel-row-text">Pages</span>
 		<span class="row-actions">
 			<button type="button" class="row-action" aria-label="New page" title="New page" onclick={newPage}>
-				<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-					<path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-				</svg>
+				<AtlasIcon name="plus" size={14} bare />
 			</button>
 		</span>
 	</div>
@@ -616,9 +614,7 @@
 		<span class="panel-row-text">Tasks</span>
 		<span class="row-actions">
 			<button type="button" class="row-action" aria-label="New task" title="New task" onclick={newTask}>
-				<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-					<path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-				</svg>
+				<AtlasIcon name="plus" size={14} bare />
 			</button>
 		</span>
 	</div>
@@ -638,9 +634,7 @@
 		<span class="panel-row-text">Projects</span>
 		<span class="row-actions">
 			<button type="button" class="row-action" aria-label="New project" title="New project" onclick={addProject}>
-				<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-					<path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-				</svg>
+				<AtlasIcon name="plus" size={14} bare />
 			</button>
 		</span>
 	</div>
@@ -698,7 +692,7 @@
 		title="Filter recents"
 		onclick={(e) => showMenuFromButton(e, recentFilterMenu())}
 	>
-		<Icon icon="ri:filter-3-line" width="14" />
+		<AtlasIcon name="filter" size={14} bare />
 	</button>
 {/snippet}
 
@@ -723,8 +717,9 @@
 		}}
 		oncontextmenu={(e) => showMenu(e, chatMenu(session))}
 	>
-		<!-- No glyph: Recent is a list of titles. The face says it is a chat
-		     (sans) and not a page (serif). -->
+		<!-- No glyph: Recent is a list of titles, and they start under the
+		     group's label. Ten repeated marks would make it a second block of
+		     doors. -->
 		<span class="panel-row-text">{titleOf(session)}</span>
 		{#if chatActivity.running(session.conversation_id)}
 			<span class="row-running" role="img" aria-label="Replying">
@@ -742,7 +737,7 @@
 				title={pinned ? 'Unpin' : 'Pin'}
 				onclick={(e) => quickPin(e, { url, label: titleOf(session), icon: session.icon })}
 			>
-				<Icon icon={pinned ? 'ri:pushpin-fill' : 'ri:pushpin-line'} width="14" />
+				<AtlasIcon name={pinned ? 'pinned' : 'pin'} size={14} bare />
 			</button>
 			<button
 				type="button"
@@ -751,7 +746,7 @@
 				title="More"
 				onclick={(e) => showMenuFromButton(e, chatMenu(session))}
 			>
-				<Icon icon="ri:more-line" width="14" />
+				<AtlasIcon name="more" size={14} bare />
 			</button>
 		</span>
 	</div>
@@ -769,7 +764,7 @@
 	{@const url = pageRoute(page)}
 	{@const pinned = isPinned(url)}
 	<div
-		class="panel-row panel-row-has-actions spine"
+		class="panel-row panel-row-has-actions"
 		class:active={activeRoute === url}
 		role="link"
 		tabindex="0"
@@ -795,7 +790,7 @@
 				title={pinned ? 'Unpin' : 'Pin'}
 				onclick={(e) => quickPin(e, { url, label: pageTitle(page), icon: page.icon })}
 			>
-				<Icon icon={pinned ? 'ri:pushpin-fill' : 'ri:pushpin-line'} width="14" />
+				<AtlasIcon name={pinned ? 'pinned' : 'pin'} size={14} bare />
 			</button>
 			<button
 				type="button"
@@ -804,7 +799,7 @@
 				title="More"
 				onclick={(e) => showMenuFromButton(e, pageMenu(page))}
 			>
-				<Icon icon="ri:more-line" width="14" />
+				<AtlasIcon name="more" size={14} bare />
 			</button>
 		</span>
 	</div>
@@ -821,7 +816,6 @@
 				{@const pinProject = owned?.kind === 'project' ? owned.id : null}
 				<div
 					class="panel-row panel-row-has-actions"
-					class:spine={!pinChat}
 					class:active={activeRoute === pin.url}
 					class:drop-target={pinProject !== null &&
 						(dndManager.projectTarget === pinProject || rowDropTarget === pinProject)}
@@ -897,7 +891,7 @@
 							title="Unpin"
 							onclick={(e) => quickPin(e, { url: pin.url, label: look.title })}
 						>
-							<Icon icon="ri:pushpin-fill" width="14" />
+							<AtlasIcon name="pinned" size={14} bare />
 						</button>
 						<button
 							type="button"
@@ -907,7 +901,7 @@
 							onclick={(e) =>
 								showMenuFromButton(e, pinMenu(pin, { x: e.clientX, y: e.clientY }))}
 						>
-							<Icon icon="ri:more-line" width="14" />
+							<AtlasIcon name="more" size={14} bare />
 						</button>
 					</span>
 				</div>
@@ -1088,6 +1082,18 @@
 		color: var(--color-foreground);
 	}
 
+	/* A door's glyph is muted and its word is ink, like the header's controls
+	   above it; pointing at the door brings the glyph up to ink. */
+	.panel-door > :global(.atlas-icon) {
+		color: var(--color-foreground-muted);
+		transition: color var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.panel-door:hover > :global(.atlas-icon) {
+		color: var(--color-foreground);
+		transition-duration: var(--motion-hover-in);
+	}
+
 	.panel-row {
 		position: relative;
 		display: flex;
@@ -1134,25 +1140,6 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-	}
-
-	/* Spines: the serif is for writing. A page, a project, and a pin of
-	   either set in the bookface; a chat and the doors stay in the sans.
-	   Recent carries no glyphs, so the face is how a page tells itself from
-	   a chat there. The chrome cut keeps the letters centered in the 28px
-	   row, where the serif's own metrics would sit them low. */
-	.spine {
-		font-family: var(--font-serif-ui);
-		font-size: 14px;
-		font-weight: 400;
-		letter-spacing: 0.02em;
-		-webkit-text-stroke: 0.2px currentColor;
-	}
-
-	.spine .panel-row-text {
-		/* An integer box: 14 × 1.5 = 21px centers on a half pixel against the
-		   28px row; 20px does not. */
-		line-height: 20px;
 	}
 
 	.row-glyph {

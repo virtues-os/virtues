@@ -107,14 +107,18 @@
 		>
 			<AtlasIcon name="sidebar" size={GLYPH_PX} bare />
 		</button>
-		<button
-			class="lead-btn"
-			onclick={() => windowShellStore.newChat()}
-			aria-label="New chat"
-			title={`New chat (${shortcuts.format('mod+n')})`}
-		>
-			<AtlasIcon name="new-chat" size={GLYPH_PX} bare />
-		</button>
+		<!-- Only while the sidebar is hidden: open, its own New chat row sits
+		     just below, and two doors to one place read as two places. -->
+		{#if !sidebarOpen}
+			<button
+				class="lead-btn"
+				onclick={() => windowShellStore.newChat()}
+				aria-label="New chat"
+				title={`New chat (${shortcuts.format('mod+n')})`}
+			>
+				<AtlasIcon name="new-chat" size={GLYPH_PX} bare />
+			</button>
+		{/if}
 	</div>
 
 	<div class="strips" data-tauri-drag-region>
