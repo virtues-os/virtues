@@ -1,10 +1,11 @@
 <script lang="ts">
 	/**
-	 * IconPicker - Icon and Emoji selection popover content
+	 * IconPicker - the mark a page, chat, pin or project wears
 	 *
-	 * Content component for selecting icons or emojis.
-	 * Supports search, tabs (Icons, Emoji, Recent), and recent selections.
-	 * Use inside a Popover primitive for proper positioning and dismiss behavior.
+	 * Shapes and colors lead: a solid shape in a color is the plainest mark
+	 * and the one that shows its color best. Line icons and emoji sit below
+	 * behind one search. Use inside a Popover primitive for positioning and
+	 * dismiss behavior.
 	 */
 	import Icon from './Icon.svelte';
 	import Button from './Button.svelte';
@@ -12,6 +13,8 @@
 	import { addCollection } from '@iconify/svelte';
 	import { onMount } from 'svelte';
 	import { PIN_COLORS, accentCss } from '$lib/sidebar/pin-colors';
+	import { SHAPES } from '$lib/icons';
+	import { GLYPHS as ATLAS_GLYPHS } from '$lib/components/sidebar/AtlasIcon.svelte';
 
 	interface Props {
 		/** Current value (emoji or icon name) */
@@ -59,9 +62,9 @@
 		activeColor = color;
 	});
 
-	// Emoji are already colored; tinting them does nothing, so the row hides
-	// rather than sitting there inert on that tab.
-	const colorRowVisible = $derived(!!onColorSelect && activeTab !== 'emoji');
+	// The color row stays put on both tabs. It colors the shapes beside it,
+	// and hiding it on the emoji tab made the whole panel jump on switch.
+	const colorRowVisible = $derived(!!onColorSelect);
 	// A custom hex is anything that isn't one of the nine keys.
 	const isCustom = $derived(!!activeColor && activeColor.startsWith('#'));
 	const gridTint = $derived(activeColor ? `color: ${accentCss(activeColor)}` : '');
@@ -71,7 +74,6 @@
 		onColorSelect?.(key);
 	}
 
-	let pickerEl: HTMLDivElement;
 	let searchInputEl: HTMLInputElement;
 
 	// Full Remix Icons collection (lazy-loaded)
@@ -88,131 +90,48 @@
 	// icon.
 	const EMOJI_MAX_VERSION = 15.1;
 	const EMOJI_COMPONENT_GROUP = 2;
+	// emojibase groups, objects and symbols first: they label a page or a
+	// project, and the faces that lead Unicode's own order mostly don't.
+	const EMOJI_GROUP_ORDER = [7, 8, 6, 5, 3, 4, 0, 1, 9];
 	type EmojiEntry = { emoji: string; label: string; terms: string };
 	let allEmojis = $state<EmojiEntry[]>([]);
 	let emojisLoading = $state(false);
 
-	// All registered icons from icons.ts - organized by category
-	const iconCategories = [
-		{
-			name: 'Files & Folders',
-			icons: [
-				'ri:file-text-line', 'ri:file-line', 'ri:file-fill', 'ri:file-text-fill',
-				'ri:file-list-3-line', 'ri:file-info-line', 'ri:file-code-fill',
-				'ri:file-pdf-fill', 'ri:file-excel-fill', 'ri:file-word-fill',
-				'ri:file-ppt-fill', 'ri:file-zip-fill', 'ri:file-unknow-line',
-				'ri:folder-line', 'ri:folder-fill', 'ri:folder-open-line',
-				'ri:folder-add-line', 'ri:folder-chart-fill'
-			]
-		},
-		{
-			name: 'Books & Writing',
-			icons: [
-				'ri:book-line', 'ri:book-2-line', 'ri:book-open-line',
-				'ri:quill-pen-line', 'ri:edit-line', 'ri:double-quotes-l', 'ri:translate-2'
-			]
-		},
-		{
-			name: 'Communication',
-			icons: [
-				'ri:chat-1-line', 'ri:chat-3-line', 'ri:chat-smile-2-line',
-				'ri:message-3-line', 'ri:mail-line', 'ri:send-plane-line',
-				'ri:send-plane-fill', 'ri:feedback-line'
-			]
-		},
-		{
-			name: 'Interface',
-			icons: [
-				'ri:settings-3-line', 'ri:settings-4-line', 'ri:search-line',
-				'ri:search-eye-line', 'ri:add-line', 'ri:add-circle-line',
-				'ri:delete-bin-line', 'ri:delete-bin-7-line', 'ri:refresh-line',
-				'ri:filter-line', 'ri:filter-3-line', 'ri:apps-line',
-				'ri:list-check', 'ri:list-unordered', 'ri:swap-line',
-				'ri:upload-2-line', 'ri:external-link-line', 'ri:information-line',
-				'ri:question-line', 'ri:alert-line', 'ri:error-warning-line',
-				'ri:layout-column-line', 'ri:layout-right-line'
-			]
-		},
-		{
-			name: 'Navigation & Maps',
-			icons: [
-				'ri:compass-line', 'ri:compass-3-line', 'ri:map-pin-line',
-				'ri:map-pin-2-line', 'ri:map-pin-add-line', 'ri:map-2-line',
-				'ri:global-line', 'ri:footprint-line', 'ri:run-line'
-			]
-		},
-		{
-			name: 'Data & Charts',
-			icons: [
-				'ri:database-2-line', 'ri:database-2-fill', 'ri:bar-chart-line',
-				'ri:line-chart-line', 'ri:dashboard-line', 'ri:table-line',
-				'ri:node-tree', 'ri:speed-line'
-			]
-		},
-		{
-			name: 'Users & People',
-			icons: [
-				'ri:user-line', 'ri:user-3-line', 'ri:user-add-line',
-				'ri:user-settings-line', 'ri:user-star-line'
-			]
-		},
-		{
-			name: 'Time & Calendar',
-			icons: [
-				'ri:calendar-line', 'ri:calendar-2-line', 'ri:calendar-event-line',
-				'ri:calendar-check-line', 'ri:time-line', 'ri:history-line'
-			]
-		},
-		{
-			name: 'Media',
-			icons: [
-				'ri:image-fill', 'ri:movie-fill', 'ri:music-fill',
-				'ri:play-fill', 'ri:play-line', 'ri:pause-line', 'ri:mic-line'
-			]
-		},
-		{
-			name: 'Objects & Symbols',
-			icons: [
-				'ri:lightbulb-line', 'ri:lightbulb-flash-line', 'ri:magic-line',
-				'ri:bookmark-line', 'ri:bookmark-fill', 'ri:heart-line',
-				'ri:heart-pulse-line', 'ri:lock-line', 'ri:link', 'ri:links-line',
-				'ri:pushpin-line', 'ri:unpin-line', 'ri:price-tag-3-line',
-				'ri:box-3-line', 'ri:palette-line', 'ri:mickey-line',
-				'ri:seedling-line', 'ri:cloud-line', 'ri:moon-line', 'ri:moon-fill'
-			]
-		},
-		{
-			name: 'Development & Tech',
-			icons: [
-				'ri:terminal-box-line', 'ri:bug-line', 'ri:tools-line',
-				'ri:cpu-line', 'ri:robot-line', 'ri:robot-fill',
-				'ri:plug-line', 'ri:hard-drive-2-line', 'ri:computer-line',
-				'ri:device-line', 'ri:wifi-line'
-			]
-		},
-		{
-			name: 'Business',
-			icons: [
-				'ri:building-line', 'ri:building-2-line', 'ri:bank-line',
-				'ri:wallet-line', 'ri:money-dollar-circle-line', 'ri:bank-card-line'
-			]
-		},
-		{
-			name: 'Brands',
-			icons: ['ri:apple-fill', 'ri:google-line', 'ri:twitter-x-fill']
-		}
+	// The curated line set: the icons people reach for to label a page or a
+	// project. Line only. A filled glyph beside the thin Atlas rows reads as a
+	// different app, so `-fill` icons and the brand marks are left out here and
+	// in the full collection below.
+	const curatedIcons = [
+		'ri:file-text-line', 'ri:file-line', 'ri:file-list-3-line', 'ri:folder-line',
+		'ri:folder-open-line', 'ri:book-line', 'ri:book-open-line', 'ri:quill-pen-line',
+		'ri:edit-line', 'ri:double-quotes-l', 'ri:translate-2', 'ri:chat-1-line',
+		'ri:message-3-line', 'ri:mail-line', 'ri:send-plane-line', 'ri:lightbulb-line',
+		'ri:magic-line', 'ri:bookmark-line', 'ri:heart-line', 'ri:heart-pulse-line',
+		'ri:lock-line', 'ri:link', 'ri:price-tag-3-line', 'ri:box-3-line', 'ri:palette-line',
+		'ri:seedling-line', 'ri:cloud-line', 'ri:moon-line', 'ri:compass-3-line',
+		'ri:map-pin-line', 'ri:map-2-line', 'ri:global-line', 'ri:footprint-line',
+		'ri:run-line', 'ri:bar-chart-line', 'ri:line-chart-line', 'ri:table-line',
+		'ri:node-tree', 'ri:user-line', 'ri:user-star-line', 'ri:calendar-line',
+		'ri:calendar-event-line', 'ri:time-line', 'ri:history-line', 'ri:image-line',
+		'ri:movie-line', 'ri:music-line', 'ri:mic-line', 'ri:terminal-box-line',
+		'ri:bug-line', 'ri:tools-line', 'ri:cpu-line', 'ri:robot-line', 'ri:plug-line',
+		'ri:building-line', 'ri:bank-line', 'ri:wallet-line', 'ri:flag-line',
+		'ri:star-line', 'ri:flashlight-line', 'ri:plant-line', 'ri:sun-line',
+		'ri:home-line', 'ri:graduation-cap-line', 'ri:flask-line', 'ri:restaurant-line',
+		'ri:shopping-bag-line', 'ri:plane-line', 'ri:gift-line', 'ri:trophy-line'
 	];
 
-	// Flatten icons for search
-	const allIcons = iconCategories.flatMap(cat => cat.icons);
+	// Atlas leads: the shell's own glyphs, so a page can wear the same mark as
+	// the sidebar row that opens its kind.
+	const allIcons = [...Object.keys(ATLAS_GLYPHS).map((n) => `atlas:${n}`), ...curatedIcons];
 
-	// One flat pool per tab. The curated list leads (it is the hand-picked,
-	// most-wanted set) and the rest of the collection follows once it has
-	// loaded, deduped so a curated icon doesn't appear twice on one sheet.
+	// One flat pool. Atlas and the curated set lead and the rest of the line
+	// collection follows, deduped. The Remix names wait for the collection to
+	// load: drawn before it registers, iconify fetches each one from its API.
 	const searchableIcons = $derived(
 		fullCollectionLoaded
 			? [...allIcons, ...allRiIconNames.filter((i) => !allIcons.includes(i))]
-			: allIcons
+			: allIcons.filter((i) => i.startsWith('atlas:'))
 	);
 
 	const visibleIcons = $derived.by(() => {
@@ -250,7 +169,11 @@
 						e.group !== EMOJI_COMPONENT_GROUP &&
 						e.version <= EMOJI_MAX_VERSION
 				)
-				.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+				.sort(
+					(a, b) =>
+						EMOJI_GROUP_ORDER.indexOf(a.group!) - EMOJI_GROUP_ORDER.indexOf(b.group!) ||
+						(a.order ?? 0) - (b.order ?? 0)
+				)
 				.map((e) => ({
 					emoji: e.emoji,
 					label: e.label,
@@ -271,7 +194,10 @@
 			const { icons: riData } = await import('@iconify-json/ri');
 			const parsed = typeof riData === 'string' ? JSON.parse(riData) : riData;
 			addCollection(parsed);
-			allRiIconNames = Object.keys(parsed.icons).map(n => `ri:${n}`).sort();
+			allRiIconNames = Object.keys(parsed.icons)
+				.filter((n) => !n.endsWith('-fill'))
+				.map((n) => `ri:${n}`)
+				.sort();
 			fullCollectionLoaded = true;
 		} catch (e) {
 			console.error('Failed to load full icon collection:', e);
@@ -299,107 +225,112 @@
 		onSelect(null);
 		close();
 	}
-
-	// Check if value is an emoji (starts with emoji character) vs icon (contains :)
-	function isEmoji(val: string): boolean {
-		return !val.includes(':');
-	}
 </script>
 
-<div class="icon-picker" bind:this={pickerEl}>
-	<!-- Two tabs. "Recent" is gone: it was a third place the same glyphs lived,
-	     and search over the whole collection finds a repeat faster than
-	     remembering which tab it was filed under. -->
-	<div class="picker-tabs">
-		<button
-			class="tab"
-			class:active={activeTab === 'icons'}
-			onclick={() => (activeTab = 'icons')}
-		>
-			Icons
-		</button>
-		<button
-			class="tab"
-			class:active={activeTab === 'emoji'}
-			onclick={() => (activeTab = 'emoji')}
-		>
-			Emojis
-		</button>
-	</div>
-
-	{#if colorRowVisible}
-		<!-- The color lives in the same panel as the icon because they are one
-		     decision. Selecting here doesn't close — the grid below restains, so
-		     you can see the pairing before committing to a glyph.
-
-		     The tick goes INSIDE the chosen swatch rather than ringing it: at
-		     this size a ring reads as a slightly bigger circle, which is not a
-		     state anyone can spot in a row of ten. -->
-		<div class="color-row" role="radiogroup" aria-label="Icon color">
-			<button
-				class="swatch swatch-auto"
-				class:selected={!activeColor}
-				onclick={() => pickColor(null)}
-				role="radio"
-				aria-checked={!activeColor}
-				title="No color - follows the text around it"
-				aria-label="No color"
-			>
-				{#if !activeColor}
-					<Icon icon="ri:check-line" width="16" />
-				{/if}
-			</button>
-			{#each PIN_COLORS as { key, label } (key)}
+<div class="icon-picker">
+	<!-- Shapes first, colors under them. Picking a color repaints the shapes
+	     and the icon grid without closing, so you see the pairing before you
+	     choose the mark. Picking a shape closes, like any other mark. -->
+	<div class="mark-head" style={gridTint}>
+		<div class="shape-row" role="group" aria-label="Shapes">
+			{#each SHAPES as shape (shape.name)}
 				<button
-					class="swatch"
-					class:selected={activeColor === key}
-					style="--swatch: var(--cat-{key})"
-					onclick={() => pickColor(key)}
-					role="radio"
-					aria-checked={activeColor === key}
-					title={label}
-					aria-label={label}
+					class="shape-btn"
+					class:current={value === `shape:${shape.name}`}
+					onclick={() => handleSelect(`shape:${shape.name}`)}
+					title={shape.label}
+					aria-label={shape.label}
 				>
-					{#if activeColor === key}
-						<Icon icon="ri:check-line" width="16" />
-					{/if}
+					<Icon icon="shape:{shape.name}" width="20" />
 				</button>
 			{/each}
-
-			<span class="color-divider" aria-hidden="true"></span>
-
-			<!-- Custom. The hex is stored verbatim, but `accentCss` pulls its
-			     LIGHTNESS into the current theme's legible band before drawing
-			     it — so a navy picked on paper stays navy and stays visible on
-			     the black theme, instead of being the one color in the app that
-			     ignores where it is. Hue and chroma, the part actually chosen,
-			     are untouched. -->
-			<label
-				class="swatch swatch-custom"
-				class:selected={isCustom}
-				style={isCustom ? `--swatch: ${accentCss(activeColor)}` : ''}
-				title="Custom color"
-			>
-				<input
-					type="color"
-					value={isCustom ? (activeColor ?? '#6366f1') : '#6366f1'}
-					oninput={(e) => pickColor(e.currentTarget.value)}
-				/>
-				{#if isCustom}
-					<Icon icon="ri:check-line" width="16" />
-				{/if}
-			</label>
 		</div>
-	{/if}
 
+		{#if colorRowVisible}
+			<!-- The tick goes INSIDE the chosen swatch: at this size a ring reads
+			     as a slightly bigger circle, which nobody spots in a row of eleven. -->
+			<div class="color-row" role="radiogroup" aria-label="Color">
+				<button
+					class="swatch swatch-auto"
+					class:selected={!activeColor}
+					onclick={() => pickColor(null)}
+					role="radio"
+					aria-checked={!activeColor}
+					title="No color - follows the text around it"
+					aria-label="No color"
+				>
+					{#if !activeColor}
+						<Icon icon="ri:check-line" width="14" />
+					{/if}
+				</button>
+				{#each PIN_COLORS as { key, label } (key)}
+					<button
+						class="swatch"
+						class:selected={activeColor === key}
+						style="--swatch: var(--cat-{key})"
+						onclick={() => pickColor(key)}
+						role="radio"
+						aria-checked={activeColor === key}
+						title={label}
+						aria-label={label}
+					>
+						{#if activeColor === key}
+							<Icon icon="ri:check-line" width="14" />
+						{/if}
+					</button>
+				{/each}
+
+				<!-- Custom. The hex is stored verbatim, but `accentCss` pulls its
+				     LIGHTNESS into the current theme's legible band before drawing
+				     it, so a navy picked on paper stays visible on a black theme.
+				     Hue and chroma, the part actually chosen, are untouched. It
+				     shows a plain "+" until a color is chosen. -->
+				<label
+					class="swatch swatch-custom"
+					class:selected={isCustom}
+					style={isCustom ? `--swatch: ${accentCss(activeColor)}` : ''}
+					title="Custom color"
+				>
+					<input
+						type="color"
+						value={isCustom ? (activeColor ?? '#6366f1') : '#6366f1'}
+						oninput={(e) => pickColor(e.currentTarget.value)}
+					/>
+					<Icon icon={isCustom ? 'ri:check-line' : 'ri:add-line'} width="14" />
+				</label>
+			</div>
+		{/if}
+	</div>
+
+	<!-- One search, with the icon/emoji switch beside it: it only changes what
+	     the grid below shows, so it sits with the grid instead of over the
+	     whole panel. -->
 	<div class="picker-search">
 		<input
 			type="text"
 			bind:value={search}
 			bind:this={searchInputEl}
-			placeholder={activeTab === 'emoji' ? 'Search emojis...' : 'Search icons...'}
+			placeholder={activeTab === 'emoji' ? 'Search emoji' : 'Search icons'}
 			class="search-input"
 		/>
+		<div class="kind-toggle" role="tablist" aria-label="Kind">
+			<button
+				role="tab"
+				aria-selected={activeTab === 'icons'}
+				class:active={activeTab === 'icons'}
+				onclick={() => (activeTab = 'icons')}
+			>
+				Icons
+			</button>
+			<button
+				role="tab"
+				aria-selected={activeTab === 'emoji'}
+				class:active={activeTab === 'emoji'}
+				onclick={() => (activeTab = 'emoji')}
+			>
+				Emoji
+			</button>
+		</div>
 	</div>
 
 	<!-- Content. One flat grid, no category headings: the headings turned a
@@ -410,8 +341,13 @@
 		{#if activeTab === 'icons'}
 			<div class="icon-grid" style={gridTint}>
 				{#each visibleIcons as icon (icon)}
-					<button class="icon-btn" onclick={() => handleSelect(icon)} title={icon}>
-						<Icon {icon} width="17" />
+					<button
+						class="icon-btn"
+						class:current={value === icon}
+						onclick={() => handleSelect(icon)}
+						title={icon.slice(icon.indexOf(':') + 1)}
+					>
+						<Icon {icon} width="16" />
 					</button>
 				{/each}
 			</div>
@@ -432,6 +368,7 @@
 				{#each visibleEmojis as { emoji, label } (emoji)}
 					<button
 						class="emoji-btn"
+						class:current={value === emoji}
 						onclick={() => handleSelect(emoji)}
 						title={label}
 						aria-label={label}
@@ -463,7 +400,7 @@
 
 <style>
 	.icon-picker {
-		width: 360px;
+		width: 344px;
 		/* Never taller than the window it floats in. A fixed 480px panel in a
 		   short window gets flipped by the positioner and then hangs off the
 		   top edge, which is how the whole picker ends up showing you nothing
@@ -474,51 +411,60 @@
 		overflow: hidden;
 	}
 
-	.picker-search {
+	/* Shapes and colors share one block with no rule between them: they are
+	   one decision, the mark and its color. Unchosen, the shapes are drawn in
+	   muted ink; the chosen color reaches them through the inline `color`. */
+	.mark-head {
 		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 12px;
+		flex-direction: column;
+		gap: 10px;
+		padding: 12px 12px 12px;
 		border-bottom: 1px solid var(--color-border);
 		color: var(--color-foreground-muted);
 	}
 
-	.search-input {
-		flex: 1;
-		background: none;
-		border: none;
-		outline: none;
-		font-size: 14px;
-		color: var(--color-foreground);
+	.shape-row {
+		display: grid;
+		grid-template-columns: repeat(6, 1fr);
+		gap: 4px;
 	}
 
-	.search-input::placeholder {
-		color: var(--color-foreground-subtle);
-	}
-
-	.picker-tabs {
+	.shape-btn {
 		display: flex;
-		border-bottom: 1px solid var(--color-border);
-		padding: 0 8px;
+		align-items: center;
+		justify-content: center;
+		height: 36px;
+		padding: 0;
+		border: none;
+		border-radius: 8px;
+		background: var(--color-surface-elevated, transparent);
+		box-shadow: inset 0 0 0 1px var(--color-border);
+		color: inherit;
+		cursor: pointer;
+		transition: background 100ms, box-shadow 100ms;
 	}
 
-	/* One row, no wrap, no scroll: ten swatches is the whole palette and the
-	   panel is sized for it. A wrapping second row would push the grid down by
-	   a line for one extra color nobody asked for. */
-	/* Ten circles inside 360px: sized to fit and spread by the row rather than
-	   by a fixed gap, so the last swatch can't fall off the panel edge. */
+	.shape-btn:hover {
+		background: var(--color-surface-overlay);
+	}
+
+	.shape-btn.current {
+		box-shadow: inset 0 0 0 1.5px var(--color-foreground-muted);
+	}
+
+	/* One row, sized to fit and spread by the row rather than by a fixed gap,
+	   so the last swatch can't fall off the panel edge. */
 	.color-row {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
 		gap: 4px;
-		padding: 12px 14px;
-		border-bottom: 1px solid var(--color-border);
+		padding: 0 2px;
 	}
 
 	.swatch {
-		width: 24px;
-		height: 24px;
+		width: 22px;
+		height: 22px;
 		flex: none;
 		padding: 0;
 		border: none;
@@ -537,32 +483,23 @@
 		transform: scale(1.1);
 	}
 
-	/* The tick sits inside the swatch — at 26px an outer ring just reads as a
-	   marginally larger circle, which is not a state anyone spots in a row. */
 	.swatch.selected {
 		transform: none;
 	}
 
-	.color-divider {
-		width: 1px;
-		height: 18px;
-		flex: none;
-		background: var(--color-border);
-	}
-
-	/* The custom well wears a color wheel until something is chosen, then the
-	   chosen color — so it reads as "pick your own", not as a tenth hue. */
+	/* Custom and "no color" are both hairline rings until chosen, so the row
+	   reads as nine colors with a control at each end. */
 	.swatch-custom {
 		position: relative;
 		overflow: hidden;
-		background:
-			var(--swatch, none),
-			conic-gradient(
-				from 0deg,
-				#e5484d, #e2a336, #e5c518, #46a758,
-				#12a594, #0091ff, #6e56cf, #d6409f, #e5484d
-			);
-		background-size: cover;
+		background: var(--swatch, transparent);
+		color: var(--color-foreground-muted);
+		box-shadow: inset 0 0 0 1.5px var(--color-border);
+	}
+
+	.swatch-custom.selected {
+		color: #fff;
+		box-shadow: inset 0 0 0 1px rgb(0 0 0 / 0.08);
 	}
 
 	.swatch-custom input[type='color'] {
@@ -576,7 +513,6 @@
 		cursor: pointer;
 	}
 
-	/* "No color" — a hairline ring, since there is no color to show. */
 	.swatch-auto {
 		background: transparent;
 		color: var(--color-foreground-muted);
@@ -587,90 +523,118 @@
 		box-shadow: inset 0 0 0 1.5px var(--color-foreground-muted);
 	}
 
-	.tab {
-		flex: 1;
-		padding: 10px 12px;
-		font-size: 13px;
-		font-weight: 400;
-		color: var(--color-foreground-muted);
-		background: none;
-		border: none;
-		border-bottom: 2px solid transparent;
-		cursor: pointer;
-		transition: all 150ms;
+	.picker-search {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		padding: 8px 8px 8px 14px;
+		border-bottom: 1px solid var(--color-border);
 	}
 
-	.tab:hover {
+	.search-input {
+		flex: 1;
+		min-width: 0;
+		background: none;
+		border: none;
+		outline: none;
+		font-size: 13px;
 		color: var(--color-foreground);
 	}
 
-	.tab.active {
-		color: var(--color-primary);
-		border-bottom-color: var(--color-primary);
+	.search-input::placeholder {
+		color: var(--color-foreground-subtle);
+	}
+
+	/* A quiet two-way switch in ink, not accent-colored tabs: the accent
+	   would compete with the swatches for the eye. */
+	.kind-toggle {
+		display: flex;
+		flex: none;
+		padding: 2px;
+		border-radius: 7px;
+		background: var(--color-surface-overlay);
+	}
+
+	.kind-toggle button {
+		padding: 3px 9px;
+		font-size: 12px;
+		line-height: 16px;
+		color: var(--color-foreground-muted);
+		background: none;
+		border: none;
+		border-radius: 5px;
+		cursor: pointer;
+	}
+
+	.kind-toggle button:hover {
+		color: var(--color-foreground);
+	}
+
+	.kind-toggle button.active {
+		color: var(--color-foreground);
+		background: var(--color-background);
+		box-shadow: 0 0 0 1px var(--color-border);
 	}
 
 	.picker-content {
 		flex: 1;
 		overflow-y: auto;
-		padding: 12px;
-		min-height: 240px;
-		max-height: 340px;
+		padding: 8px 10px 10px;
+		min-height: 200px;
+		max-height: 300px;
 	}
 
 	.emoji-grid {
 		display: grid;
-		grid-template-columns: repeat(8, 1fr);
+		grid-template-columns: repeat(9, 1fr);
 		gap: 2px;
 	}
 
-	/* Dense sheet, not a list of buttons. Ten to a row at 360px, so the eye
-	   scans a block of glyphs the way it scans a contact sheet — which is the
-	   only way anyone actually finds an icon they can't name. */
+	/* Dense sheet, not a list of buttons, so the eye scans a block of glyphs
+	   the way it scans a contact sheet. */
 	.icon-grid {
 		display: grid;
-		grid-template-columns: repeat(10, 1fr);
+		grid-template-columns: repeat(9, 1fr);
 		gap: 2px;
 		color: var(--color-foreground-muted);
 	}
 
-	.emoji-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 32px;
-		height: 32px;
-		font-size: 20px;
-		background: none;
-		border: none;
-		border-radius: 6px;
-		cursor: pointer;
-		transition: background 100ms;
-	}
-
-	.emoji-btn:hover {
-		background: var(--color-surface-overlay);
-	}
-
+	.emoji-btn,
 	.icon-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		width: 100%;
 		aspect-ratio: 1;
+		padding: 0;
 		background: none;
 		border: none;
-		border-radius: 8px;
-		/* `inherit`, NOT a color of its own. The chosen tint is set on the grid
-		   and reaches the glyph by inheritance; a color here silently won every
-		   time and the swatches appeared to do nothing. */
-		color: inherit;
+		border-radius: 7px;
 		cursor: pointer;
-		transition: all 100ms;
+		transition: background 100ms;
 	}
 
+	.emoji-btn {
+		font-size: 19px;
+		line-height: 1;
+	}
+
+	/* `inherit`, NOT a color of its own. The chosen tint is set on the grid
+	   and reaches the glyph by inheritance; a color here silently won every
+	   time and the swatches appeared to do nothing. */
+	.icon-btn {
+		color: inherit;
+	}
+
+	.emoji-btn:hover,
 	.icon-btn:hover {
 		background: var(--color-surface-overlay);
-		color: var(--color-foreground);
+	}
+
+	.emoji-btn.current,
+	.icon-btn.current {
+		background: var(--color-surface-overlay);
+		box-shadow: inset 0 0 0 1px var(--color-border);
 	}
 
 	.empty {
@@ -682,8 +646,7 @@
 	}
 
 	.picker-footer {
-		padding: 8px 12px;
+		padding: 6px 8px;
 		border-top: 1px solid var(--color-border);
 	}
-
 </style>
