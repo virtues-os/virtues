@@ -4,7 +4,7 @@
  * A mode swaps the sidebar's contents wholesale: the normal destinations slide
  * out to the left and the mode's own rows slide in. You leave through the path
  * mast — `∴ Virtues / Settings`, root clickable — not a bespoke exit row.
- * Home's panel is its own; Settings, Wiki and Drive are the consumers.
+ * Home's panel is its own; Settings and Wiki are the consumers.
  *
  * Deliberately a *sidebar* state and not derived from which tab has focus.
  * Deriving it would be incoherent with split panes — settings in the left pane
@@ -71,8 +71,10 @@ export interface SidebarMode {
  *   ACCOUNT — you, your assistant, what AI costs you.
  *   SERVER — the machine, the devices paired to it, the screen on it.
  *   SOURCES — what fills the record. Its own rail door until 2026-10-05; the
- *     rail now holds only what you read (Home, Wiki, Timeline, Drive), and
- *     connecting a source is a setting you make, then leave.
+ *     rail now holds only what you read (Home, Wiki, Timeline), and
+ *     connecting a source is a setting you make, then leave. Streams, the
+ *     raw rows each source sent, sits here too: it is the other end of a
+ *     source, and it left Drive's page on 2026-10-21.
  *   DEVELOPER — the SQL and terminal consoles. Tools, not preferences, which
  *     is why they sit under their own heading at the foot rather than mixed
  *     into the rows above.
@@ -170,6 +172,15 @@ export const SETTINGS_MODE: SidebarMode = {
 			href: '/sources/activity',
 			group: 'Sources',
 		},
+		// The route stays under `/storage`; only the door moved.
+		{
+			id: 'streams',
+			label: 'Streams',
+			icon: 'ri:database-2-line',
+			glyph: 'streams',
+			href: '/storage/streams',
+			group: 'Sources',
+		},
 		{
 			id: 'sql',
 			label: 'SQL',
@@ -206,6 +217,12 @@ export const SETTINGS_MODE: SidebarMode = {
  *   SUBJECTS — who and what it involved. You first, because the narrative
  *     identity is a subject of this wiki like any other, and because the
  *     owner is the subject every other one is oriented around.
+ *
+ * DRIVE sits under them: the files, media and bookmarks you kept, and
+ * Recently deleted. It had its own rail door until 2026-10-21. Recently
+ * deleted is last because it is the one section you walk to on purpose:
+ * everything deleted anywhere in the app (chats, pages, projects, files)
+ * waits there 30 days.
  *
  * WHAT ALSO LEFT: "History", the log of every edit the record made to its own
  * prose (`/wiki/history`, still there, still linked from an article). It sat
@@ -317,29 +334,39 @@ export const WIKI_MODE: SidebarMode = {
 			href: '/wiki/stories',
 			group: 'Subjects',
 		},
-	],
-};
-
-/**
- * Drive's panel: the Storage room's sections as rows, plus Bookmarks, which
- * folded into Drive when the rail went to six rooms. Trash is last because it
- * is the one section you walk to on purpose — everything deleted anywhere in
- * the app (chats, pages, projects, files) waits there 30 days.
- */
-export const DRIVE_MODE: SidebarMode = {
-	id: 'drive',
-	title: 'Drive',
-	rows: [
-		{ id: 'files', label: 'Files', icon: 'ri:hard-drive-2-line', glyph: 'files', href: '/storage' },
-		{ id: 'streams', label: 'Streams', icon: 'ri:database-2-line', glyph: 'streams', href: '/storage/streams' },
-		{ id: 'media', label: 'App Media', icon: 'ri:image-2-line', glyph: 'media', href: '/storage/media' },
-		{ id: 'bookmarks', label: 'Bookmarks', icon: 'ri:bookmark-line', glyph: 'bookmarks', href: '/bookmarks' },
-		{ id: 'trash', label: 'Recently deleted', icon: 'ri:delete-bin-line', glyph: 'trash', href: '/storage/trash' },
+		{
+			id: 'files',
+			label: 'Files',
+			icon: 'ri:hard-drive-2-line',
+			glyph: 'files',
+			href: '/storage',
+			// Every Storage section sits under `/storage`, Streams included, which
+			// is a Settings row. Files is the bare route and the folders under
+			// `/storage/drive`.
+			activeWhen: (route) => route === '/storage' || route.startsWith('/storage/drive'),
+			group: 'Drive',
+		},
+		{ id: 'media', label: 'App Media', icon: 'ri:image-2-line', glyph: 'media', href: '/storage/media', group: 'Drive' },
+		{
+			id: 'bookmarks',
+			label: 'Bookmarks',
+			icon: 'ri:bookmark-line',
+			glyph: 'bookmarks',
+			href: '/bookmarks',
+			group: 'Drive',
+		},
+		{
+			id: 'trash',
+			label: 'Recently deleted',
+			icon: 'ri:delete-bin-line',
+			glyph: 'trash',
+			href: '/storage/trash',
+			group: 'Drive',
+		},
 	],
 };
 
 export const SIDEBAR_MODES: Record<string, SidebarMode> = {
-	drive: DRIVE_MODE,
 	settings: SETTINGS_MODE,
 	wiki: WIKI_MODE,
 };

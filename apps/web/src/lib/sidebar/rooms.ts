@@ -20,6 +20,11 @@
  *   - Bookmarks folded into Files (now Drive). Both are "something from
  *     outside that you kept" — the loosest of the merges, and the first to
  *     revisit.
+ *   - Drive left the rail on 2026-10-21. Files, App Media, Bookmarks and
+ *     Recently deleted are a Drive heading in the Wiki panel: what you kept
+ *     sits with everything else written about your life, and a rail tile was
+ *     more weight than the room carried. Streams, what your sources sent,
+ *     moved under Sources in Settings.
  *   - Home and Chats became one room (2026-09-21). Home's panel had been the
  *     Desk — the pinned shelf — with Chats a peer tile beneath it; the shelf
  *     now sits at the top of the ground room's panel as Pinned, which is
@@ -49,7 +54,7 @@
  * it gets primacy, not parity, and it is the top of the rail, which is what
  * "the ground" should have meant all along.
  *
- * Below it the library: Wiki, Timeline, Drive - what you read the record
+ * Below it the library: Wiki and Timeline, what you read the record
  * through. Timeline is the one room with no panel: the day on a map is a
  * page you go to, and its tile opens that page rather than a list beside it.
  *
@@ -162,7 +167,22 @@ export const ROOMS: Room[] = [
 		// them are reached from this panel and all of them render a wiki page,
 		// so all of them light this tile. Home held `/day` until 2026-09-22,
 		// which is why reading a day used to light the wrong room.
-		owns: ['/wiki', '/day', '/year', '/person', '/place', '/org'],
+		//
+		// The Drive heading's rows (files, app media, bookmarks, recently
+		// deleted) open under `/storage`, `/bookmarks`, `/asset` and `/trash`,
+		// so those light this tile too. `/storage/streams` belongs to Settings.
+		owns: [
+			'/wiki',
+			'/day',
+			'/year',
+			'/person',
+			'/place',
+			'/org',
+			'/storage',
+			'/bookmarks',
+			'/asset',
+			'/trash',
+		],
 		panel: { kind: 'rows', modeId: 'wiki' },
 		group: 'library',
 	},
@@ -178,27 +198,15 @@ export const ROOMS: Room[] = [
 		group: 'library',
 	},
 	{
-		// "Drive", not "Files": the room already had the drive glyph and the
-		// /storage route, and "Files" named the contents rather than the place.
-		// The id stays `files` so a stored rail selection survives the relabel.
-		id: 'files',
-		label: 'Drive',
-		icon: 'drive',
-		chord: '⌥⌘F',
-		href: '/storage',
-		owns: ['/storage', '/bookmarks', '/asset', '/trash'],
-		panel: { kind: 'rows', modeId: 'drive' },
-		group: 'library',
-	},
-	{
 		id: 'settings',
 		label: 'Settings',
 		icon: 'settings',
 		chord: '⌥⌘,',
 		href: '/virtues/you',
 		// Sources and the developer consoles are rows in this panel, so their
-		// pages light this tile.
-		owns: ['/virtues', '/sources'],
+		// pages light this tile. Streams is a Sources row that lives under
+		// `/storage`; the longer prefix wins it from the Wiki.
+		owns: ['/virtues', '/sources', '/storage/streams'],
 		panel: { kind: 'rows', modeId: 'settings' },
 		group: 'utility',
 	},
