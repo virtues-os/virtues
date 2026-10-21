@@ -813,12 +813,15 @@ export function moveUnitTo(view: EditorView, from: number, to: number, target: n
 	const gap = out.mapping.map(from);
 	joinLists(out, gap);
 	const at = out.mapping.map(target);
+	// Nothing is taken out unless it can go back in at `at`.
+	if (!puts(state.apply(out), at, node)) return false;
 	view.dispatch(out.setMeta('uiEvent', 'drop'));
 
+	// The page's plugins may have edited it after the take-out; should it no
+	// longer go in at `at`, it goes back where it was.
 	const tr = view.state.tr;
-	const before = tr.doc;
-	tr.replaceRangeWith(at, at, node);
-	if (tr.doc.eq(before)) return true;
+	const into = puts(view.state, at, node) ? at : gap;
+	tr.replaceRangeWith(into, into, node);
 	const placed = placedAt(tr.doc, node, tr.mapping.map(at, -1));
 	if (placed !== null) {
 		tr.setSelection(NodeSelection.create(tr.doc, placed));
@@ -828,6 +831,13 @@ export function moveUnitTo(view: EditorView, from: number, to: number, target: n
 	}
 	view.dispatch(tr.setMeta('uiEvent', 'drop').scrollIntoView());
 	return true;
+}
+
+/** Whether `node` goes in at `at` in `state`: `replaceRangeWith` changes the page. */
+function puts(state: EditorState, at: number, node: PmNode): boolean {
+	const tr = state.tr;
+	tr.replaceRangeWith(at, at, node);
+	return !tr.doc.eq(state.doc);
 }
 
 /**

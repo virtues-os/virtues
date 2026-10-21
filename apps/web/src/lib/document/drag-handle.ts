@@ -1,6 +1,6 @@
 /**
  * The grip beside a block, as Linear docs draws one. With a mouse or a pen
- * over a block, or over the margin beside it, a grip shows to its left, on
+ * over a block, or over the gutter left of it, a grip shows to its left, on
  * its first line. Drag it and the block moves where the drop cursor shows
  * (`moveUnitTo`: out and back in, keeping its id); hold the copy modifier
  * (⌥ on a Mac) as it drops and a copy goes in, with ids of its own. Click it
@@ -9,6 +9,10 @@
  *
  * Typing hides it until the pointer moves. A page that is read only, and a
  * screen with no hover (a phone), draw none; the keys move a block there.
+ *
+ * The pointer is read from the whole document, not the editor, because the
+ * grip sits left of the editable element and the pointer crosses open
+ * margin to reach it. Over the grip, the block it was shown for stays.
  *
  * The grip sits beside the editable element, not in it, so ProseMirror sees
  * none of its events. The drag starts here and sets `view.dragging` as
@@ -49,6 +53,8 @@ const GRIP_WIDTH = 18;
 const GRIP_HEIGHT = 24;
 /** Between the grip and the block (or a list's markers). */
 const GRIP_GAP = 6;
+/** How far left of the text the pointer still counts as over a block: past the grip, with room to spare. */
+const GUTTER = 48;
 
 const GRIP_SVG =
 	'<svg width="10" height="16" viewBox="0 0 10 16" fill="currentColor" aria-hidden="true">' +
@@ -85,8 +91,8 @@ class Grip {
 		this.dom.addEventListener('dragend', this.onDragEnd);
 		this.dom.addEventListener('click', this.onClick);
 		this.host()?.append(this.dom);
-		this.host()?.addEventListener('mousemove', this.onMove, { passive: true });
-		this.host()?.addEventListener('mouseleave', this.onLeave);
+		document.addEventListener('mousemove', this.onMove, { capture: true, passive: true });
+		document.addEventListener('mouseout', this.onOut, { passive: true });
 		document.addEventListener('scroll', this.onScroll, { capture: true, passive: true });
 	}
 
@@ -102,8 +108,8 @@ class Grip {
 
 	destroy(): void {
 		cancelAnimationFrame(this.frame);
-		this.host()?.removeEventListener('mousemove', this.onMove);
-		this.host()?.removeEventListener('mouseleave', this.onLeave);
+		document.removeEventListener('mousemove', this.onMove, { capture: true });
+		document.removeEventListener('mouseout', this.onOut);
 		document.removeEventListener('scroll', this.onScroll, { capture: true });
 		this.dom.remove();
 	}
@@ -115,15 +121,29 @@ class Grip {
 	}
 
 	private onMove = (event: MouseEvent): void => {
+		// Over the grip, it stays beside the block it was shown for.
+		if (event.target instanceof Node && this.dom.contains(event.target)) return;
 		this.pointer = { x: event.clientX, y: event.clientY };
-		this.schedule();
+		if (this.unit || this.near(this.pointer)) this.schedule();
 	};
 
-	private onLeave = (event: MouseEvent): void => {
-		if (event.relatedTarget instanceof Node && this.dom.contains(event.relatedTarget)) return;
+	/** The pointer left the window. */
+	private onOut = (event: MouseEvent): void => {
+		if (event.relatedTarget) return;
 		this.pointer = null;
 		this.hide();
 	};
+
+	/** Whether `pointer` is over the text or the gutter left of it. */
+	private near(pointer: { x: number; y: number }): boolean {
+		const content = this.view.dom.getBoundingClientRect();
+		return (
+			pointer.y >= content.top &&
+			pointer.y <= content.bottom &&
+			pointer.x >= content.left - GUTTER &&
+			pointer.x <= content.right
+		);
+	}
 
 	private onScroll = (): void => {
 		if (this.unit) this.schedule();
@@ -137,10 +157,9 @@ class Grip {
 	/** Put the grip beside the block under the pointer, or hide it. */
 	private place(): void {
 		const { view, pointer } = this;
-		if (!pointer || !view.editable || view.isDestroyed) return this.hide();
+		if (!pointer || !view.editable || view.isDestroyed || !this.near(pointer)) return this.hide();
 		const content = view.dom.getBoundingClientRect();
-		if (pointer.y < content.top || pointer.y > content.bottom) return this.hide();
-		// Over the margin, read the row as if the pointer were at its edge.
+		// Over the gutter, read the row as if the pointer were at the text's edge.
 		const x = Math.min(Math.max(pointer.x, content.left + 1), content.right - 1);
 		const at = view.posAtCoords({ left: x, top: pointer.y });
 		if (!at) return this.hide();

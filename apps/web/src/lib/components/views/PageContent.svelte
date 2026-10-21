@@ -813,7 +813,7 @@
 									{pageId}
 									pageTitle={title}
 									article={pageData?.kind === "article"}
-									editable={!treeDoc.readOnly}
+									editable={!treeDoc.readOnly && !refusedReason}
 									ai={treeAiDriver}
 									placeholder="Start writing, or press / for commands…"
 									onDocChange={handleDocChange}

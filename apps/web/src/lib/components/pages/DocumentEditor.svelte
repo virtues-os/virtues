@@ -606,12 +606,6 @@
 		// anything else that takes it hides the menus that need it.
 		e.on("blur", follow);
 
-		// The person typing over the inline writer stops it.
-		const onInput = () => {
-			if (ai?.isActive()) ai.abortIn(e);
-		};
-		e.view.dom.addEventListener("beforeinput", onInput);
-
 		// Everything over the page follows it when it scrolls: the table's
 		// bar, the toolbar, Accept and Reject, and the menus opened at a place.
 		// The document's own scroller reports its scrolling on the window.
@@ -630,7 +624,6 @@
 		const releaseLinkKey = shortcuts.claim(e.view.dom, "mod+k", () => canEditLinkAtSelection(e.state));
 
 		cleanup = () => {
-			e.view.dom.removeEventListener("beforeinput", onInput);
 			scroller.removeEventListener("scroll", onScroll);
 			releaseLinkKey();
 			toolbarTimer?.destroy();

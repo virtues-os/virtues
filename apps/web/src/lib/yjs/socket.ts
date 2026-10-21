@@ -25,10 +25,12 @@ import { serverBack } from '$lib/document/uploads';
 /** Close codes the server ends a refused socket with (`server/yjs.rs`). */
 export const CLOSE_CONTRACT = 4426;
 export const CLOSE_REFUSED = 4422;
+export const CLOSE_REFORMATTED = 4409;
 
 export const NEEDS_NEWER_APP = 'A newer version of Virtues wrote this page. Update the app to open it.';
 const EDIT_REFUSED =
 	"Your server couldn't accept an edit to this page, so changes here won't save. Copy what you need, then reload the page.";
+const REFORMATTED = 'Your server converted this page while it was open, so changes here won\'t save. Open the page again.';
 
 export interface PageSocketOptions {
 	/** The document contract the binding reads, sent on the socket. */
@@ -151,16 +153,17 @@ export function connectPage(pageId: string, ydoc: Y.Doc, o: PageSocketOptions): 
 	});
 
 	provider.on('closed', (event: { code: number; reason: string }) => {
-		if (event.code !== CLOSE_CONTRACT && event.code !== CLOSE_REFUSED) return;
+		if (event.code !== CLOSE_CONTRACT && event.code !== CLOSE_REFUSED && event.code !== CLOSE_REFORMATTED) return;
 		console.warn(`[yjs] the server closed page ${pageId} (${event.code}): ${event.reason}`);
 		if (event.code === CLOSE_CONTRACT) {
 			refused.set(NEEDS_NEWER_APP);
 			// A local copy may already be showing; it is not this page any more.
 			isSynced.set(false);
 		} else {
-			// The editor stays, so what was typed can still be copied out;
-			// the stored copy goes, so the next open starts from the server's.
-			refused.set(EDIT_REFUSED);
+			// The editor stays, read only, so what was typed can still be
+			// copied out; the stored copy goes, so the next open starts from
+			// the server's.
+			refused.set(event.code === CLOSE_REFORMATTED ? REFORMATTED : EDIT_REFUSED);
 			persistence.clearData().catch((e: unknown) => {
 				console.warn(`[yjs] the copy of page ${pageId} this device kept was not dropped`, e);
 			});
