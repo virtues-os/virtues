@@ -36,6 +36,7 @@ import {
 } from './commands';
 import { TableKeys } from './tables';
 import { localUser, renderCaret, renderSelection } from './presence';
+import { drawnCaret } from './caret';
 import { pageNodeViews } from './views';
 import { clipboardText } from './markdown';
 import { ProposalsPasted, ProposalsRead, TypingOutsideDeletions } from './suggestions';
@@ -325,6 +326,7 @@ export function createPageEditor(o: PageEditorOptions): Editor {
 			},
 		}),
 		Gapcursor,
+		drawnCaret(),
 		ListKeymap,
 		Placeholder.configure({ placeholder: o.placeholder }),
 		pageInputRules,
