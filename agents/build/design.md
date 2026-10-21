@@ -28,8 +28,10 @@ holds the content.**
 
 ## The shell
 
-One header row across the window, then one card on the desk: the sidebar
-beside the pane. There is no rail. The sidebar shows one room's list at a
+One header row across the window, then two cards on the desk: the sidebar,
+and 12px of desk later the pane. They are separate cards, each rounded on
+all four corners, so opening and closing the sidebar only moves the pane.
+There is no rail. The sidebar shows one room's list at a
 time, Home's unless you have stepped into another room. Defined in
 `apps/web/src/lib/sidebar/rooms.ts`.
 
@@ -44,8 +46,8 @@ time, Home's unless you have stepped into another room. Defined in
   room's list. Its head is a back arrow to Home and the room's name. The
   Wiki's and Settings' lists are those rooms' only navigation; their pages
   carry none of their own.
-- **Home is named for the place, not one of its contents.** Its list holds
-  chats, pages, projects and applets.
+- **Home has no title.** It is the ground, and its doors say what it holds.
+  Only a room you stepped into is named, behind its way back.
 - **Applets, Pages, Tasks and the Wiki are doors in Home**, not places of
   their own in the chrome. A project is the room a chat lives in, so
   projects are listed in Home too.
@@ -129,7 +131,7 @@ change the scale here first.
 
 | Step | Size | Used by |
 |---|---|---|
-| Chrome row | 40px (`--chrome-row-h`) | the window header, the panel's title row |
+| Chrome row | 40px (`--chrome-row-h`) | the window header, a room's title row in the sidebar |
 | Control | 28px (`--chrome-tab-h`, `--sidebar-interactive-height`) | every clickable box in a row: the +, the header's controls, the ∴, sidebar rows |
 | Attached tab | 32px (`--chrome-attached-tab-h`) | a tab: it stands from the header's middle down onto the card it opens |
 | Nested control | 20px | a control inside a control: a tab's ×, a row's inline + and ⋯ |

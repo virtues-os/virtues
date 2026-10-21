@@ -176,13 +176,10 @@
 
 	// The sidebar is a card on the desk; the aside carries no inset of its
 	// own, and the card supplies its 12px margin.
-	// NOT a springy curve. The aside used to open on cubic-bezier(0.34, 1.56,
-	// 0.64, 1) — the 1.56 is an overshoot — and an overshoot is incompatible
-	// with a merged seam: the aside momentarily grew WIDER than its gap +
-	// panel, so for a few frames a strip of desk ground opened between the
-	// panel's right edge and the pane it is supposed to be joined to, and the
-	// whole card appeared to rubber-band. A seam can only stay shut if the
-	// thing carrying it decelerates into its final width and stops there.
+	// NOT a springy curve: an overshoot grows the aside past its final width
+	// for a few frames, so the pane beside it jumps out and back and the
+	// whole window seems to rubber-band. The aside decelerates into its width
+	// and stops there.
 	const sidebarClass = $derived.by(() =>
 		[
 			"sidebar-container relative flex h-full bg-transparent",
@@ -196,14 +193,6 @@
 			"z-[1] min-w-0 [clip-path:inset(0_-3px_0_0)]",
 		].join(" "),
 	);
-
-	// Merged with the pane whenever the panel is open — split included. Then
-	// panel + pane(s) read as one white card split by lines: the panel rounds
-	// only its left corners and its RIGHT border is the first divider; the pane
-	// (in +layout) rounds only right and drops its left border and left margin
-	// so the two abut with no desk gap. In split, the pane resizer draws the
-	// second divider inside that same card.
-	const merged = $derived(!isCollapsed);
 
 	// ── Resizing the seam ─────────────────────────────────────
 	// The aside is the desk's 12px plus the card. Closed, it is nothing: the
@@ -316,7 +305,7 @@
 		[
 			"flex flex-col",
 			"mb-3 ml-3 overflow-hidden border border-border bg-surface",
-			merged ? "panel-card-left" : "panel-card",
+			"panel-card",
 			isCollapsed ? "pointer-events-none" : "",
 		].join(" "),
 	);
@@ -407,13 +396,9 @@
 	@reference "../../../app.css";
 	@reference "$lib/styles/sidebar.css";
 
-	/* Same --card-radius as the pane, so the sidebar is never rounded
-	   differently from the pages beside it. Merged, it rounds only on the desk
-	   side and stays square at the divider. */
+	/* The sidebar is its own card, 12px of desk from the pane's, with the
+	   same --card-radius so the two are never rounded differently. */
 	:global(.panel-card) { border-radius: var(--card-radius); }
-	:global(.panel-card-left) {
-		border-radius: var(--card-radius) 0 0 var(--card-radius);
-	}
 
 	/* The hit area. Always transparent — it is a target, never a mark.
 

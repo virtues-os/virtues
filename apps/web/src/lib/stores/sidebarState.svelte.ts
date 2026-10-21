@@ -87,10 +87,11 @@ export const sidebarState = {
 
 	/**
 	 * Where the pane card starts, in px from the window's left edge: past
-	 * the desk's 12px, and past the sidebar when it is open. The window
-	 * header aligns the left pane's tabs to this.
+	 * the desk's 12px, and when the sidebar is open past its card and the
+	 * 12px of desk between the two cards. The window header aligns the left
+	 * pane's tabs to this.
 	 */
 	get cardLeft() {
-		return SIDEBAR_INSET + (collapsed ? 0 : width);
+		return SIDEBAR_INSET + (collapsed ? 0 : width + SIDEBAR_INSET);
 	},
 };

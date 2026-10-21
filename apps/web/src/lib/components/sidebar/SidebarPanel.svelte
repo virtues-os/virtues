@@ -2,11 +2,10 @@
 	/**
 	 * The panel — one frame, whatever room the sidebar is showing (`sidebarRoom`).
 	 *
-	 * Every room gets the same head so the swap reads as one object changing its
-	 * contents rather than seven different sidebars: a title row at
-	 * `--chrome-row-h` (level with the top row of the pane across the seam), the room's
-	 * name in the serif — the shell's one editorial voice — led by a back arrow
-	 * to Home in every room but Home, then the body.
+	 * Home has no head: it is the ground, and its doors say what it holds.
+	 * Every room you step into gets the same head, so the swap reads as one
+	 * object changing its contents: a row at `--chrome-row-h` with a back
+	 * arrow to Home and the room's name in the serif, then the body.
 	 *
 	 * The title is TEXT, not a control. An earlier version made it a button that
 	 * opened the room's full page, but a heading that silently navigates is a
@@ -38,10 +37,11 @@
 </script>
 
 <div class="panel">
-	<div class="panel-head" class:in-room={inRoom}>
-		{#if inRoom}
-			<!-- A room's list is stepped into from Home; this steps back out.
-			     The arrow sits on the rows' icon line and the title on their
+	<!-- Home has no title: it is the ground, and its doors say what it holds.
+	     A room you stepped into is named, behind a way back. -->
+	{#if inRoom}
+		<div class="panel-head">
+			<!-- The arrow sits on the rows' icon line and the title on their
 			     label line. -->
 			<button
 				type="button"
@@ -52,13 +52,11 @@
 			>
 				<AtlasIcon name="back" size={16} bare />
 			</button>
-		{/if}
-		<span class="panel-title">{room.title ?? room.label}</span>
-		<!-- The head used to carry a room's quick-add (+). The verbs live as
-		     doors in the Home panel now, where they are read as words. -->
-	</div>
+			<span class="panel-title">{room.title ?? room.label}</span>
+		</div>
+	{/if}
 
-	<div class="panel-body">
+	<div class="panel-body" class:headless={!inRoom}>
 		{#if room.panel.kind === 'home'}
 			<HomePanel />
 		{:else if room.panel.kind === 'setup'}
@@ -80,20 +78,14 @@
 	.panel-head {
 		display: flex;
 		align-items: center;
-		gap: 6px;
 		height: var(--chrome-row-h);
 		flex: none;
 		/* One left edge with the rows below: the body insets 4px and every row
-		   12px inside it, so the title starts at 16px and the whole column
-		   shares one spine. */
-		padding-left: 16px;
-		padding-right: 8px;
-	}
-
-	/* The back control's 28px box puts its glyph at 16px, like the rows'
-	   icons; the title then starts at 40px, like their labels. */
-	.panel-head.in-room {
+		   12px inside it. The back control's 28px box puts its glyph at 16px,
+		   like the rows' icons; the title then starts at 40px, like their
+		   labels. */
 		padding-left: 10px;
+		padding-right: 8px;
 		gap: 2px;
 	}
 
@@ -156,6 +148,12 @@
 		overflow-y: auto;
 		overflow-x: hidden;
 		padding: 4px 4px 12px;
+	}
+
+	/* Without a title row the first door starts 8px into the card, the same
+	   air the card's sides give it. */
+	.panel-body.headless {
+		padding-top: 8px;
 	}
 
 </style>

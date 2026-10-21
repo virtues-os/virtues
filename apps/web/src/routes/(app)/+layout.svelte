@@ -125,19 +125,6 @@
 		return () => clearTimeout(t);
 	});
 
-	// The sidebar panel and the main pane merge into one white card, divided by
-	// a single line, whenever the panel is open: the pane drops its left margin,
-	// left border and left rounding so it abuts the panel's right border (the
-	// divider). Only a COLLAPSED sidebar leaves the pane a free-floating card.
-	//
-	// Split used to break the merge, and that was the whole complaint: entering
-	// split re-opened a 12px channel between the panel and the pane, re-rounded
-	// the panel's right corners, and added a second channel between the panes —
-	// three new edges for one new pane. The desk's rule is that separation goes
-	// whitespace → lightness → elevation and stops at the first that reads, and
-	// inside one continuous card a LINE already reads. So split now draws a
-	// second divider rather than carving the card into three.
-	const sidebarMerged = $derived(!mobileLayout.isMobile && !sidebarState.collapsed);
 
 	// Full-screen focus mode: hide all app chrome (sidebar, tab bars, frame)
 	// by toggling a body class that app.css keys off. Driven by the same
@@ -459,13 +446,10 @@
 	     could float on the desk — there are no pane cards now. -->
 	<main
 		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-page"
-		class:mx-3={!mobileLayout.isMobile && !sidebarMerged}
+		class:mx-3={!mobileLayout.isMobile}
 		class:mb-3={!mobileLayout.isMobile}
-		class:mr-3={sidebarMerged}
-		class:pane-card={!mobileLayout.isMobile && !sidebarMerged}
-		class:pane-card-right={sidebarMerged}
+		class:pane-card={!mobileLayout.isMobile}
 		class:border={!mobileLayout.isMobile}
-		class:border-l-0={sidebarMerged}
 		class:is-mobile={mobileLayout.isMobile}
 		class:border-border={!mobileLayout.isMobile}
 		style="background-image: var(--background-image); background-blend-mode: multiply;"
@@ -587,8 +571,7 @@
 	.app-shell.opening :global(.header-mark .mark-dot.apex) {
 		animation: opening-conclude 820ms ease-out 500ms both;
 	}
-	.app-shell.opening :global(.panel-card),
-	.app-shell.opening :global(.panel-card-left) {
+	.app-shell.opening :global(.panel-card) {
 		animation: opening-panel 640ms cubic-bezier(0.2, 0.7, 0.2, 1) 720ms both;
 	}
 	.app-shell.opening main {
@@ -625,28 +608,13 @@
 		}
 	}
 
-	/* The merge/unmerge has to travel at the SAME SPEED as the sidebar, or the
-	   seam tears open.
-	
-	   `sidebarMerged` is a boolean, so every class it drives used to change on
-	   the frame the toggle was pressed while the aside spent the next 300ms
-	   animating to its new width. Collapsing therefore gave the pane its 12px
-	   desk margin instantly — a channel opened at a seam that was still shut,
-	   and the pane jumped 12px RIGHT before sliding left. That jolt, not the
-	   easing alone, is what read as rubber-banding, and it showed desk ground
-	   under the moving edge because for those frames there genuinely was some.
-	
-	   Animating the margin (and the border and corners that arrive with it) on
-	   the sidebar's own clock makes the gap GROW as the panel leaves, so the
-	   two edges never disagree about where the seam is. Keep this duration and
-	   easing identical to UnifiedSidebar's width transition. */
+	/* The pane is its own card, 12px of desk from the sidebar's, so opening
+	   and closing the sidebar only moves it: the aside's width animates and
+	   the pane's margin never changes. */
 	main:not(.is-mobile) {
 		transition:
-			margin-left 300ms var(--ease-premium),
-			border-left-width 300ms var(--ease-premium),
-			border-radius 300ms var(--ease-premium),
-			border-color 150ms var(--ease-premium),
-			background-color 150ms var(--ease-premium);
+			border-color var(--motion-state) var(--ease-premium),
+			background-color var(--motion-state) var(--ease-premium);
 	}
 
 	/* Mobile shell: edge-to-edge (viewport-fit=cover), so the shell itself pads
@@ -691,13 +659,8 @@
 	   normal flow (height comes from the insets, overriding h-screen's 100vh), so
 	   the document has nothing to scroll; only the view's own inner scroller
 	   moves. Bars stay put. overflow-x:hidden also kills sideways rubber-banding. */
-	/* The shell's cards all share --card-radius. `pane-card-right` is the merged
-	   case: the pane rounds only where it meets the desk, and stays square where
-	   it abuts the sidebar panel's divider. */
+	/* The shell's cards all share --card-radius. */
 	.pane-card { border-radius: var(--card-radius); }
-	.pane-card-right {
-		border-radius: 0 var(--card-radius) var(--card-radius) 0;
-	}
 
 	.app-shell.mobile-shell {
 		position: fixed;
