@@ -8,52 +8,35 @@
 	 *
 	 * Doors first, then groups, and the order is the order of reach:
 	 *
-	 *   doors     New chat, Pages, Tasks, Applets. The verb, then the places.
-	 *             Search is not a door: it is the ⌘K palette, reached from
-	 *             anywhere, and a door to it here only repeated the chord.
-	 *             Pages and Applets each lived on the rail as a room of their
-	 *             own and were rooms nobody walked to — a page is written the
-	 *             way a chat is started, and an applet is run from a
-	 *             conversation, so their doors stand beside the
-	 *             conversation's. Pages carries a `+` on hover, the same shape
-	 *             as the Projects label: the word is the list, the plus is
-	 *             the new one. Tasks carries the same plus.
-	 *   Pinned    what the user chose to keep, in their own order. This was
-	 *             the Desk, behind the Home tile; the shelf is more useful
-	 *             where a pin is reached for than in a room you walk to first.
-	 *   Projects  the rooms a chat can live in. Five, then "Show more". The
-	 *             label folds the group like every other label; the full
-	 *             list is behind the head's ⋯ (it used to be the label
-	 *             itself, which made Projects the one head that navigated
-	 *             when the others folded — a click that did a different
-	 *             thing in one place). A row's hover card carries what the
-	 *             row cannot: counts, the memo, the verbs.
-	 *   Today / Recent
-	 *             the chats AND the pages, blended by when they last moved,
+	 *   doors     New chat, Pages, Tasks, Projects, Applets, Wiki. The verb,
+	 *             then the places. Each place is one row that opens its
+	 *             overview; none of them lists its contents here. Search is
+	 *             not a door: it is the ⌘K palette, reached from anywhere.
+	 *             Pages, Tasks and Projects carry a `+` on hover: the word is
+	 *             the list, the plus is the new one.
+	 *   Pinned    what the user chose to keep, in their own order: a chat, a
+	 *             page, a project, an applet, a task, anything with a url.
+	 *             Everything you want one click away lives here, so the doors
+	 *             above never grow lists of their own. A pinned project takes
+	 *             a dropped row or tab, which files it there.
+	 *   Recent    the chats AND the pages, blended by when they last moved,
 	 *             newest first, ten of them: a glance, not an archive. When
 	 *             there are more, "See all" ends the list and opens All
-	 *             chats, at the end where the eye lands once the rows run
-	 *             out rather than behind a ⋯.
-	 *             Two groups, not three: "Yesterday" was a calendar fact
-	 *             nobody navigated by, and it cost a heading and a fold for
-	 *             one day's worth of rows. Grouping is not reordering — a
-	 *             row only ever moves down from Today into Recent. The
-	 *             archive page keeps the grid, the multi-select and the
-	 *             columns a 208px column can never carry.
+	 *             chats. One group: splitting off "Today" cost a heading and
+	 *             a fold for a calendar fact nobody navigated by.
 	 *
 	 * Every group folds, and its fold is remembered (`sidebarZones`): a folded
 	 * group is a statement about how you want the column to look, not a place
-	 * you went. A group with nothing in it is not drawn at all — an empty
-	 * "Projects" with "No projects yet." under it is a feature announcing
-	 * itself, and the doors above already say how to make one.
+	 * you went. A group with nothing in it is not drawn at all: an empty
+	 * "Pinned" is a feature announcing itself.
 	 *
 	 * Rows reveal their controls on hover — pin, more — rather than carrying
 	 * them always: a column of twenty rows with forty buttons is a toolbar,
-	 * not a list. Projects get the card as well, because a project has more
-	 * to say than a chat does.
+	 * not a list.
 	 *
-	 * Pinnable: a chat, a project, an applet, a page. A project cannot hold a
-	 * project — the server refuses it and the menus never offer it.
+	 * The row menus offer a pin for a chat, a project, an applet or a page, and
+	 * a tab's menu pins whatever the tab shows. A project cannot hold a
+	 * project. The server refuses it and the menus never offer it.
 	 */
 	import { chatSessions, type ChatSession } from '$lib/stores/chatSessions.svelte';
 	import { projectStore } from '$lib/stores/project.svelte';
@@ -64,21 +47,19 @@
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { promptText } from '$lib/stores/dialog.svelte';
-	import { deleteChat, type PageSummary, type Pin, type ProjectSummary } from '$lib/api/client';
+	import { deleteChat, type PageSummary, type Pin } from '$lib/api/client';
 	import { pinIdentity, renameRef, ownedRef, untitled } from '$lib/refs/identity.svelte';
 	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
 	import { clothFor, projectColor } from '$lib/sidebar/pin-colors';
-	import { isEmoji, PROJECT_ICON } from '$lib/utils/iconHelpers';
+	import { isEmoji } from '$lib/utils/iconHelpers';
 	import {
 		droppedRefUrl,
 		fileIntoProject,
 		isRefDrag,
 		memberIcon,
-		memberName,
-		newChatInProject,
 		newProject,
 		openProjects,
 		projectRowMenuItems,
@@ -86,17 +67,13 @@
 		startRefDrag,
 	} from '$lib/utils/projectActions';
 	import { dndManager, PROJECT_DROP_ATTR } from '$lib/stores/dndManager.svelte';
-	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import AtlasIcon from '../AtlasIcon.svelte';
-	import HoverCard from '../HoverCard.svelte';
 	import SetupRing from '../SetupRing.svelte';
 	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 	import { setup } from '$lib/components/setup/setup.svelte';
 	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { openWebLink } from '$lib/utils/webLinks';
-
-	const PROJECTS_SHOWN = 5;
 
 	// Skipped is not done: a step set aside keeps the door, because Finish
 	// later and Skip both mean "not now", never "not ever". It goes once every
@@ -115,10 +92,10 @@
 
 	const pins = $derived(pinsStore.pins);
 	const projects = $derived(projectStore.projects);
-	let projectsExpanded = $state(false);
-	const visibleProjects = $derived(
-		projectsExpanded ? projects : projects.slice(0, PROJECTS_SHOWN),
-	);
+	// The pinned project a dragged sidebar row is over. A dragged TAB is
+	// tracked by dndManager instead (it is not an HTML drag); either lights
+	// the row.
+	let rowDropTarget = $state<string | null>(null);
 	// The page list is loaded by the rooms that show pages; this panel is
 	// mounted before any of them, so it asks once. The store dedupes nothing,
 	// hence the guard on both the list and the in-flight flag.
@@ -141,7 +118,7 @@
 			kind: 'chat',
 			key: `chat:${session.conversation_id}`,
 			// The last message, not the row's last touch: filing or renaming
-			// an old chat must not move it into Today.
+			// an old chat must not move it to the top.
 			ts: stamp(session.last_message_at || session.last_updated),
 			session,
 		}));
@@ -160,29 +137,9 @@
 		windowShellStore.openTabFromRoute('/chat-history', { label: 'All chats', focusExisting: true });
 	}
 
-	/** Midnight-relative, so "today" means the calendar day, not 24 hours. */
-	function isToday(ts: number): boolean {
-		if (!ts) return false;
-		const startOfToday = new Date();
-		startOfToday.setHours(0, 0, 0, 0);
-		return ts >= startOfToday.getTime();
-	}
-
-	const recentGroups = $derived.by(() => {
-		const today: RecentRow[] = [];
-		const recent: RecentRow[] = [];
-		for (const r of recentsShown) (isToday(r.ts) ? today : recent).push(r);
-		return [
-			{ id: 'today', label: 'Today', items: today },
-			{ id: 'recent', label: 'Recent', items: recent },
-		].filter((g) => g.items.length > 0);
-	});
-
-
 	/** Fold state, keyed so a future group costs one string. */
 	const zoneId = (id: string) => `chats.${id}`;
 	const folded = (id: string) => sidebarZones.isCollapsed(zoneId(id));
-	const lastRecentGroup = $derived(recentGroups.at(-1)?.id ?? null);
 
 	/* The fold's duration scales with the group's height, clamped. At one
 	   fixed duration a 20-row group moved four times as fast as a 5-row one
@@ -250,10 +207,6 @@
 		return `/chat/${s.conversation_id}`;
 	}
 
-	function projectRoute(p: ProjectSummary): string {
-		return `/project/${p.id}`;
-	}
-
 	function pageTitle(p: PageSummary): string {
 		return p.title?.trim() || untitled('page');
 	}
@@ -301,6 +254,12 @@
 		openTasks();
 	}
 
+	async function addProject(e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		await newProject();
+	}
+
 	function openApplets() {
 		windowShellStore.openTabFromRoute('/applets', { label: 'Applets', focusExisting: true });
 	}
@@ -315,28 +274,12 @@
 		windowShellStore.openTabFromRoute(pageRoute(p), { label: pageTitle(p), focusExisting: true });
 	}
 
-	function openProject(p: ProjectSummary) {
-		closeCard();
-		windowShellStore.openTabFromRoute(projectRoute(p), { label: p.name, focusExisting: true });
-	}
-
 	function openPin(pin: Pin) {
 		if (isExternal(pin.url)) {
 			void openWebLink(pin.url);
 			return;
 		}
 		windowShellStore.openTabFromRoute(pin.url, { label: pinLabel(pin), focusExisting: true });
-	}
-
-	/**
-	 * A new chat that already lives in the project. The binding is staged for
-	 * the next chat to claim, the same hand-off "Ask this project" uses, so
-	 * the create path files it and grounds retrieval there before the first
-	 * message.
-	 */
-	function newChatIn(p: ProjectSummary) {
-		closeCard();
-		newChatInProject(p);
 	}
 
 // ── the verbs, per kind ────────────────────────────────────────────────
@@ -454,27 +397,6 @@
 		];
 	}
 
-	/** The head's ⋯: the list's own doors, off the label so the label can fold. */
-	function projectsHeadMenu(): ContextMenuItem[] {
-		return [
-			{ id: 'all', label: 'All projects', icon: PROJECT_ICON, action: openProjects },
-			{ id: 'new', label: 'New project', icon: 'ri:add-line', action: newProject },
-		];
-	}
-
-	/** The shared project menu; the hover card closes first, one floating thing at a time. */
-	function projectMenu(p: ProjectSummary): ContextMenuItem[] {
-		return projectRowMenuItems(p).map((item) => ({
-			...item,
-			action: item.action
-				? () => {
-						closeCard();
-						return item.action?.();
-					}
-				: undefined,
-		}));
-	}
-
 	/**
 	 * A pin's menu is its thing's menu — rename, file, delete or archive act on
 	 * the chat, page or project, as they do from its own row — with the icon
@@ -575,14 +497,12 @@
 	function showMenu(e: MouseEvent, items: ContextMenuItem[]) {
 		e.preventDefault();
 		e.stopPropagation();
-		closeCard();
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
 	}
 
 	function showMenuFromButton(e: MouseEvent, items: ContextMenuItem[]) {
 		e.preventDefault();
 		e.stopPropagation();
-		closeCard();
 		const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		contextMenu.show(
 			{ x: r.left, y: r.bottom },
@@ -600,107 +520,7 @@
 			console.error('[HomePanel] pin failed:', err);
 		}
 	}
-
-	// ── the hover card ─────────────────────────────────────────────────────
-	//
-	// One card at a time, for the project row the pointer has rested on. The
-	// row arms a timer on enter and disarms it on leave; the card, once up,
-	// survives a short excursion off the row so the pointer can cross to it.
-	// A menu or a click closes it outright — two floating things at once is
-	// one too many.
-
-	// Quick enough to feel like the row opening, slow enough that a pointer
-	// crossing the list on its way somewhere doesn't pop a card per row. Once
-	// one is up, the next row's opens at once: you are reading cards now.
-	const OPEN_AFTER_MS = 90;
-	const CLOSE_AFTER_MS = 180;
-
-	let card = $state<{ project: ProjectSummary; anchor: HTMLElement } | null>(null);
-
-	// The project row a dragged sidebar row is over. A dragged TAB is tracked
-	// by dndManager instead (it is not an HTML drag); either lights the row.
-	let rowDropTarget = $state<string | null>(null);
-	let openTimer: ReturnType<typeof setTimeout> | null = null;
-	let closeTimer: ReturnType<typeof setTimeout> | null = null;
-
-	function clearTimers() {
-		if (openTimer) clearTimeout(openTimer);
-		if (closeTimer) clearTimeout(closeTimer);
-		openTimer = null;
-		closeTimer = null;
-	}
-
-	function armCard(project: ProjectSummary, anchor: HTMLElement) {
-		clearTimers();
-		if (card?.project.id === project.id) return;
-		// Start reading what is inside now, so it is there when the card is.
-		void projectStore.get(project.id).catch(() => {});
-		if (card) {
-			card = { project, anchor };
-			return;
-		}
-		openTimer = setTimeout(() => {
-			card = { project, anchor };
-		}, OPEN_AFTER_MS);
-	}
-
-	function disarmCard() {
-		if (openTimer) clearTimeout(openTimer);
-		openTimer = null;
-		if (!card) return;
-		if (closeTimer) clearTimeout(closeTimer);
-		closeTimer = setTimeout(closeCard, CLOSE_AFTER_MS);
-	}
-
-	function holdCard() {
-		if (closeTimer) clearTimeout(closeTimer);
-		closeTimer = null;
-	}
-
-	function closeCard() {
-		clearTimers();
-		card = null;
-	}
-
-	function onKeydown(e: KeyboardEvent) {
-		if (e.key === 'Escape' && card) closeCard();
-	}
-
-	/**
-	 * What the card lists: the few most recent chats and the first few files
-	 * and pages, one click from anywhere. It is the reason the card exists: a
-	 * way into the thing you were after without landing on the project first.
-	 */
-	const CARD_ROWS = 3;
-	const cardDetail = $derived(card ? projectStore.getCached(card.project.id) : undefined);
-	const cardChats = $derived((cardDetail?.chats ?? []).slice(0, CARD_ROWS));
-	const cardItems = $derived(
-		(cardDetail?.items ?? []).filter((i) => !i.url.startsWith('/chat/')).slice(0, CARD_ROWS),
-	);
-
-	function openFromCard(route: string, label: string) {
-		closeCard();
-		if (isExternal(route)) {
-			void openWebLink(route);
-			return;
-		}
-		windowShellStore.openTabFromRoute(route, { label, focusExisting: true });
-	}
-
-	/** The live copy of the card's project, so counts move while it is up. */
-	const cardProject = $derived(
-		card ? (projects.find((p) => p.id === card!.project.id) ?? card.project) : null,
-	);
-
-	function cardMeta(p: ProjectSummary): string {
-		const parts: string[] = [];
-		if (p.chat_count > 0) parts.push(p.chat_count === 1 ? '1 chat' : `${p.chat_count} chats`);
-		if (p.item_count > 0) parts.push(p.item_count === 1 ? '1 item' : `${p.item_count} items`);
-		return parts.join(' · ') || 'Empty';
-	}
 </script>
-
-<svelte:window onkeydown={onKeydown} />
 
 <!-- The doors sit in the flow above the groups, told apart from them by air,
      not a rule. They wear Atlas like every nav door in the shell. Search
@@ -766,6 +586,28 @@
 			</button>
 		</span>
 	</div>
+	<div
+		class="panel-row panel-door panel-row-has-actions"
+		role="link"
+		tabindex="0"
+		onclick={openProjects}
+		onkeydown={(e) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				openProjects();
+			}
+		}}
+	>
+		<AtlasIcon name="projects" size={SHELL_GLYPH_PX} bare />
+		<span class="panel-row-text">Projects</span>
+		<span class="row-actions">
+			<button type="button" class="row-action" aria-label="New project" title="New project" onclick={addProject}>
+				<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+					<path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+				</svg>
+			</button>
+		</span>
+	</div>
 	<button type="button" class="panel-row panel-door" onclick={openApplets}>
 		<AtlasIcon name="applets" size={SHELL_GLYPH_PX} bare />
 		<span class="panel-row-text">Applets</span>
@@ -807,23 +649,6 @@
 			<span class="group-actions">{@render action()}</span>
 		{/if}
 	</div>
-{/snippet}
-
-{#snippet projectsHeadActions()}
-	<button type="button" class="row-action" aria-label="New project" title="New project" onclick={newProject}>
-		<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-			<path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-		</svg>
-	</button>
-	<button
-		type="button"
-		class="row-action"
-		aria-label="More"
-		title="More"
-		onclick={(e) => showMenuFromButton(e, projectsHeadMenu())}
-	>
-		<Icon icon="ri:more-line" width="14" />
-	</button>
 {/snippet}
 
 {#snippet chatRow(session: ChatSession)}
@@ -951,14 +776,41 @@
 			{#each pins as pin (pin.id)}
 				{@const pinChat = pin.url.startsWith('/chat/') ? pin.url.slice('/chat/'.length) : null}
 				{@const look = pinIdentity(pin)}
+				{@const owned = ownedRef(pin.url)}
+				{@const pinProject = owned?.kind === 'project' ? owned.id : null}
 				<div
 					class="panel-row panel-row-has-actions spine"
 					class:active={activeRoute === pin.url}
+					class:drop-target={pinProject !== null &&
+						(dndManager.projectTarget === pinProject || rowDropTarget === pinProject)}
+					{...pinProject ? { [PROJECT_DROP_ATTR]: pinProject } : {}}
 					role="link"
 					tabindex="0"
 					title={look.title}
 					draggable={projectMemberUrl(pin.url) ? 'true' : 'false'}
 					ondragstart={(e) => startRefDrag(e, pin.url, look.title)}
+					ondragover={(e) => {
+						if (!pinProject || !isRefDrag(e)) return;
+						e.preventDefault();
+						if (e.dataTransfer) e.dataTransfer.dropEffect = 'link';
+						rowDropTarget = pinProject;
+					}}
+					ondragleave={(e) => {
+						const row = e.currentTarget as HTMLElement;
+						if (!e.relatedTarget || !row.contains(e.relatedTarget as Node)) {
+							if (rowDropTarget === pinProject) rowDropTarget = null;
+						}
+					}}
+					ondrop={(e) => {
+						rowDropTarget = null;
+						const dropped = droppedRefUrl(e);
+						if (!pinProject || !dropped) return;
+						e.preventDefault();
+						void fileIntoProject(
+							projects.find((x) => x.id === pinProject) ?? { id: pinProject, name: look.title, archived_at: null },
+							dropped,
+						);
+					}}
 					onclick={() => openPin(pin)}
 					onkeydown={(e) => {
 						if (e.key === 'Enter' || e.key === ' ') {
@@ -1013,112 +865,11 @@
 	</div>
 {/if}
 
-{#if projects.length > 0}
-	{@const projectRows = visibleProjects.length + (projects.length > PROJECTS_SHOWN ? 1 : 0)}
-	{@render groupHead('projects', 'Projects', projectRows, projectsHeadActions)}
-	<div class="sidebar-expandable fold" class:expanded={!folded('projects')} style={foldStyle(projectRows)}>
+{#if recentsShown.length > 0}
+	{@render groupHead('recent', 'Recent', recentsShown.length)}
+	<div class="sidebar-expandable fold" class:expanded={!folded('recent')} style={foldStyle(recentsShown.length)}>
 		<div class="sidebar-expandable-inner">
-			{#each visibleProjects as project (project.id)}
-				{@const url = projectRoute(project)}
-				{@const pinned = isPinned(url)}
-				<div
-					class="panel-row panel-row-has-actions spine"
-					class:active={activeRoute === url}
-					class:carded={card?.project.id === project.id}
-					class:drop-target={dndManager.projectTarget === project.id || rowDropTarget === project.id}
-					{...{ [PROJECT_DROP_ATTR]: project.id }}
-					role="link"
-					tabindex="0"
-					title={project.name}
-					ondragover={(e) => {
-						if (!isRefDrag(e)) return;
-						e.preventDefault();
-						if (e.dataTransfer) e.dataTransfer.dropEffect = 'link';
-						rowDropTarget = project.id;
-					}}
-					ondragleave={(e) => {
-						const row = e.currentTarget as HTMLElement;
-						if (!e.relatedTarget || !row.contains(e.relatedTarget as Node)) {
-							if (rowDropTarget === project.id) rowDropTarget = null;
-						}
-					}}
-					ondrop={(e) => {
-						rowDropTarget = null;
-						const dropped = droppedRefUrl(e);
-						if (!dropped) return;
-						e.preventDefault();
-						void fileIntoProject(project, dropped);
-					}}
-					onclick={() => openProject(project)}
-					onkeydown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
-							e.preventDefault();
-							openProject(project);
-						}
-					}}
-					onmouseenter={(e) => armCard(project, e.currentTarget as HTMLElement)}
-					onmouseleave={disarmCard}
-					oncontextmenu={(e) => showMenu(e, projectMenu(project))}
-				>
-					<span class="row-glyph" aria-hidden="true">
-						<ProjectGlyph {project} size={15} />
-					</span>
-					<span class="panel-row-text">{project.name}</span>
-					<span class="row-actions">
-						<button
-							type="button"
-							class="row-action"
-							class:on={pinned}
-							aria-label={pinned ? 'Unpin' : 'Pin'}
-							title={pinned ? 'Unpin' : 'Pin'}
-							onclick={(e) => quickPin(e, { url, label: project.name, icon: project.icon })}
-						>
-							<Icon icon={pinned ? 'ri:pushpin-fill' : 'ri:pushpin-line'} width="14" />
-						</button>
-						<button
-							type="button"
-							class="row-action"
-							aria-label="More"
-							title="More"
-							onclick={(e) => showMenuFromButton(e, projectMenu(project))}
-						>
-							<Icon icon="ri:more-line" width="14" />
-						</button>
-					</span>
-				</div>
-			{/each}
-			{#if projects.length > PROJECTS_SHOWN}
-				<button type="button" class="panel-row panel-more" onclick={() => (projectsExpanded = !projectsExpanded)}>
-					{projectsExpanded ? 'Show less' : 'Show more'}
-				</button>
-			{/if}
-		</div>
-	</div>
-{:else if projectStore.loaded}
-	<!-- No projects: the head alone, with its + in view. No "No projects
-	     yet" line under it, and nothing to fold, so the label is the door
-	     to the projects page, the house shape for a door (the word is the
-	     list, the + is the new one). Without it nothing in the sidebar led
-	     to a first project. Once one exists this is the group above. -->
-	<div class="group-head">
-		<button type="button" class="group-label" title="All projects" onclick={openProjects}>
-			<span>Projects</span>
-		</button>
-		<span class="group-actions shown">
-			<button type="button" class="row-action" aria-label="New project" title="New project" onclick={newProject}>
-				<svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-					<path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
-				</svg>
-			</button>
-		</span>
-	</div>
-{/if}
-
-{#each recentGroups as group (group.id)}
-	{@render groupHead(group.id, group.label, group.items.length)}
-	<div class="sidebar-expandable fold" class:expanded={!folded(group.id)} style={foldStyle(group.items.length)}>
-		<div class="sidebar-expandable-inner">
-			{#each group.items as row (row.key)}
+			{#each recentsShown as row (row.key)}
 				{#if row.kind === 'chat'}
 					{@render chatRow(row.session)}
 				{:else}
@@ -1127,73 +878,15 @@
 			{/each}
 		</div>
 	</div>
-{/each}
+{/if}
 
-<!-- Hidden while the group above it is folded: "See all" under a closed
-     heading would point at nothing on screen. -->
-{#if recentsMore && !(lastRecentGroup && folded(lastRecentGroup))}
+<!-- Hidden while Recent is folded: "See all" under a closed heading would
+     point at nothing on screen. -->
+{#if recentsMore && !folded('recent')}
 	<button type="button" class="panel-row panel-more" onclick={openAllChats}>See all</button>
 {/if}
 
 <div bind:this={spacerEl} class="fold-spacer" style="height: {foldSpacer}px" aria-hidden="true"></div>
-
-{#if card && cardProject}
-	{@const url = projectRoute(cardProject)}
-	{@const pinned = isPinned(url)}
-	<HoverCard anchor={card.anchor} onenter={holdCard} onleave={disarmCard}>
-		<div class="card-head">
-			<span class="card-glyph" aria-hidden="true">
-				<ProjectGlyph project={cardProject} size={16} />
-			</span>
-			<span class="card-name">{cardProject.name}</span>
-			<button
-				type="button"
-				class="row-action card-pin"
-				class:on={pinned}
-				aria-label={pinned ? 'Unpin' : 'Pin'}
-				title={pinned ? 'Unpin' : 'Pin'}
-				onclick={(e) => quickPin(e, { url, label: cardProject.name, icon: cardProject.icon })}
-			>
-				<Icon icon={pinned ? 'ri:pushpin-fill' : 'ri:pushpin-line'} width="14" />
-			</button>
-		</div>
-		<div class="card-meta">{cardMeta(cardProject)}</div>
-		{#if cardChats.length > 0 || cardItems.length > 0}
-			<div class="card-rule" aria-hidden="true"></div>
-			{#each cardChats as chat (chat.id)}
-				<button
-					type="button"
-					class="card-row card-item"
-					onclick={() => openFromCard(`/chat/${chat.id}`, chat.title || 'Chat')}
-				>
-					<span class="card-item-glyph" style={`color: ${projectColor(cardProject)}`}>
-						<AtlasIcon name="chats" size={14} bare />
-					</span>
-					<span class="card-item-text">{chat.title || untitled('chat')}</span>
-				</button>
-			{/each}
-			{#each cardItems as item (item.url)}
-				<button
-					type="button"
-					class="card-row card-item"
-					onclick={() => openFromCard(item.url, memberName(item))}
-				>
-					<span class="card-item-glyph"><Icon icon={memberIcon(item.url)} width="14" /></span>
-					<span class="card-item-text">{memberName(item)}</span>
-				</button>
-			{/each}
-		{/if}
-		<div class="card-rule" aria-hidden="true"></div>
-		<button type="button" class="card-row" onclick={() => openProject(cardProject)}>
-			<Icon icon={PROJECT_ICON} width="15" />
-			<span>Open project</span>
-		</button>
-		<button type="button" class="card-row" onclick={() => newChatIn(cardProject)}>
-			<Icon icon="ri:chat-new-line" width="15" />
-			<span>New chat here</span>
-		</button>
-	</HoverCard>
-{/if}
 
 <style>
 	/* Sentence case, no tracking, no rule — design.md forbids uppercase with
@@ -1358,8 +1051,7 @@
 		color: var(--color-foreground);
 	}
 
-	.panel-row:hover,
-	.panel-row.carded {
+	.panel-row:hover {
 		background: var(--hover-bg);
 		transition-duration: var(--motion-hover-in);
 	}
@@ -1368,7 +1060,7 @@
 		background: var(--active-bg);
 	}
 
-	/* A project row with something held over it: the row says it will take
+	/* A pinned project with something held over it: the row says it will take
 	   it, in the same ring the focus state draws, so a drop is never a
 	   guess about which row is under the pointer. */
 	.panel-row.drop-target {
@@ -1439,8 +1131,7 @@
 	}
 
 	.panel-row-has-actions:hover .row-unread,
-	.panel-row-has-actions:focus-within .row-unread,
-	.panel-row-has-actions.carded .row-unread {
+	.panel-row-has-actions:focus-within .row-unread {
 		display: none;
 	}
 
@@ -1456,8 +1147,7 @@
 	}
 
 	.panel-row-has-actions:hover .row-actions,
-	.panel-row-has-actions:focus-within .row-actions,
-	.panel-row-has-actions.carded .row-actions {
+	.panel-row-has-actions:focus-within .row-actions {
 		display: flex;
 	}
 
@@ -1498,106 +1188,5 @@
 		font-size: 12px;
 		color: var(--color-foreground-subtle);
 		font-variant-numeric: tabular-nums;
-	}
-
-	/* ── the card ─────────────────────────────────────────────────────── */
-
-	.card-head {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		padding: 6px 6px 4px 8px;
-	}
-
-	.card-glyph {
-		width: 16px;
-		height: 16px;
-		flex: none;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-	}
-
-	.card-name {
-		flex: 1;
-		min-width: 0;
-		font-family: var(--font-serif-ui);
-		font-size: 14px;
-		font-weight: 400;
-		letter-spacing: 0.02em;
-		-webkit-text-stroke: 0.2px currentColor;
-		line-height: 20px;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-	}
-
-	.card-pin {
-		flex: none;
-	}
-
-	.card-meta {
-		padding: 0 8px 6px 32px;
-		font-size: 12px;
-		color: var(--color-foreground-subtle);
-	}
-
-/* The one rule the card allows: it divides what the project IS from what
-	   you can DO, which is the same seam a menu draws with a divider. */
-	.card-rule {
-		height: 1px;
-		margin: 4px 0;
-		background: var(--color-border);
-	}
-
-	.card-row {
-		display: flex;
-		align-items: center;
-		gap: 8px;
-		width: 100%;
-		height: 28px;
-		padding: 0 8px;
-		border: none;
-		border-radius: 6px;
-		background: none;
-		cursor: pointer;
-		text-align: left;
-		font-size: var(--sidebar-interactive-font-size);
-		color: var(--color-foreground);
-	}
-
-	.card-row :global(svg) {
-		color: var(--color-foreground-muted);
-	}
-
-	.card-row:hover {
-		background: var(--hover-bg);
-	}
-
-	.card-row:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-
-	/* The project's contents: quieter than the verbs below them, because
-	   they are places to go, not things to do. */
-	.card-item {
-		color: var(--color-foreground-muted);
-	}
-	.card-item:hover {
-		color: var(--color-foreground);
-	}
-	.card-item-glyph {
-		display: flex;
-		flex: none;
-		width: 16px;
-		justify-content: center;
-		color: var(--color-foreground-subtle);
-	}
-	.card-item-text {
-		min-width: 0;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
 	}
 </style>
