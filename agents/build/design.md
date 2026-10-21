@@ -43,14 +43,17 @@ time, Home's unless you have stepped into another room. Defined in
 | Room | Stepped into from | Its list |
 |---|---|---|
 | **Home** | the ground; every other room steps back to it | doors, Pinned, Projects, Recents |
-| **Wiki** | the Wiki door in Home | Time (Today, Timeline, Days, Years, Chapters), Subjects, Drive |
-| **Settings** | the Settings row at the sidebar's foot | Account, Server, Sources, Developer |
 | **Setup** | a Setup door at the top of Home, only while a step is not done | the steps |
 
 - **Stepping into a room** opens its page and swaps the sidebar to the
-  room's list. Its head is a back arrow to Home and the room's name. The
-  Wiki's and Settings' lists are those rooms' only navigation; their pages
-  carry none of their own.
+  room's list. Its head is a back arrow to Home and the room's name. Setup
+  is the only such room: a short checklist that goes once it is done.
+- **The sidebar never changes for a place.** The Wiki door opens the Wiki's
+  overview, whose index (Time, Subjects, Drive) reaches every section.
+  Settings at the foot opens Settings, and every Settings page (Sources and
+  Streams included) carries Settings' section list down its left, inside the
+  card (`SectionNav`, drawn by TabContent), the way a Mac app's settings
+  window carries its own.
 - **Home has no title.** It is the ground, and its doors say what it holds.
   Only a room you stepped into is named, behind its way back.
 - **Applets, Pages, Tasks and the Wiki are doors in Home**, not places of
@@ -146,17 +149,21 @@ are all 28px controls, 6px from the row's top and bottom.
 
 ### Lines and glyphs
 
-**Every icon renders at 1.25px of ink, at every size.** `AtlasIcon` derives
-its stroke from its size (1.25 × 16 ÷ size), so a stroke is never typed by
-hand. Three glyph sizes: 14px beside 12px text (a tab's icon and ×, inbox
-rows), 16px in rows and the header, 20px on the rail.
+**The shell's icons are Phosphor** (`lib/phosphor.ts`): Regular at rest,
+Fill for the selected state (a selected row, the active tab, the sidebar
+toggle while the sidebar is open). `AtlasIcon` maps the shell's glyph names
+onto them and keeps its hand-drawn set only as the fallback for a name with
+no Phosphor counterpart. Two sizes: 18px (`SHELL_GLYPH_PX`) in the
+sidebar's rows and the window header, where Regular's line (1/16 of the
+icon) comes to about 1.1px, near the weight of the 13px labels beside it;
+14px beside 12px text (a tab's icon and ×).
 
-The row slot, the 16px before a row's name, always holds a line glyph in
+The row slot, the 18px before a row's name, always holds a line glyph in
 ink. A pin or a project tints its glyph with its own color. An emoji the
 user picked stays, because it is their content.
 
-The ∴ is the one filled shape in the chrome, and its lit dot is the one
-accent color there.
+The ∴ is drawn, the one shape in the chrome that is not Phosphor, and its
+lit dot is the one accent color there.
 
 ### Grays
 

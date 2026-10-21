@@ -1,15 +1,13 @@
 /**
  * Which room the sidebar is showing.
  *
- * The sidebar is Home's list. The Wiki, Settings and Setup are rooms you
- * step into from it: a door in Home (or Settings at the sidebar's foot)
- * opens the room's page and swaps the sidebar to the room's own list, whose
- * head steps back to Home. Those lists are the rooms' only navigation; their
- * pages have none of their own.
+ * The sidebar is Home's list. Setup is the one room you step into from it:
+ * its door opens the steps and swaps the sidebar to their checklist, whose
+ * head steps back to Home. The Wiki and Settings are doors that open pages
+ * carrying their own section lists (lib/sidebar/rooms.ts).
  *
- * Persisted, so the sidebar reopens where you left it. Not derived from
- * which pane has focus: with Settings on the left and a chat on the right
- * there would be no correct answer.
+ * Persisted, so the sidebar reopens where you left it. A stored room that no
+ * longer exists (the Wiki and Settings were rooms once) falls back to Home.
  */
 
 import { DEFAULT_ROOM_ID, roomById, type Room } from '$lib/sidebar/rooms';

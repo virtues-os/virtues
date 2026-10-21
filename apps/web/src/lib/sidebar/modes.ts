@@ -369,7 +369,18 @@ export const WIKI_MODE: SidebarMode = {
 	],
 };
 
-export const SIDEBAR_MODES: Record<string, SidebarMode> = {
-	settings: SETTINGS_MODE,
-	wiki: WIKI_MODE,
-};
+/**
+ * The row a route belongs to, or null: a row's own rule if it has one, else
+ * its href and everything under it. Longest match wins, so
+ * `/virtues/developer/terminal` is Terminal, not a shorter prefix.
+ */
+export function rowForRoute(mode: SidebarMode, route: string | null | undefined): ModeRow | null {
+	if (!route) return null;
+	const path = route.split('?')[0];
+	let best: ModeRow | null = null;
+	for (const row of mode.rows) {
+		const hit = row.activeWhen ? row.activeWhen(path) : path === row.href || path.startsWith(row.href + '/');
+		if (hit && (!best || row.href.length > best.href.length)) best = row;
+	}
+	return best;
+}

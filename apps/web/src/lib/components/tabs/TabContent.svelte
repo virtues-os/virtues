@@ -5,8 +5,16 @@
 	import { loadView, peekView, reloadForStaleChunk, type View, type ViewLoader } from "$lib/tabs/lazy";
 	import { reloadApp } from "$lib/reload";
 	import Button from "$lib/components/Button.svelte";
+	import SectionNav from "$lib/components/settings/SectionNav.svelte";
+	import { SETTINGS_MODE, rowForRoute } from "$lib/sidebar/modes";
+	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	// A Settings page (Sources and Streams among them) carries Settings'
+	// section list down its left, since the sidebar does not change for
+	// Settings. The phone has its own way through Settings.
+	const settingsNav = $derived(!mobileLayout.isMobile && !!rowForRoute(SETTINGS_MODE, tab.route));
 
 	// Which view this tab wants, as a loader (see $lib/tabs/lazy.ts). Handles
 	// detail variants for entity namespaces.
@@ -67,9 +75,18 @@
 	});
 </script>
 
-<div class="tab-content" class:active style:display={active ? "flex" : "none"}>
+<div class="tab-content" class:active class:with-nav={settingsNav} style:display={active ? "flex" : "none"}>
+	{#if settingsNav}
+		<SectionNav mode={SETTINGS_MODE} route={tab.route} />
+	{/if}
 	{#if ViewComponent}
-		<ViewComponent {tab} {active} />
+		{#if settingsNav}
+			<div class="section-body">
+				<ViewComponent {tab} {active} />
+			</div>
+		{:else}
+			<ViewComponent {tab} {active} />
+		{/if}
 	{:else if loadFailed}
 		<div class="placeholder" role="alert">
 			<Icon icon="ri:refresh-line" />
@@ -94,6 +111,21 @@
 	.tab-content {
 		position: absolute;
 		inset: 0;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	/* The section list, then the page. The body keeps the column layout and
+	   the containment a view expects from the tab itself. */
+	.tab-content.with-nav {
+		flex-direction: row;
+	}
+
+	.section-body {
+		position: relative;
+		flex: 1;
+		min-width: 0;
+		display: flex;
 		flex-direction: column;
 		overflow: hidden;
 	}

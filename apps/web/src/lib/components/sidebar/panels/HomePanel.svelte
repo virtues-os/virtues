@@ -94,6 +94,7 @@
 	import { sidebarRoom } from '$lib/stores/sidebarRoom.svelte';
 	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 	import { setup } from '$lib/components/setup/setup.svelte';
+	import { SHELL_GLYPH_PX } from '$lib/phosphor';
 	import { openWebLink } from '$lib/utils/webLinks';
 
 	const PROJECTS_SHOWN = 5;
@@ -714,7 +715,7 @@
 		</button>
 	{/if}
 	<button type="button" class="panel-row panel-door" onclick={newChat}>
-		<AtlasIcon name="new-chat" size={16} bare />
+		<AtlasIcon name="new-chat" size={SHELL_GLYPH_PX} bare />
 		<span class="panel-row-text">New chat</span>
 	</button>
 	<!-- The word opens the list; the + that appears beside it makes a new
@@ -731,7 +732,7 @@
 			}
 		}}
 	>
-		<AtlasIcon name="pages" size={16} bare />
+		<AtlasIcon name="pages" size={SHELL_GLYPH_PX} bare />
 		<span class="panel-row-text">Pages</span>
 		<span class="row-actions">
 			<button type="button" class="row-action" aria-label="New page" title="New page" onclick={newPage}>
@@ -755,7 +756,7 @@
 			}
 		}}
 	>
-		<AtlasIcon name="tasks" size={16} bare />
+		<AtlasIcon name="tasks" size={SHELL_GLYPH_PX} bare />
 		<span class="panel-row-text">Tasks</span>
 		<span class="row-actions">
 			<button type="button" class="row-action" aria-label="New task" title="New task" onclick={newTask}>
@@ -766,13 +767,17 @@
 		</span>
 	</div>
 	<button type="button" class="panel-row panel-door" onclick={openApplets}>
-		<AtlasIcon name="applets" size={16} bare />
+		<AtlasIcon name="applets" size={SHELL_GLYPH_PX} bare />
 		<span class="panel-row-text">Applets</span>
 	</button>
-	<!-- The record, a door like the tools above it. It opens the Wiki and
-	     steps the sidebar into the Wiki's own list (Time, Subjects, Drive). -->
-	<button type="button" class="panel-row panel-door" onclick={() => sidebarRoom.enter('record')}>
-		<AtlasIcon name="wiki" size={16} bare />
+	<!-- The record, a door like the tools above it. It opens the Wiki's
+	     overview, whose index reaches its sections; the sidebar stays Home. -->
+	<button
+		type="button"
+		class="panel-row panel-door"
+		onclick={() => windowShellStore.openTabFromRoute('/wiki', { label: 'Wiki', focusExisting: true })}
+	>
+		<AtlasIcon name="wiki" size={SHELL_GLYPH_PX} bare />
 		<span class="panel-row-text">Wiki</span>
 	</button>
 </div>
@@ -850,7 +855,7 @@
 			{#if chatActivity.running(session.conversation_id)}
 				<Icon icon="ri:loader-4-line" width="14" class="spin" />
 			{:else}
-				<AtlasIcon name="chats" size={16} bare filled={activeRoute === url} />
+				<AtlasIcon name="chats" size={SHELL_GLYPH_PX} bare filled={activeRoute === url} />
 			{/if}
 		</span>
 		<span class="panel-row-text">{titleOf(session)}</span>
@@ -911,7 +916,7 @@
 			{#if page.icon && isEmoji(page.icon)}
 				<span class="row-emoji">{page.icon}</span>
 			{:else}
-				<AtlasIcon name="pages" size={16} bare filled={activeRoute === url} />
+				<AtlasIcon name="pages" size={SHELL_GLYPH_PX} bare filled={activeRoute === url} />
 			{/if}
 		</span>
 		<span class="panel-row-text">{pageTitle(page)}</span>
@@ -975,7 +980,7 @@
 							<Icon icon={look.icon} width="14" style="color: {clothFor({ url: pin.url, color: look.color })}" />
 						{:else}
 							<span class="row-kind" style="color: {clothFor({ url: pin.url, color: look.color })}">
-								<AtlasIcon name={pinKind(pin.url)} size={16} bare filled={activeRoute === pin.url} />
+								<AtlasIcon name={pinKind(pin.url)} size={SHELL_GLYPH_PX} bare filled={activeRoute === pin.url} />
 							</span>
 						{/if}
 					</span>
@@ -1406,8 +1411,8 @@
 	}
 
 	.row-glyph {
-		width: 16px;
-		height: 16px;
+		width: 18px;
+		height: 18px;
 		flex: none;
 		display: flex;
 		align-items: center;

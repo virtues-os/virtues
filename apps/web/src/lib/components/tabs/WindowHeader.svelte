@@ -19,12 +19,12 @@
 	import { sidebarState, SIDEBAR_INSET } from '$lib/stores/sidebarState.svelte';
 	import { shortcuts } from '$lib/shortcuts/registry.svelte';
 	import { isMacOS } from '$lib/utils/platform';
+	import { SHELL_GLYPH_PX } from '$lib/phosphor';
 
 	/** Air between the controls and the first tab when they meet. */
 	const LEAD_GAP_PX = 8;
-	/** The controls' glyphs: Atlas at row size, which draws them at the
-	 *  scale's one line weight (1.25px), the same as the sidebar's rows. */
-	const GLYPH_PX = 16;
+	/** The controls' glyphs, the same size as the sidebar's rows. */
+	const GLYPH_PX = SHELL_GLYPH_PX;
 	/** The scale's control box: every clickable thing in the header. */
 	const CONTROL_PX = 28;
 	/** The ∴ glyph inside InboxMark's control box. */

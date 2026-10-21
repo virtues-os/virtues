@@ -14,6 +14,8 @@
 	import { search } from "$lib/stores/search.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import AtlasIcon from "./AtlasIcon.svelte";
+	import { SHELL_GLYPH_PX } from "$lib/phosphor";
+	import { SETTINGS_MODE, rowForRoute } from "$lib/sidebar/modes";
 	import SidebarPanel from "./SidebarPanel.svelte";
 	import { sidebarRoom } from "$lib/stores/sidebarRoom.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
@@ -136,7 +138,7 @@
 	}
 
 	function handleWikiOverview() {
-		sidebarRoom.enter("record");
+		windowShellStore.openTabFromRoute("/wiki", { label: "Wiki", focusExisting: true });
 	}
 
 	// New chat / page navigate the window you are in. Only "+" and "open
@@ -199,7 +201,14 @@
 	// header's sidebar button is the way back.
 	const panelWidth = $derived(sidebarState.width);
 	const asideWidth = $derived(isCollapsed ? 0 : SIDEBAR_INSET + panelWidth);
-	const inSettings = $derived(sidebarRoom.selectedId === "settings");
+	// Settings is a door: it opens the Settings page, which carries its own
+	// section list (SectionNav). Lit while the focused pane shows a Settings
+	// page, the way any row says where you are.
+	const inSettings = $derived.by(() => {
+		const pane = windowShellStore.activePane;
+		const route = pane?.tabs.find((t) => t.id === pane.activeTabId)?.route;
+		return !!rowForRoute(SETTINGS_MODE, route);
+	});
 
 	let resizing = $state(false);
 	$effect(() => {
@@ -343,9 +352,9 @@
 				type="button"
 				class="sidebar-interactive"
 				class:active={inSettings}
-				onclick={() => (inSettings ? sidebarRoom.leave() : sidebarRoom.enter("settings"))}
+				onclick={() => windowShellStore.openTabFromRoute("/virtues/you", { label: "Settings", focusExisting: true })}
 			>
-				<AtlasIcon name="settings" size={16} filled={inSettings} />
+				<AtlasIcon name="settings" size={SHELL_GLYPH_PX} filled={inSettings} />
 				<span class="sidebar-label">Settings</span>
 			</button>
 		</div>

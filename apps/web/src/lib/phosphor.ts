@@ -254,6 +254,14 @@ const REMIX: Record<string, keyof typeof ICONS> = {
 	'ri:more-2-fill': 'dots-three-vertical',
 };
 
+/**
+ * The size of a glyph in the sidebar's rows and the window header. Phosphor
+ * Regular draws its line at 1/16 of the icon, so 18px gives about 1.1px of
+ * ink, near the weight of the 13px labels beside it and of native Mac apps'
+ * sidebars. At 16px it was 1px and read faint.
+ */
+export const SHELL_GLYPH_PX = 18;
+
 /** The Phosphor icon for a shell glyph name, or null when there is none. */
 export function shellIcon(name: string, filled = false): string | null {
 	const ph = SHELL[name];

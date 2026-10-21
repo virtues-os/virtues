@@ -86,26 +86,28 @@
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import { getKeepMenuItems } from '$lib/utils/contextMenuItems';
 	import { reclassifyPersonAsOrg, createPerson, deleteEntity } from '$lib/wiki/api';
+	import { WIKI_MODE } from '$lib/sidebar/modes';
+	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
+	import { SHELL_GLYPH_PX } from '$lib/phosphor';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	// The section list lives in ONE place now: WIKI_MODE in `lib/sidebar/modes.ts`,
-	// which the rail's Wiki panel renders. People/Places/Orgs stay their own rows
-	// there even though the content folds them into one Entities index — the
-	// legacy segment presets the index's type filter (see LEGACY_TYPE below).
+	// The section list lives in ONE place: WIKI_MODE in `lib/sidebar/modes.ts`,
+	// which the overview renders as its index. People/Places/Orgs stay their
+	// own rows there even though the content folds them into one Entities
+	// index — the legacy segment presets the index's type filter (see
+	// LEGACY_TYPE below).
 	//
-	// Two sections here have no row in that panel, on purpose:
-	//   - `overview` is the wiki's front page at `/wiki`, which is the Wiki
-	//     TILE's own destination on the rail. It had a row too until
-	//     2026-09-22 — the tile and the first row of its panel being the same
-	//     click.
+	// Two sections here have no row in that index, on purpose:
+	//   - `overview` is the index's own page, `/wiki`, which the sidebar's
+	//     Wiki door opens.
 	//   - the day page is its own route (`/day`), not a `/wiki/<section>` one,
-	//     so the panel's "Today" row points outside this view.
+	//     so the index's "Today" row points outside this view.
 
 	type Section = 'overview' | 'stories' | 'days' | 'years' | 'entities' | 'identity' | 'chapters' | 'history';
 
 
-	// The active section comes from the route; the sidebar rail does the linking.
+	// The active section comes from the route; the overview's index does the linking.
 	// Legacy per-type routes land in the unified entities section.
 	const LEGACY_TYPE: Record<string, 'person' | 'place' | 'org'> = {
 		people: 'person',
@@ -599,6 +601,20 @@
 		windowShellStore.openTabFromRoute(entity.route);
 	}
 
+	// The Wiki's sections, grouped as WIKI_MODE groups them (Time, Subjects,
+	// Drive). The sidebar has one Wiki door, so this index is how the
+	// sections are reached; it is the same list, in the same order.
+	const sectionGroups = $derived.by(() => {
+		const groups: { name: string; rows: typeof WIKI_MODE.rows }[] = [];
+		for (const row of WIKI_MODE.rows) {
+			const name = row.group ?? '';
+			const last = groups.at(-1);
+			if (last && last.name === name) last.rows.push(row);
+			else groups.push({ name, rows: [row] });
+		}
+		return groups;
+	});
+
 	// Overview cards switch this pane to the matching section.
 	function goTo(path: string) {
 		windowShellStore.updateTab(tab.id, { route: path });
@@ -640,6 +656,26 @@
 						</TextAction>
 					</p>
 				</header>
+
+				<!-- The sections. Moving to one moves this tab, as any view moving
+				     within itself does; Back returns here. -->
+				<nav class="ovw-index" aria-label="Wiki sections">
+					{#each sectionGroups as group (group.name)}
+						<div class="ovw-index-group">
+							<h2 class="ovw-index-head">{group.name}</h2>
+							{#each group.rows as row (row.id)}
+								<button
+									type="button"
+									class="ovw-index-row"
+									onclick={() => windowShellStore.navigate(row.href, { label: `Wiki · ${row.label}` })}
+								>
+									{#if row.glyph}<AtlasIcon name={row.glyph} size={SHELL_GLYPH_PX} bare />{/if}
+									<span>{row.label}</span>
+								</button>
+							{/each}
+						</div>
+					{/each}
+				</nav>
 
 				<!-- Their own partition of their life. The front page led with a heatmap of how much data
 				     arrived, which is a fact about the collector rather than about
@@ -1128,6 +1164,63 @@
 		font-size: 0.875rem;
 		color: var(--color-foreground-muted);
 		margin: 0;
+	}
+
+	/* The sections, three short columns under the mast. */
+	.ovw-index {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+		gap: 1.5rem 2rem;
+		margin-bottom: 3rem;
+	}
+
+	.ovw-index-head {
+		margin: 0 0 0.25rem;
+		font-size: 0.75rem;
+		font-weight: 400;
+		color: var(--color-foreground-subtle);
+	}
+
+	.ovw-index-row {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		width: 100%;
+		height: 28px;
+		padding: 0 8px;
+		margin-left: -8px;
+		border: none;
+		border-radius: var(--card-radius);
+		background: none;
+		color: var(--color-foreground);
+		font-size: 13px;
+		text-align: left;
+		cursor: pointer;
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.ovw-index-row :global(svg) {
+		color: var(--color-foreground-muted);
+	}
+
+	.ovw-index-row:hover {
+		background: var(--hover-bg);
+		transition-duration: var(--motion-hover-in);
+	}
+
+	.ovw-index-row:active {
+		background: var(--press-bg);
+	}
+
+	.ovw-index-row:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.ovw-index-row {
+			transition: none;
+		}
 	}
 
 	/* Each section is one grid row: the essay column and its margin. */

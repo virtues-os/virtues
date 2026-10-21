@@ -16,13 +16,12 @@
 	 * way back had to be a different affordance somewhere else. The mark is one
 	 * object doing one job from a place that never moves.
 	 */
-	import SidebarModePanel from './SidebarModePanel.svelte';
 	import HomePanel from './panels/HomePanel.svelte';
 	import SetupPanel from '$lib/components/setup/SetupPanel.svelte';
 	import AtlasIcon from './AtlasIcon.svelte';
 	import { sidebarRoom } from '$lib/stores/sidebarRoom.svelte';
 	import { DEFAULT_ROOM_ID } from '$lib/sidebar/rooms';
-	import { SIDEBAR_MODES } from '$lib/sidebar/modes';
+	import { SHELL_GLYPH_PX } from '$lib/phosphor';
 	import type { Room } from '$lib/sidebar/rooms';
 
 	interface Props {
@@ -31,7 +30,6 @@
 
 	let { room }: Props = $props();
 
-	const mode = $derived(room.panel.kind === 'rows' ? SIDEBAR_MODES[room.panel.modeId] : null);
 	const inRoom = $derived(room.id !== DEFAULT_ROOM_ID);
 
 </script>
@@ -50,7 +48,7 @@
 				title="Back to Home"
 				onclick={() => sidebarRoom.leave()}
 			>
-				<AtlasIcon name="back" size={16} bare />
+				<AtlasIcon name="back" size={SHELL_GLYPH_PX} bare />
 			</button>
 			<span class="panel-title">{room.title ?? room.label}</span>
 		</div>
@@ -61,8 +59,6 @@
 			<HomePanel />
 		{:else if room.panel.kind === 'setup'}
 			<SetupPanel />
-		{:else if mode}
-			<SidebarModePanel {mode} />
 		{/if}
 	</div>
 </div>

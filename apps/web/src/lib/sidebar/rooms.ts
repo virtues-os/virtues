@@ -3,16 +3,15 @@
  *
  * The sidebar is one column on the desk, and it shows one room's list at a
  * time. Home is the ground: its list is the doors (New chat, Pages, Tasks,
- * Applets, Wiki), Pinned, Projects and the recents. The other rooms are
- * stepped into from Home and back out again (`sidebarRoom.enter` and
- * `leave`):
+ * Applets, Wiki), Pinned, Projects and the recents, with Settings at the
+ * foot. Every one of them opens a page: the Wiki's overview carries an index
+ * of its sections, and every Settings page carries Settings' section list
+ * (SectionNav), so the sidebar never changes for them.
  *
- *   - Wiki, from its door in Home. Its list (Time, Subjects, Drive) is the
- *     Wiki's only navigation; its pages carry none of their own.
- *   - Settings, from the row at the sidebar's foot: something you do to the
- *     server and leave, apart from the places above.
- *   - Setup, from a door at the top of Home that shows only while a step of
- *     Setup is not done (skipped counts as not done).
+ * One room is stepped into from Home and back out again
+ * (`sidebarRoom.enter` and `leave`): Setup, from a door at the top of Home
+ * that shows only while a step of Setup is not done (skipped counts as not
+ * done). Its steps are a short checklist, and it goes once they are done.
  *
  * There was a rail of room tiles beside the sidebar. It went when the rooms
  * came down to these few, because a column of tiles for a handful of places
@@ -21,8 +20,6 @@
 
 /** What fills the panel under the room's title. */
 export type RoomPanel =
-	/** The fixed rows of a `SIDEBAR_MODES` entry. */
-	| { kind: 'rows'; modeId: string }
 	/** The Home panel: doors, Pinned, Projects, the recents. */
 	| { kind: 'home' }
 	/** Setup: the steps, and the way back into them. */
@@ -52,19 +49,6 @@ export const ROOMS: Room[] = [
 		label: 'Home',
 		href: '/chat',
 		panel: { kind: 'home' },
-	},
-	{
-		id: 'record',
-		label: 'Wiki',
-		href: '/wiki',
-		panel: { kind: 'rows', modeId: 'wiki' },
-	},
-	{
-		// Sources and the developer consoles are headings in this list.
-		id: 'settings',
-		label: 'Settings',
-		href: '/virtues/you',
-		panel: { kind: 'rows', modeId: 'settings' },
 	},
 ];
 
