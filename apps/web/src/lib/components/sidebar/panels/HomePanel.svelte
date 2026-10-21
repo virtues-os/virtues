@@ -91,7 +91,6 @@
 	import AtlasIcon from '../AtlasIcon.svelte';
 	import HoverCard from '../HoverCard.svelte';
 	import SetupRing from '../SetupRing.svelte';
-	import { sidebarRoom } from '$lib/stores/sidebarRoom.svelte';
 	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 	import { setup } from '$lib/components/setup/setup.svelte';
 	import { SHELL_GLYPH_PX } from '$lib/phosphor';
@@ -104,11 +103,12 @@
 	// step is done.
 	const setupOpen = $derived(gettingStarted.loaded && !gettingStarted.unsupported && !setup.complete);
 	const setupCount = $derived(`${setup.doneCount}/${setup.steps.length}`);
-	// A room that loses its door cannot stay open: once Setup is done the
-	// sidebar falls back to Home rather than showing steps with no way in.
-	$effect(() => {
-		if (gettingStarted.loaded && !setupOpen && sidebarRoom.selectedId === 'setup') sidebarRoom.leave();
-	});
+	// Setup's own tab, at the step to pick up: the tab carries the steps
+	// across its top, so the sidebar does not list them.
+	function openSetup() {
+		const next = setup.resumeInApp;
+		windowShellStore.openTabFromRoute(next ? `/setup/${next}` : '/setup', { label: 'Setup', focusExisting: true });
+	}
 	const RECENTS_CAP = 10;
 
 	// ── what is where ──────────────────────────────────────────────────────
@@ -708,7 +708,7 @@
      across chats, pages and projects. -->
 <div class="panel-doors">
 	{#if setupOpen}
-		<button type="button" class="panel-row panel-door" onclick={() => sidebarRoom.enter('setup')}>
+		<button type="button" class="panel-row panel-door" onclick={openSetup}>
 			<SetupRing size={16} />
 			<span class="panel-row-text">Setup</span>
 			<span class="door-meta">{setupCount}</span>

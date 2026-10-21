@@ -36,28 +36,17 @@ other. In split view the gap between the two cards is the resize handle.
 Every card keeps all four rounded corners, and nothing joins: opening the
 sidebar or a split only moves cards. There is no rail.
 
-The sidebar shows one room's list at a
-time, Home's unless you have stepped into another room. Defined in
-`apps/web/src/lib/sidebar/rooms.ts`.
+The sidebar is one list, and it never changes: the doors (Setup while it
+is not done, New chat, Pages, Tasks, Applets, Wiki), Pinned, Projects and
+Recents, with Settings at the foot. Every door opens a page. A page that
+has sections carries their list itself: the Wiki's overview has an index,
+every Settings page has Settings' section list down its left inside the
+card (`SectionNav`, drawn by TabContent), and Setup's tab has its steps
+across its top.
 
-| Room | Stepped into from | Its list |
-|---|---|---|
-| **Home** | the ground; every other room steps back to it | doors, Pinned, Projects, Recents |
-| **Setup** | a Setup door at the top of Home, only while a step is not done | the steps |
-
-- **Stepping into a room** opens its page and swaps the sidebar to the
-  room's list. Its head is a back arrow to Home and the room's name. Setup
-  is the only such room: a short checklist that goes once it is done.
-- **The sidebar never changes for a place.** The Wiki door opens the Wiki's
-  overview, whose index (Time, Subjects, Drive) reaches every section.
-  Settings at the foot opens Settings, and every Settings page (Sources and
-  Streams included) carries Settings' section list down its left, inside the
-  card (`SectionNav`, drawn by TabContent), the way a Mac app's settings
-  window carries its own.
-- **Home has no title.** It is the ground, and its doors say what it holds.
-  Only a room you stepped into is named, behind its way back.
-- **Applets, Pages, Tasks and the Wiki are doors in Home**, not places of
-  their own in the chrome. A project is the room a chat lives in, so
+- **The sidebar has no title.** Its doors say what it holds.
+- **Applets, Pages, Tasks and the Wiki are doors**, not places of their own
+  in the chrome. A project is the room a chat lives in, so
   projects are listed in Home too.
 - **Settings stands at the foot**, apart from the places above it: you do
   something to the server and leave.
@@ -139,7 +128,7 @@ change the scale here first.
 
 | Step | Size | Used by |
 |---|---|---|
-| Chrome row | 40px (`--chrome-row-h`) | the window header, a room's title row in the sidebar |
+| Chrome row | 40px (`--chrome-row-h`) | the window header |
 | Control | 28px (`--chrome-tab-h`, `--sidebar-interactive-height`) | every clickable box in a row: tabs, the +, the header's controls, the ∴, sidebar rows |
 | Nested control | 20px | a control inside a control: a tab's ×, a row's inline + and ⋯ |
 
@@ -242,8 +231,7 @@ traffic lights sit in the header row on its centre line, and the ∴ and the
 controls follow them after 12pt, as in a native Mac app. The row's empty
 space moves the window. Each pane's tabs start at that pane's edge.
 With the sidebar closed the controls keep their place, and the left pane's
-tabs start just after them. Inside a room, the panel head's back arrow sits
-on the same icon line and the room's name on the rows' label line.
+tabs start just after them. 
 
 ---
 

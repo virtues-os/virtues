@@ -3,7 +3,7 @@
 
   The letter is Setup's preface now (/setup plays it after Hello, 2026-09-24,
   agents/plan/setup-plan.md). This route is where it can be read on its own
-  afterward: from the rail's Setup panel, from the profile, from old links.
+  afterward: from Setup's tab, from the profile, from old links.
   It asks nothing and changes nothing; its one button goes back to wherever
   the reader came from.
 

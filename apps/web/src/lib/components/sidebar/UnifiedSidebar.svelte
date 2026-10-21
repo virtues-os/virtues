@@ -1,7 +1,5 @@
 <script lang="ts">
 	import { onMount } from "svelte";
-	import { fly } from "svelte/transition";
-	import { cubicIn, cubicOut } from "svelte/easing";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import {
@@ -16,8 +14,7 @@
 	import AtlasIcon from "./AtlasIcon.svelte";
 	import { SHELL_GLYPH_PX } from "$lib/phosphor";
 	import { SETTINGS_MODE, rowForRoute } from "$lib/sidebar/modes";
-	import SidebarPanel from "./SidebarPanel.svelte";
-	import { sidebarRoom } from "$lib/stores/sidebarRoom.svelte";
+	import HomePanel from "./panels/HomePanel.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { onSummon, setSummonShortcut, storedSummonChord } from "$lib/tauri/bridge";
 
@@ -167,14 +164,6 @@
 	function toggleCollapse() {
 		sidebarState.toggle();
 	}
-
-	// The panel swaps as one object, not as a cascade of rows. Sequential, not
-	// concurrent: Svelte runs `in:` and `out:` together by default, which shows
-	// two half-transparent copies of a list sliding through each other and reads
-	// as smeared. So the old panel leaves first (110ms, short travel), and the
-	// new one waits for it before arriving (210ms over 18px). The grid cell holds
-	// the height throughout, so nothing collapses in the gap.
-	const swapKey = $derived(sidebarRoom.selectedId);
 
 	// The sidebar sits on the desk; the aside carries no inset of its own,
 	// and the column supplies its margin (the desk gap).
@@ -331,16 +320,12 @@
 					<span>Loading...</span>
 				</div>
 			{:else}
-				<div class="nav-swap">
-					{#key swapKey}
-						<div
-							class="nav-layer"
-							in:fly={{ x: 18, duration: 210, delay: 110, easing: cubicOut, opacity: 0 }}
-							out:fly={{ x: -10, duration: 110, easing: cubicIn, opacity: 0 }}
-						>
-							<SidebarPanel room={sidebarRoom.selected} />
-						</div>
-					{/key}
+				<!-- One list, always: the sidebar never changes. Every door opens
+				     a page, and a page that has sections carries their list
+				     itself (the Wiki's index, Settings' SectionNav, Setup's
+				     step strip). -->
+				<div class="panel-body">
+					<HomePanel />
 				</div>
 			{/if}
 		</nav>
@@ -523,25 +508,19 @@
 		flex: 1;
 		min-height: 0;
 		overflow: hidden;
-		/* SidebarPanel owns its own head row and body padding, so the column does
-		   not add a second inset on top of it — two nested paddings are how the
-		   "one left edge" rule quietly breaks. */
+		/* The body below owns the inset, so the column adds none: two nested
+		   paddings are how the "one left edge" rule quietly breaks. */
 		padding: 0;
 	}
 
-	/* Both layers share one grid cell, so the leaving panel doesn't push the
-	   arriving one around while they overlap. */
-	.nav-swap {
-		display: grid;
+	/* The rows' inset: 4px, then each row's 12px, so icons start 16px in.
+	   The first door starts 8px down. */
+	.panel-body {
 		height: 100%;
 		min-height: 0;
-	}
-
-	.nav-layer {
-		grid-area: 1 / 1;
-		min-width: 0;
-		min-height: 0;
-		overflow: hidden;
+		overflow-y: auto;
+		overflow-x: hidden;
+		padding: 8px 4px 12px;
 	}
 
 	@keyframes spin {

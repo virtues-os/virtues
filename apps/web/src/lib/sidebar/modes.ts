@@ -80,8 +80,8 @@ export interface SidebarMode {
  *     into the rows above.
  *
  * Sources and the consoles keep their routes (`/sources/*`,
- * `/virtues/developer/*`); only the door moved. The Settings room owns both
- * prefixes in `rooms.ts`, so either lights its tile.
+ * `/virtues/developer/*`); only the door moved. `rowForRoute` matches both,
+ * so either lights the sidebar's Settings row and carries the section list.
  */
 export const SETTINGS_MODE: SidebarMode = {
 	id: 'settings',
@@ -207,7 +207,7 @@ export const SETTINGS_MODE: SidebarMode = {
  * TWO AXES, NAMED. Eleven rows in one flat list was the rail's own problem
  * moved a level down: the rail was cut from ten tiles to six because "a rail of
  * ten indistinguishable glyphs is a memorisation tax rather than a contents
- * page" (see `rooms.ts`), and the wiki panel then grew to eleven. A list that
+ * page", and the wiki's list then grew to eleven. A list that
  * long is not read, it is scanned for the word you already wanted.
  *
  * The record only ever answers two questions, so the panel asks them in the
