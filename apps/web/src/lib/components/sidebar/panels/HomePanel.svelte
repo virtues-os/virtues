@@ -62,7 +62,6 @@
 		droppedRefUrl,
 		fileIntoProject,
 		isRefDrag,
-		memberIcon,
 		newProject,
 		openProjects,
 		projectRowMenuItems,
@@ -236,14 +235,6 @@
 		const tab = pane?.tabs.find((t) => t.id === pane.activeTabId);
 		return tab?.route ?? null;
 	});
-
-	/** The drawn glyph for what a pin points at. */
-	function pinKind(url: string): string {
-		if (url.startsWith('/project')) return 'projects';
-		if (url.startsWith('/applet')) return 'applets';
-		const icon = memberIcon(url);
-		return icon.startsWith('atlas:') ? icon.slice('atlas:'.length) : 'pages';
-	}
 
 	function titleOf(s: ChatSession): string {
 		return s.title?.trim() || untitled('chat');
@@ -882,9 +873,10 @@
 					}}
 					oncontextmenu={(e) => showMenu(e, pinMenu(pin, { x: e.clientX, y: e.clientY }))}
 				>
-					<!-- The glyph if the user picked one, else the drawn glyph for
-					     what the pin is (a page, a chat, a project), in the pin's
-					     cloth: the row slot always holds a line glyph in ink. -->
+					<!-- The mark the user picked, else a solid circle in the pin's
+					     cloth. A filled dot shows its color at 14px where a line
+					     glyph shows only a trace of it, so the pinned list reads by
+					     color at a glance. -->
 					<span class="row-glyph" aria-hidden="true">
 						{#if pinChat && chatActivity.running(pinChat)}
 							<Icon icon="ri:loader-4-line" width="14" class="spin" />
@@ -893,9 +885,7 @@
 						{:else if look.icon}
 							<Icon icon={look.icon} width="14" style="color: {clothFor({ url: pin.url, color: look.color })}" />
 						{:else}
-							<span class="row-kind" style="color: {clothFor({ url: pin.url, color: look.color })}">
-								<AtlasIcon name={pinKind(pin.url)} size={SHELL_GLYPH_PX} bare />
-							</span>
+							<Icon icon="shape:circle" width="14" style="color: {clothFor({ url: pin.url, color: look.color })}" />
 						{/if}
 					</span>
 					<span class="panel-row-text">{look.title}</span>
@@ -1178,10 +1168,6 @@
 	.row-emoji {
 		font-size: 14px;
 		line-height: 1;
-	}
-
-	.row-kind {
-		display: flex;
 	}
 
 
