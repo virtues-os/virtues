@@ -58,7 +58,6 @@
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { pinsStore } from '$lib/stores/pins.svelte';
-	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { chatActivity } from '$lib/stores/chatActivity.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
@@ -100,8 +99,6 @@
 	const pins = $derived(pinsStore.pins);
 	const projects = $derived(projectStore.projects);
 	let projectsExpanded = $state(false);
-	// Loaded here so the Applets door can show how many applets need you.
-	if (!appletsStore.loaded) void appletsStore.load();
 	const visibleProjects = $derived(
 		projectsExpanded ? projects : projects.slice(0, PROJECTS_SHOWN),
 	);
@@ -733,13 +730,6 @@
 	<button type="button" class="panel-row panel-door" onclick={openApplets}>
 		<AtlasIcon name="applets" size={16} bare />
 		<span class="panel-row-text">Applets</span>
-		{#if appletsStore.problems > 0}
-			<span
-				class="door-count"
-				title={`${appletsStore.problems} ${appletsStore.problems === 1 ? 'applet needs' : 'applets need'} you`}
-				>{appletsStore.problems}</span
-			>
-		{/if}
 	</button>
 </div>
 
@@ -1384,22 +1374,6 @@
 		   was invisible against the ground it was meant to separate from. */
 		border: 1px solid color-mix(in srgb, var(--color-foreground) 12%, transparent);
 		box-sizing: border-box;
-	}
-
-	.door-count {
-		margin-left: auto;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-width: 16px;
-		height: 16px;
-		padding: 0 4px;
-		border-radius: 999px;
-		background: var(--color-error);
-		color: var(--color-background);
-		font-size: 11px;
-		line-height: 1;
-		font-variant-numeric: tabular-nums;
 	}
 
 	.row-unread {

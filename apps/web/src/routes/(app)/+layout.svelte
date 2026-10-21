@@ -115,7 +115,7 @@
 
 	// THE APP OPENING (2026-09-23). Armed by Setup's close just before
 	// it hands a new owner into the app; read once, on this first render, so
-	// the class is there from the first frame. The ∴ at the head of the rail
+	// the class is there from the first frame. The ∴ at the left of the header
 	// beats — premise, premise, therefore, the same figure the cold open drew
 	// — the rooms cascade down out of it, the panel and the pane settle in,
 	// and the Setup tile lights once. Every other mount opens plainly.
@@ -579,13 +579,13 @@
 	   See `opening` in the script. Times are from the first frame of the
 	   shell; the view transition is fading it in over the first ~0.6s, so
 	   the mark's beat starts while the letter is still going. */
-	.app-shell.opening :global(.rail-mark .mark-dot.left) {
+	.app-shell.opening :global(.header-mark .mark-dot.left) {
 		animation: opening-premise 560ms ease-out 220ms both;
 	}
-	.app-shell.opening :global(.rail-mark .mark-dot.right) {
+	.app-shell.opening :global(.header-mark .mark-dot.right) {
 		animation: opening-premise 560ms ease-out 360ms both;
 	}
-	.app-shell.opening :global(.rail-mark .mark-dot.apex) {
+	.app-shell.opening :global(.header-mark .mark-dot.apex) {
 		animation: opening-conclude 820ms ease-out 500ms both;
 	}
 	/* The rooms fall out of the mark, top to bottom. */

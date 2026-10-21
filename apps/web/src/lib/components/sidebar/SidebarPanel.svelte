@@ -12,7 +12,7 @@
 	 * opened the room's full page, but a heading that silently navigates is a
 	 * surprise, and the rail already selects the room.
 	 *
-	 * The collapse control is NOT here — it is the ∴ mark in the window header. Putting
+	 * The collapse control is NOT here — it is a button in the window header. Putting
 	 * it on the panel meant the control vanished with the thing it hid, so the
 	 * way back had to be a different affordance somewhere else. The mark is one
 	 * object doing one job from a place that never moves.

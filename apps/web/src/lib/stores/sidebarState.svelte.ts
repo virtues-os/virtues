@@ -104,7 +104,7 @@ export const sidebarState = {
 		return (railCompact ? RAIL_COMPACT_WIDTH : RAIL_WIDTH) + 12 + (collapsed ? 0 : width);
 	},
 
-	/** Rail shows glyphs only — toggled by right-clicking the ∴ mark. */
+	/** Rail shows glyphs only — toggled by right-clicking the header's sidebar button. */
 	get railCompact() {
 		return railCompact;
 	},

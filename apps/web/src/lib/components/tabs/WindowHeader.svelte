@@ -3,9 +3,10 @@
 	 * The window header: one row across the whole window, on the desk ground
 	 * above the cards.
 	 *
-	 * Over the rail and the sidebar it holds the window's own controls, in a
-	 * place that never moves: the ∴ mark (the sidebar toggle), back, forward
-	 * and new chat. Back, forward and new chat act on the focused pane. Over
+	 * Over the rail and the sidebar it holds the ∴ mark and the window's own
+	 * controls, in a place that never moves: back, forward, the sidebar
+	 * toggle and new chat. Back, forward and new chat act on the focused
+	 * pane. Right-clicking the sidebar toggle shows or hides the rail's labels. Over
 	 * the cards it holds each pane's tab strip, lined up with the pane below
 	 * it, so a tab always sits above its own content.
 	 *
@@ -13,7 +14,7 @@
 	 * left pane's tabs start just after them instead of at the card's edge.
 	 */
 	import Icon from '$lib/components/Icon.svelte';
-	import RailMark from '$lib/components/sidebar/RailMark.svelte';
+	import HeaderMark from '$lib/components/sidebar/HeaderMark.svelte';
 	import WindowTabBar from './WindowTabBar.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarState } from '$lib/stores/sidebarState.svelte';
@@ -21,7 +22,7 @@
 
 	/** Air between the controls and the first tab when they meet. */
 	const LEAD_GAP_PX = 8;
-	/** RailMark's width; the mark is centred over the rail's tile column. */
+	/** HeaderMark's width; the mark is centred over the rail's tile column. */
 	const MARK_PX = 32;
 
 	const isSplit = $derived(windowShellStore.isSplit);
@@ -38,6 +39,15 @@
 
 	const canGoBack = $derived(windowShellStore.canGoBack());
 	const canGoForward = $derived(windowShellStore.canGoForward());
+
+	const sidebarOpen = $derived(!sidebarState.collapsed);
+	const compact = $derived(sidebarState.railCompact);
+
+	function toggleLabels(e: MouseEvent) {
+		// The browser's own context menu has nothing to offer here.
+		e.preventDefault();
+		sidebarState.toggleRailCompact();
+	}
 </script>
 
 <header
@@ -46,7 +56,7 @@
 	style:--card-left="{cardLeft}px"
 >
 	<div class="lead" style:padding-left="{markInset}px" bind:clientWidth={leadWidth}>
-		<RailMark />
+		<HeaderMark />
 		<button
 			class="lead-btn"
 			onclick={() => windowShellStore.goBack()}
@@ -64,6 +74,16 @@
 			title="Forward"
 		>
 			<Icon icon="ri:arrow-right-s-line" />
+		</button>
+		<button
+			class="lead-btn"
+			onclick={() => sidebarState.toggle()}
+			oncontextmenu={toggleLabels}
+			aria-label={sidebarOpen ? 'Hide the sidebar' : 'Show the sidebar'}
+			aria-expanded={sidebarOpen}
+			title={`${sidebarOpen ? 'Hide' : 'Show'} the sidebar (${shortcuts.format('mod+b')}) · Right-click to ${compact ? 'show' : 'hide'} labels`}
+		>
+			<Icon icon={sidebarOpen ? 'ri:sidebar-fold-line' : 'ri:sidebar-unfold-line'} />
 		</button>
 		<button
 			class="lead-btn"
