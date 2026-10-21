@@ -72,9 +72,10 @@ endif
 # (or build that one session with `make dev-core SQLX_OFFLINE=` against a migrated DB).
 SQLX_OFFLINE ?= true
 
-# Dev convenience: pre-satisfy the required /setup wizard so `make dev` lands
-# straight in the app shell (the loopback-console auth already logs the dev
-# browser in). Clear it to walk the real wizard: `make dev VIRTUES_DEV_SKIP_SETUP=`.
+# Dev convenience: pre-satisfy the /setup wizard and every Setup step so
+# `make dev` lands straight in the app shell with no Setup tile on the rail
+# (the loopback-console auth already logs the dev browser in). Clear it to
+# walk the real wizard: `make dev VIRTUES_DEV_SKIP_SETUP=`.
 VIRTUES_DEV_SKIP_SETUP ?= 1
 
 # Local inference sidecars (`make dev-embed`). Models cache once under .data/

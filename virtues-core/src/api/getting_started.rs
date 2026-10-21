@@ -349,7 +349,7 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     let interview_done = done("narrative_identity_ready");
     let interview_started = interview_started_at.is_some();
 
-    let steps = vec![
+    let mut steps = vec![
         Step {
             id: "connect_ai",
             title: title("connect_ai"),
@@ -423,6 +423,14 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
             acknowledged: skipped("interview"),
         },
     ];
+
+    // A dev checkout (`make dev`) opens as a box that finished Setup, so the
+    // rail has no Setup tile. Clear the flag to walk the real steps.
+    if dev_skip() {
+        for step in &mut steps {
+            step.status = StepStatus::Done;
+        }
+    }
 
     let graduated = steps.iter().all(|s| s.status != StepStatus::Open);
     let first_day = crate::api::census::first_narrated_day(pool).await;
