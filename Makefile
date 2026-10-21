@@ -247,7 +247,7 @@ dev: db ## Run the full LOCAL dev stack: postgres + api (:9002) + core (:8000) +
 	@if [ "$(WITH_EMBED)" = "1" ]; then $(MAKE) _embed-ensure; fi
 	@echo "→ starting$(if $(DEV_LOCAL_API), virtues-api (:9002) +,) virtues-core (:8000) + web (:$(DEV_WEB_PORT))$(if $(filter 1,$(WITH_EMBED)), + embed :18181,). Ctrl-C stops all."
 	@echo "  api: $(VIRTUES_API_URL)  atlas: $(VIRTUES_ATLAS_URL)$(if $(DEV_LOCAL_API),  (fully local — AI works, no checkout), (PROD — real billing, real rows))"
-	@echo "  lands straight in the app (setup skipped).$(if $(filter 1,$(WITH_EMBED)),, search off — 'make dev WITH_EMBED=1' or 'make dev-embed' to enable.)"
+	@echo "  $(if $(VIRTUES_DEV_SKIP_SETUP),lands straight in the app (setup skipped).,walks the real Setup steps (VIRTUES_DEV_SKIP_SETUP is empty).)$(if $(filter 1,$(WITH_EMBED)),, search off — 'make dev WITH_EMBED=1' or 'make dev-embed' to enable.)"
 	@trap 'kill 0' EXIT INT TERM; \
 	$(if $(DEV_LOCAL_API),$(MAKE) dev-api & ,) \
 	$(MAKE) dev-core & \
