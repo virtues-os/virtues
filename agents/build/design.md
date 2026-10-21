@@ -28,10 +28,11 @@ holds the content.**
 
 ## The shell
 
-One header row across the window, then two cards on the desk: the sidebar,
-and 12px of desk later the pane. They are separate cards, each rounded on
-all four corners, so opening and closing the sidebar only moves the pane.
-There is no rail. The sidebar shows one room's list at a
+One header row across the window, then cards on the desk: the sidebar, and
+12px of desk later the pane. In split view each pane is a card of its own,
+with the same 12px of desk between them, which is also the resize handle.
+Every card is rounded on all four corners, so opening and closing the
+sidebar or a split only moves cards; nothing joins. There is no rail. The sidebar shows one room's list at a
 time, Home's unless you have stepped into another room. Defined in
 `apps/web/src/lib/sidebar/rooms.ts`.
 

@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
-	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { windowShellStore, SPLIT_GUTTER_PX } from "$lib/stores/window-shell.svelte";
 	import {
 		dndManager,
 		type DndTabItem,
@@ -26,12 +26,9 @@
 	const rightZoneId: ZoneId = { type: "split-overlay", paneId: "right" };
 
 	const MIN_WIDTH = 25; // minimum 25% (1/4) for each pane
-	// The seam between panes is a LINE, not a channel. This was 12px of desk
-	// ground with a floating card either side, which meant entering split
-	// carved the one merged card into three and re-introduced every edge the
-	// merge had removed. 1px is the divider's own width; the handle widens its
-	// HIT area without widening the mark (see .resize-handle::after).
-	const GUTTER_PX = 1;
+	// In split each pane is its own card, with the desk between them. The
+	// gutter is the resize handle's hit area.
+	const GUTTER_PX = SPLIT_GUTTER_PX;
 
 	// Derived state for split mode
 	const isSplitEnabled = $derived(windowShellStore.isSplit);
@@ -322,17 +319,17 @@
 		transition: none;
 	}
 
-	/* Panes paint NOTHING. `main` is the card — it carries the surface, the
-	   border and the rounded corners, and clips to them — so a pane that
-	   painted its own background and border was a card inside a card, and the
-	   only thing that made it legible as one was the 12px channel this change
-	   removes.
-
-	   The active pane is not marked here either. It has never needed to be:
-	   WindowTabBar already says it, in the one place a person is looking when
-	   they care, by giving the focused pane's active tab the page's color
-	   against the other's selected gray. A border saying it a second time is
-	   a second voice for one fact. */
+	/* One pane is `main`'s card, so the shell paints nothing. In split each
+	   pane is a card of its own on the desk (`main` turns transparent in the
+	   app layout): the page's surface, the card's border and corners. The
+	   focused pane is told by its active tab's ink, not by its card. */
+	.split-enabled .pane-shell {
+		background-color: var(--color-page);
+		background-image: var(--background-image);
+		background-blend-mode: multiply;
+		border: 1px solid var(--color-border);
+		border-radius: var(--card-radius);
+	}
 
 	/* Right pane collapsed styles */
 	.pane-shell.collapsed {
@@ -365,8 +362,22 @@
 		width: calc(var(--right-width) - (var(--gutter-width, 0px) / 2));
 	}
 
-	/* No per-pane inset or rounding any more: the slots run to the edges of the
-	   one card, and `main`'s own overflow:hidden clips them to its corners. */
+	/* In split, inside each card's border, and clipped to its corners. */
+	.split-enabled .tab-slot {
+		top: 1px;
+		bottom: 1px;
+		border-radius: calc(var(--card-radius) - 1px);
+	}
+
+	.split-enabled .tab-slot.in-left {
+		left: 1px;
+		width: calc(var(--left-width) - (var(--gutter-width, 0px) / 2) - 2px);
+	}
+
+	.split-enabled .tab-slot.in-right {
+		right: 1px;
+		width: calc(var(--right-width) - (var(--gutter-width, 0px) / 2) - 2px);
+	}
 
 	.resize-handle {
 		width: 0;
@@ -385,20 +396,19 @@
 		pointer-events: none;
 	}
 
-	/* The divider itself — the same 1px line that divides the sidebar panel
-	   from the pane, drawn once more between the panes. */
+	/* The gutter itself is the handle: desk, no line. */
 	/* z-index lifts the grip above the panes' own stacked content (the chat
 	   composer), which otherwise paints over the pill's overhang. */
 	.resize-handle.visible {
 		z-index: 5;
 		width: var(--gutter-width, 1px);
-		background: var(--color-border);
+		background: transparent;
 		opacity: 1;
 		pointer-events: auto;
 	}
 
-	/* An 8px grab target over a 1px mark, matching the sidebar's seam. Without
-	   this the handle would be a 1px hit area — findable only by accident. */
+	/* The grab target reaches 4px past the gutter into each card's edge, so
+	   the seam is easy to find from either side. */
 	.resize-handle.visible::after {
 		content: "";
 		position: absolute;

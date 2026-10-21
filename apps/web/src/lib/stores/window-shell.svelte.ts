@@ -72,6 +72,13 @@ const MOBILE_STORAGE_KEY = 'virtues-window-mobile';
 const TAB_STORAGE_VERSION = 10; // Per-tab navigation history (browser model)
 const HISTORY_CAP = 50; // Max routes kept in a single tab's history stack
 
+/**
+ * The desk between the two panes' cards in split view, the same 12px as
+ * between the sidebar and the pane. SplitContainer lays the panes out with
+ * it and the window header lines their tab strips up with it.
+ */
+export const SPLIT_GUTTER_PX = 12;
+
 // Input shape for tab creation — history/historyIndex are seeded internally.
 type TabInput = Omit<Tab, 'id' | 'createdAt' | 'history' | 'historyIndex'>;
 const WORKSPACE_STORAGE_KEY = 'virtues-active-workspace'; // Legacy — only used by migration cleanup

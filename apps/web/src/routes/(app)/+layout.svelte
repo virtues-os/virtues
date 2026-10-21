@@ -440,19 +440,21 @@
 	{/if}
 
 	<!-- Main Content -->
-	<!-- One card, always. `main` paints the page (`--page`) and clips the corners; the
-	     panes inside it are transparent and separated by the resize handle's
-	     own 1px line. It used to go transparent in split so the two pane cards
-	     could float on the desk — there are no pane cards now. -->
+	<!-- With one pane, `main` is its card: it paints the page (`--page`) and
+	     clips the corners. In split it is only the desk, and each pane draws
+	     a card of its own, 12px apart (SplitContainer). -->
 	<main
 		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-page"
 		class:mx-3={!mobileLayout.isMobile}
 		class:mb-3={!mobileLayout.isMobile}
-		class:pane-card={!mobileLayout.isMobile}
-		class:border={!mobileLayout.isMobile}
+		class:pane-card={!mobileLayout.isMobile && !windowShellStore.isSplit}
+		class:border={!mobileLayout.isMobile && !windowShellStore.isSplit}
+		class:split-desk={!mobileLayout.isMobile && windowShellStore.isSplit}
 		class:is-mobile={mobileLayout.isMobile}
 		class:border-border={!mobileLayout.isMobile}
-		style="background-image: var(--background-image); background-blend-mode: multiply;"
+		style={windowShellStore.isSplit && !mobileLayout.isMobile
+			? undefined
+			: "background-image: var(--background-image); background-blend-mode: multiply;"}
 	>
 		{#if initialized}
 			{#if mobileLayout.isMobile}
@@ -661,6 +663,12 @@
 	   moves. Bars stay put. overflow-x:hidden also kills sideways rubber-banding. */
 	/* The shell's cards all share --card-radius. */
 	.pane-card { border-radius: var(--card-radius); }
+
+	/* In split each pane draws its own card (SplitContainer), 12px apart, so
+	   `main` is only the desk they stand on. */
+	main.split-desk {
+		background-color: transparent;
+	}
 
 	.app-shell.mobile-shell {
 		position: fixed;

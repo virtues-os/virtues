@@ -15,7 +15,7 @@
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import InboxMark from '$lib/components/inbox/InboxMark.svelte';
 	import WindowTabBar from './WindowTabBar.svelte';
-	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { windowShellStore, SPLIT_GUTTER_PX } from '$lib/stores/window-shell.svelte';
 	import { sidebarState, SIDEBAR_INSET } from '$lib/stores/sidebarState.svelte';
 	import { shortcuts } from '$lib/shortcuts/registry.svelte';
 
@@ -106,14 +106,14 @@
 	<div class="strips">
 		<div
 			class="strip"
-			style:width={isSplit ? `calc(${leftWidth}% - 0.5px)` : '100%'}
+			style:width={isSplit ? `calc(${leftWidth}% - ${SPLIT_GUTTER_PX / 2}px)` : '100%'}
 			style:padding-left="{overlap}px"
 		>
 			<WindowTabBar paneId={isSplit ? 'left' : undefined} />
 		</div>
 		{#if isSplit}
-			<div class="gutter" aria-hidden="true"></div>
-			<div class="strip" style:width="calc({rightWidth}% - 0.5px)">
+			<div class="gutter" style:width="{SPLIT_GUTTER_PX}px" aria-hidden="true"></div>
+			<div class="strip" style:width="calc({rightWidth}% - {SPLIT_GUTTER_PX / 2}px)">
 				<WindowTabBar paneId="right" />
 			</div>
 		{/if}
@@ -166,7 +166,6 @@
 	}
 
 	.gutter {
-		width: 1px;
 		flex: none;
 	}
 
