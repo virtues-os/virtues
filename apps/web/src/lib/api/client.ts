@@ -905,6 +905,22 @@ export async function getStreamHealth(): Promise<StreamHealth[]> {
 	return apiGet<StreamHealth[]>('/streams/health');
 }
 
+/** One thing that needs the owner (`api/attention.rs`). `key` stays the same
+ *  while the condition holds; the item goes when the server sees it fixed. */
+export interface AttentionItem {
+	key: string;
+	/** `update` | `disk` | `backup` | `source` | `stream`, most urgent first. */
+	kind: string;
+	title: string;
+	body: string;
+	/** The in-app page that shows or fixes it. */
+	route: string;
+}
+
+export async function getAttention(): Promise<AttentionItem[]> {
+	return apiGet<AttentionItem[]>('/attention');
+}
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Source-connect flows (drive the 5 thin handlers in virtues-core/src/api/source_auth.rs)

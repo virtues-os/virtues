@@ -3,7 +3,7 @@
 	 * The window header: one row across the whole window, on the desk ground
 	 * above the cards.
 	 *
-	 * Over the rail and the sidebar it holds the ∴ mark and the window's own
+	 * Over the rail and the sidebar it holds the ∴ mark (the inbox) and the window's own
 	 * controls, in a place that never moves: back, forward, the sidebar
 	 * toggle and new chat. Back, forward and new chat act on the focused
 	 * pane. Right-clicking the sidebar toggle shows or hides the rail's labels. Over
@@ -14,7 +14,7 @@
 	 * left pane's tabs start just after them instead of at the card's edge.
 	 */
 	import Icon from '$lib/components/Icon.svelte';
-	import HeaderMark from '$lib/components/sidebar/HeaderMark.svelte';
+	import InboxMark from '$lib/components/inbox/InboxMark.svelte';
 	import WindowTabBar from './WindowTabBar.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarState } from '$lib/stores/sidebarState.svelte';
@@ -22,7 +22,7 @@
 
 	/** Air between the controls and the first tab when they meet. */
 	const LEAD_GAP_PX = 8;
-	/** HeaderMark's width; the mark is centred over the rail's tile column. */
+	/** InboxMark's width; the mark is centred over the rail's tile column. */
 	const MARK_PX = 32;
 
 	const isSplit = $derived(windowShellStore.isSplit);
@@ -56,7 +56,7 @@
 	style:--card-left="{cardLeft}px"
 >
 	<div class="lead" style:padding-left="{markInset}px" bind:clientWidth={leadWidth}>
-		<HeaderMark />
+		<InboxMark />
 		<button
 			class="lead-btn"
 			onclick={() => windowShellStore.goBack()}
@@ -115,6 +115,10 @@
 <style>
 	.window-header {
 		position: relative;
+		/* Above the sidebar and the cards, which come later in the page and
+		   would otherwise paint over what opens from here (the inbox, a
+		   tab's menu). */
+		z-index: var(--z-overlay);
 		flex: none;
 		height: var(--chrome-row-h);
 	}
