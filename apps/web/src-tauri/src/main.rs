@@ -1930,6 +1930,19 @@ fn main() {
             if let Some(p) = tauri_plugin_reach::profile() {
                 builder = builder.data_store_identifier(profile_store_id(p));
             }
+            // The app draws its own title bar: the page runs to the window's
+            // top edge and the traffic lights sit inside its header row, on
+            // the row's centre line, with the window's controls right after
+            // them (WindowHeader). tao makes the bar's height the button's
+            // 14pt plus `y`, so y = 20 puts the lights' centre 20pt down the
+            // 40pt header. The header marks itself as the drag region.
+            #[cfg(target_os = "macos")]
+            {
+                builder = builder
+                    .title_bar_style(tauri::TitleBarStyle::Overlay)
+                    .hidden_title(true)
+                    .traffic_light_position(tauri::LogicalPosition::new(16.0, 20.0));
+            }
             let window = builder
                 .title("Virtues")
                 .initialization_script(&box_url_js)

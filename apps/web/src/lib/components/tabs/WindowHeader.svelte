@@ -18,6 +18,7 @@
 	import { windowShellStore, SPLIT_GUTTER_PX } from '$lib/stores/window-shell.svelte';
 	import { sidebarState, SIDEBAR_INSET } from '$lib/stores/sidebarState.svelte';
 	import { shortcuts } from '$lib/shortcuts/registry.svelte';
+	import { isMacOS } from '$lib/utils/platform';
 
 	/** Air between the controls and the first tab when they meet. */
 	const LEAD_GAP_PX = 8;
@@ -43,7 +44,16 @@
 	 * under the pointer that just closed it.
 	 */
 	const ICON_LINE_PX = SIDEBAR_INSET + 4 + 12;
-	const leadLeft = ICON_LINE_PX - (CONTROL_PX - MARK_GLYPH_PX) / 2;
+	/**
+	 * In the Mac app the title bar is an overlay (src-tauri main.rs) and the
+	 * traffic lights sit in this row, from 16pt to 70pt: three 14pt buttons
+	 * 20pt apart. The mark and the controls follow them after 12pt of air,
+	 * as in a native Mac app, rather than on the sidebar's icon line.
+	 */
+	const TRAFFIC_LIGHTS_END_PX = 16 + 2 * 20 + 14;
+	const leadLeft = isMacOS
+		? TRAFFIC_LIGHTS_END_PX + 12
+		: ICON_LINE_PX - (CONTROL_PX - MARK_GLYPH_PX) / 2;
 
 	let leadWidth = $state(0);
 	const overlap = $derived(Math.max(0, leadLeft + leadWidth + LEAD_GAP_PX - cardLeft));
@@ -54,16 +64,20 @@
 	const sidebarOpen = $derived(!sidebarState.collapsed);
 </script>
 
+<!-- The empty parts of the row move the window in the Mac app: the
+     attribute marks an element, not its children, so each layer that can be
+     the one under the pointer carries it. Buttons and tabs do not. -->
 <header
+	data-tauri-drag-region
 	class="window-header"
 	class:resizing={sidebarState.resizing}
 	style:--card-left="{cardLeft}px"
 >
 	<!-- Three groups set apart by air alone: the mark, history (back,
 	     forward) and the window (sidebar, new chat). -->
-	<div class="lead" style:left="{leadLeft}px" bind:clientWidth={leadWidth}>
+	<div class="lead" data-tauri-drag-region style:left="{leadLeft}px" bind:clientWidth={leadWidth}>
 		<InboxMark />
-		<span class="lead-gap" aria-hidden="true"></span>
+		<span class="lead-gap" data-tauri-drag-region aria-hidden="true"></span>
 		<button
 			class="lead-btn"
 			onclick={() => windowShellStore.goBack()}
@@ -82,7 +96,7 @@
 		>
 			<AtlasIcon name="forward" size={GLYPH_PX} bare />
 		</button>
-		<span class="lead-gap" aria-hidden="true"></span>
+		<span class="lead-gap" data-tauri-drag-region aria-hidden="true"></span>
 		<button
 			class="lead-btn"
 			class:sidebar-shown={sidebarOpen}
@@ -103,8 +117,9 @@
 		</button>
 	</div>
 
-	<div class="strips">
+	<div class="strips" data-tauri-drag-region>
 		<div
+			data-tauri-drag-region
 			class="strip"
 			style:width={isSplit ? `calc(${leftWidth}% - ${SPLIT_GUTTER_PX / 2}px)` : '100%'}
 			style:padding-left="{overlap}px"
@@ -113,7 +128,7 @@
 		</div>
 		{#if isSplit}
 			<div class="gutter" style:width="{SPLIT_GUTTER_PX}px" aria-hidden="true"></div>
-			<div class="strip" style:width="calc({rightWidth}% - {SPLIT_GUTTER_PX / 2}px)">
+			<div class="strip" data-tauri-drag-region style:width="calc({rightWidth}% - {SPLIT_GUTTER_PX / 2}px)">
 				<WindowTabBar paneId="right" />
 			</div>
 		{/if}

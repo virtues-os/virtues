@@ -433,6 +433,7 @@
 </script>
 
 <div
+	data-tauri-drag-region
 	class="tab-bar"
 	role="toolbar"
 	aria-label="Tab bar"
@@ -441,6 +442,7 @@
 
 
 	<div
+		data-tauri-drag-region
 		class="tabs-scroll"
 		role="tablist"
 		tabindex="0"

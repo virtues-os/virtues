@@ -230,7 +230,10 @@ it does not repeat.
 
 **Each group in the window header starts at the column below it.** The ∴'s
 glyph starts on the sidebar's icon line, level with the rows' icons, and the
-window's controls follow it. Each pane's tabs start at that pane's edge.
+window's controls follow it. In the Mac app the title bar is an overlay: the
+traffic lights sit in the header row on its centre line, and the ∴ and the
+controls follow them after 12pt, as in a native Mac app. The row's empty
+space moves the window. Each pane's tabs start at that pane's edge.
 With the sidebar closed the controls keep their place, and the left pane's
 tabs start just after them. Inside a room, the panel head's back arrow sits
 on the same icon line and the room's name on the rows' label line.
