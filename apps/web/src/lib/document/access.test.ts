@@ -30,7 +30,7 @@ vi.mock('$lib/components/pages/nodes/FigureNode.svelte', () => ({ default: () =>
 vi.mock('$lib/stores/contextMenu.svelte', () => ({ contextMenu: { show: vi.fn(), reachFirstRow: vi.fn() } }));
 vi.mock('$lib/stores/linkEditor.svelte', () => ({ linkEditor: { show: vi.fn() } }));
 vi.mock('$lib/stores/window-shell.svelte', () => ({
-	windowShellStore: { openRouteBeside: vi.fn(), navigate: vi.fn() },
+	windowShellStore: { openRouteBeside: vi.fn(), openTabFromRoute: vi.fn() },
 }));
 vi.mock('svelte-sonner', () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 vi.mock('$lib/api/client', async (orig) => ({
@@ -98,7 +98,7 @@ afterEach(() => {
 	vi.mocked(contextMenu.show).mockClear();
 	vi.mocked(contextMenu.reachFirstRow).mockClear();
 	vi.mocked(linkEditor.show).mockClear();
-	vi.mocked(windowShellStore.navigate).mockClear();
+	vi.mocked(windowShellStore.openTabFromRoute).mockClear();
 	vi.mocked(windowShellStore.openRouteBeside).mockClear();
 });
 
@@ -474,7 +474,7 @@ describe('links', () => {
 		const click = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
 		a.dispatchEvent(click);
 		expect(click.defaultPrevented).toBe(true);
-		expect(windowShellStore.navigate).toHaveBeenCalledWith('/person/person_1', { label: 'Nick' });
+		expect(windowShellStore.openTabFromRoute).toHaveBeenCalledWith('/person/person_1', { label: 'Nick' });
 
 		editor.view.posAtCoords = () => ({ pos: posIn(editor, 'Nick', 1), inside: -1 });
 		const menu = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 5, clientY: 5 });

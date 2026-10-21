@@ -84,12 +84,12 @@ export function linkAt(state: EditorState, pos: number): LinkAt | null {
 }
 
 /**
- * Open a link: a ref in this pane, anything else where a link to the web
+ * Open a link: a ref in this pane's preview tab, anything else where a link to the web
  * opens (`openWebLink`). An address the contract refuses (`javascript:`),
  * which reached the page past the server's check, opens nothing.
  */
 export function openLink(href: string, label: string): void {
-	if (isRef(href)) windowShellStore.navigate(href, { label });
+	if (isRef(href)) windowShellStore.openTabFromRoute(href, { label });
 	else if (linkAllowed(href)) void openWebLink(href);
 }
 

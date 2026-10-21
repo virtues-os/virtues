@@ -4,9 +4,8 @@
 	import "$lib/icons"; // Pre-load all icons
 	import { UnifiedSidebar } from "$lib/components/sidebar";
 	import { SplitContainer } from "$lib/components/tabs";
+	import WindowHeader from "$lib/components/tabs/WindowHeader.svelte";
 	import MobileShell from "$lib/components/mobile/MobileShell.svelte";
-	import ServerUnreachableBar from "$lib/components/ServerUnreachableBar.svelte";
-	import { reachability } from "$lib/stores/reachability.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import { listenForWebLinks } from "$lib/utils/webLinks";
@@ -114,10 +113,9 @@
 
 	// THE APP OPENING (2026-09-23). Armed by Setup's close just before
 	// it hands a new owner into the app; read once, on this first render, so
-	// the class is there from the first frame. The ∴ at the head of the rail
+	// the class is there from the first frame. The ∴ at the left of the header
 	// beats — premise, premise, therefore, the same figure the cold open drew
-	// — the rooms cascade down out of it, the panel and the pane settle in,
-	// and the Setup tile lights once. Every other mount opens plainly.
+	// — and the panel and the pane settle in. Every other mount opens plainly.
 	let opening = $state(appOpening.consume());
 	$effect(() => {
 		if (!opening) return;
@@ -125,19 +123,6 @@
 		return () => clearTimeout(t);
 	});
 
-	// The sidebar panel and the main pane merge into one white card, divided by
-	// a single line, whenever the panel is open: the pane drops its left margin,
-	// left border and left rounding so it abuts the panel's right border (the
-	// divider). Only a COLLAPSED sidebar leaves the pane a free-floating card.
-	//
-	// Split used to break the merge, and that was the whole complaint: entering
-	// split re-opened a 12px channel between the panel and the pane, re-rounded
-	// the panel's right corners, and added a second channel between the panes —
-	// three new edges for one new pane. The desk's rule is that separation goes
-	// whitespace → lightness → elevation and stops at the first that reads, and
-	// inside one continuous card a LINE already reads. So split now draws a
-	// second divider rather than carving the card into three.
-	const sidebarMerged = $derived(!mobileLayout.isMobile && !sidebarState.collapsed);
 
 	// Full-screen focus mode: hide all app chrome (sidebar, tab bars, frame)
 	// by toggling a body class that app.css keys off. Driven by the same
@@ -148,7 +133,7 @@
 	});
 
 	// SETUP OPENS HERE once someone is in the app (setup/inApp.ts). A link
-	// to `/setup` from inside it (the rail's Setup panel, the wiki's "Draw
+	// to `/setup` from inside it (the sidebar's Setup panel, the wiki's "Draw
 	// your chapters") is caught before it leaves for the full-screen stage,
 	// and opens Setup's tab instead, the one already open if there is one.
 	beforeNavigate((nav) => {
@@ -435,33 +420,40 @@
 <SearchModal open={search.open} onClose={() => search.hide()} />
 
 <div
-	class="app-shell flex h-screen w-full bg-surface-elevated"
+	class="app-shell flex flex-col h-screen w-full bg-surface-elevated"
+	class:desk={!mobileLayout.isMobile}
 	class:mobile-shell={mobileLayout.isMobile}
 	class:opening
 	style="background-image: var(--surface-elevated-image); background-size: var(--surface-elevated-size);"
 >
+	<!-- One row across the whole window: the ∴, back, forward and new chat
+	     over the sidebar, and each pane's tabs over its pane. -->
+	{#if !mobileLayout.isMobile}
+		<WindowHeader />
+	{/if}
+
+	<div class="flex flex-1 min-h-0 w-full">
 	<!-- Desktop sidebar — hidden on the mobile (bottom-tab) shell -->
 	{#if !mobileLayout.isMobile}
 		<UnifiedSidebar />
 	{/if}
 
 	<!-- Main Content -->
-	<!-- One card, always. `main` paints the page (`--page`) and clips the corners; the
-	     panes inside it are transparent and separated by the resize handle's
-	     own 1px line. It used to go transparent in split so the two pane cards
-	     could float on the desk — there are no pane cards now. -->
+	<!-- With one pane, `main` is its card: it paints the page (`--page`) and
+	     clips the corners. In split it is only the desk, and each pane draws
+	     a card of its own, a desk gap apart (SplitContainer). -->
 	<main
 		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-page"
-		class:m-3={!mobileLayout.isMobile && !sidebarMerged}
-		class:my-3={sidebarMerged}
-		class:mr-3={sidebarMerged}
-		class:pane-card={!mobileLayout.isMobile && !sidebarMerged}
-		class:pane-card-right={sidebarMerged}
-		class:border={!mobileLayout.isMobile}
-		class:border-l-0={sidebarMerged}
+		class:mx-2={!mobileLayout.isMobile}
+		class:mb-2={!mobileLayout.isMobile}
+		class:pane-card={!mobileLayout.isMobile && !windowShellStore.isSplit}
+		class:border={!mobileLayout.isMobile && !windowShellStore.isSplit}
+		class:split-desk={!mobileLayout.isMobile && windowShellStore.isSplit}
 		class:is-mobile={mobileLayout.isMobile}
-		class:border-border={!mobileLayout.isMobile}
-		style="background-image: var(--background-image); background-blend-mode: multiply;"
+		class:card-edge={!mobileLayout.isMobile}
+		style={windowShellStore.isSplit && !mobileLayout.isMobile
+			? undefined
+			: "background-image: var(--background-image); background-blend-mode: multiply;"}
 	>
 		{#if initialized}
 			{#if mobileLayout.isMobile}
@@ -469,17 +461,12 @@
 				     is mounted. -->
 				<MobileShell />
 			{:else}
-				<!-- The phone draws this in MobileShell; the desktop here, now
-				     that the Mac keeps its own copy of the app up when the
-				     server goes away (agents/record/local-ui.md). -->
-				{#if reachability.unreachable}
-					<ServerUnreachableBar />
-				{/if}
 				<!-- SplitContainer handles both split and mono modes -->
 				<SplitContainer />
 			{/if}
 		{/if}
 	</main>
+	</div>
 </div>
 
 <!-- The phone's first-run stream setup lived here as its own screen. Setup's
@@ -570,36 +557,19 @@
 	   See `opening` in the script. Times are from the first frame of the
 	   shell; the view transition is fading it in over the first ~0.6s, so
 	   the mark's beat starts while the letter is still going. */
-	.app-shell.opening :global(.rail-mark .mark-dot.left) {
+	.app-shell.opening :global(.header-mark .mark-dot.left) {
 		animation: opening-premise 560ms ease-out 220ms both;
 	}
-	.app-shell.opening :global(.rail-mark .mark-dot.right) {
+	.app-shell.opening :global(.header-mark .mark-dot.right) {
 		animation: opening-premise 560ms ease-out 360ms both;
 	}
-	.app-shell.opening :global(.rail-mark .mark-dot.apex) {
+	.app-shell.opening :global(.header-mark .mark-dot.apex) {
 		animation: opening-conclude 820ms ease-out 500ms both;
 	}
-	/* The rooms fall out of the mark, top to bottom. */
-	.app-shell.opening :global(.rail > .rail-item) {
-		animation: opening-room 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
-		animation-delay: 560ms;
-	}
-	.app-shell.opening :global(.rail > .rail-item:nth-child(3)) { animation-delay: 610ms; }
-	.app-shell.opening :global(.rail > .rail-item:nth-child(4)) { animation-delay: 660ms; }
-	.app-shell.opening :global(.rail > .rail-item:nth-child(5)) { animation-delay: 710ms; }
-	.app-shell.opening :global(.rail > .rail-item:nth-child(6)) { animation-delay: 760ms; }
-	.app-shell.opening :global(.rail > .rail-item:nth-child(n + 7)) { animation-delay: 840ms; }
-	/* The Setup tile arrives first and then lights once — the one call to act. */
-	.app-shell.opening :global(.rail > .rail-item.setup) {
-		animation:
-			opening-room 520ms cubic-bezier(0.2, 0.7, 0.2, 1) 560ms both,
-			opening-lamp 1300ms ease-out 1500ms both;
-	}
-	.app-shell.opening :global(.panel-card),
-	.app-shell.opening :global(.panel-card-left) {
+	.app-shell.opening :global(.sidebar-column) {
 		animation: opening-panel 640ms cubic-bezier(0.2, 0.7, 0.2, 1) 720ms both;
 	}
-	.app-shell.opening > main {
+	.app-shell.opening main {
 		animation: opening-pane 760ms cubic-bezier(0.2, 0.7, 0.2, 1) 880ms both;
 	}
 
@@ -613,17 +583,6 @@
 		45% { transform: scale(1.4); }
 		75% { transform: scale(0.94); }
 		100% { transform: scale(1); }
-	}
-	@keyframes opening-room {
-		from {
-			opacity: 0;
-			transform: translateY(-6px);
-		}
-	}
-	/* Lit, then fading to its own ground: a wash of light, not a glow (a
-	   shadow of any kind is out of the grammar, design-grammar.md §6). */
-	@keyframes opening-lamp {
-		from { background-color: color-mix(in srgb, var(--color-background) 32%, transparent); }
 	}
 	@keyframes opening-panel {
 		from {
@@ -639,33 +598,18 @@
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.app-shell.opening :global(*),
-		.app-shell.opening > main {
+		.app-shell.opening main {
 			animation: none !important;
 		}
 	}
 
-	/* The merge/unmerge has to travel at the SAME SPEED as the sidebar, or the
-	   seam tears open.
-	
-	   `sidebarMerged` is a boolean, so every class it drives used to change on
-	   the frame the toggle was pressed while the aside spent the next 300ms
-	   animating to its new width. Collapsing therefore gave the pane its 12px
-	   desk margin instantly — a channel opened at a seam that was still shut,
-	   and the pane jumped 12px RIGHT before sliding left. That jolt, not the
-	   easing alone, is what read as rubber-banding, and it showed desk ground
-	   under the moving edge because for those frames there genuinely was some.
-	
-	   Animating the margin (and the border and corners that arrive with it) on
-	   the sidebar's own clock makes the gap GROW as the panel leaves, so the
-	   two edges never disagree about where the seam is. Keep this duration and
-	   easing identical to UnifiedSidebar's width transition. */
+	/* The pane is its own card, a desk gap from the sidebar's, so opening
+	   and closing the sidebar only moves it: the aside's width animates and
+	   the pane's margin never changes. */
 	main:not(.is-mobile) {
 		transition:
-			margin-left 300ms var(--ease-premium),
-			border-left-width 300ms var(--ease-premium),
-			border-radius 300ms var(--ease-premium),
-			border-color 150ms var(--ease-premium),
-			background-color 150ms var(--ease-premium);
+			border-color var(--motion-state) var(--ease-premium),
+			background-color var(--motion-state) var(--ease-premium);
 	}
 
 	/* Mobile shell: edge-to-edge (viewport-fit=cover), so the shell itself pads
@@ -710,12 +654,22 @@
 	   normal flow (height comes from the insets, overriding h-screen's 100vh), so
 	   the document has nothing to scroll; only the view's own inner scroller
 	   moves. Bars stay put. overflow-x:hidden also kills sideways rubber-banding. */
-	/* The shell's cards all share --card-radius. `pane-card-right` is the merged
-	   case: the pane rounds only where it meets the desk, and stays square where
-	   it abuts the sidebar panel's divider. */
+	/* The desk: what the sidebar and the window header stand on (themes.css,
+	   --desk). The phone keeps its own ground. */
+	.app-shell.desk {
+		background-color: var(--desk);
+	}
+
+	/* The shell's cards all share --card-radius. Their edge is the theme's
+	   --card-edge: transparent where the desk's tone already separates a
+	   card, a border where a theme's desk is too close to its page. */
 	.pane-card { border-radius: var(--card-radius); }
-	.pane-card-right {
-		border-radius: 0 var(--card-radius) var(--card-radius) 0;
+	main.card-edge { border-color: var(--card-edge); }
+
+	/* In split each pane draws its own card (SplitContainer), a desk gap apart, so
+	   `main` is only the desk they stand on. */
+	main.split-desk {
+		background-color: transparent;
 	}
 
 	.app-shell.mobile-shell {

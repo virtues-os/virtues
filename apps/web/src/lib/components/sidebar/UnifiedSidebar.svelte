@@ -1,7 +1,5 @@
 <script lang="ts">
 	import { onMount } from "svelte";
-	import { fly } from "svelte/transition";
-	import { cubicIn, cubicOut } from "svelte/easing";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 	import {
@@ -9,12 +7,14 @@
 		SIDEBAR_COLLAPSE_AT,
 		SIDEBAR_MIN_WIDTH,
 		SIDEBAR_MAX_WIDTH,
+		SIDEBAR_INSET,
 	} from "$lib/stores/sidebarState.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
-	import SidebarRail from "./SidebarRail.svelte";
-	import SidebarPanel from "./SidebarPanel.svelte";
-	import { sidebarRoom } from "$lib/stores/sidebarRoom.svelte";
+	import AtlasIcon from "./AtlasIcon.svelte";
+	import { SHELL_GLYPH_PX } from "$lib/components/sidebar/AtlasIcon.svelte";
+	import { SETTINGS_MODE, rowForRoute } from "$lib/sidebar/modes";
+	import HomePanel from "./panels/HomePanel.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { onSummon, setSummonShortcut, storedSummonChord } from "$lib/tauri/bridge";
 
@@ -135,16 +135,13 @@
 	}
 
 	function handleWikiOverview() {
-		windowShellStore.openTabFromRoute("/wiki", {
-			label: "Wiki",
-			preferEmptyPane: true,
-		});
+		windowShellStore.openTabFromRoute("/wiki", { label: "Wiki", focusExisting: true });
 	}
 
 	// New chat / page navigate the window you are in. Only "+" and "open
 	// beside" make windows — see openTabFromRoute in the window shell store.
 	function handleNewChat() {
-		windowShellStore.openTabFromRoute("/", { label: "New Chat" });
+		windowShellStore.newChat();
 	}
 
 	function handleNewTemporaryChat() {
@@ -168,24 +165,12 @@
 		sidebarState.toggle();
 	}
 
-	// The panel swaps as one object, not as a cascade of rows. Sequential, not
-	// concurrent: Svelte runs `in:` and `out:` together by default, which shows
-	// two half-transparent copies of a list sliding through each other and reads
-	// as smeared. So the old panel leaves first (110ms, short travel), and the
-	// new one waits for it before arriving (210ms over 18px). The grid cell holds
-	// the height throughout, so nothing collapses in the gap.
-	const swapKey = $derived(sidebarRoom.selectedId);
-
-	// The rail is the desk-ground strip; the panel is a card floating on it, so
-	// the aside itself carries no inset — the rail flushes left on the ground,
-	// the panel supplies its own card margins.
-	// NOT a springy curve. The aside used to open on cubic-bezier(0.34, 1.56,
-	// 0.64, 1) — the 1.56 is an overshoot — and an overshoot is incompatible
-	// with a merged seam: the aside momentarily grew WIDER than rail + gap +
-	// panel, so for a few frames a strip of desk ground opened between the
-	// panel's right edge and the pane it is supposed to be joined to, and the
-	// whole card appeared to rubber-band. A seam can only stay shut if the
-	// thing carrying it decelerates into its final width and stops there.
+	// The sidebar sits on the desk; the aside carries no inset of its own,
+	// and the column supplies its margin (the desk gap).
+	// NOT a springy curve: an overshoot grows the aside past its final width
+	// for a few frames, so the pane beside it jumps out and back and the
+	// whole window seems to rubber-band. The aside decelerates into its width
+	// and stops there.
 	const sidebarClass = $derived.by(() =>
 		[
 			"sidebar-container relative flex h-full bg-transparent",
@@ -200,24 +185,24 @@
 		].join(" "),
 	);
 
-	// Merged with the pane whenever the panel is open — split included. Then
-	// panel + pane(s) read as one white card split by lines: the panel rounds
-	// only its left corners and its RIGHT border is the first divider; the pane
-	// (in +layout) rounds only right and drops its left border and left margin
-	// so the two abut with no desk gap. In split, the pane resizer draws the
-	// second divider inside that same card.
-	const merged = $derived(!isCollapsed);
-
 	// ── Resizing the seam ─────────────────────────────────────
-	// Only the panel resizes by drag; the rail switches between two widths
-	// (labels on/off). The whole aside is rail + gap + panelWidth.
-	const PANEL_GAP = 12;
-	const railWidth = $derived(sidebarState.railWidth);
-
+	// The aside is the desk gap plus the card. Closed, it is nothing: the
+	// header's sidebar button is the way back.
 	const panelWidth = $derived(sidebarState.width);
-	const asideWidth = $derived(isCollapsed ? railWidth : railWidth + PANEL_GAP + panelWidth);
+	const asideWidth = $derived(isCollapsed ? 0 : SIDEBAR_INSET + panelWidth);
+	// Settings is a door: it opens the Settings page, which carries its own
+	// section list (SectionNav). Lit while the focused pane shows a Settings
+	// page, the way any row says where you are.
+	const inSettings = $derived.by(() => {
+		const pane = windowShellStore.activePane;
+		const route = pane?.tabs.find((t) => t.id === pane.activeTabId)?.route;
+		return !!rowForRoute(SETTINGS_MODE, route);
+	});
 
 	let resizing = $state(false);
+	$effect(() => {
+		sidebarState.resizing = resizing;
+	});
 	let dragStartX = 0;
 	let dragStartWidth = 0;
 	// The UNCLAMPED width the pointer is asking for. The stored width is clamped
@@ -317,16 +302,16 @@
 	const panelColumnClass = $derived.by(() =>
 		[
 			"flex flex-col",
-			"my-3 ml-3 overflow-hidden border border-border bg-surface",
-			merged ? "panel-card-left" : "panel-card",
+			// On the desk, not a card: only the work is raised. The sidebar
+			// is chrome, and chrome paints nothing of its own (design.md).
+			"mb-2 ml-2 overflow-hidden",
+			"sidebar-column",
 			isCollapsed ? "pointer-events-none" : "",
 		].join(" "),
 	);
 </script>
 
 <aside class={sidebarClass} style="width: {asideWidth}px">
-	<SidebarRail />
-
 	<div class={panelColumnClass} style="width: {panelWidth}px; min-width: {panelWidth}px">
 		<nav class="workspace-nav">
 			{#if !storeReady}
@@ -335,19 +320,29 @@
 					<span>Loading...</span>
 				</div>
 			{:else}
-				<div class="nav-swap">
-					{#key swapKey}
-						<div
-							class="nav-layer"
-							in:fly={{ x: 18, duration: 210, delay: 110, easing: cubicOut, opacity: 0 }}
-							out:fly={{ x: -10, duration: 110, easing: cubicIn, opacity: 0 }}
-						>
-							<SidebarPanel room={sidebarRoom.selected} />
-						</div>
-					{/key}
+				<!-- One list, always: the sidebar never changes. Every door opens
+				     a page, and a page that has sections carries their list
+				     itself (the Wiki's index, Settings' SectionNav, Setup's
+				     step strip). -->
+				<div class="panel-body">
+					<HomePanel />
 				</div>
 			{/if}
 		</nav>
+
+		<!-- Settings stands at the foot: something you do to the server and
+		     leave, apart from the places above. -->
+		<div class="panel-foot">
+			<button
+				type="button"
+				class="sidebar-interactive"
+				class:active={inSettings}
+				onclick={() => windowShellStore.openTabFromRoute("/virtues/you", { label: "Settings", focusExisting: true })}
+			>
+				<AtlasIcon name="settings" size={SHELL_GLYPH_PX} />
+				<span class="sidebar-label">Settings</span>
+			</button>
+		</div>
 
 		<SidebarFooter collapsed={isCollapsed} />
 	</div>
@@ -397,25 +392,17 @@
 	@reference "../../../app.css";
 	@reference "$lib/styles/sidebar.css";
 
-	/* Same --card-radius as the pane, so the sidebar is never rounded
-	   differently from the pages beside it. Merged, it rounds only on the desk
-	   side and stays square at the divider. */
-	:global(.panel-card) { border-radius: var(--card-radius); }
-	:global(.panel-card-left) {
-		border-radius: var(--card-radius) 0 0 var(--card-radius);
-	}
 
 	/* The hit area. Always transparent — it is a target, never a mark.
-	
-	   Inset by 12px top and bottom to sit inside the panel card (`my-3`). It
-	   used to run top:0 to bottom:0 of the full-height aside, so its hover
-	   fill spilled 12px ABOVE the card's rounded top corner and 12px below it:
-	   a grey band standing on the desk ground, next to the card rather than on
-	   it. A seam cannot start above the thing it divides. */
+
+	   Inset by the desk gap at the bottom to match the column (`mb-2`); the
+	   card's top is the aside's top, under the window header. Running past
+	   the card put its hover fill on the desk ground beside it. A seam cannot
+	   start above the thing it divides. */
 	.sidebar-resizer {
 		position: absolute;
-		top: 12px;
-		bottom: 12px;
+		top: 0;
+		bottom: 8px;
 		right: 0;
 		width: 8px;
 		z-index: 20;
@@ -512,29 +499,28 @@
 		}
 	}
 
+	.panel-foot {
+		flex: none;
+		padding: 0 4px 8px;
+	}
+
 	.workspace-nav {
 		flex: 1;
 		min-height: 0;
 		overflow: hidden;
-		/* SidebarPanel owns its own head row and body padding, so the column does
-		   not add a second inset on top of it — two nested paddings are how the
-		   "one left edge" rule quietly breaks. */
+		/* The body below owns the inset, so the column adds none: two nested
+		   paddings are how the "one left edge" rule quietly breaks. */
 		padding: 0;
 	}
 
-	/* Both layers share one grid cell, so the leaving panel doesn't push the
-	   arriving one around while they overlap. */
-	.nav-swap {
-		display: grid;
+	/* The rows' inset: 4px, then each row's 12px, so icons start 16px in.
+	   The first door starts 8px down. */
+	.panel-body {
 		height: 100%;
 		min-height: 0;
-	}
-
-	.nav-layer {
-		grid-area: 1 / 1;
-		min-width: 0;
-		min-height: 0;
-		overflow: hidden;
+		overflow-y: auto;
+		overflow-x: hidden;
+		padding: 8px 4px 12px;
 	}
 
 	@keyframes spin {

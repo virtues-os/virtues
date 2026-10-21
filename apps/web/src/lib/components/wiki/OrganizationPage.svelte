@@ -9,6 +9,7 @@
 	import { subjectHref } from "$lib/wiki/links";
 	import type { WikiOrganizationApi } from "$lib/wiki/api";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
+	import WikiCrumbs from "./WikiCrumbs.svelte";
 	import SubjectBacklinks from "./SubjectBacklinks.svelte";
 	import NotesRail from "./NotesRail.svelte";
 	import EntityRecordsSection from "./EntityRecordsSection.svelte";
@@ -75,6 +76,7 @@
 <div class="page-layout">
 	<article class="wiki-article">
 		<div class="page-content">
+			<WikiCrumbs bar parent={{ label: "Organizations", href: "/wiki/orgs" }} current={page.name} />
 			<!-- Header -->
 			<header class="page-header">
 				<!-- `cover_image` has a PUT that accepts it and no client that
@@ -182,7 +184,7 @@
 		overflow-y: auto;
 		scrollbar-width: none;
 		-ms-overflow-style: none;
-		padding: 2rem;
+		padding: 0.5rem 2rem 2rem;
 	}
 
 	.wiki-article::-webkit-scrollbar {
@@ -192,7 +194,8 @@
 	.page-content {
 		max-width: 48rem;
 		margin: 0 auto;
-		padding-top: 2rem;
+		/* The crumb row above the header takes the top space. */
+		padding-top: 0.25rem;
 		padding-bottom: 4rem;
 	}
 

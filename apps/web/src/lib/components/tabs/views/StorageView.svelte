@@ -37,22 +37,25 @@
 
 	const tabs: SubNavItem[] = [
 		{ id: "drive", label: "Drive" },
-		{ id: "streams", label: "Streams" },
 		{ id: "media", label: "App Media" },
 		{ id: "trash", label: "Recently deleted" },
 	];
 </script>
 
 <div class="flex h-full w-full flex-col bg-background">
-	<SubNav
-		tabId={tab.id}
-		route={tab.route}
-		base="/storage"
-		default="drive"
-		items={tabs}
-		divider
-		ariaLabel="Storage sections"
-	/>
+	<!-- Streams opens from Settings, under Sources, so its page has no strip:
+	     the strip's other sections are the Wiki's Drive rows. -->
+	{#if subTab !== "streams"}
+		<SubNav
+			tabId={tab.id}
+			route={tab.route}
+			base="/storage"
+			default="drive"
+			items={tabs}
+			divider
+			ariaLabel="Storage sections"
+		/>
+	{/if}
 
 	<div class="min-h-0 flex-1">
 		{#if subTab === "drive"}

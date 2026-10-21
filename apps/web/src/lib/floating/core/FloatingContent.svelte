@@ -63,9 +63,9 @@
 		z-index: var(--z-floating, var(--z-overlay));
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: 6px;
 		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
-		animation: floating-enter 150ms ease-out;
+		animation: floating-enter var(--motion-enter) var(--ease-premium);
 	}
 
 	.floating-arrow {

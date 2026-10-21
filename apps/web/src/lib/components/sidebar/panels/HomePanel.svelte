@@ -30,9 +30,10 @@
 	 *             row cannot: counts, the memo, the verbs.
 	 *   Today / Recent
 	 *             the chats AND the pages, blended by when they last moved,
-	 *             newest first, capped. No "All chats" door under the list:
-	 *             the panel ends where the recents end, and the full lists
-	 *             are rooms of their own (Pages above, All chats via ⌘K).
+	 *             newest first, ten of them: a glance, not an archive. When
+	 *             there are more, "See all" ends the list and opens All
+	 *             chats, at the end where the eye lands once the rows run
+	 *             out rather than behind a ⋯.
 	 *             Two groups, not three: "Yesterday" was a calendar fact
 	 *             nobody navigated by, and it cost a heading and a fold for
 	 *             one day's worth of rows. Grouping is not reordering — a
@@ -58,7 +59,6 @@
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { pinsStore } from '$lib/stores/pins.svelte';
-	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { chatActivity } from '$lib/stores/chatActivity.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
@@ -90,18 +90,32 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import AtlasIcon from '../AtlasIcon.svelte';
 	import HoverCard from '../HoverCard.svelte';
+	import SetupRing from '../SetupRing.svelte';
+	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
+	import { setup } from '$lib/components/setup/setup.svelte';
+	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { openWebLink } from '$lib/utils/webLinks';
 
 	const PROJECTS_SHOWN = 5;
-	const RECENTS_CAP = 20;
+
+	// Skipped is not done: a step set aside keeps the door, because Finish
+	// later and Skip both mean "not now", never "not ever". It goes once every
+	// step is done.
+	const setupOpen = $derived(gettingStarted.loaded && !gettingStarted.unsupported && !setup.complete);
+	const setupCount = $derived(`${setup.doneCount}/${setup.steps.length}`);
+	// Setup's own tab, at the step to pick up: the tab carries the steps
+	// across its top, so the sidebar does not list them.
+	function openSetup() {
+		const next = setup.resumeInApp;
+		windowShellStore.openTabFromRoute(next ? `/setup/${next}` : '/setup', { label: 'Setup', focusExisting: true });
+	}
+	const RECENTS_CAP = 10;
 
 	// ── what is where ──────────────────────────────────────────────────────
 
 	const pins = $derived(pinsStore.pins);
 	const projects = $derived(projectStore.projects);
 	let projectsExpanded = $state(false);
-	// Loaded here so the Applets door can show how many applets need you.
-	if (!appletsStore.loaded) void appletsStore.load();
 	const visibleProjects = $derived(
 		projectsExpanded ? projects : projects.slice(0, PROJECTS_SHOWN),
 	);
@@ -137,8 +151,14 @@
 			ts: stamp(page.updated_at),
 			page,
 		}));
-		return [...chats, ...pages].sort((a, b) => b.ts - a.ts).slice(0, RECENTS_CAP);
+		return [...chats, ...pages].sort((a, b) => b.ts - a.ts);
 	});
+	const recentsShown = $derived(recents.slice(0, RECENTS_CAP));
+	const recentsMore = $derived(recents.length > RECENTS_CAP);
+
+	function openAllChats() {
+		windowShellStore.openTabFromRoute('/chat-history', { label: 'All chats', focusExisting: true });
+	}
 
 	/** Midnight-relative, so "today" means the calendar day, not 24 hours. */
 	function isToday(ts: number): boolean {
@@ -151,7 +171,7 @@
 	const recentGroups = $derived.by(() => {
 		const today: RecentRow[] = [];
 		const recent: RecentRow[] = [];
-		for (const r of recents) (isToday(r.ts) ? today : recent).push(r);
+		for (const r of recentsShown) (isToday(r.ts) ? today : recent).push(r);
 		return [
 			{ id: 'today', label: 'Today', items: today },
 			{ id: 'recent', label: 'Recent', items: recent },
@@ -162,6 +182,7 @@
 	/** Fold state, keyed so a future group costs one string. */
 	const zoneId = (id: string) => `chats.${id}`;
 	const folded = (id: string) => sidebarZones.isCollapsed(zoneId(id));
+	const lastRecentGroup = $derived(recentGroups.at(-1)?.id ?? null);
 
 	/* The fold's duration scales with the group's height, clamped. At one
 	   fixed duration a 20-row group moved four times as fast as a 5-row one
@@ -213,6 +234,14 @@
 		return tab?.route ?? null;
 	});
 
+	/** The drawn glyph for what a pin points at. */
+	function pinKind(url: string): string {
+		if (url.startsWith('/project')) return 'projects';
+		if (url.startsWith('/applet')) return 'applets';
+		const icon = memberIcon(url);
+		return icon.startsWith('atlas:') ? icon.slice('atlas:'.length) : 'pages';
+	}
+
 	function titleOf(s: ChatSession): string {
 		return s.title?.trim() || untitled('chat');
 	}
@@ -245,7 +274,7 @@
 	// ── doors ──────────────────────────────────────────────────────────────
 
 	function newChat() {
-		windowShellStore.openTabFromRoute('/', { label: 'New chat' });
+		windowShellStore.newChat();
 	}
 
 	function openPages() {
@@ -678,8 +707,15 @@
      has no door here: it is the ⌘K palette, which has the room for results
      across chats, pages and projects. -->
 <div class="panel-doors">
+	{#if setupOpen}
+		<button type="button" class="panel-row panel-door" onclick={openSetup}>
+			<SetupRing size={16} />
+			<span class="panel-row-text">Setup</span>
+			<span class="door-meta">{setupCount}</span>
+		</button>
+	{/if}
 	<button type="button" class="panel-row panel-door" onclick={newChat}>
-		<AtlasIcon name="new-chat" size={16} bare />
+		<AtlasIcon name="new-chat" size={SHELL_GLYPH_PX} bare />
 		<span class="panel-row-text">New chat</span>
 	</button>
 	<!-- The word opens the list; the + that appears beside it makes a new
@@ -696,7 +732,7 @@
 			}
 		}}
 	>
-		<AtlasIcon name="pages" size={16} bare />
+		<AtlasIcon name="pages" size={SHELL_GLYPH_PX} bare />
 		<span class="panel-row-text">Pages</span>
 		<span class="row-actions">
 			<button type="button" class="row-action" aria-label="New page" title="New page" onclick={newPage}>
@@ -720,7 +756,7 @@
 			}
 		}}
 	>
-		<AtlasIcon name="tasks" size={16} bare />
+		<AtlasIcon name="tasks" size={SHELL_GLYPH_PX} bare />
 		<span class="panel-row-text">Tasks</span>
 		<span class="row-actions">
 			<button type="button" class="row-action" aria-label="New task" title="New task" onclick={newTask}>
@@ -731,15 +767,18 @@
 		</span>
 	</div>
 	<button type="button" class="panel-row panel-door" onclick={openApplets}>
-		<AtlasIcon name="applets" size={16} bare />
+		<AtlasIcon name="applets" size={SHELL_GLYPH_PX} bare />
 		<span class="panel-row-text">Applets</span>
-		{#if appletsStore.problems > 0}
-			<span
-				class="door-count"
-				title={`${appletsStore.problems} ${appletsStore.problems === 1 ? 'applet needs' : 'applets need'} you`}
-				>{appletsStore.problems}</span
-			>
-		{/if}
+	</button>
+	<!-- The record, a door like the tools above it. It opens the Wiki's
+	     overview, whose index reaches its sections; the sidebar stays Home. -->
+	<button
+		type="button"
+		class="panel-row panel-door"
+		onclick={() => windowShellStore.openTabFromRoute('/wiki', { label: 'Wiki', focusExisting: true })}
+	>
+		<AtlasIcon name="wiki" size={SHELL_GLYPH_PX} bare />
+		<span class="panel-row-text">Wiki</span>
 	</button>
 </div>
 
@@ -793,7 +832,7 @@
 	{@const home = session.project_id ? projectStore.byId(session.project_id) : undefined}
 	{@const tint = home ? projectColor(home) : null}
 	<div
-		class="panel-row panel-row-has-actions"
+		class="panel-row panel-row-has-actions spine"
 		class:active={activeRoute === url}
 		role="link"
 		tabindex="0"
@@ -816,7 +855,7 @@
 			{#if chatActivity.running(session.conversation_id)}
 				<Icon icon="ri:loader-4-line" width="14" class="spin" />
 			{:else}
-				<AtlasIcon name="chats" size={15} bare />
+				<AtlasIcon name="chats" size={SHELL_GLYPH_PX} bare />
 			{/if}
 		</span>
 		<span class="panel-row-text">{titleOf(session)}</span>
@@ -857,7 +896,7 @@
 	{@const url = pageRoute(page)}
 	{@const pinned = isPinned(url)}
 	<div
-		class="panel-row panel-row-has-actions"
+		class="panel-row panel-row-has-actions spine"
 		class:active={activeRoute === url}
 		role="link"
 		tabindex="0"
@@ -877,7 +916,7 @@
 			{#if page.icon && isEmoji(page.icon)}
 				<span class="row-emoji">{page.icon}</span>
 			{:else}
-				<AtlasIcon name="pages" size={15} bare />
+				<AtlasIcon name="pages" size={SHELL_GLYPH_PX} bare />
 			{/if}
 		</span>
 		<span class="panel-row-text">{pageTitle(page)}</span>
@@ -929,8 +968,9 @@
 					}}
 					oncontextmenu={(e) => showMenu(e, pinMenu(pin, { x: e.clientX, y: e.clientY }))}
 				>
-					<!-- The glyph if the user picked one, the cloth dot if not: most
-					     pins have no natural icon, which is what the dot is for. -->
+					<!-- The glyph if the user picked one, else the drawn glyph for
+					     what the pin is (a page, a chat, a project), in the pin's
+					     cloth: the row slot always holds a line glyph in ink. -->
 					<span class="row-glyph" aria-hidden="true">
 						{#if pinChat && chatActivity.running(pinChat)}
 							<Icon icon="ri:loader-4-line" width="14" class="spin" />
@@ -939,7 +979,9 @@
 						{:else if look.icon}
 							<Icon icon={look.icon} width="14" style="color: {clothFor({ url: pin.url, color: look.color })}" />
 						{:else}
-							<i class="row-dot" style="background: {clothFor({ url: pin.url, color: look.color })}"></i>
+							<span class="row-kind" style="color: {clothFor({ url: pin.url, color: look.color })}">
+								<AtlasIcon name={pinKind(pin.url)} size={SHELL_GLYPH_PX} bare />
+							</span>
 						{/if}
 					</span>
 					<span class="panel-row-text">{look.title}</span>
@@ -1087,6 +1129,12 @@
 	</div>
 {/each}
 
+<!-- Hidden while the group above it is folded: "See all" under a closed
+     heading would point at nothing on screen. -->
+{#if recentsMore && !(lastRecentGroup && folded(lastRecentGroup))}
+	<button type="button" class="panel-row panel-more" onclick={openAllChats}>See all</button>
+{/if}
+
 <div bind:this={spacerEl} class="fold-spacer" style="height: {foldSpacer}px" aria-hidden="true"></div>
 
 {#if card && cardProject}
@@ -1173,7 +1221,7 @@
 		font-size: 12px;
 		color: var(--color-foreground-subtle);
 		border-radius: var(--sidebar-interactive-radius);
-		transition: color var(--sidebar-transition-duration) ease;
+		transition: color var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.group-label:hover {
@@ -1312,18 +1360,19 @@
 
 	.panel-row:hover,
 	.panel-row.carded {
-		background: var(--sidebar-hover-bg);
+		background: var(--hover-bg);
+		transition-duration: var(--motion-hover-in);
 	}
 
 	.panel-row.active {
-		background: var(--sidebar-active-bg);
+		background: var(--active-bg);
 	}
 
 	/* A project row with something held over it: the row says it will take
 	   it, in the same ring the focus state draws, so a drop is never a
 	   guess about which row is under the pointer. */
 	.panel-row.drop-target {
-		background: var(--sidebar-active-bg);
+		background: var(--active-bg);
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
 	}
@@ -1341,22 +1390,23 @@
 		white-space: nowrap;
 	}
 
-	/* Spines: the serif appears in the chrome exactly where ownership does —
-	   the names of the user's own things (a pin, a project) get a bookface;
-	   a conversation's title is a caption the model wrote, and stays sans.
+	/* Spines: the serif is the voice of your things, and the sans the voice
+	   of places and verbs. Every titled row (a pin, a project, a chat, a
+	   page) gets the bookface; the doors above stay sans. So the list changes
+	   texture once, where places end and your things begin, not halfway down.
 	   The chrome cut sits beside an icon, where the serif's own metrics
 	   would leave the letters off-center against it. */
 	.spine {
 		font-family: var(--font-serif-ui);
-		font-size: 13.5px;
+		font-size: 14px;
 		font-weight: 400;
 		letter-spacing: 0.02em;
 		-webkit-text-stroke: 0.2px currentColor;
 	}
 
 	.spine .panel-row-text {
-		/* An integer box: 13.5 × 1.5 = 20.25px, which centers on a half pixel
-		   and rounds differently by DPR and scroll position. */
+		/* An integer box: 14 × 1.5 = 21px centers on a half pixel against the
+		   28px row; 20px does not. */
 		line-height: 20px;
 	}
 
@@ -1370,37 +1420,14 @@
 	}
 
 	.row-emoji {
-		font-size: 12px;
+		font-size: 14px;
 		line-height: 1;
 	}
 
-	.row-dot {
-		width: 6.5px;
-		height: 6.5px;
-		border-radius: 999px;
-		display: block;
-		/* A hairline, not a shadow, and in the panel's own ink rather than a
-		   black the theme never declared: on a dark theme the old rgba ring
-		   was invisible against the ground it was meant to separate from. */
-		border: 1px solid color-mix(in srgb, var(--color-foreground) 12%, transparent);
-		box-sizing: border-box;
+	.row-kind {
+		display: flex;
 	}
 
-	.door-count {
-		margin-left: auto;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		min-width: 16px;
-		height: 16px;
-		padding: 0 4px;
-		border-radius: 999px;
-		background: var(--color-error);
-		color: var(--color-background);
-		font-size: 11px;
-		line-height: 1;
-		font-variant-numeric: tabular-nums;
-	}
 
 	.row-unread {
 		width: 7px;
@@ -1464,6 +1491,13 @@
 
 	.panel-more {
 		color: var(--color-foreground-muted);
+	}
+
+	.door-meta {
+		margin-left: auto;
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
 	}
 
 	/* ── the card ─────────────────────────────────────────────────────── */
@@ -1537,7 +1571,7 @@
 	}
 
 	.card-row:hover {
-		background: var(--sidebar-hover-bg);
+		background: var(--hover-bg);
 	}
 
 	.card-row:focus-visible {

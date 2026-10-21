@@ -164,8 +164,6 @@
 			blurb: "Hover and press, defined once as a mix against the FOREGROUND rather than against another surface — which is why they survive all sixteen themes. These carry alpha; the swatch is drawn over `surface` so you see what a user sees.",
 			tokens: [
 				"hover-bg", "active-bg", "press-bg",
-				"sidebar-hover-bg", "sidebar-active-bg",
-				"tab-active-bg", "tab-active-bg-focused",
 			],
 		},
 		{
@@ -188,6 +186,8 @@
 				"sidebar-padding-left-base", "sidebar-indent-width", "sidebar-item-gap",
 				"sidebar-icon-opacity", "sidebar-child-icon-opacity",
 				"duration-fast", "ease-in-out-quad", "ease-premium",
+				"motion-hover-in", "motion-hover-out", "motion-press", "motion-release",
+				"motion-state", "motion-enter", "motion-layout",
 				"font-serif", "font-serif-ui", "font-sans", "font-mono",
 				"z-raised", "z-sticky", "z-dropdown", "z-popover", "z-overlay",
 				"z-modal", "z-lightbox", "z-toast", "z-context-menu",

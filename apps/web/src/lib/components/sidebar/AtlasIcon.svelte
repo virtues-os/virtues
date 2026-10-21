@@ -57,10 +57,24 @@
 		settings:
 			'<circle cx="8" cy="8" r="5.2"/><path d="M8 2.8v2.7"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/>',
 
+		// ── The window header's controls ─────────────────────────────────
+		// Interface symbols, the one place the set draws them, at the set's
+		// weight so the header and the sidebar below it read as one hand.
+		// Arrows, not chevrons: a shaft says "go", where a bare chevron reads
+		// as "expand" in every list in the app.
+		back: '<path d="M12.5 8h-9M7.5 4l-4 4 4 4"/>',
+		forward: '<path d="M3.5 8h9M8.5 4l4 4-4 4"/>',
+		// The window with its sidebar column. The column (`.atlas-fill`) is
+		// empty here; a host that wants to say the sidebar is shown tints it,
+		// and can fade the tint, which a swap between two glyphs could not.
+		sidebar:
+			'<path class="atlas-fill" d="M4.5 3h2v10h-2a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="currentColor" fill-opacity="0" stroke="none"/><rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M6.5 3v10"/>',
+		plus: '<path d="M8 3.5v9M3.5 8h9"/>',
+		close: '<path d="M4.8 4.8l6.4 6.4M11.2 4.8l-6.4 6.4"/>',
+
 		// ── Settings' own rows ─────────────────────────────────────────────
-		// Drawn objects under the dial, for the same reason the wiki's rows
-		// are: a panel of Remix glyphs under an Atlas rail tile is two icon
-		// languages in one column.
+		// Drawn objects, for the same reason the wiki's rows are: Remix
+		// glyphs beside Atlas doors are two icon languages in one column.
 		// Profile: an ID card, a portrait and two lines. Not a bust: `identity`
 		// is the bust, and it means the wiki's You, which is not this page.
 		profile:
@@ -91,8 +105,7 @@
 		// SQL: a table, a header row and a key column. Not the stacked-cylinder
 		// database, which `sources` already declined to be.
 		sql: '<rect x="2.5" y="3" width="11" height="10" rx="1.2"/><path d="M2.5 6.4h11M2.5 9.7h11M6.3 6.4v6.6"/>',
-		// Terminal: a window with the prompt inside it. The rail's Developer
-		// door is the bare prompt; this is the place you type it.
+		// Terminal: a window with the prompt inside it.
 		terminal:
 			'<rect x="2.2" y="3" width="11.6" height="10" rx="1.2"/><path d="M4.8 6.6l2 1.7-2 1.7"/><path d="M8.4 10.2h2.8"/>',
 		// ── Sources' and Drive's own rows ──────────────────────────────────
@@ -119,8 +132,8 @@
 
 		// ── The wiki's own rows ────────────────────────────────────────────
 		// Drawn here rather than pulled from Remix for the reason the set
-		// exists: the Wiki tile on the rail is an Atlas globe, and a panel of
-		// Remix glyphs hanging off it is two icon languages in one column.
+		// exists: the Wiki's door is an Atlas globe, and a list of Remix
+		// glyphs under it is two icon languages in one column.
 		// Same grid as the rest — 16px box, ~12px of ink, nothing touching an
 		// edge — so they sit level with `calendar` and `pages` above them.
 
@@ -177,6 +190,12 @@
 		// clock has two hands and no hub.
 		history: '<circle cx="8" cy="8" r="5.3"/><path d="M8 4.8V8l2.5 1.7"/>',
 	};
+
+	/**
+	 * The size of a glyph on the sidebar's rows and in the window header:
+	 * the 16-unit box the glyphs are drawn on, at one pixel per unit.
+	 */
+	export const SHELL_GLYPH_PX = 16;
 </script>
 
 <script lang="ts">
@@ -197,10 +216,9 @@
 		name: string;
 		size?: number;
 		/**
-		 * Stroke weight. The set is drawn at 1.1 for the 16px sidebar rows;
-		 * at rail scale, icon-only, a 1.1 line washes out, so the rail asks
-		 * for ~1.5. Kept a prop rather than baked so the two registers share
-		 * one glyph table.
+		 * Stroke weight, in the 16-unit box's units. Leave it unset: it is
+		 * derived from `size` so every glyph renders at the scale's one line,
+		 * 1.25px of ink, at 14, 16 and 20 alike (design.md, "The scale").
 		 */
 		stroke?: number;
 		/**
@@ -211,7 +229,12 @@
 		bare?: boolean;
 	}
 
-	let { name, size = 16, bare = false, stroke = 1.1 }: Props = $props();
+	let { name, size = 16, bare = false, stroke }: Props = $props();
+
+
+	/** 1.25px of ink at any size: the box is 16 units wide. */
+	const LINE_PX = 1.25;
+	const strokeWidth = $derived(stroke ?? (LINE_PX * 16) / size);
 
 
 	// Unknown names fall back to `pages` rather than drawing nothing, which is
@@ -234,7 +257,7 @@
 	viewBox="0 0 16 16"
 	fill="none"
 	stroke="currentColor"
-	stroke-width={stroke}
+	stroke-width={strokeWidth}
 	stroke-linecap="round"
 	stroke-linejoin="round"
 	aria-hidden="true"

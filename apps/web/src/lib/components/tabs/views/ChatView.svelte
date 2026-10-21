@@ -134,6 +134,7 @@
 	import LocalStatsLine from "$lib/components/chat/local/LocalStatsLine.svelte";
 	import { localModel } from "$lib/stores/localModel.svelte";
 	import { chatUsage } from "$lib/stores/chatUsage.svelte";
+	import { paneActions } from "$lib/stores/paneActions.svelte";
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -1253,8 +1254,19 @@
 		}
 	}
 
-	function openChatMenu(e: MouseEvent) {
-		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+	// On the desktop the chat's menu is a view action: its ⋮ sits at the end
+	// of this pane's tab strip, where every view's actions go, rather than in
+	// the corner of the conversation beside its first message.
+	$effect(() => {
+		if (!showChatMenu || mobileLayout.isMobile) return paneActions.set(tab.id, []);
+		return paneActions.set(tab.id, [
+			{ id: "chat-options", label: "Chat options", icon: "ri:more-2-fill", run: openChatMenu },
+		]);
+	});
+
+	function openChatMenu(e?: MouseEvent) {
+		const button = e?.currentTarget as HTMLElement | null | undefined;
+		const rect = button?.getBoundingClientRect() ?? new DOMRect(window.innerWidth - 48, 8, 28, 28);
 		const pinned = !!windowShellStore.findTab((t) => t.id === tab.id)?.tab.pinned;
 		const items: ContextMenuItem[] = [];
 		if (contextUsage && extractConversationId(tab.route)) {
@@ -1830,8 +1842,9 @@
 						/>
 					</div>
 				{/if}
-				<!-- Top-right chrome: the chat menu (context usage and the temporary
-				     switch live in it) -->
+				<!-- Top-right chrome: the Getting started door, and on the phone the
+				     chat's menu. On the desktop the menu is a view action at the end of
+				     the pane's tab strip (paneActions); the phone has no strip. -->
 				<div class="chat-topbar-right">
 					{#if inRoom}
 						<!-- One door. A glyph through the walk, and a word
@@ -1842,7 +1855,7 @@
 						     along. -->
 						<GettingStartedDoor />
 					{/if}
-					{#if showChatMenu}
+					{#if showChatMenu && mobileLayout.isMobile}
 						<button
 							type="button"
 							class="chat-menu-btn"
@@ -2569,11 +2582,9 @@
 		/* (The composer's phone padding lives in the docked-composer block at
 		   the end of these styles — it must follow the base rules to win the
 		   cascade.) */
-
 		.chat-menu-btn {
 			position: relative;
 		}
-
 		.chat-menu-btn::after {
 			content: "";
 			position: absolute;
@@ -2623,38 +2634,11 @@
 	}
 
 	/* A temporary chat is the ordinary page with one thing changed: the
-	   composer flips to the theme's ink, so the mode is a material change
-	   under your fingers rather than a room dressed up as another place.
-	   Done by remapping the pill's tokens — everything inside (placeholder,
-	   buttons, the model pill) follows on its own. The originals are
-	   captured one scope up because a custom property cannot swap with
-	   itself in place. */
-	.chat-area.ghost {
-		--ghost-pill-bg: var(--color-foreground);
-		--ghost-pill-ink: var(--color-surface);
-	}
-	.chat-area.ghost :global(.chat-input-wrapper.bg-surface) {
-		/* Both token families: the Tailwind theme tokens (--foreground, used
-		   by text-foreground et al.) and the component tokens (--color-*). */
-		--surface: var(--ghost-pill-bg);
-		--foreground: var(--ghost-pill-ink);
-		--color-surface: var(--ghost-pill-bg);
-		--color-foreground: var(--ghost-pill-ink);
-		--color-foreground-muted: color-mix(in srgb, var(--ghost-pill-ink) 65%, transparent);
-		--color-foreground-subtle: color-mix(in srgb, var(--ghost-pill-ink) 45%, transparent);
-		--color-border-strong: transparent;
-		--color-border: color-mix(in srgb, var(--ghost-pill-ink) 18%, transparent);
-		--hover-bg: color-mix(in srgb, var(--ghost-pill-ink) 12%, transparent);
-		background: var(--ghost-pill-bg);
-		color: var(--ghost-pill-ink);
-	}
-
-	/* The send control flips with the pill: ink circle, pill-colored glyph —
-	   otherwise `.btn-primary` (secondary bg, surface ink) lands dark-on-dark
-	   inside the inverted pill. */
-	.chat-area.ghost :global(.chat-input-wrapper .btn-primary) {
-		background-color: var(--ghost-pill-ink);
-		color: var(--ghost-pill-bg);
+	   composer's outline is dashed. Dashed is the shell's word for "not
+	   kept" (what is done is solid, what has not happened is dashed), and it
+	   leaves the pill the same weight as every other composer. */
+	.chat-area.ghost :global(.chat-input-wrapper) {
+		border-style: dashed;
 	}
 
 	/* Once the title has gone, the caption over the composer is what still

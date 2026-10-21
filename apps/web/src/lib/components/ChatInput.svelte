@@ -658,6 +658,17 @@
 		gap: 0.25rem;
 	}
 
+	/* Send is the navy primary, not the claret that .btn-primary uses. */
+	.action-btn.btn-primary {
+		background-color: var(--color-primary);
+	}
+	.action-btn.btn-primary:hover:not(:disabled) {
+		background-color: var(--color-primary-hover);
+	}
+	.action-btn.btn-primary:active:not(:disabled) {
+		background-color: var(--color-primary-active);
+	}
+
 	.action-btn:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;

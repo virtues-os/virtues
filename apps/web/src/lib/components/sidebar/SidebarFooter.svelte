@@ -10,6 +10,8 @@
 		stagedBundle,
 	} from "$lib/tauri/bridge";
 	import { onBoxBuildChanged } from "$lib/build";
+	import { goto } from "$app/navigation";
+	import { reachability } from "$lib/stores/reachability.svelte";
 	import { reloadApp, uploadsHold } from "$lib/reload";
 
 	interface Props {
@@ -21,44 +23,6 @@
 		collapsed = false,
 		animationDelay = 0,
 	}: Props = $props();
-
-	// The console line: the rail's only facts, set in mono on a hairline.
-	//
-	// Not a progress bar — a bar dramatizes a number nobody asked for. This is
-	// a colophon: the date, and the time. (Day-of-year was here once and read
-	// as trivia — "DAY 210" tells you nothing you wanted to know.)
-	let stamp = $state("");
-	let clock = $state("");
-
-	// Click the clock to swap 24h ⇄ 12h. Persisted, because a clock that
-	// forgets which face you chose is worse than one that never offered.
-	let hour12 = $state(false);
-
-	const DAYS = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
-	const MONTHS = [
-		"JAN", "FEB", "MAR", "APR", "MAY", "JUN",
-		"JUL", "AUG", "SEP", "OCT", "NOV", "DEC",
-	];
-
-	function tick() {
-		const now = new Date();
-		stamp = `${DAYS[now.getDay()]} ${MONTHS[now.getMonth()]} ${now.getDate()}`;
-		const h = now.getHours();
-		const mm = String(now.getMinutes()).padStart(2, "0");
-		clock = hour12
-			? `${((h + 11) % 12) + 1}:${mm} ${h < 12 ? "AM" : "PM"}`
-			: `${String(h).padStart(2, "0")}:${mm}`;
-	}
-
-	function toggleClock() {
-		hour12 = !hour12;
-		try {
-			localStorage.setItem("virtues:clock12", hour12 ? "1" : "0");
-		} catch {
-			// Private mode / storage disabled — the toggle still works this session.
-		}
-		tick();
-	}
 
 	// A staged app update, waiting for a relaunch. The shell stages silently
 	// (the Chrome model) and applies on the next launch — but this app is a
@@ -140,14 +104,7 @@
 	}
 
 	onMount(() => {
-		try {
-			hour12 = localStorage.getItem("virtues:clock12") === "1";
-		} catch {
-			// Fall through to the 24h default.
-		}
-		tick();
 		void pollUpdate();
-		const id = setInterval(tick, 30_000);
 		// The shell checks every 6h; ten minutes keeps the chip honest without
 		// chatter on an IPC call that answers from memory.
 		const updateId = setInterval(pollUpdate, 600_000);
@@ -156,15 +113,22 @@
 		// box no longer has is ten minutes too many. See $lib/build.
 		const offBoxMoved = onBoxBuildChanged(() => void pollUpdate());
 		return () => {
-			clearInterval(id);
 			clearInterval(updateId);
 			offBoxMoved();
 		};
 	});
 
-	// The three doors that used to live here — Sources, Developer, Settings —
-	// are rail items now. A door in the footer AND an icon on the rail is the
-	// same destination twice on one screen.
+	// The app's own copy stays up when the server goes away, and it carries
+	// /reconnect, which tells this computer being offline from the server being
+	// off, refused or moved. A browser on the LAN has no radio and no pairing
+	// to repair, so it gets the words without the click.
+	const canReconnect =
+		typeof window !== "undefined" &&
+		!!(window as unknown as { __VIRTUES_BACKEND_ORIGIN__?: string }).__VIRTUES_BACKEND_ORIGIN__;
+
+	// Sources and Developer are headings in Settings, and Settings is the
+	// row above this footer. A second door to either here would be the same
+	// destination twice on one screen.
 	//
 	// There is no "Sign Out" — auth is the device's proven iroh key, not a
 	// server session; to drop this device use Settings → Devices → Unpair.
@@ -187,6 +151,26 @@
 
 	     Neither ever acts on its own: an update that interrupts what you were
 	     typing is worse than an update that waits. -->
+	<!-- Offline is listed first: neither update can land while the server
+	     is unreachable. It goes away by itself when the server answers
+	     (reachability retries on its own). -->
+	{#if reachability.unreachable && !collapsed}
+		{#if canReconnect}
+			<button
+				type="button"
+				class="offline"
+				onclick={() => void goto("/reconnect")}
+				title="Find out why and fix it"
+			>
+				<span class="offline-label"><span class="offline-dot"></span>Can't reach your server</span>
+				<span class="offline-hint">Reconnect</span>
+			</button>
+		{:else}
+			<div class="offline" role="status">
+				<span class="offline-label"><span class="offline-dot"></span>Can't reach your server</span>
+			</div>
+		{/if}
+	{/if}
 	{#if stagedVersion && !collapsed}
 		<button
 			type="button"
@@ -223,13 +207,19 @@
 		@apply flex flex-col gap-1 py-3 mt-auto;
 		padding-left: 8px;
 		/* Staggered load animation (initial mount) */
-		animation: sidebar-fade-slide-in 200ms var(--sidebar-transition-easing) backwards;
+		animation: sidebar-fade-slide-in var(--motion-enter) var(--ease-premium) backwards;
 		/* Staggered expand transition - uses --stagger-delay CSS var */
 		opacity: 1;
 		transform: translateX(0);
 		transition:
-			opacity 200ms var(--sidebar-transition-easing) var(--stagger-delay, 0ms),
-			transform 200ms var(--sidebar-transition-easing) var(--stagger-delay, 0ms);
+			opacity var(--motion-enter) var(--ease-premium) var(--stagger-delay, 0ms),
+			transform var(--motion-enter) var(--ease-premium) var(--stagger-delay, 0ms);
+	}
+
+	/* With no chip to show, the footer takes no room, so Settings sits at the
+	   foot of the sidebar instead of 24px above it. */
+	.footer:not(:has(> *)) {
+		padding-block: 0;
 	}
 
 	/* The update chip: a standing offer, not an alarm. Info tokens (note-this),
@@ -258,7 +248,7 @@
 
 	.relaunch-version {
 		font-family: var(--font-mono);
-		font-size: 9.5px;
+		font-size: 11px;
 		letter-spacing: 0.07em;
 		color: var(--color-foreground-muted);
 		font-variant-numeric: tabular-nums;
@@ -273,90 +263,55 @@
 		outline-offset: -2px;
 	}
 
-	.door {
+	/* Offline: the same chip shape as the update chips, in neutral tokens.
+	   The server being asleep is ordinary, so it gets no warning color. */
+	.offline {
 		display: flex;
-		align-items: center;
-		gap: var(--sidebar-interactive-gap);
+		flex-direction: column;
+		align-items: flex-start;
+		gap: 1px;
 		width: 100%;
-		height: var(--sidebar-interactive-height);
-		padding: var(--sidebar-interactive-padding);
-		border: none;
+		padding: 6px var(--sidebar-interactive-padding);
+		margin-bottom: 4px;
+		border: 1px solid var(--color-border);
 		border-radius: var(--sidebar-interactive-radius);
-		background: none;
-		cursor: pointer;
+		background: color-mix(in srgb, var(--wash-ink) 4%, transparent);
 		text-align: left;
-		font-size: var(--sidebar-interactive-font-size);
-		color: var(--sidebar-interactive-color);
 	}
 
-	.door :global(.atlas-icon) {
-		color: var(--color-foreground-muted);
-		opacity: var(--sidebar-icon-opacity);
-	}
-
-	.door:hover :global(.atlas-icon) {
-		opacity: 1;
-	}
-
-	.door.collapsed {
-		justify-content: center;
-		gap: 0;
-	}
-
-	/* The library card + the colophon. Doors read exactly like Library rows —
-	   separation is distance, not a second type register. */
-	.console {
-		display: flex;
-		align-items: baseline;
-		justify-content: space-between;
-		gap: 8px;
-		margin: 6px 0 0;
-		padding: 8px 10px 0 var(--sidebar-padding-left-base);
-		border-top: 1px solid var(--color-border-subtle);
-		font-family: var(--font-mono);
-		font-size: 9.5px;
-		letter-spacing: 0.07em;
-		color: var(--color-foreground-disabled);
-		font-variant-numeric: tabular-nums;
-		white-space: nowrap;
-		user-select: none;
-	}
-
-	/* A button for the affordance, but it must read as the same piece of text
-	   the span was — so inherit the console's type and drop every default. */
-	.console-clock {
-		appearance: none;
-		background: none;
-		border: 0;
-		padding: 0;
-		margin: 0;
-		font: inherit;
-		letter-spacing: inherit;
-		font-variant-numeric: tabular-nums;
-		color: var(--color-foreground-subtle);
+	button.offline {
 		cursor: pointer;
 	}
 
-	.console-clock:hover {
-		color: var(--color-foreground);
+	button.offline:hover {
+		border-color: var(--color-border-strong);
 	}
 
-	.console-clock:focus-visible {
-		outline: 1px solid var(--color-border);
-		outline-offset: 2px;
-	}
-
-	.door:hover {
-		background: var(--sidebar-hover-bg);
-	}
-
-	.door.active {
-		background: var(--sidebar-active-bg);
-	}
-
-	.door:focus-visible {
+	button.offline:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
+	}
+
+	.offline-label {
+		display: flex;
+		align-items: center;
+		gap: 7px;
+		font-size: var(--sidebar-interactive-font-size);
+		color: var(--color-foreground-muted);
+	}
+
+	.offline-dot {
+		flex: none;
+		width: 6px;
+		height: 6px;
+		border-radius: 50%;
+		background: var(--color-foreground-subtle);
+	}
+
+	.offline-hint {
+		padding-left: 13px;
+		font-size: 11px;
+		color: var(--color-foreground-subtle);
 	}
 
 	.footer.collapsed {
@@ -365,7 +320,7 @@
 		padding-right: 4px;
 		opacity: 0;
 		transition:
-			opacity var(--sidebar-transition-duration) var(--sidebar-transition-easing),
-			transform var(--sidebar-transition-duration) var(--sidebar-transition-easing);
+			opacity var(--motion-state) var(--ease-premium),
+			transform var(--motion-state) var(--ease-premium);
 	}
 </style>

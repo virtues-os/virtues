@@ -3,6 +3,7 @@
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
 	import Icon from "$lib/components/Icon.svelte";
+	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import type { Tab } from "$lib/stores/window-shell.svelte";
 	import {
@@ -118,23 +119,8 @@
 	// the OS shell: a Mac user in a browser still presses Command.
 	const modKeyWord = isAppleKeyboard ? "Command" : "Ctrl";
 
-	// Per-tab history (browser model): back/forward act on this pane's active tab.
-	const canGoBack = $derived(windowShellStore.canGoBack(paneId));
-	const canGoForward = $derived(windowShellStore.canGoForward(paneId));
-
-	function handleBack() {
-		windowShellStore.goBack(paneId);
-	}
-
-	function handleForward() {
-		windowShellStore.goForward(paneId);
-	}
-
 	function handleNewTab() {
-		windowShellStore.openTab(
-			{ type: "chat", label: "New chat", route: "/chat", icon: "ri:chat-1-line" },
-			paneId,
-		);
+		windowShellStore.newChat(paneId);
 	}
 
 	// Build DnD items from tabs with source information
@@ -191,6 +177,7 @@
 
 		const tabIndex = tabs.findIndex((t) => t.id === tabId);
 		const hasTabsToRight = tabIndex !== -1 && tabIndex < tabs.length - 1;
+		const hasTabsToLeft = tabIndex > 0;
 
 		// A chat, page or project is renamed and re-iconed as itself. Any
 		// other tab has no name of its own to change: a rename here used to
@@ -200,7 +187,16 @@
 		const look = tabLook(tab);
 
 		// Build context menu items
-		const items: ContextMenuItem[] = [
+		const items: ContextMenuItem[] = [];
+		if (tab.preview) {
+			items.push({
+				id: "keep",
+				label: "Keep open",
+				icon: "ri:check-line",
+				action: () => windowShellStore.keepTab(tabId),
+			});
+		}
+		items.push(
 			// Compact/Expand
 			{
 				id: "compact",
@@ -210,7 +206,7 @@
 					: "ri:contract-left-right-line",
 				action: () => windowShellStore.togglePin(tabId),
 			},
-		];
+		);
 		if (owned) {
 			items.push({
 				id: "rename",
@@ -308,6 +304,14 @@
 			});
 		}
 
+		if (hasTabsToLeft) {
+			items.push({
+				id: "close-to-left",
+				label: "Close to the Left",
+				action: () => windowShellStore.closeTabsToLeft(tabId, paneId),
+			});
+		}
+
 		// Close to Right (only if tabs exist to the right)
 		if (hasTabsToRight) {
 			items.push({
@@ -350,6 +354,13 @@
 		renameRef(tab.route, newLabel).catch((e) => console.error("[WindowTabBar] rename failed:", e));
 	}
 
+	// `autofocus` only applies on page load, so a field mounted later has to
+	// be focused by hand. Selecting the title lets you type over it.
+	function focusAndSelect(node: HTMLInputElement) {
+		node.focus();
+		node.select();
+	}
+
 	function handleRenameCancel() {
 		renamingTabId = null;
 		renameValue = "";
@@ -365,9 +376,12 @@
 		}
 	}
 
+	// A double-click renames the thing, when the thing has a name of its own.
+	// On a preview tab it also keeps the tab, as in VS Code.
 	function handleDoubleClick(e: MouseEvent, tabId: string) {
 		e.preventDefault();
 		const tab = tabs.find((t) => t.id === tabId);
+		if (tab?.preview) windowShellStore.keepTab(tabId);
 		if (!tab || tab.pinned || !ownedRef(tab.route ?? "")) return;
 		renamingTabId = tabId;
 		renameValue = tabLook(tab).title;
@@ -392,10 +406,6 @@
 			dndItems = items;
 		});
 	}
-
-	// The sidebar's collapse control lives on the sidebar (its panel header),
-	// and the rail's ∴ mark reopens it when collapsed — so the pane toolbar does
-	// not carry a control for a region it is not.
 
 	// Get icon for tab type
 	function getDefaultIcon(type: string): string {
@@ -427,37 +437,16 @@
 </script>
 
 <div
+	data-tauri-drag-region
 	class="tab-bar"
-	class:split-pane={!!paneId}
-	class:active-pane={isActivePane && !!paneId}
 	role="toolbar"
 	aria-label="Tab bar"
 	tabindex="0"
 >
 
 
-	<div class="nav-cluster">
-		<button
-			class="nav-btn"
-			onclick={handleBack}
-			disabled={!canGoBack}
-			aria-label="Back"
-			title="Back"
-		>
-			<Icon icon="ri:arrow-left-s-line" />
-		</button>
-		<button
-			class="nav-btn"
-			onclick={handleForward}
-			disabled={!canGoForward}
-			aria-label="Forward"
-			title="Forward"
-		>
-			<Icon icon="ri:arrow-right-s-line" />
-		</button>
-	</div>
-
 	<div
+		data-tauri-drag-region
 		class="tabs-scroll"
 		role="tablist"
 		tabindex="0"
@@ -482,6 +471,7 @@
 				class:active-in-active-pane={tab.id === activeTabId &&
 					isActivePane}
 				class:pinned={tab.pinned}
+				class:preview={tab.preview}
 				class:renaming={tab.id === renamingTabId}
 				animate:flip={{ duration: FLIP_DURATION_MS }}
 				onclick={() =>
@@ -493,7 +483,11 @@
 					e.key === "Enter" &&
 					tab.id !== renamingTabId &&
 					handleTabClick(tab.id)}
-				title={tab.id !== renamingTabId ? identity.title : ""}
+				title={tab.id !== renamingTabId
+					? tab.preview
+						? `${identity.title} · Preview. Double-click to keep it open.`
+						: identity.title
+					: ""}
 				role="button"
 				tabindex="0"
 			>
@@ -514,7 +508,6 @@
 				{/if}
 				{#if !tab.pinned}
 					{#if tab.id === renamingTabId}
-						<!-- svelte-ignore a11y_autofocus -->
 						<input
 							type="text"
 							class="tab-rename-input"
@@ -522,7 +515,7 @@
 							onkeydown={handleRenameKeydown}
 							onblur={handleRenameSubmit}
 							onclick={(e) => e.stopPropagation()}
-							autofocus
+							use:focusAndSelect
 						/>
 					{:else}
 						<!-- On a ⌘ hold each tab's own label becomes its number:
@@ -546,7 +539,7 @@
 						onclick={(e) => handleTabClose(e, tab.id)}
 						aria-label="Close tab"
 					>
-						<Icon icon="ri:close-line" />
+						<AtlasIcon name="close" size={14} bare />
 					</button>
 				{/if}
 			</div>
@@ -556,10 +549,10 @@
 	<button
 		class="new-tab-btn"
 		onclick={handleNewTab}
-		aria-label="New tab"
-		title="New tab"
+		aria-label="New chat"
+		title="New chat"
 	>
-		<Icon icon="ri:add-line" />
+		<AtlasIcon name="plus" size={16} bare />
 	</button>
 
 	<!-- The view's own actions, published into the slot rather than rendered
@@ -603,38 +596,19 @@
 		container-type: inline-size;
 		container-name: tabbar;
 		display: flex;
-		align-items: stretch;
 		gap: 4px;
-		padding: 0 8px;
-		min-height: var(--chrome-row-h);
+		/* The first tab starts on the card's left edge, so the strip lines up
+		   with the card below it. */
+		padding: 0 8px 0 0;
+		height: var(--chrome-row-h);
+		/* Everything in the window header shares one centre line: the tabs,
+		   the +, a view's actions and the controls over the sidebar. The
+		   strip is on the desk and paints nothing. */
 		align-items: center;
-		border-bottom: 1px solid var(--color-border);
-		/* Page color, not a recessed strip. The browser model needs the strip
-		   to be darker so the active tab can read as a hole cut in it — but a
-		   recessed band next to a large recessed sidebar made the whole left
-		   half of the window a slab. Pills carry the state instead, so the strip
-		   has no reason to be a different color from what it sits on. */
-		background: var(--color-page);
+		background: transparent;
 		flex-shrink: 0;
 		position: relative;
 		z-index: var(--z-overlay); /* Above global drag overlays */
-	}
-
-	/* Card top rounding in split mode */
-	.tab-bar.split-pane {
-		border-top-left-radius: var(--card-radius, 6px);
-		border-top-right-radius: var(--card-radius, 6px);
-	}
-
-	/* The focused pane's strip stays the page colour. It used to lift to
-	   --color-surface-elevated so "which pane am I in" read from the chrome —
-	   but on the warm themes (Oxford's elevated is #F4F3F0) that painted the
-	   pane's top a grey that did not match the page below it. Focus is already
-	   carried by the active tab's pill (--tab-active-bg-focused vs
-	   --tab-active-bg), so the strip does not need to muddy the surface to say
-	   it. The top of the pane now matches the page, on every theme. */
-	.tab-bar.active-pane {
-		background: var(--color-page);
 	}
 
 	.tabs-scroll {
@@ -642,7 +616,11 @@
 		align-items: center;
 		gap: 2px;
 		overflow-x: auto;
-		flex: 1;
+		/* Only as wide as its tabs, so the + sits right after the last one,
+		   where the next tab will appear (Brave, Safari). It shrinks and
+		   scrolls once the tabs outgrow the strip, and the + stays in view. */
+		flex: 0 1 auto;
+		min-width: 0;
 		scrollbar-width: none;
 		height: var(--chrome-tab-h);
 	}
@@ -661,43 +639,57 @@
 		align-items: center;
 		gap: 6px;
 		padding: 0 10px;
-		align-self: center;
 		position: relative;
-		height: 28px;
+		/* A pill above the card, the scale's 28px control. */
+		height: var(--chrome-tab-h);
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--card-radius);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 12px;
 		cursor: pointer;
 		white-space: nowrap;
+		/* Sized to its label, so the gaps between tabs are even and the +
+		   sits one gap after the last. */
 		max-width: 160px;
-		min-width: 80px;
 		flex-shrink: 0;
+		/* The scale's motion (design.md, "The scale"): hover in fast and out
+		   slow. A new tab grows into its place. */
 		transition:
-			background-color 150ms ease,
-			color 150ms ease,
-			opacity 150ms ease;
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
+			opacity var(--motion-hover-out) var(--ease-premium);
+		animation: tab-in var(--motion-enter) var(--ease-premium);
 	}
 
 	.tab:hover {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
+		transition-duration: var(--motion-hover-in);
 	}
 
-	/* Fill from the interaction ramp, not a surface token. A surface token is
-	   what made the active tab #FFFFFF on #FFFFFF; the ramp is defined against
-	   the text color, so it is legible in all sixteen themes. */
+	@keyframes tab-in {
+		from {
+			opacity: 0;
+			transform: scale(0.92);
+		}
+	}
+
+	/* The active tab is marked by fill and ink: the page's own color on the
+	   desk (the same step that separates the cards) and full ink. Never by
+	   weight: a bolder label is a wider one, and every tab to its right
+	   moved when you switched. It takes the card's edge too, drawn inset so
+	   the tab keeps its size. */
 	.tab.active {
-		background: var(--tab-active-bg-focused);
+		background: var(--color-page);
 		color: var(--color-foreground);
-		font-weight: 500;
+		box-shadow: inset 0 0 0 1px var(--card-edge);
 	}
 
 	/* In split view two tabs are "active" at once and only one takes your
-	   typing. The unfocused pane's sits at the lighter step. */
+	   typing. Both take their page's fill; the one you are not in says so in
+	   its ink. */
 	.tab.active:not(.active-in-active-pane) {
-		background: var(--tab-active-bg);
 		color: var(--color-foreground-muted);
 	}
 
@@ -728,12 +720,18 @@
 
 	:global(.tab-icon) {
 		flex-shrink: 0;
-		font-size: 13px;
+		font-size: 14px;
 		opacity: 0.7;
 	}
 
 	.tab.active :global(.tab-icon) {
 		opacity: 1;
+	}
+
+	/* A preview tab: the one the next ordinary open replaces. Italic, as in
+	   VS Code, so you can tell it will not stay. */
+	.tab.preview .tab-label-text {
+		font-style: italic;
 	}
 
 	/* An odometer: two lines stacked in a one-line window, shifted by 100% to
@@ -755,7 +753,7 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		transition: transform 140ms cubic-bezier(0.2, 0, 0, 1);
+		transition: transform var(--motion-state) var(--ease-premium);
 	}
 
 	/* Same face, size AND weight as the label it replaces. It was monospace,
@@ -782,8 +780,19 @@
 	   travel to get there. */
 	@media (prefers-reduced-motion: reduce) {
 		.tab-label-text,
-		.tab-label-hint {
+		.tab-label-hint,
+		.tab,
+		.tab-close,
+		.new-tab-btn {
 			transition: none;
+		}
+
+		.tab {
+			animation: none;
+		}
+
+		.new-tab-btn:active {
+			transform: none;
 		}
 	}
 
@@ -806,7 +815,7 @@
 	}
 
 	.tab-emoji {
-		font-size: 12px;
+		font-size: 14px;
 		line-height: 14px;
 		width: 14px;
 		text-align: center;
@@ -818,11 +827,11 @@
 	.pane-actions {
 		display: flex;
 		align-items: center;
-		align-self: center;
 		gap: 2px;
-		margin-left: 2px;
-		padding-left: 6px;
-		border-left: 1px solid var(--color-border);
+		/* The view's actions keep the far end of the strip; the tabs and
+		   their + read from the left. */
+		margin-left: auto;
+		padding-left: 4px;
 	}
 
 	.pane-action {
@@ -839,7 +848,7 @@
 		font-size: 15px;
 		cursor: pointer;
 		flex-shrink: 0;
-		transition: background-color 150ms ease, color 150ms ease;
+		transition: background-color var(--motion-hover-out) var(--ease-premium), color var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.pane-action:hover:not(:disabled) {
@@ -904,8 +913,8 @@
 		cursor: pointer;
 		opacity: 0;
 		transition:
-			opacity 150ms ease,
-			background-color 150ms ease;
+			opacity var(--motion-hover-out) var(--ease-premium),
+			background-color var(--motion-hover-out) var(--ease-premium);
 		flex-shrink: 0;
 	}
 
@@ -933,17 +942,12 @@
 		outline-offset: -2px;
 	}
 
-	.sidebar-toggle,
-	.nav-btn,
 	.new-tab-btn {
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		/* The bar bottom-aligns its children so tabs meet the pane; the window
-		   controls opt back out and centre themselves in the strip. */
-		align-self: center;
-		width: 24px;
-		height: 24px;
+		width: 28px;
+		height: 28px;
 		padding: 0;
 		border: none;
 		border-radius: 6px;
@@ -953,59 +957,37 @@
 		cursor: pointer;
 		flex-shrink: 0;
 		transition:
-			background-color 150ms ease,
-			color 150ms ease;
-	}
-
-	.sidebar-toggle {
-		margin-right: 2px;
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-premium);
 	}
 
 	/* Hover used to be `--color-surface-elevated` over a `--color-background`
 	   toolbar — #F5F4EF on #FDFCF9 in the default theme, a ~3% shift that read
 	   as nothing happening. A foreground mix is legible in every theme instead
 	   of depending on two surface tokens staying far enough apart. */
-	.sidebar-toggle:hover,
-	.nav-btn:hover:not(:disabled),
 	.new-tab-btn:hover {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
 	}
 
-	.sidebar-toggle:active,
-	.nav-btn:active:not(:disabled),
 	.new-tab-btn:active {
 		background: var(--press-bg);
+		transform: scale(0.94);
+		transition-duration: var(--motion-press);
 	}
 
-	.sidebar-toggle:focus-visible,
-	.nav-btn:focus-visible,
 	.new-tab-btn:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
 		color: var(--color-foreground);
 	}
 
-	/* Back/forward cluster: tight grouping, muted, disabled at stack ends */
-	.nav-cluster {
-		display: flex;
-		align-items: center;
-		align-self: center;
-		gap: 0;
-		flex-shrink: 0;
-	}
-
-	.nav-btn {
-		width: 20px;
-	}
-
-	.nav-btn:disabled {
-		opacity: 0.3;
-		cursor: default;
-	}
-
+	/* The strip's own 4px gap is the only space before the +: it is the
+	   next tab's place, not a separate control. */
 	.new-tab-btn {
-		margin-left: 2px;
+		margin-left: 0;
 	}
 
 	/* svelte-dnd-action drop indicator */

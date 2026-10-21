@@ -3,9 +3,9 @@
  *
  * A paired device lands here when its server doesn't answer: at launch (the
  * Mac's shell and the phone's connect page send it), or from the app's own
- * "Can't reach your server" banner. It runs from the app's OWN copy (the
- * phone's baked bundle, the Mac's baked copy), because by definition the
- * server's copy is the thing that isn't answering.
+ * "Can't reach your server" banner or sidebar chip. It runs from the app's
+ * OWN copy (the phone's baked bundle, the Mac's baked copy), because by
+ * definition the server's copy is the thing that isn't answering.
  *
  * WHAT CAN BE WRONG, and what this can tell apart:
  *
@@ -228,7 +228,8 @@ export class Reconnect {
 
 	/**
 	 * Can the app open without its server? Its own copy can (the phone, and the
-	 * Mac since 2026-09-29): it shows the "Can't reach your server" banner.
+	 * Mac since 2026-09-29): it says "Can't reach your server" in the phone's
+	 * banner and the desktop's sidebar footer.
 	 */
 	get canOpenAnyway(): boolean {
 		const s = shell();

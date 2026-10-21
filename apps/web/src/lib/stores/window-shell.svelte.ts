@@ -25,6 +25,7 @@ import { parseRoute, tabRegistry } from '$lib/tabs/registry';
 import { visits } from '$lib/stores/visits.svelte';
 import { pushState, replaceState } from '$app/navigation';
 import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
+import { DESK_GAP_PX } from '$lib/stores/sidebarState.svelte';
 
 // Re-export types for convenience
 export type { Tab, TabType, PaneState };
@@ -71,6 +72,13 @@ const TAB_STORAGE_KEY_PREFIX = 'virtues-window-tabs';
 const MOBILE_STORAGE_KEY = 'virtues-window-mobile';
 const TAB_STORAGE_VERSION = 10; // Per-tab navigation history (browser model)
 const HISTORY_CAP = 50; // Max routes kept in a single tab's history stack
+
+/**
+ * The desk between the two panes' cards in split view, the same gap as
+ * between any two cards. SplitContainer lays the panes out with it and the
+ * window header lines their tab strips up with it.
+ */
+export const SPLIT_GUTTER_PX = DESK_GAP_PX;
 
 // Input shape for tab creation — history/historyIndex are seeded internally.
 type TabInput = Omit<Tab, 'id' | 'createdAt' | 'history' | 'historyIndex'>;
@@ -449,8 +457,9 @@ class WindowShellStore {
 	}
 
 	private openDefaultTab(): void {
-		// Fresh sessions land on a new chat: home and chat are one place.
-		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'ri:chat-1-line' });
+		// Fresh sessions land on a new chat: home and chat are one place. It is
+		// a preview, like every new chat, until you send something in it.
+		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'ri:chat-1-line' }, undefined, { preview: true });
 	}
 
 	/**
@@ -518,7 +527,13 @@ class WindowShellStore {
 	// Tab CRUD - Unified Implementation
 	// ============================================================================
 
-	openTab(input: TabInput, paneId?: string): string {
+	/**
+	 * Add a tab to a pane. A kept tab goes at the end of the strip. A preview
+	 * tab replaces the pane's current preview, if there is one, and otherwise
+	 * goes right after the tab you were on, so it opens next to where you
+	 * clicked.
+	 */
+	openTab(input: TabInput, paneId?: string, options?: { preview?: boolean }): string {
 		// One window on the phone. Every caller that means "open this somewhere"
 		// — a new tab, a tab beside, a forced-new chat — means "show this" here,
 		// and showing it is a navigation of the window already open. Replacing
@@ -530,21 +545,31 @@ class WindowShellStore {
 		}
 
 		const id = crypto.randomUUID();
+		const preview = !!options?.preview;
 		// Seed the history stack with the tab's opening route.
 		const tab: Tab = {
 			...input,
 			id,
+			preview: preview || undefined,
 			history: [input.route],
 			historyIndex: 0,
 			createdAt: Date.now()
 		};
 		const targetPaneId = this.singleWindow ? 'left' : (paneId ?? this.activePaneId);
 
-		this.updatePane(targetPaneId, pane => ({
-			...pane,
-			tabs: [...pane.tabs, tab],
-			activeTabId: id
-		}));
+		this.updatePane(targetPaneId, pane => {
+			if (!preview) return { ...pane, tabs: [...pane.tabs, tab], activeTabId: id };
+			const old = pane.tabs.findIndex(t => t.preview);
+			if (old !== -1) {
+				const tabs = [...pane.tabs];
+				tabs[old] = tab;
+				return { ...pane, tabs, activeTabId: id };
+			}
+			const at = pane.tabs.findIndex(t => t.id === pane.activeTabId);
+			const tabs = [...pane.tabs];
+			tabs.splice(at === -1 ? tabs.length : at + 1, 0, tab);
+			return { ...pane, tabs, activeTabId: id };
+		});
 
 		this.activePaneId = targetPaneId;
 		this.persistTabState();
@@ -554,18 +579,17 @@ class WindowShellStore {
 
 	/**
 	 * Route → tab dispatcher. Behavior depends on options:
-	 * - default          → navigate the active tab IN PLACE (browser model)
-	 * - forceNew: true   → always create a new tab
-	 * - focusExisting    → focus an already-open matching tab, else navigate in place
+	 * - default          → open in the pane's preview tab (`openPreview`)
+	 * - forceNew: true   → always create a new kept tab
+	 * - focusExisting    → focus an already-open matching tab, else open in preview
 	 *
-	 * A window is a place you walk through. Only two gestures make a new one:
-	 * the "+" on the tab bar and the explicit "open beside" (⌘-click, right-click
-	 * → Open beside). Every other door — the rail, the Home panel, New chat, New
-	 * page, search — moves the window you are in. `focusExisting` used to fall
-	 * through to *create*, and since a fresh chat lives at `/` until its first
-	 * message, the dedupe never matched a new chat: every press of New chat and
-	 * every row you clicked once was another window, nothing ever closed one,
-	 * and the layout persists, so a week produced ninety-nine tabs (2026-09-21).
+	 * Every door (the rail, the sidebar, search, a link in a page) opens into
+	 * the focused pane's one preview tab, so clicking through things never
+	 * adds tabs. A tab you commit to becomes kept (`keepTab`) and stays put:
+	 * what you open from it goes to the preview tab beside it. `focusExisting`
+	 * must never fall through to *create*: a fresh chat lives at `/` until its
+	 * first message, so a create-on-miss dedupe opened another window on
+	 * every press of New chat, and a week produced ninety-nine tabs.
 	 */
 	openTabFromRoute(route: string, options?: {
 		label?: string;
@@ -602,11 +626,10 @@ class WindowShellStore {
 				this.setActiveTab(result.tab.id);
 				return result.tab.id;
 			}
-			// Not open anywhere: go there in this window, don't add one.
+			// Not open anywhere: open it in the preview tab, don't add one.
 		}
 
-		// Default: navigate the active tab in place.
-		return this.navigate(route, {
+		return this.openPreview(route, {
 			label: options?.label,
 			paneId: options?.paneId,
 			preferEmptyPane: options?.preferEmptyPane
@@ -614,9 +637,93 @@ class WindowShellStore {
 	}
 
 	/**
+	 * Open a route in a pane's preview tab.
+	 *
+	 * - The active tab is the preview: it navigates in place, and Back returns.
+	 * - The active tab is kept: the pane's preview tab navigates and comes
+	 *   forward, or a new preview tab opens right after the active one. The
+	 *   kept tab is not touched.
+	 */
+	openPreview(route: string, options?: {
+		label?: string;
+		paneId?: 'left' | 'right';
+		preferEmptyPane?: boolean;
+	}): string {
+		if (this.singleWindow) return this.navigate(route, { label: options?.label });
+
+		const targetPaneId = this.pickPane(options?.paneId, options?.preferEmptyPane);
+		const pane = this.panes.find(p => p.id === targetPaneId);
+		const active = pane?.tabs.find(t => t.id === pane.activeTabId);
+		if (!pane || !active) {
+			return this.createTabFromRoute(route, { label: options?.label, paneId: targetPaneId as 'left' | 'right', preview: true });
+		}
+
+		const { effectiveRoute } = this.identityFromRoute(route);
+		const target = active.preview ? active : pane.tabs.find(t => t.preview);
+		if (!target) {
+			return this.createTabFromRoute(route, { label: options?.label, paneId: targetPaneId as 'left' | 'right', preview: true });
+		}
+		if (target.route === effectiveRoute) {
+			this.setActiveTab(target.id);
+			return target.id;
+		}
+		if (target !== active) this.updatePane(targetPaneId, p => ({ ...p, activeTabId: target.id }));
+		return this.navigate(route, { label: options?.label, paneId: targetPaneId as 'left' | 'right' });
+	}
+
+	/** Which pane an open lands in: the one asked for, else an empty one when
+	 *  asked to prefer it, else the focused one. */
+	private pickPane(paneId?: 'left' | 'right', preferEmptyPane?: boolean): string {
+		if (this.singleWindow) return 'left';
+		if (preferEmptyPane && this.isSplit) {
+			if (this.panes[0].tabs.length === 0) return 'left';
+			if (this.panes[1]?.tabs.length === 0) return 'right';
+		}
+		return paneId ?? this.activePaneId;
+	}
+
+	/**
+	 * Make a tab kept: ordinary opens stop replacing it. Called when you
+	 * commit to a tab (type in it, send from it, double-click it, drag it).
+	 */
+	keepTab(tabId: string): void {
+		const pane = this.findPaneForTab(tabId);
+		if (!pane?.tabs.some(t => t.id === tabId && t.preview)) return;
+		this.updatePane(pane.id, p => ({
+			...p,
+			tabs: p.tabs.map(t => (t.id === tabId ? { ...t, preview: undefined } : t))
+		}));
+		this.persistTabState();
+	}
+
+	/**
+	 * Start a new chat in a pane (the header's ✎, a strip's +, ⌘N and the Home
+	 * panel's New chat). The tab
+	 * you were looking at is kept first: asking for a new tab beside it means
+	 * you meant to come back to it.
+	 */
+	newChat(paneId?: 'left' | 'right'): string {
+		const pane = this.panes.find(p => p.id === (paneId ?? this.activePaneId));
+		const active = pane?.tabs.find(t => t.id === pane.activeTabId);
+		if (active && this.isNewChatRoute(active.route)) {
+			this.setActiveTab(active.id);
+			return active.id;
+		}
+		if (active?.preview) this.keepTab(active.id);
+		return this.openPreview('/', { label: 'New chat', paneId });
+	}
+
+	private isNewChatRoute(route: string): boolean {
+		return route === '/' || route === '/chat';
+	}
+
+	/**
 	 * Navigate the active tab of the target pane IN PLACE — swap its content and
-	 * push onto its history stack (browser model). Falls back to creating a tab
-	 * when the target pane has no active tab (e.g. an empty split pane).
+	 * push onto its history stack (browser model), whether it is kept or a
+	 * preview. This is for a view moving within itself: the day page stepping
+	 * to the next day, Settings walking its sections. Opening some other thing
+	 * goes through `openPreview`. Falls back to creating a tab when the target
+	 * pane has no active tab (e.g. an empty split pane).
 	 */
 	navigate(route: string, options?: {
 		label?: string;
@@ -625,11 +732,7 @@ class WindowShellStore {
 	}): string {
 		const { effectiveRoute, fields } = this.identityFromRoute(route, options?.label);
 
-		let targetPaneId = this.singleWindow ? 'left' : (options?.paneId ?? this.activePaneId);
-		if (options?.preferEmptyPane && this.isSplit) {
-			if (this.panes[0].tabs.length === 0) targetPaneId = 'left';
-			else if (this.panes[1]?.tabs.length === 0) targetPaneId = 'right';
-		}
+		const targetPaneId = this.pickPane(options?.paneId, options?.preferEmptyPane);
 
 		const pane = this.panes.find(p => p.id === targetPaneId);
 		const activeTab = pane?.tabs.find(t => t.id === pane.activeTabId);
@@ -684,7 +787,7 @@ class WindowShellStore {
 				found = undefined;
 			}
 			if (!found) {
-				id = this.navigate(route, { label: 'Setup', paneId: options?.paneId });
+				id = this.openPreview(route, { label: 'Setup', paneId: options?.paneId });
 			} else {
 				this.setActiveTab(found.tab.id);
 				id =
@@ -764,14 +867,11 @@ class WindowShellStore {
 		label?: string;
 		preferEmptyPane?: boolean;
 		paneId?: 'left' | 'right';
+		preview?: boolean;
 	}): string {
 		const { effectiveRoute, fields } = this.identityFromRoute(route, options?.label);
-		let targetPaneId = options?.paneId ?? this.activePaneId;
-		if (options?.preferEmptyPane && this.isSplit) {
-			if (this.panes[0].tabs.length === 0) targetPaneId = 'left';
-			else if (this.panes[1]?.tabs.length === 0) targetPaneId = 'right';
-		}
-		return this.openTab({ ...fields, route: effectiveRoute }, targetPaneId);
+		const targetPaneId = this.pickPane(options?.paneId, options?.preferEmptyPane);
+		return this.openTab({ ...fields, route: effectiveRoute }, targetPaneId, { preview: options?.preview });
 	}
 
 	/** Move a specific tab to a history index, re-deriving its identity fields. */
@@ -839,18 +939,7 @@ class WindowShellStore {
 
 	openOrFocusChat(chatId: string, label?: string): void {
 		const entityId = chatId.startsWith('chat_') ? chatId : `chat_${chatId}`;
-		const route = `/chat/${entityId}`;
-		const existing = this.findTab((t) => t.route === route);
-		if (existing) {
-			this.setActiveTab(existing.tab.id);
-		} else {
-			this.openTab({
-				type: 'chat',
-				label: label || 'Chat',
-				route,
-				icon: 'ri:chat-1-line'
-			});
-		}
+		this.openTabFromRoute(`/chat/${entityId}`, { label: label || 'Chat', focusExisting: true });
 	}
 
 	closeTab(tabId: string): void {
@@ -948,6 +1037,31 @@ class WindowShellStore {
 		this.syncActiveToUrl(false);
 	}
 
+	closeTabsToLeft(tabId: string, paneId?: string): void {
+		const targetPaneId = paneId ?? this.findPaneForTab(tabId)?.id;
+		if (!targetPaneId) return;
+
+		const pane = this.panes.find(p => p.id === targetPaneId);
+		if (!pane) return;
+
+		const index = pane.tabs.findIndex(t => t.id === tabId);
+		if (index <= 0) return;
+
+		const newTabs = pane.tabs.slice(index);
+		const newActiveId = newTabs.some(t => t.id === pane.activeTabId)
+			? pane.activeTabId
+			: newTabs[0]?.id || null;
+
+		this.updatePane(targetPaneId, () => ({
+			...pane,
+			tabs: newTabs,
+			activeTabId: newActiveId
+		}));
+
+		this.persistTabState();
+		this.syncActiveToUrl(false);
+	}
+
 	closeAllTabs(): void {
 		this.panes = [{ id: 'left', tabs: [], activeTabId: null, width: 100 }];
 		this.activePaneId = 'left';
@@ -1012,6 +1126,10 @@ class WindowShellStore {
 					const history = [...t.history];
 					history[t.historyIndex] = updates.route;
 					next.history = history;
+					// A new chat gets its id when its first message is sent, and
+					// sending is committing to it, so the tab is kept from here.
+					// This also covers a suggestion chip, which sends without typing.
+					if (this.isNewChatRoute(t.route)) next.preview = undefined;
 				}
 				return next;
 			})
@@ -1033,8 +1151,9 @@ class WindowShellStore {
 		if (!tab) return;
 
 		this.updatePane(pane.id, p => {
+			// Compacting a tab is a decision about it, so it is kept.
 			const updatedTabs = p.tabs.map(t =>
-				t.id === tabId ? { ...t, pinned: !t.pinned } : t
+				t.id === tabId ? { ...t, pinned: !t.pinned, preview: undefined } : t
 			);
 			// Sort pinned tabs first
 			const sortedTabs = [...updatedTabs].sort((a, b) => {
@@ -1145,8 +1264,12 @@ class WindowShellStore {
 	disableSplit(): void {
 		if (!this.isSplit) return;
 
-		// Merge all tabs to single pane
-		const allTabs = this.panes.flatMap(p => p.tabs);
+		// Merge all tabs to single pane. One pane holds one preview, so the
+		// other side's preview is kept: it was open on screen, not discarded.
+		const activePaneId = this.activePaneId;
+		const allTabs = this.panes.flatMap(p =>
+			p.id === activePaneId ? p.tabs : p.tabs.map(t => (t.preview ? { ...t, preview: undefined } : t))
+		);
 		const activeId = this.activePane?.activeTabId ?? allTabs[0]?.id ?? null;
 
 		this.panes = [{ id: 'left', tabs: allTabs, activeTabId: activeId, width: 100 }];
@@ -1198,7 +1321,9 @@ class WindowShellStore {
 
 		const other: 'left' | 'right' = this.activePaneId === 'right' ? 'left' : 'right';
 		if (!this.isSplit) this.enableSplit();
-		return this.openTabFromRoute(route, { paneId: other, forceNew: true, label });
+		// Into the other side's preview tab, so following references from one
+		// pane does not fill the other with tabs.
+		return this.openPreview(route, { paneId: other, label });
 	}
 
 	/**
@@ -1207,8 +1332,9 @@ class WindowShellStore {
 	 * button on a result card. This is NOT the explicit "open beside" gesture
 	 * (right-click → Open beside, ⌘-click a Ref), so it must NEVER create a
 	 * split. When the user is already in split view it opens beside (keeping the
-	 * pane they were in visible); otherwise it opens a NEW tab in the active pane,
-	 * leaving the current tab (e.g. the chat) where it is.
+	 * pane they were in visible); otherwise it opens in the preview tab next to
+	 * the active one. The active tab (e.g. the chat) is kept first, since the
+	 * app is acting on the work in it.
 	 */
 	openRouteInSplitOrActive(route: string, label?: string): string {
 		// Not a visit: the app opened this, the owner did not walk to it.
@@ -1217,7 +1343,9 @@ class WindowShellStore {
 			if (this.isSplit) {
 				return this.openRouteBeside(route, label);
 			}
-			return this.openTabFromRoute(route, { forceNew: true, label });
+			const active = this.activeTab;
+			if (active) this.keepTab(active.id);
+			return this.openPreview(route, { label });
 		} finally {
 			this.programmaticOpen = false;
 		}
@@ -1258,8 +1386,11 @@ class WindowShellStore {
 		const targetPane = this.panes.find(p => p.id === targetPaneId);
 		if (!sourcePane || !targetPane) return;
 
-		const tab = sourcePane.tabs.find(t => t.id === tabId);
-		if (!tab) return;
+		const found = sourcePane.tabs.find(t => t.id === tabId);
+		if (!found) return;
+		// Moving a tab is committing to it, and the other pane may have its own
+		// preview already.
+		const tab: Tab = { ...found, preview: undefined };
 
 		// Remove from source
 		const newSourceTabs = sourcePane.tabs.filter(t => t.id !== tabId);
@@ -1332,7 +1463,7 @@ class WindowShellStore {
 			this.enableSplit();
 		}
 
-		return this.openTab(input, targetPaneId);
+		return this.openTab(input, targetPaneId, { preview: true });
 	}
 
 	openChatContext(chatId: string, _currentPaneId: 'left' | 'right' | null): string {

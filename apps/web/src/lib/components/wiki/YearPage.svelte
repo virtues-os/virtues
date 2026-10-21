@@ -23,6 +23,7 @@
 	 */
 	import { onMount } from 'svelte';
 	import Markdown from '$lib/components/Markdown.svelte';
+	import WikiCrumbs from './WikiCrumbs.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import { getYear, updateYear, writeYearArticle, type YearApi } from '$lib/wiki/api';
 
@@ -103,6 +104,7 @@
 	<p class="quiet">There is no page for {year}.</p>
 {:else}
 	<article class="year">
+		<WikiCrumbs bar parent={{ label: 'Years', href: '/wiki/years' }} current={String(year)} />
 		<header>
 			<p class="eyebrow">Year</p>
 			{#if editingTitle}
@@ -213,7 +215,7 @@
 	.year {
 		max-width: 44rem;
 		margin: 0 auto;
-		padding: 2rem 1.5rem 4rem;
+		padding: 0.5rem 1.5rem 4rem;
 	}
 
 	.eyebrow {

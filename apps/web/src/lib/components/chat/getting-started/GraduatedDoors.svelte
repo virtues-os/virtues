@@ -66,7 +66,7 @@
 			out.push({
 				label: "Connect something",
 				note: "Each source you connect adds more of your life.",
-				go: () => windowShellStore.navigate("/sources", { label: "Sources" }),
+				go: () => windowShellStore.openTabFromRoute("/sources", { label: "Sources" }),
 			});
 		}
 		return out;

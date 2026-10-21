@@ -43,7 +43,16 @@ export default defineConfig({
 			{
 				extends: true,
 				plugins: [svelte({ configFile: false, emitCss: false })],
-				resolve: { conditions: ['browser'] },
+				resolve: {
+					conditions: ['browser'],
+					// A rune store that imports SvelteKit's navigation (the tab
+					// shell does) gets a no-op stand-in.
+					alias: {
+						'$app/navigation': fileURLToPath(
+							new URL('./src/lib/testing/app-navigation.ts', import.meta.url),
+						),
+					},
+				},
 				test: {
 					name: 'components',
 					include: ['src/**/*.svelte.test.ts'],

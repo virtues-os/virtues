@@ -4,7 +4,7 @@
  * A mode swaps the sidebar's contents wholesale: the normal destinations slide
  * out to the left and the mode's own rows slide in. You leave through the path
  * mast — `∴ Virtues / Settings`, root clickable — not a bespoke exit row.
- * Home's panel is its own; Settings, Wiki and Drive are the consumers.
+ * Home's panel is its own; Settings and Wiki are the consumers.
  *
  * Deliberately a *sidebar* state and not derived from which tab has focus.
  * Deriving it would be incoherent with split panes — settings in the left pane
@@ -13,7 +13,6 @@
  */
 
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
-import { appletsStore } from '$lib/stores/applets.svelte';
 
 export interface ModeRow {
 	id: string;
@@ -56,9 +55,6 @@ export interface ModeRow {
 	 * existed, which is every mode but the wiki.
 	 */
 	group?: string;
-	/** How many things in this section need you. The row shows the count
-	 *  while it is above zero. */
-	attention?: () => number;
 }
 
 export interface SidebarMode {
@@ -75,15 +71,17 @@ export interface SidebarMode {
  *   ACCOUNT — you, your assistant, what AI costs you.
  *   SERVER — the machine, the devices paired to it, the screen on it.
  *   SOURCES — what fills the record. Its own rail door until 2026-10-05; the
- *     rail now holds only what you read (Home, Wiki, Timeline, Drive), and
- *     connecting a source is a setting you make, then leave.
+ *     rail now holds only what you read (Home, Wiki, Timeline), and
+ *     connecting a source is a setting you make, then leave. Streams, the
+ *     raw rows each source sent, sits here too: it is the other end of a
+ *     source, and it left Drive's page on 2026-10-21.
  *   DEVELOPER — the SQL and terminal consoles. Tools, not preferences, which
  *     is why they sit under their own heading at the foot rather than mixed
  *     into the rows above.
  *
  * Sources and the consoles keep their routes (`/sources/*`,
- * `/virtues/developer/*`); only the door moved. The Settings room owns both
- * prefixes in `rooms.ts`, so either lights its tile.
+ * `/virtues/developer/*`); only the door moved. `rowForRoute` matches both,
+ * so either lights the sidebar's Settings row and carries the section list.
  */
 export const SETTINGS_MODE: SidebarMode = {
 	id: 'settings',
@@ -145,7 +143,6 @@ export const SETTINGS_MODE: SidebarMode = {
 			glyph: 'applets',
 			href: '/virtues/applets',
 			group: 'Server',
-			attention: () => appletsStore.builtInProblems,
 		},
 		// The screen on the server: what it shows, its hours, other screens.
 		{
@@ -175,6 +172,15 @@ export const SETTINGS_MODE: SidebarMode = {
 			href: '/sources/activity',
 			group: 'Sources',
 		},
+		// The route stays under `/storage`; only the door moved.
+		{
+			id: 'streams',
+			label: 'Streams',
+			icon: 'ri:database-2-line',
+			glyph: 'streams',
+			href: '/storage/streams',
+			group: 'Sources',
+		},
 		{
 			id: 'sql',
 			label: 'SQL',
@@ -201,7 +207,7 @@ export const SETTINGS_MODE: SidebarMode = {
  * TWO AXES, NAMED. Eleven rows in one flat list was the rail's own problem
  * moved a level down: the rail was cut from ten tiles to six because "a rail of
  * ten indistinguishable glyphs is a memorisation tax rather than a contents
- * page" (see `rooms.ts`), and the wiki panel then grew to eleven. A list that
+ * page", and the wiki's list then grew to eleven. A list that
  * long is not read, it is scanned for the word you already wanted.
  *
  * The record only ever answers two questions, so the panel asks them in the
@@ -211,6 +217,12 @@ export const SETTINGS_MODE: SidebarMode = {
  *   SUBJECTS — who and what it involved. You first, because the narrative
  *     identity is a subject of this wiki like any other, and because the
  *     owner is the subject every other one is oriented around.
+ *
+ * DRIVE sits under them: the files, media and bookmarks you kept, and
+ * Recently deleted. It had its own rail door until 2026-10-21. Recently
+ * deleted is last because it is the one section you walk to on purpose:
+ * everything deleted anywhere in the app (chats, pages, projects, files)
+ * waits there 30 days.
  *
  * WHAT ALSO LEFT: "History", the log of every edit the record made to its own
  * prose (`/wiki/history`, still there, still linked from an article). It sat
@@ -253,6 +265,9 @@ export const WIKI_MODE: SidebarMode = {
 				route === '/day' || route === `/day/day_${getLocalDateSlug(new Date())}`,
 			group: 'Time',
 		},
+		// The day on the box's own map. It was a rail room of its own; with the
+		// rail gone it is the Time group's live view, beside the days it draws.
+		{ id: 'timeline', label: 'Timeline', icon: 'ri:route-line', glyph: 'timeline', href: '/timeline', group: 'Time' },
 		{ id: 'days', label: 'Days', icon: 'ri:calendar-line', glyph: 'calendar', href: '/wiki/days', group: 'Time' },
 		{
 			id: 'years',
@@ -322,29 +337,50 @@ export const WIKI_MODE: SidebarMode = {
 			href: '/wiki/stories',
 			group: 'Subjects',
 		},
+		{
+			id: 'files',
+			label: 'Files',
+			icon: 'ri:hard-drive-2-line',
+			glyph: 'files',
+			href: '/storage',
+			// Every Storage section sits under `/storage`, Streams included, which
+			// is a Settings row. Files is the bare route and the folders under
+			// `/storage/drive`.
+			activeWhen: (route) => route === '/storage' || route.startsWith('/storage/drive'),
+			group: 'Drive',
+		},
+		{ id: 'media', label: 'App Media', icon: 'ri:image-2-line', glyph: 'media', href: '/storage/media', group: 'Drive' },
+		{
+			id: 'bookmarks',
+			label: 'Bookmarks',
+			icon: 'ri:bookmark-line',
+			glyph: 'bookmarks',
+			href: '/bookmarks',
+			group: 'Drive',
+		},
+		{
+			id: 'trash',
+			label: 'Recently deleted',
+			icon: 'ri:delete-bin-line',
+			glyph: 'trash',
+			href: '/storage/trash',
+			group: 'Drive',
+		},
 	],
 };
 
 /**
- * Drive's panel: the Storage room's sections as rows, plus Bookmarks, which
- * folded into Drive when the rail went to six rooms. Trash is last because it
- * is the one section you walk to on purpose — everything deleted anywhere in
- * the app (chats, pages, projects, files) waits there 30 days.
+ * The row a route belongs to, or null: a row's own rule if it has one, else
+ * its href and everything under it. Longest match wins, so
+ * `/virtues/developer/terminal` is Terminal, not a shorter prefix.
  */
-export const DRIVE_MODE: SidebarMode = {
-	id: 'drive',
-	title: 'Drive',
-	rows: [
-		{ id: 'files', label: 'Files', icon: 'ri:hard-drive-2-line', glyph: 'files', href: '/storage' },
-		{ id: 'streams', label: 'Streams', icon: 'ri:database-2-line', glyph: 'streams', href: '/storage/streams' },
-		{ id: 'media', label: 'App Media', icon: 'ri:image-2-line', glyph: 'media', href: '/storage/media' },
-		{ id: 'bookmarks', label: 'Bookmarks', icon: 'ri:bookmark-line', glyph: 'bookmarks', href: '/bookmarks' },
-		{ id: 'trash', label: 'Recently deleted', icon: 'ri:delete-bin-line', glyph: 'trash', href: '/storage/trash' },
-	],
-};
-
-export const SIDEBAR_MODES: Record<string, SidebarMode> = {
-	drive: DRIVE_MODE,
-	settings: SETTINGS_MODE,
-	wiki: WIKI_MODE,
-};
+export function rowForRoute(mode: SidebarMode, route: string | null | undefined): ModeRow | null {
+	if (!route) return null;
+	const path = route.split('?')[0];
+	let best: ModeRow | null = null;
+	for (const row of mode.rows) {
+		const hit = row.activeWhen ? row.activeWhen(path) : path === row.href || path.startsWith(row.href + '/');
+		if (hit && (!best || row.href.length > best.href.length)) best = row;
+	}
+	return best;
+}

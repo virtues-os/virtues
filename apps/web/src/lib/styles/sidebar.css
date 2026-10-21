@@ -33,8 +33,8 @@
 	width: 100%;
 	text-align: left;
 	transition:
-		background-color var(--sidebar-transition-duration) var(--sidebar-transition-easing),
-		color var(--sidebar-transition-duration) var(--sidebar-transition-easing);
+		background-color var(--motion-hover-out) var(--ease-premium),
+		color var(--motion-hover-out) var(--ease-premium);
 }
 
 /* Indent levels for nested items.
@@ -59,16 +59,20 @@
 }
 
 .sidebar-interactive:hover {
-	background: var(--sidebar-hover-bg);
+	background: var(--hover-bg);
 	color: var(--color-foreground);
+	transition-duration: var(--motion-hover-in);
 }
 
+/* A row takes the press fill only: a full-width row that shrank would read
+   as a wobble. Square controls also sink (design.md, "The scale"). */
 .sidebar-interactive:active {
-	background: var(--sidebar-active-bg);
+	background: var(--press-bg);
+	transition-duration: var(--motion-press);
 }
 
 .sidebar-interactive.active {
-	background: var(--sidebar-active-bg);
+	background: var(--active-bg);
 	color: var(--color-foreground);
 }
 
@@ -89,8 +93,8 @@
 	color: var(--color-foreground-muted);
 	opacity: var(--sidebar-icon-opacity);
 	transition:
-		color var(--sidebar-transition-duration) var(--sidebar-transition-easing),
-		opacity var(--sidebar-transition-duration) var(--sidebar-transition-easing);
+		color var(--motion-hover-out) var(--ease-premium),
+		opacity var(--motion-hover-out) var(--ease-premium);
 }
 
 /* Full strength where you're pointing and where you are. Everywhere else the
@@ -99,6 +103,10 @@
 .sidebar-interactive.active .sidebar-icon {
 	color: var(--color-foreground);
 	opacity: 1;
+}
+
+.sidebar-interactive:hover .sidebar-icon {
+	transition-duration: var(--motion-hover-in);
 }
 
 /* Sub-folder styling - smaller text and icons for nested items */
@@ -132,8 +140,8 @@
 	color: var(--color-foreground-subtle);
 	opacity: 0.5;
 	transition:
-		transform var(--sidebar-transition-duration) var(--sidebar-transition-easing),
-		opacity var(--sidebar-transition-duration) var(--sidebar-transition-easing);
+		transform var(--motion-state) var(--ease-premium),
+		opacity var(--motion-state) var(--ease-premium);
 }
 
 .sidebar-interactive:hover .sidebar-chevron {
@@ -152,7 +160,7 @@
 .sidebar-expandable {
 	display: grid;
 	grid-template-rows: 0fr;
-	transition: grid-template-rows var(--sidebar-transition-duration) var(--sidebar-transition-easing);
+	transition: grid-template-rows var(--motion-state) var(--ease-premium);
 	overflow: hidden;
 }
 
@@ -354,7 +362,7 @@
 	margin-left: auto;
 	flex-shrink: 0;
 	opacity: 0;
-	transition: opacity var(--sidebar-transition-duration, 150ms) var(--sidebar-transition-easing, ease);
+	transition: opacity var(--motion-hover-out) var(--ease-premium);
 }
 
 .sidebar-interactive:hover .sidebar-item-actions {
@@ -374,13 +382,14 @@
 	cursor: pointer;
 	padding: 0;
 	transition:
-		background-color var(--sidebar-transition-duration, 150ms) var(--sidebar-transition-easing, ease),
-		color var(--sidebar-transition-duration, 150ms) var(--sidebar-transition-easing, ease);
+		background-color var(--motion-hover-out) var(--ease-premium),
+		color var(--motion-hover-out) var(--ease-premium);
 }
 
 .sidebar-item-action:hover {
-	background: var(--sidebar-hover-bg);
+	background: var(--hover-bg);
 	color: var(--color-foreground);
+	transition-duration: var(--motion-hover-in);
 }
 
 /* -----------------------------

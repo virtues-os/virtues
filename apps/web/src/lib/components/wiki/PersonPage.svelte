@@ -11,6 +11,7 @@
 	import type { WikiPersonApi } from "$lib/wiki/api";
 	import { parseDateSlug } from "$lib/utils/dateUtils";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
+	import WikiCrumbs from "./WikiCrumbs.svelte";
 	import SubjectBacklinks from "./SubjectBacklinks.svelte";
 	import NotesRail from "./NotesRail.svelte";
 	import EntityRecordsSection from "./EntityRecordsSection.svelte";
@@ -227,6 +228,7 @@
 <div class="person-page-layout">
 	<article class="person-article wiki-article">
 		<div class="person-content">
+			<WikiCrumbs bar parent={{ label: "People", href: "/wiki/people" }} current={page.name} />
 			<!-- Header -->
 			<header class="person-header">
 				<button
@@ -456,7 +458,7 @@
 		overflow-y: auto;
 		scrollbar-width: none;
 		-ms-overflow-style: none;
-		padding: 2rem;
+		padding: 0.5rem 2rem 2rem;
 	}
 
 	.person-article::-webkit-scrollbar {
@@ -466,7 +468,8 @@
 	.person-content {
 		max-width: 48rem;
 		margin: 0 auto;
-		padding-top: 2rem;
+		/* The crumb row above the header takes the top space. */
+		padding-top: 0.25rem;
 		padding-bottom: 4rem;
 	}
 

@@ -3,8 +3,7 @@
 	// This is kept minimal as (onboarding) and (app) groups have their own layouts
 	import { onMount } from "svelte";
 	import { installErrorReporting, log } from "$lib/log";
-	import ErrorState from "$lib/components/ErrorState.svelte";
-	import { reloadApp } from "$lib/reload";
+	import CrashScreen from "$lib/components/CrashScreen.svelte";
 
 	let { children } = $props();
 
@@ -17,7 +16,7 @@
 	// Safe to call during SSR (it no-ops without a `window`) and idempotent.
 	installErrorReporting();
 
-	// A screen that throws while rendering shows the error state below instead
+	// A screen that throws while rendering shows the crash screen below instead
 	// of leaving the window blank.
 	function onRenderError(error: unknown) {
 		// A boundary's catch never reaches `window`'s error event, so the
@@ -59,11 +58,7 @@
 <svelte:boundary onerror={onRenderError}>
 	{@render children()}
 
-	{#snippet failed()}
-		<ErrorState
-			title="This screen couldn't open"
-			message="Reload to try again."
-			onRetry={() => reloadApp()}
-		/>
+	{#snippet failed(error)}
+		<CrashScreen {error} />
 	{/snippet}
 </svelte:boundary>

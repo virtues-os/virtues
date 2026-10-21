@@ -1,13 +1,12 @@
 <script lang="ts">
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
-	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { windowShellStore, SPLIT_GUTTER_PX } from "$lib/stores/window-shell.svelte";
 	import {
 		dndManager,
 		type DndTabItem,
 		type ZoneId,
 	} from "$lib/stores/dndManager.svelte";
-	import WindowTabBar from "./WindowTabBar.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import TabContent from "./TabContent.svelte";
 	import { mountedTabs, touch } from "$lib/tabs/keepAlive";
@@ -27,12 +26,9 @@
 	const rightZoneId: ZoneId = { type: "split-overlay", paneId: "right" };
 
 	const MIN_WIDTH = 25; // minimum 25% (1/4) for each pane
-	// The seam between panes is a LINE, not a channel. This was 12px of desk
-	// ground with a floating card either side, which meant entering split
-	// carved the one merged card into three and re-introduced every edge the
-	// merge had removed. 1px is the divider's own width; the handle widens its
-	// HIT area without widening the mark (see .resize-handle::after).
-	const GUTTER_PX = 1;
+	// In split each pane is its own card, with the desk between them. The
+	// gutter is the resize handle's hit area.
+	const GUTTER_PX = SPLIT_GUTTER_PX;
 
 	// Derived state for split mode
 	const isSplitEnabled = $derived(windowShellStore.isSplit);
@@ -202,7 +198,8 @@
 		></div>
 	</div>
 
-	<!-- Left Pane Shell: tab bar + background + click zone (no content rendered here) -->
+	<!-- Left Pane Shell: background + click zone. Its tabs are in the window
+	     header (WindowHeader), and no content is rendered here. -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
 	<div
 		class="pane-shell left-pane"
@@ -214,8 +211,6 @@
 		tabindex="0"
 		aria-label="Left pane"
 	>
-		<!-- While the app is one room (no AI yet), there are no tabs to show. -->
-			<WindowTabBar paneId={isSplitEnabled ? "left" : undefined} />
 		
 	</div>
 
@@ -231,7 +226,7 @@
 		tabindex={isSplitEnabled ? 0 : -1}
 	><span class="resize-grip" aria-hidden="true"></span></div>
 
-	<!-- Right Pane Shell: tab bar + background + click zone (no content rendered here) -->
+	<!-- Right Pane Shell: background + click zone, as the left. -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
 	<div
 		class="pane-shell right-pane"
@@ -245,11 +240,10 @@
 		aria-label="Right pane"
 		aria-hidden={!isSplitEnabled}
 	>
-		{#if isSplitEnabled}
-			<WindowTabBar paneId="right" />
-		{/if}
 	</div>
 
+	<!-- Typing anywhere in a preview tab (a composer, a page, a field) keeps
+	     it: you have started working in it. -->
 	<!-- Tab Content Layer: single {#each} loop, absolutely positioned per-pane.
 	     When a tab moves between panes, only CSS classes change, so a mounted
 	     view survives the move. A hidden tab outside the keep-alive set
@@ -267,6 +261,7 @@
 			class:in-right={paneId === "right" && isSplitEnabled}
 			style:display={isActive ? "flex" : "none"}
 			onpointerdown={() => isSplitEnabled && handlePaneClick(paneId)}
+			onbeforeinput={() => tab.preview && windowShellStore.keepTab(tab.id)}
 		>
 			{#if mountedTabIds.has(tab.id)}
 				<TabContent {tab} active={isActive} />
@@ -297,7 +292,6 @@
 
 <style>
 	.split-container {
-		--tab-bar-h: 41px; /* 6px padding + 28px tabs-scroll + 6px padding + 1px border */
 		display: flex;
 		flex: 1;
 		min-height: 0;
@@ -325,17 +319,17 @@
 		transition: none;
 	}
 
-	/* Panes paint NOTHING. `main` is the card — it carries the surface, the
-	   border and the rounded corners, and clips to them — so a pane that
-	   painted its own background and border was a card inside a card, and the
-	   only thing that made it legible as one was the 12px channel this change
-	   removes.
-
-	   The active pane is not marked here either. It has never needed to be:
-	   WindowTabBar already says it, in the one place a person is looking when
-	   they care, by giving the focused pane's active tab --tab-active-bg-focused
-	   against the other's --tab-active-bg. A border saying it a second time is
-	   a second voice for one fact. */
+	/* One pane is `main`'s card, so the shell paints nothing. In split each
+	   pane is a card of its own on the desk (`main` turns transparent in the
+	   app layout): the page's surface, the card's border and corners. The
+	   focused pane is told by its active tab's ink, not by its card. */
+	.split-enabled .pane-shell {
+		background-color: var(--color-page);
+		background-image: var(--background-image);
+		background-blend-mode: multiply;
+		border: 1px solid var(--card-edge);
+		border-radius: var(--card-radius);
+	}
 
 	/* Right pane collapsed styles */
 	.pane-shell.collapsed {
@@ -343,21 +337,15 @@
 		pointer-events: none;
 	}
 
-	/* Tab content slots: absolutely positioned into pane areas.
-	   Each slot covers the area below the tab bar within its pane.
-	   --tab-bar-h is the measured height: 6px padding + 28px scroll + 6px padding + 1px border */
+	/* Tab content slots: absolutely positioned into pane areas. Each slot
+	   covers its whole pane; the tabs are in the window header above. */
 	.tab-slot {
 		position: absolute;
-		top: var(--tab-bar-h, 41px);
+		top: 0;
 		bottom: 0;
 		flex-direction: column;
 		overflow: hidden;
 		transition: width 150ms var(--ease-premium);
-	}
-
-	/* No tab bar while the app is one room: the content takes the top. */
-	.split-container.bare {
-		--tab-bar-h: 0px;
 	}
 
 	.split-container.dragging .tab-slot {
@@ -374,8 +362,22 @@
 		width: calc(var(--right-width) - (var(--gutter-width, 0px) / 2));
 	}
 
-	/* No per-pane inset or rounding any more: the slots run to the edges of the
-	   one card, and `main`'s own overflow:hidden clips them to its corners. */
+	/* In split, inside each card's border, and clipped to its corners. */
+	.split-enabled .tab-slot {
+		top: 1px;
+		bottom: 1px;
+		border-radius: calc(var(--card-radius) - 1px);
+	}
+
+	.split-enabled .tab-slot.in-left {
+		left: 1px;
+		width: calc(var(--left-width) - (var(--gutter-width, 0px) / 2) - 2px);
+	}
+
+	.split-enabled .tab-slot.in-right {
+		right: 1px;
+		width: calc(var(--right-width) - (var(--gutter-width, 0px) / 2) - 2px);
+	}
 
 	.resize-handle {
 		width: 0;
@@ -394,20 +396,19 @@
 		pointer-events: none;
 	}
 
-	/* The divider itself — the same 1px line that divides the sidebar panel
-	   from the pane, drawn once more between the panes. */
+	/* The gutter itself is the handle: desk, no line. */
 	/* z-index lifts the grip above the panes' own stacked content (the chat
 	   composer), which otherwise paints over the pill's overhang. */
 	.resize-handle.visible {
 		z-index: 5;
 		width: var(--gutter-width, 1px);
-		background: var(--color-border);
+		background: transparent;
 		opacity: 1;
 		pointer-events: auto;
 	}
 
-	/* An 8px grab target over a 1px mark, matching the sidebar's seam. Without
-	   this the handle would be a 1px hit area — findable only by accident. */
+	/* The grab target reaches 4px past the gutter into each card's edge, so
+	   the seam is easy to find from either side. */
 	.resize-handle.visible::after {
 		content: "";
 		position: absolute;

@@ -769,13 +769,13 @@ h6 {
 /* =============================================================================
    FULL-SCREEN FOCUS MODE
    Driven by body.focus-mode (toggled from the (app) layout on
-   pageDisplay.focusMode). Hides all peripheral chrome — sidebar + tab bars —
+   pageDisplay.focusMode). Hides all peripheral chrome — sidebar + window header —
    and removes the editor frame so only the document remains. A floating exit
    button lives in the layout. !important guards against Tailwind utilities
    (m-3 / border / rounded-lg) on <main>.
    ============================================================================= */
 body.focus-mode .sidebar-container,
-body.focus-mode .tab-bar {
+body.focus-mode .window-header {
 	display: none !important;
 }
 

@@ -228,7 +228,7 @@
 
 	function open(row: Row) {
 		if (row.applet_id) {
-			windowShellStore.navigate(`/applet/${row.applet_id}`, { label: row.applet });
+			windowShellStore.openTabFromRoute(`/applet/${row.applet_id}`, { label: row.applet });
 		}
 	}
 </script>

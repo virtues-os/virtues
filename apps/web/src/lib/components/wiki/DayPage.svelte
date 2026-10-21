@@ -94,6 +94,7 @@
 	import Button from "$lib/components/Button.svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
 	import MenuItem from "$lib/components/MenuItem.svelte";
+	import WikiCrumbs from "./WikiCrumbs.svelte";
 
 	interface Props {
 		/** The wire shape. See PersonPage for why the converter is gone. */
@@ -109,6 +110,10 @@
 	/** The title: "Saturday, March 14". The year sits on the line under it. */
 	const titleLabel = $derived(
 		date.toLocaleDateString("en-US", { weekday: "long", month: "long", day: "numeric" }),
+	);
+	/** The breadcrumb's last part: "Mar 14, 2026". The title has the weekday. */
+	const crumbLabel = $derived(
+		date.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" }),
 	);
 
 	// Shared hover state for chart ↔ timeline sync
@@ -143,7 +148,8 @@
 	function navigateToDay(date: Date) {
 		const slug = getLocalDateSlug(date);
 		if (slug === currentDateSlug) return;
-		windowShellStore.openTabFromRoute(`/day/day_${slug}`);
+		// Stepping through days moves this tab, kept or not.
+		windowShellStore.navigate(`/day/day_${slug}`);
 	}
 
 	let scrollContainerEl = $state<HTMLElement | null>(null);
@@ -1066,6 +1072,8 @@
 			<div class="day-bar" role="toolbar" aria-label="Day">
 				{#if view === "record" && citedRef}
 					<button type="button" class="bar-action back" aria-label="Back to the sentence" onclick={backToArticle}>← Back<span class="bar-more">{" to the sentence"}</span></button>
+				{:else}
+					<WikiCrumbs parent={{ label: "Days", href: "/wiki/days" }} current={crumbLabel} />
 				{/if}
 				<span class="bar-gap"></span>
 				<div class="segmented" role="group" aria-label="View">
@@ -1400,8 +1408,9 @@
 </div>
 
 <style>
-	/* ── the toolbar: Article | Data, Write a note, Edit, and ⋯ for the rest.
-	   Four controls fit a phone's width; anything more goes in the menu. ── */
+	/* ── the toolbar: the breadcrumb (or Back) on the left, then Article | Data,
+	   Write a note, Edit, and ⋯ for the rest. Four controls fit a phone's
+	   width; anything more goes in the menu. ── */
 	.day-bar {
 		display: flex;
 		align-items: center;

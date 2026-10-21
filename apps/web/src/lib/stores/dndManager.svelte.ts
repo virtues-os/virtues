@@ -223,6 +223,8 @@ class DndManager {
 			case 'reorder':
 				setItems(items as T[]);
 				this.executeReorder(items as DndTabItem[], zoneId);
+				// Dragging a tab to a place in the strip is committing to it.
+				if (currentSession.item.tab?.id) windowShellStore.keepTab(currentSession.item.tab.id);
 				break;
 		}
 	}

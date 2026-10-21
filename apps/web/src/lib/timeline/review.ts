@@ -167,13 +167,17 @@ export interface PlaceReview {
 	confirmed: ConfirmedPlace[];
 }
 
+/** The answers Undo can reverse, one place at a time. */
+export type UndoableKind = "name" | "passing" | "not_this" | "home" | "not_home" | "work" | "not_work";
+
 export type Answer =
 	| { kind: "name"; name: string; category?: string | null }
 	| { kind: "passing" }
 	| { kind: "not_this"; name: string }
 	| { kind: "home" | "not_home" | "work" | "not_work" }
 	| { kind: "home_here" | "work_here"; lat: number; lon: number }
-	| { kind: "reopen" };
+	/** Undo of one earlier answer: only what `undoes` changed is reversed. */
+	| { kind: "reopen"; undoes: UndoableKind };
 
 export function fetchReview(): Promise<PlaceReview> {
 	return apiGet<PlaceReview>("/timeline/places/review");

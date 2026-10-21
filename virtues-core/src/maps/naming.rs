@@ -263,7 +263,7 @@ fn on_airport_ground(mvt: &[u8], (z, x, y): (u8, u32, u32), lat: f64, lon: f64) 
     layer.features.iter().any(|f| {
         f.kind == 3
             && f.tags.get("kind").copied() == Some("aerodrome")
-            && super::water::inside(px, py, &super::mvt::rings(&f.geometry))
+            && super::mvt::inside(px, py, &super::mvt::rings(&f.geometry))
     })
 }
 

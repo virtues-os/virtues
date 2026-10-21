@@ -28,43 +28,41 @@ holds the content.**
 
 ## The shell
 
-A rail of rooms, and one panel beside it that the selected room fills. The
-rail stays fixed; the panel's contents change with the selected room. Defined in
-`apps/web/src/lib/sidebar/rooms.ts`.
+The window has two materials. **The desk** (`--desk`) is the ground: the
+header row and the sidebar sit on it and paint nothing of their own. **The
+cards** are the work, raised off it in the page's color (`--page`): one per
+pane, a desk gap (8px, `--pane-inset`) from the window's edges and from each
+other. In split view the gap between the two cards is the resize handle.
+Every card keeps all four rounded corners, and nothing joins: opening the
+sidebar or a split only moves cards. There is no rail.
 
-The rail, top to bottom, in three gap-separated groups:
+The sidebar is one list, and it never changes: the doors (Setup while it
+is not done, New chat, Pages, Tasks, Applets, Wiki), Pinned, Projects and
+Recents, with Settings at the foot. Every door opens a page. A page that
+has sections carries their list itself: the Wiki's overview has an index,
+every Settings page has Settings' section list down its left inside the
+card (`SectionNav`, drawn by TabContent), and Setup's tab has its steps
+across its top.
 
-| Group | Room | Route |
-|---|---|---|
-| ground | **Home** | `/chat` |
-| library | **Wiki** | `/wiki` |
-| library | **Drive** | `/storage` |
-| utility | **Sources** | `/sources` |
-| utility | **Developer** | `/virtues/developer/sql` |
-| utility | **Settings** | `/virtues/you` |
-
-- **Home is the only room in the `ground` group.** It sits alone above the first gap and at the top
-  of the rail. It was called Chats until its panel held pages, projects and
-  applets too; a user reads the panel's title as the name of the place, so
-  the room is named for the place, not one of its contents. Its tile opens
-  a new chat; there is no separate home page.
-- **Drive, not Files.** The room kept its glyph and its `/storage` route; the
-  label names the place rather than its contents.
-- **Applets is not a room, and neither is Pages.** Each is a door at the top
-  of the Home panel; `/applets` and `/page` are unchanged. Projects likewise:
-  a project is the room a chat lives in, so projects are listed in the Home
-  panel rather than behind a rail door of their own.
-- Routes did not move. Labels and grouping did.
+- **The sidebar has no title.** Its doors say what it holds.
+- **Applets, Pages, Tasks and the Wiki are doors**, not places of their own
+  in the chrome. A project is the room a chat lives in, so
+  projects are listed in Home too.
+- **Settings stands at the foot**, apart from the places above it: you do
+  something to the server and leave.
+- Routes did not move.
 
 The Home panel, top to bottom:
 
-1. **Doors**: New chat, Pages, Applets, Search. The verb, the places, and
-   last the door that leaves the panel: Search opens the ⌘K palette. Pages opens the list and carries a `+` on
-   hover for a new page, the same shape as the Projects label.
+1. **Doors**: Setup (while it is not done), New chat, Pages, Tasks,
+   Applets, Wiki. The verb, then the places. Pages and Tasks carry a `+` on
+   hover for a new one, the same shape as the Projects label. Search has no
+   door: it is the ⌘K palette.
 2. **Pinned.** A chat, a project, an applet or a page can be pinned.
 3. **Projects.** Five, then "Show more"; the label opens the full list. A
    project cannot contain a project.
-4. **Today, Yesterday, Earlier**: the recent chats, grouped by when.
+4. **Today, Recent**: the ten newest chats and pages, then "See all", which
+   opens All chats.
 
 Every group folds from its label, and the fold is remembered. A group with
 nothing in it is not drawn: no empty-state line, because the doors above
@@ -101,8 +99,9 @@ are written as prohibitions.
    matched the page*. Recessing only the strip left a dark band beside a light panel for no
    gain once tabs became pills. The sidebar sits on `--surface-elevated`, a 4%
    step, and that is the only shift in the shell.
-4. **8pt grid. No off-grid values.** No `12.5px`, `13px`, `26px`, `30px`,
-   `34px`. Radii are the one exception (6px, matching Tailwind).
+4. **Sizes come from [the scale](#the-scale).** No value between its steps:
+   no `12.5px`, `13.5px`, `26px`, `30px`, `34px`. A value that is one or two
+   pixels off a neighbour reads as a mistake even when nobody can say why.
 5. **No monospace as decoration.** IBM Plex Mono is for code and data. A
    keyboard hint is not code. A shortcut label is not code.
 6. **No uppercase + serif + wide tracking.** It looks deliberate but does
@@ -116,21 +115,140 @@ are written as prohibitions.
 
 ---
 
+## The scale
+
+The shell takes every size, line, gray, type step, corner and timing from
+this one scale. It exists because the shell was built in passes that each
+kept a consistent rule of their own, and side by side they disagreed by a
+pixel or two everywhere: five box heights, two icon weights, five grays,
+half-pixel type. Before adding a value, find its step here; if none fits,
+change the scale here first.
+
+### Heights
+
+| Step | Size | Used by |
+|---|---|---|
+| Chrome row | 40px (`--chrome-row-h`) | the window header |
+| Control | 28px (`--chrome-tab-h`, `--sidebar-interactive-height`) | every clickable box in a row: tabs, the +, the header's controls, the ∴, sidebar rows |
+| Nested control | 20px | a control inside a control: a tab's ×, a row's inline + and ⋯ |
+
+**Everything in the window header shares one centre line**, 20px down the
+40px row: the ∴, the controls, the tabs, the + and a view's actions. They
+are all 28px controls, 6px from the row's top and bottom.
+
+### Lines and glyphs
+
+**The shell's icons are Atlas**, the hand-drawn set in `AtlasIcon`. Phosphor
+and Fluent were tried in its place and both read wrong beside Avenir and the
+serif, so the shell keeps its own drawings.
+
+**Every icon renders at 1.25px of ink, at every size.** `AtlasIcon` derives
+its stroke from its size (1.25 × 16 ÷ size), so a stroke is never typed by
+hand. Two glyph sizes: 14px beside 12px text (a tab's icon and ×, inbox
+rows), and 16px (`SHELL_GLYPH_PX`) in rows and the header.
+
+The row slot, the 16px before a row's name, always holds a line glyph in
+ink. A pin or a project tints its glyph with its own color. An emoji the
+user picked stays, because it is their content.
+
+The ∴ is the one filled shape in the chrome, and its lit dot is the one
+accent color there.
+
+### Grays
+
+The interaction ramp mixes the theme's ink (`--wash-ink`) into whatever is
+behind it, so it reads in all sixteen themes. Four steps, no others:
+
+| Step | Token | Mix | Means |
+|---|---|---|---|
+| Rest | — | 0% | nothing |
+| Hover | `--hover-bg` | 7% | the pointer is here |
+| Selected | `--active-bg` | 12% | where you are: the rail's room, a sidebar row, the active tab of an unfocused pane |
+| Press | `--press-bg` | 16% | held down, only for the duration of the press |
+
+**The active tab is marked by fill and ink**: the page's color (`--page`)
+on the desk, the same step that separates a card, and full ink. It sits
+above its card, not joined to it.
+
+### Tone, not lines
+
+**Cards separate from the desk by tone.** In every theme, light or dark, the
+desk is a step darker than the page, so a card always reads as a sheet lying
+on the ground, never as a hole in it.
+Where a theme's step is large enough, a card has no border
+(`--card-edge: transparent`); a line only stands in where the tone cannot.
+
+| Theme | Desk | Page | Card edge |
+|---|---|---|---|
+| Pemberley | `#F0F0F2`, a cool light gray | `#FFFFFF` | none |
+| Oxford (Virtues Light) | `#ECEAE5`, a warm gray | `#FFFFFF` | none |
+| Asgard (Virtues Dark) | `#0A0A0A` | `#161616` | none |
+| the other twelve | each theme's own `--surface-elevated` tint, darkened to about 7 L* below the page (light) or 5 (dark) | `--page` | none |
+| Borghese | `--surface-elevated` | pure black | `--border`: nothing can sit below black, so its cards keep a line |
+
+Text uses three inks: foreground, muted and subtle.
+
+### Type
+
+See [Type](#type).
+
+### Corners and elevation
+
+| Step | Radius | Used by |
+|---|---|---|
+| Box | 6px (`--card-radius`) | cards, controls, tabs, rows, popovers |
+| Nested | 4px | a box inside a box, such as a tab's × |
+| Pill | `--radius-full` | the composer |
+
+Floating layers (popovers, menus, modals) carry the one shadow. The chrome
+never does.
+
+### Motion
+
+Seven tokens in `themes.css`, always on `--ease-premium`:
+
+| Token | Value | For |
+|---|---|---|
+| `--motion-hover-in` | 80ms | a hover's fill and ink coming on |
+| `--motion-hover-out` | 200ms | going off: instant on, gentle off, so running the pointer along a row leaves a short trail rather than a strobe |
+| `--motion-press` | 60ms | sinking on press |
+| `--motion-release` | 180ms | springing back |
+| `--motion-state` | 150ms | a selection changing, a group folding |
+| `--motion-enter` | 180ms | a popover, a menu or a new tab appearing |
+| `--motion-layout` | 300ms | the sidebar opening, a pane resizing, the sidebar glyph's tint |
+
+Square controls sink to 94% while pressed. Rows and tabs take the press fill
+only, because a wide row that shrank would read as a wobble. The ∴ dot's
+single swell when it lights is the one motion with a meaning of its own, and
+it does not repeat.
+
+### Alignment
+
+**Each group in the window header starts at the column below it.** The ∴'s
+glyph starts on the sidebar's icon line, level with the rows' icons, and the
+window's controls follow it. In the Mac app the title bar is an overlay: the
+traffic lights sit in the header row on its centre line, and the ∴ and the
+controls follow them after 12pt, as in a native Mac app. The row's empty
+space moves the window. Each pane's tabs start at that pane's edge.
+With the sidebar closed the controls keep their place, and the left pane's
+tabs start just after them. 
+
+---
+
 ## Tokens
 
 Defined in `apps/web/src/themes.css`. Sixteen themes; every value below is set
-per theme where it varies.
+per theme where it varies. The scale above says which step each one is.
 
 | Token | Value | Notes |
 |---|---|---|
-| `--chrome-row-h` | 40px | Sidebar masthead AND pane toolbar. One number. |
-| tab height | 28px | Centred pill inside the 40px strip. |
-| `--pane-inset` | 12px | The pane card's margin. The sidebar matches it. |
-| `--sidebar-interactive-height` | 32px | Destinations. |
-| `--sidebar-child-height` | 24px | Expanded children. |
-| `--sidebar-padding-left-base` | 12px | Row inset. `.workspace-nav` adds 8px. |
+| `--chrome-row-h` | 40px | The window header AND the panel's title row. One number. |
+| `--chrome-tab-h` | 28px | A tab, and every other control in a row. |
+| `--pane-inset` | 8px | The desk gap: around the cards and between any two of them. |
+| `--sidebar-interactive-height` | 28px | Sidebar rows. |
+| `--sidebar-padding-left-base` | 12px | Row inset. The panel body adds 4px. |
 | `--sidebar-icon-opacity` | 0.5 | 0.4 for children, 1.0 on hover/active. |
-| `--hover-bg` / `--active-bg` | fg mix 7% / 12% | The interaction ramp. |
+| `--hover-bg` / `--active-bg` / `--press-bg` | ink mix 7% / 12% / 16% | The interaction ramp. |
 
 **Never use a surface token for an interaction state.** `--surface-elevated` is
 #F5F5F5 against a #FFFFFF parent — a 4% shift that is too small to see.
@@ -143,21 +261,28 @@ This bug shipped twice: dead hovers across 39 rules, and an active tab rendered
 
 ## Type
 
-| | face | size | weight |
+| Role | Face | Size | Weight |
 |---|---|---|---|
-| Mark (`∴ virtues`) | EB Garamond | 13px (nav size) | regular, lowercase |
-| Destinations | Avenir | 13px | 500 |
-| Children | Avenir | 12px | 400, muted |
+| Rail label | Avenir | 11px | 500 |
+| Tab, group heading, meta | Avenir | 12px | 400 (headings muted) |
+| Row (every panel) | Avenir | 13px | 400 |
+| Your things (Pinned, Projects, Recents) | EB Garamond | 14px | 400 |
+| Panel title | EB Garamond | 16px | 400 |
 | Body / prose | EB Garamond | — | the page, not the chrome |
 
-**The serif appears in the chrome exactly once**, in the mark. Serif navigation
-was considered and rejected; the serif is used in one place instead of across
-eight rows.
+**Weight never signals state.** A selected row or the active tab changes
+fill and ink, never weight: a bolder label is a wider one, and everything
+beside it moves.
 
-Lowercase `virtues`, not `Virtues` — a capital V adds too much weight to
-something meant to sit quietly. And at nav size, not larger: a wordmark bigger
-than everything around it draws attention, and its only job is to identify the
-app. The serif and the ∴ identify it; a larger size would only make it louder.
+**In the chrome the serif is the voice of your things**: a room's title and
+every titled row (a pin, a project, a chat, a page). Places and verbs (New
+chat, Pages, Tasks) stay sans. So the sidebar changes texture once, where
+the doors end and your things begin. The serif's smaller x-height is why its
+rows are a step larger (14px against 13px), on the scale rather than at a
+half pixel.
+
+The ∴ is drawn, not typed, and it stands alone in the window header without
+a wordmark.
 
 **Labels are primary; icons support them.** Eight identical 16px icons at full
 contrast in a column make a sidebar look like every other sidebar; the labels
@@ -167,11 +292,17 @@ should do the work, as they do in a table of contents.
 
 ## Interaction
 
-- **Tabs are pills.** Centred in the strip, rounded on all four corners, filled
-  from the interaction ramp when active. Two alternatives were built and
-  rejected: the full-height container and the bottom-anchored browser tab both
-  require a recessed strip, and a recessed strip is not worth what it costs the
-  rest of the window.
+- **Tabs are pills above the card.** Sized to their labels, so the gaps
+  between them are even, with the + one gap after the last. The first tab
+  starts on the card's left edge. The active tab takes the page's fill (see
+  [Grays](#grays)); the others have none until hovered. In split view the
+  active tab of the pane you are not working in has muted ink. Tabs joined
+  to their card (a browser's model) were tried and taken out: on cards that
+  float on a desk they made each card half a floating sheet and half the
+  foot of a tab.
+- **A view's actions sit at the end of its tab strip** (`paneActions`), the
+  chat's ⋮ included, not in a corner of the page. The phone has no strip, so
+  there the chat keeps its corner button.
 - **A row that names a destination navigates to it.** The chevron expands.
   Two hit targets. A row that only toggles means "Projects" cannot take you to
   Projects.

@@ -143,6 +143,18 @@
 	--ease-in-out-quad: cubic-bezier(0.45, 0, 0.55, 1);
 	--ease-premium: cubic-bezier(0.2, 0, 0, 1);
 
+	/* The shell's motion scale (agents/build/design.md, "The scale"). Every
+	   timing in the chrome is one of these, always on --ease-premium.
+	   Hover comes on fast and goes off slow, so running the pointer along a
+	   row leaves a short trail rather than a strobe. */
+	--motion-hover-in: 80ms;
+	--motion-hover-out: 200ms;
+	--motion-press: 60ms;
+	--motion-release: 180ms;
+	--motion-state: 150ms;
+	--motion-enter: 180ms;
+	--motion-layout: 300ms;
+
 	/* Radius — sm/md/lg/xl (4/6/8/12px) already match Tailwind v4 defaults,
 	   so `rounded-*` utilities are unchanged. `--radius-full` is the one gap:
 	   Tailwind's `rounded-full` is a static calc(infinity*1px) with no var,
@@ -227,6 +239,16 @@
 	--background: #FFFFFF;
 	--surface: #FFFFFF;
 	--surface-elevated: #FFFFFF;
+	/* The desk: the ground the cards stand on, under the sidebar and the
+	   window header. Only the work is raised, so the step between the desk
+	   and --page is what separates a card, not a line (--card-edge is
+	   transparent wherever the step does the job). Every theme's desk is its
+	   own --surface-elevated tint, darkened to about 7 L* below the page in
+	   a light theme and about 5 in a dark one; Borghese, whose page is pure
+	   black, keeps a border instead.
+	   Pemberley: white sheets on a cool light gray. */
+	--desk: #F0F0F2;
+	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 	/* The page is the surface unless a theme says otherwise. It resolves here,
 	   on <html>, which is also where `data-theme` lands, so every theme's own
@@ -293,7 +315,7 @@
 	--sidebar-interactive-radius: 6px;
 	--sidebar-interactive-gap: 8px;
 	--sidebar-interactive-font-size: 13px;
-	--sidebar-interactive-icon-size: 16px;
+	--sidebar-interactive-icon-size: 16px; /* SHELL_GLYPH_PX in AtlasIcon.svelte */
 	--sidebar-interactive-icon-size-small: 14px;
 	--sidebar-interactive-height: 28px;
 	/* Four registers instead of one. Every row used to be 28px / 13px / one
@@ -318,8 +340,6 @@
 	--sidebar-interactive-color: var(--color-foreground);
 	--sidebar-padding-left-base: 12px;
 	--sidebar-indent-width: 12px;
-	--sidebar-transition-duration: 150ms;
-	--sidebar-transition-easing: var(--ease-premium);
 	/* Interaction ramp. One definition for every hover/press in the app.
 	   Components used to reach for whichever surface token looked close —
 	   usually --color-surface-elevated — which is #F5F5F5 on a #FFFFFF parent
@@ -351,21 +371,13 @@
 	   rule is that nothing on the desk may out-shout the page. */
 	--scrollbar-thumb: color-mix(in srgb, var(--wash-ink) 22%, transparent);
 
-	--sidebar-hover-bg: color-mix(in srgb, var(--wash-ink) 7%, transparent);
-	--sidebar-active-bg: color-mix(in srgb, var(--wash-ink) 9%, transparent);
 	--sidebar-item-gap: 4px;
 
-	/* The active tab, on the same ramp and for the same reason.
-	   It used to be --surface for the focused pane and --surface-elevated for an
-	   unfocused one. In Caladan --surface IS #FFFFFF, the tab bar is #FFFFFF and
-	   the pane is #FFFFFF — so the active tab in the pane you were working in
-	   was white on white on white, while the tab in the pane you were ignoring
-	   (elevated, #F5F5F5) was the visible one. Exactly inverted, and invisible
-	   in every theme whose surface and background agree.
-	   Stepped above --hover-bg (7%) so hovering an inactive tab can't be
-	   mistaken for selecting it. */
-	--tab-active-bg: color-mix(in srgb, var(--wash-ink) 9%, transparent);
-	--tab-active-bg-focused: color-mix(in srgb, var(--wash-ink) 14%, transparent);
+	/* The ramp has four steps and no others: rest, hover (7%), selected
+	   (--active-bg, 12%) and press (16%). The active tab in the focused pane
+	   is not on it: it takes the page's own color (--color-page), so it reads
+	   as the top of the sheet below it, the way a browser joins a tab to its
+	   page. */
 
 	/* One height for both chrome rows — the sidebar masthead and the pane
 	   toolbar. They were 30px and 40px, under a comment in WorkspaceHeader
@@ -380,14 +392,14 @@
 	   which read as the sidebar being rounded differently from the pages. */
 	--card-radius: 6px;
 	--chrome-row-h: 40px;
-	--chrome-tab-h: 32px;
+	--chrome-tab-h: 28px;
 
 	/* How far the pane card is inset from the window: `m-3` (12px) plus its
 	   1px border. The sidebar is full-bleed, so without matching this its
 	   masthead sat 13px higher than the toolbar — equal heights, unequal
 	   centrelines, which is what you actually see across the seam. Equalising
 	   the heights alone did not fix the complaint. */
-	--pane-inset: 12px;
+	--pane-inset: 8px;
 }
 
 /* ===================================
@@ -402,6 +414,8 @@
 	--background: #FFFFFF;
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
+	--desk: #EBEBEB;
+	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Film grain + subtle navy gradient */
@@ -486,6 +500,8 @@
 	--background: #FFFFFF;
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
+	--desk: #EBEBEB;
+	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Blue to peach gradient */
@@ -572,6 +588,10 @@
 	--background: #FDFCF9;
 	--surface: #FFFFFF;
 	--surface-elevated: #F4F3F0;
+	/* White sheets on a near-white warm gray desk. The step is only about 4%,
+	   too little to draw an edge on its own, so a light hairline does. */
+	--desk: #F5F4F2;
+	--card-edge: #E6E5E2;
 	--surface-overlay: #FFFFFF;
 	/* The page is the same white as the sidebar's card, so the two panes read
 	   as one paper on the warm ground; a card on it lifts by its border. */
@@ -648,6 +668,8 @@
 	--background: #FFFFFF;
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
+	--desk: #EBEBEB;
+	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Flat for this theme */
@@ -720,6 +742,8 @@
 	--background: #1a1a2e;
 	--surface: #1f1f35;
 	--surface-elevated: #25253d;
+	--desk: #15152B;
+	--card-edge: transparent;
 	--surface-overlay: #2a2a45;
 
 	/* Background Treatment - Dark blue to warm gradient */
@@ -790,6 +814,8 @@
 	--background: #F7F7F4;
 	--surface: #FFFFFF;
 	--surface-elevated: #F0EFE9;
+	--desk: #ECEBE5;
+	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Flat for this theme */
@@ -861,6 +887,8 @@
 	--background: #0a0a0a;
 	--surface: #171717;
 	--surface-elevated: #262626;
+	--desk: #0A0A0A;
+	--card-edge: transparent;
 	--surface-overlay: #2a2a2a;
 
 	/* Background Treatment - Subtle dark gradient with hint of warmth */
@@ -934,6 +962,8 @@
 	--background: #0F1821;
 	--surface: #131E28;
 	--surface-elevated: #18242F;
+	--desk: #08141E;
+	--card-edge: transparent;
 	--surface-overlay: #1D2A36;
 
 	/* Background Treatment — the grid rules the DESK, not the page.
@@ -1035,6 +1065,8 @@
 	--background: #14120B;
 	--surface: #1B1913;
 	--surface-elevated: #221E15;
+	--desk: #110D05;
+	--card-edge: transparent;
 	--surface-overlay: #261F14;
 
 	/* Content Colors */
@@ -1095,6 +1127,10 @@
 	--background: #000000;
 	--surface: #000000;
 	--surface-elevated: #1a1a1a;
+	/* The page is pure black, so no desk can sit below it: the cards keep
+	   their border, which is this theme's look. */
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #1a1a1a;
 
 	/* Content Colors - Pure white */
@@ -1156,6 +1192,8 @@
 	--background: #292d34;
 	--surface: #2f333d;
 	--surface-elevated: #383e4a;
+	--desk: #232834;
+	--card-edge: transparent;
 	--surface-overlay: #3e4451;
 
 	/* Content Colors - Slightly lighter for readability */
@@ -1222,6 +1260,12 @@
 	--background: #0c0c0c;
 	--surface: #101010;
 	--surface-elevated: #191919;
+	/* Dark: a card is lighter than the desk it lies on, so the desk goes
+	   below the page rather than above it. --page is raised off --surface
+	   for the same reason. */
+	--page: #161616;
+	--desk: #0A0A0A;
+	--card-edge: transparent;
 	--surface-overlay: #1f1f1f;
 
 	/* Content Colors */
@@ -1283,6 +1327,8 @@
 	--background: #fdf6e3;
 	--surface: #fdf6e3;
 	--surface-elevated: #eee8d5;
+	--desk: #E8E2CF;
+	--card-edge: transparent;
 	--surface-overlay: #ffffff;
 
 	/* Content Colors - Warm text hierarchy */
@@ -1349,6 +1395,8 @@
 	--background: #282a36;
 	--surface: #2d303e;
 	--surface-elevated: #343746;
+	--desk: #232533;
+	--card-edge: transparent;
 	--surface-overlay: #3c3f52;
 
 	/* Content Colors */
@@ -1414,6 +1462,8 @@
 	--background: #232136;
 	--surface: #2a273f;
 	--surface-elevated: #312e47;
+	--desk: #201C34;
+	--card-edge: transparent;
 	--surface-overlay: #393552;
 
 	/* Content Colors */
