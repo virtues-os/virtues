@@ -28,12 +28,15 @@ holds the content.**
 
 ## The shell
 
-One header row across the window, then cards on the desk: the sidebar, and
-one desk gap (8px, `--pane-inset`) later the pane. In split view each pane
-is a card of its own, with the same gap between them, which is also the
-resize handle. The window's edges get the same 8px.
-Every card is rounded on all four corners, so opening and closing the
-sidebar or a split only moves cards; nothing joins. There is no rail. The sidebar shows one room's list at a
+The window has two materials. **The desk** (`--desk`) is the ground: the
+header row and the sidebar sit on it and paint nothing of their own. **The
+cards** are the work, raised off it in the page's color (`--page`): one per
+pane, a desk gap (8px, `--pane-inset`) from the window's edges and from each
+other. In split view the gap between the two cards is the resize handle.
+Every card keeps all four rounded corners, and nothing joins: opening the
+sidebar or a split only moves cards. There is no rail.
+
+The sidebar shows one room's list at a
 time, Home's unless you have stepped into another room. Defined in
 `apps/web/src/lib/sidebar/rooms.ts`.
 
@@ -134,13 +137,12 @@ change the scale here first.
 | Step | Size | Used by |
 |---|---|---|
 | Chrome row | 40px (`--chrome-row-h`) | the window header, a room's title row in the sidebar |
-| Control | 28px (`--chrome-tab-h`, `--sidebar-interactive-height`) | every clickable box in a row: the +, the header's controls, the ∴, sidebar rows |
-| Attached tab | 32px (`--chrome-attached-tab-h`) | a tab: it stands from the header's middle down onto the card it opens |
+| Control | 28px (`--chrome-tab-h`, `--sidebar-interactive-height`) | every clickable box in a row: tabs, the +, the header's controls, the ∴, sidebar rows |
 | Nested control | 20px | a control inside a control: a tab's ×, a row's inline + and ⋯ |
 
-The header's controls are 28px and sit 6px from the row's top and bottom.
-Tabs stand on the card's top edge instead; the + and a view's actions are
-centred in the tabs' 32px band.
+**Everything in the window header shares one centre line**, 20px down the
+40px row: the ∴, the controls, the tabs, the + and a view's actions. They
+are all 28px controls, 6px from the row's top and bottom.
 
 ### Lines and glyphs
 
@@ -168,11 +170,24 @@ behind it, so it reads in all sixteen themes. Four steps, no others:
 | Selected | `--active-bg` | 12% | where you are: the rail's room, a sidebar row, the active tab of an unfocused pane |
 | Press | `--press-bg` | 16% | held down, only for the duration of the press |
 
-**The active tab is attached to its page.** It takes the page's color
-(`--color-page`) and the card's border on its top and sides, and its foot is
-open onto the card, hanging 1px over the card's top border so the two read
-as one sheet, the way a browser draws it. The page color alone was not
-enough: on the desk it is a 4% step, too small to see without the border.
+**The active tab is marked by fill and ink**: the page's color (`--page`)
+on the desk, the same step that separates a card, and full ink. It sits
+above its card, not joined to it.
+
+### Tone, not lines
+
+**Cards separate from the desk by tone.** In every theme, light or dark, the
+desk is a step darker than the page, so a card always reads as a sheet lying
+on the ground, never as a hole in it.
+Where a theme's step is large enough, a card has no border
+(`--card-edge: transparent`); a line only stands in where the tone cannot.
+
+| Theme | Desk | Page | Card edge |
+|---|---|---|---|
+| Pemberley | `#F0F0F2`, a cool light gray | `#FFFFFF` | none |
+| Oxford (Virtues Light) | `#ECEAE5`, a warm gray | `#FFFFFF` | none |
+| Asgard (Virtues Dark) | `#0A0A0A` | `#161616` | none |
+| the other thirteen | `--surface-elevated` | `--page` | `--border`, until each theme gets its own pass |
 
 Text uses three inks: foreground, muted and subtle.
 
@@ -252,7 +267,7 @@ This bug shipped twice: dead hovers across 39 rules, and an active tab rendered
 | Rail label | Avenir | 11px | 500 |
 | Tab, group heading, meta | Avenir | 12px | 400 (headings muted) |
 | Row (every panel) | Avenir | 13px | 400 |
-| Your titled things (Pinned, Projects) | EB Garamond | 14px | 400 |
+| Your things (Pinned, Projects, Recents) | EB Garamond | 14px | 400 |
 | Panel title | EB Garamond | 16px | 400 |
 | Body / prose | EB Garamond | — | the page, not the chrome |
 
@@ -260,11 +275,12 @@ This bug shipped twice: dead hovers across 39 rules, and an active tab rendered
 fill and ink, never weight: a bolder label is a wider one, and everything
 beside it moves.
 
-**In the chrome the serif marks ownership**: the panel's title and the names
-of things you made (a pin, a project). Places and verbs (New chat, Pages,
-Tasks) and a chat's title, which the model wrote, stay sans. The serif's
-smaller x-height is why its rows are a step larger (14px against 13px), on
-the scale rather than at a half pixel.
+**In the chrome the serif is the voice of your things**: a room's title and
+every titled row (a pin, a project, a chat, a page). Places and verbs (New
+chat, Pages, Tasks) stay sans. So the sidebar changes texture once, where
+the doors end and your things begin. The serif's smaller x-height is why its
+rows are a step larger (14px against 13px), on the scale rather than at a
+half pixel.
 
 The ∴ is drawn, not typed, and it stands alone in the window header without
 a wordmark.
@@ -277,19 +293,17 @@ should do the work, as they do in a table of contents.
 
 ## Interaction
 
-- **Tabs are attached, and flush left.** The first tab's edge is the card's
-  edge, like a folder's tab; while the first tab is active, the card squares
-  that top-left corner so the two share one straight edge. A tab is rounded
-  at the top and open at the foot.
-  The active tab is drawn as the top of its page (see [Grays](#grays)); the
-  others have no fill until hovered. In split view both panes' active tabs
-  are attached, and the one in the pane you are not working in has muted
-  ink. Pills were the earlier rule, because a browser tab needed a recessed
-  strip to sit in; the window header now sets tabs on the desk, which is
-  that strip. Two alternatives were built and
-  rejected: the full-height container and the bottom-anchored browser tab both
-  require a recessed strip, and a recessed strip is not worth what it costs the
-  rest of the window.
+- **Tabs are pills above the card.** Sized to their labels, so the gaps
+  between them are even, with the + one gap after the last. The first tab
+  starts on the card's left edge. The active tab takes the page's fill (see
+  [Grays](#grays)); the others have none until hovered. In split view the
+  active tab of the pane you are not working in has muted ink. Tabs joined
+  to their card (a browser's model) were tried and taken out: on cards that
+  float on a desk they made each card half a floating sheet and half the
+  foot of a tab.
+- **A view's actions sit at the end of its tab strip** (`paneActions`), the
+  chat's ⋮ included, not in a corner of the page. The phone has no strip, so
+  there the chat keeps its corner button.
 - **A row that names a destination navigates to it.** The chevron expands.
   Two hit targets. A row that only toggles means "Projects" cannot take you to
   Projects.

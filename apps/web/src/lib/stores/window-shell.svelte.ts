@@ -820,16 +820,6 @@ class WindowShellStore {
 		this.applyHistoryIndex(targetPaneId, tab.id, tab.historyIndex + 1);
 	}
 
-	/**
-	 * The pane's first tab is the one showing. Tabs start flush with their
-	 * card's left edge, so the card squares that corner to run straight up
-	 * into the tab.
-	 */
-	isFirstTabActive(paneId: string): boolean {
-		const pane = this.panes.find(p => p.id === paneId);
-		return !!pane && pane.tabs.length > 0 && pane.tabs[0].id === pane.activeTabId;
-	}
-
 	canGoBack(paneId?: string): boolean {
 		const targetPaneId = paneId ?? this.activePaneId;
 		const pane = this.panes.find(p => p.id === targetPaneId);

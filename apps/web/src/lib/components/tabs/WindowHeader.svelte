@@ -36,13 +36,13 @@
 	const cardLeft = $derived(sidebarState.cardLeft);
 
 	/**
-	 * Where the sidebar's icons start: the desk gap, the card's 1px
-	 * border, the panel body's 4px and a row's 12px. The ∴'s glyph starts on
+	 * Where the sidebar's icons start: the desk gap, the panel body's 4px
+	 * and a row's 12px. The ∴'s glyph starts on
 	 * that line, so the header's controls head the sidebar's own column. They
 	 * keep that place with the sidebar closed: controls that slid would move
 	 * under the pointer that just closed it.
 	 */
-	const ICON_LINE_PX = SIDEBAR_INSET + 1 + 4 + 12;
+	const ICON_LINE_PX = SIDEBAR_INSET + 4 + 12;
 	const leadLeft = ICON_LINE_PX - (CONTROL_PX - MARK_GLYPH_PX) / 2;
 
 	let leadWidth = $state(0);

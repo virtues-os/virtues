@@ -174,8 +174,8 @@
 	// the height throughout, so nothing collapses in the gap.
 	const swapKey = $derived(sidebarRoom.selectedId);
 
-	// The sidebar is a card on the desk; the aside carries no inset of its
-	// own, and the card supplies its margin (the desk gap).
+	// The sidebar sits on the desk; the aside carries no inset of its own,
+	// and the column supplies its margin (the desk gap).
 	// NOT a springy curve: an overshoot grows the aside past its final width
 	// for a few frames, so the pane beside it jumps out and back and the
 	// whole window seems to rubber-band. The aside decelerates into its width
@@ -304,8 +304,10 @@
 	const panelColumnClass = $derived.by(() =>
 		[
 			"flex flex-col",
-			"mb-2 ml-2 overflow-hidden border border-border bg-surface",
-			"panel-card",
+			// On the desk, not a card: only the work is raised. The sidebar
+			// is chrome, and chrome paints nothing of its own (design.md).
+			"mb-2 ml-2 overflow-hidden",
+			"sidebar-column",
 			isCollapsed ? "pointer-events-none" : "",
 		].join(" "),
 	);
@@ -396,13 +398,10 @@
 	@reference "../../../app.css";
 	@reference "$lib/styles/sidebar.css";
 
-	/* The sidebar is its own card, a desk gap from the pane's, with the
-	   same --card-radius so the two are never rounded differently. */
-	:global(.panel-card) { border-radius: var(--card-radius); }
 
 	/* The hit area. Always transparent — it is a target, never a mark.
 
-	   Inset by the desk gap at the bottom to sit inside the panel card (`mb-2`); the
+	   Inset by the desk gap at the bottom to match the column (`mb-2`); the
 	   card's top is the aside's top, under the window header. Running past
 	   the card put its hover fill on the desk ground beside it. A seam cannot
 	   start above the thing it divides. */

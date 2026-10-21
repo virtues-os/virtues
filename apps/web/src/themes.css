@@ -239,6 +239,14 @@
 	--background: #FFFFFF;
 	--surface: #FFFFFF;
 	--surface-elevated: #FFFFFF;
+	/* The desk: the ground the cards stand on, under the sidebar and the
+	   window header. Only the work is raised, so the step between the desk
+	   and --page is what separates a card, not a line (--card-edge). Tuned in
+	   Pemberley, Oxford and Asgard; the other themes stand their cards on
+	   --surface-elevated and keep a border until each gets its own pass.
+	   Pemberley: white sheets on a cool light gray, about a 6% step. */
+	--desk: #F0F0F2;
+	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 	/* The page is the surface unless a theme says otherwise. It resolves here,
 	   on <html>, which is also where `data-theme` lands, so every theme's own
@@ -383,9 +391,6 @@
 	--card-radius: 6px;
 	--chrome-row-h: 40px;
 	--chrome-tab-h: 28px;
-	/* An attached tab: 4px taller than a control, so it stands from the
-	   header's centre line down onto the card it opens. */
-	--chrome-attached-tab-h: 32px;
 
 	/* How far the pane card is inset from the window: `m-3` (12px) plus its
 	   1px border. The sidebar is full-bleed, so without matching this its
@@ -407,6 +412,8 @@
 	--background: #FFFFFF;
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Film grain + subtle navy gradient */
@@ -491,6 +498,8 @@
 	--background: #FFFFFF;
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Blue to peach gradient */
@@ -577,6 +586,10 @@
 	--background: #FDFCF9;
 	--surface: #FFFFFF;
 	--surface-elevated: #F4F3F0;
+	/* Warm white sheets on a warm gray desk, about an 8% step, so the cards
+	   separate by tone and need no border. */
+	--desk: #ECEAE5;
+	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 	/* The page is the same white as the sidebar's card, so the two panes read
 	   as one paper on the warm ground; a card on it lifts by its border. */
@@ -653,6 +666,8 @@
 	--background: #FFFFFF;
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Flat for this theme */
@@ -725,6 +740,8 @@
 	--background: #1a1a2e;
 	--surface: #1f1f35;
 	--surface-elevated: #25253d;
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #2a2a45;
 
 	/* Background Treatment - Dark blue to warm gradient */
@@ -795,6 +812,8 @@
 	--background: #F7F7F4;
 	--surface: #FFFFFF;
 	--surface-elevated: #F0EFE9;
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Flat for this theme */
@@ -866,6 +885,8 @@
 	--background: #0a0a0a;
 	--surface: #171717;
 	--surface-elevated: #262626;
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #2a2a2a;
 
 	/* Background Treatment - Subtle dark gradient with hint of warmth */
@@ -939,6 +960,8 @@
 	--background: #0F1821;
 	--surface: #131E28;
 	--surface-elevated: #18242F;
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #1D2A36;
 
 	/* Background Treatment — the grid rules the DESK, not the page.
@@ -1040,6 +1063,8 @@
 	--background: #14120B;
 	--surface: #1B1913;
 	--surface-elevated: #221E15;
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #261F14;
 
 	/* Content Colors */
@@ -1100,6 +1125,8 @@
 	--background: #000000;
 	--surface: #000000;
 	--surface-elevated: #1a1a1a;
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #1a1a1a;
 
 	/* Content Colors - Pure white */
@@ -1161,6 +1188,8 @@
 	--background: #292d34;
 	--surface: #2f333d;
 	--surface-elevated: #383e4a;
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #3e4451;
 
 	/* Content Colors - Slightly lighter for readability */
@@ -1227,6 +1256,12 @@
 	--background: #0c0c0c;
 	--surface: #101010;
 	--surface-elevated: #191919;
+	/* Dark: a card is lighter than the desk it lies on, so the desk goes
+	   below the page rather than above it. --page is raised off --surface
+	   for the same reason. */
+	--page: #161616;
+	--desk: #0A0A0A;
+	--card-edge: transparent;
 	--surface-overlay: #1f1f1f;
 
 	/* Content Colors */
@@ -1288,6 +1323,8 @@
 	--background: #fdf6e3;
 	--surface: #fdf6e3;
 	--surface-elevated: #eee8d5;
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #ffffff;
 
 	/* Content Colors - Warm text hierarchy */
@@ -1354,6 +1391,8 @@
 	--background: #282a36;
 	--surface: #2d303e;
 	--surface-elevated: #343746;
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #3c3f52;
 
 	/* Content Colors */
@@ -1419,6 +1458,8 @@
 	--background: #232136;
 	--surface: #2a273f;
 	--surface-elevated: #312e47;
+	--desk: var(--surface-elevated);
+	--card-edge: var(--border);
 	--surface-overlay: #393552;
 
 	/* Content Colors */

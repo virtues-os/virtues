@@ -20,7 +20,9 @@ export interface PaneAction {
 	id: string;
 	label: string;
 	icon: string;
-	run: () => void;
+	/** Gets the click when the action is a button in the strip, so a menu
+	 *  can open under it; nothing when run from the overflow menu. */
+	run: (e?: MouseEvent) => void;
 	/** Renders as the emphasised action, and keeps its label when space allows.
 	    At most one per view. */
 	primary?: boolean;

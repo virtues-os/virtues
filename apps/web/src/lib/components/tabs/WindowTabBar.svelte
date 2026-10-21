@@ -592,15 +592,14 @@
 		container-name: tabbar;
 		display: flex;
 		gap: 4px;
-		/* Flush left: the first tab's edge is the card's edge, a folder's
-		   tab, so the strip reads as the card's own top. */
+		/* The first tab starts on the card's left edge, so the strip lines up
+		   with the card below it. */
 		padding: 0 8px 0 0;
 		height: var(--chrome-row-h);
-		/* Tabs stand on the card's top edge, so the strip aligns to its
-		   bottom; the + and the view's actions sit centred in the tabs' band
-		   (their own margin-bottom). The strip is on the desk ground and paints
-		   nothing. */
-		align-items: flex-end;
+		/* Everything in the window header shares one centre line: the tabs,
+		   the +, a view's actions and the controls over the sidebar. The
+		   strip is on the desk and paints nothing. */
+		align-items: center;
 		background: transparent;
 		flex-shrink: 0;
 		position: relative;
@@ -618,12 +617,7 @@
 		flex: 0 1 auto;
 		min-width: 0;
 		scrollbar-width: none;
-		/* One pixel taller than the tabs and hung one pixel below the header,
-		   so a tab's foot covers the card's top border and the two read as one
-		   sheet. The header paints above the card (WindowHeader's z-index). */
-		align-items: flex-end;
-		height: calc(var(--chrome-attached-tab-h) + 1px);
-		margin-bottom: -1px;
+		height: var(--chrome-tab-h);
 	}
 
 	.tabs-scroll::-webkit-scrollbar {
@@ -641,19 +635,18 @@
 		gap: 6px;
 		padding: 0 10px;
 		position: relative;
-		/* Attached, as a browser draws it: the top of the page it opens. Its
-		   own border on three sides; the foot is open onto the card. */
-		height: calc(var(--chrome-attached-tab-h) + 1px);
-		border: 1px solid transparent;
-		border-bottom: none;
-		border-radius: 6px 6px 0 0;
+		/* A pill above the card, the scale's 28px control. */
+		height: var(--chrome-tab-h);
+		border: none;
+		border-radius: var(--card-radius);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 12px;
 		cursor: pointer;
 		white-space: nowrap;
+		/* Sized to its label, so the gaps between tabs are even and the +
+		   sits one gap after the last. */
 		max-width: 160px;
-		min-width: 80px;
 		flex-shrink: 0;
 		/* The scale's motion (design.md, "The scale"): hover in fast and out
 		   slow. A new tab grows into its place. */
@@ -677,21 +670,18 @@
 		}
 	}
 
-	/* The active tab in the focused pane takes the page's own color, so it
-	   reads as the top of the sheet below it, the way a browser joins a tab
-	   to its page. The strip sits on the desk ground, so the page color is
-	   always a step off what is around it, in every theme. Fill and ink
-	   only, never weight: a bolder label is a wider one, and every tab to
-	   its right moved when you switched. */
+	/* The active tab is marked by fill and ink: the page's own color on the
+	   desk (the same step that separates the cards) and full ink. Never by
+	   weight: a bolder label is a wider one, and every tab to its right
+	   moved when you switched. */
 	.tab.active {
 		background: var(--color-page);
-		border-color: var(--color-border);
 		color: var(--color-foreground);
 	}
 
 	/* In split view two tabs are "active" at once and only one takes your
-	   typing. Both are attached to their pages; the one you are not in says
-	   so in its ink. */
+	   typing. Both take their page's fill; the one you are not in says so in
+	   its ink. */
 	.tab.active:not(.active-in-active-pane) {
 		color: var(--color-foreground-muted);
 	}
@@ -831,13 +821,10 @@
 		display: flex;
 		align-items: center;
 		gap: 2px;
-		/* Centred in the tabs' 32px band: (32 - 24) / 2. */
-		margin-bottom: 4px;
 		/* The view's actions keep the far end of the strip; the tabs and
 		   their + read from the left. */
 		margin-left: auto;
-		padding-left: 6px;
-		border-left: 1px solid var(--color-border);
+		padding-left: 4px;
 	}
 
 	.pane-action {
@@ -952,8 +939,6 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		/* The scale's control, centred in the tabs' band: (32 - 28) / 2. */
-		margin-bottom: 2px;
 		width: 28px;
 		height: 28px;
 		padding: 0;

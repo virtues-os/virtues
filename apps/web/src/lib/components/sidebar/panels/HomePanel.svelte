@@ -181,6 +181,7 @@
 	/** Fold state, keyed so a future group costs one string. */
 	const zoneId = (id: string) => `chats.${id}`;
 	const folded = (id: string) => sidebarZones.isCollapsed(zoneId(id));
+	const lastRecentGroup = $derived(recentGroups.at(-1)?.id ?? null);
 
 	/* The fold's duration scales with the group's height, clamped. At one
 	   fixed duration a 20-row group moved four times as fast as a 5-row one
@@ -826,7 +827,7 @@
 	{@const home = session.project_id ? projectStore.byId(session.project_id) : undefined}
 	{@const tint = home ? projectColor(home) : null}
 	<div
-		class="panel-row panel-row-has-actions"
+		class="panel-row panel-row-has-actions spine"
 		class:active={activeRoute === url}
 		role="link"
 		tabindex="0"
@@ -890,7 +891,7 @@
 	{@const url = pageRoute(page)}
 	{@const pinned = isPinned(url)}
 	<div
-		class="panel-row panel-row-has-actions"
+		class="panel-row panel-row-has-actions spine"
 		class:active={activeRoute === url}
 		role="link"
 		tabindex="0"
@@ -1123,7 +1124,9 @@
 	</div>
 {/each}
 
-{#if recentsMore}
+<!-- Hidden while the group above it is folded: "See all" under a closed
+     heading would point at nothing on screen. -->
+{#if recentsMore && !(lastRecentGroup && folded(lastRecentGroup))}
 	<button type="button" class="panel-row panel-more" onclick={openAllChats}>See all</button>
 {/if}
 
@@ -1382,9 +1385,10 @@
 		white-space: nowrap;
 	}
 
-	/* Spines: the serif appears in the chrome exactly where ownership does —
-	   the names of the user's own things (a pin, a project) get a bookface;
-	   a conversation's title is a caption the model wrote, and stays sans.
+	/* Spines: the serif is the voice of your things, and the sans the voice
+	   of places and verbs. Every titled row (a pin, a project, a chat, a
+	   page) gets the bookface; the doors above stay sans. So the list changes
+	   texture once, where places end and your things begin, not halfway down.
 	   The chrome cut sits beside an icon, where the serif's own metrics
 	   would leave the letters off-center against it. */
 	.spine {

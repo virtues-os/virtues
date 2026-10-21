@@ -423,6 +423,7 @@
 
 <div
 	class="app-shell flex flex-col h-screen w-full bg-surface-elevated"
+	class:desk={!mobileLayout.isMobile}
 	class:mobile-shell={mobileLayout.isMobile}
 	class:opening
 	style="background-image: var(--surface-elevated-image); background-size: var(--surface-elevated-size);"
@@ -450,9 +451,8 @@
 		class:pane-card={!mobileLayout.isMobile && !windowShellStore.isSplit}
 		class:border={!mobileLayout.isMobile && !windowShellStore.isSplit}
 		class:split-desk={!mobileLayout.isMobile && windowShellStore.isSplit}
-		class:first-tab-active={!mobileLayout.isMobile && !windowShellStore.isSplit && windowShellStore.isFirstTabActive('left')}
 		class:is-mobile={mobileLayout.isMobile}
-		class:border-border={!mobileLayout.isMobile}
+		class:card-edge={!mobileLayout.isMobile}
 		style={windowShellStore.isSplit && !mobileLayout.isMobile
 			? undefined
 			: "background-image: var(--background-image); background-blend-mode: multiply;"}
@@ -574,7 +574,7 @@
 	.app-shell.opening :global(.header-mark .mark-dot.apex) {
 		animation: opening-conclude 820ms ease-out 500ms both;
 	}
-	.app-shell.opening :global(.panel-card) {
+	.app-shell.opening :global(.sidebar-column) {
 		animation: opening-panel 640ms cubic-bezier(0.2, 0.7, 0.2, 1) 720ms both;
 	}
 	.app-shell.opening main {
@@ -662,10 +662,17 @@
 	   normal flow (height comes from the insets, overriding h-screen's 100vh), so
 	   the document has nothing to scroll; only the view's own inner scroller
 	   moves. Bars stay put. overflow-x:hidden also kills sideways rubber-banding. */
-	/* The shell's cards all share --card-radius. */
+	/* The desk: what the sidebar and the window header stand on (themes.css,
+	   --desk). The phone keeps its own ground. */
+	.app-shell.desk {
+		background-color: var(--desk);
+	}
+
+	/* The shell's cards all share --card-radius. Their edge is the theme's
+	   --card-edge: transparent where the desk's tone already separates a
+	   card, a border where a theme's desk is too close to its page. */
 	.pane-card { border-radius: var(--card-radius); }
-	/* The first tab, active, stands flush on this corner (WindowTabBar). */
-	.pane-card.first-tab-active { border-top-left-radius: 0; }
+	main.card-edge { border-color: var(--card-edge); }
 
 	/* In split each pane draws its own card (SplitContainer), a desk gap apart, so
 	   `main` is only the desk they stand on. */
