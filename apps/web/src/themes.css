@@ -588,9 +588,9 @@
 	--background: #FDFCF9;
 	--surface: #FFFFFF;
 	--surface-elevated: #F4F3F0;
-	/* Warm white sheets on a warm gray desk, about an 8% step, so the cards
-	   separate by tone and need no border. */
-	--desk: #ECEAE5;
+	/* Warm white sheets on a light warm gray desk, about a 5% step, so the
+	   cards separate by tone and need no border. */
+	--desk: #F3F2EF;
 	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 	/* The page is the same white as the sidebar's card, so the two panes read
