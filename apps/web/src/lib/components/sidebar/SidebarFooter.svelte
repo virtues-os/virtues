@@ -223,13 +223,13 @@
 		@apply flex flex-col gap-1 py-3 mt-auto;
 		padding-left: 8px;
 		/* Staggered load animation (initial mount) */
-		animation: sidebar-fade-slide-in 200ms var(--sidebar-transition-easing) backwards;
+		animation: sidebar-fade-slide-in var(--motion-enter) var(--ease-premium) backwards;
 		/* Staggered expand transition - uses --stagger-delay CSS var */
 		opacity: 1;
 		transform: translateX(0);
 		transition:
-			opacity 200ms var(--sidebar-transition-easing) var(--stagger-delay, 0ms),
-			transform 200ms var(--sidebar-transition-easing) var(--stagger-delay, 0ms);
+			opacity var(--motion-enter) var(--ease-premium) var(--stagger-delay, 0ms),
+			transform var(--motion-enter) var(--ease-premium) var(--stagger-delay, 0ms);
 	}
 
 	/* The update chip: a standing offer, not an alarm. Info tokens (note-this),
@@ -258,7 +258,7 @@
 
 	.relaunch-version {
 		font-family: var(--font-mono);
-		font-size: 9.5px;
+		font-size: 11px;
 		letter-spacing: 0.07em;
 		color: var(--color-foreground-muted);
 		font-variant-numeric: tabular-nums;
@@ -314,7 +314,7 @@
 		padding: 8px 10px 0 var(--sidebar-padding-left-base);
 		border-top: 1px solid var(--color-border-subtle);
 		font-family: var(--font-mono);
-		font-size: 9.5px;
+		font-size: 11px;
 		letter-spacing: 0.07em;
 		color: var(--color-foreground-disabled);
 		font-variant-numeric: tabular-nums;
@@ -347,11 +347,11 @@
 	}
 
 	.door:hover {
-		background: var(--sidebar-hover-bg);
+		background: var(--hover-bg);
 	}
 
 	.door.active {
-		background: var(--sidebar-active-bg);
+		background: var(--active-bg);
 	}
 
 	.door:focus-visible {
@@ -365,7 +365,7 @@
 		padding-right: 4px;
 		opacity: 0;
 		transition:
-			opacity var(--sidebar-transition-duration) var(--sidebar-transition-easing),
-			transform var(--sidebar-transition-duration) var(--sidebar-transition-easing);
+			opacity var(--motion-state) var(--ease-premium),
+			transform var(--motion-state) var(--ease-premium);
 	}
 </style>

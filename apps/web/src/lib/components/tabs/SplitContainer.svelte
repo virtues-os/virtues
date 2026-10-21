@@ -330,8 +330,8 @@
 
 	   The active pane is not marked here either. It has never needed to be:
 	   WindowTabBar already says it, in the one place a person is looking when
-	   they care, by giving the focused pane's active tab --tab-active-bg-focused
-	   against the other's --tab-active-bg. A border saying it a second time is
+	   they care, by giving the focused pane's active tab the page's color
+	   against the other's selected gray. A border saying it a second time is
 	   a second voice for one fact. */
 
 	/* Right pane collapsed styles */

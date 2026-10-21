@@ -133,7 +133,7 @@
 				{#if room.group === 'setup'}
 					<SetupRing size={20} />
 				{:else}
-					<AtlasIcon name={room.icon} size={20} stroke={1.0} bare />
+					<AtlasIcon name={room.icon} size={20} bare />
 				{/if}
 			</span>
 			<span class="rail-label" aria-hidden={compact}>{room.label}</span>
@@ -198,8 +198,8 @@
 		/* Compact squares the item to the 36px column: the label's gap and
 		   row go to equal padding around the 20px glyph. */
 		transition:
-			background var(--sidebar-transition-duration) ease,
-			color var(--sidebar-transition-duration) ease,
+			background var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
 			gap 220ms cubic-bezier(0.2, 0.7, 0.2, 1),
 			padding 220ms cubic-bezier(0.2, 0.7, 0.2, 1);
 		border: none;
@@ -252,12 +252,13 @@
 
 	.rail-item :global(svg) {
 		opacity: 0.8;
-		transition: opacity var(--sidebar-transition-duration) ease;
+		transition: opacity var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.rail-item:hover {
 		color: var(--color-foreground);
-		background: var(--sidebar-hover-bg);
+		background: var(--hover-bg);
+		transition-duration: var(--motion-hover-in);
 	}
 	.rail-item:hover :global(svg) { opacity: 1; }
 

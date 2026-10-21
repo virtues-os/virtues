@@ -172,11 +172,11 @@
 		font-size: var(--sidebar-interactive-font-size, 13px);
 		color: var(--color-foreground);
 		transition:
-			background var(--sidebar-transition-duration, 120ms) ease,
-			color var(--sidebar-transition-duration, 120ms) ease;
+			background var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium);
 	}
 	.row:hover:not(:disabled) {
-		background: var(--sidebar-hover-bg);
+		background: var(--hover-bg);
 	}
 	.selected .row {
 		background: var(--active-bg);

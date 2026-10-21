@@ -871,7 +871,7 @@
 
 	.escape-hint {
 		font-family: var(--font-mono);
-		font-size: 10px;
+		font-size: 11px;
 		padding: 3px 6px;
 		background: var(--surface-elevated);
 		border-radius: 4px;
@@ -1012,7 +1012,7 @@
 
 	.result-shortcut {
 		font-family: var(--font-mono);
-		font-size: 10px;
+		font-size: 11px;
 		padding: 2px 6px;
 		background: var(--surface-elevated);
 		border-radius: 4px;

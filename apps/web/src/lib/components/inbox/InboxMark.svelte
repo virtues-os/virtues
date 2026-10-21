@@ -89,8 +89,8 @@
 	.header-mark {
 		display: grid;
 		place-items: center;
-		width: 32px;
-		height: 32px;
+		width: 28px;
+		height: 28px;
 		flex: none;
 		padding: 0;
 		border: none;
@@ -98,22 +98,22 @@
 		background: transparent;
 		color: var(--color-foreground);
 		cursor: pointer;
-		/* The header's motion: hover on in 80ms, off over 200ms; a press
-		   sinks to 94% and springs back (WindowHeader's .lead-btn). */
+		/* The scale's motion: hover in fast and out slow; a press sinks to
+		   94% and springs back (design.md, "The scale"). */
 		transition:
-			background-color 200ms var(--ease-premium),
-			transform 180ms var(--ease-premium);
+			background-color var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-premium);
 	}
 
 	.header-mark:hover {
 		background: var(--hover-bg);
-		transition-duration: 80ms, 180ms;
+		transition-duration: var(--motion-hover-in), var(--motion-release);
 	}
 
 	.header-mark:active {
 		background: var(--press-bg);
 		transform: scale(0.94);
-		transition-duration: 60ms;
+		transition-duration: var(--motion-press);
 	}
 
 	.header-mark:focus-visible {
@@ -131,7 +131,7 @@
 		fill: currentColor;
 		transform-box: fill-box;
 		transform-origin: center;
-		transition: fill 300ms var(--ease-premium);
+		transition: fill var(--motion-state) var(--ease-premium);
 	}
 
 	/* The theme's accent, not red: something is waiting, nothing is on fire.
@@ -202,17 +202,17 @@
 		background: transparent;
 		text-align: left;
 		cursor: pointer;
-		transition: background-color 200ms var(--ease-premium);
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.inbox-row:hover {
 		background: var(--hover-bg);
-		transition-duration: 80ms;
+		transition-duration: var(--motion-hover-in);
 	}
 
 	.inbox-row:active {
 		background: var(--press-bg);
-		transition-duration: 60ms;
+		transition-duration: var(--motion-press);
 	}
 
 	.inbox-row:focus-visible {

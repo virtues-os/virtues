@@ -22,15 +22,13 @@
 
 	/** Air between the controls and the first tab when they meet. */
 	const LEAD_GAP_PX = 8;
-	/**
-	 * The controls' glyphs are the rail's (Atlas), at the rail's line: the
-	 * rail draws 20px glyphs at stroke 1.0 on a 16-unit box, 1.25px of ink,
-	 * so 16px glyphs here take 1.25 to match it exactly.
-	 */
+	/** The controls' glyphs: Atlas at row size, which draws them at the
+	 *  scale's one line weight (1.25px), the same as the rail and the rows. */
 	const GLYPH_PX = 16;
-	const GLYPH_STROKE = 1.25;
+	/** The scale's control box: every clickable thing in the header. */
+	const CONTROL_PX = 28;
 	/** InboxMark's width; the mark is centred over the rail's tile column. */
-	const MARK_PX = 32;
+	const MARK_PX = CONTROL_PX;
 
 	const isSplit = $derived(windowShellStore.isSplit);
 	const leftWidth = $derived(isSplit ? windowShellStore.leftPane?.width || 50 : 100);
@@ -50,8 +48,8 @@
 	 * mark would move under the pointer that just closed it.
 	 */
 	const PANEL_ICON_INSET_PX = 1 + 4 + 12;
-	/** A 32px control centres its 16px glyph, 8px in from its edge. */
-	const GLYPH_INSET_PX = (32 - GLYPH_PX) / 2;
+	/** A control centres its glyph, this far in from its edge. */
+	const GLYPH_INSET_PX = (CONTROL_PX - GLYPH_PX) / 2;
 	const controlsLeft = $derived(sidebarState.railWidth + 12 + PANEL_ICON_INSET_PX - GLYPH_INSET_PX);
 
 	let controlsWidth = $state(0);
@@ -90,7 +88,7 @@
 			aria-label="Back"
 			title="Back"
 		>
-			<AtlasIcon name="back" size={GLYPH_PX} stroke={GLYPH_STROKE} bare />
+			<AtlasIcon name="back" size={GLYPH_PX} bare />
 		</button>
 		<button
 			class="lead-btn"
@@ -99,7 +97,7 @@
 			aria-label="Forward"
 			title="Forward"
 		>
-			<AtlasIcon name="forward" size={GLYPH_PX} stroke={GLYPH_STROKE} bare />
+			<AtlasIcon name="forward" size={GLYPH_PX} bare />
 		</button>
 		<span class="lead-gap" aria-hidden="true"></span>
 		<button
@@ -111,7 +109,7 @@
 			aria-expanded={sidebarOpen}
 			title={`${sidebarOpen ? 'Hide' : 'Show'} the sidebar (${shortcuts.format('mod+b')}) · Right-click to ${compact ? 'show' : 'hide'} labels`}
 		>
-			<AtlasIcon name="sidebar" size={GLYPH_PX} stroke={GLYPH_STROKE} bare />
+			<AtlasIcon name="sidebar" size={GLYPH_PX} bare />
 		</button>
 		<button
 			class="lead-btn"
@@ -119,7 +117,7 @@
 			aria-label="New chat"
 			title={`New chat (${shortcuts.format('mod+n')})`}
 		>
-			<AtlasIcon name="new-chat" size={GLYPH_PX} stroke={GLYPH_STROKE} bare />
+			<AtlasIcon name="new-chat" size={GLYPH_PX} bare />
 		</button>
 	</div>
 
@@ -158,7 +156,7 @@
 		z-index: 1;
 		display: flex;
 		align-items: center;
-		transition: left 300ms var(--ease-premium);
+		transition: left var(--motion-layout) var(--ease-premium);
 	}
 
 	/* The strips span exactly the cards below them: from the card's left edge
@@ -171,12 +169,12 @@
 		left: var(--card-left);
 		right: 12px;
 		display: flex;
-		transition: left 300ms var(--ease-premium);
+		transition: left var(--motion-layout) var(--ease-premium);
 	}
 
 	.strip {
 		min-width: 0;
-		transition: padding-left 300ms var(--ease-premium);
+		transition: padding-left var(--motion-layout) var(--ease-premium);
 	}
 
 	.resizing .strips,
@@ -195,21 +193,16 @@
 		flex: none;
 	}
 
-	/* 32px squares on the 8pt grid, the same box as the mark, butted
-	   together: the 16px glyphs leave 16px of air between neighbours, so no
-	   gap is needed inside a group.
-
-	   Motion, the same in every control here, the mark and the tabs:
-	   - Hover comes on in 80ms and goes off over 200ms. Instant on, gentle
-	     off: running the pointer along the row leaves a short trail rather
-	     than a strobe.
-	   - A press sinks to 94% in 60ms and springs back on --ease-premium,
-	     so a click is felt without anything moving out of its box. */
+	/* The scale's 28px control (design.md, "The scale"), the same box as the
+	   mark and the tabs, butted together: the 16px glyphs leave 12px of air
+	   between neighbours, so no gap is needed inside a group. Motion is the
+	   scale's too: hover in fast and out slow, and a press that sinks to 94%
+	   and springs back. */
 	.lead-btn {
 		display: grid;
 		place-items: center;
-		width: 32px;
-		height: 32px;
+		width: 28px;
+		height: 28px;
 		padding: 0;
 		border: none;
 		border-radius: 6px;
@@ -218,28 +211,29 @@
 		cursor: pointer;
 		flex-shrink: 0;
 		transition:
-			background-color 200ms var(--ease-premium),
-			color 200ms var(--ease-premium),
-			opacity 200ms var(--ease-premium),
-			transform 180ms var(--ease-premium);
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
+			opacity var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-premium);
 	}
 
 	.lead-btn:hover:not(:disabled) {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
-		transition-duration: 80ms, 80ms, 80ms, 180ms;
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
 	}
 
 	.lead-btn:active:not(:disabled) {
 		background: var(--press-bg);
 		transform: scale(0.94);
-		transition-duration: 60ms;
+		transition-duration: var(--motion-press);
 	}
 
 	/* The sidebar glyph's column fills while the sidebar is shown, on the
-	   sidebar's own 300ms, so the glyph and the panel arrive together. */
+	   sidebar's own layout timing, so the glyph and the panel arrive
+	   together. */
 	.lead-btn :global(.atlas-fill) {
-		transition: fill-opacity 300ms var(--ease-premium);
+		transition: fill-opacity var(--motion-layout) var(--ease-premium);
 	}
 
 	.lead-btn.sidebar-shown :global(.atlas-fill) {

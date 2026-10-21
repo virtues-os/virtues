@@ -143,6 +143,18 @@
 	--ease-in-out-quad: cubic-bezier(0.45, 0, 0.55, 1);
 	--ease-premium: cubic-bezier(0.2, 0, 0, 1);
 
+	/* The shell's motion scale (agents/build/design.md, "The scale"). Every
+	   timing in the chrome is one of these, always on --ease-premium.
+	   Hover comes on fast and goes off slow, so running the pointer along a
+	   row leaves a short trail rather than a strobe. */
+	--motion-hover-in: 80ms;
+	--motion-hover-out: 200ms;
+	--motion-press: 60ms;
+	--motion-release: 180ms;
+	--motion-state: 150ms;
+	--motion-enter: 180ms;
+	--motion-layout: 300ms;
+
 	/* Radius — sm/md/lg/xl (4/6/8/12px) already match Tailwind v4 defaults,
 	   so `rounded-*` utilities are unchanged. `--radius-full` is the one gap:
 	   Tailwind's `rounded-full` is a static calc(infinity*1px) with no var,
@@ -318,8 +330,6 @@
 	--sidebar-interactive-color: var(--color-foreground);
 	--sidebar-padding-left-base: 12px;
 	--sidebar-indent-width: 12px;
-	--sidebar-transition-duration: 150ms;
-	--sidebar-transition-easing: var(--ease-premium);
 	/* Interaction ramp. One definition for every hover/press in the app.
 	   Components used to reach for whichever surface token looked close —
 	   usually --color-surface-elevated — which is #F5F5F5 on a #FFFFFF parent
@@ -351,21 +361,13 @@
 	   rule is that nothing on the desk may out-shout the page. */
 	--scrollbar-thumb: color-mix(in srgb, var(--wash-ink) 22%, transparent);
 
-	--sidebar-hover-bg: color-mix(in srgb, var(--wash-ink) 7%, transparent);
-	--sidebar-active-bg: color-mix(in srgb, var(--wash-ink) 9%, transparent);
 	--sidebar-item-gap: 4px;
 
-	/* The active tab, on the same ramp and for the same reason.
-	   It used to be --surface for the focused pane and --surface-elevated for an
-	   unfocused one. In Caladan --surface IS #FFFFFF, the tab bar is #FFFFFF and
-	   the pane is #FFFFFF — so the active tab in the pane you were working in
-	   was white on white on white, while the tab in the pane you were ignoring
-	   (elevated, #F5F5F5) was the visible one. Exactly inverted, and invisible
-	   in every theme whose surface and background agree.
-	   Stepped above --hover-bg (7%) so hovering an inactive tab can't be
-	   mistaken for selecting it. */
-	--tab-active-bg: color-mix(in srgb, var(--wash-ink) 9%, transparent);
-	--tab-active-bg-focused: color-mix(in srgb, var(--wash-ink) 14%, transparent);
+	/* The ramp has four steps and no others: rest, hover (7%), selected
+	   (--active-bg, 12%) and press (16%). The active tab in the focused pane
+	   is not on it: it takes the page's own color (--color-page), so it reads
+	   as the top of the sheet below it, the way a browser joins a tab to its
+	   page. */
 
 	/* One height for both chrome rows — the sidebar masthead and the pane
 	   toolbar. They were 30px and 40px, under a comment in WorkspaceHeader
@@ -380,7 +382,7 @@
 	   which read as the sidebar being rounded differently from the pages. */
 	--card-radius: 6px;
 	--chrome-row-h: 40px;
-	--chrome-tab-h: 32px;
+	--chrome-tab-h: 28px;
 
 	/* How far the pane card is inset from the window: `m-3` (12px) plus its
 	   1px border. The sidebar is full-bleed, so without matching this its

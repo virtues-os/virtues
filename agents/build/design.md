@@ -101,8 +101,9 @@ are written as prohibitions.
    matched the page*. Recessing only the strip left a dark band beside a light panel for no
    gain once tabs became pills. The sidebar sits on `--surface-elevated`, a 4%
    step, and that is the only shift in the shell.
-4. **8pt grid. No off-grid values.** No `12.5px`, `13px`, `26px`, `30px`,
-   `34px`. Radii are the one exception (6px, matching Tailwind).
+4. **Sizes come from [the scale](#the-scale).** No value between its steps:
+   no `12.5px`, `13.5px`, `26px`, `30px`, `34px`. A value that is one or two
+   pixels off a neighbour reads as a mistake even when nobody can say why.
 5. **No monospace as decoration.** IBM Plex Mono is for code and data. A
    keyboard hint is not code. A shortcut label is not code.
 6. **No uppercase + serif + wide tracking.** It looks deliberate but does
@@ -116,21 +117,118 @@ are written as prohibitions.
 
 ---
 
+## The scale
+
+The shell takes every size, line, gray, type step, corner and timing from
+this one scale. It exists because the shell was built in passes that each
+kept a consistent rule of their own, and side by side they disagreed by a
+pixel or two everywhere: five box heights, two icon weights, five grays,
+half-pixel type. Before adding a value, find its step here; if none fits,
+change the scale here first.
+
+### Heights
+
+| Step | Size | Used by |
+|---|---|---|
+| Chrome row | 40px (`--chrome-row-h`) | the window header, the panel's title row |
+| Control | 28px (`--chrome-tab-h`, `--sidebar-interactive-height`) | every clickable box in a row: tabs, the +, the header's controls, the ∴, sidebar rows |
+| Nested control | 20px | a control inside a control: a tab's ×, a row's inline + and ⋯ |
+| Rail tile | 36px compact, 52px labelled | the rail's rooms |
+
+Every box in the window header is a 28px control, so all of them sit 6px
+from the row's top and bottom.
+
+### Lines and glyphs
+
+**Every icon renders at 1.25px of ink, at every size.** `AtlasIcon` derives
+its stroke from its size (1.25 × 16 ÷ size), so a stroke is never typed by
+hand. Three glyph sizes: 14px beside 12px text (a tab's icon and ×, inbox
+rows), 16px in rows and the header, 20px on the rail.
+
+The row slot, the 16px before a row's name, always holds a line glyph in
+ink. A pin or a project tints its glyph with its own color. An emoji the
+user picked stays, because it is their content.
+
+The ∴ is the one filled shape in the chrome, and its lit dot is the one
+accent color there.
+
+### Grays
+
+The interaction ramp mixes the theme's ink (`--wash-ink`) into whatever is
+behind it, so it reads in all sixteen themes. Four steps, no others:
+
+| Step | Token | Mix | Means |
+|---|---|---|---|
+| Rest | — | 0% | nothing |
+| Hover | `--hover-bg` | 7% | the pointer is here |
+| Selected | `--active-bg` | 12% | where you are: the rail's room, a sidebar row, the active tab of an unfocused pane |
+| Press | `--press-bg` | 16% | held down, only for the duration of the press |
+
+**The active tab of the focused pane takes the page's color**
+(`--color-page`), not a gray. It reads as the top of the sheet below it, the
+way a browser joins a tab to its page. The strip sits on the desk ground, so
+the page color is always a step off what is around it.
+
+Text uses three inks: foreground, muted and subtle.
+
+### Type
+
+See [Type](#type).
+
+### Corners and elevation
+
+| Step | Radius | Used by |
+|---|---|---|
+| Box | 6px (`--card-radius`) | cards, controls, tabs, rows, popovers |
+| Nested | 4px | a box inside a box, such as a tab's × |
+| Pill | `--radius-full` | the composer |
+
+Floating layers (popovers, menus, modals) carry the one shadow. The chrome
+never does.
+
+### Motion
+
+Seven tokens in `themes.css`, always on `--ease-premium`:
+
+| Token | Value | For |
+|---|---|---|
+| `--motion-hover-in` | 80ms | a hover's fill and ink coming on |
+| `--motion-hover-out` | 200ms | going off: instant on, gentle off, so running the pointer along a row leaves a short trail rather than a strobe |
+| `--motion-press` | 60ms | sinking on press |
+| `--motion-release` | 180ms | springing back |
+| `--motion-state` | 150ms | a selection changing, a group folding |
+| `--motion-enter` | 180ms | a popover, a menu or a new tab appearing |
+| `--motion-layout` | 300ms | the sidebar opening, a pane resizing, the sidebar glyph's tint |
+
+Square controls sink to 94% while pressed. Rows and tabs take the press fill
+only, because a wide row that shrank would read as a wobble. The ∴ dot's
+single swell when it lights is the one motion with a meaning of its own, and
+it does not repeat.
+
+### Alignment
+
+**Each group in the window header starts at the column below it.** The ∴ is
+centred on the rail. The controls start on the sidebar's icon line, the
+back arrow's glyph level with the rows' icons and the panel title. Each
+pane's tabs start at that pane's edge; with the sidebar closed, the left
+pane's tabs start just after the controls, which keep their place.
+
+---
+
 ## Tokens
 
 Defined in `apps/web/src/themes.css`. Sixteen themes; every value below is set
-per theme where it varies.
+per theme where it varies. The scale above says which step each one is.
 
 | Token | Value | Notes |
 |---|---|---|
-| `--chrome-row-h` | 40px | Sidebar masthead AND pane toolbar. One number. |
-| tab height | 28px | Centred pill inside the 40px strip. |
+| `--chrome-row-h` | 40px | The window header AND the panel's title row. One number. |
+| `--chrome-tab-h` | 28px | A tab, and every other control in a row. |
 | `--pane-inset` | 12px | The pane card's margin. The sidebar matches it. |
-| `--sidebar-interactive-height` | 32px | Destinations. |
-| `--sidebar-child-height` | 24px | Expanded children. |
-| `--sidebar-padding-left-base` | 12px | Row inset. `.workspace-nav` adds 8px. |
+| `--sidebar-interactive-height` | 28px | Sidebar rows. |
+| `--sidebar-padding-left-base` | 12px | Row inset. The panel body adds 4px. |
 | `--sidebar-icon-opacity` | 0.5 | 0.4 for children, 1.0 on hover/active. |
-| `--hover-bg` / `--active-bg` | fg mix 7% / 12% | The interaction ramp. |
+| `--hover-bg` / `--active-bg` / `--press-bg` | ink mix 7% / 12% / 16% | The interaction ramp. |
 
 **Never use a surface token for an interaction state.** `--surface-elevated` is
 #F5F5F5 against a #FFFFFF parent — a 4% shift that is too small to see.
@@ -143,21 +241,27 @@ This bug shipped twice: dead hovers across 39 rules, and an active tab rendered
 
 ## Type
 
-| | face | size | weight |
+| Role | Face | Size | Weight |
 |---|---|---|---|
-| Mark (`∴ virtues`) | EB Garamond | 13px (nav size) | regular, lowercase |
-| Destinations | Avenir | 13px | 500 |
-| Children | Avenir | 12px | 400, muted |
+| Rail label | Avenir | 11px | 500 |
+| Tab, group heading, meta | Avenir | 12px | 400 (headings muted) |
+| Row (every panel) | Avenir | 13px | 400 |
+| Your titled things (Pinned, Projects) | EB Garamond | 14px | 400 |
+| Panel title | EB Garamond | 16px | 400 |
 | Body / prose | EB Garamond | — | the page, not the chrome |
 
-**The serif appears in the chrome exactly once**, in the mark. Serif navigation
-was considered and rejected; the serif is used in one place instead of across
-eight rows.
+**Weight never signals state.** A selected row or the active tab changes
+fill and ink, never weight: a bolder label is a wider one, and everything
+beside it moves.
 
-Lowercase `virtues`, not `Virtues` — a capital V adds too much weight to
-something meant to sit quietly. And at nav size, not larger: a wordmark bigger
-than everything around it draws attention, and its only job is to identify the
-app. The serif and the ∴ identify it; a larger size would only make it louder.
+**In the chrome the serif marks ownership**: the panel's title and the names
+of things you made (a pin, a project). Places and verbs (New chat, Pages,
+Tasks) and a chat's title, which the model wrote, stay sans. The serif's
+smaller x-height is why its rows are a step larger (14px against 13px), on
+the scale rather than at a half pixel.
+
+The ∴ is drawn, not typed, and it stands alone in the window header without
+a wordmark.
 
 **Labels are primary; icons support them.** Eight identical 16px icons at full
 contrast in a column make a sidebar look like every other sidebar; the labels
@@ -167,8 +271,9 @@ should do the work, as they do in a table of contents.
 
 ## Interaction
 
-- **Tabs are pills.** Centred in the strip, rounded on all four corners, filled
-  from the interaction ramp when active. Two alternatives were built and
+- **Tabs are pills.** Centred in the strip, rounded on all four corners. The
+  active tab of the focused pane takes the page's color; the active tab of
+  the other pane takes the ramp's selected step. Two alternatives were built and
   rejected: the full-height container and the bottom-anchored browser tab both
   require a recessed strip, and a recessed strip is not worth what it costs the
   rest of the window.

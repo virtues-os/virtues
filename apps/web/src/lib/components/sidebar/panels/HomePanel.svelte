@@ -217,6 +217,14 @@
 		return tab?.route ?? null;
 	});
 
+	/** The drawn glyph for what a pin points at. */
+	function pinKind(url: string): string {
+		if (url.startsWith('/project')) return 'projects';
+		if (url.startsWith('/applet')) return 'applets';
+		const icon = memberIcon(url);
+		return icon.startsWith('atlas:') ? icon.slice('atlas:'.length) : 'pages';
+	}
+
 	function titleOf(s: ChatSession): string {
 		return s.title?.trim() || untitled('chat');
 	}
@@ -926,8 +934,9 @@
 					}}
 					oncontextmenu={(e) => showMenu(e, pinMenu(pin, { x: e.clientX, y: e.clientY }))}
 				>
-					<!-- The glyph if the user picked one, the cloth dot if not: most
-					     pins have no natural icon, which is what the dot is for. -->
+					<!-- The glyph if the user picked one, else the drawn glyph for
+					     what the pin is (a page, a chat, a project), in the pin's
+					     cloth: the row slot always holds a line glyph in ink. -->
 					<span class="row-glyph" aria-hidden="true">
 						{#if pinChat && chatActivity.running(pinChat)}
 							<Icon icon="ri:loader-4-line" width="14" class="spin" />
@@ -936,7 +945,9 @@
 						{:else if look.icon}
 							<Icon icon={look.icon} width="14" style="color: {clothFor({ url: pin.url, color: look.color })}" />
 						{:else}
-							<i class="row-dot" style="background: {clothFor({ url: pin.url, color: look.color })}"></i>
+							<span class="row-kind" style="color: {clothFor({ url: pin.url, color: look.color })}">
+								<AtlasIcon name={pinKind(pin.url)} size={16} bare />
+							</span>
 						{/if}
 					</span>
 					<span class="panel-row-text">{look.title}</span>
@@ -1174,7 +1185,7 @@
 		font-size: 12px;
 		color: var(--color-foreground-subtle);
 		border-radius: var(--sidebar-interactive-radius);
-		transition: color var(--sidebar-transition-duration) ease;
+		transition: color var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.group-label:hover {
@@ -1313,18 +1324,19 @@
 
 	.panel-row:hover,
 	.panel-row.carded {
-		background: var(--sidebar-hover-bg);
+		background: var(--hover-bg);
+		transition-duration: var(--motion-hover-in);
 	}
 
 	.panel-row.active {
-		background: var(--sidebar-active-bg);
+		background: var(--active-bg);
 	}
 
 	/* A project row with something held over it: the row says it will take
 	   it, in the same ring the focus state draws, so a drop is never a
 	   guess about which row is under the pointer. */
 	.panel-row.drop-target {
-		background: var(--sidebar-active-bg);
+		background: var(--active-bg);
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
 	}
@@ -1349,15 +1361,15 @@
 	   would leave the letters off-center against it. */
 	.spine {
 		font-family: var(--font-serif-ui);
-		font-size: 13.5px;
+		font-size: 14px;
 		font-weight: 400;
 		letter-spacing: 0.02em;
 		-webkit-text-stroke: 0.2px currentColor;
 	}
 
 	.spine .panel-row-text {
-		/* An integer box: 13.5 × 1.5 = 20.25px, which centers on a half pixel
-		   and rounds differently by DPR and scroll position. */
+		/* An integer box: 14 × 1.5 = 21px centers on a half pixel against the
+		   28px row; 20px does not. */
 		line-height: 20px;
 	}
 
@@ -1371,21 +1383,14 @@
 	}
 
 	.row-emoji {
-		font-size: 12px;
+		font-size: 14px;
 		line-height: 1;
 	}
 
-	.row-dot {
-		width: 6.5px;
-		height: 6.5px;
-		border-radius: 999px;
-		display: block;
-		/* A hairline, not a shadow, and in the panel's own ink rather than a
-		   black the theme never declared: on a dark theme the old rgba ring
-		   was invisible against the ground it was meant to separate from. */
-		border: 1px solid color-mix(in srgb, var(--color-foreground) 12%, transparent);
-		box-sizing: border-box;
+	.row-kind {
+		display: flex;
 	}
+
 
 	.row-unread {
 		width: 7px;
@@ -1522,7 +1527,7 @@
 	}
 
 	.card-row:hover {
-		background: var(--sidebar-hover-bg);
+		background: var(--hover-bg);
 	}
 
 	.card-row:focus-visible {

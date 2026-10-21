@@ -212,10 +212,9 @@
 		name: string;
 		size?: number;
 		/**
-		 * Stroke weight. The set is drawn at 1.1 for the 16px sidebar rows;
-		 * at rail scale, icon-only, a 1.1 line washes out, so the rail asks
-		 * for ~1.5. Kept a prop rather than baked so the two registers share
-		 * one glyph table.
+		 * Stroke weight, in the 16-unit box's units. Leave it unset: it is
+		 * derived from `size` so every glyph renders at the scale's one line,
+		 * 1.25px of ink, at 14, 16 and 20 alike (design.md, "The scale").
 		 */
 		stroke?: number;
 		/**
@@ -226,7 +225,11 @@
 		bare?: boolean;
 	}
 
-	let { name, size = 16, bare = false, stroke = 1.1 }: Props = $props();
+	let { name, size = 16, bare = false, stroke }: Props = $props();
+
+	/** 1.25px of ink at any size: the box is 16 units wide. */
+	const LINE_PX = 1.25;
+	const strokeWidth = $derived(stroke ?? (LINE_PX * 16) / size);
 
 
 	// Unknown names fall back to `pages` rather than drawing nothing, which is
@@ -249,7 +252,7 @@
 	viewBox="0 0 16 16"
 	fill="none"
 	stroke="currentColor"
-	stroke-width={stroke}
+	stroke-width={strokeWidth}
 	stroke-linecap="round"
 	stroke-linejoin="round"
 	aria-hidden="true"

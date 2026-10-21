@@ -128,7 +128,7 @@
 	}
 
 	.panel-stub:hover {
-		background: var(--sidebar-hover-bg);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 </style>

@@ -167,16 +167,16 @@
 
 	.mode-row :global(svg) {
 		opacity: var(--sidebar-icon-opacity);
-		transition: opacity var(--sidebar-transition-duration) ease;
+		transition: opacity var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.mode-row {
-		font-weight: 500;
+		font-weight: 400;
 	}
 
 	/* The same count the Home panel's Applets door carries. */
 	.mode-row:hover {
-		background: var(--sidebar-hover-bg);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 
@@ -186,7 +186,7 @@
 	}
 
 	.mode-row.active {
-		background: var(--sidebar-active-bg);
+		background: var(--active-bg);
 		color: var(--color-foreground);
 	}
 

@@ -534,7 +534,7 @@
 						onclick={(e) => handleTabClose(e, tab.id)}
 						aria-label="Close tab"
 					>
-						<AtlasIcon name="close" size={14} stroke={1.25} bare />
+						<AtlasIcon name="close" size={14} bare />
 					</button>
 				{/if}
 			</div>
@@ -547,7 +547,7 @@
 		aria-label="New chat"
 		title="New chat"
 	>
-		<AtlasIcon name="plus" size={16} stroke={1.25} bare />
+		<AtlasIcon name="plus" size={16} bare />
 	</button>
 
 	<!-- The view's own actions, published into the slot rather than rendered
@@ -645,19 +645,19 @@
 		max-width: 160px;
 		min-width: 80px;
 		flex-shrink: 0;
-		/* The header's motion (WindowHeader's .lead-btn): hover on in 80ms,
-		   off over 200ms. A new tab grows into its place. */
+		/* The scale's motion (design.md, "The scale"): hover in fast and out
+		   slow. A new tab grows into its place. */
 		transition:
-			background-color 200ms var(--ease-premium),
-			color 200ms var(--ease-premium),
-			opacity 200ms var(--ease-premium);
-		animation: tab-in 220ms var(--ease-premium);
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
+			opacity var(--motion-hover-out) var(--ease-premium);
+		animation: tab-in var(--motion-enter) var(--ease-premium);
 	}
 
 	.tab:hover {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
-		transition-duration: 80ms;
+		transition-duration: var(--motion-hover-in);
 	}
 
 	@keyframes tab-in {
@@ -667,20 +667,22 @@
 		}
 	}
 
-	/* Fill from the interaction ramp, not a surface token. A surface token is
-	   what made the active tab #FFFFFF on #FFFFFF; the ramp is defined against
-	   the text color, so it is legible in all sixteen themes. Fill and ink
-	   only, never weight: a bolder label is a wider one, and every tab to its
-	   right moved when you switched. */
+	/* The active tab in the focused pane takes the page's own color, so it
+	   reads as the top of the sheet below it, the way a browser joins a tab
+	   to its page. The strip sits on the desk ground, so the page color is
+	   always a step off what is around it, in every theme. Fill and ink
+	   only, never weight: a bolder label is a wider one, and every tab to
+	   its right moved when you switched. */
 	.tab.active {
-		background: var(--tab-active-bg-focused);
+		background: var(--color-page);
 		color: var(--color-foreground);
 	}
 
 	/* In split view two tabs are "active" at once and only one takes your
-	   typing. The unfocused pane's sits at the lighter step. */
+	   typing. The unfocused pane's is selected but not where you are: the
+	   ramp's selected step. */
 	.tab.active:not(.active-in-active-pane) {
-		background: var(--tab-active-bg);
+		background: var(--active-bg);
 		color: var(--color-foreground-muted);
 	}
 
@@ -711,7 +713,7 @@
 
 	:global(.tab-icon) {
 		flex-shrink: 0;
-		font-size: 13px;
+		font-size: 14px;
 		opacity: 0.7;
 	}
 
@@ -744,7 +746,7 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		transition: transform 140ms cubic-bezier(0.2, 0, 0, 1);
+		transition: transform var(--motion-state) var(--ease-premium);
 	}
 
 	/* Same face, size AND weight as the label it replaces. It was monospace,
@@ -806,7 +808,7 @@
 	}
 
 	.tab-emoji {
-		font-size: 12px;
+		font-size: 14px;
 		line-height: 14px;
 		width: 14px;
 		text-align: center;
@@ -841,7 +843,7 @@
 		font-size: 15px;
 		cursor: pointer;
 		flex-shrink: 0;
-		transition: background-color 150ms ease, color 150ms ease;
+		transition: background-color var(--motion-hover-out) var(--ease-premium), color var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.pane-action:hover:not(:disabled) {
@@ -906,8 +908,8 @@
 		cursor: pointer;
 		opacity: 0;
 		transition:
-			opacity 200ms var(--ease-premium),
-			background-color 200ms var(--ease-premium);
+			opacity var(--motion-hover-out) var(--ease-premium),
+			background-color var(--motion-hover-out) var(--ease-premium);
 		flex-shrink: 0;
 	}
 
@@ -952,9 +954,9 @@
 		cursor: pointer;
 		flex-shrink: 0;
 		transition:
-			background-color 200ms var(--ease-premium),
-			color 200ms var(--ease-premium),
-			transform 180ms var(--ease-premium);
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-premium);
 	}
 
 	/* Hover used to be `--color-surface-elevated` over a `--color-background`
@@ -964,13 +966,13 @@
 	.new-tab-btn:hover {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
-		transition-duration: 80ms, 80ms, 180ms;
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
 	}
 
 	.new-tab-btn:active {
 		background: var(--press-bg);
 		transform: scale(0.94);
-		transition-duration: 60ms;
+		transition-duration: var(--motion-press);
 	}
 
 	.new-tab-btn:focus-visible {
