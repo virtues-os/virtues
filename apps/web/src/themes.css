@@ -315,7 +315,7 @@
 	--sidebar-interactive-radius: 6px;
 	--sidebar-interactive-gap: 8px;
 	--sidebar-interactive-font-size: 13px;
-	--sidebar-interactive-icon-size: 20px; /* SHELL_GLYPH_PX in lib/shellIcons.ts */
+	--sidebar-interactive-icon-size: 16px; /* SHELL_GLYPH_PX in AtlasIcon.svelte */
 	--sidebar-interactive-icon-size-small: 14px;
 	--sidebar-interactive-height: 28px;
 	/* Four registers instead of one. Every row used to be 28px / 13px / one

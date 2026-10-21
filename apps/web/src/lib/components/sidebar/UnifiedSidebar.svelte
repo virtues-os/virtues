@@ -12,7 +12,7 @@
 	import { search } from "$lib/stores/search.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import AtlasIcon from "./AtlasIcon.svelte";
-	import { SHELL_GLYPH_PX } from "$lib/shellIcons";
+	import { SHELL_GLYPH_PX } from "$lib/components/sidebar/AtlasIcon.svelte";
 	import { SETTINGS_MODE, rowForRoute } from "$lib/sidebar/modes";
 	import HomePanel from "./panels/HomePanel.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
@@ -339,7 +339,7 @@
 				class:active={inSettings}
 				onclick={() => windowShellStore.openTabFromRoute("/virtues/you", { label: "Settings", focusExisting: true })}
 			>
-				<AtlasIcon name="settings" size={SHELL_GLYPH_PX} filled={inSettings} />
+				<AtlasIcon name="settings" size={SHELL_GLYPH_PX} />
 				<span class="sidebar-label">Settings</span>
 			</button>
 		</div>

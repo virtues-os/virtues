@@ -13,7 +13,7 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { rowForRoute, type SidebarMode } from '$lib/sidebar/modes';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
-	import { SHELL_GLYPH_PX } from '$lib/shellIcons';
+	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 
 	interface Props {
 		mode: SidebarMode;
@@ -48,7 +48,7 @@
 				onclick={() => open(row.href, row.label)}
 			>
 				{#if row.glyph}
-					<AtlasIcon name={row.glyph} size={SHELL_GLYPH_PX} filled={activeHref === row.href} />
+					<AtlasIcon name={row.glyph} size={SHELL_GLYPH_PX} />
 				{/if}
 				<span>{row.label}</span>
 			</button>

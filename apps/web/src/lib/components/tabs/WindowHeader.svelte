@@ -19,7 +19,7 @@
 	import { sidebarState, SIDEBAR_INSET } from '$lib/stores/sidebarState.svelte';
 	import { shortcuts } from '$lib/shortcuts/registry.svelte';
 	import { isMacOS } from '$lib/utils/platform';
-	import { SHELL_GLYPH_PX } from '$lib/shellIcons';
+	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 
 	/** Air between the controls and the first tab when they meet. */
 	const LEAD_GAP_PX = 8;
@@ -99,12 +99,13 @@
 		<span class="lead-gap" data-tauri-drag-region aria-hidden="true"></span>
 		<button
 			class="lead-btn"
+			class:sidebar-shown={sidebarOpen}
 			onclick={() => sidebarState.toggle()}
 			aria-label={sidebarOpen ? 'Hide the sidebar' : 'Show the sidebar'}
 			aria-expanded={sidebarOpen}
 			title={`${sidebarOpen ? 'Hide' : 'Show'} the sidebar (${shortcuts.format('mod+b')})`}
 		>
-			<AtlasIcon name="sidebar" size={GLYPH_PX} bare filled={sidebarOpen} />
+			<AtlasIcon name="sidebar" size={GLYPH_PX} bare />
 		</button>
 		<button
 			class="lead-btn"
@@ -224,6 +225,17 @@
 		transition-duration: var(--motion-press);
 	}
 
+	/* The sidebar glyph's column fills while the sidebar is shown, on the
+	   sidebar's own layout timing, so the glyph and the panel arrive
+	   together. */
+	.lead-btn :global(.atlas-fill) {
+		transition: fill-opacity var(--motion-layout) var(--ease-premium);
+	}
+
+	.lead-btn.sidebar-shown :global(.atlas-fill) {
+		fill-opacity: 0.22;
+	}
+
 	/* Present but spent: the history arrows stay put at the ends of the
 	   stack so the cluster never shifts. */
 	.lead-btn:disabled {
@@ -240,6 +252,7 @@
 	@media (prefers-reduced-motion: reduce) {
 		.lead,
 		.lead-btn,
+		.lead-btn :global(.atlas-fill),
 		.strips,
 		.strip {
 			transition: none;

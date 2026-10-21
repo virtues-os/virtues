@@ -93,7 +93,7 @@
 	import SetupRing from '../SetupRing.svelte';
 	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 	import { setup } from '$lib/components/setup/setup.svelte';
-	import { SHELL_GLYPH_PX } from '$lib/shellIcons';
+	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { openWebLink } from '$lib/utils/webLinks';
 
 	const PROJECTS_SHOWN = 5;
@@ -855,7 +855,7 @@
 			{#if chatActivity.running(session.conversation_id)}
 				<Icon icon="ri:loader-4-line" width="14" class="spin" />
 			{:else}
-				<AtlasIcon name="chats" size={SHELL_GLYPH_PX} bare filled={activeRoute === url} />
+				<AtlasIcon name="chats" size={SHELL_GLYPH_PX} bare />
 			{/if}
 		</span>
 		<span class="panel-row-text">{titleOf(session)}</span>
@@ -916,7 +916,7 @@
 			{#if page.icon && isEmoji(page.icon)}
 				<span class="row-emoji">{page.icon}</span>
 			{:else}
-				<AtlasIcon name="pages" size={SHELL_GLYPH_PX} bare filled={activeRoute === url} />
+				<AtlasIcon name="pages" size={SHELL_GLYPH_PX} bare />
 			{/if}
 		</span>
 		<span class="panel-row-text">{pageTitle(page)}</span>
@@ -980,7 +980,7 @@
 							<Icon icon={look.icon} width="14" style="color: {clothFor({ url: pin.url, color: look.color })}" />
 						{:else}
 							<span class="row-kind" style="color: {clothFor({ url: pin.url, color: look.color })}">
-								<AtlasIcon name={pinKind(pin.url)} size={SHELL_GLYPH_PX} bare filled={activeRoute === pin.url} />
+								<AtlasIcon name={pinKind(pin.url)} size={SHELL_GLYPH_PX} bare />
 							</span>
 						{/if}
 					</span>
@@ -1411,8 +1411,8 @@
 	}
 
 	.row-glyph {
-		width: 20px;
-		height: 20px;
+		width: 16px;
+		height: 16px;
 		flex: none;
 		display: flex;
 		align-items: center;

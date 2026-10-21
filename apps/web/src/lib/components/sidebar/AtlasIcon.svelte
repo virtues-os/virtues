@@ -190,13 +190,15 @@
 		// clock has two hands and no hub.
 		history: '<circle cx="8" cy="8" r="5.3"/><path d="M8 4.8V8l2.5 1.7"/>',
 	};
+
+	/**
+	 * The size of a glyph on the sidebar's rows and in the window header:
+	 * the 16-unit box the glyphs are drawn on, at one pixel per unit.
+	 */
+	export const SHELL_GLYPH_PX = 16;
 </script>
 
 <script lang="ts">
-	// Iconify itself, not $lib/components/Icon: that wrapper loads icons.ts,
-	// which reads this file's glyph table, and the loop would leave it unset.
-	import Icon from "@iconify/svelte";
-	import { shellIcon } from "$lib/shellIcons";
 	/**
 	 * Atlas — the shell's own icon set.
 	 *
@@ -225,16 +227,10 @@
 		 * the sidebar — the phone drawer — and there the host styles them.
 		 */
 		bare?: boolean;
-		/** The selected state (a selected row, the active tab): the Filled drawing. */
-		filled?: boolean;
 	}
 
-	let { name, size = 16, bare = false, stroke, filled = false }: Props = $props();
+	let { name, size = 16, bare = false, stroke }: Props = $props();
 
-	// The shell draws Fluent (lib/shellIcons.ts): Regular at rest, Filled
-	// when selected, each size from its own drawing. The table above is the
-	// fallback for a name with no counterpart there.
-	const library = $derived(shellIcon(name, filled, size));
 
 	/** 1.25px of ink at any size: the box is 16 units wide. */
 	const LINE_PX = 1.25;
@@ -254,9 +250,6 @@
 	});
 </script>
 
-{#if library}
-	<Icon icon={library} width={size} height={size} class="atlas-icon {bare ? '' : 'sidebar-icon'}" aria-hidden="true" />
-{:else}
 <svg
 	class="atlas-icon {bare ? '' : 'sidebar-icon'}"
 	width={size}
@@ -272,11 +265,9 @@
 	<!-- eslint-disable-next-line svelte/no-at-html-tags — static glyph table above, no user input -->
 	{@html paths}
 </svg>
-{/if}
 
 <style>
-	.atlas-icon,
-	:global(svg.atlas-icon) {
+	.atlas-icon {
 		flex-shrink: 0;
 		display: block;
 	}

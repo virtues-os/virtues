@@ -138,23 +138,21 @@ are all 28px controls, 6px from the row's top and bottom.
 
 ### Lines and glyphs
 
-**The shell's icons are Fluent** (`lib/shellIcons.ts`), Microsoft's open set:
-Regular at rest, Filled for the selected state (a selected row, the active
-tab, the sidebar toggle while the sidebar is open). Fluent draws each icon
-as a Regular and Filled pair with round caps and generous corners, and draws
-it again for each size on that size's pixel grid, so each place uses its own
-drawing at its own size: 20px (`SHELL_GLYPH_PX`) in the sidebar's rows and
-the window header, about 1.25px of line; 16px drawings in tabs. `AtlasIcon`
-maps the shell's glyph names onto them and keeps its hand-drawn set only as
-the fallback for a name with no counterpart. Phosphor was tried before it
-and read sharp: hard corners, pointed heads, a wire-thin line.
+**The shell's icons are Atlas**, the hand-drawn set in `AtlasIcon`. Phosphor
+and Fluent were tried in its place and both read wrong beside Avenir and the
+serif, so the shell keeps its own drawings.
 
-The row slot, the 20px before a row's name, always holds a line glyph in
+**Every icon renders at 1.25px of ink, at every size.** `AtlasIcon` derives
+its stroke from its size (1.25 × 16 ÷ size), so a stroke is never typed by
+hand. Two glyph sizes: 14px beside 12px text (a tab's icon and ×, inbox
+rows), and 16px (`SHELL_GLYPH_PX`) in rows and the header.
+
+The row slot, the 16px before a row's name, always holds a line glyph in
 ink. A pin or a project tints its glyph with its own color. An emoji the
 user picked stays, because it is their content.
 
-The ∴ is drawn, the one shape in the chrome that is not from the icon set, and its
-lit dot is the one accent color there.
+The ∴ is the one filled shape in the chrome, and its lit dot is the one
+accent color there.
 
 ### Grays
 
