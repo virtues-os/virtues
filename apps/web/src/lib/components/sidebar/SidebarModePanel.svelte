@@ -103,7 +103,7 @@
 				     takes `glyph` rather than `icon`: eleven REMIX glyphs under
 				     an Atlas door was two icon families in one column. -->
 				{#if row.glyph}
-					<AtlasIcon name={row.glyph} size={15} />
+					<AtlasIcon name={row.glyph} size={16} filled={activeHref === row.href} />
 				{/if}
 				<span>{row.label}</span>
 			</button>

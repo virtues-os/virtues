@@ -850,7 +850,7 @@
 			{#if chatActivity.running(session.conversation_id)}
 				<Icon icon="ri:loader-4-line" width="14" class="spin" />
 			{:else}
-				<AtlasIcon name="chats" size={15} bare />
+				<AtlasIcon name="chats" size={16} bare filled={activeRoute === url} />
 			{/if}
 		</span>
 		<span class="panel-row-text">{titleOf(session)}</span>
@@ -911,7 +911,7 @@
 			{#if page.icon && isEmoji(page.icon)}
 				<span class="row-emoji">{page.icon}</span>
 			{:else}
-				<AtlasIcon name="pages" size={15} bare />
+				<AtlasIcon name="pages" size={16} bare filled={activeRoute === url} />
 			{/if}
 		</span>
 		<span class="panel-row-text">{pageTitle(page)}</span>
@@ -975,7 +975,7 @@
 							<Icon icon={look.icon} width="14" style="color: {clothFor({ url: pin.url, color: look.color })}" />
 						{:else}
 							<span class="row-kind" style="color: {clothFor({ url: pin.url, color: look.color })}">
-								<AtlasIcon name={pinKind(pin.url)} size={16} bare />
+								<AtlasIcon name={pinKind(pin.url)} size={16} bare filled={activeRoute === pin.url} />
 							</span>
 						{/if}
 					</span>

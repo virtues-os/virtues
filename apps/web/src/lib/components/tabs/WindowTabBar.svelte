@@ -4,6 +4,7 @@
 	import type { DndEvent } from "svelte-dnd-action";
 	import Icon from "$lib/components/Icon.svelte";
 	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
+	import { shellIconFor } from "$lib/phosphor";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import type { Tab } from "$lib/stores/window-shell.svelte";
 	import {
@@ -460,7 +461,7 @@
 			{@const tab = item.tab}
 			{@const tabOrdinal = ordinalOffset + tabIndex + 1}
 			{@const identity = tabLook(tab)}
-			{@const glyph = identity.icon || item.icon || getDefaultIcon(tab.type)}
+			{@const glyph = shellIconFor(identity.icon || item.icon || getDefaultIcon(tab.type), tab.id === activeTabId)}
 			<div
 				class="tab"
 				class:active={tab.id === activeTabId}
@@ -569,7 +570,7 @@
 					aria-label={action.label}
 					title={action.label}
 				>
-					<Icon icon={action.icon} />
+					<Icon icon={shellIconFor(action.icon)} />
 					{#if action.primary}<span class="pane-action-label">{action.label}</span>{/if}
 				</button>
 			{/each}

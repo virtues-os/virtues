@@ -345,7 +345,7 @@
 				class:active={inSettings}
 				onclick={() => (inSettings ? sidebarRoom.leave() : sidebarRoom.enter("settings"))}
 			>
-				<AtlasIcon name="settings" size={16} />
+				<AtlasIcon name="settings" size={16} filled={inSettings} />
 				<span class="sidebar-label">Settings</span>
 			</button>
 		</div>
