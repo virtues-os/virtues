@@ -2,8 +2,9 @@
 	ComposerTray.svelte
 
 	What sits on top of the chat composer: the drop hint while a file is
-	dragged over the chat, the staged attachments, the banner when the model
-	cannot read one of them, and the messages queued behind a running turn.
+	dragged over the chat, the staged attachments, a note while the server
+	can't be reached, the banner when the model cannot read one of them, and
+	the messages queued behind a running turn.
 
 	Renders no wrapper of its own on purpose. The drop hint is positioned
 	against the composer wrapper that contains this tray (ChatView's
@@ -13,6 +14,8 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { formatFileSize, type Attachment } from "$lib/components/chat/state/attachments.svelte";
 	import type { ModelChoiceController } from "$lib/components/chat/state/modelChoice.svelte";
+	import { reachability } from "$lib/stores/reachability.svelte";
+	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 
 	let {
 		dragActive,
@@ -79,6 +82,13 @@
 				</button>
 			</div>
 		{/each}
+	</div>
+{/if}
+<!-- Said here because sending is where being offline bites. The phone has
+     its own banner under the header (MobileShell), so this is desktop only. -->
+{#if reachability.unreachable && !mobileLayout.isMobile}
+	<div class="offline-note" role="status">
+		Can't reach your server, so messages won't send until it answers again.
 	</div>
 {/if}
 {#if capabilityIssue}
@@ -233,6 +243,16 @@
 
 	.attachment-remove:hover {
 		background: var(--color-border);
+	}
+
+	.offline-note {
+		margin-bottom: 0.5rem;
+		padding: 0.375rem 0.625rem;
+		border: 1px solid var(--color-border);
+		border-radius: 0.625rem;
+		background: var(--color-surface-elevated);
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
 	}
 
 	.capability-banner {

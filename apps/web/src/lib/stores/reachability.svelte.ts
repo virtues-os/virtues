@@ -32,9 +32,10 @@ if (typeof window !== 'undefined') {
 	window.addEventListener('offline', () => (online = false));
 
 	// Every layout since 2026-09-29: the Mac keeps its own copy of the app up
-	// when the server goes away, so the desktop needs the banner to heal
-	// itself too (ServerUnreachableBar). Only while there is something to heal
-	// and someone to see it, so a healthy app never polls.
+	// when the server goes away, so the desktop's signals need to heal
+	// themselves too (the sidebar footer chip and the composer note). Only
+	// while there is something to heal and someone to see it, so a healthy
+	// app never polls.
 	setInterval(() => {
 		if (document.hidden) return;
 		if (!online || chatSessions.error !== null) void chatSessions.load();

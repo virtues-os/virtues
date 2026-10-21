@@ -188,8 +188,8 @@
 		<p class="note">Loading…</p>
 	{:else if appletsStore.error && shown.length === 0}
 		<!-- What failed and one thing to do. If the server itself is down, the
-		     app's "Can't reach your server" bar says so and offers the fix;
-		     Try again re-runs the check that raises it. -->
+		     sidebar footer's "Can't reach your server" chip says so and offers
+		     the fix; Try again re-runs the check that raises it. -->
 		<div class="load-failed">
 			<p class="error-msg" title={appletsStore.error}>Your server couldn't send your applets.</p>
 			<Button variant="secondary" size="sm" onclick={tryAgain}>Try again</Button>

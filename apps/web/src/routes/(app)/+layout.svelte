@@ -6,8 +6,6 @@
 	import { SplitContainer } from "$lib/components/tabs";
 	import WindowHeader from "$lib/components/tabs/WindowHeader.svelte";
 	import MobileShell from "$lib/components/mobile/MobileShell.svelte";
-	import ServerUnreachableBar from "$lib/components/ServerUnreachableBar.svelte";
-	import { reachability } from "$lib/stores/reachability.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { ContextMenuProvider } from "$lib/components/contextMenu";
 	import { listenForWebLinks } from "$lib/utils/webLinks";
@@ -463,12 +461,6 @@
 				     is mounted. -->
 				<MobileShell />
 			{:else}
-				<!-- The phone draws this in MobileShell; the desktop here, now
-				     that the Mac keeps its own copy of the app up when the
-				     server goes away (agents/record/local-ui.md). -->
-				{#if reachability.unreachable}
-					<ServerUnreachableBar />
-				{/if}
 				<!-- SplitContainer handles both split and mono modes -->
 				<SplitContainer />
 			{/if}

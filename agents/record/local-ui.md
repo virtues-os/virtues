@@ -103,7 +103,7 @@ origins.
 | Box newer than the app's UI | The app pulls the box's bundle and applies it on the next hidden reload |
 | Bad OTA bundle | It never confirms; the watchdog reloads it after 20 s, the second unconfirmed load is its last, the next load rolls back |
 | Bundle needs a newer shell | Refused; the current UI stays until the app updates |
-| Sleep at home, wake at work | Banner after the grace period, "Fix it" opens `/reconnect` |
+| Sleep at home, wake at work | "Can't reach your server" in the sidebar footer after the grace period; clicking it opens `/reconnect` |
 | LAN browser, the panel | Unchanged: box-served |
 | `make mac-dev` | Loads Vite at its own origin; the resolver and OTA run only in a real build |
 
