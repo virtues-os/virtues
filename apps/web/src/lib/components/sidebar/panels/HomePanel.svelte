@@ -93,7 +93,7 @@
 	import SetupRing from '../SetupRing.svelte';
 	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
 	import { setup } from '$lib/components/setup/setup.svelte';
-	import { SHELL_GLYPH_PX } from '$lib/phosphor';
+	import { SHELL_GLYPH_PX } from '$lib/shellIcons';
 	import { openWebLink } from '$lib/utils/webLinks';
 
 	const PROJECTS_SHOWN = 5;
@@ -1411,8 +1411,8 @@
 	}
 
 	.row-glyph {
-		width: 18px;
-		height: 18px;
+		width: 20px;
+		height: 20px;
 		flex: none;
 		display: flex;
 		align-items: center;

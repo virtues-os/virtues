@@ -35,7 +35,7 @@
 	"dependencies": {
 		"@ai-sdk/svelte": "5.0.16",
 		"@floating-ui/dom": "^1.8.0",
-		"@iconify-icons/ph": "1.2.5",
+		"@iconify-icons/fluent": "1.2.39",
 		"@iconify-icons/ri": "^1.2.11",
 		"@iconify-icons/simple-icons": "^1.2.75",
 		"@iconify-json/ri": "^1.2.10",

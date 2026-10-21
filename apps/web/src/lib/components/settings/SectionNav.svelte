@@ -13,7 +13,7 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { rowForRoute, type SidebarMode } from '$lib/sidebar/modes';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
-	import { SHELL_GLYPH_PX } from '$lib/phosphor';
+	import { SHELL_GLYPH_PX } from '$lib/shellIcons';
 
 	interface Props {
 		mode: SidebarMode;

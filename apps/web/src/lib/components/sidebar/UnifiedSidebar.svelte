@@ -12,7 +12,7 @@
 	import { search } from "$lib/stores/search.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
 	import AtlasIcon from "./AtlasIcon.svelte";
-	import { SHELL_GLYPH_PX } from "$lib/phosphor";
+	import { SHELL_GLYPH_PX } from "$lib/shellIcons";
 	import { SETTINGS_MODE, rowForRoute } from "$lib/sidebar/modes";
 	import HomePanel from "./panels/HomePanel.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";

@@ -4,7 +4,7 @@
 	import type { DndEvent } from "svelte-dnd-action";
 	import Icon from "$lib/components/Icon.svelte";
 	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
-	import { shellIconFor } from "$lib/phosphor";
+	import { shellIconFor } from "$lib/shellIcons";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import type { Tab } from "$lib/stores/window-shell.svelte";
 	import {

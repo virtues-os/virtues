@@ -22,9 +22,9 @@ importers:
       '@floating-ui/dom':
         specifier: ^1.8.0
         version: 1.8.0
-      '@iconify-icons/ph':
-        specifier: 1.2.5
-        version: 1.2.5
+      '@iconify-icons/fluent':
+        specifier: 1.2.39
+        version: 1.2.39
       '@iconify-icons/ri':
         specifier: ^1.2.11
         version: 1.2.11
@@ -426,8 +426,8 @@ packages:
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
 
-  '@iconify-icons/ph@1.2.5':
-    resolution: {integrity: sha512-Ox2VkJDoFowrf0e74LlLUuLMiN73PsCN28MUx9wCQfyZAFrL8ntfBnMpzukfi/0vN9qpJKAiKYZ3dQ5JjBqt/A==}
+  '@iconify-icons/fluent@1.2.39':
+    resolution: {integrity: sha512-w9nP91eQ44z2kStihJZBmYvV9UpOhaMjPIDZ7l5EsTEfui2eyqOzk1K4Hn03SWfIU3Mfzof7oC7MyDzZfTtGfQ==}
 
   '@iconify-icons/ri@1.2.11':
     resolution: {integrity: sha512-fgwo9R5oItnQuslMdfLldrMp4LpdF83+SDzcMDV799yzCGyvuo4ldzOC36k4FC6XkCdxViiaF00toYHJDDPMTA==}
@@ -2497,7 +2497,7 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
-  '@iconify-icons/ph@1.2.5':
+  '@iconify-icons/fluent@1.2.39':
     dependencies:
       '@iconify/types': 2.0.0
 

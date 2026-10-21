@@ -196,7 +196,7 @@
 	// Iconify itself, not $lib/components/Icon: that wrapper loads icons.ts,
 	// which reads this file's glyph table, and the loop would leave it unset.
 	import Icon from "@iconify/svelte";
-	import { shellIcon } from "$lib/phosphor";
+	import { shellIcon } from "$lib/shellIcons";
 	/**
 	 * Atlas — the shell's own icon set.
 	 *
@@ -225,16 +225,16 @@
 		 * the sidebar — the phone drawer — and there the host styles them.
 		 */
 		bare?: boolean;
-		/** The selected state (a selected row, the active tab): Phosphor's Fill. */
+		/** The selected state (a selected row, the active tab): the Filled drawing. */
 		filled?: boolean;
 	}
 
 	let { name, size = 16, bare = false, stroke, filled = false }: Props = $props();
 
-	// The shell draws Phosphor (lib/phosphor.ts): Regular at rest, Fill when
-	// selected. The drawn table above is the fallback for a name Phosphor
-	// has no counterpart for.
-	const phosphor = $derived(shellIcon(name, filled));
+	// The shell draws Fluent (lib/shellIcons.ts): Regular at rest, Filled
+	// when selected, each size from its own drawing. The table above is the
+	// fallback for a name with no counterpart there.
+	const library = $derived(shellIcon(name, filled, size));
 
 	/** 1.25px of ink at any size: the box is 16 units wide. */
 	const LINE_PX = 1.25;
@@ -254,8 +254,8 @@
 	});
 </script>
 
-{#if phosphor}
-	<Icon icon={phosphor} width={size} height={size} class="atlas-icon {bare ? '' : 'sidebar-icon'}" aria-hidden="true" />
+{#if library}
+	<Icon icon={library} width={size} height={size} class="atlas-icon {bare ? '' : 'sidebar-icon'}" aria-hidden="true" />
 {:else}
 <svg
 	class="atlas-icon {bare ? '' : 'sidebar-icon'}"

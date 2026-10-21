@@ -19,7 +19,7 @@
 	import { sidebarState, SIDEBAR_INSET } from '$lib/stores/sidebarState.svelte';
 	import { shortcuts } from '$lib/shortcuts/registry.svelte';
 	import { isMacOS } from '$lib/utils/platform';
-	import { SHELL_GLYPH_PX } from '$lib/phosphor';
+	import { SHELL_GLYPH_PX } from '$lib/shellIcons';
 
 	/** Air between the controls and the first tab when they meet. */
 	const LEAD_GAP_PX = 8;

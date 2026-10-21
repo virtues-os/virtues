@@ -88,7 +88,7 @@
 	import { reclassifyPersonAsOrg, createPerson, deleteEntity } from '$lib/wiki/api';
 	import { WIKI_MODE } from '$lib/sidebar/modes';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
-	import { SHELL_GLYPH_PX } from '$lib/phosphor';
+	import { SHELL_GLYPH_PX } from '$lib/shellIcons';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 

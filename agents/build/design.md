@@ -138,20 +138,22 @@ are all 28px controls, 6px from the row's top and bottom.
 
 ### Lines and glyphs
 
-**The shell's icons are Phosphor** (`lib/phosphor.ts`): Regular at rest,
-Fill for the selected state (a selected row, the active tab, the sidebar
-toggle while the sidebar is open). `AtlasIcon` maps the shell's glyph names
-onto them and keeps its hand-drawn set only as the fallback for a name with
-no Phosphor counterpart. Two sizes: 18px (`SHELL_GLYPH_PX`) in the
-sidebar's rows and the window header, where Regular's line (1/16 of the
-icon) comes to about 1.1px, near the weight of the 13px labels beside it;
-14px beside 12px text (a tab's icon and ×).
+**The shell's icons are Fluent** (`lib/shellIcons.ts`), Microsoft's open set:
+Regular at rest, Filled for the selected state (a selected row, the active
+tab, the sidebar toggle while the sidebar is open). Fluent draws each icon
+as a Regular and Filled pair with round caps and generous corners, and draws
+it again for each size on that size's pixel grid, so each place uses its own
+drawing at its own size: 20px (`SHELL_GLYPH_PX`) in the sidebar's rows and
+the window header, about 1.25px of line; 16px drawings in tabs. `AtlasIcon`
+maps the shell's glyph names onto them and keeps its hand-drawn set only as
+the fallback for a name with no counterpart. Phosphor was tried before it
+and read sharp: hard corners, pointed heads, a wire-thin line.
 
-The row slot, the 18px before a row's name, always holds a line glyph in
+The row slot, the 20px before a row's name, always holds a line glyph in
 ink. A pin or a project tints its glyph with its own color. An emoji the
 user picked stays, because it is their content.
 
-The ∴ is drawn, the one shape in the chrome that is not Phosphor, and its
+The ∴ is drawn, the one shape in the chrome that is not from the icon set, and its
 lit dot is the one accent color there.
 
 ### Grays
