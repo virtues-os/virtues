@@ -654,11 +654,12 @@
 
 	/* Fill from the interaction ramp, not a surface token. A surface token is
 	   what made the active tab #FFFFFF on #FFFFFF; the ramp is defined against
-	   the text color, so it is legible in all sixteen themes. */
+	   the text color, so it is legible in all sixteen themes. Fill and ink
+	   only, never weight: a bolder label is a wider one, and every tab to its
+	   right moved when you switched. */
 	.tab.active {
 		background: var(--tab-active-bg-focused);
 		color: var(--color-foreground);
-		font-weight: 500;
 	}
 
 	/* In split view two tabs are "active" at once and only one takes your

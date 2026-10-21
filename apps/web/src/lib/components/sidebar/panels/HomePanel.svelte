@@ -30,9 +30,10 @@
 	 *             row cannot: counts, the memo, the verbs.
 	 *   Today / Recent
 	 *             the chats AND the pages, blended by when they last moved,
-	 *             newest first, capped. No "All chats" door under the list:
-	 *             the panel ends where the recents end, and the full lists
-	 *             are rooms of their own (Pages above, All chats via ⌘K).
+	 *             newest first, ten of them: a glance, not an archive. When
+	 *             there are more, "See all" ends the list and opens All
+	 *             chats, at the end where the eye lands once the rows run
+	 *             out rather than behind a ⋯.
 	 *             Two groups, not three: "Yesterday" was a calendar fact
 	 *             nobody navigated by, and it cost a heading and a fold for
 	 *             one day's worth of rows. Grouping is not reordering — a
@@ -92,7 +93,7 @@
 	import { openWebLink } from '$lib/utils/webLinks';
 
 	const PROJECTS_SHOWN = 5;
-	const RECENTS_CAP = 20;
+	const RECENTS_CAP = 10;
 
 	// ── what is where ──────────────────────────────────────────────────────
 
@@ -134,8 +135,14 @@
 			ts: stamp(page.updated_at),
 			page,
 		}));
-		return [...chats, ...pages].sort((a, b) => b.ts - a.ts).slice(0, RECENTS_CAP);
+		return [...chats, ...pages].sort((a, b) => b.ts - a.ts);
 	});
+	const recentsShown = $derived(recents.slice(0, RECENTS_CAP));
+	const recentsMore = $derived(recents.length > RECENTS_CAP);
+
+	function openAllChats() {
+		windowShellStore.openTabFromRoute('/chat-history', { label: 'All chats', focusExisting: true });
+	}
 
 	/** Midnight-relative, so "today" means the calendar day, not 24 hours. */
 	function isToday(ts: number): boolean {
@@ -148,7 +155,7 @@
 	const recentGroups = $derived.by(() => {
 		const today: RecentRow[] = [];
 		const recent: RecentRow[] = [];
-		for (const r of recents) (isToday(r.ts) ? today : recent).push(r);
+		for (const r of recentsShown) (isToday(r.ts) ? today : recent).push(r);
 		return [
 			{ id: 'today', label: 'Today', items: today },
 			{ id: 'recent', label: 'Recent', items: recent },
@@ -1076,6 +1083,10 @@
 		</div>
 	</div>
 {/each}
+
+{#if recentsMore}
+	<button type="button" class="panel-row panel-more" onclick={openAllChats}>See all</button>
+{/if}
 
 <div bind:this={spacerEl} class="fold-spacer" style="height: {foldSpacer}px" aria-hidden="true"></div>
 

@@ -3,15 +3,15 @@
 	 * The window header: one row across the whole window, on the desk ground
 	 * above the cards.
 	 *
-	 * Over the rail and the sidebar it holds the ∴ mark (the inbox) and the window's own
-	 * controls, in a place that never moves: back, forward, the sidebar
-	 * toggle and new chat. Back, forward and new chat act on the focused
-	 * pane. Right-clicking the sidebar toggle shows or hides the rail's labels. Over
-	 * the cards it holds each pane's tab strip, lined up with the pane below
-	 * it, so a tab always sits above its own content.
+	 * Over the rail it holds the ∴ mark (the inbox). Over the sidebar it holds
+	 * the window's own controls, in a place that never moves: back, forward,
+	 * the sidebar toggle and new chat. Back, forward and new chat act on the
+	 * focused pane. Right-clicking the sidebar toggle shows or hides the
+	 * rail's labels. Over the cards it holds each pane's tab strip, lined up
+	 * with the pane below it, so a tab always sits above its own content.
 	 *
-	 * With the sidebar closed the controls are wider than the rail, so the
-	 * left pane's tabs start just after them instead of at the card's edge.
+	 * With the sidebar closed the controls stay where they were, past the
+	 * card's edge, so the left pane's tabs start just after them.
 	 */
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import InboxMark from '$lib/components/inbox/InboxMark.svelte';
@@ -41,8 +41,21 @@
 	// the rest.
 	const markInset = $derived(12 + (sidebarState.railWidth - 12 - MARK_PX) / 2);
 
-	let leadWidth = $state(0);
-	const overlap = $derived(Math.max(0, leadWidth + LEAD_GAP_PX - cardLeft));
+	/**
+	 * Where the sidebar's icons start: past the rail, its 12px of desk, the
+	 * panel card's 1px border, the panel body's 4px and a row's 12px (the
+	 * Home title starts there too). The back arrow's glyph starts on that
+	 * line, so the history controls read as the sidebar's own top row. They
+	 * keep that place with the sidebar closed: controls that slid toward the
+	 * mark would move under the pointer that just closed it.
+	 */
+	const PANEL_ICON_INSET_PX = 1 + 4 + 12;
+	/** A 32px control centres its 16px glyph, 8px in from its edge. */
+	const GLYPH_INSET_PX = (32 - GLYPH_PX) / 2;
+	const controlsLeft = $derived(sidebarState.railWidth + 12 + PANEL_ICON_INSET_PX - GLYPH_INSET_PX);
+
+	let controlsWidth = $state(0);
+	const overlap = $derived(Math.max(0, controlsLeft + controlsWidth + LEAD_GAP_PX - cardLeft));
 
 	const canGoBack = $derived(windowShellStore.canGoBack());
 	const canGoForward = $derived(windowShellStore.canGoForward());
@@ -62,11 +75,14 @@
 	class:resizing={sidebarState.resizing}
 	style:--card-left="{cardLeft}px"
 >
-	<div class="lead" style:padding-left="{markInset}px" bind:clientWidth={leadWidth}>
+	<!-- The mark sits over the rail's column, the controls over the sidebar's:
+	     each group heads the column it belongs to. Within the controls, air
+	     alone sets history (back, forward) apart from the window (sidebar,
+	     new chat). -->
+	<div class="lead mark-slot" style:left="{markInset}px">
 		<InboxMark />
-		<!-- Three groups, set apart by air alone: who (the mark), where you
-		     have been (back, forward), and the window (sidebar, new chat). -->
-		<span class="lead-gap" aria-hidden="true"></span>
+	</div>
+	<div class="lead" style:left="{controlsLeft}px" bind:clientWidth={controlsWidth}>
 		<button
 			class="lead-btn"
 			onclick={() => windowShellStore.goBack()}
@@ -138,11 +154,10 @@
 		position: absolute;
 		top: 0;
 		bottom: 0;
-		left: 0;
 		z-index: 1;
 		display: flex;
 		align-items: center;
-		transition: padding-left 300ms var(--ease-premium);
+		transition: left 300ms var(--ease-premium);
 	}
 
 	/* The strips span exactly the cards below them: from the card's left edge
