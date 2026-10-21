@@ -5,7 +5,10 @@
 
 const STORAGE_KEY = "virtues-sidebar-collapsed";
 const WIDTH_KEY = "virtues-sidebar-width";
-const COMPACT_KEY = "virtues-rail-compact";
+// "true" when the owner has chosen to show the rail's labels. A new key
+// rather than the old "virtues-rail-compact", whose stored "false" from
+// before labels were hidden by default would otherwise keep them on.
+const LABELS_KEY = "virtues-rail-labels";
 
 /**
  * The PANEL's width — the rail is fixed, so this is the only part that resizes.
@@ -52,7 +55,7 @@ if (typeof localStorage !== "undefined") {
 	if (stored !== null) {
 		collapsed = stored === "true";
 	}
-	railCompact = localStorage.getItem(COMPACT_KEY) !== "false";
+	railCompact = localStorage.getItem(LABELS_KEY) !== "true";
 	const storedWidth = localStorage.getItem(WIDTH_KEY);
 	if (storedWidth !== null) {
 		// Clamp on read as well as on write: the bounds can move between
@@ -116,7 +119,7 @@ export const sidebarState = {
 	toggleRailCompact() {
 		railCompact = !railCompact;
 		if (typeof localStorage !== "undefined") {
-			localStorage.setItem(COMPACT_KEY, String(railCompact));
+			localStorage.setItem(LABELS_KEY, String(!railCompact));
 		}
 	},
 };
