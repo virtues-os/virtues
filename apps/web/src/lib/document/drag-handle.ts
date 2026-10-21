@@ -154,10 +154,25 @@ class Grip {
 		this.frame = requestAnimationFrame(() => this.place());
 	}
 
+	/**
+	 * Whether the pointer is on its way from the block the grip is shown for
+	 * to the grip: level with the block and left of it. Read from the page
+	 * there, the row is a list item's list, and the grip would jump to it.
+	 */
+	private heading(pointer: { x: number; y: number }): boolean {
+		const { unit, view } = this;
+		if (!unit || view.state.doc.nodeAt(unit.from) !== unit.node) return false;
+		const block = view.nodeDOM(unit.from);
+		if (!(block instanceof HTMLElement)) return false;
+		const box = block.getBoundingClientRect();
+		return pointer.y >= box.top && pointer.y <= box.bottom && pointer.x < box.left;
+	}
+
 	/** Put the grip beside the block under the pointer, or hide it. */
 	private place(): void {
 		const { view, pointer } = this;
 		if (!pointer || !view.editable || view.isDestroyed || !this.near(pointer)) return this.hide();
+		if (this.heading(pointer)) return;
 		const content = view.dom.getBoundingClientRect();
 		// Over the gutter, read the row as if the pointer were at the text's edge.
 		const x = Math.min(Math.max(pointer.x, content.left + 1), content.right - 1);
