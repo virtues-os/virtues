@@ -410,36 +410,14 @@ for (const [name, body] of Object.entries(ATLAS_GLYPHS)) {
 	});
 }
 
-// Shapes — solid marks a user can give a page, chat, pin or project in place
-// of an icon. Filled because a filled shape shows its color across its whole
-// area, where a 1.25px line at 14px shows only a trace of it. Each sits inside
-// the same ~11px optical box as the Atlas line glyphs beside it, and the
-// stroke in the fill's own color rounds the corners to match Atlas's round
-// joins. Stored as `shape:<name>` in the ordinary icon field.
-export const SHAPES: { name: string; label: string; body: string }[] = [
-	{ name: 'circle', label: 'Circle', body: '<circle cx="8" cy="8" r="5.25"/>' },
-	{ name: 'square', label: 'Square', body: '<rect x="3.25" y="3.25" width="9.5" height="9.5" rx="1.75"/>' },
-	{ name: 'triangle', label: 'Triangle', body: '<path d="M8 3.25L13.25 12.5H2.75Z"/>' },
-	{ name: 'diamond', label: 'Diamond', body: '<path d="M8 2.5L13.5 8L8 13.5L2.5 8Z"/>' },
-	{
-		name: 'hexagon',
-		label: 'Hexagon',
-		body: '<path d="M12.85 10.8L8 13.6L3.15 10.8V5.2L8 2.4L12.85 5.2Z"/>',
-	},
-	{
-		name: 'star',
-		label: 'Star',
-		body: '<path d="M8 2.5L9.53 6.4L13.71 6.65L10.47 9.3L11.53 13.35L8 11.1L4.47 13.35L5.53 9.3L2.29 6.65L6.47 6.4Z"/>',
-	},
-];
-
-for (const { name, body } of SHAPES) {
-	addIcon(`shape:${name}`, {
-		body: `<g fill="currentColor" stroke="currentColor" stroke-width="1" stroke-linejoin="round">${body}</g>`,
-		width: 16,
-		height: 16,
-	});
-}
+// The dot: what a pin, page or chat wears when no icon has been chosen, in
+// its color. Filled because a filled mark shows its color across its whole
+// area, where a 1.25px line at 14px shows only a trace of it.
+addIcon('shape:circle', {
+	body: '<circle cx="8" cy="8" r="5.75" fill="currentColor"/>',
+	width: 16,
+	height: 16,
+});
 
 // Export flag to indicate icons are registered
 export const iconsRegistered = true;

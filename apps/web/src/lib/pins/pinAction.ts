@@ -28,6 +28,7 @@ import { pinsStore } from '$lib/stores/pins.svelte';
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { iconPickerStore } from '$lib/stores/iconPicker.svelte';
 import { ownedRef, pinIdentity, setRefLook } from '$lib/refs/identity.svelte';
+import { clothFor } from '$lib/sidebar/pin-colors';
 
 export interface PinTarget {
 	/** Route or absolute URL. External `http(s)` urls are allowed and open out. */
@@ -99,6 +100,8 @@ export function pinIconMenuItem(
 						void setRefLook(url, { color });
 					},
 					anchor,
+					label: look.title,
+					autoColor: clothFor({ url }),
 				},
 			);
 		},

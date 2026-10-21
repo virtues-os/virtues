@@ -37,6 +37,7 @@
 		"@floating-ui/dom": "^1.8.0",
 		"@iconify-icons/ri": "^1.2.11",
 		"@iconify-icons/simple-icons": "^1.2.75",
+		"@iconify-json/lucide": "^1.2.147",
 		"@iconify-json/ri": "^1.2.10",
 		"@iconify/svelte": "^5.2.2",
 		"@maplibre/maplibre-gl-leaflet": "^0.1.4",

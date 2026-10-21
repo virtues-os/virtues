@@ -511,6 +511,9 @@
 				onSelect={(icon) => iconPickerStore.select(icon)}
 				close={() => iconPickerStore.hide()}
 				color={iconPickerStore.currentColor}
+				label={iconPickerStore.label}
+				fallback={iconPickerStore.fallback}
+				autoColor={iconPickerStore.autoColor}
 				onColorSelect={iconPickerStore.colorEnabled
 					? (c) => iconPickerStore.selectColor(c)
 					: undefined}

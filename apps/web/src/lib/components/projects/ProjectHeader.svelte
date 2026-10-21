@@ -18,6 +18,7 @@
 	import { Popover } from '$lib/floating';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { projectColor } from '$lib/sidebar/pin-colors';
+	import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 	import {
 		archiveProject,
 		deleteProject,
@@ -105,6 +106,9 @@
 					{close}
 					color={project.accent_color ?? null}
 					onColorSelect={setAccent}
+					label={project.name}
+					fallback={PROJECT_ICON}
+					autoColor={projectColor({ id: project.id })}
 				/>
 			{/snippet}
 		</Popover>

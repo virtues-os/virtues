@@ -12,6 +12,8 @@
 	import { Popover } from "$lib/floating";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import type { PageFormat } from "$lib/api/client";
+	import { identityOf } from "$lib/refs/identity.svelte";
+	import { clothFor } from "$lib/sidebar/pin-colors";
 
 	interface Props {
 		icon: string | null;
@@ -108,6 +110,8 @@
 					{close}
 					color={iconColor}
 					onColorSelect={onIconColorSelect}
+					label={identityOf(`/page/${pageId}`).title}
+					autoColor={clothFor({ url: `/page/${pageId}` })}
 				/>
 			{/snippet}
 		</Popover>

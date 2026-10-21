@@ -16,7 +16,7 @@
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { projectMenuItems, targetForTab } from "$lib/utils/projectActions";
 	import { identityOf, ownedRef, renameRef, setRefLook } from "$lib/refs/identity.svelte";
-	import { accentCss } from "$lib/sidebar/pin-colors";
+	import { accentCss, clothFor } from "$lib/sidebar/pin-colors";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
@@ -253,6 +253,8 @@
 						{
 							anchor: { x: e.clientX, y: e.clientY, width: 0, height: 0 },
 							color: look.color,
+							label: look.title,
+							autoColor: clothFor({ url: tab.route }),
 							// Persisted on click, without closing — so you can
 							// try a color against the grid before choosing the
 							// glyph, which is the point of one panel.
