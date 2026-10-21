@@ -661,8 +661,7 @@
 	}
 
 	/* The shell's cards all share --card-radius. Their edge is the theme's
-	   --card-edge: transparent where the desk's tone already separates a
-	   card, a border where a theme's desk is too close to its page. */
+	   --card-edge, a faint hairline over the desk's step in tone. */
 	.pane-card { border-radius: var(--card-radius); }
 	main.card-edge { border-color: var(--card-edge); }
 
