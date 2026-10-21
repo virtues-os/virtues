@@ -675,10 +675,12 @@
 	/* The active tab is marked by fill and ink: the page's own color on the
 	   desk (the same step that separates the cards) and full ink. Never by
 	   weight: a bolder label is a wider one, and every tab to its right
-	   moved when you switched. */
+	   moved when you switched. It takes the card's edge too, drawn inset so
+	   the tab keeps its size. */
 	.tab.active {
 		background: var(--color-page);
 		color: var(--color-foreground);
+		box-shadow: inset 0 0 0 1px var(--card-edge);
 	}
 
 	/* In split view two tabs are "active" at once and only one takes your
