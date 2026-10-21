@@ -354,6 +354,13 @@
 		renameRef(tab.route, newLabel).catch((e) => console.error("[WindowTabBar] rename failed:", e));
 	}
 
+	// `autofocus` only applies on page load, so a field mounted later has to
+	// be focused by hand. Selecting the title lets you type over it.
+	function focusAndSelect(node: HTMLInputElement) {
+		node.focus();
+		node.select();
+	}
+
 	function handleRenameCancel() {
 		renamingTabId = null;
 		renameValue = "";
@@ -369,15 +376,12 @@
 		}
 	}
 
-	// On a preview tab a double-click keeps it, as in VS Code. On a kept tab
-	// it renames the thing, when the thing has a name of its own.
+	// A double-click renames the thing, when the thing has a name of its own.
+	// On a preview tab it also keeps the tab, as in VS Code.
 	function handleDoubleClick(e: MouseEvent, tabId: string) {
 		e.preventDefault();
 		const tab = tabs.find((t) => t.id === tabId);
-		if (tab?.preview) {
-			windowShellStore.keepTab(tabId);
-			return;
-		}
+		if (tab?.preview) windowShellStore.keepTab(tabId);
 		if (!tab || tab.pinned || !ownedRef(tab.route ?? "")) return;
 		renamingTabId = tabId;
 		renameValue = tabLook(tab).title;
@@ -504,7 +508,6 @@
 				{/if}
 				{#if !tab.pinned}
 					{#if tab.id === renamingTabId}
-						<!-- svelte-ignore a11y_autofocus -->
 						<input
 							type="text"
 							class="tab-rename-input"
@@ -512,7 +515,7 @@
 							onkeydown={handleRenameKeydown}
 							onblur={handleRenameSubmit}
 							onclick={(e) => e.stopPropagation()}
-							autofocus
+							use:focusAndSelect
 						/>
 					{:else}
 						<!-- On a ⌘ hold each tab's own label becomes its number:
