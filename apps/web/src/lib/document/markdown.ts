@@ -352,11 +352,8 @@ function leafMd(n: PmNode, inTable: boolean): string {
 		}
 		case 'table':
 			return tableMd(n);
-		case 'applet': {
-			const el = DOMSerializer.fromSchema(n.type.schema).serializeNode(n) as HTMLElement;
-			el.removeAttribute('data-id');
-			return el.outerHTML;
-		}
+		case 'applet':
+			return nodeHtml(n);
 		default:
 			return `<!-- ${n.type.name} -->`;
 	}
@@ -404,7 +401,49 @@ export function readsAsFigure(body: string): boolean {
 	});
 }
 
+/**
+ * A node as its HTML without block ids (render.rs `node_html`). HTML's parser
+ * drops a line feed straight after `<pre>`, so code that starts with one is
+ * written with one more, as the crate writes it.
+ */
+function nodeHtml(n: PmNode): string {
+	const el = DOMSerializer.fromSchema(n.type.schema).serializeNode(n) as HTMLElement;
+	const idAttr = contract.id.html;
+	el.removeAttribute(idAttr);
+	for (const child of el.querySelectorAll(`[${idAttr}]`)) child.removeAttribute(idAttr);
+	return el.outerHTML.replace(/(<pre\b(?:[^>"']|"[^"]*"|'[^']*')*>)\n/gi, '$1\n\n');
+}
+
+/**
+ * Whether a pipe table reads back as `n` (render.rs `pipes_hold`). GFM has
+ * no merged cells, no header cells outside its first row, and one line per
+ * cell, so a table holding any of those, or a cell holding more than one
+ * paragraph, is written as its HTML instead.
+ */
+function pipesHold(n: PmNode): boolean {
+	return children(n).every((row, i) => {
+		const cells = children(row);
+		const headers = cells.filter((c) => c.type.name === 'tableHeader').length;
+		const placed = i === 0 ? headers === 0 || headers === cells.length : headers === 0;
+		return (
+			placed &&
+			cells.every(
+				(c) =>
+					(c.attrs.colspan ?? 1) === 1 &&
+					(c.attrs.rowspan ?? 1) === 1 &&
+					c.childCount === 1 &&
+					c.firstChild!.type.name === 'paragraph',
+			)
+		);
+	});
+}
+
+/**
+ * GFM aligns a column, not a cell: a column takes the first alignment any
+ * of its cells carries. A table pipes cannot hold is its HTML (`pipesHold`).
+ */
 function tableMd(n: PmNode): string {
+	if (!pipesHold(n)) return nodeHtml(n);
 	const rows = children(n).map((row) =>
 		children(row).map((cell) =>
 			children(cell)

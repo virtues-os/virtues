@@ -113,7 +113,7 @@ import {
 } from './find';
 import { focusMode } from './focus';
 import { codeHighlight } from './code';
-import { isCodeEditorHtml, looksLikeMarkdown, MAX_DEPTH, MAX_NODES, nodeCount, nodeDepth, pasteHandling, pasteMarkdown, wordLists, type Convert } from './paste';
+import { isCodeEditorHtml, looksLikeMarkdown, MAX_DEPTH, onlyWrapsText, MAX_NODES, nodeCount, nodeDepth, pasteHandling, pasteMarkdown, wordLists, type Convert } from './paste';
 import { addFiles, driveFileId, imagesOnTheirWay, kindOfFile, MAX_UPLOAD_BYTES, mediaSrc, mediaUploads, nameForBlock, nameOfSrc, type Send } from './media';
 import { CHECK_AFTER_MS, resetUploads, retryUpload, TRY_AGAIN_EVERY_MS, uploadsAtStake, watchUpload, type LocalUpload } from './uploads';
 import { convertNow, type ConvertResult } from './converter';
@@ -2033,6 +2033,26 @@ describe('paste', () => {
 		expect(paste(code, clipboard({ 'text/plain': 'const a = 1;\nconst b = 2;', 'text/html': VSCODE(['const a = 1;', 'const b = 2;']) }))).toBe(true);
 		expect(code.getHTML()).toBe('<p>const a = 1;</p><p>const b = 2;</p>');
 		expect(convert).toHaveBeenCalledTimes(1);
+	});
+
+	it('reads markdown in text whose HTML only wraps it, and keeps HTML with formatting of its own', () => {
+		const md = '## Packing\n\n- tent\n- stove';
+		expect(onlyWrapsText('<meta charset="utf-8"><span>## Packing</span><br><br><span>- tent</span><br><span>- stove</span>', md)).toBe(true);
+		expect(onlyWrapsText('<div><p>## Packing</p><p>- tent</p><p>- stove</p></div>', md)).toBe(true);
+		expect(onlyWrapsText('<h2>Packing</h2><ul><li>tent</li><li>stove</li></ul>', md)).toBe(false);
+		expect(onlyWrapsText('<p><span style="font-weight:700">## Packing</span></p><p>- tent</p><p>- stove</p>', md)).toBe(false);
+		expect(onlyWrapsText('<p>## Packing</p><p>- tent</p>', md)).toBe(false);
+
+		const convert = realConvert();
+		const editor = track(htmlEditor('<p></p>', [pasteHandling(convert)]));
+		editor.commands.setTextSelection(1);
+		const html = '<meta charset="utf-8"><span>## Packing</span><br><br><span>- tent</span><br><span>- stove</span>';
+		expect(paste(editor, clipboard({ 'text/plain': md, 'text/html': html }))).toBe(true);
+		expect(editor.getHTML()).toBe('<h2>Packing</h2><ul><li><p>tent</p></li><li><p>stove</p></li></ul>');
+
+		const rich = track(htmlEditor('<p></p>', [pasteHandling(convert)]));
+		rich.commands.setTextSelection(1);
+		expect(paste(rich, clipboard({ 'text/plain': md, 'text/html': '<h2>Packing</h2><ul><li>tent</li></ul>' }))).toBe(false);
 	});
 
 	it("leaves VS Code's own data to the code block paste, unless it says markdown", () => {

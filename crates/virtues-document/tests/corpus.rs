@@ -108,12 +108,6 @@ const EXPORT_DIFFERS: &[(&str, &str)] = &[
         "a space at a mark's edge moves outside it: CommonMark's delimiters must touch text",
     ),
     (
-        "table thead tbody",
-        "a GFM cell holds one line: a cell's paragraphs come back as one with line breaks",
-    ),
-    ("table spans", "GFM has no column or row spans"),
-    ("cell spanning the most columns", "as `table spans`"),
-    (
         "image width past 2^53 / 1000",
         "the dialect's `![alt|600](…)` reads a width up to 4294967295; a larger one stays in the alt",
     ),
