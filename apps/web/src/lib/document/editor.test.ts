@@ -87,7 +87,7 @@ vi.mock('$lib/api/client', async (orig) => ({
 	getNamedUploads: vi.fn(async (ids: string[]) => Object.fromEntries(ids.map((id) => [id, server.names(id)]))),
 }));
 
-import { Editor } from '@tiptap/core';
+import { Editor, Extension } from '@tiptap/core';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { CellSelection } from '@tiptap/pm/tables';
 import { GapCursor } from '@tiptap/pm/gapcursor';
@@ -99,7 +99,18 @@ import { contract, contractExtensions, ITEM_NUMBER, itemNumbers } from './schema
 import { appletCommands, insertEntity, moveBlock, moveUnitTo, treeCommands, unitAround, type TreeCommandHost } from './commands';
 import { pickedRange, putBackQuery, triggers, triggerState } from './triggers';
 import { fileIcon, parseRef } from '$lib/utils/refRoutes';
-import { clearFind, find, findMatches, findNext, findPrevious, findState, selectionEchoes, setFindQuery } from './find';
+import {
+	clearFind,
+	find,
+	findMatches,
+	findNext,
+	findPrevious,
+	findState,
+	replaceAll,
+	replacementFor,
+	selectionEchoes,
+	setFindQuery,
+} from './find';
 import { focusMode } from './focus';
 import { codeHighlight } from './code';
 import { isCodeEditorHtml, looksLikeMarkdown, MAX_DEPTH, MAX_NODES, nodeCount, nodeDepth, pasteHandling, pasteMarkdown, wordLists, type Convert } from './paste';
@@ -1291,6 +1302,125 @@ describe('find in page', () => {
 		setFindQuery(editor.view, 'one');
 		editor.commands.insertContentAt(editor.state.doc.content.size, '<p>one more</p>');
 		expect(findState(editor.state).matches).toHaveLength(2);
+	});
+
+	const findIn = (html: string) => track(htmlEditor(html, [find({ onOpen: () => {}, onClose: () => {} })]));
+	const spans = (editor: Editor) => findState(editor.state).matches.map(({ from, to }) => ({ from, to }));
+	const currentBlock = (editor: Editor) => {
+		const s = findState(editor.state);
+		return editor.state.doc.resolve(s.matches[s.current].from).parent.textContent;
+	};
+
+	it('keeps the current match on the same text when the page changes above it', () => {
+		const editor = findIn('<p>The fox and the hound.</p><p>The fox ran.</p><p>The fox slept.</p>');
+		setFindQuery(editor.view, 'fox');
+		findNext(editor.view);
+		expect(currentBlock(editor)).toBe('The fox ran.');
+
+		editor.commands.insertContentAt(0, '<p>A fox sat.</p>');
+		expect(findState(editor.state).current).toBe(2);
+		expect(currentBlock(editor)).toBe('The fox ran.');
+
+		editor.commands.insertContentAt(posIn(editor, 'and the hound'), 'fox ');
+		expect(findState(editor.state).current).toBe(3);
+		expect(currentBlock(editor)).toBe('The fox ran.');
+		expect(editor.view.dom.querySelector('.doc-find-current')?.closest('p')?.textContent).toBe('The fox ran.');
+		expect(editor.view.dom.querySelectorAll('.doc-find-current')).toHaveLength(1);
+
+		// A collaborative update replaces the whole document in one step.
+		const whole = editor.state.tr.replaceWith(
+			0,
+			editor.state.doc.content.size,
+			editor.schema.nodeFromJSON({
+				type: 'doc',
+				content: [{ type: 'paragraph', content: [{ type: 'text', text: 'One more fox.' }] }, ...(editor.getJSON().content ?? [])],
+			}).content,
+		);
+		editor.view.dispatch(whole);
+		expect(findState(editor.state).current).toBe(4);
+		expect(currentBlock(editor)).toBe('The fox ran.');
+
+		// Deleting the current match moves it to the next one.
+		const m = findState(editor.state).matches[4];
+		editor.commands.deleteRange({ from: m.from, to: m.to });
+		expect(currentBlock(editor)).toBe('The fox slept.');
+	});
+
+	it('finds the same matches after an edit as a fresh search does', () => {
+		const editor = findIn('<p>The fox and the hound.</p><p>The hound ran.</p>');
+		setFindQuery(editor.view, 'fox', { caseSensitive: false, regexp: false, wholeWord: true });
+		const check = () => {
+			expect(spans(editor)).toEqual(
+				findMatches(editor.state.doc, 'fox', { caseSensitive: false, regexp: false, wholeWord: true }).map(({ from, to }) => ({ from, to })),
+			);
+			expect(editor.view.dom.querySelectorAll('.doc-find-match')).toHaveLength(findState(editor.state).matches.length);
+		};
+		// A match made one character at a time, then unmade as a word grows.
+		const at = posIn(editor, ' ran');
+		editor.commands.insertContentAt(at, ' fo');
+		check();
+		editor.commands.insertContentAt(at + 3, 'x');
+		check();
+		expect(spans(editor)).toHaveLength(2);
+		editor.commands.insertContentAt(at + 4, 'es');
+		check();
+		expect(spans(editor)).toHaveLength(1);
+		// Two blocks joined into one, and one split in two.
+		editor.commands.setTextSelection(posIn(editor, 'The hound'));
+		editor.commands.joinBackward();
+		check();
+		editor.commands.setTextSelection(posIn(editor, 'and the'));
+		editor.commands.splitBlock();
+		check();
+	});
+
+	it('replaces from the groups a pattern found in the whole block, lookbehind and lookahead included', () => {
+		const regexp = { caseSensitive: false, regexp: true, wholeWord: false };
+		const editor = findIn('<p>The fox and the hound.</p><p>A fox ran.</p>');
+		setFindQuery(editor.view, '(?<=The )fox', regexp);
+		expect(findState(editor.state).matches).toHaveLength(1);
+		expect(replaceAll(editor.view, 'cat')).toBe(1);
+		expect(editor.state.doc.textContent).toBe('The cat and the hound.A fox ran.');
+
+		setFindQuery(editor.view, 'fox(?= ran)', regexp);
+		expect(replaceAll(editor.view, '$&es')).toBe(1);
+		expect(editor.state.doc.textContent).toBe('The cat and the hound.A foxes ran.');
+
+		setFindQuery(editor.view, '(?<animal>cat|hound)', regexp);
+		expect(replaceAll(editor.view, '[$<animal>] $$1')).toBe(2);
+		expect(editor.state.doc.textContent).toBe('The [cat] $1 and the [hound] $1.A foxes ran.');
+	});
+
+	it('reads $1 to $99 as String.prototype.replace does', () => {
+		const m = { from: 0, to: 3, captures: ['fox', 'f', 'o', 'x'] };
+		for (const r of ['$1$2$3', '$&-$0', '$4', '$10', '$$', '$<n>', '$03']) {
+			expect(replacementFor(m, r), r).toBe('fox'.replace(/(f)(o)(x)/, r));
+		}
+		const named = { from: 0, to: 3, captures: ['fox', 'fox'], named: { animal: 'fox', none: undefined } };
+		for (const r of ['$<animal>!', '$<none>', '$<missing>']) {
+			expect(replacementFor(named, r), r).toBe('fox'.replace(/(?<animal>fox)(?<none>z)?/, r));
+		}
+		expect(replacementFor({ from: 0, to: 3 }, '$1')).toBe('$1');
+	});
+
+	it('leaves Escape to the next handler when nothing is being found', () => {
+		// Tiptap runs the keys of a later extension first, so this one, listed
+		// before find, sees Escape only when find passes it on.
+		let next = 0;
+		const before = Extension.create({
+			name: 'escapeAfterFind',
+			addKeyboardShortcuts: () => ({ Escape: () => (next++, true) }),
+		});
+		const editor = track(htmlEditor('<p>The fox and the hound.</p>', [before, find({ onOpen: () => {}, onClose: () => {} })]));
+		const escape = () => editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+		escape();
+		expect(next).toBe(1);
+		setFindQuery(editor.view, 'fox');
+		escape();
+		expect(next).toBe(1);
+		expect(findState(editor.state).query).toBe('');
+		escape();
+		expect(next).toBe(2);
 	});
 });
 

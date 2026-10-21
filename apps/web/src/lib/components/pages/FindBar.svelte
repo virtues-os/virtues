@@ -5,7 +5,8 @@
 	expression and whole words are toggles, as in a code editor's search
 	panel. On a page that can be edited, Replace replaces the current
 	match and goes to the next, and Replace all replaces every match as one
-	undo step.
+	undo step. The bar floats over the top right of the page and stays there
+	as it scrolls, so opening it does not move the text.
 -->
 <script lang="ts">
 	import { onMount } from "svelte";
@@ -109,62 +110,73 @@
 	}
 </script>
 
-<div class="find-bar" role="search" data-print="hide">
-	<div class="find-row">
-		<Icon icon="ri:search-line" width="14" />
-		<input
-			bind:this={input}
-			bind:value={query}
-			class="find-input"
-			type="text"
-			placeholder="Find in page"
-			aria-label="Find in page"
-			spellcheck="false"
-			oninput={search}
-			onkeydown={onKeydown}
-		/>
-		<span class="find-status" aria-live="polite">{status}</span>
-		<IconButton size={touch ? "touch" : "md"} icon="ri:font-size" label="Match case" pressed={options.caseSensitive} onclick={() => toggle("caseSensitive")} />
-		<IconButton size={touch ? "touch" : "md"} icon="ri:text" label="Whole words" pressed={options.wholeWord} onclick={() => toggle("wholeWord")} />
-		<IconButton size={touch ? "touch" : "md"} icon="ri:asterisk" label="Regular expression" pressed={options.regexp} onclick={() => toggle("regexp")} />
-		<IconButton size={touch ? "touch" : "md"} icon="ri:arrow-up-s-line" label="Previous match" onclick={() => findPrevious(editor.view)} />
-		<IconButton size={touch ? "touch" : "md"} icon="ri:arrow-down-s-line" label="Next match" onclick={() => findNext(editor.view)} />
-		<IconButton size={touch ? "touch" : "md"} icon="ri:close-line" label="Close find" onclick={close} />
-	</div>
-	{#if editable}
+<div class="find-anchor" data-print="hide">
+	<div class="find-bar" role="search">
 		<div class="find-row">
-			<Icon icon="ri:find-replace-line" width="14" />
+			<Icon icon="ri:search-line" width="14" />
 			<input
-				bind:value={replacement}
+				bind:this={input}
+				bind:value={query}
 				class="find-input"
 				type="text"
-				placeholder="Replace with"
-				aria-label="Replace with"
+				placeholder="Find in page"
+				aria-label="Find in page"
 				spellcheck="false"
-				onkeydown={onReplaceKeydown}
+				oninput={search}
+				onkeydown={onKeydown}
 			/>
-			<TextAction onclick={() => replaceCurrent(editor.view, replacement)}>Replace</TextAction>
-			<TextAction onclick={() => replaceAll(editor.view, replacement)}>Replace all</TextAction>
+			<span class="find-status" aria-live="polite">{status}</span>
+			<IconButton size={touch ? "touch" : "md"} icon="ri:font-size" label="Match case" pressed={options.caseSensitive} onclick={() => toggle("caseSensitive")} />
+			<IconButton size={touch ? "touch" : "md"} icon="ri:text" label="Whole words" pressed={options.wholeWord} onclick={() => toggle("wholeWord")} />
+			<IconButton size={touch ? "touch" : "md"} icon="ri:asterisk" label="Regular expression" pressed={options.regexp} onclick={() => toggle("regexp")} />
+			<IconButton size={touch ? "touch" : "md"} icon="ri:arrow-up-s-line" label="Previous match" onclick={() => findPrevious(editor.view)} />
+			<IconButton size={touch ? "touch" : "md"} icon="ri:arrow-down-s-line" label="Next match" onclick={() => findNext(editor.view)} />
+			<IconButton size={touch ? "touch" : "md"} icon="ri:close-line" label="Close find" onclick={close} />
 		</div>
-	{/if}
+		{#if editable}
+			<div class="find-row">
+				<Icon icon="ri:find-replace-line" width="14" />
+				<input
+					bind:value={replacement}
+					class="find-input"
+					type="text"
+					placeholder="Replace with"
+					aria-label="Replace with"
+					spellcheck="false"
+					onkeydown={onReplaceKeydown}
+				/>
+				<TextAction onclick={() => replaceCurrent(editor.view, replacement)}>Replace</TextAction>
+				<TextAction onclick={() => replaceAll(editor.view, replacement)}>Replace all</TextAction>
+			</div>
+		{/if}
+	</div>
 </div>
 
 <style>
-	.find-bar {
+	/* Sticky with no height: it keeps the bar in view while the page
+	   scrolls but takes no room, so the bar overlays the text. */
+	.find-anchor {
 		position: sticky;
 		top: 8px;
 		z-index: var(--z-sticky);
+		display: flex;
+		justify-content: flex-end;
+		height: 0;
+	}
+
+	.find-bar {
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
 		width: fit-content;
 		max-width: 100%;
-		margin: 0 0 8px auto;
+		height: fit-content;
 		padding: 4px 4px 4px 12px;
 		border: 1px solid var(--color-border-subtle, var(--color-border));
 		border-radius: 12px;
 		background: var(--color-surface);
 		color: var(--color-foreground-muted);
+		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 	}
 
 	.find-row {
@@ -193,7 +205,7 @@
 	}
 
 	@media print {
-		.find-bar {
+		.find-anchor {
 			display: none;
 		}
 	}
