@@ -59,7 +59,7 @@
 
 		// ── The window header's controls ─────────────────────────────────
 		// Interface symbols, the one place the set draws them, at the set's
-		// weight so the header and the rail below it read as one hand.
+		// weight so the header and the sidebar below it read as one hand.
 		// Arrows, not chevrons: a shaft says "go", where a bare chevron reads
 		// as "expand" in every list in the app.
 		back: '<path d="M12.5 8h-9M7.5 4l-4 4 4 4"/>',
@@ -73,9 +73,8 @@
 		close: '<path d="M4.8 4.8l6.4 6.4M11.2 4.8l-6.4 6.4"/>',
 
 		// ── Settings' own rows ─────────────────────────────────────────────
-		// Drawn objects under the dial, for the same reason the wiki's rows
-		// are: a panel of Remix glyphs under an Atlas rail tile is two icon
-		// languages in one column.
+		// Drawn objects, for the same reason the wiki's rows are: Remix
+		// glyphs beside Atlas doors are two icon languages in one column.
 		// Profile: an ID card, a portrait and two lines. Not a bust: `identity`
 		// is the bust, and it means the wiki's You, which is not this page.
 		profile:
@@ -106,8 +105,7 @@
 		// SQL: a table, a header row and a key column. Not the stacked-cylinder
 		// database, which `sources` already declined to be.
 		sql: '<rect x="2.5" y="3" width="11" height="10" rx="1.2"/><path d="M2.5 6.4h11M2.5 9.7h11M6.3 6.4v6.6"/>',
-		// Terminal: a window with the prompt inside it. The rail's Developer
-		// door is the bare prompt; this is the place you type it.
+		// Terminal: a window with the prompt inside it.
 		terminal:
 			'<rect x="2.2" y="3" width="11.6" height="10" rx="1.2"/><path d="M4.8 6.6l2 1.7-2 1.7"/><path d="M8.4 10.2h2.8"/>',
 		// ── Sources' and Drive's own rows ──────────────────────────────────
@@ -134,8 +132,8 @@
 
 		// ── The wiki's own rows ────────────────────────────────────────────
 		// Drawn here rather than pulled from Remix for the reason the set
-		// exists: the Wiki tile on the rail is an Atlas globe, and a panel of
-		// Remix glyphs hanging off it is two icon languages in one column.
+		// exists: the Wiki's door is an Atlas globe, and a list of Remix
+		// glyphs under it is two icon languages in one column.
 		// Same grid as the rest — 16px box, ~12px of ink, nothing touching an
 		// edge — so they sit level with `calendar` and `pages` above them.
 

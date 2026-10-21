@@ -383,6 +383,9 @@
 	--card-radius: 6px;
 	--chrome-row-h: 40px;
 	--chrome-tab-h: 28px;
+	/* An attached tab: 4px taller than a control, so it stands from the
+	   header's centre line down onto the card it opens. */
+	--chrome-attached-tab-h: 32px;
 
 	/* How far the pane card is inset from the window: `m-3` (12px) plus its
 	   1px border. The sidebar is full-bleed, so without matching this its

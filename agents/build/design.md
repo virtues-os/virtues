@@ -28,43 +28,42 @@ holds the content.**
 
 ## The shell
 
-A rail of rooms, and one panel beside it that the selected room fills. The
-rail stays fixed; the panel's contents change with the selected room. Defined in
+One header row across the window, then one card on the desk: the sidebar
+beside the pane. There is no rail. The sidebar shows one room's list at a
+time, Home's unless you have stepped into another room. Defined in
 `apps/web/src/lib/sidebar/rooms.ts`.
 
-The rail, top to bottom, in three gap-separated groups:
-
-| Group | Room | Route |
+| Room | Stepped into from | Its list |
 |---|---|---|
-| ground | **Home** | `/chat` |
-| library | **Wiki** | `/wiki` |
-| library | **Drive** | `/storage` |
-| utility | **Sources** | `/sources` |
-| utility | **Developer** | `/virtues/developer/sql` |
-| utility | **Settings** | `/virtues/you` |
+| **Home** | the ground; every other room steps back to it | doors, Pinned, Projects, Recents |
+| **Wiki** | the Wiki door in Home | Time (Today, Timeline, Days, Years, Chapters), Subjects, Drive |
+| **Settings** | the Settings row at the sidebar's foot | Account, Server, Sources, Developer |
+| **Setup** | a Setup door at the top of Home, only while a step is not done | the steps |
 
-- **Home is the only room in the `ground` group.** It sits alone above the first gap and at the top
-  of the rail. It was called Chats until its panel held pages, projects and
-  applets too; a user reads the panel's title as the name of the place, so
-  the room is named for the place, not one of its contents. Its tile opens
-  a new chat; there is no separate home page.
-- **Drive, not Files.** The room kept its glyph and its `/storage` route; the
-  label names the place rather than its contents.
-- **Applets is not a room, and neither is Pages.** Each is a door at the top
-  of the Home panel; `/applets` and `/page` are unchanged. Projects likewise:
-  a project is the room a chat lives in, so projects are listed in the Home
-  panel rather than behind a rail door of their own.
-- Routes did not move. Labels and grouping did.
+- **Stepping into a room** opens its page and swaps the sidebar to the
+  room's list. Its head is a back arrow to Home and the room's name. The
+  Wiki's and Settings' lists are those rooms' only navigation; their pages
+  carry none of their own.
+- **Home is named for the place, not one of its contents.** Its list holds
+  chats, pages, projects and applets.
+- **Applets, Pages, Tasks and the Wiki are doors in Home**, not places of
+  their own in the chrome. A project is the room a chat lives in, so
+  projects are listed in Home too.
+- **Settings stands at the foot**, apart from the places above it: you do
+  something to the server and leave.
+- Routes did not move.
 
 The Home panel, top to bottom:
 
-1. **Doors**: New chat, Pages, Applets, Search. The verb, the places, and
-   last the door that leaves the panel: Search opens the ⌘K palette. Pages opens the list and carries a `+` on
-   hover for a new page, the same shape as the Projects label.
+1. **Doors**: Setup (while it is not done), New chat, Pages, Tasks,
+   Applets, Wiki. The verb, then the places. Pages and Tasks carry a `+` on
+   hover for a new one, the same shape as the Projects label. Search has no
+   door: it is the ⌘K palette.
 2. **Pinned.** A chat, a project, an applet or a page can be pinned.
 3. **Projects.** Five, then "Show more"; the label opens the full list. A
    project cannot contain a project.
-4. **Today, Yesterday, Earlier**: the recent chats, grouped by when.
+4. **Today, Recent**: the ten newest chats and pages, then "See all", which
+   opens All chats.
 
 Every group folds from its label, and the fold is remembered. A group with
 nothing in it is not drawn: no empty-state line, because the doors above
@@ -131,12 +130,13 @@ change the scale here first.
 | Step | Size | Used by |
 |---|---|---|
 | Chrome row | 40px (`--chrome-row-h`) | the window header, the panel's title row |
-| Control | 28px (`--chrome-tab-h`, `--sidebar-interactive-height`) | every clickable box in a row: tabs, the +, the header's controls, the ∴, sidebar rows |
+| Control | 28px (`--chrome-tab-h`, `--sidebar-interactive-height`) | every clickable box in a row: the +, the header's controls, the ∴, sidebar rows |
+| Attached tab | 32px (`--chrome-attached-tab-h`) | a tab: it stands from the header's middle down onto the card it opens |
 | Nested control | 20px | a control inside a control: a tab's ×, a row's inline + and ⋯ |
-| Rail tile | 36px compact, 52px labelled | the rail's rooms |
 
-Every box in the window header is a 28px control, so all of them sit 6px
-from the row's top and bottom.
+The header's controls are 28px and sit 6px from the row's top and bottom.
+Tabs stand on the card's top edge instead; the + and a view's actions are
+centred in the tabs' 32px band.
 
 ### Lines and glyphs
 
@@ -164,10 +164,11 @@ behind it, so it reads in all sixteen themes. Four steps, no others:
 | Selected | `--active-bg` | 12% | where you are: the rail's room, a sidebar row, the active tab of an unfocused pane |
 | Press | `--press-bg` | 16% | held down, only for the duration of the press |
 
-**The active tab of the focused pane takes the page's color**
-(`--color-page`), not a gray. It reads as the top of the sheet below it, the
-way a browser joins a tab to its page. The strip sits on the desk ground, so
-the page color is always a step off what is around it.
+**The active tab is attached to its page.** It takes the page's color
+(`--color-page`) and the card's border on its top and sides, and its foot is
+open onto the card, hanging 1px over the card's top border so the two read
+as one sheet, the way a browser draws it. The page color alone was not
+enough: on the desk it is a 4% step, too small to see without the border.
 
 Text uses three inks: foreground, muted and subtle.
 
@@ -207,11 +208,12 @@ it does not repeat.
 
 ### Alignment
 
-**Each group in the window header starts at the column below it.** The ∴ is
-centred on the rail. The controls start on the sidebar's icon line, the
-back arrow's glyph level with the rows' icons and the panel title. Each
-pane's tabs start at that pane's edge; with the sidebar closed, the left
-pane's tabs start just after the controls, which keep their place.
+**Each group in the window header starts at the column below it.** The ∴'s
+glyph starts on the sidebar's icon line, level with the rows' icons, and the
+window's controls follow it. Each pane's tabs start at that pane's edge.
+With the sidebar closed the controls keep their place, and the left pane's
+tabs start just after them. Inside a room, the panel head's back arrow sits
+on the same icon line and the room's name on the rows' label line.
 
 ---
 
@@ -271,9 +273,13 @@ should do the work, as they do in a table of contents.
 
 ## Interaction
 
-- **Tabs are pills.** Centred in the strip, rounded on all four corners. The
-  active tab of the focused pane takes the page's color; the active tab of
-  the other pane takes the ramp's selected step. Two alternatives were built and
+- **Tabs are attached.** A tab is rounded at the top and open at the foot.
+  The active tab is drawn as the top of its page (see [Grays](#grays)); the
+  others have no fill until hovered. In split view both panes' active tabs
+  are attached, and the one in the pane you are not working in has muted
+  ink. Pills were the earlier rule, because a browser tab needed a recessed
+  strip to sit in; the window header now sets tabs on the desk, which is
+  that strip. Two alternatives were built and
   rejected: the full-height container and the bottom-anchored browser tab both
   require a recessed strip, and a recessed strip is not worth what it costs the
   rest of the window.

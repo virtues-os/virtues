@@ -22,7 +22,7 @@
 		animationDelay = 0,
 	}: Props = $props();
 
-	// The console line: the rail's only facts, set in mono on a hairline.
+	// The console line: the sidebar's only facts, set in mono on a hairline.
 	//
 	// Not a progress bar — a bar dramatizes a number nobody asked for. This is
 	// a colophon: the date, and the time. (Day-of-year was here once and read
@@ -162,9 +162,9 @@
 		};
 	});
 
-	// The three doors that used to live here — Sources, Developer, Settings —
-	// are rail items now. A door in the footer AND an icon on the rail is the
-	// same destination twice on one screen.
+	// Sources and Developer are headings in Settings, and Settings is the
+	// row above this footer. A second door to either here would be the same
+	// destination twice on one screen.
 	//
 	// There is no "Sign Out" — auth is the device's proven iroh key, not a
 	// server session; to drop this device use Settings → Devices → Unpair.

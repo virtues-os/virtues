@@ -101,7 +101,7 @@
 
 				     The other half of the old objection stands and is why this
 				     takes `glyph` rather than `icon`: eleven REMIX glyphs under
-				     an Atlas rail tile was two icon families in one column. -->
+				     an Atlas door was two icon families in one column. -->
 				{#if row.glyph}
 					<AtlasIcon name={row.glyph} size={15} />
 				{/if}

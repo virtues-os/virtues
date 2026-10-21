@@ -265,6 +265,9 @@ export const WIKI_MODE: SidebarMode = {
 				route === '/day' || route === `/day/day_${getLocalDateSlug(new Date())}`,
 			group: 'Time',
 		},
+		// The day on the box's own map. It was a rail room of its own; with the
+		// rail gone it is the Time group's live view, beside the days it draws.
+		{ id: 'timeline', label: 'Timeline', icon: 'ri:route-line', glyph: 'timeline', href: '/timeline', group: 'Time' },
 		{ id: 'days', label: 'Days', icon: 'ri:calendar-line', glyph: 'calendar', href: '/wiki/days', group: 'Time' },
 		{
 			id: 'years',

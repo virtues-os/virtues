@@ -90,9 +90,24 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import AtlasIcon from '../AtlasIcon.svelte';
 	import HoverCard from '../HoverCard.svelte';
+	import SetupRing from '../SetupRing.svelte';
+	import { sidebarRoom } from '$lib/stores/sidebarRoom.svelte';
+	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
+	import { setup } from '$lib/components/setup/setup.svelte';
 	import { openWebLink } from '$lib/utils/webLinks';
 
 	const PROJECTS_SHOWN = 5;
+
+	// Skipped is not done: a step set aside keeps the door, because Finish
+	// later and Skip both mean "not now", never "not ever". It goes once every
+	// step is done.
+	const setupOpen = $derived(gettingStarted.loaded && !gettingStarted.unsupported && !setup.complete);
+	const setupCount = $derived(`${setup.doneCount}/${setup.steps.length}`);
+	// A room that loses its door cannot stay open: once Setup is done the
+	// sidebar falls back to Home rather than showing steps with no way in.
+	$effect(() => {
+		if (gettingStarted.loaded && !setupOpen && sidebarRoom.selectedId === 'setup') sidebarRoom.leave();
+	});
 	const RECENTS_CAP = 10;
 
 	// ── what is where ──────────────────────────────────────────────────────
@@ -690,6 +705,13 @@
      has no door here: it is the ⌘K palette, which has the room for results
      across chats, pages and projects. -->
 <div class="panel-doors">
+	{#if setupOpen}
+		<button type="button" class="panel-row panel-door" onclick={() => sidebarRoom.enter('setup')}>
+			<SetupRing size={16} />
+			<span class="panel-row-text">Setup</span>
+			<span class="door-meta">{setupCount}</span>
+		</button>
+	{/if}
 	<button type="button" class="panel-row panel-door" onclick={newChat}>
 		<AtlasIcon name="new-chat" size={16} bare />
 		<span class="panel-row-text">New chat</span>
@@ -745,6 +767,12 @@
 	<button type="button" class="panel-row panel-door" onclick={openApplets}>
 		<AtlasIcon name="applets" size={16} bare />
 		<span class="panel-row-text">Applets</span>
+	</button>
+	<!-- The record, a door like the tools above it. It opens the Wiki and
+	     steps the sidebar into the Wiki's own list (Time, Subjects, Drive). -->
+	<button type="button" class="panel-row panel-door" onclick={() => sidebarRoom.enter('record')}>
+		<AtlasIcon name="wiki" size={16} bare />
+		<span class="panel-row-text">Wiki</span>
 	</button>
 </div>
 
@@ -1454,6 +1482,13 @@
 
 	.panel-more {
 		color: var(--color-foreground-muted);
+	}
+
+	.door-meta {
+		margin-left: auto;
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
+		font-variant-numeric: tabular-nums;
 	}
 
 	/* ── the card ─────────────────────────────────────────────────────── */

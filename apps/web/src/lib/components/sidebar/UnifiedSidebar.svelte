@@ -9,10 +9,11 @@
 		SIDEBAR_COLLAPSE_AT,
 		SIDEBAR_MIN_WIDTH,
 		SIDEBAR_MAX_WIDTH,
+		SIDEBAR_INSET,
 	} from "$lib/stores/sidebarState.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
-	import SidebarRail from "./SidebarRail.svelte";
+	import AtlasIcon from "./AtlasIcon.svelte";
 	import SidebarPanel from "./SidebarPanel.svelte";
 	import { sidebarRoom } from "$lib/stores/sidebarRoom.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
@@ -135,10 +136,7 @@
 	}
 
 	function handleWikiOverview() {
-		windowShellStore.openTabFromRoute("/wiki", {
-			label: "Wiki",
-			preferEmptyPane: true,
-		});
+		sidebarRoom.enter("record");
 	}
 
 	// New chat / page navigate the window you are in. Only "+" and "open
@@ -176,12 +174,11 @@
 	// the height throughout, so nothing collapses in the gap.
 	const swapKey = $derived(sidebarRoom.selectedId);
 
-	// The rail is the desk-ground strip; the panel is a card floating on it, so
-	// the aside itself carries no inset — the rail flushes left on the ground,
-	// the panel supplies its own card margins.
+	// The sidebar is a card on the desk; the aside carries no inset of its
+	// own, and the card supplies its 12px margin.
 	// NOT a springy curve. The aside used to open on cubic-bezier(0.34, 1.56,
 	// 0.64, 1) — the 1.56 is an overshoot — and an overshoot is incompatible
-	// with a merged seam: the aside momentarily grew WIDER than rail + gap +
+	// with a merged seam: the aside momentarily grew WIDER than its gap +
 	// panel, so for a few frames a strip of desk ground opened between the
 	// panel's right edge and the pane it is supposed to be joined to, and the
 	// whole card appeared to rubber-band. A seam can only stay shut if the
@@ -209,13 +206,11 @@
 	const merged = $derived(!isCollapsed);
 
 	// ── Resizing the seam ─────────────────────────────────────
-	// Only the panel resizes by drag; the rail switches between two widths
-	// (labels on/off). The whole aside is rail + gap + panelWidth.
-	const PANEL_GAP = 12;
-	const railWidth = $derived(sidebarState.railWidth);
-
+	// The aside is the desk's 12px plus the card. Closed, it is nothing: the
+	// header's sidebar button is the way back.
 	const panelWidth = $derived(sidebarState.width);
-	const asideWidth = $derived(isCollapsed ? railWidth : railWidth + PANEL_GAP + panelWidth);
+	const asideWidth = $derived(isCollapsed ? 0 : SIDEBAR_INSET + panelWidth);
+	const inSettings = $derived(sidebarRoom.selectedId === "settings");
 
 	let resizing = $state(false);
 	$effect(() => {
@@ -328,8 +323,6 @@
 </script>
 
 <aside class={sidebarClass} style="width: {asideWidth}px">
-	<SidebarRail />
-
 	<div class={panelColumnClass} style="width: {panelWidth}px; min-width: {panelWidth}px">
 		<nav class="workspace-nav">
 			{#if !storeReady}
@@ -351,6 +344,20 @@
 				</div>
 			{/if}
 		</nav>
+
+		<!-- Settings stands at the foot: something you do to the server and
+		     leave, apart from the places above. -->
+		<div class="panel-foot">
+			<button
+				type="button"
+				class="sidebar-interactive"
+				class:active={inSettings}
+				onclick={() => (inSettings ? sidebarRoom.leave() : sidebarRoom.enter("settings"))}
+			>
+				<AtlasIcon name="settings" size={16} />
+				<span class="sidebar-label">Settings</span>
+			</button>
+		</div>
 
 		<SidebarFooter collapsed={isCollapsed} />
 	</div>
@@ -512,6 +519,11 @@
 		.seam-tip {
 			animation: none;
 		}
+	}
+
+	.panel-foot {
+		flex: none;
+		padding: 0 4px 8px;
 	}
 
 	.workspace-nav {

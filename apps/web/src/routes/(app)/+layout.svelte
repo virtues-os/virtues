@@ -117,8 +117,7 @@
 	// it hands a new owner into the app; read once, on this first render, so
 	// the class is there from the first frame. The ∴ at the left of the header
 	// beats — premise, premise, therefore, the same figure the cold open drew
-	// — the rooms cascade down out of it, the panel and the pane settle in,
-	// and the Setup tile lights once. Every other mount opens plainly.
+	// — and the panel and the pane settle in. Every other mount opens plainly.
 	let opening = $state(appOpening.consume());
 	$effect(() => {
 		if (!opening) return;
@@ -149,7 +148,7 @@
 	});
 
 	// SETUP OPENS HERE once someone is in the app (setup/inApp.ts). A link
-	// to `/setup` from inside it (the rail's Setup panel, the wiki's "Draw
+	// to `/setup` from inside it (the sidebar's Setup panel, the wiki's "Draw
 	// your chapters") is caught before it leaves for the full-screen stage,
 	// and opens Setup's tab instead, the one already open if there is one.
 	beforeNavigate((nav) => {
@@ -588,22 +587,6 @@
 	.app-shell.opening :global(.header-mark .mark-dot.apex) {
 		animation: opening-conclude 820ms ease-out 500ms both;
 	}
-	/* The rooms fall out of the mark, top to bottom. */
-	.app-shell.opening :global(.rail > .rail-item) {
-		animation: opening-room 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
-		animation-delay: 560ms;
-	}
-	.app-shell.opening :global(.rail > .rail-item:nth-child(2)) { animation-delay: 610ms; }
-	.app-shell.opening :global(.rail > .rail-item:nth-child(3)) { animation-delay: 660ms; }
-	.app-shell.opening :global(.rail > .rail-item:nth-child(4)) { animation-delay: 710ms; }
-	.app-shell.opening :global(.rail > .rail-item:nth-child(5)) { animation-delay: 760ms; }
-	.app-shell.opening :global(.rail > .rail-item:nth-child(n + 6)) { animation-delay: 840ms; }
-	/* The Setup tile arrives first and then lights once — the one call to act. */
-	.app-shell.opening :global(.rail > .rail-item.setup) {
-		animation:
-			opening-room 520ms cubic-bezier(0.2, 0.7, 0.2, 1) 560ms both,
-			opening-lamp 1300ms ease-out 1500ms both;
-	}
 	.app-shell.opening :global(.panel-card),
 	.app-shell.opening :global(.panel-card-left) {
 		animation: opening-panel 640ms cubic-bezier(0.2, 0.7, 0.2, 1) 720ms both;
@@ -622,17 +605,6 @@
 		45% { transform: scale(1.4); }
 		75% { transform: scale(0.94); }
 		100% { transform: scale(1); }
-	}
-	@keyframes opening-room {
-		from {
-			opacity: 0;
-			transform: translateY(-6px);
-		}
-	}
-	/* Lit, then fading to its own ground: a wash of light, not a glow (a
-	   shadow of any kind is out of the grammar, design-grammar.md §6). */
-	@keyframes opening-lamp {
-		from { background-color: color-mix(in srgb, var(--color-background) 32%, transparent); }
 	}
 	@keyframes opening-panel {
 		from {

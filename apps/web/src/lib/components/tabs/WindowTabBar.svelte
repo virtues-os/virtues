@@ -591,13 +591,14 @@
 		container-type: inline-size;
 		container-name: tabbar;
 		display: flex;
-		align-items: stretch;
 		gap: 4px;
 		padding: 0 8px;
 		height: var(--chrome-row-h);
-		align-items: center;
-		/* The strip sits in the window header, on the desk ground above the
-		   card, so it paints nothing. Pills carry the state. */
+		/* Tabs stand on the card's top edge, so the strip aligns to its
+		   bottom; the + and the view's actions sit centred in the tabs' band
+		   (their own margin-bottom). The strip is on the desk ground and paints
+		   nothing. */
+		align-items: flex-end;
 		background: transparent;
 		flex-shrink: 0;
 		position: relative;
@@ -615,7 +616,12 @@
 		flex: 0 1 auto;
 		min-width: 0;
 		scrollbar-width: none;
-		height: var(--chrome-tab-h);
+		/* One pixel taller than the tabs and hung one pixel below the header,
+		   so a tab's foot covers the card's top border and the two read as one
+		   sheet. The header paints above the card (WindowHeader's z-index). */
+		align-items: flex-end;
+		height: calc(var(--chrome-attached-tab-h) + 1px);
+		margin-bottom: -1px;
 	}
 
 	.tabs-scroll::-webkit-scrollbar {
@@ -632,11 +638,13 @@
 		align-items: center;
 		gap: 6px;
 		padding: 0 10px;
-		align-self: center;
 		position: relative;
-		height: 28px;
-		border: none;
-		border-radius: 6px;
+		/* Attached, as a browser draws it: the top of the page it opens. Its
+		   own border on three sides; the foot is open onto the card. */
+		height: calc(var(--chrome-attached-tab-h) + 1px);
+		border: 1px solid transparent;
+		border-bottom: none;
+		border-radius: 6px 6px 0 0;
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 12px;
@@ -675,14 +683,14 @@
 	   its right moved when you switched. */
 	.tab.active {
 		background: var(--color-page);
+		border-color: var(--color-border);
 		color: var(--color-foreground);
 	}
 
 	/* In split view two tabs are "active" at once and only one takes your
-	   typing. The unfocused pane's is selected but not where you are: the
-	   ramp's selected step. */
+	   typing. Both are attached to their pages; the one you are not in says
+	   so in its ink. */
 	.tab.active:not(.active-in-active-pane) {
-		background: var(--active-bg);
 		color: var(--color-foreground-muted);
 	}
 
@@ -820,8 +828,9 @@
 	.pane-actions {
 		display: flex;
 		align-items: center;
-		align-self: center;
 		gap: 2px;
+		/* Centred in the tabs' 32px band: (32 - 24) / 2. */
+		margin-bottom: 4px;
 		/* The view's actions keep the far end of the strip; the tabs and
 		   their + read from the left. */
 		margin-left: auto;
@@ -941,8 +950,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		/* The same box as a tab, so the + reads as the next tab's place. */
-		align-self: center;
+		/* The scale's control, centred in the tabs' band: (32 - 28) / 2. */
+		margin-bottom: 2px;
 		width: 28px;
 		height: 28px;
 		padding: 0;

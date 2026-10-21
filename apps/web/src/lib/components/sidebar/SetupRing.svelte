@@ -2,7 +2,7 @@
 	/**
 	 * Setup's glyph: a ring cut into one arc per step, each arc inked when
 	 * its step is done. The count is the drawing, so the label can be the
-	 * room's name alone, the same length as every other label on the rail.
+	 * room's name alone, beside a door's count of steps done.
 	 * Arcs sit in step order, clockwise from twelve, so a step done out of
 	 * order shows as the gap it leaves rather than as a tally. Skipped is not
 	 * done and stays faint, as it does in the flow.

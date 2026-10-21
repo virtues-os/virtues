@@ -1,16 +1,16 @@
 <script lang="ts">
 	/**
-	 * The panel — one frame, whatever room the rail has selected.
+	 * The panel — one frame, whatever room the sidebar is showing (`sidebarRoom`).
 	 *
 	 * Every room gets the same head so the swap reads as one object changing its
 	 * contents rather than seven different sidebars: a title row at
 	 * `--chrome-row-h` (level with the top row of the pane across the seam), the room's
-	 * name in the serif — the shell's one editorial voice — then the room's
-	 * actions and the collapse control, then the body.
+	 * name in the serif — the shell's one editorial voice — led by a back arrow
+	 * to Home in every room but Home, then the body.
 	 *
 	 * The title is TEXT, not a control. An earlier version made it a button that
 	 * opened the room's full page, but a heading that silently navigates is a
-	 * surprise, and the rail already selects the room.
+	 * surprise, and you stepped into the room to get here.
 	 *
 	 * The collapse control is NOT here — it is a button in the window header. Putting
 	 * it on the panel meant the control vanished with the thing it hid, so the
@@ -20,7 +20,9 @@
 	import SidebarModePanel from './SidebarModePanel.svelte';
 	import HomePanel from './panels/HomePanel.svelte';
 	import SetupPanel from '$lib/components/setup/SetupPanel.svelte';
-	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import AtlasIcon from './AtlasIcon.svelte';
+	import { sidebarRoom } from '$lib/stores/sidebarRoom.svelte';
+	import { DEFAULT_ROOM_ID } from '$lib/sidebar/rooms';
 	import { SIDEBAR_MODES } from '$lib/sidebar/modes';
 	import type { Room } from '$lib/sidebar/rooms';
 
@@ -31,17 +33,26 @@
 	let { room }: Props = $props();
 
 	const mode = $derived(room.panel.kind === 'rows' ? SIDEBAR_MODES[room.panel.modeId] : null);
+	const inRoom = $derived(room.id !== DEFAULT_ROOM_ID);
 
-	function openRoom() {
-		windowShellStore.openTabFromRoute(room.href, {
-			label: room.label,
-			focusExisting: true,
-		});
-	}
 </script>
 
 <div class="panel">
-	<div class="panel-head">
+	<div class="panel-head" class:in-room={inRoom}>
+		{#if inRoom}
+			<!-- A room's list is stepped into from Home; this steps back out.
+			     The arrow sits on the rows' icon line and the title on their
+			     label line. -->
+			<button
+				type="button"
+				class="panel-back"
+				aria-label="Back to Home"
+				title="Back to Home"
+				onclick={() => sidebarRoom.leave()}
+			>
+				<AtlasIcon name="back" size={16} bare />
+			</button>
+		{/if}
 		<span class="panel-title">{room.title ?? room.label}</span>
 		<!-- The head used to carry a room's quick-add (+). The verbs live as
 		     doors in the Home panel now, where they are read as words. -->
@@ -54,12 +65,6 @@
 			<SetupPanel />
 		{:else if mode}
 			<SidebarModePanel {mode} />
-		{:else}
-			<!-- Not built yet, and saying so is better than an empty column that
-			     reads as a room with nothing in it. -->
-			<button type="button" class="panel-stub" onclick={openRoom}>
-				Open {room.label}
-			</button>
 		{/if}
 	</div>
 </div>
@@ -85,6 +90,52 @@
 		padding-right: 8px;
 	}
 
+	/* The back control's 28px box puts its glyph at 16px, like the rows'
+	   icons; the title then starts at 40px, like their labels. */
+	.panel-head.in-room {
+		padding-left: 10px;
+		gap: 2px;
+	}
+
+	.panel-back {
+		display: grid;
+		place-items: center;
+		width: 28px;
+		height: 28px;
+		flex: none;
+		padding: 0;
+		border: none;
+		border-radius: var(--sidebar-interactive-radius);
+		background: none;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		transition:
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.panel-back:hover {
+		background: var(--hover-bg);
+		color: var(--color-foreground);
+		transition-duration: var(--motion-hover-in);
+	}
+
+	.panel-back:active {
+		background: var(--press-bg);
+		transition-duration: var(--motion-press);
+	}
+
+	.panel-back:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.panel-back {
+			transition: none;
+		}
+	}
+
 	/* The shell's one editorial voice, said once. Serif, regular — never bold. */
 	.panel-title {
 		flex: 1;
@@ -99,11 +150,6 @@
 		white-space: nowrap;
 	}
 
-	.panel-stub:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-
 	.panel-body {
 		flex: 1;
 		min-height: 0;
@@ -112,23 +158,4 @@
 		padding: 4px 4px 12px;
 	}
 
-	.panel-stub {
-		display: flex;
-		align-items: center;
-		width: 100%;
-		height: var(--sidebar-interactive-height);
-		padding: 0 12px;
-		border: none;
-		border-radius: var(--sidebar-interactive-radius);
-		background: none;
-		cursor: pointer;
-		text-align: left;
-		font-size: var(--sidebar-interactive-font-size);
-		color: var(--color-foreground-muted);
-	}
-
-	.panel-stub:hover {
-		background: var(--hover-bg);
-		color: var(--color-foreground);
-	}
 </style>

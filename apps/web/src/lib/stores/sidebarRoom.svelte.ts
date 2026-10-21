@@ -1,22 +1,20 @@
 /**
- * Which room the sidebar panel is showing.
+ * Which room the sidebar is showing.
  *
- * PERSISTED, and that is a deliberate reversal of `sidebarMode`, which was
- * session-only because "a mode is somewhere you go and come back from". That
- * held while a mode was an exception. It does not hold for a rail: there is
- * always a selected room, so "come back from" has no destination, and a rail
- * that reset every launch would throw away the one piece of state the user set
- * by hand.
+ * The sidebar is Home's list. The Wiki, Settings and Setup are rooms you
+ * step into from it: a door in Home (or Settings at the sidebar's foot)
+ * opens the room's page and swaps the sidebar to the room's own list, whose
+ * head steps back to Home. Those lists are the rooms' only navigation; their
+ * pages have none of their own.
  *
- * Deliberately not derived from which pane has focus. Deriving it is incoherent
- * with split panes — Settings left and a chat right leaves no correct answer —
- * the same conclusion `modes.ts` reached. The rail shows TWO things instead:
- * the selected room (this store, a fill) and the occupied rooms (derived from
- * the panes, full contrast, no fill). Usually the same room. When they are not,
- * that is information rather than a contradiction to hide.
+ * Persisted, so the sidebar reopens where you left it. Not derived from
+ * which pane has focus: with Settings on the left and a chat on the right
+ * there would be no correct answer.
  */
 
 import { DEFAULT_ROOM_ID, roomById, type Room } from '$lib/sidebar/rooms';
+import { windowShellStore } from '$lib/stores/window-shell.svelte';
+import { sidebarState } from '$lib/stores/sidebarState.svelte';
 
 const STORAGE_KEY = 'virtues-sidebar-room';
 
@@ -41,6 +39,20 @@ class SidebarRoomStore {
 		if (typeof localStorage !== 'undefined') {
 			localStorage.setItem(STORAGE_KEY, id);
 		}
+	}
+
+	/** Step into a room: open its page and show its list in the sidebar. */
+	enter(id: string): void {
+		const room = roomById(id);
+		if (!room) return;
+		windowShellStore.openTabFromRoute(room.href, { label: room.label, focusExisting: true });
+		this.select(id);
+		sidebarState.collapsed = false;
+	}
+
+	/** Back to Home's list. The page you were on stays open. */
+	leave(): void {
+		this.select(DEFAULT_ROOM_ID);
 	}
 }
 

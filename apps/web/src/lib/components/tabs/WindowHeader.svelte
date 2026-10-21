@@ -3,69 +3,55 @@
 	 * The window header: one row across the whole window, on the desk ground
 	 * above the cards.
 	 *
-	 * Over the rail it holds the ∴ mark (the inbox). Over the sidebar it holds
-	 * the window's own controls, in a place that never moves: back, forward,
-	 * the sidebar toggle and new chat. Back, forward and new chat act on the
-	 * focused pane. Right-clicking the sidebar toggle shows or hides the
-	 * rail's labels. Over the cards it holds each pane's tab strip, lined up
-	 * with the pane below it, so a tab always sits above its own content.
+	 * Over the sidebar it holds the ∴ mark (the inbox) and the window's own
+	 * controls, in a place that never moves: back, forward, the sidebar
+	 * toggle and new chat. Back, forward and new chat act on the focused
+	 * pane. Over the cards it holds each pane's tab strip, lined up with the
+	 * pane below it, so a tab always sits on top of its own content.
 	 *
-	 * With the sidebar closed the controls stay where they were, past the
-	 * card's edge, so the left pane's tabs start just after them.
+	 * With the sidebar closed the controls stay where they were, so the left
+	 * pane's tabs start just after them.
 	 */
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import InboxMark from '$lib/components/inbox/InboxMark.svelte';
 	import WindowTabBar from './WindowTabBar.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { sidebarState } from '$lib/stores/sidebarState.svelte';
+	import { sidebarState, SIDEBAR_INSET } from '$lib/stores/sidebarState.svelte';
 	import { shortcuts } from '$lib/shortcuts/registry.svelte';
 
 	/** Air between the controls and the first tab when they meet. */
 	const LEAD_GAP_PX = 8;
 	/** The controls' glyphs: Atlas at row size, which draws them at the
-	 *  scale's one line weight (1.25px), the same as the rail and the rows. */
+	 *  scale's one line weight (1.25px), the same as the sidebar's rows. */
 	const GLYPH_PX = 16;
 	/** The scale's control box: every clickable thing in the header. */
 	const CONTROL_PX = 28;
-	/** InboxMark's width; the mark is centred over the rail's tile column. */
-	const MARK_PX = CONTROL_PX;
+	/** The ∴ glyph inside InboxMark's control box. */
+	const MARK_GLYPH_PX = 17;
 
 	const isSplit = $derived(windowShellStore.isSplit);
 	const leftWidth = $derived(isSplit ? windowShellStore.leftPane?.width || 50 : 100);
 	const rightWidth = $derived(isSplit ? windowShellStore.rightPane?.width || 50 : 0);
 
 	const cardLeft = $derived(sidebarState.cardLeft);
-	// The rail pads 12px on its left and none on its right; its tiles fill
-	// the rest.
-	const markInset = $derived(12 + (sidebarState.railWidth - 12 - MARK_PX) / 2);
 
 	/**
-	 * Where the sidebar's icons start: past the rail, its 12px of desk, the
-	 * panel card's 1px border, the panel body's 4px and a row's 12px (the
-	 * Home title starts there too). The back arrow's glyph starts on that
-	 * line, so the history controls read as the sidebar's own top row. They
-	 * keep that place with the sidebar closed: controls that slid toward the
-	 * mark would move under the pointer that just closed it.
+	 * Where the sidebar's icons start: the desk's 12px, the card's 1px
+	 * border, the panel body's 4px and a row's 12px. The ∴'s glyph starts on
+	 * that line, so the header's controls head the sidebar's own column. They
+	 * keep that place with the sidebar closed: controls that slid would move
+	 * under the pointer that just closed it.
 	 */
-	const PANEL_ICON_INSET_PX = 1 + 4 + 12;
-	/** A control centres its glyph, this far in from its edge. */
-	const GLYPH_INSET_PX = (CONTROL_PX - GLYPH_PX) / 2;
-	const controlsLeft = $derived(sidebarState.railWidth + 12 + PANEL_ICON_INSET_PX - GLYPH_INSET_PX);
+	const ICON_LINE_PX = SIDEBAR_INSET + 1 + 4 + 12;
+	const leadLeft = ICON_LINE_PX - (CONTROL_PX - MARK_GLYPH_PX) / 2;
 
-	let controlsWidth = $state(0);
-	const overlap = $derived(Math.max(0, controlsLeft + controlsWidth + LEAD_GAP_PX - cardLeft));
+	let leadWidth = $state(0);
+	const overlap = $derived(Math.max(0, leadLeft + leadWidth + LEAD_GAP_PX - cardLeft));
 
 	const canGoBack = $derived(windowShellStore.canGoBack());
 	const canGoForward = $derived(windowShellStore.canGoForward());
 
 	const sidebarOpen = $derived(!sidebarState.collapsed);
-	const compact = $derived(sidebarState.railCompact);
-
-	function toggleLabels(e: MouseEvent) {
-		// The browser's own context menu has nothing to offer here.
-		e.preventDefault();
-		sidebarState.toggleRailCompact();
-	}
 </script>
 
 <header
@@ -73,14 +59,11 @@
 	class:resizing={sidebarState.resizing}
 	style:--card-left="{cardLeft}px"
 >
-	<!-- The mark sits over the rail's column, the controls over the sidebar's:
-	     each group heads the column it belongs to. Within the controls, air
-	     alone sets history (back, forward) apart from the window (sidebar,
-	     new chat). -->
-	<div class="lead mark-slot" style:left="{markInset}px">
+	<!-- Three groups set apart by air alone: the mark, history (back,
+	     forward) and the window (sidebar, new chat). -->
+	<div class="lead" style:left="{leadLeft}px" bind:clientWidth={leadWidth}>
 		<InboxMark />
-	</div>
-	<div class="lead" style:left="{controlsLeft}px" bind:clientWidth={controlsWidth}>
+		<span class="lead-gap" aria-hidden="true"></span>
 		<button
 			class="lead-btn"
 			onclick={() => windowShellStore.goBack()}
@@ -104,10 +87,9 @@
 			class="lead-btn"
 			class:sidebar-shown={sidebarOpen}
 			onclick={() => sidebarState.toggle()}
-			oncontextmenu={toggleLabels}
 			aria-label={sidebarOpen ? 'Hide the sidebar' : 'Show the sidebar'}
 			aria-expanded={sidebarOpen}
-			title={`${sidebarOpen ? 'Hide' : 'Show'} the sidebar (${shortcuts.format('mod+b')}) · Right-click to ${compact ? 'show' : 'hide'} labels`}
+			title={`${sidebarOpen ? 'Hide' : 'Show'} the sidebar (${shortcuts.format('mod+b')})`}
 		>
 			<AtlasIcon name="sidebar" size={GLYPH_PX} bare />
 		</button>

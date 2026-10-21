@@ -1,17 +1,13 @@
 /**
- * Shared sidebar state — reactive store consumed by both
- * UnifiedSidebar (owner) and the rail's mark.
+ * Shared sidebar state — reactive store consumed by UnifiedSidebar (owner)
+ * and the window header, which toggles it and lines its tabs up with it.
  */
 
 const STORAGE_KEY = "virtues-sidebar-collapsed";
 const WIDTH_KEY = "virtues-sidebar-width";
-// "true" when the owner has chosen to show the rail's labels. A new key
-// rather than the old "virtues-rail-compact", whose stored "false" from
-// before labels were hidden by default would otherwise keep them on.
-const LABELS_KEY = "virtues-rail-labels";
 
 /**
- * The PANEL's width — the rail is fixed, so this is the only part that resizes.
+ * The sidebar's width.
  *
  * The floor is a real floor: below it the serif room title starts truncating
  * and chat rows become unreadable stubs, so dragging further is never what
@@ -24,13 +20,8 @@ export const SIDEBAR_MAX_WIDTH = 420;
 export const SIDEBAR_DEFAULT_WIDTH = 208;
 export const SIDEBAR_COLLAPSE_AT = 148;
 
-/**
- * The rail's width with and without its labels. The aside sizes itself as
- * rail + gap + panel, so both read these — a rail narrower than the aside
- * thinks it is opens a strip of desk between the panel and the pane.
- */
-export const RAIL_WIDTH = 64;
-export const RAIL_COMPACT_WIDTH = 48;
+/** The desk between the window's edge and the sidebar card (`ml-3`). */
+export const SIDEBAR_INSET = 12;
 
 function clampWidth(v: number): number {
 	if (!Number.isFinite(v)) return SIDEBAR_DEFAULT_WIDTH;
@@ -39,11 +30,6 @@ function clampWidth(v: number): number {
 
 let collapsed = $state(false);
 let width = $state(SIDEBAR_DEFAULT_WIDTH);
-// The rail without its labels: glyphs only, narrower. Independent of
-// `collapsed`, which is the panel beside it. On by default: the glyphs carry
-// a tooltip with the room's name, and the labels cost the rail 16px.
-// Right-clicking the sidebar toggle shows them, and that choice is kept.
-let railCompact = $state(true);
 // True while the seam is being dragged. Not persisted. The window header
 // lines its tab strips up with the cards below, and it drops its width
 // transition while this is on so the strips follow the pointer.
@@ -55,7 +41,6 @@ if (typeof localStorage !== "undefined") {
 	if (stored !== null) {
 		collapsed = stored === "true";
 	}
-	railCompact = localStorage.getItem(LABELS_KEY) !== "true";
 	const storedWidth = localStorage.getItem(WIDTH_KEY);
 	if (storedWidth !== null) {
 		// Clamp on read as well as on write: the bounds can move between
@@ -101,25 +86,11 @@ export const sidebarState = {
 	},
 
 	/**
-	 * Where the cards start, in px from the window's left edge: past the rail
-	 * and its 12px of desk, and past the panel when it is open. The window
+	 * Where the pane card starts, in px from the window's left edge: past
+	 * the desk's 12px, and past the sidebar when it is open. The window
 	 * header aligns the left pane's tabs to this.
 	 */
 	get cardLeft() {
-		return (railCompact ? RAIL_COMPACT_WIDTH : RAIL_WIDTH) + 12 + (collapsed ? 0 : width);
-	},
-
-	/** Rail shows glyphs only — toggled by right-clicking the header's sidebar button. */
-	get railCompact() {
-		return railCompact;
-	},
-	get railWidth() {
-		return railCompact ? RAIL_COMPACT_WIDTH : RAIL_WIDTH;
-	},
-	toggleRailCompact() {
-		railCompact = !railCompact;
-		if (typeof localStorage !== "undefined") {
-			localStorage.setItem(LABELS_KEY, String(!railCompact));
-		}
+		return SIDEBAR_INSET + (collapsed ? 0 : width);
 	},
 };
