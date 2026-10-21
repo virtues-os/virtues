@@ -4,7 +4,7 @@
 	 *
 	 * Every room gets the same head so the swap reads as one object changing its
 	 * contents rather than seven different sidebars: a title row at
-	 * `--chrome-row-h` (level with the pane toolbar across the seam), the room's
+	 * `--chrome-row-h` (level with the top row of the pane across the seam), the room's
 	 * name in the serif — the shell's one editorial voice — then the room's
 	 * actions and the collapse control, then the body.
 	 *
@@ -12,7 +12,7 @@
 	 * opened the room's full page, but a heading that silently navigates is a
 	 * surprise, and the rail already selects the room.
 	 *
-	 * The collapse control is NOT here — it is the ∴ mark on the rail. Putting
+	 * The collapse control is NOT here — it is the ∴ mark in the window header. Putting
 	 * it on the panel meant the control vanished with the thing it hid, so the
 	 * way back had to be a different affordance somewhere else. The mark is one
 	 * object doing one job from a place that never moves.

@@ -245,7 +245,7 @@
 	// ── doors ──────────────────────────────────────────────────────────────
 
 	function newChat() {
-		windowShellStore.openTabFromRoute('/', { label: 'New chat' });
+		windowShellStore.newChat();
 	}
 
 	function openPages() {

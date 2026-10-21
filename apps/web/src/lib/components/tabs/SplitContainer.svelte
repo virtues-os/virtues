@@ -7,7 +7,6 @@
 		type DndTabItem,
 		type ZoneId,
 	} from "$lib/stores/dndManager.svelte";
-	import WindowTabBar from "./WindowTabBar.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import TabContent from "./TabContent.svelte";
 	import { mountedTabs, touch } from "$lib/tabs/keepAlive";
@@ -202,7 +201,8 @@
 		></div>
 	</div>
 
-	<!-- Left Pane Shell: tab bar + background + click zone (no content rendered here) -->
+	<!-- Left Pane Shell: background + click zone. Its tabs are in the window
+	     header (WindowHeader), and no content is rendered here. -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
 	<div
 		class="pane-shell left-pane"
@@ -214,8 +214,6 @@
 		tabindex="0"
 		aria-label="Left pane"
 	>
-		<!-- While the app is one room (no AI yet), there are no tabs to show. -->
-			<WindowTabBar paneId={isSplitEnabled ? "left" : undefined} />
 		
 	</div>
 
@@ -231,7 +229,7 @@
 		tabindex={isSplitEnabled ? 0 : -1}
 	><span class="resize-grip" aria-hidden="true"></span></div>
 
-	<!-- Right Pane Shell: tab bar + background + click zone (no content rendered here) -->
+	<!-- Right Pane Shell: background + click zone, as the left. -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
 	<div
 		class="pane-shell right-pane"
@@ -245,11 +243,10 @@
 		aria-label="Right pane"
 		aria-hidden={!isSplitEnabled}
 	>
-		{#if isSplitEnabled}
-			<WindowTabBar paneId="right" />
-		{/if}
 	</div>
 
+	<!-- Typing anywhere in a preview tab (a composer, a page, a field) keeps
+	     it: you have started working in it. -->
 	<!-- Tab Content Layer: single {#each} loop, absolutely positioned per-pane.
 	     When a tab moves between panes, only CSS classes change, so a mounted
 	     view survives the move. A hidden tab outside the keep-alive set
@@ -267,6 +264,7 @@
 			class:in-right={paneId === "right" && isSplitEnabled}
 			style:display={isActive ? "flex" : "none"}
 			onpointerdown={() => isSplitEnabled && handlePaneClick(paneId)}
+			onbeforeinput={() => tab.preview && windowShellStore.keepTab(tab.id)}
 		>
 			{#if mountedTabIds.has(tab.id)}
 				<TabContent {tab} active={isActive} />
@@ -297,7 +295,6 @@
 
 <style>
 	.split-container {
-		--tab-bar-h: 41px; /* 6px padding + 28px tabs-scroll + 6px padding + 1px border */
 		display: flex;
 		flex: 1;
 		min-height: 0;
@@ -343,21 +340,15 @@
 		pointer-events: none;
 	}
 
-	/* Tab content slots: absolutely positioned into pane areas.
-	   Each slot covers the area below the tab bar within its pane.
-	   --tab-bar-h is the measured height: 6px padding + 28px scroll + 6px padding + 1px border */
+	/* Tab content slots: absolutely positioned into pane areas. Each slot
+	   covers its whole pane; the tabs are in the window header above. */
 	.tab-slot {
 		position: absolute;
-		top: var(--tab-bar-h, 41px);
+		top: 0;
 		bottom: 0;
 		flex-direction: column;
 		overflow: hidden;
 		transition: width 150ms var(--ease-premium);
-	}
-
-	/* No tab bar while the app is one room: the content takes the top. */
-	.split-container.bare {
-		--tab-bar-h: 0px;
 	}
 
 	.split-container.dragging .tab-slot {

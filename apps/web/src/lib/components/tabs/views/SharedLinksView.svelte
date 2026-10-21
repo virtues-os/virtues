@@ -74,7 +74,7 @@
 				: p.producer_kind === 'chat'
 					? `/chat/${p.producer_id}`
 					: `/applet/${p.producer_id}`;
-		windowShellStore.navigate(route, { label: p.title });
+		windowShellStore.openTabFromRoute(route, { label: p.title });
 	}
 
 	async function copy(p: Publication) {

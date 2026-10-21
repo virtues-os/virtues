@@ -39,6 +39,10 @@ let width = $state(SIDEBAR_DEFAULT_WIDTH);
 // The rail without its labels: glyphs only, narrower. Independent of
 // `collapsed`, which is the panel beside it.
 let railCompact = $state(false);
+// True while the seam is being dragged. Not persisted. The window header
+// lines its tab strips up with the cards below, and it drops its width
+// transition while this is on so the strips follow the pointer.
+let resizing = $state(false);
 
 // Initialize from localStorage (safe for SSR — guarded)
 if (typeof localStorage !== "undefined") {
@@ -82,6 +86,22 @@ export const sidebarState = {
 	},
 	resetWidth() {
 		sidebarState.width = SIDEBAR_DEFAULT_WIDTH;
+	},
+
+	get resizing() {
+		return resizing;
+	},
+	set resizing(val: boolean) {
+		resizing = val;
+	},
+
+	/**
+	 * Where the cards start, in px from the window's left edge: past the rail
+	 * and its 12px of desk, and past the panel when it is open. The window
+	 * header aligns the left pane's tabs to this.
+	 */
+	get cardLeft() {
+		return (railCompact ? RAIL_COMPACT_WIDTH : RAIL_WIDTH) + 12 + (collapsed ? 0 : width);
 	},
 
 	/** Rail shows glyphs only — toggled by right-clicking the ∴ mark. */

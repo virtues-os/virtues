@@ -143,7 +143,8 @@
 	function navigateToDay(date: Date) {
 		const slug = getLocalDateSlug(date);
 		if (slug === currentDateSlug) return;
-		windowShellStore.openTabFromRoute(`/day/day_${slug}`);
+		// Stepping through days moves this tab, kept or not.
+		windowShellStore.navigate(`/day/day_${slug}`);
 	}
 
 	let scrollContainerEl = $state<HTMLElement | null>(null);

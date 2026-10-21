@@ -118,23 +118,8 @@
 	// the OS shell: a Mac user in a browser still presses Command.
 	const modKeyWord = isAppleKeyboard ? "Command" : "Ctrl";
 
-	// Per-tab history (browser model): back/forward act on this pane's active tab.
-	const canGoBack = $derived(windowShellStore.canGoBack(paneId));
-	const canGoForward = $derived(windowShellStore.canGoForward(paneId));
-
-	function handleBack() {
-		windowShellStore.goBack(paneId);
-	}
-
-	function handleForward() {
-		windowShellStore.goForward(paneId);
-	}
-
 	function handleNewTab() {
-		windowShellStore.openTab(
-			{ type: "chat", label: "New chat", route: "/chat", icon: "ri:chat-1-line" },
-			paneId,
-		);
+		windowShellStore.newChat(paneId);
 	}
 
 	// Build DnD items from tabs with source information
@@ -191,6 +176,7 @@
 
 		const tabIndex = tabs.findIndex((t) => t.id === tabId);
 		const hasTabsToRight = tabIndex !== -1 && tabIndex < tabs.length - 1;
+		const hasTabsToLeft = tabIndex > 0;
 
 		// A chat, page or project is renamed and re-iconed as itself. Any
 		// other tab has no name of its own to change: a rename here used to
@@ -200,7 +186,16 @@
 		const look = tabLook(tab);
 
 		// Build context menu items
-		const items: ContextMenuItem[] = [
+		const items: ContextMenuItem[] = [];
+		if (tab.preview) {
+			items.push({
+				id: "keep",
+				label: "Keep open",
+				icon: "ri:check-line",
+				action: () => windowShellStore.keepTab(tabId),
+			});
+		}
+		items.push(
 			// Compact/Expand
 			{
 				id: "compact",
@@ -210,7 +205,7 @@
 					: "ri:contract-left-right-line",
 				action: () => windowShellStore.togglePin(tabId),
 			},
-		];
+		);
 		if (owned) {
 			items.push({
 				id: "rename",
@@ -308,6 +303,14 @@
 			});
 		}
 
+		if (hasTabsToLeft) {
+			items.push({
+				id: "close-to-left",
+				label: "Close to the Left",
+				action: () => windowShellStore.closeTabsToLeft(tabId, paneId),
+			});
+		}
+
 		// Close to Right (only if tabs exist to the right)
 		if (hasTabsToRight) {
 			items.push({
@@ -365,9 +368,15 @@
 		}
 	}
 
+	// On a preview tab a double-click keeps it, as in VS Code. On a kept tab
+	// it renames the thing, when the thing has a name of its own.
 	function handleDoubleClick(e: MouseEvent, tabId: string) {
 		e.preventDefault();
 		const tab = tabs.find((t) => t.id === tabId);
+		if (tab?.preview) {
+			windowShellStore.keepTab(tabId);
+			return;
+		}
 		if (!tab || tab.pinned || !ownedRef(tab.route ?? "")) return;
 		renamingTabId = tabId;
 		renameValue = tabLook(tab).title;
@@ -392,10 +401,6 @@
 			dndItems = items;
 		});
 	}
-
-	// The sidebar's collapse control lives on the sidebar (its panel header),
-	// and the rail's ∴ mark reopens it when collapsed — so the pane toolbar does
-	// not carry a control for a region it is not.
 
 	// Get icon for tab type
 	function getDefaultIcon(type: string): string {
@@ -428,34 +433,11 @@
 
 <div
 	class="tab-bar"
-	class:split-pane={!!paneId}
-	class:active-pane={isActivePane && !!paneId}
 	role="toolbar"
 	aria-label="Tab bar"
 	tabindex="0"
 >
 
-
-	<div class="nav-cluster">
-		<button
-			class="nav-btn"
-			onclick={handleBack}
-			disabled={!canGoBack}
-			aria-label="Back"
-			title="Back"
-		>
-			<Icon icon="ri:arrow-left-s-line" />
-		</button>
-		<button
-			class="nav-btn"
-			onclick={handleForward}
-			disabled={!canGoForward}
-			aria-label="Forward"
-			title="Forward"
-		>
-			<Icon icon="ri:arrow-right-s-line" />
-		</button>
-	</div>
 
 	<div
 		class="tabs-scroll"
@@ -482,6 +464,7 @@
 				class:active-in-active-pane={tab.id === activeTabId &&
 					isActivePane}
 				class:pinned={tab.pinned}
+				class:preview={tab.preview}
 				class:renaming={tab.id === renamingTabId}
 				animate:flip={{ duration: FLIP_DURATION_MS }}
 				onclick={() =>
@@ -493,7 +476,11 @@
 					e.key === "Enter" &&
 					tab.id !== renamingTabId &&
 					handleTabClick(tab.id)}
-				title={tab.id !== renamingTabId ? identity.title : ""}
+				title={tab.id !== renamingTabId
+					? tab.preview
+						? `${identity.title} · Preview. Double-click to keep it open.`
+						: identity.title
+					: ""}
 				role="button"
 				tabindex="0"
 			>
@@ -556,8 +543,8 @@
 	<button
 		class="new-tab-btn"
 		onclick={handleNewTab}
-		aria-label="New tab"
-		title="New tab"
+		aria-label="New chat"
+		title="New chat"
 	>
 		<Icon icon="ri:add-line" />
 	</button>
@@ -606,35 +593,14 @@
 		align-items: stretch;
 		gap: 4px;
 		padding: 0 8px;
-		min-height: var(--chrome-row-h);
+		height: var(--chrome-row-h);
 		align-items: center;
-		border-bottom: 1px solid var(--color-border);
-		/* Page color, not a recessed strip. The browser model needs the strip
-		   to be darker so the active tab can read as a hole cut in it — but a
-		   recessed band next to a large recessed sidebar made the whole left
-		   half of the window a slab. Pills carry the state instead, so the strip
-		   has no reason to be a different color from what it sits on. */
-		background: var(--color-page);
+		/* The strip sits in the window header, on the desk ground above the
+		   card, so it paints nothing. Pills carry the state. */
+		background: transparent;
 		flex-shrink: 0;
 		position: relative;
 		z-index: var(--z-overlay); /* Above global drag overlays */
-	}
-
-	/* Card top rounding in split mode */
-	.tab-bar.split-pane {
-		border-top-left-radius: var(--card-radius, 6px);
-		border-top-right-radius: var(--card-radius, 6px);
-	}
-
-	/* The focused pane's strip stays the page colour. It used to lift to
-	   --color-surface-elevated so "which pane am I in" read from the chrome —
-	   but on the warm themes (Oxford's elevated is #F4F3F0) that painted the
-	   pane's top a grey that did not match the page below it. Focus is already
-	   carried by the active tab's pill (--tab-active-bg-focused vs
-	   --tab-active-bg), so the strip does not need to muddy the surface to say
-	   it. The top of the pane now matches the page, on every theme. */
-	.tab-bar.active-pane {
-		background: var(--color-page);
 	}
 
 	.tabs-scroll {
@@ -734,6 +700,12 @@
 
 	.tab.active :global(.tab-icon) {
 		opacity: 1;
+	}
+
+	/* A preview tab: the one the next ordinary open replaces. Italic, as in
+	   VS Code, so you can tell it will not stay. */
+	.tab.preview .tab-label-text {
+		font-style: italic;
 	}
 
 	/* An odometer: two lines stacked in a one-line window, shifted by 100% to
@@ -933,8 +905,6 @@
 		outline-offset: -2px;
 	}
 
-	.sidebar-toggle,
-	.nav-btn,
 	.new-tab-btn {
 		display: flex;
 		align-items: center;
@@ -957,51 +927,23 @@
 			color 150ms ease;
 	}
 
-	.sidebar-toggle {
-		margin-right: 2px;
-	}
-
 	/* Hover used to be `--color-surface-elevated` over a `--color-background`
 	   toolbar — #F5F4EF on #FDFCF9 in the default theme, a ~3% shift that read
 	   as nothing happening. A foreground mix is legible in every theme instead
 	   of depending on two surface tokens staying far enough apart. */
-	.sidebar-toggle:hover,
-	.nav-btn:hover:not(:disabled),
 	.new-tab-btn:hover {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 
-	.sidebar-toggle:active,
-	.nav-btn:active:not(:disabled),
 	.new-tab-btn:active {
 		background: var(--press-bg);
 	}
 
-	.sidebar-toggle:focus-visible,
-	.nav-btn:focus-visible,
 	.new-tab-btn:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
 		color: var(--color-foreground);
-	}
-
-	/* Back/forward cluster: tight grouping, muted, disabled at stack ends */
-	.nav-cluster {
-		display: flex;
-		align-items: center;
-		align-self: center;
-		gap: 0;
-		flex-shrink: 0;
-	}
-
-	.nav-btn {
-		width: 20px;
-	}
-
-	.nav-btn:disabled {
-		opacity: 0.3;
-		cursor: default;
 	}
 
 	.new-tab-btn {

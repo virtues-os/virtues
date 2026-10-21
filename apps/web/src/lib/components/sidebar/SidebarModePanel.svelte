@@ -51,11 +51,12 @@
 	});
 
 	function open(href: string, label: string) {
-		// `navigate` swaps the active tab's content in place rather than opening
-		// a new one, so moving through six settings sections leaves you with one
-		// tab instead of six to close afterwards. It pushes onto that tab's
-		// history too, so Back walks the sections.
-		windowShellStore.navigate(href, { label: `${mode.title} · ${label}` });
+		// Moving between this mode's own sections moves the tab you are in,
+		// kept or not, so six settings sections leave you with one tab and Back
+		// walks them. From anywhere else it opens in the preview tab.
+		const label_ = `${mode.title} · ${label}`;
+		if (activeHref !== null) windowShellStore.navigate(href, { label: label_ });
+		else windowShellStore.openTabFromRoute(href, { label: label_ });
 	}
 </script>
 

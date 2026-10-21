@@ -144,7 +144,7 @@
 	// New chat / page navigate the window you are in. Only "+" and "open
 	// beside" make windows — see openTabFromRoute in the window shell store.
 	function handleNewChat() {
-		windowShellStore.openTabFromRoute("/", { label: "New Chat" });
+		windowShellStore.newChat();
 	}
 
 	function handleNewTemporaryChat() {
@@ -218,6 +218,9 @@
 	const asideWidth = $derived(isCollapsed ? railWidth : railWidth + PANEL_GAP + panelWidth);
 
 	let resizing = $state(false);
+	$effect(() => {
+		sidebarState.resizing = resizing;
+	});
 	let dragStartX = 0;
 	let dragStartWidth = 0;
 	// The UNCLAMPED width the pointer is asking for. The stored width is clamped
@@ -317,7 +320,7 @@
 	const panelColumnClass = $derived.by(() =>
 		[
 			"flex flex-col",
-			"my-3 ml-3 overflow-hidden border border-border bg-surface",
+			"mb-3 ml-3 overflow-hidden border border-border bg-surface",
 			merged ? "panel-card-left" : "panel-card",
 			isCollapsed ? "pointer-events-none" : "",
 		].join(" "),
@@ -406,15 +409,14 @@
 	}
 
 	/* The hit area. Always transparent — it is a target, never a mark.
-	
-	   Inset by 12px top and bottom to sit inside the panel card (`my-3`). It
-	   used to run top:0 to bottom:0 of the full-height aside, so its hover
-	   fill spilled 12px ABOVE the card's rounded top corner and 12px below it:
-	   a grey band standing on the desk ground, next to the card rather than on
-	   it. A seam cannot start above the thing it divides. */
+
+	   Inset by 12px at the bottom to sit inside the panel card (`mb-3`); the
+	   card's top is the aside's top, under the window header. Running past
+	   the card put its hover fill on the desk ground beside it. A seam cannot
+	   start above the thing it divides. */
 	.sidebar-resizer {
 		position: absolute;
-		top: 12px;
+		top: 0;
 		bottom: 12px;
 		right: 0;
 		width: 8px;

@@ -4,6 +4,7 @@
 	import "$lib/icons"; // Pre-load all icons
 	import { UnifiedSidebar } from "$lib/components/sidebar";
 	import { SplitContainer } from "$lib/components/tabs";
+	import WindowHeader from "$lib/components/tabs/WindowHeader.svelte";
 	import MobileShell from "$lib/components/mobile/MobileShell.svelte";
 	import ServerUnreachableBar from "$lib/components/ServerUnreachableBar.svelte";
 	import { reachability } from "$lib/stores/reachability.svelte";
@@ -435,11 +436,18 @@
 <SearchModal open={search.open} onClose={() => search.hide()} />
 
 <div
-	class="app-shell flex h-screen w-full bg-surface-elevated"
+	class="app-shell flex flex-col h-screen w-full bg-surface-elevated"
 	class:mobile-shell={mobileLayout.isMobile}
 	class:opening
 	style="background-image: var(--surface-elevated-image); background-size: var(--surface-elevated-size);"
 >
+	<!-- One row across the whole window: the ∴, back, forward and new chat
+	     over the sidebar, and each pane's tabs over its pane. -->
+	{#if !mobileLayout.isMobile}
+		<WindowHeader />
+	{/if}
+
+	<div class="flex flex-1 min-h-0 w-full">
 	<!-- Desktop sidebar — hidden on the mobile (bottom-tab) shell -->
 	{#if !mobileLayout.isMobile}
 		<UnifiedSidebar />
@@ -452,8 +460,8 @@
 	     could float on the desk — there are no pane cards now. -->
 	<main
 		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-page"
-		class:m-3={!mobileLayout.isMobile && !sidebarMerged}
-		class:my-3={sidebarMerged}
+		class:mx-3={!mobileLayout.isMobile && !sidebarMerged}
+		class:mb-3={!mobileLayout.isMobile}
 		class:mr-3={sidebarMerged}
 		class:pane-card={!mobileLayout.isMobile && !sidebarMerged}
 		class:pane-card-right={sidebarMerged}
@@ -480,6 +488,7 @@
 			{/if}
 		{/if}
 	</main>
+	</div>
 </div>
 
 <!-- The phone's first-run stream setup lived here as its own screen. Setup's
@@ -584,11 +593,11 @@
 		animation: opening-room 520ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
 		animation-delay: 560ms;
 	}
-	.app-shell.opening :global(.rail > .rail-item:nth-child(3)) { animation-delay: 610ms; }
-	.app-shell.opening :global(.rail > .rail-item:nth-child(4)) { animation-delay: 660ms; }
-	.app-shell.opening :global(.rail > .rail-item:nth-child(5)) { animation-delay: 710ms; }
-	.app-shell.opening :global(.rail > .rail-item:nth-child(6)) { animation-delay: 760ms; }
-	.app-shell.opening :global(.rail > .rail-item:nth-child(n + 7)) { animation-delay: 840ms; }
+	.app-shell.opening :global(.rail > .rail-item:nth-child(2)) { animation-delay: 610ms; }
+	.app-shell.opening :global(.rail > .rail-item:nth-child(3)) { animation-delay: 660ms; }
+	.app-shell.opening :global(.rail > .rail-item:nth-child(4)) { animation-delay: 710ms; }
+	.app-shell.opening :global(.rail > .rail-item:nth-child(5)) { animation-delay: 760ms; }
+	.app-shell.opening :global(.rail > .rail-item:nth-child(n + 6)) { animation-delay: 840ms; }
 	/* The Setup tile arrives first and then lights once — the one call to act. */
 	.app-shell.opening :global(.rail > .rail-item.setup) {
 		animation:
@@ -599,7 +608,7 @@
 	.app-shell.opening :global(.panel-card-left) {
 		animation: opening-panel 640ms cubic-bezier(0.2, 0.7, 0.2, 1) 720ms both;
 	}
-	.app-shell.opening > main {
+	.app-shell.opening main {
 		animation: opening-pane 760ms cubic-bezier(0.2, 0.7, 0.2, 1) 880ms both;
 	}
 
@@ -639,7 +648,7 @@
 	}
 	@media (prefers-reduced-motion: reduce) {
 		.app-shell.opening :global(*),
-		.app-shell.opening > main {
+		.app-shell.opening main {
 			animation: none !important;
 		}
 	}
