@@ -84,7 +84,7 @@
 	</div>
 	<div class="lead" style:left="{controlsLeft}px" bind:clientWidth={controlsWidth}>
 		<button
-			class="lead-btn nudge-back"
+			class="lead-btn"
 			onclick={() => windowShellStore.goBack()}
 			disabled={!canGoBack}
 			aria-label="Back"
@@ -93,7 +93,7 @@
 			<AtlasIcon name="back" size={GLYPH_PX} stroke={GLYPH_STROKE} bare />
 		</button>
 		<button
-			class="lead-btn nudge-forward"
+			class="lead-btn"
 			onclick={() => windowShellStore.goForward()}
 			disabled={!canGoForward}
 			aria-label="Forward"
@@ -224,10 +224,6 @@
 			transform 180ms var(--ease-premium);
 	}
 
-	.lead-btn :global(svg) {
-		transition: transform 180ms var(--ease-premium);
-	}
-
 	.lead-btn:hover:not(:disabled) {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
@@ -238,15 +234,6 @@
 		background: var(--press-bg);
 		transform: scale(0.94);
 		transition-duration: 60ms;
-	}
-
-	/* The arrows lean the way they go, 1.5px, as if pulled. */
-	.nudge-back:hover:not(:disabled) :global(svg) {
-		transform: translateX(-1.5px);
-	}
-
-	.nudge-forward:hover:not(:disabled) :global(svg) {
-		transform: translateX(1.5px);
 	}
 
 	/* The sidebar glyph's column fills while the sidebar is shown, on the
@@ -275,16 +262,13 @@
 	@media (prefers-reduced-motion: reduce) {
 		.lead,
 		.lead-btn,
-		.lead-btn :global(svg),
 		.lead-btn :global(.atlas-fill),
 		.strips,
 		.strip {
 			transition: none;
 		}
 
-		.lead-btn:active:not(:disabled),
-		.nudge-back:hover:not(:disabled) :global(svg),
-		.nudge-forward:hover:not(:disabled) :global(svg) {
+		.lead-btn:active:not(:disabled) {
 			transform: none;
 		}
 	}
