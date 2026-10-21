@@ -68,18 +68,40 @@ describe('a chat edit on a block page', () => {
 		unregisterTreeEditor('page_1', editor);
 	});
 
-	it('waits once for blocks the sync has not brought yet', async () => {
+	it('waits for blocks the sync has not brought yet', async () => {
 		const { doc } = pageDoc('<p>First.</p>');
 		const editor = treeEditor(doc);
 		registerTreeEditor('page_2', editor);
 		animateChatEdit('page_2', ['blk_new1']);
 		await settle(20);
 		expect(flashedBlocks(editor.state)).toEqual([]);
-		// The edit arrives from the server.
+		// The edit arrives from the server, later than a first look.
+		await settle(400);
 		editor.commands.insertContentAt(editor.state.doc.content.size, '<p data-id="blk_new1">Added.</p>');
-		await settle(200);
+		await settle(20);
 		expect(flashedBlocks(editor.state)).toEqual(['blk_new1']);
 		unregisterTreeEditor('page_2', editor);
+	});
+
+	it('flashes what has arrived once the wait runs out, and stops watching', async () => {
+		vi.useFakeTimers();
+		try {
+			const { doc } = pageDoc('<p>First.</p>');
+			const editor = treeEditor(doc);
+			registerTreeEditor('page_4', editor);
+			const [first] = blockIds(editor);
+			const off = vi.spyOn(editor, 'off');
+			animateChatEdit('page_4', [first, 'blk_never']);
+			await vi.advanceTimersByTimeAsync(1000);
+			expect(flashedBlocks(editor.state)).toEqual([]);
+			await vi.advanceTimersByTimeAsync(1100);
+			expect(flashedBlocks(editor.state)).toEqual([first]);
+			expect(off).toHaveBeenCalledWith('update', expect.any(Function));
+			expect(vi.getTimerCount()).toBeLessThanOrEqual(1);
+			unregisterTreeEditor('page_4', editor);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('does nothing when the page is not open, or the edit names no blocks', async () => {
