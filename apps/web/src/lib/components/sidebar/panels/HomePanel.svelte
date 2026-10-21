@@ -55,7 +55,7 @@
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
-	import { clothFor, projectColor } from '$lib/sidebar/pin-colors';
+	import { clothFor } from '$lib/sidebar/pin-colors';
 	import { isEmoji } from '$lib/utils/iconHelpers';
 	import {
 		droppedRefUrl,
@@ -715,9 +715,8 @@
 	{@const url = chatRoute(session)}
 	{@const pinned = isPinned(url)}
 	{@const home = session.project_id ? projectStore.byId(session.project_id) : undefined}
-	{@const tint = home ? projectColor(home) : null}
 	<div
-		class="panel-row panel-row-has-actions spine"
+		class="panel-row panel-row-has-actions"
 		class:active={activeRoute === url}
 		role="link"
 		tabindex="0"
@@ -733,18 +732,16 @@
 		}}
 		oncontextmenu={(e) => showMenu(e, chatMenu(session))}
 	>
-		<!-- A chat in a project wears the project's color on its bubble, so the
-		     filed ones read at a glance in Today and Recent. The bubble stays a
-		     bubble: the row is still a chat, the color says whose. -->
-		<span class="row-glyph" aria-hidden="true" style={tint ? `color: ${tint}` : undefined}>
-			{#if chatActivity.running(session.conversation_id)}
-				<Icon icon="ri:loader-4-line" width="14" class="spin" />
-			{:else}
-				<AtlasIcon name="chats" size={SHELL_GLYPH_PX} bare />
-			{/if}
-		</span>
+		<!-- No glyph: Recent is a list of titles. The face says it is a chat
+		     (sans) and not a page (serif). -->
 		<span class="panel-row-text">{titleOf(session)}</span>
-		{@render unreadDot(session.conversation_id)}
+		{#if chatActivity.running(session.conversation_id)}
+			<span class="row-running" role="img" aria-label="Replying">
+				<Icon icon="ri:loader-4-line" width="14" class="spin" />
+			</span>
+		{:else}
+			{@render unreadDot(session.conversation_id)}
+		{/if}
 		<span class="row-actions">
 			<button
 				type="button"
@@ -797,13 +794,6 @@
 		}}
 		oncontextmenu={(e) => showMenu(e, pageMenu(page))}
 	>
-		<span class="row-glyph" aria-hidden="true">
-			{#if page.icon && isEmoji(page.icon)}
-				<span class="row-emoji">{page.icon}</span>
-			{:else}
-				<AtlasIcon name="pages" size={SHELL_GLYPH_PX} bare />
-			{/if}
-		</span>
 		<span class="panel-row-text">{pageTitle(page)}</span>
 		<span class="row-actions">
 			<button
@@ -839,7 +829,8 @@
 				{@const owned = ownedRef(pin.url)}
 				{@const pinProject = owned?.kind === 'project' ? owned.id : null}
 				<div
-					class="panel-row panel-row-has-actions spine"
+					class="panel-row panel-row-has-actions"
+					class:spine={!pinChat}
 					class:active={activeRoute === pin.url}
 					class:drop-target={pinProject !== null &&
 						(dndManager.projectTarget === pinProject || rowDropTarget === pinProject)}
@@ -1145,12 +1136,11 @@
 		white-space: nowrap;
 	}
 
-	/* Spines: the serif is the voice of your things, and the sans the voice
-	   of places and verbs. Every titled row (a pin, a project, a chat, a
-	   page) gets the bookface; the doors above stay sans. So the list changes
-	   texture once, where places end and your things begin, not halfway down.
-	   The chrome cut sits beside an icon, where the serif's own metrics
-	   would leave the letters off-center against it. */
+	/* Spines: the serif is for writing. A page, a project, and a pin of
+	   either set in the bookface; a chat and the doors stay in the sans.
+	   Recent carries no glyphs, so the face is how a page tells itself from
+	   a chat there. The chrome cut keeps the letters centered in the 28px
+	   row, where the serif's own metrics would sit them low. */
 	.spine {
 		font-family: var(--font-serif-ui);
 		font-size: 14px;
@@ -1184,6 +1174,12 @@
 	}
 
 
+	.row-running {
+		display: flex;
+		flex: none;
+		color: var(--color-foreground-muted);
+	}
+
 	.row-unread {
 		width: 7px;
 		height: 7px;
@@ -1193,8 +1189,8 @@
 		background: var(--color-success);
 	}
 
-	.panel-row-has-actions:hover .row-unread,
-	.panel-row-has-actions:focus-within .row-unread {
+	.panel-row-has-actions:hover :is(.row-unread, .row-running),
+	.panel-row-has-actions:focus-within :is(.row-unread, .row-running) {
 		display: none;
 	}
 

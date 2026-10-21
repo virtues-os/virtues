@@ -147,9 +147,11 @@ its stroke from its size (1.25 × 16 ÷ size), so a stroke is never typed by
 hand. Two glyph sizes: 14px beside 12px text (a tab's icon and ×, inbox
 rows), and 16px (`SHELL_GLYPH_PX`) in rows and the header.
 
-The row slot, the 16px before a row's name, always holds a line glyph in
-ink. A pin or a project tints its glyph with its own color. An emoji the
-user picked stays, because it is their content.
+Glyphs sit on doors, pins and projects. The row slot, the 16px before such
+a row's name, holds a line glyph in ink. A pin or a project tints its glyph
+with its own color. An emoji the user picked stays, because it is their
+content. Recent carries no glyphs: it is a list of titles, and the face
+tells a page from a chat there.
 
 The ∴ is the one filled shape in the chrome, and its lit dot is the one
 accent color there.
@@ -263,10 +265,9 @@ This bug shipped twice: dead hovers across 39 rules, and an active tab rendered
 
 | Role | Face | Size | Weight |
 |---|---|---|---|
-| Rail label | Avenir | 11px | 500 |
 | Tab, group heading, meta | Avenir | 12px | 400 (headings muted) |
 | Row (every panel) | Avenir | 13px | 400 |
-| Your things (Pinned, Projects, Recents) | EB Garamond | 14px | 400 |
+| Writing in the sidebar (a page, a project, a pin of either) | EB Garamond | 14px | 400 |
 | Panel title | EB Garamond | 16px | 400 |
 | Body / prose | EB Garamond | — | the page, not the chrome |
 
@@ -274,12 +275,12 @@ This bug shipped twice: dead hovers across 39 rules, and an active tab rendered
 fill and ink, never weight: a bolder label is a wider one, and everything
 beside it moves.
 
-**In the chrome the serif is the voice of your things**: a room's title and
-every titled row (a pin, a project, a chat, a page). Places and verbs (New
-chat, Pages, Tasks) stay sans. So the sidebar changes texture once, where
-the doors end and your things begin. The serif's smaller x-height is why its
-rows are a step larger (14px against 13px), on the scale rather than at a
-half pixel.
+**In the chrome the serif is for writing**: a room's title, a page, a
+project, and a pin of either. A chat is a conversation, so its row stays
+sans, as do places and verbs (New chat, Pages, Tasks). Because Recent has
+no glyphs, the face is what tells a page from a chat there. The serif's
+smaller x-height is why its rows are a step larger (14px against 13px), on
+the scale rather than at a half pixel.
 
 The ∴ is drawn, not typed, and it stands alone in the window header without
 a wordmark.
