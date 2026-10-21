@@ -10,6 +10,8 @@
 	crumb sits on the same line on every wiki page.
 -->
 <script lang="ts">
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+
 	interface Props {
 		parent: { label: string; href: string };
 		current: string;
@@ -17,6 +19,15 @@
 	}
 
 	let { parent, current, bar = false }: Props = $props();
+
+	// A plain link changes the browser's URL and leaves the tab where it was,
+	// so a click moves the tab itself, the way the day page steps between
+	// days. The href stays for a modified click and for the link's semantics.
+	function go(e: MouseEvent, href: string) {
+		if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return;
+		e.preventDefault();
+		windowShellStore.navigate(href);
+	}
 </script>
 
 {#if bar}
@@ -27,9 +38,9 @@
 
 {#snippet crumbs()}
 	<nav class="crumbs" aria-label="Breadcrumb">
-		<a href="/wiki">Wiki</a>
+		<a href="/wiki" onclick={(e) => go(e, "/wiki")}>Wiki</a>
 		<span class="sep" aria-hidden="true">/</span>
-		<a href={parent.href}>{parent.label}</a>
+		<a href={parent.href} onclick={(e) => go(e, parent.href)}>{parent.label}</a>
 		<span class="sep" aria-hidden="true">/</span>
 		<span class="current" aria-current="page">{current}</span>
 	</nav>
