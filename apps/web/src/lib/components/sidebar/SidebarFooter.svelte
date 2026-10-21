@@ -216,6 +216,12 @@
 			transform var(--motion-enter) var(--ease-premium) var(--stagger-delay, 0ms);
 	}
 
+	/* With no chip to show, the footer takes no room, so Settings sits at the
+	   foot of the sidebar instead of 24px above it. */
+	.footer:not(:has(> *)) {
+		padding-block: 0;
+	}
+
 	/* The update chip: a standing offer, not an alarm. Info tokens (note-this),
 	   never the accent (act-on-this is the doors' register) — the split the
 	   theme pass argued for. Reads like a Library row that happens to carry a
