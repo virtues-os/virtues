@@ -8,10 +8,9 @@
 	 *
 	 * Doors first, then groups, and the order is the order of reach:
 	 *
-	 *   doors     Home, New chat, Pages, Tasks, Projects, Applets, Wiki.
-	 *             Home is your desk, then the verb, then the places. Each
-	 *             place is one row that opens its overview; none of them
-	 *             lists its contents here. Search is
+	 *   doors     New chat, Pages, Tasks, Projects, Applets, Wiki. The verb,
+	 *             then the places. Each place is one row that opens its
+	 *             overview; none of them lists its contents here. Search is
 	 *             not a door: it is the ⌘K palette, reached from anywhere.
 	 *             Pages, Tasks and Projects carry a `+` on hover: the word is
 	 *             the list, the plus is the new one.
@@ -262,12 +261,6 @@
 	}
 
 	// ── doors ──────────────────────────────────────────────────────────────
-
-	// Home is an applet's face, so the desk is yours to change: edit the
-	// applet and the door opens what you made.
-	function openHome() {
-		windowShellStore.openTabFromRoute('/applet/applet_home/view', { label: 'Home', focusExisting: true });
-	}
 
 	function newChat() {
 		windowShellStore.newChat();
@@ -570,10 +563,6 @@
      has no door here: it is the ⌘K palette, which has the room for results
      across chats, pages and projects. -->
 <div class="panel-doors">
-	<button type="button" class="panel-row panel-door" onclick={openHome}>
-		<AtlasIcon name="home" size={SHELL_GLYPH_PX} bare />
-		<span class="panel-row-text">Home</span>
-	</button>
 	{#if setupOpen}
 		<button type="button" class="panel-row panel-door" onclick={openSetup}>
 			<SetupRing size={16} />

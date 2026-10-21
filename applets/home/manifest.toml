@@ -1,8 +1,0 @@
-# Home — the desk the sidebar's Home door opens. Face-only: it reads the
-# record through virtues.query and opens rooms through virtues.open, so it
-# is an ordinary applet. Copy the folder or edit the face to make your own.
-name = "Home"
-description = "Shows your day at a glance: calendar, tasks, pages, health and screen time."
-owner = "user"
-triggers = []
-default_enabled = true
