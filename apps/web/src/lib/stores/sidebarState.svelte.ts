@@ -37,8 +37,10 @@ function clampWidth(v: number): number {
 let collapsed = $state(false);
 let width = $state(SIDEBAR_DEFAULT_WIDTH);
 // The rail without its labels: glyphs only, narrower. Independent of
-// `collapsed`, which is the panel beside it.
-let railCompact = $state(false);
+// `collapsed`, which is the panel beside it. On by default: the glyphs carry
+// a tooltip with the room's name, and the labels cost the rail 16px.
+// Right-clicking the sidebar toggle shows them, and that choice is kept.
+let railCompact = $state(true);
 // True while the seam is being dragged. Not persisted. The window header
 // lines its tab strips up with the cards below, and it drops its width
 // transition while this is on so the strips follow the pointer.
@@ -50,7 +52,7 @@ if (typeof localStorage !== "undefined") {
 	if (stored !== null) {
 		collapsed = stored === "true";
 	}
-	railCompact = localStorage.getItem(COMPACT_KEY) === "true";
+	railCompact = localStorage.getItem(COMPACT_KEY) !== "false";
 	const storedWidth = localStorage.getItem(WIDTH_KEY);
 	if (storedWidth !== null) {
 		// Clamp on read as well as on write: the bounds can move between
