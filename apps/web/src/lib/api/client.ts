@@ -604,8 +604,36 @@ export interface AppletLogEntry {
 	cost_micros: number;
 }
 
+/** A page an applet's runs wrote, with the last time one of them did. */
+export interface AppletPage {
+	page_id: string;
+	title: string;
+	written_at: string;
+	run_id: string;
+}
+
+/** The pages an applet wrote, most recently written first. */
+export function getAppletPages(id: string): Promise<AppletPage[]> {
+	return apiGet<AppletPage[]>(`/applets/${encodeURIComponent(id)}/pages`);
+}
+
 export function getAppletLog(id: string, limit = 50): Promise<AppletLogEntry[]> {
 	return apiGet<AppletLogEntry[]>(`/applets/${encodeURIComponent(id)}/log`, { limit });
+}
+
+/** One applet's runs on one day (in the box's timezone), counted by outcome. */
+export interface RunDay {
+	applet_id: string;
+	/** `YYYY-MM-DD`, the box-local day the runs started on. */
+	day: string;
+	status: AppletRun['status'];
+	runs: number;
+}
+
+/** Every applet's run counts per day for the last `days` days, in one request.
+ *  Drives the Applets list's "Last 7 days" column and each applet's history. */
+export function getRunsByDay(days = 30): Promise<RunDay[]> {
+	return apiGet<RunDay[]>('/runs/by-day', { days });
 }
 
 /** Say something to an applet — the `message` wake. Returns once the run row

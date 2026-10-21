@@ -22,6 +22,10 @@
 		// A box with its tick: the one mark every to-do list shares, so the
 		// door reads as a list of things to do before its word is read.
 		tasks: '<rect x="2.8" y="2.8" width="10.4" height="10.4" rx="2.2"/><path d="M5.6 8.1 7.3 9.8 10.5 6.3"/>',
+		// An applet's live view (its face): panes of a dashboard, uneven so it
+		// reads as readings laid out, not as a grid of apps.
+		dashboard:
+			'<rect x="2.6" y="2.6" width="4.6" height="4.6" rx="1"/><rect x="8.8" y="2.6" width="4.6" height="6.6" rx="1"/><rect x="2.6" y="8.8" width="4.6" height="4.6" rx="1"/><rect x="8.8" y="10.8" width="4.6" height="2.6" rx="1"/>',
 		search: '<circle cx="7.1" cy="7.1" r="4.3"/><path d="M10.4 10.4 13.5 13.5"/>',
 		// The chats bubble, empty and waiting — a plus where the conversation
 		// dots would be. Drawn for the phone drawer's "New chat" door.

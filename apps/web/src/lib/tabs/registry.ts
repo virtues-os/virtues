@@ -624,11 +624,11 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: () => ({
 			type: 'applets',
 			label: 'Applets',
-			icon: 'ri:flashlight-line',
+			icon: 'atlas:applets',
 		}),
 		serialize: () => 'applets',
 		deserialize: () => '/applets',
-		icon: 'ri:flashlight-line',
+		icon: 'atlas:applets',
 		defaultLabel: 'Applets',
 		component: AppletsView,
 	},
@@ -669,7 +669,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'applet',
 				label: 'Applet',
-				icon: 'ri:flashlight-line',
+				icon: 'atlas:applets',
 				entityId: match?.[1],
 			};
 		},
@@ -678,7 +678,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (serialized.startsWith('applet_')) return `/applet/${serialized}`;
 			return '/applets';
 		},
-		icon: 'ri:flashlight-line',
+		icon: 'atlas:applets',
 		defaultLabel: 'Applet',
 		component: AppletDetailView,
 		detailComponent: AppletDetailView,

@@ -58,6 +58,10 @@
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { pinsStore } from '$lib/stores/pins.svelte';
+	import { appletsStore } from '$lib/stores/applets.svelte';
+	import { needsYou } from '$lib/applets/days';
+	import { appletGlyph } from '$lib/applets/palette';
+	import type { Applet } from '$lib/api/client';
 	import { chatActivity } from '$lib/stores/chatActivity.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
@@ -92,6 +96,7 @@
 	import { openWebLink } from '$lib/utils/webLinks';
 
 	const PROJECTS_SHOWN = 5;
+	const APPLETS_SHOWN = 4;
 	const RECENTS_CAP = 20;
 
 	// ── what is where ──────────────────────────────────────────────────────
@@ -99,6 +104,12 @@
 	const pins = $derived(pinsStore.pins);
 	const projects = $derived(projectStore.projects);
 	let projectsExpanded = $state(false);
+	// Every applet you made sits under the Applets door, four and then "Show
+	// all", so the ones you use are one click away without opening the table.
+	if (!appletsStore.loaded) void appletsStore.load();
+	let appletsExpanded = $state(false);
+	const myApplets = $derived(appletsStore.mine);
+	const visibleApplets = $derived(appletsExpanded ? myApplets : myApplets.slice(0, APPLETS_SHOWN));
 	const visibleProjects = $derived(
 		projectsExpanded ? projects : projects.slice(0, PROJECTS_SHOWN),
 	);
@@ -269,8 +280,30 @@
 		openTasks();
 	}
 
+	/**
+	 * The first click goes to the table and shows your applets under the door;
+	 * a click while the table is already in front folds the list or opens it,
+	 * like a group's label.
+	 */
 	function openApplets() {
+		if (activeRoute === '/applets' && myApplets.length > 0) {
+			sidebarZones.toggle(zoneId('applets'));
+			return;
+		}
 		windowShellStore.openTabFromRoute('/applets', { label: 'Applets', focusExisting: true });
+		if (folded('applets')) sidebarZones.toggle(zoneId('applets'));
+	}
+
+	function appletRoute(a: Applet): string {
+		return `/applet/${a.id}`;
+	}
+
+	function openApplet(a: Applet) {
+		windowShellStore.openTabFromRoute(appletRoute(a), { label: a.name, focusExisting: true });
+	}
+
+	function appletMenu(a: Applet): ContextMenuItem[] {
+		return [pinMenuItem({ url: appletRoute(a), label: a.name, icon: 'atlas:applets' }, { dividerBefore: false })];
 	}
 
 // ── opening rows ───────────────────────────────────────────────────────
@@ -727,10 +760,36 @@
 			</button>
 		</span>
 	</div>
-	<button type="button" class="panel-row panel-door" onclick={openApplets}>
+	<button
+		type="button"
+		class="panel-row panel-door"
+		aria-expanded={myApplets.length > 0 ? !folded('applets') : undefined}
+		onclick={openApplets}
+	>
 		<AtlasIcon name="applets" size={16} bare />
 		<span class="panel-row-text">Applets</span>
+		{#if appletsStore.problems > 0}
+			<span
+				class="door-count"
+				title={`${appletsStore.problems} ${appletsStore.problems === 1 ? 'applet needs' : 'applets need'} you`}
+				>{appletsStore.problems}</span
+			>
+		{/if}
 	</button>
+	{#if myApplets.length > 0}
+		<div class="sidebar-expandable fold" class:expanded={!folded('applets')} style={foldStyle(visibleApplets.length)}>
+			<div class="sidebar-expandable-inner applets-nest">
+				{#each visibleApplets as a (a.id)}
+					{@render appletRow(a)}
+				{/each}
+				{#if myApplets.length > APPLETS_SHOWN}
+					<button type="button" class="panel-row panel-more nested" onclick={() => (appletsExpanded = !appletsExpanded)}>
+						{appletsExpanded ? 'Show fewer' : `Show all (${myApplets.length})`}
+					</button>
+				{/if}
+			</div>
+		</div>
+	{/if}
 </div>
 
 <!-- A group's head: the label folds the group; the chevron says so on
@@ -841,6 +900,44 @@
 	{#if chatId && chatActivity.unread(chatId)}
 		<span class="row-unread" role="img" aria-label="New reply"></span>
 	{/if}
+{/snippet}
+
+{#snippet appletRow(a: Applet)}
+	{@const url = appletRoute(a)}
+	{@const pinned = isPinned(url)}
+	<div
+		class="panel-row panel-row-has-actions nested"
+		class:active={activeRoute === url}
+		role="link"
+		tabindex="0"
+		title={a.name}
+		onclick={() => openApplet(a)}
+		onkeydown={(e) => {
+			if (e.key === 'Enter' || e.key === ' ') {
+				e.preventDefault();
+				openApplet(a);
+			}
+		}}
+		oncontextmenu={(e) => showMenu(e, appletMenu(a))}
+	>
+		<span class="applet-tile" aria-hidden="true"><AtlasIcon name={appletGlyph(a)} size={12} bare /></span>
+		<span class="panel-row-text">{a.name}</span>
+		{#if needsYou(a)}
+			<span class="row-problem" role="img" aria-label="Needs you"></span>
+		{/if}
+		<span class="row-actions">
+			<button
+				type="button"
+				class="row-action"
+				class:on={pinned}
+				aria-label={pinned ? 'Unpin' : 'Pin'}
+				title={pinned ? 'Unpin' : 'Pin'}
+				onclick={(e) => quickPin(e, { url, label: a.name, icon: 'atlas:applets' })}
+			>
+				<Icon icon={pinned ? 'ri:pushpin-fill' : 'ri:pushpin-line'} width="14" />
+			</button>
+		</span>
+	</div>
 {/snippet}
 
 {#snippet pageRow(page: PageSummary)}
@@ -1374,6 +1471,58 @@
 		   was invisible against the ground it was meant to separate from. */
 		border: 1px solid color-mix(in srgb, var(--color-foreground) 12%, transparent);
 		box-sizing: border-box;
+	}
+
+	/* Your applets sit under their door, set in from it on a guide line so they
+	   read as its contents rather than as more doors. */
+	.applets-nest {
+		margin-left: 19px;
+		border-left: 1px solid var(--color-border);
+	}
+	.panel-row.nested {
+		padding-left: 12px;
+	}
+	/* The applet's kind, the same glyph as its row on the Applets page, on a
+	   small tile so it doesn't read as one of the doors' bare icons. */
+	.applet-tile {
+		width: 20px;
+		height: 20px;
+		flex: none;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		border-radius: 6px;
+		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
+		color: var(--color-foreground-muted);
+	}
+
+	/* Problems only: an applet that failed or didn't run when it was due. */
+	.row-problem {
+		width: 7px;
+		height: 7px;
+		margin-right: 2px;
+		flex: none;
+		border-radius: 50%;
+		background: var(--color-error);
+	}
+	.panel-row-has-actions:hover .row-problem,
+	.panel-row-has-actions:focus-within .row-problem {
+		display: none;
+	}
+	.door-count {
+		margin-left: auto;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		min-width: 16px;
+		height: 16px;
+		padding: 0 4px;
+		border-radius: 999px;
+		background: var(--color-error);
+		color: var(--color-background);
+		font-size: 11px;
+		line-height: 1;
+		font-variant-numeric: tabular-nums;
 	}
 
 	.row-unread {
