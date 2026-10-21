@@ -163,7 +163,7 @@
 	   engine-side.
 	   Change a size here and page and editor move together; that is the whole
 	   WYSIWYG guarantee. Values are the editor's tuned scale. */
-	--md-h1-size: 1.75rem;   --md-h1-lh: 1.3;  --md-h1-weight: 400;
+	--md-h1-size: 1.625rem;  --md-h1-lh: 1.3;  --md-h1-weight: 400;
 	--md-h2-size: 1.375rem;  --md-h2-lh: 1.35; --md-h2-weight: 400;
 	--md-h3-size: 1.125rem;  --md-h3-lh: 1.4;  --md-h3-weight: 500;
 	--md-h4-size: 1rem;      --md-h4-lh: 1.5;  --md-h4-weight: 500;

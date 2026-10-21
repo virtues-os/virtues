@@ -27,7 +27,9 @@
 	margin-top: 0.75em;
 }
 
-.doc-prose p {
+/* No weight, so the gap above still reaches a paragraph after a list, a
+   quote or code; inside a block a paragraph has none of its own. */
+:where(.doc-prose p) {
 	margin: 0;
 }
 
@@ -45,6 +47,12 @@
 .doc-prose h6 {
 	margin-bottom: 0;
 	color: var(--color-foreground);
+}
+
+/* A heading sits close over what it heads: far more room above it than
+   below, so it reads as the start of its section. */
+.doc-prose > :is(h1, h2, h3, h4, h5, h6) + * {
+	margin-top: 0.5em;
 }
 
 .doc-prose h1 {

@@ -163,7 +163,7 @@ keeps the table of what was built, and outlives this plan:
 
 - task lists and the `/task` keyword (page checkboxes stay page
   content); slash commands; find-in-page; word and
-  link counts (`PageStatusBar`); code blocks with language picker, copy and
+  link counts (under the page toolbar's ⋯); code blocks with language picker, copy and
   Shiki highlighting; table menus (add, delete, align); the link menu (open
   beside, turn into embed, `LinkEditorPopover`); focus and typewriter mode;
   long-press for menus on iOS, which fires no `contextmenu`; the cover,
