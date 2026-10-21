@@ -84,7 +84,7 @@
 	</div>
 	<div class="lead" style:left="{controlsLeft}px" bind:clientWidth={controlsWidth}>
 		<button
-			class="lead-btn"
+			class="lead-btn nudge-back"
 			onclick={() => windowShellStore.goBack()}
 			disabled={!canGoBack}
 			aria-label="Back"
@@ -93,7 +93,7 @@
 			<AtlasIcon name="back" size={GLYPH_PX} stroke={GLYPH_STROKE} bare />
 		</button>
 		<button
-			class="lead-btn"
+			class="lead-btn nudge-forward"
 			onclick={() => windowShellStore.goForward()}
 			disabled={!canGoForward}
 			aria-label="Forward"
@@ -104,13 +104,14 @@
 		<span class="lead-gap" aria-hidden="true"></span>
 		<button
 			class="lead-btn"
+			class:sidebar-shown={sidebarOpen}
 			onclick={() => sidebarState.toggle()}
 			oncontextmenu={toggleLabels}
 			aria-label={sidebarOpen ? 'Hide the sidebar' : 'Show the sidebar'}
 			aria-expanded={sidebarOpen}
 			title={`${sidebarOpen ? 'Hide' : 'Show'} the sidebar (${shortcuts.format('mod+b')}) · Right-click to ${compact ? 'show' : 'hide'} labels`}
 		>
-			<AtlasIcon name={sidebarOpen ? 'sidebar-open' : 'sidebar'} size={GLYPH_PX} stroke={GLYPH_STROKE} bare />
+			<AtlasIcon name="sidebar" size={GLYPH_PX} stroke={GLYPH_STROKE} bare />
 		</button>
 		<button
 			class="lead-btn"
@@ -196,7 +197,14 @@
 
 	/* 32px squares on the 8pt grid, the same box as the mark, butted
 	   together: the 16px glyphs leave 16px of air between neighbours, so no
-	   gap is needed inside a group. */
+	   gap is needed inside a group.
+
+	   Motion, the same in every control here, the mark and the tabs:
+	   - Hover comes on in 80ms and goes off over 200ms. Instant on, gentle
+	     off: running the pointer along the row leaves a short trail rather
+	     than a strobe.
+	   - A press sinks to 94% in 60ms and springs back on --ease-premium,
+	     so a click is felt without anything moving out of its box. */
 	.lead-btn {
 		display: grid;
 		place-items: center;
@@ -210,17 +218,45 @@
 		cursor: pointer;
 		flex-shrink: 0;
 		transition:
-			background-color 150ms ease,
-			color 150ms ease;
+			background-color 200ms var(--ease-premium),
+			color 200ms var(--ease-premium),
+			opacity 200ms var(--ease-premium),
+			transform 180ms var(--ease-premium);
+	}
+
+	.lead-btn :global(svg) {
+		transition: transform 180ms var(--ease-premium);
 	}
 
 	.lead-btn:hover:not(:disabled) {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
+		transition-duration: 80ms, 80ms, 80ms, 180ms;
 	}
 
 	.lead-btn:active:not(:disabled) {
 		background: var(--press-bg);
+		transform: scale(0.94);
+		transition-duration: 60ms;
+	}
+
+	/* The arrows lean the way they go, 1.5px, as if pulled. */
+	.nudge-back:hover:not(:disabled) :global(svg) {
+		transform: translateX(-1.5px);
+	}
+
+	.nudge-forward:hover:not(:disabled) :global(svg) {
+		transform: translateX(1.5px);
+	}
+
+	/* The sidebar glyph's column fills while the sidebar is shown, on the
+	   sidebar's own 300ms, so the glyph and the panel arrive together. */
+	.lead-btn :global(.atlas-fill) {
+		transition: fill-opacity 300ms var(--ease-premium);
+	}
+
+	.lead-btn.sidebar-shown :global(.atlas-fill) {
+		fill-opacity: 0.22;
 	}
 
 	/* Present but spent: the history arrows stay put at the ends of the
@@ -239,9 +275,17 @@
 	@media (prefers-reduced-motion: reduce) {
 		.lead,
 		.lead-btn,
+		.lead-btn :global(svg),
+		.lead-btn :global(.atlas-fill),
 		.strips,
 		.strip {
 			transition: none;
+		}
+
+		.lead-btn:active:not(:disabled),
+		.nudge-back:hover:not(:disabled) :global(svg),
+		.nudge-forward:hover:not(:disabled) :global(svg) {
+			transform: none;
 		}
 	}
 </style>

@@ -98,11 +98,22 @@
 		background: transparent;
 		color: var(--color-foreground);
 		cursor: pointer;
-		transition: background-color 150ms ease;
+		/* The header's motion: hover on in 80ms, off over 200ms; a press
+		   sinks to 94% and springs back (WindowHeader's .lead-btn). */
+		transition:
+			background-color 200ms var(--ease-premium),
+			transform 180ms var(--ease-premium);
 	}
 
 	.header-mark:hover {
 		background: var(--hover-bg);
+		transition-duration: 80ms, 180ms;
+	}
+
+	.header-mark:active {
+		background: var(--press-bg);
+		transform: scale(0.94);
+		transition-duration: 60ms;
 	}
 
 	.header-mark:focus-visible {
@@ -120,12 +131,22 @@
 		fill: currentColor;
 		transform-box: fill-box;
 		transform-origin: center;
-		transition: fill 200ms ease;
+		transition: fill 300ms var(--ease-premium);
 	}
 
-	/* The theme's accent, not red: something is waiting, nothing is on fire. */
+	/* The theme's accent, not red: something is waiting, nothing is on fire.
+	   As it lights, the dot swells once, the conclusion beat of the mark's
+	   own syllogism (ThinkingMark's 1.26), and then holds still: a dot that
+	   kept pulsing would say the server is working, which it is not. */
 	.lit .mark-dot.apex {
 		fill: var(--color-primary);
+		animation: dot-lights 640ms var(--ease-premium) 1;
+	}
+
+	@keyframes dot-lights {
+		0% { transform: scale(1); }
+		35% { transform: scale(1.26); }
+		100% { transform: scale(1); }
 	}
 
 	@media (prefers-reduced-motion: reduce) {
@@ -133,6 +154,14 @@
 		.mark-dot,
 		.inbox-row {
 			transition: none;
+		}
+
+		.header-mark:active {
+			transform: none;
+		}
+
+		.lit .mark-dot.apex {
+			animation: none;
 		}
 	}
 
@@ -173,11 +202,17 @@
 		background: transparent;
 		text-align: left;
 		cursor: pointer;
-		transition: background-color 150ms ease;
+		transition: background-color 200ms var(--ease-premium);
 	}
 
 	.inbox-row:hover {
 		background: var(--hover-bg);
+		transition-duration: 80ms;
+	}
+
+	.inbox-row:active {
+		background: var(--press-bg);
+		transition-duration: 60ms;
 	}
 
 	.inbox-row:focus-visible {

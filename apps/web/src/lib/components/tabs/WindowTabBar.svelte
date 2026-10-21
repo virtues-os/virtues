@@ -609,7 +609,11 @@
 		align-items: center;
 		gap: 2px;
 		overflow-x: auto;
-		flex: 1;
+		/* Only as wide as its tabs, so the + sits right after the last one,
+		   where the next tab will appear (Brave, Safari). It shrinks and
+		   scrolls once the tabs outgrow the strip, and the + stays in view. */
+		flex: 0 1 auto;
+		min-width: 0;
 		scrollbar-width: none;
 		height: var(--chrome-tab-h);
 	}
@@ -641,15 +645,26 @@
 		max-width: 160px;
 		min-width: 80px;
 		flex-shrink: 0;
+		/* The header's motion (WindowHeader's .lead-btn): hover on in 80ms,
+		   off over 200ms. A new tab grows into its place. */
 		transition:
-			background-color 150ms ease,
-			color 150ms ease,
-			opacity 150ms ease;
+			background-color 200ms var(--ease-premium),
+			color 200ms var(--ease-premium),
+			opacity 200ms var(--ease-premium);
+		animation: tab-in 220ms var(--ease-premium);
 	}
 
 	.tab:hover {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
+		transition-duration: 80ms;
+	}
+
+	@keyframes tab-in {
+		from {
+			opacity: 0;
+			transform: scale(0.92);
+		}
 	}
 
 	/* Fill from the interaction ramp, not a surface token. A surface token is
@@ -756,8 +771,19 @@
 	   travel to get there. */
 	@media (prefers-reduced-motion: reduce) {
 		.tab-label-text,
-		.tab-label-hint {
+		.tab-label-hint,
+		.tab,
+		.tab-close,
+		.new-tab-btn {
 			transition: none;
+		}
+
+		.tab {
+			animation: none;
+		}
+
+		.new-tab-btn:active {
+			transform: none;
 		}
 	}
 
@@ -794,7 +820,9 @@
 		align-items: center;
 		align-self: center;
 		gap: 2px;
-		margin-left: 2px;
+		/* The view's actions keep the far end of the strip; the tabs and
+		   their + read from the left. */
+		margin-left: auto;
 		padding-left: 6px;
 		border-left: 1px solid var(--color-border);
 	}
@@ -878,8 +906,8 @@
 		cursor: pointer;
 		opacity: 0;
 		transition:
-			opacity 150ms ease,
-			background-color 150ms ease;
+			opacity 200ms var(--ease-premium),
+			background-color 200ms var(--ease-premium);
 		flex-shrink: 0;
 	}
 
@@ -924,8 +952,9 @@
 		cursor: pointer;
 		flex-shrink: 0;
 		transition:
-			background-color 150ms ease,
-			color 150ms ease;
+			background-color 200ms var(--ease-premium),
+			color 200ms var(--ease-premium),
+			transform 180ms var(--ease-premium);
 	}
 
 	/* Hover used to be `--color-surface-elevated` over a `--color-background`
@@ -935,10 +964,13 @@
 	.new-tab-btn:hover {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
+		transition-duration: 80ms, 80ms, 180ms;
 	}
 
 	.new-tab-btn:active {
 		background: var(--press-bg);
+		transform: scale(0.94);
+		transition-duration: 60ms;
 	}
 
 	.new-tab-btn:focus-visible {
@@ -947,8 +979,10 @@
 		color: var(--color-foreground);
 	}
 
+	/* The strip's own 4px gap is the only space before the +: it is the
+	   next tab's place, not a separate control. */
 	.new-tab-btn {
-		margin-left: 4px;
+		margin-left: 0;
 	}
 
 	/* svelte-dnd-action drop indicator */
