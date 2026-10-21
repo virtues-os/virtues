@@ -90,7 +90,7 @@
 		display: grid;
 		place-items: center;
 		width: 32px;
-		height: 28px;
+		height: 32px;
 		flex: none;
 		padding: 0;
 		border: none;

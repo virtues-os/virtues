@@ -13,7 +13,7 @@
 	 * With the sidebar closed the controls are wider than the rail, so the
 	 * left pane's tabs start just after them instead of at the card's edge.
 	 */
-	import Icon from '$lib/components/Icon.svelte';
+	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import InboxMark from '$lib/components/inbox/InboxMark.svelte';
 	import WindowTabBar from './WindowTabBar.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -22,6 +22,13 @@
 
 	/** Air between the controls and the first tab when they meet. */
 	const LEAD_GAP_PX = 8;
+	/**
+	 * The controls' glyphs are the rail's (Atlas), at the rail's line: the
+	 * rail draws 20px glyphs at stroke 1.0 on a 16-unit box, 1.25px of ink,
+	 * so 16px glyphs here take 1.25 to match it exactly.
+	 */
+	const GLYPH_PX = 16;
+	const GLYPH_STROKE = 1.25;
 	/** InboxMark's width; the mark is centred over the rail's tile column. */
 	const MARK_PX = 32;
 
@@ -57,6 +64,9 @@
 >
 	<div class="lead" style:padding-left="{markInset}px" bind:clientWidth={leadWidth}>
 		<InboxMark />
+		<!-- Three groups, set apart by air alone: who (the mark), where you
+		     have been (back, forward), and the window (sidebar, new chat). -->
+		<span class="lead-gap" aria-hidden="true"></span>
 		<button
 			class="lead-btn"
 			onclick={() => windowShellStore.goBack()}
@@ -64,7 +74,7 @@
 			aria-label="Back"
 			title="Back"
 		>
-			<Icon icon="ri:arrow-left-s-line" />
+			<AtlasIcon name="back" size={GLYPH_PX} stroke={GLYPH_STROKE} bare />
 		</button>
 		<button
 			class="lead-btn"
@@ -73,8 +83,9 @@
 			aria-label="Forward"
 			title="Forward"
 		>
-			<Icon icon="ri:arrow-right-s-line" />
+			<AtlasIcon name="forward" size={GLYPH_PX} stroke={GLYPH_STROKE} bare />
 		</button>
+		<span class="lead-gap" aria-hidden="true"></span>
 		<button
 			class="lead-btn"
 			onclick={() => sidebarState.toggle()}
@@ -83,7 +94,7 @@
 			aria-expanded={sidebarOpen}
 			title={`${sidebarOpen ? 'Hide' : 'Show'} the sidebar (${shortcuts.format('mod+b')}) · Right-click to ${compact ? 'show' : 'hide'} labels`}
 		>
-			<Icon icon={sidebarOpen ? 'ri:sidebar-fold-line' : 'ri:sidebar-unfold-line'} />
+			<AtlasIcon name={sidebarOpen ? 'sidebar-open' : 'sidebar'} size={GLYPH_PX} stroke={GLYPH_STROKE} bare />
 		</button>
 		<button
 			class="lead-btn"
@@ -91,7 +102,7 @@
 			aria-label="New chat"
 			title={`New chat (${shortcuts.format('mod+n')})`}
 		>
-			<Icon icon="ri:edit-box-line" />
+			<AtlasIcon name="new-chat" size={GLYPH_PX} stroke={GLYPH_STROKE} bare />
 		</button>
 	</div>
 
@@ -131,7 +142,6 @@
 		z-index: 1;
 		display: flex;
 		align-items: center;
-		gap: 2px;
 		transition: padding-left 300ms var(--ease-premium);
 	}
 
@@ -164,18 +174,24 @@
 		flex: none;
 	}
 
+	.lead-gap {
+		width: 8px;
+		flex: none;
+	}
+
+	/* 32px squares on the 8pt grid, the same box as the mark, butted
+	   together: the 16px glyphs leave 16px of air between neighbours, so no
+	   gap is needed inside a group. */
 	.lead-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 26px;
-		height: 26px;
+		display: grid;
+		place-items: center;
+		width: 32px;
+		height: 32px;
 		padding: 0;
 		border: none;
 		border-radius: 6px;
 		background: transparent;
 		color: var(--color-foreground-muted);
-		font-size: 16px;
 		cursor: pointer;
 		flex-shrink: 0;
 		transition:
@@ -192,8 +208,10 @@
 		background: var(--press-bg);
 	}
 
+	/* Present but spent: the history arrows stay put at the ends of the
+	   stack so the cluster never shifts. */
 	.lead-btn:disabled {
-		opacity: 0.3;
+		opacity: 0.35;
 		cursor: default;
 	}
 
@@ -205,6 +223,7 @@
 
 	@media (prefers-reduced-motion: reduce) {
 		.lead,
+		.lead-btn,
 		.strips,
 		.strip {
 			transition: none;

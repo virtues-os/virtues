@@ -3,6 +3,7 @@
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
 	import Icon from "$lib/components/Icon.svelte";
+	import AtlasIcon from "$lib/components/sidebar/AtlasIcon.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import type { Tab } from "$lib/stores/window-shell.svelte";
 	import {
@@ -533,7 +534,7 @@
 						onclick={(e) => handleTabClose(e, tab.id)}
 						aria-label="Close tab"
 					>
-						<Icon icon="ri:close-line" />
+						<AtlasIcon name="close" size={14} stroke={1.25} bare />
 					</button>
 				{/if}
 			</div>
@@ -546,7 +547,7 @@
 		aria-label="New chat"
 		title="New chat"
 	>
-		<Icon icon="ri:add-line" />
+		<AtlasIcon name="plus" size={16} stroke={1.25} bare />
 	</button>
 
 	<!-- The view's own actions, published into the slot rather than rendered
@@ -909,11 +910,10 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		/* The bar bottom-aligns its children so tabs meet the pane; the window
-		   controls opt back out and centre themselves in the strip. */
+		/* The same box as a tab, so the + reads as the next tab's place. */
 		align-self: center;
-		width: 24px;
-		height: 24px;
+		width: 28px;
+		height: 28px;
 		padding: 0;
 		border: none;
 		border-radius: 6px;
@@ -947,7 +947,7 @@
 	}
 
 	.new-tab-btn {
-		margin-left: 2px;
+		margin-left: 4px;
 	}
 
 	/* svelte-dnd-action drop indicator */

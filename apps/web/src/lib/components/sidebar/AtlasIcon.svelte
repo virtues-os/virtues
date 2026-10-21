@@ -57,6 +57,19 @@
 		settings:
 			'<circle cx="8" cy="8" r="5.2"/><path d="M8 2.8v2.7"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/>',
 
+		// ── The window header's controls ─────────────────────────────────
+		// Interface symbols, the one place the set draws them, at the set's
+		// weight so the header and the rail below it read as one hand.
+		back: '<path d="M10 3.5 5.5 8l4.5 4.5"/>',
+		forward: '<path d="M6 3.5 10.5 8 6 12.5"/>',
+		// The window with its sidebar column. Shown, the column is tinted: the
+		// glyph says which way the window is, as a switch does.
+		sidebar: '<rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M6.5 3v10"/>',
+		'sidebar-open':
+			'<path d="M4.5 3h2v10h-2a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="currentColor" fill-opacity="0.22" stroke="none"/><rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M6.5 3v10"/>',
+		plus: '<path d="M8 3.5v9M3.5 8h9"/>',
+		close: '<path d="M4.8 4.8l6.4 6.4M11.2 4.8l-6.4 6.4"/>',
+
 		// ── Settings' own rows ─────────────────────────────────────────────
 		// Drawn objects under the dial, for the same reason the wiki's rows
 		// are: a panel of Remix glyphs under an Atlas rail tile is two icon
