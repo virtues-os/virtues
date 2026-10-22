@@ -696,10 +696,9 @@
 		right: -4px;
 	}
 
-	/* The grip: a pill centred on the 1px line, hidden until the pointer
-	   finds the seam. The line itself never changes; the grip is the one
-	   thing that responds. It fades in and lengthens on approach and takes
-	   the accent only while held. Same object as the sidebar seam's grip. */
+	/* The grip: a pill centred in the gutter, hidden until the pointer
+	   finds the seam. It fades in and lengthens on approach and takes the
+	   accent only while held. Same object as the sidebar seam's grip. */
 	.resize-grip {
 		display: none;
 	}

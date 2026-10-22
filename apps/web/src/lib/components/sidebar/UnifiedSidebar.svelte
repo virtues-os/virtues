@@ -185,12 +185,12 @@
 			"sidebar-container relative flex h-full bg-transparent",
 			resizing ? "" : "transition-[width] duration-300 ease-[var(--ease-premium)]",
 			// Clips like overflow-hidden (the panel must not spill while the
-			// width animates) but lets the seam's grip, which is centred on the
-			// panel's right border, overhang the edge by its own half-width.
+			// width animates) but lets the seam reach across the 8px desk gap
+			// to the pane card's edge, so its grip can sit in that gap.
 			// min-w-0 keeps the flex sizing overflow-hidden used to imply; z-[1]
 			// keeps the pane's positioned content from painting over that
 			// overhang, since clip-path makes the aside its own stacking layer.
-			"z-[1] min-w-0 [clip-path:inset(0_-3px_0_0)]",
+			"z-[1] min-w-0 [clip-path:inset(0_-8px_0_0)]",
 		].join(" "),
 	);
 
@@ -385,9 +385,9 @@
 	</div>
 
 	{#if !isCollapsed}
-		<!-- The seam is the handle. It sits over the panel's right border — the
-		     same line that divides the panel from the pane — so the thing you
-		     grab is the thing you see. Click hides, drag resizes. -->
+		<!-- The seam is the handle: the desk gap between the sidebar and the
+		     pane card, with the grip in its middle, the way the gutter works
+		     between two panes in split. Click hides, drag resizes. -->
 		<div
 			class="sidebar-resizer"
 			class:dragging={resizing}
@@ -430,34 +430,36 @@
 	@reference "$lib/styles/sidebar.css";
 
 
-	/* The hit area. Always transparent — it is a target, never a mark.
+	/* The hit area. It paints nothing.
 
-	   Inset by the desk gap at the bottom to match the column (`mb-2`); the
-	   card's top is the aside's top, under the window header. Running past
-	   the card put its hover fill on the desk ground beside it. A seam cannot
-	   start above the thing it divides. */
+	   The desk gap between the sidebar and the pane card lies just past the
+	   aside's right edge. The hit area covers that gap plus 4px of the
+	   sidebar, so the seam is easy to find from that side. It stops at the
+	   card's edge, because reaching into the card would need a wider clip on
+	   the aside, and that would let the panel paint over the card while the
+	   width animates. Top and bottom match the column and the card: the
+	   aside's top, under the window header, and the desk gap (`mb-2`). */
 	.sidebar-resizer {
 		position: absolute;
 		top: 0;
 		bottom: 8px;
-		right: 0;
-		width: 8px;
+		right: -8px;
+		width: 12px;
 		z-index: 20;
 		cursor: col-resize;
 		touch-action: none;
 		background: transparent;
 	}
 
-	/* The grip: a pill centred on the panel's right border, hidden until the
-	   pointer finds the seam, so the resting panel is just a clean line. The
-	   border itself never changes; the grip is the one thing that responds.
-	   It fades in and lengthens on approach and takes the accent only while
-	   held. The border's centre is 0.5px in from the right edge; the 4px pill
-	   is centred there, overhanging by 1.5px (the aside's clip allows it). */
+	/* The grip: a pill centred in the desk gap, hidden until the pointer
+	   finds the seam, so at rest the gap is plain desk. It fades in and
+	   lengthens on approach and takes the accent only while held. The gap is
+	   the hit area's right 8px, so 2px in from the right edge centres the
+	   4px pill in it. Same object as the split gutter's grip. */
 	.sidebar-resizer-grip {
 		position: absolute;
 		top: 50%;
-		right: -1.5px;
+		right: 2px;
 		width: 4px;
 		height: 32px;
 		transform: translateY(-50%);
