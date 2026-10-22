@@ -137,6 +137,7 @@
 	import { localModel } from "$lib/stores/localModel.svelte";
 	import { chatUsage } from "$lib/stores/chatUsage.svelte";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
+	import { dropZone, hasFiles } from "$lib/actions/dropZone";
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -1825,30 +1826,17 @@
 	<div
 		class="chat-root"
 		role="presentation"
-		ondragover={(e) => {
-			if (e.dataTransfer?.types.includes("Files")) {
-				e.preventDefault();
-				attachments.dragActive = true;
-			}
-		}}
-		ondragleave={(e) => {
-			// Only clear when leaving the root, not when crossing child boundaries.
-			if (!e.relatedTarget || !(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
-				attachments.dragActive = false;
-			}
-		}}
-		ondrop={(e) => {
-			attachments.dragActive = false;
-			// The composer is a CodeMirror editor INSIDE this root, and it
-			// handles drops on itself (calling preventDefault + onAttach).
-			// Returning true from a CodeMirror dom event handler does not stop
-			// DOM propagation, so that drop still bubbles here — and until
-			// 2026-09-17 this added the same files a second time. Cleared
-			// dragActive first, because the sticky part of the overlay is not
-			// optional: no dragleave fires on the element that took the drop.
-			if (e.defaultPrevented) return;
-			e.preventDefault();
-			if (e.dataTransfer?.files?.length) attachments.add(Array.from(e.dataTransfer.files));
+		use:dropZone={{
+			accepts: hasFiles,
+			onActive: (active) => (attachments.dragActive = active),
+			// The composer is a ProseMirror editor inside this root
+			// (lib/document/composer.ts), and it attaches files dropped on
+			// itself and cancels the drop. The drop still bubbles here, and
+			// dropZone skips a drop that was already cancelled, so the files
+			// are added once.
+			onDrop: (e) => {
+				if (e.dataTransfer?.files?.length) attachments.add(Array.from(e.dataTransfer.files));
+			},
 		}}
 	>
 		<div class="chat-container">
@@ -2938,15 +2926,24 @@
 		color: var(--color-foreground-muted);
 	}
 
-	/* Accent ring + gentle lift on the actual composer box while dragging. */
+	/* While files are over the chat, the composer box takes a ring in the drop
+	   tint and a small lift, because it is where they will land. The ring comes
+	   on at hover-in, and ChatInput's own transition takes it off at hover-out.
+	   Under reduced motion it changes at once and has no lift. */
 	.chat-input-wrapper.drag-active :global(.chat-input-container .chat-input-wrapper) {
 		border-color: var(--color-primary);
+		/* design-ok: the drop ring is drawn as a spread shadow so it adds no layout, and the lift marks the landing spot. */
 		box-shadow:
-			0 0 0 3px color-mix(in srgb, var(--color-primary) 22%, transparent),
+			0 0 0 3px var(--drop-tint),
 			0 10px 28px -14px color-mix(in srgb, var(--color-primary) 50%, transparent);
-		transition:
-			border-color 0.15s ease,
-			box-shadow 0.15s ease;
+		transition-duration: var(--motion-hover-in);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.chat-input-wrapper.drag-active :global(.chat-input-container .chat-input-wrapper) {
+			/* design-ok: the same drop ring as above, without the lift. */
+			box-shadow: 0 0 0 3px var(--drop-tint);
+		}
 	}
 
 	.chat-input-wrapper.transitions-enabled {

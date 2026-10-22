@@ -466,9 +466,17 @@
 		/* design-ok: the composer floats over the page (§6 elevation), so it
 		   takes the faintest lift — a whisper, not a card shadow. */
 		box-shadow: 0 2px 4px color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		/* Out at hover-out. A state that comes on (ChatView's drop ring) sets
+		   its own hover-in duration. */
 		transition:
-			border-color 0.3s cubic-bezier(0.4, 0, 0.2, 1),
-			box-shadow 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+			border-color var(--motion-hover-out) var(--ease-premium),
+			box-shadow var(--motion-hover-out) var(--ease-premium);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.chat-input-wrapper {
+			transition: none;
+		}
 	}
 
 	/* Once the field wraps to multiple lines, anchor controls to the bottom and

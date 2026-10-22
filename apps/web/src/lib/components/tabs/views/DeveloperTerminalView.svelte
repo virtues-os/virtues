@@ -4,6 +4,8 @@
     import { onMount, onDestroy } from "svelte";
     import { browser } from "$app/environment";
     import { getWsUrl } from "$lib/config/backend";
+    import { toast } from "svelte-sonner";
+    import { dropZone, hasFiles } from "$lib/actions/dropZone";
 
     let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -21,6 +23,7 @@
     // be painted over — or worse, shift its layout.
     let uploading = $state(false);
     let uploadError = $state<string | null>(null);
+    let dropActive = $state(false);
 
     // Reconnect state. The shell lives in tmux on the box, so a dropped socket
     // is a detach, not a death: reconnecting reattaches to the same session with
@@ -210,12 +213,11 @@
             });
             resizeObserver.observe(terminalContainer);
 
-            // Paste and drop of files. xterm's own paste handler only ever reads
+            // Paste of files. xterm's own paste handler only ever reads
             // `text/plain`, so image items fall through untouched and we can take
-            // them in the capture phase before it runs.
+            // them in the capture phase before it runs. Drops are taken by
+            // `use:dropZone` on the container.
             terminal.textarea?.addEventListener("paste", handlePaste, true);
-            terminalContainer.addEventListener("dragover", handleDragOver);
-            terminalContainer.addEventListener("drop", handleDrop);
 
             // Watch for theme changes (data-theme attribute on html element)
             themeObserver = new MutationObserver((mutations) => {
@@ -242,8 +244,6 @@
             if (resizeObserver) resizeObserver.disconnect();
             if (themeObserver) themeObserver.disconnect();
             terminal?.textarea?.removeEventListener("paste", handlePaste, true);
-            terminalContainer?.removeEventListener("dragover", handleDragOver);
-            terminalContainer?.removeEventListener("drop", handleDrop);
         };
     });
 
@@ -339,7 +339,13 @@
     /// ordinary input, so they land wherever the cursor is — including inside a
     /// running TUI's prompt.
     async function sendFiles(files: File[]) {
-        if (!files.length || webSocket?.readyState !== WebSocket.OPEN) return;
+        if (!files.length) return;
+        if (webSocket?.readyState !== WebSocket.OPEN) {
+            toast.error(
+                "The terminal isn't connected, so the files weren't sent. Try again when it reconnects.",
+            );
+            return;
+        }
         uploading = true;
         try {
             for (const file of files) {
@@ -375,17 +381,8 @@
         void sendFiles(files);
     }
 
-    function handleDragOver(event: DragEvent) {
-        if (!event.dataTransfer?.types.includes("Files")) return;
-        event.preventDefault();
-        event.dataTransfer.dropEffect = "copy";
-    }
-
     function handleDrop(event: DragEvent) {
-        const files = Array.from(event.dataTransfer?.files ?? []);
-        if (!files.length) return;
-        event.preventDefault();
-        void sendFiles(files);
+        void sendFiles(Array.from(event.dataTransfer?.files ?? []));
     }
 
     function scheduleReconnect() {
@@ -461,7 +458,15 @@
 
     <!-- Terminal Container. The inner surface carries no padding of its own —
          see .terminal-surface below for why that matters. -->
-    <div class="terminal-container">
+    <div
+        class="terminal-container"
+        class:drop-active={dropActive}
+        use:dropZone={{
+            accepts: hasFiles,
+            onActive: (active) => (dropActive = active),
+            onDrop: handleDrop,
+        }}
+    >
         <div class="terminal-surface" bind:this={terminalContainer}></div>
     </div>
 </div>
@@ -529,12 +534,40 @@
     }
 
     .terminal-container {
+        position: relative;
         flex: 1;
         min-height: 0;
         display: flex;
         padding: 12px;
         overflow: hidden;
         background: var(--color-background);
+    }
+
+    /* The drop tint, laid over the terminal while files are over it. xterm
+       paints its own background, so a tint behind it would not show. It lets
+       the pointer through, so the drag stays on the terminal underneath, and
+       sits above xterm's own layers, the highest of which is its scrollbar
+       at 11. */
+    .terminal-container::after {
+        content: "";
+        position: absolute;
+        inset: 0;
+        z-index: 12;
+        background: var(--drop-tint);
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity var(--motion-hover-out) var(--ease-premium);
+    }
+
+    .terminal-container.drop-active::after {
+        opacity: 1;
+        transition-duration: var(--motion-hover-in);
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+        .terminal-container::after {
+            transition: none;
+        }
     }
 
     /* The element xterm is opened into, and therefore the one FitAddon measures

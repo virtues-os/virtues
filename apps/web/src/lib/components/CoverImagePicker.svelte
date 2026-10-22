@@ -9,6 +9,7 @@
 	import Button from './Button.svelte';
 	import MenuItem from './MenuItem.svelte';
 	import { backendUrl } from '$lib/config/backend';
+	import { dropZone, hasFiles } from '$lib/actions/dropZone';
 	import {
 		listDriveFiles,
 		uploadMedia,
@@ -99,20 +100,9 @@
 	}
 
 	function handleDrop(e: DragEvent) {
-		e.preventDefault();
-		dragOver = false;
 		if (e.dataTransfer?.files) {
 			handleFileSelect(e.dataTransfer.files);
 		}
-	}
-
-	function handleDragOver(e: DragEvent) {
-		e.preventDefault();
-		dragOver = true;
-	}
-
-	function handleDragLeave() {
-		dragOver = false;
 	}
 
 	// Library handlers
@@ -254,9 +244,11 @@
 				<div
 					class="upload-zone"
 					class:drag-over={dragOver}
-					ondrop={handleDrop}
-					ondragover={handleDragOver}
-					ondragleave={handleDragLeave}
+					use:dropZone={{
+						accepts: hasFiles,
+						onActive: (active) => (dragOver = active),
+						onDrop: handleDrop,
+					}}
 					role="button"
 					tabindex="0"
 					onclick={() => fileInputEl?.click()}
@@ -457,17 +449,37 @@
 		border: 2px dashed var(--color-border);
 		border-radius: 8px;
 		cursor: pointer;
-		transition: all 150ms;
+		transition:
+			border-color var(--motion-hover-out) var(--ease-premium),
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium);
 		color: var(--color-foreground-muted);
 		outline: none;
 	}
 
-	.upload-zone:hover,
-	.upload-zone:focus-visible,
+	/* Hover is quieter than a drag, so after a drop that failed the zone does
+	   not still look like it is about to take one. */
+	.upload-zone:hover {
+		border-color: var(--color-border-strong);
+		color: var(--color-foreground);
+		transition-duration: var(--motion-hover-in);
+	}
+
+	.upload-zone:focus-visible {
+		border-color: var(--color-primary);
+	}
+
 	.upload-zone.drag-over {
 		border-color: var(--color-primary);
-		background: color-mix(in srgb, var(--color-primary) 5%, transparent);
+		background-color: var(--drop-tint);
 		color: var(--color-primary);
+		transition-duration: var(--motion-hover-in);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.upload-zone {
+			transition: none;
+		}
 	}
 
 	.upload-text {

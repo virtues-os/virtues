@@ -23,6 +23,7 @@
 	import { onMount } from "svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
+	import { dropZone, hasFiles } from "$lib/actions/dropZone";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -240,28 +241,9 @@
 		}
 	}
 
-	// Handle drop
 	function handleDrop(e: DragEvent) {
-		e.preventDefault();
-		dragOver = false;
-		if (e.dataTransfer?.files) {
+		if (e.dataTransfer?.files.length) {
 			handleUpload(e.dataTransfer.files);
-		}
-	}
-
-	// Handle drag over
-	function handleDragOver(e: DragEvent) {
-		e.preventDefault();
-		dragOver = true;
-	}
-
-	// Handle drag leave. Only when the pointer leaves the zone itself — a
-	// dragleave also fires every time it crosses into a child, which made the
-	// highlight strobe as you moved across the file grid toward the middle.
-	function handleDragLeave(e: DragEvent) {
-		const zone = e.currentTarget as HTMLElement;
-		if (!e.relatedTarget || !zone.contains(e.relatedTarget as Node)) {
-			dragOver = false;
 		}
 	}
 
@@ -669,15 +651,13 @@
 
 		<!-- Files Grid (drop zone) -->
 		<div
-			class="border rounded-lg transition-colors"
-			class:border-transparent={!dragOver}
-			class:border-primary={dragOver}
-			style:background-color={dragOver
-				? "color-mix(in srgb, var(--color-primary) 5%, transparent)"
-				: undefined}
-			ondrop={handleDrop}
-			ondragover={handleDragOver}
-			ondragleave={handleDragLeave}
+			class="drop-zone"
+			class:drag-over={dragOver}
+			use:dropZone={{
+				accepts: hasFiles,
+				onActive: (active) => (dragOver = active),
+				onDrop: handleDrop,
+			}}
 			role="region"
 			aria-label="File drop zone"
 		>
@@ -848,6 +828,25 @@
 </Modal>
 
 <style>
+	/* The file grid takes dropped files. It shows the drop tint while files
+	   are over it, coming on at hover-in and going at hover-out, and at once
+	   under reduced motion. */
+	.drop-zone {
+		border-radius: 12px;
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.drop-zone.drag-over {
+		background-color: var(--drop-tint);
+		transition-duration: var(--motion-hover-in);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.drop-zone {
+			transition: none;
+		}
+	}
+
 	@media (max-width: 768px) {
 		.hide-mobile {
 			display: none;

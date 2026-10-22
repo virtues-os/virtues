@@ -37,12 +37,11 @@
 	} = $props();
 </script>
 
-{#if dragActive}
-	<div class="drop-hint">
-		<Icon icon="ri:download-2-line" width="15" />
-		<span>Drop to attach &middot; images, PDFs, audio, or text</span>
-	</div>
-{/if}
+<!-- Always mounted, so it can fade out as well as in. -->
+<div class="drop-hint" class:shown={dragActive} aria-hidden={!dragActive}>
+	<Icon icon="ri:download-2-line" width="15" />
+	<span>Drop to attach &middot; images, PDFs, audio, or text</span>
+</div>
 {#if attachments.length > 0}
 	<div class="attachments">
 		{#each attachments as a (a.id)}
@@ -310,23 +309,26 @@
 		box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--color-primary) 60%, transparent);
 		pointer-events: none;
 		z-index: 11;
-		animation: drop-hint-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+		opacity: 0;
+		transform: translateX(-50%) translateY(0.35rem);
+		/* Hidden only once the fade out has finished. */
+		visibility: hidden;
+		transition:
+			opacity var(--motion-enter) var(--ease-premium),
+			transform var(--motion-enter) var(--ease-premium),
+			visibility 0s linear var(--motion-enter);
 	}
 
-	@keyframes drop-hint-in {
-		from {
-			opacity: 0;
-			transform: translateX(-50%) translateY(0.35rem);
-		}
-		to {
-			opacity: 1;
-			transform: translateX(-50%) translateY(0);
-		}
+	.drop-hint.shown {
+		opacity: 1;
+		transform: translateX(-50%) translateY(0);
+		visibility: visible;
+		transition-delay: 0s;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
 		.drop-hint {
-			animation: none;
+			transition: none;
 		}
 	}
 </style>
