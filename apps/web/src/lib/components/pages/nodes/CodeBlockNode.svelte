@@ -123,7 +123,8 @@
 		align-items: center;
 		justify-content: space-between;
 		gap: 8px;
-		padding: 4px 8px;
+		/* 12px and the label's own 4px put the language on the code's 16px edge. */
+		padding: 4px 12px;
 	}
 
 	.doc-code-language {

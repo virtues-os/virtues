@@ -132,7 +132,7 @@
 						onmouseenter={() => (selectedIndex = index)}
 						type="button"
 					>
-						<Icon icon={cmd.icon} width="17" />
+						<Icon icon={cmd.icon} width="16" />
 						<span class="command-label">{cmd.label}</span>
 					</button>
 				{/each}
@@ -180,16 +180,16 @@
 	.command-item {
 		display: flex;
 		align-items: center;
-		gap: 11px;
+		gap: 8px;
 		width: 100%;
-		padding: 7px 10px;
+		padding: 6px 10px;
 		border: none;
 		background: none;
 		text-align: left;
 		cursor: pointer;
 		/* The icon inherits this, so the whole row lifts together on select. */
 		color: var(--color-foreground-muted);
-		border-radius: 8px;
+		border-radius: 6px;
 		transition:
 			color 0.12s ease,
 			background-color 0.12s ease;
@@ -203,15 +203,17 @@
 	}
 
 	/* One highlight, driven by keyboard AND hover (mouseenter moves the
-	   selection), so the menu never shows two candidate rows at once. */
+	   selection), so the menu never shows two candidate rows at once. The
+	   hover ground, as every other menu's row (MenuItem): the accent is for
+	   what is on or can be pressed, and every row here can. */
 	.command-item.selected {
-		background: var(--color-primary-subtle);
+		background: var(--hover-bg);
 		color: var(--color-foreground);
 	}
 
 	.command-label {
-		font-size: 13.5px;
-		font-weight: 450;
+		font-size: 13px;
+		font-weight: 400;
 		color: var(--color-foreground);
 	}
 </style>

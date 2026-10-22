@@ -7,6 +7,7 @@
 	 */
 	import Icon from './Icon.svelte';
 	import Button from './Button.svelte';
+	import TextAction from './TextAction.svelte';
 	import MenuItem from './MenuItem.svelte';
 	import { backendUrl } from '$lib/config/backend';
 	import { dropZone, hasFiles } from '$lib/actions/dropZone';
@@ -29,10 +30,12 @@
 
 	let { value = null, onSelect, close }: Props = $props();
 
-	let activeTab = $state<'upload' | 'library' | 'unsplash'>('unsplash');
+	// Your own images first: they are on your server. Unsplash is a search
+	// on someone else's, and its tab says so.
+	let activeTab = $state<'upload' | 'library' | 'unsplash'>('library');
 
 	// Topic suggestions for Unsplash empty state
-	const UNSPLASH_TOPICS = ['Nature', 'Abstract', 'Gradient', 'Landscape', 'Texture', 'Library'];
+	const UNSPLASH_TOPICS = ['Nature', 'Abstract', 'Gradient', 'Landscape', 'Texture', 'Architecture'];
 
 	// Max file size: 20MB (matches server limit)
 	const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -309,9 +312,12 @@
 							{/each}
 						</div>
 					{:else}
-						<div class="library-status empty">
-							<Icon icon="ri:image-2-line" width="20" />
-							<span>No images in your library</span>
+						<div class="library-empty">
+							<p>No images in your library yet.</p>
+							<p class="library-empty-actions">
+								<TextAction onclick={() => (activeTab = 'upload')}>Upload one</TextAction>
+								<TextAction onclick={() => (activeTab = 'unsplash')}>Search Unsplash</TextAction>
+							</p>
 						</div>
 					{/if}
 				</div>
@@ -326,6 +332,7 @@
 						class="unsplash-search"
 						oninput={handleUnsplashInput}
 					/>
+					<p class="unsplash-note">Your search goes to Unsplash. A photo you pick loads from their site each time the page opens.</p>
 
 					{#if unsplashLoading}
 						<div class="unsplash-status">
@@ -541,7 +548,28 @@
 		color: var(--color-error);
 	}
 
-	.library-status.empty {
+	.library-empty {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+		padding: 32px 16px;
+		color: var(--color-foreground-muted);
+		font-size: 14px;
+	}
+
+	.library-empty p {
+		margin: 0;
+	}
+
+	.library-empty-actions {
+		display: flex;
+		gap: 16px;
+	}
+
+	.unsplash-note {
+		margin: 8px 0 0;
+		font-size: 12px;
 		color: var(--color-foreground-subtle);
 	}
 

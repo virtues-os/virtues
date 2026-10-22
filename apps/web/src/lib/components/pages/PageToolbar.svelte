@@ -10,7 +10,6 @@
 	import DisplaySettingsPopover from "$lib/components/pages/DisplaySettingsPopover.svelte";
 	import { VersionHistoryPanel } from "$lib/components/pages";
 	import { Popover } from "$lib/floating";
-	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import type { PageFormat } from "$lib/api/client";
 	import { identityOf } from "$lib/refs/identity.svelte";
 	import { clothFor } from "$lib/sidebar/pin-colors";
@@ -87,19 +86,22 @@
 					onclick={toggle}
 					class="toolbar-action"
 					title={icon ? "Change icon" : "Add icon"}
+					aria-label={icon ? "Change icon" : "Add icon"}
+					aria-expanded={showIconPicker}
+					aria-haspopup="dialog"
 				>
 					{#if icon}
 						{#if icon.includes(":")}
 							<Icon
 								{icon}
-								width="15"
+								width="16"
 								style={iconColor ? `color: var(--cat-${iconColor})` : undefined}
 							/>
 						{:else}
 							<span class="toolbar-emoji">{icon}</span>
 						{/if}
 					{:else}
-						<Icon icon="ri:emotion-line" width="15" />
+						<Icon icon="ri:emotion-line" width="16" />
 					{/if}
 				</button>
 			{/snippet}
@@ -120,6 +122,8 @@
 				<IconButton
 					icon={coverUrl ? "ri:image-edit-line" : "ri:image-line"}
 					label={coverUrl ? "Change cover" : "Add cover"}
+					expanded={showCoverPicker}
+					haspopup="dialog"
 					onclick={toggle}
 				/>
 			{/snippet}
@@ -140,6 +144,9 @@
 					class="toolbar-action toolbar-action-text"
 					class:active={showDisplaySettings}
 					title="Display settings"
+					aria-label="Display settings"
+					aria-expanded={showDisplaySettings}
+					aria-haspopup="dialog"
 				>
 					Aa
 				</button>
@@ -155,12 +162,6 @@
 				/>
 			{/snippet}
 		</Popover>
-		<IconButton
-			icon="ri:check-double-line"
-			label={pageDisplay.spellcheck ? "Spell check on" : "Spell check off"}
-			pressed={pageDisplay.spellcheck}
-			onclick={() => pageDisplay.toggleSpellcheck()}
-		/>
 	</div>
 
 	<div class="toolbar-gap"></div>
@@ -177,7 +178,7 @@
 		{/if}
 		<Popover bind:open={showVersionHistory} placement="bottom-end">
 			{#snippet trigger({ toggle })}
-				<IconButton icon="ri:history-line" label="Version history" onclick={toggle} />
+				<IconButton icon="ri:history-line" label="Version history" expanded={showVersionHistory} haspopup="dialog" onclick={toggle} />
 			{/snippet}
 			{#snippet children({ close })}
 				<VersionHistoryPanel {close} {pageId} {format} />
@@ -197,7 +198,7 @@
 		{/if}
 		<Popover bind:open={showOverflow} placement="bottom-end">
 			{#snippet trigger({ toggle })}
-				<IconButton icon="ri:more-2-fill" label="More" onclick={toggle} />
+				<IconButton icon="ri:more-2-fill" label="More" expanded={showOverflow} haspopup="menu" onclick={toggle} />
 			{/snippet}
 			{#snippet children({ close })}
 				<div class="overflow-menu">
@@ -299,12 +300,12 @@
 	.toolbar-group {
 		display: flex;
 		align-items: center;
-		gap: 2px;
+		gap: 4px;
 	}
 
 	/* Whitespace separates semantic groups instead of hard dividers */
 	.toolbar-gap {
-		width: 10px;
+		width: 8px;
 	}
 
 	.toolbar-action {
@@ -320,8 +321,8 @@
 		cursor: pointer;
 		border-radius: 6px;
 		transition:
-			color 0.15s ease,
-			background-color 0.15s ease;
+			color 0.12s ease,
+			background-color 0.12s ease;
 	}
 
 	.toolbar-action:hover {
@@ -329,8 +330,16 @@
 		background: var(--hover-bg);
 	}
 
+	.toolbar-action:focus-visible {
+		outline: 2px solid var(--color-border-focus);
+		outline-offset: 2px;
+	}
+
+	/* Open, as IconButton draws a button whose popover is open: a ground,
+	   not the accent, which means a thing is on or can be pressed. */
 	.toolbar-action.active {
-		color: var(--color-primary);
+		color: var(--color-foreground);
+		background: var(--active-bg);
 	}
 
 	/* The "Aa" that opens display settings. The serif is load-bearing here and

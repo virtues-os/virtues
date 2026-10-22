@@ -43,7 +43,7 @@
 					class="seg"
 					class:active={pageDisplay.fontMode === opt.value}
 					style:font-family={opt.value === "serif"
-						? "var(--font-serif, Georgia, serif)"
+						? "var(--font-serif-ui, Georgia, serif)"
 						: opt.value === "mono"
 							? "var(--font-mono, monospace)"
 							: "var(--font-sans, sans-serif)"}
@@ -80,7 +80,7 @@
 					title={opt.label}
 					onclick={() => pageDisplay.setWidth(opt.value)}
 				>
-					<Icon icon={opt.icon} width="15" />
+					<Icon icon={opt.icon} width="16" />
 				</button>
 			{/each}
 		</div>
@@ -88,12 +88,12 @@
 
 	<div class="divider"></div>
 
-	<button class="focus-toggle" onclick={() => pageDisplay.toggleFocus()}>
+	<button class="focus-toggle" aria-pressed={pageDisplay.focusMode} onclick={() => pageDisplay.toggleFocus()}>
 		<Icon
 			icon={pageDisplay.focusMode
 				? "ri:focus-2-fill"
 				: "ri:focus-2-line"}
-			width="15"
+			width="16"
 		/>
 		<span class="focus-label">Focus mode</span>
 		<span class="focus-state" class:on={pageDisplay.focusMode}>
@@ -102,9 +102,17 @@
 		<kbd class="focus-kbd">⌘⇧F</kbd>
 	</button>
 
+	<button class="focus-toggle" aria-pressed={pageDisplay.spellcheck} onclick={() => pageDisplay.toggleSpellcheck()}>
+		<Icon icon={pageDisplay.spellcheck ? "ri:check-double-fill" : "ri:check-double-line"} width="16" />
+		<span class="focus-label">Spell check</span>
+		<span class="focus-state" class:on={pageDisplay.spellcheck}>
+			{pageDisplay.spellcheck ? "On" : "Off"}
+		</span>
+	</button>
+
 	{#if onViewMarkdown}
 		<button class="focus-toggle" onclick={onViewMarkdown}>
-			<Icon icon="ri:markdown-line" width="15" />
+			<Icon icon="ri:markdown-line" width="16" />
 			<span class="focus-label">View as markdown</span>
 		</button>
 	{/if}
@@ -114,7 +122,7 @@
 	.display-settings {
 		display: flex;
 		flex-direction: column;
-		gap: 10px;
+		gap: 8px;
 		padding: 12px;
 		min-width: 220px;
 	}
@@ -136,7 +144,7 @@
 		gap: 2px;
 		padding: 2px;
 		background: var(--color-surface-elevated);
-		border-radius: 7px;
+		border-radius: 6px;
 	}
 
 	.seg {
@@ -150,7 +158,7 @@
 		color: var(--color-foreground-muted);
 		font-size: 12px;
 		font-weight: 500;
-		border-radius: 5px;
+		border-radius: 6px;
 		cursor: pointer;
 		transition:
 			color 0.12s ease,
@@ -165,10 +173,12 @@
 		color: var(--color-foreground);
 	}
 
+	/* Raised by a hairline, not a shadow: the pane draws none. */
 	.seg.active {
 		background: var(--color-background);
 		color: var(--color-foreground);
-		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.06);
+		outline: 1px solid var(--color-border);
+		outline-offset: -1px;
 	}
 
 	.divider {
@@ -205,7 +215,7 @@
 	}
 
 	.focus-state {
-		font-size: 11px;
+		font-size: 12px;
 		color: var(--color-foreground-subtle);
 	}
 
@@ -214,11 +224,8 @@
 	}
 
 	.focus-kbd {
-		font-size: 10px;
-		font-family: var(--font-mono, monospace);
+		font-size: 12px;
+		font-family: var(--font-sans, sans-serif);
 		color: var(--color-foreground-subtle);
-		background: var(--color-surface-elevated);
-		padding: 1px 5px;
-		border-radius: 4px;
 	}
 </style>

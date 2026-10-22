@@ -27,12 +27,13 @@ const FONT_SIZE: Record<TextSize, string> = {
 	l: "1.125rem",
 };
 
-// Line-height tracks the text size: tighter for small (denser reading), airier
-// for large (more breathing room). Surfaced as `--editor-line-height`.
+// Line-height tracks the text size and lands on a whole pixel: 24px for small
+// and medium, 28px for large. Medium is chat's body line (`--md-body-lh`), so
+// a page and a reply read at one rhythm. Surfaced as `--editor-line-height`.
 const LINE_HEIGHT: Record<TextSize, string> = {
-	s: "1.5",
-	m: "1.6",
-	l: "1.7",
+	s: "1.5rem",
+	m: "var(--md-body-lh)",
+	l: "1.75rem",
 };
 
 interface Persisted {

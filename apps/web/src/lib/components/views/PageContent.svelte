@@ -914,6 +914,27 @@
 		overflow-y: auto;
 		padding: 2rem 1.5rem;
 		padding-bottom: 4rem;
+		/* Text scrolling up under the toolbar fades over its last 24px instead
+		   of being cut through a line. The fade grows in over the first 24px
+		   of scroll, so a page at its top, cover and all, is not masked.
+		   Where scroll timelines are unsupported the stop stays at 0 and
+		   nothing is masked. */
+		mask-image: linear-gradient(to bottom, transparent 0, #000 var(--page-scroll-fade));
+		animation: page-scroll-fade linear both;
+		animation-timeline: scroll(self);
+		animation-range: 0 24px;
+	}
+
+	@property --page-scroll-fade {
+		syntax: "<length>";
+		inherits: false;
+		initial-value: 0px;
+	}
+
+	@keyframes page-scroll-fade {
+		to {
+			--page-scroll-fade: 24px;
+		}
 	}
 
 	.page-inner {

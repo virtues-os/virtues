@@ -23,8 +23,9 @@
 	caret-color: var(--color-foreground);
 }
 
+/* One gap between blocks, chat's paragraph gap (app.css `.markdown p`). */
 .doc-prose > * + * {
-	margin-top: 0.75em;
+	margin-top: 1em;
 }
 
 /* No weight, so the gap above still reaches a paragraph after a list, a
@@ -34,7 +35,7 @@
 }
 
 .doc-prose p + p {
-	margin-top: 0.75em;
+	margin-top: 1em;
 }
 
 /* ── Headings: h1–h3 in the serif the tokens name, h4–h6 in the body's face. */
@@ -110,8 +111,10 @@
 
 /* ── Inline marks */
 
+/* Avenir's Medium, as chat sets bold: Avenir ships no 600, so 600 drew
+   its Bold, a step heavier than the same word in a reply. */
 .doc-prose strong {
-	font-weight: 600;
+	font-weight: 500;
 }
 
 .doc-prose code {

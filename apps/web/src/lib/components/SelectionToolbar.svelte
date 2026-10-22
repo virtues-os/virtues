@@ -154,7 +154,7 @@
 		padding: 3px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 9px;
+		border-radius: 12px;
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.13);
 	}
 
