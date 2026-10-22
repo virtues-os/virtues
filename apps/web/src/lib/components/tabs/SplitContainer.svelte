@@ -36,6 +36,24 @@
 	// Track isDragging reactively via direct session access
 	// Public session property enables Svelte 5 fine-grained reactivity
 	const isDragging = $derived(dndManager.session !== null);
+	// The pane the dragged tab is in. Its own pane takes no drop: the move
+	// would change nothing.
+	const dragFromPane = $derived(dndManager.session?.sourceZone.paneId ?? null);
+	const leftTakesDrop = $derived(isDragging && isSplitEnabled && dragFromPane !== "left");
+	const rightTakesDrop = $derived(
+		isDragging &&
+			(isSplitEnabled
+				? dragFromPane !== "right"
+				: (windowShellStore.panes[0]?.tabs.length ?? 0) >= 2),
+	);
+
+	// svelte-dnd-action's id for the dragged copy of a tab. Over a pane that
+	// will take it, the copy straightens to say so (WindowTabBar styles it).
+	const DRAGGED_EL_ID = "dnd-action-dragged-el";
+	$effect(() => {
+		const docking = leftDropItems.length > 0 || rightDropItems.length > 0;
+		document.getElementById(DRAGGED_EL_ID)?.classList.toggle("tab-docking", docking);
+	});
 
 	// Direct pane access (unified model - tabs always live in panes)
 	const leftPaneTabs = $derived(windowShellStore.panes[0]?.tabs ?? []);
@@ -318,7 +336,7 @@
 >
 	<!-- Drag to Split Overlays - Always mounted so svelte-dnd-action registers zones before drag starts.
 	     With one pane only the right half takes a drop, and only when there is
-	     a tab left behind. The zone under the pointer takes a soft tint the
+	     a tab left behind. In split a pane takes no drop of its own tab. The zone under the pointer takes a soft tint the
 	     shape of the card the drop lands in. The zones render no children:
 	     svelte-dnd-action treats a zone's children as its items. -->
 	<div class="drag-overlays" class:visible={isDragging}>
@@ -331,7 +349,7 @@
 				type: "tab",
 				flipDurationMs: 0,
 				dragDisabled: true,
-				dropFromOthersDisabled: !isDragging || !isSplitEnabled,
+				dropFromOthersDisabled: !leftTakesDrop,
 				dropAnimationDisabled: true,
 				dropTargetStyle: {},
 			}}
@@ -347,7 +365,7 @@
 				type: "tab",
 				flipDurationMs: 0,
 				dragDisabled: true,
-				dropFromOthersDisabled: !isDragging || (!isSplitEnabled && leftPaneTabs.length < 2),
+				dropFromOthersDisabled: !rightTakesDrop,
 				dropAnimationDisabled: true,
 				dropTargetStyle: {},
 			}}

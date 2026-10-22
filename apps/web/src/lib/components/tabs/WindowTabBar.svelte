@@ -403,10 +403,19 @@
 		);
 	}
 
-	function handleDndFinalize(e: CustomEvent<DndEvent<DndTabItem>>) {
-		dndManager.handleFinalize(e, zoneId, (items) => {
+	async function handleDndFinalize(e: CustomEvent<DndEvent<DndTabItem>>) {
+		await dndManager.handleFinalize(e, zoneId, (items) => {
 			dndItems = items;
 		});
+		// The library took the tab out of this strip's list while it was
+		// dragged. A drop that changed nothing leaves the store as it was, so
+		// rebuild from the store or the tab stays missing from the strip.
+		dndItems = buildDndItems();
+	}
+
+	/** The dragged copy of a tab, lifted off the strip (styles below). */
+	function liftDraggedTab(el: HTMLElement | undefined) {
+		el?.classList.add("tab-lifted");
 	}
 
 	// Get icon for tab type
@@ -458,6 +467,10 @@
 			flipDurationMs: FLIP_DURATION_MS,
 			dropTargetStyle: {},
 			dragDisabled: renamingTabId !== null,
+			// The dragged tab keeps its own shape. Morphing would copy the
+			// drop marker's, a 2px bar, and leave only the label showing.
+			morphDisabled: true,
+			transformDraggedElement: liftDraggedTab,
 		}}
 		onconsider={handleDndConsider}
 		onfinalize={handleDndFinalize}
@@ -705,6 +718,59 @@
 	/* Dragging state - svelte-dnd-action applies aria-grabbed */
 	:global(.tab[aria-grabbed="true"]) {
 		opacity: 0.5;
+	}
+
+	/* The dragged tab: the whole pill, lifted off the strip. It takes the
+	   active tab's fill whichever tab it was, tilts a little and rises on a
+	   soft shadow. Over a pane it can be dropped into it straightens and
+	   takes the accent edge (SplitContainer sets .tab-docking). The library
+	   copies the source's computed styles inline, hence !important. */
+	:global(.tab.tab-lifted) {
+		background: var(--color-page) !important;
+		color: var(--color-foreground) !important;
+		opacity: 1 !important;
+		/* design-ok: a dragged tab floats above the window; the shadow is its lift */
+		box-shadow: inset 0 0 0 1px var(--card-edge), 0 10px 24px -8px rgb(0 0 0 / 0.28), 0 2px 6px -2px rgb(0 0 0 / 0.12) !important;
+		scale: 1.06;
+		rotate: -2deg;
+		animation: -global-tab-lift var(--motion-enter) var(--ease-premium) both !important;
+	}
+
+	/* Nothing on a tab in the air can be clicked, and the label gets the
+	   close button's room in the copy's fixed width. */
+	:global(.tab.tab-lifted .tab-close) {
+		display: none !important;
+	}
+
+	:global(.tab.tab-lifted.tab-docking) {
+		/* design-ok: a dragged tab floats above the window; the shadow is its lift */
+		box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-primary) 70%, transparent), 0 6px 16px -8px rgb(0 0 0 / 0.24) !important;
+		scale: 1;
+		rotate: 0deg;
+		animation: -global-tab-dock var(--motion-state) var(--ease-premium) both !important;
+	}
+
+	@keyframes -global-tab-lift {
+		from {
+			scale: 1;
+			rotate: 0deg;
+		}
+	}
+
+	@keyframes -global-tab-dock {
+		from {
+			scale: 1.06;
+			rotate: -2deg;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		:global(.tab.tab-lifted),
+		:global(.tab.tab-lifted.tab-docking) {
+			rotate: 0deg;
+			scale: 1;
+			animation: none !important;
+		}
 	}
 
 	/* A compacted tab — the "Compact / Expand" context action, which shrinks a
