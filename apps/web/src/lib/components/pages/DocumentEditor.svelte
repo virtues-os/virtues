@@ -688,9 +688,9 @@
 	class="document-editor"
 	class:doc-page-view={pageDisplay.widthMode === "page"}
 	class:doc-veiled={veil.hiding}
-	style:--editor-font-family={pageDisplay.fontFamily}
-	style:--editor-font-size={pageDisplay.fontSize}
-	style:--editor-line-height={pageDisplay.lineHeight}
+	style:--prose-family={pageDisplay.fontFamily}
+	style:--prose-size={pageDisplay.fontSize}
+	style:--prose-lh={pageDisplay.lineHeight}
 >
 	{#if findOpen && editor && findHost}
 		<!-- In from the right, where the toolbar's icons were; out as they come back. -->

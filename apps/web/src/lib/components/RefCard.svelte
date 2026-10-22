@@ -11,7 +11,7 @@
 	//   • portrait — an identity image beside the facts: a person's photo (round)
 	//                or an org's logo (rounded square).
 	//   • line     — no image: a quiet glyph + title + facts.
-	// Titles inherit the page font (--editor-font-family) at normal weight;
+	// Titles inherit the page font (--prose-family) at normal weight;
 	// captions are quiet natural case. Full facts shown; deeper transclusion
 	// (a page's text, an org's people) is a later step needing new data.
 	import Icon from "$lib/components/Icon.svelte";
@@ -142,7 +142,7 @@
 	/* Title belongs to the writing — inherits the reader's page font at normal
 	   weight; never bold, never a hardcoded sans. */
 	.ref-title {
-		font-family: var(--editor-font-family, var(--font-serif));
+		font-family: var(--prose-family, var(--font-serif));
 		font-size: 1.0625rem;
 		font-weight: 400;
 		color: var(--color-foreground);

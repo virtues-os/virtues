@@ -1,0 +1,355 @@
+/* =============================================================================
+   PROSE — the text every renderer shares
+   =============================================================================
+   One stylesheet for what rendered text looks like: paragraphs, headings,
+   marks, links, lists and to-dos, quotes, rules and tables. A renderer puts
+   `prose` on its root; a page's editor and its version preview do
+   (lib/document/editor.ts, DocumentPreview). The plan to bring chat, the
+   articles and the composer onto it is agents/plan/prose-consolidation-plan.md.
+
+   Sizes, faces and line heights are the --md-* tokens (themes.css). The
+   spacing is the --prose-* tokens below, so a surface tunes its rhythm by
+   setting tokens, never by rewriting a rule. A surface's own reading
+   settings arrive as --prose-family, --prose-size and --prose-lh on an
+   ancestor (a page's display settings, pageDisplay) and win over the body
+   tokens.
+
+   What only the editor has (its caret, selection, the grip, find, print) is
+   in lib/document/document.css. */
+
+:root {
+	/* Between blocks, and between a heading and what it heads. */
+	--prose-gap: 1em;
+	--prose-after-heading: 0.5em;
+	/* Above each heading level: far more room above than below, so a
+	   heading reads as the start of its section. */
+	--prose-heading-space-1: 1.5em;
+	--prose-heading-space-2: 1.4em;
+	--prose-heading-space-3: 1.25em;
+	--prose-heading-space-4: 1.1em;
+	--prose-heading-space-5: 1em;
+	--prose-heading-space-6: 1em;
+	/* Lists: the indent, and the gap between items. */
+	--prose-indent: 1.5em;
+	--prose-item-gap: 0.35em;
+	/* Inline code's padding, and a link's underline offset. */
+	--prose-code-pad: 0.1em 0.3em;
+	--prose-link-offset: 0.15em;
+}
+
+.prose {
+	color: var(--color-foreground);
+	font-family: var(--prose-family, var(--md-body-family));
+	font-size: var(--prose-size, var(--md-body-size));
+	line-height: var(--prose-lh, var(--md-body-lh));
+	overflow-wrap: break-word;
+	word-break: break-word;
+}
+
+/* One gap between blocks. */
+.prose > * + * {
+	margin-top: var(--prose-gap);
+}
+
+/* No weight, so the gap above still reaches a paragraph after a list, a
+   quote or code; inside a block a paragraph has none of its own. */
+:where(.prose p) {
+	margin: 0;
+}
+
+.prose p + p {
+	margin-top: var(--prose-gap);
+}
+
+/* ── Headings: h1–h3 in the serif the tokens name, h4–h6 in the body's face. */
+
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+	margin-bottom: 0;
+	color: var(--color-foreground);
+}
+
+/* A heading sits close over what it heads: far more room above it than
+   below, so it reads as the start of its section. */
+.prose > :is(h1, h2, h3, h4, h5, h6) + * {
+	margin-top: var(--prose-after-heading);
+}
+
+.prose h1 {
+	margin-top: var(--prose-heading-space-1);
+	font-family: var(--md-heading-major-family);
+	font-size: var(--md-h1-size);
+	line-height: var(--md-h1-lh);
+	font-weight: var(--md-h1-weight);
+}
+
+.prose h2 {
+	margin-top: var(--prose-heading-space-2);
+	font-family: var(--md-heading-major-family);
+	font-size: var(--md-h2-size);
+	line-height: var(--md-h2-lh);
+	font-weight: var(--md-h2-weight);
+}
+
+.prose h3 {
+	margin-top: var(--prose-heading-space-3);
+	font-family: var(--md-heading-major-family);
+	font-size: var(--md-h3-size);
+	line-height: var(--md-h3-lh);
+	font-weight: var(--md-h3-weight);
+}
+
+.prose h4 {
+	margin-top: var(--prose-heading-space-4);
+	font-family: inherit;
+	font-size: var(--md-h4-size);
+	line-height: var(--md-h4-lh);
+	font-weight: var(--md-h4-weight);
+}
+
+.prose h5 {
+	margin-top: var(--prose-heading-space-5);
+	font-family: inherit;
+	font-size: var(--md-h5-size);
+	line-height: var(--md-h5-lh);
+	font-weight: var(--md-h5-weight);
+}
+
+.prose h6 {
+	margin-top: var(--prose-heading-space-6);
+	font-family: inherit;
+	font-size: var(--md-h6-size);
+	line-height: var(--md-h6-lh);
+	font-weight: var(--md-h6-weight);
+	color: var(--color-foreground-muted);
+}
+
+.prose > :first-child {
+	margin-top: 0;
+}
+
+/* ── Inline marks */
+
+/* Avenir's Medium, as chat sets bold: Avenir ships no 600, so 600 drew
+   its Bold, a step heavier than the same word in a reply. */
+.prose strong {
+	font-weight: 500;
+}
+
+.prose code {
+	padding: var(--prose-code-pad);
+	/* design-ok: inline code is code; a fixed advance is the content */
+	font-family: var(--font-mono);
+	font-size: var(--md-inline-code-size);
+	border: var(--md-inline-code-border);
+	border-radius: var(--md-inline-code-radius);
+	background: var(--md-inline-code-bg);
+}
+
+.prose mark {
+	padding: 0 0.1em;
+	border-radius: 0;
+	background: var(--color-highlight);
+	color: var(--color-highlight-foreground, inherit);
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
+}
+
+.prose a {
+	color: var(--color-primary);
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: var(--prose-link-offset);
+}
+
+/* ── Lists */
+
+.prose ul,
+.prose ol {
+	margin-bottom: 0;
+	padding-left: var(--prose-indent);
+}
+
+.prose ul {
+	list-style: disc;
+}
+
+.prose ol {
+	list-style: decimal;
+}
+
+.prose li + li {
+	margin-top: var(--prose-item-gap);
+}
+
+.prose li > ul,
+.prose li > ol {
+	margin-top: var(--prose-item-gap);
+}
+
+/* Task lists: Tiptap's TaskItem view draws `<li><label><input></label><div>`,
+   its `li` without the `data-type` canonical HTML carries, so items are
+   matched as the list's children. */
+.prose ul[data-type='taskList'] {
+	list-style: none;
+	padding-left: 0;
+}
+
+.prose ul[data-type='taskList'] > li {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+
+.prose ul[data-type='taskList'] > li > label {
+	flex: none;
+	display: flex;
+	align-items: center;
+	/* One line of the item's text, whatever its line height is set in. */
+	height: 1lh;
+	user-select: none;
+}
+
+.prose ul[data-type='taskList'] > li > div {
+	flex: 1;
+	min-width: 0;
+}
+
+.prose ul[data-type='taskList'] > li input[type='checkbox'] {
+	appearance: none;
+	width: 14px;
+	height: 14px;
+	margin: 0;
+	border: 1.5px solid var(--color-border);
+	border-radius: 0;
+	background: transparent;
+	cursor: pointer;
+	position: relative;
+}
+
+/* A thumb's 44pt: the box stays 14px, its hit area grows (design-grammar §6),
+   up, down and to the left only. It ends at the box's right edge: the
+   item's text starts 8px past it, and a tap there places the caret. */
+@media (pointer: coarse) {
+	.prose ul[data-type='taskList'] > li > label {
+		position: relative;
+	}
+
+	.prose ul[data-type='taskList'] > li > label::after {
+		content: '';
+		position: absolute;
+		top: 50%;
+		right: 0;
+		width: 44px;
+		height: 44px;
+		transform: translateY(-50%);
+	}
+}
+
+.prose ul[data-type='taskList'] > li input[type='checkbox']:checked {
+	background: var(--color-primary);
+	border-color: var(--color-primary);
+}
+
+.prose ul[data-type='taskList'] > li input[type='checkbox']:checked::after {
+	content: '';
+	position: absolute;
+	left: 3px;
+	top: 0;
+	width: 4px;
+	height: 8px;
+	border: solid var(--color-primary-foreground, var(--color-background));
+	border-width: 0 2px 2px 0;
+	transform: rotate(45deg);
+}
+
+.prose li[data-checked='true'] > div {
+	color: var(--color-foreground-muted);
+	text-decoration: line-through;
+	text-decoration-color: var(--color-border);
+}
+
+/* ── Quotes */
+
+.prose blockquote {
+	margin-left: 0;
+	margin-right: 0;
+	padding-left: 16px;
+	border-left: var(--md-quote-border);
+	color: var(--color-foreground-muted);
+}
+
+/* ── Rules and tables */
+
+/* The rule's box is as tall as a line of text, with the line drawn through
+   its middle. A 1px box was too thin to point at: the grip beside it gave way
+   to the next block before the pointer reached it. Its margins and height add
+   up to the 3em the bare line and its margins took. */
+.prose hr {
+	--prose-rule-color: var(--color-border-subtle, var(--color-border));
+	height: 1.5em;
+	margin: 0.75em 0;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: linear-gradient(var(--prose-rule-color), var(--prose-rule-color)) center / 100% 1px no-repeat;
+}
+
+/* Tiptap's table view wraps each table in `.tableWrapper`: a wide table
+   scrolls inside it, rather than widen the page and take its title and text sideways with it. */
+.prose .tableWrapper {
+	overflow-x: auto;
+}
+
+.prose table {
+	width: 100%;
+	border-collapse: separate;
+	border-spacing: 0;
+	border: 1px solid var(--md-table-border-color);
+	border-radius: var(--radius-md);
+	table-layout: auto;
+}
+
+.prose th,
+.prose td {
+	min-width: 4em;
+	padding: var(--md-cell-pad);
+	border-right: 1px solid var(--md-table-border-color);
+	border-bottom: 1px solid var(--md-table-border-color);
+	vertical-align: top;
+	text-align: left;
+}
+
+.prose th {
+	font-size: var(--md-th-size);
+	font-weight: var(--md-th-weight);
+	background: var(--color-surface-elevated);
+}
+
+.prose th:last-child,
+.prose td:last-child {
+	border-right: none;
+}
+
+.prose tr:last-child > td {
+	border-bottom: none;
+}
+
+.prose th[align='center'],
+.prose td[align='center'] {
+	text-align: center;
+}
+
+.prose th[align='right'],
+.prose td[align='right'] {
+	text-align: right;
+}
+
+.prose th > * + *,
+.prose td > * + * {
+	margin-top: 0.5em;
+}
+

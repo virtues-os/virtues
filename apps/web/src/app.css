@@ -2,6 +2,7 @@
 @import './themes.css';
 @import './lib/styles/sidebar.css';
 @import './lib/styles/ref-badge.css';
+@import './lib/styles/prose.css';
 
 /* Add Streamdown styles to Tailwind build */
 @source "../node_modules/svelte-streamdown/**/*";

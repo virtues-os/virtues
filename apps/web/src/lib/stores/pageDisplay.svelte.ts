@@ -4,8 +4,8 @@
  * One persisted, app-wide set of reading/writing preferences for the page
  * editor: font mode, text size, page width, and focus/typewriter mode.
  * Width `page` sets the page as an A4 sheet (210 mm), the width it prints at.
- * Font + size are surfaced to the editor via the `--editor-font-family` /
- * `--editor-font-size` custom properties (see lib/document/document.css), set
+ * Font + size are surfaced to the editor via the `--prose-family` /
+ * `--prose-size` custom properties (see lib/styles/prose.css), set
  * on an ancestor of the editor so they cascade in.
  */
 
@@ -29,7 +29,7 @@ const FONT_SIZE: Record<TextSize, string> = {
 
 // Line-height tracks the text size and lands on a whole pixel: 24px for small
 // and medium, 28px for large. Medium is chat's body line (`--md-body-lh`), so
-// a page and a reply read at one rhythm. Surfaced as `--editor-line-height`.
+// a page and a reply read at one rhythm. Surfaced as `--prose-lh`.
 const LINE_HEIGHT: Record<TextSize, string> = {
 	s: "1.5rem",
 	m: "var(--md-body-lh)",
@@ -78,17 +78,17 @@ class PageDisplay {
 		this.spellcheck = p.spellcheck;
 	}
 
-	/** CSS value for `--editor-font-family`. */
+	/** CSS value for `--prose-family`. */
 	get fontFamily(): string {
 		return FONT_FAMILY[this.fontMode];
 	}
 
-	/** CSS value for `--editor-font-size`. */
+	/** CSS value for `--prose-size`. */
 	get fontSize(): string {
 		return FONT_SIZE[this.textSize];
 	}
 
-	/** CSS value for `--editor-line-height`. Tracks the text size. */
+	/** CSS value for `--prose-lh`. Tracks the text size. */
 	get lineHeight(): string {
 		return LINE_HEIGHT[this.textSize];
 	}

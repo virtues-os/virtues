@@ -1,146 +1,21 @@
 /* =============================================================================
    BLOCK PAGES — the block editor's surface (DocumentEditor, DocumentPreview)
    =============================================================================
-   Typography is the --md-* tokens (themes.css): the one definition the read
-   path (.markdown in app.css) shares, so a block page reads at the sizes
-   every other page does. The page's display
-   settings (pageDisplay: font, size) arrive as --editor-font-* on an ancestor
-   and win over the body tokens.
-
-   Spacing is engine-side, as the tokens' own comment says: ProseMirror
-   renders real block elements, so ordinary margins give the rhythm. */
+   What the text looks like is prose.css (`.prose`), which the editor's root
+   also carries: the elements every renderer shares. This file is what only
+   the editor has: its box, the caret, selection, placeholders, find, the
+   assistant's marks, proposals, the veil, refs, the grip, the A4 sheet and
+   print, and the callout and code-block markup its node views draw. */
 
 .doc-prose {
 	min-height: 300px;
 	padding-bottom: 96px;
-	color: var(--color-foreground);
-	font-family: var(--editor-font-family, var(--md-body-family));
-	font-size: var(--editor-font-size, var(--md-body-size));
-	line-height: var(--editor-line-height, var(--md-body-lh));
-	overflow-wrap: break-word;
-	word-break: break-word;
 	outline: none;
 	caret-color: var(--color-foreground);
 }
 
-/* One gap between blocks, chat's paragraph gap (app.css `.markdown p`). */
-.doc-prose > * + * {
-	margin-top: 1em;
-}
-
-/* No weight, so the gap above still reaches a paragraph after a list, a
-   quote or code; inside a block a paragraph has none of its own. */
-:where(.doc-prose p) {
-	margin: 0;
-}
-
-.doc-prose p + p {
-	margin-top: 1em;
-}
-
-/* ── Headings: h1–h3 in the serif the tokens name, h4–h6 in the body's face. */
-
-.doc-prose h1,
-.doc-prose h2,
-.doc-prose h3,
-.doc-prose h4,
-.doc-prose h5,
-.doc-prose h6 {
-	margin-bottom: 0;
-	color: var(--color-foreground);
-}
-
-/* A heading sits close over what it heads: far more room above it than
-   below, so it reads as the start of its section. */
-.doc-prose > :is(h1, h2, h3, h4, h5, h6) + * {
-	margin-top: 0.5em;
-}
-
-.doc-prose h1 {
-	margin-top: 1.5em;
-	font-family: var(--md-heading-major-family);
-	font-size: var(--md-h1-size);
-	line-height: var(--md-h1-lh);
-	font-weight: var(--md-h1-weight);
-}
-
-.doc-prose h2 {
-	margin-top: 1.4em;
-	font-family: var(--md-heading-major-family);
-	font-size: var(--md-h2-size);
-	line-height: var(--md-h2-lh);
-	font-weight: var(--md-h2-weight);
-}
-
-.doc-prose h3 {
-	margin-top: 1.25em;
-	font-family: var(--md-heading-major-family);
-	font-size: var(--md-h3-size);
-	line-height: var(--md-h3-lh);
-	font-weight: var(--md-h3-weight);
-}
-
-.doc-prose h4 {
-	margin-top: 1.1em;
-	font-family: inherit;
-	font-size: var(--md-h4-size);
-	line-height: var(--md-h4-lh);
-	font-weight: var(--md-h4-weight);
-}
-
-.doc-prose h5 {
-	margin-top: 1em;
-	font-family: inherit;
-	font-size: var(--md-h5-size);
-	line-height: var(--md-h5-lh);
-	font-weight: var(--md-h5-weight);
-}
-
-.doc-prose h6 {
-	margin-top: 1em;
-	font-family: inherit;
-	font-size: var(--md-h6-size);
-	line-height: var(--md-h6-lh);
-	font-weight: var(--md-h6-weight);
-	color: var(--color-foreground-muted);
-}
-
-.doc-prose > :first-child {
-	margin-top: 0;
-}
-
-/* ── Inline marks */
-
-/* Avenir's Medium, as chat sets bold: Avenir ships no 600, so 600 drew
-   its Bold, a step heavier than the same word in a reply. */
-.doc-prose strong {
-	font-weight: 500;
-}
-
-.doc-prose code {
-	padding: 0.1em 0.3em;
-	/* design-ok: inline code is code; a fixed advance is the content */
-	font-family: var(--font-mono);
-	font-size: var(--md-inline-code-size);
-	border: var(--md-inline-code-border);
-	border-radius: var(--md-inline-code-radius);
-	background: var(--md-inline-code-bg);
-}
-
-.doc-prose mark {
-	padding: 0 0.1em;
-	border-radius: 0;
-	background: var(--color-highlight);
-	color: var(--color-highlight-foreground, inherit);
-	box-decoration-break: clone;
-	-webkit-box-decoration-break: clone;
-}
-
+/* A link's text is text to edit: the caret, not the hand. */
 .doc-prose a {
-	color: var(--color-primary);
-	text-decoration: underline;
-	text-decoration-thickness: 1px;
-	text-underline-offset: 0.15em;
 	cursor: text;
 }
 
@@ -198,121 +73,7 @@
 	background: none;
 }
 
-/* ── Lists */
-
-.doc-prose ul,
-.doc-prose ol {
-	margin-bottom: 0;
-	padding-left: 1.5em;
-}
-
-.doc-prose ul {
-	list-style: disc;
-}
-
-.doc-prose ol {
-	list-style: decimal;
-}
-
-.doc-prose li + li {
-	margin-top: 0.35em;
-}
-
-.doc-prose li > ul,
-.doc-prose li > ol {
-	margin-top: 0.35em;
-}
-
-/* Task lists: Tiptap's TaskItem view draws `<li><label><input></label><div>`,
-   its `li` without the `data-type` canonical HTML carries, so items are
-   matched as the list's children. */
-.doc-prose ul[data-type='taskList'] {
-	list-style: none;
-	padding-left: 0;
-}
-
-.doc-prose ul[data-type='taskList'] > li {
-	display: flex;
-	align-items: flex-start;
-	gap: 8px;
-}
-
-.doc-prose ul[data-type='taskList'] > li > label {
-	flex: none;
-	display: flex;
-	align-items: center;
-	height: calc(1em * var(--editor-line-height, 1.5));
-	user-select: none;
-}
-
-.doc-prose ul[data-type='taskList'] > li > div {
-	flex: 1;
-	min-width: 0;
-}
-
-.doc-prose ul[data-type='taskList'] > li input[type='checkbox'] {
-	appearance: none;
-	width: 14px;
-	height: 14px;
-	margin: 0;
-	border: 1.5px solid var(--color-border);
-	border-radius: 0;
-	background: transparent;
-	cursor: pointer;
-	position: relative;
-}
-
-/* A thumb's 44pt: the box stays 14px, its hit area grows (design-grammar §6),
-   up, down and to the left only. It ends at the box's right edge: the
-   item's text starts 8px past it, and a tap there places the caret. */
-@media (pointer: coarse) {
-	.doc-prose ul[data-type='taskList'] > li > label {
-		position: relative;
-	}
-
-	.doc-prose ul[data-type='taskList'] > li > label::after {
-		content: '';
-		position: absolute;
-		top: 50%;
-		right: 0;
-		width: 44px;
-		height: 44px;
-		transform: translateY(-50%);
-	}
-}
-
-.doc-prose ul[data-type='taskList'] > li input[type='checkbox']:checked {
-	background: var(--color-primary);
-	border-color: var(--color-primary);
-}
-
-.doc-prose ul[data-type='taskList'] > li input[type='checkbox']:checked::after {
-	content: '';
-	position: absolute;
-	left: 3px;
-	top: 0;
-	width: 4px;
-	height: 8px;
-	border: solid var(--color-primary-foreground, var(--color-background));
-	border-width: 0 2px 2px 0;
-	transform: rotate(45deg);
-}
-
-.doc-prose li[data-checked='true'] > div {
-	color: var(--color-foreground-muted);
-	text-decoration: line-through;
-	text-decoration-color: var(--color-border);
-}
-
-/* ── Quotes and callouts */
-
-.doc-prose blockquote {
-	margin-left: 0;
-	margin-right: 0;
-	padding-left: 16px;
-	border-left: var(--md-quote-border);
-	color: var(--color-foreground-muted);
-}
+/* ── Callouts */
 
 .doc-block-callout {
 	display: flex;
@@ -383,69 +144,6 @@
 	white-space: pre;
 }
 
-/* ── Rules and tables */
-
-.doc-prose hr {
-	margin: 1.5em 0;
-	border: none;
-	border-top: 1px solid var(--color-border-subtle, var(--color-border));
-}
-
-/* Tiptap's table view wraps each table in `.tableWrapper`: a wide table
-   scrolls inside it, rather than widen the page and take its title and text sideways with it. */
-.doc-prose .tableWrapper {
-	overflow-x: auto;
-}
-
-.doc-prose table {
-	width: 100%;
-	border-collapse: separate;
-	border-spacing: 0;
-	border: 1px solid var(--md-table-border-color);
-	border-radius: var(--radius-md);
-	table-layout: auto;
-}
-
-.doc-prose th,
-.doc-prose td {
-	min-width: 4em;
-	padding: var(--md-cell-pad);
-	border-right: 1px solid var(--md-table-border-color);
-	border-bottom: 1px solid var(--md-table-border-color);
-	vertical-align: top;
-	text-align: left;
-}
-
-.doc-prose th {
-	font-size: var(--md-th-size);
-	font-weight: var(--md-th-weight);
-	background: var(--color-surface-elevated);
-}
-
-.doc-prose th:last-child,
-.doc-prose td:last-child {
-	border-right: none;
-}
-
-.doc-prose tr:last-child > td {
-	border-bottom: none;
-}
-
-.doc-prose th[align='center'],
-.doc-prose td[align='center'] {
-	text-align: center;
-}
-
-.doc-prose th[align='right'],
-.doc-prose td[align='right'] {
-	text-align: right;
-}
-
-.doc-prose th > * + *,
-.doc-prose td > * + * {
-	margin-top: 0.5em;
-}
-
 .doc-prose .selectedCell {
 	background: var(--color-primary-subtle);
 }
@@ -462,11 +160,12 @@
 	background: var(--color-primary-subtle);
 }
 
-/* A rule selected, as Backspace beside it selects it before it goes. The
-   other widgets draw their own selected outline. */
+/* A rule selected, as Backspace beside it or a click on its grip selects it,
+   is shaded like a selected block of text. The other widgets draw their own
+   selected outline. */
 .doc-prose hr.ProseMirror-selectednode {
-	outline: 2px solid var(--color-primary);
-	outline-offset: 2px;
+	--prose-rule-color: var(--color-primary);
+	background-color: var(--color-primary-subtle);
 }
 
 .doc-widget-applet,

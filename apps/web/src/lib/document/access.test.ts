@@ -1115,8 +1115,8 @@ describe('on a phone', () => {
 			expect(source, file).toMatch(/<IconButton /);
 			expect(source, file).not.toMatch(/<button/);
 		}
-		const css = read('document.css');
-		expect(css).toMatch(/@media \(pointer: coarse\) \{\s+\.doc-prose ul\[data-type='taskList'\] > li > label \{/);
+		const css = read('../styles/prose.css');
+		expect(css).toMatch(/@media \(pointer: coarse\) \{\s+\.prose ul\[data-type='taskList'\] > li > label \{/);
 		expect(css).toMatch(/width: 44px;\s+height: 44px;/);
 		for (const file of ['../components/pages/nodes/MediaNode.svelte', '../components/pages/nodes/AppletNode.svelte']) {
 			expect(read(file), file).toMatch(/@media \(pointer: coarse\) \{[^}]*handle[^}]*::after|@media \(pointer: coarse\) \{[\s\S]*?handle::after/);
@@ -1312,8 +1312,8 @@ describe('on a phone', () => {
 		const table = editor.view.dom.querySelector('table')!;
 		const wrapper = table.parentElement!;
 		expect(wrapper.classList.contains('tableWrapper')).toBe(true);
-		const css = read('document.css');
-		expect(css).toMatch(/\.doc-prose \.tableWrapper \{\s+overflow-x: auto;\s+\}/);
+		const css = read('../styles/prose.css');
+		expect(css).toMatch(/\.prose \.tableWrapper \{\s+overflow-x: auto;\s+\}/);
 		// The bar sits over the box the table scrolls in, not the table's full width.
 		expect(read('../components/pages/DocumentEditor.svelte')).toMatch(/const dom = e\.view\.nodeDOM\(at\.tablePos\) as HTMLElement \| null;/);
 		expect(editor.view.nodeDOM(0)).toBe(wrapper);
@@ -1328,7 +1328,7 @@ describe('on a phone', () => {
 	});
 
 	it('a to-do’s hit area grows away from its text, so a tap at the text’s start places the caret', () => {
-		const css = read('document.css');
+		const css = read('../styles/prose.css');
 		const after = css.match(/ul\[data-type='taskList'\] > li > label::after \{([^}]*)\}/)![1];
 		// It ends at the 14px box's right edge; the text starts 8px past it.
 		expect(after).toMatch(/right: 0;/);
@@ -1551,9 +1551,10 @@ describe('printing', () => {
 		for (const name of ['primary', 'success', 'error']) expect(token(name), name).toMatch(/^color-mix\(in srgb, \w+ \d+%, black\)$/);
 		for (const name of ['success-subtle', 'error-subtle']) expect(token(name), name).toMatch(/, white\)$/);
 		// What reads them: the mark, the link, the proposals.
+		const prose = read('../styles/prose.css');
+		expect(prose).toMatch(/\.prose mark \{[^}]*background: var\(--color-highlight\);\s+color: var\(--color-highlight-foreground, inherit\);/);
+		expect(prose).toMatch(/\.prose a \{\s+color: var\(--color-primary\);/);
 		const css = read('document.css');
-		expect(css).toMatch(/\.doc-prose mark \{[^}]*background: var\(--color-highlight\);\s+color: var\(--color-highlight-foreground, inherit\);/);
-		expect(css).toMatch(/\.doc-prose a \{\s+color: var\(--color-primary\);/);
 		expect(css).toMatch(/border-bottom: 1px solid var\(--color-success\);/);
 		expect(css).toMatch(/text-decoration-color: var\(--color-error\);/);
 	});

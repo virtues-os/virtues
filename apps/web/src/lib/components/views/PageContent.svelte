@@ -729,9 +729,9 @@
 				class="page-content"
 				bind:this={printRootEl}
 				onscroll={(e) => (scrolled = e.currentTarget.scrollTop > 0)}
-				style:--editor-font-family={pageDisplay.fontFamily}
-				style:--editor-font-size={pageDisplay.fontSize}
-				style:--editor-line-height={pageDisplay.lineHeight}
+				style:--prose-family={pageDisplay.fontFamily}
+				style:--prose-size={pageDisplay.fontSize}
+				style:--prose-lh={pageDisplay.lineHeight}
 			>
 				<!-- Cover Image - above title, full bleed -->
 				{#if coverUrl}

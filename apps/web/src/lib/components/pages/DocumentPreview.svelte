@@ -26,7 +26,7 @@
 			editable: false,
 			content: html,
 			extensions: [...contractExtensions(pageNodeViews()), codeHighlight(), links(), ProposalsRead],
-			editorProps: { attributes: { class: "doc-prose doc-preview" } },
+			editorProps: { attributes: { class: "doc-prose prose doc-preview" } },
 		});
 	});
 
@@ -45,9 +45,9 @@
 
 <div
 	class="document-preview"
-	style:--editor-font-family={pageDisplay.fontFamily}
-	style:--editor-font-size={pageDisplay.fontSize}
-	style:--editor-line-height={pageDisplay.lineHeight}
+	style:--prose-family={pageDisplay.fontFamily}
+	style:--prose-size={pageDisplay.fontSize}
+	style:--prose-lh={pageDisplay.lineHeight}
 	bind:this={host}
 ></div>
 

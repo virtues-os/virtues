@@ -170,7 +170,7 @@ const ClickBelowEnd = Extension.create({
  */
 export function editorAttributes(o: { spellcheck: boolean; editable: boolean; label?: string }): Record<string, string> {
 	return {
-		class: 'doc-prose',
+		class: 'doc-prose prose',
 		spellcheck: String(o.spellcheck),
 		'aria-multiline': 'true',
 		'aria-label': o.label || 'Page',
