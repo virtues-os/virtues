@@ -56,8 +56,7 @@
 	import Composing from "$lib/components/chat/Composing.svelte";
 	import Rail, { topOfElement } from "$lib/components/Rail.svelte";
 	import RestingMark from "$lib/components/chat/RestingMark.svelte";
-	import NewChatSky from "$lib/components/chat/NewChatSky.svelte";
-	import type { ChatOpening } from "$lib/api/client";
+	import NewChatMark from "$lib/components/chat/NewChatMark.svelte";
 	// Getting started — the room after the founder's letter. Same shape as
 	// the interview: the id decides everything, the top of the room is
 	// synthetic and rebuilt from derived state, the cards do the work.
@@ -618,10 +617,6 @@
 
 	// Chat instance - fetched from shared store to survive remounts
 	let chat = $state<Chat>(null!);
-	/** What the box said first on this empty chat, if anything (NewChatSky). */
-	let opening = $state<ChatOpening | null>(null);
-	/** Set only while the first send that replies to the opening is going out. */
-	let openingForSend: string | null = null;
 	/** The question this empty chat offers in its composer (api::suggestions).
 	 *  An hourly job writes it ahead of time, so asking costs nothing. */
 	let suggestion = $state<SuggestedQuestion | null>(null);
@@ -664,7 +659,6 @@
 				getChatMode: () => chatMode,
 				getTemporary: () => isGhost,
 				getThink: () => localThink,
-				getOpening: () => openingForSend,
 			});
 			// The draft this conversation left behind, if the composer is empty.
 			if (!isGhost && !input) {
@@ -1704,19 +1698,6 @@
 			// later Claude turn failed; Grok did not care). An attachment on
 			// its own is a complete message — no filler words on the person's
 			// behalf.
-			// Replying to the box's opening: it becomes the chat's first turn
-			// here and, from its id, on the box (store_opening in chat.rs).
-			if (opening?.id && opening.text && chat.messages.length === 0 && !isGhost && !isLocal) {
-				chat.messages = [
-					{
-						id: `${opening.id}_${conversationId}`,
-						role: "assistant",
-						parts: [{ type: "text", text: opening.text }],
-					},
-				];
-				openingForSend = opening.id;
-			}
-
 			await chat.sendMessage(
 				files.length > 0
 					? messageToSend
@@ -1726,8 +1707,6 @@
 			);
 
 			handedOff = true;
-			openingForSend = null;
-			opening = null;
 
 			if (chat.messages.length >= 2 && !isGhost && !titleDone) {
 				await generateTitle();
@@ -2469,13 +2448,12 @@
 							<ThreeBody onClose={() => (threeBodyOpen = false)} />
 						{/await}
 					{:else if isEmpty && !isGhost && !isLocal && attachments.count === 0}
-						<!-- The opening: today as a small sky and the box's first
-						     sentence, or the mark and word when the day has neither.
-						     Positioned off the midpoint, so it sits above the composer
-						     on the phone and the desktop alike. It yields to staged
-						     attachments, whose chips grow upward from the composer. -->
+						<!-- The mark and word. Positioned off the midpoint, so it sits
+						     above the composer on the phone and the desktop alike. It
+						     yields to staged attachments, whose chips grow upward from
+						     the composer. -->
 						<div class="init-hero" out:fade={{ duration: 200 }}>
-							<NewChatSky bind:opening />
+							<NewChatMark />
 						</div>
 					{/if}
 
@@ -2786,9 +2764,9 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	/* ── The opening ──
+	/* ── The mark on an empty chat ──
 	   Seated above center, so the phone's bottom-docked composer and rising
-	   keyboard never crowd it. What it draws is NewChatSky's. */
+	   keyboard never crowd it. What it draws is NewChatMark's. */
 	.init-hero {
 		position: absolute;
 		left: 0;
@@ -3114,15 +3092,13 @@
 	   not. It read as a UI artifact stuck onto prose, in a green nothing else
 	   in the room uses, and it broke the column's left edge. */
 
-	/* User message card styling — hugs its content (left-aligned). Its corners
-	   are the composer's, so a sent message keeps the shape of the box it was
-	   written in. */
+	/* User message card styling — hugs its content (left-aligned). A tinted
+	   fill with no outline: the turn reads as yours by its ground alone, and
+	   sits lighter beside the answer. */
 	.message-wrapper[data-role="user"] {
 		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
-		/* design-ok: the composer shell's 16px, so the bubble and the box it came from share a corner. */
-		border-radius: 1rem;
-		padding: 10px 16px;
+		border-radius: var(--radius-xl);
+		padding: 8px 14px;
 		width: fit-content;
 		max-width: 80%;
 	}
