@@ -36,7 +36,6 @@
 	// Track isDragging reactively via direct session access
 	// Public session property enables Svelte 5 fine-grained reactivity
 	const isDragging = $derived(dndManager.session !== null);
-	const draggedLabel = $derived(dndManager.session?.item.label ?? "");
 
 	// Direct pane access (unified model - tabs always live in panes)
 	const leftPaneTabs = $derived(windowShellStore.panes[0]?.tabs ?? []);
@@ -319,12 +318,10 @@
 >
 	<!-- Drag to Split Overlays - Always mounted so svelte-dnd-action registers zones before drag starts.
 	     With one pane only the right half takes a drop, and only when there is
-	     a tab left behind: it previews the card the drop would open. -->
-	<div
-		class="drag-overlays"
-		class:visible={isDragging}
-		class:previewing={!isSplitEnabled && rightDropItems.length > 0}
-	>
+	     a tab left behind. The zone under the pointer takes a soft tint the
+	     shape of the card the drop lands in. The zones render no children:
+	     svelte-dnd-action treats a zone's children as its items. -->
+	<div class="drag-overlays" class:visible={isDragging}>
 		<div
 			class="drag-overlay left"
 			class:active={leftDropItems.length > 0}
@@ -336,6 +333,7 @@
 				dragDisabled: true,
 				dropFromOthersDisabled: !isDragging || !isSplitEnabled,
 				dropAnimationDisabled: true,
+				dropTargetStyle: {},
 			}}
 			onconsider={handleLeftDndConsider}
 			onfinalize={handleLeftDndFinalize}
@@ -351,16 +349,11 @@
 				dragDisabled: true,
 				dropFromOthersDisabled: !isDragging || (!isSplitEnabled && leftPaneTabs.length < 2),
 				dropAnimationDisabled: true,
+				dropTargetStyle: {},
 			}}
 			onconsider={handleRightDndConsider}
 			onfinalize={handleRightDndFinalize}
-		>
-			{#if !isSplitEnabled}
-				<div class="ghost-card" aria-hidden="true">
-					<span class="ghost-label">{draggedLabel}</span>
-				</div>
-			{/if}
-		</div>
+		></div>
 	</div>
 
 	<!-- Left Pane Shell: the card and a click zone. Its tabs are in the window
@@ -748,52 +741,18 @@
 		width: calc(var(--right-width) - (var(--gutter-width) / 2));
 	}
 
-	.split-enabled .drag-overlay.active {
-		background: color-mix(in srgb, var(--color-primary) 8%, transparent);
-		outline: 1px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
-		outline-offset: -1px;
+	/* With one pane the halves sit where the two cards would, a desk gap
+	   apart, so the tint is the shape of the card a drop opens. */
+	.split-container:not(.split-enabled) .drag-overlay.left {
+		margin-right: calc(var(--split-gap) / 2);
 	}
 
-	/* With one pane, the right half shows the card a drop would open: where
-	   it will stand, with the dragged tab's name, while the view it would
-	   share the window with dims. */
-	.drag-overlays.previewing .drag-overlay.left {
-		margin-right: var(--split-gap);
-		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+	.split-container:not(.split-enabled) .drag-overlay.right {
+		margin-left: calc(var(--split-gap) / 2);
 	}
 
-	.ghost-card {
-		position: absolute;
-		top: 0;
-		bottom: 0;
-		right: 0;
-		left: 0;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		border: 1px solid color-mix(in srgb, var(--color-primary) 40%, var(--card-edge));
-		border-radius: var(--card-radius);
-		background-color: color-mix(in srgb, var(--color-primary) 6%, var(--color-page));
-		opacity: 0;
-		translate: 24px 0;
-		transition:
-			opacity var(--motion-state) var(--ease-premium),
-			translate var(--motion-layout) var(--ease-premium);
-		pointer-events: none;
-	}
-
-	.drag-overlay.active .ghost-card {
-		opacity: 1;
-		translate: 0 0;
-	}
-
-	.ghost-label {
-		max-width: 80%;
-		overflow: hidden;
-		text-overflow: ellipsis;
-		white-space: nowrap;
-		font-size: 13px;
-		color: var(--color-foreground-muted);
+	.drag-overlay.active {
+		background: color-mix(in srgb, var(--color-primary) 15%, transparent);
 	}
 
 	/* Hide the ghost/shadow item that svelte-dnd-action creates in the drop zone */
@@ -807,7 +766,7 @@
 		.pane-shell,
 		.tab-slot,
 		.resize-handle,
-		.ghost-card,
+		.drag-overlay,
 		.resize-handle.visible .resize-grip {
 			transition: none;
 		}
