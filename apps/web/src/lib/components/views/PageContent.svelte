@@ -986,7 +986,12 @@
 		background: transparent;
 		border: none;
 		outline: none;
-		padding: 0;
+		/* A textarea clips to its box, and the serif's descenders (the p of
+		   "page") and accents reach past a 1.2 line. The padding makes room
+		   for them and the margin takes it back, so the title sits where it
+		   would with none. */
+		padding: 0.1em 0 0.25em;
+		margin: -0.1em 0 -0.25em;
 		resize: none;
 		field-sizing: content;
 	}
