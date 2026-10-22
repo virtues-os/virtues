@@ -155,6 +155,15 @@
 	--motion-enter: 180ms;
 	--motion-layout: 300ms;
 
+	/* Drag and drop (agents/build/design.md, "Drag and drop"). One look
+	   everywhere: a line where a dragged thing will land between others, a
+	   tint on a thing or a zone that will take it, and the source dimmed
+	   where it came from. */
+	--drop-line: var(--color-primary);
+	--drop-line-width: 2px;
+	--drop-tint: color-mix(in srgb, var(--color-primary) 15%, transparent);
+	--drag-source-opacity: 0.4;
+
 	/* Radius — sm/md/lg/xl (4/6/8/12px) already match Tailwind v4 defaults,
 	   so `rounded-*` utilities are unchanged. `--radius-full` is the one gap:
 	   Tailwind's `rounded-full` is a static calc(infinity*1px) with no var,

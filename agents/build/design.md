@@ -243,6 +243,32 @@ only, because a wide row that shrank would read as a wobble. The ∴ dot's
 single swell when it lights is the one motion with a meaning of its own, and
 it does not repeat.
 
+### Drag and drop
+
+Every drag in the app uses the same few marks, from tokens in `themes.css`:
+
+| Token | Value | For |
+|---|---|---|
+| `--drop-line` | `--color-primary` | where a dragged thing will land between others: a pin gap, a gap between blocks |
+| `--drop-line-width` | 2px | that line's thickness, with a 1px radius |
+| `--drop-tint` | primary at 15% | a thing or a zone that will take the drop: a pane, a project row, a file zone, and the slot a tab opens in a strip |
+| `--drag-source-opacity` | 0.4 | the dragged thing's place while it is away |
+
+- **The thing in your hand looks like itself.** A dragged row or tab is the
+  whole pill, with the page fill, and never a bare label or a faded copy.
+  Set the dragged look before the browser takes its snapshot, and dim the
+  source only after it.
+- **Only a place that will take the drop lights up.** A file zone checks for
+  files, and a pane does not take its own tab. Anywhere else the cursor says
+  no: the app-wide `dragover` sets `none` unless a zone accepted the drag.
+- **A drop that worked does not fly home.** The dragged copy goes where it
+  landed, or fades there.
+- **Marks fade in on `--motion-hover-in` and out on `--motion-hover-out`.**
+  Things that move on a drop slide on `--motion-state`. Under reduced motion
+  the marks stay and the travel goes.
+- **A drag never leaves state behind.** Escape, a drop outside, and the
+  source unmounting all clear the line, the tint and the dimming.
+
 ### Alignment
 
 **Each group in the window header starts at the column below it.** The ∴'s
