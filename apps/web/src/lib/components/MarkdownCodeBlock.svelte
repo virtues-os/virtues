@@ -63,10 +63,10 @@
 </script>
 
 <div
-	class="my-4 w-full overflow-hidden rounded-xl border border-border-subtle flex flex-col"
+	class="w-full overflow-hidden rounded-xl border border-border-subtle flex flex-col"
 >
 	<div
-		class="flex items-center justify-between px-4 py-2 text-foreground-muted text-xs font-mono bg-surface-elevated"
+		class="flex items-center justify-between px-4 py-2 text-foreground-muted text-xs bg-surface-elevated"
 	>
 		<span class="text-foreground-muted font-medium">{lang || ''}</span>
 		<Button variant="ghost" size="sm" onclick={copy}>

@@ -3048,15 +3048,6 @@
 	.messages-container.room .message-wrapper:not([data-role="user"]) {
 		padding: 0;
 	}
-	/* `.markdown > .streamdown-content > <blocks>` — Streamdown nests its
-	   output one level, so the original `.markdown > :last-child` matched
-	   that wrapper and never the last paragraph. The trailing margin stayed,
-	   and the room's lines sat 2rem apart while paragraphs inside a line sat
-	   at 1rem — the very thing this rule was written to fix. */
-	.messages-container.room .message-wrapper:not([data-role="user"]) :global(.markdown > * > :last-child) {
-		margin-bottom: 0;
-	}
-
 	/* ── The standfirst ──
 	   The welcome's opening line is the most important sentence in the
 	   product and was set as body copy, indistinguishable from the admin
@@ -3076,13 +3067,6 @@
 	   is already done — the hook is kept, the check that hung in the margin is
 	   not. It read as a UI artifact stuck onto prose, in a green nothing else
 	   in the room uses, and it broke the column's left edge. */
-
-	.message-wrapper :global(h1),
-	.message-wrapper :global(h2),
-	.message-wrapper :global(h3),
-	.message-wrapper :global(h4) {
-		margin-top: 0;
-	}
 
 	/* User message card styling — hugs its content (left-aligned). Radius mirrors
 	   the composer's language: big enough that a one-line bubble caps into a pill

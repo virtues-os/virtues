@@ -1553,7 +1553,7 @@ describe('printing', () => {
 		// What reads them: the mark, the link, the proposals.
 		const prose = read('../styles/prose.css');
 		expect(prose).toMatch(/\.prose mark \{[^}]*background: var\(--color-highlight\);\s+color: var\(--color-highlight-foreground, inherit\);/);
-		expect(prose).toMatch(/\.prose a \{\s+color: var\(--color-primary\);/);
+		expect(prose).toMatch(/\.prose a:where\(:not\(\.ref-link\):not\(\.ref-pill\)\) \{\s+color: var\(--color-primary\);/);
 		const css = read('document.css');
 		expect(css).toMatch(/border-bottom: 1px solid var\(--color-success\);/);
 		expect(css).toMatch(/text-decoration-color: var\(--color-error\);/);

@@ -10,9 +10,13 @@
    Sizes, faces and line heights are the --md-* tokens (themes.css). The
    spacing is the --prose-* tokens below, so a surface tunes its rhythm by
    setting tokens, never by rewriting a rule. A surface's own reading
-   settings arrive as --prose-family, --prose-size and --prose-lh on an
-   ancestor (a page's display settings, pageDisplay) and win over the body
-   tokens.
+   settings arrive as --prose-family, --prose-size, --prose-lh and
+   --prose-color on an ancestor (a page's display settings, pageDisplay; a
+   quiet note's smaller, muted text) and win over the body tokens.
+
+   Chat replies and the articles carry it on Streamdown's root
+   (Markdown.svelte), whose own theme is emptied so nothing of its look
+   leaks through.
 
    What only the editor has (its caret, selection, the grip, find, print) is
    in lib/document/document.css. */
@@ -38,7 +42,7 @@
 }
 
 .prose {
-	color: var(--color-foreground);
+	color: var(--prose-color, var(--color-foreground));
 	font-family: var(--prose-family, var(--md-body-family));
 	font-size: var(--prose-size, var(--md-body-size));
 	line-height: var(--prose-lh, var(--md-body-lh));
@@ -140,7 +144,9 @@
 	font-weight: 500;
 }
 
-.prose code {
+/* Inline code: code inside a block (`pre`) is the block's (MarkdownCodeBlock,
+   CodeBlockNode). */
+.prose :not(pre) > code {
 	padding: var(--prose-code-pad);
 	/* design-ok: inline code is code; a fixed advance is the content */
 	font-family: var(--font-mono);
@@ -159,11 +165,18 @@
 	-webkit-box-decoration-break: clone;
 }
 
-.prose a {
+/* A plain link. Refs and link chips (`.ref-link`, `.ref-pill`) bring their
+   own look from ref-badge.css; `:where` keeps this rule at the specificity
+   of `.prose a`, so a surface's ref rules still win. */
+.prose a:where(:not(.ref-link):not(.ref-pill)) {
 	color: var(--color-primary);
 	text-decoration: underline;
 	text-decoration-thickness: 1px;
 	text-underline-offset: var(--prose-link-offset);
+}
+
+.prose a:where(:not(.ref-link):not(.ref-pill)):hover {
+	color: var(--color-primary-hover);
 }
 
 /* ── Lists */
@@ -324,8 +337,12 @@
 }
 
 .prose th {
+	font-family: var(--prose-family, var(--md-body-family));
 	font-size: var(--md-th-size);
-	font-weight: var(--md-th-weight);
+	/* The regular: the header is told apart by its size and ground, and a
+	   heavier weight is one the serif, in an article, does not have.
+	   TODO(2026-10-21): set --md-th-weight to 400 in themes.css and read it here. */
+	font-weight: 400;
 	background: var(--color-surface-elevated);
 }
 
@@ -353,3 +370,10 @@
 	margin-top: 0.5em;
 }
 
+/* ── Images: within the column, on the radius every picture has. */
+
+.prose img {
+	max-width: 100%;
+	height: auto;
+	border-radius: var(--radius-md);
+}

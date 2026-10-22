@@ -322,251 +322,25 @@ h6 {
    COMPONENT STYLES
    =================================== */
 
-/* Markdown Styles - Using semantic colors */
+/* Rendered markdown (Markdown.svelte). What its text looks like is
+   prose.css, on Streamdown's root; this wrapper only fills its column and
+   carries the article switch. */
 .markdown {
-	color: var(--color-foreground);
-	font-family: var(--md-body-family);
-	font-size: var(--md-body-size);
-	line-height: var(--md-body-lh);
 	width: 100%;
-	overflow-wrap: break-word;
-	word-break: break-word;
 }
 
 /* A wiki article — a day, a year, a person, a place, an organization, the
    narrative identity. Same renderer, the other register.
 
    It redefines the body tokens ON ITSELF rather than restating the rules, so
-   everything already citing them (`.markdown p`, `li`, blockquote) follows
-   without a second set of selectors to keep in step. That is the whole reason
+   everything already citing them (prose.css) follows without a second set
+   of selectors to keep in step. That is the whole reason
    the token layer exists: the surfaces that fell out of sync did so by each
    writing its own font-size. */
 .markdown--article {
 	--md-body-family: var(--md-article-family);
 	--md-body-size: var(--md-article-size);
 	--md-body-lh: var(--md-article-lh);
-}
-
-/* Heading VALUES come from the --md-* tokens in themes.css — one definition,
-   cited here and by the page editor's (lib/document/document.css). Only the
-   margins are local: rhythm is engine-specific. */
-.markdown h1 {
-	@apply mb-6;
-	font-family: var(--md-heading-major-family);
-	font-size: var(--md-h1-size);
-	font-weight: var(--md-h1-weight);
-	line-height: var(--md-h1-lh);
-	color: var(--color-foreground);
-}
-
-.markdown h2 {
-	@apply mb-5;
-	font-family: var(--md-heading-major-family);
-	font-size: var(--md-h2-size);
-	font-weight: var(--md-h2-weight);
-	line-height: var(--md-h2-lh);
-	color: var(--color-foreground);
-}
-
-.markdown h3 {
-	@apply mb-4;
-	font-family: var(--md-heading-major-family);
-	font-size: var(--md-h3-size);
-	font-weight: var(--md-h3-weight);
-	line-height: var(--md-h3-lh);
-	color: var(--color-foreground);
-}
-
-.markdown h4 {
-	@apply mb-2;
-	font-size: var(--md-h4-size);
-	font-weight: var(--md-h4-weight);
-	line-height: var(--md-h4-lh);
-	color: var(--color-foreground);
-}
-
-.markdown h5 {
-	@apply mb-1;
-	font-size: var(--md-h5-size);
-	font-weight: var(--md-h5-weight);
-	line-height: var(--md-h5-lh);
-	color: var(--color-foreground);
-}
-
-.markdown h6 {
-	@apply mb-1;
-	font-size: var(--md-h6-size);
-	font-weight: var(--md-h6-weight);
-	line-height: var(--md-h6-lh);
-	color: var(--color-foreground);
-}
-
-.markdown p {
-	@apply mb-4;
-	line-height: var(--md-body-lh);
-	color: var(--color-foreground);
-}
-
-.markdown strong {
-	@apply font-medium;
-}
-
-.markdown em {
-	@apply italic;
-}
-
-/* Inline code styling - block code is handled by Streamdown */
-.markdown :not(pre)>code {
-	@apply px-1.5 py-0.5 font-mono;
-	font-size: var(--md-inline-code-size);
-	border-radius: var(--md-inline-code-radius);
-	border: var(--md-inline-code-border);
-	color: var(--color-foreground);
-	background-color: var(--md-inline-code-bg);
-}
-
-/* Size SVG icons in code block action buttons */
-.markdown [data-streamdown-code] button svg {
-	width: 1rem;
-	height: 1rem;
-}
-
-/* Remove duplicate padding and styling from streamdown's wrapper div */
-.markdown [data-streamdown-code]>div:last-child {
-	padding: 0;
-	margin: 0;
-	border: none;
-	border-radius: 0;
-	background: transparent;
-}
-
-/* Lists sit closer to the margin and closer to each other than they did.
-   2em of indent and 0.5rem between items reads as five separate paragraphs
-   that happen to have dots; a list is one thought in parts, and should look
-   like one block. The reference points: GitHub indents 2em and spaces items
-   0.25em, Tailwind's prose indents 1.625em, Stripe's docs about 1.25em —
-   1.5em and 0.35em sits inside that range, in `em` so it tracks the type.
-   Block margins stay at the paragraph's own rhythm. */
-.markdown ul {
-	@apply list-disc mb-4;
-	/* Streamdown ships its own `ml-4` on every list, which stacked 16px on top
-	   of whatever we set here — the reason a five-line list sat 40px in from
-	   its own paragraph. Padding is the one knob; the margin is zeroed so
-	   there is nothing to stack with. */
-	margin-left: 0;
-	padding-left: 1.5em;
-	list-style-position: outside;
-}
-
-.markdown ol {
-	@apply list-decimal mb-4;
-	margin-left: 0;
-	padding-left: 1.5em;
-	list-style-position: outside;
-}
-
-.markdown li {
-	line-height: var(--md-body-lh);
-	contain: layout;
-}
-
-.markdown li + li {
-	margin-top: 0.35em;
-}
-
-/* A nested list is part of its parent item, not a new block after it. */
-.markdown li > ul,
-.markdown li > ol {
-	margin-top: 0.35em;
-	margin-bottom: 0;
-}
-
-/* A paragraph inside a list item is the item, not a block in its own right —
-   markdown makes these the moment any item in the list has a blank line. */
-.markdown li > p {
-	margin-bottom: 0;
-}
-
-.markdown li > p + p {
-	margin-top: 0.5em;
-}
-
-.markdown blockquote {
-	@apply pl-4 italic my-4;
-	border-left: var(--md-quote-border);
-	color: var(--color-foreground-muted);
-}
-
-/* Plain prose links only. Refs and citations bring their own treatment from
-   ref-badge.css — a hairline (or dotted) border-bottom and their own color —
-   and this rule out-specifies it (`.markdown a` is 0,1,1 against `.ref-link`'s
-   0,1,0). The result was a citation wearing BOTH: a text-decoration underline
-   and a border under that, two lines at two offsets, in a color the ref
-   never chose. Excluding the ref classes is the fix; raising ref-badge's
-   specificity would only move the fight. */
-.markdown a:not(.ref-link):not(.ref-pill) {
-	@apply underline;
-	color: var(--color-primary);
-}
-
-.markdown a:not(.ref-link):not(.ref-pill):hover {
-	color: var(--color-primary-hover);
-}
-
-.markdown hr {
-	@apply my-6;
-	border-color: var(--color-border-subtle);
-}
-
-/* Override Streamdown's table wrapper styling to match our theme */
-.markdown [data-streamdown-table] {
-	border-color: var(--color-border-subtle) !important;
-	background-color: transparent !important;
-}
-
-/* Override Streamdown's thead background to match our theme */
-.markdown [data-streamdown-thead] {
-	background-color: var(--color-surface-elevated) !important;
-}
-
-/* Override Streamdown's row hover to match our theme */
-.markdown [data-streamdown-tr]:hover {
-	background-color: var(--color-background) !important;
-}
-
-.markdown table {
-	@apply w-full text-sm;
-	border-collapse: separate;
-	border-spacing: 0;
-}
-
-.markdown th {
-	@apply text-left;
-	padding: var(--md-cell-pad);
-	font-size: var(--md-th-size);
-	font-weight: var(--md-th-weight);
-	font-family: var(--md-heading-major-family);
-	border-right: 1px solid var(--md-table-border-color);
-	border-bottom: 1px solid var(--md-table-border-color);
-}
-
-.markdown th:last-child {
-	border-right: none;
-}
-
-.markdown td {
-	@apply text-sm;
-	padding: var(--md-cell-pad);
-	border-right: 1px solid var(--md-table-border-color);
-	border-bottom: 1px solid var(--md-table-border-color);
-}
-
-.markdown td:last-child {
-	border-right: none;
-}
-
-.markdown tr:last-child td {
-	border-bottom: none;
 }
 
 /* In an article a table is part of the prose: its cells read at the body's
@@ -598,10 +372,6 @@ h6 {
 .veil-hidden * {
 	color: inherit !important;
 	text-decoration-color: transparent !important;
-}
-
-.markdown img {
-	@apply max-w-full h-auto rounded-lg my-4;
 }
 
 /* The spinner every "working" glyph in the app wears: `<Icon … class="spin" />`.

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { Streamdown } from 'svelte-streamdown';
+	import { Streamdown, theme as streamdownTheme } from 'svelte-streamdown';
 	import type { CitationContext, Citation } from '$lib/types/Citation';
 	import InlineCitation from './citations/InlineCitation.svelte';
 	import Ref from './Ref.svelte';
@@ -8,7 +8,6 @@
 	import { parseEntityRoute } from '$lib/utils/refRoutes';
 	import { preprocessMarkdown } from '$lib/utils/markdownPreprocess';
 	import { backendUrl } from '$lib/config/backend';
-	import type { BundledTheme } from 'shiki';
 
 	interface Props {
 		content: string;
@@ -32,8 +31,9 @@
 		 * article: a day, a year, a person, a place, an organization, the
 		 * narrative identity.
 		 *
-		 * The VALUES live in `--md-*` (themes.css) and the switch is one class
-		 * in app.css. Every one of these surfaces used to set its own
+		 * What the text looks like is prose.css (`.prose`, on Streamdown's root);
+		 * the VALUES live in `--md-*` (themes.css), and the article switch is
+		 * one class in app.css. Every one of these surfaces used to set its own
 		 * font-family and font-size locally, which is how they ended up with
 		 * five sizes between them and how the day article ended up in sans.
 		 */
@@ -49,23 +49,6 @@
 		refVariant = "link",
 		variant = "ui"
 	}: Props = $props();
-
-	// Read Shiki theme from CSS variable (defined in themes.css)
-	function getShikiTheme(): BundledTheme {
-		const theme = getComputedStyle(document.documentElement).getPropertyValue('--shiki-theme').trim();
-		return (theme || 'github-light') as BundledTheme;
-	}
-
-	let currentShikiTheme = $state<BundledTheme>(getShikiTheme());
-
-	// Update when theme changes
-	$effect(() => {
-		const handleThemeChange = () => {
-			currentShikiTheme = getShikiTheme();
-		};
-		window.addEventListener('themechange', handleThemeChange);
-		return () => window.removeEventListener('themechange', handleThemeChange);
-	});
 
 	// Helper to get Citation from token key
 	function getCitation(key: string): Citation | undefined {
@@ -118,27 +101,27 @@
 		? window.location.origin
 		: 'http://localhost';
 
-	// Streamdown theme
-	const customTheme = {
-		code: {
-			base: 'my-4 w-full overflow-hidden rounded-xl border border-border-subtle flex flex-col',
-			container: '',
-			header: 'flex items-center justify-between px-4 py-2 text-foreground-muted text-xs font-mono bg-surface-elevated',
-			languageLabel: 'text-foreground-muted font-medium',
-			copyButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
-			copyIcon: 'w-4 h-4',
-			pre: 'overflow-x-auto p-4 text-sm bg-surface-elevated',
-			skeleton: 'block text-foreground bg-transparent animate-none',
-			downloadButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
-			downloadIcon: 'w-4 h-4'
-		},
-		// No cell entries: streamdown's default td/th render inline markdown,
-		// and their LOOK is `.markdown th/td` in app.css (which cites the
-		// --md-* tokens). Tailwind strings here used to style the same cells a
-		// second time and fight that CSS by specificity — px-3 vs px-4 was
-		// whoever won that day. The `table` snippet below supplies only the
-		// scrolling wrapper.
-	};
+	/**
+	 * Streamdown's own theme with its look taken out: prose.css styles every
+	 * element both renderers share, and Streamdown's default classes leaked
+	 * wherever a rule set nothing (a heading's top margin, a list item's
+	 * padding, 200-400px table cells, hard-coded grays that ignore the dark
+	 * themes). Code, images and tables are our snippets below; callouts,
+	 * mermaid, math, citations and the popover components keep Streamdown's
+	 * classes, which place things rather than style text.
+	 */
+	const BLANKED = [
+		'link', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'paragraph', 'ul', 'ol', 'li', 'codespan',
+		'blockquote', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'sup', 'sub', 'hr',
+		'strong', 'br', 'em', 'del', 'footnoteRef', 'descriptionList', 'descriptionTerm',
+		'descriptionDetail',
+	] as const;
+	const blank = (part: Record<string, unknown>) =>
+		Object.fromEntries(Object.entries(part).map(([k, v]) => [k, typeof v === 'string' ? '' : v]));
+	const proseTheme = {
+		...streamdownTheme,
+		...Object.fromEntries(BLANKED.map((key) => [key, blank(streamdownTheme[key] as Record<string, unknown>)])),
+	} as typeof streamdownTheme;
 </script>
 
 <div class="markdown" class:markdown--article={variant === "article"}>
@@ -146,11 +129,9 @@
 			content={processedContent}
 			{sources}
 			inlineCitationsMode="list"
-			class="streamdown-content"
-			shikiTheme={currentShikiTheme}
-			parseIncompleteMarkdown={isStreaming}
-			theme={customTheme}
-			controls={{ table: true }}
+			class="streamdown-content prose"
+			theme={proseTheme}
+			mergeTheme={false}
 			defaultOrigin={origin}
 			allowedLinkPrefixes={['*']}
 			animation={{
@@ -174,9 +155,10 @@
 				<!-- Empty - we use CitationPanel at page level instead -->
 			{/snippet}
 
+			<!-- The page editor's table markup, so prose.css draws one table for both. -->
 			{#snippet table({ children }: { children: import('svelte').Snippet })}
-				<div class="my-4 w-full overflow-x-auto rounded-xl border border-border-subtle">
-					<table class="w-full border-collapse text-sm">{@render children()}</table>
+				<div class="tableWrapper">
+					<table>{@render children()}</table>
 				</div>
 			{/snippet}
 
@@ -228,7 +210,7 @@
 					     we render the inline ref instead. -->
 					<Ref displayName={label} {url} variant={refVariant} />
 				{:else}
-					<img src={url ? backendUrl(url) : url} alt={token?.text ?? ''} loading="lazy" style="max-width: 100%; height: auto;" />
+					<img src={url ? backendUrl(url) : url} alt={token?.text ?? ''} loading="lazy" />
 				{/if}
 			{/snippet}
 	</Streamdown>
@@ -244,6 +226,11 @@
 
 	.markdown :global(.streamdown-content) {
 		display: block;
+	}
+
+	/* Each list item is its own layout root while a reply streams in. */
+	.markdown :global(li) {
+		contain: layout;
 	}
 
 	/* Streamdown fades each word in its own span and makes it inline-block,

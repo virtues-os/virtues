@@ -1372,10 +1372,12 @@
 		background: transparent;
 		color: var(--color-foreground);
 	}
+	/* A note under its highlight: the prose (Markdown) smaller and muted,
+	   told so through its tokens, which its own root would otherwise set. */
 	.pdf-note-preview {
 		margin-top: 6px;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
+		--prose-size: 0.8125rem;
+		--prose-color: var(--color-foreground-muted);
 	}
 
 	/* Minimal text layer (pdf.js positions spans via inline styles + the

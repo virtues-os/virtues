@@ -1224,7 +1224,7 @@
 							</div>
 							{#if parsed.abstract}
 								<div class="day-abstract" use:veiled={{ hiding: veil.hiding, phrases: abstractLead.phrases }}>
-									<div class="markdown markdown--article"><p class="abstract">{#if abstractLead.word}<strong class="lead-word">{abstractLead.word}</strong>{/if}<DayInline markdown={abstractLead.markdown} person={personGloss} /></p></div>
+									<div class="markdown markdown--article prose"><p class="abstract">{#if abstractLead.word}<strong class="lead-word">{abstractLead.word}</strong>{/if}<DayInline markdown={abstractLead.markdown} person={personGloss} /></p></div>
 								</div>
 							{/if}
 							<DayNumbers date={currentDateSlug} {pins} onchange={savePins} saveFailed={pinsFailed} />
