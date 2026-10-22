@@ -4,6 +4,7 @@
 	import { fade, fly } from "svelte/transition";
 	import { cubicOut } from "svelte/easing";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { askVirtues } from "$lib/stores/pendingPrompt.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
@@ -100,14 +101,14 @@
 			id: "new-chat",
 			label: "New Chat",
 			icon: "ri:add-line",
-			shortcut: "⌘N",
-			action: () => windowShellStore.openTabFromRoute("/"),
+			shortcut: shortcuts.format("mod+n"),
+			action: () => windowShellStore.newChat(),
 		},
 		{
 			id: "new-temp-chat",
 			label: "New Temporary Chat",
 			icon: "ri:ghost-line",
-			shortcut: "⌘⇧T",
+			shortcut: shortcuts.format("mod+shift+i"),
 			action: () =>
 				windowShellStore.openTabFromRoute("/?temporary=1", {
 					label: "Temporary Chat",
@@ -117,7 +118,7 @@
 			id: "new-page",
 			label: "New Page",
 			icon: "ri:file-text-line",
-			shortcut: "⌘⇧N",
+			shortcut: shortcuts.format("mod+shift+n"),
 			action: createNewPage,
 		},
 		{
@@ -136,7 +137,7 @@
 			id: "wiki",
 			label: "Go to Wiki",
 			icon: "ri:book-2-line",
-			shortcut: "⌘W",
+			shortcut: shortcuts.format("mod+w"),
 			action: () => windowShellStore.openTabFromRoute("/wiki"),
 		},
 		{

@@ -88,6 +88,25 @@ describe('opening things', () => {
 		expect(strip('right')).toEqual(['/page/page_1', '/page/page_2']);
 	});
 
+	it('reopens the tab closed last, in its place and with its history', () => {
+		shell.openTabFromRoute('/page/page_1');
+		shell.openTabFromRoute('/page/page_2', { forceNew: true });
+		const first = shell.panes[0].tabs[0];
+		shell.closeTab(first.id);
+		expect(strip()).toEqual(['/page/page_2']);
+		shell.reopenClosedTab();
+		expect(strip()).toEqual(['/page/page_1', '/page/page_2']);
+		expect(active()).toBe('/page/page_1');
+		shell.goBack();
+		expect(active()).toBe('/chat/chat_a');
+	});
+
+	it('does not bring back a tab closed because its thing was deleted', () => {
+		shell.openTabFromRoute('/page/page_1', { forceNew: true });
+		shell.closeTabsByRoute('/page/page_1');
+		expect(shell.reopenClosedTab()).toBeNull();
+	});
+
 	it('closes the tabs to the left', () => {
 		shell.openTabFromRoute('/page/page_1', { forceNew: true });
 		shell.openTabFromRoute('/page/page_2', { forceNew: true });

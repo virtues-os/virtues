@@ -22,7 +22,7 @@ class TasksStore {
 	error = $state<string | null>(null);
 	closedLoaded = $state(false);
 	/**
-	 * Bumped by a "New task" door (the sidebar +, ⌘⇧T) so the open list
+	 * Bumped by a "New task" door (the sidebar +, ⌘⇧E) so the open list
 	 * focuses its add row, whether it is opening now or already open.
 	 */
 	addRequest = $state(0);

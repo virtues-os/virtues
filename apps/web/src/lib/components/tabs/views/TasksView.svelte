@@ -93,7 +93,7 @@
 	let addInput: HTMLInputElement | undefined = $state();
 	const preview = $derived(parseDue(draft));
 
-	// A "New task" door asks for the add row: the sidebar +, ⌘⇧T.
+	// A "New task" door asks for the add row: the sidebar +, ⌘⇧E.
 	let seenAddRequest = tasksStore.addRequest;
 	$effect(() => {
 		if (tasksStore.addRequest !== seenAddRequest && active) {

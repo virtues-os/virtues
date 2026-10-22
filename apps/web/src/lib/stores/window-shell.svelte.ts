@@ -177,6 +177,11 @@ class WindowShellStore {
 	 */
 	private visitsArmed = false;
 	private programmaticOpen = false;
+	/**
+	 * Tabs you closed, newest last, for ⌘⇧T. Each keeps its history, so a
+	 * reopened tab's Back still works. Not kept across reloads.
+	 */
+	private closedTabs: { tab: Tab; paneId: string; index: number }[] = [];
 
 	// ============================================================================
 	// Shell scope getters
@@ -913,11 +918,48 @@ class WindowShellStore {
 		this.openTabFromRoute(`/chat/${entityId}`, { label: label || 'Chat', focusExisting: true });
 	}
 
-	closeTab(tabId: string): void {
+	/** How many closed tabs ⌘⇧T can bring back. */
+	private static readonly CLOSED_TABS_CAP = 20;
+
+	/** Remember a tab being closed. An empty new chat has nothing to come back to. */
+	private rememberClosed(tab: Tab, paneId: string, index: number): void {
+		if (this.isNewChatRoute(tab.route)) return;
+		this.closedTabs.push({ tab, paneId, index });
+		if (this.closedTabs.length > WindowShellStore.CLOSED_TABS_CAP) this.closedTabs.shift();
+	}
+
+	/**
+	 * Bring back the tab closed last (⌘⇧T), where it was and with its history.
+	 * One already open again is switched to rather than doubled.
+	 */
+	reopenClosedTab(): string | null {
+		const entry = this.closedTabs.pop();
+		if (!entry) return null;
+		const open = this.findTab(t => t.route === entry.tab.route);
+		if (open) {
+			this.setActiveTab(open.tab.id);
+			return open.tab.id;
+		}
+		const paneId = this.panes.some(p => p.id === entry.paneId) ? entry.paneId : this.activePaneId;
+		const tab: Tab = { ...entry.tab, id: crypto.randomUUID() };
+		this.updatePane(paneId, pane => {
+			const tabs = [...pane.tabs];
+			tabs.splice(Math.min(entry.index, tabs.length), 0, tab);
+			return { ...pane, tabs, activeTabId: tab.id };
+		});
+		this.activePaneId = paneId;
+		this.persistTabState();
+		this.syncActiveToUrl(true);
+		return tab.id;
+	}
+
+	/** Close a tab. `forget` leaves it out of ⌘⇧T, for a thing that was deleted. */
+	closeTab(tabId: string, options?: { forget?: boolean }): void {
 		const pane = this.findPaneForTab(tabId);
 		if (!pane) return;
 
 		const tabIndex = pane.tabs.findIndex(t => t.id === tabId);
+		if (!options?.forget && tabIndex !== -1) this.rememberClosed(pane.tabs[tabIndex], pane.id, tabIndex);
 		const newTabs = pane.tabs.filter(t => t.id !== tabId);
 
 		// If this was the last tab in a split pane, collapse split
@@ -971,6 +1013,7 @@ class WindowShellStore {
 		const pane = this.panes.find(p => p.id === targetPaneId);
 		const tabToKeep = pane?.tabs.find(t => t.id === tabId);
 		if (!tabToKeep) return;
+		pane!.tabs.forEach((t, i) => t.id !== tabId && this.rememberClosed(t, targetPaneId, i));
 
 		this.updatePane(targetPaneId, () => ({
 			id: targetPaneId,
@@ -994,6 +1037,7 @@ class WindowShellStore {
 		if (index === -1) return;
 
 		const newTabs = pane.tabs.slice(0, index + 1);
+		pane.tabs.slice(index + 1).forEach((t, i) => this.rememberClosed(t, targetPaneId, index + 1 + i));
 		const newActiveId = newTabs.some(t => t.id === pane.activeTabId)
 			? pane.activeTabId
 			: newTabs[newTabs.length - 1]?.id || null;
@@ -1019,6 +1063,7 @@ class WindowShellStore {
 		if (index <= 0) return;
 
 		const newTabs = pane.tabs.slice(index);
+		pane.tabs.slice(0, index).forEach((t, i) => this.rememberClosed(t, targetPaneId, i));
 		const newActiveId = newTabs.some(t => t.id === pane.activeTabId)
 			? pane.activeTabId
 			: newTabs[0]?.id || null;
@@ -1047,7 +1092,7 @@ class WindowShellStore {
 		for (const pane of this.panes) {
 			const tabsToClose = pane.tabs.filter(t => t.route === route);
 			for (const tab of tabsToClose) {
-				this.closeTab(tab.id);
+				this.closeTab(tab.id, { forget: true });
 			}
 		}
 	}

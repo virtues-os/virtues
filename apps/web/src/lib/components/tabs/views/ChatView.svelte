@@ -85,6 +85,7 @@
 	import TurnFigures from "$lib/components/chat/TurnFigures.svelte";
 	import SubagentPanel from "$lib/components/SubagentPanel.svelte";
 	import { onMount, onDestroy, tick, untrack } from "svelte";
+	import { saveScroll, savedScroll } from "$lib/tabs/scrollMemory";
 	import { SvelteSet } from "svelte/reactivity";
 	import { goto } from "$app/navigation";
 	import { fade, fly } from "svelte/transition";
@@ -684,6 +685,7 @@
 		// temporary chat is open, which never leaves /chat — is a fresh
 		// conversation even though the route string did not change.
 		const renavigatedToNew = route === previousTabRoute && isNewChat(route) && historyIndex !== previousHistoryIndex;
+		const leftIndex = previousHistoryIndex;
 		previousHistoryIndex = historyIndex;
 		if (route === previousTabRoute && !renavigatedToNew) return;
 		const routeConversationId = extractConversationId(route);
@@ -694,6 +696,9 @@
 			previousTabRoute = route;
 			return;
 		}
+
+		// Leaving a place in this tab's history: remember where you were, for Back.
+		rememberScroll(previousTabRoute, leftIndex);
 
 		// Cancel any in-flight load from the previous conversation.
 		tabSwitchAbortController?.abort();
@@ -781,7 +786,7 @@
 				// Scroll to bottom after loading existing chat — but the
 				// getting-started room opens on its cover.
 				setTimeout(() => {
-					if (!openAtStart()) scrollToBottom("instant");
+					if (!restoreScroll() && !openAtStart()) scrollToBottom("instant");
 				}, 10);
 			}
 		}
@@ -832,6 +837,8 @@
 		untrack(() => reportRunning(running ? id : null));
 	});
 	onDestroy(() => reportRunning(null));
+	// The tab moved on to something that is not a chat (a page, a person).
+	onDestroy(() => rememberScroll(previousTabRoute, previousHistoryIndex));
 
 	// Seen: this chat is on screen, loaded, and not mid-reply. Re-runs when a
 	// reply finishes, so an answer watched as it arrived is never unread.
@@ -930,7 +937,7 @@
 
 			isLoading = false;
 			setTimeout(() => {
-				if (!openAtStart()) scrollToBottom("instant");
+				if (!restoreScroll() && !openAtStart()) scrollToBottom("instant");
 				enableTransitions = true;
 			}, 50);
 
@@ -1429,6 +1436,19 @@
 	 * Only on load: once the person is in the conversation, new turns pull
 	 * the view down as they do anywhere else.
 	 */
+	/** Save the scroll of the place this view is leaving in the tab's history. */
+	function rememberScroll(route: string, historyIndex: number) {
+		if (scrollContainer && route) saveScroll(tab.id, historyIndex, route, scrollContainer.scrollTop);
+	}
+
+	/** Back or Forward to a place seen before: open where you were. */
+	function restoreScroll(): boolean {
+		const top = savedScroll(tab.id, tab.historyIndex, tab.route);
+		if (top === undefined || !scrollContainer) return false;
+		scrollContainer.scrollTo({ top, behavior: "instant" });
+		return true;
+	}
+
 	function openAtStart(behavior: ScrollBehavior = "instant") {
 		if (inRoom) {
 			scrollContainer?.scrollTo({ top: 0, behavior });

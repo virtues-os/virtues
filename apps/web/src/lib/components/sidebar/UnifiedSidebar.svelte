@@ -71,7 +71,8 @@
 		const unregisterShortcuts = shortcuts.register(
 			{
 				id: "chat.new-temporary",
-				keys: "mod+shift+t",
+				// ⌘⇧T is the browsers' reopen-closed-tab, below. I for incognito.
+				keys: "mod+shift+i",
 				label: "New temporary chat",
 				group: "Create",
 				run: handleNewTemporaryChat,
@@ -84,12 +85,19 @@
 				run: handleNewPage,
 			},
 			{
-				// ⌘⇧T is the temporary chat's, so a task takes E.
+				// ⌘⇧T reopens a closed tab, so a task takes E.
 				id: "task.new",
 				keys: "mod+shift+e",
 				label: "New task",
 				group: "Create",
 				run: handleNewTask,
+			},
+			{
+				id: "tab.reopen",
+				keys: "mod+shift+t",
+				label: "Reopen closed tab",
+				group: "Window",
+				run: () => void windowShellStore.reopenClosedTab(),
 			},
 			{
 				id: "chat.new",

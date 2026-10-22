@@ -41,7 +41,7 @@
 	 * a tab's menu pins whatever the tab shows. A project cannot hold a
 	 * project. The server refuses it and the menus never offer it.
 	 */
-	import { onMount, tick } from 'svelte';
+	import { onMount, tick, untrack } from 'svelte';
 	import { crossfade, slide } from 'svelte/transition';
 	import { flip } from 'svelte/animate';
 	import { prefersReducedMotion } from 'svelte/motion';
@@ -228,7 +228,43 @@
 	// Recent: chats, pages, projects, tasks and applets, newest first, with
 	// pinned things left out (sidebar/recents).
 	loadRecentSources();
-	const recents = $derived(recentRows());
+	const recentsLive = $derived(recentRows());
+
+	// While the pointer or the keyboard is in the sidebar, Recent keeps the
+	// order it had when you arrived: opening a row moves it to the top a few
+	// seconds later, and a list that reorders while you click down it moves
+	// the row you were reaching for. Something new still joins at the top.
+	// Leave the sidebar and the order catches up, with the rows sliding.
+	let heldOrder = $state<Map<string, number> | null>(null);
+	const recents = $derived.by(() => {
+		const held = heldOrder;
+		if (!held) return recentsLive;
+		return [...recentsLive].sort((a, b) => (held.get(a.url) ?? -1) - (held.get(b.url) ?? -1));
+	});
+
+	$effect(() => {
+		const column = spacerEl?.closest<HTMLElement>('.sidebar-column');
+		if (!column) return;
+		const hold = () => {
+			if (!heldOrder) heldOrder = new Map(untrack(() => recentsLive).map((r, i) => [r.url, i]));
+		};
+		const release = () => {
+			// focusout fires before focus lands on its next element.
+			setTimeout(() => {
+				if (!column.matches(':hover') && !column.contains(document.activeElement)) heldOrder = null;
+			});
+		};
+		column.addEventListener('pointerenter', hold);
+		column.addEventListener('pointerleave', release);
+		column.addEventListener('focusin', hold);
+		column.addEventListener('focusout', release);
+		return () => {
+			column.removeEventListener('pointerenter', hold);
+			column.removeEventListener('pointerleave', release);
+			column.removeEventListener('focusin', hold);
+			column.removeEventListener('focusout', release);
+		};
+	});
 
 	// What Recent shows: every kind, or one. Remembered per browser, like a
 	// fold, because it says how you want the column to look.
