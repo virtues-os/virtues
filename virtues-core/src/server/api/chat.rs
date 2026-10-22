@@ -30,7 +30,6 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/api/chats/title", post(generate_chat_title_handler))
         .route("/api/chats/live", get(live_chats_handler))
-        .route("/api/chat/opening", get(chat_opening_handler))
         // The composer's `/` menu
         .route("/api/skills", get(list_skills_handler))
         // The question an empty new chat offers (api::suggestions)
@@ -242,11 +241,6 @@ pub async fn suggestion_outcome_handler(
             .await
             .map(|()| serde_json::json!({ "ok": true })),
     )
-}
-
-/// GET /api/chat/opening - What the box says first on an empty new chat.
-pub async fn chat_opening_handler(State(state): State<AppState>) -> Response {
-    api_response(crate::api::chat_opening::current(state.db.pool()).await)
 }
 
 /// POST /api/chats/:id/seen - The person has this chat on screen.

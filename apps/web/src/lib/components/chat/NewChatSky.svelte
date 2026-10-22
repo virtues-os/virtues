@@ -1,24 +1,23 @@
 <script lang="ts">
 	/**
-	 * The empty new chat's opening: today as a small sky, and the box's first
-	 * sentence beneath it.
+	 * The empty new chat's opening: today as a small sky.
 	 *
 	 * Each of today's events is a dot, placed left to right by when it
 	 * happened, so the sky fills in as the day goes on and the right side is
 	 * the part of the day still to come. A dot's size follows how long the
-	 * event lasted and its ink follows how unlike your usual it was. The event
-	 * the sentence is about gets a halo, so the words and the picture point at
-	 * the same thing.
+	 * event lasted and its ink follows how unlike your usual it was.
 	 *
-	 * With no events and nothing to say, it falls back to the mark and word
-	 * the screen always had.
+	 * With no events, it falls back to the mark and word the screen always had.
 	 */
 	import { onMount } from 'svelte';
 	import { fade } from 'svelte/transition';
-	import { getChatOpening, type ChatOpening } from '$lib/api/client';
+	import type { ChatOpening } from '$lib/api/client';
 	import { getDayEvents, type TemporalEventApi } from '$lib/wiki/api';
 	import { getLocalDateSlug } from '$lib/utils/dateUtils';
 
+	// TODO(2026-10-22): delete with ChatView's `bind:opening` and its opening
+	// state. The box no longer writes an opening sentence, so this stays null;
+	// ChatView had another change open when the sentence was removed.
 	let { opening = $bindable(null) }: { opening?: ChatOpening | null } = $props();
 
 	const W = 560;
@@ -32,11 +31,6 @@
 		void getDayEvents(date)
 			.then((rows) => (events = rows))
 			.catch(() => (events = []));
-		// The sentence can take a few seconds the first time in each part of
-		// the day; the sky does not wait for it.
-		void getChatOpening()
-			.then((o) => (opening = o.text ? o : null))
-			.catch(() => (opening = null));
 	});
 
 	function hash(s: string): number {
@@ -50,7 +44,7 @@
 		return (h >>> 0) / 4294967295;
 	}
 
-	type Dot = { id: string; x: number; y: number; r: number; ink: number; delay: number; twinkle: number; lit: boolean };
+	type Dot = { id: string; x: number; y: number; r: number; ink: number; delay: number; twinkle: number };
 
 	const dots = $derived.by((): Dot[] => {
 		const shown = (events ?? []).filter((e) => !e.user_hidden && !e.is_unknown && !e.is_sleep);
@@ -61,7 +55,6 @@
 		// Six in the morning, or earlier if the day started earlier, to midnight.
 		const from = Math.min(first, midnight.getTime() + 6 * 3600e3);
 		const to = midnight.getTime() + 24 * 3600e3;
-		const lit = opening?.event_id ?? null;
 		return shown
 			.slice()
 			.sort((a, b) => a.start_time.localeCompare(b.start_time))
@@ -77,8 +70,7 @@
 					r: Math.min(4.6, 1.3 + 2.4 * Math.sqrt(minutes / 240)),
 					ink: z === null ? 0.3 : z >= 1 ? 0.9 : 0.5,
 					delay: Math.min(1200, i * 45),
-					twinkle: 5 + hash(e.id + 't') * 7,
-					lit: e.id === lit
+					twinkle: 5 + hash(e.id + 't') * 7
 				};
 			});
 	});
@@ -87,21 +79,12 @@
 	const showMark = $derived(events !== null && !showSky);
 </script>
 
-<div class="opening" aria-hidden={!opening}>
+<div class="opening">
 	{#if showSky}
 		<svg class="sky" viewBox="0 0 {W} {H}" role="img" aria-label="Today, one dot for each event so far" in:fade={{ duration: 300 }}>
-			<defs>
-				<radialGradient id="sky-halo">
-					<stop offset="0" stop-color="currentColor" stop-opacity="0.22" />
-					<stop offset="1" stop-color="currentColor" stop-opacity="0" />
-				</radialGradient>
-			</defs>
 			{#each dots as d (d.id)}
 				<g class="dot" style="--delay: {d.delay}ms; --twinkle: {d.twinkle}s">
-					{#if d.lit}
-						<circle class="halo" cx={d.x} cy={d.y} r="22" fill="url(#sky-halo)" />
-					{/if}
-					<circle cx={d.x} cy={d.y} r={d.lit ? d.r + 1.2 : d.r} fill="currentColor" fill-opacity={d.lit ? 1 : d.ink} />
+					<circle cx={d.x} cy={d.y} r={d.r} fill="currentColor" fill-opacity={d.ink} />
 				</g>
 			{/each}
 		</svg>
@@ -116,9 +99,6 @@
 		</div>
 	{/if}
 
-	{#if opening?.text}
-		<p class="said" in:fade={{ duration: 600, delay: showSky ? 500 : 0 }}>{opening.text}</p>
-	{/if}
 </div>
 
 <style>
@@ -137,18 +117,6 @@
 		width: min(560px, 100%);
 		height: auto;
 		overflow: visible;
-	}
-
-	/* A box turn's face: the serif, at the transcript's size, unframed. */
-	.said {
-		max-width: 32em;
-		margin: 0;
-		font-family: var(--font-serif);
-		font-size: 1.25rem;
-		font-weight: 400;
-		line-height: 1.45;
-		text-align: center;
-		text-wrap: balance;
 	}
 
 	.mark {
@@ -173,11 +141,6 @@
 			animation:
 				dot-arrive 0.6s cubic-bezier(0.22, 1, 0.36, 1) var(--delay) backwards,
 				dot-twinkle var(--twinkle) ease-in-out calc(var(--delay) + 0.6s) infinite;
-			transform-box: fill-box;
-			transform-origin: center;
-		}
-		.halo {
-			animation: halo-breathe 4.8s ease-in-out infinite;
 			transform-box: fill-box;
 			transform-origin: center;
 		}
@@ -214,17 +177,6 @@
 		}
 		18% {
 			opacity: 0.55;
-		}
-	}
-	@keyframes halo-breathe {
-		0%,
-		100% {
-			transform: scale(1);
-			opacity: 1;
-		}
-		50% {
-			transform: scale(1.25);
-			opacity: 0.6;
 		}
 	}
 	@keyframes init-dot-settle {

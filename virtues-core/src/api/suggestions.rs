@@ -30,6 +30,8 @@ const QUIET_FROM: u32 = 22;
 const QUIET_UNTIL: u32 = 7;
 /// At most this many candidates per run.
 const MAX_CANDIDATES: usize = 3;
+/// At most this many of today's events go in, the most unusual first.
+const MAX_EVENTS: usize = 12;
 /// How far back a question counts as already offered.
 const OFFERED_WITHIN_HOURS: i64 = 72;
 /// The narrative identity is cut at a paragraph inside this many characters.
@@ -324,7 +326,7 @@ async fn build_dossier(
 
     // Today's events, the most unlike the owner's usual first.
     let day_url = format!("/day/day_{today}");
-    let events = crate::api::chat_opening::todays_events(pool, today, tz).await?;
+    let events = todays_events(pool, today, tz).await?;
     let lines = events
         .into_iter()
         .enumerate()
@@ -333,7 +335,7 @@ async fn build_dossier(
                 reference: SuggestionRef { url: day_url.clone(), label: format!("{today}") },
                 starts_at: None,
             };
-            (format!("E{}", i + 1), e.line, handle)
+            (format!("E{}", i + 1), e, handle)
         })
         .collect();
     section(&mut d, "todays_events", lines);
@@ -706,6 +708,56 @@ async fn store(pool: &PgPool, fingerprint: &str, rows: &[Row]) -> Result<()> {
     }
     tx.commit().await?;
     Ok(())
+}
+
+/// Today's events, most unlike the owner's usual first, one line each.
+async fn todays_events(pool: &PgPool, today: NaiveDate, tz: Option<Tz>) -> Result<Vec<String>> {
+    // Read the day without creating it: a suggestion run must not write one.
+    let day_id: Option<String> = sqlx::query_scalar("SELECT id FROM wiki_days WHERE date = $1")
+        .bind(today)
+        .fetch_optional(pool)
+        .await?;
+    let Some(day_id) = day_id else { return Ok(Vec::new()) };
+    let mut events = crate::api::wiki_events::get_day_events(pool, day_id).await?;
+    events.retain(|e| {
+        // absent-ok: these are nullable columns on a row already read; a null
+        // flag means the event was never marked hidden, unknown or sleep.
+        !e.user_hidden.unwrap_or(false) && !e.is_unknown.unwrap_or(false) && !e.is_sleep.unwrap_or(false)
+    });
+    let score = |e: &crate::api::wiki_events::TemporalEvent| e.local_novelty_z.or(e.novelty_z);
+    events.sort_by(|a, b| {
+        score(b)
+            .unwrap_or(f64::MIN)
+            .partial_cmp(&score(a).unwrap_or(f64::MIN))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let clock = |t: DateTime<Utc>| match tz {
+        Some(tz) => t.with_timezone(&tz).format("%-I:%M %p").to_string(),
+        None => t.format("%H:%M UTC").to_string(),
+    };
+    Ok(events
+        .into_iter()
+        .take(MAX_EVENTS)
+        .map(|e| {
+            let label = e.user_label.clone().or(e.auto_label.clone()).unwrap_or_else(|| "Untitled".into());
+            let place = e.user_location.clone().or(e.auto_location.clone());
+            let unusual = match score(&e) {
+                Some(z) if z >= 1.0 => "unlike their usual",
+                Some(_) => "like their usual",
+                None => "not scored",
+            };
+            let mut line = format!("{} to {}: {}", clock(e.start_time), clock(e.end_time), label);
+            if let Some(place) = place {
+                line.push_str(&format!(" at {place}"));
+            }
+            line.push_str(&format!(" ({unusual})"));
+            if let Some(summary) = e.event_summary.as_deref().filter(|s| !s.trim().is_empty()) {
+                let summary: String = summary.chars().take(240).collect();
+                line.push_str(&format!(". {summary}"));
+            }
+            line
+        })
+        .collect())
 }
 
 /// One titled block of handled lines.

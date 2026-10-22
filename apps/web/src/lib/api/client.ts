@@ -2628,14 +2628,15 @@ export function resolveRefs(urls: string[]): Promise<{ refs: RefIdentity[] }> {
 	return apiSend('POST', '/refs/resolve', { urls });
 }
 
-/** What the box says first on an empty new chat; nulls when nothing stands out. */
+/**
+ * The opening sentence an empty chat once showed. The box no longer writes
+ * one; ChatView and NewChatSky still hold the type.
+ * TODO(2026-10-22): delete with ChatView's opening state once that file is free.
+ */
 export interface ChatOpening {
 	id: string | null;
 	text: string | null;
 	event_id: string | null;
-}
-export function getChatOpening(): Promise<ChatOpening> {
-	return apiGet('/chat/opening');
 }
 
 /** The chats with a turn running on the box right now, from any device. */
