@@ -37,6 +37,9 @@ pub struct AiCall {
     pub cost_micros: i64,
     /// Which purse paid: `wallet` or `byo`. See [`Route`].
     pub route: Route,
+    /// The chat the call was made for. A request's cost is the sum over its
+    /// work chat. `None` for a temporary chat, which leaves no trace.
+    pub chat_id: Option<String>,
     pub applet_run_id: Option<String>,
 }
 
@@ -88,8 +91,8 @@ pub async fn record_ai_call(pool: &PgPool, call: &AiCall) -> Result<(), sqlx::Er
         r#"
         INSERT INTO app_ai_calls
             (id, feature, model, prompt_tokens, completion_tokens,
-             reasoning_tokens, cost_micros, route, applet_run_id)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+             reasoning_tokens, cost_micros, route, chat_id, applet_run_id)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
         "#,
     )
     .bind(id)
@@ -100,6 +103,7 @@ pub async fn record_ai_call(pool: &PgPool, call: &AiCall) -> Result<(), sqlx::Er
     .bind(call.reasoning_tokens)
     .bind(call.cost_micros)
     .bind(call.route.as_str())
+    .bind(&call.chat_id)
     .bind(&call.applet_run_id)
     .execute(pool)
     .await?;
@@ -371,6 +375,7 @@ mod tests {
                 reasoning_tokens: 0,
                 cost_micros: 5_000,
                 route: Route::Wallet,
+                chat_id: None,
                 applet_run_id: None,
             },
         )
@@ -387,6 +392,7 @@ mod tests {
                 // A BYO row: its tokens count, its price does not.
                 cost_micros: 0,
                 route: Route::Byo,
+                chat_id: None,
                 applet_run_id: None,
             },
         )

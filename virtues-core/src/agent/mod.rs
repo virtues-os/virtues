@@ -38,6 +38,7 @@ pub(crate) mod cache_watch;
 pub mod caps;
 pub mod executor;
 pub mod guard;
+pub mod headless;
 pub mod subagent;
 pub mod prompt;
 pub mod prompt_blocks;

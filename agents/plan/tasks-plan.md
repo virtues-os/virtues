@@ -1,9 +1,9 @@
 # Tasks: your to-dos and requests to the assistant
 
 **Status:** Rewritten 2026-10-21. The list, the two task tools and Hand to
-assistant are built on `wave` (`20c0f35f5`, `a7a2df843`). Nothing in this
-version is built yet. Slice 1 makes the assistant do its tasks without a chat
-open. Slice 2 rebuilds the page around what it produces.
+assistant are built on `wave` (`20c0f35f5`, `a7a2df843`). Slice 1, requests
+running in the background, is built on `wave` and not yet on `staging`.
+Slice 2 rebuilds the page around what requests produce.
 
 ## Why the first version fell short
 
@@ -90,7 +90,7 @@ status, due, project, origin, source, and the signed, append-only history in
 | **Result** | markdown, optional | set when a run finishes. Rendered with the chat's prose and chart blocks |
 | **Result URL** | optional app URL | a page or applet the run made, using the ref URL convention |
 | **Chat** | optional chat id | the request's own work chat, created by its first run and reused by every later run |
-| **Run after** | timestamp, optional | when the worker may pick the request up. Null means it never runs on its own |
+| **Next run at** | timestamp, optional | when the worker may pick the request up. Null means it never runs on its own |
 | **Attempts** | integer | failed runs in a row. Reset by a successful run |
 
 A request is a task with `assignee = 'assistant'`. There is no separate
@@ -113,20 +113,21 @@ One migration, claimed with `make migration NAME=task_requests`:
 - Add `ready` to the `status` CHECK. `closed_at` stays null for `ready`,
   because a ready request is not closed.
 - Add `result text`, `result_url text`, `chat_id text REFERENCES
-  app_chats(id) ON DELETE SET NULL`, `run_after timestamptz` and
+  app_chats(id) ON DELETE SET NULL`, `next_run_at timestamptz` and
   `attempts integer NOT NULL DEFAULT 0`.
 - Add a partial index for the worker:
-  `(run_after) WHERE assignee = 'assistant' AND status = 'open' AND run_after IS NOT NULL`.
+  `(next_run_at) WHERE assignee = 'assistant' AND status = 'open' AND next_run_at IS NOT NULL`.
 
 **Trap: existing assistant tasks must not all start at once.** The migration
-leaves `run_after` null on every existing row. Code sets `run_after` only on
+leaves `next_run_at` null on every existing row. Code sets `next_run_at` only on
 new requests and on hand-overs and replies after the migration. Without
 this, every assistant task on a box starts a model run, and charges, the
 minute the upgrade lands.
 
-Spend needs no new attribution column. `app_ai_calls.chat_id` already
-records the chat for every call, and each request has one chat, so a
-request's cost is the sum over its chat. The same rows carry `model` and
+The migration also adds `app_ai_calls.chat_id` back (0011 had dropped it
+because nothing wrote it). Chat turns and headless runs now record the chat
+for every call, and each request has one chat, so a request's cost is the
+sum over its chat. The same rows carry `model` and
 `route` (`wallet` or `byo`), which is where the page's "where it ran" line
 comes from.
 
@@ -136,41 +137,46 @@ Register the new columns in `sql_catalog.rs` with the rest of `app_tasks`.
 
 ### One headless agent loop
 
-`crate::agent::applet_runner::run_agent_loop` takes an `&Applet` and reads
-its chat, model slot and limits from the applet's config. Tasks need the
-same loop without an applet row.
-
-Split it in the same change. The loop body becomes a function that takes a
-job: chat id, prompt, model slot, `Limits`, and an attribution for the AI
-calls. Applets build a job from their row. Requests build one from the
-task. Both callers move onto it in one commit, with no second copy of the
-loop.
+`agent::headless::run_headless` runs one pass of the loop from a
+`HeadlessJob`: chat, model, prompt, tools, a spend ceiling and the AI-call
+attribution. It loads the chat, posts the person's message and the reply,
+and records every call. `agent::applet_runner` builds a job from an applet
+row; `crate::task_runner` builds one from a request.
 
 ### The worker
 
-A loop in the scheduler, started next to the applet cron scheduler, checks
-once a minute for requests where `status = 'open'`, `assignee = 'assistant'`
-and `run_after <= now()`. It runs one request at a time.
+`crate::task_runner`, started next to the applet cron scheduler, checks
+once a minute, and straight after each run, for requests where `status = 'open'`, `assignee = 'assistant'`
+and `next_run_at <= now()`. It runs one request at a time.
 
 For each request:
 
 1. Set `active`, signed `assistant`, in one transaction with the event, the
    same way every task write goes through `api::tasks`.
 2. Create the request's chat on its first run. The opening message carries
-   the title, the notes and the history's notes. The chat belongs to the
-   request: it does not appear in Recent or in the chat list.
-3. Run the loop with the slot for background work, under the task limits.
-   The tool context carries the request's chat id, so every tool call lands
-   in the task history signed `assistant` with that chat.
+   the title and notes. A later run opens with the owner's notes since the
+   last run. The chat belongs to the request, so `list_chats` leaves it out.
+3. Run the loop on the Standard slot, because the result is prose the owner
+   reads, with the request tool set (`get_tools_for_request`: read, search,
+   compute, pages and the two task tools, without `sql_write`). The tool
+   context carries the chat id and the task id, so every tool call lands in
+   the history signed `assistant`, and the permission gate lets it through
+   as it does an applet run.
 4. On success: store the final assistant message as `result`, set `ready`,
-   reset `attempts` and clear `run_after`. The assistant can set
+   reset `attempts` and clear `next_run_at`. The assistant can set
    `result_url` through `update_task` when it made a page.
 5. On a model or tool failure: increment `attempts`, keep `open`, and set
-   `run_after` with a backoff. After three failures, set `ready` with a
+   `next_run_at` with a backoff. After three failures, set `ready` with a
    result that says what failed and what the owner can do.
-6. When a spending ceiling stops the run: set `ready` with a result that
-   names the ceiling and where to raise it. A ceiling is not a failure, the
-   same distinction `AppletRunStatus` draws.
+6. When the per-run ceiling stops the run: set `ready` with what it had,
+   plus a line naming the limit and asking the owner to reply to continue.
+   A ceiling is not a failure, the same distinction `AppletRunStatus` draws.
+7. When the daily ceiling is reached, nothing starts. Requests stay queued
+   until the day's spend falls under it.
+
+A request left `active` with a work chat when the server stops goes back in
+the queue on the next start. A request the owner dismisses or takes back
+during a run keeps their change; the run's answer becomes a note.
 
 **A request cannot start another request.** Tasks created during a run are
 created for the owner, and `update_task` from a run cannot assign a task to
@@ -179,13 +185,15 @@ the worker busy, and spending, indefinitely.
 
 ### Limits
 
-Request runs use `applet_runner::limits::Limits`: a ceiling per run and a
-ceiling per day across all requests, both settable by the owner in
-Settings. The default values are an open question below.
+Request runs have a ceiling per run and a ceiling per day across all
+requests, counted on wallet spend (BYO calls report no cost). They are
+constants in `task_runner.rs` for now, $0.50 a run and $2 a day, and become
+owner settings in Settings with slice 2.
 
 ### Changes to the tools and the chat side
 
-- `update_task` gains `ready` with `result`, and `result_url`.
+- `update_task` gains `ready` with `result`, and `result_url`. Only the
+  assistant can set `ready`, and it can never set `done` on a request.
 - **Hand to assistant** no longer opens a chat. It sets the assignee,
   queues the request, and the row shows Queued at once.
 - A chat that creates a request with `create_task` queues it the same way.
@@ -195,9 +203,10 @@ Settings. The default values are an open question below.
 
 ### What slice 1 does not change
 
-The page keeps its current layout. Ready requests show under their date
-group with a Ready chip and the result in the detail. That is enough to
-test runs end to end before the page is rebuilt.
+The page keeps its current layout. A request row shows Queued, Working or
+Ready, and the detail shows the result with Reply and Accept. The list
+reloads only when its tab comes forward, so a request that finishes while
+the page is open still reads Queued until then. Slice 2 has to refresh it.
 
 ## Slice 2: the page
 
@@ -283,8 +292,8 @@ None of these changes the object; each adds columns or a producer.
 
 ## Open
 
-- **Default spending ceilings** for a request run and for a day of request
-  runs.
+- **Default spending ceilings.** The code uses $0.50 a run and $2 a day
+  until the Settings control exists. Confirm or change both.
 - **Whether Ready gets a sidebar mark.** A count is ruled out. A plain dot on
   the Tasks entry while something is ready might be acceptable. Decide after
   using slice 1.

@@ -109,7 +109,7 @@ fn create_task_tool() -> ToolConfig {
         id: "create_task".to_string(),
         name: "Add a task".to_string(),
         description: "Add tasks to your list".to_string(),
-        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). Never for things only mentioned in passing. Titles: short, in their words. The chat shows the tasks."#.to_string(),
+        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). A task for "assistant" runs in the background, at its due time if it has one. Never for things only mentioned in passing. Titles: short, in their words."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["tasks"],
@@ -145,7 +145,7 @@ fn update_task_tool() -> ToolConfig {
         id: "update_task".to_string(),
         name: "Update a task".to_string(),
         description: "Edit, finish or dismiss a task".to_string(),
-        llm_description: r#"Change one task by id: fields, status, or a note in its history. Working one assigned to you: "active", then a note on what you did and where, then "done"; if blocked, "open" with a note why. due "none" clears it."#.to_string(),
+        llm_description: r#"Change one task by id: fields, status, or a note in its history. To finish one assigned to you: "ready" with a result, never "done". due "none" clears it."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["id"],
@@ -156,7 +156,9 @@ fn update_task_tool() -> ToolConfig {
                 "due": { "type": "string" },
                 "for": { "type": "string", "enum": ["owner", "assistant"] },
                 "project_id": { "type": "string" },
-                "status": { "type": "string", "enum": ["open", "active", "done", "dismissed"] },
+                "status": { "type": "string", "enum": ["open", "active", "ready", "done", "dismissed"] },
+                "result": { "type": "string" },
+                "result_url": { "type": "string" },
                 "note": { "type": "string" }
             }
         }),

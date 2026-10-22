@@ -2124,7 +2124,8 @@ export interface PageListResponse {
 // ============================================================================
 
 export type TaskActor = 'owner' | 'assistant';
-export type TaskStatus = 'open' | 'active' | 'done' | 'dismissed';
+/** `ready`: a request's run finished and its result waits for the owner. */
+export type TaskStatus = 'open' | 'active' | 'ready' | 'done' | 'dismissed';
 
 export interface Task {
 	id: string;
@@ -2145,6 +2146,16 @@ export interface Task {
 	closed_at: string | null;
 	created_at: string;
 	updated_at: string;
+	/** What a request's run produced, as markdown. */
+	result: string | null;
+	/** A page or other app URL the run made. */
+	result_url: string | null;
+	/** The request's own work chat. */
+	chat_id: string | null;
+	/** When the worker may run the request; null when it does not run on its own. */
+	next_run_at: string | null;
+	/** Failed runs in a row. */
+	attempts: number;
 }
 
 export interface TaskEvent {

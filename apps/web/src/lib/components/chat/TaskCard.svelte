@@ -24,7 +24,7 @@
 	);
 
 	async function toggle(t: Task) {
-		const closing = t.status === "open" || t.status === "active";
+		const closing = t.status !== "done" && t.status !== "dismissed";
 		try {
 			// The store may not hold this task yet (Tasks never opened): seed it.
 			if (!tasksStore.find(t.id)) tasksStore.open = [...tasksStore.open, t];
@@ -69,6 +69,10 @@
 					<span class="chip">Dismissed</span>
 				{:else if t.status === "active"}
 					<span class="chip">Working on it</span>
+				{:else if t.status === "ready"}
+					<span class="chip">Ready</span>
+				{:else if t.assignee === "assistant" && t.next_run_at}
+					<span class="chip">Queued</span>
 				{/if}
 				{#if t.due_on && !closed}
 					<span class="chip" class:overdue={dueGroup(t.due_on) === "overdue"}>{dueLabel(t.due_on, t.due_at)}</span>

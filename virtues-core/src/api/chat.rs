@@ -2440,6 +2440,7 @@ fn create_agent_stream(
             },
             chat_id: Some(request.chat_id.clone()),
             applet_id: None,
+            task_id: None,
             subagent_tx: Some(subagent_tx),
             cancel_token: Some(cancel_token.clone()),
             worker_budget: Some(worker_budget),
@@ -2700,6 +2701,7 @@ impl Spend<'_> {
                 } else {
                     crate::api::ai_calls::Route::Wallet
                 },
+                chat_id: (!self.temporary).then(|| chat_id.to_string()),
                 applet_run_id: None,
             },
         )

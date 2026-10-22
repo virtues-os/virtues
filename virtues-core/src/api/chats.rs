@@ -312,6 +312,8 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
         FROM app_chats c
         LEFT JOIN app_chat_seen s ON s.chat_id = c.id
         WHERE deleted_at IS NULL
+          -- A request's work chat belongs to its task, not the chat list.
+          AND NOT EXISTS (SELECT 1 FROM app_tasks t WHERE t.chat_id = c.id)
         ORDER BY last_message_at DESC
         LIMIT $1
         "#,

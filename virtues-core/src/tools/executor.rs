@@ -73,6 +73,11 @@ pub struct ToolContext {
     pub chat_id: Option<String>,
     /// Applet ID (set when running as an action — for action memory tool)
     pub applet_id: Option<String>,
+    /// The request being worked, set by `crate::task_runner` for a request's
+    /// background run. Nobody is present to approve, so the permission gate
+    /// lets it through as it does an applet run, and the task tools refuse to
+    /// start another request from it.
+    pub task_id: Option<String>,
     /// Side-channel for streaming Deep Research subagent status to the live panel.
     /// Set by the chat handler; `None` for headless/action runs.
     pub subagent_tx: Option<tokio::sync::mpsc::Sender<SubagentUpdate>>,
@@ -116,6 +121,7 @@ impl Default for ToolContext {
             scope_mode: crate::search::ScopeMode::default(),
             chat_id: None,
             applet_id: None,
+            task_id: None,
             subagent_tx: None,
             cancel_token: None,
             worker_budget: None,
@@ -338,7 +344,7 @@ impl ToolExecutor {
         }
         // Only interactive chat is gated. Autonomous action runs set `applet_id` (and may carry a
         // linked `chat_id`) but have no user present to approve, so they must run ungated.
-        if context.applet_id.is_some() {
+        if context.applet_id.is_some() || context.task_id.is_some() {
             return Ok(None);
         }
         // Headless calls with no chat aren't gated either.

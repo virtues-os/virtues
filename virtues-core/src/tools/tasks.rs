@@ -2,6 +2,8 @@
 //!
 //! Both write through `api::tasks`, signed by the assistant and tagged with
 //! the chat they came from, so every change lands in the task's history.
+//! A task assigned to the assistant is a request: `api::tasks` queues it and
+//! `crate::task_runner` works it in the background.
 //! Reading the list is `sql_query` against `app_tasks`. Neither tool asks
 //! first: a task is cheap to undo and its history shows who did what.
 
@@ -20,7 +22,11 @@ pub const UPDATE_TOOL: &str = "update_task";
 const MAX_PER_CALL: usize = 20;
 
 fn writer(context: &ToolContext) -> Writer {
-    Writer { author: Actor::Assistant, chat_id: context.chat_id.clone() }
+    Writer {
+        author: Actor::Assistant,
+        chat_id: context.chat_id.clone(),
+        from_request: context.task_id.is_some(),
+    }
 }
 
 pub async fn create(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolResult {
@@ -107,10 +113,21 @@ pub async fn update(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolR
         patch.status = Some(match status {
             "open" => Status::Open,
             "active" => Status::Active,
+            "ready" => Status::Ready,
             "done" => Status::Done,
             "dismissed" => Status::Dismissed,
-            other => return ToolResult::error(format!("unknown status '{other}' (open | active | done | dismissed)")),
+            other => {
+                return ToolResult::error(format!(
+                    "unknown status '{other}' (open | active | ready | done | dismissed)"
+                ))
+            }
         });
+    }
+    if let Some(result) = args.get("result").and_then(Value::as_str) {
+        patch.result = Some(result.to_string());
+    }
+    if let Some(url) = args.get("result_url").and_then(Value::as_str) {
+        patch.result_url = Some(Some(url.to_string()).filter(|u| !u.trim().is_empty()));
     }
     let note = args.get("note").and_then(Value::as_str).map(str::trim).filter(|n| !n.is_empty());
 
@@ -189,9 +206,24 @@ mod tests {
         assert_eq!(tasks[0]["origin"], "chat");
 
         let id = tasks[2]["id"].as_str().unwrap();
-        let done = update(&pool, &json!({ "id": id, "status": "done", "note": "No reply yet; asked again." }), &ctx).await;
-        assert!(done.success, "{:?}", done.error);
-        assert_eq!(done.data["task"]["status"], "done");
+        assert!(tasks[2]["next_run_at"].is_string(), "a new request is queued");
+        assert!(tasks[0]["next_run_at"].is_null(), "the owner's to-do never runs");
+
+        // The assistant never closes its own request: it hands back a result.
+        let closed = update(&pool, &json!({ "id": id, "status": "done" }), &ctx).await;
+        assert!(!closed.success);
+        let bare = update(&pool, &json!({ "id": id, "status": "ready" }), &ctx).await;
+        assert!(!bare.success, "ready needs a result");
+        let ready = update(
+            &pool,
+            &json!({ "id": id, "status": "ready", "result": "No reply yet.", "note": "Asked again." }),
+            &ctx,
+        )
+        .await;
+        assert!(ready.success, "{:?}", ready.error);
+        assert_eq!(ready.data["task"]["status"], "ready");
+        assert_eq!(ready.data["task"]["result"], "No reply yet.");
+        assert!(ready.data["task"]["next_run_at"].is_null(), "a ready request is out of the queue");
 
         let events = crate::api::tasks::list_events(&pool, id).await.unwrap();
         let kinds: Vec<_> = events.iter().map(|e| e.kind.as_str()).collect();
@@ -201,5 +233,18 @@ mod tests {
         let bad = update(&pool, &json!({ "id": id, "status": "finished" }), &ctx).await;
         assert!(!bad.success);
         assert!(!create(&pool, &json!({ "tasks": [] }), &ctx).await.success);
+    }
+
+    /// A request's own run can add to-dos for the owner but cannot start
+    /// another request, by creating one or by handing a to-do over.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_request_run_cannot_start_another_request(pool: PgPool) {
+        let run = ToolContext { chat_id: Some("chat_r".into()), task_id: Some("task_r".into()), ..Default::default() };
+        let own = create(&pool, &json!({ "tasks": [{ "title": "Look into it", "for": "assistant" }] }), &run).await;
+        assert!(!own.success);
+        let todo = create(&pool, &json!({ "tasks": [{ "title": "Sign the form" }] }), &run).await;
+        assert!(todo.success, "{:?}", todo.error);
+        let id = todo.data["tasks"][0]["id"].as_str().unwrap();
+        assert!(!update(&pool, &json!({ "id": id, "for": "assistant" }), &run).await.success);
     }
 }

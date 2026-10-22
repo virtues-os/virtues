@@ -6,18 +6,22 @@
 	 * the bottom. A row is a checkbox, a title and at most three chips, and
 	 * opens in place to edit.
 	 *
+	 * A task for the assistant is a request: the server runs it in the
+	 * background and it comes back as Ready with a result, which the owner
+	 * accepts or replies to.
+	 *
 	 * No counts anywhere, the tab's description included: the list must
 	 * never nag, and a number is the first step toward that.
 	 */
 	import type { Tab } from "$lib/tabs/types";
-	import { listTaskEvents, type Task, type TaskEvent, type TaskPatch } from "$lib/api/client";
-	import { askVirtues } from "$lib/stores/pendingPrompt.svelte";
+	import { addTaskNote, listTaskEvents, type Task, type TaskEvent, type TaskPatch } from "$lib/api/client";
 	import { tasksStore } from "$lib/stores/tasks.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { Page } from "$lib";
 	import SubNav, { type SubNavItem } from "$lib/components/SubNav.svelte";
 	import Icon from "$lib/components/Icon.svelte";
+	import Markdown from "$lib/components/Markdown.svelte";
 	import { dueGroup, dueLabel, isoDay, parseDue, type DueGroup } from "$lib/tasks/due";
 	import { toast } from "svelte-sonner";
 	import { onMount, tick } from "svelte";
@@ -136,7 +140,7 @@
 	}
 
 	function toggleDone(t: Task) {
-		const closing = t.status === "open" || t.status === "active";
+		const closing = t.status !== "done" && t.status !== "dismissed";
 		void save(t.id, { status: closing ? "done" : "open" }, "Your server couldn't update that task");
 	}
 
@@ -214,6 +218,7 @@
 			case "status": {
 				const to = String(body.to ?? "");
 				const said: Record<string, string> = {
+					ready: "finished it and left a result",
 					done: "finished it",
 					dismissed: "dismissed it",
 					active: "started on it",
@@ -256,23 +261,49 @@
 	}
 
 	/**
-	 * Give the task to the assistant and start it on the work: a new chat,
-	 * every time, so nothing from an older conversation rides along. The
-	 * history links whichever chat does the work.
+	 * Give the task to the assistant. The server queues it and works it in
+	 * the background, in the request's own chat, so the owner stays here.
 	 */
 	async function handToAssistant(t: Task) {
-		try {
-			await tasksStore.update(t.id, { assignee: "assistant" });
-		} catch (e) {
-			toast.error("Your server couldn't hand that task over", { description: errorText(e) });
-			return;
-		}
-		const notes = t.notes ? `\n\nNotes: ${t.notes}` : "";
-		askVirtues(`Please take this task (${t.id}): ${t.title}${notes}`, t.project_id);
+		await save(t.id, { assignee: "assistant" }, "Your server couldn't hand that task over");
+		void loadHistory(t.id);
 	}
 
-	function takeBack(t: Task) {
-		void save(t.id, { assignee: "owner" }, "Your server couldn't take that task back");
+	/** Close a ready request: the owner has what they asked for. */
+	function accept(t: Task) {
+		void save(t.id, { status: "done" }, "Your server couldn't close that request");
+	}
+
+	let reply = $state("");
+
+	/**
+	 * Answer a ready request: the reply goes into its history and the
+	 * request goes back in the queue, to run again in the same chat.
+	 */
+	async function sendReply(t: Task) {
+		const text = reply.trim();
+		if (!text) return;
+		try {
+			await addTaskNote(t.id, text);
+			await tasksStore.update(t.id, { status: "open" });
+			reply = "";
+			void loadHistory(t.id);
+		} catch (e) {
+			toast.error("Your server couldn't send that reply", { description: errorText(e) });
+		}
+	}
+
+	/** A request's state, in a word, while it is still the assistant's. */
+	function requestState(t: Task): string | null {
+		if (t.assignee !== "assistant") return null;
+		if (t.status === "active") return "Working";
+		if (t.status === "ready") return "Ready";
+		if (t.status === "open" && t.next_run_at) return "Queued";
+		return null;
+	}
+
+	async function takeBack(t: Task) {
+		await save(t.id, { assignee: "owner" }, "Your server couldn't take that task back");
 		void loadHistory(t.id);
 	}
 
@@ -438,7 +469,9 @@
 					{#if project}
 						<span class="chip">{project}</span>
 					{/if}
-					{#if t.assignee === "assistant" && filter !== "assistant"}
+					{#if requestState(t)}
+						<span class="chip chip-assistant">{requestState(t)}</span>
+					{:else if t.assignee === "assistant" && filter !== "assistant"}
 						<span class="chip chip-assistant" title="Assigned to the assistant">Assistant</span>
 					{/if}
 				</span>
@@ -502,7 +535,30 @@
 						</button>
 					{/if}
 				</div>
-				{#if !isClosed}
+				{#if t.result}
+					<div class="result">
+						<Markdown content={t.result} />
+						{#if t.result_url}
+							<button type="button" class="fact link" onclick={() => openSource(t.result_url!)}>
+								<Icon icon="ri:link" width="14" />
+								Open the {sourceLabel(t.result_url).toLowerCase()} it made
+							</button>
+						{/if}
+					</div>
+				{/if}
+				{#if t.status === "ready"}
+					<form
+						class="reply"
+						onsubmit={(e) => {
+							e.preventDefault();
+							void sendReply(t);
+						}}
+					>
+						<input bind:value={reply} class="reply-input" placeholder="Reply to run it again" aria-label="Reply" />
+						<button type="submit" class="hand-btn" disabled={!reply.trim()}>Send</button>
+						<button type="button" class="hand-btn" onclick={() => accept(t)}>Accept</button>
+					</form>
+				{:else if !isClosed}
 					<div class="hand">
 						{#if t.assignee === "owner"}
 							<button type="button" class="hand-btn" onclick={() => handToAssistant(t)}>
@@ -774,6 +830,29 @@
 	}
 	.hand-btn:hover {
 		background: color-mix(in srgb, var(--wash-ink) 5%, transparent);
+	}
+	.result {
+		display: flex;
+		flex-direction: column;
+		gap: 0.5rem;
+		padding: 0.5rem 0;
+		font-size: 0.9375rem;
+	}
+	.reply {
+		display: flex;
+		gap: 0.5rem;
+		align-items: center;
+	}
+	.reply-input {
+		flex: 1;
+		min-width: 0;
+		background: transparent;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		padding: 0.25rem 0.5rem;
+		color: var(--color-foreground);
+		font: inherit;
+		font-size: 0.875rem;
 	}
 	.history {
 		list-style: none;

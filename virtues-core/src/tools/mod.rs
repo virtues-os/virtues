@@ -144,6 +144,29 @@ pub fn get_tools_for_applet() -> Vec<serde_json::Value> {
     tools_named(APPLET_RUN_ALLOWED_TOOLS)
 }
 
+/// The allowlist for a request's background run (`crate::task_runner`):
+/// read, research, compute, write pages, and touch the task list. It has no
+/// `sql_write` and no applet or memory tools, because a request answers a
+/// question and keeps no state of its own. Its answer is the run's reply,
+/// which becomes the request's result.
+const REQUEST_RUN_ALLOWED_TOOLS: &[&str] = &[
+    "think",
+    "sql_query",
+    "semantic_search",
+    "web_search",
+    "create_page",
+    "get_page_content",
+    "edit_page",
+    "code_interpreter",
+    "create_task",
+    "update_task",
+];
+
+/// Tools for a request's background run: the allowlist above.
+pub fn get_tools_for_request() -> Vec<serde_json::Value> {
+    tools_named(REQUEST_RUN_ALLOWED_TOOLS)
+}
+
 /// The tools behind the CLI's data verbs (`virtues query`, `search`,
 /// `schema`, `applet`, `page`). Each verb is one of these run through the
 /// executor, so it gets the same role drop, timeout and arguments as chat;

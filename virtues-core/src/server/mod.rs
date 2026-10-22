@@ -187,6 +187,10 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
 
     spawn_scheduler(pool.clone(), yjs_state.clone());
 
+    // Requests: tasks assigned to the assistant, worked in the background
+    // one at a time. See `crate::task_runner`.
+    crate::task_runner::spawn(pool.clone(), yjs_state.clone());
+
     // Auth-table sweeper: deletes expired pair tokens + sudo requests every
     // 10 minutes, archives `app_auth_event` rows older than 90 days. See
     // `crate::maintenance::sweeper`.

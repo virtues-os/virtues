@@ -386,11 +386,11 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // The task list, read here; written only through create_task and
     // update_task so every change reaches the task's history.
     m.insert("app_tasks", TableMetadata {
-        description: "The to-do list the owner and the assistant share. assignee is owner or assistant; status open, active (the assistant is working on it), done or dismissed; due_on is the owner's local day, due_at a time when one was given",
+        description: "The to-do list the owner and the assistant share. assignee is owner or assistant (a request, worked in the background); status open, active (being worked), ready (a request's result waits for the owner), done or dismissed; due_on is the owner's local day, due_at a time when one was given; result is a ready request's answer",
         category: "tasks",
-        key_columns: &["title", "notes", "assignee", "status", "due_on", "due_at", "project_id", "closed_at"],
+        key_columns: &["title", "notes", "assignee", "status", "due_on", "due_at", "project_id", "closed_at", "result", "result_url"],
         join_hint: None,
-        note: Some("open: status IN ('open','active')"),
+        note: Some("not closed: status IN ('open','active','ready')"),
     });
     m.insert("wiki_notes", TableMetadata {
         description: "Notes and open questions attached to a wiki subject, written by the owner or by the assistant",
