@@ -237,6 +237,15 @@ export function svelteNodeView(
  *
  * For `pre`, the content goes in a `code` inside the `pre`, as the HTML has it.
  */
+/**
+ * The classes a content block shares with chat's rendering of the same block
+ * (prose.css): its own, its chrome's and its content's.
+ */
+const PROSE_BLOCK: Record<string, { block: string; chrome?: string; content?: string }> = {
+	callout: { block: 'prose-callout', chrome: 'prose-callout-mark', content: 'prose-callout-body' },
+	codeBlock: { block: 'prose-code' },
+};
+
 export function svelteContentNodeView(
 	component: Component<{ view: ViewState }>,
 	tag: 'aside' | 'pre' | 'div',
@@ -245,11 +254,14 @@ export function svelteContentNodeView(
 		const { editor } = props;
 		let node = props.node;
 		const dom = document.createElement(tag === 'pre' ? 'div' : tag);
+		const shared = PROSE_BLOCK[node.type.name];
 		dom.classList.add('doc-block', `doc-block-${node.type.name}`);
+		if (shared) dom.classList.add(shared.block);
 		mirrorAttrs(dom, node);
 		const chrome = document.createElement('div');
 		chrome.contentEditable = 'false';
 		chrome.className = 'doc-block-chrome';
+		if (shared?.chrome) chrome.classList.add(shared.chrome);
 		let contentDOM: HTMLElement;
 		if (tag === 'pre') {
 			const pre = document.createElement('pre');
@@ -259,6 +271,7 @@ export function svelteContentNodeView(
 		} else {
 			contentDOM = document.createElement('div');
 			contentDOM.className = 'doc-block-content';
+			if (shared?.content) contentDOM.classList.add(shared.content);
 			dom.append(chrome, contentDOM);
 		}
 		const view = viewState(props, () => node);

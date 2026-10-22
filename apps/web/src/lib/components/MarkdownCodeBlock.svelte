@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { browser } from '$app/environment';
 	import { highlightCode, getThemeFromCSS } from '$lib/shiki/highlighter';
-	import Button from '$lib/components/Button.svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
+	import { languageLabel } from '$lib/document/languages';
 	import type { ThemedToken } from 'shiki';
 
 	// Custom renderer for svelte-streamdown `code` tokens. We override the default
@@ -62,26 +63,20 @@
 	}
 </script>
 
-<div
-	class="w-full overflow-hidden rounded-xl border border-border-subtle flex flex-col"
->
-	<div
-		class="flex items-center justify-between px-4 py-2 text-foreground-muted text-xs bg-surface-elevated"
-	>
-		<span class="text-foreground-muted font-medium">{lang || ''}</span>
-		<Button variant="ghost" size="sm" onclick={copy}>
-			{copied ? 'Copied' : 'Copy'}
-		</Button>
+<!-- A page's code block's markup (prose.css `.prose-code`), so the two are one. -->
+<div class="prose-code">
+	<div class="prose-code-head">
+		<span class="prose-code-lang">{languageLabel(lang) || 'Plain text'}</span>
+		<IconButton icon={copied ? 'ri:check-line' : 'ri:file-copy-line'} label="Copy code" size="sm" onclick={copy} />
 	</div>
 
 	{#if tokens}
-		<pre class="overflow-x-auto p-4 text-sm bg-surface-elevated"><code
+		<pre><code
 				>{#each tokens as line, i}{#each line as t}<span
 							style:color={t.color}>{t.content}</span
 						>{/each}{#if i < tokens.length - 1}{'\n'}{/if}{/each}</code
 			></pre>
 	{:else}
-		<pre
-			class="overflow-x-auto p-4 text-sm bg-surface-elevated"><code>{code}</code></pre>
+		<pre><code>{code}</code></pre>
 	{/if}
 </div>

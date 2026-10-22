@@ -5,6 +5,8 @@
 	import Ref from './Ref.svelte';
 	import LinkChip from './LinkChip.svelte';
 	import MarkdownCodeBlock from './MarkdownCodeBlock.svelte';
+	import Icon from './Icon.svelte';
+	import { alertTone } from '$lib/document/callouts';
 	import { parseEntityRoute } from '$lib/utils/refRoutes';
 	import { preprocessMarkdown } from '$lib/utils/markdownPreprocess';
 	import { backendUrl } from '$lib/config/backend';
@@ -160,6 +162,38 @@
 				<div class="tableWrapper">
 					<table>{@render children()}</table>
 				</div>
+			{/snippet}
+
+			<!-- `> [!NOTE]` as a page's callout: the tone's mark beside the body,
+			     the alert's kind read as the converter reads it. -->
+			{#snippet alert({ children, token }: { children: import('svelte').Snippet; token: any })}
+				{@const tone = alertTone(token.variant)}
+				<aside class="prose-callout" data-tone={tone.tone}>
+					<span class="prose-callout-mark"><Icon icon={tone.icon} width="16" aria-label={tone.label} /></span>
+					<div class="prose-callout-body">{@render children()}</div>
+				</aside>
+			{/snippet}
+
+			<!-- To-dos in a page's to-do markup (`ul[data-type=taskList]`, each
+			     item a box beside its text), which prose.css draws for both. The
+			     box is the record's; it cannot be ticked from a reply. -->
+			{#snippet ul({ children, token }: { children: import('svelte').Snippet; token: any })}
+				{#if token.tokens?.some((item: any) => item.task)}
+					<ul data-type="taskList">{@render children()}</ul>
+				{:else}
+					<ul>{@render children()}</ul>
+				{/if}
+			{/snippet}
+
+			{#snippet li({ children, token }: { children: import('svelte').Snippet; token: any })}
+				{#if token.task}
+					<li data-checked={token.checked ? 'true' : 'false'}>
+						<label><input type="checkbox" checked={token.checked} disabled /></label>
+						<div>{@render children()}</div>
+					</li>
+				{:else}
+					<li value={token.value ?? undefined}>{@render children()}</li>
+				{/if}
 			{/snippet}
 
 			{#snippet code({ token }: { token: any })}

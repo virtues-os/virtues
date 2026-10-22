@@ -244,6 +244,11 @@
 	position: relative;
 }
 
+/* A to-do in a reply or a page read only is a record, not a control. */
+.prose ul[data-type='taskList'] > li input[type='checkbox']:disabled {
+	cursor: default;
+}
+
 /* A thumb's 44pt: the box stays 14px, its hit area grows (design-grammar §6),
    up, down and to the left only. It ends at the box's right edge: the
    item's text starts 8px past it, and a tap there places the caret. */
@@ -377,3 +382,97 @@
 	height: auto;
 	border-radius: var(--radius-md);
 }
+
+/* ── Callouts: the tone's mark beside the content. A page's callout node
+   view (nodeviews.svelte.ts, CalloutNode) and chat's `> [!NOTE]` alert
+   (Markdown.svelte) draw the same markup: `.prose-callout[data-tone]`
+   holding `.prose-callout-mark` and `.prose-callout-body`. */
+
+.prose-callout {
+	display: flex;
+	gap: 8px;
+	padding: 12px 16px 12px 12px;
+	border: 1px solid var(--color-border-subtle);
+	border-radius: var(--radius-xl);
+	background: var(--color-surface-elevated);
+}
+
+.prose-callout[data-tone='tip'] {
+	border-color: var(--color-success);
+	background: var(--color-success-subtle);
+}
+
+.prose-callout[data-tone='warning'] {
+	border-color: var(--color-warning);
+	background: var(--color-warning-subtle);
+}
+
+.prose-callout > .prose-callout-mark {
+	flex: none;
+	display: flex;
+	align-items: flex-start;
+	color: var(--color-foreground-muted);
+}
+
+.prose-callout[data-tone='tip'] > .prose-callout-mark {
+	color: var(--color-success);
+}
+
+.prose-callout[data-tone='warning'] > .prose-callout-mark {
+	color: var(--color-warning);
+}
+
+.prose-callout > .prose-callout-body {
+	flex: 1;
+	min-width: 0;
+}
+
+.prose-callout-body > * + * {
+	margin-top: 0.75em;
+}
+
+/* ── Code blocks: a header (the language, Copy) over the code. A page's code
+   block (nodeviews.svelte.ts, CodeBlockNode) and chat's (MarkdownCodeBlock)
+   draw `.prose-code` holding `.prose-code-head` and a `pre`. */
+
+.prose-code {
+	border: 1px solid var(--color-border-subtle);
+	border-radius: var(--radius-xl);
+	background: var(--color-surface-elevated);
+	overflow: hidden;
+}
+
+.prose-code-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	/* 12px and the label's own 4px put the language on the code's 16px edge. */
+	padding: 4px 12px;
+}
+
+.prose-code-lang {
+	padding: 0 4px;
+	color: var(--color-foreground-muted);
+	font-size: 0.75rem;
+}
+
+.prose-code pre {
+	margin: 0;
+	padding: 0 16px 12px;
+	overflow-x: auto;
+	white-space: pre;
+}
+
+.prose-code code {
+	display: block;
+	padding: 0;
+	border: none;
+	background: transparent;
+	/* design-ok: a code block is code; a fixed advance is the content */
+	font-family: var(--font-mono);
+	font-size: 0.875rem;
+	line-height: 1.6;
+	white-space: pre;
+}
+

@@ -5,7 +5,8 @@
    also carries: the elements every renderer shares. This file is what only
    the editor has: its box, the caret, selection, placeholders, find, the
    assistant's marks, proposals, the veil, refs, the grip, the A4 sheet and
-   print, and the callout and code-block markup its node views draw. */
+   print. A callout and a code block wear prose.css's shared classes
+   (`prose-callout`, `prose-code`) beside their node views' own. */
 
 .doc-prose {
 	min-height: 300px;
@@ -71,77 +72,6 @@
 .doc-veiled .doc-prose virtues-veil:hover {
 	color: inherit;
 	background: none;
-}
-
-/* ── Callouts */
-
-.doc-block-callout {
-	display: flex;
-	gap: 8px;
-	padding: 12px 16px 12px 12px;
-	border: 1px solid var(--color-border-subtle, var(--color-border));
-	border-radius: var(--radius-xl);
-	background: var(--color-surface-elevated);
-}
-
-.doc-block-callout[data-tone='tip'] {
-	border-color: var(--color-success);
-	background: var(--color-success-subtle);
-}
-
-.doc-block-callout[data-tone='warning'] {
-	border-color: var(--color-warning);
-	background: var(--color-warning-subtle);
-}
-
-.doc-block-callout > .doc-block-chrome {
-	flex: none;
-	color: var(--color-foreground-muted);
-}
-
-.doc-block-callout[data-tone='tip'] > .doc-block-chrome {
-	color: var(--color-success);
-}
-
-.doc-block-callout[data-tone='warning'] > .doc-block-chrome {
-	color: var(--color-warning);
-}
-
-.doc-block-callout > .doc-block-content {
-	flex: 1;
-	min-width: 0;
-}
-
-.doc-block-content > * + * {
-	margin-top: 0.75em;
-}
-
-/* ── Code blocks: a header (CodeBlockNode) over the code. */
-
-.doc-block-codeBlock {
-	border: 1px solid var(--color-border-subtle, var(--color-border));
-	border-radius: var(--radius-xl);
-	background: var(--color-surface-elevated);
-	overflow: hidden;
-}
-
-.doc-block-codeBlock pre {
-	margin: 0;
-	padding: 0 16px 12px;
-	overflow-x: auto;
-	white-space: pre;
-}
-
-.doc-block-codeBlock code {
-	display: block;
-	padding: 0;
-	border: none;
-	background: transparent;
-	/* design-ok: a code block is code; a fixed advance is the content */
-	font-family: var(--font-mono);
-	font-size: 0.875rem;
-	line-height: 1.6;
-	white-space: pre;
 }
 
 .doc-prose .selectedCell {
