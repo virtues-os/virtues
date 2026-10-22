@@ -19,7 +19,7 @@ import { TRIGGERS } from 'svelte-dnd-action';
 import type { DndEvent } from 'svelte-dnd-action';
 import { windowShellStore, type Tab } from '$lib/stores/window-shell.svelte';
 import { projectStore } from '$lib/stores/project.svelte';
-import { fileIntoProject, targetForTab, type FileTarget } from '$lib/utils/projectActions';
+import { fileIntoProject, mentionableUrl, targetForTab, type FileTarget } from '$lib/utils/projectActions';
 import { canPin, pinAtGap } from '$lib/pins/pinAction';
 import { toast } from 'svelte-sonner';
 
@@ -38,6 +38,15 @@ export const PROJECT_DROP_ATTR = 'data-project-drop';
  * splits: its middle files into the project, its edges pin beside it.
  */
 export const PIN_DROP_ATTR = 'data-pin-drop';
+
+/**
+ * A chat composer carries this, so a tab let go over it is mentioned there:
+ * the composer gets a `MENTION_DROP_EVENT` with the tab's route and label,
+ * and the tab goes home. While a tab is over a composer the split overlays
+ * take no drop, so letting go there does not also open a split.
+ */
+export const MENTION_DROP_ATTR = 'data-mention-drop';
+export const MENTION_DROP_EVENT = 'virtues:mention-drop';
 
 /** svelte-dnd-action's id for the dragged copy of a tab. WindowTabBar styles
  *  it: lifted in the air, straight over a place that will take it, and
@@ -141,6 +150,9 @@ class DndManager {
 	/** The gap in Pinned a dragged tab would be pinned into, for its line. */
 	pinGap = $state<number | null>(null);
 
+	/** The chat composer under a dragged tab, which would mention it. */
+	mentionTarget = $state<Element | null>(null);
+
 	/** The pointer is over a split pane that will take the tab. */
 	private overPane = false;
 
@@ -149,7 +161,11 @@ class DndManager {
 	 * library animates for a moment before it finalizes, and a pointer that
 	 * keeps moving in that time must not change where the tab lands.
 	 */
-	private released: { projectTarget: string | null; pinGap: number | null } | null = null;
+	private released: {
+		projectTarget: string | null;
+		pinGap: number | null;
+		mentionTarget: Element | null;
+	} | null = null;
 
 	get isDragging(): boolean {
 		return this.session !== null;
@@ -169,7 +185,13 @@ class DndManager {
 		const canFile = !!this.draggedTarget;
 		let id: string | null = null;
 		let gap: number | null = null;
+		let composer: Element | null = null;
 		for (const el of document.elementsFromPoint(pt.clientX, pt.clientY)) {
+			const mention = mentionableUrl(route) ? el.closest(`[${MENTION_DROP_ATTR}]`) : null;
+			if (mention) {
+				composer = mention;
+				break;
+			}
 			const pinned = canPin(route) ? el.closest(`[${PIN_DROP_ATTR}]`) : null;
 			if (pinned) {
 				const at = pinGapAt(pinned, pt.clientY, canFile);
@@ -185,6 +207,7 @@ class DndManager {
 		}
 		if (id !== this.projectTarget) this.projectTarget = id;
 		if (gap !== this.pinGap) this.pinGap = gap;
+		if (composer !== this.mentionTarget) this.mentionTarget = composer;
 		this.styleDragged();
 	};
 
@@ -200,7 +223,8 @@ class DndManager {
 			this.released !== null ||
 			this.overPane ||
 			this.projectTarget !== null ||
-			this.pinGap !== null;
+			this.pinGap !== null ||
+			this.mentionTarget !== null;
 		document.getElementById(DRAGGED_EL_ID)?.classList.toggle('tab-docking', docking);
 	}
 
@@ -212,10 +236,18 @@ class DndManager {
 	 */
 	private release = () => {
 		if (!this.session) return;
-		this.released = { projectTarget: this.projectTarget, pinGap: this.pinGap };
+		this.released = {
+			projectTarget: this.projectTarget,
+			pinGap: this.pinGap,
+			mentionTarget: this.mentionTarget,
+		};
 		this.unlistenPointer();
 		this.styleDragged();
-		if (this.released.projectTarget !== null || this.released.pinGap !== null) {
+		if (
+			this.released.projectTarget !== null ||
+			this.released.pinGap !== null ||
+			this.released.mentionTarget !== null
+		) {
 			document.getElementById(DRAGGED_EL_ID)?.classList.add('tab-landed');
 		}
 	};
@@ -239,6 +271,7 @@ class DndManager {
 		this.unlistenPointer();
 		this.projectTarget = null;
 		this.pinGap = null;
+		this.mentionTarget = null;
 		this.overPane = false;
 		this.released = null;
 	}
@@ -286,7 +319,11 @@ class DndManager {
 		const { items, info } = e.detail;
 		const currentSession = this.session;
 		const fileTarget = this.draggedTarget;
-		const at = this.released ?? { projectTarget: this.projectTarget, pinGap: this.pinGap };
+		const at = this.released ?? {
+			projectTarget: this.projectTarget,
+			pinGap: this.pinGap,
+			mentionTarget: this.mentionTarget,
+		};
 		const target = at.projectTarget ? projectStore.byId(at.projectTarget) : undefined;
 		const pinGap = at.pinGap;
 
@@ -295,6 +332,18 @@ class DndManager {
 		this.stopTracking();
 
 		if (!currentSession) {
+			return;
+		}
+
+		// Let go over a chat composer: mention what the tab shows there. The
+		// tab goes home.
+		const dropped = currentSession.item.tab;
+		const mentionUrl = dropped?.route ? mentionableUrl(dropped.route) : null;
+		if (at.mentionTarget && dropped && mentionUrl) {
+			setItems(items as T[]);
+			at.mentionTarget.dispatchEvent(
+				new CustomEvent(MENTION_DROP_EVENT, { detail: { url: mentionUrl, label: dropped.label } }),
+			);
 			return;
 		}
 

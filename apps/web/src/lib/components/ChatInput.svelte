@@ -5,7 +5,8 @@
 	import { fly } from "svelte/transition";
 	import { quintOut } from "svelte/easing";
 	import ContextPanel from "$lib/components/chat/ContextPanel.svelte";
-	import type { RefSearchResult } from "$lib/api/client";
+	import SkillsPanel from "$lib/components/chat/SkillsPanel.svelte";
+	import type { RefSearchResult, SkillSummary } from "$lib/api/client";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { createComposer, type Composer } from "$lib/document/composer";
 	import { outgoingMessage } from "$lib/document/message";
@@ -22,6 +23,8 @@
 	import { Popover } from "$lib/floating";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { canDictate, startDictation } from "$lib/tauri/bridge";
+	import { dndManager, MENTION_DROP_ATTR, MENTION_DROP_EVENT } from "$lib/stores/dndManager.svelte";
+	import { droppedMention, isMentionDrag } from "$lib/utils/projectActions";
 
 	let {
 		value = $bindable(""),
@@ -38,6 +41,7 @@
 		agentMode = undefined as AgentModeId | undefined,
 		onModeChange = undefined as ((mode: AgentModeId) => void) | undefined,
 		modes = AGENT_MODES,
+		skill = $bindable(null),
 	}: {
 		value?: string;
 		disabled?: boolean;
@@ -56,6 +60,10 @@
 		onModeChange?: (mode: AgentModeId) => void;
 		/** The modes this chat may switch between (see `availableModes`). */
 		modes?: AgentMode[];
+		/** The skill the next message runs as, shown as a chip before the
+		 *  text. It stays after a send, so a skill that asks questions gets
+		 *  the answers, until the person takes it off. */
+		skill?: SkillSummary | null;
 	} = $props();
 
 	// The one mode, shown as two chips (see DEPTH_ORDER). Full access runs at
@@ -80,13 +88,14 @@
 	// Whether focus is anywhere in the composer, the tray included.
 	let focusWithin = $state(false);
 
-	// Focus leaving the composer closes the @ menu too, as a click outside a
+	// Focus leaving the composer closes its menus too, as a click outside a
 	// menu does. The date menu opens outside the composer and belongs to it.
 	function onShellFocusOut(e: FocusEvent) {
 		const shell = e.currentTarget as HTMLElement;
 		if (shell.contains(e.relatedTarget as Node | null)) return;
 		focusWithin = false;
 		if (mention !== null && !contextMenu.visible) closeContext({ refocus: false });
+		if (slash !== null) closeSkills({ refocus: false });
 	}
 
 	function cycleMode() {
@@ -175,17 +184,20 @@
 	let inputIsEmpty = $state(true);
 	// The `@` query while the editor's `@` trigger is open, else null.
 	let mention = $state<string | null>(null);
-	// The tray above the card shows one view at a time; the `/` menu will be
-	// the second.
-	type TrayView = "context";
-	const trayView = $derived<TrayView | null>(mention !== null ? "context" : null);
+	// The `/` query while the skills menu is open, else null.
+	let slash = $state<string | null>(null);
+	// The tray above the card shows one view at a time.
+	type TrayView = "context" | "skills";
+	const trayView = $derived<TrayView | null>(
+		mention !== null ? "context" : slash !== null ? "skills" : null,
+	);
 	const trayOpen = $derived(trayView !== null);
 	// What the tray draws. While it closes it keeps the last view and query,
 	// so the content folds away with it instead of switching first.
 	let lastView: TrayView | null = null;
 	let lastQuery = "";
 	const shownView = $derived.by(() => (lastView = trayView ?? lastView));
-	const shownQuery = $derived.by(() => (lastQuery = mention ?? lastQuery));
+	const shownQuery = $derived.by(() => (lastQuery = mention ?? slash ?? lastQuery));
 	// Each opening starts the view fresh, so the @ panel comes back on All
 	// with any date, and its entrance plays again.
 	let wasOpen = false;
@@ -213,7 +225,7 @@
 	const shouldScroll = $derived(inputHeight.current >= MAX_HEIGHT - 1);
 
 	// Can we submit? (has content, or staged refs/attachments allow an empty send)
-	const canSubmit = $derived((!inputIsEmpty || allowEmptySubmit) && !sendDisabled);
+	const canSubmit = $derived((!inputIsEmpty || allowEmptySubmit || skill !== null) && !sendDisabled);
 	// The turn is in flight (content queued/sending) — show the spinner.
 	const isBusy = $derived(sendDisabled && (!inputIsEmpty || allowEmptySubmit));
 
@@ -294,8 +306,71 @@
 		editor?.closeRef(opts);
 	}
 
+	function pickSkill(picked: SkillSummary) {
+		editor?.takeSlash();
+		skill = picked;
+		slash = null;
+	}
+
+	function closeSkills(opts?: { refocus?: boolean }) {
+		slash = null;
+		editor?.closeSlash(opts);
+	}
+
+	// A sidebar row or a window tab dropped on the composer is mentioned at
+	// the caret. Rows arrive as an HTML drag, caught before the editor would
+	// paste their title as text; tabs arrive from the tab drag
+	// (`dndManager`) as MENTION_DROP_EVENT.
+	let shellEl: HTMLDivElement | null = $state(null);
+	let rowOver = $state(false);
+	const mentionOver = $derived(rowOver || (shellEl !== null && dndManager.mentionTarget === shellEl));
+
+	function mentionDropped(url: string, label: string) {
+		editor?.insertRefHere(label, url);
+	}
+
+	function onDragOverCapture(e: DragEvent) {
+		if (!isMentionDrag(e)) return;
+		e.preventDefault();
+		e.stopPropagation();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = "link";
+		rowOver = true;
+	}
+
+	function onDropCapture(e: DragEvent) {
+		rowOver = false;
+		const dropped = droppedMention(e);
+		if (!dropped) return;
+		e.preventDefault();
+		e.stopPropagation();
+		mentionDropped(dropped.url, dropped.label);
+	}
+
+	$effect(() => {
+		const el = shellEl;
+		if (!el) return;
+		const onTab = (e: Event) => {
+			const { url, label } = (e as CustomEvent<{ url: string; label: string }>).detail;
+			mentionDropped(url, label);
+		};
+		el.addEventListener(MENTION_DROP_EVENT, onTab);
+		return () => el.removeEventListener(MENTION_DROP_EVENT, onTab);
+	});
+
+	// Backspace in an empty field takes the skill chip off, as it would
+	// delete a character before the caret.
+	function onShellKeydown(e: KeyboardEvent) {
+		if (e.key === "Backspace" && skill && inputIsEmpty && !trayOpen) {
+			e.preventDefault();
+			skill = null;
+		}
+	}
+
 	function handleSubmit() {
-		const content = outgoingMessage(docText);
+		const typed = outgoingMessage(docText);
+		// A skill rides as the message's leading `/name`, which ChatView
+		// reads to run the turn as it and which the transcript shows.
+		const content = skill ? `/${skill.name}${typed ? ` ${typed}` : ""}` : typed;
 		if ((!content && !allowEmptySubmit) || disabled) return;
 
 		onSubmit?.(content);
@@ -354,6 +429,11 @@
 				if (mention !== null) mention = q;
 			},
 			onMentionClose: () => (mention = null),
+			onSlashOpen: (q) => (slash = q),
+			onSlashQuery: (q) => {
+				if (slash !== null) slash = q;
+			},
+			onSlashClose: () => (slash = null),
 		});
 		docText = value;
 		inputIsEmpty = !value.trim();
@@ -374,9 +454,18 @@
 		class:focused={isFocused}
 		class:tray-open={trayOpen}
 		class:sudo={fullAccess}
+		class:mention-over={mentionOver}
+		bind:this={shellEl}
+		{...{ [MENTION_DROP_ATTR]: "" }}
+		ondragovercapture={onDragOverCapture}
+		ondragleave={(e) => {
+			if (!shellEl?.contains(e.relatedTarget as Node | null)) rowOver = false;
+		}}
+		ondropcapture={onDropCapture}
 		onclick={handleWrapperClick}
 		onfocusin={() => (focusWithin = true)}
 		onfocusout={onShellFocusOut}
+		onkeydown={onShellKeydown}
 		role="textbox"
 		tabindex="-1"
 	>
@@ -388,7 +477,7 @@
 		>
 			<div bind:offsetHeight={trayContentHeight}>
 				{#key viewKey}
-					<div class="tray-view" class:panel={shownView === "context"} in:fly={viewIn}>
+					<div class="tray-view panel" in:fly={viewIn}>
 						{#if shownView === "context"}
 							<ContextPanel
 								query={shownQuery}
@@ -396,6 +485,13 @@
 								onSelect={pickContext}
 								onClose={() => closeContext()}
 								onRangePicked={() => editor?.focus()}
+							/>
+						{:else if shownView === "skills"}
+							<SkillsPanel
+								query={shownQuery}
+								active={slash !== null}
+								onSelect={pickSkill}
+								onClose={() => closeSkills()}
 							/>
 						{/if}
 					</div>
@@ -424,18 +520,38 @@
 				/>
 			{/if}
 
-			<!-- The editor mounts here. The box's height is the spring; this box
-			     scrolls once the content passes the cap, so the caret scrolls
-			     into view through the nearest scrollable ancestor, as
-			     ProseMirror expects. -->
-			<div
-				id="chat-input"
-				bind:this={inputEl}
-				class="chat-input text-foreground font-sans bg-transparent"
-				class:empty={inputIsEmpty}
-				style:height="{inputHeight.current}px"
-				style:overflow-y={shouldScroll ? 'auto' : 'hidden'}
-			></div>
+			<div class="field-row">
+				{#if skill}
+					<span class="skill-chip" title={skill.description}>
+						<Icon icon={skill.icon ?? "ri:flashlight-line"} width="13" style="color: inherit" />
+						<span>/{skill.name}</span>
+						<button
+							type="button"
+							class="skill-chip-remove"
+							aria-label="Remove skill"
+							onclick={(e) => {
+								e.stopPropagation();
+								skill = null;
+								editor?.focus();
+							}}
+						>
+							<Icon icon="ri:close-line" width="12" />
+						</button>
+					</span>
+				{/if}
+				<!-- The editor mounts here. The box's height is the spring; this box
+				     scrolls once the content passes the cap, so the caret scrolls
+				     into view through the nearest scrollable ancestor, as
+				     ProseMirror expects. -->
+				<div
+					id="chat-input"
+					bind:this={inputEl}
+					class="chat-input text-foreground font-sans bg-transparent"
+					class:empty={inputIsEmpty}
+					style:height="{inputHeight.current}px"
+					style:overflow-y={shouldScroll ? 'auto' : 'hidden'}
+				></div>
+			</div>
 
 			<div class="composer-toolbar">
 				{#if onAttach}
@@ -677,6 +793,11 @@
 		border-color: color-mix(in srgb, var(--color-foreground) 28%, var(--color-border-strong));
 	}
 
+	/* A row or tab held over the composer, which would mention it. */
+	.chat-input-wrapper.mention-over {
+		border-color: var(--color-primary);
+	}
+
 	.chat-input-wrapper.focused {
 		border-color: color-mix(in srgb, var(--color-foreground) 28%, var(--color-border-strong));
 	}
@@ -688,7 +809,45 @@
 		border-color: var(--color-error) !important;
 	}
 
+	.field-row {
+		display: flex;
+		align-items: flex-start;
+		gap: 0.25rem;
+		min-width: 0;
+	}
+
+	.skill-chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.25rem;
+		flex-shrink: 0;
+		height: 1.5rem;
+		margin: 0.125rem 0 0 0.25rem;
+		padding: 0 0.25rem 0 0.5rem;
+		border-radius: var(--radius-md);
+		background: var(--hover-bg);
+		font-size: 0.8125rem;
+		color: var(--color-foreground);
+		white-space: nowrap;
+	}
+
+	.skill-chip-remove {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.125rem;
+		height: 1.125rem;
+		border-radius: var(--radius-sm);
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+	}
+
+	.skill-chip-remove:hover {
+		color: var(--color-foreground);
+	}
+
 	.chat-input {
+		flex: 1;
 		min-width: 0;
 		padding: 0 0.375rem;
 		font-family: var(--font-sans);

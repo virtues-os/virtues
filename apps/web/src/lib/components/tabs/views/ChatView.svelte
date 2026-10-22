@@ -133,6 +133,8 @@
 	import ComposerTray from "$lib/components/chat/ComposerTray.svelte";
 	import { ChatError } from "$lib/components/chat";
 	import { availableModes, type AgentModeId } from "$lib/config/agentModes";
+	import { skills } from "$lib/stores/skills.svelte";
+	import type { SkillSummary } from "$lib/api/client";
 	import LocalModelCard from "$lib/components/chat/local/LocalModelCard.svelte";
 	import LocalStatsLine from "$lib/components/chat/local/LocalStatsLine.svelte";
 	import { localModel } from "$lib/stores/localModel.svelte";
@@ -636,6 +638,8 @@
 				// A mode belongs to the chat it was chosen in. Sudo above all
 				// must not follow the view into the next conversation.
 				selectedAgentMode = 'chat';
+				composerSkill = null;
+				turnSkill = null;
 			}
 			// Get or create new instance with model, space, active page, persona, and agent mode getters
 			chat = chatInstances.getOrCreate({
@@ -646,7 +650,7 @@
 				getProjectId: () => chatProjectId,
 				getActivePageContext: activePageContext,
 				getPersona: () => selectedPersona,
-				getAgentMode: () => selectedAgentMode,
+				getAgentMode: () => turnSkill ?? selectedAgentMode,
 				getChatMode: () => chatMode,
 				getTemporary: () => isGhost,
 				getThink: () => localThink,
@@ -1089,6 +1093,20 @@
 
 	function changeMode(mode: AgentModeId) {
 		selectedAgentMode = mode;
+	}
+
+	// The skill chip in the composer, and the skill the last sent message ran
+	// as. A message that starts with `/name` for a known skill runs that turn
+	// as the skill; approving a tool or regenerating answers the same turn, so
+	// they keep it, and the next message sets it again.
+	let composerSkill = $state<SkillSummary | null>(null);
+	let turnSkill: string | null = null;
+
+	async function skillOf(text: string): Promise<string | null> {
+		const m = /^\/([a-z][a-z0-9-]{1,39})(?=\s|$)/.exec(text);
+		if (!m) return null;
+		if (!skills.loaded) await skills.load();
+		return skills.names.has(m[1]) ? m[1] : null;
 	}
 	let selectedPersona = $state<string>('default');
 
@@ -1601,6 +1619,8 @@
 		if (models.capabilityIssue) return;
 
 		if (!messageToSend && attachments.count === 0) return;
+
+		turnSkill = await skillOf(messageToSend);
 
 		// After an error the SDK sits in "error" until something clears it,
 		// and nothing did: Send greyed out, Enter queued the text into a chip
@@ -2533,6 +2553,7 @@
 							agentMode={selectedAgentMode}
 							onModeChange={changeMode}
 							modes={availableModes({ localSupported: localModel.status.supported })}
+							bind:skill={composerSkill}
 						/>
 						{/if}
 

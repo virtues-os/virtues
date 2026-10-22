@@ -42,9 +42,13 @@
 	// The pane the dragged tab is in. Its own pane takes no drop: the move
 	// would change nothing.
 	const dragFromPane = $derived(dndManager.session?.sourceZone.paneId ?? null);
-	const leftTakesDrop = $derived(isDragging && isSplitEnabled && dragFromPane !== "left");
+	// Over a chat composer the tab is mentioned there instead
+	// (`MENTION_DROP_ATTR`), so neither half takes it.
+	const overComposer = $derived(dndManager.mentionTarget !== null);
+	const leftTakesDrop = $derived(isDragging && !overComposer && isSplitEnabled && dragFromPane !== "left");
 	const rightTakesDrop = $derived(
 		isDragging &&
+			!overComposer &&
 			(isSplitEnabled
 				? dragFromPane !== "right"
 				: (windowShellStore.panes[0]?.tabs.length ?? 0) >= 2),

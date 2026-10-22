@@ -15,7 +15,8 @@
  * are new lines, Tab indents and Shift+Tab takes the indent back; Enter on a
  * line of three backticks opens one. Elsewhere Tab nests a list item and
  * otherwise moves focus, and Shift+Tab cycles the chat's mode (outdenting a
- * nested item first). `@` opens the ref picker. There are no slash commands.
+ * nested item first). `@` opens the ref picker, and `/` at the very start
+ * of the message opens the skills menu.
  */
 
 import { Editor, Extension } from '@tiptap/core';
@@ -76,6 +77,12 @@ export interface ComposerOptions {
 	onMentionQuery?: (query: string) => void;
 	/** The `@` closed: a space, a move away, Escape, or a ref picked. */
 	onMentionClose?: () => void;
+	/** `/` typed at the very start of the message: open the skills menu with what follows it. */
+	onSlashOpen?: (query: string) => void;
+	/** The text typed after the `/` changed. */
+	onSlashQuery?: (query: string) => void;
+	/** The `/` closed. */
+	onSlashClose?: () => void;
 }
 
 export interface Composer {
@@ -90,9 +97,15 @@ export interface Composer {
 	focus(): void;
 	/** Put what the ref picker chose where the `@` was. */
 	insertRef(label: string, url: string): void;
+	/** Put a ref at the caret, for a row or tab dropped on the composer. */
+	insertRefHere(label: string, url: string): void;
 	/** The `@` menu closed with nothing picked; what was typed after the `@` stays.
 	 *  `refocus: false` when it closed because the focus went elsewhere. */
 	closeRef(opts?: { refocus?: boolean }): void;
+	/** A skill was picked: the `/` and what was typed after it leave the message. */
+	takeSlash(): void;
+	/** The `/` menu closed with nothing picked; the text stays. */
+	closeSlash(opts?: { refocus?: boolean }): void;
 	destroy(): void;
 }
 
@@ -372,6 +385,10 @@ export function composerAttributes(mobile: boolean, label = 'Message'): Record<s
 export function createComposer(o: ComposerOptions): Composer {
 	let hint = o.placeholder ?? 'Ask Virtues';
 	let mentionFrom = 0;
+	let slashFrom = 0;
+	// Whether the open `/` is at the start of the message, the only place it
+	// means a skill; anywhere else it is a slash in a sentence.
+	let slashAtStart = false;
 	// How the message on screen was read, and whether it has been edited
 	// since: one read as text for want of a converter is read again once
 	// the converter loads, unless the person has changed it by then.
@@ -457,6 +474,21 @@ export function createComposer(o: ComposerOptions): Composer {
 				},
 				onQuery: (q) => o.onMentionQuery?.(q),
 				onClose: () => o.onMentionClose?.(),
+			},
+			{
+				char: '/',
+				onOpen: (_coords, from) => {
+					slashFrom = from;
+					slashAtStart = from <= 1;
+					if (slashAtStart) o.onSlashOpen?.(triggerState(editor.state, '/').query);
+				},
+				onQuery: (q) => {
+					if (slashAtStart) o.onSlashQuery?.(q);
+				},
+				onClose: () => {
+					if (slashAtStart) o.onSlashClose?.();
+					slashAtStart = false;
+				},
 			},
 		]),
 		messagePaste(o.onAttach),
@@ -559,8 +591,28 @@ export function createComposer(o: ComposerOptions): Composer {
 			editor.view.dispatch(tr.scrollIntoView());
 			editor.commands.focus();
 		},
+		insertRefHere(label, url) {
+			const { schema } = editor.state;
+			const node = isRoute(url)
+				? schema.nodes.mention.create({ to: url, label })
+				: schema.text(label, [schema.marks.link.create({ href: url })]);
+			const tr = editor.state.tr.replaceSelectionWith(node, false);
+			tr.insertText(' ');
+			editor.view.dispatch(tr.scrollIntoView());
+			editor.commands.focus();
+		},
 		closeRef({ refocus = true } = {}) {
 			closeTrigger(editor.view, '@');
+			if (refocus) editor.commands.focus();
+		},
+		takeSlash() {
+			const range = pickedRange(editor.state, '/', { from: slashFrom, to: slashFrom + 1 });
+			closeTrigger(editor.view, '/');
+			editor.view.dispatch(editor.state.tr.delete(range.from, range.to));
+			editor.commands.focus();
+		},
+		closeSlash({ refocus = true } = {}) {
+			closeTrigger(editor.view, '/');
 			if (refocus) editor.commands.focus();
 		},
 		destroy() {

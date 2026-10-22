@@ -81,6 +81,7 @@
 		projectMemberUrl,
 		REF_DRAG_TYPE,
 		startRefDrag,
+		setMentionDrag,
 	} from '$lib/utils/projectActions';
 	import { dndManager, PIN_DROP_ATTR, PROJECT_DROP_ATTR, pinGapAt } from '$lib/stores/dndManager.svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -1110,6 +1111,7 @@
 			draggingRecent = row.url;
 			if (projectMemberUrl(row.url)) startRefDrag(e, row.url, row.title);
 			else e.dataTransfer?.setData('text/plain', row.title);
+			setMentionDrag(e, row.url, row.title);
 		}}
 		ondragend={endDrag}
 		onclick={(e) => openFromRow(e, row.url, row.title, () => openRecent(row))}
@@ -1254,6 +1256,7 @@
 						// still be dropped on a project or into a page.
 						if (projectMemberUrl(pin.url)) startRefDrag(e, pin.url, look.title);
 						else e.dataTransfer?.setData('text/plain', look.title);
+						setMentionDrag(e, pin.url, look.title);
 						if (e.dataTransfer) e.dataTransfer.effectAllowed = 'linkMove';
 					}}
 					ondragend={endDrag}

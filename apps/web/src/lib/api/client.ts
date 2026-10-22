@@ -2222,6 +2222,25 @@ export interface RefSearchResult {
 	created_at?: string;
 }
 
+/** A skill as the composer's `/` menu lists it (`GET /api/skills`). */
+export interface SkillSummary {
+	name: string;
+	description: string;
+	icon?: string | null;
+	source: "shipped" | "authored";
+}
+
+export interface SkillList {
+	skills: SkillSummary[];
+	/** The skill that writes skills: the menu's pinned create row. */
+	create?: SkillSummary | null;
+}
+
+/** The skills the `/` menu offers: shipped first, then the person's own. */
+export function listSkills(): Promise<SkillList> {
+	return apiGet<SkillList>("/skills");
+}
+
 export interface RefSearchResponse {
 	results: RefSearchResult[];
 }
