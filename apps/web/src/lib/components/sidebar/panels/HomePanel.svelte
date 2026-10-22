@@ -20,7 +20,7 @@
 	 *             above never grow lists of their own. A pinned project takes
 	 *             a dropped row or tab, which files it there. A pin moves by
 	 *             drag, by Alt and an arrow, or by Move up and Move down.
-	 *   Recent    chats, pages, projects, tasks and applets, blended by when
+	 *   Recent    chats, pages, projects and applets, blended by when
 	 *             they last changed or you last opened them, newest first,
 	 *             ten of them, with pinned things left out (sidebar/recents).
 	 *             When there are more, "See all" ends the list. One group:
@@ -225,7 +225,7 @@
 	// hence the guard on both the list and the in-flight flag.
 	if (!pagesStore.pages.length && !pagesStore.pagesLoading) pagesStore.loadPages();
 
-	// Recent: chats, pages, projects, tasks and applets, newest first, with
+	// Recent: chats, pages, projects and applets, newest first, with
 	// pinned things left out (sidebar/recents).
 	loadRecentSources();
 	const recentsLive = $derived(recentRows());
@@ -274,7 +274,6 @@
 		{ id: 'chat', label: 'Chats', plural: 'chats', seeAll: () => openAllChats() },
 		{ id: 'page', label: 'Pages', plural: 'pages', seeAll: () => openPages() },
 		{ id: 'project', label: 'Projects', plural: 'projects', seeAll: () => openProjects() },
-		{ id: 'task', label: 'Tasks', plural: 'tasks', seeAll: () => openTasks() },
 		{ id: 'applet', label: 'Applets', plural: 'applets', seeAll: () => openApplets() },
 	];
 	const RECENT_FILTER_KEY = 'virtues-sidebar-recent-filter';

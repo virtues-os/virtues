@@ -600,7 +600,8 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	// TASKS: /tasks — the to-do list the owner and the assistant share
 	// ========================================================================
 	tasks: {
-		// The filters are sub-routes so SubNav can derive them: /tasks is Mine.
+		// One page. /tasks/assistant and /tasks/all are links from when the
+		// page had filter tabs; they still open it.
 		match: (path) => /^\/tasks(\/(assistant|all))?$/.test(path),
 		parse: () => ({
 			type: 'tasks',

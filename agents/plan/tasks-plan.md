@@ -1,9 +1,10 @@
 # Tasks: your to-dos and requests to the assistant
 
 **Status:** Rewritten 2026-10-21. The list, the two task tools and Hand to
-assistant are built on `wave` (`20c0f35f5`, `a7a2df843`). Slice 1, requests
-running in the background, is built on `wave` and not yet on `staging`.
-Slice 2 rebuilds the page around what requests produce.
+assistant are built on `wave` (`20c0f35f5`, `a7a2df843`). Slice 1 (requests
+running in the background, `5d9e3a1e8`) and slice 2 (the page rebuilt around
+what they produce, and the spending limits in Settings) are built on `wave`
+and not yet on `staging`. What is left is under Later and Open.
 
 ## Why the first version fell short
 
@@ -187,8 +188,9 @@ the worker busy, and spending, indefinitely.
 
 Request runs have a ceiling per run and a ceiling per day across all
 requests, counted on wallet spend (BYO calls report no cost). They are
-constants in `task_runner.rs` for now, $0.50 a run and $2 a day, and become
-owner settings in Settings with slice 2.
+columns on `app_assistant_profile` (migration 0060), $0.50 a run and $2 a
+day by default, and the owner sets them in Settings under Assistant. The
+worker reads them before every run.
 
 ### Changes to the tools and the chat side
 
@@ -203,10 +205,8 @@ owner settings in Settings with slice 2.
 
 ### What slice 1 does not change
 
-The page keeps its current layout. A request row shows Queued, Working or
-Ready, and the detail shows the result with Reply and Accept. The list
-reloads only when its tab comes forward, so a request that finishes while
-the page is open still reads Queued until then. Slice 2 has to refresh it.
+Slice 1 kept the old layout, with a Queued, Working or Ready chip on a
+request row. Slice 2 replaced it.
 
 ## Slice 2: the page
 
@@ -219,19 +219,27 @@ One page, top to bottom, with no Mine / Assistant / All tabs:
    result URL shows as a ref card. Two actions: **Accept**, which sets
    done, and **Reply**, which opens an inline composer under the result and
    queues the request again.
-2. **Working.** Queued and active requests. Active ones show a quiet
-   progress mark. Each shows one line on where the work runs: the model's
-   display name, and "on your account" for BYO or "through Virtues" for the
-   wallet. A BYO model at a loopback or LAN address reads "on your server".
+2. **Working.** Queued and active requests. An active one's mark breathes,
+   and it shows one line on where the work runs: the model's display name,
+   then "through Virtues" for the wallet, or for BYO "on your server" at a
+   loopback address, "on your network" at a private one, and "on your own
+   account" otherwise. The task API reads the model, the purse and the
+   wallet spend from the request's work chat (`RUN_COLUMNS` in
+   `api/tasks.rs`). A request that is open but not queued (one from before
+   requests ran on their own) reads "Not started" and has a Start action.
 3. **To-dos.** Dated to-dos first, in date order, then undated ones. The
-   date is muted text at the end of the line ("Tomorrow", "Fri", "2 days
-   ago"). No group headers until the list is long enough to need them,
-   and no red.
+   date is muted text at the end of the line ("Tomorrow", "Friday", "2 days
+   ago"). Past ten to-dos they group under Earlier, Today, Coming up and No
+   date. Nothing is red.
 4. **Done,** folded. It holds accepted requests, finished to-dos and
    dismissed items, newest first.
 
 The add row stays at the top. A line typed there is a to-do. Pressing
 ⌘Return instead of Return makes it a request.
+
+The page reloads the list every four seconds while a request is queued or
+running, every thirty otherwise, and whenever the window comes back into
+view.
 
 ### Rows
 
@@ -246,13 +254,16 @@ The add row stays at the top. A line typed there is a to-do. Pressing
 Clicking a row opens it under itself, as now, but with no form fields:
 
 - The title edits in place in the row.
-- Notes use the composer's ProseMirror editor.
+- Notes use the chat composer's editor (`createComposer`, wrapped in
+  `tasks/TaskComposer.svelte`), and save on Return or on leaving the field.
+  A request still with the assistant also has a field for a note its next
+  run reads.
 - Due and project are text buttons ("Tomorrow · Kitchen remodel") that open
   small popovers. The date popover takes the same plain-language input as
   the add row (`tasks/due.ts`), with a calendar under it.
-- History is a quiet timeline under the notes. For a request, it includes
-  each run, its cost, and a link to the work chat for anyone who wants the
-  full transcript.
+- For a request, a line says which model ran it, who paid, and the wallet
+  spend so far. History is a quiet timeline under that, with a link to the
+  work chat on each entry the assistant made there.
 
 ### Keyboard
 
@@ -269,7 +280,9 @@ in Home stays, with no count.
 ### Mobile
 
 The same order on the phone. Accept and Reply sit under the result, always
-visible.
+visible, and the reply field has a Send button because a phone's Return
+breaks the line. A phone has no ⌘Return, so a to-do goes to the assistant
+from its detail.
 
 ## Later: designed for, not built
 
@@ -292,11 +305,11 @@ None of these changes the object; each adds columns or a producer.
 
 ## Open
 
-- **Default spending ceilings.** The code uses $0.50 a run and $2 a day
-  until the Settings control exists. Confirm or change both.
+- **Default spending limits.** New boxes start at $0.50 a run and $2 a
+  day (migration 0060's column defaults). Confirm or change both.
 - **Whether Ready gets a sidebar mark.** A count is ruled out. A plain dot on
   the Tasks entry while something is ready might be acceptable. Decide after
-  using slice 1.
+  using the rebuilt page.
 - **Drag to reorder** is still not built. If it is, it applies to undated
   to-dos only, since dates decide the rest of the order. `sort_order` already
   exists.

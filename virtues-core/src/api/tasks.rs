@@ -21,6 +21,17 @@ const TASK_COLUMNS: &str = "id, title, notes, assignee, status, due_on, due_at, 
      origin, source_url, sort_order, closed_at, created_at, updated_at, result, result_url, \
      chat_id, next_run_at, attempts";
 
+/// What a request's runs used, read from its work chat's AI calls: the
+/// model and purse of the latest call, and the wallet spend across all of
+/// them. Only reads return these; a write's `RETURNING` leaves them empty.
+const RUN_COLUMNS: &str = "\
+     (SELECT c.model FROM app_ai_calls c WHERE c.chat_id = app_tasks.chat_id \
+      ORDER BY c.created_at DESC LIMIT 1) AS run_model, \
+     (SELECT c.route FROM app_ai_calls c WHERE c.chat_id = app_tasks.chat_id \
+      ORDER BY c.created_at DESC LIMIT 1) AS run_route, \
+     (SELECT SUM(c.cost_micros)::bigint FROM app_ai_calls c \
+      WHERE c.chat_id = app_tasks.chat_id AND c.route = 'wallet') AS spent_micros";
+
 /// Failed runs in a row before the worker stops retrying and hands the
 /// request back to the owner as ready, with the failure as its result.
 pub const MAX_ATTEMPTS: i32 = 3;
@@ -115,6 +126,16 @@ pub struct Task {
     pub next_run_at: Option<Timestamp>,
     /// Failed runs in a row.
     pub attempts: i32,
+    /// The model the latest run used. See `RUN_COLUMNS`.
+    #[sqlx(default)]
+    pub run_model: Option<String>,
+    /// Who paid for the latest run's calls: `wallet` or `byo`.
+    #[sqlx(default)]
+    pub run_route: Option<String>,
+    /// Wallet spend across the request's runs, in micros-USD. BYO calls
+    /// report no cost, so they are not in it.
+    #[sqlx(default)]
+    pub spent_micros: Option<i64>,
 }
 
 impl Task {
@@ -216,7 +237,7 @@ pub async fn list_tasks(pool: &PgPool, filter: &ListFilter) -> Result<Vec<Task>>
     };
     let statuses: Vec<String> = statuses.iter().map(|s| s.to_string()).collect();
     let sql = format!(
-        "SELECT {TASK_COLUMNS} FROM app_tasks
+        "SELECT {TASK_COLUMNS}, {RUN_COLUMNS} FROM app_tasks
          WHERE status = ANY($1)
            AND ($2::text IS NULL OR assignee = $2)
            AND ($3::text IS NULL OR project_id = $3)
@@ -233,7 +254,7 @@ pub async fn list_tasks(pool: &PgPool, filter: &ListFilter) -> Result<Vec<Task>>
 }
 
 pub async fn get_task(pool: &PgPool, id: &str) -> Result<Task> {
-    let sql = format!("SELECT {TASK_COLUMNS} FROM app_tasks WHERE id = $1");
+    let sql = format!("SELECT {TASK_COLUMNS}, {RUN_COLUMNS} FROM app_tasks WHERE id = $1");
     sqlx::query_as::<_, Task>(&sql)
         .bind(id)
         .fetch_optional(pool)
@@ -313,6 +334,9 @@ pub async fn update_task(
         .await?
         .ok_or_else(|| Error::NotFound(format!("task not found: {id}")))?;
 
+    // Handing over a request that is open but not queued (one from before
+    // requests ran on their own) is how the owner starts it.
+    let start = patch.assignee == Some(Actor::Assistant) && before.is_queued() && before.next_run_at.is_none();
     let mut next = before.clone();
     if let Some(title) = &patch.title {
         next.title = clean_title(title)?;
@@ -364,7 +388,7 @@ pub async fn update_task(
     // A request queues when a write leaves it open and it was not already
     // waiting on the same time. A request that is not open never runs.
     if next.is_queued() {
-        if !before.is_queued() || before.due_at != next.due_at {
+        if !before.is_queued() || before.due_at != next.due_at || start {
             next.next_run_at = Some(queue_time(next.due_at));
             next.attempts = 0;
         }
@@ -424,6 +448,11 @@ pub async fn update_task(
         .await?;
     }
     tx.commit().await?;
+    // Read back with the run columns, so the list keeps showing where the
+    // request ran after the owner edits it.
+    if task.chat_id.is_some() {
+        return get_task(pool, id).await;
+    }
     Ok(task)
 }
 
@@ -860,6 +889,52 @@ mod tests {
             .unwrap();
         assert!(edited.next_run_at.is_none());
         assert!(claim_next_request(&pool).await.unwrap().is_none());
+
+        let started = update_task(&pool, &id, TaskPatch { assignee: Some(Actor::Assistant), ..Default::default() }, &Writer::owner())
+            .await
+            .unwrap();
+        assert!(started.next_run_at.is_some(), "handing it over again starts it");
+    }
+
+    /// A request's reads say which model its latest run used, who paid, and
+    /// what the wallet spent across its runs. BYO calls add no cost.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_request_says_where_it_ran(pool: PgPool) {
+        use crate::api::ai_calls::{record_ai_call, AiCall, Route};
+        let id = create_tasks(&pool, vec![request("Sort the receipts")], Origin::Owner, &Writer::owner())
+            .await
+            .unwrap()
+            .remove(0)
+            .id;
+        let chat = crate::api::chats::create_chat(&pool, "Sort the receipts", Vec::new()).await.unwrap();
+        set_request_chat(&pool, &id, &chat.id).await.unwrap();
+        assert!(get_task(&pool, &id).await.unwrap().run_model.is_none(), "no run yet");
+
+        for (model, route, cost) in [("m/one", Route::Wallet, 3_000), ("m/two", Route::Byo, 0)] {
+            let call = AiCall {
+                feature: "task".into(),
+                model: model.into(),
+                prompt_tokens: 10,
+                completion_tokens: 10,
+                reasoning_tokens: 0,
+                cost_micros: cost,
+                route,
+                chat_id: Some(chat.id.clone()),
+                applet_run_id: None,
+            };
+            record_ai_call(&pool, &call).await.unwrap();
+        }
+        let task = get_task(&pool, &id).await.unwrap();
+        assert_eq!(task.run_model.as_deref(), Some("m/two"));
+        assert_eq!(task.run_route.as_deref(), Some("byo"));
+        assert_eq!(task.spent_micros, Some(3_000));
+
+        let listed = list_tasks(&pool, &ListFilter::default()).await.unwrap();
+        assert_eq!(listed[0].run_model.as_deref(), Some("m/two"));
+        let edited = update_task(&pool, &id, TaskPatch { title: Some("Sort the March receipts".into()), ..Default::default() }, &Writer::owner())
+            .await
+            .unwrap();
+        assert_eq!(edited.spent_micros, Some(3_000), "an edit keeps the run info");
     }
 
     #[sqlx::test(migrations = "./migrations")]

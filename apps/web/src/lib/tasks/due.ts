@@ -160,8 +160,22 @@ export function parseDue(input: string, now: Date = new Date()): ParsedDue {
 }
 
 /**
- * How a due date reads on a row: "Today", "Tomorrow", "Yesterday", a weekday
- * inside the coming week, else a short date, with the time when there is one.
+ * A date phrase on its own ("fri", "tomorrow 5pm"), as the date picker
+ * reads it. `null` when the whole phrase is not a date.
+ */
+export function readDue(input: string, now: Date = new Date()): { due_on: string; due_at: string | null } | null {
+	const phrase = input.trim();
+	if (!phrase) return null;
+	// The parser keeps a title back, so a placeholder stands in for one.
+	const parsed = parseDue(`x ${phrase}`, now);
+	if (parsed.title !== 'x' || !parsed.due_on) return null;
+	return { due_on: parsed.due_on, due_at: parsed.due_at };
+}
+
+/**
+ * How a due date reads on a row: "Today", "Tomorrow", "Yesterday", "3 days
+ * ago" inside the past week, a weekday inside the coming week, else a short
+ * date, with the time when there is one.
  */
 export function dueLabel(due_on: string, due_at: string | null, now: Date = new Date()): string {
 	const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
@@ -171,6 +185,7 @@ export function dueLabel(due_on: string, due_at: string | null, now: Date = new 
 	if (diff === 0) label = 'Today';
 	else if (diff === 1) label = 'Tomorrow';
 	else if (diff === -1) label = 'Yesterday';
+	else if (diff < -1 && diff > -7) label = `${-diff} days ago`;
 	else if (diff > 1 && diff < 7) label = day.toLocaleDateString('en-US', { weekday: 'long' });
 	else
 		label = day.toLocaleDateString('en-US', {

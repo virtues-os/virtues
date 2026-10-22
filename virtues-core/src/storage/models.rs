@@ -125,6 +125,12 @@ pub struct AssistantProfile {
     /// the assistant's character in the prompt, never in place of it.
     /// NULL = no notes. Migration 0035.
     pub style_notes: Option<String>,
+    /// Ceiling on wallet spend for one background request run, in
+    /// micros-USD (`crate::task_runner`). Migration 0060.
+    pub request_run_limit_micros: i64,
+    /// Ceiling on wallet spend across all request runs in a rolling day,
+    /// in micros-USD. Zero means requests never start.
+    pub request_day_limit_micros: i64,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }

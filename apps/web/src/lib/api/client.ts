@@ -2156,6 +2156,12 @@ export interface Task {
 	next_run_at: string | null;
 	/** Failed runs in a row. */
 	attempts: number;
+	/** The model the request's latest run used. Only reads carry it. */
+	run_model?: string | null;
+	/** Who paid for that run's calls: `wallet` or `byo`. */
+	run_route?: 'wallet' | 'byo' | null;
+	/** Wallet spend across the request's runs, in micros-USD. */
+	spent_micros?: number | null;
 }
 
 export interface TaskEvent {

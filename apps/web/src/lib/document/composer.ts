@@ -50,6 +50,8 @@ export interface ComposerOptions {
 	/** The message to open with, as markdown. */
 	markdown?: string;
 	placeholder?: string;
+	/** The field's accessible name. A chat message by default. */
+	label?: string;
 	disabled?: boolean;
 	/**
 	 * Read at keystroke time, not creation time: the layout store can flip on
@@ -346,10 +348,10 @@ function messagePaste(onAttach?: (files: File[]) => void): Extension {
  * off: the red underlines were the complaint, not the suggestions. On a
  * desktop the defaults are right and nothing is set.
  */
-export function composerAttributes(mobile: boolean): Record<string, string> {
+export function composerAttributes(mobile: boolean, label = 'Message'): Record<string, string> {
 	const attrs: Record<string, string> = {
 		class: 'composer-field prose prose--compact',
-		'aria-label': 'Message',
+		'aria-label': label,
 		'aria-multiline': 'true',
 		role: 'textbox',
 	};
@@ -462,7 +464,7 @@ export function createComposer(o: ComposerOptions): Composer {
 		editable: !o.disabled,
 		extensions,
 		editorProps: {
-			attributes: () => composerAttributes(o.isMobile()),
+			attributes: () => composerAttributes(o.isMobile(), o.label),
 		},
 		onUpdate: ({ editor: e }) => {
 			if (!settingDoc) edited = true;

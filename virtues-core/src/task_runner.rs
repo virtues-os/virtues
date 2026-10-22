@@ -28,15 +28,6 @@ const CARRY_ON: &str = "Please carry on with this request.";
 /// `app_ai_calls.feature` for request runs.
 const FEATURE: &str = "task";
 
-/// Spend ceiling for one run, in micros-USD.
-// TODO(2026-10-21): migrate both ceilings to an owner setting in Settings
-// with the page rebuild (tasks-plan.md, slice 2).
-const MAX_COST_PER_RUN_MICROS: i64 = 500_000;
-
-/// Spend ceiling across all request runs in a rolling 24 hours. When it is
-/// reached, requests stay queued until the day's spend falls under it.
-const MAX_COST_PER_DAY_MICROS: i64 = 2_000_000;
-
 pub fn spawn(pool: PgPool, yjs_state: YjsState) {
     tokio::spawn(async move {
         match tasks::requeue_interrupted_requests(&pool).await {
@@ -55,10 +46,14 @@ pub fn spawn(pool: PgPool, yjs_state: YjsState) {
     });
 }
 
-/// Run the next due request. `Ok(false)` when nothing ran.
+/// Run the next due request. `Ok(false)` when nothing ran. The owner's
+/// spending limits live on the assistant profile (Settings, Assistant). When
+/// the day's limit is reached, requests stay queued until the day's spend
+/// falls under it.
 async fn run_next(pool: &PgPool, yjs_state: &YjsState) -> Result<bool> {
+    let profile = crate::api::assistant_profile::get_assistant_profile(pool).await?;
     let spent = spend_last_day(pool).await?;
-    if spent >= MAX_COST_PER_DAY_MICROS {
+    if spent >= profile.request_day_limit_micros {
         tracing::debug!(spent, "tasks: daily spend ceiling reached; requests wait");
         return Ok(false);
     }
@@ -66,7 +61,7 @@ async fn run_next(pool: &PgPool, yjs_state: &YjsState) -> Result<bool> {
         return Ok(false);
     };
     let id = task.id.clone();
-    if let Err(e) = run_request(pool, yjs_state, task).await {
+    if let Err(e) = run_request(pool, yjs_state, task, profile.request_run_limit_micros).await {
         // Anything that broke outside the model (the database, the chat)
         // counts against the request the same way a model failure does, so a
         // request never stays active with nothing working on it.
@@ -76,7 +71,7 @@ async fn run_next(pool: &PgPool, yjs_state: &YjsState) -> Result<bool> {
     Ok(true)
 }
 
-async fn run_request(pool: &PgPool, yjs_state: &YjsState, task: Task) -> Result<()> {
+async fn run_request(pool: &PgPool, yjs_state: &YjsState, task: Task, run_limit: i64) -> Result<()> {
     let first_run = task.chat_id.is_none();
     let chat_id = match &task.chat_id {
         Some(id) => id.clone(),
@@ -117,7 +112,7 @@ async fn run_request(pool: &PgPool, yjs_state: &YjsState, task: Task) -> Result<
             message: Some(&message),
             tools: crate::tools::get_tools_for_request(),
             tool_context,
-            max_cost_micros: Some(MAX_COST_PER_RUN_MICROS),
+            max_cost_micros: Some(run_limit),
             feature: FEATURE,
             applet_run_id: None,
         },
@@ -130,8 +125,8 @@ async fn run_request(pool: &PgPool, yjs_state: &YjsState, task: Task) -> Result<
         let said = outcome.message.unwrap_or_default();
         let result = format!(
             "{said}\n\nI stopped here because this request reached its spending limit of {} for one run. \
-             Reply to let me continue.",
-            format_usd(MAX_COST_PER_RUN_MICROS)
+             Reply to let me continue, or raise the limit in Settings under Assistant.",
+            format_usd(run_limit)
         );
         tasks::finish_request_run(pool, &task.id, result.trim(), &writer).await?;
     } else if let Some(result) = outcome.message.filter(|m| !m.trim().is_empty()) {

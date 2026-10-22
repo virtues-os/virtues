@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { dueGroup, dueLabel, parseDue } from './due';
+import { dueGroup, dueLabel, parseDue, readDue } from './due';
 
 // A Wednesday morning, local time.
 const NOW = new Date(2030, 0, 2, 9, 0);
@@ -55,6 +55,7 @@ describe('dueLabel and dueGroup', () => {
 		expect(dueLabel('2030-01-02', null, NOW)).toBe('Today');
 		expect(dueLabel('2030-01-03', null, NOW)).toBe('Tomorrow');
 		expect(dueLabel('2030-01-01', null, NOW)).toBe('Yesterday');
+		expect(dueLabel('2029-12-30', null, NOW)).toBe('3 days ago');
 		expect(dueLabel('2030-01-04', null, NOW)).toBe('Friday');
 	});
 
@@ -63,5 +64,18 @@ describe('dueLabel and dueGroup', () => {
 		expect(dueGroup('2030-01-02', NOW)).toBe('today');
 		expect(dueGroup('2030-01-09', NOW)).toBe('upcoming');
 		expect(dueGroup(null, NOW)).toBe('none');
+	});
+});
+
+describe('readDue', () => {
+	it('reads a date phrase on its own', () => {
+		expect(readDue('tomorrow', NOW)).toEqual({ due_on: '2030-01-03', due_at: null });
+		expect(readDue('fri 5pm', NOW)?.due_on).toBe('2030-01-04');
+		expect(readDue('fri 5pm', NOW)?.due_at).not.toBeNull();
+	});
+	it('refuses anything that is not only a date', () => {
+		expect(readDue('', NOW)).toBeNull();
+		expect(readDue('call Nick', NOW)).toBeNull();
+		expect(readDue('call Nick fri', NOW)).toBeNull();
 	});
 });
