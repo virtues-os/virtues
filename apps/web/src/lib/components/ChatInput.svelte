@@ -3,7 +3,7 @@
 	import { onDestroy, onMount } from "svelte";
 	import { Spring, prefersReducedMotion } from "svelte/motion";
 	import { fly } from "svelte/transition";
-	import { cubicOut } from "svelte/easing";
+	import { quintOut } from "svelte/easing";
 	import ContextPanel from "$lib/components/chat/ContextPanel.svelte";
 	import type { RefSearchResult } from "$lib/api/client";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
@@ -198,7 +198,7 @@
 	// The tray's height follows its content, so opening, closing and moving
 	// between views are all one height transition.
 	let trayContentHeight = $state(0);
-	const viewIn = $derived({ y: 6, duration: prefersReducedMotion.current ? 0 : 200, easing: cubicOut });
+	const viewIn = $derived({ y: 6, duration: prefersReducedMotion.current ? 0 : 280, easing: quintOut });
 	// Mirror of the editor's markdown, so an external `value` set can be told
 	// apart from our own echo of a keystroke.
 	let docText = "";
@@ -595,7 +595,7 @@
 	/* The shell: a tinted frame around the white card. At rest the card
 	   fills it; the tray opens inside it, above the card. */
 	.chat-input-wrapper {
-		--shell-radius: 1.25rem;
+		--shell-radius: 1rem;
 		position: relative;
 		display: flex;
 		flex-direction: column;
@@ -639,11 +639,13 @@
 			opacity 120ms var(--ease-premium);
 	}
 
+	/* Opening ends on a long ease-out (quint), so the top edge settles
+	   slowly instead of stopping. */
 	.tray.open {
 		opacity: 1;
 		transition:
-			height 260ms var(--ease-premium),
-			opacity 180ms var(--ease-premium) 40ms;
+			height 340ms cubic-bezier(0.22, 1, 0.36, 1),
+			opacity 200ms var(--ease-premium) 40ms;
 	}
 
 	.tray-view {
