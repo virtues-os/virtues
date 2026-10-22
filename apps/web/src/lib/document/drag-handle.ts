@@ -374,6 +374,9 @@ class Grip {
 		if (text) {
 			const line = view.coordsAtPos(text.from);
 			top = (line.top + line.bottom) / 2 - GRIP_HEIGHT / 2;
+		} else if (unit.node.type.name === 'horizontalRule') {
+			// Level with the line, which runs through the middle of the rule's box.
+			top = (box.top + box.bottom) / 2 - GRIP_HEIGHT / 2;
 		}
 		// A list item's marker sits in its list's padding: the grip goes left of it.
 		const list = unit.node.type.name === 'listItem' || unit.node.type.name === 'taskItem' ? block.parentElement : null;
