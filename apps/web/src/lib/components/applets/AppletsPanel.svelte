@@ -188,7 +188,7 @@
 		<p class="note">Loading…</p>
 	{:else if appletsStore.error && shown.length === 0}
 		<!-- What failed and one thing to do. If the server itself is down, the
-		     sidebar footer's "Can't reach your server" chip says so and offers
+		     sidebar's "Can't reach server" pill says so and offers
 		     the fix; Try again re-runs the check that raises it. -->
 		<div class="load-failed">
 			<p class="error-msg" title={appletsStore.error}>Your server couldn't send your applets.</p>

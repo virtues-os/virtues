@@ -11,6 +11,7 @@
 	} from "$lib/stores/sidebarState.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
+	import OfflinePill from "./OfflinePill.svelte";
 	import AtlasIcon from "./AtlasIcon.svelte";
 	import { SHELL_GLYPH_PX } from "$lib/components/sidebar/AtlasIcon.svelte";
 	import { SETTINGS_MODE, rowForRoute } from "$lib/sidebar/modes";
@@ -333,6 +334,7 @@
 		<!-- Settings stands at the foot: something you do to the server and
 		     leave, apart from the places above. -->
 		<div class="panel-foot">
+			<OfflinePill collapsed={isCollapsed} />
 			<button
 				type="button"
 				class="sidebar-interactive"
