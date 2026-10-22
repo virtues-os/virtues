@@ -22,12 +22,15 @@
 		active = true,
 		onSelect,
 		onClose,
+		onRangePicked,
 	}: {
 		query: string;
 		/** False while the tray folds it away: it no longer takes keys. */
 		active?: boolean;
 		onSelect: (result: RefSearchResult) => void;
 		onClose: () => void;
+		/** A date range was chosen: the field takes the keyboard back. */
+		onRangePicked: () => void;
 	} = $props();
 
 	// "All" also finds organizations and files, which have no tab of their own.
@@ -135,6 +138,7 @@
 				checked: x.id === range,
 				action: () => {
 					range = x.id;
+					onRangePicked();
 				},
 			})),
 			{
@@ -301,10 +305,13 @@
 		margin-left: auto;
 	}
 
+	/* A fixed height of five and a half rows, whatever the tab or query
+	   finds, so the tab row above never moves. The half row shows there is
+	   more to scroll. */
 	.context-list {
 		display: flex;
 		flex-direction: column;
-		max-height: 16rem;
+		height: 13.75rem;
 		overflow-y: auto;
 		overscroll-behavior: contain;
 	}
@@ -361,8 +368,9 @@
 	}
 
 	.context-empty {
-		margin: 0;
+		margin: auto 0;
 		padding: 0.75rem 0.5rem;
+		text-align: center;
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
 	}

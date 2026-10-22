@@ -92,9 +92,13 @@
 	];
 	let focusWithin = $state(false);
 
+	// Focus leaving the composer closes the @ menu too, as a click outside a
+	// menu does. The date menu opens outside the composer and belongs to it.
 	function onShellFocusOut(e: FocusEvent) {
 		const shell = e.currentTarget as HTMLElement;
-		if (!shell.contains(e.relatedTarget as Node | null)) focusWithin = false;
+		if (shell.contains(e.relatedTarget as Node | null)) return;
+		focusWithin = false;
+		if (mention !== null && !contextMenu.visible) closeContext({ refocus: false });
 	}
 
 	function cycleMode() {
@@ -134,6 +138,12 @@
 	let attachWasOpen = false;
 	$effect(() => {
 		if (!contextMenu.visible) attachOpen = false;
+	});
+
+	// The date menu closed without handing the focus back (Escape, a click
+	// elsewhere): the @ menu closes with it.
+	$effect(() => {
+		if (!contextMenu.visible && mention !== null && !focusWithin) closeContext({ refocus: false });
 	});
 
 	function openAttach(anchorEl: HTMLElement) {
@@ -187,6 +197,15 @@
 	let lastQuery = "";
 	const shownView = $derived.by(() => (lastView = trayView ?? lastView));
 	const shownQuery = $derived.by(() => (lastQuery = mention ?? lastQuery));
+	// Each opening starts the view fresh, so the @ panel comes back on All
+	// with any date, and its entrance plays again.
+	let wasOpen = false;
+	let opens = 0;
+	const viewKey = $derived.by(() => {
+		if (trayOpen && !wasOpen) opens++;
+		wasOpen = trayOpen;
+		return `${shownView}:${opens}`;
+	});
 	// The tray's height follows its content, so opening, closing and moving
 	// between views are all one height transition.
 	let trayContentHeight = $state(0);
@@ -281,9 +300,9 @@
 	}
 
 	/** Escape: the menu closes and what was typed after the `@` stays. */
-	function closeContext() {
+	function closeContext(opts?: { refocus?: boolean }) {
 		mention = null;
-		editor?.closeRef();
+		editor?.closeRef(opts);
 	}
 
 	function handleSubmit() {
@@ -379,14 +398,15 @@
 			style:height="{trayOpen ? trayContentHeight : 0}px"
 		>
 			<div bind:offsetHeight={trayContentHeight}>
-				{#key shownView}
+				{#key viewKey}
 					<div class="tray-view" class:panel={shownView === "context"} in:fly={viewIn}>
 						{#if shownView === "context"}
 							<ContextPanel
 								query={shownQuery}
 								active={mention !== null}
 								onSelect={pickContext}
-								onClose={closeContext}
+								onClose={() => closeContext()}
+								onRangePicked={() => editor?.focus()}
 							/>
 						{:else if shownView === "starters"}
 							{#each STARTERS as st (st.id)}

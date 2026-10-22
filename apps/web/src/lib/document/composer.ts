@@ -32,7 +32,7 @@ import { holdsOnlyMessage, MESSAGE, messageText, readMessage, textBlocks, type R
 import { svelteNodeView } from './nodeviews.svelte';
 import { htmlSlice, looksLikeMarkdown, placeConverted } from './paste';
 import { contractExtensions, isRoute } from './schema';
-import { closeTrigger, pickedRange, putBackQuery, triggerState, triggers } from './triggers';
+import { closeTrigger, pickedRange, triggerState, triggers } from './triggers';
 import { drawnCaret } from './caret';
 import { dropLine } from './drop-line';
 
@@ -90,8 +90,9 @@ export interface Composer {
 	focus(): void;
 	/** Put what the ref picker chose where the `@` was. */
 	insertRef(label: string, url: string): void;
-	/** The ref picker closed with nothing picked; what was typed in its box goes back after the `@`. */
-	closeRef(typed?: string): void;
+	/** The `@` menu closed with nothing picked; what was typed after the `@` stays.
+	 *  `refocus: false` when it closed because the focus went elsewhere. */
+	closeRef(opts?: { refocus?: boolean }): void;
 	destroy(): void;
 }
 
@@ -558,10 +559,9 @@ export function createComposer(o: ComposerOptions): Composer {
 			editor.view.dispatch(tr.scrollIntoView());
 			editor.commands.focus();
 		},
-		closeRef(typed) {
-			if (typed) putBackQuery(editor.view, '@', typed, '', { from: mentionFrom, to: mentionFrom + 1 });
-			else closeTrigger(editor.view, '@');
-			editor.commands.focus();
+		closeRef({ refocus = true } = {}) {
+			closeTrigger(editor.view, '@');
+			if (refocus) editor.commands.focus();
 		},
 		destroy() {
 			observer?.disconnect();

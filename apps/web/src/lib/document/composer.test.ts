@@ -323,10 +323,10 @@ describe('refs', () => {
 		expect(h.composer.markdown()).toBe('see [the notes](https://example.com/notes) ');
 	});
 
-	it('closing the picker with words in its box puts them after the `@`', () => {
+	it('closing the `@` menu leaves what was typed after it', () => {
 		const h = mount();
-		typeIn(h.composer, 'hi @');
-		h.composer.closeRef('Dav');
+		typeIn(h.composer, 'hi @Dav');
+		h.composer.closeRef();
 		expect(h.composer.markdown()).toBe('hi @Dav');
 	});
 });
