@@ -218,6 +218,10 @@
 	// to [MIN, MAX], so it can't tell us the user has dragged well past the
 	// floor — which is exactly the gesture that should close the sidebar.
 	let dragIntent = 0;
+	// The pointer is far enough past the floor that releasing will close the
+	// sidebar. The grip bends into a chevron and the column dims, so you can
+	// see that before you let go.
+	let collapseArmed = $state(false);
 	// Under this much travel, a press on the seam is a click.
 	const CLICK_SLOP_PX = 3;
 
@@ -242,6 +246,7 @@
 		// The setter clamps, so the panel stops at the floor while the pointer
 		// keeps going — the drag feels like it hit a wall rather than jittering.
 		sidebarState.width = dragIntent;
+		collapseArmed = dragIntent < SIDEBAR_COLLAPSE_AT;
 	}
 
 	function onResizeEnd(e: PointerEvent) {
@@ -256,8 +261,11 @@
 		// down would yank the handle out from under it and drop the capture.
 		// A press that barely moved is a click, and the tooltip promises a click
 		// hides the sidebar.
+		// Release does what the grip showed: closing only when it was armed.
 		const clicked = Math.abs(e.clientX - dragStartX) < CLICK_SLOP_PX;
-		if (clicked || dragIntent < SIDEBAR_COLLAPSE_AT) {
+		const close = clicked || collapseArmed;
+		collapseArmed = false;
+		if (close) {
 			sidebarState.width = dragStartWidth;
 			sidebarState.collapsed = true;
 		}
@@ -342,6 +350,9 @@
 			"mb-2 ml-2 overflow-hidden",
 			"sidebar-column",
 			isCollapsed ? "pointer-events-none" : "",
+			// Dimmed while releasing the seam would close the sidebar.
+			"transition-opacity duration-150 ease-[var(--ease-premium)]",
+			collapseArmed ? "opacity-50" : "",
 		].join(" "),
 	);
 </script>
@@ -391,6 +402,7 @@
 		<div
 			class="sidebar-resizer"
 			class:dragging={resizing}
+			class:armed={collapseArmed}
 			role="separator"
 			aria-orientation="vertical"
 			aria-label="Resize the sidebar"
@@ -455,7 +467,11 @@
 	   finds the seam, so at rest the gap is plain desk. It fades in and
 	   lengthens on approach and takes the accent only while held. The gap is
 	   the hit area's right 8px, so 2px in from the right edge centres the
-	   4px pill in it. Same object as the split gutter's grip. */
+	   4px pill in it. Same object as the split gutter's grip.
+
+	   The pill is drawn as two halves so it can bend into a chevron. Each
+	   half runs from one end to 2px past the middle, so their round ends
+	   overlap exactly there and the straight pill reads as one piece. */
 	.sidebar-resizer-grip {
 		position: absolute;
 		top: 50%;
@@ -463,15 +479,38 @@
 		width: 4px;
 		height: 32px;
 		transform: translateY(-50%);
-		border-radius: var(--radius-full);
-		background: var(--color-foreground-subtle);
 		opacity: 0;
 		pointer-events: none;
 		z-index: 1;
 		transition:
 			opacity 160ms var(--ease-premium),
 			height 160ms var(--ease-premium),
+			transform 160ms var(--ease-premium);
+	}
+
+	.sidebar-resizer-grip::before,
+	.sidebar-resizer-grip::after {
+		content: "";
+		position: absolute;
+		left: 0;
+		width: 100%;
+		height: calc(50% + 2px);
+		border-radius: var(--radius-full);
+		background: var(--color-foreground-subtle);
+		transition:
+			transform 160ms var(--ease-premium),
 			background-color 160ms var(--ease-premium);
+	}
+
+	/* Each half turns about the centre of its round end at the middle. */
+	.sidebar-resizer-grip::before {
+		top: 0;
+		transform-origin: 50% calc(100% - 2px);
+	}
+
+	.sidebar-resizer-grip::after {
+		bottom: 0;
+		transform-origin: 50% 2px;
 	}
 
 	.sidebar-resizer:hover .sidebar-resizer-grip,
@@ -480,12 +519,32 @@
 		height: 40px;
 	}
 
-	/* Held: the accent says you have it. No easing — it follows the pointer. */
+	/* Held: the accent says you have it, and it changes with no easing. */
 	.sidebar-resizer.dragging .sidebar-resizer-grip {
-		background: var(--color-primary);
 		opacity: 1;
 		height: 40px;
-		transition: none;
+	}
+
+	.sidebar-resizer.dragging .sidebar-resizer-grip::before,
+	.sidebar-resizer.dragging .sidebar-resizer-grip::after {
+		background: var(--color-primary);
+		transition: transform 160ms var(--ease-premium);
+	}
+
+	/* Armed: releasing now closes the sidebar. The grip shortens and bends
+	   into a chevron pointing the way the sidebar will go. It moves 4px left
+	   so the chevron's open ends stay inside the aside's 8px clip. */
+	.sidebar-resizer.armed .sidebar-resizer-grip {
+		height: 24px;
+		transform: translate(-4px, -50%);
+	}
+
+	.sidebar-resizer.armed .sidebar-resizer-grip::before {
+		transform: rotate(35deg);
+	}
+
+	.sidebar-resizer.armed .sidebar-resizer-grip::after {
+		transform: rotate(-35deg);
 	}
 
 	/* Beside the grip, vertically centred on it. A hairline card on the
@@ -530,7 +589,9 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.sidebar-resizer-grip {
+		.sidebar-resizer-grip,
+		.sidebar-resizer-grip::before,
+		.sidebar-resizer-grip::after {
 			transition: none;
 		}
 		.seam-tip {
