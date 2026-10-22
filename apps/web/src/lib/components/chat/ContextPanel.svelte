@@ -3,9 +3,10 @@
 
 	The `@` menu in the chat composer's tray. The field keeps the focus and
 	what is typed after the `@` is the query, so the arrows, Enter, Tab and
-	Escape are caught here before the editor sees them: the arrows move the
-	highlight, Tab moves between the type tabs, Enter adds the highlighted
-	row, and Escape closes the menu and leaves the text as typed.
+	Escape are caught here before the editor sees them: Up and Down move the
+	highlight, Left, Right and Tab move between the type tabs, Enter adds the
+	highlighted row, and Escape closes the menu and leaves the text as typed.
+	Left and Right with Shift, Option or Cmd still move or select in the field.
 
 	Uses: GET /api/pages/search/refs (searchRefs) with kinds and created_after.
 -->
@@ -123,9 +124,13 @@
 			?.scrollIntoView({ block: "nearest" });
 	}
 
+	// On a phone the tab row scrolls sideways; the chosen tab stays in view.
 	function cycleTab(by: number) {
 		const i = TABS.findIndex((t) => t.id === tab);
 		tab = TABS[(i + by + TABS.length) % TABS.length].id;
+		queueMicrotask(() =>
+			panelEl?.querySelector(".context-tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" }),
+		);
 	}
 
 	function pickRange(anchor: HTMLElement) {
@@ -165,8 +170,11 @@
 		if (!active || contextMenu.visible || inComposition(e)) return;
 		const shell = panelEl?.closest(".chat-input-wrapper");
 		if (!shell || !shell.contains(e.target as Node)) return;
+		const plainArrow = !e.shiftKey && !e.altKey && !e.metaKey && !e.ctrlKey;
 		let handled = true;
-		if (e.key === "ArrowDown") move(1);
+		if (e.key === "ArrowLeft" && plainArrow) cycleTab(-1);
+		else if (e.key === "ArrowRight" && plainArrow) cycleTab(1);
+		else if (e.key === "ArrowDown") move(1);
 		else if (e.key === "ArrowUp") move(-1);
 		else if (e.key === "Tab") cycleTab(e.shiftKey ? -1 : 1);
 		else if (e.key === "Escape") onClose();
@@ -305,13 +313,13 @@
 		margin-left: auto;
 	}
 
-	/* A fixed height of five and a half rows, whatever the tab or query
+	/* A fixed height of four and a half rows, whatever the tab or query
 	   finds, so the tab row above never moves. The half row shows there is
 	   more to scroll. */
 	.context-list {
 		display: flex;
 		flex-direction: column;
-		height: 13.75rem;
+		height: 11.25rem;
 		overflow-y: auto;
 		overscroll-behavior: contain;
 	}

@@ -38,7 +38,6 @@
 		agentMode = undefined as AgentModeId | undefined,
 		onModeChange = undefined as ((mode: AgentModeId) => void) | undefined,
 		modes = AGENT_MODES,
-		starters = false,
 	}: {
 		value?: string;
 		disabled?: boolean;
@@ -57,9 +56,6 @@
 		onModeChange?: (mode: AgentModeId) => void;
 		/** The modes this chat may switch between (see `availableModes`). */
 		modes?: AgentMode[];
-		/** Show the starters tray while the composer has focus. ChatView turns
-		 *  it on for a chat with no messages yet. */
-		starters?: boolean;
 	} = $props();
 
 	// The one mode, shown as two chips (see DEPTH_ORDER). Full access runs at
@@ -81,15 +77,7 @@
 		fileInputEl?.click();
 	}
 
-	// The tray above the card. It opens while focus is anywhere in the
-	// composer, so moving from the field to a starter does not close it.
-	// TODO(2026-10-22): the starters do nothing yet beyond focusing the field;
-	// they become skills once the `/` menu lands.
-	const STARTERS = [
-		{ id: "plan", label: "Plan", icon: "ri:calendar-line" },
-		{ id: "reflect", label: "Reflect", icon: "ri:quill-pen-line" },
-		{ id: "research", label: "Research", icon: "ri:search-eye-line" },
-	];
+	// Whether focus is anywhere in the composer, the tray included.
 	let focusWithin = $state(false);
 
 	// Focus leaving the composer closes the @ menu too, as a click outside a
@@ -187,9 +175,10 @@
 	let inputIsEmpty = $state(true);
 	// The `@` query while the editor's `@` trigger is open, else null.
 	let mention = $state<string | null>(null);
-	const showStarters = $derived(starters && focusWithin && inputIsEmpty && !disabled);
-	type TrayView = "starters" | "context";
-	const trayView = $derived<TrayView | null>(mention !== null ? "context" : showStarters ? "starters" : null);
+	// The tray above the card shows one view at a time; the `/` menu will be
+	// the second.
+	type TrayView = "context";
+	const trayView = $derived<TrayView | null>(mention !== null ? "context" : null);
 	const trayOpen = $derived(trayView !== null);
 	// What the tray draws. While it closes it keeps the last view and query,
 	// so the content folds away with it instead of switching first.
@@ -408,19 +397,6 @@
 								onClose={() => closeContext()}
 								onRangePicked={() => editor?.focus()}
 							/>
-						{:else if shownView === "starters"}
-							{#each STARTERS as st (st.id)}
-								<!-- mousedown is held back so the field keeps focus. -->
-								<button
-									type="button"
-									class="starter"
-									onmousedown={(e) => e.preventDefault()}
-									onclick={() => editor?.focus()}
-								>
-									<Icon icon={st.icon} width="15" style="color: inherit" />
-									<span>{st.label}</span>
-								</button>
-							{/each}
 						{/if}
 					</div>
 				{/key}
@@ -679,27 +655,6 @@
 
 	.tray-view.panel {
 		padding: 0.5rem 0.5rem 0.375rem;
-	}
-
-	.starter {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.375rem;
-		height: 1.875rem;
-		padding: 0 0.5rem;
-		border-radius: var(--radius-md);
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		white-space: nowrap;
-		cursor: pointer;
-		transition:
-			background-color 0.15s ease,
-			color 0.15s ease;
-	}
-
-	.starter:hover {
-		background: var(--hover-bg);
-		color: var(--color-foreground);
 	}
 
 	@media (prefers-reduced-motion: reduce) {

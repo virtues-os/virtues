@@ -2533,7 +2533,6 @@
 							agentMode={selectedAgentMode}
 							onModeChange={changeMode}
 							modes={availableModes({ localSupported: localModel.status.supported })}
-							starters={isEmpty}
 						/>
 						{/if}
 
