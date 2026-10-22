@@ -858,17 +858,19 @@
 	opacity: 0;
 	pointer-events: none;
 	transition:
-		opacity 0.12s ease,
-		background 0.12s ease,
-		color 0.12s ease;
+		opacity var(--motion-hover-out) var(--ease-premium),
+		background var(--motion-hover-out) var(--ease-premium),
+		color var(--motion-hover-out) var(--ease-premium);
 }
 .doc-grip.is-shown {
 	opacity: 1;
 	pointer-events: auto;
+	transition-duration: var(--motion-hover-in), var(--motion-hover-out), var(--motion-hover-out);
 }
 .doc-grip:hover {
 	background: var(--hover-bg);
 	color: var(--color-foreground-muted);
+	transition-duration: var(--motion-hover-in);
 }
 .doc-grip.is-dragging {
 	opacity: 0;
@@ -882,17 +884,15 @@
 	}
 }
 
-/* Where a dragged block will land, and none where a drop would do nothing. */
-.doc-dropcursor {
-	background: var(--color-primary);
-	border-radius: 1px;
+/* The block being dragged, where it was until it lands. It dims as the
+   drag starts and comes back as a cancelled drag ends, so the way back
+   needs a transition on every block that can be dragged (a top-level
+   block, a list item, a widget), not only on the class. No weight, so a
+   block's own opacity transition (focus mode's dimming) wins. */
+:where(.doc-prose > *, .doc-prose li, .doc-prose .doc-widget) {
+	transition: opacity var(--motion-hover-out) var(--ease-premium);
 }
-.doc-drop-idle .doc-dropcursor {
-	display: none;
-}
-
-/* The block being dragged, where it was until it lands. */
 .doc-prose .doc-drag-source {
-	opacity: 0.4;
-	transition: opacity 0.12s ease;
+	opacity: var(--drag-source-opacity);
+	transition: opacity var(--motion-hover-in) var(--ease-premium);
 }

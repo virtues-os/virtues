@@ -1,0 +1,35 @@
+/* Where a dragged thing will land (drop-line.ts). The drop cursor places
+   it with inline left, top, width and height; it fades in as it appears
+   and glides from gap to gap. Where a drop would do nothing (a block over
+   itself, drag-handle.ts) it fades out. */
+.doc-dropcursor {
+	background: var(--drop-line);
+	border-radius: 1px;
+	animation: doc-drop-line-in var(--motion-hover-in) var(--ease-premium);
+	transition:
+		top var(--motion-hover-in) var(--ease-premium),
+		left var(--motion-hover-in) var(--ease-premium),
+		opacity var(--motion-hover-in) var(--ease-premium);
+}
+
+.doc-drop-idle .doc-dropcursor {
+	opacity: 0;
+	transition:
+		top var(--motion-hover-in) var(--ease-premium),
+		left var(--motion-hover-in) var(--ease-premium),
+		opacity var(--motion-hover-out) var(--ease-premium);
+}
+
+@keyframes doc-drop-line-in {
+	from {
+		opacity: 0;
+	}
+}
+
+/* The line still fades; it no longer travels between gaps. */
+@media (prefers-reduced-motion: reduce) {
+	.doc-dropcursor,
+	.doc-drop-idle .doc-dropcursor {
+		transition-property: opacity;
+	}
+}

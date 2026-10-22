@@ -3,9 +3,10 @@
  * over a block, or over the gutter left of it, a grip shows to its left, on
  * its first line. Drag it and the block moves where the drop cursor shows
  * (`moveUnitTo`: out and back in, keeping its id); hold the copy modifier
- * (⌥ on a Mac) as it drops and a copy goes in, with ids of its own. Click it
- * and the block is selected, so ⌥↑ and ⌥↓, ⌘C and Backspace act on it. A
- * list item has a grip of its own: the innermost one under the pointer.
+ * (⌥ on a Mac) as it drops and a copy goes in, with ids of its own, and is
+ * selected. Click it and the block is selected, so ⌥↑ and ⌥↓, ⌘C and
+ * Backspace act on it. A list item has a grip of its own: the innermost one
+ * under the pointer.
  *
  * Typing hides it until the pointer moves. A page that is read only, and a
  * screen with no hover (a phone), draw none; the keys move a block there.
@@ -13,6 +14,8 @@
  * The pointer is read from the whole document, not the editor, because the
  * grip sits left of the editable element and the pointer crosses open
  * margin to reach it. Over the grip, the block it was shown for stays.
+ * Mouse events stop during a drag, so after one the grip waits for the
+ * pointer to move before it shows again.
  *
  * While a block is dragged it shows no picture of itself under the pointer,
  * which would cover the place it is aimed at. The block stays where it was,
@@ -21,7 +24,21 @@
  * top or bottom of the page's scroller the page scrolls, faster nearer the
  * edge. On the drop the blocks that moved slide from where they were
  * (`slideMoved`), unless the person asks for reduced motion, and where it
- * landed is said to assistive technology.
+ * landed is said to assistive technology. The editor has the focus after
+ * every drag, dropped or not, so the keys act on the block that landed; a
+ * drag from the grip let go of nowhere, or over the block itself, leaves
+ * the block where it was, selected.
+ *
+ * The margin beside the text takes the drop as the text at the same height
+ * would: the grip sits in it, and the pointer often stays there on its way
+ * down the page. A dragover there is passed to the editor at the text's
+ * edge, so the drop cursor draws the line it would draw there, and a drop
+ * there goes through the same `land` as a drop on the text.
+ *
+ * A widget dragged by itself (an image, a figure, an applet) is ProseMirror's
+ * own drag, and it goes as a drag from its grip goes: nothing under the
+ * pointer, its place dimmed, the drop taken here. The selection stays as it
+ * was, as ProseMirror leaves it, until the widget lands and is selected.
  *
  * The grip sits beside the editable element, not in it, so ProseMirror sees
  * none of its events. The drag starts here and sets `view.dragging` as
@@ -31,15 +48,16 @@
  */
 
 import { Extension } from '@tiptap/core';
-import type { Node as PmNode, Slice } from '@tiptap/pm/model';
+import type { Node as PmNode, NodeType, Slice } from '@tiptap/pm/model';
 import { NodeSelection, Plugin, PluginKey, Selection, type EditorState, type Transaction } from '@tiptap/pm/state';
 import { dropPoint } from '@tiptap/pm/transform';
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view';
 import { moveUnitTo, unitAround, withoutIds } from './commands';
+import { clearDropLine, dropMotion } from './drop-line';
 import { scrollerOf } from './outline';
 import { contract } from './schema';
 
-/** What a drag from the grip carries, mapped through edits made while it lasts. */
+/** What a drag of a block carries, mapped through edits made while it lasts. */
 interface Held {
 	from: number;
 	to: number;
@@ -50,6 +68,29 @@ interface Unit {
 	from: number;
 	to: number;
 	node: PmNode;
+}
+
+/** A point on the screen, as a drag event gives one. */
+interface At {
+	clientX: number;
+	clientY: number;
+}
+
+/** A drag of a block of this page, from its grip or of a widget itself. */
+interface Drag {
+	/** The element the drag began on, which is told when it ends. */
+	source: EventTarget;
+	/** The page's scroller: what the drag scrolls, and whose margin takes the drop. */
+	scroller: HTMLElement;
+	/** Over, though a drop that arrives after the end is still taken. */
+	ended: boolean;
+}
+
+/** Where blocks were before a drop: the top of each with an id near the screen, and how far the page had scrolled. */
+interface Before {
+	tops: Map<string, number>;
+	scroller: HTMLElement;
+	scrollTop: number;
 }
 
 export interface DragHandleOptions {
@@ -76,24 +117,30 @@ const GRIP_SVG =
 /** How far from the scroller's top or bottom edge a drag scrolls the page, and its fastest step a frame. */
 const EDGE = 56;
 const EDGE_STEP = 18;
-/** How long the blocks a drop moved take to slide into place. */
-const SLIDE_MS = 180;
+/** How long after a drag's end its drop is still read: some browsers send the drop after the end. */
+const SETTLE_MS = 50;
+/** How long after a drop a drag is ended when its element, taken out of the page by the drop, hears no end. */
+const DROP_END_MS = 100;
 
-/** Where a drop at `event` would put what `held` carries, or null where it would do nothing. */
-function dropTarget(view: EditorView, event: DragEvent, held: Held, moved: boolean): number | null {
-	const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
-	if (!at) return null;
-	const target = dropPoint(view.state.doc, at.pos, held.slice) ?? at.pos;
+/** Where a drop at `at` would put what `held` carries, or null where it would do nothing. */
+function dropTarget(view: EditorView, at: At, held: Held, moved: boolean): number | null {
+	const pos = view.posAtCoords({ left: at.clientX, top: at.clientY });
+	if (!pos) return null;
+	const target = dropPoint(view.state.doc, pos.pos, held.slice) ?? pos.pos;
 	return moved && target >= held.from && target <= held.to ? null : target;
 }
 
 /** Whether a drop copies, as ProseMirror reads it: the copy modifier held (⌥ on a Mac, Ctrl elsewhere). */
-function copies(event: DragEvent): boolean {
+function copies(event: { altKey: boolean; ctrlKey: boolean }): boolean {
 	return /Mac|iP(hone|[oa]d)/.test(navigator.platform) ? event.altKey : event.ctrlKey;
 }
 
-/** The top of each block with an id that is near the screen, by id. */
-function blockTops(view: EditorView): Map<string, number> {
+function reducedMotion(): boolean {
+	return window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+}
+
+/** Where the blocks near the screen are now, by id, and how far the page has scrolled. */
+function measure(view: EditorView): Before {
 	const tops = new Map<string, number>();
 	const reach = window.innerHeight * 2;
 	view.state.doc.descendants((node, pos) => {
@@ -106,30 +153,50 @@ function blockTops(view: EditorView): Map<string, number> {
 		}
 		return !node.isTextblock;
 	});
-	return tops;
+	const scroller = scrollerOf(view.dom);
+	return { tops, scroller, scrollTop: scroller.scrollTop };
 }
 
 /**
- * Slide every block that moved from where it was (`before`, from
- * `blockTops`) to where it is now. A block that moved carries its own
+ * Slide every block that moved from where it was (`before`) to where it is
+ * now. A drop that scrolled the page to show where the block landed moved
+ * every block on the screen by as much; that is taken off, so only the
+ * blocks that moved in the page slide. A block that moved carries its own
  * blocks, which are not slid again.
  */
-function slideMoved(view: EditorView, before: Map<string, number>): void {
+function slideMoved(view: EditorView, before: Before): void {
+	const scrolled = before.scroller.scrollTop - before.scrollTop;
+	const motion = dropMotion();
 	view.state.doc.descendants((node, pos) => {
 		if (!node.isBlock) return false;
 		const id = node.attrs[contract.id.attr];
-		const was = id ? before.get(String(id)) : undefined;
+		const was = id ? before.tops.get(String(id)) : undefined;
 		const el = view.nodeDOM(pos);
 		if (was === undefined || !(el instanceof HTMLElement)) return !node.isTextblock;
-		const dy = was - el.getBoundingClientRect().top;
+		const dy = was - scrolled - el.getBoundingClientRect().top;
 		if (Math.abs(dy) < 1) return !node.isTextblock;
 		// The Web Animations API writes no attribute ProseMirror would read back.
-		el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], {
-			duration: SLIDE_MS,
-			easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
-		});
+		el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], motion);
 		return false;
 	});
+}
+
+/** Where a node of `type` went in, put in by `tr`'s last step at about `near`: the first one at or after where it went. */
+function insertedAt(tr: Transaction, near: number, type: NodeType): number | null {
+	const map = tr.mapping.maps[tr.mapping.maps.length - 1];
+	if (!map) return null;
+	let from = near;
+	let to = near;
+	map.forEach((_from, _to, newFrom, newTo) => {
+		from = newFrom;
+		to = newTo;
+	});
+	let found: number | null = null;
+	tr.doc.nodesBetween(from, to, (node, pos) => {
+		if (found === null && pos >= from && node.type === type) found = pos;
+		return found === null;
+	});
+	return found;
 }
 
 /** Where the selected block now sits, said in words: below the block before it, or at the top. */
@@ -161,9 +228,18 @@ class Grip {
 	private readonly blank: HTMLDivElement;
 	/** Where the person is told where a block landed. */
 	private readonly said: HTMLDivElement;
-	/** The pointer while a block is dragged, and the frame that scrolls the page by it. */
+	private drag: Drag | null = null;
+	/** The pointer's height while a block is dragged, and the frame that scrolls the page by it. */
 	private dragPointer: number | null = null;
 	private scrollFrame = 0;
+	private endTimer: ReturnType<typeof setTimeout> | undefined;
+	private dropTimer: ReturnType<typeof setTimeout> | undefined;
+	/** Whether the drop line is drawn from the margin, its dragover passed to the editor. */
+	private relayed = false;
+	/** While a dragover from the margin is passed on; it comes back through the document's own listener. */
+	private relaying = false;
+	/** `view.dragging` as a dragstart in the editor began. ProseMirror's own drag sets a new one. */
+	private draggingBefore: unknown = null;
 
 	constructor(
 		private view: EditorView,
@@ -175,8 +251,7 @@ class Grip {
 		this.dom.setAttribute('aria-hidden', 'true');
 		this.dom.title = 'Drag to move. Click to select';
 		this.dom.innerHTML = GRIP_SVG;
-		this.dom.addEventListener('dragstart', this.onDragStart);
-		this.dom.addEventListener('dragend', this.onDragEnd);
+		this.dom.addEventListener('dragstart', this.onGripDragStart);
 		this.dom.addEventListener('click', this.onClick);
 		this.blank = document.createElement('div');
 		this.blank.style.cssText = 'position:fixed;top:-2px;left:-2px;width:1px;height:1px;opacity:0;pointer-events:none';
@@ -184,6 +259,9 @@ class Grip {
 		this.said.className = 'sr-only';
 		this.said.setAttribute('aria-live', 'polite');
 		this.host()?.append(this.dom, this.blank, this.said);
+		// Around ProseMirror's own dragstart, which is registered first.
+		view.dom.addEventListener('dragstart', this.beforeDragStart, true);
+		view.dom.addEventListener('dragstart', this.onWidgetDragStart);
 		document.addEventListener('mousemove', this.onMove, { capture: true, passive: true });
 		document.addEventListener('mouseout', this.onOut, { passive: true });
 		document.addEventListener('scroll', this.onScroll, { capture: true, passive: true });
@@ -196,12 +274,19 @@ class Grip {
 	update(view: EditorView, prev: { doc: PmNode }): void {
 		this.view = view;
 		if (!view.editable) this.hide();
-		else if (this.unit && !view.state.doc.eq(prev.doc)) this.schedule();
+		else if (this.unit && !this.drag && !view.state.doc.eq(prev.doc)) this.schedule();
 	}
 
 	destroy(): void {
 		cancelAnimationFrame(this.frame);
+		clearTimeout(this.endTimer);
+		clearTimeout(this.dropTimer);
 		this.stopScrolling();
+		document.removeEventListener('drop', this.onDrop, { capture: true });
+		this.drag?.source.removeEventListener('dragend', this.onDragEnd);
+		this.drag = null;
+		this.view.dom.removeEventListener('dragstart', this.beforeDragStart, true);
+		this.view.dom.removeEventListener('dragstart', this.onWidgetDragStart);
 		this.blank.remove();
 		this.said.remove();
 		document.removeEventListener('mousemove', this.onMove, { capture: true });
@@ -212,6 +297,7 @@ class Grip {
 
 	/** Typed keys hide it until the pointer moves. */
 	hide(): void {
+		cancelAnimationFrame(this.frame);
 		this.unit = null;
 		this.dom.classList.remove('is-shown');
 	}
@@ -241,8 +327,9 @@ class Grip {
 		);
 	}
 
+	/** A scroll under a still pointer puts the grip beside the block now under it; a drag's scrolling does not. */
 	private onScroll = (): void => {
-		if (this.unit) this.schedule();
+		if (this.unit && !this.drag) this.schedule();
 	};
 
 	private schedule(): void {
@@ -267,6 +354,7 @@ class Grip {
 	/** Put the grip beside the block under the pointer, or hide it. */
 	private place(): void {
 		const { view, pointer } = this;
+		if (this.drag) return;
 		if (!pointer || !view.editable || view.isDestroyed || !this.near(pointer)) return this.hide();
 		if (this.heading(pointer)) return;
 		const content = view.dom.getBoundingClientRect();
@@ -304,8 +392,9 @@ class Grip {
 		view.focus();
 	};
 
-	private onDragStart = (event: DragEvent): void => {
+	private onGripDragStart = (event: DragEvent): void => {
 		const { unit, view } = this;
+		if (this.drag) this.reset();
 		if (!unit || !event.dataTransfer || !view.editable) {
 			event.preventDefault();
 			return;
@@ -329,25 +418,159 @@ class Grip {
 		// Faded, not hidden: Chrome ends a drag at once when its source stops
 		// taking the pointer during dragstart.
 		this.dom.classList.add('is-dragging');
-		this.dragPointer = event.clientY;
-		document.addEventListener('dragover', this.onDragOver, { capture: true, passive: true });
-		this.scrollFrame = requestAnimationFrame(this.scrollStep);
+		this.begin(event);
 	};
+
+	private beforeDragStart = (): void => {
+		this.draggingBefore = this.view.dragging;
+	};
+
+	/** A block widget dragged by itself, once ProseMirror has started the drag: it goes as a drag from its grip. */
+	private onWidgetDragStart = (event: DragEvent): void => {
+		const { view } = this;
+		const dragging = view.dragging as { slice: Slice; node?: NodeSelection } | null;
+		if (!dragging || dragging === this.draggingBefore || !event.dataTransfer || !view.editable) return;
+		// The dragged node, or the block selected whole that the drag began in.
+		const selection = dragging.node ?? view.state.selection;
+		if (!(selection instanceof NodeSelection) || !selection.node.isBlock) return;
+		if (this.drag) this.reset();
+		view.dispatch(view.state.tr.setMeta(heldKey, { from: selection.from, to: selection.to, slice: dragging.slice }));
+		event.dataTransfer.setDragImage(this.blank, 0, 0);
+		this.hide();
+		this.begin(event);
+	};
+
+	private begin(event: DragEvent): void {
+		const source = event.target ?? this.dom;
+		this.drag = { source, scroller: scrollerOf(this.view.dom), ended: false };
+		// On the element itself: one a drop took out of the page still hears its end there.
+		source.addEventListener('dragend', this.onDragEnd);
+		this.dragPointer = event.clientY;
+		document.addEventListener('dragover', this.onDragOver, { capture: true });
+		document.addEventListener('dragleave', this.onDragLeave, { capture: true });
+		document.addEventListener('drop', this.onDrop, { capture: true });
+		this.scrollFrame = requestAnimationFrame(this.scrollStep);
+	}
 
 	/** Tell assistive technology where a block landed. */
 	say(words: string): void {
 		this.said.textContent = words;
 	}
 
+	private inText(target: EventTarget | null): boolean {
+		return target instanceof Node && this.view.dom.contains(target);
+	}
+
+	/**
+	 * Where a drag over the page's margin, beside the text and level with it,
+	 * lands: the same height at the text's nearer edge. Null anywhere else.
+	 */
+	private besideText(event: { target: EventTarget | null; clientX: number; clientY: number }): At | null {
+		const { drag, view } = this;
+		const { target } = event;
+		if (!drag || !(target instanceof Node) || this.inText(target)) return null;
+		// With the window as the scroller, the editor's own host is as far as the margin goes.
+		const zone = drag.scroller === document.scrollingElement ? this.host() : drag.scroller;
+		if (!zone?.contains(target)) return null;
+		const box = view.dom.getBoundingClientRect();
+		if (event.clientY < box.top || event.clientY > box.bottom) return null;
+		if (event.clientX >= box.left && event.clientX <= box.right) return null;
+		return { clientX: Math.min(Math.max(event.clientX, box.left + 1), box.right - 1), clientY: event.clientY };
+	}
+
 	private onDragOver = (event: DragEvent): void => {
+		if (this.relaying) return;
 		this.dragPointer = event.clientY;
+		const at = this.besideText(event);
+		if (!at) {
+			// Off the margin: over the text the drop cursor reads the drag
+			// itself; anywhere else the line goes.
+			if (this.relayed && !this.inText(event.target)) clearDropLine(this.view);
+			this.relayed = false;
+			return;
+		}
+		event.preventDefault();
+		if (event.dataTransfer) event.dataTransfer.dropEffect = copies(event) ? 'copy' : 'move';
+		this.relaying = true;
+		try {
+			// Not bubbling: only the editor's own listeners hear it.
+			this.view.dom.dispatchEvent(
+				new MouseEvent('dragover', {
+					clientX: at.clientX,
+					clientY: at.clientY,
+					altKey: event.altKey,
+					ctrlKey: event.ctrlKey,
+					metaKey: event.metaKey,
+					shiftKey: event.shiftKey,
+				}),
+			);
+		} finally {
+			this.relaying = false;
+		}
+		this.relayed = true;
 	};
+
+	/**
+	 * The drop cursor takes the line away when a drag leaves the text. For
+	 * the margin beside it, it stays: the margin's next dragover moves it.
+	 */
+	private onDragLeave = (event: DragEvent): void => {
+		if (!this.inText(event.target) || this.inText(event.relatedTarget)) return;
+		if (this.besideText({ target: event.relatedTarget, clientX: event.clientX, clientY: event.clientY })) event.stopPropagation();
+	};
+
+	/** A drop in the margin is taken here; one on the text goes through ProseMirror to `handleDrop`. */
+	private onDrop = (event: DragEvent): void => {
+		const at = this.besideText(event);
+		if (at && heldKey.getState(this.view.state)) {
+			event.preventDefault();
+			event.stopPropagation();
+			clearDropLine(this.view);
+			this.relayed = false;
+			this.land(at, !copies(event));
+		}
+		clearTimeout(this.dropTimer);
+		this.dropTimer = setTimeout(this.endDrag, DROP_END_MS);
+	};
+
+	/** Put the held block where a drop at `at` puts it, moved or copied, and give the editor the focus. */
+	land(at: At, moved: boolean): void {
+		const { view } = this;
+		this.host()?.classList.remove('doc-drop-idle');
+		const held = heldKey.getState(view.state);
+		const node = held && view.state.doc.nodeAt(held.from);
+		const target = held && node ? dropTarget(view, at, held, moved) : null;
+		if (held && node && target !== null) {
+			const before = reducedMotion() ? null : measure(view);
+			if (!moved) this.copyTo(node, target, before);
+			else if (moveUnitTo(view, held.from, held.to, target)) {
+				if (before) slideMoved(view, before);
+				this.say(landedWords(view.state));
+			}
+		}
+		view.focus();
+	}
+
+	/** Put a copy of `node`, with ids of its own, in at `target`, selected; it fades in there. */
+	private copyTo(node: PmNode, target: number, before: Before | null): void {
+		const { view } = this;
+		const tr = view.state.tr.replaceRangeWith(target, target, withoutIds(node));
+		if (tr.doc.eq(view.state.doc)) return;
+		const placed = insertedAt(tr, target, node.type);
+		if (placed !== null) tr.setSelection(NodeSelection.create(tr.doc, placed));
+		view.dispatch(tr.setMeta('uiEvent', 'drop').scrollIntoView());
+		if (before) slideMoved(view, before);
+		const { selection } = view.state;
+		const copy = placed !== null && selection instanceof NodeSelection ? view.nodeDOM(selection.from) : null;
+		if (copy instanceof HTMLElement) copy.animate([{ opacity: 0 }, { opacity: 1 }], dropMotion());
+		this.say('Block copied');
+	}
 
 	/** One frame of scrolling while a block is dragged near the top or bottom of the page's scroller. */
 	private scrollStep = (): void => {
 		const y = this.dragPointer;
-		const scroller = scrollerOf(this.view.dom);
-		if (y !== null && !this.view.isDestroyed) {
+		const scroller = this.drag?.scroller;
+		if (y !== null && scroller && !this.view.isDestroyed) {
 			const page = scroller === document.scrollingElement;
 			const box = page ? { top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
 			const into = y < box.top + EDGE ? -(box.top + EDGE - y) : y > box.bottom - EDGE ? y - (box.bottom - EDGE) : 0;
@@ -363,23 +586,59 @@ class Grip {
 		cancelAnimationFrame(this.scrollFrame);
 		this.dragPointer = null;
 		document.removeEventListener('dragover', this.onDragOver, { capture: true });
+		document.removeEventListener('dragleave', this.onDragLeave, { capture: true });
 	}
 
-	private onDragEnd = (): void => {
-		const { view } = this;
+	private onDragEnd = (): void => this.endDrag();
+
+	/**
+	 * The drag is over, dropped or not. Nothing it drew stays: the line, the
+	 * idle mark, the faded grip; the dimmed block comes back once a drop that
+	 * arrives late has been read (`settle`). The editor takes the focus back
+	 * unless the drop put it in another editor or a field.
+	 */
+	private endDrag = (): void => {
+		const { drag, view } = this;
+		if (!drag || drag.ended) return;
+		drag.ended = true;
+		clearTimeout(this.dropTimer);
+		drag.source.removeEventListener('dragend', this.onDragEnd);
 		this.stopScrolling();
+		this.relayed = false;
 		this.host()?.classList.remove('doc-drop-idle');
 		this.dom.classList.remove('is-dragging');
+		// Mouse events stop during a drag: the pointer last read is from before it.
+		this.pointer = null;
 		this.hide();
+		if (view.isDestroyed) return;
+		clearDropLine(view);
 		this.options.dragEnded?.(view);
-		// After the drop has read it, as ProseMirror clears its own.
-		setTimeout(() => {
-			if (view.isDestroyed) return;
-			const held = heldKey.getState(view.state);
-			if (held && view.dragging?.slice === held.slice) view.dragging = null;
-			if (held) view.dispatch(view.state.tr.setMeta(heldKey, null));
-		}, 50);
+		const active = document.activeElement;
+		const elsewhere =
+			active instanceof HTMLElement &&
+			!this.host()?.contains(active) &&
+			(active.isContentEditable || active.matches('input, textarea'));
+		if (view.editable && !elsewhere) view.focus();
+		this.endTimer = setTimeout(this.settle, SETTLE_MS);
 	};
+
+	/** After the drop has read it, as ProseMirror clears its own: the held block, and `view.dragging` if it is this drag's. */
+	private settle = (): void => {
+		clearTimeout(this.endTimer);
+		document.removeEventListener('drop', this.onDrop, { capture: true });
+		this.drag = null;
+		const { view } = this;
+		if (view.isDestroyed) return;
+		const held = heldKey.getState(view.state);
+		if (held && view.dragging?.slice === held.slice) view.dragging = null;
+		if (held) view.dispatch(view.state.tr.setMeta(heldKey, null));
+	};
+
+	/** End a drag at once, as another starts. */
+	private reset(): void {
+		this.endDrag();
+		this.settle();
+	}
 }
 
 export const DragHandle = Extension.create<DragHandleOptions>({
@@ -436,20 +695,8 @@ export const DragHandle = Extension.create<DragHandleOptions>({
 					// drag is known by the one `view.dragging` still holds.
 					handleDrop(view, event, _slice, moved) {
 						const held = heldKey.getState(view.state);
-						if (!held || view.dragging?.slice !== held.slice) return false;
-						view.dom.parentElement?.classList.remove('doc-drop-idle');
-						const node = view.state.doc.nodeAt(held.from);
-						const target = dropTarget(view, event, held, moved);
-						if (!node || target === null) return true;
-						const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-						const before = still ? null : blockTops(view);
-						if (moved) {
-							if (!moveUnitTo(view, held.from, held.to, target)) return true;
-						} else {
-							view.dispatch(view.state.tr.replaceRangeWith(target, target, withoutIds(node)).scrollIntoView());
-						}
-						if (before) slideMoved(view, before);
-						grip?.say(moved ? landedWords(view.state) : 'Block copied');
+						if (!held || view.dragging?.slice !== held.slice || !grip) return false;
+						grip.land(event, moved);
 						return true;
 					},
 				},

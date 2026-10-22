@@ -34,6 +34,7 @@ import { htmlSlice, looksLikeMarkdown, placeConverted } from './paste';
 import { contractExtensions, isRoute } from './schema';
 import { closeTrigger, pickedRange, putBackQuery, triggers } from './triggers';
 import { drawnCaret } from './caret';
+import { dropLine } from './drop-line';
 
 /** Pasted text longer than this becomes an attachment rather than a wall in the composer. */
 export const PASTE_AS_FILE_THRESHOLD = 1500;
@@ -436,6 +437,8 @@ export function createComposer(o: ComposerOptions): Composer {
 		),
 		UndoRedo,
 		drawnCaret(),
+		// Text dragged inside a message lands where a caret-high bar shows.
+		dropLine(),
 		ListKeymap,
 		Placeholder.configure({ placeholder: () => hint }),
 		triggers([

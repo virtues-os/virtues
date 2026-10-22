@@ -636,6 +636,27 @@ describe('the selection toolbar', () => {
 		expect(timing.ready()).toBe(true);
 	});
 
+	// Browsers end the press with a pointercancel as a drag of the words
+	// starts, which read as a release put the bar over the words in hand.
+	it('stays away while words are dragged and over what the drop put in, until the next press or key', () => {
+		const editor = track(htmlEditor('<p>Drag these words</p>'));
+		const show = vi.fn();
+		const timing = toolbarTiming(editor.view, show);
+		cleanups.push(timing.destroy);
+		const text = editor.view.dom.querySelector('p')!;
+		text.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true }));
+		text.dispatchEvent(new DragEvent('dragstart', { bubbles: true }));
+		window.dispatchEvent(new PointerEvent('pointercancel', { button: 0 }));
+		expect(timing.ready()).toBe(false);
+		text.dispatchEvent(new DragEvent('drop', { bubbles: true }));
+		const tr = editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 1, 5)).setMeta('uiEvent', 'drop');
+		editor.view.dispatch(tr);
+		timing.note(tr);
+		expect(timing.ready()).toBe(false);
+		editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
+		expect(timing.ready()).toBe(true);
+	});
+
 	it('shows for a keyboard selection once it has held still', async () => {
 		const editor = track(htmlEditor('<p>Shift arrow over words</p>'));
 		const show = vi.fn();
@@ -839,6 +860,22 @@ describe('keyboard paths', () => {
 		expect(drag([[101, 90], [102, 40], [103, -100]])).toEqual({ sizes: [], wrote: null });
 		// The browser took the gesture.
 		expect(drag([[140, 100]], 'pointercancel')).toEqual({ sizes: [340], wrote: null });
+		// Escape mid-drag: back to where it started, nothing written, and the
+		// Escape goes no further.
+		{
+			const sizes: number[] = [];
+			let wrote: number | null | undefined;
+			const down = new PointerEvent('pointerdown', { clientX: 100, clientY: 100, pointerId: 1, bubbles: true, cancelable: true });
+			dragToResize(handle, down, { axis: 'x', start: 300, min: 48, max: 600, onSize: (n) => sizes.push(n), onEnd: (n) => (wrote = n) });
+			handle.dispatchEvent(new PointerEvent('pointermove', { clientX: 140, clientY: 100, pointerId: 1 }));
+			const heard = vi.fn();
+			document.addEventListener('keydown', heard);
+			handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+			document.removeEventListener('keydown', heard);
+			handle.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+			expect({ sizes, wrote }).toEqual({ sizes: [340], wrote: null });
+			expect(heard).not.toHaveBeenCalled();
+		}
 
 		// On touch a handle takes the pointer only on a selected widget.
 		for (const [file, selected] of [

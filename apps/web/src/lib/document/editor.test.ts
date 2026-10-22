@@ -3633,6 +3633,8 @@ describe('a drag from one page to another', () => {
 		const end = to.state.doc.content.size;
 		to.view.posAtCoords = () => ({ pos: end, inside: -1 });
 		const data = new DataTransfer();
+		// happy-dom draws no drag image, and its `setDragImage` throws.
+		data.setDragImage = () => {};
 		const event = (type: string) => {
 			const e = new DragEvent(type, { bubbles: true, cancelable: true });
 			Object.defineProperty(e, 'dataTransfer', { value: data });
@@ -3686,6 +3688,51 @@ describe('a drag from one page to another', () => {
 		expect(left).toHaveLength(15);
 		expect(left).not.toContain('5.png');
 		expect(blocksOf(b)).toEqual(['Elsewhere', '5.png']);
+	});
+});
+
+describe('a widget dragged on its own page', () => {
+	function blocksOf(editor: Editor): string[] {
+		const out: string[] = [];
+		editor.state.doc.forEach((n) => out.push(n.type.name === 'image' ? String(n.attrs.alt) : n.textContent));
+		return out;
+	}
+
+	// The grip sits in the margin left of the text, and a drop there went
+	// nowhere: the drop cursor and ProseMirror's drop hear only the text.
+	it('dropped in the margin beside the text, lands as it would on the text at that height', async () => {
+		const { editor, element } = bind(pageDoc('<p>First</p><img src="https://images.example.com/1.png" alt="1.png"><p>Last</p>').doc);
+		await settle();
+		const { view } = editor;
+		const image = view.nodeDOM(view.state.doc.child(0).nodeSize) as HTMLElement;
+		view.dom.getBoundingClientRect = () => new DOMRect(100, 0, 500, 400);
+		const end = view.state.doc.content.size;
+		const asked: { left: number; top: number }[] = [];
+		view.posAtCoords = (at) => {
+			asked.push(at);
+			return { pos: end, inside: -1 };
+		};
+		const data = new DataTransfer();
+		// happy-dom draws no drag image, and its `setDragImage` throws.
+		data.setDragImage = () => {};
+		const event = (type: string, at = { clientX: 0, clientY: 0 }) => {
+			const e = new DragEvent(type, { bubbles: true, cancelable: true });
+			Object.defineProperties(e, { dataTransfer: { value: data }, clientX: { value: at.clientX }, clientY: { value: at.clientY } });
+			return e;
+		};
+		image.dispatchEvent(event('dragstart'));
+		// Dimmed where it was, as a block dragged by its grip is.
+		expect(image.classList).toContain('doc-drag-source');
+		const drop = event('drop', { clientX: 40, clientY: 200 });
+		element.dispatchEvent(drop);
+		expect(drop.defaultPrevented).toBe(true);
+		// Read at the text's left edge, level with the pointer.
+		expect(asked.at(-1)).toEqual({ left: 101, top: 200 });
+		image.dispatchEvent(event('dragend'));
+		await settle(60);
+		expect(blocksOf(editor)).toEqual(['First', 'Last', '1.png']);
+		expect((editor.state.selection as NodeSelection).node?.attrs.alt).toBe('1.png');
+		expect(view.dom.querySelector('.doc-drag-source')).toBeNull();
 	});
 });
 

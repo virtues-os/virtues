@@ -382,12 +382,14 @@
 		opacity: 0;
 		cursor: ew-resize;
 		touch-action: none;
+		transition: opacity var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.doc-image-frame:hover .doc-image-handle,
 	.doc-media.selected .doc-image-handle,
 	.doc-image-handle:focus-visible {
 		opacity: 0.6;
+		transition-duration: var(--motion-hover-in);
 	}
 
 	.doc-image-handle:focus-visible {

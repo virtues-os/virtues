@@ -16,7 +16,7 @@ import Collaboration, { isChangeOrigin } from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
 import UniqueID from '@tiptap/extension-unique-id';
 import { ListKeymap } from '@tiptap/extension-list';
-import { Dropcursor, Gapcursor, Placeholder } from '@tiptap/extensions';
+import { Gapcursor, Placeholder } from '@tiptap/extensions';
 import type { Node as PmNode, Slice } from '@tiptap/pm/model';
 import { Plugin, TextSelection, type EditorState, type NodeSelection } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
@@ -42,6 +42,7 @@ import { clipboardText } from './markdown';
 import { ProposalsPasted, ProposalsRead, TypingOutsideDeletions } from './suggestions';
 import { KeptThroughOthersEdits } from './anchor';
 import { DragHandle } from './drag-handle';
+import { dropLine } from './drop-line';
 import { scrollerOf } from './outline';
 
 /** What the editor binds to: a `TreeDocument`, or anything with its document and caret channel. */
@@ -318,7 +319,7 @@ export function createPageEditor(o: PageEditorOptions): Editor {
 					}),
 				]
 			: []),
-		Dropcursor.configure({ color: false, width: 2, class: 'doc-dropcursor' }),
+		dropLine(),
 		DragHandle.configure({
 			dragStarted: (view) => (dragSource = view),
 			dragEnded: (view) => {

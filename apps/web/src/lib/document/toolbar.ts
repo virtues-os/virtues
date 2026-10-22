@@ -5,6 +5,11 @@
  *   and a bar over the words being swept is in the way; it shows once the
  *   pointer is released, wherever that happens (a drag often ends outside
  *   the editor).
+ * - Never while words or a block are dragged and dropped. Browsers end the
+ *   press with a `pointercancel` as such a drag starts, which would show the
+ *   bar over the words being dragged. The bar waits from the dragstart to
+ *   the next press or key in the editor, so it does not show over what a
+ *   drop put in either. A drag let go of nowhere shows it again at once.
  * - A selection made with the keyboard waits until it has held still for
  *   200 ms, so Shift and the arrows are not chased by a bar moving every step.
  * - On touch it sits under the selection, where the platform's own menu is
@@ -48,6 +53,8 @@ export interface ToolbarTiming {
 export function toolbarTiming(view: EditorView, show: () => void, delay = KEYBOARD_SHOW_DELAY_MS): ToolbarTiming {
 	let pressed = false;
 	let waiting = false;
+	/** From a drag's start in the editor, or a drop into it, to the next press or key there. */
+	let dragged = false;
 	let timer: ReturnType<typeof setTimeout> | null = null;
 	const stopWaiting = () => {
 		if (timer !== null) clearTimeout(timer);
@@ -55,6 +62,7 @@ export function toolbarTiming(view: EditorView, show: () => void, delay = KEYBOA
 		waiting = false;
 	};
 	const down = (e: PointerEvent) => {
+		dragged = false;
 		if (e.button !== 0) return;
 		pressed = true;
 		stopWaiting();
@@ -64,15 +72,40 @@ export function toolbarTiming(view: EditorView, show: () => void, delay = KEYBOA
 		pressed = false;
 		show();
 	};
+	const key = () => {
+		dragged = false;
+	};
+	// The editor's host holds the block grip as well as the text.
+	const dragStart = (e: DragEvent) => {
+		const host = view.dom.parentElement ?? view.dom;
+		if (!(e.target instanceof Node) || !host.contains(e.target)) return;
+		dragged = true;
+		pressed = false;
+		stopWaiting();
+		show();
+	};
+	const drop = () => {
+		dragged = true;
+		stopWaiting();
+	};
+	const dragEnd = (e: DragEvent) => {
+		if (!dragged || e.dataTransfer?.dropEffect !== 'none') return;
+		dragged = false;
+		show();
+	};
 	view.dom.addEventListener('pointerdown', down);
+	view.dom.addEventListener('keydown', key);
+	view.dom.addEventListener('drop', drop, true);
 	window.addEventListener('pointerup', up, true);
 	window.addEventListener('pointercancel', up, true);
+	window.addEventListener('dragstart', dragStart, true);
+	window.addEventListener('dragend', dragEnd, true);
 	return {
-		ready: () => !pressed && !waiting,
+		ready: () => !pressed && !waiting && !dragged,
 		note(tr) {
 			// A pointer's selection carries `pointer`; while it is down the
 			// release decides, and a click's selection is final at once.
-			if (!tr.selectionSet || tr.getMeta('pointer') || pressed) return;
+			if (!tr.selectionSet || tr.getMeta('pointer') || pressed || dragged) return;
 			stopWaiting();
 			waiting = true;
 			timer = setTimeout(() => {
@@ -84,8 +117,12 @@ export function toolbarTiming(view: EditorView, show: () => void, delay = KEYBOA
 		destroy() {
 			stopWaiting();
 			view.dom.removeEventListener('pointerdown', down);
+			view.dom.removeEventListener('keydown', key);
+			view.dom.removeEventListener('drop', drop, true);
 			window.removeEventListener('pointerup', up, true);
 			window.removeEventListener('pointercancel', up, true);
+			window.removeEventListener('dragstart', dragStart, true);
+			window.removeEventListener('dragend', dragEnd, true);
 		},
 	};
 }

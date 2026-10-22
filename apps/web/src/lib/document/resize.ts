@@ -62,7 +62,7 @@ export interface ResizeDrag extends Pick<SizeRange, 'min' | 'max'> {
 	start: number;
 	/** Each size the drag passes through, to draw. */
 	onSize: (size: number) => void;
-	/** The drag is over: the size to write, or null when it resized nothing or was cancelled. */
+	/** The drag is over: the size to write, or null when it resized nothing or was cancelled, which draws the size it started from. */
 	onEnd: (size: number | null) => void;
 }
 
@@ -71,7 +71,8 @@ export interface ResizeDrag extends Pick<SizeRange, 'min' | 'max'> {
  * once it has moved `DRAG_SLOP` mostly along the handle's axis; one that
  * moves mostly across it resizes nothing and lets go. Only a drag that
  * ends with the pointer lifted writes a size, once; a cancelled one (the
- * browser took the gesture) writes none.
+ * browser took the gesture, or Escape) writes none, and the widget goes
+ * back to the size it had.
  */
 export function dragToResize(handle: HTMLElement, down: PointerEvent, o: ResizeDrag): void {
 	down.preventDefault();
@@ -85,6 +86,7 @@ export function dragToResize(handle: HTMLElement, down: PointerEvent, o: ResizeD
 		handle.removeEventListener('pointermove', move);
 		handle.removeEventListener('pointerup', up);
 		handle.removeEventListener('pointercancel', cancel);
+		window.removeEventListener('keydown', escape, true);
 		if (handle.hasPointerCapture?.(down.pointerId)) handle.releasePointerCapture(down.pointerId);
 		o.onEnd(write ? size : null);
 	};
@@ -99,7 +101,15 @@ export function dragToResize(handle: HTMLElement, down: PointerEvent, o: ResizeD
 	};
 	const up = () => stop(true);
 	const cancel = () => stop(false);
+	// Heard before anything else on the page, so this Escape only cancels the resize.
+	const escape = (ev: KeyboardEvent) => {
+		if (ev.key !== 'Escape') return;
+		ev.preventDefault();
+		ev.stopPropagation();
+		stop(false);
+	};
 	handle.addEventListener('pointermove', move);
 	handle.addEventListener('pointerup', up);
 	handle.addEventListener('pointercancel', cancel);
+	window.addEventListener('keydown', escape, true);
 }
