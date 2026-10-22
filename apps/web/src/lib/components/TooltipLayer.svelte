@@ -71,9 +71,28 @@
 
 	function hide() {
 		clearTimeout(timer);
+		timer = undefined;
+		if (!tip && !anchor) return;
 		if (tip) lastHidden = Date.now();
 		tip = null;
 		anchor = null;
+	}
+
+	/**
+	 * Focus leaving, from a listener. Removing a focused element fires
+	 * `focusout` (and can blur the window) synchronously, while Svelte is
+	 * tearing that element down, and a state write then throws
+	 * state_unsafe_mutation. So the hide waits for the teardown to finish.
+	 * Tabbing fires `focusout` and then `focusin` on the next element, which
+	 * may arm a tip of its own; the wait hides only the tip that was there.
+	 */
+	function hideLater() {
+		if (!tip && !anchor && !timer) return;
+		const was = anchor;
+		const pending = timer;
+		queueMicrotask(() => {
+			if (anchor === was && timer === pending) hide();
+		});
 	}
 
 	function arm(target: HTMLElement, immediate: boolean) {
@@ -104,19 +123,19 @@
 		document.addEventListener('pointerover', over);
 		document.addEventListener('pointerdown', hide, true);
 		document.addEventListener('focusin', focusIn);
-		document.addEventListener('focusout', hide);
+		document.addEventListener('focusout', hideLater);
 		document.addEventListener('keydown', key, true);
 		document.addEventListener('scroll', hide, true);
-		window.addEventListener('blur', hide);
+		window.addEventListener('blur', hideLater);
 		return () => {
 			clearTimeout(timer);
 			document.removeEventListener('pointerover', over);
 			document.removeEventListener('pointerdown', hide, true);
 			document.removeEventListener('focusin', focusIn);
-			document.removeEventListener('focusout', hide);
+			document.removeEventListener('focusout', hideLater);
 			document.removeEventListener('keydown', key, true);
 			document.removeEventListener('scroll', hide, true);
-			window.removeEventListener('blur', hide);
+			window.removeEventListener('blur', hideLater);
 		};
 	});
 </script>
