@@ -1,8 +1,8 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index bc8b2ae67ccd77ba690a9615d72fd4203364a4f3..769fd375971aaef8761f4bcc8656217dbfd0236c 100644
+index 046d626..a3120e0 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
-@@ -5258,17 +5258,10 @@ function pasteRulesPlugin(props) {
+@@ -5505,17 +5505,10 @@ function pasteRulesPlugin(props) {
  				drop: (view, event) => {
  					isDroppedFromProseMirror = dragSourceElement === view.dom.parentElement;
  					dropEvent = event;
@@ -25,10 +25,10 @@ index bc8b2ae67ccd77ba690a9615d72fd4203364a4f3..769fd375971aaef8761f4bcc8656217d
  				},
  				paste: (_view, event) => {
 diff --git a/dist/index.js b/dist/index.js
-index 957903bc2f41b88239c054bb3f8a56829acdd9c6..02cdad20343f5e35772f9624c8e32def91fc5fed 100644
+index c39cdd1..e4549f3 100644
 --- a/dist/index.js
 +++ b/dist/index.js
-@@ -5246,17 +5246,10 @@ function pasteRulesPlugin(props) {
+@@ -5493,17 +5493,10 @@ function pasteRulesPlugin(props) {
  				drop: (view, event) => {
  					isDroppedFromProseMirror = dragSourceElement === view.dom.parentElement;
  					dropEvent = event;

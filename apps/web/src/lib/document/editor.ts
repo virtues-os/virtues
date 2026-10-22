@@ -255,7 +255,7 @@ function draggedRange(source: EditorView): { from: number; to: number } | null {
  * as the person's own edit there. A drag with the copy modifier, or a drop
  * that put nothing in, takes nothing out. Tiptap's own version, which
  * deleted the other page's selection once per paste rule, is patched out
- * (`patches/@tiptap__core@3.31.4.patch`).
+ * (`patches/@tiptap__core@3.32.0.patch`).
  */
 const DragBetweenPages = Extension.create({
 	name: 'dragBetweenPages',
