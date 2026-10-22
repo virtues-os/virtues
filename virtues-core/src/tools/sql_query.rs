@@ -91,11 +91,13 @@ impl SqlQueryTool {
                 let sql = args.sql.ok_or_else(|| {
                     ToolError::InvalidParameters("'sql' is required for query operation".into())
                 })?;
-                let Some(name) = args.save_as else {
+                // A blank save_as is no save_as: models that fill every field
+                // the schema offers send '' or ' ' for one they do not want.
+                let Some(name) = args.save_as.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
                     let limit = args.limit.unwrap_or(50).min(200);
                     return self.execute_query(&sql, limit, None, timezone).await;
                 };
-                let name = saved_file_name(&name)?;
+                let name = saved_file_name(name)?;
                 let chat_id = chat_id.ok_or_else(|| {
                     ToolError::InvalidParameters(
                         "save_as keeps a file for code_interpreter in a saved chat, and this \
@@ -1211,6 +1213,22 @@ mod tests {
         let tool = SqlQueryTool::new(Arc::new(pool));
         let result = tool.execute_query("SELECT 1 AS n", 10, None, None).await;
         assert!(result.is_ok(), "a plain SELECT must still run: {result:?}");
+    }
+
+    /// An empty or whitespace save_as runs the query as if it were absent,
+    /// even with no chat to keep a file in. A real name still needs a chat.
+    #[sqlx::test]
+    async fn a_blank_save_as_is_no_save_as(pool: sqlx::PgPool) {
+        let tool = SqlQueryTool::new(Arc::new(pool));
+        let query = |save_as: &str| {
+            serde_json::json!({ "operation": "query", "sql": "SELECT 1 AS n", "save_as": save_as })
+        };
+        for blank in ["", " ", "\t\n"] {
+            let result = tool.execute(query(blank), None, None).await;
+            assert!(result.is_ok(), "save_as {blank:?} must run the query: {result:?}");
+        }
+        let result = tool.execute(query("sleep.csv"), None, None).await;
+        assert!(matches!(result, Err(ToolError::InvalidParameters(_))), "{result:?}");
     }
 
     /// A query's dates are the owner's: a bare day literal starts at their
