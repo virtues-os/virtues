@@ -78,6 +78,38 @@ struct Dossier {
     offered: Vec<String>,
 }
 
+impl Dossier {
+    /// The question with any handle the model wrote into it (`P2`) replaced
+    /// by the name of what it stands for.
+    fn unhandle(&self, question: &str) -> String {
+        question
+            .split_inclusive(|c: char| !c.is_ascii_alphanumeric())
+            .map(|piece| {
+                let word = piece.trim_end_matches(|c: char| !c.is_ascii_alphanumeric());
+                match self.handles.get(word) {
+                    Some(h) => format!("{}{}", h.reference.label, &piece[word.len()..]),
+                    None => piece.to_string(),
+                }
+            })
+            .collect()
+    }
+
+    /// The line a candidate names: by its handle, or by the id or url of a
+    /// handled line, which the model sometimes copies from the text instead.
+    fn lookup(&self, named: &str) -> Option<&Handle> {
+        let key = named.trim().trim_matches(['[', ']']);
+        if key.is_empty() {
+            return None;
+        }
+        self.handles.get(key).or_else(|| {
+            self.handles.values().find(|h| {
+                let url = h.reference.url.as_str();
+                url == key || url.rsplit('/').next() == Some(key)
+            })
+        })
+    }
+}
+
 /// Write new suggestions if the record has moved and it is not quiet hours.
 /// `force` (a manual run) skips both checks.
 pub async fn refresh(pool: &PgPool, force: bool) -> Result<RunSummary> {
@@ -116,12 +148,16 @@ pub async fn refresh(pool: &PgPool, force: bool) -> Result<RunSummary> {
     Ok(RunSummary { skipped: None, candidates: rows.len(), offered })
 }
 
-/// The suggestion to show now, marked as shown, or none.
+/// The suggestion to show now, marked as shown, or none. Only the newest
+/// run that offered anything counts: it read the latest record, so an older
+/// run's leftovers are out of date even before they expire.
 pub async fn current(pool: &PgPool) -> Result<Option<Suggestion>> {
     let row: Option<(String, String, String, serde_json::Value)> = sqlx::query_as(
         "SELECT id, kind, question, refs FROM app_suggestions \
-         WHERE dropped_reason IS NULL AND outcome IS NULL AND expires_at > now() \
-         ORDER BY created_at DESC, rank ASC LIMIT 1",
+         WHERE run_id = (SELECT run_id FROM app_suggestions WHERE dropped_reason IS NULL \
+                         ORDER BY created_at DESC LIMIT 1) \
+           AND dropped_reason IS NULL AND outcome IS NULL AND expires_at > now() \
+         ORDER BY rank ASC LIMIT 1",
     )
     .fetch_optional(pool)
     .await?;
@@ -356,6 +392,46 @@ async fn build_dossier(
         .collect();
     section(&mut d, "messages_waiting", lines);
 
+    // What their hands are on: pages edited this week and projects active in
+    // the last two, which open loops are most often about.
+    let pages: Vec<(String, String, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT pg.id, COALESCE(NULLIF(pg.title, ''), 'Untitled'), pg.updated_at FROM app_pages pg \
+         WHERE pg.kind = 'page' AND pg.deleted_at IS NULL \
+           AND NOT EXISTS (SELECT 1 FROM wiki_articles a WHERE a.page_id = pg.id) \
+           AND pg.updated_at > $1 - interval '7 days' \
+         ORDER BY pg.updated_at DESC LIMIT 6",
+    )
+    .bind(now)
+    .fetch_all(pool)
+    .await?;
+    let projects: Vec<(String, String, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT id, name, updated_at FROM app_projects \
+         WHERE archived_at IS NULL AND deleted_at IS NULL AND updated_at > $1 - interval '14 days' \
+         ORDER BY updated_at DESC LIMIT 4",
+    )
+    .bind(now)
+    .fetch_all(pool)
+    .await?;
+    let mut lines: Vec<(String, String, Handle)> = pages
+        .into_iter()
+        .enumerate()
+        .map(|(i, (id, title, at))| {
+            let handle = Handle {
+                reference: SuggestionRef { url: format!("/page/{id}"), label: title.clone() },
+                starts_at: None,
+            };
+            (format!("P{}", i + 1), format!("page \"{}\", edited {}", clip(&title, 80), clock(at)), handle)
+        })
+        .collect();
+    lines.extend(projects.into_iter().enumerate().map(|(i, (id, name, at))| {
+        let handle = Handle {
+            reference: SuggestionRef { url: format!("/project/{id}"), label: name.clone() },
+            starts_at: None,
+        };
+        (format!("J{}", i + 1), format!("project \"{}\", active {}", clip(&name, 80), clock(at)), handle)
+    }));
+    section(&mut d, "live_threads", lines);
+
     // The first thing the owner asked in each of their recent chats, so a
     // suggestion sounds like them and does not repeat them.
     let asked: Vec<(String, String, String, DateTime<Utc>)> = sqlx::query_as(
@@ -417,7 +493,8 @@ Find questions of these five kinds:
 Each question must:
 - be in their own voice, first person, under 15 words, ending with a question mark;
 - be answerable from their own records;
-- be about specific lines below, named by their handles in square brackets;
+- be about specific lines below that carry a handle in square brackets, such as K2 or P1, listed in "about" by that handle;
+- call things by their names, as the person would, and never contain a handle or an id;
 - not repeat a question they asked lately or one already offered.
 
 Do not suggest questions about their health or their relationships unless they asked about that topic themselves in the questions below. Prefer what is recent and what needs something from them. An aftermath question about a meeting that was not recorded must be answerable from email, messages or notes instead.
@@ -469,7 +546,7 @@ struct Row {
     reason: Option<String>,
     refs: Vec<SuggestionRef>,
     expires_at: DateTime<Utc>,
-    dropped_reason: Option<&'static str>,
+    dropped_reason: Option<String>,
 }
 
 /// Decide which candidates may reach the composer, and when each expires.
@@ -478,9 +555,8 @@ fn judge(candidates: Vec<Candidate>, d: &Dossier, now: DateTime<Utc>) -> Vec<Row
     candidates
         .into_iter()
         .map(|c| {
-            let question = c.question.trim().replace('—', ", ");
-            let handles: Vec<&Handle> =
-                c.about.iter().filter_map(|k| d.handles.get(k.trim().trim_matches(['[', ']']))).collect();
+            let question = d.unhandle(c.question.trim()).replace('—', ", ");
+            let handles: Vec<&Handle> = c.about.iter().filter_map(|k| d.lookup(k)).collect();
             let mut refs: Vec<SuggestionRef> = Vec::new();
             for h in &handles {
                 if !refs.contains(&h.reference) {
@@ -489,13 +565,14 @@ fn judge(candidates: Vec<Candidate>, d: &Dossier, now: DateTime<Utc>) -> Vec<Row
             }
             let kind = c.kind.trim().to_lowercase();
             let dropped_reason = if !KINDS.contains(&kind.as_str()) {
-                Some("unknown kind")
+                Some("unknown kind".to_string())
             } else if question.is_empty() || question.chars().count() > 140 {
-                Some("empty or too long")
+                Some("empty or too long".to_string())
             } else if refs.is_empty() {
-                Some("not tied to a record")
+                // What it named instead, for tuning the dossier.
+                Some(format!("not tied to a record (named: {})", c.about.join(", ")))
             } else if offered.contains(&question.to_lowercase()) {
-                Some("offered recently")
+                Some("offered recently".to_string())
             } else {
                 None
             };
@@ -546,7 +623,7 @@ async fn store(pool: &PgPool, fingerprint: &str, rows: &[Row]) -> Result<()> {
         .bind(serde_json::to_value(&r.refs)?)
         .bind(i as i32 + 1)
         .bind(r.expires_at)
-        .bind(r.dropped_reason)
+        .bind(&r.dropped_reason)
         .execute(&mut *tx)
         .await?;
     }
@@ -626,6 +703,7 @@ mod tests {
             vec![
                 c("preparation", &["[K1]"], "What should I bring to planning?"),
                 c("arrival", &["X9"], "What changed today?"),
+                c("arrival", &["em_1"], "Who sent the invoice?"),
                 c("arrival", &["M1"], "what did Nick say about the invoice?"),
                 c("guesswork", &["M1"], "Anything else?"),
             ],
@@ -635,19 +713,21 @@ mod tests {
         assert_eq!(rows[0].dropped_reason, None);
         assert_eq!(rows[0].refs[0].url, "/record/calendar_event/ev_1");
         assert!(rows[0].expires_at < now + Duration::hours(4), "a preparation question expires when the event starts");
-        assert_eq!(rows[1].dropped_reason, Some("not tied to a record"));
-        assert_eq!(rows[2].dropped_reason, Some("offered recently"));
-        assert_eq!(rows[3].dropped_reason, Some("unknown kind"));
+        assert_eq!(rows[1].dropped_reason.as_deref(), Some("not tied to a record (named: X9)"));
+        assert_eq!(rows[2].dropped_reason, None, "a handled line's id counts as naming it");
+        assert_eq!(rows[2].refs[0].label, "Invoice");
+        assert_eq!(rows[3].dropped_reason.as_deref(), Some("offered recently"));
+        assert_eq!(rows[4].dropped_reason.as_deref(), Some("unknown kind"));
     }
 
-    fn row(question: &str, hours: i64, dropped_reason: Option<&'static str>) -> Row {
+    fn row(question: &str, hours: i64, dropped_reason: Option<&str>) -> Row {
         Row {
             kind: "arrival".into(),
             question: question.into(),
             reason: None,
             refs: vec![SuggestionRef { url: "/record/communication_email/em_1".into(), label: "Invoice".into() }],
             expires_at: Utc::now() + Duration::hours(hours),
-            dropped_reason,
+            dropped_reason: dropped_reason.map(str::to_string),
         }
     }
 
@@ -658,8 +738,6 @@ mod tests {
         store(&pool, "fp", &[row("What is the invoice for?", 2, None), row("Dropped?", 2, Some("not tied to a record"))])
             .await
             .unwrap();
-        store(&pool, "fp", &[row("Expired?", -1, None)]).await.unwrap();
-
         let s = current(&pool).await.unwrap().expect("the offered one");
         assert_eq!(s.question, "What is the invoice for?");
         assert_eq!(s.refs[0].label, "Invoice");
@@ -680,8 +758,20 @@ mod tests {
         assert_eq!(outcome.as_deref(), Some("dismissed"), "the first outcome stands");
         assert!(current(&pool).await.unwrap().is_none(), "nothing else is live");
 
+        // A newer run replaces an older one, and an expired candidate is never shown.
+        store(&pool, "fp", &[row("Older?", 2, None)]).await.unwrap();
+        store(&pool, "fp", &[row("Expired?", -1, None), row("Newer?", 2, None)]).await.unwrap();
+        assert_eq!(current(&pool).await.unwrap().map(|s| s.question).as_deref(), Some("Newer?"));
+
         assert!(matches!(record_outcome(&pool, "sug_none", "used").await, Err(Error::NotFound(_))));
         assert!(matches!(record_outcome(&pool, &s.id, "maybe").await, Err(Error::InvalidInput(_))));
+    }
+
+    #[test]
+    fn a_handle_in_the_question_becomes_its_name() {
+        let d = dossier();
+        assert_eq!(d.unhandle("What should I bring to K1?"), "What should I bring to Planning?");
+        assert_eq!(d.unhandle("Is M1 paid, or K12 done?"), "Is Invoice paid, or K12 done?");
     }
 
     #[test]

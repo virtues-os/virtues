@@ -302,9 +302,11 @@
 	});
 
 	function useSuggestion() {
-		if (!ghost || !editor) return;
-		editor.fill(ghost.question, ghost.refs);
-		onSuggestion?.(ghost.id, "used");
+		// Held first: filling the field empties `ghost` before the next line.
+		const used = ghost;
+		if (!used || !editor) return;
+		editor.fill(used.question, used.refs);
+		onSuggestion?.(used.id, "used");
 	}
 
 	function setHeight(contentPx: number) {

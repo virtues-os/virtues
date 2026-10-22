@@ -610,6 +610,7 @@ export function createComposer(o: ComposerOptions): Composer {
 		fill(markdown, refs) {
 			setMarkdown(markdown);
 			editor.commands.focus('end');
+			if (refs.length > 0) editor.view.dispatch(editor.state.tr.insertText(' '));
 			for (const r of refs) refAtCaret(r.label, r.url);
 		},
 		closeRef({ refocus = true } = {}) {
