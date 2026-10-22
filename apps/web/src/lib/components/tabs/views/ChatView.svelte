@@ -2833,7 +2833,7 @@
 		   floating a hand's width above the bottom (Adam, 2026-09-14). The
 		   phone override below sets its own. */
 		padding-bottom: 1.5rem;
-		background-color: var(--color-surface);
+		background-color: var(--color-page);
 		background-image: var(--background-image);
 		background-blend-mode: multiply;
 		box-sizing: border-box;
