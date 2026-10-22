@@ -4,8 +4,8 @@
    One stylesheet for what rendered text looks like: paragraphs, headings,
    marks, links, lists and to-dos, quotes, rules and tables. A renderer puts
    `prose` on its root; a page's editor and its version preview do
-   (lib/document/editor.ts, DocumentPreview). The plan to bring chat, the
-   articles and the composer onto it is agents/plan/prose-consolidation-plan.md.
+   (lib/document/editor.ts, DocumentPreview). The plan behind it is
+   agents/plan/prose-consolidation-plan.md.
 
    Sizes, faces and line heights are the --md-* tokens (themes.css). The
    spacing is the --prose-* tokens below, so a surface tunes its rhythm by
@@ -17,6 +17,9 @@
    Chat replies and the articles carry it on Streamdown's root
    (Markdown.svelte), whose own theme is emptied so nothing of its look
    leaks through.
+
+   The chat composer carries `prose prose--compact` (lib/document/composer.ts):
+   the same rules on tighter spacing, so a message reads as it will once sent.
 
    What only the editor has (its caret, selection, the grip, find, print) is
    in lib/document/document.css. */
@@ -404,6 +407,30 @@
 	font-size: 0.8125rem;
 	font-weight: 400;
 	color: var(--color-foreground-muted);
+}
+
+/* ── The composer: a message as it is typed, in the same rules on tighter
+   spacing. Blocks sit 6px apart and list items touch, as a short message
+   reads in a box a few lines tall. In rem, so the code block's smaller
+   text does not shrink the gap above it. */
+
+.prose--compact {
+	--prose-gap: 0.375rem;
+	--prose-after-heading: 0.375rem;
+	--prose-item-gap: 0;
+}
+
+/* The composer's code block is a bare `pre`, with no header to hold a
+   language or Copy: the frame alone, wrapping, as a message is typed. */
+.prose--compact pre {
+	margin-bottom: 0;
+	padding: 0.5rem 0.625rem;
+	border-radius: var(--radius-md);
+	background: var(--color-surface-elevated);
+	/* design-ok: a code block is code; a fixed advance is the content */
+	font-family: var(--font-mono);
+	font-size: 0.875rem;
+	white-space: pre-wrap;
 }
 
 /* ── Images: within the column, on the radius every picture has. */

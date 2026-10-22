@@ -541,71 +541,15 @@
 		font-family: var(--font-sans);
 	}
 
-	/* The message as typed: body text at the old box's size and rhythm, its
-	   blocks tight, the way a message reads in the thread. */
-	.chat-input :global(.composer-prose) {
-		font-size: 1rem;
-		line-height: 1.5;
+	/* The field around the message as typed. The text itself is prose.css's
+	   (`prose prose--compact`), so it reads as it will in the thread. */
+	.chat-input :global(.composer-field) {
 		padding: 0.125rem 0.25rem;
 		outline: none;
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
-	.chat-input :global(.composer-prose > * + *),
-	.chat-input :global(.composer-prose li > * + *) {
-		margin-top: 0.375rem;
-	}
-	.chat-input :global(.composer-prose p) {
-		margin: 0;
-	}
-	.chat-input :global(.composer-prose ul),
-	.chat-input :global(.composer-prose ol) {
-		margin: 0;
-		padding-left: 1.5rem;
-	}
-	.chat-input :global(.composer-prose ul) {
-		list-style: disc;
-	}
-	.chat-input :global(.composer-prose ol) {
-		list-style: decimal;
-	}
-	.chat-input :global(.composer-prose li > * + *) {
-		margin-top: 0;
-	}
-	.chat-input :global(.composer-prose blockquote) {
-		margin: 0;
-		padding-left: 0.75rem;
-		border-left: 2px solid var(--color-border-strong);
-		color: var(--color-foreground-muted);
-	}
-	.chat-input :global(.composer-prose pre) {
-		margin: 0;
-		padding: 0.5rem 0.625rem;
-		border-radius: var(--radius-md);
-		background: var(--color-surface-elevated);
-		/* design-ok: a code block is code; a fixed advance is the content */
-		font-family: var(--font-mono);
-		font-size: 0.875rem;
-		white-space: pre-wrap;
-	}
-	.chat-input :global(.composer-prose :not(pre) > code) {
-		padding: 0.0625rem 0.25rem;
-		border-radius: var(--radius-sm);
-		background: var(--color-surface-elevated);
-		/* design-ok: inline code is code; a fixed advance is the content */
-		font-family: var(--font-mono);
-		font-size: 0.875em;
-	}
-	.chat-input :global(.composer-prose a) {
-		color: inherit;
-		text-decoration: underline dotted;
-		text-underline-offset: 0.2em;
-	}
-	.chat-input :global(.composer-prose mark) {
-		background: var(--color-highlight);
-		color: var(--color-highlight-foreground, inherit);
-	}
-	.chat-input :global(.composer-prose p.is-editor-empty:first-child::before) {
+	.chat-input :global(.composer-field p.is-editor-empty:first-child::before) {
 		content: attr(data-placeholder);
 		float: left;
 		height: 0;

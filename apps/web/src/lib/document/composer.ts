@@ -348,7 +348,7 @@ function messagePaste(onAttach?: (files: File[]) => void): Extension {
  */
 export function composerAttributes(mobile: boolean): Record<string, string> {
 	const attrs: Record<string, string> = {
-		class: 'composer-prose',
+		class: 'composer-field prose prose--compact',
 		'aria-label': 'Message',
 		'aria-multiline': 'true',
 		role: 'textbox',
