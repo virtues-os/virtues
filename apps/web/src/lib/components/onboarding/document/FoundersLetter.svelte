@@ -101,7 +101,7 @@
 		     dissolve (display: contents) and `order` interleaves the notes back
 		     under their paragraphs, so the reading order is the same either way. -->
 		<div class="body">
-			<div class="prose">
+			<div class="letter-body">
 
 				<!-- THE PREMISE. The data is the person's, and companies use it
 				     against them (ads, algorithms, addictions). The ledger beside it,
@@ -345,7 +345,7 @@
 	/* IN THE COLUMN (no margin yet). Both containers dissolve and their
 	   children become one flex column, `order` putting each note straight
 	   under the paragraph it annotates. */
-	.prose,
+	.letter-body,
 	.margin {
 		display: contents;
 	}
@@ -453,7 +453,7 @@
 			margin-right: calc(-1 * (var(--m-width) + var(--m-gutter)));
 		}
 
-		.prose {
+		.letter-body {
 			display: flex;
 			flex-direction: column;
 			gap: 1.15rem;

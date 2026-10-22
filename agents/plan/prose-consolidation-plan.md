@@ -1,7 +1,11 @@
 # One prose stylesheet for chat, pages and the composer
 
-**Status: planned (2026-10-21).** The same markdown is styled three times
-today, and the three copies disagree. This plan puts every rule that styles
+**Status: slices 1-7 done (2026-10-21).** What is left is in themes.css:
+set `--md-h3-weight` and `--md-th-weight` to 400 and read the second in
+prose.css (its TODO), and drop the `.markdown--article` name from the
+article tokens' comment. Delete this plan when that lands. The rest of this
+document describes the state before the work. The same markdown was styled
+three times, and the three copies disagreed. This plan puts every rule that styles
 rendered text in one stylesheet, `src/lib/styles/prose.css`, and leaves each
 surface only what is its own: the editor's caret, selection and block
 controls, chat's streaming, the composer's compactness.

@@ -186,7 +186,7 @@
 		{/if}
 
 		{#if page.article}
-			<div class="prose">
+			<div class="year-article">
 				<Markdown content={page.article} refVariant="quiet" variant="article" />
 			</div>
 		{/if}
@@ -288,7 +288,7 @@
 
 	/* Type comes from `variant="article"` on the renderer; only the space
 	   above it is this page's business. */
-	.prose {
+	.year-article {
 		margin-top: 2rem;
 	}
 
