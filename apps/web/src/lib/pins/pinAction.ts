@@ -29,6 +29,7 @@ import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { iconPickerStore } from '$lib/stores/iconPicker.svelte';
 import { ownedRef, pinIdentity, setRefLook } from '$lib/refs/identity.svelte';
 import { clothFor } from '$lib/sidebar/pin-colors';
+import { isNewChat } from '$lib/components/chat/state/chatRoute';
 
 export interface PinTarget {
 	/** Route or absolute URL. External `http(s)` urls are allowed and open out. */
@@ -65,6 +66,32 @@ export async function togglePin(target: PinTarget): Promise<boolean> {
 	const owned = ownedRef(target.url);
 	await pinsStore.add(target.url, owned ? null : (target.label ?? null), owned ? null : (target.icon ?? null));
 	return true;
+}
+
+/**
+ * Whether a dragged url can become a pin. A new chat has no thing behind it
+ * yet, so there is nothing to keep.
+ */
+export function canPin(url: string): boolean {
+	return !!url && !isNewChat(url);
+}
+
+/**
+ * Pin `target` into the gap before pin number `gap` (`pins.length` is the
+ * end), from a drop. A url that is already pinned moves to that gap instead
+ * of pinning twice.
+ */
+export async function pinAtGap(target: PinTarget, gap: number): Promise<void> {
+	if (!canPin(target.url)) return;
+	let from = pinsStore.pins.findIndex((p) => p.url === target.url);
+	if (from < 0) {
+		const owned = ownedRef(target.url);
+		const pin = await pinsStore.add(target.url, owned ? null : (target.label ?? null), owned ? null : (target.icon ?? null));
+		// The box may write the url its own way; find the pin it made.
+		from = pinsStore.pins.findIndex((p) => p.id === pin.id);
+	}
+	const to = from < gap ? gap - 1 : gap;
+	await pinsStore.reorder(from, Math.min(to, pinsStore.pins.length - 1));
 }
 
 /**

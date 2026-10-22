@@ -53,7 +53,7 @@
 	import { promptText } from '$lib/stores/dialog.svelte';
 	import { deleteChat, type PageSummary, type Pin } from '$lib/api/client';
 	import { pinIdentity, renameRef, ownedRef, untitled } from '$lib/refs/identity.svelte';
-	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin } from '$lib/pins/pinAction';
+	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin, canPin, pinAtGap } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
@@ -67,9 +67,10 @@
 		openProjects,
 		projectRowMenuItems,
 		projectMemberUrl,
+		REF_DRAG_TYPE,
 		startRefDrag,
 	} from '$lib/utils/projectActions';
-	import { dndManager, PROJECT_DROP_ATTR } from '$lib/stores/dndManager.svelte';
+	import { dndManager, PIN_DROP_ATTR, PROJECT_DROP_ATTR, pinGapAt } from '$lib/stores/dndManager.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import AtlasIcon from '../AtlasIcon.svelte';
 	import SetupRing from '../SetupRing.svelte';
@@ -99,10 +100,34 @@
 	// tracked by dndManager instead (it is not an HTML drag); either lights
 	// the row.
 	let rowDropTarget = $state<string | null>(null);
-	// A pin being dragged within Pinned, and where it would land: the gap
-	// before or after the row it is over.
+	// A pin being dragged within Pinned, and the gap a drag over Pinned would
+	// land in: before pin number `pinGap`, or at the end when it equals
+	// pins.length. A dragged tab is tracked by dndManager; either draws the line.
 	let draggingPin = $state<number | null>(null);
-	let pinDrop = $state<{ index: number; edge: 'before' | 'after' } | null>(null);
+	let pinGap = $state<number | null>(null);
+	const shownGap = $derived(dndManager.pinGap ?? pinGap);
+	// A sidebar row is in the air, so an empty Pinned shows where to drop it.
+	let refDragging = $state(false);
+	const tabCanPin = $derived(!!dndManager.session?.item.tab?.route && canPin(dndManager.session.item.tab.route));
+	const pinnedOpenForDrop = $derived(pins.length === 0 && (refDragging || tabCanPin));
+
+	$effect(() => {
+		const start = (e: DragEvent) => {
+			if (isRefDrag(e)) refDragging = true;
+		};
+		const end = () => {
+			refDragging = false;
+			pinGap = null;
+		};
+		document.addEventListener('dragstart', start);
+		document.addEventListener('dragend', end);
+		document.addEventListener('drop', end);
+		return () => {
+			document.removeEventListener('dragstart', start);
+			document.removeEventListener('dragend', end);
+			document.removeEventListener('drop', end);
+		};
+	});
 	// The page list is loaded by the rooms that show pages; this panel is
 	// mounted before any of them, so it asks once. The store dedupes nothing,
 	// hence the guard on both the list and the in-flight flag.
@@ -324,26 +349,56 @@
 		pinsStore.reorder(from, to).catch(() => toast.error("Couldn't move that pin. Try again."));
 	}
 
-	/** Where a pin dragged over row `index` lands, and whether this is a move. */
-	function pinDropAt(e: DragEvent, index: number, fileInto: boolean): 'move' | 'file' {
-		const row = (e.currentTarget as HTMLElement).getBoundingClientRect();
-		const y = (e.clientY - row.top) / row.height;
-		// Over a pinned project, the middle of the row files the dragged thing
-		// into it and only the edges move it, so both stay reachable.
-		if (fileInto && y > 0.25 && y < 0.75) return 'file';
-		pinDrop = { index, edge: y < 0.5 ? 'before' : 'after' };
-		return 'move';
-	}
-
-	/** The index a dragged pin ends at, from the gap it was dropped in. */
-	function pinTarget(from: number, drop: { index: number; edge: 'before' | 'after' }): number {
-		const gap = drop.edge === 'before' ? drop.index : drop.index + 1;
-		return from < gap ? gap - 1 : gap;
-	}
-
 	function endPinDrag() {
 		draggingPin = null;
-		pinDrop = null;
+		pinGap = null;
+	}
+
+	/**
+	 * A drag over Pinned: a pin moving, or a Recent row (or any sidebar row)
+	 * arriving. Over a pinned project's row, the middle files the dragged
+	 * thing into the project and the edges pin beside it.
+	 */
+	function overPinned(e: DragEvent, project: string | null = null, self = false) {
+		const ref = isRefDrag(e);
+		if (draggingPin === null && !ref) return;
+		const at = pinGapAt(e.currentTarget as Element, e.clientY, ref && !!project && !self);
+		e.preventDefault();
+		if (at === 'file') {
+			pinGap = null;
+			rowDropTarget = project;
+			if (e.dataTransfer) e.dataTransfer.dropEffect = 'link';
+			return;
+		}
+		if (rowDropTarget === project) rowDropTarget = null;
+		pinGap = at;
+		if (e.dataTransfer) e.dataTransfer.dropEffect = draggingPin !== null ? 'move' : 'link';
+	}
+
+	/** A drop on Pinned at the line: move the pin, or pin what arrived. True if it took the drop. */
+	function dropOnPinned(e: DragEvent): boolean {
+		const gap = pinGap;
+		pinGap = null;
+		if (gap === null) return false;
+		e.preventDefault();
+		if (draggingPin !== null) {
+			const from = draggingPin;
+			endPinDrag();
+			movePin(from, from < gap ? gap - 1 : gap);
+			return true;
+		}
+		const url = e.dataTransfer?.getData(REF_DRAG_TYPE);
+		if (url) {
+			const label = e.dataTransfer?.getData('text/plain') || null;
+			void pinAtGap({ url, label }, gap).catch(() => toast.error("Couldn't pin that. Try again."));
+		}
+		return true;
+	}
+
+	/** Leaving Pinned altogether takes the line away. */
+	function leavePinned(e: DragEvent) {
+		const area = e.currentTarget as HTMLElement;
+		if (!e.relatedTarget || !area.contains(e.relatedTarget as Node)) pinGap = null;
 	}
 
 	function openPin(pin: Pin) {
@@ -856,8 +911,29 @@
 	</div>
 {/snippet}
 
-{#if pins.length > 0}
-	{@render groupHead('pinned', 'Pinned', pins.length)}
+{#if pins.length > 0 || pinnedOpenForDrop}
+<!-- Pinned takes drops anywhere in it: a pin moving, a Recent row or a tab
+     being pinned. The head pins at the top; an empty Pinned shows only while
+     something is being dragged, as a row to drop on. -->
+<div class="pinned-zone" role="group" aria-label="Pinned" ondragleave={leavePinned}>
+	<div
+		{...{ [PIN_DROP_ATTR]: 'head' }}
+		ondragover={(e) => overPinned(e)}
+		ondrop={(e) => dropOnPinned(e)}
+	>
+		{@render groupHead('pinned', 'Pinned', Math.max(1, pins.length))}
+	</div>
+	{#if pins.length === 0}
+		<div
+			class="panel-row pin-drop-empty"
+			class:drop-here={shownGap === 0}
+			{...{ [PIN_DROP_ATTR]: 'head' }}
+			ondragover={(e) => overPinned(e)}
+			ondrop={(e) => dropOnPinned(e)}
+		>
+			<span class="panel-row-text">Drop here to pin</span>
+		</div>
+	{/if}
 	<div class="sidebar-expandable fold" class:expanded={!folded('pinned')} style={foldStyle(pins.length)}>
 		<div class="sidebar-expandable-inner">
 			{#each pins as pin, index (pin.id)}
@@ -870,10 +946,11 @@
 					class:active={activeRoute === pin.url}
 					class:drop-target={pinProject !== null &&
 						(dndManager.projectTarget === pinProject || rowDropTarget === pinProject)}
-					class:drop-before={pinDrop?.index === index && pinDrop.edge === 'before'}
-					class:drop-after={pinDrop?.index === index && pinDrop.edge === 'after'}
+					class:drop-before={shownGap === index}
+					class:drop-after={shownGap === pins.length && index === pins.length - 1}
 					class:dragging={draggingPin === index}
 					{...pinProject ? { [PROJECT_DROP_ATTR]: pinProject } : {}}
+					{...{ [PIN_DROP_ATTR]: String(index) }}
 					role="link"
 					tabindex="0"
 					title={look.title}
@@ -888,37 +965,16 @@
 						if (e.dataTransfer) e.dataTransfer.effectAllowed = 'linkMove';
 					}}
 					ondragend={endPinDrag}
-					ondragover={(e) => {
-						const fileInto = !!pinProject && isRefDrag(e) && draggingPin !== index;
-						if (draggingPin !== null && pinDropAt(e, index, fileInto) === 'move') {
-							e.preventDefault();
-							if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-							if (rowDropTarget === pinProject) rowDropTarget = null;
-							return;
-						}
-						pinDrop = null;
-						if (!pinProject || !isRefDrag(e)) return;
-						e.preventDefault();
-						if (e.dataTransfer) e.dataTransfer.dropEffect = 'link';
-						rowDropTarget = pinProject;
-					}}
+					ondragover={(e) => overPinned(e, pinProject, draggingPin === index)}
 					ondragleave={(e) => {
 						const row = e.currentTarget as HTMLElement;
 						if (!e.relatedTarget || !row.contains(e.relatedTarget as Node)) {
 							if (rowDropTarget === pinProject) rowDropTarget = null;
-							if (pinDrop?.index === index) pinDrop = null;
 						}
 					}}
 					ondrop={(e) => {
 						rowDropTarget = null;
-						if (draggingPin !== null && pinDrop) {
-							e.preventDefault();
-							const from = draggingPin;
-							const to = pinTarget(from, pinDrop);
-							endPinDrag();
-							movePin(from, to);
-							return;
-						}
+						if (dropOnPinned(e)) return;
 						const dropped = droppedRefUrl(e);
 						if (!pinProject || !dropped) return;
 						e.preventDefault();
@@ -999,6 +1055,7 @@
 			{/each}
 		</div>
 	</div>
+</div>
 {/if}
 
 {#if recents.length > 0}
@@ -1242,6 +1299,19 @@
 	}
 	.panel-row.drop-after::after {
 		bottom: -1px;
+	}
+
+	/* Only while something is dragged and nothing is pinned yet: the row to
+	   drop on, in the meta ink, lit like a drop target when it is under the
+	   pointer. */
+	.pin-drop-empty {
+		color: var(--color-foreground-subtle);
+		cursor: default;
+	}
+	.pin-drop-empty.drop-here {
+		background: var(--active-bg);
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
 	}
 
 	/* The pin in hand stays in its place, dimmed, until it lands. */

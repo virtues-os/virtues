@@ -11,6 +11,8 @@
  * - Sidebar reorder = REORDER (handled locally, not here)
  * - Tab → a project row in the sidebar = FILE (the tab's chat or page joins
  *   the project, an unsent chat takes it as its draft; the tab stays put)
+ * - Tab → Pinned in the sidebar = PIN (what the tab shows is pinned at the
+ *   gap the pointer is in; the tab stays put)
  */
 
 import { TRIGGERS } from 'svelte-dnd-action';
@@ -18,6 +20,8 @@ import type { DndEvent } from 'svelte-dnd-action';
 import { windowShellStore, type Tab } from '$lib/stores/window-shell.svelte';
 import { projectStore } from '$lib/stores/project.svelte';
 import { fileIntoProject, targetForTab, type FileTarget } from '$lib/utils/projectActions';
+import { canPin, pinAtGap } from '$lib/pins/pinAction';
+import { toast } from 'svelte-sonner';
 
 /**
  * A project row takes a tab by carrying this attribute with the project's id.
@@ -27,6 +31,28 @@ import { fileIntoProject, targetForTab, type FileTarget } from '$lib/utils/proje
  * and a let-go over one files the tab's thing instead.
  */
 export const PROJECT_DROP_ATTR = 'data-project-drop';
+
+/**
+ * Pinned's rows carry this with their index, and its head with `head`, so a
+ * tab let go over them is pinned there. A row that is also a project's
+ * splits: its middle files into the project, its edges pin beside it.
+ */
+export const PIN_DROP_ATTR = 'data-pin-drop';
+
+/**
+ * The gap a pointer at `clientY` is in over a Pinned element, or `file` for
+ * the middle of a pinned project's row when there is something to file.
+ * Shared with the sidebar's own drags so both draw the same line.
+ */
+export function pinGapAt(el: Element, clientY: number, canFile: boolean): number | 'file' {
+	const at = el.getAttribute(PIN_DROP_ATTR);
+	if (at === 'head' || at === null) return 0;
+	const index = Number(at);
+	const box = el.getBoundingClientRect();
+	const y = (clientY - box.top) / box.height;
+	if (canFile && el.hasAttribute(PROJECT_DROP_ATTR) && y > 0.25 && y < 0.75) return 'file';
+	return y < 0.5 ? index : index + 1;
+}
 
 // ============================================================================
 // Zone Types
@@ -107,6 +133,9 @@ class DndManager {
 	/** The project row under a dragged tab, for the row to light up. */
 	projectTarget = $state<string | null>(null);
 
+	/** The gap in Pinned a dragged tab would be pinned into, for its line. */
+	pinGap = $state<number | null>(null);
+
 	get isDragging(): boolean {
 		return this.session !== null;
 	}
@@ -118,18 +147,29 @@ class DndManager {
 	}
 
 	private trackPointer = (e: MouseEvent | TouchEvent) => {
-		if (!this.draggedTarget) return;
+		const route = this.session?.item.tab?.route;
+		if (!route) return;
 		const pt = 'touches' in e ? e.touches[0] : e;
 		if (!pt) return;
+		const canFile = !!this.draggedTarget;
 		let id: string | null = null;
+		let gap: number | null = null;
 		for (const el of document.elementsFromPoint(pt.clientX, pt.clientY)) {
-			const row = el.closest(`[${PROJECT_DROP_ATTR}]`);
+			const pinned = canPin(route) ? el.closest(`[${PIN_DROP_ATTR}]`) : null;
+			if (pinned) {
+				const at = pinGapAt(pinned, pt.clientY, canFile);
+				if (at === 'file') id = pinned.getAttribute(PROJECT_DROP_ATTR);
+				else gap = at;
+				break;
+			}
+			const row = canFile ? el.closest(`[${PROJECT_DROP_ATTR}]`) : null;
 			if (row) {
 				id = row.getAttribute(PROJECT_DROP_ATTR);
 				break;
 			}
 		}
 		if (id !== this.projectTarget) this.projectTarget = id;
+		if (gap !== this.pinGap) this.pinGap = gap;
 	};
 
 	private startTracking(): void {
@@ -141,6 +181,7 @@ class DndManager {
 		window.removeEventListener('mousemove', this.trackPointer, { capture: true });
 		window.removeEventListener('touchmove', this.trackPointer, { capture: true });
 		this.projectTarget = null;
+		this.pinGap = null;
 	}
 
 	// ============================================================================
@@ -187,6 +228,7 @@ class DndManager {
 		const currentSession = this.session;
 		const fileTarget = this.draggedTarget;
 		const target = this.projectTarget ? projectStore.byId(this.projectTarget) : undefined;
+		const pinGap = this.pinGap;
 
 		// Always end session
 		this.session = null;
@@ -202,6 +244,16 @@ class DndManager {
 		if (fileTarget && target) {
 			setItems(items as T[]);
 			void fileIntoProject(target, fileTarget);
+			return;
+		}
+
+		// Let go over Pinned: pin what the tab shows there. The tab goes home.
+		const tab = currentSession.item.tab;
+		if (pinGap !== null && tab?.route) {
+			setItems(items as T[]);
+			void pinAtGap({ url: tab.route, label: tab.label, icon: tab.icon }, pinGap).catch(() =>
+				toast.error("Couldn't pin that tab. Try again."),
+			);
 			return;
 		}
 

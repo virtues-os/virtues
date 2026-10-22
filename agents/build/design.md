@@ -60,7 +60,10 @@ The Home panel, top to bottom:
    Projects carry a `+` on hover for a new one. Search has no door: it is
    the ⌘K palette.
 2. **Pinned.** A chat, a project, an applet, a page, or any other url can be
-   pinned, from the thing's own pin control or menu. A pin shows the mark
+   pinned, from the thing's own pin control or menu, or by dragging a Recent
+   row or a pane's tab into Pinned, where a line shows the gap it will land
+   in. While something is dragged and nothing is pinned yet, Pinned shows a
+   "Drop here to pin" row. A pin shows the mark
    picked for it, else a solid dot in its color. Pins stay in the order the
    person puts them: drag a pin, press Alt with an arrow on a focused pin, or
    use Move up and Move down in its menu. A line in the gap shows where a
