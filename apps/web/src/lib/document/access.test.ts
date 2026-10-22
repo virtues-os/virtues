@@ -30,7 +30,7 @@ vi.mock('$lib/components/pages/nodes/FigureNode.svelte', () => ({ default: () =>
 vi.mock('$lib/stores/contextMenu.svelte', () => ({ contextMenu: { show: vi.fn(), reachFirstRow: vi.fn() } }));
 vi.mock('$lib/stores/linkEditor.svelte', () => ({ linkEditor: { show: vi.fn() } }));
 vi.mock('$lib/stores/window-shell.svelte', () => ({
-	windowShellStore: { openRouteBeside: vi.fn(), openTabFromRoute: vi.fn() },
+	windowShellStore: { openRouteBeside: vi.fn(), openTabFromRoute: vi.fn(), openInNewTab: vi.fn() },
 }));
 vi.mock('svelte-sonner', () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 vi.mock('$lib/api/client', async (orig) => ({
@@ -481,7 +481,7 @@ describe('links', () => {
 		a.dispatchEvent(menu);
 		expect(menu.defaultPrevented).toBe(true);
 		const items = vi.mocked(contextMenu.show).mock.calls[0][1].map((i) => i.id);
-		expect(items).toEqual(['open', 'open-beside', 'copy-link']);
+		expect(items).toEqual(['open', 'open-new-tab', 'open-beside', 'copy-link']);
 	});
 });
 
@@ -509,6 +509,16 @@ describe('a click with ⌘ or Ctrl', () => {
 			|| editor.view.dispatch(editor.state.tr.insertText('a', at, at));
 		expect(editor.state.doc.child(1).textContent).toBe('Seconda line with a link inside.');
 		expect(editor.state.doc.child(0).textContent).toBe('First paragraph, kept.');
+	});
+
+	it('on a ref opens it in a new tab beside this one, leaving this tab where it was', () => {
+		vi.mocked(windowShellStore.openInNewTab).mockClear();
+		vi.mocked(windowShellStore.openTabFromRoute).mockClear();
+		const editor = bound('<p>Ask <a href="/person/person_1">Nick</a> today.</p>', [links()]);
+		const at = posIn(editor, 'Nick', 1);
+		modClick(editor, editor.view.dom.querySelector('a')!, at, -1);
+		expect(windowShellStore.openInNewTab).toHaveBeenCalledWith('/person/person_1', 'Nick');
+		expect(windowShellStore.openTabFromRoute).not.toHaveBeenCalled();
 	});
 
 	it('on a widget selects it, as a plain click does', () => {

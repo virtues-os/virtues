@@ -36,7 +36,7 @@
 	import { pasteHandling } from "$lib/document/paste";
 	import { addFiles, mediaUploads } from "$lib/document/media";
 	import { anchorAt, anchorRange, pinAt, placeOf, resolveRange, type Anchor, type AnchoredRange, type Pinned } from "$lib/document/anchor";
-	import { canEditLinkAtSelection, editLinkAtSelection, linkContext, links, openLinkBeside, previewType } from "$lib/document/links";
+	import { canEditLinkAtSelection, editLinkAtSelection, linkContext, links, openLink, previewType } from "$lib/document/links";
 	import { cellAt, selectionForCellMenu, tableActions, tableBarAnchor, tableMenuItems } from "$lib/document/tables";
 	import { aiPresence } from "$lib/document/presence";
 	import {
@@ -747,7 +747,7 @@
 				onOpen={() => {
 					const h = hover;
 					hover = null;
-					if (h) openLinkBeside(h.href, h.label);
+					if (h) openLink(h.href, h.label);
 				}}
 				oncardenter={() => hoverHide && clearTimeout(hoverHide)}
 				oncardleave={hidePreview}

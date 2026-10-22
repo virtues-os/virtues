@@ -64,7 +64,7 @@ vi.mock('$lib/components/pages/nodes/FigureNode.svelte', () => ({ default: stand
 vi.mock('$lib/stores/contextMenu.svelte', () => ({ contextMenu: { show: vi.fn(), reachFirstRow: vi.fn() } }));
 vi.mock('$lib/stores/linkEditor.svelte', () => ({ linkEditor: { show: vi.fn() } }));
 vi.mock('$lib/stores/window-shell.svelte', () => ({
-	windowShellStore: { openRouteBeside: vi.fn(), openTabFromRoute: vi.fn() },
+	windowShellStore: { openRouteBeside: vi.fn(), openTabFromRoute: vi.fn(), openInNewTab: vi.fn() },
 }));
 vi.mock('svelte-sonner', () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 vi.mock('$lib/api/client', async (orig) => ({
@@ -120,7 +120,7 @@ import { convertNow, type ConvertResult } from './converter';
 import { kindOfLink } from './media-kind';
 import { decoded } from '$lib/utils/urlUtils';
 import { svelteNodeView } from './nodeviews.svelte';
-import { editLinkAtSelection, isRef, linkAt, linkMenu, links, openLink, openLinkBeside } from './links';
+import { editLinkAtSelection, isRef, linkAt, linkMenu, links, openLink, openLinkInNewTab } from './links';
 import { anchorAt, anchorRange, pinAt, placeOf, resolveRange } from './anchor';
 import { linkEditor } from '$lib/stores/linkEditor.svelte';
 import { toast } from 'svelte-sonner';
@@ -1218,7 +1218,7 @@ describe('a link the contract refuses, and a widget\'s own link', () => {
 		expect(editor.view.dom.innerHTML).not.toContain('javascript:');
 		const open = vi.spyOn(window, 'open').mockImplementation(() => null);
 		openLink('javascript:alert(document.domain)', 'click me');
-		openLinkBeside('javascript:alert(document.domain)', 'click me');
+		openLinkInNewTab('javascript:alert(document.domain)', 'click me');
 		expect(open).not.toHaveBeenCalled();
 		openLink('https://example.com/plan', 'plan');
 		expect(open).toHaveBeenCalledOnce();

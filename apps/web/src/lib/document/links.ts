@@ -2,7 +2,7 @@
  * Links in a block page.
  *
  * - A link to something on the box (a route, `/kind/id`) reads as a ref:
- *   the `doc-ref-link` class, and ⌘ or Ctrl-click opens it beside the page.
+ *   the `doc-ref-link` class, and ⌘ or Ctrl-click opens it in a new tab.
  *   A link elsewhere (`doc-web-link`) opens on ⌘ or Ctrl-click, where a
  *   link to the web opens (`openWebLink`: the Browser tab, on the Mac).
  *   Off a link, ⌘ or Ctrl-click is a plain click, never ProseMirror's
@@ -11,9 +11,11 @@
  *   link elsewhere as its address (`previewType`). In an editable page a plain click places the caret, so
  *   a link's text can be edited like any other; in a page that is read
  *   only, a plain click opens it.
- * - The link menu (right-click, or a long press): Open, Open beside, Open in
- *   default browser (a link to the web, in the app on a computer), Copy
- *   link, and on an editable page Edit, Turn into embed, Remove link. Turn
+ * - The link menu (right-click, or a long press): Open, then for a ref Open
+ *   in new tab and Open beside (`openMenuItems`, as on every openable
+ *   thing), for a link to the web Open in default browser (in the app on a
+ *   computer), then Copy link, and on an editable page Edit, Turn into
+ *   embed, Remove link. Turn
  *   into embed makes a route a mention and a media or Drive address a media
  *   block.
  * - ⌘K links the selected text or edits the link at the caret
@@ -36,6 +38,7 @@ import { linkEditor } from '$lib/stores/linkEditor.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import { getEntityTypeFromRoute, parseRef } from '$lib/utils/refRoutes';
 import { defaultBrowserItem, openWebLink } from '$lib/utils/webLinks';
+import { openMenuItems } from '$lib/utils/openMenuItems';
 import { isRoute, linkAllowed } from './schema';
 import { driveFileId, mediaNode } from './media';
 import { insertBlockAt } from './place';
@@ -84,18 +87,19 @@ export function linkAt(state: EditorState, pos: number): LinkAt | null {
 }
 
 /**
- * Open a link: a ref in this pane's preview tab, anything else where a link to the web
- * opens (`openWebLink`). An address the contract refuses (`javascript:`),
- * which reached the page past the server's check, opens nothing.
+ * Open a link: a ref in the tab you are on, anything else where a link to
+ * the web opens (`openWebLink`). An address the contract refuses
+ * (`javascript:`), which reached the page past the server's check, opens
+ * nothing.
  */
 export function openLink(href: string, label: string): void {
 	if (isRef(href)) windowShellStore.openTabFromRoute(href, { label });
 	else if (linkAllowed(href)) void openWebLink(href);
 }
 
-/** Open a link beside the page: a ref in the other pane, anything else as `openLink` does. */
-export function openLinkBeside(href: string, label: string): void {
-	if (isRef(href)) windowShellStore.openRouteBeside(href, label);
+/** Open a link in a new tab, as ⌘ or Ctrl-click does: a ref in a tab beside this one, anything else as `openLink` does. */
+export function openLinkInNewTab(href: string, label: string): void {
+	if (isRef(href)) void windowShellStore.openInNewTab(href, label);
 	else if (linkAllowed(href)) void openWebLink(href);
 }
 
@@ -274,8 +278,7 @@ export function linkMenu(editor: Editor, link: LinkAt, at: { x: number; y: numbe
 	};
 	const reading: ContextMenuItem[] = [
 		{ id: 'open', label: 'Open', icon: 'ri:arrow-right-up-line', action: () => openLink(link.href, label) },
-		{ id: 'open-beside', label: 'Open beside', icon: 'ri:layout-column-line', action: () => openLinkBeside(link.href, label) },
-		...(isRef(link.href) ? [] : defaultBrowserItem(link.href)),
+		...(isRef(link.href) ? openMenuItems(link.href, label) : defaultBrowserItem(link.href)),
 		{
 			id: 'copy-link',
 			label: 'Copy link',
@@ -334,7 +337,7 @@ export function links(hover?: LinkHover): Extension {
 							if (!(event.metaKey || event.ctrlKey)) return false;
 							const link = linkAt(view.state, pos);
 							if (link) {
-								openLinkBeside(link.href, link.text || link.href);
+								openLinkInNewTab(link.href, link.text || link.href);
 								return true;
 							}
 							// Off a link, the click is a plain one. ⌘ (Ctrl elsewhere) is also
