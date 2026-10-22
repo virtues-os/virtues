@@ -1003,7 +1003,7 @@
 
 	/* The suggested question, drawn where the first character would go
 	   (the field's 6px plus the paragraph's 4px, and its 2px top), in the
-	   placeholder's colour. Clicks pass through to the field. */
+	   placeholder's color. Clicks pass through to the field. */
 	.ghost {
 		position: absolute;
 		top: 0.125rem;
@@ -1011,7 +1011,7 @@
 		right: 0.625rem;
 		font-size: 1rem;
 		line-height: 1.5rem;
-		color: var(--color-foreground-subtle);
+		color: color-mix(in srgb, var(--color-foreground-subtle) 70%, transparent);
 		overflow-wrap: anywhere;
 		pointer-events: none;
 	}
@@ -1207,12 +1207,14 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}
+	/* Softer than the subtle ink, so the empty field sits back. The
+	   suggested question above uses the same color. */
 	.chat-input :global(.composer-field p.is-editor-empty:first-child::before) {
 		content: attr(data-placeholder);
 		float: left;
 		height: 0;
 		pointer-events: none;
-		color: var(--color-foreground-subtle);
+		color: color-mix(in srgb, var(--color-foreground-subtle) 70%, transparent);
 	}
 
 	/* Round icon buttons that sit inside the pill */
