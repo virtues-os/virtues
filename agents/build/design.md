@@ -50,12 +50,20 @@ across its top.
 - **Settings stands at the foot**, apart from the places above it: you do
   something to the server and leave.
 - **The doors are the owner's to arrange, not to add to.** They can be
-  reordered and hidden, and that is saved on the profile (`sidebar_doors`)
-  so every device shows the same sidebar. What a person wants one click
-  away goes in Pinned. Doors and pins stay two groups: hiding a door hides
+  reordered and hidden on the desktop sidebar (the web app and the Mac
+  app), and that is saved on the profile (`sidebar_doors`). The phone's
+  drawer reads the same arrangement and shows the same Pinned list, but
+  cannot change either: it has no drag, Alt-arrows or door menu. What a
+  person wants one click away goes in Pinned. Doors and pins stay two groups: hiding a door hides
   a place that still exists, and unpinning removes the person's own entry,
   so one list would make the same gesture mean two things.
 - Routes did not move.
+
+The phone's drawer (`MobileDrawer`) follows the same order with what a
+phone needs around it: Search and Continue setup first, then the doors as
+arranged, then All chats and Settings as fixed rows, then Pinned and
+Recents, which scroll. A door with a `+` always shows it, since a phone has
+no hover.
 
 The Home panel, top to bottom:
 
