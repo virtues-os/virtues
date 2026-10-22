@@ -87,8 +87,9 @@
 <!-- Said here because sending is where being offline bites. The phone has
      its own banner under the header (MobileShell), so this is desktop only. -->
 {#if reachability.unreachable && !mobileLayout.isMobile}
-	<div class="offline-note" role="status">
-		Can't reach your server, so messages won't send until it answers again.
+	<div class="offline-note" role="status" title="Messages won't send until your server answers again.">
+		<Icon icon="ri:wifi-off-line" width="13" />
+		<span>Can't reach server</span>
 	</div>
 {/if}
 {#if capabilityIssue}
@@ -245,13 +246,19 @@
 		background: var(--color-border);
 	}
 
+	/* A small centered pill: the send button is already disabled, so this
+	   only has to name the reason. The full sentence is in the tooltip. */
 	.offline-note {
-		margin-bottom: 0.5rem;
-		padding: 0.375rem 0.625rem;
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		width: fit-content;
+		margin: 0 auto 0.5rem;
+		padding: 0.25rem 0.625rem;
 		border: 1px solid var(--color-border);
-		border-radius: 0.625rem;
+		border-radius: var(--radius-full);
 		background: var(--color-surface-elevated);
-		font-size: 0.8125rem;
+		font-size: 0.75rem;
 		color: var(--color-foreground-muted);
 	}
 
