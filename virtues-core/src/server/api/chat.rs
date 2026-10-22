@@ -33,6 +33,9 @@ pub fn routes() -> Router<AppState> {
         .route("/api/chat/opening", get(chat_opening_handler))
         // The composer's `/` menu
         .route("/api/skills", get(list_skills_handler))
+        // The question an empty new chat offers (api::suggestions)
+        .route("/api/suggestions/current", get(current_suggestion_handler))
+        .route("/api/suggestions/:id/outcome", post(suggestion_outcome_handler))
         .route("/api/chats/:id/seen", post(mark_chat_seen_handler))
         // Chat Usage & Compaction API
         .route("/api/chats/:id/usage", get(get_chat_usage_handler))
@@ -211,6 +214,34 @@ pub async fn live_chats_handler(State(state): State<AppState>) -> Response {
 /// GET /api/skills — the shipped skills and the person's own, for the `/` menu.
 pub async fn list_skills_handler() -> Response {
     Json(crate::api::skills::list()).into_response()
+}
+
+/// GET /api/suggestions/current — the suggested question for an empty new
+/// chat, or `{"suggestion": null}`.
+pub async fn current_suggestion_handler(State(state): State<AppState>) -> Response {
+    api_response(
+        crate::api::suggestions::current(state.db.pool())
+            .await
+            .map(|suggestion| serde_json::json!({ "suggestion": suggestion })),
+    )
+}
+
+#[derive(Deserialize)]
+pub struct SuggestionOutcomeRequest {
+    pub outcome: String,
+}
+
+/// POST /api/suggestions/:id/outcome — `used` or `dismissed`.
+pub async fn suggestion_outcome_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SuggestionOutcomeRequest>,
+) -> Response {
+    api_response(
+        crate::api::suggestions::record_outcome(state.db.pool(), &id, &body.outcome)
+            .await
+            .map(|()| serde_json::json!({ "ok": true })),
+    )
 }
 
 /// GET /api/chat/opening - What the box says first on an empty new chat.

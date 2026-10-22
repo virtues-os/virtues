@@ -151,13 +151,13 @@ fn as_opening(h: &Held) -> Opening {
     }
 }
 
-struct EventLine {
-    id: String,
-    line: String,
+pub(crate) struct EventLine {
+    pub(crate) id: String,
+    pub(crate) line: String,
 }
 
 /// Today's events, most unlike the owner's usual first, as numbered lines.
-async fn todays_events(pool: &PgPool, today: NaiveDate, tz: Option<Tz>) -> Result<Vec<EventLine>> {
+pub(crate) async fn todays_events(pool: &PgPool, today: NaiveDate, tz: Option<Tz>) -> Result<Vec<EventLine>> {
     // Read the day without creating it: an empty new chat must not write.
     let day_id: Option<String> = sqlx::query_scalar("SELECT id FROM wiki_days WHERE date = $1")
         .bind(today)

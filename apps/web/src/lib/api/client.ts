@@ -2241,6 +2241,24 @@ export function listSkills(): Promise<SkillList> {
 	return apiGet<SkillList>("/skills");
 }
 
+/** The question an empty new chat offers (`GET /api/suggestions/current`). */
+export interface SuggestedQuestion {
+	id: string;
+	kind: string;
+	question: string;
+	/** What it is about, attached as mentions when it is used. */
+	refs: { url: string; label: string }[];
+}
+
+export function getSuggestedQuestion(): Promise<{ suggestion: SuggestedQuestion | null }> {
+	return apiGet<{ suggestion: SuggestedQuestion | null }>("/suggestions/current");
+}
+
+/** The owner used the suggestion or put it away; the box keeps a ledger. */
+export function recordSuggestionOutcome(id: string, outcome: "used" | "dismissed"): Promise<{ ok: boolean }> {
+	return apiSend<{ ok: boolean }>("POST", `/suggestions/${encodeURIComponent(id)}/outcome`, { outcome });
+}
+
 export interface RefSearchResponse {
 	results: RefSearchResult[];
 }

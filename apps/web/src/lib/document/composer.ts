@@ -99,6 +99,9 @@ export interface Composer {
 	insertRef(label: string, url: string): void;
 	/** Put a ref at the caret, for a row or tab dropped on the composer. */
 	insertRefHere(label: string, url: string): void;
+	/** Replace the message with `markdown` and mentions of `refs` after it,
+	 *  caret at the end: an accepted suggested question. */
+	fill(markdown: string, refs: { url: string; label: string }[]): void;
 	/** The `@` menu closed with nothing picked; what was typed after the `@` stays.
 	 *  `refocus: false` when it closed because the focus went elsewhere. */
 	closeRef(opts?: { refocus?: boolean }): void;
@@ -530,6 +533,18 @@ export function createComposer(o: ComposerOptions): Composer {
 		}
 	}
 
+	/** A mention (or a link, for an address out) at the caret, then a space. */
+	function refAtCaret(label: string, url: string) {
+		const { schema } = editor.state;
+		const node = isRoute(url)
+			? schema.nodes.mention.create({ to: url, label })
+			: schema.text(label, [schema.marks.link.create({ href: url })]);
+		const tr = editor.state.tr.replaceSelectionWith(node, false);
+		tr.insertText(' ');
+		editor.view.dispatch(tr.scrollIntoView());
+		editor.commands.focus();
+	}
+
 	function setMarkdown(markdown: string) {
 		if (markdown === messageText(editor.state.doc)) return;
 		const next = readMessage(editor.schema, markdown);
@@ -591,15 +606,11 @@ export function createComposer(o: ComposerOptions): Composer {
 			editor.view.dispatch(tr.scrollIntoView());
 			editor.commands.focus();
 		},
-		insertRefHere(label, url) {
-			const { schema } = editor.state;
-			const node = isRoute(url)
-				? schema.nodes.mention.create({ to: url, label })
-				: schema.text(label, [schema.marks.link.create({ href: url })]);
-			const tr = editor.state.tr.replaceSelectionWith(node, false);
-			tr.insertText(' ');
-			editor.view.dispatch(tr.scrollIntoView());
-			editor.commands.focus();
+		insertRefHere: refAtCaret,
+		fill(markdown, refs) {
+			setMarkdown(markdown);
+			editor.commands.focus('end');
+			for (const r of refs) refAtCaret(r.label, r.url);
 		},
 		closeRef({ refocus = true } = {}) {
 			closeTrigger(editor.view, '@');

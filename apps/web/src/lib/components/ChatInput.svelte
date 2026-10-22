@@ -6,7 +6,7 @@
 	import { quintOut } from "svelte/easing";
 	import ContextPanel from "$lib/components/chat/ContextPanel.svelte";
 	import SkillsPanel from "$lib/components/chat/SkillsPanel.svelte";
-	import type { RefSearchResult, SkillSummary } from "$lib/api/client";
+	import type { RefSearchResult, SkillSummary, SuggestedQuestion } from "$lib/api/client";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { createComposer, type Composer } from "$lib/document/composer";
 	import { outgoingMessage } from "$lib/document/message";
@@ -42,6 +42,8 @@
 		onModeChange = undefined as ((mode: AgentModeId) => void) | undefined,
 		modes = AGENT_MODES,
 		skill = $bindable(null),
+		suggestion = null,
+		onSuggestion = undefined,
 	}: {
 		value?: string;
 		disabled?: boolean;
@@ -64,6 +66,10 @@
 		 *  text. It stays after a send, so a skill that asks questions gets
 		 *  the answers, until the person takes it off. */
 		skill?: SkillSummary | null;
+		/** A question to offer in the empty field, in the placeholder's place. */
+		suggestion?: SuggestedQuestion | null;
+		/** The person used the suggestion (Tab) or put it away (Escape). */
+		onSuggestion?: (id: string, outcome: "used" | "dismissed") => void;
 	} = $props();
 
 	// The one mode, shown as two chips (see DEPTH_ORDER). Full access runs at
@@ -284,10 +290,22 @@
 		editor?.setDisabled(next);
 	});
 
+	// The suggested question shows where the placeholder would, while the
+	// field is empty and nothing else is in the way.
+	const ghost = $derived(
+		suggestion && inputIsEmpty && !skill && !trayOpen && !disabled ? suggestion : null,
+	);
+
 	$effect(() => {
-		const text = placeholder;
+		const text = ghost?.question ?? placeholder;
 		editor?.setPlaceholder(text);
 	});
+
+	function useSuggestion() {
+		if (!ghost || !editor) return;
+		editor.fill(ghost.question, ghost.refs);
+		onSuggestion?.(ghost.id, "used");
+	}
 
 	function setHeight(contentPx: number) {
 		inputHeight.target = Math.min(Math.max(contentPx, MIN_HEIGHT), MAX_HEIGHT);
@@ -363,6 +381,21 @@
 		if (e.key === "Backspace" && skill && inputIsEmpty && !trayOpen) {
 			e.preventDefault();
 			skill = null;
+		}
+	}
+
+	// Tab takes the suggested question, Escape puts it away. Caught before the
+	// editor, whose Tab moves focus and whose Escape blurs.
+	function onShellKeydownCapture(e: KeyboardEvent) {
+		if (!ghost || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return;
+		if (e.key === "Tab") {
+			e.preventDefault();
+			e.stopPropagation();
+			useSuggestion();
+		} else if (e.key === "Escape") {
+			e.preventDefault();
+			e.stopPropagation();
+			onSuggestion?.(ghost.id, "dismissed");
 		}
 	}
 
@@ -466,6 +499,7 @@
 		onfocusin={() => (focusWithin = true)}
 		onfocusout={onShellFocusOut}
 		onkeydown={onShellKeydown}
+		onkeydowncapture={onShellKeydownCapture}
 		role="textbox"
 		tabindex="-1"
 	>
@@ -543,6 +577,21 @@
 				     scrolls once the content passes the cap, so the caret scrolls
 				     into view through the nearest scrollable ancestor, as
 				     ProseMirror expects. -->
+				{#if ghost}
+					<!-- mousedown is held back so the field keeps focus. -->
+					<button
+						type="button"
+						class="ghost-use"
+						onmousedown={(e) => e.preventDefault()}
+						onclick={(e) => {
+							e.stopPropagation();
+							useSuggestion();
+						}}
+						title="Use this question"
+					>
+						{mobileLayout.isMobile ? "Use" : "Tab"}
+					</button>
+				{/if}
 				<div
 					id="chat-input"
 					bind:this={inputEl}
@@ -843,6 +892,24 @@
 	}
 
 	.skill-chip-remove:hover {
+		color: var(--color-foreground);
+	}
+
+	/* Sits after the field, at its right edge. */
+	.ghost-use {
+		order: 2;
+		flex-shrink: 0;
+		align-self: center;
+		height: 1.375rem;
+		padding: 0 0.4375rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		font-size: 0.75rem;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+	}
+
+	.ghost-use:hover {
 		color: var(--color-foreground);
 	}
 

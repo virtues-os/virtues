@@ -1,0 +1,6 @@
+name = "Suggested Questions"
+description = "Writes the question a new chat offers you, from what changed in your day."
+owner = "system"
+command = ["suggested_questions"]
+triggers = ["cron", "manual"]
+schedule = "0 5 * * * *"

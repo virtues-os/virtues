@@ -134,7 +134,12 @@
 	import { ChatError } from "$lib/components/chat";
 	import { availableModes, type AgentModeId } from "$lib/config/agentModes";
 	import { skills } from "$lib/stores/skills.svelte";
-	import type { SkillSummary } from "$lib/api/client";
+	import {
+		getSuggestedQuestion,
+		recordSuggestionOutcome,
+		type SkillSummary,
+		type SuggestedQuestion,
+	} from "$lib/api/client";
 	import LocalModelCard from "$lib/components/chat/local/LocalModelCard.svelte";
 	import LocalStatsLine from "$lib/components/chat/local/LocalStatsLine.svelte";
 	import { localModel } from "$lib/stores/localModel.svelte";
@@ -617,6 +622,10 @@
 	let opening = $state<ChatOpening | null>(null);
 	/** Set only while the first send that replies to the opening is going out. */
 	let openingForSend: string | null = null;
+	/** The question this empty chat offers in its composer (api::suggestions).
+	 *  An hourly job writes it ahead of time, so asking costs nothing. */
+	let suggestion = $state<SuggestedQuestion | null>(null);
+	let suggestionAsked = false;
 	let currentChatConversationId = $state<string | null>(null);
 	/** This view is showing the getting-started room. */
 	const inRoom = $derived(isGettingStartedChat(currentChatConversationId));
@@ -640,6 +649,8 @@
 				selectedAgentMode = 'chat';
 				composerSkill = null;
 				turnSkill = null;
+				suggestion = null;
+				suggestionAsked = false;
 			}
 			// Get or create new instance with model, space, active page, persona, and agent mode getters
 			chat = chatInstances.getOrCreate({
@@ -1127,6 +1138,23 @@
 	// Derived state for layout mode
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
+
+	// Asked once per empty chat. A temporary chat, local mode and the
+	// getting-started room show none: each is somewhere a question drawn
+	// from the record does not belong.
+	$effect(() => {
+		if (!isEmpty || isGhost || isLocal || inRoom || suggestionAsked) return;
+		suggestionAsked = true;
+		getSuggestedQuestion()
+			.then((r) => (suggestion = r.suggestion))
+			// A box older than suggestions answers 404; the field keeps its placeholder.
+			.catch(() => {});
+	});
+
+	function onSuggestion(id: string, outcome: "used" | "dismissed") {
+		suggestion = null;
+		recordSuggestionOutcome(id, outcome).catch((e) => console.error("Recording the suggestion failed:", e));
+	}
 
 	// The interview's close. Three witnesses, any one suffices: the tool
 	// result in this session (the transient data part — see chatInstances),
@@ -2554,6 +2582,8 @@
 							onModeChange={changeMode}
 							modes={availableModes({ localSupported: localModel.status.supported })}
 							bind:skill={composerSkill}
+							suggestion={isEmpty ? suggestion : null}
+							{onSuggestion}
 						/>
 						{/if}
 
