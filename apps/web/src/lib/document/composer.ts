@@ -32,7 +32,7 @@ import { holdsOnlyMessage, MESSAGE, messageText, readMessage, textBlocks, type R
 import { svelteNodeView } from './nodeviews.svelte';
 import { htmlSlice, looksLikeMarkdown, placeConverted } from './paste';
 import { contractExtensions, isRoute } from './schema';
-import { closeTrigger, pickedRange, putBackQuery, triggers } from './triggers';
+import { closeTrigger, pickedRange, putBackQuery, triggerState, triggers } from './triggers';
 import { drawnCaret } from './caret';
 import { dropLine } from './drop-line';
 
@@ -70,8 +70,12 @@ export interface ComposerOptions {
 	onEscape?: () => boolean;
 	/** Shift+Tab outside a code block and a nested list item: cycle the chat's mode. */
 	onShiftTab?: () => void;
-	/** `@` typed at the start of a word: open the ref picker. */
-	onMentionOpen?: () => void;
+	/** `@` typed at the start of a word: open the ref picker with what follows it. */
+	onMentionOpen?: (query: string) => void;
+	/** The text typed after the `@` changed. */
+	onMentionQuery?: (query: string) => void;
+	/** The `@` closed: a space, a move away, Escape, or a ref picked. */
+	onMentionClose?: () => void;
 }
 
 export interface Composer {
@@ -448,10 +452,10 @@ export function createComposer(o: ComposerOptions): Composer {
 				char: '@',
 				onOpen: (_coords, from) => {
 					mentionFrom = from;
-					o.onMentionOpen?.();
+					o.onMentionOpen?.(triggerState(editor.state, '@').query);
 				},
-				onQuery: () => {},
-				onClose: () => {},
+				onQuery: (q) => o.onMentionQuery?.(q),
+				onClose: () => o.onMentionClose?.(),
 			},
 		]),
 		messagePaste(o.onAttach),

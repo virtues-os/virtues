@@ -24,17 +24,10 @@
 	import { FloatingContent, useClickOutside, useEscapeKey } from '$lib/floating';
 	import type { VirtualAnchor } from '$lib/floating';
 	import { inComposition } from '$lib/utils/ime';
-	import { searchRefs } from '$lib/api/client';
+	import { searchRefs, type RefSearchResult } from '$lib/api/client';
 
 	/** Entity result from the API */
-	export interface EntityResult {
-		id: string;
-		name: string;
-		entity_type: string;
-		icon: string;
-		url: string;
-		mime_type?: string;
-	}
+	export type EntityResult = RefSearchResult;
 
 	interface FooterAction {
 		label: string;

@@ -2,7 +2,8 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import { onDestroy, onMount } from "svelte";
 	import { Spring } from "svelte/motion";
-	import RefPicker, { type EntityResult } from "./RefPicker.svelte";
+	import ContextPanel from "$lib/components/chat/ContextPanel.svelte";
+	import type { RefSearchResult } from "$lib/api/client";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { createComposer, type Composer } from "$lib/document/composer";
 	import { outgoingMessage } from "$lib/document/message";
@@ -172,7 +173,10 @@
 	let editor: Composer | null = null;
 	let isFocused = $state(false);
 	let inputIsEmpty = $state(true);
-	const trayOpen = $derived(starters && focusWithin && inputIsEmpty && !disabled);
+	// The `@` query while the editor's `@` trigger is open, else null.
+	let mention = $state<string | null>(null);
+	const showStarters = $derived(starters && focusWithin && inputIsEmpty && !disabled);
+	const trayOpen = $derived(mention !== null || showStarters);
 	// Mirror of the editor's markdown, so an external `value` set can be told
 	// apart from our own echo of a keystroke.
 	let docText = "";
@@ -185,10 +189,6 @@
 
 	// Only enable scrolling when at max height to prevent scrollbar flash during animation
 	const shouldScroll = $derived(inputHeight.current >= MAX_HEIGHT - 1);
-
-	// `@` picker: the editor's `@` trigger opens it; the panel is the
-	// RefPicker component, anchored above the pill.
-	let showEntityPicker = $state(false);
 
 	// Can we submit? (has content, or staged refs/attachments allow an empty send)
 	const canSubmit = $derived((!inputIsEmpty || allowEmptySubmit) && !sendDisabled);
@@ -259,19 +259,17 @@
 		inputHeight.target = Math.min(Math.max(contentPx, MIN_HEIGHT), MAX_HEIGHT);
 	}
 
-	function handleEntityPickerSelect(entity: EntityResult) {
-		if (!editor) return;
+	function pickContext(result: RefSearchResult) {
 		// Always inline: a message attaches files through the attach path, so
 		// a picked file is a ref here like any other.
-		editor.insertRef(entity.name, entity.url);
-		showEntityPicker = false;
+		editor?.insertRef(result.name, result.url);
+		mention = null;
 	}
 
-	/** The picker closed; with nothing picked, what was typed in its box goes back after the `@`. */
-	function closeEntityPicker(typed?: string) {
-		if (!showEntityPicker) return;
-		showEntityPicker = false;
-		editor?.closeRef(typed);
+	/** Escape: the menu closes and what was typed after the `@` stays. */
+	function closeContext() {
+		mention = null;
+		editor?.closeRef();
 	}
 
 	function handleSubmit() {
@@ -329,16 +327,11 @@
 			onHeight: setHeight,
 			onAttach,
 			onShiftTab: cycleMode,
-			onEscape: () => {
-				if (showEntityPicker) {
-					closeEntityPicker();
-					return true;
-				}
-				return false;
+			onMentionOpen: (q) => (mention = q),
+			onMentionQuery: (q) => {
+				if (mention !== null) mention = q;
 			},
-			onMentionOpen: () => {
-				showEntityPicker = true;
-			},
+			onMentionClose: () => (mention = null),
 		});
 		docText = value;
 		inputIsEmpty = !value.trim();
@@ -365,8 +358,12 @@
 		role="textbox"
 		tabindex="-1"
 	>
-		{#if starters}
-			<div class="tray" class:open={trayOpen} inert={!trayOpen}>
+		<div class="tray" class:open={trayOpen} inert={!trayOpen}>
+			{#if mention !== null}
+				<div class="tray-inner panel">
+					<ContextPanel query={mention} onSelect={pickContext} onClose={closeContext} />
+				</div>
+			{:else}
 				<div class="tray-inner">
 					{#each STARTERS as st (st.id)}
 						<!-- mousedown is held back so the field keeps focus. -->
@@ -381,8 +378,8 @@
 						</button>
 					{/each}
 				</div>
-			</div>
-		{/if}
+			{/if}
+		</div>
 
 		<div class="composer-card bg-surface">
 			{#if onAttach}
@@ -556,15 +553,6 @@
 					</span>
 				</button>
 			</div>
-
-			{#if showEntityPicker}
-				<RefPicker
-					mode="single"
-					placeholder="Search entities to mention..."
-					onSelect={handleEntityPickerSelect}
-					onClose={closeEntityPicker}
-				/>
-			{/if}
 		</div>
 	</div>
 </div>
@@ -646,6 +634,10 @@
 	.tray.open .tray-inner {
 		padding: 0.4375rem 0.5rem;
 		opacity: 1;
+	}
+
+	.tray.open .tray-inner.panel {
+		padding: 0.5rem 0.5rem 0.375rem;
 	}
 
 	.starter {

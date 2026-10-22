@@ -287,6 +287,11 @@ pub async fn get_page_backlinks_handler(
 #[derive(Debug, Deserialize)]
 pub struct EntitySearchQuery {
     pub q: String,
+    /// Comma-separated entity types, e.g. `page,chat`. Absent keeps every type.
+    pub kinds: Option<String>,
+    /// RFC 3339 instant; only rows created at or after it.
+    pub created_after: Option<chrono::DateTime<chrono::Utc>>,
+    pub limit: Option<i64>,
 }
 
 /// GET /api/pages/search/refs - Search entities for autocomplete
@@ -294,7 +299,18 @@ pub async fn search_refs_handler(
     State(pool): State<PgPool>,
     Query(query): Query<EntitySearchQuery>,
 ) -> Response {
-    api_response(crate::api::pages::search_refs(&pool, &query.q).await)
+    let filter = crate::api::pages::RefSearchFilter {
+        kinds: query.kinds.as_deref().map(|k| {
+            k.split(',')
+                .map(str::trim)
+                .filter(|k| !k.is_empty())
+                .map(String::from)
+                .collect()
+        }),
+        created_after: query.created_after,
+        limit: query.limit,
+    };
+    api_response(crate::api::pages::search_refs(&pool, &query.q, &filter).await)
 }
 
 // ============================================================================

@@ -2216,6 +2216,10 @@ export interface RefSearchResult {
 	name: string;
 	entity_type: string;
 	icon: string;
+	url: string;
+	mime_type?: string;
+	/** When the row was written (RFC 3339). A box older than this field omits it. */
+	created_at?: string;
 }
 
 export interface RefSearchResponse {
@@ -2274,11 +2278,22 @@ export async function deletePage(id: string): Promise<void> {
 }
 
 /**
- * Search entities for autocomplete in the page editor
- * Used when typing [[ to link to entities
+ * Search entities for an `@` mention. `kinds` keeps only those entity types,
+ * `createdAfter` only rows created at or after it; `limit` is capped at 50.
  */
-export function searchRefs(query: string): Promise<RefSearchResponse> {
-	return apiGet<RefSearchResponse>('/pages/search/refs', { q: query });
+export function searchRefs(
+	query: string,
+	opts: { kinds?: string[]; createdAfter?: Date; limit?: number; signal?: AbortSignal } = {},
+): Promise<RefSearchResponse> {
+	return request<RefSearchResponse>('/pages/search/refs', {
+		query: {
+			q: query,
+			kinds: opts.kinds?.join(','),
+			created_after: opts.createdAfter?.toISOString(),
+			limit: opts.limit,
+		},
+		signal: opts.signal,
+	});
 }
 
 /**
