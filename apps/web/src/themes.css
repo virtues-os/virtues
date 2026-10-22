@@ -402,6 +402,10 @@
 	   sidebar panel. They used to disagree (8px mono, 4px split, 6px fallback),
 	   which read as the sidebar being rounded differently from the pages. */
 	--card-radius: 6px;
+	/* The one shadow (design.md, Corners and elevation): every layer that
+	   floats over a page or the shell carries this and no other, at
+	   --card-radius. The chrome and the pane never carry one. */
+	--shadow-float: 0 4px 16px rgba(0, 0, 0, 0.15);
 	--chrome-row-h: 40px;
 	--chrome-tab-h: 28px;
 

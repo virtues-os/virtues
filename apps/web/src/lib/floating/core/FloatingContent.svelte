@@ -63,8 +63,8 @@
 		z-index: var(--z-floating, var(--z-overlay));
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+		border-radius: var(--card-radius);
+		box-shadow: var(--shadow-float);
 		animation: floating-enter var(--motion-enter) var(--ease-premium);
 	}
 

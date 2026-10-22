@@ -106,8 +106,8 @@
 		gap: 3px;
 		min-width: 0;
 		max-width: min(42ch, 100%);
-		padding: 5px 6px 5px 10px;
-		border-radius: 7px;
+		padding: 4px 8px 4px 12px;
+		border-radius: var(--card-radius);
 		cursor: pointer;
 		font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
 		font-size: 0.875rem;
@@ -160,7 +160,7 @@
 		padding: 0.4rem 1.25rem 0.7rem;
 		background: var(--color-surface);
 		border-bottom: 1px solid var(--color-border);
-		box-shadow: 0 14px 28px -10px rgba(0, 0, 0, 0.3);
+		box-shadow: var(--shadow-float);
 		max-height: 60vh;
 		overflow-y: auto;
 		animation: outline-drop 0.16s cubic-bezier(0.22, 1, 0.36, 1);
@@ -170,8 +170,8 @@
 		all: unset;
 		box-sizing: border-box;
 		cursor: pointer;
-		padding: 0.28rem 0.5rem;
-		border-radius: 5px;
+		padding: 4px 8px;
+		border-radius: var(--card-radius);
 		font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
 		font-size: 0.875rem;
 		line-height: 1.35;
@@ -184,12 +184,12 @@
 			background 0.12s ease;
 	}
 	.outline-item:hover {
-		background: color-mix(in srgb, var(--wash-ink) 5%, transparent);
+		background: var(--hover-bg);
 		color: var(--color-foreground-muted);
 	}
+	/* The heading you are in, by ink alone: weight never signals state (design.md). */
 	.outline-item.active {
 		color: var(--color-foreground);
-		font-weight: 500;
 	}
 
 	.level-1 { padding-left: 0.5rem; }
@@ -203,5 +203,12 @@
 	@keyframes outline-fade {
 		from { opacity: 0; }
 		to { opacity: 1; }
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.outline-scrim,
+		.outline-drawer {
+			animation: none;
+		}
 	}
 </style>

@@ -68,7 +68,7 @@
 	}
 
 	.cover-image-wrapper.width-medium {
-		max-width: 42rem;
+		max-width: var(--reading-measure);
 	}
 
 	.cover-image-wrapper.width-full {

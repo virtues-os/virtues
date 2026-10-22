@@ -166,7 +166,11 @@ scan() {
         # §6: "No shadows in the pane." A shadow fakes depth that the spread
         # gets from the painting; every card that grew one read as a widget.
         # `box-shadow: none` is a REMOVAL of a shadow, so it is not one.
-        if (line ~ /box-shadow[ \t]*:/ && line !~ /box-shadow[ \t]*:[ \t]*none/)
+        # `var(--shadow-float)` alone is the one shadow design.md gives a layer
+        # floating over the page (a menu, a popover, a bar), so it is not
+        # counted; any other shadow, a mix or a second layer, still is.
+        if (line ~ /box-shadow[ \t]*:/ && line !~ /box-shadow[ \t]*:[ \t]*none/ \
+            && line !~ /box-shadow[ \t]*:[ \t]*var\(--shadow-float\)[ \t]*;/)
             emit("shadow", line)
 
         # ── 2/3. Type size ────────────────────────────────────────────────

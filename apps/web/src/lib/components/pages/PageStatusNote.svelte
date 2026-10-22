@@ -55,15 +55,15 @@
 		z-index: var(--z-sticky);
 		display: flex;
 		align-items: center;
-		gap: 6px;
-		padding: 5px 10px;
+		gap: 8px;
+		padding: 4px 12px;
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--card-radius);
 		background: var(--color-surface);
 		font-family: var(--font-sans);
 		font-size: 12px;
 		color: var(--color-foreground-muted);
-		box-shadow: 0 4px 12px -6px rgba(0, 0, 0, 0.18);
+		box-shadow: var(--shadow-float);
 		animation: note-in 0.16s ease-out;
 	}
 

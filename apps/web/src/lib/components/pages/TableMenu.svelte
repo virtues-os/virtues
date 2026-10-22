@@ -135,8 +135,9 @@
 		gap: 0;
 		padding: 4px;
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 12px;
+		border-radius: var(--card-radius);
 		background: var(--color-surface);
+		box-shadow: var(--shadow-float);
 	}
 
 	.sep {

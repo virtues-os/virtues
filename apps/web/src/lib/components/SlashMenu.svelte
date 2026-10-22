@@ -158,8 +158,8 @@
 		width: 232px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 12px;
-		box-shadow: 0 10px 32px rgba(0, 0, 0, 0.1);
+		border-radius: var(--card-radius);
+		box-shadow: var(--shadow-float);
 		z-index: var(--z-overlay);
 		overflow: hidden;
 	}

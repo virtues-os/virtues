@@ -614,10 +614,16 @@ describe('the selection toolbar', () => {
 	// reader read Bold the same whether the words were bold or not.
 	it('each mark button says whether its mark is on, and names its key as the keyboard does', () => {
 		const source = read('../components/SelectionToolbar.svelte');
-		expect(source).toMatch(/aria-pressed=\{activeMarks\[btn\.mark\]\}/);
-		expect(source).toMatch(/aria-label=\{btn\.label\}/);
-		expect(source).toMatch(/title=\{btn\.shortcut \? `\$\{btn\.label\} \(\$\{shortcuts\.format\(btn\.shortcut\)\}\)` : btn\.label\}/);
+		expect(source).toMatch(/pressed=\{!!activeMarks\[btn\.mark\]\}/);
+		expect(source).toMatch(/label=\{btn\.label\}/);
+		expect(source).toMatch(/shortcut=\{btn\.shortcut \? shortcuts\.format\(btn\.shortcut\) : undefined\}/);
 		expect(source).not.toMatch(/Cmd\+/);
+		// IconButton says the state and the key, and keeps the name the verb alone.
+		const button = read('../components/IconButton.svelte');
+		expect(button).toMatch(/aria-pressed=\{pressed\}/);
+		expect(button).toMatch(/aria-label=\{label\}/);
+		expect(button).toMatch(/aria-keyshortcuts=\{shortcut\}/);
+		expect(button).toMatch(/title=\{shortcut \? `\$\{label\} \(\$\{shortcut\}\)` : label\}/);
 		expect(shortcuts.format('mod+shift+s')).toBe(isAppleKeyboard ? '⌘⇧S' : 'Ctrl+Shift+S');
 	});
 
@@ -688,10 +694,12 @@ describe('the selection toolbar', () => {
 	// the 44pt bar covered the selection's last line and its end handle.
 	it('on touch the bar itself clears the selection and the handle under it', async () => {
 		const bar = read('../components/SelectionToolbar.svelte');
-		expect(bar).toMatch(/@media \(pointer: coarse\) \{\s+\.toolbar-btn \{\s+width: 44px;\s+height: 44px;/);
-		expect(bar).toMatch(/\.selection-toolbar \{[^}]*padding: 3px;[^}]*border: 1px solid/);
+		const buttons = bar.match(/<IconButton[^>]*>/g) ?? [];
+		expect(buttons.length).toBe(2);
+		for (const b of buttons) expect(b).toMatch(/size=\{touch \? "touch" : "md"\}/);
+		expect(bar).toMatch(/\.selection-toolbar \{[^}]*padding: 4px;[^}]*border: 1px solid/);
 		expect(bar).toMatch(/placement: 'top', offset: TOOLBAR_OFFSET/);
-		expect(TOUCH_TOOLBAR_HEIGHT).toBeGreaterThanOrEqual(44 + 2 * 3 + 2 * 1);
+		expect(TOUCH_TOOLBAR_HEIGHT).toBeGreaterThanOrEqual(44 + 2 * 4 + 2 * 1);
 
 		const end = { left: 110, bottom: 420 };
 		const anchor = selectionToolbarAt({ left: 10, top: 400 }, end, { coarse: true, bottom: 800 });
@@ -1114,9 +1122,10 @@ describe('on a phone', () => {
 		expect(buttons.length).toBeGreaterThan(0);
 		for (const b of buttons) expect(b).toMatch(/size=\{touch \? "touch" : "md"\}/);
 		expect(bar).toMatch(/const touch = typeof window !== "undefined" && !!window\.matchMedia\?\.\("\(pointer: coarse\)"\)\.matches;/);
-		expect(read('../components/SelectionToolbar.svelte')).toMatch(
-			/@media \(pointer: coarse\) \{\s+\.toolbar-btn \{\s+width: 44px;\s+height: 44px;/,
-		);
+		const selection = read('../components/SelectionToolbar.svelte');
+		const selectionButtons = selection.match(/<IconButton[^>]*>/g) ?? [];
+		expect(selectionButtons.length).toBeGreaterThan(0);
+		for (const b of selectionButtons) expect(b).toMatch(/size=\{touch \? "touch" : "md"\}/);
 	});
 
 	// The selection toolbar's Ask AI and `/ai` open the prompt on a phone,

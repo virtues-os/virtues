@@ -173,10 +173,10 @@
 		height: fit-content;
 		padding: 4px 4px 4px 12px;
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 12px;
+		border-radius: var(--card-radius);
 		background: var(--color-surface);
 		color: var(--color-foreground-muted);
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+		box-shadow: var(--shadow-float);
 	}
 
 	.find-row {

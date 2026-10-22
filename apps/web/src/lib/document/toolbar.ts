@@ -22,10 +22,10 @@ import type { EditorView } from '@tiptap/pm/view';
 /** How long a keyboard selection holds still before the toolbar shows. */
 export const KEYBOARD_SHOW_DELAY_MS = 200;
 /**
- * The bar's height on touch: its 44pt buttons, its 3px padding and 1px
+ * The bar's height on touch: its 44pt buttons, its 4px padding and 1px
  * border, and its frame's 1px border (`SelectionToolbar.svelte`).
  */
-export const TOUCH_TOOLBAR_HEIGHT = 44 + 2 * 3 + 2 * 1 + 2 * 1;
+export const TOUCH_TOOLBAR_HEIGHT = 44 + 2 * 4 + 2 * 1 + 2 * 1;
 /** The gap the bar keeps from its anchor. */
 export const TOOLBAR_OFFSET = 8;
 /** Room under a selection's last line for the end handle a phone hangs there. */
