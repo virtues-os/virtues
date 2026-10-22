@@ -132,8 +132,12 @@
 	let unsubRefused: (() => void) | null = null;
 	// Why the server will not sync this page with this editor, once it says so.
 	let refusedReason = $state<string | null>(null);
-	/** The top bar, which the editor's find bar hangs from. */
+	/** The top bar, which the editor's find bar docks in, in the toolbar's place. */
 	let topbarEl = $state<HTMLElement | null>(null);
+	/** Find is docked in the top bar. */
+	let finding = $state(false);
+	/** The page has scrolled from its top: the top bar draws its bottom edge. */
+	let scrolled = $state(false);
 	// Track sync/connection state reactively (subscribed from Yjs stores)
 	let isSynced = $state(false);
 	let isConnected = $state(false);
@@ -655,7 +659,7 @@
 	{:else if pageData}
 		<div class="page-layout">
 			<!-- Top bar: TOC (left) + page actions (right), one classic row -->
-			<div class="page-topbar" data-print="hide" bind:this={topbarEl}>
+			<div class="page-topbar" class:scrolled data-print="hide" bind:this={topbarEl}>
 			<PageOutline
 				headings={outline}
 				nav={treeNav}
@@ -666,6 +670,7 @@
 				<PageProjects url={`/page/${pageId}`} />
 			{/if}
 			<PageToolbar
+				{finding}
 				{icon}
 				{coverUrl}
 				{copied}
@@ -708,6 +713,7 @@
 			<div
 				class="page-content"
 				bind:this={printRootEl}
+				onscroll={(e) => (scrolled = e.currentTarget.scrollTop > 0)}
 				style:--editor-font-family={pageDisplay.fontFamily}
 				style:--editor-font-size={pageDisplay.fontSize}
 				style:--editor-line-height={pageDisplay.lineHeight}
@@ -824,6 +830,7 @@
 									editable={!treeDoc.readOnly && !refusedReason}
 									ai={treeAiDriver}
 									findHost={topbarEl}
+									onFindOpen={(open) => (finding = open)}
 									placeholder="Start writing, or press / for commands…"
 									onDocChange={handleDocChange}
 									onOutline={(h) => (outline = h)}
@@ -886,12 +893,19 @@
 	/* Three columns: projects, the outline's title, the page's actions. The
 	   title sits centred while the row has room and shortens before it
 	   reaches either side, so on a narrow column it never covers an icon. */
+	/* Its bottom edge shows once the page scrolls from its top, so text
+	   passing under the bar meets a line instead of being cut mid-line. */
 	.page-topbar {
 		position: relative;
 		display: grid;
 		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
 		z-index: var(--z-sticky);
+		border-bottom: 1px solid transparent;
+		transition: border-color var(--motion-hover-out) var(--ease-premium);
+	}
+	.page-topbar.scrolled {
+		border-bottom-color: var(--color-border-subtle, var(--color-border));
 	}
 	/* Each in its column of the one row. With a column alone, the grid
 	   places items in source order: the outline (column 2) comes first, so
@@ -921,27 +935,6 @@
 		min-width: 0;
 		overflow-y: auto;
 		padding: 2rem var(--reading-gutter) 4rem;
-		/* Text scrolling up under the toolbar fades over its last 24px instead
-		   of being cut through a line. The fade grows in over the first 24px
-		   of scroll, so a page at its top, cover and all, is not masked.
-		   Where scroll timelines are unsupported the stop stays at 0 and
-		   nothing is masked. */
-		mask-image: linear-gradient(to bottom, transparent 0, #000 var(--page-scroll-fade));
-		animation: page-scroll-fade linear both;
-		animation-timeline: scroll(self);
-		animation-range: 0 24px;
-	}
-
-	@property --page-scroll-fade {
-		syntax: "<length>";
-		inherits: false;
-		initial-value: 0px;
-	}
-
-	@keyframes page-scroll-fade {
-		to {
-			--page-scroll-fade: 24px;
-		}
 	}
 
 	.page-inner {

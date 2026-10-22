@@ -70,6 +70,8 @@
 	import AiPromptPopover from "$lib/components/pages/AiPromptPopover.svelte";
 	import FindBar from "$lib/components/pages/FindBar.svelte";
 	import { portal } from "$lib/actions/portal";
+	import { fade, fly } from "svelte/transition";
+	import { cubicOut } from "svelte/easing";
 	import TableMenu from "$lib/components/pages/TableMenu.svelte";
 	import SuggestionBar from "$lib/components/pages/SuggestionBar.svelte";
 
@@ -95,10 +97,12 @@
 		onOutlineNav?: (nav: OutlineNav | null) => void;
 		onEditorReady?: (editor: Editor | null) => void;
 		/**
-		 * Where the find bar hangs: the page's top bar, so it sits under the
-		 * toolbar's right edge. Without one it floats at the top of the text.
+		 * Where the find bar docks: the page's top bar, where it takes the
+		 * toolbar's place in the row. Without one it floats at the top of the text.
 		 */
 		findHost?: HTMLElement | null;
+		/** Told when the find bar docks in `findHost` and when it leaves, so the toolbar can step aside. */
+		onFindOpen?: (open: boolean) => void;
 	}
 
 	let {
@@ -114,6 +118,7 @@
 		onOutlineNav,
 		onEditorReady,
 		findHost = null,
+		onFindOpen,
 	}: Props = $props();
 
 	const DOC_CHANGE_MS = 300;
@@ -164,6 +169,10 @@
 	let aiIntent = $state<AiIntent>("continue");
 
 	let findOpen = $state(false);
+	$effect(() => onFindOpen?.(findOpen && !!findHost));
+	/** A motion's length, or none when the person asks for reduced motion. */
+	const motion = (ms: number) =>
+		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : ms;
 	let findInitial = $state("");
 
 	let tableAnchor = $state<{ x: number; y: number; width: number } | null>(null);
@@ -684,8 +693,14 @@
 	style:--editor-line-height={pageDisplay.lineHeight}
 >
 	{#if findOpen && editor && findHost}
-		<div class="find-dock" use:portal={findHost}>
-			<FindBar editor={editor} initial={findInitial} {revision} onClose={() => (findOpen = false)} />
+		<!-- In from the right, where the toolbar's icons were; out as they come back. -->
+		<div
+			class="find-dock"
+			use:portal={findHost}
+			in:fly={{ x: 16, duration: motion(160), easing: cubicOut }}
+			out:fade={{ duration: motion(100) }}
+		>
+			<FindBar editor={editor} initial={findInitial} {revision} docked onClose={() => (findOpen = false)} />
 		</div>
 	{:else if findOpen && editor}
 		<FindBar editor={editor} initial={findInitial} {revision} onClose={() => (findOpen = false)} />
@@ -768,14 +783,17 @@
 </div>
 
 <style>
-	/* Under the toolbar's right edge (12px in, as the toolbar is), over the
-	   page: the top bar is the positioned ancestor. */
+	/* In the page toolbar's cell of the top bar's grid (.page-topbar), at its
+	   right edge and 12px in, as the toolbar's own padding is. */
 	.find-dock {
-		position: absolute;
-		top: 100%;
-		right: 12px;
-		margin-top: 4px;
+		grid-row: 1;
+		grid-column: 3;
+		justify-self: end;
+		align-self: center;
+		position: relative;
 		z-index: var(--z-sticky);
+		width: min(360px, calc(100% - 24px));
+		margin-right: 12px;
 	}
 
 	.document-editor {

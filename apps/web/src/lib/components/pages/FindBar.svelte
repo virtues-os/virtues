@@ -1,17 +1,23 @@
 <!--
 	FindBar: find and replace in a block page (lib/document/find.ts). Enter
 	goes to the next match and Shift-Enter to the previous one; Escape closes
-	and leaves the selection on the match last gone to. Match case, a regular
-	expression and whole words are toggles, as in a code editor's search
-	panel. On a page that can be edited, Replace replaces the current
-	match and goes to the next, and Replace all replaces every match as one
-	undo step. The bar floats over the top right of the page and stays there
-	as it scrolls, so opening it does not move the text.
+	and leaves the selection on the match last gone to.
+
+	One row: the field, where you are in the matches, previous and next, a
+	chevron and close. The chevron opens the rest: match case, whole words
+	and a regular expression as toggles, as in a code editor's search panel,
+	and on a page that can be edited Replace (the current match, then the
+	next) and Replace all (every match, one undo step).
+
+	`docked`: the row stands in the page toolbar's place (DocumentEditor
+	hangs it there), drawn as a field in the bar, and the rest drops under
+	the bar as a floating layer. Otherwise the bar floats over the top right
+	of the text and stays there as it scrolls, so opening it does not move
+	the text.
 -->
 <script lang="ts">
 	import { onMount } from "svelte";
 	import type { Editor } from "@tiptap/core";
-	import Icon from "$lib/components/Icon.svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
 	import TextAction from "$lib/components/TextAction.svelte";
 	import { inComposition } from "$lib/utils/ime";
@@ -32,14 +38,18 @@
 		initial?: string;
 		/** Bumped by the host on every update, so the count follows edits. */
 		revision: number;
+		/** Stands in the page toolbar's place, as a field in the bar. */
+		docked?: boolean;
 		onClose: () => void;
 	}
 
-	let { editor, initial = "", revision, onClose }: Props = $props();
+	let { editor, initial = "", revision, docked = false, onClose }: Props = $props();
 
 	let query = $state("");
 	let replacement = $state("");
 	let options = $state<FindOptions>({ caseSensitive: false, regexp: false, wholeWord: false });
+	/** The options and Replace, behind the chevron. */
+	let more = $state(false);
 	let input: HTMLInputElement;
 	// Touch-sized buttons on touch: the row's 28px buttons sit 36px apart,
 	// and their grown hit areas would overlap (IconButton).
@@ -97,6 +107,15 @@
 		}
 	}
 
+	/** Escape from anywhere in the bar (a toggle or the chevron last pressed) closes it, as from its fields. */
+	function onBarKeydown(e: KeyboardEvent) {
+		if (inComposition(e) || e.defaultPrevented) return;
+		if (e.key === "Escape") {
+			e.preventDefault();
+			close();
+		}
+	}
+
 	function onReplaceKeydown(e: KeyboardEvent) {
 		if (inComposition(e)) return;
 		if (e.key === "Enter") {
@@ -110,10 +129,19 @@
 	}
 </script>
 
-<div class="find-anchor" data-print="hide">
-	<div class="find-bar" role="search">
+<div class="find-anchor" class:docked data-print="hide">
+	<!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+	<div class="find-bar" role="search" onkeydown={onBarKeydown}>
 		<div class="find-row">
-			<Icon icon="ri:search-line" width="14" />
+			<!-- First in the row, as a code editor's find puts it: the arrows
+			     beside the count already mean previous and next. -->
+			<IconButton
+				size={touch ? "touch" : "md"}
+				icon={more ? "ri:arrow-down-s-line" : "ri:arrow-right-s-line"}
+				label={editable ? "Options and replace" : "Options"}
+				expanded={more}
+				onclick={() => (more = !more)}
+			/>
 			<input
 				bind:this={input}
 				bind:value={query}
@@ -126,35 +154,41 @@
 				onkeydown={onKeydown}
 			/>
 			<span class="find-status" aria-live="polite">{status}</span>
-			<IconButton size={touch ? "touch" : "md"} icon="ri:font-size" label="Match case" pressed={options.caseSensitive} onclick={() => toggle("caseSensitive")} />
-			<IconButton size={touch ? "touch" : "md"} icon="ri:text" label="Whole words" pressed={options.wholeWord} onclick={() => toggle("wholeWord")} />
-			<IconButton size={touch ? "touch" : "md"} icon="ri:asterisk" label="Regular expression" pressed={options.regexp} onclick={() => toggle("regexp")} />
-			<IconButton size={touch ? "touch" : "md"} icon="ri:arrow-up-s-line" label="Previous match" onclick={() => findPrevious(editor.view)} />
-			<IconButton size={touch ? "touch" : "md"} icon="ri:arrow-down-s-line" label="Next match" onclick={() => findNext(editor.view)} />
-			<IconButton size={touch ? "touch" : "md"} icon="ri:close-line" label="Close find" onclick={close} />
+			<IconButton size={touch ? "touch" : "md"} icon="ri:arrow-up-s-line" label="Previous match" shortcut="⇧⏎" onclick={() => findPrevious(editor.view)} />
+			<IconButton size={touch ? "touch" : "md"} icon="ri:arrow-down-s-line" label="Next match" shortcut="⏎" onclick={() => findNext(editor.view)} />
+			<IconButton size={touch ? "touch" : "md"} icon="ri:close-line" label="Close find" shortcut="Esc" onclick={close} />
 		</div>
-		{#if editable}
-			<div class="find-row">
-				<Icon icon="ri:find-replace-line" width="14" />
-				<input
-					bind:value={replacement}
-					class="find-input"
-					type="text"
-					placeholder="Replace with"
-					aria-label="Replace with"
-					spellcheck="false"
-					onkeydown={onReplaceKeydown}
-				/>
-				<TextAction onclick={() => replaceCurrent(editor.view, replacement)}>Replace</TextAction>
-				<TextAction onclick={() => replaceAll(editor.view, replacement)}>Replace all</TextAction>
+		{#if more}
+			<div class="find-more">
+				<div class="find-options">
+					<IconButton size={touch ? "touch" : "md"} icon="ri:font-size" label="Match case" pressed={options.caseSensitive} onclick={() => toggle("caseSensitive")} />
+					<IconButton size={touch ? "touch" : "md"} icon="ri:text" label="Whole words" pressed={options.wholeWord} onclick={() => toggle("wholeWord")} />
+					<IconButton size={touch ? "touch" : "md"} icon="ri:asterisk" label="Regular expression" pressed={options.regexp} onclick={() => toggle("regexp")} />
+				</div>
+				{#if editable}
+					<div class="find-replace">
+						<input
+							bind:value={replacement}
+							class="find-input"
+							type="text"
+							placeholder="Replace with"
+							aria-label="Replace with"
+							spellcheck="false"
+							onkeydown={onReplaceKeydown}
+						/>
+						<TextAction onclick={() => replaceCurrent(editor.view, replacement)}>Replace</TextAction>
+						<TextAction onclick={() => replaceAll(editor.view, replacement)}>Replace all</TextAction>
+					</div>
+				{/if}
 			</div>
 		{/if}
 	</div>
 </div>
 
 <style>
-	/* Sticky with no height: it keeps the bar in view while the page
-	   scrolls but takes no room, so the bar overlays the text. */
+	/* Floating, the default: sticky with no height, so it keeps the bar in
+	   view while the page scrolls but takes no room, and the bar overlays
+	   the text. */
 	.find-anchor {
 		position: sticky;
 		top: 8px;
@@ -165,13 +199,14 @@
 	}
 
 	.find-bar {
+		position: relative;
 		display: flex;
 		flex-direction: column;
 		gap: 4px;
 		width: fit-content;
 		max-width: 100%;
 		height: fit-content;
-		padding: 4px 4px 4px 12px;
+		padding: 4px;
 		border: 1px solid var(--color-border-subtle, var(--color-border));
 		border-radius: var(--card-radius);
 		background: var(--color-surface);
@@ -181,14 +216,14 @@
 
 	.find-row {
 		display: flex;
-		flex-wrap: wrap;
 		align-items: center;
-		gap: 8px;
+		gap: 4px;
 	}
 
 	.find-input {
-		width: 180px;
+		width: 200px;
 		min-width: 0;
+		margin-left: 4px;
 		border: none;
 		background: transparent;
 		color: var(--color-foreground);
@@ -202,6 +237,71 @@
 		font-variant-numeric: tabular-nums;
 		text-align: right;
 		white-space: nowrap;
+	}
+
+	.find-more {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 4px 0;
+	}
+
+	.find-options,
+	.find-replace {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+
+	.find-options {
+		gap: 4px;
+	}
+
+	.find-replace .find-input {
+		flex: 1;
+		height: 28px;
+		padding: 0 8px;
+		margin-left: 0;
+		border-radius: var(--card-radius);
+		background: var(--hover-bg);
+	}
+
+	/* Docked: the row is a field in the page toolbar's place, the toolbar's
+	   height (28px controls), and the rest drops under the bar. */
+	.find-anchor.docked {
+		position: static;
+		height: auto;
+	}
+
+	.docked .find-bar {
+		padding: 0;
+		border: none;
+		background: transparent;
+		box-shadow: none;
+		width: 100%;
+	}
+
+	.docked .find-row {
+		height: 28px;
+		border-radius: var(--card-radius);
+		background: var(--hover-bg);
+	}
+
+	.docked .find-input {
+		flex: 1;
+		width: auto;
+	}
+
+	.docked .find-more {
+		position: absolute;
+		top: calc(100% + 10px);
+		left: 0;
+		right: 0;
+		padding: 8px;
+		border: 1px solid var(--color-border-subtle, var(--color-border));
+		border-radius: var(--card-radius);
+		background: var(--color-surface);
+		box-shadow: var(--shadow-float);
 	}
 
 	@media print {

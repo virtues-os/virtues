@@ -39,9 +39,12 @@
 		onShare?: () => void;
 		onToggleReferences?: () => void;
 		onDelete: () => void;
+		/** Find stands in the toolbar's place (DocumentEditor's dock): the toolbar steps aside. */
+		finding?: boolean;
 	}
 
 	let {
+		finding = false,
 		icon,
 		iconColor = null,
 		coverUrl,
@@ -75,7 +78,7 @@
   reads clean; rises to full opacity on hover/focus. Page-level actions only
   (icon, cover, display, share); the long tail lives behind ••• overflow.
 -->
-<div class="page-toolbar">
+<div class="page-toolbar" class:finding inert={finding}>
 	<div class="toolbar-spacer"></div>
 
 	<!-- Identity -->
@@ -282,7 +285,22 @@
 </div>
 
 <style>
+	/* Out to the left as find comes in from the right, and back as it goes. */
+	.page-toolbar.finding {
+		opacity: 0;
+		transform: translateX(-8px);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.page-toolbar {
+			transition: none;
+		}
+	}
+
 	.page-toolbar {
+		transition:
+			opacity 120ms var(--ease-premium),
+			transform 120ms var(--ease-premium);
 		display: flex;
 		align-items: center;
 		gap: 4px;

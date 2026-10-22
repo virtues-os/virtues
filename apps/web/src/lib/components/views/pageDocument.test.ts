@@ -188,7 +188,7 @@ describe('PageContent, in its source', () => {
 		expect(page).toMatch(/getPageMarkdown\(pageId\)/);
 		expect(page).toMatch(/<MarkdownView \{pageId\} ydoc=\{treeDoc\.ydoc\} \/>/);
 		expect(page).toMatch(/onPrint=\{format === "tree" && canPrint \? printPage : undefined\}/);
-		expect(page).toMatch(/class="page-topbar" data-print="hide"/);
+		expect(page).toMatch(/class="page-topbar"[^>]*data-print="hide"/);
 		expect(page).toMatch(/class:width-page=/);
 	});
 
