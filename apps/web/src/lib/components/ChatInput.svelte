@@ -1,7 +1,9 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
 	import { onDestroy, onMount } from "svelte";
-	import { Spring } from "svelte/motion";
+	import { Spring, prefersReducedMotion } from "svelte/motion";
+	import { fly } from "svelte/transition";
+	import { cubicOut } from "svelte/easing";
 	import ContextPanel from "$lib/components/chat/ContextPanel.svelte";
 	import type { RefSearchResult } from "$lib/api/client";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
@@ -176,7 +178,19 @@
 	// The `@` query while the editor's `@` trigger is open, else null.
 	let mention = $state<string | null>(null);
 	const showStarters = $derived(starters && focusWithin && inputIsEmpty && !disabled);
-	const trayOpen = $derived(mention !== null || showStarters);
+	type TrayView = "starters" | "context";
+	const trayView = $derived<TrayView | null>(mention !== null ? "context" : showStarters ? "starters" : null);
+	const trayOpen = $derived(trayView !== null);
+	// What the tray draws. While it closes it keeps the last view and query,
+	// so the content folds away with it instead of switching first.
+	let lastView: TrayView | null = null;
+	let lastQuery = "";
+	const shownView = $derived.by(() => (lastView = trayView ?? lastView));
+	const shownQuery = $derived.by(() => (lastQuery = mention ?? lastQuery));
+	// The tray's height follows its content, so opening, closing and moving
+	// between views are all one height transition.
+	let trayContentHeight = $state(0);
+	const viewIn = $derived({ y: 6, duration: prefersReducedMotion.current ? 0 : 200, easing: cubicOut });
 	// Mirror of the editor's markdown, so an external `value` set can be told
 	// apart from our own echo of a keystroke.
 	let docText = "";
@@ -358,27 +372,39 @@
 		role="textbox"
 		tabindex="-1"
 	>
-		<div class="tray" class:open={trayOpen} inert={!trayOpen}>
-			{#if mention !== null}
-				<div class="tray-inner panel">
-					<ContextPanel query={mention} onSelect={pickContext} onClose={closeContext} />
-				</div>
-			{:else}
-				<div class="tray-inner">
-					{#each STARTERS as st (st.id)}
-						<!-- mousedown is held back so the field keeps focus. -->
-						<button
-							type="button"
-							class="starter"
-							onmousedown={(e) => e.preventDefault()}
-							onclick={() => editor?.focus()}
-						>
-							<Icon icon={st.icon} width="15" style="color: inherit" />
-							<span>{st.label}</span>
-						</button>
-					{/each}
-				</div>
-			{/if}
+		<div
+			class="tray"
+			class:open={trayOpen}
+			inert={!trayOpen}
+			style:height="{trayOpen ? trayContentHeight : 0}px"
+		>
+			<div bind:offsetHeight={trayContentHeight}>
+				{#key shownView}
+					<div class="tray-view" class:panel={shownView === "context"} in:fly={viewIn}>
+						{#if shownView === "context"}
+							<ContextPanel
+								query={shownQuery}
+								active={mention !== null}
+								onSelect={pickContext}
+								onClose={closeContext}
+							/>
+						{:else if shownView === "starters"}
+							{#each STARTERS as st (st.id)}
+								<!-- mousedown is held back so the field keeps focus. -->
+								<button
+									type="button"
+									class="starter"
+									onmousedown={(e) => e.preventDefault()}
+									onclick={() => editor?.focus()}
+								>
+									<Icon icon={st.icon} width="15" style="color: inherit" />
+									<span>{st.label}</span>
+								</button>
+							{/each}
+						{/if}
+					</div>
+				{/key}
+			</div>
 		</div>
 
 		<div class="composer-card bg-surface">
@@ -606,37 +632,32 @@
 		border-top-color: var(--color-border);
 	}
 
-	/* Opens by animating the row from 0fr to 1fr, so it needs no measured
-	   height. */
+	/* Closing is quicker than opening and the content fades out before the
+	   height has finished, so nothing is left hanging over the card. */
 	.tray {
-		display: grid;
-		grid-template-rows: 0fr;
-		transition: grid-template-rows var(--motion-enter) var(--ease-premium);
+		height: 0;
+		overflow: hidden;
+		opacity: 0;
+		transition:
+			height 200ms var(--ease-premium),
+			opacity 120ms var(--ease-premium);
 	}
 
 	.tray.open {
-		grid-template-rows: 1fr;
+		opacity: 1;
+		transition:
+			height 260ms var(--ease-premium),
+			opacity 180ms var(--ease-premium) 40ms;
 	}
 
-	.tray-inner {
+	.tray-view {
 		display: flex;
 		align-items: center;
 		gap: 0.25rem;
-		min-height: 0;
-		overflow: hidden;
-		padding: 0 0.5rem;
-		opacity: 0;
-		transition:
-			padding var(--motion-enter) var(--ease-premium),
-			opacity var(--motion-enter) var(--ease-premium);
-	}
-
-	.tray.open .tray-inner {
 		padding: 0.4375rem 0.5rem;
-		opacity: 1;
 	}
 
-	.tray.open .tray-inner.panel {
+	.tray-view.panel {
 		padding: 0.5rem 0.5rem 0.375rem;
 	}
 
@@ -663,7 +684,7 @@
 
 	@media (prefers-reduced-motion: reduce) {
 		.tray,
-		.tray-inner,
+		.tray.open,
 		.composer-card {
 			transition: none;
 		}

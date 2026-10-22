@@ -19,10 +19,13 @@
 
 	let {
 		query,
+		active = true,
 		onSelect,
 		onClose,
 	}: {
 		query: string;
+		/** False while the tray folds it away: it no longer takes keys. */
+		active?: boolean;
 		onSelect: (result: RefSearchResult) => void;
 		onClose: () => void;
 	} = $props();
@@ -69,6 +72,9 @@
 
 	// A short pause, so each keystroke does not send its own search, and
 	// an abort, so a slow answer to an older query cannot replace a newer one.
+	// The first search goes at once: the tray grows to fit what it finds, and
+	// waiting would make it stop at a smaller height first.
+	let first = true;
 	$effect(() => {
 		const q = query;
 		const kinds = TABS.find((t) => t.id === tab)?.kinds;
@@ -93,7 +99,8 @@
 			loading = false;
 			listEl?.scrollTo({ top: 0 });
 			queueMicrotask(updateFade);
-		}, 120);
+		}, first ? 0 : 120);
+		first = false;
 		return () => {
 			clearTimeout(timer);
 			ctrl.abort();
@@ -151,7 +158,7 @@
 	// Only while the field this panel belongs to has the keyboard, and not
 	// while another menu (the date range) is open over it.
 	function onKeydown(e: KeyboardEvent) {
-		if (contextMenu.visible || inComposition(e)) return;
+		if (!active || contextMenu.visible || inComposition(e)) return;
 		const shell = panelEl?.closest(".chat-input-wrapper");
 		if (!shell || !shell.contains(e.target as Node)) return;
 		let handled = true;
@@ -226,7 +233,7 @@
 				{#if failed}
 					Search didn't respond. Check that your server is reachable, then type again.
 				{:else if loading}
-					Searching
+					<!-- Nothing while the first answer is on its way. -->
 				{:else if query}
 					Nothing matches "{query}".
 				{:else}
