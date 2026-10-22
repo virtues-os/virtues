@@ -55,6 +55,28 @@ export interface CitationContext {
 
 	/** Quick lookup by tool_call_id */
 	byToolCallId: Map<string, Citation>;
+
+	/**
+	 * The records this turn's tools returned, by the route an answer links to.
+	 * A link to one of these routes is a citation: the box only lets the model
+	 * link a record a tool showed it.
+	 */
+	byRoute: Map<string, RecordSource>;
+}
+
+/** One record a tool returned in this turn, as the answer's citation card reads it. */
+export interface RecordSource {
+	/** `/record/<ontology>/<id>`, exactly as the tool returned it. */
+	route: string;
+	ontology: string;
+	recordId: string;
+	title?: string;
+	/** The passage the search matched: the text a citation rests on. */
+	passage?: string;
+	timestamp?: string;
+	/** Order within its search, 1 first. */
+	rank?: number;
+	toolCallId: string;
 }
 
 /**

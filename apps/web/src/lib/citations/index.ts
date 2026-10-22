@@ -4,7 +4,7 @@
  */
 
 // Types
-export type { Citation, CitationContext, DisplayInfo, SourceType } from '$lib/types/Citation';
+export type { Citation, CitationContext, DisplayInfo, RecordSource, SourceType } from '$lib/types/Citation';
 
 // Mapping utilities
 export {
@@ -20,6 +20,7 @@ export {
 export {
 	buildCitationContext,
 	buildCitationContextFromParts,
+	citedRoutes,
 	extractToolCallParts,
 	isToolCallPart,
 	hasCitations,

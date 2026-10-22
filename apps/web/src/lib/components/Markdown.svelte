@@ -1,9 +1,13 @@
 <script lang="ts">
-	import type { Component } from 'svelte';
+	import { tick, type Component } from 'svelte';
 	import { Streamdown, theme as streamdownTheme } from 'svelte-streamdown';
 	import type { CitationContext, Citation } from '$lib/types/Citation';
+	import { citedRoutes } from '$lib/citations/builder';
 	import InlineCitation from './citations/InlineCitation.svelte';
+	import CitationCard from './citations/CitationCard.svelte';
 	import Ref from './Ref.svelte';
+	import RefPreview from './RefPreview.svelte';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import LinkChip from './LinkChip.svelte';
 	import MarkdownCodeBlock from './MarkdownCodeBlock.svelte';
 	import Icon from './Icon.svelte';
@@ -72,6 +76,78 @@
 		return preprocessMarkdown(content.replace(/\](\[\d+\])/g, '] $1'));
 	});
 
+	// The citation card. A link to a record or a query this turn's tools
+	// returned is a citation; a click opens one card for the whole answer,
+	// anchored on that link, and the arrow keys step through the answer's
+	// citations in the order it links them.
+	let root = $state<HTMLElement | null>(null);
+	let openRoute = $state<string | null>(null);
+	let openAnchor = $state<HTMLElement | null>(null);
+	let openMark = $state('');
+	const order = $derived(citations ? citedRoutes(content ?? '', citations) : []);
+
+	function openCite(route: string, anchor: HTMLElement) {
+		if (openRoute === route && openAnchor === anchor) {
+			closeCite();
+			return;
+		}
+		openRoute = route;
+		openAnchor = anchor;
+		openMark = anchor.textContent ?? '';
+	}
+
+	function closeCite(how?: 'escape' | 'outside') {
+		const anchor = openAnchor;
+		openRoute = null;
+		openAnchor = null;
+		if (how === 'escape') anchor?.focus();
+	}
+
+	function anchorFor(route: string): HTMLElement | null {
+		return root?.querySelector<HTMLElement>(`[data-cite-route="${CSS.escape(route)}"]`) ?? null;
+	}
+
+	function stepCite(dir: 1 | -1) {
+		if (!openRoute || order.length < 2) return;
+		const at = order.indexOf(openRoute);
+		const next = order[(at + dir + order.length) % order.length];
+		const anchor = anchorFor(next);
+		if (!anchor) return;
+		openRoute = next;
+		openAnchor = anchor;
+		openMark = anchor.textContent ?? '';
+	}
+
+	function onCardKey(e: KeyboardEvent) {
+		if (e.key === 'ArrowRight') {
+			e.preventDefault();
+			stepCite(1);
+		} else if (e.key === 'ArrowLeft') {
+			e.preventDefault();
+			stepCite(-1);
+		}
+	}
+
+	// A reply that is still arriving re-renders its links. Keep the card on
+	// the same citation's new link, or close it if the link is gone.
+	$effect(() => {
+		void processedContent;
+		if (!openRoute) return;
+		tick().then(() => {
+			if (!openRoute || openAnchor?.isConnected) return;
+			const anchor = anchorFor(openRoute);
+			if (anchor) openAnchor = anchor;
+			else closeCite();
+		});
+	});
+
+	const TOOL_ROUTE = /^\/chat\/[^/]+\/tool\/([^/?#]+)$/;
+	const openSource = $derived(openRoute ? citations?.byRoute.get(openRoute) : undefined);
+	const openQuery = $derived.by(() => {
+		const callId = openRoute ? TOOL_ROUTE.exec(openRoute)?.[1] : undefined;
+		return callId ? citations?.byToolCallId.get(callId) : undefined;
+	});
+
 	// TeX (`$…$`, `$$…$$`) is drawn by KaTeX, which Streamdown's math
 	// component loads. It is fetched the first time a reply holds a `$`, so
 	// a reply without math never downloads it. Until it arrives (and when it
@@ -120,7 +196,7 @@
 	} as typeof streamdownTheme;
 </script>
 
-<div class="markdown">
+<div class="markdown" bind:this={root}>
 		<Streamdown
 			content={processedContent}
 			class={variant === "article" ? "streamdown-content prose prose--article" : "streamdown-content prose"}
@@ -201,19 +277,34 @@
 				{@const target = linkTarget(url)}
 				{@const queryCitation = target.kind === 'query' ? citationForToolCall(target.callId) : undefined}
 				{#if queryCitation}
-					<!-- The rows behind a figure. Same quiet dotted form as a
-					     web citation: it is evidence for the number, not a
-					     place to go. -->
+					<!-- The rows behind a figure: a citation like a record's.
+					     A click opens its card; Cmd-click opens the rows. -->
 					<button
 						type="button"
-						class="query-ref"
-						onclick={() => onCitationClick?.(queryCitation)}
+						class="ref-link ref-link--cite"
+						class:is-open={openRoute === url}
+						data-cite-route={url}
+						aria-haspopup="dialog"
+						aria-expanded={openRoute === url}
+						onclick={(e) => {
+							if (e.metaKey || e.ctrlKey) onCitationClick?.(queryCitation);
+							else openCite(url, e.currentTarget);
+						}}
 					>{@render children()}</button>
 				{:else if target.kind === 'query'}
 					<!-- A query ref with no citation in hand (a page, an
 					     answer whose tool calls are not loaded) has no panel
 					     to open, and no route: the figure reads as text. -->
 					<span>{@render children()}</span>
+				{:else if target.kind === 'entity' && citations?.byRoute.has(url)}
+					<!-- A record this turn's tools returned: a citation. -->
+					<Ref
+						displayName={(token.text ?? '').replace(/^@/, '')}
+						url={url}
+						variant="cite"
+						onCite={openCite}
+						active={openRoute === url}
+					/>
 				{:else if target.kind === 'entity'}
 					<!-- `[@X](/entity/id)`: the editor's `@` marks the ref, and
 					     is no part of its name, as in the image form below. -->
@@ -248,6 +339,41 @@
 				{/if}
 			{/snippet}
 	</Streamdown>
+
+	{#if openRoute && openAnchor && (openSource || openQuery)}
+		<RefPreview
+			anchor={openAnchor}
+			type={openSource ? 'record' : null}
+			label={openSource?.title ?? openMark}
+			url={openRoute}
+			pinned
+			prefer="below"
+			width={384}
+			onclose={closeCite}
+			onkeydown={onCardKey}
+		>
+			<CitationCard
+				route={openRoute}
+				source={openSource}
+				query={openQuery}
+				mark={openMark}
+				index={Math.max(0, order.indexOf(openRoute))}
+				total={order.length}
+				onstep={stepCite}
+				onopenbeside={() => {
+					if (openRoute) windowShellStore.openRouteBeside(openRoute, openSource?.title ?? openMark);
+					closeCite();
+				}}
+				onshowrows={openQuery
+					? () => {
+							const q = openQuery;
+							closeCite();
+							if (q) onCitationClick?.(q);
+						}
+					: undefined}
+			/>
+		</RefPreview>
+	{/if}
 </div>
 
 <style>
@@ -278,17 +404,5 @@
 			animation: none !important;
 			opacity: 1 !important;
 		}
-	}
-
-	.markdown :global(.query-ref) {
-		all: unset;
-		cursor: pointer;
-		text-decoration: underline dotted;
-		text-underline-offset: 3px;
-		text-decoration-color: var(--color-foreground-muted);
-	}
-
-	.markdown :global(.query-ref:hover) {
-		text-decoration-style: solid;
 	}
 </style>

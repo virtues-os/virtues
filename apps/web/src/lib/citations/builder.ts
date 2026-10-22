@@ -3,8 +3,11 @@
  * Transforms tool call parts into a citation context for rendering
  */
 
-import type { Citation, CitationContext } from '$lib/types/Citation';
+import type { Citation, CitationContext, RecordSource } from '$lib/types/Citation';
 import { getDisplayInfo, inferSourceType } from './mapping';
+
+const RECORD_ROUTE = /^\/record\/([a-z0-9_]+)\/(.+)$/;
+const TOOL_ROUTE = /^\/chat\/[^/]+\/tool\/([^/?#]+)$/;
 
 /**
  * Tool call part from AI SDK UIMessage
@@ -139,8 +142,37 @@ export function buildCitationContext(toolCallParts: ToolCallPart[]): CitationCon
 	const citations: Citation[] = [];
 	const byId = new Map<string, Citation>();
 	const byToolCallId = new Map<string, Citation>();
+	const byRoute = new Map<string, RecordSource>();
 
 	let index = 1;
+
+	// Every record a tool returned with a `/record/` ref: semantic_search's
+	// results, and the rows of a single-table sql_query. The first sighting
+	// wins, so a record two searches found keeps the passage of the first.
+	const indexRecords = (output: unknown, toolCallId: string) => {
+		if (!output || typeof output !== 'object') return;
+		const body = output as Record<string, unknown>;
+		const lists = [body.results, body.rows].filter(Array.isArray) as unknown[][];
+		for (const list of lists) {
+			for (const item of list) {
+				if (!item || typeof item !== 'object') continue;
+				const r = item as Record<string, unknown>;
+				const route = typeof r.ref === 'string' ? r.ref : '';
+				const m = RECORD_ROUTE.exec(route);
+				if (!m || byRoute.has(route)) continue;
+				byRoute.set(route, {
+					route,
+					ontology: m[1],
+					recordId: m[2],
+					title: typeof r.title === 'string' ? r.title : undefined,
+					passage: typeof r.preview === 'string' ? r.preview : undefined,
+					timestamp: typeof r.timestamp === 'string' ? r.timestamp : undefined,
+					rank: typeof r.rank === 'number' ? r.rank : undefined,
+					toolCallId
+				});
+			}
+		}
+	};
 
 	// Push a citation, assigning it the current running index.
 	const pushCitation = (c: Omit<Citation, 'id'>) => {
@@ -240,6 +272,7 @@ export function buildCitationContext(toolCallParts: ToolCallPart[]): CitationCon
 			// every other tool becomes a single citation. Both go through the shared
 			// citationForSource helper (see the Deep Research path above).
 			citationForSource(toolName, part.input, part.output, part.toolCallId);
+			indexRecords(part.output, part.toolCallId);
 		} catch (error) {
 			// Log error but continue processing other parts
 			console.error('[buildCitationContext] Error processing tool part:', error, part);
@@ -249,8 +282,29 @@ export function buildCitationContext(toolCallParts: ToolCallPart[]): CitationCon
 	return {
 		citations,
 		byId,
-		byToolCallId
+		byToolCallId,
+		byRoute
 	};
+}
+
+/**
+ * The turn's citations in the order the answer first links them: records the
+ * turn's tools returned, and query refs whose call is in the context. Each
+ * route appears once. This is the order the citation card steps through.
+ */
+export function citedRoutes(markdown: string, context: CitationContext): string[] {
+	const seen = new Set<string>();
+	const out: string[] = [];
+	for (const m of markdown.matchAll(/\]\((\/[^)\s]+)\)/g)) {
+		const route = m[1];
+		if (seen.has(route)) continue;
+		const callId = TOOL_ROUTE.exec(route)?.[1];
+		const cited = callId ? context.byToolCallId.has(callId) : context.byRoute.has(route);
+		if (!cited) continue;
+		seen.add(route);
+		out.push(route);
+	}
+	return out;
 }
 
 /**

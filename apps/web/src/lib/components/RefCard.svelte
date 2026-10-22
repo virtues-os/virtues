@@ -21,6 +21,7 @@
 	import { initials } from "$lib/utils/initials";
 	import { refIcon } from "$lib/utils/refRoutes";
 	import { getRefSummary, type RefSummary } from "$lib/utils/refSummary";
+	import RecordCardBody from "$lib/components/RecordCardBody.svelte";
 
 	let { type, label, url, mimeType } = $props<{
 		type: string | null;
@@ -95,9 +96,18 @@
 	// Monogram fallback so an image-less person/org still has a visual anchor
 	// with real mass (Gmail/Notion style) instead of a floating glyph.
 	const usesMonogram = $derived(!cover && (type === "person" || type === "org"));
+
+	// A raw record (`/record/<ontology>/<id>`) shows its own body: what kind of
+	// record it is, and its words.
+	const recordRef = $derived.by(() => {
+		const m = type === "record" && url ? /^\/record\/([a-z0-9_]+)\/(.+)$/.exec(url) : null;
+		return m ? { ontology: m[1], recordId: m[2] } : null;
+	});
 </script>
 
-{#if hasMap && summary?.coords}
+{#if recordRef}
+	<RecordCardBody ontology={recordRef.ontology} recordId={recordRef.recordId} title={label} />
+{:else if hasMap && summary?.coords}
 	<figure class="ref-card ref-figure">
 		<div class="ref-figure-media ref-figure-map">
 			<MovementMap
