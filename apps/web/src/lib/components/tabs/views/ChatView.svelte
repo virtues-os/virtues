@@ -2488,7 +2488,7 @@
 								bind:value={input}
 								disabled={true}
 								sendDisabled={true}
-								maxWidth="max-w-2xl"
+								maxWidth="max-w-full"
 								placeholder="Connect AI above to write here"
 								onSubmit={() => {}}
 							/>
@@ -2501,7 +2501,7 @@
 							disabled={false}
 							sendDisabled={turnPhase.working || (isLocal && !localModel.status.ready)}
 							isStreaming={turnPhase.working}
-							maxWidth="max-w-2xl"
+							maxWidth="max-w-full"
 							placeholder={isLocal ? "Ask the local model" : isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
@@ -2764,14 +2764,16 @@
 		pointer-events: auto;
 	}
 
-	/* The reading width pages use (42rem): about 80 characters of 16px
-	   Avenir a line. Much wider and a reply runs past 90, which tires the
-	   eye. The composer below takes the same width. */
+	/* The reading measure is the TEXT column, 38rem (608px): about 80
+	   characters of 16px Avenir a line, and the same column a page's text
+	   takes, so switching between a chat and a page leaves the left edge
+	   where it was. The 1.5rem side gutter sits outside it, so a narrow pane
+	   loses gutter before it loses measure. The composer below matches. */
 	.messages-container {
-		max-width: 42rem;
+		max-width: calc(var(--reading-measure) + 2 * var(--reading-gutter));
 		margin: 0 auto;
 		width: 100%;
-		padding: 1.5rem 2rem 10rem 2rem;
+		padding: 1.5rem var(--reading-gutter) 10rem var(--reading-gutter);
 		/* The docked composer's measured height (set by the observer in the
 		   script) plus a breath of room, never less than the resting reserve.
 		   The composer overlays the scroller rather than pushing it, so this is
@@ -2803,8 +2805,8 @@
 		right: 0;
 		margin: 0 auto;
 		width: 100%;
-		max-width: 42rem;
-		padding: 0 2rem 2rem 2rem;
+		max-width: calc(var(--reading-measure) + 2 * var(--reading-gutter));
+		padding: 0 var(--reading-gutter) 2rem var(--reading-gutter);
 		/* The composer's resting inset off the window edge. It sat at 78px,
 		   a leftover of "1rem plus the floating tab bar's reserve" kept after
 		   the bar went; on a desktop window that read as the composer

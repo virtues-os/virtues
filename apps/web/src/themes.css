@@ -1661,3 +1661,11 @@
 	--z-context-submenu: 1301; /* its submenu, one above the menu            */
 	--z-tooltip: 1400;       /* tooltips — always on top                     */
 }
+
+/* The reading column, shared by a chat's messages and a page's text: the
+   measure is the text's width (about 80 characters of 16px body), and the
+   gutter is the room either side of it inside the pane. */
+:root {
+	--reading-measure: 38rem;
+	--reading-gutter: 1.5rem;
+}
