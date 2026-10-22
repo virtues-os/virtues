@@ -1011,7 +1011,7 @@
 		right: 0.625rem;
 		font-size: 1rem;
 		line-height: 1.5rem;
-		color: color-mix(in srgb, var(--color-foreground-subtle) 70%, transparent);
+		color: color-mix(in srgb, var(--color-foreground-subtle) 60%, transparent);
 		overflow-wrap: anywhere;
 		pointer-events: none;
 	}
@@ -1214,7 +1214,7 @@
 		float: left;
 		height: 0;
 		pointer-events: none;
-		color: color-mix(in srgb, var(--color-foreground-subtle) 70%, transparent);
+		color: color-mix(in srgb, var(--color-foreground-subtle) 60%, transparent);
 	}
 
 	/* Round icon buttons that sit inside the pill */
