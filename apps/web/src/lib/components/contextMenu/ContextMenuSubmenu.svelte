@@ -235,7 +235,10 @@
 		color: var(--color-error, #ef4444);
 	}
 
-	.menu-item.checked {
+	/* A single choice (a color, a swatch) shades the row it is on. A set of
+	   checkboxes shows only its ticks: five checked rows shaded read as five
+	   highlights. Those rows shade on hover and focus like any other. */
+	.menu-item.checked:not([role='menuitemcheckbox']) {
 		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 	}
 
