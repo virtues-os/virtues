@@ -268,6 +268,7 @@ const TOOLS: Record<string, Presentation> = {
 	edit_applet: { noun: "an applet", depth: 4, say: ["Changing an applet", "Changed an applet"] },
 	delete_applet: { noun: "an applet", depth: 4, say: ["Removing an applet", "Removed an applet"] },
 	run_applet: { noun: "an applet", depth: 4, say: ["Running an applet", "Ran an applet"] },
+	save_skill: { noun: "a skill", depth: 4, say: ["Saving your skill", "Saved your skill"] },
 	update_applet_memory: {
 		noun: "an applet",
 		depth: 4,

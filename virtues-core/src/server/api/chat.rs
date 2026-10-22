@@ -31,6 +31,8 @@ pub fn routes() -> Router<AppState> {
         .route("/api/chats/title", post(generate_chat_title_handler))
         .route("/api/chats/live", get(live_chats_handler))
         .route("/api/chat/opening", get(chat_opening_handler))
+        // The composer's `/` menu
+        .route("/api/skills", get(list_skills_handler))
         .route("/api/chats/:id/seen", post(mark_chat_seen_handler))
         // Chat Usage & Compaction API
         .route("/api/chats/:id/usage", get(get_chat_usage_handler))
@@ -204,6 +206,11 @@ pub async fn delete_chat_handler(
 /// A turn outlives the tab that started it, so only the box can say.
 pub async fn live_chats_handler(State(state): State<AppState>) -> Response {
     Json(serde_json::json!({ "running": state.live_turns.running() })).into_response()
+}
+
+/// GET /api/skills — the shipped skills and the person's own, for the `/` menu.
+pub async fn list_skills_handler() -> Response {
+    Json(crate::api::skills::list()).into_response()
 }
 
 /// GET /api/chat/opening - What the box says first on an empty new chat.

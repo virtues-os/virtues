@@ -17,8 +17,9 @@
 //!
 //! Compiled in with `include_str!` for the same reason tools and personas
 //! are Rust constants: the shipped set needs no installer step and cannot
-//! be missing on a box. Authored skills — the person's own — would live in
-//! the state root beside authored applets, and are not built.
+//! be missing on a box. Authored skills, the person's own, are files in the
+//! same format under the box's state root; `virtues-core`'s `api::skills`
+//! reads and writes them with [`parse`] and [`render`].
 //!
 //! An applet is the same thing run unattended: a prompt, a tool list, a
 //! budget, and a trigger. This format is written so that field can be
@@ -48,11 +49,18 @@ pub struct Skill {
     /// the key is absent) or `model: deep`. A skill picks its tier the way it
     /// picks its tools — by declaring it, not by a router guessing.
     pub slot: crate::models::ModelSlot,
+    /// The icon the composer's `/` menu shows, an `ri:` id. Optional.
+    pub icon: Option<String>,
 }
 
 /// The shipped skill files, as `(name, include_str!("../../../skills/<name>/SKILL.md"))`.
-/// None ship today.
-const SHIPPED: &[(&str, &str)] = &[];
+const SHIPPED: &[(&str, &str)] = &[
+    ("meeting-prep", include_str!("../../../skills/meeting-prep/SKILL.md")),
+    ("morning-brief", include_str!("../../../skills/morning-brief/SKILL.md")),
+    ("new-skill", include_str!("../../../skills/new-skill/SKILL.md")),
+    ("trip-planner", include_str!("../../../skills/trip-planner/SKILL.md")),
+    ("weekly-review", include_str!("../../../skills/weekly-review/SKILL.md")),
+];
 
 /// Every shipped skill. Parsed on each call, like `default_tools()`; the
 /// sources are compiled in, so a parse failure is a build-time mistake
@@ -95,6 +103,7 @@ pub fn parse(src: &str) -> Result<Skill, String> {
     let mut max_cost_usd = None;
     let mut max_minutes = None;
     let mut slot = crate::models::ModelSlot::Standard;
+    let mut icon = None;
     for line in front.lines() {
         let (key, value) = line
             .split_once(':')
@@ -124,6 +133,15 @@ pub fn parse(src: &str) -> Result<Skill, String> {
                     _ => return Err(format!("model: {value:?} is not standard or deep")),
                 }
             }
+            "icon" => {
+                let ok = value.starts_with("ri:")
+                    && value.len() <= 64
+                    && value[3..].chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+                if !ok {
+                    return Err(format!("icon: {value:?} is not an ri: icon id"));
+                }
+                icon = Some(value.to_string());
+            }
             other => return Err(format!("unknown frontmatter key {other:?}")),
         }
     }
@@ -141,7 +159,31 @@ pub fn parse(src: &str) -> Result<Skill, String> {
         max_cost_usd: max_cost_usd.ok_or("max_cost_usd is required")?,
         max_minutes: max_minutes.ok_or("max_minutes is required")?,
         slot,
+        icon,
     })
+}
+
+/// Write a skill back out as a file [`parse`] reads. Single-line fields have
+/// their newlines folded to spaces, because a frontmatter line ends at one.
+pub fn render(skill: &Skill) -> String {
+    let line = |s: &str| s.split_whitespace().collect::<Vec<_>>().join(" ");
+    let mut out = String::from("---\n");
+    out.push_str(&format!("name: {}\n", line(&skill.name)));
+    out.push_str(&format!("description: {}\n", line(&skill.description)));
+    if let Some(icon) = &skill.icon {
+        out.push_str(&format!("icon: {}\n", line(icon)));
+    }
+    out.push_str(&format!("tools: {}\n", skill.tools.join(", ")));
+    out.push_str(&format!("max_steps: {}\n", skill.max_steps));
+    out.push_str(&format!("max_cost_usd: {}\n", skill.max_cost_usd));
+    out.push_str(&format!("max_minutes: {}\n", skill.max_minutes));
+    if skill.slot != crate::models::ModelSlot::Standard {
+        out.push_str(&format!("model: {}\n", skill.slot.as_str()));
+    }
+    out.push_str("---\n");
+    out.push_str(skill.body.trim());
+    out.push('\n');
+    out
 }
 
 #[cfg(test)]
@@ -177,6 +219,24 @@ mod tests {
         assert!(parse("---\nname: x\nbogus: 1\n---\nbody").unwrap_err().contains("bogus"));
         assert!(parse("---\nname: x\n---\nbody").unwrap_err().contains("description"));
         assert!(parse("---\nname: x\nmodel: image\n---\nbody").unwrap_err().contains("standard or deep"));
+        assert!(parse("---\nname: x\nicon: <svg>\n---\nbody").unwrap_err().contains("ri: icon"));
+    }
+
+    /// What `render` writes, `parse` reads back unchanged, so an authored
+    /// skill survives being saved.
+    #[test]
+    fn render_round_trips() {
+        for s in default_skills() {
+            let back = parse(&render(&s)).expect("rendered skill parses");
+            assert_eq!(
+                (&back.name, &back.description, &back.icon, &back.tools, &back.body),
+                (&s.name, &s.description, &s.icon, &s.tools, &s.body)
+            );
+            assert_eq!((back.max_steps, back.max_minutes, back.slot), (s.max_steps, s.max_minutes, s.slot));
+            assert!((back.max_cost_usd - s.max_cost_usd).abs() < 1e-9);
+        }
+        let deep = parse("---\nname: d\ndescription: d\nmax_steps: 1\nmax_cost_usd: 1\nmax_minutes: 1\nmodel: deep\n---\nbody").unwrap();
+        assert_eq!(parse(&render(&deep)).unwrap().slot, crate::models::ModelSlot::Deep);
     }
 
     #[test]

@@ -102,7 +102,7 @@ impl ChatMode {
             "interview" => Self::Interview,
             "local" => Self::Local,
             getting_started::AGENT_MODE => Self::GettingStarted,
-            other => virtues_registry::skills::skill_named(other).map_or(Self::Chat, Self::Skill),
+            other => crate::api::skills::skill_named(other).map_or(Self::Chat, Self::Skill),
         }
     }
 
@@ -431,6 +431,8 @@ pub(crate) mod tests {
             ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], 2_400),
             ("search", &["semantic_search", "web_search"], 2_000),
             ("self", &["update_memory"], 800),
+            // Only inside the shipped `new-skill` skill (`SKILL_ONLY_TOOLS`).
+            ("skills", &["save_skill"], 950),
             ("tasks", &["create_task", "update_task"], 1_500),
             ("sql_write", &["sql_write"], 600),
             // Drawn inside the reply. The kinds and their column contracts are
@@ -459,6 +461,12 @@ pub(crate) mod tests {
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),
+            // The shipped skills, each just above its 2026-10-22 size.
+            ("meeting-prep", 8_400),
+            ("morning-brief", 8_700),
+            ("new-skill", 950),
+            ("trip-planner", 9_000),
+            ("weekly-review", 8_700),
         ];
 
         let size = |t: &serde_json::Value| serde_json::to_string(t).unwrap().chars().count();
