@@ -2527,12 +2527,13 @@
 							sendDisabled={turnPhase.working || (isLocal && !localModel.status.ready)}
 							isStreaming={turnPhase.working}
 							maxWidth="max-w-full"
-							placeholder={isLocal ? "Ask the local model" : isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
+							placeholder={isLocal ? "Ask the local model" : isGhost ? "Ask anything. This chat isn't saved" : undefined}
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
 							agentMode={selectedAgentMode}
 							onModeChange={changeMode}
 							modes={availableModes({ localSupported: localModel.status.supported })}
+							starters={isEmpty}
 						/>
 						{/if}
 
