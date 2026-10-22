@@ -1,6 +1,34 @@
 import tailwindcss from '@tailwindcss/vite';
 import { sveltekit } from '@sveltejs/kit/vite';
-import { defineConfig, loadEnv } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
+
+/**
+ * KaTeX's stylesheet names each of its fonts three times (woff2, woff, ttf),
+ * and the build copies every file a stylesheet names. Every browser the app
+ * runs in reads woff2, the first source, so the woff and ttf files (about
+ * 800 KB, and gzip copies of the ttfs) went into every update and were never
+ * fetched. This keeps the woff2 source alone. It fails the build when the
+ * stylesheet no longer matches, so a KaTeX upgrade cannot quietly bring the
+ * other formats back.
+ */
+function katexWoff2Only(): Plugin {
+	const OTHER_FORMATS = /,url\([^)]*\.woff\) format\("woff"\),url\([^)]*\.ttf\) format\("truetype"\)/g;
+	return {
+		name: 'katex-woff2-only',
+		enforce: 'pre',
+		transform(code, id) {
+			if (!/\/katex\/dist\/katex(\.min)?\.css(\?|$)/.test(id)) return;
+			const faces = code.match(/@font-face/g)?.length ?? 0;
+			const trimmed = code.match(OTHER_FORMATS)?.length ?? 0;
+			if (faces === 0 || trimmed !== faces) {
+				throw new Error(
+					`katex-woff2-only: trimmed ${trimmed} of ${faces} @font-face sources in ${id}; the stylesheet's format changed`
+				);
+			}
+			return { code: code.replace(OTHER_FORMATS, ''), map: null };
+		}
+	};
+}
 
 export default defineConfig(({ mode }) => {
 	// Load env file from project root (../..)
@@ -8,7 +36,7 @@ export default defineConfig(({ mode }) => {
 
 	return {
 		envDir: '../..', // Load .env from project root
-		plugins: [tailwindcss(), sveltekit()],
+		plugins: [katexWoff2Only(), tailwindcss(), sveltekit()],
 		define: {
 			// Build identity, baked at build time — mirrors the box's build.rs.
 			// GIT_COMMIT = full sha; GIT_DESCRIBE = the release tag (CI sets
