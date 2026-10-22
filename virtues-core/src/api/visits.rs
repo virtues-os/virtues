@@ -1,13 +1,16 @@
 //! The visits log and its frecency read.
 //!
-//! `POST /api/visits` records that the owner opened a chat, page or project
-//! by a gesture of their own (migration 0031). The client decides what counts
+//! `POST /api/visits` records that the owner opened a chat, page, project or
+//! applet by a gesture of their own (migration 0031). The client decides what counts
 //! — a tab activated by a click, a row chosen from a panel or ⌘K, held for a
 //! few seconds — and leaves out restores on reload and opens the assistant
 //! made for them. This side only refuses a repeat within a minute, so a
 //! twitchy client or two devices cannot turn one sitting into ten.
 //!
-//! `GET /api/visits/frecency` is the only reader. It scores each record over
+//! `GET /api/visits/recent` gives each record's last visit, newest first, for
+//! the sidebar's Recent.
+//!
+//! `GET /api/visits/frecency` scores each record over
 //! the last [`VISIT_RETENTION_DAYS`] the way Firefox's address bar does: a
 //! visit this week counts in full and one from two months ago a third, so a
 //! page hammered once in March cannot outrank the one opened every morning.
@@ -23,7 +26,11 @@ pub const VISIT_RETENTION_DAYS: i64 = 90;
 /// Two opens of one record inside this window are one visit.
 const DEDUPE_WINDOW: &str = "1 minute";
 
-const KINDS: [&str; 3] = ["chat", "page", "project"];
+const KINDS: [&str; 4] = ["chat", "page", "project", "applet"];
+
+/// How many records `recent` returns. The sidebar shows ten after it drops
+/// pinned and deleted records, so this leaves room for both.
+const RECENT_LIMIT: i64 = 60;
 
 #[derive(Debug, Clone, Deserialize)]
 pub struct RecordVisitRequest {
@@ -42,7 +49,7 @@ pub struct Frecency {
 pub async fn record_visit(pool: &PgPool, req: RecordVisitRequest) -> Result<()> {
     if !KINDS.contains(&req.kind.as_str()) {
         return Err(Error::InvalidInput(format!(
-            "unknown visit kind '{}' (chat | page | project)",
+            "unknown visit kind '{}' (chat | page | project | applet)",
             req.kind
         )));
     }
@@ -63,6 +70,28 @@ pub async fn record_visit(pool: &PgPool, req: RecordVisitRequest) -> Result<()> 
     .await
     .map_err(|e| Error::Database(format!("Failed to record visit: {e}")))?;
     Ok(())
+}
+
+#[derive(Debug, Clone, Serialize, sqlx::FromRow)]
+pub struct RecentVisit {
+    pub kind: String,
+    pub record_id: String,
+    pub last_visited_at: chrono::DateTime<chrono::Utc>,
+}
+
+/// Each visited record's latest visit, newest first.
+pub async fn recent(pool: &PgPool) -> Result<Vec<RecentVisit>> {
+    sqlx::query_as::<_, RecentVisit>(
+        "SELECT kind, record_id, MAX(occurred_at) AS last_visited_at \
+         FROM app_visits \
+         GROUP BY kind, record_id \
+         ORDER BY last_visited_at DESC \
+         LIMIT $1",
+    )
+    .bind(RECENT_LIMIT)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| Error::Database(format!("Failed to read recent visits: {e}")))
 }
 
 /// Every visited record's frecency, highest first. Bucketed by age, summed:

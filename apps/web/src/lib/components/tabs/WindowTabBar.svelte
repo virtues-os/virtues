@@ -470,6 +470,7 @@
 			<div
 				class="tab"
 				class:active={tab.id === activeTabId}
+				class:only={dndItems.length === 1}
 				class:active-in-active-pane={tab.id === activeTabId &&
 					isActivePane}
 				class:pinned={tab.pinned}
@@ -920,8 +921,10 @@
 		flex-shrink: 0;
 	}
 
+	/* A pane's only tab hides its × until you point at it: shown at rest, it
+	   offers to close the one view you have. */
 	.tab:hover .tab-close,
-	.tab.active .tab-close {
+	.tab.active:not(.only) .tab-close {
 		opacity: 1;
 	}
 

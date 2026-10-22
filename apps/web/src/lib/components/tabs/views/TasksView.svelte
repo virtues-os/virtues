@@ -179,6 +179,22 @@
 		if (expanded) void loadHistory(t.id);
 	}
 
+	// `?task=<id>` opens that task, as a Recent row in the sidebar does. Read
+	// once per route, so closing the task afterwards keeps it closed.
+	const linkedTask = $derived(new URL(tab.route, "http://localhost").searchParams.get("task"));
+	let openedLink: string | null = null;
+	$effect(() => {
+		const id = linkedTask;
+		if (!id || id === openedLink || !tasksStore.find(id)) return;
+		openedLink = id;
+		expanded = id;
+		history = [];
+		void loadHistory(id);
+		void tick().then(() =>
+			document.querySelector(`[data-task-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: "nearest" }),
+		);
+	});
+
 	async function loadHistory(id: string) {
 		try {
 			const events = await listTaskEvents(id);
@@ -390,7 +406,7 @@
 {#snippet row(t: Task)}
 	{@const isClosed = t.status === "done" || t.status === "dismissed"}
 	{@const project = t.project_id ? projectName.get(t.project_id) : undefined}
-	<li class="row" class:closed={isClosed} class:dismissed={t.status === "dismissed"} class:open-detail={expanded === t.id}>
+	<li class="row" data-task-id={t.id} class:closed={isClosed} class:dismissed={t.status === "dismissed"} class:open-detail={expanded === t.id}>
 		<div class="row-line">
 			<button
 				type="button"

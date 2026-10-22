@@ -54,8 +54,10 @@
 		setup: '<path d="M4.2 13.8V2.6"/><path d="M4.2 3.1h7.9l-1.9 2.6 1.9 2.6H4.2"/>',
 		home:
 			'<path d="M2.8 7.4 8 3.1l5.2 4.3"/><path d="M4.2 8.5v4.4h7.6V8.5"/><path d="M6.7 12.9V9.8h2.6v3.1"/>',
+		// Two sliders, set differently. A dial with a tick read as a power
+		// button at 16px.
 		settings:
-			'<circle cx="8" cy="8" r="5.2"/><path d="M8 2.8v2.7"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/>',
+			'<path d="M2.8 5.2h5.8M11.8 5.2h1.4M2.8 10.8h1.4M7.4 10.8h5.8"/><circle cx="10.2" cy="5.2" r="1.6"/><circle cx="5.8" cy="10.8" r="1.6"/>',
 
 		// ── The window header's controls ─────────────────────────────────
 		// Interface symbols, the one place the set draws them, at the set's

@@ -1594,7 +1594,7 @@ export function emptyTrash(): Promise<{ deleted_count: number }> {
 // Visits — the frecency log behind ⌘K (`api::visits` on the box)
 // ============================================================================
 
-export type VisitKind = 'chat' | 'page' | 'project';
+export type VisitKind = 'chat' | 'page' | 'project' | 'applet';
 
 export interface Frecency {
 	kind: VisitKind;
@@ -1605,6 +1605,17 @@ export interface Frecency {
 /** POST /api/visits — the owner opened this themselves. 204; the box dedupes a minute. */
 export function recordVisit(kind: VisitKind, recordId: string): Promise<void> {
 	return apiSend<void>('POST', '/visits', { kind, record_id: recordId });
+}
+
+export interface RecentVisit {
+	kind: VisitKind;
+	record_id: string;
+	last_visited_at: string;
+}
+
+/** GET /api/visits/recent — each record's last visit, newest first. */
+export function getRecentVisits(): Promise<RecentVisit[]> {
+	return apiGet<RecentVisit[]>('/visits/recent');
 }
 
 /** GET /api/visits/frecency — every visited record's score, highest first. */

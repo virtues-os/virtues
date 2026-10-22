@@ -519,6 +519,13 @@
 		line-height: normal;
 	}
 
+	/* As the panel's rows: Avenir's medium on a 1x display. */
+	@media (max-resolution: 1.5dppx) {
+		.panel-foot .sidebar-label {
+			font-weight: 500;
+		}
+	}
+
 	.workspace-nav {
 		flex: 1;
 		min-height: 0;

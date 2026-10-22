@@ -51,6 +51,16 @@ export function untitled(kind: string): string {
 	return 'Untitled';
 }
 
+/**
+ * True when a title is a stand-in rather than a name: empty, the plain
+ * "Untitled" a new page is saved with (the box refuses an empty title), or
+ * this kind's own stand-in. Shown muted, so an unnamed thing looks unnamed.
+ */
+export function isUntitled(title: string | null | undefined, kind = ''): boolean {
+	const t = title?.trim() ?? '';
+	return t === '' || t === 'Untitled' || t === untitled(kind);
+}
+
 /** A chat, page or project as this client's stores hold it right now. */
 function storeIdentity(url: string): Identity | null {
 	const owned = ownedRef(url);

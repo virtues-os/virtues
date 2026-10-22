@@ -71,6 +71,7 @@ pub fn routes() -> Router<AppState> {
         // The visits log: what the owner opens, for ⌘K's frecency prior.
         .route("/api/visits", post(record_visit_handler))
         .route("/api/visits/frecency", get(frecency_handler))
+        .route("/api/visits/recent", get(recent_visits_handler))
         // What the owner has shared through the door (`api::publications`).
         .route(
             "/api/publications",
@@ -505,7 +506,7 @@ pub async fn empty_trash_handler(State(state): State<AppState>) -> Response {
 // Visits — the frecency log behind ⌘K (`api::visits`)
 // ============================================================================
 
-/// POST /api/visits — the owner opened a chat, page or project themselves.
+/// POST /api/visits — the owner opened a chat, page, project or applet themselves.
 pub async fn record_visit_handler(
     State(state): State<AppState>,
     Json(req): Json<crate::api::visits::RecordVisitRequest>,
@@ -514,6 +515,11 @@ pub async fn record_visit_handler(
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
         Err(e) => error_response(e),
     }
+}
+
+/// GET /api/visits/recent — each record's last visit, newest first.
+pub async fn recent_visits_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::visits::recent(state.db.pool()).await)
 }
 
 /// GET /api/visits/frecency — every visited record's score, highest first.

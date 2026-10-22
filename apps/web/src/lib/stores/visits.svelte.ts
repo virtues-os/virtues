@@ -8,7 +8,7 @@
  * serves the frecency read that ⌘K ranks by.
  *
  * What counts:
- *   - a chat, page or project route (the three things a person makes);
+ *   - a chat, page, project or applet route;
  *   - reached by a gesture of theirs — the shell marks opens the assistant
  *     made on their behalf, and those are dropped;
  *   - held for a few seconds. Flicking through tabs is not visiting them.
@@ -16,8 +16,12 @@
  *
  * Nothing here is shown. No screen carries the count; the number only
  * orders. "Viewed 14 times" is the register this app refuses.
+ *
+ * It also keeps each record's last visit, which the sidebar's Recent blends
+ * with when the thing itself last changed. A visit updates it here at once,
+ * so Recent moves without waiting for the box.
  */
-import { getFrecency, recordVisit, type VisitKind } from '$lib/api/client';
+import { getFrecency, getRecentVisits, recordVisit, type VisitKind } from '$lib/api/client';
 import { parseRef } from '$lib/utils/refRoutes';
 
 /** How long a route has to stay active before it is a visit. */
@@ -27,8 +31,10 @@ const DEDUPE_MS = 60_000;
 /** The frecency read is cached this long; ⌘K opens refresh it past this. */
 const FRECENCY_TTL_MS = 60_000;
 
-/** Visits are kept for the three things ⌘K ranks: chats, pages, projects. */
+/** Visits are kept for chats, pages and projects (⌘K ranks these) and applets (Recent shows them). */
 function parseVisit(route: string): { kind: VisitKind; id: string } | null {
+	const applet = route.match(/^\/applet\/(applet_[^/?#]+)/);
+	if (applet) return { kind: 'applet', id: applet[1] };
 	const ref = parseRef(route);
 	if (ref && (ref.kind === 'chat' || ref.kind === 'page' || ref.kind === 'project')) {
 		return { kind: ref.kind, id: ref.id };
@@ -39,6 +45,9 @@ function parseVisit(route: string): { kind: VisitKind; id: string } | null {
 class VisitsStore {
 	/** `kind:id` → frecency score, from the box. */
 	private scores = $state<Map<string, number>>(new Map());
+	/** `kind:id` → when it was last visited, ms since the epoch. */
+	private lastAt = $state<Map<string, number>>(new Map());
+	private recentLoad: Promise<void> | null = null;
 	private fetchedAt = 0;
 	private inflight: Promise<void> | null = null;
 
@@ -61,11 +70,35 @@ class VisitsStore {
 			const last = this.lastNoted.get(key) ?? 0;
 			if (now - last < DEDUPE_MS) return;
 			this.lastNoted.set(key, now);
+			this.lastAt = new Map(this.lastAt).set(key, now);
 			// Fire and forget: a lost visit is a lost visit. Logged, never surfaced.
 			recordVisit(visit.kind, visit.id).catch((e) => {
 				console.warn('[visits] not recorded:', e);
 			});
 		}, DWELL_MS);
+	}
+
+	/** When a record was last visited, ms since the epoch; 0 when never. */
+	lastVisit(kind: VisitKind, id: string): number {
+		return this.lastAt.get(`${kind}:${id}`) ?? 0;
+	}
+
+	/** Load the last visits once. Later visits are added locally as they happen. */
+	loadRecent(): Promise<void> {
+		this.recentLoad ??= getRecentVisits()
+			.then((rows) => {
+				const next = new Map(this.lastAt);
+				for (const r of rows) {
+					const key = `${r.kind}:${r.record_id}`;
+					next.set(key, Math.max(next.get(key) ?? 0, Date.parse(r.last_visited_at) || 0));
+				}
+				this.lastAt = next;
+			})
+			.catch((e) => {
+				// An older box has no endpoint; Recent then orders by activity alone.
+				console.warn('[visits] recent visits unavailable:', e);
+			});
+		return this.recentLoad;
 	}
 
 	/** Frecency for one record; 0 when never visited. */

@@ -20,13 +20,13 @@
 	 *             above never grow lists of their own. A pinned project takes
 	 *             a dropped row or tab, which files it there. A pin moves by
 	 *             drag, by Alt and an arrow, or by Move up and Move down.
-	 *   Recent    the chats AND the pages, blended by when they last moved,
-	 *             newest first, ten of them: a glance, not an archive. When
-	 *             there are more, "See all" ends the list and opens All
-	 *             chats. One group: splitting off "Today" cost a heading and
-	 *             a fold for a calendar fact nobody navigated by.
-	 *             The head's filter narrows it to chats or pages, and the
-	 *             label says which.
+	 *   Recent    chats, pages, projects, tasks and applets, blended by when
+	 *             they last changed or you last opened them, newest first,
+	 *             ten of them, with pinned things left out (sidebar/recents).
+	 *             When there are more, "See all" ends the list. One group:
+	 *             splitting off "Today" cost a heading and a fold for a
+	 *             calendar fact nobody navigated by. The head's filter
+	 *             narrows it to one kind, and the label says which.
 	 *
 	 * Every group folds, and its fold is remembered (`sidebarZones`): a folded
 	 * group is a statement about how you want the column to look, not a place
@@ -42,6 +42,9 @@
 	 * project. The server refuses it and the menus never offer it.
 	 */
 	import { onMount, tick } from 'svelte';
+	import { crossfade, slide } from 'svelte/transition';
+	import { flip } from 'svelte/animate';
+	import { cubicOut } from 'svelte/easing';
 	import { chatSessions, type ChatSession } from '$lib/stores/chatSessions.svelte';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { pagesStore } from '$lib/stores/pages.svelte';
@@ -53,7 +56,15 @@
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { promptText } from '$lib/stores/dialog.svelte';
 	import { deleteChat, type PageSummary, type Pin } from '$lib/api/client';
-	import { pinIdentity, renameRef, ownedRef, untitled } from '$lib/refs/identity.svelte';
+	import { pinIdentity, renameRef, ownedRef, untitled, isUntitled } from '$lib/refs/identity.svelte';
+	import {
+		loadRecentSources,
+		recentRows,
+		RECENT_KIND_LABEL,
+		type RecentKind,
+		type RecentRow,
+	} from '$lib/sidebar/recents.svelte';
+	import ThinkingMark from '$lib/components/ThinkingMark.svelte';
 	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin, canPin, pinAtGap } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
@@ -134,51 +145,38 @@
 	// hence the guard on both the list and the in-flight flag.
 	if (!pagesStore.pages.length && !pagesStore.pagesLoading) pagesStore.loadPages();
 
-	/** One row of the recents: a chat or a page, with when it last moved. */
-	type RecentRow =
-		| { kind: 'chat'; key: string; ts: number; session: ChatSession }
-		| { kind: 'page'; key: string; ts: number; page: PageSummary };
+	// Recent: chats, pages, projects, tasks and applets, newest first, with
+	// pinned things left out (sidebar/recents).
+	loadRecentSources();
+	const recents = $derived(recentRows());
 
-	function stamp(iso: string | null | undefined): number {
-		if (!iso) return 0;
-		const t = Date.parse(iso);
-		return Number.isNaN(t) ? 0 : t;
-	}
-
-	/** Chats and pages, newest first, capped as one list. */
-	const recents = $derived.by<RecentRow[]>(() => {
-		const chats: RecentRow[] = chatSessions.sessions.map((session) => ({
-			kind: 'chat',
-			key: `chat:${session.conversation_id}`,
-			// The last message, not the row's last touch: filing or renaming
-			// an old chat must not move it to the top.
-			ts: stamp(session.last_message_at || session.last_updated),
-			session,
-		}));
-		const pages: RecentRow[] = pagesStore.pages.map((page) => ({
-			kind: 'page',
-			key: `page:${page.id}`,
-			ts: stamp(page.updated_at),
-			page,
-		}));
-		return [...chats, ...pages].sort((a, b) => b.ts - a.ts);
-	});
-	// What Recent shows: both kinds, or one. Remembered per browser, like a
+	// What Recent shows: every kind, or one. Remembered per browser, like a
 	// fold, because it says how you want the column to look.
-	type RecentFilter = 'all' | 'chat' | 'page';
+	type RecentFilter = 'all' | RecentKind;
+	const RECENT_FILTERS: { id: RecentFilter; label: string; plural: string; seeAll: () => void }[] = [
+		{ id: 'all', label: 'Everything', plural: 'things', seeAll: () => openAllChats() },
+		{ id: 'chat', label: 'Chats', plural: 'chats', seeAll: () => openAllChats() },
+		{ id: 'page', label: 'Pages', plural: 'pages', seeAll: () => openPages() },
+		{ id: 'project', label: 'Projects', plural: 'projects', seeAll: () => openProjects() },
+		{ id: 'task', label: 'Tasks', plural: 'tasks', seeAll: () => openTasks() },
+		{ id: 'applet', label: 'Applets', plural: 'applets', seeAll: () => openApplets() },
+	];
 	const RECENT_FILTER_KEY = 'virtues-sidebar-recent-filter';
 	let recentFilter = $state<RecentFilter>(readRecentFilter());
+	const filterDef = $derived(RECENT_FILTERS.find((f) => f.id === recentFilter) ?? RECENT_FILTERS[0]);
 
 	function readRecentFilter(): RecentFilter {
 		try {
 			const v = localStorage.getItem(RECENT_FILTER_KEY);
-			return v === 'chat' || v === 'page' ? v : 'all';
+			return RECENT_FILTERS.some((f) => f.id === v) ? (v as RecentFilter) : 'all';
 		} catch {
 			return 'all';
 		}
 	}
 
 	function setRecentFilter(next: RecentFilter) {
+		// A different set of rows, not a change to this one: swap without motion.
+		holdMotion();
 		recentFilter = next;
 		try {
 			localStorage.setItem(RECENT_FILTER_KEY, next);
@@ -192,25 +190,66 @@
 	);
 	const recentsShown = $derived(recentsFiltered.slice(0, RECENTS_CAP));
 	const recentsMore = $derived(recentsFiltered.length > RECENTS_CAP);
-	const recentLabel = $derived(
-		recentFilter === 'chat' ? 'Recent chats' : recentFilter === 'page' ? 'Recent pages' : 'Recent',
-	);
+	const recentLabel = $derived(recentFilter === 'all' ? 'Recent' : `Recent ${filterDef.plural}`);
 
 	function recentFilterMenu(): ContextMenuItem[] {
-		const option = (id: RecentFilter, label: string): ContextMenuItem => ({
-			id: `recent-${id}`,
-			label,
+		return RECENT_FILTERS.map((f) => ({
+			id: `recent-${f.id}`,
+			label: f.label,
 			role: 'menuitemradio',
-			checked: recentFilter === id,
-			action: () => setRecentFilter(id),
-		});
-		return [option('all', 'Chats and pages'), option('chat', 'Chats'), option('page', 'Pages')];
+			checked: recentFilter === f.id,
+			action: () => setRecentFilter(f.id),
+		}));
 	}
 
-	// "See all" goes to the full list of what Recent is showing.
-	function openAllRecents() {
-		if (recentFilter === 'page') openPages();
-		else windowShellStore.openTabFromRoute('/chat-history', { label: 'All chats', focusExisting: true });
+	function openAllChats() {
+		windowShellStore.openTabFromRoute('/chat-history', { label: 'All chats', focusExisting: true });
+	}
+
+	// ── motion ─────────────────────────────────────────────────────────────
+	// Rows move only when you did something: a new chat or page slides in at
+	// the top, and a pinned row travels from Recent to Pinned and back. The
+	// lists arriving on load, and a change of filter, swap in place.
+
+	const MOVE_MS = 200;
+	let motionOn = $state(false);
+	let motionTimer: ReturnType<typeof setTimeout> | undefined;
+
+	/** Hold motion off until the lists settle. */
+	function holdMotion(ms = 400) {
+		motionOn = false;
+		clearTimeout(motionTimer);
+		const reduced = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+		if (!reduced) motionTimer = setTimeout(() => (motionOn = true), ms);
+	}
+	// The stores fill over the first second or so, one after another.
+	holdMotion(1500);
+
+	const [sendRow, receiveRow] = crossfade({
+		duration: MOVE_MS,
+		easing: cubicOut,
+		// A row with no partner (a new chat, one past Recent's ten) opens its
+		// own height instead of crossing the column.
+		fallback: (node) => slide(node, { duration: motionOn ? 160 : 0, easing: cubicOut }),
+	});
+
+	const rowOut = (node: Element, key: string) =>
+		motionOn ? sendRow(node, { key }) : { duration: 0 };
+	const rowIn = (node: Element, key: string) =>
+		motionOn ? receiveRow(node, { key }) : { duration: 0 };
+	const rowFlip = (node: Element, rects: { from: DOMRect; to: DOMRect }) =>
+		flip(node, rects, { duration: motionOn ? MOVE_MS : 0, easing: cubicOut });
+
+	/** The glyph a pin with no chosen mark wears, by what it opens. */
+	function pinKindGlyph(url: string): string {
+		if (/^https?:\/\//i.test(url)) return 'wiki';
+		if (url.startsWith('/chat/')) return 'chats';
+		if (url.startsWith('/project/') || url.startsWith('/notebook/')) return 'projects';
+		if (url.startsWith('/applet')) return 'applets';
+		if (url.startsWith('/tasks')) return 'tasks';
+		if (url.startsWith('/wiki')) return 'wiki';
+		if (url.startsWith('/day/')) return 'day';
+		return 'pages';
 	}
 
 	/** Fold state, keyed so a future group costs one string. */
@@ -429,14 +468,6 @@
 	}
 
 // ── opening rows ───────────────────────────────────────────────────────
-
-	function openChat(s: ChatSession) {
-		windowShellStore.openTabFromRoute(chatRoute(s), { label: titleOf(s), focusExisting: true });
-	}
-
-	function openPage(p: PageSummary) {
-		windowShellStore.openTabFromRoute(pageRoute(p), { label: pageTitle(p), focusExisting: true });
-	}
 
 	/**
 	 * Move a pin, from a drop or the keyboard. The store moves it at once and
@@ -732,6 +763,29 @@
 		return items;
 	}
 
+	/** A Recent row opens its thing, in the tab already showing it if there is one. */
+	function openRecent(row: RecentRow) {
+		windowShellStore.openTabFromRoute(row.url, { label: row.title, focusExisting: true });
+	}
+
+	/** A Recent row's menu is its thing's menu; a task or applet gets the shared verbs. */
+	function recentMenu(row: RecentRow): ContextMenuItem[] {
+		if (row.kind === 'chat') return chatMenu(row.session);
+		if (row.kind === 'page') return pageMenu(row.page);
+		if (row.kind === 'project') return projectRowMenuItems(row.project);
+		return [
+			{
+				id: 'open-beside',
+				label: 'Open beside',
+				icon: 'ri:layout-column-line',
+				action: () => {
+					windowShellStore.openRouteBeside(row.url, row.title);
+				},
+			},
+			pinMenuItem({ url: row.url, label: row.title }),
+		];
+	}
+
 	/** The ⋯ button and the right-click share one menu per row. */
 	function showMenu(e: MouseEvent, items: ContextMenuItem[]) {
 		e.preventDefault();
@@ -895,37 +949,40 @@
 	</button>
 {/snippet}
 
-{#snippet chatRow(session: ChatSession)}
-	{@const url = chatRoute(session)}
-	{@const pinned = isPinned(url)}
-	{@const home = session.project_id ? projectStore.byId(session.project_id) : undefined}
+<!-- One row for every kind. No glyph: Recent is a list of titles, and they
+     start under the group's label. Ten repeated marks would make it a second
+     block of doors. The tooltip says what kind of thing it is. -->
+{#snippet recentRow(row: RecentRow)}
+	{@const pinned = isPinned(row.url)}
+	{@const chatId = row.kind === 'chat' ? row.session.conversation_id : null}
+	{@const home = row.kind === 'chat' && row.session.project_id ? projectStore.byId(row.session.project_id) : undefined}
 	<div
 		class="panel-row panel-row-has-actions"
-		class:active={activeRoute === url}
+		class:active={activeRoute === row.url}
 		role="link"
 		tabindex="0"
-		title={home ? `${titleOf(session)} · ${home.name}` : titleOf(session)}
+		title={`${row.title} · ${home ? home.name : RECENT_KIND_LABEL[row.kind]}`}
 		draggable="true"
-		ondragstart={(e) => startRefDrag(e, url, titleOf(session))}
-		onclick={() => openChat(session)}
+		ondragstart={(e) => {
+			if (projectMemberUrl(row.url)) startRefDrag(e, row.url, row.title);
+			else e.dataTransfer?.setData('text/plain', row.title);
+		}}
+		onclick={() => openRecent(row)}
 		onkeydown={(e) => {
 			if (e.key === 'Enter' || e.key === ' ') {
 				e.preventDefault();
-				openChat(session);
+				openRecent(row);
 			}
 		}}
-		oncontextmenu={(e) => showMenu(e, chatMenu(session))}
+		oncontextmenu={(e) => showMenu(e, recentMenu(row))}
 	>
-		<!-- No glyph: Recent is a list of titles, and they start under the
-		     group's label. Ten repeated marks would make it a second block of
-		     doors. -->
-		<span class="panel-row-text">{titleOf(session)}</span>
-		{#if chatActivity.running(session.conversation_id)}
+		<span class="panel-row-text" class:untitled={row.untitled}>{row.title}</span>
+		{#if chatId && chatActivity.running(chatId)}
 			<span class="row-running" role="img" aria-label="Replying">
-				<Icon icon="ri:loader-4-line" width="14" class="spin" />
+				<ThinkingMark depth={3} size={14} />
 			</span>
 		{:else}
-			{@render unreadDot(session.conversation_id)}
+			{@render unreadDot(chatId)}
 		{/if}
 		<span class="row-actions">
 			<button
@@ -934,7 +991,7 @@
 				class:on={pinned}
 				aria-label={pinned ? 'Unpin' : 'Pin'}
 				title={pinned ? 'Unpin' : 'Pin'}
-				onclick={(e) => quickPin(e, { url, label: titleOf(session), icon: session.icon })}
+				onclick={(e) => quickPin(e, { url: row.url, label: row.title })}
 			>
 				<AtlasIcon name={pinned ? 'pinned' : 'pin'} size={14} bare />
 			</button>
@@ -943,7 +1000,7 @@
 				class="row-action"
 				aria-label="More"
 				title="More"
-				onclick={(e) => showMenuFromButton(e, chatMenu(session))}
+				onclick={(e) => showMenuFromButton(e, recentMenu(row))}
 			>
 				<AtlasIcon name="more" size={14} bare />
 			</button>
@@ -957,51 +1014,6 @@
 	{#if chatId && chatActivity.unread(chatId)}
 		<span class="row-unread" role="img" aria-label="New reply"></span>
 	{/if}
-{/snippet}
-
-{#snippet pageRow(page: PageSummary)}
-	{@const url = pageRoute(page)}
-	{@const pinned = isPinned(url)}
-	<div
-		class="panel-row panel-row-has-actions"
-		class:active={activeRoute === url}
-		role="link"
-		tabindex="0"
-		title={pageTitle(page)}
-		draggable="true"
-		ondragstart={(e) => startRefDrag(e, url, pageTitle(page))}
-		onclick={() => openPage(page)}
-		onkeydown={(e) => {
-			if (e.key === 'Enter' || e.key === ' ') {
-				e.preventDefault();
-				openPage(page);
-			}
-		}}
-		oncontextmenu={(e) => showMenu(e, pageMenu(page))}
-	>
-		<span class="panel-row-text">{pageTitle(page)}</span>
-		<span class="row-actions">
-			<button
-				type="button"
-				class="row-action"
-				class:on={pinned}
-				aria-label={pinned ? 'Unpin' : 'Pin'}
-				title={pinned ? 'Unpin' : 'Pin'}
-				onclick={(e) => quickPin(e, { url, label: pageTitle(page), icon: page.icon })}
-			>
-				<AtlasIcon name={pinned ? 'pinned' : 'pin'} size={14} bare />
-			</button>
-			<button
-				type="button"
-				class="row-action"
-				aria-label="More"
-				title="More"
-				onclick={(e) => showMenuFromButton(e, pageMenu(page))}
-			>
-				<AtlasIcon name="more" size={14} bare />
-			</button>
-		</span>
-	</div>
 {/snippet}
 
 {#if pins.length > 0 || pinnedOpenForDrop}
@@ -1035,6 +1047,9 @@
 				{@const owned = ownedRef(pin.url)}
 				{@const pinProject = owned?.kind === 'project' ? owned.id : null}
 				<div
+					in:rowIn={pin.url}
+					out:rowOut={pin.url}
+					animate:rowFlip
 					class="panel-row panel-row-has-actions"
 					class:active={activeRoute === pin.url}
 					class:drop-target={pinProject !== null &&
@@ -1096,13 +1111,12 @@
 					}}
 					oncontextmenu={(e) => showMenu(e, pinMenu(pin, { x: e.clientX, y: e.clientY }))}
 				>
-					<!-- The mark the user picked, else a solid circle in the pin's
-					     cloth. A filled dot shows its color at 14px where a line
-					     glyph shows only a trace of it, so the pinned list reads by
-					     color at a glance. -->
+					<!-- The mark the user picked, else the glyph of what it opens, in
+					     the pin's cloth. A solid dot read as a status light: red and
+					     amber said error and warning about a page that had neither. -->
 					<span class="row-glyph" aria-hidden="true">
 						{#if pinChat && chatActivity.running(pinChat)}
-							<Icon icon="ri:loader-4-line" width="14" class="spin" />
+							<ThinkingMark depth={3} size={14} />
 						{:else if look.icon && isEmoji(look.icon)}
 							<span class="row-emoji">{look.icon}</span>
 						{:else if look.icon}
@@ -1118,10 +1132,12 @@
 								{/if}
 							</span>
 						{:else}
-							<Icon icon="shape:circle" width="14" style="color: {clothFor({ url: pin.url, color: look.color })}" />
+							<span class="row-kind" style="color: {clothFor({ url: pin.url, color: look.color })}">
+								<AtlasIcon name={pinKindGlyph(pin.url)} size={SHELL_GLYPH_PX} bare />
+							</span>
 						{/if}
 					</span>
-					<span class="panel-row-text">{look.title}</span>
+					<span class="panel-row-text" class:untitled={isUntitled(look.title, look.kind)}>{look.title}</span>
 					{@render unreadDot(pinChat)}
 					<span class="row-actions">
 						<button
@@ -1156,14 +1172,12 @@
 	<div class="sidebar-expandable fold" class:expanded={!folded('recent')} style={foldStyle(recentsShown.length)}>
 		<div class="sidebar-expandable-inner">
 			{#if recentsShown.length === 0}
-				<div class="panel-row panel-empty">{recentFilter === 'page' ? 'No pages yet' : 'No chats yet'}</div>
+				<div class="panel-row panel-empty">No recent {filterDef.plural}</div>
 			{/if}
-			{#each recentsShown as row (row.key)}
-				{#if row.kind === 'chat'}
-					{@render chatRow(row.session)}
-				{:else}
-					{@render pageRow(row.page)}
-				{/if}
+			{#each recentsShown as row (row.url)}
+				<div class="row-slot" in:rowIn={row.url} out:rowOut={row.url} animate:rowFlip>
+					{@render recentRow(row)}
+				</div>
 			{/each}
 		</div>
 	</div>
@@ -1172,7 +1186,7 @@
 <!-- Hidden while Recent is folded: "See all" under a closed heading would
      point at nothing on screen. -->
 {#if recentsMore && !folded('recent')}
-	<button type="button" class="panel-row panel-more" onclick={openAllRecents}>See all</button>
+	<button type="button" class="panel-row panel-more" onclick={() => filterDef.seeAll()}>See all</button>
 {/if}
 
 <div bind:this={spacerEl} class="fold-spacer" style="height: {foldSpacer}px" aria-hidden="true"></div>
@@ -1185,8 +1199,10 @@
 	.group-head {
 		display: flex;
 		align-items: center;
-		height: 24px;
-		margin-top: 12px;
+		/* More air above the label than below it, so it reads as the head of
+		   the rows under it and not the tail of the ones above. */
+		height: 22px;
+		margin-top: 16px;
 		padding-right: 6px;
 		user-select: none;
 	}
@@ -1357,8 +1373,12 @@
 		transition-duration: var(--motion-hover-in);
 	}
 
-	.panel-row.active {
-		background: var(--active-bg);
+	/* Where you are: the page's own white, edged by a hairline, so the row
+	   is made of the same stuff as the card it opened. Hover stays a wash. */
+	.panel-row.active,
+	.panel-row.active:hover {
+		background: var(--color-page);
+		box-shadow: inset 0 0 0 1px var(--color-border);
 	}
 
 	/* A pinned project with something held over it: the row says it will take
@@ -1423,6 +1443,19 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+		/* Dates stack: "13" sits over "11". */
+		font-variant-numeric: tabular-nums;
+	}
+
+	/* A stand-in name ("Untitled", "New chat") looks unnamed. */
+	.panel-row-text.untitled {
+		color: var(--color-foreground-subtle);
+	}
+
+	/* Recent's rows sit in a slot that carries their motion. */
+	.row-slot {
+		display: flex;
+		flex-direction: column;
 	}
 
 	.row-glyph {
@@ -1450,6 +1483,8 @@
 		color: var(--color-foreground-muted);
 	}
 
+	/* It arrives once, and then holds still: a dot that kept pulsing would
+	   say something is still happening. */
 	.row-unread {
 		width: 7px;
 		height: 7px;
@@ -1457,27 +1492,56 @@
 		flex: none;
 		border-radius: 999px;
 		background: var(--color-success);
+		animation: unread-in 180ms var(--ease-premium);
+	}
+
+	@keyframes unread-in {
+		from {
+			transform: scale(0.6);
+			opacity: 0;
+		}
+	}
+
+	/* The marks keep their place under the controls, so the title's width
+	   does not change on hover. */
+	.row-unread,
+	.row-running {
+		transition: opacity var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.panel-row-has-actions:hover :is(.row-unread, .row-running),
 	.panel-row-has-actions:focus-within :is(.row-unread, .row-running) {
-		display: none;
+		opacity: 0;
 	}
 
-	/* The controls appear where the pointer is and nowhere else. Kept in the
-	   flow (not absolutely positioned) so the label's ellipsis makes room for
-	   them; a label under a floating button is a label you cannot read. */
+	/* The controls appear where the pointer is and nowhere else. They float
+	   over the end of the row, and the title fades out under them, so the
+	   title never moves: reflowing it to make room shortened it and jumped its
+	   ellipsis on every hover. */
 	.row-actions {
-		display: none;
+		position: absolute;
+		top: 50%;
+		right: 6px;
+		display: flex;
 		align-items: center;
 		gap: 4px;
-		flex: none;
-		margin-right: -6px;
+		transform: translateY(-50%);
+		opacity: 0;
+		pointer-events: none;
+		transition: opacity var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.panel-row-has-actions:hover .row-actions,
 	.panel-row-has-actions:focus-within .row-actions {
-		display: flex;
+		opacity: 1;
+		pointer-events: auto;
+		transition-duration: var(--motion-hover-in);
+	}
+
+	/* The last 48px of the row hold the controls: the title is clear up to
+	   20px before them and gone under them. */
+	.panel-row-has-actions:is(:hover, :focus-within) .panel-row-text {
+		mask-image: linear-gradient(to left, transparent 42px, #000 62px);
 	}
 
 	.row-action {
@@ -1519,6 +1583,19 @@
 
 	.panel-empty:hover {
 		background: none;
+	}
+
+	/* Avenir's regular is thin at 13px on a 1x display; its medium holds up. */
+	@media (max-resolution: 1.5dppx) {
+		.panel-row {
+			font-weight: 500;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.row-unread {
+			animation: none;
+		}
 	}
 
 	.door-meta {
