@@ -45,6 +45,7 @@
 
 <div
 	class="document-preview"
+	class:prose--article={pageDisplay.article}
 	style:--prose-family={pageDisplay.fontFamily}
 	style:--prose-size={pageDisplay.fontSize}
 	style:--prose-lh={pageDisplay.lineHeight}

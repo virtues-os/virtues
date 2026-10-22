@@ -727,6 +727,7 @@
 			<!-- Main Content Area -->
 			<div
 				class="page-content"
+				class:prose--article={pageDisplay.article}
 				bind:this={printRootEl}
 				onscroll={(e) => (scrolled = e.currentTarget.scrollTop > 0)}
 				style:--prose-family={pageDisplay.fontFamily}

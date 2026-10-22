@@ -686,6 +686,7 @@
 <div
 	bind:this={frame}
 	class="document-editor"
+	class:prose--article={pageDisplay.article}
 	class:doc-page-view={pageDisplay.widthMode === "page"}
 	class:doc-veiled={veil.hiding}
 	style:--prose-family={pageDisplay.fontFamily}

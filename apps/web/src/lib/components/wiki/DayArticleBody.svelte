@@ -529,7 +529,7 @@
 			{:else}
 				<div class="text" use:veiled={{ hiding: veil.hiding, phrases: marked.phrases }}>
 					{#if block.kind === "paragraph"}
-						<div class="markdown markdown--article prose">
+						<div class="markdown prose prose--article">
 							<p>
 								{#each block.sentences as s, j (j)}{#if j > 0 && s.space}{" "}{/if}{#if s.evidence.length}<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions --><span
 											class="s"

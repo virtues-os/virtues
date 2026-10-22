@@ -375,6 +375,37 @@
 	margin-top: 0.5em;
 }
 
+/* ── The article: the record's serif, for a wiki article (a day, a year, a
+   person, a place, an organization, the narrative identity) and a page in
+   Serif mode. Same rules, the other register.
+
+   It redefines the body tokens on itself rather than restating the rules,
+   so every rule above that cites them follows without a second set of
+   selectors to keep in step. */
+
+.prose--article {
+	--md-body-family: var(--md-article-family);
+	--md-body-size: var(--md-article-size);
+	--md-body-lh: var(--md-article-lh);
+}
+
+/* In an article a table is part of the prose: its cells read at the body's
+   size and face, and its header is a quiet label in the regular (the serif
+   is never bold). */
+.prose--article table,
+.prose--article td {
+	font-family: var(--md-body-family);
+	font-size: var(--md-body-size);
+	line-height: 1.45;
+}
+
+.prose--article th {
+	font-family: var(--md-body-family);
+	font-size: 0.8125rem;
+	font-weight: 400;
+	color: var(--color-foreground-muted);
+}
+
 /* ── Images: within the column, on the radius every picture has. */
 
 .prose img {

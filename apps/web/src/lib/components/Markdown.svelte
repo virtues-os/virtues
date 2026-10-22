@@ -33,9 +33,9 @@
 		 * article: a day, a year, a person, a place, an organization, the
 		 * narrative identity.
 		 *
-		 * What the text looks like is prose.css (`.prose`, on Streamdown's root);
-		 * the VALUES live in `--md-*` (themes.css), and the article switch is
-		 * one class in app.css. Every one of these surfaces used to set its own
+		 * What the text looks like is prose.css (`.prose`, on Streamdown's root;
+		 * `.prose--article` for an article); the VALUES live in `--md-*`
+		 * (themes.css). Every one of these surfaces used to set its own
 		 * font-family and font-size locally, which is how they ended up with
 		 * five sizes between them and how the day article ended up in sans.
 		 */
@@ -126,12 +126,12 @@
 	} as typeof streamdownTheme;
 </script>
 
-<div class="markdown" class:markdown--article={variant === "article"}>
+<div class="markdown">
 		<Streamdown
 			content={processedContent}
 			{sources}
 			inlineCitationsMode="list"
-			class="streamdown-content prose"
+			class={variant === "article" ? "streamdown-content prose prose--article" : "streamdown-content prose"}
 			theme={proseTheme}
 			mergeTheme={false}
 			defaultOrigin={origin}
