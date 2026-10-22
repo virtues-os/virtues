@@ -152,7 +152,7 @@ pub enum AppletCmd {
     /// daily spend limit gets `max_llm_cost_per_day = 1.00`. Needs the virtues
     /// server running on this machine.
     Put {
-        /// The applet folder, or `-` for `setup_applet`'s JSON on stdin.
+        /// The applet folder, or `-` for applet setup's JSON on stdin.
         path: String,
         /// Leave it turned off.
         #[arg(long)]
@@ -186,7 +186,7 @@ pub enum AppletCmd {
     /// The same check chat runs before it creates an applet: cron shape, SQL
     /// conditions EXPLAINed, schema DDL dry-run and drift, table names in the
     /// prompt, limit keys. Takes an applet folder (`manifest.toml`,
-    /// `face/index.html`, `schema/NNNN_*.sql`) or `-` for `setup_applet`'s
+    /// `face/index.html`, `schema/NNNN_*.sql`) or `-` for applet setup's
     /// JSON arguments on stdin. Exits 1 when there are findings.
     Check {
         /// The applet folder, or `-` for JSON on stdin.

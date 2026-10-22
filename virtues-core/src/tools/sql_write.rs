@@ -98,6 +98,6 @@ fn fail(msg: &str) -> ToolResult {
     ToolResult::success(serde_json::json!({
         "status": "error",
         "error": msg,
-        "hint": "sql_write can only touch tables in applet_* schemas (create them via setup_applet's schema_sql)",
+        "hint": "sql_write can only touch tables in applet_* schemas (create them with the applet tool's setup action, schema_sql)",
     }))
 }

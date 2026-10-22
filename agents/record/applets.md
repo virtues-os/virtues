@@ -62,18 +62,18 @@ skipped on the morning the box woke at 9:30). Write the condition against the da
 The first design broke it three ways: self-enabling edits, check-failed drafts
 promoted by reconcile, and deleted applets resurrected from their folders:
 
-- `setup_applet` checks **before anything touches disk**; a failed check
+- The `applet` tool's `setup` action checks **before anything touches disk**; a failed check
   creates nothing. Re-calling with the same name is the edit path; another
   name that collapses to the same slug gets a suffix, never an overwrite.
 - **Gate predicate:** a `schedule` or an `api`/`webhook` trigger materializes
   with `default_enabled = false`. Manual, message-driven and face-only applets
   start enabled: storage on your own box is not a boundary, and asking for
   approval on a free read-only view would train people to approve without reading.
-- `edit_applet` refuses `enabled: true` on an ai-owned row and force-disables
+- The `edit` action refuses `enabled: true` on an ai-owned row and force-disables
   one that gains a boundary while enabled. Re-authoring re-gates the same way.
 - The gate is an Enable card in the chat; `enabled` is mirrored into the
-  manifest so a rebuilt database keeps the choice. `delete_applet` removes the
-  folder. Reconcile's `ai` branch never touches `enabled` or `memory`.
+  manifest so a rebuilt database keeps the choice. The `delete` action removes
+  the folder. Reconcile's `ai` branch never touches `enabled` or `memory`.
 
 **A command from an outside agent counts as the owner's approval within that
 agent's session** (2026-10-05). An agent such as Claude Code works on the box through
@@ -97,7 +97,7 @@ applet could mint scheduled applets past every boundary.
 | deliver to the owner | the run's result posts to the chat that authored it |
 | write its own tables | `sql_write` as `virtues_applet_writer`: DML inside `applet_*` schemas only |
 | notes, pages, compute | `update_applet_memory`; `create_page` / `edit_page` / `get_page_content`; `code_interpreter` (jailed) |
-| introspect | `list_applets` / `get_applet`, read-only |
+| introspect | `applet` with `list` or `get`, read-only |
 | be told something | the `message` wake |
 
 **Rule for missing verbs:** if a task needs a verb that is not in the table,

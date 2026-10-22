@@ -3,8 +3,8 @@
 //!
 //! The CLI's read verbs run their tools in the CLI process. Its write verbs
 //! cannot: a page edit has to go through the live Yjs document this process
-//! holds, `setup_applet` reloads this process's applet catalog, and
-//! `run_applet` dispatches through this process's runner. A write made from
+//! holds, applet setup reloads this process's applet catalog, and an
+//! applet run dispatches through this process's runner. A write made from
 //! another process would land in the database behind all three, and the next
 //! save of an open page would put it back.
 //!
@@ -25,7 +25,7 @@ use sha2::{Digest, Sha256};
 
 use crate::middleware::auth::{AuthUser, CONSOLE_DEVICE_ID};
 use crate::server::AppState;
-use crate::tools::{ToolContext, ToolExecutor, CLI_TOOLS, CLI_WRITE_TOOLS};
+use crate::tools::{cli_reads, cli_writes, ToolContext, ToolExecutor};
 
 /// The agent key a call arrived on (`cli/agent_key.rs`), for the audit line.
 /// Trusted only as far as an audit label: only the console reaches this door.
@@ -51,7 +51,7 @@ async fn console_tool_handler(
     }
     // Writes always come here; reads come here from an agent key, whose user
     // has no database of its own.
-    if !CLI_WRITE_TOOLS.contains(&tool.as_str()) && !CLI_TOOLS.contains(&tool.as_str()) {
+    if !cli_writes(&tool, &arguments) && !cli_reads(&tool, &arguments) {
         return refuse(StatusCode::NOT_FOUND, &format!("{tool} is not a CLI verb"));
     }
     let key = headers.get(AGENT_KEY_HEADER).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();

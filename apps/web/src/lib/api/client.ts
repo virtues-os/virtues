@@ -2222,6 +2222,46 @@ export interface RefSearchResult {
 	created_at?: string;
 }
 
+/** A skill as the composer's `/` menu lists it (`GET /api/skills`). */
+export interface SkillSummary {
+	name: string;
+	description: string;
+	icon?: string | null;
+	source: "shipped" | "authored";
+}
+
+export interface SkillList {
+	skills: SkillSummary[];
+	/** The skill that writes skills: the menu's pinned create row. */
+	create?: SkillSummary | null;
+}
+
+/** The skills the `/` menu offers: shipped first, then the person's own. */
+export function listSkills(): Promise<SkillList> {
+	return apiGet<SkillList>("/skills");
+}
+
+/** The question an empty new chat offers (`GET /api/suggestions/current`). */
+export interface SuggestedQuestion {
+	id: string;
+	kind: string;
+	question: string;
+	/** What it is about, attached as mentions when it is used. */
+	refs: { url: string; label: string }[];
+}
+
+export function getSuggestedQuestion(): Promise<{ suggestion: SuggestedQuestion | null }> {
+	return apiGet<{ suggestion: SuggestedQuestion | null }>("/suggestions/current");
+}
+
+/** The suggestion was drawn, sent or put away; the box keeps a ledger. */
+export function recordSuggestionOutcome(
+	id: string,
+	outcome: "shown" | "used" | "dismissed",
+): Promise<{ ok: boolean }> {
+	return apiSend<{ ok: boolean }>("POST", `/suggestions/${encodeURIComponent(id)}/outcome`, { outcome });
+}
+
 export interface RefSearchResponse {
 	results: RefSearchResult[];
 }
@@ -2588,15 +2628,6 @@ export function resolveRefs(urls: string[]): Promise<{ refs: RefIdentity[] }> {
 	return apiSend('POST', '/refs/resolve', { urls });
 }
 
-/** What the box says first on an empty new chat; nulls when nothing stands out. */
-export interface ChatOpening {
-	id: string | null;
-	text: string | null;
-	event_id: string | null;
-}
-export function getChatOpening(): Promise<ChatOpening> {
-	return apiGet('/chat/opening');
-}
 
 /** The chats with a turn running on the box right now, from any device. */
 export function listLiveChats(): Promise<{ running: string[] }> {

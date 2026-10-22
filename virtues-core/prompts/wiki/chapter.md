@@ -50,8 +50,9 @@ the years inside it, plainly, and leave the era unnamed.
 
 ## The shape
 
-**Open with a lede**: one short paragraph saying what this era was. Do not
-begin with the chapter's name, or its dates, on a line of their own — the page
+**Open with a lede**: one short paragraph. If they wrote a summary for the
+era, the lede is that summary, placed as written; otherwise it says what
+happened across the era. Do not begin with the chapter's name, or its dates, on a line of their own — the page
 already carries both above your prose, and the first block you write is taken
 as this article's summary everywhere else in the wiki.
 

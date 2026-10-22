@@ -81,6 +81,7 @@
 		projectMemberUrl,
 		REF_DRAG_TYPE,
 		startRefDrag,
+		setMentionDrag,
 	} from '$lib/utils/projectActions';
 	import { dndManager, PIN_DROP_ATTR, PROJECT_DROP_ATTR, pinGapAt } from '$lib/stores/dndManager.svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -1015,7 +1016,8 @@
 			}}
 			onclick={act.open}
 			onkeydown={(e) => {
-				if (e.key === 'Enter' || e.key === ' ') {
+				// The row's own keys only: Enter on its + presses the +.
+				if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
 					e.preventDefault();
 					act.open();
 					return;
@@ -1110,12 +1112,14 @@
 			draggingRecent = row.url;
 			if (projectMemberUrl(row.url)) startRefDrag(e, row.url, row.title);
 			else e.dataTransfer?.setData('text/plain', row.title);
+			setMentionDrag(e, row.url, row.title);
 		}}
 		ondragend={endDrag}
 		onclick={(e) => openFromRow(e, row.url, row.title, () => openRecent(row))}
 		ondblclick={(e) => renameFromRow(e, row.url, row.title, row.kind)}
 		onkeydown={(e) => {
-			if (e.key === 'Enter' || e.key === ' ') {
+			// The row's own keys only: Enter on Pin or More presses that button.
+			if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
 				e.preventDefault();
 				openRecent(row);
 			} else if (e.key === 'F2') {
@@ -1254,6 +1258,7 @@
 						// still be dropped on a project or into a page.
 						if (projectMemberUrl(pin.url)) startRefDrag(e, pin.url, look.title);
 						else e.dataTransfer?.setData('text/plain', look.title);
+						setMentionDrag(e, pin.url, look.title);
 						if (e.dataTransfer) e.dataTransfer.effectAllowed = 'linkMove';
 					}}
 					ondragend={endDrag}
@@ -1272,7 +1277,8 @@
 					onclick={(e) => openFromRow(e, pin.url, look.title, () => openPin(pin))}
 					ondblclick={(e) => renameFromRow(e, pin.url, look.title, look.kind)}
 					onkeydown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
+						// The row's own keys only: Enter on Unpin or More presses that button.
+						if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
 							e.preventDefault();
 							openPin(pin);
 							return;

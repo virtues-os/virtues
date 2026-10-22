@@ -229,12 +229,14 @@ async fn build_applet_system_prompt(
 
     let datetime = crate::api::profile::local_datetime_line(pool).await;
 
+    // Only what the applet cannot know for itself. Its instruction says what
+    // it is and what to reply with; a role or a reply format stated here
+    // contradicted every applet that defines its own.
     let mut prompt = format!(
-        "You are {assistant_name}, {user_name}'s personal AI assistant, running autonomously.\n\n\
+        "You are {assistant_name}, running on {user_name}'s server as one of their applets, with nobody watching.\n\n\
          Current date/time: {datetime}\n\n\
          <action_instruction>\n{instruction}\n</action_instruction>\n\n\
-         You are running as an action. Use your tools to accomplish your mission. \
-         Log your findings as your response. Be concise and actionable.",
+         Follow the instruction above. If it does not say what to reply with, reply with a short account of what you did and found.",
     );
 
     if let Some(mem) = memory {

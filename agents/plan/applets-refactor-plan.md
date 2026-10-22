@@ -25,11 +25,11 @@ existing one.
    any 5 or 6 field string passes
    ([applet_setup.rs:150](../../virtues-core/src/tools/applet_setup.rs#L150)).
    Every screen still shows the schedule.
-2. **Changes do not stick.** A time changed on the page or by `edit_applet`
-   writes only the row; the next reconcile (boot, any new applet, a source
+2. **Changes do not stick.** A time changed on the page or by the applet tool's
+   `edit` writes only the row; the next reconcile (boot, any new applet, a source
    connect) puts the manifest's value back
    ([applet_templates/mod.rs:1359](../../virtues-core/src/applet_templates/mod.rs#L1359)).
-   Changing the time through `edit_applet` also switches the applet off, and
+   Changing the time through `edit` also switches the applet off, and
    nothing says so
    ([applet_management.rs:138](../../virtues-core/src/tools/applet_management.rs#L138)).
 3. **When it runs, you will not see it.** Output is appended to the chat it was
@@ -81,9 +81,9 @@ existing one.
   needs no Allow prompt and no Enable step: it is on as soon as it is made.
   This replaces the gate in [record/applets.md](../record/applets.md) ("no path
   from model output to an enabled, scheduled row without a user action"), the
-  Allow prompt for `setup_applet`
+  Allow prompt for applet `setup`
   ([executor.rs:344](../../virtues-core/src/tools/executor.rs#L344)), and
-  `edit_applet`'s switch-off. The guard that remains is money: every applet the
+  `edit`'s switch-off. The guard that remains is money: every applet the
   AI makes gets a daily spending cap, shown on its card.
 - **The result lives on the box; notifications point to it.** Every run's
   output is kept as the run and shown on the new chat screen (home and chat

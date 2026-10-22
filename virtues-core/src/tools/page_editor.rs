@@ -569,7 +569,7 @@ impl PageEditorTool {
     /// Editing a page is reversible (versions keep it) and local, so it runs
     /// freely with no permission prompt. Write-permission gating lives in
     /// the executor and applies only to destructive or outbound tools
-    /// (run_applet, delete_applet).
+    /// (applet run and delete, among others).
     pub async fn edit_page(
         &self,
         arguments: serde_json::Value,

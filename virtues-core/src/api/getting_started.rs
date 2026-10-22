@@ -126,7 +126,9 @@ impl GettingStartedState {
     /// open. Cache-stable across turns while nothing changes.
     pub fn render_prompt_block(&self) -> String {
         let mut out = String::from("<getting_started>\n");
-        for s in &self.steps {
+        // The room's prompt names four steps; the timeline is Setup's, and
+        // the room never asks it (see [`script`]).
+        for s in self.steps.iter().filter(|s| s.id != "timeline") {
             let status = match s.status {
                 StepStatus::Done => "done",
                 StepStatus::Open if s.underway => "underway",

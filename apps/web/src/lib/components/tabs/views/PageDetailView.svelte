@@ -24,10 +24,14 @@
 		windowShellStore.updateTab(tab.id, { icon: icon || undefined });
 	}
 
+	// A link inside the page opens in this tab, as any link does, so Back
+	// returns to the page. Only the tab in front of its pane navigates: a
+	// request from anywhere else must not rewrite whichever tab is in front.
 	function handleNavigate(route: string) {
-		// Close this tab and navigate to the new route
-		windowShellStore.closeTab(tab.id);
-		windowShellStore.openTabFromRoute(route);
+		const paneId = windowShellStore.findTabPane(tab.id);
+		const pane = windowShellStore.panes.find((p) => p.id === paneId);
+		if (!paneId || pane?.activeTabId !== tab.id) return;
+		windowShellStore.openHere(route, { paneId });
 	}
 </script>
 

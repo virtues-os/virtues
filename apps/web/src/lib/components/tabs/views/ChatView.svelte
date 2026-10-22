@@ -56,8 +56,7 @@
 	import Composing from "$lib/components/chat/Composing.svelte";
 	import Rail, { topOfElement } from "$lib/components/Rail.svelte";
 	import RestingMark from "$lib/components/chat/RestingMark.svelte";
-	import NewChatSky from "$lib/components/chat/NewChatSky.svelte";
-	import type { ChatOpening } from "$lib/api/client";
+	import NewChatMark from "$lib/components/chat/NewChatMark.svelte";
 	// Getting started — the room after the founder's letter. Same shape as
 	// the interview: the id decides everything, the top of the room is
 	// synthetic and rebuilt from derived state, the cards do the work.
@@ -133,6 +132,13 @@
 	import ComposerTray from "$lib/components/chat/ComposerTray.svelte";
 	import { ChatError } from "$lib/components/chat";
 	import { availableModes, type AgentModeId } from "$lib/config/agentModes";
+	import { skills } from "$lib/stores/skills.svelte";
+	import {
+		getSuggestedQuestion,
+		recordSuggestionOutcome,
+		type SkillSummary,
+		type SuggestedQuestion,
+	} from "$lib/api/client";
 	import LocalModelCard from "$lib/components/chat/local/LocalModelCard.svelte";
 	import LocalStatsLine from "$lib/components/chat/local/LocalStatsLine.svelte";
 	import { localModel } from "$lib/stores/localModel.svelte";
@@ -611,10 +617,10 @@
 
 	// Chat instance - fetched from shared store to survive remounts
 	let chat = $state<Chat>(null!);
-	/** What the box said first on this empty chat, if anything (NewChatSky). */
-	let opening = $state<ChatOpening | null>(null);
-	/** Set only while the first send that replies to the opening is going out. */
-	let openingForSend: string | null = null;
+	/** The question this empty chat offers in its composer (api::suggestions).
+	 *  An hourly job writes it ahead of time, so asking costs nothing. */
+	let suggestion = $state<SuggestedQuestion | null>(null);
+	let suggestionAskedFor: string | null = null;
 	let currentChatConversationId = $state<string | null>(null);
 	/** This view is showing the getting-started room. */
 	const inRoom = $derived(isGettingStartedChat(currentChatConversationId));
@@ -636,8 +642,12 @@
 				// A mode belongs to the chat it was chosen in. Sudo above all
 				// must not follow the view into the next conversation.
 				selectedAgentMode = 'chat';
+				composerSkill = null;
+				turnSkill = null;
+				suggestion = null;
+				suggestionAskedFor = null;
 			}
-			// Get or create new instance with model, space, active page, persona, and agent mode getters
+			// Get or create new instance with model, space, active page, and agent mode getters
 			chat = chatInstances.getOrCreate({
 				conversationId,
 				getModel: () => models.idForWire(),
@@ -645,12 +655,10 @@
 				// context block and the server keeps the binding fresh.
 				getProjectId: () => chatProjectId,
 				getActivePageContext: activePageContext,
-				getPersona: () => selectedPersona,
-				getAgentMode: () => selectedAgentMode,
+				getAgentMode: () => turnSkill ?? selectedAgentMode,
 				getChatMode: () => chatMode,
 				getTemporary: () => isGhost,
 				getThink: () => localThink,
-				getOpening: () => openingForSend,
 			});
 			// The draft this conversation left behind, if the composer is empty.
 			if (!isGhost && !input) {
@@ -880,7 +888,6 @@
 			const tabConversationId = extractConversationId(tab.route);
 
 			let profileDefaultModelId: string | undefined;
-			let profileDefaultPersona: string | undefined;
 
 			const profilePromise = (async () => {
 				try {
@@ -888,11 +895,9 @@
 						standard_model_id?: string;
 						/** The same pin, from a box older than the Standard rename. */
 						chat_model_id?: string;
-						persona?: string;
 					}>();
 					profileDefaultModelId =
 						profile.standard_model_id ?? profile.chat_model_id;
-					profileDefaultPersona = profile.persona;
 				} catch (error) {
 					console.error("Failed to load assistant profile:", error);
 				}
@@ -928,11 +933,7 @@
 					editAllowListStore.init(tabConversationId),
 				]);
 			} else {
-				// New chat - set defaults from profile
 				editAllowListStore.setChatId(conversationId, isGhost);
-				if (profileDefaultPersona) {
-					selectedPersona = profileDefaultPersona;
-				}
 			}
 
 			isLoading = false;
@@ -1081,7 +1082,7 @@
 	let titleDone = $state(false);
 	let refreshDataTimeout: ReturnType<typeof setTimeout> | null = null;
 
-	// Agent mode and persona selection state - used for tool filtering on backend
+	// Agent mode selection, used for tool filtering on the backend.
 	let selectedAgentMode = $state<AgentModeId>('chat');
 	// Local mode's "Think first" switch, sent with each local turn.
 	let localThink = $state(false);
@@ -1090,7 +1091,20 @@
 	function changeMode(mode: AgentModeId) {
 		selectedAgentMode = mode;
 	}
-	let selectedPersona = $state<string>('default');
+
+	// The skill chip in the composer, and the skill the last sent message ran
+	// as. A message that starts with `/name` for a known skill runs that turn
+	// as the skill; approving a tool or regenerating answers the same turn, so
+	// they keep it, and the next message sets it again.
+	let composerSkill = $state<SkillSummary | null>(null);
+	let turnSkill: string | null = null;
+
+	async function skillOf(text: string): Promise<string | null> {
+		const m = /^\/([a-z][a-z0-9-]{1,39})(?=\s|$)/.exec(text);
+		if (!m) return null;
+		if (!skills.loaded) await skills.load();
+		return skills.names.has(m[1]) ? m[1] : null;
+	}
 
 	// Retrieval scope. 'scoped' (grounded in a project's items only) still
 	// exists on the wire and in the retriever — what's gone is the pill above
@@ -1109,6 +1123,28 @@
 	// Derived state for layout mode
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
+
+	// Asked once per empty chat, and kept only if the chat it was asked for
+	// is still the one on screen. A temporary chat, local mode and the
+	// getting-started room show none: each is somewhere a question drawn
+	// from the record does not belong.
+	const suggestionAllowed = $derived(isEmpty && !isGhost && !isLocal && !inRoom);
+	$effect(() => {
+		const askedFor = conversationId;
+		if (!suggestionAllowed || suggestionAskedFor === askedFor) return;
+		suggestionAskedFor = askedFor;
+		getSuggestedQuestion()
+			.then((r) => {
+				if (conversationId === askedFor) suggestion = r.suggestion;
+			})
+			// A box older than suggestions answers 404; the field keeps its placeholder.
+			.catch(() => {});
+	});
+
+	function onSuggestion(id: string, outcome: "shown" | "used" | "dismissed") {
+		if (outcome !== "shown") suggestion = null;
+		recordSuggestionOutcome(id, outcome).catch((e) => console.error("Recording the suggestion failed:", e));
+	}
 
 	// The interview's close. Three witnesses, any one suffices: the tool
 	// result in this session (the transient data part — see chatInstances),
@@ -1602,6 +1638,8 @@
 
 		if (!messageToSend && attachments.count === 0) return;
 
+		turnSkill = await skillOf(messageToSend);
+
 		// After an error the SDK sits in "error" until something clears it,
 		// and nothing did: Send greyed out, Enter queued the text into a chip
 		// that never drained, the draft gone. The next message IS the
@@ -1660,19 +1698,6 @@
 			// later Claude turn failed; Grok did not care). An attachment on
 			// its own is a complete message — no filler words on the person's
 			// behalf.
-			// Replying to the box's opening: it becomes the chat's first turn
-			// here and, from its id, on the box (store_opening in chat.rs).
-			if (opening?.id && opening.text && chat.messages.length === 0 && !isGhost && !isLocal) {
-				chat.messages = [
-					{
-						id: `${opening.id}_${conversationId}`,
-						role: "assistant",
-						parts: [{ type: "text", text: opening.text }],
-					},
-				];
-				openingForSend = opening.id;
-			}
-
 			await chat.sendMessage(
 				files.length > 0
 					? messageToSend
@@ -1682,8 +1707,6 @@
 			);
 
 			handedOff = true;
-			openingForSend = null;
-			opening = null;
 
 			if (chat.messages.length >= 2 && !isGhost && !titleDone) {
 				await generateTitle();
@@ -1999,7 +2022,6 @@
 													toolCalls={turn.toolParts}
 													reasoningContent={turn.reasoning}
 													narration={turn.narration}
-													intent={turn.intent}
 													browseStep={isStreaming
 														? chatInstances.getBrowseStep(conversationId)
 														: undefined}
@@ -2043,7 +2065,7 @@
 											{:else if part.type === "file"}
 												<MessageFile part={part as any} onOpenImage={openLightbox} />
 											{:else if part.type.startsWith("tool-") && (part as any).state === "output-available" && (part as any).output?.permission_needed}
-												<!-- Any gated tool (run_action, delete_action, …) awaiting the user's "I allow" -->
+												<!-- Any gated tool (an applet run or delete, sql_write, …) awaiting the user's "I allow" -->
 												{@const output = (part as any).output}
 												<PageBindingInline
 													entityId={output.entity_id}
@@ -2122,7 +2144,7 @@
 														} : undefined}
 													/>
 												{/if}
-											{:else if part.type === "tool-setup_applet" && (part as any).state === "output-available"}
+											{:else if (part.type === "tool-applet" && (part as any).input?.action === "setup" || part.type === "tool-setup_applet") && (part as any).state === "output-available"}
 											{@const out = (part as any).output}
 											{#if out?.applet_id && out?.status !== "check_failed"}
 												<!-- The gate, in the conversation. An applet that crosses a
@@ -2426,13 +2448,12 @@
 							<ThreeBody onClose={() => (threeBodyOpen = false)} />
 						{/await}
 					{:else if isEmpty && !isGhost && !isLocal && attachments.count === 0}
-						<!-- The opening: today as a small sky and the box's first
-						     sentence, or the mark and word when the day has neither.
-						     Positioned off the midpoint, so it sits above the composer
-						     on the phone and the desktop alike. It yields to staged
-						     attachments, whose chips grow upward from the composer. -->
+						<!-- The mark and word. Positioned off the midpoint, so it sits
+						     above the composer on the phone and the desktop alike. It
+						     yields to staged attachments, whose chips grow upward from
+						     the composer. -->
 						<div class="init-hero" out:fade={{ duration: 200 }}>
-							<NewChatSky bind:opening />
+							<NewChatMark />
 						</div>
 					{/if}
 
@@ -2533,6 +2554,9 @@
 							agentMode={selectedAgentMode}
 							onModeChange={changeMode}
 							modes={availableModes({ localSupported: localModel.status.supported })}
+							bind:skill={composerSkill}
+							suggestion={suggestionAllowed ? suggestion : null}
+							{onSuggestion}
 						/>
 						{/if}
 
@@ -2740,9 +2764,9 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	/* ── The opening ──
+	/* ── The mark on an empty chat ──
 	   Seated above center, so the phone's bottom-docked composer and rising
-	   keyboard never crowd it. What it draws is NewChatSky's. */
+	   keyboard never crowd it. What it draws is NewChatMark's. */
 	.init-hero {
 		position: absolute;
 		left: 0;
@@ -3068,15 +3092,13 @@
 	   not. It read as a UI artifact stuck onto prose, in a green nothing else
 	   in the room uses, and it broke the column's left edge. */
 
-	/* User message card styling — hugs its content (left-aligned). Radius mirrors
-	   the composer's language: big enough that a one-line bubble caps into a pill
-	   (radius ≥ half its height) to match the input, but still leaves flat sides
-	   once the text wraps, so 2+ lines read as a clean rounded rect, not a lozenge. */
+	/* User message card styling — hugs its content (left-aligned). A tinted
+	   fill with no outline: the turn reads as yours by its ground alone, and
+	   sits lighter beside the answer. */
 	.message-wrapper[data-role="user"] {
 		background: var(--color-surface-elevated);
-		border: 1px solid var(--color-border);
-		border-radius: 1.5rem;
-		padding: 10px 16px;
+		border-radius: var(--radius-xl);
+		padding: 8px 14px;
 		width: fit-content;
 		max-width: 80%;
 	}

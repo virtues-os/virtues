@@ -314,7 +314,18 @@ class WindowShellStore {
 		this._skipUrlSync = true;
 
 		try {
-			if (path && path !== '/') {
+			const namesLeft = !!path && path !== '/';
+
+			// An address without ?right= names one pane, as Back from "Open
+			// beside" does. Fold the split first, with the left pane's tab in
+			// front, so the tab you see is the one the address names. Folded
+			// after, the right pane's tab stayed in front under the left's URL.
+			if (!rightRoute && this.isSplit) {
+				if (namesLeft) this.activePaneId = 'left';
+				this.disableSplit();
+			}
+
+			if (namesLeft) {
 				// Walk per-tab history when the URL is an adjacent entry (OS back/forward
 				// mirrors the in-app buttons); otherwise focus-existing / restore.
 				this.reconcilePaneToRoute('left', path);
@@ -328,10 +339,16 @@ class WindowShellStore {
 			} else if (rightRoute) {
 				if (!this.isSplit) {
 					this.enableSplit();
+					// Forward after that Back: the tab that was beside now sits in
+					// the one pane. It moves back to the right, where finding it
+					// would otherwise light it up on the left and leave the right
+					// pane empty.
+					const { effectiveRoute } = this.identityFromRoute(rightRoute);
+					const left = this.panes[0];
+					const beside = left.tabs.find((t) => t.route === effectiveRoute && t.id !== left.activeTabId);
+					if (beside) this.moveTabToPane(beside.id, 'right');
 				}
 				this.reconcilePaneToRoute('right', rightRoute);
-			} else if (this.isSplit) {
-				this.disableSplit();
 			}
 		} finally {
 			this._skipUrlSync = false;

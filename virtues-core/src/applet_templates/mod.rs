@@ -1314,7 +1314,7 @@ async fn upsert_row(
     //           the user and reconcile is a no-op.
     //
     //   ai:     the third branch (authoring plan §E). The folder is written by
-    //           setup_applet, so COMPILED fields (name, agent, condition,
+    //           the applet tool's setup, so COMPILED fields (name, agent, condition,
     //           until, triggers, schedule) overwrite on reconcile — re-setup
     //           IS the edit path and must propagate. OPERATIONAL state is
     //           never touched: `enabled` (the gate lives there; the user

@@ -391,7 +391,7 @@ pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::resul
 }
 
 /// Idempotent grants for the two applet DB roles. Called at server boot and
-/// after each setup_applet schema apply.
+/// after each applet setup's schema apply.
 ///
 /// - `virtues_face_reader`: SELECT on `data_*` / `wiki_*` tables and every
 ///   `applet_*` schema (the faces' read-only bridge), except the ontologies

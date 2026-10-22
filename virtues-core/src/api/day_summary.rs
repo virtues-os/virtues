@@ -74,7 +74,7 @@ DO NOT QUOTE PEOPLE:
 You may READ every message in the dossier, both directions. You may NOT reproduce another person's words in a `summary`. Their text is here so you can cut and name the day correctly, not so it can be printed back. Write what the exchange was ABOUT ("you and <person> settled on coffee at 7:30"), never what either party said in their own words. The owner's own words are the one exception, and even then prefer describing to quoting.
 
 WHAT MAKES A BOUNDARY:
-A boundary is a change of CONTEXT — where you are, what is scheduled, who you are with — never a change of TOPIC. A single conversation at one desk that drifts from work to lunch to weekend plans is ONE event, not three. Do not split on what is being talked about; split on the situation changing.
+A boundary is a change of CONTEXT (where you are, or who you are with), never a change of TOPIC. A schedule alone is never a boundary; see CALENDAR EVENTS ARE INTENTIONS. A single conversation at one desk that drifts from work to lunch to weekend plans is ONE event, not three. Do not split on what is being talked about; split on the situation changing.
 
 MOVEMENT:
 A `[movement]` line is a stretch the owner was actually moving. It says how far in words (nearby, across town, out of town, a long way), and "from X to Y" when both ends are places the owner named. Hard rules:
@@ -86,7 +86,7 @@ When a move has CONTENT (a conversation, a call), headline the span by that cont
 WHAT AN EVENT IS:
 Each event is one of exactly two kinds:
 1. **A definitively understood block** — the dossier evidences a specific, nameable activity.
-   - The `label` is 2-6 specific words the owner would know their own day by, shaped like "Brunch with <person>", "<activity> at <named place>", "Texting <person> from the gate". Use the day's people and its context: what came just before, and what earlier events were called, so the labels read as one day. Name a person in a label only when the record puts them there: on the message thread, on the call, in a corroborated calendar entry. Never a generic label like "Group outing", "Computer session" or "Move toward somewhere" when the evidence says more.
+   - The `label` is 2-6 specific words the owner would know their own day by, shaped like "Brunch with <person>", "<activity> at <named place>", "Texting <person> from the gate". Use the day's people and its context: what came just before, and what earlier events were called, so the labels read as one day. Name a person in a label only when the record puts them in that stretch: on the call, in an exchange on the thread at that hour, or in a corroborated plan. Never a generic label like "Group outing", "Computer session" or "Move toward somewhere" when the evidence says more.
    - The `summary` is one or two plain sentences on what mattered in that stretch: who, what was said or done, and where only when the place has a real name. No mood, no motivation, no invention.
 2. **Unknown** — the dossier does not support a specific classification for this stretch. The `label` is exactly "Unknown" and the `summary` is omitted. Do NOT invent "Morning routine" / "Rest" / "Quiet time" to fill it. A genuine gap is more truthful than a guess.
 
@@ -100,7 +100,7 @@ RULES:
 - The timeline MUST cover the full 24 hours: first event starts "00:00", last ends "24:00", contiguous, no gaps, no overlaps. Fill any stretch the evidence cannot name with a single "Unknown" block.
 - Use 24-hour local time (HH:MM). Do not emit "Sleep" (the system owns it); leave overnight/rest stretches with no waking activity as "Unknown".
 - Event count scales with evidence. A rich, mobile, talkative day might have 10-16 events; a quiet day might have 3-5. Do not pad to a minimum, do not fragment a coherent context to inflate the count.
-- RECENT CONTEXT (if provided) is the last few days' event labels — use it to keep labels consistent across days and to disambiguate a stretch the dossier leaves ambiguous ("Unknown 18:00-19:00" that lines up with a nightly gym pattern), never to invent evidence this day lacks.
+- RECENT CONTEXT (if provided) is the last few days' event labels. Use it to keep labels consistent across days (the same place called the same thing each day), never to name a stretch this day's evidence does not support: a habit is not a trace.
 - The `summary` is the single most load-bearing field: the owner reads it AND it is embedded to measure how unlike their usual the event was. Make it factual and specific, shaped like "You and <person> went over the lease, then met for coffee at <named place>." Not "a pleasant coffee.""#;
 
 

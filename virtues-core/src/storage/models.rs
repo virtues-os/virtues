@@ -107,20 +107,14 @@ pub struct AssistantProfile {
     // .or() fallback then served that snapshot as if the person had pinned it
     // — grok-4.5 outliving its ZDR delisting by a week, breaking every
     // server-side model call routed through it. chat_model_id and
-    // coding_model_id are kept and unread for the same reason (migration 0042).
+    // coding_model_id are kept and unread for the same reason (migration 0042),
+    // as are persona and personas (retired in migration 0035).
     pub lite_model_id: Option<String>,
     pub standard_model_id: Option<String>,
     pub deep_model_id: Option<String>,
     pub image_model_id: Option<String>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
-    /// Retired persona id. Unread by the prompt since migration 0035; kept a
-    /// release so an older client that still writes it does not fail.
-    pub persona: Option<String>,
-    /// Retired persona definitions: { "items": [...], "hidden": [...] }.
-    /// Unread by the prompt since migration 0035, same reason as `persona`.
-    /// Column is `jsonb` — bind as `serde_json::Value`, not String.
-    pub personas: Option<serde_json::Value>,
     /// How the owner wants to be spoken to, in their own words. Added beneath
     /// the assistant's character in the prompt, never in place of it.
     /// NULL = no notes. Migration 0035.

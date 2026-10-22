@@ -213,7 +213,12 @@
 		sidebarState.resizing = resizing;
 	});
 	let dragStartX = 0;
+	let dragStartY = 0;
 	let dragStartWidth = 0;
+	// The farthest the pointer got from where it pressed, in either axis. A
+	// drag out and back ends where it started, so the release point alone
+	// can't tell it from a click.
+	let dragTravel = 0;
 	// The UNCLAMPED width the pointer is asking for. The stored width is clamped
 	// to [MIN, MAX], so it can't tell us the user has dragged well past the
 	// floor — which is exactly the gesture that should close the sidebar.
@@ -226,11 +231,16 @@
 	const CLICK_SLOP_PX = 3;
 
 	function onResizeStart(e: PointerEvent) {
+		// The primary button only: a right-click or a two-finger tap would
+		// otherwise count as a click on release and hide the sidebar.
+		if (e.button !== 0) return;
 		hideTip();
 		resizing = true;
 		dragStartX = e.clientX;
+		dragStartY = e.clientY;
 		dragStartWidth = sidebarState.width;
 		dragIntent = dragStartWidth;
+		dragTravel = 0;
 		try {
 			(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
 		} catch {
@@ -242,6 +252,13 @@
 
 	function onResizeMove(e: PointerEvent) {
 		if (!resizing) return;
+		// No button held means the release went somewhere this element never
+		// heard about. End the drag here, or plain hovering would resize.
+		if (e.buttons === 0) {
+			stopDrag();
+			return;
+		}
+		dragTravel = Math.max(dragTravel, Math.abs(e.clientX - dragStartX), Math.abs(e.clientY - dragStartY));
 		dragIntent = dragStartWidth + (e.clientX - dragStartX);
 		// The setter clamps, so the panel stops at the floor while the pointer
 		// keeps going — the drag feels like it hit a wall rather than jittering.
@@ -251,24 +268,30 @@
 
 	function onResizeEnd(e: PointerEvent) {
 		if (!resizing) return;
-		resizing = false;
+		// Decided on release, not mid-drag: collapsing while the pointer is still
+		// down would yank the handle out from under it and drop the capture.
+		// A press that never moved is a click, and the tooltip promises a click
+		// hides the sidebar. Otherwise release does what the grip showed: it
+		// closes only when the grip was armed. Decided before the capture is
+		// released, since losing capture ends the drag.
+		const clicked = Math.max(dragTravel, Math.abs(e.clientX - dragStartX)) < CLICK_SLOP_PX;
+		const close = clicked || collapseArmed;
+		stopDrag();
 		try {
 			(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
 		} catch {
 			// Capture can already be gone if the pointer left the window.
 		}
-		// Decided on release, not mid-drag: collapsing while the pointer is still
-		// down would yank the handle out from under it and drop the capture.
-		// A press that barely moved is a click, and the tooltip promises a click
-		// hides the sidebar.
-		// Release does what the grip showed: closing only when it was armed.
-		const clicked = Math.abs(e.clientX - dragStartX) < CLICK_SLOP_PX;
-		const close = clicked || collapseArmed;
-		collapseArmed = false;
 		if (close) {
 			sidebarState.width = dragStartWidth;
 			sidebarState.collapsed = true;
 		}
+	}
+
+	/** End the drag where it is, deciding nothing. */
+	function stopDrag() {
+		resizing = false;
+		collapseArmed = false;
 	}
 
 	// ── The seam's tooltip ────────────────────────────────────
@@ -292,9 +315,12 @@
 		tipAt = null;
 	}
 
-	// Collapsing unmounts the seam before pointerleave can fire.
+	// Collapsing unmounts the seam before pointerleave or pointerup can fire:
+	// ⌘B or the header button can close the sidebar mid-drag.
 	$effect(() => {
-		if (isCollapsed) hideTip();
+		if (!isCollapsed) return;
+		hideTip();
+		stopDrag();
 	});
 
 	// design.md: any drag affordance needs a keyboard path, because HTML5 drag
@@ -349,7 +375,6 @@
 			// is chrome, and chrome paints nothing of its own (design.md).
 			"mb-2 ml-2 overflow-hidden",
 			"sidebar-column",
-			isCollapsed ? "pointer-events-none" : "",
 			// Dimmed while releasing the seam would close the sidebar.
 			"transition-opacity duration-150 ease-[var(--ease-premium)]",
 			collapseArmed ? "opacity-50" : "",
@@ -359,7 +384,10 @@
 
 <aside class={sidebarClass} style="width: {asideWidth}px">
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class={panelColumnClass} style="width: {panelWidth}px; min-width: {panelWidth}px" onkeydown={onColumnKey}>
+	<!-- Closed, the column is inert: still in the page while the width
+	     animates, but out of the Tab order, the pointer's reach and the
+	     accessibility tree. -->
+	<div class={panelColumnClass} style="width: {panelWidth}px; min-width: {panelWidth}px" inert={isCollapsed} onkeydown={onColumnKey}>
 		<nav class="workspace-nav">
 			{#if !storeReady}
 				<div class="loading-state">
@@ -416,7 +444,8 @@
 			onpointerdown={onResizeStart}
 			onpointermove={onResizeMove}
 			onpointerup={onResizeEnd}
-			onpointercancel={onResizeEnd}
+			onpointercancel={() => resizing && stopDrag()}
+			onlostpointercapture={() => resizing && stopDrag()}
 			onkeydown={onResizeKey}
 		><span class="sidebar-resizer-grip" aria-hidden="true"></span></div>
 	{/if}

@@ -41,6 +41,10 @@ name = "day_summary_eod"
 path = "day_summary_eod/main.rs"
 
 [[bin]]
+name = "suggested_questions"
+path = "suggested_questions/main.rs"
+
+[[bin]]
 name = "embedding_index"
 path = "embedding_index/main.rs"
 

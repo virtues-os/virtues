@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { slide } from 'svelte/transition';
 	import Ref from './Ref.svelte';
+	import Icon from './Icon.svelte';
 	import { parseEntityRoute } from '$lib/utils/refRoutes';
+	import { skills } from '$lib/stores/skills.svelte';
 
 	let { text }: { text: string } = $props();
 
@@ -32,7 +34,20 @@
 		return out;
 	}
 
-	const segments = $derived(segment(text));
+	// A message sent with a skill starts with its `/name` (ChatInput), which
+	// shows as the badge the composer drew. Any other leading slash is text.
+	const SKILL = /^\/([a-z][a-z0-9-]{1,39})(?=\s|$)/;
+	const skillName = $derived(SKILL.exec(text)?.[1] ?? null);
+	$effect(() => {
+		if (skillName && !skills.loaded) void skills.load();
+	});
+	const skill = $derived(
+		skillName && skills.names.has(skillName)
+			? (skills.items.find((s) => s.name === skillName) ?? skills.create ?? null)
+			: null,
+	);
+	const body = $derived(skill ? text.slice(skillName!.length + 1).replace(/^ /, '') : text);
+	const segments = $derived(segment(body));
 
 	let isExpanded = $state(false);
 	let lineCount = $state(0);
@@ -64,7 +79,7 @@
 		bind:this={textContainer}
 		class="text-base text-foreground user-message-content"
 		style="max-height: {maxHeight}; overflow: hidden;"
-	>{#each segments as seg, i (i)}{#if seg.kind === 'ref'}<Ref displayName={seg.name} url={seg.url} />{:else}{seg.text}{/if}{/each}</div>
+	>{#if skill}<span class="skill-badge" title={skill.description}><Icon icon={skill.icon ?? 'ri:flashlight-line'} width="13" style="color: inherit" />/{skill.name}</span>{' '}{/if}{#each segments as seg, i (i)}{#if seg.kind === 'ref'}<Ref displayName={seg.name} url={seg.url} />{:else}{seg.text}{/if}{/each}</div>
 
 	{#if shouldTruncate}
 		<button
@@ -85,5 +100,19 @@
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 		line-height: 1.5;
+	}
+
+	/* The composer's skill chip, without its remove button. */
+	.skill-badge {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.1875rem;
+		height: 1.375rem;
+		padding: 0 0.375rem;
+		border-radius: var(--radius-sm);
+		background: var(--hover-bg);
+		font-size: 0.8125rem;
+		vertical-align: 0.0625rem;
+		white-space: nowrap;
 	}
 </style>

@@ -124,6 +124,8 @@ import riLoader4Line from '@iconify-icons/ri/loader-4-line';
 import riLockLine from '@iconify-icons/ri/lock-line';
 import riLockUnlockLine from '@iconify-icons/ri/lock-unlock-line';
 import riAttachment2 from '@iconify-icons/ri/attachment-2';
+import riPlaneLine from '@iconify-icons/ri/plane-line';
+import riTeamLine from '@iconify-icons/ri/team-line';
 import riLogoutBoxRLine from '@iconify-icons/ri/logout-box-r-line';
 // Mobile bottom-tab bar: line + fill pairs (rendered offline on the phone,
 // so they must live in this registry — the network Iconify API is unavailable).
@@ -315,6 +317,8 @@ addIcon('ri:loader-4-line', riLoader4Line);
 addIcon('ri:lock-line', riLockLine);
 addIcon('ri:lock-unlock-line', riLockUnlockLine);
 addIcon('ri:attachment-2', riAttachment2);
+addIcon('ri:plane-line', riPlaneLine);
+addIcon('ri:team-line', riTeamLine);
 addIcon('ri:logout-box-r-line', riLogoutBoxRLine);
 // Mobile bottom-tab bar icons (line + fill pairs).
 addIcon('ri:sun-line', riSunLine);
