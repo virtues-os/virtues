@@ -41,10 +41,13 @@
 		onDelete: () => void;
 		/** Find stands in the toolbar's place (DocumentEditor's dock): the toolbar steps aside. */
 		finding?: boolean;
+		/** The page's headings, offered as Contents in ⋯ when the pane has no gutter for the headings rail. */
+		contents?: { label: string; go: () => void }[] | null;
 	}
 
 	let {
 		finding = false,
+		contents = null,
 		icon,
 		iconColor = null,
 		coverUrl,
@@ -205,6 +208,24 @@
 			{/snippet}
 			{#snippet children({ close })}
 				<div class="overflow-menu">
+					{#if contents?.length}
+						<!-- As Add to project: the headings open as their own menu
+						     where this row was. -->
+						<MenuItem
+							icon="ri:list-unordered"
+							label="Contents…"
+							onclick={(e: MouseEvent) => {
+								const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+								close();
+								const items = (contents ?? []).map((c, i) => ({ id: `heading-${i}`, label: c.label, action: c.go }));
+								contextMenu.show({ x: rect.left, y: rect.top }, items, {
+									anchor: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+									placement: "bottom-end",
+								});
+							}}
+						/>
+						<div class="overflow-divider"></div>
+					{/if}
 					<MenuItem
 						icon={copied ? "ri:check-line" : "ri:file-copy-line"}
 						label={copied ? "Copied!" : "Copy as Markdown"}

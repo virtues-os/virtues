@@ -54,7 +54,7 @@
 		findWriteItUpOutput,
 	} from "$lib/components/chat/interview/interview";
 	import Composing from "$lib/components/chat/Composing.svelte";
-	import ConversationRail from "$lib/components/chat/ConversationRail.svelte";
+	import Rail, { topOfElement } from "$lib/components/Rail.svelte";
 	import RestingMark from "$lib/components/chat/RestingMark.svelte";
 	import NewChatSky from "$lib/components/chat/NewChatSky.svelte";
 	import type { ChatOpening } from "$lib/api/client";
@@ -2413,7 +2413,12 @@
 					     once the pane is wide enough to have a gutter — below that the
 					     column takes the whole pane and the rail would sit on the words. -->
 					{#if !isEmpty && pageWidth >= 1000}
-						<ConversationRail turns={railTurnList} {scrollContainer} />
+						<Rail
+							items={railTurnList}
+							scroller={scrollContainer}
+							topOf={(turn, scroller) => topOfElement(scroller, turn.anchor)}
+							label="Turns in this chat"
+						/>
 					{/if}
 
 					{#if isEmpty && threeBodyOpen}

@@ -1,11 +1,11 @@
 <!--
-	ConversationRail.svelte
+	Rail.svelte
 
-	The transcript's spine, in the left gutter: one mark per thing the owner
-	said. A long chat is a column of replies with the owner's own turns buried
-	in it, and the only way back to "the one where I asked about the margins"
-	was to scroll and read. The rail makes the turns the index — they are the
-	only lines in a chat anyone navigates by.
+	An index down a gutter beside a long column: one mark per item, the
+	item being read inked. Chat puts the owner's turns on it, in the left
+	gutter (ChatView); a page puts its headings on it, in the right gutter,
+	since its left holds the block grip (PageContent). One component, so the
+	two read and move alike.
 
 	Three states, and the middle one is the whole point:
 
@@ -16,36 +16,60 @@
 	            toward the hand. That taper is what makes a 2px target
 	            hittable — the mark under the cursor is the widest thing
 	            there before the cursor arrives.
-	  reading   the mark for the turn currently on screen stays inked at all
+	  reading   the mark for the item currently on screen stays inked at all
 	            times, hover or not. It is a position indicator first and a
 	            control second.
 
-	The card names the turn (what the owner said) over the opening of the
-	answer it got, because a turn alone is often "and then?" — the reply is
-	what makes the entry recognizable.
+	An item's `level` (a heading's) shortens its mark 3px a level, so a page
+	shows its shape at rest. The card names the item over its `preview`: a
+	chat turn over the opening of the answer it got, because a turn alone is
+	often "and then?".
 -->
 
-<script lang="ts">
+<script lang="ts" module>
+	export interface RailItem {
+		/** The key, stable across a re-render. */
+		id: string;
+		/** What the item says, one line: a turn, a heading. */
+		label: string;
+		/** A line under it on the card, if there is one. */
+		preview?: string;
+		/** 1 for a top-level item; each level down draws a shorter mark. */
+		level?: number;
+	}
+
+	/**
+	 * An element's distance from the top of its scroller's content, by its
+	 * id. Measured off rects rather than `offsetTop`: the element's offset
+	 * parent is the column, not the scroller, so `offsetTop` is only
+	 * accidentally the same number and stops being it the moment anything
+	 * sits above the column (a room's cover plate does).
+	 */
+	export function topOfElement(scroller: HTMLElement, id: string): number | null {
+		const el = scroller.querySelector<HTMLElement>(`#${CSS.escape(id)}`);
+		if (!el) return null;
+		return el.getBoundingClientRect().top - scroller.getBoundingClientRect().top + scroller.scrollTop;
+	}
+</script>
+
+<script lang="ts" generics="T extends RailItem">
 	import { browser } from "$app/environment";
 
-	export interface RailTurn {
-		/** The message id — the key, and stable across a re-render. */
-		id: string;
-		/** The element id on the turn's row in the transcript. */
-		anchor: string;
-		/** What the owner said, one line. */
-		label: string;
-		/** The opening of the answer it got, if it has one yet. */
-		preview: string;
-	}
-
 	interface Props {
-		turns: RailTurn[];
-		/** The transcript's scroller — the thing the rail spies on and drives. */
-		scrollContainer?: HTMLElement | null;
+		items: T[];
+		/** The column's scroller: what the rail spies on and drives. */
+		scroller?: HTMLElement | null;
+		/** Where an item starts, from the top of the scroller's content; null when it is not drawn. */
+		topOf: (item: T, scroller: HTMLElement) => number | null;
+		/** Go to an item. Without one, the scroller goes to it, a hair above its top. */
+		go?: (item: T) => void;
+		/** Which gutter: the rail sits against that edge and its card opens toward the column. */
+		side?: "left" | "right";
+		/** What the rail indexes, for assistive technology ("Turns in this chat"). */
+		label: string;
 	}
 
-	let { turns, scrollContainer = null }: Props = $props();
+	let { items, scroller = null, topOf, go: goTo, side = "left", label }: Props = $props();
 
 	let activeIndex = $state(0);
 	let hoveredIndex = $state<number | null>(null);
@@ -55,44 +79,32 @@
 	let cardHeight = $state(0);
 	let railHeight = $state(0);
 
-	/** How far below the top of the view the reading line sits. A turn becomes
+	/** How far below the top of the view the reading line sits. An item becomes
 	 *  "the one being read" once its first line crosses it. A fraction of the
 	 *  window alone put the line a third of the way down a tall pane, which
 	 *  made the SECOND turn active on a chat scrolled to the very top. */
 	const READ_LINE = (h: number) => Math.min(h * 0.28, 120);
 
-	/** A turn's distance from the top of the scrollable content. Measured off
-	 *  rects rather than `offsetTop`: the anchors' offset parent is the
-	 *  messages column, not the scroller, so `offsetTop` is only accidentally
-	 *  the same number and stops being it the moment anything sits above the
-	 *  column (the room's cover plate does). */
-	function topOf(scroller: HTMLElement, base: number, anchor: string): number | null {
-		const el = scroller.querySelector<HTMLElement>(`#${CSS.escape(anchor)}`);
-		if (!el) return null;
-		return el.getBoundingClientRect().top - base + scroller.scrollTop;
-	}
-
 	// ── scroll-spy ─────────────────────────────────────────────────────────
 	// A band-shaped IntersectionObserver was the obvious build and it is wrong
-	// twice: it never fires for the last turn of a short chat, which cannot
-	// reach the band, and it fires twice for a turn taller than the window.
+	// twice: it never fires for the last item of a short column, which cannot
+	// reach the band, and it fires twice for an item taller than the window.
 	// One line, and a binary search down it — a long chat is hundreds of
-	// anchors and this runs on every frame of a scroll.
+	// items and this runs on every frame of a scroll.
 	$effect(() => {
-		const scroller = scrollContainer;
-		if (!browser || !scroller || turns.length === 0) return;
+		const el = scroller;
+		if (!browser || !el || items.length === 0) return;
 
 		let frame = 0;
 		const measure = () => {
 			frame = 0;
-			const base = scroller.getBoundingClientRect().top;
-			const line = scroller.scrollTop + READ_LINE(scroller.clientHeight);
+			const line = el.scrollTop + READ_LINE(el.clientHeight);
 			let lo = 0;
-			let hi = turns.length - 1;
+			let hi = items.length - 1;
 			let found = 0;
 			while (lo <= hi) {
 				const mid = (lo + hi) >> 1;
-				const top = topOf(scroller, base, turns[mid].anchor);
+				const top = topOf(items[mid], el);
 				if (top === null) break;
 				if (top <= line) {
 					found = mid;
@@ -101,11 +113,11 @@
 					hi = mid - 1;
 				}
 			}
-			// At the very bottom the last turn is the one being read even if its
+			// At the very bottom the last item is the one being read even if its
 			// first line never crosses the line — a short final exchange sits
 			// entirely below it.
-			if (scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight < 8) {
-				found = turns.length - 1;
+			if (el.scrollHeight - el.scrollTop - el.clientHeight < 8) {
+				found = items.length - 1;
 			}
 			activeIndex = found;
 		};
@@ -116,12 +128,12 @@
 		};
 
 		measure();
-		scroller.addEventListener("scroll", onScroll, { passive: true });
+		el.addEventListener("scroll", onScroll, { passive: true });
 		const ro = new ResizeObserver(onScroll);
-		ro.observe(scroller);
+		ro.observe(el);
 		return () => {
 			if (frame) cancelAnimationFrame(frame);
-			scroller.removeEventListener("scroll", onScroll);
+			el.removeEventListener("scroll", onScroll);
 			ro.disconnect();
 		};
 	});
@@ -160,13 +172,14 @@
 		),
 	);
 
-	function go(turn: RailTurn) {
-		const scroller = scrollContainer;
-		if (!scroller) return;
-		const top = topOf(scroller, scroller.getBoundingClientRect().top, turn.anchor);
+	function go(item: T) {
+		if (goTo) return goTo(item);
+		const el = scroller;
+		if (!el) return;
+		const top = topOf(item, el);
 		if (top === null) return;
-		scroller.scrollTo({
-			// A hair above the turn, so it lands under the top edge rather than
+		el.scrollTo({
+			// A hair above the item, so it lands under the top edge rather than
 			// flush against it.
 			top: Math.max(0, top - 24),
 			behavior: "smooth",
@@ -174,28 +187,30 @@
 	}
 </script>
 
-{#if turns.length > 1}
+{#if items.length > 1}
 	<nav
 		class="rail"
+		class:right={side === "right"}
 		bind:this={railEl}
 		bind:clientHeight={railHeight}
-		aria-label="Turns in this chat"
+		aria-label={label}
 		onmouseleave={() => (hoveredIndex = null)}
 	>
 		<div class="marks" bind:this={marksEl}>
-			{#each turns as turn, i (turn.id)}
+			{#each items as item, i (item.id)}
 				<button
 					type="button"
 					class="row"
 					class:active={i === activeIndex}
 					class:hovered={i === hoveredIndex}
 					style:--near={nearness(i)}
+					style:--cut="{((item.level ?? 1) - 1) * 3}px"
 					aria-current={i === activeIndex ? "true" : undefined}
-					title={turn.label}
+					title={item.label}
 					onmouseenter={(e) => enter(i, e)}
 					onfocus={(e) => enter(i, e)}
 					onblur={() => (hoveredIndex = null)}
-					onclick={() => go(turn)}
+					onclick={() => go(item)}
 				>
 					<span class="mark"></span>
 				</button>
@@ -203,15 +218,15 @@
 		</div>
 
 		{#if hoveredIndex !== null}
-			{@const turn = turns[hoveredIndex]}
+			{@const item = items[hoveredIndex]}
 			<div
 				class="card"
 				bind:clientHeight={cardHeight}
 				style:top="{clampedCardTop}px"
 			>
-				<p class="said">{turn.label}</p>
-				{#if turn.preview}
-					<p class="answered">{turn.preview}</p>
+				<p class="said">{item.label}</p>
+				{#if item.preview}
+					<p class="answered">{item.preview}</p>
 				{/if}
 			</div>
 		{/if}
@@ -223,12 +238,12 @@
 		position: absolute;
 		top: 50%;
 		transform: translateY(-50%);
-		/* Against the pane's own left edge, not the column's. Trailing the
-		   column meant the rail moved every time the pane resized and sat
-		   right up against the words on a narrow one; pinned here it is a
-		   fixture of the window, in the same place every time the hand goes
-		   looking for it. ChatView hides it when the pane is too narrow to
-		   have a gutter at all. */
+		/* Against the pane's own edge, not the column's. Trailing the column
+		   meant the rail moved every time the pane resized and sat right up
+		   against the words on a narrow one; pinned here it is a fixture of
+		   the window, in the same place every time the hand goes looking for
+		   it. Its host hides it when the pane is too narrow to have a gutter
+		   at all. */
 		left: 1.5rem;
 		z-index: 5;
 		max-height: 64%;
@@ -244,6 +259,12 @@
 		align-items: flex-start;
 	}
 
+	.rail.right {
+		left: auto;
+		right: 1.5rem;
+		align-items: flex-end;
+	}
+
 	.marks {
 		display: flex;
 		flex-direction: column;
@@ -254,6 +275,11 @@
 		scrollbar-width: none;
 		/* The gutter is the target, not the 2px line in it. */
 		padding: 0.5rem 0.75rem 0.5rem 0.5rem;
+	}
+
+	.right .marks {
+		align-items: flex-end;
+		padding: 0.5rem 0.5rem 0.5rem 0.75rem;
 	}
 
 	.marks::-webkit-scrollbar {
@@ -283,8 +309,9 @@
 		   exactly as the 1px it replaces. */
 		border-radius: 100px;
 		/* 10px at rest; the pointer's nearness adds up to 12 more, and the
-		   mark directly under it adds the rest. */
-		width: calc(10px + var(--near, 0) * 12px);
+		   mark directly under it adds the rest. A deeper level is `--cut`
+		   shorter in every state. */
+		width: calc(10px - var(--cut, 0px) + var(--near, 0) * 12px);
 		background: color-mix(in srgb, var(--color-foreground) 16%, transparent);
 		transition:
 			width 0.24s cubic-bezier(0.22, 1, 0.36, 1),
@@ -292,7 +319,7 @@
 	}
 
 	.row.hovered .mark {
-		width: 26px;
+		width: calc(26px - var(--cut, 0px));
 		background: var(--color-foreground);
 	}
 
@@ -300,11 +327,11 @@
 	   persistent statement, and it has to survive the hover taper. */
 	.row.active .mark {
 		background: color-mix(in srgb, var(--color-foreground) 70%, transparent);
-		width: calc(20px + var(--near, 0) * 6px);
+		width: calc(20px - var(--cut, 0px) + var(--near, 0) * 6px);
 	}
 
 	.row.active.hovered .mark {
-		width: 26px;
+		width: calc(26px - var(--cut, 0px));
 		background: var(--color-foreground);
 	}
 
@@ -314,6 +341,7 @@
 		}
 	}
 
+	/* A layer floating over the page, drawn as every other one is. */
 	.card {
 		position: absolute;
 		left: 100%;
@@ -322,17 +350,37 @@
 		box-sizing: border-box;
 		padding: 0.625rem 0.75rem;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
-		background: var(--color-surface-elevated);
+		border-radius: var(--card-radius);
+		background: var(--color-surface);
+		box-shadow: var(--shadow-float);
 		pointer-events: none;
 		font-family: var(--font-sans, system-ui, sans-serif);
 		animation: card-in 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+	}
+
+	.right .card {
+		left: auto;
+		right: 100%;
+		animation-name: card-in-left;
 	}
 
 	@keyframes card-in {
 		from {
 			opacity: 0;
 			transform: translateY(-50%) translateX(-4px);
+		}
+	}
+
+	@keyframes card-in-left {
+		from {
+			opacity: 0;
+			transform: translateY(-50%) translateX(4px);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.card {
+			animation: none;
 		}
 	}
 

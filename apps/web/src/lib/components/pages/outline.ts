@@ -1,7 +1,8 @@
 /**
- * The page outline: h1 to h3 headings, and how the table of contents scrolls
- * to them and spies on the scroll. The editor supplies an `OutlineNav`
- * (`treeOutlineNav`), so `PageOutline` knows no editor.
+ * The page outline: h1 to h3 headings, and how the headings rail
+ * (`Rail.svelte`, in PageContent) and Contents in ⋯ scroll to them and spy
+ * on the scroll. The editor supplies an `OutlineNav` (`treeOutlineNav`), so
+ * neither knows an editor.
  */
 
 export interface PageHeading {
@@ -22,9 +23,4 @@ export interface OutlineNav {
 	 */
 	topOf(h: PageHeading): number | null;
 	scrollTo(h: PageHeading): void;
-}
-
-/** Whether two headings are the same entry of the outline. */
-export function sameHeading(a: PageHeading, b: PageHeading): boolean {
-	return a.id !== undefined || b.id !== undefined ? a.id === b.id : a.from === b.from;
 }

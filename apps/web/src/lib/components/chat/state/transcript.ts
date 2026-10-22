@@ -320,7 +320,7 @@ export function eyebrowsFor(messages: { id: string; subject?: string }[]): Map<s
 }
 
 /**
- * The turns the owner took, indexed for the rail (ConversationRail.svelte).
+ * The turns the owner took, indexed for the rail (Rail.svelte).
  *
  * The anchor ids are the `exchange-N` ids the view already puts on user rows,
  * and N counts user messages — so this must count them the same way or the

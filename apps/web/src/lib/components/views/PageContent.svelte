@@ -23,7 +23,7 @@
 	import PageStatusNote from "$lib/components/pages/PageStatusNote.svelte";
 	import PageToolbar from "$lib/components/pages/PageToolbar.svelte";
 	import PageProjects from "$lib/components/pages/PageProjects.svelte";
-	import PageOutline from "$lib/components/pages/PageOutline.svelte";
+	import Rail from "$lib/components/Rail.svelte";
 	import ReferencesPanel from "$lib/components/pages/ReferencesPanel.svelte";
 	import { Popover } from "$lib/floating";
 	import {
@@ -170,6 +170,19 @@
 	let outline = $state<PageHeading[]>([]);
 	/** The block editor's outline navigation, while one is mounted. */
 	let treeNav = $state<OutlineNav | null>(null);
+	/** The scroller's frame and the text column, measured for the rail's gutter. */
+	let frameWidth = $state(0);
+	let columnWidth = $state(0);
+	/** The page's headings on the rail: each keeps its heading, which the nav goes to. */
+	const railHeadings = $derived(
+		outline.map((h) => ({ id: h.id ?? `at-${h.from}`, label: h.text, level: h.level, heading: h })),
+	);
+	/**
+	 * The headings rail stands in the right gutter when the gutter has room
+	 * for it beside the text; otherwise the headings are Contents in the ⋯
+	 * menu (PageToolbar).
+	 */
+	const railShown = $derived(!!treeNav && outline.length > 1 && (frameWidth - columnWidth) / 2 >= 64);
 	/** View as markdown (block pages). */
 	let viewingMarkdown = $state(false);
 	/** The scroller holding the cover, title and text: what Print prints. */
@@ -658,19 +671,18 @@
 		</div>
 	{:else if pageData}
 		<div class="page-layout">
-			<!-- Top bar: TOC (left) + page actions (right), one classic row -->
+			<!-- Top bar: the projects (left) and the page's actions (right), one row -->
 			<div class="page-topbar" class:scrolled data-print="hide" bind:this={topbarEl}>
-			<PageOutline
-				headings={outline}
-				nav={treeNav}
-			/>
-			<!-- The projects this page is in, beside the outline: the page's
-			     "where it lives", in the corner a chat says it. -->
+			<!-- The projects this page is in: the page's "where it lives", in
+			     the corner a chat says it. -->
 			{#if pageId}
 				<PageProjects url={`/page/${pageId}`} />
 			{/if}
 			<PageToolbar
 				{finding}
+				contents={!railShown && treeNav && outline.length > 1
+					? outline.map((h) => ({ label: h.text, go: () => treeNav?.scrollTo(h) }))
+					: null}
 				{icon}
 				{coverUrl}
 				{copied}
@@ -709,6 +721,9 @@
 
 			<!-- Body: scrollable editor + optional References rail -->
 			<div class="page-body">
+			<!-- The scroller in a frame that holds still, so the headings rail
+			     stands beside the column while the page moves. -->
+			<div class="page-scroll-frame" bind:clientWidth={frameWidth}>
 			<!-- Main Content Area -->
 			<div
 				class="page-content"
@@ -733,6 +748,7 @@
 
 				<div
 					class="page-inner"
+					bind:clientWidth={columnWidth}
 					class:width-small={pageDisplay.widthMode === "small"}
 					class:width-medium={pageDisplay.widthMode === "medium"}
 					class:width-full={pageDisplay.widthMode === "full"}
@@ -845,6 +861,21 @@
 				</div>
 			</div>
 
+			{#if railShown && treeNav}
+				{@const nav = treeNav}
+				<div class="page-rail" data-print="hide">
+					<Rail
+						items={railHeadings}
+						scroller={nav.scroller}
+						topOf={(item) => nav.topOf(item.heading)}
+						go={(item) => nav.scrollTo(item.heading)}
+						side="right"
+						label="Headings on this page"
+					/>
+				</div>
+			{/if}
+			</div>
+
 			{#if showReferences}
 				<ReferencesPanel
 					{backlinks}
@@ -888,13 +919,10 @@
 		min-height: 0;
 	}
 
-	/* One classic top bar: TOC trigger (left) + page actions (right). Relative so
-	   the outline drawer anchors to it and spans the full width. */
-	/* Three columns: projects, the outline's title, the page's actions. The
-	   title sits centred while the row has room and shortens before it
-	   reaches either side, so on a narrow column it never covers an icon. */
-	/* Its bottom edge shows once the page scrolls from its top, so text
-	   passing under the bar meets a line instead of being cut mid-line. */
+	/* Three columns: the projects, an empty middle, the page's actions (or
+	   find, docked in their place). Its bottom edge shows once the page
+	   scrolls from its top, so text passing under the bar meets a line
+	   instead of being cut mid-line. */
 	.page-topbar {
 		position: relative;
 		display: grid;
@@ -907,9 +935,9 @@
 	.page-topbar.scrolled {
 		border-bottom-color: var(--color-border-subtle, var(--color-border));
 	}
-	/* Each in its column of the one row. With a column alone, the grid
-	   places items in source order: the outline (column 2) comes first, so
-	   the projects (column 1) fell to a second row and the bar grew two. */
+	/* Each in its column of the one row: with a column alone, the grid
+	   places items in source order, and an item asking for a column behind
+	   the last one placed falls to a new row. */
 	.page-topbar :global(.page-projects) {
 		grid-row: 1;
 		grid-column: 1;
@@ -927,6 +955,18 @@
 		display: flex;
 		min-height: 0;
 		overflow: hidden;
+	}
+
+	.page-scroll-frame {
+		position: relative;
+		flex: 1;
+		display: flex;
+		min-width: 0;
+	}
+
+	/* The rail places itself against the frame's right edge (Rail.svelte). */
+	.page-rail {
+		display: contents;
 	}
 
 	/* Main Content Area - scrollable */
