@@ -7,7 +7,16 @@
 	import { createComposer, type Composer } from "$lib/document/composer";
 	import { outgoingMessage } from "$lib/document/message";
 	import { ATTACH_ACCEPT } from "$lib/components/chat/state/attachments.svelte";
-	import { AGENT_MODES, getModeById, nextMode, type AgentMode, type AgentModeId } from "$lib/config/agentModes";
+	import {
+		AGENT_MODES,
+		DEPTH_NAMES,
+		depthModes,
+		getModeById,
+		nextMode,
+		type AgentMode,
+		type AgentModeId,
+	} from "$lib/config/agentModes";
+	import { Popover } from "$lib/floating";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { canDictate, startDictation } from "$lib/tauri/bridge";
 
@@ -38,15 +47,25 @@
 		onAttach?: (files: File[]) => void;
 		onSubmit?: (content: string) => void;
 		onStop?: () => void;
-		/** The chat's mode. The chip under the pill shows it when it is not plain chat. */
+		/** The chat's mode, shown as the depth and access chips. */
 		agentMode?: AgentModeId;
-		/** Chosen from the (+) menu or the chip, or cycled with Shift+Tab. */
+		/** Chosen from the depth or access chip, or cycled with Shift+Tab. */
 		onModeChange?: (mode: AgentModeId) => void;
 		/** The modes this chat may switch between (see `availableModes`). */
 		modes?: AgentMode[];
 	} = $props();
 
-	const activeMode = $derived(agentMode && agentMode !== "chat" ? getModeById(agentMode) : undefined);
+	// The one mode, shown as two chips (see DEPTH_ORDER). Full access runs at
+	// the balanced depth, so that is where the depth chip sits while it is on.
+	const depths = $derived(depthModes(modes));
+	const depthId = $derived<AgentModeId>(
+		agentMode && depths.some((m) => m.id === agentMode) ? agentMode : "chat",
+	);
+	const depthIndex = $derived(Math.max(0, depths.findIndex((m) => m.id === depthId)));
+	const depthMode = $derived(getModeById(depthId));
+	const hasAccess = $derived(modes.some((m) => m.id === "sudo"));
+	const fullAccess = $derived(agentMode === "sudo");
+	let depthOpen = $state(false);
 
 	let fileInputEl: HTMLInputElement | null = $state(null);
 	let cameraInputEl: HTMLInputElement | null = $state(null);
@@ -59,59 +78,77 @@
 		if (agentMode && onModeChange) onModeChange(nextMode(agentMode, modes));
 	}
 
-	// The (+) menu: what you add to the message, then how it is handled.
-	// Nothing else goes in here — a menu of every option is a junk drawer.
-	function modeRows(): ContextMenuItem[] {
-		return modes.map((m) => ({
-			id: `mode-${m.id}`,
-			label: m.name,
-			description: m.description,
-			icon: m.icon,
-			checked: m.id === (agentMode ?? "chat"),
-			action: () => onModeChange?.(m.id),
-		}));
+	function setDepth(i: number) {
+		const m = depths[Math.min(Math.max(i, 0), depths.length - 1)];
+		if (m && m.id !== agentMode) onModeChange?.(m.id);
 	}
 
-	function openMenu(anchorEl: HTMLElement, onlyModes = false) {
-		const items: ContextMenuItem[] = [];
-		if (!onlyModes && onAttach) {
-			items.push({ id: "attach", label: "Add files", icon: "ri:attachment-2", action: pickFiles });
-			// A phone has a camera a tap away; a desktop's "take a photo" is
-			// a webcam nobody means.
-			if (mobileLayout.isMobile) {
-				items.push({
-					id: "camera",
-					label: "Take a photo",
-					icon: "ri:camera-line",
-					action: () => cameraInputEl?.click(),
-				});
-			}
-		}
-		if (onModeChange) {
-			const rows = modeRows();
-			if (onlyModes) {
-				items.push(...rows);
-			} else if (mobileLayout.isMobile) {
-				// Fly-out submenus are fiddly under a thumb: the modes sit in
-				// the same sheet.
-				items.push(...rows);
-			} else {
-				const current = getModeById(agentMode ?? "chat");
-				items.push({
-					id: "mode",
-					label: "Mode",
-					icon: current?.icon ?? "ri:chat-3-line",
-					shortcut: current && current.id !== "chat" ? current.name : undefined,
-					submenu: rows,
-				});
-			}
-		}
-		if (items.length === 0) return;
+	function onDepthKey(e: KeyboardEvent) {
+		const step: Record<string, number> = {
+			ArrowRight: depthIndex + 1,
+			ArrowUp: depthIndex + 1,
+			ArrowLeft: depthIndex - 1,
+			ArrowDown: depthIndex - 1,
+			Home: 0,
+			End: depths.length - 1,
+		};
+		if (!(e.key in step)) return;
+		e.preventDefault();
+		setDepth(step[e.key]);
+	}
+
+	// The track snaps to the nearest stop, on press and while dragging.
+	function onTrackPointer(e: PointerEvent) {
+		const el = e.currentTarget as HTMLElement;
+		if (e.type === "pointerdown") el.setPointerCapture(e.pointerId);
+		else if (!el.hasPointerCapture(e.pointerId)) return;
+		const r = el.getBoundingClientRect();
+		setDepth(Math.round(((e.clientX - r.left) / r.width) * (depths.length - 1)));
+	}
+
+	function menuAt(anchorEl: HTMLElement, items: ContextMenuItem[]) {
 		const r = anchorEl.getBoundingClientRect();
 		contextMenu.show({ x: r.left, y: r.top }, items, {
 			anchor: { x: r.left, y: r.top, width: r.width, height: r.height },
 			placement: "top-start",
 		});
+	}
+
+	// A phone has a camera a tap away, so (+) offers it beside files. A
+	// desktop's "take a photo" is a webcam nobody means, so there (+) picks
+	// files straight away.
+	function openAttach(anchorEl: HTMLElement) {
+		if (!mobileLayout.isMobile) {
+			pickFiles();
+			return;
+		}
+		menuAt(anchorEl, [
+			{ id: "attach", label: "Add files", icon: "ri:attachment-2", action: pickFiles },
+			{ id: "camera", label: "Take a photo", icon: "ri:camera-line", action: () => cameraInputEl?.click() },
+		]);
+	}
+
+	function openAccess(anchorEl: HTMLElement) {
+		menuAt(anchorEl, [
+			{
+				id: "access-ask",
+				label: "Ask first",
+				description: getModeById("chat")?.description,
+				icon: "ri:lock-line",
+				checked: !fullAccess,
+				action: () => {
+					if (fullAccess) onModeChange?.("chat");
+				},
+			},
+			{
+				id: "access-full",
+				label: "Full access",
+				description: getModeById("sudo")?.description,
+				icon: "ri:lock-unlock-line",
+				checked: fullAccess,
+				action: () => onModeChange?.("sudo"),
+			},
+		]);
 	}
 
 	function onFilesPicked(e: Event) {
@@ -141,8 +178,6 @@
 
 	// Only enable scrolling when at max height to prevent scrollbar flash during animation
 	const shouldScroll = $derived(inputHeight.current >= MAX_HEIGHT - 1);
-	// Bottom-align the controls once the field wraps past a single line.
-	const isMultiline = $derived(inputHeight.current > MIN_HEIGHT + 6);
 
 	// `@` picker: the editor's `@` trigger opens it; the panel is the
 	// RefPicker component, anchored above the pill.
@@ -260,7 +295,9 @@
 
 	function handleWrapperClick(e: MouseEvent) {
 		const target = e.target as HTMLElement;
-		if (target.tagName === "BUTTON" || target.closest("button")) {
+		// The depth popover renders inside the card, and a press on its
+		// slider must not hand the focus back to the field.
+		if (target.closest("button, .popover-content")) {
 			return;
 		}
 		editor?.focus();
@@ -313,30 +350,11 @@
 		aria-label="Chat input"
 		class="chat-input-wrapper bg-surface border border-border-strong cursor-text"
 		class:focused={isFocused}
-		class:multiline={isMultiline}
-		class:sudo={agentMode === "sudo"}
+		class:sudo={fullAccess}
 		onclick={handleWrapperClick}
 		role="textbox"
 		tabindex="-1"
 	>
-		{#if onAttach || onModeChange}
-			<button
-				type="button"
-				onclick={(e) => {
-					e.stopPropagation();
-					// No modes here (another composer): a one-row menu is just
-					// an extra click, so (+) picks files straight away.
-					if (onModeChange) openMenu(e.currentTarget);
-					else pickFiles();
-				}}
-				class="pill-btn attach-button"
-				aria-label="Add files or change mode"
-				aria-haspopup="menu"
-				title="Add files or change mode"
-			>
-				<Icon icon="ri:add-line" width="18" />
-			</button>
-		{/if}
 		{#if onAttach}
 			<input
 				bind:this={fileInputEl}
@@ -369,8 +387,95 @@
 			style:overflow-y={shouldScroll ? 'auto' : 'hidden'}
 		></div>
 
-		<!-- Trailing controls: send / stop -->
-		<div class="composer-actions">
+		<div class="composer-toolbar">
+			{#if onAttach}
+				<button
+					type="button"
+					onclick={(e) => {
+						e.stopPropagation();
+						openAttach(e.currentTarget);
+					}}
+					class="pill-btn attach-button"
+					aria-label="Add files"
+					title="Add files"
+				>
+					<Icon icon="ri:add-line" width="18" />
+				</button>
+			{/if}
+
+			{#if onModeChange && depths.length > 1 && depthMode}
+				<Popover bind:open={depthOpen} placement="top-start" offset={6}>
+					{#snippet trigger({ toggle }: { toggle: () => void })}
+						<button
+							type="button"
+							class="chip"
+							class:open={depthOpen}
+							onclick={(e) => {
+								e.stopPropagation();
+								toggle();
+							}}
+							aria-haspopup="dialog"
+							aria-expanded={depthOpen}
+							title="Depth (Shift+Tab to switch)"
+						>
+							<Icon icon={depthMode.icon} width="14" style="color: inherit" />
+							<span>{DEPTH_NAMES[depthMode.id] ?? depthMode.name}</span>
+						</button>
+					{/snippet}
+					{#snippet children()}
+						<div class="depth-panel">
+							<div class="depth-head">
+								<span class="depth-label">Depth</span>
+								<span class="depth-current">
+									<Icon icon={depthMode.icon} width="14" style="color: inherit" />
+									{DEPTH_NAMES[depthMode.id] ?? depthMode.name}
+								</span>
+							</div>
+							<div
+								class="depth-track"
+								role="slider"
+								tabindex="0"
+								aria-label="Depth"
+								aria-valuemin={0}
+								aria-valuemax={depths.length - 1}
+								aria-valuenow={depthIndex}
+								aria-valuetext={DEPTH_NAMES[depthMode.id] ?? depthMode.name}
+								style:--stops={depths.length - 1}
+								style:--at={depthIndex}
+								onkeydown={onDepthKey}
+								onpointerdown={onTrackPointer}
+								onpointermove={onTrackPointer}
+							>
+								{#each depths as m, i (m.id)}
+									<span class="depth-dot" style:--i={i} title={DEPTH_NAMES[m.id] ?? m.name}></span>
+								{/each}
+								<span class="depth-thumb"></span>
+							</div>
+						</div>
+					{/snippet}
+				</Popover>
+			{/if}
+
+			{#if onModeChange && hasAccess}
+				<span class="chip-sep" aria-hidden="true">&middot;</span>
+				<button
+					type="button"
+					class="chip"
+					class:danger={fullAccess}
+					onclick={(e) => {
+						e.stopPropagation();
+						openAccess(e.currentTarget);
+					}}
+					aria-haspopup="menu"
+					title="Access"
+				>
+					<Icon icon={fullAccess ? "ri:lock-unlock-line" : "ri:lock-line"} width="14" style="color: inherit" />
+					<span>{fullAccess ? "Full access" : "Ask first"}</span>
+				</button>
+			{/if}
+
+			<span class="toolbar-spacer"></span>
+
 			{#if showMic}
 				<!-- mousedown is held back so the field keeps the focus the
 				     dictation writes into. -->
@@ -392,7 +497,7 @@
 				type="button"
 				onclick={trailingAction}
 				disabled={trailingMode === "send" && !canSubmit && !canQueue}
-				class="pill-btn action-btn btn-primary"
+				class="pill-btn action-btn"
 				aria-label={trailingLabel}
 			>
 				<span class="icon-swap">
@@ -418,29 +523,6 @@
 			/>
 		{/if}
 	</div>
-
-	{#if activeMode}
-		<div class="mode-row">
-			<button
-				type="button"
-				class="mode-chip"
-				style:color={activeMode.color}
-				onclick={(e) => {
-					e.stopPropagation();
-					openMenu(e.currentTarget, true);
-				}}
-				aria-haspopup="menu"
-				title="Change mode (Shift+Tab)"
-			>
-				<Icon icon={activeMode.icon} width="13" style="color: inherit" />
-				<span class="mode-name">{activeMode.name}</span>
-				<span class="mode-description">{activeMode.description}</span>
-			</button>
-			{#if !mobileLayout.isMobile}
-				<span class="mode-hint">Shift+Tab to switch</span>
-			{/if}
-		</div>
-	{/if}
 </div>
 
 <style>
@@ -456,16 +538,17 @@
 		border-width: 0;
 	}
 
+	/* A card: the message on top, the toolbar under it. */
 	.chat-input-wrapper {
 		position: relative;
 		display: flex;
-		align-items: center;
+		flex-direction: column;
 		gap: 0.25rem;
-		padding: 0.4375rem 0.5rem 0.4375rem 0.5625rem;
-		border-radius: 1.75rem;
+		padding: 0.75rem 0.625rem 0.5rem;
+		border-radius: var(--radius-xl);
 		/* design-ok: the composer floats over the page (§6 elevation), so it
-		   takes the faintest lift — a whisper, not a card shadow. */
-		box-shadow: 0 2px 4px color-mix(in srgb, var(--color-foreground) 5%, transparent);
+		   takes a soft lift. */
+		box-shadow: 0 4px 14px -4px color-mix(in srgb, var(--color-foreground) 10%, transparent);
 		/* Out at hover-out. A state that comes on (ChatView's drop ring) sets
 		   its own hover-in duration. */
 		transition:
@@ -477,13 +560,6 @@
 		.chat-input-wrapper {
 			transition: none;
 		}
-	}
-
-	/* Once the field wraps to multiple lines, anchor controls to the bottom and
-	   ease off the full pill radius into a rounded box. */
-	.chat-input-wrapper.multiline {
-		align-items: flex-end;
-		border-radius: 1.25rem;
 	}
 
 	.chat-input-wrapper:hover {
@@ -501,45 +577,145 @@
 		border-color: var(--color-error) !important;
 	}
 
-	.mode-row {
-		display: flex;
-		align-items: center;
-		gap: 0.625rem;
-		padding: 0.375rem 0.875rem 0;
-		font-size: 0.75rem;
-		line-height: 1rem;
+	.chat-input {
+		min-width: 0;
+		padding: 0 0.375rem;
+		font-family: var(--font-sans);
 	}
 
-	.mode-chip {
+	.composer-toolbar {
+		display: flex;
+		align-items: center;
+		gap: 0.125rem;
+		min-width: 0;
+	}
+
+	.toolbar-spacer {
+		flex: 1;
+	}
+
+	.chip {
 		display: inline-flex;
 		align-items: center;
 		gap: 0.3125rem;
-		min-width: 0;
-		cursor: pointer;
-	}
-
-	.mode-name {
-		font-weight: 500;
-	}
-
-	.mode-description {
+		height: 1.875rem;
+		padding: 0 0.5rem;
+		border-radius: var(--radius-md);
+		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
 		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		cursor: pointer;
+		transition:
+			background-color 0.15s ease,
+			color 0.15s ease;
 	}
 
-	.mode-hint {
-		margin-left: auto;
-		flex-shrink: 0;
+	.chip:hover,
+	.chip.open {
+		background: var(--hover-bg);
+		color: var(--color-foreground);
+	}
+
+	.chip.danger {
+		color: var(--color-error);
+	}
+
+	.chip-sep {
 		color: var(--color-foreground-subtle);
+		font-size: 0.75rem;
+		user-select: none;
 	}
 
-	.chat-input {
-		flex: 1;
-		min-width: 0;
-		font-family: var(--font-sans);
+	.depth-panel {
+		display: flex;
+		flex-direction: column;
+		gap: 0.625rem;
+		width: 14rem;
+		padding: 0.625rem 0.75rem 0.75rem;
 	}
+
+	.depth-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		font-size: 0.8125rem;
+	}
+
+	.depth-label {
+		color: var(--color-foreground-muted);
+	}
+
+	.depth-current {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.3125rem;
+		color: var(--color-foreground);
+	}
+
+	/* Stops sit at the centers of equal slots, so the thumb, the dots and
+	   the pointer math in onTrackPointer agree. */
+	.depth-track {
+		--pad: 0.1875rem;
+		--thumb: 1.375rem;
+		--span: calc(100% - 2 * var(--pad) - var(--thumb));
+		position: relative;
+		height: 1.625rem;
+		border-radius: var(--radius-md);
+		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		cursor: pointer;
+		touch-action: none;
+		outline: none;
+	}
+
+	.depth-track:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 1px;
+	}
+
+	.depth-dot,
+	.depth-thumb {
+		position: absolute;
+		top: 50%;
+		left: calc(var(--pad) + var(--span) * var(--pos) / max(var(--stops), 1));
+	}
+
+	.depth-dot {
+		--pos: var(--i);
+		width: var(--thumb);
+		height: 0.25rem;
+		margin-top: -0.125rem;
+		display: flex;
+		justify-content: center;
+	}
+
+	.depth-dot::before {
+		content: "";
+		width: 0.25rem;
+		height: 0.25rem;
+		border-radius: var(--radius-full);
+		background: var(--color-foreground-subtle);
+	}
+
+	.depth-thumb {
+		--pos: var(--at);
+		width: var(--thumb);
+		height: calc(100% - 2 * var(--pad));
+		transform: translateY(-50%);
+		border-radius: var(--radius-sm);
+		background: var(--color-surface);
+		/* design-ok: the thumb is a physical knob on the track. */
+		box-shadow:
+			0 0 0 1px color-mix(in srgb, var(--color-foreground) 10%, transparent),
+			0 1px 3px color-mix(in srgb, var(--color-foreground) 15%, transparent);
+		transition: left 0.22s var(--ease-premium);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.depth-thumb {
+			transition: none;
+		}
+	}
+
 
 	/* The field around the message as typed. The text itself is prose.css's
 	   (`prose prose--compact`), so it reads as it will in the thread. */
@@ -603,26 +779,26 @@
 		color: var(--color-foreground);
 	}
 
-	.composer-actions {
-		flex-shrink: 0;
-		display: flex;
-		align-items: center;
-		gap: 0.25rem;
-	}
-
-	/* Send is the navy primary, not the claret that .btn-primary uses. */
-	.action-btn.btn-primary {
+	/* Send is a soft square: grey while there is nothing to send, the navy
+	   primary once there is. */
+	.action-btn {
+		width: 1.875rem;
+		height: 1.875rem;
+		margin-left: 0.25rem;
+		border-radius: var(--radius-md);
 		background-color: var(--color-primary);
+		color: var(--color-surface);
 	}
-	.action-btn.btn-primary:hover:not(:disabled) {
+	.action-btn:hover:not(:disabled) {
 		background-color: var(--color-primary-hover);
 	}
-	.action-btn.btn-primary:active:not(:disabled) {
+	.action-btn:active:not(:disabled) {
 		background-color: var(--color-primary-active);
 	}
 
 	.action-btn:disabled {
-		opacity: 0.5;
+		background-color: color-mix(in srgb, var(--color-foreground) 8%, transparent);
+		color: var(--color-foreground-subtle);
 		cursor: not-allowed;
 	}
 

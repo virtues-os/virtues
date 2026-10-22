@@ -23,8 +23,6 @@ export interface AgentMode {
 	name: string;
 	description: string;
 	icon: string;
-	/** Color of the composer chip (null = the quiet default) */
-	color: string | null;
 }
 
 export const AGENT_MODES: AgentMode[] = [
@@ -32,31 +30,49 @@ export const AGENT_MODES: AgentMode[] = [
 		id: 'chat',
 		name: 'Chat',
 		description: 'Asks before changing anything',
-		icon: 'ri:chat-3-line',
-		color: null
+		icon: 'ri:chat-3-line'
 	},
 	{
 		id: 'deep_research',
 		name: 'Deep research',
 		description: 'Investigates your records and the web',
-		icon: 'ri:search-eye-line',
-		color: 'var(--color-info)'
+		icon: 'ri:search-eye-line'
 	},
 	{
 		id: 'sudo',
 		name: 'Sudo',
 		description: 'Full access to the server, asks before deleting anything',
-		icon: 'ri:terminal-box-line',
-		color: 'var(--color-error)'
+		icon: 'ri:terminal-box-line'
 	},
 	{
 		id: 'local',
 		name: 'Local',
 		description: "A small model on your server's NPU",
-		icon: 'ri:cpu-line',
-		color: null
+		icon: 'ri:cpu-line'
 	}
 ];
+
+/**
+ * The composer shows the one mode as two controls. Depth steps through the
+ * modes below, lightest first; access is ask-first or full access (sudo).
+ * The server takes a single mode, so choosing on one control resets the
+ * other: full access runs at the balanced depth.
+ */
+export const DEPTH_ORDER: AgentModeId[] = ['local', 'chat', 'deep_research'];
+
+/** What the depth control calls each of its stops. */
+export const DEPTH_NAMES: Partial<Record<AgentModeId, string>> = {
+	local: 'Local',
+	chat: 'Balanced',
+	deep_research: 'Deep research'
+};
+
+/** The depth stops this chat offers, lightest first. */
+export function depthModes(modes: AgentMode[]): AgentMode[] {
+	return DEPTH_ORDER.map((id) => modes.find((m) => m.id === id)).filter(
+		(m): m is AgentMode => m !== undefined
+	);
+}
 
 export function getModeById(id: AgentModeId): AgentMode | undefined {
 	return AGENT_MODES.find((m) => m.id === id);

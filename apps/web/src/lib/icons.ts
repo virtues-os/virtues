@@ -122,6 +122,7 @@ import riListCheck from '@iconify-icons/ri/list-check';
 import riListUnordered from '@iconify-icons/ri/list-unordered';
 import riLoader4Line from '@iconify-icons/ri/loader-4-line';
 import riLockLine from '@iconify-icons/ri/lock-line';
+import riLockUnlockLine from '@iconify-icons/ri/lock-unlock-line';
 import riLogoutBoxRLine from '@iconify-icons/ri/logout-box-r-line';
 // Mobile bottom-tab bar: line + fill pairs (rendered offline on the phone,
 // so they must live in this registry — the network Iconify API is unavailable).
@@ -311,6 +312,7 @@ addIcon('ri:list-check', riListCheck);
 addIcon('ri:list-unordered', riListUnordered);
 addIcon('ri:loader-4-line', riLoader4Line);
 addIcon('ri:lock-line', riLockLine);
+addIcon('ri:lock-unlock-line', riLockUnlockLine);
 addIcon('ri:logout-box-r-line', riLogoutBoxRLine);
 // Mobile bottom-tab bar icons (line + fill pairs).
 addIcon('ri:sun-line', riSunLine);
