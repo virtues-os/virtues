@@ -882,8 +882,17 @@
 	}
 }
 
-/* Where a dragged block will land. */
+/* Where a dragged block will land, and none where a drop would do nothing. */
 .doc-dropcursor {
 	background: var(--color-primary);
 	border-radius: 1px;
+}
+.doc-drop-idle .doc-dropcursor {
+	display: none;
+}
+
+/* The block being dragged, where it was until it lands. */
+.doc-prose .doc-drag-source {
+	opacity: 0.4;
+	transition: opacity 0.12s ease;
 }

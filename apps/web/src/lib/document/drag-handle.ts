@@ -14,6 +14,15 @@
  * grip sits left of the editable element and the pointer crosses open
  * margin to reach it. Over the grip, the block it was shown for stays.
  *
+ * While a block is dragged it shows no picture of itself under the pointer,
+ * which would cover the place it is aimed at. The block stays where it was,
+ * dimmed (`doc-drag-source`), the drop cursor draws a line where it would
+ * land, and no line where a drop would do nothing (into itself). Near the
+ * top or bottom of the page's scroller the page scrolls, faster nearer the
+ * edge. On the drop the blocks that moved slide from where they were
+ * (`slideMoved`), unless the person asks for reduced motion, and where it
+ * landed is said to assistive technology.
+ *
  * The grip sits beside the editable element, not in it, so ProseMirror sees
  * none of its events. The drag starts here and sets `view.dragging` as
  * ProseMirror does for its own drags, so the drop cursor draws where the
@@ -23,10 +32,12 @@
 
 import { Extension } from '@tiptap/core';
 import type { Node as PmNode, Slice } from '@tiptap/pm/model';
-import { NodeSelection, Plugin, PluginKey, Selection, type Transaction } from '@tiptap/pm/state';
+import { NodeSelection, Plugin, PluginKey, Selection, type EditorState, type Transaction } from '@tiptap/pm/state';
 import { dropPoint } from '@tiptap/pm/transform';
-import type { EditorView } from '@tiptap/pm/view';
+import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view';
 import { moveUnitTo, unitAround, withoutIds } from './commands';
+import { scrollerOf } from './outline';
+import { contract } from './schema';
 
 /** What a drag from the grip carries, mapped through edits made while it lasts. */
 interface Held {
@@ -62,6 +73,76 @@ const GRIP_SVG =
 	'<circle cx="2.5" cy="8" r="1.4"/><circle cx="7.5" cy="8" r="1.4"/>' +
 	'<circle cx="2.5" cy="13" r="1.4"/><circle cx="7.5" cy="13" r="1.4"/></svg>';
 
+/** How far from the scroller's top or bottom edge a drag scrolls the page, and its fastest step a frame. */
+const EDGE = 56;
+const EDGE_STEP = 18;
+/** How long the blocks a drop moved take to slide into place. */
+const SLIDE_MS = 180;
+
+/** Where a drop at `event` would put what `held` carries, or null where it would do nothing. */
+function dropTarget(view: EditorView, event: DragEvent, held: Held, moved: boolean): number | null {
+	const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
+	if (!at) return null;
+	const target = dropPoint(view.state.doc, at.pos, held.slice) ?? at.pos;
+	return moved && target >= held.from && target <= held.to ? null : target;
+}
+
+/** Whether a drop copies, as ProseMirror reads it: the copy modifier held (⌥ on a Mac, Ctrl elsewhere). */
+function copies(event: DragEvent): boolean {
+	return /Mac|iP(hone|[oa]d)/.test(navigator.platform) ? event.altKey : event.ctrlKey;
+}
+
+/** The top of each block with an id that is near the screen, by id. */
+function blockTops(view: EditorView): Map<string, number> {
+	const tops = new Map<string, number>();
+	const reach = window.innerHeight * 2;
+	view.state.doc.descendants((node, pos) => {
+		if (!node.isBlock) return false;
+		const id = node.attrs[contract.id.attr];
+		const el = view.nodeDOM(pos);
+		if (id && el instanceof HTMLElement) {
+			const top = el.getBoundingClientRect().top;
+			if (Math.abs(top) < reach) tops.set(String(id), top);
+		}
+		return !node.isTextblock;
+	});
+	return tops;
+}
+
+/**
+ * Slide every block that moved from where it was (`before`, from
+ * `blockTops`) to where it is now. A block that moved carries its own
+ * blocks, which are not slid again.
+ */
+function slideMoved(view: EditorView, before: Map<string, number>): void {
+	view.state.doc.descendants((node, pos) => {
+		if (!node.isBlock) return false;
+		const id = node.attrs[contract.id.attr];
+		const was = id ? before.get(String(id)) : undefined;
+		const el = view.nodeDOM(pos);
+		if (was === undefined || !(el instanceof HTMLElement)) return !node.isTextblock;
+		const dy = was - el.getBoundingClientRect().top;
+		if (Math.abs(dy) < 1) return !node.isTextblock;
+		// The Web Animations API writes no attribute ProseMirror would read back.
+		el.animate([{ transform: `translateY(${dy}px)` }, { transform: 'none' }], {
+			duration: SLIDE_MS,
+			easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)',
+		});
+		return false;
+	});
+}
+
+/** Where the selected block now sits, said in words: below the block before it, or at the top. */
+function landedWords(state: EditorState): string {
+	const { selection } = state;
+	if (!(selection instanceof NodeSelection)) return 'Block moved';
+	const before = state.doc.resolve(selection.from).nodeBefore;
+	if (!before) return 'Block moved to the top';
+	const text = before.textContent.trim();
+	if (!text) return 'Block moved';
+	return `Block moved below ${text.length > 40 ? `${text.slice(0, 40)}…` : text}`;
+}
+
 /** The first and last places for the caret inside `unit`, or null when it has no text. */
 function textRange(view: EditorView, unit: Unit): { from: number; to: number } | null {
 	const { doc } = view.state;
@@ -76,6 +157,13 @@ class Grip {
 	private unit: Unit | null = null;
 	private pointer: { x: number; y: number } | null = null;
 	private frame = 0;
+	/** What a drag shows under the pointer: nothing, one transparent pixel. */
+	private readonly blank: HTMLDivElement;
+	/** Where the person is told where a block landed. */
+	private readonly said: HTMLDivElement;
+	/** The pointer while a block is dragged, and the frame that scrolls the page by it. */
+	private dragPointer: number | null = null;
+	private scrollFrame = 0;
 
 	constructor(
 		private view: EditorView,
@@ -90,7 +178,12 @@ class Grip {
 		this.dom.addEventListener('dragstart', this.onDragStart);
 		this.dom.addEventListener('dragend', this.onDragEnd);
 		this.dom.addEventListener('click', this.onClick);
-		this.host()?.append(this.dom);
+		this.blank = document.createElement('div');
+		this.blank.style.cssText = 'position:fixed;top:-2px;left:-2px;width:1px;height:1px;opacity:0;pointer-events:none';
+		this.said = document.createElement('div');
+		this.said.className = 'sr-only';
+		this.said.setAttribute('aria-live', 'polite');
+		this.host()?.append(this.dom, this.blank, this.said);
 		document.addEventListener('mousemove', this.onMove, { capture: true, passive: true });
 		document.addEventListener('mouseout', this.onOut, { passive: true });
 		document.addEventListener('scroll', this.onScroll, { capture: true, passive: true });
@@ -108,6 +201,9 @@ class Grip {
 
 	destroy(): void {
 		cancelAnimationFrame(this.frame);
+		this.stopScrolling();
+		this.blank.remove();
+		this.said.remove();
 		document.removeEventListener('mousemove', this.onMove, { capture: true });
 		document.removeEventListener('mouseout', this.onOut);
 		document.removeEventListener('scroll', this.onScroll, { capture: true });
@@ -223,10 +319,9 @@ class Grip {
 		event.dataTransfer.setData('text/html', dom.innerHTML);
 		event.dataTransfer.setData('text/plain', text);
 		event.dataTransfer.effectAllowed = 'copyMove';
-		const block = view.nodeDOM(unit.from);
-		if (block instanceof HTMLElement) {
-			event.dataTransfer.setDragImage(block, 0, Math.max(0, event.clientY - block.getBoundingClientRect().top));
-		}
+		// Nothing under the pointer: the block dimmed in place and the drop
+		// line say what moves and where to.
+		event.dataTransfer.setDragImage(this.blank, 0, 0);
 		// As ProseMirror's own drag sets it, `node` included: the drop cursor
 		// reads it, and so does a drop on another page.
 		view.dragging = { slice, move: true, node: selection } as EditorView['dragging'];
@@ -234,10 +329,46 @@ class Grip {
 		// Faded, not hidden: Chrome ends a drag at once when its source stops
 		// taking the pointer during dragstart.
 		this.dom.classList.add('is-dragging');
+		this.dragPointer = event.clientY;
+		document.addEventListener('dragover', this.onDragOver, { capture: true, passive: true });
+		this.scrollFrame = requestAnimationFrame(this.scrollStep);
 	};
+
+	/** Tell assistive technology where a block landed. */
+	say(words: string): void {
+		this.said.textContent = words;
+	}
+
+	private onDragOver = (event: DragEvent): void => {
+		this.dragPointer = event.clientY;
+	};
+
+	/** One frame of scrolling while a block is dragged near the top or bottom of the page's scroller. */
+	private scrollStep = (): void => {
+		const y = this.dragPointer;
+		const scroller = scrollerOf(this.view.dom);
+		if (y !== null && !this.view.isDestroyed) {
+			const page = scroller === document.scrollingElement;
+			const box = page ? { top: 0, bottom: window.innerHeight } : scroller.getBoundingClientRect();
+			const into = y < box.top + EDGE ? -(box.top + EDGE - y) : y > box.bottom - EDGE ? y - (box.bottom - EDGE) : 0;
+			if (into) {
+				const step = Math.sign(into) * Math.ceil(EDGE_STEP * Math.min(1, Math.abs(into) / EDGE) ** 2);
+				scroller.scrollBy({ top: step });
+			}
+		}
+		this.scrollFrame = requestAnimationFrame(this.scrollStep);
+	};
+
+	private stopScrolling(): void {
+		cancelAnimationFrame(this.scrollFrame);
+		this.dragPointer = null;
+		document.removeEventListener('dragover', this.onDragOver, { capture: true });
+	}
 
 	private onDragEnd = (): void => {
 		const { view } = this;
+		this.stopScrolling();
+		this.host()?.classList.remove('doc-drop-idle');
 		this.dom.classList.remove('is-dragging');
 		this.hide();
 		this.options.dragEnded?.(view);
@@ -284,17 +415,41 @@ export const DragHandle = Extension.create<DragHandleOptions>({
 						grip?.hide();
 						return false;
 					},
+					// The block being dragged, dimmed where it was until it lands.
+					decorations(state) {
+						const held = heldKey.getState(state);
+						if (!held || !state.doc.nodeAt(held.from)) return null;
+						return DecorationSet.create(state.doc, [Decoration.node(held.from, held.to, { class: 'doc-drag-source' })]);
+					},
+					handleDOMEvents: {
+						// No drop line where a drop would do nothing.
+						dragover(view, event) {
+							const held = heldKey.getState(view.state);
+							if (held && view.dragging?.slice === held.slice) {
+								const idle = dropTarget(view, event, held, !copies(event)) === null;
+								view.dom.parentElement?.classList.toggle('doc-drop-idle', idle);
+							}
+							return false;
+						},
+					},
 					// The slice given here has been through `transformPasted`, so the
 					// drag is known by the one `view.dragging` still holds.
 					handleDrop(view, event, _slice, moved) {
 						const held = heldKey.getState(view.state);
 						if (!held || view.dragging?.slice !== held.slice) return false;
-						const at = view.posAtCoords({ left: event.clientX, top: event.clientY });
+						view.dom.parentElement?.classList.remove('doc-drop-idle');
 						const node = view.state.doc.nodeAt(held.from);
-						if (!at || !node) return true;
-						const target = dropPoint(view.state.doc, at.pos, held.slice) ?? at.pos;
-						if (moved) moveUnitTo(view, held.from, held.to, target);
-						else view.dispatch(view.state.tr.replaceRangeWith(target, target, withoutIds(node)).scrollIntoView());
+						const target = dropTarget(view, event, held, moved);
+						if (!node || target === null) return true;
+						const still = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+						const before = still ? null : blockTops(view);
+						if (moved) {
+							if (!moveUnitTo(view, held.from, held.to, target)) return true;
+						} else {
+							view.dispatch(view.state.tr.replaceRangeWith(target, target, withoutIds(node)).scrollIntoView());
+						}
+						if (before) slideMoved(view, before);
+						grip?.say(moved ? landedWords(view.state) : 'Block copied');
 						return true;
 					},
 				},
