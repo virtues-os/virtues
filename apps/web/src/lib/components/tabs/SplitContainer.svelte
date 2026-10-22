@@ -243,19 +243,56 @@
 
 	onMount(() => () => clearTimeout(motionTimer));
 
-	function handleMouseDown(e: MouseEvent) {
-		if (!isSplitEnabled) return;
+	// The divider's drag works as the sidebar seam's does: pointer events with
+	// capture on the handle, so the drag follows the pointer anywhere, works
+	// with touch, and ends however it is interrupted.
+	function handleDividerDown(e: PointerEvent) {
+		// The primary button only: a right-click is not a drag.
+		if (!isSplitEnabled || e.button !== 0) return;
 		e.preventDefault();
 		isResizing = true;
 		windowShellStore.paneResizing = true;
+		try {
+			(e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+		} catch {
+			// Synthetic or already-captured pointers: the move handler still
+			// follows while the pointer is over the handle.
+		}
 	}
 
-	function handleMouseMove(e: MouseEvent) {
+	function handleDividerMove(e: PointerEvent) {
 		if (!isResizing || !containerRef || !isSplitEnabled) return;
+		// No button held means the release went somewhere the handle never
+		// heard about, such as another app after ⌘-Tab. End the drag here.
+		if (e.buttons === 0) {
+			stopResize();
+			return;
+		}
 
 		const rect = containerRef.getBoundingClientRect();
 		setDivider(((e.clientX - rect.left) / rect.width) * 100);
 	}
+
+	function handleDividerUp(e: PointerEvent) {
+		if (!isResizing) return;
+		stopResize();
+		try {
+			(e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+		} catch {
+			// Capture can already be gone if the pointer left the window.
+		}
+	}
+
+	function stopResize() {
+		isResizing = false;
+		windowShellStore.paneResizing = false;
+	}
+
+	// The split can close mid-drag (the browser's Back, for one), and then the
+	// handle stops taking pointer events before its release arrives.
+	$effect(() => {
+		if (!isSplitEnabled) stopResize();
+	});
 
 	/**
 	 * Put the divider at `percent` of the window, keeping each pane at least
@@ -281,12 +318,6 @@
 			e.preventDefault();
 			windowShellStore.setPaneWidth(50);
 		}
-	}
-
-	function handleMouseUp() {
-		if (!isResizing) return;
-		isResizing = false;
-		windowShellStore.paneResizing = false;
 	}
 
 	function handlePaneClick(paneId: "left" | "right") {
@@ -343,8 +374,6 @@
 		return () => off?.();
 	});
 </script>
-
-<svelte:window on:mousemove={handleMouseMove} on:mouseup={handleMouseUp} />
 
 <div
 	class="split-container"
@@ -421,7 +450,11 @@
 		class="resize-handle"
 		class:dragging={isResizing}
 		class:visible={isSplitEnabled}
-		onmousedown={handleMouseDown}
+		onpointerdown={handleDividerDown}
+		onpointermove={handleDividerMove}
+		onpointerup={handleDividerUp}
+		onpointercancel={() => isResizing && stopResize()}
+		onlostpointercapture={() => isResizing && stopResize()}
 		ondblclick={() => isSplitEnabled && windowShellStore.setPaneWidth(50)}
 		onkeydown={handleDividerKey}
 		role="separator"
@@ -687,6 +720,8 @@
 		z-index: 5;
 		opacity: 1;
 		pointer-events: auto;
+		/* A touch drag moves the divider instead of scrolling the page. */
+		touch-action: none;
 	}
 
 	/* The grab target reaches 4px past the gutter into each card's edge, so
