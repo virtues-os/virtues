@@ -98,6 +98,7 @@
 		display: contents;
 	}
 	.page-outline :global(.popover-trigger) {
+		grid-row: 1;
 		grid-column: 2;
 		justify-self: center;
 		min-width: 0;

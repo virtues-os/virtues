@@ -893,12 +893,17 @@
 		align-items: center;
 		z-index: var(--z-sticky);
 	}
+	/* Each in its column of the one row. With a column alone, the grid
+	   places items in source order: the outline (column 2) comes first, so
+	   the projects (column 1) fell to a second row and the bar grew two. */
 	.page-topbar :global(.page-projects) {
+		grid-row: 1;
 		grid-column: 1;
 		justify-self: start;
 		max-width: 100%;
 	}
 	.page-topbar :global(.page-toolbar) {
+		grid-row: 1;
 		grid-column: 3;
 	}
 
