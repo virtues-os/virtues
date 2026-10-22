@@ -47,7 +47,7 @@
 			aria-label={lit ? 'Inbox. Something needs you.' : 'Inbox'}
 			aria-haspopup="dialog"
 			aria-expanded={open}
-			title={lit ? 'Something needs you' : 'Inbox'}
+			data-tip={lit ? 'Something needs you' : 'Inbox'}
 			onclick={() => {
 				if (!open) void attention.refresh();
 				toggle();

@@ -613,7 +613,8 @@
 	/* Content Colors - Navy-black ink on ivory */
 	--foreground: #1A2030;
 	--foreground-muted: #3E4459;
-	--foreground-subtle: #6C7185;
+	/* 5:1 on the desk: the 12px group labels need AA at their size. */
+	--foreground-subtle: #626779;
 	--foreground-disabled: #A8A395;
 
 	/* Interactive Colors - Deep heritage navy */
@@ -1577,8 +1578,11 @@
  * Theme-adaptive by design: the light values below are the default; the dark
  * override lifts each hue so categories stay legible on dark surfaces.
  *
- * Both sets sit at a UNIFORM lightness in OKLab — 0.58 light, 0.78 dark — with
- * hue preserved and chroma held near 0.13. They were raw Tailwind 500s, whose
+ * Both sets sit at a UNIFORM lightness in OKLab — 0.58 light, 0.78 dark — and
+ * a muted chroma, 0.10 light and 0.09 dark, so a pin reads as a label and
+ * not as a light. No hue sits at an error red or a warning amber: rose is at
+ * 12°, clay (key `orange`) at 48° and ochre (key `yellow`) at 95°, and the
+ * nine are spread so no two neighbors are under 25° apart. They were raw Tailwind 500s, whose
  * lightness ranged 0.59 to 0.80: yellow was the palest thing in the set and
  * washed out on paper while indigo sat heavy, so a row of them read as
  * unevenly weighted rather than as one family. Equal lightness is what makes
@@ -1595,18 +1599,18 @@
  * lightness, or the unevenness comes straight back.
  * ────────────────────────────────────────────────────────────────────────── */
 :root {
-	--cat-purple: #8b64b9;
-	--cat-purple-light: #a97fd6;
-	--cat-indigo: #457ac7;
-	--cat-violet: #7e69c1;
-	--cat-pink: #b4557f;
-	--cat-rose: #bb555f;
-	--cat-orange: #b75e2b;
-	--cat-yellow: #9d7300;
-	--cat-cyan: #008cab;
-	--cat-cyan-light: #22a6c6;
-	--cat-emerald: #009262;
-	--cat-emerald-light: #1cad7c;
+	--cat-purple: #8e68a5;
+	--cat-purple-light: #a47dbb;
+	--cat-indigo: #547bb5;
+	--cat-violet: #7471b3;
+	--cat-pink: #a1628d;
+	--cat-rose: #ad606a;
+	--cat-orange: #aa6743;
+	--cat-yellow: #8d792a;
+	--cat-cyan: #1b87a4;
+	--cat-cyan-light: #399dba;
+	--cat-emerald: #3a8c67;
+	--cat-emerald-light: #51a27b;
 }
 
 [data-theme="lothlorien"],
@@ -1618,18 +1622,18 @@
 [data-theme="asgard"],
 [data-theme="agora"],
 [data-theme="shire"] {
-	--cat-purple: #c9a3f9;
-	--cat-purple-light: #dbbdff;
-	--cat-indigo: #84b9ff;
-	--cat-violet: #baa8ff;
-	--cat-pink: #f694bc;
-	--cat-rose: #fd959b;
-	--cat-orange: #f99d6e;
-	--cat-yellow: #dbb14e;
-	--cat-cyan: #37cbea;
-	--cat-cyan-light: #6fe0fb;
-	--cat-emerald: #60d09f;
-	--cat-emerald-light: #8ae5bb;
+	--cat-purple: #cba7e1;
+	--cat-purple-light: #dcbcf1;
+	--cat-indigo: #94b9f1;
+	--cat-violet: #b1b0ef;
+	--cat-pink: #dfa1ca;
+	--cat-rose: #eba0a8;
+	--cat-orange: #e7a685;
+	--cat-yellow: #c9b773;
+	--cat-cyan: #71c5e0;
+	--cat-cyan-light: #8ed7ef;
+	--cat-emerald: #82caa5;
+	--cat-emerald-light: #9cdbba;
 
 	/* Dark-mode flag for the JS that adapts a user's CUSTOM hex (pin-colors.ts).
 	   Set here, beside the palette it belongs to, so adding a theme stays one

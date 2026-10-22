@@ -22,20 +22,24 @@
  * the same language.
  */
 
-/** The nine, in spectrum order — this is also the picker's order. */
+/**
+ * The nine, in spectrum order — this is also the picker's order. Keys are
+ * the stored values (app_pins.color and friends) and never change; the
+ * labels name the muted hues the tokens draw (themes.css, `--cat-*`).
+ */
 export const PIN_COLORS: { key: string; label: string }[] = [
 	{ key: 'rose', label: 'Rose' },
-	{ key: 'orange', label: 'Orange' },
-	{ key: 'yellow', label: 'Yellow' },
-	{ key: 'emerald', label: 'Emerald' },
-	{ key: 'cyan', label: 'Cyan' },
+	{ key: 'orange', label: 'Clay' },
+	{ key: 'yellow', label: 'Ochre' },
+	{ key: 'emerald', label: 'Sage' },
+	{ key: 'cyan', label: 'Teal' },
 	// Key stays `indigo` — it's the value stored in app_pins.color,
 	// app_pages.icon_color and friends — but the hue is a true blue now, so
 	// the label says what the user actually sees.
 	{ key: 'indigo', label: 'Blue' },
 	{ key: 'violet', label: 'Violet' },
 	{ key: 'purple', label: 'Purple' },
-	{ key: 'pink', label: 'Pink' },
+	{ key: 'pink', label: 'Mauve' },
 ];
 
 const KEYS = PIN_COLORS.map((c) => c.key);

@@ -146,7 +146,7 @@
 			type="button"
 			class="relaunch"
 			onclick={() => void relaunch()}
-			title="Restart into the downloaded update - takes a few seconds"
+			data-tip="Restart into the downloaded update - takes a few seconds"
 		>
 			<span class="relaunch-label">Relaunch to update</span>
 			<span class="relaunch-version">v{stagedVersion}</span>
@@ -157,7 +157,7 @@
 			type="button"
 			class="relaunch"
 			onclick={() => reloadApp()}
-			title={ownCopy
+			data-tip={ownCopy
 				? "This app downloaded a newer interface - reload to switch to it"
 				: "Your server is serving a newer interface - reload to pick it up"}
 		>

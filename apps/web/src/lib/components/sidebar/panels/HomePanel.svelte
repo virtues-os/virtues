@@ -55,7 +55,6 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
-	import { promptText } from '$lib/stores/dialog.svelte';
 	import { deleteChat, type PageSummary, type Pin } from '$lib/api/client';
 	import { pinIdentity, renameRef, ownedRef, untitled, isUntitled } from '$lib/refs/identity.svelte';
 	import {
@@ -467,10 +466,10 @@
 	 * list does not nag from the sidebar (agents/plan/tasks-plan.md). The
 	 * Wiki opens its overview, whose index reaches its sections.
 	 */
-	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; run: (e: MouseEvent) => void } }> = {
+	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; key?: string; run: (e: MouseEvent) => void } }> = {
 		'new-chat': { open: newChat },
-		pages: { open: openPages, add: { label: 'New page', run: newPage } },
-		tasks: { open: openTasks, add: { label: 'New task', run: newTask } },
+		pages: { open: openPages, add: { label: 'New page', key: 'mod+shift+n', run: newPage } },
+		tasks: { open: openTasks, add: { label: 'New task', key: 'mod+shift+e', run: newTask } },
 		projects: { open: openProjects, add: { label: 'New project', run: addProject } },
 		applets: { open: openApplets },
 		wiki: { open: openWiki },
@@ -637,24 +636,60 @@
 // ── the verbs, per kind ────────────────────────────────────────────────
 
 	/** One rename for anything with a url: the thing, its tabs, its pin (refs/identity). */
-	async function renameUrl(url: string, current: string, dialogTitle: string) {
-		const next = await promptText({ title: dialogTitle, initialValue: current, confirmLabel: 'Rename' });
-		const title = next?.trim();
-		if (!title || title === current) return;
+	// Rename happens in the row: its title becomes a field. Enter or leaving
+	// the field saves, Escape puts the old name back. A stand-in name starts
+	// the field empty, so typing does not have to delete "Untitled" first.
+	let renaming = $state<{ url: string; draft: string; original: string } | null>(null);
+
+	function startRename(url: string, current: string, kind = '') {
+		renaming = { url, draft: isUntitled(current, kind) ? '' : current, original: current };
+	}
+
+	async function commitRename() {
+		const r = renaming;
+		renaming = null;
+		const title = r?.draft.trim();
+		if (!r || !title || title === r.original) return;
 		try {
-			await renameRef(url, title);
+			await renameRef(r.url, title);
 		} catch (e) {
 			console.error('[HomePanel] rename failed:', e);
-			toast.error(`Your server couldn't rename "${current}"`, { description: 'It keeps its old name. Try again' });
+			toast.error(`Your server couldn't rename "${r.original}"`, { description: 'It keeps its old name. Try again' });
 		}
 	}
 
+	/** Chats, pages and projects own their names; a web or app-screen pin owns its own. */
+	function canRename(url: string): boolean {
+		if (ownedRef(url)) return true;
+		const pin = pins.find((p) => p.url === url);
+		return !!pin && ['web', 'route'].includes(pinIdentity(pin).kind);
+	}
+
+	/** A row's open: ⌘-click (Ctrl on Windows and Linux) opens it in the other pane. */
+	function openFromRow(e: MouseEvent, url: string, title: string, open: () => void) {
+		if (renaming?.url === url) return;
+		if ((e.metaKey || e.ctrlKey) && !isExternal(url)) windowShellStore.openRouteBeside(url, title);
+		else open();
+	}
+
+	/** Double-click or F2 renames, where the thing has a name to change. */
+	function renameFromRow(e: Event, url: string, title: string, kind = '') {
+		if (!canRename(url)) return;
+		e.preventDefault();
+		startRename(url, title, kind);
+	}
+
+	function focusAndSelect(node: HTMLInputElement) {
+		node.focus();
+		node.select();
+	}
+
 	function renameChat(s: ChatSession) {
-		return renameUrl(chatRoute(s), titleOf(s), 'Rename chat');
+		startRename(chatRoute(s), titleOf(s), 'chat');
 	}
 
 	function renamePage(p: PageSummary) {
-		return renameUrl(pageRoute(p), pageTitle(p), 'Rename page');
+		startRename(pageRoute(p), pageTitle(p), 'page');
 	}
 
 	// The three deletes below ask nothing. Each is a trip to Recently deleted
@@ -843,7 +878,7 @@
 				id: 'rename',
 				label: 'Rename',
 				icon: 'ri:edit-line',
-				action: () => void renameUrl(pin.url, look.title, 'Rename pin'),
+				action: () => startRename(pin.url, look.title),
 			});
 		}
 		// The picker holds the icon AND the color, so one entry, not two.
@@ -996,7 +1031,7 @@
 			{#if act.add}
 				{@const add = act.add}
 				<span class="row-actions">
-					<button type="button" class="row-action" aria-label={add.label} title={add.label} onclick={add.run}>
+					<button type="button" class="row-action" aria-label={add.label} data-tip={add.label} data-tip-key={add.key} onclick={add.run}>
 						<AtlasIcon name="plus" size={14} bare />
 					</button>
 				</span>
@@ -1018,7 +1053,7 @@
 			type="button"
 			class="group-label group-toggle"
 			aria-expanded={!folded(id)}
-			title={folded(id) ? `Show ${label}` : `Hide ${label}`}
+			data-tip={folded(id) ? `Show ${label}` : `Hide ${label}`}
 			onclick={(e) => toggleGroup(id, e.currentTarget.parentElement as HTMLElement)}
 		>
 			<span>{label}</span>
@@ -1040,7 +1075,7 @@
 		class="row-action"
 		class:on={recentFilter !== 'all'}
 		aria-label="Filter recents"
-		title="Filter recents"
+		data-tip="Filter recents"
 		onclick={(e) => showMenuFromButton(e, recentFilterMenu())}
 	>
 		<AtlasIcon name="filter" size={14} bare />
@@ -1061,8 +1096,9 @@
 		class:stale-hover={staleHover}
 		role="link"
 		tabindex="0"
-		title={`${row.title} · ${home ? home.name : RECENT_KIND_LABEL[row.kind]}`}
-		draggable="true"
+		data-tip={`${row.title} · ${home ? home.name : RECENT_KIND_LABEL[row.kind]}`}
+		data-tip-side="right"
+		draggable={renaming?.url !== row.url}
 		ondragstart={(e) => {
 			liftRow(e);
 			draggingRecent = row.url;
@@ -1070,16 +1106,19 @@
 			else e.dataTransfer?.setData('text/plain', row.title);
 		}}
 		ondragend={endDrag}
-		onclick={() => openRecent(row)}
+		onclick={(e) => openFromRow(e, row.url, row.title, () => openRecent(row))}
+		ondblclick={(e) => renameFromRow(e, row.url, row.title, row.kind)}
 		onkeydown={(e) => {
 			if (e.key === 'Enter' || e.key === ' ') {
 				e.preventDefault();
 				openRecent(row);
+			} else if (e.key === 'F2') {
+				renameFromRow(e, row.url, row.title, row.kind);
 			}
 		}}
 		oncontextmenu={(e) => showMenu(e, recentMenu(row))}
 	>
-		<span class="panel-row-text" class:untitled={row.untitled}>{row.title}</span>
+		{@render rowTitle(row.url, row.title, row.untitled)}
 		{#if chatId && chatActivity.running(chatId)}
 			<span class="row-running" role="img" aria-label="Replying">
 				<ThinkingMark depth={3} size={14} />
@@ -1093,7 +1132,7 @@
 				class="row-action"
 				class:on={pinned}
 				aria-label={pinned ? 'Unpin' : 'Pin'}
-				title={pinned ? 'Unpin' : 'Pin'}
+				data-tip={pinned ? 'Unpin' : 'Pin'}
 				onclick={(e) => quickPin(e, { url: row.url, label: row.title })}
 			>
 				<AtlasIcon name={pinned ? 'pinned' : 'pin'} size={14} bare />
@@ -1102,13 +1141,42 @@
 				type="button"
 				class="row-action"
 				aria-label="More"
-				title="More"
+				data-tip="More"
 				onclick={(e) => showMenuFromButton(e, recentMenu(row))}
 			>
 				<AtlasIcon name="more" size={14} bare />
 			</button>
 		</span>
 	</div>
+{/snippet}
+
+<!-- A row's title, or the field that renames it. The field keeps every key
+     to itself: the row's own Enter and Space would open the thing. -->
+{#snippet rowTitle(url: string, title: string, untitledTitle: boolean)}
+	{#if renaming?.url === url}
+		<input
+			class="row-rename"
+			aria-label="Name"
+			bind:value={renaming.draft}
+			placeholder={title}
+			use:focusAndSelect
+			onclick={(e) => e.stopPropagation()}
+			ondblclick={(e) => e.stopPropagation()}
+			onkeydown={(e) => {
+				e.stopPropagation();
+				if (e.key === 'Enter') {
+					e.preventDefault();
+					void commitRename();
+				} else if (e.key === 'Escape') {
+					e.preventDefault();
+					renaming = null;
+				}
+			}}
+			onblur={() => void commitRename()}
+		/>
+	{:else}
+		<span class="panel-row-text" class:untitled={untitledTitle}>{title}</span>
+	{/if}
 {/snippet}
 
 <!-- A reply landed while the chat was off screen. It sits where the row's
@@ -1169,9 +1237,10 @@
 					{...{ [PIN_DROP_ATTR]: String(index) }}
 					role="link"
 					tabindex="0"
-					title={look.title}
+					data-tip={look.title}
+					data-tip-side="right"
 					aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
-					draggable="true"
+					draggable={renaming?.url !== pin.url}
 					ondragstart={(e) => {
 						liftRow(e);
 						draggingPinId = pin.id;
@@ -1194,11 +1263,16 @@
 							dropped,
 						);
 					}}
-					onclick={() => openPin(pin)}
+					onclick={(e) => openFromRow(e, pin.url, look.title, () => openPin(pin))}
+					ondblclick={(e) => renameFromRow(e, pin.url, look.title, look.kind)}
 					onkeydown={(e) => {
 						if (e.key === 'Enter' || e.key === ' ') {
 							e.preventDefault();
 							openPin(pin);
+							return;
+						}
+						if (e.key === 'F2') {
+							renameFromRow(e, pin.url, look.title, look.kind);
 							return;
 						}
 						// The keyboard's drag: Alt and an arrow move the pin a row,
@@ -1240,14 +1314,14 @@
 							</span>
 						{/if}
 					</span>
-					<span class="panel-row-text" class:untitled={isUntitled(look.title, look.kind)}>{look.title}</span>
+					{@render rowTitle(pin.url, look.title, isUntitled(look.title, look.kind))}
 					{@render unreadDot(pinChat)}
 					<span class="row-actions">
 						<button
 							type="button"
 							class="row-action"
 							aria-label="Unpin"
-							title="Unpin"
+							data-tip="Unpin"
 							onclick={(e) => quickPin(e, { url: pin.url, label: look.title })}
 						>
 							<AtlasIcon name="pinned" size={14} bare />
@@ -1256,7 +1330,7 @@
 							type="button"
 							class="row-action"
 							aria-label="More"
-							title="More"
+							data-tip="More"
 							onclick={(e) =>
 								showMenuFromButton(e, pinMenu(pin, { x: e.clientX, y: e.clientY }))}
 						>
@@ -1597,6 +1671,26 @@
 		font-variant-numeric: tabular-nums;
 	}
 
+	/* The rename field sits exactly where the title was, in its face and size. */
+	.row-rename {
+		flex: 1;
+		min-width: 0;
+		height: 22px;
+		margin: 0 -4px;
+		padding: 0 4px;
+		border: none;
+		border-radius: 4px;
+		background: var(--color-page);
+		box-shadow: inset 0 0 0 1px var(--color-border);
+		color: var(--color-foreground);
+		font: inherit;
+		outline: none;
+	}
+
+	.row-rename:focus {
+		box-shadow: inset 0 0 0 1.5px var(--color-primary);
+	}
+
 	/* A stand-in name ("Untitled", "New chat") looks unnamed. */
 	.panel-row-text.untitled {
 		color: var(--color-foreground-subtle);
@@ -1641,7 +1735,9 @@
 		margin-right: 2px;
 		flex: none;
 		border-radius: 999px;
-		background: var(--color-success);
+		/* The accent, as on the header mark's inbox dot: "something new" has
+		   one color everywhere. Green would say something succeeded. */
+		background: var(--color-primary);
 		animation: unread-in 180ms var(--ease-premium);
 	}
 
@@ -1706,9 +1802,15 @@
 		cursor: pointer;
 	}
 
+	/* A control inside a hovered row takes the next step up, the active
+	   fill, so the ladder has two rungs and no in-between. */
 	.row-action:hover {
-		background: color-mix(in srgb, var(--wash-ink) 10%, transparent);
+		background: var(--active-bg);
 		color: var(--color-foreground);
+	}
+
+	.row-action:active {
+		background: var(--press-bg);
 	}
 
 	.row-action.on {

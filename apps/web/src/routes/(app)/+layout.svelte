@@ -12,6 +12,7 @@
 	import SearchModal from "$lib/components/sidebar/SearchModal.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import DialogHost from "$lib/components/DialogHost.svelte";
+	import TooltipLayer from "$lib/components/TooltipLayer.svelte";
 	import { FloatingContent } from "$lib/floating";
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import LinkEditorPopover from "$lib/components/pages/LinkEditorPopover.svelte";
@@ -412,6 +413,7 @@
 
 <!-- Global Context Menu Provider -->
 <ContextMenuProvider />
+<TooltipLayer />
 
 <!-- Global confirm/prompt dialogs (replaces window.confirm/prompt) -->
 <DialogHost />

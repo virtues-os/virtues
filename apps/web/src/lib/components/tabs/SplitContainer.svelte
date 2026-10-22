@@ -25,7 +25,10 @@
 	const leftZoneId: ZoneId = { type: "split-overlay", paneId: "left" };
 	const rightZoneId: ZoneId = { type: "split-overlay", paneId: "right" };
 
-	const MIN_WIDTH = 25; // minimum 25% (1/4) for each pane
+	/** A pane narrower than this cannot show a chat or a page. */
+	const MIN_PANE_PX = 360;
+	/** Within this many pixels of the middle, the divider settles on it. */
+	const SNAP_PX = 12;
 	// In split each pane is its own card, with the desk between them. The
 	// gutter is the resize handle's hit area.
 	const GUTTER_PX = SPLIT_GUTTER_PX;
@@ -247,13 +250,33 @@
 		if (!isResizing || !containerRef || !isSplitEnabled) return;
 
 		const rect = containerRef.getBoundingClientRect();
-		const newWidth = ((e.clientX - rect.left) / rect.width) * 100;
-		const clampedWidth = Math.max(
-			MIN_WIDTH,
-			Math.min(100 - MIN_WIDTH, newWidth),
-		);
+		setDivider(((e.clientX - rect.left) / rect.width) * 100);
+	}
 
-		windowShellStore.setPaneWidth(clampedWidth);
+	/**
+	 * Put the divider at `percent` of the window, keeping each pane at least
+	 * MIN_PANE_PX wide (or half the window, when it is too narrow for two)
+	 * and settling on the middle when it comes within SNAP_PX of it.
+	 */
+	function setDivider(percent: number) {
+		const total = containerRef?.getBoundingClientRect().width ?? 0;
+		if (!total) return;
+		const min = Math.min(50, (MIN_PANE_PX / total) * 100);
+		let next = Math.max(min, Math.min(100 - min, percent));
+		if (Math.abs(next - 50) * (total / 100) < SNAP_PX) next = 50;
+		windowShellStore.setPaneWidth(next);
+	}
+
+	function handleDividerKey(e: KeyboardEvent) {
+		if (!isSplitEnabled) return;
+		const step = e.shiftKey ? 10 : 2;
+		if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+			e.preventDefault();
+			setDivider(leftWidth + (e.key === "ArrowLeft" ? -step : step));
+		} else if (e.key === "Home") {
+			e.preventDefault();
+			windowShellStore.setPaneWidth(50);
+		}
 	}
 
 	function handleMouseUp() {
@@ -395,8 +418,14 @@
 		class:dragging={isResizing}
 		class:visible={isSplitEnabled}
 		onmousedown={handleMouseDown}
+		ondblclick={() => isSplitEnabled && windowShellStore.setPaneWidth(50)}
+		onkeydown={handleDividerKey}
 		role="separator"
 		aria-orientation="vertical"
+		aria-label="Resize the panes. Double-click to make them equal"
+		aria-valuenow={isSplitEnabled ? Math.round(leftWidth) : undefined}
+		aria-valuemin={0}
+		aria-valuemax={100}
 		tabindex={isSplitEnabled ? 0 : -1}
 	><span class="resize-grip" aria-hidden="true"></span></div>
 

@@ -300,6 +300,32 @@
 		}
 	}
 
+	// ── Moving through the column by keyboard ─────────────────────────────
+	// Up and Down step through the rows and group heads, Home and End go to
+	// the first and last. Tab still moves on to the next control as usual.
+	// Alt-arrows belong to Pinned (they move a pin), so only bare arrows count.
+	const NAV_ROWS =
+		'.panel-row:not(.panel-empty):not(.pin-drop-empty), .group-toggle, .panel-foot button';
+
+	function onColumnKey(e: KeyboardEvent) {
+		if (e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
+		if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+		const target = e.target as HTMLElement;
+		if (target.closest('input, textarea, [contenteditable="true"]')) return;
+		const column = e.currentTarget as HTMLElement;
+		const rows = [...column.querySelectorAll<HTMLElement>(NAV_ROWS)].filter((r) => r.offsetParent !== null);
+		if (rows.length === 0) return;
+		const at = rows.findIndex((r) => r === target || r.contains(target));
+		let next = 0;
+		if (e.key === 'Home') next = 0;
+		else if (e.key === 'End') next = rows.length - 1;
+		else if (at < 0) next = 0;
+		else next = Math.max(0, Math.min(rows.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)));
+		e.preventDefault();
+		rows[next].focus();
+		rows[next].scrollIntoView({ block: 'nearest' });
+	}
+
 	const panelColumnClass = $derived.by(() =>
 		[
 			"flex flex-col",
@@ -313,7 +339,8 @@
 </script>
 
 <aside class={sidebarClass} style="width: {asideWidth}px">
-	<div class={panelColumnClass} style="width: {panelWidth}px; min-width: {panelWidth}px">
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class={panelColumnClass} style="width: {panelWidth}px; min-width: {panelWidth}px" onkeydown={onColumnKey}>
 		<nav class="workspace-nav">
 			{#if !storeReady}
 				<div class="loading-state">

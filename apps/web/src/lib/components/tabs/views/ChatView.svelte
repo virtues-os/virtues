@@ -2488,7 +2488,7 @@
 								bind:value={input}
 								disabled={true}
 								sendDisabled={true}
-								maxWidth="max-w-3xl"
+								maxWidth="max-w-2xl"
 								placeholder="Connect AI above to write here"
 								onSubmit={() => {}}
 							/>
@@ -2501,7 +2501,7 @@
 							disabled={false}
 							sendDisabled={turnPhase.working || (isLocal && !localModel.status.ready)}
 							isStreaming={turnPhase.working}
-							maxWidth="max-w-3xl"
+							maxWidth="max-w-2xl"
 							placeholder={isLocal ? "Ask the local model" : isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
@@ -2764,8 +2764,11 @@
 		pointer-events: auto;
 	}
 
+	/* The reading width pages use (42rem): about 80 characters of 16px
+	   Avenir a line. Much wider and a reply runs past 90, which tires the
+	   eye. The composer below takes the same width. */
 	.messages-container {
-		max-width: 48rem;
+		max-width: 42rem;
 		margin: 0 auto;
 		width: 100%;
 		padding: 1.5rem 2rem 10rem 2rem;
@@ -2800,7 +2803,7 @@
 		right: 0;
 		margin: 0 auto;
 		width: 100%;
-		max-width: 48rem;
+		max-width: 42rem;
 		padding: 0 2rem 2rem 2rem;
 		/* The composer's resting inset off the window edge. It sat at 78px,
 		   a leftover of "1rem plus the floating tab bar's reserve" kept after

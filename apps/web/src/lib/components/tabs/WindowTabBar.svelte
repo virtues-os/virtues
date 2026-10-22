@@ -57,6 +57,17 @@
 	});
 
 	// Derive tabs and active state based on mode
+	// Tabs shrink together as they fill the strip. Once each would get less
+	// than COMPACT_TAB_PX, the tabs you are not on drop their labels and show
+	// only their icon, as a browser's do.
+	const COMPACT_TAB_PX = 80;
+	/** The strip's room besides its tabs: the +, a view's actions, the gaps. */
+	const STRIP_RESERVE_PX = 120;
+	let barWidth = $state(0);
+	const tabsCompact = $derived(
+		barWidth > 0 && dndItems.length > 1 && (barWidth - STRIP_RESERVE_PX) / dndItems.length < COMPACT_TAB_PX,
+	);
+
 	const tabs = $derived(
 		paneId
 			? (paneId === "left"
@@ -387,7 +398,12 @@
 	function handleDoubleClick(e: MouseEvent, tabId: string) {
 		e.preventDefault();
 		const tab = tabs.find((t) => t.id === tabId);
-		if (tab?.preview) windowShellStore.keepTab(tabId);
+		// A preview tab's double-click keeps it, and that is all it does. A
+		// second double-click, on a kept tab, renames.
+		if (tab?.preview) {
+			windowShellStore.keepTab(tabId);
+			return;
+		}
 		if (!tab || tab.pinned || !ownedRef(tab.route ?? "")) return;
 		renamingTabId = tabId;
 		renameValue = tabLook(tab).title;
@@ -454,6 +470,8 @@
 <div
 	data-tauri-drag-region
 	class="tab-bar"
+	class:compact={tabsCompact}
+	bind:clientWidth={barWidth}
 	role="toolbar"
 	aria-label="Tab bar"
 	tabindex="0"
@@ -504,9 +522,9 @@
 					e.key === "Enter" &&
 					tab.id !== renamingTabId &&
 					handleTabClick(tab.id)}
-				title={tab.id !== renamingTabId
+				data-tip={tab.id !== renamingTabId
 					? tab.preview
-						? `${identity.title} · Preview. Double-click to keep it open.`
+						? `${identity.title} · Preview. Double-click to keep it open`
 						: identity.title
 					: ""}
 				role="button"
@@ -571,7 +589,8 @@
 		class="new-tab-btn"
 		onclick={handleNewTab}
 		aria-label="New chat"
-		title="New chat"
+		data-tip="New chat"
+		data-tip-key="mod+n"
 	>
 		<AtlasIcon name="plus" size={16} bare />
 	</button>
@@ -591,7 +610,7 @@
 					disabled={action.disabled}
 					onclick={action.run}
 					aria-label={action.label}
-					title={action.label}
+					data-tip={action.label}
 				>
 					<Icon icon={action.icon} />
 					{#if action.primary}<span class="pane-action-label">{action.label}</span>{/if}
@@ -603,7 +622,7 @@
 					class="pane-action"
 					onclick={showActionOverflow}
 					aria-label="More actions"
-					title="More actions"
+					data-tip="More actions"
 				>
 					<Icon icon="ri:more-line" />
 				</button>
@@ -667,13 +686,16 @@
 		border-radius: var(--card-radius);
 		background: transparent;
 		color: var(--color-foreground-muted);
-		font-size: 12px;
+		/* The sidebar rows' size, so the header and the column read as one. */
+		font-size: 13px;
 		cursor: pointer;
 		white-space: nowrap;
-		/* Sized to its label, so the gaps between tabs are even and the +
-		   sits one gap after the last. */
-		max-width: 160px;
-		flex-shrink: 0;
+		/* Sized to its label up to 200px, so the gaps between tabs are even
+		   and the + sits one gap after the last. Past that the tabs shrink
+		   together, down to their icon. */
+		max-width: 200px;
+		min-width: 36px;
+		flex-shrink: 1;
 		/* The scale's motion (design.md, "The scale"): hover in fast and out
 		   slow. A new tab grows into its place. */
 		transition:
@@ -815,10 +837,26 @@
 		opacity: 1;
 	}
 
-	/* A preview tab: the one the next ordinary open replaces. Italic, as in
-	   VS Code, so you can tell it will not stay. */
-	.tab.preview .tab-label-text {
-		font-style: italic;
+	/* A preview tab: the one the next ordinary open replaces. Roman like
+	   every label; it says it will not stay by having no fill of its own,
+	   only a dashed edge when it is the one showing. Typing in it, or a
+	   double-click, keeps it. */
+	.tab.preview.active {
+		background: transparent;
+		box-shadow: none;
+		outline: 1px dashed var(--card-edge);
+		outline-offset: -1px;
+	}
+
+	/* A crowded strip: the tabs you are not on show only their icon. */
+	.tab-bar.compact .tab:not(.active) {
+		padding: 0 10px;
+		gap: 0;
+	}
+
+	.tab-bar.compact .tab:not(.active) .tab-label,
+	.tab-bar.compact .tab:not(.active):not(:hover) .tab-close {
+		display: none;
 	}
 
 	/* An odometer: two lines stacked in a one-line window, shifted by 100% to
@@ -826,6 +864,7 @@
 	   nothing in this shell should be more saturated than the work. */
 	.tab-label {
 		position: relative;
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		flex: 1;
@@ -1017,7 +1056,7 @@
 	   treatment (plus a red wash over the whole tab) read as a warning for an
 	   action that doesn't warrant one. */
 	.tab-close:hover {
-		background: color-mix(in srgb, var(--wash-ink) 10%, transparent);
+		background: var(--active-bg);
 		color: var(--color-foreground);
 	}
 

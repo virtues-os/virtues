@@ -182,11 +182,12 @@
 		font-size: 13px;
 		text-align: left;
 		cursor: pointer;
-		transition: background-color 100ms ease;
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.menu-item:hover:not(.disabled) {
 		background: var(--hover-bg);
+		transition-duration: var(--motion-hover-in);
 	}
 
 	.menu-item.disabled {

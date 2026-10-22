@@ -156,7 +156,7 @@
 		font-size: 13px;
 		text-align: left;
 		cursor: pointer;
-		transition: background-color 100ms ease;
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
 	}
 
 	/* A thumb's 44pt, inside the row (design-grammar §6): a long press on a
@@ -173,6 +173,7 @@
 	.v-menuitem:hover:not(:disabled),
 	.v-menuitem.is-focused:not(:disabled) {
 		background: var(--hover-bg);
+		transition-duration: var(--motion-hover-in);
 	}
 
 	.v-menuitem:disabled {

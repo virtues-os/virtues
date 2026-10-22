@@ -17,7 +17,6 @@
 	import WindowTabBar from './WindowTabBar.svelte';
 	import { windowShellStore, SPLIT_GUTTER_PX } from '$lib/stores/window-shell.svelte';
 	import { sidebarState, SIDEBAR_INSET } from '$lib/stores/sidebarState.svelte';
-	import { shortcuts } from '$lib/shortcuts/registry.svelte';
 	import { isMacOS } from '$lib/utils/platform';
 	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 
@@ -84,7 +83,7 @@
 			onclick={() => windowShellStore.goBack()}
 			disabled={!canGoBack}
 			aria-label="Back"
-			title="Back"
+			data-tip="Back"
 		>
 			<AtlasIcon name="back" size={GLYPH_PX} bare />
 		</button>
@@ -93,7 +92,7 @@
 			onclick={() => windowShellStore.goForward()}
 			disabled={!canGoForward}
 			aria-label="Forward"
-			title="Forward"
+			data-tip="Forward"
 		>
 			<AtlasIcon name="forward" size={GLYPH_PX} bare />
 		</button>
@@ -104,7 +103,8 @@
 			onclick={() => sidebarState.toggle()}
 			aria-label={sidebarOpen ? 'Hide the sidebar' : 'Show the sidebar'}
 			aria-expanded={sidebarOpen}
-			title={`${sidebarOpen ? 'Hide' : 'Show'} the sidebar (${shortcuts.format('mod+b')})`}
+			data-tip={`${sidebarOpen ? 'Hide' : 'Show'} the sidebar`}
+			data-tip-key="mod+b"
 		>
 			<AtlasIcon name="sidebar" size={GLYPH_PX} bare />
 		</button>
@@ -115,7 +115,8 @@
 				class="lead-btn"
 				onclick={() => windowShellStore.newChat()}
 				aria-label="New chat"
-				title={`New chat (${shortcuts.format('mod+n')})`}
+				data-tip="New chat"
+				data-tip-key="mod+n"
 			>
 				<AtlasIcon name="new-chat" size={GLYPH_PX} bare />
 			</button>

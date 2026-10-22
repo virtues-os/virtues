@@ -17,7 +17,10 @@ const WIDTH_KEY = "virtues-sidebar-width";
  */
 export const SIDEBAR_MIN_WIDTH = 180;
 export const SIDEBAR_MAX_WIDTH = 420;
-export const SIDEBAR_DEFAULT_WIDTH = 208;
+// Wide enough that a typical chat title fits without its ellipsis.
+export const SIDEBAR_DEFAULT_WIDTH = 236;
+/** The old default. A stored width equal to it was never chosen, so it moves to the new one. */
+const OLD_DEFAULT_WIDTH = 208;
 export const SIDEBAR_COLLAPSE_AT = 148;
 
 /**
@@ -51,7 +54,8 @@ if (typeof localStorage !== "undefined") {
 		// Clamp on read as well as on write: the bounds can move between
 		// releases, and a stored 600 from an older build must not survive as a
 		// sidebar half the window wide.
-		width = clampWidth(Number(storedWidth));
+		const n = Number(storedWidth);
+		width = clampWidth(n === OLD_DEFAULT_WIDTH ? SIDEBAR_DEFAULT_WIDTH : n);
 	}
 }
 
