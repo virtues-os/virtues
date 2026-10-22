@@ -625,7 +625,7 @@
 	/** The question this empty chat offers in its composer (api::suggestions).
 	 *  An hourly job writes it ahead of time, so asking costs nothing. */
 	let suggestion = $state<SuggestedQuestion | null>(null);
-	let suggestionAsked = false;
+	let suggestionAskedFor: string | null = null;
 	let currentChatConversationId = $state<string | null>(null);
 	/** This view is showing the getting-started room. */
 	const inRoom = $derived(isGettingStartedChat(currentChatConversationId));
@@ -650,7 +650,7 @@
 				composerSkill = null;
 				turnSkill = null;
 				suggestion = null;
-				suggestionAsked = false;
+				suggestionAskedFor = null;
 			}
 			// Get or create new instance with model, space, active page, persona, and agent mode getters
 			chat = chatInstances.getOrCreate({
@@ -1139,20 +1139,25 @@
 	// Also gate on isLoading to prevent flashing "new chat" while fetching an existing conversation
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
 
-	// Asked once per empty chat. A temporary chat, local mode and the
+	// Asked once per empty chat, and kept only if the chat it was asked for
+	// is still the one on screen. A temporary chat, local mode and the
 	// getting-started room show none: each is somewhere a question drawn
 	// from the record does not belong.
+	const suggestionAllowed = $derived(isEmpty && !isGhost && !isLocal && !inRoom);
 	$effect(() => {
-		if (!isEmpty || isGhost || isLocal || inRoom || suggestionAsked) return;
-		suggestionAsked = true;
+		const askedFor = conversationId;
+		if (!suggestionAllowed || suggestionAskedFor === askedFor) return;
+		suggestionAskedFor = askedFor;
 		getSuggestedQuestion()
-			.then((r) => (suggestion = r.suggestion))
+			.then((r) => {
+				if (conversationId === askedFor) suggestion = r.suggestion;
+			})
 			// A box older than suggestions answers 404; the field keeps its placeholder.
 			.catch(() => {});
 	});
 
-	function onSuggestion(id: string, outcome: "used" | "dismissed") {
-		suggestion = null;
+	function onSuggestion(id: string, outcome: "shown" | "used" | "dismissed") {
+		if (outcome !== "shown") suggestion = null;
 		recordSuggestionOutcome(id, outcome).catch((e) => console.error("Recording the suggestion failed:", e));
 	}
 
@@ -2582,7 +2587,7 @@
 							onModeChange={changeMode}
 							modes={availableModes({ localSupported: localModel.status.supported })}
 							bind:skill={composerSkill}
-							suggestion={isEmpty ? suggestion : null}
+							suggestion={suggestionAllowed ? suggestion : null}
 							{onSuggestion}
 						/>
 						{/if}
@@ -3119,14 +3124,14 @@
 	   not. It read as a UI artifact stuck onto prose, in a green nothing else
 	   in the room uses, and it broke the column's left edge. */
 
-	/* User message card styling — hugs its content (left-aligned). Radius mirrors
-	   the composer's language: big enough that a one-line bubble caps into a pill
-	   (radius ≥ half its height) to match the input, but still leaves flat sides
-	   once the text wraps, so 2+ lines read as a clean rounded rect, not a lozenge. */
+	/* User message card styling — hugs its content (left-aligned). Its corners
+	   are the composer's, so a sent message keeps the shape of the box it was
+	   written in. */
 	.message-wrapper[data-role="user"] {
 		background: var(--color-surface-elevated);
 		border: 1px solid var(--color-border);
-		border-radius: 1.5rem;
+		/* design-ok: the composer shell's 16px, so the bubble and the box it came from share a corner. */
+		border-radius: 1rem;
 		padding: 10px 16px;
 		width: fit-content;
 		max-width: 80%;

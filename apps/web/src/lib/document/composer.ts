@@ -23,7 +23,7 @@ import { Editor, Extension } from '@tiptap/core';
 import { ListKeymap } from '@tiptap/extension-list';
 import { Placeholder, UndoRedo } from '@tiptap/extensions';
 import { Fragment, Slice, type Node as PmNode, type Schema } from '@tiptap/pm/model';
-import { Plugin, TextSelection, type EditorState } from '@tiptap/pm/state';
+import { Plugin, Selection, TextSelection, type EditorState } from '@tiptap/pm/state';
 import { findWrapping } from '@tiptap/pm/transform';
 import MentionNode from '$lib/components/pages/nodes/MentionNode.svelte';
 import { convertNow, loadConverter } from './converter';
@@ -93,15 +93,19 @@ export interface Composer {
 	setMarkdown(markdown: string): void;
 	setDisabled(disabled: boolean): void;
 	/** Swap the empty-state hint: the chat's mode can change after creation. */
-	setPlaceholder(text: string): void;
+	/** The placeholder drawn in the empty field, and what assistive tech
+	 *  reads as it (`aria-placeholder`), which defaults to the same text. */
+	setPlaceholder(text: string, spoken?: string): void;
 	focus(): void;
 	/** Put what the ref picker chose where the `@` was. */
 	insertRef(label: string, url: string): void;
-	/** Put a ref at the caret, for a row or tab dropped on the composer. */
-	insertRefHere(label: string, url: string): void;
-	/** Replace the message with `markdown` and mentions of `refs` after it,
-	 *  caret at the end: an accepted suggested question. */
-	fill(markdown: string, refs: { url: string; label: string }[]): void;
+	/** Put a ref where a row or tab was dropped: under the pointer when it
+	 *  is over the text, otherwise at the end of the message. */
+	insertRefHere(label: string, url: string, at?: { x: number; y: number }): void;
+	/** Replace the message with `text`, as written (not read as markdown),
+	 *  and mentions of `refs` after it, caret at the end, in one step that
+	 *  one undo takes back: an accepted suggested question. */
+	fill(text: string, refs: { url: string; label: string }[]): void;
 	/** The `@` menu closed with nothing picked; what was typed after the `@` stays.
 	 *  `refocus: false` when it closed because the focus went elsewhere. */
 	closeRef(opts?: { refocus?: boolean }): void;
@@ -534,12 +538,16 @@ export function createComposer(o: ComposerOptions): Composer {
 	}
 
 	/** A mention (or a link, for an address out) at the caret, then a space. */
-	function refAtCaret(label: string, url: string) {
+	/** A mention for a route, or a link for an address elsewhere. */
+	function refNode(label: string, url: string): PmNode {
 		const { schema } = editor.state;
-		const node = isRoute(url)
+		return isRoute(url)
 			? schema.nodes.mention.create({ to: url, label })
 			: schema.text(label, [schema.marks.link.create({ href: url })]);
-		const tr = editor.state.tr.replaceSelectionWith(node, false);
+	}
+
+	function refAtCaret(label: string, url: string) {
+		const tr = editor.state.tr.replaceSelectionWith(refNode(label, url), false);
 		tr.insertText(' ');
 		editor.view.dispatch(tr.scrollIntoView());
 		editor.commands.focus();
@@ -574,7 +582,8 @@ export function createComposer(o: ComposerOptions): Composer {
 		setDisabled(disabled) {
 			if (editor.isEditable === disabled) editor.setEditable(!disabled, false);
 		},
-		setPlaceholder(text) {
+		setPlaceholder(text, spoken = text) {
+			editor.view.dom.setAttribute('aria-placeholder', spoken);
 			if (text === hint) return;
 			hint = text;
 			// Placeholder draws on the next transaction.
@@ -606,12 +615,22 @@ export function createComposer(o: ComposerOptions): Composer {
 			editor.view.dispatch(tr.scrollIntoView());
 			editor.commands.focus();
 		},
-		insertRefHere: refAtCaret,
-		fill(markdown, refs) {
-			setMarkdown(markdown);
-			editor.commands.focus('end');
-			if (refs.length > 0) editor.view.dispatch(editor.state.tr.insertText(' '));
-			for (const r of refs) refAtCaret(r.label, r.url);
+		insertRefHere(label, url, at) {
+			const { state, view } = editor;
+			const hit = at ? view.posAtCoords({ left: at.x, top: at.y }) : null;
+			const pos = hit ? hit.pos : state.doc.content.size;
+			view.dispatch(state.tr.setSelection(Selection.near(state.doc.resolve(pos))));
+			refAtCaret(label, url);
+		},
+		fill(text, refs) {
+			const { schema, doc } = editor.state;
+			const inline: PmNode[] = [schema.text(text)];
+			for (const r of refs) inline.push(schema.text(' '), refNode(r.label, r.url));
+			if (refs.length > 0) inline.push(schema.text(' '));
+			const tr = editor.state.tr.replaceWith(0, doc.content.size, schema.nodes.paragraph.create(null, inline));
+			tr.setSelection(Selection.atEnd(tr.doc));
+			editor.view.dispatch(tr.scrollIntoView());
+			editor.commands.focus();
 		},
 		closeRef({ refocus = true } = {}) {
 			closeTrigger(editor.view, '@');

@@ -457,6 +457,7 @@ async fn execute_prepared_inner(
             &command,
             credentials.clone(),
             payload.as_ref(),
+            &trigger,
         )
         .await
         {
@@ -1061,6 +1062,7 @@ async fn run_subprocess(
     command: &[String],
     credentials: Option<serde_json::Value>,
     payload: Option<&serde_json::Value>,
+    trigger: &str,
 ) -> Result<SubprocessOutcome> {
     let argv0 = command
         .first()
@@ -1079,6 +1081,7 @@ async fn run_subprocess(
         config: action.config.clone(),
         credentials,
         payload: payload.cloned(),
+        trigger: Some(trigger.to_string()),
     };
     let stdin_bytes = serde_json::to_vec(&input)
         .map_err(|e| Error::Other(format!("failed to serialize action input: {e}")))?;

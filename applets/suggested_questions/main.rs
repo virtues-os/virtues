@@ -16,8 +16,9 @@ async fn main() -> Result<()> {
     let input = read_input()?;
     let pool = virtues_helpers::connect_from_env("virtues-action-suggested_questions").await?;
 
-    // A cron run has no payload; a manual run from the applet's page does.
-    let force = input.payload.is_some();
+    // A run someone started by hand writes now; a scheduled one waits for
+    // waking hours and for something to have changed.
+    let force = input.trigger.as_deref() == Some("manual");
     let run = virtues::api::suggestions::refresh(&pool, force).await?;
     let result = match run.skipped {
         Some(why) => format!("Skipped: {why}."),

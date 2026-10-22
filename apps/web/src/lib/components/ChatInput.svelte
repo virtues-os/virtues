@@ -23,6 +23,7 @@
 	import { Popover } from "$lib/floating";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { canDictate, startDictation } from "$lib/tauri/bridge";
+	import { inComposition } from "$lib/utils/ime";
 	import { dndManager, MENTION_DROP_ATTR, MENTION_DROP_EVENT } from "$lib/stores/dndManager.svelte";
 	import { droppedMention, isMentionDrag } from "$lib/utils/projectActions";
 
@@ -68,8 +69,9 @@
 		skill?: SkillSummary | null;
 		/** A question to offer in the empty field, in the placeholder's place. */
 		suggestion?: SuggestedQuestion | null;
-		/** The person used the suggestion (Tab) or put it away (Escape). */
-		onSuggestion?: (id: string, outcome: "used" | "dismissed") => void;
+		/** What became of the suggestion: drawn (`shown`), sent (`used`), or
+		 *  put away with Escape (`dismissed`). */
+		onSuggestion?: (id: string, outcome: "shown" | "used" | "dismissed") => void;
 	} = $props();
 
 	// The one mode, shown as two chips (see DEPTH_ORDER). Full access runs at
@@ -186,6 +188,9 @@
 	// markdown, as it is sent and as its draft is kept.
 	let inputEl: HTMLDivElement;
 	let editor: Composer | null = null;
+	// Set once the editor exists, so an effect that ran before it did (a
+	// suggestion that arrived first) runs again.
+	let editorReady = $state(false);
 	let isFocused = $state(false);
 	let inputIsEmpty = $state(true);
 	// The `@` query while the editor's `@` trigger is open, else null.
@@ -290,28 +295,68 @@
 		editor?.setDisabled(next);
 	});
 
-	// The suggested question shows where the placeholder would, while the
-	// field is empty and nothing else is in the way.
+	// The suggested question is drawn where the text would start, while the
+	// field is empty and nothing else is in the way. It is a layer of its
+	// own, not the placeholder, so a long question wraps and the field grows
+	// to hold it. Assistive tech reads it as the placeholder.
 	const ghost = $derived(
 		suggestion && inputIsEmpty && !skill && !trayOpen && !disabled ? suggestion : null,
 	);
+	let ghostHeight = $state(0);
+	// The suggestion filled in with Tab, until the message is sent.
+	let filledFrom: string | null = null;
+	const reportedShown = new Set<string>();
 
 	$effect(() => {
-		const text = ghost?.question ?? placeholder;
-		editor?.setPlaceholder(text);
+		const visible = ghost ? "" : placeholder;
+		const spoken = ghost?.question ?? placeholder;
+		if (editorReady) editor?.setPlaceholder(visible, spoken);
 	});
+
+	// Reported once it is drawn in a tab someone can see, so the ledger's
+	// "shown" means seen.
+	$effect(() => {
+		const id = ghost?.id;
+		if (!id || reportedShown.has(id) || document.visibilityState !== "visible") return;
+		reportedShown.add(id);
+		onSuggestion?.(id, "shown");
+	});
+
+	// The keycap after the question says Tab takes it. It retires once the
+	// person has sent a few suggestions, and shows only while the field has
+	// the keyboard, which is when Tab would work.
+	const HINT_KEY = "virtues.suggestionHint.used";
+	const HINT_RETIRES_AFTER = 3;
+	function hintUses(): number {
+		try {
+			return Number(localStorage.getItem(HINT_KEY) ?? 0) || 0;
+		} catch {
+			return 0;
+		}
+	}
+	let showKeyHint = $state(hintUses() < HINT_RETIRES_AFTER);
 
 	function useSuggestion() {
 		// Held first: filling the field empties `ghost` before the next line.
 		const used = ghost;
 		if (!used || !editor) return;
 		editor.fill(used.question, used.refs);
-		onSuggestion?.(used.id, "used");
+		filledFrom = used.id;
 	}
 
+	// The field is as tall as its content, or as the question drawn in it.
+	let contentHeight = MIN_HEIGHT;
 	function setHeight(contentPx: number) {
-		inputHeight.target = Math.min(Math.max(contentPx, MIN_HEIGHT), MAX_HEIGHT);
+		contentHeight = contentPx;
+		fitHeight(ghost ? ghostHeight : 0);
 	}
+	function fitHeight(ghostPx: number) {
+		const want = Math.max(contentHeight, ghostPx > 0 ? ghostPx + 4 : 0);
+		inputHeight.target = Math.min(Math.max(want, MIN_HEIGHT), MAX_HEIGHT);
+	}
+	$effect(() => {
+		fitHeight(ghost ? ghostHeight : 0);
+	});
 
 	function pickContext(result: RefSearchResult) {
 		// Always inline: a message attaches files through the attach path, so
@@ -345,8 +390,8 @@
 	let rowOver = $state(false);
 	const mentionOver = $derived(rowOver || (shellEl !== null && dndManager.mentionTarget === shellEl));
 
-	function mentionDropped(url: string, label: string) {
-		editor?.insertRefHere(label, url);
+	function mentionDropped(url: string, label: string, at: { x: number; y: number } | null) {
+		editor?.insertRefHere(label, url, at ?? undefined);
 	}
 
 	function onDragOverCapture(e: DragEvent) {
@@ -363,19 +408,26 @@
 		if (!dropped) return;
 		e.preventDefault();
 		e.stopPropagation();
-		mentionDropped(dropped.url, dropped.label);
+		mentionDropped(dropped.url, dropped.label, { x: e.clientX, y: e.clientY });
 	}
 
 	$effect(() => {
 		const el = shellEl;
 		if (!el) return;
 		const onTab = (e: Event) => {
-			const { url, label } = (e as CustomEvent<{ url: string; label: string }>).detail;
-			mentionDropped(url, label);
+			const { url, label, at } = (
+				e as CustomEvent<{ url: string; label: string; at: { x: number; y: number } | null }>
+			).detail;
+			mentionDropped(url, label, at);
 		};
 		el.addEventListener(MENTION_DROP_EVENT, onTab);
 		return () => el.removeEventListener(MENTION_DROP_EVENT, onTab);
 	});
+
+	// The skill chip sits at the start of the first line, and the first
+	// paragraph is indented by its width, so the text runs on beside it and
+	// wraps under it as it would after an inline token.
+	let skillChipWidth = $state(0);
 
 	// Backspace in an empty field takes the skill chip off, as it would
 	// delete a character before the caret.
@@ -386,10 +438,13 @@
 		}
 	}
 
-	// Tab takes the suggested question, Escape puts it away. Caught before the
-	// editor, whose Tab moves focus and whose Escape blurs.
+	// Tab takes the suggested question, Escape puts it away: only from the
+	// text itself, so Tab still moves between the composer's buttons and
+	// Escape still closes the depth popover. Caught before the editor,
+	// whose Tab moves focus and whose Escape blurs.
 	function onShellKeydownCapture(e: KeyboardEvent) {
-		if (!ghost || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return;
+		if (!ghost || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey || inComposition(e)) return;
+		if (!inputEl?.contains(e.target as Node)) return;
 		if (e.key === "Tab") {
 			e.preventDefault();
 			e.stopPropagation();
@@ -409,6 +464,17 @@
 		if ((!content && !allowEmptySubmit) || disabled) return;
 
 		onSubmit?.(content);
+		// Used means sent with the question still in it, not only filled in.
+		if (filledFrom && suggestion?.id === filledFrom && typed.includes(suggestion.question)) {
+			onSuggestion?.(filledFrom, "used");
+			try {
+				localStorage.setItem(HINT_KEY, String(hintUses() + 1));
+			} catch {
+				// Storage refused (private window): the hint keeps showing.
+			}
+			showKeyHint = hintUses() < HINT_RETIRES_AFTER;
+		}
+		filledFrom = null;
 
 		docText = "";
 		value = "";
@@ -472,6 +538,7 @@
 		});
 		docText = value;
 		inputIsEmpty = !value.trim();
+		editorReady = true;
 		void canDictate().then((yes) => (showMic = yes));
 	});
 
@@ -556,9 +623,9 @@
 				/>
 			{/if}
 
-			<div class="field-row">
+			<div class="field-row" style:--skill-indent="{skill ? skillChipWidth + 6 : 0}px">
 				{#if skill}
-					<span class="skill-chip" title={skill.description}>
+					<span class="skill-chip" title={skill.description} bind:offsetWidth={skillChipWidth}>
 						<Icon icon={skill.icon ?? "ri:flashlight-line"} width="13" style="color: inherit" />
 						<span>/{skill.name}</span>
 						<button
@@ -580,19 +647,25 @@
 				     into view through the nearest scrollable ancestor, as
 				     ProseMirror expects. -->
 				{#if ghost}
-					<!-- mousedown is held back so the field keeps focus. -->
-					<button
-						type="button"
-						class="ghost-use"
-						onmousedown={(e) => e.preventDefault()}
-						onclick={(e) => {
-							e.stopPropagation();
-							useSuggestion();
-						}}
-						title="Use this question"
-					>
-						{mobileLayout.isMobile ? "Use" : "Tab"}
-					</button>
+					<div class="ghost" bind:offsetHeight={ghostHeight}>
+						<span aria-hidden="true">{ghost.question}</span>
+						{#if mobileLayout.isMobile}
+							<!-- A phone has no Tab: the question is taken with a tap.
+							     mousedown is held back so the field keeps focus. -->
+							<button
+								type="button"
+								class="ghost-use"
+								onmousedown={(e) => e.preventDefault()}
+								onclick={(e) => {
+									e.stopPropagation();
+									useSuggestion();
+								}}
+								aria-label="Use the suggested question: {ghost.question}"
+							>Use</button>
+						{:else if showKeyHint && isFocused}
+							<kbd class="ghost-key" aria-hidden="true">tab</kbd>
+						{/if}
+					</div>
 				{/if}
 				<div
 					id="chat-input"
@@ -861,25 +934,56 @@
 	}
 
 	.field-row {
+		position: relative;
 		display: flex;
 		align-items: flex-start;
 		gap: 0.25rem;
 		min-width: 0;
 	}
 
+	/* Over the start of the first line (the field's padding plus the
+	   centring in a 1.5rem line), not beside the field. Shaped like a
+	   mention in the composer; a neutral fill, because a skill is a command
+	   and not a reference. */
 	.skill-chip {
+		position: absolute;
+		top: 0.1875rem;
+		left: 0.625rem;
+		z-index: 1;
 		display: inline-flex;
 		align-items: center;
-		gap: 0.25rem;
-		flex-shrink: 0;
-		height: 1.5rem;
-		margin: 0.125rem 0 0 0.25rem;
-		padding: 0 0.25rem 0 0.5rem;
-		border-radius: var(--radius-md);
+		gap: 0.1875rem;
+		height: 1.375rem;
+		padding: 0 0.125rem 0 0.375rem;
+		border-radius: var(--radius-sm);
 		background: var(--hover-bg);
 		font-size: 0.8125rem;
 		color: var(--color-foreground);
 		white-space: nowrap;
+	}
+
+	.chat-input :global(.composer-field > :first-child) {
+		text-indent: var(--skill-indent, 0px);
+	}
+
+	.chat-input :global(.composer-field p.is-editor-empty:first-child::before) {
+		margin-left: var(--skill-indent, 0px);
+	}
+
+	/* A mention while it is being written is a token, so it is drawn as one:
+	   a tinted pill (ref-badge.css's editing treatment) instead of the
+	   dotted underline it has where it is read. Pages keep their own. */
+	.chat-input :global(.doc-mention .ref-link) {
+		padding: 0 0.3125rem;
+		border-bottom: none;
+		border-radius: var(--radius-sm);
+		background: var(--ref-pill-bg);
+		color: var(--ref-pill-color);
+		transition: background-color 0.15s ease;
+	}
+
+	.chat-input :global(.doc-mention .ref-link:hover) {
+		background: var(--ref-pill-bg-hover);
 	}
 
 	.skill-chip-remove {
@@ -897,22 +1001,45 @@
 		color: var(--color-foreground);
 	}
 
-	/* Sits after the field, at its right edge. */
-	.ghost-use {
-		order: 2;
-		flex-shrink: 0;
-		align-self: center;
-		height: 1.375rem;
-		padding: 0 0.4375rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-sm);
-		font-size: 0.75rem;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
+	/* The suggested question, drawn where the first character would go
+	   (the field's 6px plus the paragraph's 4px, and its 2px top), in the
+	   placeholder's colour. Clicks pass through to the field. */
+	.ghost {
+		position: absolute;
+		top: 0.125rem;
+		left: 0.625rem;
+		right: 0.625rem;
+		font-size: 1rem;
+		line-height: 1.5rem;
+		color: var(--color-foreground-subtle);
+		overflow-wrap: anywhere;
+		pointer-events: none;
 	}
 
-	.ghost-use:hover {
+	/* A keycap that sits in the line after the question and wraps with it. */
+	.ghost-key {
+		display: inline-block;
+		margin-left: 0.375rem;
+		padding: 0 0.3125rem;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
+		font-family: inherit;
+		font-size: 0.6875rem;
+		line-height: 1.125rem;
+		vertical-align: 0.0625rem;
+		color: var(--color-foreground-subtle);
+	}
+
+	.ghost-use {
+		margin-left: 0.375rem;
+		padding: 0 0.4375rem;
+		border-radius: var(--radius-sm);
+		background: var(--hover-bg);
+		font-size: 0.8125rem;
+		line-height: 1.375rem;
 		color: var(--color-foreground);
+		pointer-events: auto;
+		cursor: pointer;
 	}
 
 	.chat-input {

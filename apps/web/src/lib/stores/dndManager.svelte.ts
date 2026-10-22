@@ -153,6 +153,9 @@ class DndManager {
 	/** The chat composer under a dragged tab, which would mention it. */
 	mentionTarget = $state<Element | null>(null);
 
+	/** Where the pointer last was, so a mention lands where the tab was let go. */
+	private lastPoint: { x: number; y: number } | null = null;
+
 	/** The pointer is over a split pane that will take the tab. */
 	private overPane = false;
 
@@ -182,6 +185,7 @@ class DndManager {
 		if (!route) return;
 		const pt = 'touches' in e ? e.touches[0] : e;
 		if (!pt) return;
+		this.lastPoint = { x: pt.clientX, y: pt.clientY };
 		const canFile = !!this.draggedTarget;
 		let id: string | null = null;
 		let gap: number | null = null;
@@ -254,6 +258,7 @@ class DndManager {
 
 	private startTracking(): void {
 		this.released = null;
+		this.lastPoint = null;
 		window.addEventListener('mousemove', this.trackPointer, { capture: true, passive: true });
 		window.addEventListener('touchmove', this.trackPointer, { capture: true, passive: true });
 		window.addEventListener('mouseup', this.release, { capture: true });
@@ -342,7 +347,9 @@ class DndManager {
 		if (at.mentionTarget && dropped && mentionUrl) {
 			setItems(items as T[]);
 			at.mentionTarget.dispatchEvent(
-				new CustomEvent(MENTION_DROP_EVENT, { detail: { url: mentionUrl, label: dropped.label } }),
+				new CustomEvent(MENTION_DROP_EVENT, {
+					detail: { url: mentionUrl, label: dropped.label, at: this.lastPoint },
+				}),
 			);
 			return;
 		}

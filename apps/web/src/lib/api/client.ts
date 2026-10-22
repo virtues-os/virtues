@@ -2254,8 +2254,11 @@ export function getSuggestedQuestion(): Promise<{ suggestion: SuggestedQuestion 
 	return apiGet<{ suggestion: SuggestedQuestion | null }>("/suggestions/current");
 }
 
-/** The owner used the suggestion or put it away; the box keeps a ledger. */
-export function recordSuggestionOutcome(id: string, outcome: "used" | "dismissed"): Promise<{ ok: boolean }> {
+/** The suggestion was drawn, sent or put away; the box keeps a ledger. */
+export function recordSuggestionOutcome(
+	id: string,
+	outcome: "shown" | "used" | "dismissed",
+): Promise<{ ok: boolean }> {
 	return apiSend<{ ok: boolean }>("POST", `/suggestions/${encodeURIComponent(id)}/outcome`, { outcome });
 }
 
