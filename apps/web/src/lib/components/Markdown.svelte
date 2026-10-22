@@ -8,7 +8,7 @@
 	import MarkdownCodeBlock from './MarkdownCodeBlock.svelte';
 	import Icon from './Icon.svelte';
 	import { alertTone } from '$lib/document/callouts';
-	import { parseEntityRoute } from '$lib/utils/refRoutes';
+	import { linkTarget, parseEntityRoute } from '$lib/utils/refRoutes';
 	import { preprocessMarkdown } from '$lib/utils/markdownPreprocess';
 	import { backendUrl } from '$lib/config/backend';
 
@@ -58,15 +58,12 @@
 		return citations?.byId.get(key);
 	}
 
-	// A figure computed over rows cites the query that computed it, as
-	// `/chat/{chat}/tool/{call}` — the ref the box attaches to every
-	// sql_query result. The citation context already indexes each tool
-	// call by id, so the link resolves to the same panel a numbered
-	// citation opens, with the rows as a table.
-	const TOOL_REF = /^\/chat\/[^/]+\/tool\/([^/?#]+)$/;
-	function citationForToolRef(url: string | undefined): Citation | undefined {
-		const callId = url?.match(TOOL_REF)?.[1];
-		return callId ? citations?.byToolCallId.get(callId) : undefined;
+	// A figure computed over rows cites the query that computed it. The
+	// citation context already indexes each tool call by id, so the link
+	// resolves to the same panel a numbered citation opens, with the rows
+	// as a table.
+	function citationForToolCall(callId: string): Citation | undefined {
+		return citations?.byToolCallId.get(callId);
 	}
 
 	const processedContent = $derived.by(() => {
@@ -201,14 +198,9 @@
 
 			{#snippet link({ children, token }: { children: import('svelte').Snippet; token: any })}
 				{@const url = token?.href}
-				{@const isEntity = url ? parseEntityRoute(url) !== null : false}
-				{@const isExternal = url ? /^https?:\/\//.test(url) : false}
-				{@const queryCitation = citationForToolRef(url)}
-				{#if isEntity}
-					<!-- `[@X](/entity/id)`: the editor's `@` marks the ref, and
-					     is no part of its name, as in the image form below. -->
-					<Ref displayName={(token.text ?? '').replace(/^@/, '')} url={url} variant={refVariant} />
-				{:else if queryCitation}
+				{@const target = linkTarget(url)}
+				{@const queryCitation = target.kind === 'query' ? citationForToolCall(target.callId) : undefined}
+				{#if queryCitation}
 					<!-- The rows behind a figure. Same quiet dotted form as a
 					     web citation: it is evidence for the number, not a
 					     place to go. -->
@@ -217,7 +209,16 @@
 						class="query-ref"
 						onclick={() => onCitationClick?.(queryCitation)}
 					>{@render children()}</button>
-				{:else if isExternal}
+				{:else if target.kind === 'query'}
+					<!-- A query ref with no citation in hand (a page, an
+					     answer whose tool calls are not loaded) has no panel
+					     to open, and no route: the figure reads as text. -->
+					<span>{@render children()}</span>
+				{:else if target.kind === 'entity'}
+					<!-- `[@X](/entity/id)`: the editor's `@` marks the ref, and
+					     is no part of its name, as in the image form below. -->
+					<Ref displayName={(token.text ?? '').replace(/^@/, '')} url={url} variant={refVariant} />
+				{:else if target.kind === 'external'}
 					<!-- Always quiet, even where entity refs are loud. A web
 					     citation is metadata about the sentence, not part of it,
 					     and an answer that cites six of them was ending every
