@@ -162,12 +162,14 @@ export function buildCitationContext(toolCallParts: ToolCallPart[]): CitationCon
 		// web_search expands into one citation per result.
 		if (toolName === 'web_search' && output) {
 			const results = (output as Record<string, unknown>).results as
-				| Array<{ position: number; title: string; url: string; summary?: string; text?: string }>
+				| Array<{ title: string; url: string; summary?: string; text?: string }>
 				| undefined;
 			if (results && results.length > 0) {
-				for (const result of results) {
+				// The box sends results in rank order with no position field,
+				// so the 1-based index is each result's id within the call.
+				results.forEach((result, i) => {
 					pushCitation({
-						tool_call_id: `${toolCallId}-${result.position}`,
+						tool_call_id: `${toolCallId}-${i + 1}`,
 						tool_name: 'web_search',
 						source_type: 'web_search',
 						icon: 'ri:global-line',
@@ -180,7 +182,7 @@ export function buildCitationContext(toolCallParts: ToolCallPart[]): CitationCon
 						title: result.title,
 						timestamp: new Date().toISOString()
 					});
-				}
+				});
 				return;
 			}
 		}

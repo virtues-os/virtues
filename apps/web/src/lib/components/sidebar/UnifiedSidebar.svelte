@@ -11,6 +11,7 @@
 	} from "$lib/stores/sidebarState.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import SidebarFooter from "./SidebarFooter.svelte";
+	import OfflinePill from "./OfflinePill.svelte";
 	import AtlasIcon from "./AtlasIcon.svelte";
 	import { SHELL_GLYPH_PX } from "$lib/components/sidebar/AtlasIcon.svelte";
 	import { SETTINGS_MODE, rowForRoute } from "$lib/sidebar/modes";
@@ -70,7 +71,8 @@
 		const unregisterShortcuts = shortcuts.register(
 			{
 				id: "chat.new-temporary",
-				keys: "mod+shift+t",
+				// ⌘⇧T is the browsers' reopen-closed-tab, below. I for incognito.
+				keys: "mod+shift+i",
 				label: "New temporary chat",
 				group: "Create",
 				run: handleNewTemporaryChat,
@@ -83,12 +85,19 @@
 				run: handleNewPage,
 			},
 			{
-				// ⌘⇧T is the temporary chat's, so a task takes E.
+				// ⌘⇧T reopens a closed tab, so a task takes E.
 				id: "task.new",
 				keys: "mod+shift+e",
 				label: "New task",
 				group: "Create",
 				run: handleNewTask,
+			},
+			{
+				id: "tab.reopen",
+				keys: "mod+shift+t",
+				label: "Reopen closed tab",
+				group: "Window",
+				run: () => void windowShellStore.reopenClosedTab(),
 			},
 			{
 				id: "chat.new",
@@ -176,12 +185,12 @@
 			"sidebar-container relative flex h-full bg-transparent",
 			resizing ? "" : "transition-[width] duration-300 ease-[var(--ease-premium)]",
 			// Clips like overflow-hidden (the panel must not spill while the
-			// width animates) but lets the seam's grip, which is centred on the
-			// panel's right border, overhang the edge by its own half-width.
+			// width animates) but lets the seam reach across the 8px desk gap
+			// to the pane card's edge, so its grip can sit in that gap.
 			// min-w-0 keeps the flex sizing overflow-hidden used to imply; z-[1]
 			// keeps the pane's positioned content from painting over that
 			// overhang, since clip-path makes the aside its own stacking layer.
-			"z-[1] min-w-0 [clip-path:inset(0_-3px_0_0)]",
+			"z-[1] min-w-0 [clip-path:inset(0_-8px_0_0)]",
 		].join(" "),
 	);
 
@@ -209,6 +218,10 @@
 	// to [MIN, MAX], so it can't tell us the user has dragged well past the
 	// floor — which is exactly the gesture that should close the sidebar.
 	let dragIntent = 0;
+	// The pointer is far enough past the floor that releasing will close the
+	// sidebar. The grip bends into a chevron and the column dims, so you can
+	// see that before you let go.
+	let collapseArmed = $state(false);
 	// Under this much travel, a press on the seam is a click.
 	const CLICK_SLOP_PX = 3;
 
@@ -233,6 +246,7 @@
 		// The setter clamps, so the panel stops at the floor while the pointer
 		// keeps going — the drag feels like it hit a wall rather than jittering.
 		sidebarState.width = dragIntent;
+		collapseArmed = dragIntent < SIDEBAR_COLLAPSE_AT;
 	}
 
 	function onResizeEnd(e: PointerEvent) {
@@ -247,8 +261,11 @@
 		// down would yank the handle out from under it and drop the capture.
 		// A press that barely moved is a click, and the tooltip promises a click
 		// hides the sidebar.
+		// Release does what the grip showed: closing only when it was armed.
 		const clicked = Math.abs(e.clientX - dragStartX) < CLICK_SLOP_PX;
-		if (clicked || dragIntent < SIDEBAR_COLLAPSE_AT) {
+		const close = clicked || collapseArmed;
+		collapseArmed = false;
+		if (close) {
 			sidebarState.width = dragStartWidth;
 			sidebarState.collapsed = true;
 		}
@@ -299,6 +316,32 @@
 		}
 	}
 
+	// ── Moving through the column by keyboard ─────────────────────────────
+	// Up and Down step through the rows and group heads, Home and End go to
+	// the first and last. Tab still moves on to the next control as usual.
+	// Alt-arrows belong to Pinned (they move a pin), so only bare arrows count.
+	const NAV_ROWS =
+		'.panel-row:not(.panel-empty):not(.pin-drop-empty), .group-toggle, .panel-foot button';
+
+	function onColumnKey(e: KeyboardEvent) {
+		if (e.altKey || e.metaKey || e.ctrlKey || e.shiftKey) return;
+		if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) return;
+		const target = e.target as HTMLElement;
+		if (target.closest('input, textarea, [contenteditable="true"]')) return;
+		const column = e.currentTarget as HTMLElement;
+		const rows = [...column.querySelectorAll<HTMLElement>(NAV_ROWS)].filter((r) => r.offsetParent !== null);
+		if (rows.length === 0) return;
+		const at = rows.findIndex((r) => r === target || r.contains(target));
+		let next = 0;
+		if (e.key === 'Home') next = 0;
+		else if (e.key === 'End') next = rows.length - 1;
+		else if (at < 0) next = 0;
+		else next = Math.max(0, Math.min(rows.length - 1, at + (e.key === 'ArrowDown' ? 1 : -1)));
+		e.preventDefault();
+		rows[next].focus();
+		rows[next].scrollIntoView({ block: 'nearest' });
+	}
+
 	const panelColumnClass = $derived.by(() =>
 		[
 			"flex flex-col",
@@ -307,12 +350,16 @@
 			"mb-2 ml-2 overflow-hidden",
 			"sidebar-column",
 			isCollapsed ? "pointer-events-none" : "",
+			// Dimmed while releasing the seam would close the sidebar.
+			"transition-opacity duration-150 ease-[var(--ease-premium)]",
+			collapseArmed ? "opacity-50" : "",
 		].join(" "),
 	);
 </script>
 
 <aside class={sidebarClass} style="width: {asideWidth}px">
-	<div class={panelColumnClass} style="width: {panelWidth}px; min-width: {panelWidth}px">
+	<!-- svelte-ignore a11y_no_static_element_interactions -->
+	<div class={panelColumnClass} style="width: {panelWidth}px; min-width: {panelWidth}px" onkeydown={onColumnKey}>
 		<nav class="workspace-nav">
 			{#if !storeReady}
 				<div class="loading-state">
@@ -333,13 +380,14 @@
 		<!-- Settings stands at the foot: something you do to the server and
 		     leave, apart from the places above. -->
 		<div class="panel-foot">
+			<OfflinePill collapsed={isCollapsed} />
 			<button
 				type="button"
 				class="sidebar-interactive"
 				class:active={inSettings}
 				onclick={() => windowShellStore.openTabFromRoute("/virtues/you", { label: "Settings", focusExisting: true })}
 			>
-				<AtlasIcon name="settings" size={SHELL_GLYPH_PX} />
+				<AtlasIcon name="settings" size={SHELL_GLYPH_PX} bare />
 				<span class="sidebar-label">Settings</span>
 			</button>
 		</div>
@@ -348,12 +396,13 @@
 	</div>
 
 	{#if !isCollapsed}
-		<!-- The seam is the handle. It sits over the panel's right border — the
-		     same line that divides the panel from the pane — so the thing you
-		     grab is the thing you see. Click hides, drag resizes. -->
+		<!-- The seam is the handle: the desk gap between the sidebar and the
+		     pane card, with the grip in its middle, the way the gutter works
+		     between two panes in split. Click hides, drag resizes. -->
 		<div
 			class="sidebar-resizer"
 			class:dragging={resizing}
+			class:armed={collapseArmed}
 			role="separator"
 			aria-orientation="vertical"
 			aria-label="Resize the sidebar"
@@ -393,46 +442,75 @@
 	@reference "$lib/styles/sidebar.css";
 
 
-	/* The hit area. Always transparent — it is a target, never a mark.
+	/* The hit area. It paints nothing.
 
-	   Inset by the desk gap at the bottom to match the column (`mb-2`); the
-	   card's top is the aside's top, under the window header. Running past
-	   the card put its hover fill on the desk ground beside it. A seam cannot
-	   start above the thing it divides. */
+	   The desk gap between the sidebar and the pane card lies just past the
+	   aside's right edge. The hit area covers that gap plus 4px of the
+	   sidebar, so the seam is easy to find from that side. It stops at the
+	   card's edge, because reaching into the card would need a wider clip on
+	   the aside, and that would let the panel paint over the card while the
+	   width animates. Top and bottom match the column and the card: the
+	   aside's top, under the window header, and the desk gap (`mb-2`). */
 	.sidebar-resizer {
 		position: absolute;
 		top: 0;
 		bottom: 8px;
-		right: 0;
-		width: 8px;
+		right: -8px;
+		width: 12px;
 		z-index: 20;
 		cursor: col-resize;
 		touch-action: none;
 		background: transparent;
 	}
 
-	/* The grip: a pill centred on the panel's right border, hidden until the
-	   pointer finds the seam, so the resting panel is just a clean line. The
-	   border itself never changes; the grip is the one thing that responds.
-	   It fades in and lengthens on approach and takes the accent only while
-	   held. The border's centre is 0.5px in from the right edge; the 4px pill
-	   is centred there, overhanging by 1.5px (the aside's clip allows it). */
+	/* The grip: a pill centred in the desk gap, hidden until the pointer
+	   finds the seam, so at rest the gap is plain desk. It fades in and
+	   lengthens on approach and takes the accent only while held. The gap is
+	   the hit area's right 8px, so 2px in from the right edge centres the
+	   4px pill in it. Same object as the split gutter's grip.
+
+	   The pill is drawn as two halves so it can bend into a chevron. Each
+	   half runs from one end to 2px past the middle, so their round ends
+	   overlap exactly there and the straight pill reads as one piece. */
 	.sidebar-resizer-grip {
 		position: absolute;
 		top: 50%;
-		right: -1.5px;
+		right: 2px;
 		width: 4px;
 		height: 32px;
 		transform: translateY(-50%);
-		border-radius: 999px;
-		background: var(--color-foreground-subtle);
 		opacity: 0;
 		pointer-events: none;
 		z-index: 1;
 		transition:
 			opacity 160ms var(--ease-premium),
 			height 160ms var(--ease-premium),
+			transform 160ms var(--ease-premium);
+	}
+
+	.sidebar-resizer-grip::before,
+	.sidebar-resizer-grip::after {
+		content: "";
+		position: absolute;
+		left: 0;
+		width: 100%;
+		height: calc(50% + 2px);
+		border-radius: var(--radius-full);
+		background: var(--color-foreground-subtle);
+		transition:
+			transform 160ms var(--ease-premium),
 			background-color 160ms var(--ease-premium);
+	}
+
+	/* Each half turns about the centre of its round end at the middle. */
+	.sidebar-resizer-grip::before {
+		top: 0;
+		transform-origin: 50% calc(100% - 2px);
+	}
+
+	.sidebar-resizer-grip::after {
+		bottom: 0;
+		transform-origin: 50% 2px;
 	}
 
 	.sidebar-resizer:hover .sidebar-resizer-grip,
@@ -441,12 +519,32 @@
 		height: 40px;
 	}
 
-	/* Held: the accent says you have it. No easing — it follows the pointer. */
+	/* Held: the accent says you have it, and it changes with no easing. */
 	.sidebar-resizer.dragging .sidebar-resizer-grip {
-		background: var(--color-primary);
 		opacity: 1;
 		height: 40px;
-		transition: none;
+	}
+
+	.sidebar-resizer.dragging .sidebar-resizer-grip::before,
+	.sidebar-resizer.dragging .sidebar-resizer-grip::after {
+		background: var(--color-primary);
+		transition: transform 160ms var(--ease-premium);
+	}
+
+	/* Armed: releasing now closes the sidebar. The grip shortens and bends
+	   into a chevron pointing the way the sidebar will go. It moves 4px left
+	   so the chevron's open ends stay inside the aside's 8px clip. */
+	.sidebar-resizer.armed .sidebar-resizer-grip {
+		height: 24px;
+		transform: translate(-4px, -50%);
+	}
+
+	.sidebar-resizer.armed .sidebar-resizer-grip::before {
+		transform: rotate(35deg);
+	}
+
+	.sidebar-resizer.armed .sidebar-resizer-grip::after {
+		transform: rotate(-35deg);
 	}
 
 	/* Beside the grip, vertically centred on it. A hairline card on the
@@ -460,7 +558,7 @@
 		gap: 4px;
 		padding: 8px 12px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface-elevated);
 		color: var(--color-foreground);
 		font-size: 13px;
@@ -491,7 +589,9 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.sidebar-resizer-grip {
+		.sidebar-resizer-grip,
+		.sidebar-resizer-grip::before,
+		.sidebar-resizer-grip::after {
 			transition: none;
 		}
 		.seam-tip {
@@ -502,6 +602,28 @@
 	.panel-foot {
 		flex: none;
 		padding: 0 4px 8px;
+	}
+
+	/* Settings is a door like the ones at the top of the panel, so it takes
+	   their glyph tone and their line height. */
+	.panel-foot :global(.atlas-icon) {
+		color: var(--color-foreground-muted);
+		transition: color var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.panel-foot button:is(:hover, .active) :global(.atlas-icon) {
+		color: var(--color-foreground);
+	}
+
+	.panel-foot .sidebar-label {
+		line-height: normal;
+	}
+
+	/* As the panel's rows: Avenir's medium on a 1x display. */
+	@media (max-resolution: 1.5dppx) {
+		.panel-foot .sidebar-label {
+			font-weight: 500;
+		}
 	}
 
 	.workspace-nav {

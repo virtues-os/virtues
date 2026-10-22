@@ -132,7 +132,7 @@
 		overflow: auto;
 		padding: 12px;
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface-elevated);
 		color: var(--color-foreground);
 		/* design-ok: the page's markdown source, where a fixed advance shows its syntax, as TextPane's raw text */

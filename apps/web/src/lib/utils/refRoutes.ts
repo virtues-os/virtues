@@ -108,6 +108,30 @@ export function parseEntityRoute(route: string): string | null {
 	return null;
 }
 
+// `/chat/{chat}/tool/{call}`: the whole result of one tool call, the rows
+// behind a computed figure. The box attaches it to every sql_query result.
+const TOOL_REF = /^\/chat\/[^/]+\/tool\/([^/?#]+)$/;
+
+export type LinkTarget =
+	| { kind: 'query'; callId: string }
+	| { kind: 'entity' }
+	| { kind: 'external' }
+	| { kind: 'other' }
+	| { kind: 'none' };
+
+/**
+ * What a markdown link in a reply points at. A query ref is tested before
+ * the entity routes, because `/chat/` prefix-matches it as a chat.
+ */
+export function linkTarget(url: string | null | undefined): LinkTarget {
+	if (!url) return { kind: 'none' };
+	const callId = TOOL_REF.exec(url)?.[1];
+	if (callId) return { kind: 'query', callId };
+	if (parseEntityRoute(url) !== null) return { kind: 'entity' };
+	if (/^https?:\/\//.test(url)) return { kind: 'external' };
+	return { kind: 'other' };
+}
+
 /**
  * `/kind/id` → its kind and id: the client's twin of the server's
  * `refs::split_ref`, and the grammar every consumer should parse with. The

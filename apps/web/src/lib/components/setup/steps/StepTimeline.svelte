@@ -1315,7 +1315,7 @@
 	.advance:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 8px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 	.stage > svg {
 		position: absolute;
@@ -1494,7 +1494,7 @@
 		border: 0;
 		background: transparent;
 		cursor: copy;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 	.editor.unborn .band-hit {
 		cursor: pointer;
@@ -1644,7 +1644,7 @@
 	.year-btn {
 		padding: 4px 6px;
 		border: 0;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		cursor: text;
@@ -1862,7 +1862,7 @@
 		margin: 24px auto 0;
 		padding: 12px 16px;
 		border: 1px dashed color-mix(in srgb, var(--color-primary) 45%, transparent);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: color-mix(in srgb, var(--color-primary) 4%, transparent);
 		cursor: text;
 		transition: border-color var(--m-quick) ease;
@@ -1937,7 +1937,7 @@
 		transform: translateX(-50%);
 		width: min(22rem, calc(100vw - 32px));
 		padding: 16px 20px;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface-overlay, var(--color-surface));
 		outline: 1px solid color-mix(in srgb, var(--color-foreground) 12%, transparent);
 		outline-offset: -1px;
@@ -2010,7 +2010,7 @@
 	.row-remove:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 3px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 	.under {
 		display: flex;
@@ -2037,7 +2037,7 @@
 	.primary {
 		padding: 8px 20px;
 		border: 0;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-primary);
 		color: var(--color-background);
 		font-family: var(--font-sans);

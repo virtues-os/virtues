@@ -185,7 +185,7 @@
 	.code-card {
 		margin: 0.5rem 0;
 		border: 1px solid var(--color-border);
-		border-radius: 0.5rem;
+		border-radius: var(--radius-lg);
 		background: var(--color-surface);
 		overflow: hidden;
 		font-size: 0.8125rem;
@@ -203,7 +203,7 @@
 		display: block;
 		max-width: 100%;
 		height: auto;
-		border-radius: 0.25rem;
+		border-radius: var(--radius-sm);
 	}
 
 	.code-card.error {

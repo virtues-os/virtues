@@ -5,7 +5,8 @@
 //! `allow-same-origin`) gives the document an **opaque origin**, so it holds
 //! no cookies/storage and cannot read the parent. The box injects two
 //! runtime files: `virtues.css` (theme variables) and `virtues.js` (a scoped
-//! read-only `virtues.query(sql)` bridge).
+//! read-only `virtues.query(sql)` bridge, and `virtues.open(route)`, which
+//! asks the app around the frame to open one of its routes).
 //!
 //! ## Trust model
 //!
@@ -527,7 +528,17 @@ const VIRTUES_JS: &str = r#"// virtues.js — the face runtime bridge (read-only
     return body;
   }
 
-  window.virtues = { query, theme, surface };
+  // Ask the app around the frame to open one of its own routes ('/page/…',
+  // '/tasks', '/' for a new chat). The face cannot navigate the app itself:
+  // its origin is opaque. FaceFrame decides whether to honor the request;
+  // loaded top-level or on the panel there is no app, and nothing happens.
+  function open(route) {
+    if (window.parent !== window) {
+      window.parent.postMessage({ type: 'virtues:open', route: String(route) }, '*');
+    }
+  }
+
+  window.virtues = { query, open, theme, surface };
 })();
 "#;
 

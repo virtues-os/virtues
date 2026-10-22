@@ -37,12 +37,11 @@
 	} = $props();
 </script>
 
-{#if dragActive}
-	<div class="drop-hint">
-		<Icon icon="ri:download-2-line" width="15" />
-		<span>Drop to attach &middot; images, PDFs, audio, or text</span>
-	</div>
-{/if}
+<!-- Always mounted, so it can fade out as well as in. -->
+<div class="drop-hint" class:shown={dragActive} aria-hidden={!dragActive}>
+	<Icon icon="ri:download-2-line" width="15" />
+	<span>Drop to attach &middot; images, PDFs, audio, or text</span>
+</div>
 {#if attachments.length > 0}
 	<div class="attachments">
 		{#each attachments as a (a.id)}
@@ -87,8 +86,9 @@
 <!-- Said here because sending is where being offline bites. The phone has
      its own banner under the header (MobileShell), so this is desktop only. -->
 {#if reachability.unreachable && !mobileLayout.isMobile}
-	<div class="offline-note" role="status">
-		Can't reach your server, so messages won't send until it answers again.
+	<div class="offline-note" role="status" title="Messages won't send until your server answers again.">
+		<Icon icon="ri:wifi-off-line" width="13" />
+		<span>Can't reach server</span>
 	</div>
 {/if}
 {#if capabilityIssue}
@@ -137,7 +137,7 @@
 		gap: 0.5rem;
 		padding: 0.375rem 0.625rem;
 		border: 1px solid var(--color-border);
-		border-radius: 0.625rem;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface-elevated);
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
@@ -157,7 +157,7 @@
 		align-items: center;
 		justify-content: center;
 		padding: 0.125rem;
-		border-radius: 0.375rem;
+		border-radius: var(--radius-md);
 		color: var(--color-foreground-muted);
 		transition: background-color 0.15s ease;
 	}
@@ -179,7 +179,7 @@
 		gap: 0.5rem;
 		padding: 0.375rem 0.5rem 0.375rem 0.375rem;
 		border: 1px solid var(--color-border-subtle);
-		border-radius: 0.625rem;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface-elevated);
 		max-width: 15rem;
 	}
@@ -192,7 +192,7 @@
 	.attachment-thumb {
 		width: 4.5rem;
 		height: 4.5rem;
-		border-radius: 0.4rem;
+		border-radius: var(--radius-md);
 		object-fit: cover;
 		flex-shrink: 0;
 		display: block;
@@ -201,7 +201,7 @@
 	.attachment-icon {
 		width: 2.25rem;
 		height: 2.25rem;
-		border-radius: 0.4rem;
+		border-radius: var(--radius-md);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -236,7 +236,7 @@
 		align-items: center;
 		justify-content: center;
 		padding: 0.125rem;
-		border-radius: 0.375rem;
+		border-radius: var(--radius-md);
 		color: var(--color-foreground-muted);
 		transition: background-color 0.15s ease;
 	}
@@ -245,13 +245,19 @@
 		background: var(--color-border);
 	}
 
+	/* A small centered pill: the send button is already disabled, so this
+	   only has to name the reason. The full sentence is in the tooltip. */
 	.offline-note {
-		margin-bottom: 0.5rem;
-		padding: 0.375rem 0.625rem;
+		display: flex;
+		align-items: center;
+		gap: 0.375rem;
+		width: fit-content;
+		margin: 0 auto 0.5rem;
+		padding: 0.25rem 0.625rem;
 		border: 1px solid var(--color-border);
-		border-radius: 0.625rem;
+		border-radius: var(--radius-full);
 		background: var(--color-surface-elevated);
-		font-size: 0.8125rem;
+		font-size: 0.75rem;
 		color: var(--color-foreground-muted);
 	}
 
@@ -263,7 +269,7 @@
 		margin-bottom: 0.5rem;
 		padding: 0.375rem 0.625rem;
 		border: 1px solid var(--color-warning, var(--color-border));
-		border-radius: 0.625rem;
+		border-radius: var(--radius-xl);
 		background: var(--color-warning-subtle, var(--color-surface-elevated));
 		font-size: 0.8125rem;
 		color: var(--color-foreground);
@@ -303,23 +309,26 @@
 		box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--color-primary) 60%, transparent);
 		pointer-events: none;
 		z-index: 11;
-		animation: drop-hint-in 0.18s cubic-bezier(0.22, 1, 0.36, 1);
+		opacity: 0;
+		transform: translateX(-50%) translateY(0.35rem);
+		/* Hidden only once the fade out has finished. */
+		visibility: hidden;
+		transition:
+			opacity var(--motion-enter) var(--ease-premium),
+			transform var(--motion-enter) var(--ease-premium),
+			visibility 0s linear var(--motion-enter);
 	}
 
-	@keyframes drop-hint-in {
-		from {
-			opacity: 0;
-			transform: translateX(-50%) translateY(0.35rem);
-		}
-		to {
-			opacity: 1;
-			transform: translateX(-50%) translateY(0);
-		}
+	.drop-hint.shown {
+		opacity: 1;
+		transform: translateX(-50%) translateY(0);
+		visibility: visible;
+		transition-delay: 0s;
 	}
 
 	@media (prefers-reduced-motion: reduce) {
 		.drop-hint {
-			animation: none;
+			transition: none;
 		}
 	}
 </style>

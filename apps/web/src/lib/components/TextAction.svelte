@@ -210,7 +210,7 @@
 	.v-textaction:focus-visible {
 		outline: 2px solid var(--color-border-focus);
 		outline-offset: 2px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	/* The way back. Muted ink, so "Cancel" beside "Send a link" reads as the

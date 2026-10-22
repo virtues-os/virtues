@@ -139,7 +139,7 @@
 	.sources-footer {
 		margin-top: 16px;
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		overflow: hidden;
 		background: var(--color-surface);
 	}
@@ -242,7 +242,7 @@
 		width: 32px;
 		height: 32px;
 		background: var(--color-surface-elevated);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		flex-shrink: 0;
 	}
 

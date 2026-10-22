@@ -28,6 +28,8 @@ import { pinsStore } from '$lib/stores/pins.svelte';
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { iconPickerStore } from '$lib/stores/iconPicker.svelte';
 import { ownedRef, pinIdentity, setRefLook } from '$lib/refs/identity.svelte';
+import { clothFor } from '$lib/sidebar/pin-colors';
+import { isNewChat } from '$lib/components/chat/state/chatRoute';
 
 export interface PinTarget {
 	/** Route or absolute URL. External `http(s)` urls are allowed and open out. */
@@ -67,6 +69,39 @@ export async function togglePin(target: PinTarget): Promise<boolean> {
 }
 
 /**
+ * Whether a dragged url can become a pin. A new chat has no thing behind it
+ * yet, so there is nothing to keep.
+ */
+export function canPin(url: string): boolean {
+	return !!url && !isNewChat(url);
+}
+
+/**
+ * Pin `target` into the gap before pin number `gap` (`pins.length` is the
+ * end), from a drop. A url that is already pinned moves to that gap instead
+ * of pinning twice. A new pin shows in the gap before the box answers
+ * (`pinsStore.insertAt`), and the store changes before this first awaits, so
+ * a drop handler's own cleanup never sees an empty Pinned in between.
+ */
+export async function pinAtGap(target: PinTarget, gap: number): Promise<void> {
+	if (!canPin(target.url)) return;
+	const from = pinsStore.pins.findIndex((p) => p.url === target.url);
+	if (from >= 0) {
+		const to = from < gap ? gap - 1 : gap;
+		await pinsStore.reorder(from, Math.min(to, pinsStore.pins.length - 1));
+		return;
+	}
+	const owned = ownedRef(target.url);
+	await pinsStore.insertAt(
+		gap,
+		target.url,
+		owned ? null : (target.label ?? null),
+		owned ? null : (target.icon ?? null),
+		target.label,
+	);
+}
+
+/**
  * "Change icon" for a pinned url — opens the shared picker, which carries the
  * color swatches with it, so a glyph and its color are chosen in one place
  * like every other icon in the app.
@@ -99,6 +134,8 @@ export function pinIconMenuItem(
 						void setRefLook(url, { color });
 					},
 					anchor,
+					label: look.title,
+					autoColor: clothFor({ url }),
 				},
 			);
 		},

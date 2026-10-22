@@ -23,7 +23,7 @@
 	import PageStatusNote from "$lib/components/pages/PageStatusNote.svelte";
 	import PageToolbar from "$lib/components/pages/PageToolbar.svelte";
 	import PageProjects from "$lib/components/pages/PageProjects.svelte";
-	import PageOutline from "$lib/components/pages/PageOutline.svelte";
+	import Rail from "$lib/components/Rail.svelte";
 	import ReferencesPanel from "$lib/components/pages/ReferencesPanel.svelte";
 	import { Popover } from "$lib/floating";
 	import {
@@ -38,7 +38,7 @@
 	import { toast } from "svelte-sonner";
 	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
-	import { untitled } from "$lib/refs/identity.svelte";
+	import { isUntitled, untitled } from "$lib/refs/identity.svelte";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import type { TreeDocument } from "$lib/yjs";
 	import { cutServerVersion } from "$lib/yjs/versions";
@@ -132,6 +132,12 @@
 	let unsubRefused: (() => void) | null = null;
 	// Why the server will not sync this page with this editor, once it says so.
 	let refusedReason = $state<string | null>(null);
+	/** The top bar, which the editor's find bar docks in, in the toolbar's place. */
+	let topbarEl = $state<HTMLElement | null>(null);
+	/** Find is docked in the top bar. */
+	let finding = $state(false);
+	/** The page has scrolled from its top: the top bar draws its bottom edge. */
+	let scrolled = $state(false);
 	// Track sync/connection state reactively (subscribed from Yjs stores)
 	let isSynced = $state(false);
 	let isConnected = $state(false);
@@ -164,6 +170,19 @@
 	let outline = $state<PageHeading[]>([]);
 	/** The block editor's outline navigation, while one is mounted. */
 	let treeNav = $state<OutlineNav | null>(null);
+	/** The scroller's frame and the text column, measured for the rail's gutter. */
+	let frameWidth = $state(0);
+	let columnWidth = $state(0);
+	/** The page's headings on the rail: each keeps its heading, which the nav goes to. */
+	const railHeadings = $derived(
+		outline.map((h) => ({ id: h.id ?? `at-${h.from}`, label: h.text, level: h.level, heading: h })),
+	);
+	/**
+	 * The headings rail stands in the right gutter when the gutter has room
+	 * for it beside the text; otherwise the headings are Contents in the ⋯
+	 * menu (PageToolbar).
+	 */
+	const railShown = $derived(!!treeNav && outline.length > 1 && (frameWidth - columnWidth) / 2 >= 64);
 	/** View as markdown (block pages). */
 	let viewingMarkdown = $state(false);
 	/** The scroller holding the cover, title and text: what Print prints. */
@@ -652,18 +671,18 @@
 		</div>
 	{:else if pageData}
 		<div class="page-layout">
-			<!-- Top bar: TOC (left) + page actions (right), one classic row -->
-			<div class="page-topbar" data-print="hide">
-			<PageOutline
-				headings={outline}
-				nav={treeNav}
-			/>
-			<!-- The projects this page is in, beside the outline: the page's
-			     "where it lives", in the corner a chat says it. -->
+			<!-- Top bar: the projects (left) and the page's actions (right), one row -->
+			<div class="page-topbar" class:scrolled data-print="hide" bind:this={topbarEl}>
+			<!-- The projects this page is in: the page's "where it lives", in
+			     the corner a chat says it. -->
 			{#if pageId}
 				<PageProjects url={`/page/${pageId}`} />
 			{/if}
 			<PageToolbar
+				{finding}
+				contents={!railShown && treeNav && outline.length > 1
+					? outline.map((h) => ({ label: h.text, go: () => treeNav?.scrollTo(h) }))
+					: null}
 				{icon}
 				{coverUrl}
 				{copied}
@@ -702,13 +721,19 @@
 
 			<!-- Body: scrollable editor + optional References rail -->
 			<div class="page-body">
+			<!-- The scroller in a frame that holds still, so the headings rail
+			     stands beside the column while the page moves. -->
+			<div class="page-scroll-frame" bind:clientWidth={frameWidth}>
 			<!-- Main Content Area -->
 			<div
 				class="page-content"
+				class:prose--article={pageDisplay.article}
 				bind:this={printRootEl}
-				style:--editor-font-family={pageDisplay.fontFamily}
-				style:--editor-font-size={pageDisplay.fontSize}
-				style:--editor-line-height={pageDisplay.lineHeight}
+				onscroll={(e) => (scrolled = e.currentTarget.scrollTop > 0)}
+				style:--prose-family={pageDisplay.fontFamily}
+				style:--prose-size={pageDisplay.fontSize}
+				style:--prose-lh={pageDisplay.lineHeight}
+				style:--prose-scale={pageDisplay.scale}
 			>
 				<!-- Cover Image - above title, full bleed -->
 				{#if coverUrl}
@@ -725,6 +750,7 @@
 
 				<div
 					class="page-inner"
+					bind:clientWidth={columnWidth}
 					class:width-small={pageDisplay.widthMode === "small"}
 					class:width-medium={pageDisplay.widthMode === "medium"}
 					class:width-full={pageDisplay.widthMode === "full"}
@@ -782,9 +808,15 @@
 								{/snippet}
 							</Popover>
 						{/if}
+						<!-- A default title is shown muted and selected on focus, so the
+						     first keystroke names the page. -->
 						<textarea
 							bind:value={title}
 							placeholder="Untitled"
+							class:untitled={isUntitled(title, "page")}
+							onfocus={(e) => {
+								if (isUntitled(title, "page")) e.currentTarget.select();
+							}}
 							onkeydown={handleTitleKeydown}
 							rows="1"
 							class="page-title-input"
@@ -813,8 +845,10 @@
 									{pageId}
 									pageTitle={title}
 									article={pageData?.kind === "article"}
-									editable={!treeDoc.readOnly}
+									editable={!treeDoc.readOnly && !refusedReason}
 									ai={treeAiDriver}
+									findHost={topbarEl}
+									onFindOpen={(open) => (finding = open)}
 									placeholder="Start writing, or press / for commands…"
 									onDocChange={handleDocChange}
 									onOutline={(h) => (outline = h)}
@@ -827,6 +861,21 @@
 						{/if}
 					</div>
 				</div>
+			</div>
+
+			{#if railShown && treeNav}
+				{@const nav = treeNav}
+				<div class="page-rail" data-print="hide">
+					<Rail
+						items={railHeadings}
+						scroller={nav.scroller}
+						topOf={(item) => nav.topOf(item.heading)}
+						go={(item) => nav.scrollTo(item.heading)}
+						side="right"
+						label="Headings on this page"
+					/>
+				</div>
+			{/if}
 			</div>
 
 			{#if showReferences}
@@ -872,24 +921,33 @@
 		min-height: 0;
 	}
 
-	/* One classic top bar: TOC trigger (left) + page actions (right). Relative so
-	   the outline drawer anchors to it and spans the full width. */
-	/* Three columns: projects, the outline's title, the page's actions. The
-	   title sits centred while the row has room and shortens before it
-	   reaches either side, so on a narrow column it never covers an icon. */
+	/* Three columns: the projects, an empty middle, the page's actions (or
+	   find, docked in their place). Its bottom edge shows once the page
+	   scrolls from its top, so text passing under the bar meets a line
+	   instead of being cut mid-line. */
 	.page-topbar {
 		position: relative;
 		display: grid;
 		grid-template-columns: 1fr auto 1fr;
 		align-items: center;
 		z-index: var(--z-sticky);
+		border-bottom: 1px solid transparent;
+		transition: border-color var(--motion-hover-out) var(--ease-premium);
 	}
+	.page-topbar.scrolled {
+		border-bottom-color: var(--color-border-subtle, var(--color-border));
+	}
+	/* Each in its column of the one row: with a column alone, the grid
+	   places items in source order, and an item asking for a column behind
+	   the last one placed falls to a new row. */
 	.page-topbar :global(.page-projects) {
+		grid-row: 1;
 		grid-column: 1;
 		justify-self: start;
 		max-width: 100%;
 	}
 	.page-topbar :global(.page-toolbar) {
+		grid-row: 1;
 		grid-column: 3;
 	}
 
@@ -901,13 +959,24 @@
 		overflow: hidden;
 	}
 
+	.page-scroll-frame {
+		position: relative;
+		flex: 1;
+		display: flex;
+		min-width: 0;
+	}
+
+	/* The rail places itself against the frame's right edge (Rail.svelte). */
+	.page-rail {
+		display: contents;
+	}
+
 	/* Main Content Area - scrollable */
 	.page-content {
 		flex: 1;
 		min-width: 0;
 		overflow-y: auto;
-		padding: 2rem 1.5rem;
-		padding-bottom: 4rem;
+		padding: 2rem var(--reading-gutter) 4rem;
 	}
 
 	.page-inner {
@@ -919,8 +988,10 @@
 		max-width: 32rem; /* ~512px */
 	}
 
+	/* The reading column chat's messages use, so a page and a chat start
+	   their text at one edge when you switch tabs (themes.css). */
 	.page-inner.width-medium {
-		max-width: 42rem; /* ~672px, similar to max-w-2xl */
+		max-width: var(--reading-measure);
 	}
 
 	.page-inner.width-full {
@@ -955,7 +1026,8 @@
 	}
 
 	/* Page Header: a step of room under the title, which stays a clear size
-	   above the page's own first heading (36px over --md-h1-size, 26px). */
+	   above the page's own first heading (36px over --md-h1-size, 26px at
+	   medium text and 29px at large). */
 	.page-header {
 		display: flex;
 		align-items: flex-start;
@@ -980,12 +1052,21 @@
 		background: transparent;
 		border: none;
 		outline: none;
-		padding: 0;
+		/* A textarea clips to its box, and the serif's descenders (the p of
+		   "page") and accents reach past a 1.2 line. The padding makes room
+		   for them and the margin takes it back, so the title sits where it
+		   would with none. */
+		padding: 0.1em 0 0.25em;
+		margin: -0.1em 0 -0.25em;
 		resize: none;
 		field-sizing: content;
 	}
 
 	.page-title-input::placeholder {
+		color: var(--color-foreground-subtle);
+	}
+
+	.page-title-input.untitled {
 		color: var(--color-foreground-subtle);
 	}
 

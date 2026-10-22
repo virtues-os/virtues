@@ -51,10 +51,11 @@ import type { Editor } from "@tiptap/core";
 import { Slice, type Mark, type Node as PmNode, type ResolvedPos } from "@tiptap/pm/model";
 import type { EditorState, Transaction } from "@tiptap/pm/state";
 import { canSplit } from "@tiptap/pm/transform";
-import { yUndoPluginKey } from "@tiptap/y-tiptap";
+import { ySyncPluginKey } from "@tiptap/y-tiptap";
 import type * as Y from "yjs";
 import { toast } from "svelte-sonner";
 import { anchorAt, isBound, type Anchor } from "$lib/document/anchor";
+import { undoManagerOf } from "$lib/document/history";
 import type { TreeAiDriver } from "$lib/document/editor";
 import { clearAi, setAiCaret, setAiTelegraph, setAiTrail } from "$lib/document/presence";
 import { DELETION, INSERTION, PROPOSAL_ATTR, withProposalRejected } from "$lib/document/suggestions";
@@ -320,8 +321,11 @@ function inheritNotes(tr: Transaction, from: number, to: number, notes: Map<stri
  * writes as a link.
  */
 function writerTr(state: EditorState): Transaction {
-	return state.tr.setMeta("preventAutolink", true);
+	return state.tr.setMeta("preventAutolink", true).setMeta(WRITER, true);
 }
+
+/** Marks the writer's own edits, so any other local edit stops it (`TreeAiSession.onEdit`). */
+const WRITER = "aiWriter";
 
 class TreeAiSession {
 	private readonly editor: Editor;
@@ -335,6 +339,8 @@ class TreeAiSession {
 
 	private readonly controller = new AbortController();
 	private aborted = false;
+	/** A newer session started: it owns the status now, and the caret too when it writes to this editor. */
+	private superseded: "no" | "elsewhere" | "here" = "no";
 
 	/** Where the next words go: just after the last ones written. */
 	private anchor: Anchor | null = null;
@@ -404,14 +410,42 @@ class TreeAiSession {
 		this.releaseUndo();
 	}
 
+	/** Stop because a newer session starts in its place. */
+	supersede(by: TreeAiSession): void {
+		this.superseded = by.writesTo(this.editor) ? "here" : "elsewhere";
+		this.abort();
+	}
+
+	/**
+	 * Any local edit that is not the writer's stops it: a key a keymap takes
+	 * (Enter, Backspace, Tab, ⌘B), a paste, a drag, a command from a menu.
+	 * The undo step closes before the edit applies, so the edit is the
+	 * person's own step and never part of the writer's. Words not yet shown
+	 * are dropped, since they would land after the edit. An undo or redo
+	 * stops it too: undone, the writer's words are gone and it must not
+	 * write after them. Edits from other devices change nothing.
+	 */
+	private onEdit = ({ transaction: tr }: { transaction: Transaction }): void => {
+		if (this.aborted || !tr.docChanged || tr.getMeta(WRITER)) return;
+		const sync = tr.getMeta(ySyncPluginKey) as { isChangeOrigin?: boolean; isUndoRedoOperation?: boolean } | undefined;
+		if (sync?.isChangeOrigin && !sync.isUndoRedoOperation) return;
+		// The fixes plugins make after an edit (ids, joined lists) are kept out
+		// of undo. The binding marks an undo so too, and an undo stops it.
+		if (!sync?.isUndoRedoOperation && tr.getMeta("addToHistory") === false) return;
+		this.releaseUndo();
+		this.buffer = "";
+		this.queue = [];
+		// After this edit applies: stopping dispatches, and a dispatch now would apply first.
+		queueMicrotask(() => this.abort());
+	};
+
 	private track(pos: number): Anchor | null {
 		return this.bound ? anchorAt(this.editor.state, pos) : null;
 	}
 
 	/** Make everything this session writes one undo step, apart from what came before. */
 	private holdUndo() {
-		const manager = (yUndoPluginKey.getState(this.editor.state) as { undoManager?: Y.UndoManager } | undefined)
-			?.undoManager;
+		const manager = undoManagerOf(this.editor.state);
 		if (!manager) return;
 		manager.stopCapturing();
 		this.undo = { manager, timeout: manager.captureTimeout };
@@ -436,6 +470,7 @@ class TreeAiSession {
 		}
 		aiSession.set("thinking");
 		this.holdUndo();
+		this.editor.on("beforeTransaction", this.onEdit);
 
 		const { state } = this.editor;
 		const sel = state.selection;
@@ -811,8 +846,9 @@ class TreeAiSession {
 	/** Take the caret and trail down. `resetStatus` false keeps an error showing. */
 	private cleanup(resetStatus = true) {
 		this.releaseUndo();
-		if (this.live()) clearAi(this.editor);
-		if (resetStatus) aiSession.reset();
+		this.editor.off("beforeTransaction", this.onEdit);
+		if (this.live() && this.superseded !== "here") clearAi(this.editor);
+		if (resetStatus && this.superseded === "no") aiSession.reset();
 	}
 }
 
@@ -825,8 +861,8 @@ export function createTreeAiDriver(
 	let running: Promise<void> = Promise.resolve();
 	return {
 		start(o) {
-			current?.abort();
 			const session = new TreeAiSession(o, resolved);
+			current?.supersede(session);
 			current = session;
 			running = session.run().finally(() => {
 				if (current === session) current = null;

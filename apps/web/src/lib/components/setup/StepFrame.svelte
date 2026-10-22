@@ -129,7 +129,7 @@
 		font-size: 15px;
 		padding: 0.75rem 1.5rem;
 		border: none;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		/* Primary, like the letter's close and the rail's tile: the way
 		   forward is the same object on every screen of the walk. */
 		background: var(--color-primary);

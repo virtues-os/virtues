@@ -282,6 +282,20 @@ pub struct RefSearchResult {
     pub icon: String,
     pub url: String,
     pub mime_type: Option<String>,
+    /// When the row was written; the composer's `@` panel shows and filters by it.
+    pub created_at: Timestamp,
+}
+
+/// What narrows an entity search beyond its text.
+#[derive(Debug, Clone, Default)]
+pub struct RefSearchFilter {
+    /// Keep only these entity types (`person`, `place`, `org`, `file`,
+    /// `page`, `chat`, `project`). `None` keeps every type.
+    pub kinds: Option<Vec<String>>,
+    /// Keep only rows created at or after this instant.
+    pub created_after: Option<chrono::DateTime<chrono::Utc>>,
+    /// How many rows to return. `None` is 15, and it is capped at 50.
+    pub limit: Option<i64>,
 }
 
 /// Entity search response
@@ -848,7 +862,7 @@ struct RawRefSearchResult {
     entity_type: String,
     icon: String,
     mime_type: Option<String>,
-    updated_at: Timestamp,
+    created_at: Timestamp,
     relevance: i32,
 }
 
@@ -882,7 +896,11 @@ fn get_entity_url(entity_type: &str, id: &str) -> String {
 /// Results are ranked by:
 /// 1. Relevance: prefix matches (name starts with query) come before contains matches
 /// 2. Recency: within each relevance tier, most recently updated items come first
-pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse> {
+pub async fn search_refs(
+    pool: &PgPool,
+    query: &str,
+    filter: &RefSearchFilter,
+) -> Result<RefSearchResponse> {
     let query = query.trim();
 
     // For empty query, show most recent items
@@ -900,12 +918,15 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
     // lowercases the surface before matching, so this must too.
     let exact = query.to_lowercase();
 
-    let limit = 15i64;
+    let limit = filter.limit.unwrap_or(15).clamp(1, 50);
 
-    // Search across multiple tables with UNION
+    // Search across multiple tables with UNION, then narrow by type and
+    // creation date outside it, where every leg has both columns.
     // Relevance: 0 = prefix match (highest), 1 = contains match
     let raw_results = sqlx::query_as::<_, RawRefSearchResult>(
         r#"
+        SELECT id, name, entity_type, icon, mime_type, created_at, relevance
+        FROM (
         -- Aliases are the whole point of 0037: "a mention resolves iff its
         -- normalized surface matches EXACTLY ONE entity, by canonical name,
         -- nickname, or an alias a human put here". The column shipped and this
@@ -913,34 +934,34 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
         -- the decision had a home and no door. An exact alias hit ranks with a
         -- prefix hit: it is not a fuzzy match, it is a name you declared.
         SELECT id, name, 'person' as entity_type, 'ri:user-line' as icon,
-               NULL as mime_type, updated_at,
+               NULL as mime_type, created_at, updated_at,
                CASE WHEN name ILIKE $2 OR jsonb_exists(aliases, $4)
                     THEN 0 ELSE 1 END as relevance
         FROM wiki_people
         WHERE name ILIKE $1 OR nickname ILIKE $1 OR jsonb_exists(aliases, $4)
         UNION ALL
         SELECT id, name, 'place' as entity_type, 'ri:map-pin-line' as icon,
-               NULL as mime_type, updated_at,
+               NULL as mime_type, created_at, updated_at,
                CASE WHEN name ILIKE $2 OR jsonb_exists(aliases, $4)
                     THEN 0 ELSE 1 END as relevance
         FROM wiki_places
         WHERE name ILIKE $1 OR jsonb_exists(aliases, $4)
         UNION ALL
         SELECT id, name, 'org' as entity_type, 'ri:building-line' as icon,
-               NULL as mime_type, updated_at,
+               NULL as mime_type, created_at, updated_at,
                CASE WHEN name ILIKE $2 OR jsonb_exists(aliases, $4)
                     THEN 0 ELSE 1 END as relevance
         FROM wiki_orgs
         WHERE name ILIKE $1 OR jsonb_exists(aliases, $4)
         UNION ALL
         SELECT id, filename as name, 'file' as entity_type, 'ri:file-line' as icon,
-               mime_type, updated_at,
+               mime_type, created_at, updated_at,
                CASE WHEN filename ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM app_drive_files
         WHERE filename ILIKE $1 AND deleted_at IS NULL
         UNION ALL
         SELECT id, title as name, 'page' as entity_type, 'ri:file-text-line' as icon,
-               NULL as mime_type, updated_at,
+               NULL as mime_type, created_at, updated_at,
                CASE WHEN title ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM app_pages
         -- Articles are excluded here and surfaced under their SUBJECT instead:
@@ -950,17 +971,20 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
         UNION ALL
         SELECT id, title as name, 'chat' as entity_type,
                CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:chat-3-line' END as icon,
-               NULL as mime_type, updated_at,
+               NULL as mime_type, created_at, updated_at,
                CASE WHEN title ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM app_chats
         WHERE title ILIKE $1 AND title <> '' AND deleted_at IS NULL
         UNION ALL
         SELECT id, name, 'project' as entity_type,
                CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:folder-line' END as icon,
-               NULL as mime_type, updated_at,
+               NULL as mime_type, created_at, updated_at,
                CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
         FROM app_projects
         WHERE name ILIKE $1 AND deleted_at IS NULL
+        ) refs
+        WHERE ($5::text[] IS NULL OR entity_type = ANY($5))
+          AND ($6::timestamptz IS NULL OR created_at >= $6)
         ORDER BY relevance ASC, updated_at DESC
         LIMIT $3
         "#,
@@ -969,6 +993,8 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
     .bind(&prefix_pattern)
     .bind(limit)
     .bind(&exact)
+    .bind(&filter.kinds)
+    .bind(filter.created_after)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to search entities: {}", e)))?;
@@ -983,6 +1009,7 @@ pub async fn search_refs(pool: &PgPool, query: &str) -> Result<RefSearchResponse
             entity_type: r.entity_type,
             icon: r.icon,
             mime_type: r.mime_type,
+            created_at: r.created_at,
         })
         .collect();
 

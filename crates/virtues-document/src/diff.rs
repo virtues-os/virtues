@@ -1132,11 +1132,10 @@ mod tests {
         }
     }
 
-    /// A change markdown cannot line up with the page's rows (the row
-    /// under a cell two rows tall, or that cell's own row dropped) writes
-    /// the table as the writer's markdown reads, and the table stays a
-    /// grid: kept, the tall cell would cover a column the row under it
-    /// also fills.
+    /// A table with a cell two rows tall is exported as its HTML, which
+    /// pipes cannot hold, so a writer's change to it (a word in the row
+    /// under the tall cell, a row dropped) is written as the writer's
+    /// markdown reads, and the table stays a grid with its tall cell.
     #[test]
     fn a_table_changed_across_a_tall_cell_is_written_as_it_reads() {
         use yrs::Transact;
@@ -1146,11 +1145,14 @@ mod tests {
                    <tr data-id=\"r4\"><td><p>Evening</p></td><td><p>You finished a long book.</p></td></tr></table>";
         let edits: [&dyn Fn(&str) -> String; 2] = [
             &|md| md.replace("coffee with friends", "tea with friends"),
-            &|md| md.lines().filter(|l| !l.contains("porch")).map(|l| format!("{l}\n")).collect(),
+            &|md| md.replace("<tr><td><p>Evening</p></td><td><p>You finished a long book.</p></td></tr>", ""),
         ];
         for edit in edits {
             let doc = doc_of(src);
-            let md = edit(&crate::to_markdown(&crate::read_doc(&doc.transact())));
+            let before = crate::to_markdown(&crate::read_doc(&doc.transact()));
+            assert!(before.starts_with("<table>"), "{before}");
+            let md = edit(&before);
+            assert_ne!(md, before);
             revise(&doc, &md);
             let after = crate::read_doc(&doc.transact());
             assert_eq!(crate::table::problems(&after[0]), Vec::<String>::new(), "{}", show(&after));

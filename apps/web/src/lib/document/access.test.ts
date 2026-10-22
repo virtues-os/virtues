@@ -30,7 +30,7 @@ vi.mock('$lib/components/pages/nodes/FigureNode.svelte', () => ({ default: () =>
 vi.mock('$lib/stores/contextMenu.svelte', () => ({ contextMenu: { show: vi.fn(), reachFirstRow: vi.fn() } }));
 vi.mock('$lib/stores/linkEditor.svelte', () => ({ linkEditor: { show: vi.fn() } }));
 vi.mock('$lib/stores/window-shell.svelte', () => ({
-	windowShellStore: { openRouteBeside: vi.fn(), openTabFromRoute: vi.fn() },
+	windowShellStore: { openRouteBeside: vi.fn(), openTabFromRoute: vi.fn(), openInNewTab: vi.fn() },
 }));
 vi.mock('svelte-sonner', () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 vi.mock('$lib/api/client', async (orig) => ({
@@ -481,7 +481,7 @@ describe('links', () => {
 		a.dispatchEvent(menu);
 		expect(menu.defaultPrevented).toBe(true);
 		const items = vi.mocked(contextMenu.show).mock.calls[0][1].map((i) => i.id);
-		expect(items).toEqual(['open', 'open-beside', 'copy-link']);
+		expect(items).toEqual(['open', 'open-new-tab', 'open-beside', 'copy-link']);
 	});
 });
 
@@ -509,6 +509,16 @@ describe('a click with ⌘ or Ctrl', () => {
 			|| editor.view.dispatch(editor.state.tr.insertText('a', at, at));
 		expect(editor.state.doc.child(1).textContent).toBe('Seconda line with a link inside.');
 		expect(editor.state.doc.child(0).textContent).toBe('First paragraph, kept.');
+	});
+
+	it('on a ref opens it in a new tab beside this one, leaving this tab where it was', () => {
+		vi.mocked(windowShellStore.openInNewTab).mockClear();
+		vi.mocked(windowShellStore.openTabFromRoute).mockClear();
+		const editor = bound('<p>Ask <a href="/person/person_1">Nick</a> today.</p>', [links()]);
+		const at = posIn(editor, 'Nick', 1);
+		modClick(editor, editor.view.dom.querySelector('a')!, at, -1);
+		expect(windowShellStore.openInNewTab).toHaveBeenCalledWith('/person/person_1', 'Nick');
+		expect(windowShellStore.openTabFromRoute).not.toHaveBeenCalled();
 	});
 
 	it('on a widget selects it, as a plain click does', () => {
@@ -614,10 +624,16 @@ describe('the selection toolbar', () => {
 	// reader read Bold the same whether the words were bold or not.
 	it('each mark button says whether its mark is on, and names its key as the keyboard does', () => {
 		const source = read('../components/SelectionToolbar.svelte');
-		expect(source).toMatch(/aria-pressed=\{activeMarks\[btn\.mark\]\}/);
-		expect(source).toMatch(/aria-label=\{btn\.label\}/);
-		expect(source).toMatch(/title=\{btn\.shortcut \? `\$\{btn\.label\} \(\$\{shortcuts\.format\(btn\.shortcut\)\}\)` : btn\.label\}/);
+		expect(source).toMatch(/pressed=\{!!activeMarks\[btn\.mark\]\}/);
+		expect(source).toMatch(/label=\{btn\.label\}/);
+		expect(source).toMatch(/shortcut=\{btn\.shortcut \? shortcuts\.format\(btn\.shortcut\) : undefined\}/);
 		expect(source).not.toMatch(/Cmd\+/);
+		// IconButton says the state and the key, and keeps the name the verb alone.
+		const button = read('../components/IconButton.svelte');
+		expect(button).toMatch(/aria-pressed=\{pressed\}/);
+		expect(button).toMatch(/aria-label=\{label\}/);
+		expect(button).toMatch(/aria-keyshortcuts=\{shortcut\}/);
+		expect(button).toMatch(/title=\{shortcut \? `\$\{label\} \(\$\{shortcut\}\)` : label\}/);
 		expect(shortcuts.format('mod+shift+s')).toBe(isAppleKeyboard ? '⌘⇧S' : 'Ctrl+Shift+S');
 	});
 
@@ -633,6 +649,27 @@ describe('the selection toolbar', () => {
 		expect(timing.ready()).toBe(false);
 		window.dispatchEvent(new PointerEvent('pointerup', { button: 0 }));
 		expect(show).toHaveBeenCalledOnce();
+		expect(timing.ready()).toBe(true);
+	});
+
+	// Browsers end the press with a pointercancel as a drag of the words
+	// starts, which read as a release put the bar over the words in hand.
+	it('stays away while words are dragged and over what the drop put in, until the next press or key', () => {
+		const editor = track(htmlEditor('<p>Drag these words</p>'));
+		const show = vi.fn();
+		const timing = toolbarTiming(editor.view, show);
+		cleanups.push(timing.destroy);
+		const text = editor.view.dom.querySelector('p')!;
+		text.dispatchEvent(new PointerEvent('pointerdown', { button: 0, bubbles: true }));
+		text.dispatchEvent(new DragEvent('dragstart', { bubbles: true }));
+		window.dispatchEvent(new PointerEvent('pointercancel', { button: 0 }));
+		expect(timing.ready()).toBe(false);
+		text.dispatchEvent(new DragEvent('drop', { bubbles: true }));
+		const tr = editor.state.tr.setSelection(TextSelection.create(editor.state.doc, 1, 5)).setMeta('uiEvent', 'drop');
+		editor.view.dispatch(tr);
+		timing.note(tr);
+		expect(timing.ready()).toBe(false);
+		editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }));
 		expect(timing.ready()).toBe(true);
 	});
 
@@ -667,10 +704,12 @@ describe('the selection toolbar', () => {
 	// the 44pt bar covered the selection's last line and its end handle.
 	it('on touch the bar itself clears the selection and the handle under it', async () => {
 		const bar = read('../components/SelectionToolbar.svelte');
-		expect(bar).toMatch(/@media \(pointer: coarse\) \{\s+\.toolbar-btn \{\s+width: 44px;\s+height: 44px;/);
-		expect(bar).toMatch(/\.selection-toolbar \{[^}]*padding: 3px;[^}]*border: 1px solid/);
+		const buttons = bar.match(/<IconButton[^>]*>/g) ?? [];
+		expect(buttons.length).toBe(2);
+		for (const b of buttons) expect(b).toMatch(/size=\{touch \? "touch" : "md"\}/);
+		expect(bar).toMatch(/\.selection-toolbar \{[^}]*padding: 4px;[^}]*border: 1px solid/);
 		expect(bar).toMatch(/placement: 'top', offset: TOOLBAR_OFFSET/);
-		expect(TOUCH_TOOLBAR_HEIGHT).toBeGreaterThanOrEqual(44 + 2 * 3 + 2 * 1);
+		expect(TOUCH_TOOLBAR_HEIGHT).toBeGreaterThanOrEqual(44 + 2 * 4 + 2 * 1);
 
 		const end = { left: 110, bottom: 420 };
 		const anchor = selectionToolbarAt({ left: 10, top: 400 }, end, { coarse: true, bottom: 800 });
@@ -839,6 +878,22 @@ describe('keyboard paths', () => {
 		expect(drag([[101, 90], [102, 40], [103, -100]])).toEqual({ sizes: [], wrote: null });
 		// The browser took the gesture.
 		expect(drag([[140, 100]], 'pointercancel')).toEqual({ sizes: [340], wrote: null });
+		// Escape mid-drag: back to where it started, nothing written, and the
+		// Escape goes no further.
+		{
+			const sizes: number[] = [];
+			let wrote: number | null | undefined;
+			const down = new PointerEvent('pointerdown', { clientX: 100, clientY: 100, pointerId: 1, bubbles: true, cancelable: true });
+			dragToResize(handle, down, { axis: 'x', start: 300, min: 48, max: 600, onSize: (n) => sizes.push(n), onEnd: (n) => (wrote = n) });
+			handle.dispatchEvent(new PointerEvent('pointermove', { clientX: 140, clientY: 100, pointerId: 1 }));
+			const heard = vi.fn();
+			document.addEventListener('keydown', heard);
+			handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+			document.removeEventListener('keydown', heard);
+			handle.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1 }));
+			expect({ sizes, wrote }).toEqual({ sizes: [340], wrote: null });
+			expect(heard).not.toHaveBeenCalled();
+		}
 
 		// On touch a handle takes the pointer only on a selected widget.
 		for (const [file, selected] of [
@@ -1060,8 +1115,8 @@ describe('on a phone', () => {
 			expect(source, file).toMatch(/<IconButton /);
 			expect(source, file).not.toMatch(/<button/);
 		}
-		const css = read('document.css');
-		expect(css).toMatch(/@media \(pointer: coarse\) \{\s+\.doc-prose ul\[data-type='taskList'\] > li > label \{/);
+		const css = read('../styles/prose.css');
+		expect(css).toMatch(/@media \(pointer: coarse\) \{\s+\.prose ul\[data-type='taskList'\] > li > label \{/);
 		expect(css).toMatch(/width: 44px;\s+height: 44px;/);
 		for (const file of ['../components/pages/nodes/MediaNode.svelte', '../components/pages/nodes/AppletNode.svelte']) {
 			expect(read(file), file).toMatch(/@media \(pointer: coarse\) \{[^}]*handle[^}]*::after|@media \(pointer: coarse\) \{[\s\S]*?handle::after/);
@@ -1077,9 +1132,10 @@ describe('on a phone', () => {
 		expect(buttons.length).toBeGreaterThan(0);
 		for (const b of buttons) expect(b).toMatch(/size=\{touch \? "touch" : "md"\}/);
 		expect(bar).toMatch(/const touch = typeof window !== "undefined" && !!window\.matchMedia\?\.\("\(pointer: coarse\)"\)\.matches;/);
-		expect(read('../components/SelectionToolbar.svelte')).toMatch(
-			/@media \(pointer: coarse\) \{\s+\.toolbar-btn \{\s+width: 44px;\s+height: 44px;/,
-		);
+		const selection = read('../components/SelectionToolbar.svelte');
+		const selectionButtons = selection.match(/<IconButton[^>]*>/g) ?? [];
+		expect(selectionButtons.length).toBeGreaterThan(0);
+		for (const b of selectionButtons) expect(b).toMatch(/size=\{touch \? "touch" : "md"\}/);
 	});
 
 	// The selection toolbar's Ask AI and `/ai` open the prompt on a phone,
@@ -1256,8 +1312,8 @@ describe('on a phone', () => {
 		const table = editor.view.dom.querySelector('table')!;
 		const wrapper = table.parentElement!;
 		expect(wrapper.classList.contains('tableWrapper')).toBe(true);
-		const css = read('document.css');
-		expect(css).toMatch(/\.doc-prose \.tableWrapper \{\s+overflow-x: auto;\s+\}/);
+		const css = read('../styles/prose.css');
+		expect(css).toMatch(/\.prose \.tableWrapper \{\s+overflow-x: auto;\s+\}/);
 		// The bar sits over the box the table scrolls in, not the table's full width.
 		expect(read('../components/pages/DocumentEditor.svelte')).toMatch(/const dom = e\.view\.nodeDOM\(at\.tablePos\) as HTMLElement \| null;/);
 		expect(editor.view.nodeDOM(0)).toBe(wrapper);
@@ -1272,7 +1328,7 @@ describe('on a phone', () => {
 	});
 
 	it('a to-do’s hit area grows away from its text, so a tap at the text’s start places the caret', () => {
-		const css = read('document.css');
+		const css = read('../styles/prose.css');
 		const after = css.match(/ul\[data-type='taskList'\] > li > label::after \{([^}]*)\}/)![1];
 		// It ends at the 14px box's right edge; the text starts 8px past it.
 		expect(after).toMatch(/right: 0;/);
@@ -1495,9 +1551,10 @@ describe('printing', () => {
 		for (const name of ['primary', 'success', 'error']) expect(token(name), name).toMatch(/^color-mix\(in srgb, \w+ \d+%, black\)$/);
 		for (const name of ['success-subtle', 'error-subtle']) expect(token(name), name).toMatch(/, white\)$/);
 		// What reads them: the mark, the link, the proposals.
+		const prose = read('../styles/prose.css');
+		expect(prose).toMatch(/\.prose mark \{[^}]*background: var\(--color-highlight\);\s+color: var\(--color-highlight-foreground, inherit\);/);
+		expect(prose).toMatch(/\.prose a:where\(:not\(\.ref-link\):not\(\.ref-pill\)\) \{\s+color: var\(--color-primary\);/);
 		const css = read('document.css');
-		expect(css).toMatch(/\.doc-prose mark \{[^}]*background: var\(--color-highlight\);\s+color: var\(--color-highlight-foreground, inherit\);/);
-		expect(css).toMatch(/\.doc-prose a \{\s+color: var\(--color-primary\);/);
 		expect(css).toMatch(/border-bottom: 1px solid var\(--color-success\);/);
 		expect(css).toMatch(/text-decoration-color: var\(--color-error\);/);
 	});

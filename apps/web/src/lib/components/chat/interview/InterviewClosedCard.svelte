@@ -104,7 +104,7 @@
 		margin: 0.75rem 0;
 		padding: 1rem 1.125rem 1.125rem;
 		border: 1px solid var(--color-border);
-		border-radius: 0.625rem;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		max-width: 34rem;
 	}
@@ -152,7 +152,7 @@
 		gap: 0.25rem;
 		padding: 0.75rem 2rem 0.75rem 0.875rem;
 		border: 1px solid var(--color-border);
-		border-radius: 0.5rem;
+		border-radius: var(--radius-lg);
 		background: var(--color-background);
 		text-align: left;
 		cursor: pointer;

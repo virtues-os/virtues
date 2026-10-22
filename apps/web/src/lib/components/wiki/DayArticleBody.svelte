@@ -47,6 +47,7 @@
 	import { getDayFirsts, type DayFirstsApi, type WikiNote } from "$lib/wiki/api";
 	import { stepDay } from "$lib/timeline/day";
 	import { inComposition } from "$lib/utils/ime";
+	import { scrollerOf } from "$lib/document/outline";
 	import { veiled } from "$lib/actions/veil";
 	import { veil } from "$lib/stores/veil.svelte";
 	import DayInline from "./DayInline.svelte";
@@ -156,13 +157,6 @@
 	});
 
 	/** The nearest ancestor that scrolls: the page's right edge, for the card's width. */
-	function scrollParent(el: HTMLElement): HTMLElement | null {
-		for (let p = el.parentElement; p; p = p.parentElement) {
-			if (/(auto|scroll)/.test(getComputedStyle(p).overflowY)) return p;
-		}
-		return null;
-	}
-
 	/**
 	 * In the margin when the row has one: level with the anchor's first line,
 	 * as wide as the margin and on into the page's right gutter, up to 20rem.
@@ -178,8 +172,8 @@
 		const box = root.getBoundingClientRect();
 		const rowBox = row.getBoundingClientRect();
 		const left = rowBox.left - box.left + cols[0] + (parseFloat(style.columnGap) || 0);
-		const view = scrollParent(root);
-		const right = view ? view.getBoundingClientRect().left + view.clientWidth : document.documentElement.clientWidth;
+		const view = scrollerOf(root);
+		const right = view.getBoundingClientRect().left + view.clientWidth;
 		const rem = parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
 		const width = Math.min(20 * rem, Math.max(cols[1], right - (box.left + left) - rem));
 		const top = (anchor.getClientRects()[0] ?? anchor.getBoundingClientRect()).top - box.top - 4;
@@ -535,7 +529,7 @@
 			{:else}
 				<div class="text" use:veiled={{ hiding: veil.hiding, phrases: marked.phrases }}>
 					{#if block.kind === "paragraph"}
-						<div class="markdown markdown--article">
+						<div class="markdown prose prose--article">
 							<p>
 								{#each block.sentences as s, j (j)}{#if j > 0 && s.space}{" "}{/if}{#if s.evidence.length}<!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions --><span
 											class="s"
@@ -649,7 +643,7 @@
 	   highlight while its card is open. */
 	.s {
 		cursor: pointer;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		box-decoration-break: clone;
 		-webkit-box-decoration-break: clone;
 		transition: background-color 0.12s ease;
@@ -683,7 +677,7 @@
 		clip-path: none;
 		margin-left: 0.25rem;
 		padding: 0 0.375rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-highlight);
 		font-family: var(--font-sans);
 		font-size: 0.75rem;
@@ -714,7 +708,7 @@
 
 	.s-block {
 		display: block;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	.s-block:hover {
@@ -751,7 +745,7 @@
 		display: block;
 		width: 100%;
 		margin: 0.375rem 0 0.625rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	.row-figure .text :global(p) {
@@ -823,7 +817,7 @@
 		width: 8px;
 		border: 1.5px solid var(--color-foreground-muted);
 		border-left: 0;
-		border-radius: 0 3px 3px 0;
+		border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 		opacity: 0.75;
 		transform: rotate(0.6deg);
 		transform-origin: top;

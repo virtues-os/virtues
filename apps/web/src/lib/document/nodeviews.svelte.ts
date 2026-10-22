@@ -108,6 +108,41 @@ function viewState(props: NodeViewRendererProps, current: () => PmNode): ViewSta
 	return view;
 }
 
+/** Whether two attribute records hold the same values, key by key. */
+function sameAttrs(a: Record<string, unknown>, b: Record<string, unknown>): boolean {
+	const keys = Object.keys(a);
+	if (keys.length !== Object.keys(b).length) return false;
+	return keys.every((k) => Object.is(a[k], b[k]));
+}
+
+/**
+ * Bring `view` up to date with `node`. ProseMirror calls a node view's
+ * `update` whenever the decorations around it change (focus dimming, a find
+ * match, the assistant's trail), so the reactive fields are assigned only
+ * when they differ, and the component re-renders only for its own changes.
+ */
+function syncView(view: ViewState, node: PmNode, editor: Editor): void {
+	if (!sameAttrs(view.attrs, node.attrs)) view.attrs = { ...node.attrs };
+	if (view.editable !== editor.isEditable) view.editable = editor.isEditable;
+}
+
+/**
+ * Keep `view.editable` in step with the editor. `setEditable` changes no
+ * node, so ProseMirror does not call the node view's `update` for it; the
+ * editor's `update` and `transaction` events follow it. Returns the cleanup.
+ */
+function followEditable(view: ViewState, editor: Editor): () => void {
+	const sync = () => {
+		if (view.editable !== editor.isEditable) view.editable = editor.isEditable;
+	};
+	editor.on('update', sync);
+	editor.on('transaction', sync);
+	return () => {
+		editor.off('update', sync);
+		editor.off('transaction', sync);
+	};
+}
+
 /** Mirror the node's attributes as `data-*` on its outer element, for styling and print. */
 function mirrorAttrs(dom: HTMLElement, node: PmNode): void {
 	for (const [key, value] of Object.entries(node.attrs)) {
@@ -132,6 +167,7 @@ export function svelteNodeView(
 		if (options.className) dom.classList.add(options.className);
 		mirrorAttrs(dom, node);
 		const view = viewState(props, () => node);
+		const unfollow = followEditable(view, editor);
 
 		let instance: Record<string, unknown> | null = null;
 		let tried = false;
@@ -163,10 +199,10 @@ export function svelteNodeView(
 			dom,
 			update(next) {
 				if (next.type !== node.type) return false;
+				const changed = !sameAttrs(node.attrs, next.attrs);
 				node = next;
-				view.attrs = { ...next.attrs };
-				view.editable = editor.isEditable;
-				mirrorAttrs(dom, next);
+				syncView(view, next, editor);
+				if (changed) mirrorAttrs(dom, next);
 				return true;
 			},
 			selectNode() {
@@ -185,6 +221,7 @@ export function svelteNodeView(
 			// The component re-renders its own DOM; none of it is document content.
 			ignoreMutation: () => true,
 			destroy() {
+				unfollow();
 				observer?.disconnect();
 				if (instance) void unmount(instance);
 				instance = null;
@@ -200,6 +237,15 @@ export function svelteNodeView(
  *
  * For `pre`, the content goes in a `code` inside the `pre`, as the HTML has it.
  */
+/**
+ * The classes a content block shares with chat's rendering of the same block
+ * (prose.css): its own, its chrome's and its content's.
+ */
+const PROSE_BLOCK: Record<string, { block: string; chrome?: string; content?: string }> = {
+	callout: { block: 'prose-callout', chrome: 'prose-callout-mark', content: 'prose-callout-body' },
+	codeBlock: { block: 'prose-code' },
+};
+
 export function svelteContentNodeView(
 	component: Component<{ view: ViewState }>,
 	tag: 'aside' | 'pre' | 'div',
@@ -208,11 +254,14 @@ export function svelteContentNodeView(
 		const { editor } = props;
 		let node = props.node;
 		const dom = document.createElement(tag === 'pre' ? 'div' : tag);
+		const shared = PROSE_BLOCK[node.type.name];
 		dom.classList.add('doc-block', `doc-block-${node.type.name}`);
+		if (shared) dom.classList.add(shared.block);
 		mirrorAttrs(dom, node);
 		const chrome = document.createElement('div');
 		chrome.contentEditable = 'false';
 		chrome.className = 'doc-block-chrome';
+		if (shared?.chrome) chrome.classList.add(shared.chrome);
 		let contentDOM: HTMLElement;
 		if (tag === 'pre') {
 			const pre = document.createElement('pre');
@@ -222,20 +271,22 @@ export function svelteContentNodeView(
 		} else {
 			contentDOM = document.createElement('div');
 			contentDOM.className = 'doc-block-content';
+			if (shared?.content) contentDOM.classList.add(shared.content);
 			dom.append(chrome, contentDOM);
 		}
 		const view = viewState(props, () => node);
 		const instance = mountOrSay(component, chrome, view);
+		const unfollow = followEditable(view, editor);
 
 		return {
 			dom,
 			contentDOM,
 			update(next) {
 				if (next.type !== node.type) return false;
+				const changed = !sameAttrs(node.attrs, next.attrs);
 				node = next;
-				view.attrs = { ...next.attrs };
-				view.editable = editor.isEditable;
-				mirrorAttrs(dom, next);
+				syncView(view, next, editor);
+				if (changed) mirrorAttrs(dom, next);
 				return true;
 			},
 			stopEvent(event) {
@@ -249,6 +300,7 @@ export function svelteContentNodeView(
 				return !contentDOM.contains(mutation.target);
 			},
 			destroy() {
+				unfollow();
 				if (instance) void unmount(instance);
 			},
 		};

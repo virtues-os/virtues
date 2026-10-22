@@ -1,14 +1,16 @@
 <script lang="ts">
-	import { Streamdown } from 'svelte-streamdown';
+	import type { Component } from 'svelte';
+	import { Streamdown, theme as streamdownTheme } from 'svelte-streamdown';
 	import type { CitationContext, Citation } from '$lib/types/Citation';
 	import InlineCitation from './citations/InlineCitation.svelte';
 	import Ref from './Ref.svelte';
 	import LinkChip from './LinkChip.svelte';
 	import MarkdownCodeBlock from './MarkdownCodeBlock.svelte';
-	import { parseEntityRoute } from '$lib/utils/refRoutes';
+	import Icon from './Icon.svelte';
+	import { alertTone } from '$lib/document/callouts';
+	import { linkTarget, parseEntityRoute } from '$lib/utils/refRoutes';
 	import { preprocessMarkdown } from '$lib/utils/markdownPreprocess';
 	import { backendUrl } from '$lib/config/backend';
-	import type { BundledTheme } from 'shiki';
 
 	interface Props {
 		content: string;
@@ -32,8 +34,9 @@
 		 * article: a day, a year, a person, a place, an organization, the
 		 * narrative identity.
 		 *
-		 * The VALUES live in `--md-*` (themes.css) and the switch is one class
-		 * in app.css. Every one of these surfaces used to set its own
+		 * What the text looks like is prose.css (`.prose`, on Streamdown's root;
+		 * `.prose--article` for an article); the VALUES live in `--md-*`
+		 * (themes.css). Every one of these surfaces used to set its own
 		 * font-family and font-size locally, which is how they ended up with
 		 * five sizes between them and how the day article ended up in sans.
 		 */
@@ -50,37 +53,17 @@
 		variant = "ui"
 	}: Props = $props();
 
-	// Read Shiki theme from CSS variable (defined in themes.css)
-	function getShikiTheme(): BundledTheme {
-		const theme = getComputedStyle(document.documentElement).getPropertyValue('--shiki-theme').trim();
-		return (theme || 'github-light') as BundledTheme;
-	}
-
-	let currentShikiTheme = $state<BundledTheme>(getShikiTheme());
-
-	// Update when theme changes
-	$effect(() => {
-		const handleThemeChange = () => {
-			currentShikiTheme = getShikiTheme();
-		};
-		window.addEventListener('themechange', handleThemeChange);
-		return () => window.removeEventListener('themechange', handleThemeChange);
-	});
-
 	// Helper to get Citation from token key
 	function getCitation(key: string): Citation | undefined {
 		return citations?.byId.get(key);
 	}
 
-	// A figure computed over rows cites the query that computed it, as
-	// `/chat/{chat}/tool/{call}` — the ref the box attaches to every
-	// sql_query result. The citation context already indexes each tool
-	// call by id, so the link resolves to the same panel a numbered
-	// citation opens, with the rows as a table.
-	const TOOL_REF = /^\/chat\/[^/]+\/tool\/([^/?#]+)$/;
-	function citationForToolRef(url: string | undefined): Citation | undefined {
-		const callId = url?.match(TOOL_REF)?.[1];
-		return callId ? citations?.byToolCallId.get(callId) : undefined;
+	// A figure computed over rows cites the query that computed it. The
+	// citation context already indexes each tool call by id, so the link
+	// resolves to the same panel a numbered citation opens, with the rows
+	// as a table.
+	function citationForToolCall(callId: string): Citation | undefined {
+		return citations?.byToolCallId.get(callId);
 	}
 
 	const processedContent = $derived.by(() => {
@@ -89,18 +72,14 @@
 		return preprocessMarkdown(content.replace(/\](\[\d+\])/g, '] $1'));
 	});
 
-	// Convert CitationContext to Streamdown's sources format
-	const sources = $derived.by(() => {
-		if (!citations) return {};
-		const result: Record<string, { title: string; url?: string; content?: string }> = {};
-		for (const [id, citation] of citations.byId) {
-			result[id] = {
-				title: citation.title || citation.label || 'Source',
-				url: citation.url,
-				content: citation.preview
-			};
-		}
-		return result;
+	// TeX (`$…$`, `$$…$$`) is drawn by KaTeX, which Streamdown's math
+	// component loads. It is fetched the first time a reply holds a `$`, so
+	// a reply without math never downloads it. Until it arrives (and when it
+	// cannot parse the TeX) the formula shows as its source.
+	let mathElement = $state<Component<any> | undefined>();
+	$effect(() => {
+		if (mathElement || !processedContent.includes('$')) return;
+		import('svelte-streamdown/math').then((m) => (mathElement = m.default));
 	});
 
 	// Base for resolving relative URLs. The app is SPA-only (routes/+layout.js
@@ -118,40 +97,37 @@
 		? window.location.origin
 		: 'http://localhost';
 
-	// Streamdown theme
-	const customTheme = {
-		code: {
-			base: 'my-4 w-full overflow-hidden rounded-xl border border-border-subtle flex flex-col',
-			container: '',
-			header: 'flex items-center justify-between px-4 py-2 text-foreground-muted text-xs font-mono bg-surface-elevated',
-			languageLabel: 'text-foreground-muted font-medium',
-			copyButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
-			copyIcon: 'w-4 h-4',
-			pre: 'overflow-x-auto p-4 text-sm bg-surface-elevated',
-			skeleton: 'block text-foreground bg-transparent animate-none',
-			downloadButton: 'px-2 py-1 rounded hover:bg-border/50 transition-colors text-foreground-muted',
-			downloadIcon: 'w-4 h-4'
-		},
-		// No cell entries: streamdown's default td/th render inline markdown,
-		// and their LOOK is `.markdown th/td` in app.css (which cites the
-		// --md-* tokens). Tailwind strings here used to style the same cells a
-		// second time and fight that CSS by specificity — px-3 vs px-4 was
-		// whoever won that day. The `table` snippet below supplies only the
-		// scrolling wrapper.
-	};
+	/**
+	 * Streamdown's own theme with its look taken out: prose.css styles every
+	 * element both renderers share, and Streamdown's default classes leaked
+	 * wherever a rule set nothing (a heading's top margin, a list item's
+	 * padding, 200-400px table cells, hard-coded grays that ignore the dark
+	 * themes). Code, images, tables, callouts and citations are our snippets
+	 * below; mermaid and math keep Streamdown's classes, which place things
+	 * rather than style text.
+	 */
+	const BLANKED = [
+		'link', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'paragraph', 'ul', 'ol', 'li', 'codespan',
+		'blockquote', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'td', 'th', 'sup', 'sub', 'hr',
+		'strong', 'br', 'em', 'del', 'footnoteRef', 'descriptionList', 'descriptionTerm',
+		'descriptionDetail',
+	] as const;
+	const blank = (part: Record<string, unknown>) =>
+		Object.fromEntries(Object.entries(part).map(([k, v]) => [k, typeof v === 'string' ? '' : v]));
+	const proseTheme = {
+		...streamdownTheme,
+		...Object.fromEntries(BLANKED.map((key) => [key, blank(streamdownTheme[key] as Record<string, unknown>)])),
+	} as typeof streamdownTheme;
 </script>
 
-<div class="markdown" class:markdown--article={variant === "article"}>
+<div class="markdown">
 		<Streamdown
 			content={processedContent}
-			{sources}
-			inlineCitationsMode="list"
-			class="streamdown-content"
-			shikiTheme={currentShikiTheme}
-			parseIncompleteMarkdown={isStreaming}
-			theme={customTheme}
-			controls={{ table: true }}
+			class={variant === "article" ? "streamdown-content prose prose--article" : "streamdown-content prose"}
+			theme={proseTheme}
+			mergeTheme={false}
 			defaultOrigin={origin}
+			components={mathElement ? { math: mathElement } : undefined}
 			allowedLinkPrefixes={['*']}
 			animation={{
 				enabled: animate,
@@ -161,23 +137,59 @@
 				animateOnMount: false
 			}}
 		>
-			{#snippet inlineCitationPreview({ token })}
-				{@const citation = getCitation(token.keys[0])}
-				<InlineCitation
-					citationId={token.keys[0]}
-					{citation}
-					onPanelOpen={onCitationClick}
-				/>
+			<!-- `[1]` as a source badge that opens the citation panel. The whole
+			     element is ours: Streamdown's own wraps its preview in a button,
+			     which put our badge's button inside another. Brackets that name
+			     no source stay as written. -->
+			{#snippet inlineCitation({ token }: { token: any })}
+				{@const cited = (token.keys as string[]).flatMap((key) => {
+					const citation = getCitation(key);
+					return citation ? [citation] : [];
+				})}
+				{#if cited.length}
+					{#each cited as citation (citation.id)}<InlineCitation {citation} onPanelOpen={onCitationClick} />{/each}
+				{:else}
+					{token.raw}
+				{/if}
 			{/snippet}
 
-			{#snippet inlineCitationPopover()}
-				<!-- Empty - we use CitationPanel at page level instead -->
-			{/snippet}
-
+			<!-- The page editor's table markup, so prose.css draws one table for both. -->
 			{#snippet table({ children }: { children: import('svelte').Snippet })}
-				<div class="my-4 w-full overflow-x-auto rounded-xl border border-border-subtle">
-					<table class="w-full border-collapse text-sm">{@render children()}</table>
+				<div class="tableWrapper">
+					<table>{@render children()}</table>
 				</div>
+			{/snippet}
+
+			<!-- `> [!NOTE]` as a page's callout: the tone's mark beside the body,
+			     the alert's kind read as the converter reads it. -->
+			{#snippet alert({ children, token }: { children: import('svelte').Snippet; token: any })}
+				{@const tone = alertTone(token.variant)}
+				<aside class="prose-callout" data-tone={tone.tone}>
+					<span class="prose-callout-mark"><Icon icon={tone.icon} width="16" aria-label={tone.label} /></span>
+					<div class="prose-callout-body">{@render children()}</div>
+				</aside>
+			{/snippet}
+
+			<!-- To-dos in a page's to-do markup (`ul[data-type=taskList]`, each
+			     item a box beside its text), which prose.css draws for both. The
+			     box is the record's; it cannot be ticked from a reply. -->
+			{#snippet ul({ children, token }: { children: import('svelte').Snippet; token: any })}
+				{#if token.tokens?.some((item: any) => item.task)}
+					<ul data-type="taskList">{@render children()}</ul>
+				{:else}
+					<ul>{@render children()}</ul>
+				{/if}
+			{/snippet}
+
+			{#snippet li({ children, token }: { children: import('svelte').Snippet; token: any })}
+				{#if token.task}
+					<li data-checked={token.checked ? 'true' : 'false'}>
+						<label><input type="checkbox" checked={token.checked} disabled /></label>
+						<div>{@render children()}</div>
+					</li>
+				{:else}
+					<li value={token.value ?? undefined}>{@render children()}</li>
+				{/if}
 			{/snippet}
 
 			{#snippet code({ token }: { token: any })}
@@ -186,14 +198,9 @@
 
 			{#snippet link({ children, token }: { children: import('svelte').Snippet; token: any })}
 				{@const url = token?.href}
-				{@const isEntity = url ? parseEntityRoute(url) !== null : false}
-				{@const isExternal = url ? /^https?:\/\//.test(url) : false}
-				{@const queryCitation = citationForToolRef(url)}
-				{#if isEntity}
-					<!-- `[@X](/entity/id)`: the editor's `@` marks the ref, and
-					     is no part of its name, as in the image form below. -->
-					<Ref displayName={(token.text ?? '').replace(/^@/, '')} url={url} variant={refVariant} />
-				{:else if queryCitation}
+				{@const target = linkTarget(url)}
+				{@const queryCitation = target.kind === 'query' ? citationForToolCall(target.callId) : undefined}
+				{#if queryCitation}
 					<!-- The rows behind a figure. Same quiet dotted form as a
 					     web citation: it is evidence for the number, not a
 					     place to go. -->
@@ -202,7 +209,16 @@
 						class="query-ref"
 						onclick={() => onCitationClick?.(queryCitation)}
 					>{@render children()}</button>
-				{:else if isExternal}
+				{:else if target.kind === 'query'}
+					<!-- A query ref with no citation in hand (a page, an
+					     answer whose tool calls are not loaded) has no panel
+					     to open, and no route: the figure reads as text. -->
+					<span>{@render children()}</span>
+				{:else if target.kind === 'entity'}
+					<!-- `[@X](/entity/id)`: the editor's `@` marks the ref, and
+					     is no part of its name, as in the image form below. -->
+					<Ref displayName={(token.text ?? '').replace(/^@/, '')} url={url} variant={refVariant} />
+				{:else if target.kind === 'external'}
 					<!-- Always quiet, even where entity refs are loud. A web
 					     citation is metadata about the sentence, not part of it,
 					     and an answer that cites six of them was ending every
@@ -228,22 +244,25 @@
 					     we render the inline ref instead. -->
 					<Ref displayName={label} {url} variant={refVariant} />
 				{:else}
-					<img src={url ? backendUrl(url) : url} alt={token?.text ?? ''} loading="lazy" style="max-width: 100%; height: auto;" />
+					<img src={url ? backendUrl(url) : url} alt={token?.text ?? ''} loading="lazy" />
 				{/if}
 			{/snippet}
 	</Streamdown>
 </div>
 
 <style>
-	/* Scoped to this component's own .markdown div (Svelte hashes the class),
-	   so these don't touch app.css's global .markdown rules. `cited-markdown`
-	   is gone: it named a second renderer that no longer exists. */
+	/* Scoped to this component's own .markdown div (Svelte hashes the class). */
 	.markdown {
 		display: block;
 	}
 
 	.markdown :global(.streamdown-content) {
 		display: block;
+	}
+
+	/* Each list item is its own layout root while a reply streams in. */
+	.markdown :global(li) {
+		contain: layout;
 	}
 
 	/* Streamdown fades each word in its own span and makes it inline-block,
@@ -271,14 +290,5 @@
 
 	.markdown :global(.query-ref:hover) {
 		text-decoration-style: solid;
-	}
-
-	.markdown :global([data-streamdown-citation-preview]) {
-		all: unset;
-		display: inline;
-	}
-
-	.markdown :global([data-streamdown-citation-popover]) {
-		display: none !important;
 	}
 </style>

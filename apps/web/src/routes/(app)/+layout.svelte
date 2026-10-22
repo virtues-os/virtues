@@ -12,6 +12,7 @@
 	import SearchModal from "$lib/components/sidebar/SearchModal.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import DialogHost from "$lib/components/DialogHost.svelte";
+	import TooltipLayer from "$lib/components/TooltipLayer.svelte";
 	import { FloatingContent } from "$lib/floating";
 	import IconPicker from "$lib/components/IconPicker.svelte";
 	import LinkEditorPopover from "$lib/components/pages/LinkEditorPopover.svelte";
@@ -64,6 +65,18 @@
 	void shellIdentity().then((s) => {
 		if (s?.appVersion) setShellAppVersion(s.appVersion);
 	});
+
+	// A place that takes a drag claims it by cancelling its own dragover and
+	// choosing its own dropEffect. Everywhere else the cursor says no: this
+	// listener runs last, and for an unclaimed drag it sets `none`, which the
+	// browser treats as a refused drop, so a file let go outside every zone is
+	// not opened in the window. The root layout swallows a stray `drop` as a
+	// second guard. Hoisted to component scope so onDestroy can remove it.
+	function refuseUnclaimedDrag(e: DragEvent) {
+		if (e.defaultPrevented) return;
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
+	}
 
 	// Foreground OTA check — hoisted to component scope so onDestroy can remove
 	// it. `onMount` is async here, so a returned cleanup would never run.
@@ -178,18 +191,7 @@
 		// listener leaked per layout mount (audit, minor).
 		document.addEventListener("visibilitychange", checkForNewUi);
 
-		// Global dragover handler: Allow drops on document by preventing default
-		// This is a fallback to ensure drops are never blocked by missing handlers.
-		// The matching `drop` guard is in the ROOT layout — cancelling dragover
-		// here is what makes the whole document a drop target, and an unclaimed
-		// drop on that target navigates the window to the file. See
-		// `routes/+layout.svelte`; the two belong together.
-		document.addEventListener("dragover", (e) => {
-			e.preventDefault();
-			if (e.dataTransfer) {
-				e.dataTransfer.dropEffect = "move";
-			}
-		});
+		document.addEventListener("dragover", refuseUnclaimedDrag);
 
 		// Collapse sidebar for new users (first-time onboarding)
 		if (data?.onboardingStatus === 'new') {
@@ -345,6 +347,7 @@
 
 	onDestroy(() => {
 		document.removeEventListener("visibilitychange", checkForNewUi);
+		document.removeEventListener("dragover", refuseUnclaimedDrag);
 		if (sessionExpiryTimer) {
 			clearInterval(sessionExpiryTimer);
 		}
@@ -410,6 +413,7 @@
 
 <!-- Global Context Menu Provider -->
 <ContextMenuProvider />
+<TooltipLayer />
 
 <!-- Global confirm/prompt dialogs (replaces window.confirm/prompt) -->
 <DialogHost />
@@ -439,21 +443,18 @@
 	{/if}
 
 	<!-- Main Content -->
-	<!-- With one pane, `main` is its card: it paints the page (`--page`) and
-	     clips the corners. In split it is only the desk, and each pane draws
-	     a card of its own, a desk gap apart (SplitContainer). -->
+	<!-- On the desktop `main` is only the desk: each pane draws its own card
+	     (SplitContainer), so one card can divide into two and merge back.
+	     On the phone `main` is the page itself. -->
 	<main
 		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-page"
 		class:mx-2={!mobileLayout.isMobile}
 		class:mb-2={!mobileLayout.isMobile}
-		class:pane-card={!mobileLayout.isMobile && !windowShellStore.isSplit}
-		class:border={!mobileLayout.isMobile && !windowShellStore.isSplit}
-		class:split-desk={!mobileLayout.isMobile && windowShellStore.isSplit}
+		class:split-desk={!mobileLayout.isMobile}
 		class:is-mobile={mobileLayout.isMobile}
-		class:card-edge={!mobileLayout.isMobile}
-		style={windowShellStore.isSplit && !mobileLayout.isMobile
-			? undefined
-			: "background-image: var(--background-image); background-blend-mode: multiply;"}
+		style={mobileLayout.isMobile
+			? "background-image: var(--background-image); background-blend-mode: multiply;"
+			: undefined}
 	>
 		{#if initialized}
 			{#if mobileLayout.isMobile}
@@ -511,6 +512,9 @@
 				onSelect={(icon) => iconPickerStore.select(icon)}
 				close={() => iconPickerStore.hide()}
 				color={iconPickerStore.currentColor}
+				label={iconPickerStore.label}
+				fallback={iconPickerStore.fallback}
+				autoColor={iconPickerStore.autoColor}
 				onColorSelect={iconPickerStore.colorEnabled
 					? (c) => iconPickerStore.selectColor(c)
 					: undefined}
@@ -660,14 +664,8 @@
 		background-color: var(--desk);
 	}
 
-	/* The shell's cards all share --card-radius. Their edge is the theme's
-	   --card-edge: transparent where the desk's tone already separates a
-	   card, a border where a theme's desk is too close to its page. */
-	.pane-card { border-radius: var(--card-radius); }
-	main.card-edge { border-color: var(--card-edge); }
-
-	/* In split each pane draws its own card (SplitContainer), a desk gap apart, so
-	   `main` is only the desk they stand on. */
+	/* Each pane draws its own card (SplitContainer), a desk gap apart in
+	   split, so `main` is only the desk they stand on. */
 	main.split-desk {
 		background-color: transparent;
 	}
@@ -693,7 +691,7 @@
 		width: 34px;
 		height: 34px;
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: var(--color-surface);
 		color: var(--color-foreground-muted);
 		cursor: pointer;
@@ -728,7 +726,7 @@
 		z-index: calc(var(--z-popover, 1000) + 1);
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
 	}
 </style>

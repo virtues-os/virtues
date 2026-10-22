@@ -122,6 +122,8 @@ import riListCheck from '@iconify-icons/ri/list-check';
 import riListUnordered from '@iconify-icons/ri/list-unordered';
 import riLoader4Line from '@iconify-icons/ri/loader-4-line';
 import riLockLine from '@iconify-icons/ri/lock-line';
+import riLockUnlockLine from '@iconify-icons/ri/lock-unlock-line';
+import riAttachment2 from '@iconify-icons/ri/attachment-2';
 import riLogoutBoxRLine from '@iconify-icons/ri/logout-box-r-line';
 // Mobile bottom-tab bar: line + fill pairs (rendered offline on the phone,
 // so they must live in this registry — the network Iconify API is unavailable).
@@ -311,6 +313,8 @@ addIcon('ri:list-check', riListCheck);
 addIcon('ri:list-unordered', riListUnordered);
 addIcon('ri:loader-4-line', riLoader4Line);
 addIcon('ri:lock-line', riLockLine);
+addIcon('ri:lock-unlock-line', riLockUnlockLine);
+addIcon('ri:attachment-2', riAttachment2);
 addIcon('ri:logout-box-r-line', riLogoutBoxRLine);
 // Mobile bottom-tab bar icons (line + fill pairs).
 addIcon('ri:sun-line', riSunLine);
@@ -409,6 +413,15 @@ for (const [name, body] of Object.entries(ATLAS_GLYPHS)) {
 		height: 16,
 	});
 }
+
+// The dot: what a pin, page or chat wears when no icon has been chosen, in
+// its color. Filled because a filled mark shows its color across its whole
+// area, where a 1.25px line at 14px shows only a trace of it.
+addIcon('shape:circle', {
+	body: '<circle cx="8" cy="8" r="5.75" fill="currentColor"/>',
+	width: 16,
+	height: 16,
+});
 
 // Export flag to indicate icons are registered
 export const iconsRegistered = true;

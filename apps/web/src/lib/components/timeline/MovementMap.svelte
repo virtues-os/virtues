@@ -311,7 +311,7 @@
 	.movement-map {
 		width: 100%;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		overflow: hidden;
 		background: var(--color-surface);
 	}

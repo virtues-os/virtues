@@ -1,0 +1,551 @@
+/* =============================================================================
+   PROSE — the text every renderer shares
+   =============================================================================
+   One stylesheet for what rendered text looks like: paragraphs, headings,
+   marks, links, lists and to-dos, quotes, rules and tables. A renderer puts
+   `prose` on its root; a page's editor and its version preview do
+   (lib/document/editor.ts, DocumentPreview). The plan behind it is
+   agents/plan/prose-consolidation-plan.md.
+
+   Sizes, faces and line heights are the --md-* tokens (themes.css). The
+   spacing is the --prose-* tokens below, so a surface tunes its rhythm by
+   setting tokens, never by rewriting a rule. A surface's own reading
+   settings arrive as --prose-family, --prose-size, --prose-lh and
+   --prose-color on an ancestor (a page's display settings, pageDisplay; a
+   quiet note's smaller, muted text) and win over the body tokens.
+   --prose-scale is the text size against its medium (a page at Large is
+   1.125), and the headings multiply their sizes by it, so they keep their
+   step above the body text at every size.
+
+   Chat replies and the articles carry it on Streamdown's root
+   (Markdown.svelte), whose own theme is emptied so nothing of its look
+   leaks through.
+
+   The chat composer carries `prose prose--compact` (lib/document/composer.ts):
+   the same rules on tighter spacing, so a message reads as it will once sent.
+
+   What only the editor has (its caret, selection, the grip, find, print) is
+   in lib/document/document.css. */
+
+:root {
+	/* Between blocks, and between a heading and what it heads. */
+	--prose-gap: 1em;
+	--prose-after-heading: 0.5em;
+	/* Above each heading level: far more room above than below, so a
+	   heading reads as the start of its section. */
+	--prose-heading-space-1: 1.5em;
+	--prose-heading-space-2: 1.4em;
+	--prose-heading-space-3: 1.25em;
+	--prose-heading-space-4: 1.1em;
+	--prose-heading-space-5: 1em;
+	--prose-heading-space-6: 1em;
+	/* Lists: the indent, and the gap between items. */
+	--prose-indent: 1.5em;
+	--prose-item-gap: 0.35em;
+	/* Inline code's padding, and a link's underline offset. */
+	--prose-code-pad: 0.1em 0.3em;
+	--prose-link-offset: 0.15em;
+}
+
+.prose {
+	color: var(--prose-color, var(--color-foreground));
+	font-family: var(--prose-family, var(--md-body-family));
+	font-size: var(--prose-size, var(--md-body-size));
+	line-height: var(--prose-lh, var(--md-body-lh));
+	overflow-wrap: break-word;
+	word-break: break-word;
+}
+
+/* One gap between blocks. */
+.prose > * + * {
+	margin-top: var(--prose-gap);
+}
+
+/* No weight, so the gap above still reaches a paragraph after a list, a
+   quote or code; inside a block a paragraph has none of its own. */
+:where(.prose p) {
+	margin: 0;
+}
+
+.prose p + p {
+	margin-top: var(--prose-gap);
+}
+
+/* ── Headings: h1–h3 in the serif the tokens name, h4–h6 in the body's face. */
+
+.prose h1,
+.prose h2,
+.prose h3,
+.prose h4,
+.prose h5,
+.prose h6 {
+	margin-bottom: 0;
+	color: var(--color-foreground);
+}
+
+/* A heading sits close over what it heads: far more room above it than
+   below, so it reads as the start of its section. */
+.prose > :is(h1, h2, h3, h4, h5, h6) + * {
+	margin-top: var(--prose-after-heading);
+}
+
+.prose h1 {
+	margin-top: var(--prose-heading-space-1);
+	font-family: var(--md-heading-major-family);
+	font-size: calc(var(--md-h1-size) * var(--prose-scale, 1));
+	line-height: var(--md-h1-lh);
+	font-weight: var(--md-h1-weight);
+}
+
+.prose h2 {
+	margin-top: var(--prose-heading-space-2);
+	font-family: var(--md-heading-major-family);
+	font-size: calc(var(--md-h2-size) * var(--prose-scale, 1));
+	line-height: var(--md-h2-lh);
+	font-weight: var(--md-h2-weight);
+}
+
+.prose h3 {
+	margin-top: var(--prose-heading-space-3);
+	font-family: var(--md-heading-major-family);
+	font-size: calc(var(--md-h3-size) * var(--prose-scale, 1));
+	line-height: var(--md-h3-lh);
+	font-weight: var(--md-h3-weight);
+}
+
+.prose h4 {
+	margin-top: var(--prose-heading-space-4);
+	font-family: inherit;
+	font-size: calc(var(--md-h4-size) * var(--prose-scale, 1));
+	line-height: var(--md-h4-lh);
+	font-weight: var(--md-h4-weight);
+}
+
+.prose h5 {
+	margin-top: var(--prose-heading-space-5);
+	font-family: inherit;
+	font-size: calc(var(--md-h5-size) * var(--prose-scale, 1));
+	line-height: var(--md-h5-lh);
+	font-weight: var(--md-h5-weight);
+}
+
+.prose h6 {
+	margin-top: var(--prose-heading-space-6);
+	font-family: inherit;
+	font-size: calc(var(--md-h6-size) * var(--prose-scale, 1));
+	line-height: var(--md-h6-lh);
+	font-weight: var(--md-h6-weight);
+	color: var(--color-foreground-muted);
+}
+
+.prose > :first-child {
+	margin-top: 0;
+}
+
+/* ── Inline marks */
+
+/* Avenir's Medium, as chat sets bold: Avenir ships no 600, so 600 drew
+   its Bold, a step heavier than the same word in a reply. */
+.prose strong {
+	font-weight: 500;
+}
+
+/* Inline code: code inside a block (`pre`) is the block's (MarkdownCodeBlock,
+   CodeBlockNode). */
+.prose :not(pre) > code {
+	padding: var(--prose-code-pad);
+	/* design-ok: inline code is code; a fixed advance is the content */
+	font-family: var(--font-mono);
+	font-size: var(--md-inline-code-size);
+	border: var(--md-inline-code-border);
+	border-radius: var(--md-inline-code-radius);
+	background: var(--md-inline-code-bg);
+}
+
+.prose mark {
+	padding: 0 0.1em;
+	border-radius: 0;
+	background: var(--color-highlight);
+	color: var(--color-highlight-foreground, inherit);
+	box-decoration-break: clone;
+	-webkit-box-decoration-break: clone;
+}
+
+/* A plain link. Refs and link chips (`.ref-link`, `.ref-pill`) bring their
+   own look from ref-badge.css; `:where` keeps this rule at the specificity
+   of `.prose a`, so a surface's ref rules still win. */
+.prose a:where(:not(.ref-link):not(.ref-pill)) {
+	color: var(--color-primary);
+	text-decoration: underline;
+	text-decoration-thickness: 1px;
+	text-underline-offset: var(--prose-link-offset);
+}
+
+.prose a:where(:not(.ref-link):not(.ref-pill)):hover {
+	color: var(--color-primary-hover);
+}
+
+/* ── Lists */
+
+.prose ul,
+.prose ol {
+	margin-bottom: 0;
+	padding-left: var(--prose-indent);
+}
+
+.prose ul {
+	list-style: disc;
+}
+
+.prose ol {
+	list-style: decimal;
+}
+
+.prose li + li {
+	margin-top: var(--prose-item-gap);
+}
+
+.prose li > ul,
+.prose li > ol {
+	margin-top: var(--prose-item-gap);
+}
+
+/* Task lists: Tiptap's TaskItem view draws `<li><label><input></label><div>`,
+   its `li` without the `data-type` canonical HTML carries, so items are
+   matched as the list's children. */
+.prose ul[data-type='taskList'] {
+	list-style: none;
+	padding-left: 0;
+}
+
+.prose ul[data-type='taskList'] > li {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+}
+
+.prose ul[data-type='taskList'] > li > label {
+	flex: none;
+	display: flex;
+	align-items: center;
+	/* One line of the item's text, whatever its line height is set in. */
+	height: 1lh;
+	user-select: none;
+}
+
+.prose ul[data-type='taskList'] > li > div {
+	flex: 1;
+	min-width: 0;
+}
+
+.prose ul[data-type='taskList'] > li input[type='checkbox'] {
+	appearance: none;
+	width: 14px;
+	height: 14px;
+	margin: 0;
+	border: 1.5px solid var(--color-border);
+	border-radius: 0;
+	background: transparent;
+	cursor: pointer;
+	position: relative;
+}
+
+/* A to-do in a reply or a page read only is a record, not a control. */
+.prose ul[data-type='taskList'] > li input[type='checkbox']:disabled {
+	cursor: default;
+}
+
+/* A thumb's 44pt: the box stays 14px, its hit area grows (design-grammar §6),
+   up, down and to the left only. It ends at the box's right edge: the
+   item's text starts 8px past it, and a tap there places the caret. */
+@media (pointer: coarse) {
+	.prose ul[data-type='taskList'] > li > label {
+		position: relative;
+	}
+
+	.prose ul[data-type='taskList'] > li > label::after {
+		content: '';
+		position: absolute;
+		top: 50%;
+		right: 0;
+		width: 44px;
+		height: 44px;
+		transform: translateY(-50%);
+	}
+}
+
+.prose ul[data-type='taskList'] > li input[type='checkbox']:checked {
+	background: var(--color-primary);
+	border-color: var(--color-primary);
+}
+
+.prose ul[data-type='taskList'] > li input[type='checkbox']:checked::after {
+	content: '';
+	position: absolute;
+	left: 3px;
+	top: 0;
+	width: 4px;
+	height: 8px;
+	border: solid var(--color-primary-foreground, var(--color-background));
+	border-width: 0 2px 2px 0;
+	transform: rotate(45deg);
+}
+
+.prose li[data-checked='true'] > div {
+	color: var(--color-foreground-muted);
+	text-decoration: line-through;
+	text-decoration-color: var(--color-border);
+}
+
+/* ── Quotes */
+
+.prose blockquote {
+	margin-left: 0;
+	margin-right: 0;
+	padding-left: 16px;
+	border-left: var(--md-quote-border);
+	color: var(--color-foreground-muted);
+}
+
+/* ── Rules and tables */
+
+/* The rule's box is as tall as a line of text, with the line drawn through
+   its middle. A 1px box was too thin to point at: the grip beside it gave way
+   to the next block before the pointer reached it. Its margins and height add
+   up to the 3em the bare line and its margins took. */
+.prose hr {
+	--prose-rule-color: var(--color-border-subtle, var(--color-border));
+	height: 1.5em;
+	margin: 0.75em 0;
+	border: none;
+	border-radius: var(--radius-sm);
+	background: linear-gradient(var(--prose-rule-color), var(--prose-rule-color)) center / 100% 1px no-repeat;
+}
+
+/* Tiptap's table view wraps each table in `.tableWrapper`: a wide table
+   scrolls inside it, rather than widen the page and take its title and text sideways with it. */
+.prose .tableWrapper {
+	overflow-x: auto;
+}
+
+.prose table {
+	width: 100%;
+	border-collapse: separate;
+	border-spacing: 0;
+	border: 1px solid var(--md-table-border-color);
+	border-radius: var(--radius-md);
+	table-layout: auto;
+}
+
+.prose th,
+.prose td {
+	min-width: 4em;
+	padding: var(--md-cell-pad);
+	border-right: 1px solid var(--md-table-border-color);
+	border-bottom: 1px solid var(--md-table-border-color);
+	vertical-align: top;
+	text-align: left;
+}
+
+.prose th {
+	font-family: var(--prose-family, var(--md-body-family));
+	font-size: var(--md-th-size);
+	/* The regular: the header is told apart by its size and ground, and a
+	   heavier weight is one the serif, in an article, does not have.
+	   TODO(2026-10-21): set --md-th-weight to 400 in themes.css and read it here. */
+	font-weight: 400;
+	background: var(--color-surface-elevated);
+}
+
+.prose th:last-child,
+.prose td:last-child {
+	border-right: none;
+}
+
+.prose tr:last-child > td {
+	border-bottom: none;
+}
+
+.prose th[align='center'],
+.prose td[align='center'] {
+	text-align: center;
+}
+
+.prose th[align='right'],
+.prose td[align='right'] {
+	text-align: right;
+}
+
+.prose th > * + *,
+.prose td > * + * {
+	margin-top: 0.5em;
+}
+
+/* ── The article: the record's serif, for a wiki article (a day, a year, a
+   person, a place, an organization, the narrative identity) and a page in
+   Serif mode. Same rules, the other register.
+
+   It redefines the body tokens on itself rather than restating the rules,
+   so every rule above that cites them follows without a second set of
+   selectors to keep in step. */
+
+.prose--article {
+	--md-body-family: var(--md-article-family);
+	--md-body-size: var(--md-article-size);
+	--md-body-lh: var(--md-article-lh);
+	/* The serif has one weight (agents/build/typography.md), so the lower
+	   headings step by size and color, not by the sans's 500 and 600. h4 is
+	   a step over the 17px body and h3 a step over h4; h5 is the body's size
+	   in the muted ink; h6 is smaller, also muted, as in the sans. */
+	--md-h3-size: 1.25rem;
+	--md-h4-size: 1.125rem;
+	--md-h5-size: var(--md-article-size);
+	--md-h6-size: 0.9375rem;
+}
+
+.prose--article h5 {
+	color: var(--color-foreground-muted);
+}
+
+/* In an article a table is part of the prose: its cells read at the body's
+   size and face, and its header is a quiet label in the regular (the serif
+   is never bold). */
+.prose--article table,
+.prose--article td {
+	font-family: var(--md-body-family);
+	font-size: var(--md-body-size);
+	line-height: 1.45;
+}
+
+.prose--article th {
+	font-family: var(--md-body-family);
+	font-size: 0.8125rem;
+	font-weight: 400;
+	color: var(--color-foreground-muted);
+}
+
+/* ── The composer: a message as it is typed, in the same rules on tighter
+   spacing. Blocks sit 6px apart and list items touch, as a short message
+   reads in a box a few lines tall. In rem, so the code block's smaller
+   text does not shrink the gap above it. */
+
+.prose--compact {
+	--prose-gap: 0.375rem;
+	--prose-after-heading: 0.375rem;
+	--prose-item-gap: 0;
+}
+
+/* The composer's code block is a bare `pre`, with no header to hold a
+   language or Copy: the frame alone, wrapping, as a message is typed. */
+.prose--compact pre {
+	margin-bottom: 0;
+	padding: 0.5rem 0.625rem;
+	border-radius: var(--radius-md);
+	background: var(--color-surface-elevated);
+	/* design-ok: a code block is code; a fixed advance is the content */
+	font-family: var(--font-mono);
+	font-size: 0.875rem;
+	white-space: pre-wrap;
+}
+
+/* ── Images: within the column, on the radius every picture has. */
+
+.prose img {
+	max-width: 100%;
+	height: auto;
+	border-radius: var(--radius-md);
+}
+
+/* ── Callouts: the tone's mark beside the content. A page's callout node
+   view (nodeviews.svelte.ts, CalloutNode) and chat's `> [!NOTE]` alert
+   (Markdown.svelte) draw the same markup: `.prose-callout[data-tone]`
+   holding `.prose-callout-mark` and `.prose-callout-body`. */
+
+.prose-callout {
+	display: flex;
+	gap: 8px;
+	padding: 12px 16px 12px 12px;
+	border: 1px solid var(--color-border-subtle);
+	border-radius: var(--radius-xl);
+	background: var(--color-surface-elevated);
+}
+
+.prose-callout[data-tone='tip'] {
+	border-color: var(--color-success);
+	background: var(--color-success-subtle);
+}
+
+.prose-callout[data-tone='warning'] {
+	border-color: var(--color-warning);
+	background: var(--color-warning-subtle);
+}
+
+.prose-callout > .prose-callout-mark {
+	flex: none;
+	display: flex;
+	align-items: flex-start;
+	color: var(--color-foreground-muted);
+}
+
+.prose-callout[data-tone='tip'] > .prose-callout-mark {
+	color: var(--color-success);
+}
+
+.prose-callout[data-tone='warning'] > .prose-callout-mark {
+	color: var(--color-warning);
+}
+
+.prose-callout > .prose-callout-body {
+	flex: 1;
+	min-width: 0;
+}
+
+.prose-callout-body > * + * {
+	margin-top: 0.75em;
+}
+
+/* ── Code blocks: a header (the language, Copy) over the code. A page's code
+   block (nodeviews.svelte.ts, CodeBlockNode) and chat's (MarkdownCodeBlock)
+   draw `.prose-code` holding `.prose-code-head` and a `pre`. */
+
+.prose-code {
+	border: 1px solid var(--color-border-subtle);
+	border-radius: var(--radius-xl);
+	background: var(--color-surface-elevated);
+	overflow: hidden;
+}
+
+.prose-code-head {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	/* 12px and the label's own 4px put the language on the code's 16px edge. */
+	padding: 4px 12px;
+}
+
+.prose-code-lang {
+	padding: 0 4px;
+	color: var(--color-foreground-muted);
+	font-size: 0.75rem;
+}
+
+.prose-code pre {
+	margin: 0;
+	padding: 0 16px 12px;
+	overflow-x: auto;
+	white-space: pre;
+}
+
+.prose-code code {
+	display: block;
+	padding: 0;
+	border: none;
+	background: transparent;
+	/* design-ok: a code block is code; a fixed advance is the content */
+	font-family: var(--font-mono);
+	font-size: 0.875rem;
+	line-height: 1.6;
+	white-space: pre;
+}
+

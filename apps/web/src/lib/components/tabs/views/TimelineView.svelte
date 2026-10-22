@@ -1765,7 +1765,7 @@
 		inset: 0;
 		/* What the inspector takes from the map's right edge, with its gaps. */
 		--inspector-space: 16px;
-		--tile-radius: 12px;
+		--tile-radius: var(--radius-xl);
 	}
 	/* The map's markers stack at z 1 to 7 (bubbles, chips, the place card);
 	   everything over the map sits at 10 and up. */
@@ -1847,7 +1847,7 @@
 		bottom: calc(var(--scrub-h) + 28px);
 		z-index: 11;
 		padding: 8px 16px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		font-family: var(--font-sans);
 		font-size: 14px;
 		font-weight: 500;
@@ -1969,7 +1969,7 @@
 		flex: 1;
 		min-height: 32px;
 		border: 0;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: color-mix(in srgb, var(--color-background) 18%, transparent);
 		color: var(--color-background);
 		font-family: var(--font-sans);
@@ -2049,7 +2049,7 @@
 		text-align: center;
 		background: var(--c-tile);
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		padding: 4px 12px;
 		font-family: var(--font-sans);
 		font-size: 12px;
@@ -2146,7 +2146,7 @@
 		max-width: 312px;
 		background: var(--c-tile);
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		font-family: var(--font-sans);
 		color: var(--color-foreground);
 		z-index: 7;

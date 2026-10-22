@@ -283,7 +283,7 @@
         gap: 0.5rem;
         width: 100%;
         padding: 0.375rem 0.5rem;
-        border-radius: 0.375rem;
+        border-radius: var(--radius-md);
         text-align: left;
         font-size: 0.75rem;
         color: var(--color-foreground-muted);
@@ -336,7 +336,7 @@
         padding: 12px 14px;
         background: var(--color-surface-elevated);
         border: 1px solid var(--color-border);
-        border-radius: 8px;
+        border-radius: var(--radius-lg);
         box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
         font-size: 12px;
         line-height: 1.5;

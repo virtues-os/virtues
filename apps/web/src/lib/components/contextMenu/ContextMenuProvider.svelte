@@ -266,8 +266,8 @@
 		position: fixed;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.16);
+		border-radius: var(--radius-lg);
+		box-shadow: var(--shadow-float);
 		padding: 4px;
 		min-width: 180px;
 		max-width: 280px;

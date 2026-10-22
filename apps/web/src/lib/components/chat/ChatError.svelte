@@ -258,7 +258,7 @@
 		margin-top: 8px;
 		padding: 16px 20px;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 	}
 

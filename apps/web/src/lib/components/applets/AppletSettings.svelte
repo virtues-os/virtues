@@ -280,7 +280,7 @@
 		font: inherit;
 		font-size: 14px;
 		padding: 8px 12px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		border: 1px solid var(--color-border);
 		background: var(--color-surface);
 		color: var(--color-foreground);
@@ -334,7 +334,7 @@
 	.chip {
 		padding: 0 8px;
 		border: 1px solid var(--color-border);
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		font-size: 12px;
 		color: var(--color-foreground-muted);
 	}

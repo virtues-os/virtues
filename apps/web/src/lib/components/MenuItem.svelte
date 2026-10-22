@@ -28,9 +28,9 @@
 	 *   trailing   `shortcut`, the `checked` tick, the `submenu` chevron, or
 	 *              anything else (`trailing` snippet).
 	 *
-	 * `checked` is the state, not a picture: it paints the row's ground AND
-	 * renders the tick, so a caller stops hand-drawing `ri:check-line` beside
-	 * a `class:on`. Pass `role="menuitemcheckbox"` or `"menuitemradio"` when
+	 * `checked` is the state, not a picture: it renders the tick and, except
+	 * on a `menuitemcheckbox`, paints the row's ground, so a caller stops
+	 * hand-drawing `ri:check-line` beside a `class:on`. Pass `role="menuitemcheckbox"` or `"menuitemradio"` when
 	 * the menu is a set of choices rather than a list of commands — `checked`
 	 * then reports `aria-checked` instead of `aria-current`, which is the
 	 * difference between "this is selected" and "you are here".
@@ -149,14 +149,14 @@
 		width: 100%;
 		padding: 6px 10px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground);
 		font-family: var(--font-sans);
 		font-size: 13px;
 		text-align: left;
 		cursor: pointer;
-		transition: background-color 100ms ease;
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
 	}
 
 	/* A thumb's 44pt, inside the row (design-grammar §6): a long press on a
@@ -173,6 +173,7 @@
 	.v-menuitem:hover:not(:disabled),
 	.v-menuitem.is-focused:not(:disabled) {
 		background: var(--hover-bg);
+		transition-duration: var(--motion-hover-in);
 	}
 
 	.v-menuitem:disabled {
@@ -185,7 +186,9 @@
 		outline-offset: -2px;
 	}
 
-	.v-menuitem.is-checked {
+	/* A checkbox in a set shows only its tick; shading every checked row
+	   reads as that many highlights. Any other checked row is shaded. */
+	.v-menuitem.is-checked:not([role="menuitemcheckbox"]) {
 		background: var(--active-bg);
 	}
 

@@ -171,6 +171,15 @@ describe('a block page', () => {
 		again.destroy();
 	});
 
+	it('says the page was converted when the server closes for that, and drops the kept copy', () => {
+		fakes.kept.clear();
+		const { doc, provider } = openTree(V, V, { blocks: 1, stamp: V });
+		provider.emit('closed', { code: 4409, reason: 'your server converted this page; open it again' });
+		expect(get(doc.refused)).toContain('converted this page');
+		expect(fakes.kept.get(fakes.made.persistence!.name) ?? []).toEqual([]);
+		doc.destroy();
+	});
+
 	it("keeps its copy under the document's lineage, so a copy of an earlier document is never bound", () => {
 		const doc = createTreeDocument('pg_2', V, V, '0a1b2c3d4e5f6a7b');
 		expect(fakes.made.persistence!.name).toBe('tree-pg_2.0a1b2c3d4e5f6a7b');

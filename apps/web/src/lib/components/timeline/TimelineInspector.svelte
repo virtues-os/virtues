@@ -639,17 +639,17 @@
 		width: calc(100% - 16px);
 		padding-left: 8px;
 		padding-right: 32px;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 	}
 	/* A line under the stay (its question, or "Saved as… Undo") joins the
 	   selection: the row squares off where the line meets it. */
 	.group:is(.sel, .open) > .sec:not(:last-child) {
-		border-radius: 12px 12px 0 0;
+		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 	}
 	.group.sel > .ask-line {
 		padding-left: 24px;
 		padding-right: 32px;
-		border-radius: 0 0 12px 12px;
+		border-radius: 0 0 var(--radius-xl) var(--radius-xl);
 	}
 	.group:is(.sel, .open)::before {
 		display: none;
@@ -669,7 +669,7 @@
 		top: 8px;
 		bottom: 8px;
 		width: 3px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--c-sel);
 		z-index: 3;
 	}
@@ -909,7 +909,7 @@
 		width: 100%;
 		padding: 8px 12px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-background);
 		color: var(--color-foreground);
 		font-family: var(--font-sans);
@@ -949,7 +949,7 @@
 	.inline-card {
 		margin: 0 8px 8px;
 		padding: 0 8px 8px;
-		border-radius: 0 0 12px 12px;
+		border-radius: 0 0 var(--radius-xl) var(--radius-xl);
 		background: color-mix(in srgb, var(--color-primary) 12%, var(--color-surface));
 	}
 	@media (prefers-reduced-motion: reduce) {

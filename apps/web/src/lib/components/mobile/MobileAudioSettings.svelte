@@ -393,7 +393,7 @@
 	}
 	.card {
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		overflow: hidden;
 	}
 	.row {
@@ -429,7 +429,7 @@
 		gap: 2px;
 		padding: 3px;
 		border: 1px solid var(--color-border);
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		background: color-mix(in srgb, var(--wash-ink) 3%, transparent);
 	}
 	.seg button {
@@ -437,7 +437,7 @@
 		min-height: 40px;
 		padding: 6px 4px;
 		border: 0;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font: inherit;
@@ -520,7 +520,7 @@
 	.radius {
 		padding: 4px 10px;
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font: inherit;
@@ -559,7 +559,7 @@
 		width: 26px;
 		height: 26px;
 		flex: none;
-		border-radius: 7px;
+		border-radius: var(--radius-md);
 		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		color: var(--color-foreground-muted);
 	}
@@ -581,7 +581,7 @@
 		color: var(--color-foreground);
 		background: transparent;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		padding: 4px 7px;
 	}
 	.fine {
@@ -657,7 +657,7 @@
 		flex: none;
 		width: 38px;
 		height: 22px;
-		border-radius: 11px;
+		border-radius: var(--radius-full);
 		background: var(--color-foreground-muted);
 		opacity: 0.4;
 		position: relative;

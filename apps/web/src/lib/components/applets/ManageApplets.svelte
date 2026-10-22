@@ -519,7 +519,7 @@
 		min-width: 240px;
 		padding: 0.25rem;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 	}
 	.reconcile-msg {
@@ -556,7 +556,7 @@
 	}
 	.table-card {
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		overflow: hidden;
 		padding: 0 16px 8px;
@@ -570,7 +570,7 @@
 	.origin-tag {
 		flex: none;
 		padding: 0 8px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 		font-size: 12px;
 		line-height: 20px;
@@ -583,7 +583,7 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 		color: var(--color-foreground-muted);
 	}
@@ -598,7 +598,7 @@
 		max-width: 100%;
 		padding: 4px 12px;
 		border: 1px solid var(--color-border);
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: none;
 		font: inherit;
 		font-size: 13px;
@@ -633,7 +633,7 @@
 		padding: 0 8px;
 		margin: 0 -8px;
 		border: 1px solid transparent;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: none;
 		cursor: pointer;
 	}
@@ -670,7 +670,7 @@
 		padding: 2px 6px;
 		margin: 0 -6px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: none;
 		font: inherit;
 		font-size: 0.8125rem;

@@ -4,6 +4,7 @@
  * for these, so a door behaves the same whichever wall it is in.
  */
 
+import { openMenuItems } from '$lib/utils/openMenuItems';
 import { ApiError, type Project, type ProjectSummary } from '$lib/api/client';
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { GETTING_STARTED_CHAT_ID } from '$lib/components/chat/getting-started/getting-started';
@@ -408,12 +409,7 @@ export function projectRowMenuItems(
 		];
 	}
 	return [
-		{
-			id: 'open-beside',
-			label: 'Open beside',
-			icon: 'ri:layout-column-line',
-			action: () => void windowShellStore.openRouteBeside(url, project.name),
-		},
+		...openMenuItems(url, project.name),
 		{ id: 'new-chat', label: 'New chat here', icon: 'ri:chat-new-line', action: () => newChatInProject(project) },
 		{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renameProject(project) },
 		// No "Add to project": you can't put a project in a project.

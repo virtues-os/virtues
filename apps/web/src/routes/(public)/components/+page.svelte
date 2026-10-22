@@ -1725,7 +1725,7 @@
 		color: var(--color-foreground-muted);
 		background: transparent;
 		border: 1px solid var(--color-border);
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		cursor: pointer;
 	}
 	.theme-chip:hover {
@@ -1742,7 +1742,7 @@
 	.chip-dot {
 		width: 10px;
 		height: 10px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		border: 1px solid var(--color-border);
 		display: inline-block;
 	}
@@ -1833,7 +1833,7 @@
 		padding: 10px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		cursor: pointer;
 		color: inherit;
 		font: inherit;
@@ -1845,13 +1845,13 @@
 		display: flex;
 		gap: 3px;
 		padding: 8px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		border: 1px solid var(--color-border-subtle);
 	}
 	.theme-sq {
 		width: 18px;
 		height: 18px;
-		border-radius: 3px;
+		border-radius: var(--radius-sm);
 		border: 1px solid;
 	}
 	.theme-meta {
@@ -1897,7 +1897,7 @@
 		align-items: flex-start;
 		padding: 8px;
 		border: 1px solid var(--color-border-subtle);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface);
 	}
 	.chip-wrap {
@@ -1910,14 +1910,14 @@
 		background-size: 8px 8px;
 		background-position: 0 0, 0 4px, 4px -4px, -4px 0;
 		border: 1px solid var(--color-border);
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		flex-shrink: 0;
 	}
 	.chip {
 		display: block;
 		width: 44px;
 		height: 44px;
-		border-radius: 3px;
+		border-radius: var(--radius-sm);
 	}
 	.swatch-text {
 		display: flex;
@@ -1990,7 +1990,7 @@
 		display: inline-block;
 		width: 9px;
 		height: 9px;
-		border-radius: 2px;
+		border-radius: var(--radius-xs);
 		border: 1px solid var(--color-border);
 		margin-right: 3px;
 		vertical-align: -1px;
@@ -1999,7 +1999,7 @@
 	.verdict {
 		display: inline-block;
 		padding: 6px 12px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		font-size: 13px;
 		background: var(--color-success-subtle);
 		color: var(--color-success);
@@ -2031,7 +2031,7 @@
 		font-family: var(--font-mono);
 		font-size: 10px;
 		padding: 1px 6px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-error-subtle);
 		color: var(--color-error);
 	}
@@ -2039,7 +2039,7 @@
 	.matrix-wrap {
 		overflow-x: auto;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 	.matrix {
 		margin: 0;
@@ -2106,7 +2106,7 @@
 		gap: 2px;
 		padding: 8px 10px;
 		border: 1px solid var(--color-border-subtle);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface);
 	}
 	.face-name {
@@ -2142,7 +2142,7 @@
 		align-items: baseline;
 		padding: 14px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface);
 	}
 
@@ -2156,7 +2156,7 @@
 	.spec.boxed {
 		padding: 16px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface);
 	}
 	.spec-row {
@@ -2225,7 +2225,7 @@
 		gap: 2px;
 		padding: 4px 6px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 	.ib-rowlabel {
 		padding: 0 6px;
@@ -2256,7 +2256,7 @@
 	.page-box {
 		height: 320px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		overflow: hidden;
 		background: var(--color-surface);
 	}

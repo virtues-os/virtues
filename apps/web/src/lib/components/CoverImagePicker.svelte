@@ -7,8 +7,10 @@
 	 */
 	import Icon from './Icon.svelte';
 	import Button from './Button.svelte';
+	import TextAction from './TextAction.svelte';
 	import MenuItem from './MenuItem.svelte';
 	import { backendUrl } from '$lib/config/backend';
+	import { dropZone, hasFiles } from '$lib/actions/dropZone';
 	import {
 		listDriveFiles,
 		uploadMedia,
@@ -28,10 +30,12 @@
 
 	let { value = null, onSelect, close }: Props = $props();
 
-	let activeTab = $state<'upload' | 'library' | 'unsplash'>('unsplash');
+	// Your own images first: they are on your server. Unsplash is a search
+	// on someone else's, and its tab says so.
+	let activeTab = $state<'upload' | 'library' | 'unsplash'>('library');
 
 	// Topic suggestions for Unsplash empty state
-	const UNSPLASH_TOPICS = ['Nature', 'Abstract', 'Gradient', 'Landscape', 'Texture', 'Library'];
+	const UNSPLASH_TOPICS = ['Nature', 'Abstract', 'Gradient', 'Landscape', 'Texture', 'Architecture'];
 
 	// Max file size: 20MB (matches server limit)
 	const MAX_FILE_SIZE = 20 * 1024 * 1024;
@@ -99,20 +103,9 @@
 	}
 
 	function handleDrop(e: DragEvent) {
-		e.preventDefault();
-		dragOver = false;
 		if (e.dataTransfer?.files) {
 			handleFileSelect(e.dataTransfer.files);
 		}
-	}
-
-	function handleDragOver(e: DragEvent) {
-		e.preventDefault();
-		dragOver = true;
-	}
-
-	function handleDragLeave() {
-		dragOver = false;
 	}
 
 	// Library handlers
@@ -254,9 +247,11 @@
 				<div
 					class="upload-zone"
 					class:drag-over={dragOver}
-					ondrop={handleDrop}
-					ondragover={handleDragOver}
-					ondragleave={handleDragLeave}
+					use:dropZone={{
+						accepts: hasFiles,
+						onActive: (active) => (dragOver = active),
+						onDrop: handleDrop,
+					}}
 					role="button"
 					tabindex="0"
 					onclick={() => fileInputEl?.click()}
@@ -317,9 +312,12 @@
 							{/each}
 						</div>
 					{:else}
-						<div class="library-status empty">
-							<Icon icon="ri:image-2-line" width="20" />
-							<span>No images in your library</span>
+						<div class="library-empty">
+							<p>No images in your library yet.</p>
+							<p class="library-empty-actions">
+								<TextAction onclick={() => (activeTab = 'upload')}>Upload one</TextAction>
+								<TextAction onclick={() => (activeTab = 'unsplash')}>Search Unsplash</TextAction>
+							</p>
 						</div>
 					{/if}
 				</div>
@@ -334,6 +332,7 @@
 						class="unsplash-search"
 						oninput={handleUnsplashInput}
 					/>
+					<p class="unsplash-note">Your search goes to Unsplash. A photo you pick loads from their site each time the page opens.</p>
 
 					{#if unsplashLoading}
 						<div class="unsplash-status">
@@ -455,19 +454,39 @@
 		gap: 8px;
 		padding: 24px;
 		border: 2px dashed var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		cursor: pointer;
-		transition: all 150ms;
+		transition:
+			border-color var(--motion-hover-out) var(--ease-premium),
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium);
 		color: var(--color-foreground-muted);
 		outline: none;
 	}
 
-	.upload-zone:hover,
-	.upload-zone:focus-visible,
+	/* Hover is quieter than a drag, so after a drop that failed the zone does
+	   not still look like it is about to take one. */
+	.upload-zone:hover {
+		border-color: var(--color-border-strong);
+		color: var(--color-foreground);
+		transition-duration: var(--motion-hover-in);
+	}
+
+	.upload-zone:focus-visible {
+		border-color: var(--color-primary);
+	}
+
 	.upload-zone.drag-over {
 		border-color: var(--color-primary);
-		background: color-mix(in srgb, var(--color-primary) 5%, transparent);
+		background-color: var(--drop-tint);
 		color: var(--color-primary);
+		transition-duration: var(--motion-hover-in);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.upload-zone {
+			transition: none;
+		}
 	}
 
 	.upload-text {
@@ -485,7 +504,7 @@
 		max-width: 200px;
 		height: 4px;
 		background: var(--color-surface-overlay);
-		border-radius: 2px;
+		border-radius: var(--radius-xs);
 		overflow: hidden;
 		margin-top: 4px;
 	}
@@ -505,7 +524,7 @@
 		font-size: 13px;
 		color: var(--color-error);
 		background: color-mix(in srgb, var(--color-error) 10%, transparent);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	/* Library tab */
@@ -529,7 +548,28 @@
 		color: var(--color-error);
 	}
 
-	.library-status.empty {
+	.library-empty {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 8px;
+		padding: 32px 16px;
+		color: var(--color-foreground-muted);
+		font-size: 14px;
+	}
+
+	.library-empty p {
+		margin: 0;
+	}
+
+	.library-empty-actions {
+		display: flex;
+		gap: 16px;
+	}
+
+	.unsplash-note {
+		margin: 8px 0 0;
+		font-size: 12px;
 		color: var(--color-foreground-subtle);
 	}
 
@@ -545,7 +585,7 @@
 		padding: 10px 12px;
 		font-size: 14px;
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: var(--color-background);
 		color: var(--color-foreground);
 		outline: none;

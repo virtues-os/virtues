@@ -124,7 +124,7 @@
 		gap: 8px;
 		padding: 4px 4px 4px 16px;
 		border: 1px solid var(--color-border);
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-surface);
 	}
 	.ask input {
@@ -140,7 +140,7 @@
 	.ask :global(.v-iconbtn.send) {
 		width: 32px;
 		height: 32px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 	}
 	.examples-head {
 		margin: 8px 0 0;
@@ -164,7 +164,7 @@
 		width: 100%;
 		padding: 12px;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		text-align: left;
 		font: inherit;
@@ -182,7 +182,7 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 		color: var(--color-foreground-muted);
 	}

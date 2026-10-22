@@ -81,6 +81,7 @@ pub fn get_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         .into_iter()
         .filter(|tool| !tool.is_system)
         .filter(|tool| !SUDO_ONLY_TOOLS.contains(&tool.id.as_str()))
+        .filter(|tool| !SKILL_ONLY_TOOLS.contains(&tool.id.as_str()))
         .filter(|tool| !is_browser_tool(&tool.id))
         .map(llm_definition)
         .collect()
@@ -99,6 +100,7 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
     virtues_registry::tools::default_tools()
         .into_iter()
         .filter(|tool| !SUDO_ONLY_TOOLS.contains(&tool.id.as_str()))
+        .filter(|tool| !SKILL_ONLY_TOOLS.contains(&tool.id.as_str()))
         // An applet runs with nobody watching; the browser is the owner's.
         .filter(|tool| !is_browser_tool(&tool.id))
         .map(llm_definition)
@@ -109,6 +111,11 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
 /// tool list is built by filtering these out or by an allowlist that never
 /// names them, and the executor refuses them outside a sudo turn as well.
 pub(crate) const SUDO_ONLY_TOOLS: &[&str] = &["shell"];
+
+/// Tools offered only to a skill that names them: `save_skill`, which the
+/// shipped `new-skill` skill uses. In ordinary chat it would add its
+/// definition to every turn's prompt for a request people make rarely.
+pub(crate) const SKILL_ONLY_TOOLS: &[&str] = &["save_skill"];
 
 /// The explicit allowlist for a headless applet run — the runtime capability
 /// table from agents/record/applets.md, enforced. What an applet's
@@ -142,6 +149,29 @@ const APPLET_RUN_ALLOWED_TOOLS: &[&str] = &[
 /// Tools for an autonomous **applet** run: the explicit allowlist above.
 pub fn get_tools_for_applet() -> Vec<serde_json::Value> {
     tools_named(APPLET_RUN_ALLOWED_TOOLS)
+}
+
+/// The allowlist for a request's background run (`crate::task_runner`):
+/// read, research, compute, write pages, and touch the task list. It has no
+/// `sql_write` and no applet or memory tools, because a request answers a
+/// question and keeps no state of its own. Its answer is the run's reply,
+/// which becomes the request's result.
+const REQUEST_RUN_ALLOWED_TOOLS: &[&str] = &[
+    "think",
+    "sql_query",
+    "semantic_search",
+    "web_search",
+    "create_page",
+    "get_page_content",
+    "edit_page",
+    "code_interpreter",
+    "create_task",
+    "update_task",
+];
+
+/// Tools for a request's background run: the allowlist above.
+pub fn get_tools_for_request() -> Vec<serde_json::Value> {
+    tools_named(REQUEST_RUN_ALLOWED_TOOLS)
 }
 
 /// The tools behind the CLI's data verbs (`virtues query`, `search`,

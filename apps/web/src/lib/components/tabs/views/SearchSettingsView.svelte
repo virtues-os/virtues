@@ -191,7 +191,7 @@
 	.accelerator {
 		padding: 16px 20px;
 		border: 1px solid var(--color-border);
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface-elevated);
 		margin-bottom: 24px;
 	}
@@ -214,7 +214,7 @@
 	pre {
 		margin: 0 0 12px;
 		padding: 8px 12px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		overflow-x: auto;

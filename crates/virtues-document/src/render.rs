@@ -825,9 +825,35 @@ fn last_segment(url: &str) -> &str {
     path.rsplit('/').find(|s| !s.is_empty()).unwrap_or("")
 }
 
+/// Whether a pipe table reads back as `n`. GFM has no merged cells, no
+/// header cells outside its first row, and one line per cell, so a table
+/// holding any of those, or a cell holding more than one paragraph, is
+/// written as its HTML instead. A first row of empty header cells is still
+/// dropped on reading, as the stand-in for no header row
+/// (`migrate::drop_empty_header_rows`), in either form.
+fn pipes_hold(n: &Node) -> bool {
+    let span = |cell: &Node, key: &str| cell.attrs.get(key).and_then(Value::as_i64).unwrap_or(1) != 1;
+    n.content.iter().enumerate().all(|(i, row)| {
+        let headers = row.content.iter().filter(|cell| cell.kind == "tableHeader").count();
+        let placed = if i == 0 { headers == 0 || headers == row.content.len() } else { headers == 0 };
+        placed
+            && row.content.iter().all(|cell| {
+                !span(cell, "colspan")
+                    && !span(cell, "rowspan")
+                    && cell.content.len() == 1
+                    && cell.content[0].kind == "paragraph"
+            })
+    })
+}
+
 /// GFM aligns a column, not a cell: a column takes the first alignment any
-/// of its cells carries.
+/// of its cells carries. A table pipes cannot hold is its HTML (`pipes_hold`).
 fn table_md(c: &Contract, n: &Node) -> String {
+    if !pipes_hold(n) {
+        let mut s = String::new();
+        node_html(c, n, &Options { ids: false }, &mut s);
+        return s;
+    }
     let rows: Vec<Vec<String>> = n
         .content
         .iter()
@@ -1404,6 +1430,36 @@ mod tests {
             markdown(&c, &nodes),
             "| L | C | R | N |\n| :--- | :---: | ---: | --- |\n| 1 | 2 | 3 | 4 |\n"
         );
+    }
+
+    /// A table pipes cannot hold is written as its HTML, without ids, and
+    /// every dialect a page's markdown is read in gives the same table back.
+    #[test]
+    fn a_table_pipes_cannot_hold_exports_as_html_and_reads_back() {
+        let c = Contract::load();
+        for src in [
+            // Merged cells.
+            "<table><tbody><tr><th colspan=\"2\"><p>Week</p></th></tr><tr><td rowspan=\"2\"><p>Mon</p></td><td><p>run</p></td></tr><tr><td><p>swim</p></td></tr></tbody></table>",
+            // A cell holding a list, and one holding two paragraphs.
+            "<table><tbody><tr><th><p>Item</p></th><th><p>Notes</p></th></tr><tr><td><ul><li><p>tent</p></li><li><p>stove</p></li></ul></td><td><p>one</p><p>two</p></td></tr></tbody></table>",
+            // A header cell outside the first row.
+            "<table><tbody><tr><td><p>a</p></td><td><p>b</p></td></tr><tr><th><p>Total</p></th><td><p>3</p></td></tr></tbody></table>",
+        ] {
+            let nodes = tree(src);
+            let md = markdown(&c, &nodes);
+            assert_eq!(md, format!("{src}\n"), "{src}");
+            for (dialect, read) in [
+                ("written", crate::parse_written_markdown(&md)),
+                ("paste", crate::parse_pasted_markdown(&md)),
+                ("article", crate::parse_article_markdown(&md)),
+            ] {
+                assert!(read.errors.is_empty(), "{dialect} {src}: {:?}", read.errors);
+                assert_eq!(html(&c, &read.nodes, &Options { ids: false }), src, "{dialect}");
+            }
+        }
+        // A table pipes hold stays a pipe table.
+        let nodes = tree("<table><tbody><tr><td><p>a</p></td></tr><tr><td><p>b</p></td></tr></tbody></table>");
+        assert_eq!(markdown(&c, &nodes), "|  |\n| --- |\n| a |\n| b |\n");
     }
 
     #[test]

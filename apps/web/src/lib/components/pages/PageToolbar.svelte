@@ -10,8 +10,9 @@
 	import DisplaySettingsPopover from "$lib/components/pages/DisplaySettingsPopover.svelte";
 	import { VersionHistoryPanel } from "$lib/components/pages";
 	import { Popover } from "$lib/floating";
-	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import type { PageFormat } from "$lib/api/client";
+	import { identityOf } from "$lib/refs/identity.svelte";
+	import { clothFor } from "$lib/sidebar/pin-colors";
 
 	interface Props {
 		icon: string | null;
@@ -38,9 +39,15 @@
 		onShare?: () => void;
 		onToggleReferences?: () => void;
 		onDelete: () => void;
+		/** Find stands in the toolbar's place (DocumentEditor's dock): the toolbar steps aside. */
+		finding?: boolean;
+		/** The page's headings, offered as Contents in ⋯ when the pane has no gutter for the headings rail. */
+		contents?: { label: string; go: () => void }[] | null;
 	}
 
 	let {
+		finding = false,
+		contents = null,
 		icon,
 		iconColor = null,
 		coverUrl,
@@ -74,7 +81,7 @@
   reads clean; rises to full opacity on hover/focus. Page-level actions only
   (icon, cover, display, share); the long tail lives behind ••• overflow.
 -->
-<div class="page-toolbar">
+<div class="page-toolbar" class:finding inert={finding}>
 	<div class="toolbar-spacer"></div>
 
 	<!-- Identity -->
@@ -85,19 +92,22 @@
 					onclick={toggle}
 					class="toolbar-action"
 					title={icon ? "Change icon" : "Add icon"}
+					aria-label={icon ? "Change icon" : "Add icon"}
+					aria-expanded={showIconPicker}
+					aria-haspopup="dialog"
 				>
 					{#if icon}
 						{#if icon.includes(":")}
 							<Icon
 								{icon}
-								width="15"
+								width="16"
 								style={iconColor ? `color: var(--cat-${iconColor})` : undefined}
 							/>
 						{:else}
 							<span class="toolbar-emoji">{icon}</span>
 						{/if}
 					{:else}
-						<Icon icon="ri:emotion-line" width="15" />
+						<Icon icon="ri:emotion-line" width="16" />
 					{/if}
 				</button>
 			{/snippet}
@@ -108,6 +118,8 @@
 					{close}
 					color={iconColor}
 					onColorSelect={onIconColorSelect}
+					label={identityOf(`/page/${pageId}`).title}
+					autoColor={clothFor({ url: `/page/${pageId}` })}
 				/>
 			{/snippet}
 		</Popover>
@@ -116,6 +128,8 @@
 				<IconButton
 					icon={coverUrl ? "ri:image-edit-line" : "ri:image-line"}
 					label={coverUrl ? "Change cover" : "Add cover"}
+					expanded={showCoverPicker}
+					haspopup="dialog"
 					onclick={toggle}
 				/>
 			{/snippet}
@@ -136,6 +150,9 @@
 					class="toolbar-action toolbar-action-text"
 					class:active={showDisplaySettings}
 					title="Display settings"
+					aria-label="Display settings"
+					aria-expanded={showDisplaySettings}
+					aria-haspopup="dialog"
 				>
 					Aa
 				</button>
@@ -151,12 +168,6 @@
 				/>
 			{/snippet}
 		</Popover>
-		<IconButton
-			icon="ri:check-double-line"
-			label={pageDisplay.spellcheck ? "Spell check on" : "Spell check off"}
-			pressed={pageDisplay.spellcheck}
-			onclick={() => pageDisplay.toggleSpellcheck()}
-		/>
 	</div>
 
 	<div class="toolbar-gap"></div>
@@ -173,7 +184,7 @@
 		{/if}
 		<Popover bind:open={showVersionHistory} placement="bottom-end">
 			{#snippet trigger({ toggle })}
-				<IconButton icon="ri:history-line" label="Version history" onclick={toggle} />
+				<IconButton icon="ri:history-line" label="Version history" expanded={showVersionHistory} haspopup="dialog" onclick={toggle} />
 			{/snippet}
 			{#snippet children({ close })}
 				<VersionHistoryPanel {close} {pageId} {format} />
@@ -193,10 +204,28 @@
 		{/if}
 		<Popover bind:open={showOverflow} placement="bottom-end">
 			{#snippet trigger({ toggle })}
-				<IconButton icon="ri:more-2-fill" label="More" onclick={toggle} />
+				<IconButton icon="ri:more-2-fill" label="More" expanded={showOverflow} haspopup="menu" onclick={toggle} />
 			{/snippet}
 			{#snippet children({ close })}
 				<div class="overflow-menu">
+					{#if contents?.length}
+						<!-- As Add to project: the headings open as their own menu
+						     where this row was. -->
+						<MenuItem
+							icon="ri:list-unordered"
+							label="Contents…"
+							onclick={(e: MouseEvent) => {
+								const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+								close();
+								const items = (contents ?? []).map((c, i) => ({ id: `heading-${i}`, label: c.label, action: c.go }));
+								contextMenu.show({ x: rect.left, y: rect.top }, items, {
+									anchor: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+									placement: "bottom-end",
+								});
+							}}
+						/>
+						<div class="overflow-divider"></div>
+					{/if}
 					<MenuItem
 						icon={copied ? "ri:check-line" : "ri:file-copy-line"}
 						label={copied ? "Copied!" : "Copy as Markdown"}
@@ -277,7 +306,22 @@
 </div>
 
 <style>
+	/* Out to the left as find comes in from the right, and back as it goes. */
+	.page-toolbar.finding {
+		opacity: 0;
+		transform: translateX(-8px);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.page-toolbar {
+			transition: none;
+		}
+	}
+
 	.page-toolbar {
+		transition:
+			opacity 120ms var(--ease-premium),
+			transform 120ms var(--ease-premium);
 		display: flex;
 		align-items: center;
 		gap: 4px;
@@ -295,12 +339,12 @@
 	.toolbar-group {
 		display: flex;
 		align-items: center;
-		gap: 2px;
+		gap: 4px;
 	}
 
 	/* Whitespace separates semantic groups instead of hard dividers */
 	.toolbar-gap {
-		width: 10px;
+		width: 8px;
 	}
 
 	.toolbar-action {
@@ -314,10 +358,10 @@
 		background: none;
 		color: var(--color-foreground-muted);
 		cursor: pointer;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		transition:
-			color 0.15s ease,
-			background-color 0.15s ease;
+			color 0.12s ease,
+			background-color 0.12s ease;
 	}
 
 	.toolbar-action:hover {
@@ -325,8 +369,16 @@
 		background: var(--hover-bg);
 	}
 
+	.toolbar-action:focus-visible {
+		outline: 2px solid var(--color-border-focus);
+		outline-offset: 2px;
+	}
+
+	/* Open, as IconButton draws a button whose popover is open: a ground,
+	   not the accent, which means a thing is on or can be pressed. */
 	.toolbar-action.active {
-		color: var(--color-primary);
+		color: var(--color-foreground);
+		background: var(--active-bg);
 	}
 
 	/* The "Aa" that opens display settings. The serif is load-bearing here and

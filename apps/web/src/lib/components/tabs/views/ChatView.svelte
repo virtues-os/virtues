@@ -54,8 +54,10 @@
 		findWriteItUpOutput,
 	} from "$lib/components/chat/interview/interview";
 	import Composing from "$lib/components/chat/Composing.svelte";
-	import ConversationRail from "$lib/components/chat/ConversationRail.svelte";
+	import Rail, { topOfElement } from "$lib/components/Rail.svelte";
 	import RestingMark from "$lib/components/chat/RestingMark.svelte";
+	import NewChatSky from "$lib/components/chat/NewChatSky.svelte";
+	import type { ChatOpening } from "$lib/api/client";
 	// Getting started — the room after the founder's letter. Same shape as
 	// the interview: the id decides everything, the top of the room is
 	// synthetic and rebuilt from derived state, the cards do the work.
@@ -83,6 +85,7 @@
 	import TurnFigures from "$lib/components/chat/TurnFigures.svelte";
 	import SubagentPanel from "$lib/components/SubagentPanel.svelte";
 	import { onMount, onDestroy, tick, untrack } from "svelte";
+	import { saveScroll, savedScroll } from "$lib/tabs/scrollMemory";
 	import { SvelteSet } from "svelte/reactivity";
 	import { goto } from "$app/navigation";
 	import { fade, fly } from "svelte/transition";
@@ -135,6 +138,7 @@
 	import { localModel } from "$lib/stores/localModel.svelte";
 	import { chatUsage } from "$lib/stores/chatUsage.svelte";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
+	import { dropZone, hasFiles } from "$lib/actions/dropZone";
 
 	// Props
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -607,6 +611,10 @@
 
 	// Chat instance - fetched from shared store to survive remounts
 	let chat = $state<Chat>(null!);
+	/** What the box said first on this empty chat, if anything (NewChatSky). */
+	let opening = $state<ChatOpening | null>(null);
+	/** Set only while the first send that replies to the opening is going out. */
+	let openingForSend: string | null = null;
 	let currentChatConversationId = $state<string | null>(null);
 	/** This view is showing the getting-started room. */
 	const inRoom = $derived(isGettingStartedChat(currentChatConversationId));
@@ -642,6 +650,7 @@
 				getChatMode: () => chatMode,
 				getTemporary: () => isGhost,
 				getThink: () => localThink,
+				getOpening: () => openingForSend,
 			});
 			// The draft this conversation left behind, if the composer is empty.
 			if (!isGhost && !input) {
@@ -676,6 +685,7 @@
 		// temporary chat is open, which never leaves /chat — is a fresh
 		// conversation even though the route string did not change.
 		const renavigatedToNew = route === previousTabRoute && isNewChat(route) && historyIndex !== previousHistoryIndex;
+		const leftIndex = previousHistoryIndex;
 		previousHistoryIndex = historyIndex;
 		if (route === previousTabRoute && !renavigatedToNew) return;
 		const routeConversationId = extractConversationId(route);
@@ -686,6 +696,9 @@
 			previousTabRoute = route;
 			return;
 		}
+
+		// Leaving a place in this tab's history: remember where you were, for Back.
+		rememberScroll(previousTabRoute, leftIndex);
 
 		// Cancel any in-flight load from the previous conversation.
 		tabSwitchAbortController?.abort();
@@ -773,7 +786,7 @@
 				// Scroll to bottom after loading existing chat — but the
 				// getting-started room opens on its cover.
 				setTimeout(() => {
-					if (!openAtStart()) scrollToBottom("instant");
+					if (!restoreScroll() && !openAtStart()) scrollToBottom("instant");
 				}, 10);
 			}
 		}
@@ -824,6 +837,8 @@
 		untrack(() => reportRunning(running ? id : null));
 	});
 	onDestroy(() => reportRunning(null));
+	// The tab moved on to something that is not a chat (a page, a person).
+	onDestroy(() => rememberScroll(previousTabRoute, previousHistoryIndex));
 
 	// Seen: this chat is on screen, loaded, and not mid-reply. Re-runs when a
 	// reply finishes, so an answer watched as it arrived is never unread.
@@ -922,7 +937,7 @@
 
 			isLoading = false;
 			setTimeout(() => {
-				if (!openAtStart()) scrollToBottom("instant");
+				if (!restoreScroll() && !openAtStart()) scrollToBottom("instant");
 				enableTransitions = true;
 			}, 50);
 
@@ -1421,6 +1436,19 @@
 	 * Only on load: once the person is in the conversation, new turns pull
 	 * the view down as they do anywhere else.
 	 */
+	/** Save the scroll of the place this view is leaving in the tab's history. */
+	function rememberScroll(route: string, historyIndex: number) {
+		if (scrollContainer && route) saveScroll(tab.id, historyIndex, route, scrollContainer.scrollTop);
+	}
+
+	/** Back or Forward to a place seen before: open where you were. */
+	function restoreScroll(): boolean {
+		const top = savedScroll(tab.id, tab.historyIndex, tab.route);
+		if (top === undefined || !scrollContainer) return false;
+		scrollContainer.scrollTo({ top, behavior: "instant" });
+		return true;
+	}
+
 	function openAtStart(behavior: ScrollBehavior = "instant") {
 		if (inRoom) {
 			scrollContainer?.scrollTo({ top: 0, behavior });
@@ -1632,6 +1660,19 @@
 			// later Claude turn failed; Grok did not care). An attachment on
 			// its own is a complete message — no filler words on the person's
 			// behalf.
+			// Replying to the box's opening: it becomes the chat's first turn
+			// here and, from its id, on the box (store_opening in chat.rs).
+			if (opening?.id && opening.text && chat.messages.length === 0 && !isGhost && !isLocal) {
+				chat.messages = [
+					{
+						id: `${opening.id}_${conversationId}`,
+						role: "assistant",
+						parts: [{ type: "text", text: opening.text }],
+					},
+				];
+				openingForSend = opening.id;
+			}
+
 			await chat.sendMessage(
 				files.length > 0
 					? messageToSend
@@ -1641,6 +1682,8 @@
 			);
 
 			handedOff = true;
+			openingForSend = null;
+			opening = null;
 
 			if (chat.messages.length >= 2 && !isGhost && !titleDone) {
 				await generateTitle();
@@ -1803,30 +1846,17 @@
 	<div
 		class="chat-root"
 		role="presentation"
-		ondragover={(e) => {
-			if (e.dataTransfer?.types.includes("Files")) {
-				e.preventDefault();
-				attachments.dragActive = true;
-			}
-		}}
-		ondragleave={(e) => {
-			// Only clear when leaving the root, not when crossing child boundaries.
-			if (!e.relatedTarget || !(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node)) {
-				attachments.dragActive = false;
-			}
-		}}
-		ondrop={(e) => {
-			attachments.dragActive = false;
-			// The composer is a CodeMirror editor INSIDE this root, and it
-			// handles drops on itself (calling preventDefault + onAttach).
-			// Returning true from a CodeMirror dom event handler does not stop
-			// DOM propagation, so that drop still bubbles here — and until
-			// 2026-09-17 this added the same files a second time. Cleared
-			// dragActive first, because the sticky part of the overlay is not
-			// optional: no dragleave fires on the element that took the drop.
-			if (e.defaultPrevented) return;
-			e.preventDefault();
-			if (e.dataTransfer?.files?.length) attachments.add(Array.from(e.dataTransfer.files));
+		use:dropZone={{
+			accepts: hasFiles,
+			onActive: (active) => (attachments.dragActive = active),
+			// The composer is a ProseMirror editor inside this root
+			// (lib/document/composer.ts), and it attaches files dropped on
+			// itself and cancels the drop. The drop still bubbles here, and
+			// dropZone skips a drop that was already cancelled, so the files
+			// are added once.
+			onDrop: (e) => {
+				if (e.dataTransfer?.files?.length) attachments.add(Array.from(e.dataTransfer.files));
+			},
 		}}
 	>
 		<div class="chat-container">
@@ -2383,32 +2413,26 @@
 					     once the pane is wide enough to have a gutter — below that the
 					     column takes the whole pane and the rail would sit on the words. -->
 					{#if !isEmpty && pageWidth >= 1000}
-						<ConversationRail turns={railTurnList} {scrollContainer} />
+						<Rail
+							items={railTurnList}
+							scroller={scrollContainer}
+							topOf={(turn, scroller) => topOfElement(scroller, turn.anchor)}
+							label="Turns in this chat"
+						/>
 					{/if}
 
 					{#if isEmpty && threeBodyOpen}
 						{#await import("$lib/components/chat/ThreeBody.svelte") then { default: ThreeBody }}
 							<ThreeBody onClose={() => (threeBodyOpen = false)} />
 						{/await}
-					{:else if isEmpty && !isGhost && attachments.count === 0}
-						<!-- The opening image: the mark assembling itself in the space
-						     a conversation will fill. Both layouts left this expanse
-						     blank — the phone docks the composer to the bottom, the
-						     desktop floats it at center, and either way a new chat
-						     opened onto nothing at all (VIR-313). Positioned off the
-						     midpoint, so it sits above the composer in both. It yields to
-						     staged attachments: the row of chips grows upward from the
-						     composer and would otherwise collide with the word, and once
-						     someone has dropped a file the blank canvas has done its job.
-						     Decorative, so hidden from the tree and transparent to
-						     touches. -->
-						<div class="init-hero" aria-hidden="true" out:fade={{ duration: 200 }}>
-							<svg class="init-mark" viewBox="0 0 12 10.5" width="19.87" height="17.39" fill="currentColor">
-								<circle class="init-dot init-dot-1" cx="6" cy="2.4" r="1.5" />
-								<circle class="init-dot init-dot-2" cx="2.6" cy="8.1" r="1.5" />
-								<circle class="init-dot init-dot-3" cx="9.4" cy="8.1" r="1.5" />
-							</svg>
-							<span class="init-word">Virtues</span>
+					{:else if isEmpty && !isGhost && !isLocal && attachments.count === 0}
+						<!-- The opening: today as a small sky and the box's first
+						     sentence, or the mark and word when the day has neither.
+						     Positioned off the midpoint, so it sits above the composer
+						     on the phone and the desktop alike. It yields to staged
+						     attachments, whose chips grow upward from the composer. -->
+						<div class="init-hero" out:fade={{ duration: 200 }}>
+							<NewChatSky bind:opening />
 						</div>
 					{/if}
 
@@ -2489,7 +2513,7 @@
 								bind:value={input}
 								disabled={true}
 								sendDisabled={true}
-								maxWidth="max-w-3xl"
+								maxWidth="max-w-full"
 								placeholder="Connect AI above to write here"
 								onSubmit={() => {}}
 							/>
@@ -2502,8 +2526,8 @@
 							disabled={false}
 							sendDisabled={turnPhase.working || (isLocal && !localModel.status.ready)}
 							isStreaming={turnPhase.working}
-							maxWidth="max-w-3xl"
-							placeholder={isLocal ? "Ask the local model" : isGhost ? "Ask Virtues (temporary)" : "Ask Virtues"}
+							maxWidth="max-w-full"
+							placeholder={isLocal ? "Ask the local model" : isGhost ? "Ask anything. This chat isn't saved" : undefined}
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
 							agentMode={selectedAgentMode}
@@ -2602,7 +2626,7 @@
 		justify-content: center;
 		width: 28px;
 		height: 28px;
-		border-radius: 9px;
+		border-radius: var(--radius-lg);
 		color: var(--color-foreground-subtle);
 		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
 		backdrop-filter: blur(8px);
@@ -2716,16 +2740,9 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	/* ── The phone's opening image ──
-	   The ∴ mark and wordmark, seated in the upper half of the empty room —
-	   above center so the (bottom-docked) composer and rising keyboard never
-	   crowd it. Mark and word sit on one line, the mark a touch under the
-	   word's size so the two read as one lockup. The entrance is the mark
-	   ASSEMBLING: three dots settle into the trivet one by one, then the
-	   word surfaces beside them. All
-	   keyframes are from-only with `backwards` fill — an explicit `to` with
-	   a fill-mode is what once pinned a disabled button solid ink (see the
-	   airlock's rise animation for the same rule). */
+	/* ── The opening ──
+	   Seated above center, so the phone's bottom-docked composer and rising
+	   keyboard never crowd it. What it draws is NewChatSky's. */
 	.init-hero {
 		position: absolute;
 		left: 0;
@@ -2735,59 +2752,9 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		gap: 0.5rem;
 		pointer-events: none;
 		color: var(--color-foreground);
 	}
-
-	.init-mark {
-		overflow: visible;
-	}
-
-	.init-word {
-		/* The masthead's register, verbatim: serif, never bold, hairline
-		   stroke for logo presence at text weight. */
-		font-family: var(--font-serif);
-		font-size: 1.375rem;
-		font-weight: 400;
-		letter-spacing: 0.03em;
-		-webkit-text-stroke: 0.2px currentColor;
-	}
-
-	@media (prefers-reduced-motion: no-preference) {
-		.init-dot {
-			animation: init-dot-settle 0.55s cubic-bezier(0.22, 1, 0.36, 1) backwards;
-			transform-origin: center;
-			transform-box: fill-box;
-		}
-		.init-dot-1 {
-			animation-delay: 0.15s;
-		}
-		.init-dot-2 {
-			animation-delay: 0.32s;
-		}
-		.init-dot-3 {
-			animation-delay: 0.49s;
-		}
-		.init-word {
-			animation: init-word-rise 0.7s cubic-bezier(0.22, 1, 0.36, 1) 0.75s backwards;
-		}
-	}
-
-	@keyframes init-dot-settle {
-		from {
-			opacity: 0;
-			transform: scale(0.3) translateY(3px);
-		}
-	}
-
-	@keyframes init-word-rise {
-		from {
-			opacity: 0;
-			transform: translateY(8px);
-		}
-	}
-
 
 	.page-container {
 		height: 100%;
@@ -2822,11 +2789,16 @@
 		pointer-events: auto;
 	}
 
+	/* The reading measure is the TEXT column, 38rem (608px): about 80
+	   characters of 16px Avenir a line, and the same column a page's text
+	   takes, so switching between a chat and a page leaves the left edge
+	   where it was. The 1.5rem side gutter sits outside it, so a narrow pane
+	   loses gutter before it loses measure. The composer below matches. */
 	.messages-container {
-		max-width: 48rem;
+		max-width: calc(var(--reading-measure) + 2 * var(--reading-gutter));
 		margin: 0 auto;
 		width: 100%;
-		padding: 1.5rem 2rem 10rem 2rem;
+		padding: 1.5rem var(--reading-gutter) 10rem var(--reading-gutter);
 		/* The docked composer's measured height (set by the observer in the
 		   script) plus a breath of room, never less than the resting reserve.
 		   The composer overlays the scroller rather than pushing it, so this is
@@ -2858,15 +2830,15 @@
 		right: 0;
 		margin: 0 auto;
 		width: 100%;
-		max-width: 48rem;
-		padding: 0 2rem 2rem 2rem;
+		max-width: calc(var(--reading-measure) + 2 * var(--reading-gutter));
+		padding: 0 var(--reading-gutter) 2rem var(--reading-gutter);
 		/* The composer's resting inset off the window edge. It sat at 78px,
 		   a leftover of "1rem plus the floating tab bar's reserve" kept after
 		   the bar went; on a desktop window that read as the composer
 		   floating a hand's width above the bottom (Adam, 2026-09-14). The
 		   phone override below sets its own. */
 		padding-bottom: 1.5rem;
-		background-color: var(--color-surface);
+		background-color: var(--color-page);
 		background-image: var(--background-image);
 		background-blend-mode: multiply;
 		box-sizing: border-box;
@@ -2889,7 +2861,7 @@
 		place-items: center;
 		width: 2.25rem;
 		height: 2.25rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		border: 1px solid var(--color-border);
 		background: var(--color-surface-elevated);
 		color: var(--color-foreground-muted);
@@ -2917,7 +2889,7 @@
 	.jump-dots i {
 		width: 0.3125rem;
 		height: 0.3125rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-primary);
 		opacity: 0.45;
 	}
@@ -2978,21 +2950,30 @@
 		margin: 0.5rem 0;
 		padding: 0.5rem 0.75rem;
 		border: 1px solid var(--color-border-subtle);
-		border-radius: 0.625rem;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface-elevated);
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
 	}
 
-	/* Accent ring + gentle lift on the actual composer box while dragging. */
+	/* While files are over the chat, the composer box takes a ring in the drop
+	   tint and a small lift, because it is where they will land. The ring comes
+	   on at hover-in, and ChatInput's own transition takes it off at hover-out.
+	   Under reduced motion it changes at once and has no lift. */
 	.chat-input-wrapper.drag-active :global(.chat-input-container .chat-input-wrapper) {
 		border-color: var(--color-primary);
+		/* design-ok: the drop ring is drawn as a spread shadow so it adds no layout, and the lift marks the landing spot. */
 		box-shadow:
-			0 0 0 3px color-mix(in srgb, var(--color-primary) 22%, transparent),
+			0 0 0 3px var(--drop-tint),
 			0 10px 28px -14px color-mix(in srgb, var(--color-primary) 50%, transparent);
-		transition:
-			border-color 0.15s ease,
-			box-shadow 0.15s ease;
+		transition-duration: var(--motion-hover-in);
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.chat-input-wrapper.drag-active :global(.chat-input-container .chat-input-wrapper) {
+			/* design-ok: the same drop ring as above, without the lift. */
+			box-shadow: 0 0 0 3px var(--drop-tint);
+		}
 	}
 
 	.chat-input-wrapper.transitions-enabled {
@@ -3067,15 +3048,6 @@
 	.messages-container.room .message-wrapper:not([data-role="user"]) {
 		padding: 0;
 	}
-	/* `.markdown > .streamdown-content > <blocks>` — Streamdown nests its
-	   output one level, so the original `.markdown > :last-child` matched
-	   that wrapper and never the last paragraph. The trailing margin stayed,
-	   and the room's lines sat 2rem apart while paragraphs inside a line sat
-	   at 1rem — the very thing this rule was written to fix. */
-	.messages-container.room .message-wrapper:not([data-role="user"]) :global(.markdown > * > :last-child) {
-		margin-bottom: 0;
-	}
-
 	/* ── The standfirst ──
 	   The welcome's opening line is the most important sentence in the
 	   product and was set as body copy, indistinguishable from the admin
@@ -3095,13 +3067,6 @@
 	   is already done — the hook is kept, the check that hung in the margin is
 	   not. It read as a UI artifact stuck onto prose, in a green nothing else
 	   in the room uses, and it broke the column's left edge. */
-
-	.message-wrapper :global(h1),
-	.message-wrapper :global(h2),
-	.message-wrapper :global(h3),
-	.message-wrapper :global(h4) {
-		margin-top: 0;
-	}
 
 	/* User message card styling — hugs its content (left-aligned). Radius mirrors
 	   the composer's language: big enough that a one-line bubble caps into a pill
@@ -3178,7 +3143,7 @@
 		padding: 0.25rem;
 		border: none;
 		background: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		color: var(--foreground-subtle);
 		cursor: pointer;
 	}

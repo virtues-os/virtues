@@ -629,12 +629,10 @@
 
 	/* The question is the page: the record's serif, at reading size, with
 	   the interviewer's lead-in and question kept together as written. */
+	/* The question is the article's prose (Markdown variant="article"),
+	   which sets its own face, size and ink; these reach it by inheritance. */
 	.question {
-		font-family: var(--font-serif, Georgia, serif);
-		font-size: clamp(22px, 2.6vw, 30px);
-		line-height: 1.35;
 		letter-spacing: -0.005em;
-		color: var(--color-foreground);
 		text-wrap: balance;
 	}
 	.question :global(p) {
@@ -654,8 +652,6 @@
 	.example {
 		margin: 0 0 1.5rem;
 		text-align: left;
-		font-size: 0.95rem;
-		color: var(--color-foreground-muted);
 	}
 
 	.chips {
@@ -672,7 +668,7 @@
 		align-items: baseline;
 		gap: 8px;
 		padding: 6px 12px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		outline: 1px solid var(--color-border);
 		outline-offset: -1px;
 	}

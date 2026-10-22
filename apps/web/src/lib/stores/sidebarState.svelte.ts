@@ -9,16 +9,24 @@ const WIDTH_KEY = "virtues-sidebar-width";
 /**
  * The sidebar's width.
  *
- * The floor is a real floor: below it the serif room title starts truncating
- * and chat rows become unreadable stubs, so dragging further is never what
- * someone wants. `COLLAPSE_AT` is what they DO want — past it the sidebar
- * closes rather than becoming a useless sliver, which is the behaviour every
- * desktop chat app has trained people to expect.
+ * The floor is the narrowest width at which the fixed rows still fit on one
+ * line: Setup with its count, and the offline note above Settings. Chat
+ * titles are cut short well before it, so a narrower sidebar would only be a
+ * sliver. Dragging on past the floor closes the sidebar on release instead,
+ * which is what desktop chat apps have taught people to expect.
  */
-export const SIDEBAR_MIN_WIDTH = 180;
+export const SIDEBAR_MIN_WIDTH = 140;
 export const SIDEBAR_MAX_WIDTH = 420;
-export const SIDEBAR_DEFAULT_WIDTH = 208;
-export const SIDEBAR_COLLAPSE_AT = 148;
+// Wide enough that a typical chat title fits without its ellipsis.
+export const SIDEBAR_DEFAULT_WIDTH = 236;
+/** The old default. A stored width equal to it was never chosen, so it moves to the new one. */
+const OLD_DEFAULT_WIDTH = 208;
+/**
+ * Released with the pointer asking for less than this, the sidebar closes.
+ * It sits 32px past the floor, so the panel visibly stops before the drag
+ * means "close".
+ */
+export const SIDEBAR_COLLAPSE_AT = SIDEBAR_MIN_WIDTH - 32;
 
 /**
  * The desk: the one gap between the window's edge and a card, and between
@@ -51,7 +59,8 @@ if (typeof localStorage !== "undefined") {
 		// Clamp on read as well as on write: the bounds can move between
 		// releases, and a stored 600 from an older build must not survive as a
 		// sidebar half the window wide.
-		width = clampWidth(Number(storedWidth));
+		const n = Number(storedWidth);
+		width = clampWidth(n === OLD_DEFAULT_WIDTH ? SIDEBAR_DEFAULT_WIDTH : n);
 	}
 }
 

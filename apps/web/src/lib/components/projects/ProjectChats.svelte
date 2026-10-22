@@ -11,6 +11,7 @@
 	import ProjectSection from '$lib/components/projects/ProjectSection.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { openMenuItems } from '$lib/utils/openMenuItems';
 	import { projectColor } from '$lib/sidebar/pin-colors';
 	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
@@ -46,12 +47,7 @@
 		}));
 		contextMenu.show({ x: e.clientX, y: e.clientY }, [
 			{ id: 'open', label: 'Open', icon: 'ri:chat-3-line', action: () => open(chat) },
-			{
-				id: 'open-beside',
-				label: 'Open beside',
-				icon: 'ri:layout-column-line',
-				action: () => void windowShellStore.openRouteBeside(url, chat.title)
-			},
+			...openMenuItems(url, chat.title),
 			...elsewhere,
 			{
 				id: 'remove',
@@ -114,7 +110,7 @@
 		position: relative;
 		display: flex;
 		align-items: center;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 	}
 	.chat-item:hover {
 		background: var(--color-background-hover);
@@ -136,7 +132,7 @@
 	.chat-open:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 	}
 	.chat-glyph {
 		display: flex;
@@ -170,7 +166,7 @@
 		align-self: flex-start;
 		padding: 4px 8px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: none;
 		cursor: pointer;
 		font-size: 0.8125rem;

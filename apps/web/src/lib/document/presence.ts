@@ -155,9 +155,25 @@ function applyAi(tr: Transaction, prev: AiState): AiState {
 	return { caret, telegraph, trail, flash };
 }
 
-/** The overlay caret: one element in the editor's positioned parent, moved by transform so it glides. */
+/**
+ * The overlay caret: one element in the editor's positioned parent, moved by
+ * transform so it glides. While it shows, it is placed again whenever the
+ * page's size changes (an image loading, a window resize), since text that
+ * reflows moves the caret's position on screen without a transaction.
+ */
 class CaretOverlay {
 	private dom: HTMLElement | null = null;
+	private resizes: ResizeObserver | null = null;
+	private frame = 0;
+	private pending = false;
+	private readonly reflowed = () => {
+		if (this.pending) return;
+		this.pending = true;
+		this.frame = requestAnimationFrame(() => {
+			this.pending = false;
+			if (!this.view.isDestroyed) this.render();
+		});
+	};
 
 	constructor(private view: EditorView) {
 		this.render();
@@ -188,6 +204,7 @@ class CaretOverlay {
 			label.textContent = 'Virtues';
 			this.dom.append(bar, label);
 			host.appendChild(this.dom);
+			this.follow();
 		}
 		this.dom.classList.toggle('doc-ai-caret--done', caret.phase === 'done');
 		const box = host.getBoundingClientRect();
@@ -198,8 +215,24 @@ class CaretOverlay {
 	}
 
 	remove() {
+		this.unfollow();
 		this.dom?.remove();
 		this.dom = null;
+	}
+
+	private follow() {
+		window.addEventListener('resize', this.reflowed);
+		if (typeof ResizeObserver === 'undefined') return;
+		this.resizes = new ResizeObserver(this.reflowed);
+		this.resizes.observe(this.view.dom);
+	}
+
+	private unfollow() {
+		window.removeEventListener('resize', this.reflowed);
+		this.resizes?.disconnect();
+		this.resizes = null;
+		if (this.pending) cancelAnimationFrame(this.frame);
+		this.pending = false;
 	}
 }
 

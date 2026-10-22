@@ -4,9 +4,9 @@
  * One persisted, app-wide set of reading/writing preferences for the page
  * editor: font mode, text size, page width, and focus/typewriter mode.
  * Width `page` sets the page as an A4 sheet (210 mm), the width it prints at.
- * Font + size are surfaced to the editor via the `--editor-font-family` /
- * `--editor-font-size` custom properties (see lib/document/document.css), set
- * on an ancestor of the editor so they cascade in.
+ * Font + size are surfaced to the editor via the `--prose-family`,
+ * `--prose-size`, `--prose-lh` and `--prose-scale` custom properties (see
+ * lib/styles/prose.css), set on an ancestor of the editor so they cascade in.
  */
 
 export type FontMode = "sans" | "serif" | "mono";
@@ -15,9 +15,12 @@ export type WidthMode = "small" | "medium" | "full" | "page";
 
 const STORAGE_KEY = "virtues-page-display";
 
+// Serif is the article's face, at the article's size (below): the serif drawn
+// at the sans's 16px reads about 13% smaller, its x-height being 0.405 of its
+// size against Avenir's 0.468.
 const FONT_FAMILY: Record<FontMode, string> = {
 	sans: "var(--font-sans, ui-sans-serif, system-ui, -apple-system, sans-serif)",
-	serif: "var(--font-serif, Georgia, 'Times New Roman', serif)",
+	serif: "var(--md-article-family)",
 	mono: "var(--font-mono, ui-monospace, monospace)",
 };
 
@@ -27,13 +30,34 @@ const FONT_SIZE: Record<TextSize, string> = {
 	l: "1.125rem",
 };
 
-// Line-height tracks the text size: tighter for small (denser reading), airier
-// for large (more breathing room). Surfaced as `--editor-line-height`.
+// Line-height tracks the text size and lands on a whole pixel: 24px for small
+// and medium, 28px for large. Medium is chat's body line (`--md-body-lh`), so
+// a page and a reply read at one rhythm. Surfaced as `--prose-lh`.
 const LINE_HEIGHT: Record<TextSize, string> = {
-	s: "1.5",
-	m: "1.6",
-	l: "1.7",
+	s: "1.5rem",
+	m: "var(--md-body-lh)",
+	l: "1.75rem",
 };
+
+// Serif is the wiki's article (`prose--article`): medium is its size on its
+// line, small and large a step either side, each on a whole pixel (16/26,
+// 19/30).
+const SERIF_SIZE: Record<TextSize, string> = {
+	s: "1rem",
+	m: "var(--md-article-size)",
+	l: "1.1875rem",
+};
+
+const SERIF_LINE_HEIGHT: Record<TextSize, string> = {
+	s: "1.625rem",
+	m: "var(--md-article-lh)",
+	l: "1.875rem",
+};
+
+// The text size against medium, in each set: what the headings' sizes are
+// multiplied by (`--prose-scale`), so a heading keeps its step above the text.
+const SCALE: Record<TextSize, number> = { s: 15 / 16, m: 1, l: 18 / 16 };
+const SERIF_SCALE: Record<TextSize, number> = { s: 16 / 17, m: 1, l: 19 / 17 };
 
 interface Persisted {
 	fontMode: FontMode;
@@ -77,19 +101,29 @@ class PageDisplay {
 		this.spellcheck = p.spellcheck;
 	}
 
-	/** CSS value for `--editor-font-family`. */
+	/** CSS value for `--prose-family`. */
 	get fontFamily(): string {
 		return FONT_FAMILY[this.fontMode];
 	}
 
-	/** CSS value for `--editor-font-size`. */
+	/** CSS value for `--prose-size`. */
 	get fontSize(): string {
-		return FONT_SIZE[this.textSize];
+		return (this.article ? SERIF_SIZE : FONT_SIZE)[this.textSize];
 	}
 
-	/** CSS value for `--editor-line-height`. Tracks the text size. */
+	/** CSS value for `--prose-lh`. Tracks the text size. */
 	get lineHeight(): string {
-		return LINE_HEIGHT[this.textSize];
+		return (this.article ? SERIF_LINE_HEIGHT : LINE_HEIGHT)[this.textSize];
+	}
+
+	/** CSS value for `--prose-scale`: the text size against its medium. */
+	get scale(): number {
+		return (this.article ? SERIF_SCALE : SCALE)[this.textSize];
+	}
+
+	/** Serif mode reads as an article: the page wears `prose--article`, so its tables follow too. */
+	get article(): boolean {
+		return this.fontMode === "serif";
 	}
 
 	private persist() {

@@ -297,7 +297,7 @@
 		margin: 0;
 		padding: 0.75rem;
 		background: var(--color-surface-elevated);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		white-space: pre-wrap;
 		overflow-wrap: anywhere;
 	}

@@ -103,7 +103,7 @@
 	.trigger {
 		all: unset;
 		cursor: pointer;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	.trigger:focus-visible {
@@ -116,7 +116,7 @@
 		padding: 0.625rem;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		font-family: var(--font-sans);
 	}
 
@@ -150,7 +150,7 @@
 		aspect-ratio: 1;
 		border: none;
 		background: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		padding: 0;
 		font-size: 0.75rem;
 		color: var(--color-foreground-muted);

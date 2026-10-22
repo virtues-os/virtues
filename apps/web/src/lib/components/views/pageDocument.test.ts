@@ -172,10 +172,10 @@ describe('showing the copy this device kept, when the server is slow', () => {
 describe('PageContent, in its source', () => {
 	const page = source('PageContent.svelte');
 
-	it('mounts DocumentEditor for a block page once its converter has settled, editable unless the server is older, and shows a markdown page read only', () => {
+	it('mounts DocumentEditor for a block page once its converter has settled, editable unless the server is older or has refused the page, and shows a markdown page read only', () => {
 		expect(page).toMatch(/openPageDocument\(pageId, data\)/);
 		expect(page).toMatch(
-			/\{#if treeDoc && isSynced && \$converterSettled\}[\s\S]*?<DocumentEditor[\s\S]*?editable=\{!treeDoc\.readOnly\}[\s\S]*?ai=\{treeAiDriver\}/,
+			/\{#if treeDoc && isSynced && \$converterSettled\}[\s\S]*?<DocumentEditor[\s\S]*?editable=\{!treeDoc\.readOnly && !refusedReason\}[\s\S]*?ai=\{treeAiDriver\}/,
 		);
 		// Until then the page says it is loading, as it does before the sync.
 		expect(page).toMatch(/stillLoading\(opened, isSynced, refusedReason\) \|\| \(treeDoc && isSynced && !\$converterSettled\)/);
@@ -188,7 +188,7 @@ describe('PageContent, in its source', () => {
 		expect(page).toMatch(/getPageMarkdown\(pageId\)/);
 		expect(page).toMatch(/<MarkdownView \{pageId\} ydoc=\{treeDoc\.ydoc\} \/>/);
 		expect(page).toMatch(/onPrint=\{format === "tree" && canPrint \? printPage : undefined\}/);
-		expect(page).toMatch(/class="page-topbar" data-print="hide"/);
+		expect(page).toMatch(/class="page-topbar"[^>]*data-print="hide"/);
 		expect(page).toMatch(/class:width-page=/);
 	});
 

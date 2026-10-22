@@ -199,7 +199,7 @@
 		gap: 6px;
 		padding: 6px 8px;
 		border: none;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: none;
 		color: var(--color-foreground);
 		cursor: pointer;
@@ -270,7 +270,7 @@
 		margin: 0;
 		padding: 6px;
 		list-style: none;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface-elevated, var(--color-surface));
 		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
 		outline-offset: -1px;
@@ -284,7 +284,7 @@
 		width: 100%;
 		padding: 6px 8px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: none;
 		font: inherit;
 		font-size: 14px;

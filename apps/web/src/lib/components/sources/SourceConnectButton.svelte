@@ -151,7 +151,7 @@
 		overflow-y: auto;
 		background: var(--color-surface, #fff);
 		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		box-shadow: 0 8px 28px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0, 0, 0, 0.04);
 	}
 
@@ -208,7 +208,7 @@
 		padding: 0.5rem 0.625rem;
 		background: transparent;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		cursor: pointer;
 		text-align: left;
 		font: inherit;

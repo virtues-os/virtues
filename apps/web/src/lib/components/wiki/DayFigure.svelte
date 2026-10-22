@@ -215,7 +215,7 @@
 	button.hit:focus-visible {
 		outline: 2px solid var(--color-border-focus);
 		outline-offset: 4px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	/* ── quote ── */
@@ -310,7 +310,7 @@
 		aspect-ratio: 3 / 2;
 		max-height: 19rem;
 		object-fit: cover;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface-elevated);
 	}
 

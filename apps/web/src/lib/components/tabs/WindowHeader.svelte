@@ -17,7 +17,6 @@
 	import WindowTabBar from './WindowTabBar.svelte';
 	import { windowShellStore, SPLIT_GUTTER_PX } from '$lib/stores/window-shell.svelte';
 	import { sidebarState, SIDEBAR_INSET } from '$lib/stores/sidebarState.svelte';
-	import { shortcuts } from '$lib/shortcuts/registry.svelte';
 	import { isMacOS } from '$lib/utils/platform';
 	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 
@@ -33,6 +32,7 @@
 	const isSplit = $derived(windowShellStore.isSplit);
 	const leftWidth = $derived(isSplit ? windowShellStore.leftPane?.width || 50 : 100);
 	const rightWidth = $derived(isSplit ? windowShellStore.rightPane?.width || 50 : 0);
+	const gutterPx = $derived(isSplit ? SPLIT_GUTTER_PX : 0);
 
 	const cardLeft = $derived(sidebarState.cardLeft);
 
@@ -70,7 +70,7 @@
 <header
 	data-tauri-drag-region
 	class="window-header"
-	class:resizing={sidebarState.resizing}
+	class:resizing={sidebarState.resizing || windowShellStore.paneResizing}
 	style:--card-left="{cardLeft}px"
 >
 	<!-- Three groups set apart by air alone: the mark, history (back,
@@ -83,7 +83,7 @@
 			onclick={() => windowShellStore.goBack()}
 			disabled={!canGoBack}
 			aria-label="Back"
-			title="Back"
+			data-tip="Back"
 		>
 			<AtlasIcon name="back" size={GLYPH_PX} bare />
 		</button>
@@ -92,7 +92,7 @@
 			onclick={() => windowShellStore.goForward()}
 			disabled={!canGoForward}
 			aria-label="Forward"
-			title="Forward"
+			data-tip="Forward"
 		>
 			<AtlasIcon name="forward" size={GLYPH_PX} bare />
 		</button>
@@ -103,35 +103,43 @@
 			onclick={() => sidebarState.toggle()}
 			aria-label={sidebarOpen ? 'Hide the sidebar' : 'Show the sidebar'}
 			aria-expanded={sidebarOpen}
-			title={`${sidebarOpen ? 'Hide' : 'Show'} the sidebar (${shortcuts.format('mod+b')})`}
+			data-tip={`${sidebarOpen ? 'Hide' : 'Show'} the sidebar`}
+			data-tip-key="mod+b"
 		>
 			<AtlasIcon name="sidebar" size={GLYPH_PX} bare />
 		</button>
-		<button
-			class="lead-btn"
-			onclick={() => windowShellStore.newChat()}
-			aria-label="New chat"
-			title={`New chat (${shortcuts.format('mod+n')})`}
-		>
-			<AtlasIcon name="new-chat" size={GLYPH_PX} bare />
-		</button>
+		<!-- Only while the sidebar is hidden: open, its own New chat row sits
+		     just below, and two doors to one place read as two places. -->
+		{#if !sidebarOpen}
+			<button
+				class="lead-btn"
+				onclick={() => windowShellStore.newChat()}
+				aria-label="New chat"
+				data-tip="New chat"
+				data-tip-key="mod+n"
+			>
+				<AtlasIcon name="new-chat" size={GLYPH_PX} bare />
+			</button>
+		{/if}
 	</div>
 
 	<div class="strips" data-tauri-drag-region>
 		<div
 			data-tauri-drag-region
 			class="strip"
-			style:width={isSplit ? `calc(${leftWidth}% - ${SPLIT_GUTTER_PX / 2}px)` : '100%'}
+			style:width="calc({leftWidth}% - {gutterPx / 2}px)"
 			style:padding-left="{overlap}px"
 		>
 			<WindowTabBar paneId={isSplit ? 'left' : undefined} />
 		</div>
-		{#if isSplit}
-			<div class="gutter" style:width="{SPLIT_GUTTER_PX}px" aria-hidden="true"></div>
-			<div class="strip" data-tauri-drag-region style:width="calc({rightWidth}% - {SPLIT_GUTTER_PX / 2}px)">
+		<!-- The gutter and the right strip stay mounted at zero width with one
+		     pane, so they open and close on the cards' clock. -->
+		<div class="gutter" style:width="{gutterPx}px" aria-hidden="true"></div>
+		<div class="strip" data-tauri-drag-region style:width="calc({rightWidth}% - {gutterPx / 2}px)">
+			{#if isSplit}
 				<WindowTabBar paneId="right" />
-			</div>
-		{/if}
+			{/if}
+		</div>
 	</div>
 </header>
 
@@ -169,19 +177,25 @@
 		transition: left var(--motion-layout) var(--ease-premium);
 	}
 
+	/* The strips open and close with the cards below them (SplitContainer),
+	   on the same clock, so a tab never runs ahead of its pane. */
 	.strip {
 		min-width: 0;
-		transition: padding-left var(--motion-layout) var(--ease-premium);
+		transition:
+			padding-left var(--motion-layout) var(--ease-premium),
+			width var(--motion-layout) var(--ease-premium);
 	}
 
 	.resizing .strips,
 	.resizing .strip,
+	.resizing .gutter,
 	.resizing .lead {
 		transition: none;
 	}
 
 	.gutter {
 		flex: none;
+		transition: width var(--motion-layout) var(--ease-premium);
 	}
 
 	.lead-gap {
@@ -201,7 +215,7 @@
 		height: 28px;
 		padding: 0;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		cursor: pointer;

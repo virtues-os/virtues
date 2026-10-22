@@ -207,7 +207,7 @@
 		min-height: 32px;
 		padding: 0 8px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: none;
 		font: inherit;
 		font-size: 13px;
@@ -309,7 +309,7 @@
 		width: 100%;
 		max-width: 46rem;
 		padding: clamp(2rem, 5vw, 4rem) clamp(1.25rem, 5vw, 4rem);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface-overlay, var(--color-surface));
 		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
 		outline-offset: -1px;

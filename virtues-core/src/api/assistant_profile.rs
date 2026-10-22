@@ -57,6 +57,9 @@ pub struct UpdateAssistantProfileRequest {
     /// The owner's notes on how to be spoken to. An empty or all-whitespace
     /// value clears them (stored as NULL); see `normalize_style_notes`.
     pub style_notes: Option<String>,
+    /// Spending limits for background requests, in micros-USD.
+    pub request_run_limit_micros: Option<i64>,
+    pub request_day_limit_micros: Option<i64>,
 }
 
 /// Longest the style notes may be, in characters. They ride in every chat's
@@ -100,6 +103,11 @@ pub async fn update_assistant_profile(
     db: &PgPool,
     request: UpdateAssistantProfileRequest,
 ) -> Result<AssistantProfile> {
+    let limits = [request.request_run_limit_micros, request.request_day_limit_micros];
+    if limits.into_iter().flatten().any(|v| v < 0) {
+        return Err(Error::InvalidInput("a spending limit can't be negative".into()));
+    }
+
     // The singleton ID (stored as TEXT)
     let profile_id = "00000000-0000-0000-0000-000000000001";
 
@@ -127,6 +135,8 @@ pub async fn update_assistant_profile(
     add_field!(request.ui_preferences, "ui_preferences");
     add_field!(request.persona, "persona");
     add_field!(request.style_notes, "style_notes");
+    add_field!(request.request_run_limit_micros, "request_run_limit_micros");
+    add_field!(request.request_day_limit_micros, "request_day_limit_micros");
 
     if set_clauses.is_empty() {
         // No updates requested, just return current profile
@@ -174,6 +184,12 @@ pub async fn update_assistant_profile(
     }
     if let Some(v) = &request.style_notes {
         q = q.bind(normalize_style_notes(v));
+    }
+    if let Some(v) = request.request_run_limit_micros {
+        q = q.bind(v);
+    }
+    if let Some(v) = request.request_day_limit_micros {
+        q = q.bind(v);
     }
     q = q.bind(profile_id);
 

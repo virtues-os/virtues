@@ -12,9 +12,11 @@
 	 *   - Conversations carry their own relative time as a caption instead of
 	 *     shouting day-bucket headers between them — one quiet section label,
 	 *     then rows.
-	 *   - Two regions, not one list: the mast and the doors (Search, New
-	 *     chat, Pages, Applets, All chats, Settings) are pinned chrome; only the
-	 *     lists scroll — Projects, then Recents, the desktop panel's order —
+	 *   - Two regions, not one list: the mast and the doors are pinned
+	 *     chrome. Search comes first, then the desktop's doors in the order the
+	 *     owner arranged them (stores/sidebarDoors, saved on the profile), then
+	 *     All chats and Settings. Only the lists scroll — Pinned, then Recents,
+	 *     the desktop panel's order —
 	 *     and a hairline appears under the doors once the list has slid
 	 *     beneath them — the way a navigation bar earns its rule. There used
 	 *     to be a bottom bar too (search pill, compose), and search down there
@@ -39,6 +41,14 @@
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatActivity } from "$lib/stores/chatActivity.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
+	import { pinsStore } from "$lib/stores/pins.svelte";
+	import { sidebarDoors, type DoorId } from "$lib/stores/sidebarDoors.svelte";
+	import { pinIdentity } from "$lib/refs/identity.svelte";
+	import { clothFor } from "$lib/sidebar/pin-colors";
+	import { isEmoji } from "$lib/utils/iconHelpers";
+	import { openWebLink } from "$lib/utils/webLinks";
+	import { newProject } from "$lib/utils/projectActions";
+	import type { Pin } from "$lib/api/client";
 	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
 	import { search } from "$lib/stores/search.svelte";
 	import { goto } from "$app/navigation";
@@ -52,6 +62,8 @@
 		if (mobileLayout.drawerOpen) {
 			void chatSessions.refresh();
 			void projectStore.load();
+			void pinsStore.load();
+			void sidebarDoors.load();
 		}
 	});
 
@@ -93,6 +105,34 @@
 		const { tasksStore } = await import("$lib/stores/tasks.svelte");
 		tasksStore.requestAdd();
 		go("/tasks", "Tasks");
+	}
+
+	function addProject() {
+		mobileLayout.closeDrawer();
+		void newProject();
+	}
+
+	/**
+	 * Each door, as on the desktop panel. The arrangement is the owner's and
+	 * is made on the desktop; the phone shows it. No hover on a phone, so a
+	 * door's + is always drawn.
+	 */
+	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; run: () => void } }> = {
+		"new-chat": { open: () => go("/chat", "Chat") },
+		pages: { open: () => go("/page", "Pages"), add: { label: "New page", run: newPage } },
+		tasks: { open: () => go("/tasks", "Tasks"), add: { label: "New task", run: newTask } },
+		projects: { open: () => go("/projects", "Projects"), add: { label: "New project", run: addProject } },
+		applets: { open: () => go("/applets", "Applets") },
+		wiki: { open: () => go("/wiki", "Wiki") },
+	};
+
+	function openPin(pin: Pin, title: string) {
+		if (/^https?:\/\//i.test(pin.url)) {
+			mobileLayout.closeDrawer();
+			void openWebLink(pin.url);
+			return;
+		}
+		go(pin.url, title);
 	}
 
 	/** The list has scrolled under the doors; draw the rule between them. */
@@ -154,8 +194,8 @@
 	<!-- The doors: pinned, before the flow of conversations. They wear Atlas
 	     (the shell's drawn set), matching the desktop sidebar's rule: Atlas
 	     for nav doors, Remix for interface symbols (the close » above).
-	     Search first, then New chat — the app's primary verb — then the full
-	     archive, then Settings. That last door used to say "This device",
+	     Search first, then the desktop's doors in the owner's order, then
+	     the full archive, then Settings. That last door used to say "This device",
 	     which was the truth about what the page held (this phone's streams
 	     and its link to the server) and a mystery to anyone looking for
 	     settings. One door, the word people look for. -->
@@ -174,37 +214,28 @@
 			<AtlasIcon name="search" bare />
 			<span>Search</span>
 		</button>
-		<button class="row" onclick={() => go("/chat", "Chat")}>
-			<AtlasIcon name="new-chat" bare />
-			<span class="row-text">New chat</span>
-		</button>
-		<!-- The word is the list, the + is the new one — the desktop panel's
-		     shape. No hover on a phone, so the + is always drawn. -->
-		<div class="row row-split">
-			<button class="row-main" onclick={() => go("/page", "Pages")}>
-				<AtlasIcon name="pages" bare />
-				<span class="row-text">Pages</span>
-			</button>
-			<button class="row-plus" onclick={newPage} aria-label="New page">
-				<Icon icon="ri:add-line" width={20} />
-			</button>
-		</div>
-		<div class="row row-split">
-			<button class="row-main" onclick={() => go("/tasks", "Tasks")}>
-				<AtlasIcon name="tasks" bare />
-				<span class="row-text">Tasks</span>
-			</button>
-			<button class="row-plus" onclick={newTask} aria-label="New task">
-				<Icon icon="ri:add-line" width={20} />
-			</button>
-		</div>
-		<!-- Applets is a door beside New chat, here as on the desktop panel:
-		     an applet is something you run from a chat, so its door stands
-		     beside the chat's. -->
-		<button class="row" onclick={() => go("/applets", "Applets")}>
-			<AtlasIcon name="applets" bare />
-			<span class="row-text">Applets</span>
-		</button>
+		{#each sidebarDoors.visible as door (door.id)}
+			{@const act = doorActions[door.id]}
+			{#if act.add}
+				{@const add = act.add}
+				<!-- The word is the list, the + is the new one: the desktop
+				     panel's shape. -->
+				<div class="row row-split">
+					<button class="row-main" onclick={act.open}>
+						<AtlasIcon name={door.glyph} bare />
+						<span class="row-text">{door.label}</span>
+					</button>
+					<button class="row-plus" onclick={add.run} aria-label={add.label}>
+						<Icon icon="ri:add-line" width={20} />
+					</button>
+				</div>
+			{:else}
+				<button class="row" onclick={act.open}>
+					<AtlasIcon name={door.glyph} bare />
+					<span class="row-text">{door.label}</span>
+				</button>
+			{/if}
+		{/each}
 		<button class="row" onclick={() => go("/chat-history", "All Chats")}>
 			<AtlasIcon name="chats" bare />
 			<span class="row-text">All chats</span>
@@ -216,24 +247,41 @@
 	</div>
 
 	<div class="body" onscroll={(e) => (scrolled = e.currentTarget.scrollTop > 0)}>
-		{#if projectStore.projects.length > 0}
-			<!-- The rooms a chat can live in, above the chats themselves: the
-			     same order as the desktop panel. No empty state — a section
-			     with nothing in it is a feature announcing itself. -->
-			<div class="section-label">Projects</div>
-			{#each projectStore.projects as p (p.id)}
-				{@const route = `/project/${p.id}`}
+		{#if pinsStore.pins.length > 0}
+			<!-- What the owner pinned, in their order, above the chats: the
+			     desktop panel's order. Projects are a door now, as there. No
+			     empty state: a section with nothing in it is a feature
+			     announcing itself. -->
+			<div class="section-label">Pinned</div>
+			{#each pinsStore.pins as pin (pin.id)}
+				{@const look = pinIdentity(pin)}
+				{@const pinChat = pin.url.startsWith("/chat/") ? pin.url.slice("/chat/".length) : null}
 				<button
 					class="chat-row"
-					class:active={activeRoute === route}
-					aria-current={activeRoute === route ? "page" : undefined}
-					onclick={() => go(route, p.name || "Project")}
+					class:active={activeRoute === pin.url}
+					aria-current={activeRoute === pin.url ? "page" : undefined}
+					onclick={() => openPin(pin, look.title)}
 				>
 					<span class="chat-title with-glyph">
-						<ProjectGlyph project={p} size={16} />
-						<span class="title-text">{p.name || untitled("project")}</span>
+						<!-- The mark picked for it, else a dot in its color. -->
+						<span class="pin-mark" aria-hidden="true" style="color: {clothFor({ url: pin.url, color: look.color })}">
+							{#if look.icon && isEmoji(look.icon)}
+								{look.icon}
+							{:else if look.icon?.startsWith("atlas:")}
+								<AtlasIcon name={look.icon.slice("atlas:".length)} size={16} bare />
+							{:else if look.icon}
+								<Icon icon={look.icon} width={16} />
+							{:else}
+								<Icon icon="shape:circle" width={14} />
+							{/if}
+						</span>
+						<span class="title-text">{look.title}</span>
+						{#if pinChat && chatActivity.running(pinChat)}
+							<Icon icon="ri:loader-4-line" width="14" class="spin state-mark" />
+						{:else if pinChat && chatActivity.unread(pinChat)}
+							<span class="row-unread" role="img" aria-label="New reply"></span>
+						{/if}
 					</span>
-					<span class="chat-when">{p.chat_count === 1 ? "1 chat" : `${p.chat_count} chats`}</span>
 				</button>
 			{/each}
 		{/if}
@@ -321,7 +369,7 @@
 		width: 44px;
 		height: 44px;
 		border: 0;
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		background: transparent;
 		color: var(--color-foreground);
 		cursor: pointer;
@@ -373,7 +421,7 @@
 		margin: 0 0 6px;
 		padding: 0 14px;
 		border: 0;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: color-mix(in srgb, var(--wash-ink) 5%, transparent);
 		color: var(--color-foreground-muted);
 		font-size: 15px;
@@ -432,7 +480,7 @@
 		width: 44px;
 		min-height: 48px;
 		border: 0;
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		cursor: pointer;
@@ -454,7 +502,7 @@
 		margin-bottom: 8px;
 		padding: 0 16px;
 		border: 0;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-primary);
 		color: var(--color-background);
 		text-align: left;
@@ -476,7 +524,7 @@
 		min-height: 48px;
 		padding: 0 10px;
 		border: 0;
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		background: transparent;
 		color: var(--color-foreground);
 		text-align: left;
@@ -509,7 +557,7 @@
 		min-height: 48px;
 		padding: 7px 10px;
 		border: 0;
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		background: transparent;
 		color: var(--color-foreground);
 		text-align: left;
@@ -538,7 +586,7 @@
 		height: 8px;
 		margin-left: auto;
 		flex: none;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-success);
 	}
 
@@ -572,6 +620,15 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+
+	.pin-mark {
+		display: flex;
+		flex: none;
+		align-items: center;
+		justify-content: center;
+		width: 16px;
+		font-size: 14px;
 	}
 
 	.empty {

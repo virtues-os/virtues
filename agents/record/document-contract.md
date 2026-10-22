@@ -151,10 +151,10 @@ What a markdown page's editor did, and what a block page does instead.
 | Copy: a selection is its markdown; a range of table cells is tab-separated text | Kept: `clipboardText` in `markdown.ts`; a copy inside one list item is its blocks |
 | The platform's undo (shake, three fingers, Edit > Undo) | Kept: `editor.ts` routes `historyUndo` to y-undo, as ⌘Z does |
 | Focus and typewriter | Kept: `focus.ts` |
+| The drawn caret (`caret.ts`): sized to the font, gliding on keyboard moves, a soft blink once still | Kept: `drawnCaret` in `lib/document/caret.ts`, on pages and in the chat composer; a click or a focus arrives without a glide, a range or a selected widget shows no bar, and an input method's composition gets the browser's caret back |
 | Long-press menus on iOS | Kept: `gesture.ts`, `onContextGesture`; Shift-F10 opens the same menus from the keyboard, on their first row, on a page that is read only the focused link's or widget's; the lift after a hold never closes the menu (`swallowLift`); while one is open every key that would edit the page is the menu's (`contextMenu/keys.ts`) |
 | Media widgets, image width, media paste | Kept: `MediaNode`, `media.ts`, `uploads.ts`; the width and an applet's height are sliders the arrows move; files pasted over a selection replace it at once, over selected cells every cell empties and they land in the first |
 | Refs and their hover preview | Kept: `MentionNode` |
 | Raw markdown editing (`pageDisplay.rawMode`, `render-mode.ts`) | **Replaced** by the read-only View as markdown (`MarkdownView.svelte`); markdown is not edited as text on a block page |
 | CriticMarkup comments (`{>>note<<}`) and Resolve comment (`review-marks.ts`) | **Cut**: the contract has no comment mark |
-| The drawn caret (`caret.ts`): sized to the font, gliding on keyboard moves, a soft blink once still | **Cut**: the browser's own caret, in the page's ink (`caret-color`) |
 | Live preview, render mode, widget height, mouse freeze, list renumber, empty-mark tidy | **Cut**: no meaning on a tree; ProseMirror renders the tree, and the browser numbers a list itself, an item carrying its own number by that ([A numbered item keeps its number](../build/document.md#rules-the-editor-keeps)) |

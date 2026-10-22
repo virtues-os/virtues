@@ -23,9 +23,11 @@
 		getProjectGraph
 	} from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
+	import { dropZone, hasFiles } from '$lib/actions/dropZone';
 	import {
 		droppedRefUrl,
 		fileIntoProject,
+		REF_DRAG_TYPE,
 		memberIcon,
 		memberName,
 		projectMemberUrl,
@@ -434,10 +436,12 @@
 	}
 
 	// ---- Drag-drop onto the project: upload + add in one motion -------------
+	// It takes files and the sidebar's rows, and nothing while archived.
 	let dropActive = $state(false);
+	function acceptsDrop(data: DataTransfer): boolean {
+		return !archived && (hasFiles(data) || data.types.includes(REF_DRAG_TYPE));
+	}
 	async function handleDrop(e: DragEvent) {
-		e.preventDefault();
-		dropActive = false;
 		const id = projectId;
 		// A chat, page or pin dragged from the sidebar files itself.
 		const ref = droppedRefUrl(e);
@@ -447,7 +451,7 @@
 			return;
 		}
 		const dropped = e.dataTransfer?.files;
-		if (!id || archived || !dropped || dropped.length === 0) return;
+		if (!id || !dropped || dropped.length === 0) return;
 		const files = [...dropped];
 		// An upload can take a while and the row only appears at the end, so
 		// the drop says it was taken before it says it is done.
@@ -506,19 +510,14 @@
 			class:drop-active={dropActive}
 			role="region"
 			aria-label="Project contents"
-			ondragover={(e) => {
-				e.preventDefault();
-				dropActive = !archived;
+			use:dropZone={{
+				accepts: acceptsDrop,
+				onActive: (active) => (dropActive = active),
+				onDrop: handleDrop,
+				// A sidebar row allows only a link, and a drop whose effect
+				// it does not allow never fires.
+				effect: (data) => (data.types.includes(REF_DRAG_TYPE) ? 'link' : 'copy'),
 			}}
-			ondragleave={(e) => {
-				// Crossing into a child fires dragleave too; only leaving the
-				// project itself should drop the highlight.
-				const zone = e.currentTarget as HTMLElement;
-				if (!e.relatedTarget || !zone.contains(e.relatedTarget as Node)) {
-					dropActive = false;
-				}
-			}}
-			ondrop={handleDrop}
 		>
 			<ProjectHeader project={detail} />
 
@@ -674,8 +673,14 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1.6rem;
+		border-radius: var(--radius-xl);
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
 	}
-	.inner.drop-active { outline: 1.5px dashed var(--color-primary); outline-offset: 10px; border-radius: 10px; }
+	/* The drop tint, on at hover-in and off at hover-out. */
+	.inner.drop-active {
+		background-color: var(--drop-tint);
+		transition-duration: var(--motion-hover-in);
+	}
 	.state { display: flex; align-items: center; gap: 8px; padding: 3rem 2rem; color: var(--color-foreground-muted); }
 	.state.error { color: var(--color-error, #dc2626); }
 
@@ -689,7 +694,7 @@
 		min-height: 44px;
 		padding: 4px 6px 4px 16px;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		transition: border-color 120ms ease;
 	}
@@ -723,6 +728,7 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
+		.inner,
 		.ask-send {
 			transition: none;
 		}
@@ -734,7 +740,7 @@
 
 	.add-row {
 		display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
-		padding: 1rem 0.6rem; border: 1px dashed var(--color-border); border-radius: 8px;
+		padding: 1rem 0.6rem; border: 1px dashed var(--color-border); border-radius: var(--radius-lg);
 		background: transparent; cursor: pointer;
 		font: inherit; font-size: 0.9rem; color: var(--color-foreground-subtle);
 	}
@@ -767,7 +773,7 @@
 	.project-card {
 		display: flex; flex-direction: column; gap: 0.4rem;
 		width: 100%; height: 100%; padding: 0.85rem 0.9rem;
-		border: 1px solid var(--color-border); border-radius: 10px;
+		border: 1px solid var(--color-border); border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		transition: background-color 0.12s ease, border-color 0.12s ease;
 	}

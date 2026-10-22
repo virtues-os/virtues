@@ -1,0 +1,97 @@
+/*
+ * The drawn caret's look: the half of `caret.ts` that CSS carries.
+ *
+ * Imported by `caret.ts` itself, so every editor that turns the caret on
+ * gets its styles in the same chunk as the behavior. Styles that arrived with
+ * some other chunk would leave the browser's caret hidden and nothing drawn
+ * in its place until that chunk loaded.
+ */
+
+/* The browser's caret gives way to the drawn one. Two classes, so it wins
+   over the page's own `caret-color` on `.doc-prose` whatever the order. */
+.ProseMirror.doc-caret-drawn {
+	caret-color: transparent;
+}
+
+/* Fields inside the document (a caption, a link's address) keep the
+   browser's caret: their selection is not a position in the document, so
+   the drawn bar cannot follow it. Same color, so it reads as one caret. */
+.ProseMirror.doc-caret-drawn input,
+.ProseMirror.doc-caret-drawn textarea {
+	caret-color: var(--color-primary);
+}
+
+/* An input method draws its own composition, and the browser's caret is
+   the one that follows it. */
+.ProseMirror.doc-caret-drawn[data-caret-composing] {
+	caret-color: var(--color-primary);
+}
+
+.doc-caret-host {
+	position: relative;
+}
+
+.doc-caret {
+	position: absolute;
+	top: 0;
+	left: 0;
+	z-index: 5;
+	border-radius: var(--radius-xs);
+	background: var(--color-primary);
+	pointer-events: none;
+	/* Front-loaded curve: leaves fast, settles slow. A symmetric ease at
+	   105ms feels like lag; this feels like travel. */
+	transition:
+		transform 105ms cubic-bezier(0.22, 0.61, 0.36, 1),
+		height 105ms cubic-bezier(0.22, 0.61, 0.36, 1),
+		width 105ms cubic-bezier(0.22, 0.61, 0.36, 1);
+}
+
+.doc-caret[hidden] {
+	display: none;
+}
+
+/* Typing gets a shorter glide: keys land faster than 105ms, and a caret
+   still travelling when the next letter appears sits behind the text. */
+.doc-caret[data-input='typing'] {
+	transition-duration: 60ms;
+}
+
+/* A click is a jump, and so is arriving from nowhere (focus, a selection
+   collapsing). Gliding toward the spot someone just pointed at is the
+   fastest way to make an editor feel slow. */
+.doc-caret[data-input='pointer'],
+.doc-caret.doc-caret--arriving {
+	transition: none;
+}
+
+/* Blinking is opt-in, applied after 500ms of stillness, so the caret never
+   blinks under the writer's own typing. */
+.doc-caret--blinking {
+	animation: doc-caret-blink 1s infinite;
+}
+
+/* Long on, quick dip, back: a fade the eye reads as breathing. The stock
+   square wave is what makes a native caret feel mechanical. */
+@keyframes doc-caret-blink {
+	0%,
+	40% {
+		opacity: 1;
+	}
+	80% {
+		opacity: 0;
+	}
+	100% {
+		opacity: 1;
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.doc-caret {
+		transition: none;
+	}
+
+	.doc-caret--blinking {
+		animation: none;
+	}
+}

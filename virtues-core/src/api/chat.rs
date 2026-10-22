@@ -256,6 +256,11 @@ pub struct ChatRequest {
     /// Every other mode's thinking is the mode's own (`ChatMode::limits`).
     #[serde(default)]
     pub think: bool,
+    /// The opening turn the person is replying to (`chat_opening`), on the
+    /// first send of a new chat. Only the id travels; the box looks the text
+    /// up in what it wrote.
+    #[serde(default)]
+    pub opening: Option<String>,
 }
 
 /// A ghost chat's history, as the client sent it. The box stores nothing for
@@ -2027,6 +2032,7 @@ pub(crate) async fn store_user_turn(pool: &PgPool, request: &ChatRequest) {
         {
             tracing::warn!("Failed to set chat project: {}", e);
         }
+        store_opening(pool, request).await;
     }
 
     let regenerating = drop_previous_answer_if_regenerating(pool, request).await;
@@ -2061,6 +2067,35 @@ pub(crate) async fn store_user_turn(pool: &PgPool, request: &ChatRequest) {
         } else if let Err(e) = append_message(pool, request.chat_id.clone(), user_message).await {
             tracing::error!("Failed to save user message: {}", e);
         }
+    }
+}
+
+/// A new chat that answers the box's opening turn starts with that turn, so
+/// the model sees what the person is replying to and the transcript shows it.
+/// The id is `<opening id>_<chat id>`, which the client also gives the turn.
+async fn store_opening(pool: &PgPool, request: &ChatRequest) {
+    let Some(opening_id) = request.opening.as_deref() else { return };
+    let Some(text) = crate::api::chat_opening::text_for(opening_id) else {
+        tracing::warn!("[chat] opening {opening_id} is not held; the chat starts without it");
+        return;
+    };
+    let message = ChatMessage {
+        id: Some(format!("{opening_id}_{}", request.chat_id)),
+        role: "assistant".to_string(),
+        content: text,
+        timestamp: Timestamp::now(),
+        model: None,
+        provider: None,
+        agent_id: None,
+        parts: None,
+        tool_calls: None,
+        reasoning: None,
+        intent: None,
+        subject: None,
+        reasoning_details: None,
+    };
+    if let Err(e) = append_message(pool, request.chat_id.clone(), message).await {
+        tracing::error!("Failed to save the opening turn: {}", e);
     }
 }
 
@@ -2405,6 +2440,7 @@ fn create_agent_stream(
             },
             chat_id: Some(request.chat_id.clone()),
             applet_id: None,
+            task_id: None,
             subagent_tx: Some(subagent_tx),
             cancel_token: Some(cancel_token.clone()),
             worker_budget: Some(worker_budget),
@@ -2665,6 +2701,7 @@ impl Spend<'_> {
                 } else {
                     crate::api::ai_calls::Route::Wallet
                 },
+                chat_id: (!self.temporary).then(|| chat_id.to_string()),
                 applet_run_id: None,
             },
         )

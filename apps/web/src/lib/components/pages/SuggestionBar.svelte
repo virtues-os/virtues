@@ -60,8 +60,9 @@
 		gap: 4px;
 		padding: 4px;
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 12px;
+		border-radius: var(--card-radius);
 		background: var(--color-surface);
+		box-shadow: var(--shadow-float);
 	}
 
 	.sb-btn {
@@ -71,7 +72,7 @@
 		height: 28px;
 		padding: 0 8px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 0.8125rem;

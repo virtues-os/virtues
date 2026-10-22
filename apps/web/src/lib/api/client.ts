@@ -1127,6 +1127,9 @@ export interface Profile {
 	/** Getting-started sections dismissed from Home. Send the whole array —
 	 *  the box remembers it verbatim; the client owns the merge. */
 	getting_started_dismissed?: string[];
+	/** The sidebar's doors as the owner arranged them, by door id. Null is the
+	 *  shipped arrangement. Send the whole value. */
+	sidebar_doors?: { order: string[]; hidden: string[] } | null;
 }
 
 export function getProfile(): Promise<Profile> {
@@ -1591,7 +1594,7 @@ export function emptyTrash(): Promise<{ deleted_count: number }> {
 // Visits — the frecency log behind ⌘K (`api::visits` on the box)
 // ============================================================================
 
-export type VisitKind = 'chat' | 'page' | 'project';
+export type VisitKind = 'chat' | 'page' | 'project' | 'applet';
 
 export interface Frecency {
 	kind: VisitKind;
@@ -1602,6 +1605,17 @@ export interface Frecency {
 /** POST /api/visits — the owner opened this themselves. 204; the box dedupes a minute. */
 export function recordVisit(kind: VisitKind, recordId: string): Promise<void> {
 	return apiSend<void>('POST', '/visits', { kind, record_id: recordId });
+}
+
+export interface RecentVisit {
+	kind: VisitKind;
+	record_id: string;
+	last_visited_at: string;
+}
+
+/** GET /api/visits/recent — each record's last visit, newest first. */
+export function getRecentVisits(): Promise<RecentVisit[]> {
+	return apiGet<RecentVisit[]>('/visits/recent');
 }
 
 /** GET /api/visits/frecency — every visited record's score, highest first. */
@@ -2110,7 +2124,8 @@ export interface PageListResponse {
 // ============================================================================
 
 export type TaskActor = 'owner' | 'assistant';
-export type TaskStatus = 'open' | 'active' | 'done' | 'dismissed';
+/** `ready`: a request's run finished and its result waits for the owner. */
+export type TaskStatus = 'open' | 'active' | 'ready' | 'done' | 'dismissed';
 
 export interface Task {
 	id: string;
@@ -2131,6 +2146,22 @@ export interface Task {
 	closed_at: string | null;
 	created_at: string;
 	updated_at: string;
+	/** What a request's run produced, as markdown. */
+	result: string | null;
+	/** A page or other app URL the run made. */
+	result_url: string | null;
+	/** The request's own work chat. */
+	chat_id: string | null;
+	/** When the worker may run the request; null when it does not run on its own. */
+	next_run_at: string | null;
+	/** Failed runs in a row. */
+	attempts: number;
+	/** The model the request's latest run used. Only reads carry it. */
+	run_model?: string | null;
+	/** Who paid for that run's calls: `wallet` or `byo`. */
+	run_route?: 'wallet' | 'byo' | null;
+	/** Wallet spend across the request's runs, in micros-USD. */
+	spent_micros?: number | null;
 }
 
 export interface TaskEvent {
@@ -2185,6 +2216,10 @@ export interface RefSearchResult {
 	name: string;
 	entity_type: string;
 	icon: string;
+	url: string;
+	mime_type?: string;
+	/** When the row was written (RFC 3339). A box older than this field omits it. */
+	created_at?: string;
 }
 
 export interface RefSearchResponse {
@@ -2243,11 +2278,22 @@ export async function deletePage(id: string): Promise<void> {
 }
 
 /**
- * Search entities for autocomplete in the page editor
- * Used when typing [[ to link to entities
+ * Search entities for an `@` mention. `kinds` keeps only those entity types,
+ * `createdAfter` only rows created at or after it; `limit` is capped at 50.
  */
-export function searchRefs(query: string): Promise<RefSearchResponse> {
-	return apiGet<RefSearchResponse>('/pages/search/refs', { q: query });
+export function searchRefs(
+	query: string,
+	opts: { kinds?: string[]; createdAfter?: Date; limit?: number; signal?: AbortSignal } = {},
+): Promise<RefSearchResponse> {
+	return request<RefSearchResponse>('/pages/search/refs', {
+		query: {
+			q: query,
+			kinds: opts.kinds?.join(','),
+			created_after: opts.createdAfter?.toISOString(),
+			limit: opts.limit,
+		},
+		signal: opts.signal,
+	});
 }
 
 /**
@@ -2540,6 +2586,16 @@ export interface RefIdentity {
 }
 export function resolveRefs(urls: string[]): Promise<{ refs: RefIdentity[] }> {
 	return apiSend('POST', '/refs/resolve', { urls });
+}
+
+/** What the box says first on an empty new chat; nulls when nothing stands out. */
+export interface ChatOpening {
+	id: string | null;
+	text: string | null;
+	event_id: string | null;
+}
+export function getChatOpening(): Promise<ChatOpening> {
+	return apiGet('/chat/opening');
 }
 
 /** The chats with a turn running on the box right now, from any device. */

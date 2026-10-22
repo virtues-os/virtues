@@ -119,8 +119,8 @@
 		width: 320px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 10px;
-		box-shadow: 0 8px 30px rgba(0, 0, 0, 0.14);
+		border-radius: var(--card-radius);
+		box-shadow: var(--shadow-float);
 		overflow: hidden;
 	}
 
@@ -168,7 +168,7 @@
 		border: none;
 		background: var(--color-surface-elevated);
 		color: var(--color-foreground-muted);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		cursor: pointer;
 		transition:
 			color 0.12s ease,

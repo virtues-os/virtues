@@ -93,12 +93,23 @@ impl ToolExecutionResult {
     /// repeated-failure guard then refused the identical retry. The data is
     /// the part it needs.
     pub fn to_llm_content(&self) -> String {
+        self.render_for_model(&mut |data| data.clone())
+    }
+
+    /// What the model reads, with each `ref` route as a short handle it can
+    /// copy (see `agent::citations`). The client and the stored row get the
+    /// routes, through `to_event`.
+    pub fn to_llm_content_cited(&self, cites: &mut super::citations::Citations) -> String {
+        self.render_for_model(&mut |data| cites.shorten(data))
+    }
+
+    fn render_for_model(&self, shown: &mut dyn FnMut(&serde_json::Value) -> serde_json::Value) -> String {
         match &self.result {
             Ok(result) if !result.success => {
                 let reason = result.error.as_deref().unwrap_or("the tool reported a failure");
                 let mut out = format!("Tool failed ({}, execution): {reason}", self.tool_name);
                 if !result.data.is_null() {
-                    if let Ok(data) = serde_json::to_string(&result.data) {
+                    if let Ok(data) = serde_json::to_string(&shown(&result.data)) {
                         out.push('\n');
                         out.push_str(&clip_for_model(&data, FAILURE_DATA_BYTES));
                     }
@@ -106,7 +117,7 @@ impl ToolExecutionResult {
                 out
             }
             Ok(result) => {
-                let text = serde_json::to_string(&result.data)
+                let text = serde_json::to_string(&shown(&result.data))
                     .unwrap_or_else(|_| "Tool completed: success".to_string());
                 clip_for_model(&text, MAX_TOOL_OUTPUT_BYTES)
             }

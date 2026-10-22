@@ -155,10 +155,28 @@
 	--motion-enter: 180ms;
 	--motion-layout: 300ms;
 
-	/* Radius — sm/md/lg/xl (4/6/8/12px) already match Tailwind v4 defaults,
-	   so `rounded-*` utilities are unchanged. `--radius-full` is the one gap:
-	   Tailwind's `rounded-full` is a static calc(infinity*1px) with no var,
-	   so this exposes a pill radius to hand-written `<style>` blocks. */
+	/* Drag and drop (agents/build/design.md, "Drag and drop"). One look
+	   everywhere: a line where a dragged thing will land between others, a
+	   tint on a thing or a zone that will take it, and the source dimmed
+	   where it came from. */
+	--drop-line: var(--color-primary);
+	--drop-line-width: 2px;
+	--drop-tint: color-mix(in srgb, var(--color-primary) 15%, transparent);
+	--drag-source-opacity: 0.4;
+
+	/* Radius. Every corner in the app is one of these steps, in `rounded-*`
+	   utilities and hand-written `<style>` blocks alike. md and lg sit 2px
+	   above Tailwind's defaults (6/8px) so cards, tabs, rows and menus round
+	   like the macOS window around them. xs and sm stay small because 2px
+	   more on a checkbox or inline code would soften it visibly. A step
+	   inside a padded container should be at least one step below it.
+	   `--radius-full` is here because Tailwind's `rounded-full` is a static
+	   calc(infinity*1px) with no var. */
+	--radius-xs: 2px;
+	--radius-sm: 4px;
+	--radius-md: 8px;
+	--radius-lg: 10px;
+	--radius-xl: 12px;
 	--radius-full: 9999px;
 
 	/* Named breakpoint for the app's dominant hand-written media query (900px),
@@ -240,15 +258,17 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #FFFFFF;
 	/* The desk: the ground the cards stand on, under the sidebar and the
-	   window header. Only the work is raised, so the step between the desk
-	   and --page is what separates a card, not a line (--card-edge is
-	   transparent wherever the step does the job). Every theme's desk is its
-	   own --surface-elevated tint, darkened to about 7 L* below the page in
-	   a light theme and about 5 in a dark one; Borghese, whose page is pure
-	   black, keeps a border instead.
+	   window header. Only the work is raised: the step between the desk and
+	   --page separates a card, and a faint hairline gives it a clean edge.
+	   Every theme's desk is its own --surface-elevated tint, darkened to
+	   about 7 L* below the page in a light theme and about 5 in a dark one.
 	   Pemberley: white sheets on a cool light gray. */
 	--desk: #F0F0F2;
-	--card-edge: transparent;
+	/* The hairline: 9% of the theme's ink over its page, so every theme gets
+	   one in its own hue without a value of its own. Mixed over the page, it
+	   lands darker than a light card and lighter than a dark one. It resolves
+	   on <html>, where `data-theme` lands, so it reads that theme's colors. */
+	--card-edge: color-mix(in srgb, var(--foreground) 9%, var(--page));
 	--surface-overlay: #FFFFFF;
 	/* The page is the surface unless a theme says otherwise. It resolves here,
 	   on <html>, which is also where `data-theme` lands, so every theme's own
@@ -312,7 +332,7 @@
 
 	/* Sidebar Component Tokens */
 	--sidebar-interactive-padding: 6px 10px;
-	--sidebar-interactive-radius: 6px;
+	--sidebar-interactive-radius: var(--radius-md);
 	--sidebar-interactive-gap: 8px;
 	--sidebar-interactive-font-size: 13px;
 	--sidebar-interactive-icon-size: 16px; /* SHELL_GLYPH_PX in AtlasIcon.svelte */
@@ -390,7 +410,11 @@
 	/* One radius for every card in the shell — the pane, the split panes and the
 	   sidebar panel. They used to disagree (8px mono, 4px split, 6px fallback),
 	   which read as the sidebar being rounded differently from the pages. */
-	--card-radius: 6px;
+	--card-radius: var(--radius-md);
+	/* The one shadow (design.md, Corners and elevation): every layer that
+	   floats over a page or the shell carries this and no other, at
+	   --card-radius. The chrome and the pane never carry one. */
+	--shadow-float: 0 4px 16px rgba(0, 0, 0, 0.15);
 	--chrome-row-h: 40px;
 	--chrome-tab-h: 28px;
 
@@ -415,7 +439,6 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
 	--desk: #EBEBEB;
-	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Film grain + subtle navy gradient */
@@ -501,7 +524,6 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
 	--desk: #EBEBEB;
-	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Blue to peach gradient */
@@ -591,7 +613,6 @@
 	/* White sheets on a near-white warm gray desk. The step is only about 4%,
 	   too little to draw an edge on its own, so a light hairline does. */
 	--desk: #F5F4F2;
-	--card-edge: #E6E5E2;
 	--surface-overlay: #FFFFFF;
 	/* The page is the same white as the sidebar's card, so the two panes read
 	   as one paper on the warm ground; a card on it lifts by its border. */
@@ -605,7 +626,8 @@
 	/* Content Colors - Navy-black ink on ivory */
 	--foreground: #1A2030;
 	--foreground-muted: #3E4459;
-	--foreground-subtle: #6C7185;
+	/* 5:1 on the desk: the 12px group labels need AA at their size. */
+	--foreground-subtle: #626779;
 	--foreground-disabled: #A8A395;
 
 	/* Interactive Colors - Deep heritage navy */
@@ -669,7 +691,6 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F5F5F5;
 	--desk: #EBEBEB;
-	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Flat for this theme */
@@ -743,7 +764,6 @@
 	--surface: #1f1f35;
 	--surface-elevated: #25253d;
 	--desk: #15152B;
-	--card-edge: transparent;
 	--surface-overlay: #2a2a45;
 
 	/* Background Treatment - Dark blue to warm gradient */
@@ -815,7 +835,6 @@
 	--surface: #FFFFFF;
 	--surface-elevated: #F0EFE9;
 	--desk: #ECEBE5;
-	--card-edge: transparent;
 	--surface-overlay: #FFFFFF;
 
 	/* Background Treatment - Flat for this theme */
@@ -888,7 +907,6 @@
 	--surface: #171717;
 	--surface-elevated: #262626;
 	--desk: #0A0A0A;
-	--card-edge: transparent;
 	--surface-overlay: #2a2a2a;
 
 	/* Background Treatment - Subtle dark gradient with hint of warmth */
@@ -963,7 +981,6 @@
 	--surface: #131E28;
 	--surface-elevated: #18242F;
 	--desk: #08141E;
-	--card-edge: transparent;
 	--surface-overlay: #1D2A36;
 
 	/* Background Treatment — the grid rules the DESK, not the page.
@@ -1066,7 +1083,6 @@
 	--surface: #1B1913;
 	--surface-elevated: #221E15;
 	--desk: #110D05;
-	--card-edge: transparent;
 	--surface-overlay: #261F14;
 
 	/* Content Colors */
@@ -1128,7 +1144,7 @@
 	--surface: #000000;
 	--surface-elevated: #1a1a1a;
 	/* The page is pure black, so no desk can sit below it: the cards keep
-	   their border, which is this theme's look. */
+	   their full border, which is this theme's look. */
 	--desk: var(--surface-elevated);
 	--card-edge: var(--border);
 	--surface-overlay: #1a1a1a;
@@ -1193,7 +1209,6 @@
 	--surface: #2f333d;
 	--surface-elevated: #383e4a;
 	--desk: #232834;
-	--card-edge: transparent;
 	--surface-overlay: #3e4451;
 
 	/* Content Colors - Slightly lighter for readability */
@@ -1256,17 +1271,17 @@
 	/* Code Syntax Highlighting (Vitesse Dark) */
 	--shiki-theme: vitesse-dark;
 
-	/* Surface Colors */
-	--background: #0c0c0c;
-	--surface: #101010;
-	--surface-elevated: #191919;
+	/* Surface Colors - Charcoal with a faint cool cast toward the Nordic
+	   blue. Pure black made the desk glare against the cards. */
+	--background: #131416;
+	--surface: #17181a;
+	--surface-elevated: #1e1f22;
 	/* Dark: a card is lighter than the desk it lies on, so the desk goes
 	   below the page rather than above it. --page is raised off --surface
 	   for the same reason. */
-	--page: #161616;
-	--desk: #0A0A0A;
-	--card-edge: transparent;
-	--surface-overlay: #1f1f1f;
+	--page: #1c1d20;
+	--desk: #121315;
+	--surface-overlay: #25262a;
 
 	/* Content Colors */
 	--foreground: #D4D4D4;
@@ -1301,9 +1316,9 @@
 	--diff-remove-bg: #2d1a1f;
 
 	/* Border Colors */
-	--border: #2a2a2a;
-	--border-subtle: #1e1e1e;
-	--border-strong: #3a3a3a;
+	--border: #2e3034;
+	--border-subtle: #242528;
+	--border-strong: #3e4045;
 	--border-focus: #88C0D0;
 
 	/* Selection/Highlight - the Nordic blue as a tint, strong enough to read
@@ -1312,7 +1327,7 @@
 	--highlight-foreground: #D4D4D4;
 
 	/* Background Inverse */
-	--background-inverse: #0f0f0f;
+	--background-inverse: #121315;
 }
 
 /* ===================================
@@ -1328,7 +1343,6 @@
 	--surface: #fdf6e3;
 	--surface-elevated: #eee8d5;
 	--desk: #E8E2CF;
-	--card-edge: transparent;
 	--surface-overlay: #ffffff;
 
 	/* Content Colors - Warm text hierarchy */
@@ -1396,7 +1410,6 @@
 	--surface: #2d303e;
 	--surface-elevated: #343746;
 	--desk: #232533;
-	--card-edge: transparent;
 	--surface-overlay: #3c3f52;
 
 	/* Content Colors */
@@ -1463,7 +1476,6 @@
 	--surface: #2a273f;
 	--surface-elevated: #312e47;
 	--desk: #201C34;
-	--card-edge: transparent;
 	--surface-overlay: #393552;
 
 	/* Content Colors */
@@ -1579,8 +1591,11 @@
  * Theme-adaptive by design: the light values below are the default; the dark
  * override lifts each hue so categories stay legible on dark surfaces.
  *
- * Both sets sit at a UNIFORM lightness in OKLab — 0.58 light, 0.78 dark — with
- * hue preserved and chroma held near 0.13. They were raw Tailwind 500s, whose
+ * Both sets sit at a UNIFORM lightness in OKLab — 0.58 light, 0.78 dark — and
+ * a muted chroma, 0.10 light and 0.09 dark, so a pin reads as a label and
+ * not as a light. No hue sits at an error red or a warning amber: rose is at
+ * 12°, clay (key `orange`) at 48° and ochre (key `yellow`) at 95°, and the
+ * nine are spread so no two neighbors are under 25° apart. They were raw Tailwind 500s, whose
  * lightness ranged 0.59 to 0.80: yellow was the palest thing in the set and
  * washed out on paper while indigo sat heavy, so a row of them read as
  * unevenly weighted rather than as one family. Equal lightness is what makes
@@ -1597,18 +1612,18 @@
  * lightness, or the unevenness comes straight back.
  * ────────────────────────────────────────────────────────────────────────── */
 :root {
-	--cat-purple: #8b64b9;
-	--cat-purple-light: #a97fd6;
-	--cat-indigo: #457ac7;
-	--cat-violet: #7e69c1;
-	--cat-pink: #b4557f;
-	--cat-rose: #bb555f;
-	--cat-orange: #b75e2b;
-	--cat-yellow: #9d7300;
-	--cat-cyan: #008cab;
-	--cat-cyan-light: #22a6c6;
-	--cat-emerald: #009262;
-	--cat-emerald-light: #1cad7c;
+	--cat-purple: #8e68a5;
+	--cat-purple-light: #a47dbb;
+	--cat-indigo: #547bb5;
+	--cat-violet: #7471b3;
+	--cat-pink: #a1628d;
+	--cat-rose: #ad606a;
+	--cat-orange: #aa6743;
+	--cat-yellow: #8d792a;
+	--cat-cyan: #1b87a4;
+	--cat-cyan-light: #399dba;
+	--cat-emerald: #3a8c67;
+	--cat-emerald-light: #51a27b;
 }
 
 [data-theme="lothlorien"],
@@ -1620,18 +1635,18 @@
 [data-theme="asgard"],
 [data-theme="agora"],
 [data-theme="shire"] {
-	--cat-purple: #c9a3f9;
-	--cat-purple-light: #dbbdff;
-	--cat-indigo: #84b9ff;
-	--cat-violet: #baa8ff;
-	--cat-pink: #f694bc;
-	--cat-rose: #fd959b;
-	--cat-orange: #f99d6e;
-	--cat-yellow: #dbb14e;
-	--cat-cyan: #37cbea;
-	--cat-cyan-light: #6fe0fb;
-	--cat-emerald: #60d09f;
-	--cat-emerald-light: #8ae5bb;
+	--cat-purple: #cba7e1;
+	--cat-purple-light: #dcbcf1;
+	--cat-indigo: #94b9f1;
+	--cat-violet: #b1b0ef;
+	--cat-pink: #dfa1ca;
+	--cat-rose: #eba0a8;
+	--cat-orange: #e7a685;
+	--cat-yellow: #c9b773;
+	--cat-cyan: #71c5e0;
+	--cat-cyan-light: #8ed7ef;
+	--cat-emerald: #82caa5;
+	--cat-emerald-light: #9cdbba;
 
 	/* Dark-mode flag for the JS that adapts a user's CUSTOM hex (pin-colors.ts).
 	   Set here, beside the palette it belongs to, so adding a theme stays one
@@ -1658,4 +1673,12 @@
 	--z-context-menu: 1300;  /* right-click context menu                     */
 	--z-context-submenu: 1301; /* its submenu, one above the menu            */
 	--z-tooltip: 1400;       /* tooltips — always on top                     */
+}
+
+/* The reading column, shared by a chat's messages and a page's text: the
+   measure is the text's width (about 80 characters of 16px body), and the
+   gutter is the room either side of it inside the pane. */
+:root {
+	--reading-measure: 38rem;
+	--reading-gutter: 1.5rem;
 }

@@ -18,6 +18,7 @@
 	import { Popover } from '$lib/floating';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { projectColor } from '$lib/sidebar/pin-colors';
+	import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 	import {
 		archiveProject,
 		deleteProject,
@@ -105,6 +106,9 @@
 					{close}
 					color={project.accent_color ?? null}
 					onColorSelect={setAccent}
+					label={project.name}
+					fallback={PROJECT_ICON}
+					autoColor={projectColor({ id: project.id })}
 				/>
 			{/snippet}
 		</Popover>
@@ -207,7 +211,7 @@
 	   itself on its own page. */
 	.project-icon {
 		display: grid; place-items: center; width: 46px; height: 46px; flex-shrink: 0;
-		border-radius: 12px; cursor: pointer;
+		border-radius: var(--radius-xl); cursor: pointer;
 		background: color-mix(in srgb, var(--room-accent) 16%, transparent);
 		border: 1px solid color-mix(in srgb, var(--room-accent) 30%, var(--color-border));
 		color: color-mix(in srgb, var(--room-accent) 78%, var(--color-foreground));
@@ -240,7 +244,7 @@
 
 	.archived-note {
 		display: flex; align-items: center; gap: 10px;
-		padding: 10px 12px; border-radius: 10px;
+		padding: 10px 12px; border-radius: var(--radius-xl);
 		background: var(--color-surface-elevated);
 		font-size: 0.85rem; line-height: 1.45; color: var(--color-foreground-muted);
 	}

@@ -570,7 +570,7 @@
 		margin-top: 8px;
 		padding: 12px 16px;
 		background: var(--hover-bg);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		max-height: 500px;
 		overflow-y: auto;
 		color: var(--color-foreground);

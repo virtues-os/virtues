@@ -92,7 +92,7 @@
 	}
 	.drawing {
 		height: 200px;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: linear-gradient(
 			90deg,
 			var(--color-surface) 0%,

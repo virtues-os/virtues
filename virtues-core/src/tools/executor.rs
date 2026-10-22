@@ -73,6 +73,11 @@ pub struct ToolContext {
     pub chat_id: Option<String>,
     /// Applet ID (set when running as an action — for action memory tool)
     pub applet_id: Option<String>,
+    /// The request being worked, set by `crate::task_runner` for a request's
+    /// background run. Nobody is present to approve, so the permission gate
+    /// lets it through as it does an applet run, and the task tools refuse to
+    /// start another request from it.
+    pub task_id: Option<String>,
     /// Side-channel for streaming Deep Research subagent status to the live panel.
     /// Set by the chat handler; `None` for headless/action runs.
     pub subagent_tx: Option<tokio::sync::mpsc::Sender<SubagentUpdate>>,
@@ -116,6 +121,7 @@ impl Default for ToolContext {
             scope_mode: crate::search::ScopeMode::default(),
             chat_id: None,
             applet_id: None,
+            task_id: None,
             subagent_tx: None,
             cancel_token: None,
             worker_budget: None,
@@ -300,6 +306,8 @@ impl ToolExecutor {
         // ever covered applets it had authored itself.
         "setup_applet",
         "edit_applet",
+        // Writes a prompt that later runs with tools, as an applet's does.
+        "save_skill",
         // Deletes rows, in the person's own record.
         "sql_write",
         // Real money, per call.
@@ -338,7 +346,7 @@ impl ToolExecutor {
         }
         // Only interactive chat is gated. Autonomous action runs set `applet_id` (and may carry a
         // linked `chat_id`) but have no user present to approve, so they must run ungated.
-        if context.applet_id.is_some() {
+        if context.applet_id.is_some() || context.task_id.is_some() {
             return Ok(None);
         }
         // Headless calls with no chat aren't gated either.
@@ -370,6 +378,13 @@ impl ToolExecutor {
                         "sql_write" => ("your records".to_string(), "write to"),
                         "generate_image" => ("an image".to_string(), "generate"),
                         "setup_applet" => ("a new action".to_string(), "create"),
+                        "save_skill" => (
+                            arguments
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .map_or_else(|| "a skill".to_string(), |n| format!("the skill /{n}")),
+                            "save",
+                        ),
                         other => (other.to_string(), "run"),
                     };
                     (tool_name.to_string(), "tool", title, verb)
@@ -460,6 +475,7 @@ impl ToolExecutor {
                 }
             }
             "update_memory" => self.execute_update_memory(arguments).await,
+            "save_skill" => Self::execute_save_skill(arguments),
             // Getting started's tools: markers, never writes (the client's
             // cards write). `skip_step` is the one exception and it lands in
             // the same stored list the door uses.
@@ -1027,6 +1043,42 @@ impl ToolExecutor {
     /// Open one step's card. A done step has no card to open, and the
 
     /// Skip a step on the person's ask. `connect_ai` is the door's alone.
+    /// Save one of the person's skills (`api::skills`). Every check lives
+    /// there, so a refused name or tool comes back as the reason.
+    fn execute_save_skill(arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
+        let text = |key: &str| arguments.get(key).and_then(|v| v.as_str()).map(str::to_string);
+        let required = |key: &str| text(key).ok_or_else(|| ToolError::InvalidParameters(format!("{key} is required")));
+        let tools = arguments
+            .get("tools")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        let slot = match text("model").as_deref() {
+            None | Some("standard") => virtues_registry::models::ModelSlot::Standard,
+            Some("deep") => virtues_registry::models::ModelSlot::Deep,
+            Some(other) => {
+                return Err(ToolError::InvalidParameters(format!("model {other:?} is not standard or deep")))
+            }
+        };
+        let (skill, replaced) = crate::api::skills::save(crate::api::skills::NewSkill {
+            name: required("name")?,
+            description: required("description")?,
+            icon: text("icon"),
+            tools,
+            body: required("body")?,
+            slot,
+        })
+        .map_err(|e| match e {
+            crate::error::Error::InvalidInput(why) => ToolError::InvalidParameters(why),
+            e => ToolError::ExecutionFailed(format!("save skill: {e}")),
+        })?;
+        Ok(ToolResult::success(serde_json::json!({
+            "saved": skill.name,
+            "replaced": replaced,
+            "run_it_with": format!("/{}", skill.name),
+        })))
+    }
+
     async fn execute_skip_step(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
         let step = arguments
             .get("step")

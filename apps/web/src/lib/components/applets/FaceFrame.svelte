@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { mintFaceToken } from '$lib/api/client';
 	import { backendUrl } from '$lib/config/backend';
+	import { parseRoute } from '$lib/tabs/registry';
+	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import type { TabType } from '$lib/tabs/types';
 
 	/**
 	 * The applet face runtime: face/index.html rendered in a sandboxed
@@ -13,6 +16,43 @@
 
 	let src = $state<string | null>(null);
 	let err = $state<string | null>(null);
+	let frame = $state<HTMLIFrameElement | null>(null);
+
+	// The rooms `virtues.open(route)` may open. A face reads the record, so
+	// anything that carries a URL out of the app would let it send what it
+	// read somewhere: the in-app browser is left out, and the query string is
+	// dropped so no route can prefill a chat.
+	const OPENABLE: ReadonlySet<TabType> = new Set<TabType>([
+		'chat',
+		'page',
+		'tasks',
+		'day',
+		'year',
+		'timeline',
+		'wiki',
+		'person',
+		'place',
+		'org',
+		'project',
+		'bookmark',
+		'bookmarks',
+		'applets',
+		'applet-view'
+	]);
+
+	function onMessage(e: MessageEvent) {
+		if (!frame || e.source !== frame.contentWindow) return;
+		const data = e.data as { type?: unknown; route?: unknown } | null;
+		if (data?.type !== 'virtues:open' || typeof data.route !== 'string') return;
+		if (!data.route.startsWith('/') || data.route.startsWith('//')) return;
+		const path = new URL(data.route, 'http://localhost').pathname;
+		if (path === '/') {
+			windowShellStore.newChat();
+			return;
+		}
+		if (!OPENABLE.has(parseRoute(path).type)) return;
+		windowShellStore.openTabFromRoute(path, { focusExisting: true });
+	}
 
 	$effect(() => {
 		const id = appletId;
@@ -35,10 +75,13 @@
 	});
 </script>
 
+<svelte:window onmessage={onMessage} />
+
 {#if err}
 	<div class="face-error">face unavailable: {err}</div>
 {:else if src}
 	<iframe
+		bind:this={frame}
 		{src}
 		sandbox="allow-scripts"
 		title="Applet face"
@@ -53,7 +96,7 @@
 	.face-frame {
 		width: 100%;
 		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: var(--color-surface, #fff);
 	}
 	.face-error,
@@ -62,6 +105,6 @@
 		font-size: 0.8125rem;
 		color: var(--color-foreground-subtle, #9ca3af);
 		border: 1px dashed var(--color-border, #e5e7eb);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 	}
 </style>

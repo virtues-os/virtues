@@ -9,23 +9,18 @@
 	import IconButton from "$lib/components/IconButton.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import type { ViewState } from "$lib/document/nodeviews.svelte";
+	import { CALLOUT_TONES, calloutTone } from "$lib/document/callouts";
 
 	let { view }: { view: ViewState } = $props();
 
-	const TONES = [
-		{ tone: "note", label: "Note", icon: "ri:information-line" },
-		{ tone: "tip", label: "Tip", icon: "ri:lightbulb-line" },
-		{ tone: "warning", label: "Warning", icon: "ri:alert-line" },
-	] as const;
-
-	const current = $derived(TONES.find((t) => t.tone === view.attrs.tone) ?? TONES[0]);
+	const current = $derived(calloutTone(view.attrs.tone));
 
 	function pick(e: MouseEvent) {
 		if (!view.editable) return;
 		const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		contextMenu.show(
 			{ x: box.left, y: box.bottom },
-			TONES.map((t) => ({
+			CALLOUT_TONES.map((t) => ({
 				id: `tone-${t.tone}`,
 				label: t.label,
 				icon: t.icon,

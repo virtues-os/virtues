@@ -32,6 +32,11 @@ class ChatActivityStore {
 		return this.localRunning.includes(chatId) || this.boxRunning.includes(chatId);
 	}
 
+	/** Some chat is replying, here or on the box. The header mark pulses. */
+	get anyRunning(): boolean {
+		return this.localRunning.length > 0 || this.boxRunning.length > 0;
+	}
+
 	/** A finished reply nobody has seen. A chat still running shows the spinner instead. */
 	unread(chatId: string): boolean {
 		if (this.running(chatId)) return false;

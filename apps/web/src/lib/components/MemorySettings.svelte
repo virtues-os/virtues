@@ -380,7 +380,7 @@
 	.placeholder-bar {
 		display: block;
 		height: 12px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--hover-bg);
 	}
 </style>

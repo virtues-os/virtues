@@ -11,11 +11,12 @@
 	//   • portrait — an identity image beside the facts: a person's photo (round)
 	//                or an org's logo (rounded square).
 	//   • line     — no image: a quiet glyph + title + facts.
-	// Titles inherit the page font (--editor-font-family) at normal weight;
+	// Titles inherit the page font (--prose-family) at normal weight;
 	// captions are quiet natural case. Full facts shown; deeper transclusion
 	// (a page's text, an org's people) is a later step needing new data.
 	import Icon from "$lib/components/Icon.svelte";
 	import { backendUrl } from "$lib/config/backend";
+	import { kindOfLink } from "$lib/document/media-kind";
 	import MovementMap from "$lib/components/timeline/MovementMap.svelte";
 	import { initials } from "$lib/utils/initials";
 	import { refIcon } from "$lib/utils/refRoutes";
@@ -44,8 +45,7 @@
 		}
 	});
 
-	const IMAGE_EXT = /\.(jpe?g|png|gif|webp|svg|bmp|ico|heic)$/i;
-	const isImage = $derived((mimeType?.startsWith("image/") ?? false) || IMAGE_EXT.test(label));
+	const isImage = $derived((mimeType?.startsWith("image/") ?? false) || kindOfLink("", label) === "image");
 	const fileImageUrl = $derived(
 		type === "file" && isImage && id ? backendUrl(`/api/drive/files/${id}/download`) : "",
 	);
@@ -142,7 +142,7 @@
 	/* Title belongs to the writing — inherits the reader's page font at normal
 	   weight; never bold, never a hardcoded sans. */
 	.ref-title {
-		font-family: var(--editor-font-family, var(--font-serif));
+		font-family: var(--prose-family, var(--font-serif));
 		font-size: 1.0625rem;
 		font-weight: 400;
 		color: var(--color-foreground);
@@ -178,7 +178,7 @@
 	}
 	.ref-figure-media {
 		width: 100%;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		overflow: hidden;
 		background: var(--color-surface-elevated);
 	}
@@ -212,7 +212,7 @@
 	.ref-anchor {
 		width: 44px;
 		height: 44px;
-		border-radius: 9px;
+		border-radius: var(--radius-lg);
 		flex-shrink: 0;
 	}
 	.ref-anchor.round {

@@ -240,7 +240,7 @@
 		gap: 0;
 		padding: 0.75rem 0;
 		transition: background 0.12s ease;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 	}
 
 
@@ -326,7 +326,7 @@
 		flex-wrap: wrap;
 		padding: 0.25rem 0.5rem;
 		margin: -0.25rem -0.5rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		transition: background 0.12s ease;
 	}
 
@@ -342,7 +342,7 @@
 		flex-wrap: wrap;
 		padding: 0.25rem 0.5rem;
 		margin: -0.25rem -0.5rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		transition: background 0.12s ease;
 		width: fit-content;
 	}

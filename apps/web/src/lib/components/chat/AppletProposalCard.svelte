@@ -130,7 +130,7 @@
 <style>
 	.proposal {
 		border: 1px solid var(--color-border);
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		padding: 0.75rem 0.875rem;
 		margin-bottom: 0.75rem;

@@ -480,7 +480,7 @@
 		font-family: var(--font-mono, monospace);
 		font-size: 11px;
 		padding: 1px 4px;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		background: var(--color-surface-elevated);
 	}
 
@@ -494,7 +494,7 @@
 		aspect-ratio: 585 / 329;
 		background: #0b0f14;
 		border: 1px solid var(--color-border);
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		overflow: hidden;
 	}
 	.g-fault,
@@ -626,7 +626,7 @@
 		font: inherit;
 		font-size: 13px;
 		padding: 4px 8px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		border: 1px solid var(--color-border);
 		background: var(--color-background);
 		color: var(--color-foreground);
@@ -637,7 +637,7 @@
 		font: inherit;
 		font-size: 13px;
 		padding: 4px 8px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		border: 1px solid var(--color-border);
 		background: var(--color-background);
 		color: var(--color-foreground);

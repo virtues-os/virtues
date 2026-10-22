@@ -161,7 +161,7 @@
 		padding: 0;
 		list-style: none;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		overflow: hidden;
 	}

@@ -457,7 +457,7 @@
 	.search-result {
 		padding: 12px;
 		background: var(--color-surface-elevated);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		border: 1px solid var(--color-border);
 	}
 
@@ -501,7 +501,7 @@
 	.table-wrapper {
 		overflow-x: auto;
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 	}
 
 	.data-table {
@@ -540,7 +540,7 @@
 	/* Query section */
 	.query-section {
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		padding: 12px;
 	}
 
@@ -557,7 +557,7 @@
 		font-size: 0.75rem;
 		background: var(--color-surface-elevated);
 		padding: 12px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		overflow-x: auto;
 		margin: 0;
 		white-space: pre-wrap;

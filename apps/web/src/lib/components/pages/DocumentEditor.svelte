@@ -36,7 +36,7 @@
 	import { pasteHandling } from "$lib/document/paste";
 	import { addFiles, mediaUploads } from "$lib/document/media";
 	import { anchorAt, anchorRange, pinAt, placeOf, resolveRange, type Anchor, type AnchoredRange, type Pinned } from "$lib/document/anchor";
-	import { canEditLinkAtSelection, editLinkAtSelection, linkContext, links, openLinkBeside, previewType } from "$lib/document/links";
+	import { canEditLinkAtSelection, editLinkAtSelection, linkContext, links, openLink, previewType } from "$lib/document/links";
 	import { cellAt, selectionForCellMenu, tableActions, tableBarAnchor, tableMenuItems } from "$lib/document/tables";
 	import { aiPresence } from "$lib/document/presence";
 	import {
@@ -69,6 +69,9 @@
 	import SelectionToolbar from "$lib/components/SelectionToolbar.svelte";
 	import AiPromptPopover from "$lib/components/pages/AiPromptPopover.svelte";
 	import FindBar from "$lib/components/pages/FindBar.svelte";
+	import { portal } from "$lib/actions/portal";
+	import { fade, fly } from "svelte/transition";
+	import { cubicOut } from "svelte/easing";
 	import TableMenu from "$lib/components/pages/TableMenu.svelte";
 	import SuggestionBar from "$lib/components/pages/SuggestionBar.svelte";
 
@@ -93,6 +96,13 @@
 		onOutline?: (headings: PageHeading[]) => void;
 		onOutlineNav?: (nav: OutlineNav | null) => void;
 		onEditorReady?: (editor: Editor | null) => void;
+		/**
+		 * Where the find bar docks: the page's top bar, where it takes the
+		 * toolbar's place in the row. Without one it floats at the top of the text.
+		 */
+		findHost?: HTMLElement | null;
+		/** Told when the find bar docks in `findHost` and when it leaves, so the toolbar can step aside. */
+		onFindOpen?: (open: boolean) => void;
 	}
 
 	let {
@@ -107,6 +117,8 @@
 		onOutline,
 		onOutlineNav,
 		onEditorReady,
+		findHost = null,
+		onFindOpen,
 	}: Props = $props();
 
 	const DOC_CHANGE_MS = 300;
@@ -157,6 +169,10 @@
 	let aiIntent = $state<AiIntent>("continue");
 
 	let findOpen = $state(false);
+	$effect(() => onFindOpen?.(findOpen && !!findHost));
+	/** A motion's length, or none when the person asks for reduced motion. */
+	const motion = (ms: number) =>
+		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : ms;
 	let findInitial = $state("");
 
 	let tableAnchor = $state<{ x: number; y: number; width: number } | null>(null);
@@ -606,12 +622,6 @@
 		// anything else that takes it hides the menus that need it.
 		e.on("blur", follow);
 
-		// The person typing over the inline writer stops it.
-		const onInput = () => {
-			if (ai?.isActive()) ai.abortIn(e);
-		};
-		e.view.dom.addEventListener("beforeinput", onInput);
-
 		// Everything over the page follows it when it scrolls: the table's
 		// bar, the toolbar, Accept and Reject, and the menus opened at a place.
 		// The document's own scroller reports its scrolling on the window.
@@ -630,7 +640,6 @@
 		const releaseLinkKey = shortcuts.claim(e.view.dom, "mod+k", () => canEditLinkAtSelection(e.state));
 
 		cleanup = () => {
-			e.view.dom.removeEventListener("beforeinput", onInput);
 			scroller.removeEventListener("scroll", onScroll);
 			releaseLinkKey();
 			toolbarTimer?.destroy();
@@ -677,13 +686,25 @@
 <div
 	bind:this={frame}
 	class="document-editor"
+	class:prose--article={pageDisplay.article}
 	class:doc-page-view={pageDisplay.widthMode === "page"}
 	class:doc-veiled={veil.hiding}
-	style:--editor-font-family={pageDisplay.fontFamily}
-	style:--editor-font-size={pageDisplay.fontSize}
-	style:--editor-line-height={pageDisplay.lineHeight}
+	style:--prose-family={pageDisplay.fontFamily}
+	style:--prose-size={pageDisplay.fontSize}
+	style:--prose-lh={pageDisplay.lineHeight}
+	style:--prose-scale={pageDisplay.scale}
 >
-	{#if findOpen && editor}
+	{#if findOpen && editor && findHost}
+		<!-- In from the right, where the toolbar's icons were; out as they come back. -->
+		<div
+			class="find-dock"
+			use:portal={findHost}
+			in:fly={{ x: 16, duration: motion(160), easing: cubicOut }}
+			out:fade={{ duration: motion(100) }}
+		>
+			<FindBar editor={editor} initial={findInitial} {revision} docked onClose={() => (findOpen = false)} />
+		</div>
+	{:else if findOpen && editor}
 		<FindBar editor={editor} initial={findInitial} {revision} onClose={() => (findOpen = false)} />
 	{/if}
 
@@ -754,7 +775,7 @@
 				onOpen={() => {
 					const h = hover;
 					hover = null;
-					if (h) openLinkBeside(h.href, h.label);
+					if (h) openLink(h.href, h.label);
 				}}
 				oncardenter={() => hoverHide && clearTimeout(hoverHide)}
 				oncardleave={hidePreview}
@@ -764,6 +785,19 @@
 </div>
 
 <style>
+	/* In the page toolbar's cell of the top bar's grid (.page-topbar), at its
+	   right edge and 12px in, as the toolbar's own padding is. */
+	.find-dock {
+		grid-row: 1;
+		grid-column: 3;
+		justify-self: end;
+		align-self: center;
+		position: relative;
+		z-index: var(--z-sticky);
+		width: min(360px, calc(100% - 24px));
+		margin-right: 12px;
+	}
+
 	.document-editor {
 		position: relative;
 	}

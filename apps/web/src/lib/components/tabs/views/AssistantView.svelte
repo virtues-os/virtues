@@ -7,6 +7,7 @@
 	import RulesSettings from '$lib/components/RulesSettings.svelte';
 	import MemorySettings from '$lib/components/MemorySettings.svelte';
 	import ModelSettings from '$lib/components/ModelSettings.svelte';
+	import RequestLimitsSettings from '$lib/components/RequestLimitsSettings.svelte';
 
 	// The profile is read once here: the name feeds every section's copy, so
 	// a rename shows in all of them as soon as the server has it.
@@ -38,7 +39,7 @@
 
 <Page
 	title="Assistant"
-	description="How your assistant talks to you, what it keeps in mind, and the models it runs on."
+	description="How your assistant talks to you, what it keeps in mind, the models it runs on, and what its background work may spend."
 	maxWidth="wide"
 >
 	<div class="assistant-settings">
@@ -61,6 +62,7 @@
 		<RulesSettings assistantName={spoken} />
 		<MemorySettings assistantName={spoken} />
 		<ModelSettings assistantName={spoken} />
+		<RequestLimitsSettings assistantName={spoken} />
 	</div>
 </Page>
 

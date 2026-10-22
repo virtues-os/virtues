@@ -9,12 +9,15 @@
 	 * Uses the floating UI system for smart positioning.
 	 */
 
-	import Icon from '$lib/components/Icon.svelte';
+	import IconButton from '$lib/components/IconButton.svelte';
 	import { fade } from 'svelte/transition';
 	import { FloatingContent, useClickOutside, useEscapeKey } from '$lib/floating';
 	import type { VirtualAnchor } from '$lib/floating';
 	import { TOOLBAR_OFFSET } from '$lib/document/toolbar';
 	import { shortcuts } from '$lib/shortcuts/registry.svelte';
+
+	/** On touch every button is 44pt (design-grammar §6): this bar is how a phone formats. */
+	const touch = typeof window !== 'undefined' && !!window.matchMedia?.('(pointer: coarse)').matches;
 
 	type MarkType = 'strong' | 'em' | 'underline' | 'code' | 'strikethrough' | 'link';
 
@@ -105,34 +108,28 @@
 		tabindex="-1"
 	>
 		{#if onAskAi}
-			<button
-				type="button"
-				class="toolbar-btn toolbar-btn-ai"
+			<IconButton
+				icon="ri:sparkling-2-line"
+				label="Ask AI"
+				size={touch ? "touch" : "md"}
 				onclick={(e) => {
 					e.preventDefault();
 					e.stopPropagation();
 					onAskAi?.();
 				}}
-				title="Ask AI"
-				aria-label="Ask AI"
-			>
-				<Icon icon="ri:sparkling-2-line" width="16" />
-			</button>
+			/>
 			{#if marks}<span class="toolbar-sep"></span>{/if}
 		{/if}
 		{#each marks ? buttons : [] as btn}
 			<!-- Its state is said, not only drawn: a screen reader on a phone reads this bar. -->
-			<button
-				type="button"
-				class="toolbar-btn"
-				class:active={activeMarks[btn.mark]}
+			<IconButton
+				icon={btn.icon}
+				label={btn.label}
+				shortcut={btn.shortcut ? shortcuts.format(btn.shortcut) : undefined}
+				size={touch ? "touch" : "md"}
+				pressed={!!activeMarks[btn.mark]}
 				onclick={(e) => handleButtonClick(e, btn.mark)}
-				title={btn.shortcut ? `${btn.label} (${shortcuts.format(btn.shortcut)})` : btn.label}
-				aria-label={btn.label}
-				aria-pressed={activeMarks[btn.mark]}
-			>
-				<Icon icon={btn.icon} width="16" />
-			</button>
+			/>
 		{/each}
 	</div>
 </FloatingContent>
@@ -150,12 +147,12 @@
 	.selection-toolbar {
 		display: flex;
 		align-items: center;
-		gap: 1px;
-		padding: 3px;
+		gap: 4px;
+		padding: 4px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 9px;
-		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.13);
+		border-radius: var(--card-radius);
+		box-shadow: var(--shadow-float);
 	}
 
 	/* Arrow pointing down (default when placement is top) */
@@ -206,53 +203,10 @@
 		z-index: 1;
 	}
 
-	.toolbar-btn {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 28px;
-		height: 28px;
-		border: none;
-		background: transparent;
-		border-radius: 6px;
-		cursor: pointer;
-		color: var(--color-foreground-muted);
-		transition:
-			color 0.12s ease,
-			background-color 0.12s ease;
-	}
-
-	/* A thumb's 44pt, inside the button (design-grammar §6): on touch this
-	   bar sits under the selection and is how a phone formats. */
-	@media (pointer: coarse) {
-		.toolbar-btn {
-			width: 44px;
-			height: 44px;
-		}
-	}
-
-	.toolbar-btn:hover {
-		background: var(--hover-bg);
-		color: var(--color-foreground);
-	}
-
-	.toolbar-btn.active {
-		background: var(--color-primary-subtle);
-		color: var(--color-primary);
-	}
-
-	.toolbar-btn:hover.active {
-		background: var(--color-primary-subtle);
-	}
-
-	.toolbar-btn-ai {
-		color: var(--color-primary);
-	}
-
 	.toolbar-sep {
 		width: 1px;
 		align-self: stretch;
-		margin: 3px 3px;
+		margin: 4px 0;
 		background: var(--color-border-subtle, var(--color-border));
 	}
 </style>

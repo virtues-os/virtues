@@ -15,12 +15,16 @@
 	import { Popover } from '$lib/floating';
 	import { attention } from '$lib/stores/attention.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { chatActivity } from '$lib/stores/chatActivity.svelte';
 	import type { AttentionItem } from '$lib/api/client';
 
 	let open = $state(false);
 
 	const items = $derived(attention.items);
 	const lit = $derived(items.length > 0);
+	// A chat is replying somewhere. The mark is the one thing in the chrome
+	// that moves while it does, so you can tell from any tab.
+	const thinking = $derived(chatActivity.anyRunning);
 
 	onMount(() => {
 		attention.start();
@@ -39,10 +43,11 @@
 			type="button"
 			class="header-mark"
 			class:lit
+			class:thinking
 			aria-label={lit ? 'Inbox. Something needs you.' : 'Inbox'}
 			aria-haspopup="dialog"
 			aria-expanded={open}
-			title={lit ? 'Something needs you' : 'Inbox'}
+			data-tip={lit ? 'Something needs you' : 'Inbox'}
 			onclick={() => {
 				if (!open) void attention.refresh();
 				toggle();
@@ -94,7 +99,7 @@
 		flex: none;
 		padding: 0;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground);
 		cursor: pointer;
@@ -149,6 +154,25 @@
 		100% { transform: scale(1); }
 	}
 
+	/* Thinking: the dots dim and shrink in premise order, base pair first and
+	   the apex last, as ThinkingMark's syllogism does in the chat. */
+	.thinking .mark-dot {
+		animation: dot-thinks 1.6s ease-in-out infinite;
+	}
+
+	.thinking .mark-dot.right {
+		animation-delay: 0.2s;
+	}
+
+	.thinking .mark-dot.apex {
+		animation-delay: 0.4s;
+	}
+
+	@keyframes dot-thinks {
+		0%, 100% { transform: scale(1); opacity: 1; }
+		40% { transform: scale(0.72); opacity: 0.45; }
+	}
+
 	@media (prefers-reduced-motion: reduce) {
 		.header-mark,
 		.mark-dot,
@@ -160,7 +184,8 @@
 			transform: none;
 		}
 
-		.lit .mark-dot.apex {
+		.lit .mark-dot.apex,
+		.thinking .mark-dot {
 			animation: none;
 		}
 	}
@@ -198,7 +223,7 @@
 		width: 100%;
 		padding: 8px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		text-align: left;
 		cursor: pointer;

@@ -64,7 +64,7 @@ vi.mock('$lib/components/pages/nodes/FigureNode.svelte', () => ({ default: stand
 vi.mock('$lib/stores/contextMenu.svelte', () => ({ contextMenu: { show: vi.fn(), reachFirstRow: vi.fn() } }));
 vi.mock('$lib/stores/linkEditor.svelte', () => ({ linkEditor: { show: vi.fn() } }));
 vi.mock('$lib/stores/window-shell.svelte', () => ({
-	windowShellStore: { openRouteBeside: vi.fn(), openTabFromRoute: vi.fn() },
+	windowShellStore: { openRouteBeside: vi.fn(), openTabFromRoute: vi.fn(), openInNewTab: vi.fn() },
 }));
 vi.mock('svelte-sonner', () => ({ toast: Object.assign(vi.fn(), { error: vi.fn() }) }));
 vi.mock('$lib/api/client', async (orig) => ({
@@ -87,7 +87,7 @@ vi.mock('$lib/api/client', async (orig) => ({
 	getNamedUploads: vi.fn(async (ids: string[]) => Object.fromEntries(ids.map((id) => [id, server.names(id)]))),
 }));
 
-import { Editor } from '@tiptap/core';
+import { Editor, Extension } from '@tiptap/core';
 import { NodeSelection, TextSelection } from '@tiptap/pm/state';
 import { CellSelection } from '@tiptap/pm/tables';
 import { GapCursor } from '@tiptap/pm/gapcursor';
@@ -99,17 +99,28 @@ import { contract, contractExtensions, ITEM_NUMBER, itemNumbers } from './schema
 import { appletCommands, insertEntity, moveBlock, moveUnitTo, treeCommands, unitAround, type TreeCommandHost } from './commands';
 import { pickedRange, putBackQuery, triggers, triggerState } from './triggers';
 import { fileIcon, parseRef } from '$lib/utils/refRoutes';
-import { clearFind, find, findMatches, findNext, findPrevious, findState, selectionEchoes, setFindQuery } from './find';
+import {
+	clearFind,
+	find,
+	findMatches,
+	findNext,
+	findPrevious,
+	findState,
+	replaceAll,
+	replacementFor,
+	selectionEchoes,
+	setFindQuery,
+} from './find';
 import { focusMode } from './focus';
 import { codeHighlight } from './code';
-import { isCodeEditorHtml, looksLikeMarkdown, MAX_DEPTH, MAX_NODES, nodeCount, nodeDepth, pasteHandling, pasteMarkdown, wordLists, type Convert } from './paste';
+import { isCodeEditorHtml, looksLikeMarkdown, MAX_DEPTH, onlyWrapsText, MAX_NODES, nodeCount, nodeDepth, pasteHandling, pasteMarkdown, wordLists, type Convert } from './paste';
 import { addFiles, driveFileId, imagesOnTheirWay, kindOfFile, MAX_UPLOAD_BYTES, mediaSrc, mediaUploads, nameForBlock, nameOfSrc, type Send } from './media';
 import { CHECK_AFTER_MS, resetUploads, retryUpload, TRY_AGAIN_EVERY_MS, uploadsAtStake, watchUpload, type LocalUpload } from './uploads';
 import { convertNow, type ConvertResult } from './converter';
 import { kindOfLink } from './media-kind';
 import { decoded } from '$lib/utils/urlUtils';
 import { svelteNodeView } from './nodeviews.svelte';
-import { editLinkAtSelection, isRef, linkAt, linkMenu, links, openLink, openLinkBeside } from './links';
+import { editLinkAtSelection, isRef, linkAt, linkMenu, links, openLink, openLinkInNewTab } from './links';
 import { anchorAt, anchorRange, pinAt, placeOf, resolveRange } from './anchor';
 import { linkEditor } from '$lib/stores/linkEditor.svelte';
 import { toast } from 'svelte-sonner';
@@ -1207,7 +1218,7 @@ describe('a link the contract refuses, and a widget\'s own link', () => {
 		expect(editor.view.dom.innerHTML).not.toContain('javascript:');
 		const open = vi.spyOn(window, 'open').mockImplementation(() => null);
 		openLink('javascript:alert(document.domain)', 'click me');
-		openLinkBeside('javascript:alert(document.domain)', 'click me');
+		openLinkInNewTab('javascript:alert(document.domain)', 'click me');
 		expect(open).not.toHaveBeenCalled();
 		openLink('https://example.com/plan', 'plan');
 		expect(open).toHaveBeenCalledOnce();
@@ -1291,6 +1302,125 @@ describe('find in page', () => {
 		setFindQuery(editor.view, 'one');
 		editor.commands.insertContentAt(editor.state.doc.content.size, '<p>one more</p>');
 		expect(findState(editor.state).matches).toHaveLength(2);
+	});
+
+	const findIn = (html: string) => track(htmlEditor(html, [find({ onOpen: () => {}, onClose: () => {} })]));
+	const spans = (editor: Editor) => findState(editor.state).matches.map(({ from, to }) => ({ from, to }));
+	const currentBlock = (editor: Editor) => {
+		const s = findState(editor.state);
+		return editor.state.doc.resolve(s.matches[s.current].from).parent.textContent;
+	};
+
+	it('keeps the current match on the same text when the page changes above it', () => {
+		const editor = findIn('<p>The fox and the hound.</p><p>The fox ran.</p><p>The fox slept.</p>');
+		setFindQuery(editor.view, 'fox');
+		findNext(editor.view);
+		expect(currentBlock(editor)).toBe('The fox ran.');
+
+		editor.commands.insertContentAt(0, '<p>A fox sat.</p>');
+		expect(findState(editor.state).current).toBe(2);
+		expect(currentBlock(editor)).toBe('The fox ran.');
+
+		editor.commands.insertContentAt(posIn(editor, 'and the hound'), 'fox ');
+		expect(findState(editor.state).current).toBe(3);
+		expect(currentBlock(editor)).toBe('The fox ran.');
+		expect(editor.view.dom.querySelector('.doc-find-current')?.closest('p')?.textContent).toBe('The fox ran.');
+		expect(editor.view.dom.querySelectorAll('.doc-find-current')).toHaveLength(1);
+
+		// A collaborative update replaces the whole document in one step.
+		const whole = editor.state.tr.replaceWith(
+			0,
+			editor.state.doc.content.size,
+			editor.schema.nodeFromJSON({
+				type: 'doc',
+				content: [{ type: 'paragraph', content: [{ type: 'text', text: 'One more fox.' }] }, ...(editor.getJSON().content ?? [])],
+			}).content,
+		);
+		editor.view.dispatch(whole);
+		expect(findState(editor.state).current).toBe(4);
+		expect(currentBlock(editor)).toBe('The fox ran.');
+
+		// Deleting the current match moves it to the next one.
+		const m = findState(editor.state).matches[4];
+		editor.commands.deleteRange({ from: m.from, to: m.to });
+		expect(currentBlock(editor)).toBe('The fox slept.');
+	});
+
+	it('finds the same matches after an edit as a fresh search does', () => {
+		const editor = findIn('<p>The fox and the hound.</p><p>The hound ran.</p>');
+		setFindQuery(editor.view, 'fox', { caseSensitive: false, regexp: false, wholeWord: true });
+		const check = () => {
+			expect(spans(editor)).toEqual(
+				findMatches(editor.state.doc, 'fox', { caseSensitive: false, regexp: false, wholeWord: true }).map(({ from, to }) => ({ from, to })),
+			);
+			expect(editor.view.dom.querySelectorAll('.doc-find-match')).toHaveLength(findState(editor.state).matches.length);
+		};
+		// A match made one character at a time, then unmade as a word grows.
+		const at = posIn(editor, ' ran');
+		editor.commands.insertContentAt(at, ' fo');
+		check();
+		editor.commands.insertContentAt(at + 3, 'x');
+		check();
+		expect(spans(editor)).toHaveLength(2);
+		editor.commands.insertContentAt(at + 4, 'es');
+		check();
+		expect(spans(editor)).toHaveLength(1);
+		// Two blocks joined into one, and one split in two.
+		editor.commands.setTextSelection(posIn(editor, 'The hound'));
+		editor.commands.joinBackward();
+		check();
+		editor.commands.setTextSelection(posIn(editor, 'and the'));
+		editor.commands.splitBlock();
+		check();
+	});
+
+	it('replaces from the groups a pattern found in the whole block, lookbehind and lookahead included', () => {
+		const regexp = { caseSensitive: false, regexp: true, wholeWord: false };
+		const editor = findIn('<p>The fox and the hound.</p><p>A fox ran.</p>');
+		setFindQuery(editor.view, '(?<=The )fox', regexp);
+		expect(findState(editor.state).matches).toHaveLength(1);
+		expect(replaceAll(editor.view, 'cat')).toBe(1);
+		expect(editor.state.doc.textContent).toBe('The cat and the hound.A fox ran.');
+
+		setFindQuery(editor.view, 'fox(?= ran)', regexp);
+		expect(replaceAll(editor.view, '$&es')).toBe(1);
+		expect(editor.state.doc.textContent).toBe('The cat and the hound.A foxes ran.');
+
+		setFindQuery(editor.view, '(?<animal>cat|hound)', regexp);
+		expect(replaceAll(editor.view, '[$<animal>] $$1')).toBe(2);
+		expect(editor.state.doc.textContent).toBe('The [cat] $1 and the [hound] $1.A foxes ran.');
+	});
+
+	it('reads $1 to $99 as String.prototype.replace does', () => {
+		const m = { from: 0, to: 3, captures: ['fox', 'f', 'o', 'x'] };
+		for (const r of ['$1$2$3', '$&-$0', '$4', '$10', '$$', '$<n>', '$03']) {
+			expect(replacementFor(m, r), r).toBe('fox'.replace(/(f)(o)(x)/, r));
+		}
+		const named = { from: 0, to: 3, captures: ['fox', 'fox'], named: { animal: 'fox', none: undefined } };
+		for (const r of ['$<animal>!', '$<none>', '$<missing>']) {
+			expect(replacementFor(named, r), r).toBe('fox'.replace(/(?<animal>fox)(?<none>z)?/, r));
+		}
+		expect(replacementFor({ from: 0, to: 3 }, '$1')).toBe('$1');
+	});
+
+	it('leaves Escape to the next handler when nothing is being found', () => {
+		// Tiptap runs the keys of a later extension first, so this one, listed
+		// before find, sees Escape only when find passes it on.
+		let next = 0;
+		const before = Extension.create({
+			name: 'escapeAfterFind',
+			addKeyboardShortcuts: () => ({ Escape: () => (next++, true) }),
+		});
+		const editor = track(htmlEditor('<p>The fox and the hound.</p>', [before, find({ onOpen: () => {}, onClose: () => {} })]));
+		const escape = () => editor.view.dom.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+		escape();
+		expect(next).toBe(1);
+		setFindQuery(editor.view, 'fox');
+		escape();
+		expect(next).toBe(1);
+		expect(findState(editor.state).query).toBe('');
+		escape();
+		expect(next).toBe(2);
 	});
 });
 
@@ -1903,6 +2033,26 @@ describe('paste', () => {
 		expect(paste(code, clipboard({ 'text/plain': 'const a = 1;\nconst b = 2;', 'text/html': VSCODE(['const a = 1;', 'const b = 2;']) }))).toBe(true);
 		expect(code.getHTML()).toBe('<p>const a = 1;</p><p>const b = 2;</p>');
 		expect(convert).toHaveBeenCalledTimes(1);
+	});
+
+	it('reads markdown in text whose HTML only wraps it, and keeps HTML with formatting of its own', () => {
+		const md = '## Packing\n\n- tent\n- stove';
+		expect(onlyWrapsText('<meta charset="utf-8"><span>## Packing</span><br><br><span>- tent</span><br><span>- stove</span>', md)).toBe(true);
+		expect(onlyWrapsText('<div><p>## Packing</p><p>- tent</p><p>- stove</p></div>', md)).toBe(true);
+		expect(onlyWrapsText('<h2>Packing</h2><ul><li>tent</li><li>stove</li></ul>', md)).toBe(false);
+		expect(onlyWrapsText('<p><span style="font-weight:700">## Packing</span></p><p>- tent</p><p>- stove</p>', md)).toBe(false);
+		expect(onlyWrapsText('<p>## Packing</p><p>- tent</p>', md)).toBe(false);
+
+		const convert = realConvert();
+		const editor = track(htmlEditor('<p></p>', [pasteHandling(convert)]));
+		editor.commands.setTextSelection(1);
+		const html = '<meta charset="utf-8"><span>## Packing</span><br><br><span>- tent</span><br><span>- stove</span>';
+		expect(paste(editor, clipboard({ 'text/plain': md, 'text/html': html }))).toBe(true);
+		expect(editor.getHTML()).toBe('<h2>Packing</h2><ul><li><p>tent</p></li><li><p>stove</p></li></ul>');
+
+		const rich = track(htmlEditor('<p></p>', [pasteHandling(convert)]));
+		rich.commands.setTextSelection(1);
+		expect(paste(rich, clipboard({ 'text/plain': md, 'text/html': '<h2>Packing</h2><ul><li>tent</li></ul>' }))).toBe(false);
 	});
 
 	it("leaves VS Code's own data to the code block paste, unless it says markdown", () => {
@@ -2699,10 +2849,7 @@ describe('media', () => {
 		// the page drew as an image opened as a download, and its ref showed
 		// a file icon.
 		const LIB = path.resolve(HERE, '..');
-		// TODO(2026-10-10): migrate components/RefCard.svelte's extension list
-		// onto kindOfLink and add it here; another edit to that file is in
-		// flight.
-		for (const file of ['components/tabs/views/AssetView.svelte', 'utils/refRoutes.ts']) {
+		for (const file of ['components/tabs/views/AssetView.svelte', 'utils/refRoutes.ts', 'components/RefCard.svelte']) {
 			const source = fs.readFileSync(path.join(LIB, file), 'utf8');
 			expect(source, file).toMatch(/kindOfLink\(/);
 			expect(source, file).not.toMatch(/jpe\?g|\bjpeg\b|\bmp3\b|\bwebm\b|\bheic\b/);
@@ -3486,6 +3633,8 @@ describe('a drag from one page to another', () => {
 		const end = to.state.doc.content.size;
 		to.view.posAtCoords = () => ({ pos: end, inside: -1 });
 		const data = new DataTransfer();
+		// happy-dom draws no drag image, and its `setDragImage` throws.
+		data.setDragImage = () => {};
 		const event = (type: string) => {
 			const e = new DragEvent(type, { bubbles: true, cancelable: true });
 			Object.defineProperty(e, 'dataTransfer', { value: data });
@@ -3539,6 +3688,51 @@ describe('a drag from one page to another', () => {
 		expect(left).toHaveLength(15);
 		expect(left).not.toContain('5.png');
 		expect(blocksOf(b)).toEqual(['Elsewhere', '5.png']);
+	});
+});
+
+describe('a widget dragged on its own page', () => {
+	function blocksOf(editor: Editor): string[] {
+		const out: string[] = [];
+		editor.state.doc.forEach((n) => out.push(n.type.name === 'image' ? String(n.attrs.alt) : n.textContent));
+		return out;
+	}
+
+	// The grip sits in the margin left of the text, and a drop there went
+	// nowhere: the drop cursor and ProseMirror's drop hear only the text.
+	it('dropped in the margin beside the text, lands as it would on the text at that height', async () => {
+		const { editor, element } = bind(pageDoc('<p>First</p><img src="https://images.example.com/1.png" alt="1.png"><p>Last</p>').doc);
+		await settle();
+		const { view } = editor;
+		const image = view.nodeDOM(view.state.doc.child(0).nodeSize) as HTMLElement;
+		view.dom.getBoundingClientRect = () => new DOMRect(100, 0, 500, 400);
+		const end = view.state.doc.content.size;
+		const asked: { left: number; top: number }[] = [];
+		view.posAtCoords = (at) => {
+			asked.push(at);
+			return { pos: end, inside: -1 };
+		};
+		const data = new DataTransfer();
+		// happy-dom draws no drag image, and its `setDragImage` throws.
+		data.setDragImage = () => {};
+		const event = (type: string, at = { clientX: 0, clientY: 0 }) => {
+			const e = new DragEvent(type, { bubbles: true, cancelable: true });
+			Object.defineProperties(e, { dataTransfer: { value: data }, clientX: { value: at.clientX }, clientY: { value: at.clientY } });
+			return e;
+		};
+		image.dispatchEvent(event('dragstart'));
+		// Dimmed where it was, as a block dragged by its grip is.
+		expect(image.classList).toContain('doc-drag-source');
+		const drop = event('drop', { clientX: 40, clientY: 200 });
+		element.dispatchEvent(drop);
+		expect(drop.defaultPrevented).toBe(true);
+		// Read at the text's left edge, level with the pointer.
+		expect(asked.at(-1)).toEqual({ left: 101, top: 200 });
+		image.dispatchEvent(event('dragend'));
+		await settle(60);
+		expect(blocksOf(editor)).toEqual(['First', 'Last', '1.png']);
+		expect((editor.state.selection as NodeSelection).node?.attrs.alt).toBe('1.png');
+		expect(view.dom.querySelector('.doc-drag-source')).toBeNull();
 	});
 });
 

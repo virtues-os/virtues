@@ -512,7 +512,7 @@
 		text-align: left;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		animation: list-in var(--m-quick) var(--m-ease) both;
 	}
 	@keyframes list-in {
@@ -526,7 +526,7 @@
 		align-items: baseline;
 		gap: 8px;
 		padding: 8px 12px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		cursor: pointer;
 	}
 	.list li.active {
@@ -584,7 +584,7 @@
 	.zone:has(select:focus-visible) {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 4px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 	.sep {
 		color: var(--color-foreground-subtle, var(--color-foreground-muted));

@@ -647,7 +647,7 @@
 		gap: 5px;
 		padding: 3px 9px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: none;
 		cursor: pointer;
 		font-size: 12px;
@@ -696,7 +696,7 @@
 		color: var(--foreground-muted);
 		padding: 4px 9px;
 		border: 1px solid var(--border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		transition: all var(--duration-fast) ease;
 	}
 	.toggle:hover { color: var(--foreground); border-color: var(--border-strong, var(--foreground-subtle)); }
@@ -724,7 +724,7 @@
 	@media (max-width: 880px) { .vitals-grid { grid-template-columns: repeat(2, 1fr); } }
 	.vital {
 		border: 1px solid var(--border-subtle, var(--border));
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		padding: 16px;
 		background: var(--surface-elevated);
 		display: flex;
@@ -767,7 +767,7 @@
 	@media (max-width: 880px) { .history-grid { grid-template-columns: 1fr; } }
 	.history-cell {
 		border: 1px solid var(--border-subtle, var(--border));
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		padding: 16px;
 		background: var(--surface-elevated);
 	}
@@ -785,14 +785,14 @@
 	/* ─── Meters (hairline) ────────────────────────────────────────────── */
 	.meter {
 		height: 3px;
-		border-radius: 2px;
+		border-radius: var(--radius-xs);
 		background: var(--border);
 		overflow: hidden;
 	}
 	.meter.tall { height: 5px; }
 	.meter-fill {
 		height: 100%;
-		border-radius: 2px;
+		border-radius: var(--radius-xs);
 		background: var(--foreground);
 		opacity: 0.55;
 		transition: width 600ms var(--ease-premium, ease), background 400ms ease;
@@ -816,13 +816,13 @@
 		flex: 1;
 		height: 100%;
 		background: var(--border);
-		border-radius: 2px;
+		border-radius: var(--radius-xs);
 		display: flex;
 		align-items: flex-end;
 		overflow: hidden;
 		min-width: 4px;
 	}
-	.core-fill { width: 100%; background: var(--foreground); opacity: 0.5; transition: height 500ms ease; border-radius: 2px; }
+	.core-fill { width: 100%; background: var(--foreground); opacity: 0.5; transition: height 500ms ease; border-radius: var(--radius-xs); }
 	.core-fill.warn { background: var(--warning); opacity: 0.85; }
 	.core-fill.crit { background: var(--error); opacity: 0.9; }
 	.core-legend { font-size: 11px; color: var(--foreground-subtle); margin-top: 8px; }
@@ -913,7 +913,7 @@
 		padding: 14px;
 		background: var(--surface-elevated);
 		border: 1px solid var(--border-subtle, var(--border));
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		font-size: 11px;
 		line-height: 1.5;
 		color: var(--foreground-muted);

@@ -505,7 +505,7 @@
 	.track {
 		font-size: 11px;
 		padding: 1px 6px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		border: 1px solid var(--color-border);
 		color: var(--color-foreground-muted);
 	}
@@ -530,7 +530,7 @@
 		font: inherit;
 		font-size: 13px;
 		padding: 4px 8px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		border: 1px solid var(--color-border);
 		background: var(--color-background);
 		color: var(--color-foreground);
@@ -566,7 +566,7 @@
 		gap: 6px;
 		padding: 12px;
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: var(--color-surface-elevated);
 		font-size: 13px;
 	}
@@ -581,7 +581,7 @@
 	.available code {
 		display: block;
 		padding: 6px 10px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-background);
 		font-family: var(--font-mono, monospace);
 		font-size: 12px;
@@ -631,7 +631,7 @@
 	.switch {
 		width: 44px;
 		height: 26px;
-		border-radius: 13px;
+		border-radius: var(--radius-full);
 		background: var(--color-border);
 		position: relative;
 		flex: none;
@@ -676,7 +676,7 @@
 		gap: 4px;
 		padding: 12px;
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: var(--color-surface-elevated);
 	}
 

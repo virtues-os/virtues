@@ -301,6 +301,7 @@ pub(super) fn append_next_step(
     tool_results: &[ToolExecutionResult],
     vision: Option<bool>,
     steps_remaining: u32,
+    cites: &mut super::citations::Citations,
 ) {
     messages.push(executor::build_assistant_tool_message(
         &result.content,
@@ -311,7 +312,7 @@ pub(super) fn append_next_step(
     for tool_result in tool_results {
         messages.push(executor::build_tool_result_message(
             &tool_result.tool_call_id,
-            &tool_result.to_llm_content(),
+            &tool_result.to_llm_content_cited(cites),
         ));
     }
 
@@ -608,6 +609,7 @@ mod tests {
             &[done("1", vec![]), done("2", vec![])],
             Some(true),
             10,
+            &mut crate::agent::citations::Citations::default(),
         );
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[0]["role"], "assistant");
@@ -620,7 +622,7 @@ mod tests {
     #[test]
     fn media_is_attached_when_the_model_reads_images() {
         let mut messages = vec![];
-        append_next_step(&mut messages, "m", &step(vec![call("1")]), &[done("1", vec![png()])], Some(true), 10);
+        append_next_step(&mut messages, "m", &step(vec![call("1")]), &[done("1", vec![png()])], Some(true), 10, &mut crate::agent::citations::Citations::default());
         assert_eq!(messages.len(), 3);
         assert_eq!(messages[2]["role"], "user");
         assert!(messages[2]["content"].is_array(), "{}", messages[2]);
@@ -629,7 +631,7 @@ mod tests {
     #[test]
     fn media_is_named_not_attached_when_the_model_cannot_read_it() {
         let mut messages = vec![];
-        append_next_step(&mut messages, "m", &step(vec![call("1")]), &[done("1", vec![png()])], Some(false), 10);
+        append_next_step(&mut messages, "m", &step(vec![call("1")]), &[done("1", vec![png()])], Some(false), 10, &mut crate::agent::citations::Citations::default());
         assert_eq!(messages.len(), 3);
         let note = messages[2]["content"].as_str().unwrap();
         assert!(note.starts_with("[System: the tool returned 1 file(s)"), "{note}");
@@ -639,7 +641,7 @@ mod tests {
     #[test]
     fn media_is_named_not_attached_when_vision_is_unknown() {
         let mut messages = vec![];
-        append_next_step(&mut messages, "m", &step(vec![call("1")]), &[done("1", vec![png()])], None, 10);
+        append_next_step(&mut messages, "m", &step(vec![call("1")]), &[done("1", vec![png()])], None, 10, &mut crate::agent::citations::Citations::default());
         let note = messages[2]["content"].as_str().unwrap();
         assert!(note.contains("image support for m is unknown on this box"), "{note}");
     }
@@ -652,7 +654,7 @@ mod tests {
             result: Err(crate::agent::ToolExecutionError::Timeout(std::time::Duration::from_secs(30))),
         };
         let mut messages = vec![];
-        append_next_step(&mut messages, "m", &step(vec![call("1")]), &[failed], None, 10);
+        append_next_step(&mut messages, "m", &step(vec![call("1")]), &[failed], None, 10, &mut crate::agent::citations::Citations::default());
         assert_eq!(messages.len(), 2);
     }
 
@@ -660,7 +662,7 @@ mod tests {
     fn the_steps_warning_runs_from_three_to_two() {
         let warned = |remaining| {
             let mut messages = vec![];
-            append_next_step(&mut messages, "m", &step(vec![call("1")]), &[done("1", vec![])], Some(true), remaining);
+            append_next_step(&mut messages, "m", &step(vec![call("1")]), &[done("1", vec![])], Some(true), remaining, &mut crate::agent::citations::Citations::default());
             messages.last().unwrap()["content"].as_str().map(str::to_string)
         };
         assert_eq!(

@@ -7,6 +7,7 @@
  * back, with a toast, if the server refuses.
  */
 import {
+	addTaskNote,
 	createTask,
 	listTasks,
 	updateTask,
@@ -22,7 +23,7 @@ class TasksStore {
 	error = $state<string | null>(null);
 	closedLoaded = $state(false);
 	/**
-	 * Bumped by a "New task" door (the sidebar +, ⌘⇧T) so the open list
+	 * Bumped by a "New task" door (the sidebar +, ⌘⇧E) so the open list
 	 * focuses its add row, whether it is opening now or already open.
 	 */
 	addRequest = $state(0);
@@ -42,6 +43,37 @@ class TasksStore {
 		} finally {
 			this.loading = false;
 		}
+	}
+
+	/**
+	 * Reload without the loading state, for the page's live refresh. The
+	 * server works requests in the background, so the list changes without
+	 * anyone here touching it.
+	 */
+	async refresh() {
+		try {
+			this.open = await listTasks('open');
+			if (this.closedLoaded) this.closed = await listTasks('closed');
+			this.error = null;
+		} catch {
+			// The next refresh tries again; the list keeps what it showed.
+		}
+	}
+
+	/** Whether the server has a request queued or running. */
+	get working(): boolean {
+		return this.open.some(
+			(t) => t.assignee === 'assistant' && (t.status === 'active' || (t.status === 'open' && !!t.next_run_at)),
+		);
+	}
+
+	/**
+	 * Answer a ready request: the reply goes into its history and the
+	 * request goes back in the queue, to run again in the same chat.
+	 */
+	async reply(id: string, text: string): Promise<Task> {
+		await addTaskNote(id, text);
+		return this.update(id, { status: 'open' });
 	}
 
 	async loadClosed() {

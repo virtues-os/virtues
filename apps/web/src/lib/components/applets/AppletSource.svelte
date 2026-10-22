@@ -192,7 +192,7 @@
 		margin: 0;
 		padding: 0;
 		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		overflow: hidden;
 		max-height: 26rem;
 		overflow-y: auto;
@@ -241,7 +241,7 @@
 
 	.viewer {
 		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		max-height: 26rem;
 		overflow: auto;
 		padding: 0.625rem 0.75rem;

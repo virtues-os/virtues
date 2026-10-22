@@ -32,7 +32,9 @@ import { holdsOnlyMessage, MESSAGE, messageText, readMessage, textBlocks, type R
 import { svelteNodeView } from './nodeviews.svelte';
 import { htmlSlice, looksLikeMarkdown, placeConverted } from './paste';
 import { contractExtensions, isRoute } from './schema';
-import { closeTrigger, pickedRange, putBackQuery, triggers } from './triggers';
+import { closeTrigger, pickedRange, triggerState, triggers } from './triggers';
+import { drawnCaret } from './caret';
+import { dropLine } from './drop-line';
 
 /** Pasted text longer than this becomes an attachment rather than a wall in the composer. */
 export const PASTE_AS_FILE_THRESHOLD = 1500;
@@ -48,6 +50,8 @@ export interface ComposerOptions {
 	/** The message to open with, as markdown. */
 	markdown?: string;
 	placeholder?: string;
+	/** The field's accessible name. A chat message by default. */
+	label?: string;
 	disabled?: boolean;
 	/**
 	 * Read at keystroke time, not creation time: the layout store can flip on
@@ -66,8 +70,12 @@ export interface ComposerOptions {
 	onEscape?: () => boolean;
 	/** Shift+Tab outside a code block and a nested list item: cycle the chat's mode. */
 	onShiftTab?: () => void;
-	/** `@` typed at the start of a word: open the ref picker. */
-	onMentionOpen?: () => void;
+	/** `@` typed at the start of a word: open the ref picker with what follows it. */
+	onMentionOpen?: (query: string) => void;
+	/** The text typed after the `@` changed. */
+	onMentionQuery?: (query: string) => void;
+	/** The `@` closed: a space, a move away, Escape, or a ref picked. */
+	onMentionClose?: () => void;
 }
 
 export interface Composer {
@@ -82,8 +90,9 @@ export interface Composer {
 	focus(): void;
 	/** Put what the ref picker chose where the `@` was. */
 	insertRef(label: string, url: string): void;
-	/** The ref picker closed with nothing picked; what was typed in its box goes back after the `@`. */
-	closeRef(typed?: string): void;
+	/** The `@` menu closed with nothing picked; what was typed after the `@` stays.
+	 *  `refocus: false` when it closed because the focus went elsewhere. */
+	closeRef(opts?: { refocus?: boolean }): void;
 	destroy(): void;
 }
 
@@ -344,10 +353,10 @@ function messagePaste(onAttach?: (files: File[]) => void): Extension {
  * off: the red underlines were the complaint, not the suggestions. On a
  * desktop the defaults are right and nothing is set.
  */
-export function composerAttributes(mobile: boolean): Record<string, string> {
+export function composerAttributes(mobile: boolean, label = 'Message'): Record<string, string> {
 	const attrs: Record<string, string> = {
-		class: 'composer-prose',
-		'aria-label': 'Message',
+		class: 'composer-field prose prose--compact',
+		'aria-label': label,
 		'aria-multiline': 'true',
 		role: 'textbox',
 	};
@@ -434,6 +443,9 @@ export function createComposer(o: ComposerOptions): Composer {
 			MESSAGE,
 		),
 		UndoRedo,
+		drawnCaret(),
+		// Text dragged inside a message lands where a caret-high bar shows.
+		dropLine(),
 		ListKeymap,
 		Placeholder.configure({ placeholder: () => hint }),
 		triggers([
@@ -441,10 +453,10 @@ export function createComposer(o: ComposerOptions): Composer {
 				char: '@',
 				onOpen: (_coords, from) => {
 					mentionFrom = from;
-					o.onMentionOpen?.();
+					o.onMentionOpen?.(triggerState(editor.state, '@').query);
 				},
-				onQuery: () => {},
-				onClose: () => {},
+				onQuery: (q) => o.onMentionQuery?.(q),
+				onClose: () => o.onMentionClose?.(),
 			},
 		]),
 		messagePaste(o.onAttach),
@@ -457,7 +469,7 @@ export function createComposer(o: ComposerOptions): Composer {
 		editable: !o.disabled,
 		extensions,
 		editorProps: {
-			attributes: () => composerAttributes(o.isMobile()),
+			attributes: () => composerAttributes(o.isMobile(), o.label),
 		},
 		onUpdate: ({ editor: e }) => {
 			if (!settingDoc) edited = true;
@@ -547,10 +559,9 @@ export function createComposer(o: ComposerOptions): Composer {
 			editor.view.dispatch(tr.scrollIntoView());
 			editor.commands.focus();
 		},
-		closeRef(typed) {
-			if (typed) putBackQuery(editor.view, '@', typed, '', { from: mentionFrom, to: mentionFrom + 1 });
-			else closeTrigger(editor.view, '@');
-			editor.commands.focus();
+		closeRef({ refocus = true } = {}) {
+			closeTrigger(editor.view, '@');
+			if (refocus) editor.commands.focus();
 		},
 		destroy() {
 			observer?.disconnect();

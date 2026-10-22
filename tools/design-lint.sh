@@ -4,7 +4,7 @@
 # Run from anywhere:   bash tools/design-lint.sh
 #
 # §9 ("The checklist") states countable limits — shadows 0, mono outside a chart
-# or a clock 0, sizes under 11px or with a half 0, radii {12, pills, circles} —
+# or a clock 0, sizes under 11px or with a half 0, radii on the `--radius-*` scale, pills and circles —
 # and nothing has ever enforced them. tools/arch-lint.sh enforces architecture
 # with the same rigor and contains zero design lints, so while the Rust
 # invariants held, the page grammar drifted: 56 shadows, 305 hex literals and
@@ -83,7 +83,7 @@ describe() {
     mono-literal)      echo "a raw monospace font stack outside a chart axis or a clock time (§4)" ;;
     hex-literal)       echo "hardcoded hex color in a component (§5: theme tokens, never literals in the pane)" ;;
     rgb-literal)       echo "hardcoded rgb()/rgba() in a component (§5)" ;;
-    radius)            echo "border-radius outside {0, 6px, 12px, 50%, a pill} (§6: Nothing else)" ;;
+    radius)            echo "border-radius that is not a --radius-* step, 0, 50% or a pill (§6)" ;;
     off-grid)          echo "off-grid px in padding/margin/gap (§6: the 8pt grid — 8·12·16·20·24·32…)" ;;
     no-reduced-motion) echo "file animates with no prefers-reduced-motion block (§7)" ;;
     serif-impossible)  echo "the serif set bold/medium or italic — the serif ships ONE cut (agents/build/typography.md)" ;;
@@ -166,7 +166,11 @@ scan() {
         # §6: "No shadows in the pane." A shadow fakes depth that the spread
         # gets from the painting; every card that grew one read as a widget.
         # `box-shadow: none` is a REMOVAL of a shadow, so it is not one.
-        if (line ~ /box-shadow[ \t]*:/ && line !~ /box-shadow[ \t]*:[ \t]*none/)
+        # `var(--shadow-float)` alone is the one shadow design.md gives a layer
+        # floating over the page (a menu, a popover, a bar), so it is not
+        # counted; any other shadow, a mix or a second layer, still is.
+        if (line ~ /box-shadow[ \t]*:/ && line !~ /box-shadow[ \t]*:[ \t]*none/ \
+            && line !~ /box-shadow[ \t]*:[ \t]*var\(--shadow-float\)[ \t]*;/)
             emit("shadow", line)
 
         # ── 2/3. Type size ────────────────────────────────────────────────
@@ -244,13 +248,10 @@ scan() {
         }
 
         # ── 7. Radius ─────────────────────────────────────────────────────
-        # §6: "Radius is {0, 6px, 12px, 50%, a pill} and nothing else." 12px
-        # on a card in the pane; a pill on a button; 50% on a dot; 6px inside
-        # the shell. design.md yields to the grammar on radius specifically, so
-        # there is one answer. (This quoted the struck frontispiece and the
-        # struck stepper’s dots until 2026-09-16 — the doc moved, the lint’s
-        # own citation did not, which is the failure this whole ratchet is
-        # against.)
+        # §6: "Radius is a `--radius-*` step, 0, 50% or a pill, and nothing
+        # else." The steps are px literals in themes.css, which is the one
+        # place a radius length may be written; everywhere else a length is a
+        # violation and the var() is stripped before the check.
         # Custom properties whose name ends in -radius are checked too: four of
         # them (--card-radius: 4px, --cell-radius: 2px, --ref-pill-radius,
         # --md-inline-code-radius) currently launder an off-grammar value
@@ -258,6 +259,7 @@ scan() {
         # A px value of 100 or more is a pill by construction — the radius
         # exceeds any plausible half-height, so the corner renders as a capsule.
         s = line
+        if (FILENAME ~ /themes\.css$/ && line ~ /--radius-[a-z0-9]+[ \t]*:/) s = ""
         while (match(s, /(border[a-z-]*radius|--[a-z-]*radius[a-z-]*)[ \t]*:[^;}"'"'"']*/)) {
             val = substr(s, RSTART, RLENGTH)
             s = substr(s, RSTART + RLENGTH)
@@ -269,7 +271,6 @@ scan() {
             for (i = 1; i <= nv; i++) {
                 p = parts[i]
                 if (p == "" || p == "0" || p == "50%" || p == "100%") continue
-                if (p == "12px" || p == "6px") continue
                 if (p ~ /^[0-9]+px$/ && p + 0 >= 100) continue
                 emit("radius", line)
                 break

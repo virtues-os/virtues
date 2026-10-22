@@ -147,7 +147,7 @@
 	}
 	.card {
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		overflow: hidden;
 	}
 	.hero {
@@ -163,7 +163,7 @@
 		width: 40px;
 		height: 40px;
 		flex: none;
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		color: var(--color-foreground-muted);
 	}
@@ -217,7 +217,7 @@
 		border: 1px solid var(--color-primary);
 		color: var(--color-primary);
 		background: transparent;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		padding: 7px 14px;
 		font-size: 13px;
 		font-weight: 600;

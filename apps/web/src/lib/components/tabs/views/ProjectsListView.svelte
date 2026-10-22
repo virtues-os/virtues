@@ -221,7 +221,7 @@
 		height: 100%;
 		padding: 14px;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		transition:
 			border-color 0.12s ease,
@@ -237,7 +237,7 @@
 		width: 32px;
 		height: 32px;
 		margin-bottom: 2px;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: color-mix(in srgb, var(--room-accent) 16%, transparent);
 		color: color-mix(in srgb, var(--room-accent) 78%, var(--color-foreground));
 	}
@@ -315,7 +315,7 @@
 		align-items: center;
 		gap: 12px;
 		padding: 6px 0.75rem;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 	}
 	.archived-row:hover {
 		background: var(--color-background-hover);

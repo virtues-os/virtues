@@ -29,7 +29,7 @@ import type { Editor } from '@tiptap/core';
 import { yUndoPluginKey } from '@tiptap/y-tiptap';
 import * as Y from 'yjs';
 import { codeAt, createPageEditor } from '$lib/document/editor';
-import { aiPresence, aiTelegraphOf } from '$lib/document/presence';
+import { aiCaretOf, aiPresence, aiTelegraphOf } from '$lib/document/presence';
 import { aiSession } from './aiSession.svelte';
 import { contract } from '$lib/document/schema';
 import { acceptProposal, proposalIds, rejectProposal } from '$lib/document/suggestions';
@@ -239,6 +239,81 @@ describe('stopping', () => {
 		expect(blocks(here)).toEqual(['paragraph: XStart. Words from the writer here,']);
 		here.commands.undo();
 		expect(blocks(here)).toEqual(['paragraph: Start. Words from the writer here,']);
+	});
+
+	it('stops on an edit a keymap makes, and that edit is its own undo step', async () => {
+		const { here } = twoDevices('<p>Start.</p>');
+		const f = feed();
+		const { driver } = driverWith(f);
+		here.commands.setTextSelection(posIn(here, 'Start.', 6));
+		driver.start({ editor: here, intent: 'continue', instruction: 'Go on' });
+		f.push(' The first words');
+		await settle();
+		// Enter: a keymap's command, which fires no beforeinput.
+		here.commands.splitBlock();
+		await settle();
+		f.push(' that come too late');
+		await driver.whenIdle();
+		expect(driver.isActive()).toBe(false);
+		expect(blocks(here)).toEqual(['paragraph: Start. The first words', 'paragraph: ']);
+		here.commands.undo();
+		expect(blocks(here)).toEqual(['paragraph: Start. The first words']);
+	});
+
+	it('stops on an undo, and writes nothing after it', async () => {
+		const { here } = twoDevices('<p>Start.</p>');
+		const f = feed();
+		const { driver } = driverWith(f);
+		here.commands.setTextSelection(posIn(here, 'Start.', 6));
+		driver.start({ editor: here, intent: 'continue', instruction: 'Go on' });
+		f.push(' The first words');
+		await settle();
+		here.commands.undo();
+		await settle();
+		f.push(' that come too late');
+		await driver.whenIdle();
+		expect(driver.isActive()).toBe(false);
+		expect(blocks(here)).toEqual(['paragraph: Start.']);
+	});
+
+	it('keeps writing through an edit from another device', async () => {
+		const { here, there } = twoDevices('<p>Start.</p><p>Below.</p>');
+		const f = feed();
+		const { driver } = driverWith(f);
+		here.commands.setTextSelection(posIn(here, 'Start.', 6));
+		driver.start({ editor: here, intent: 'continue', instruction: 'Go on' });
+		f.push(' One');
+		await settle();
+		there.commands.insertContentAt(posIn(there, 'Below.', 6), ' Edited.');
+		await settle();
+		f.push(' two.');
+		f.end();
+		await driver.whenIdle();
+		expect(blocks(here)).toEqual(['paragraph: Start. One two.', 'paragraph: Below. Edited.']);
+	});
+
+	it('started again on the same page, the stopped session leaves the new one its caret and status', async () => {
+		const { here } = twoDevices('<p>Start.</p>');
+		const f = feed();
+		const g = feed();
+		const driver = createTreeAiDriver({
+			stream: (req, signal) => (f.requests.length ? g.stream(req, signal) : f.stream(req, signal)),
+			convert: () => ({ kind: 'unavailable' }),
+			flushMs: 0,
+			dissolveMs: 0,
+			telegraphMs: 0,
+		});
+		here.commands.setTextSelection(posIn(here, 'Start.', 6));
+		driver.start({ editor: here, intent: 'continue', instruction: 'Go on' });
+		f.push(' One.');
+		await settle();
+		vi.mocked(aiSession.reset).mockClear();
+		driver.start({ editor: here, intent: 'continue', instruction: 'Go on' });
+		await settle();
+		expect(aiCaretOf(here)).not.toBeNull();
+		expect(vi.mocked(aiSession.reset)).not.toHaveBeenCalled();
+		g.end();
+		await driver.whenIdle();
 	});
 });
 

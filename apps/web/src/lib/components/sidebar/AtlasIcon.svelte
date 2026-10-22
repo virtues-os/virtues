@@ -54,8 +54,10 @@
 		setup: '<path d="M4.2 13.8V2.6"/><path d="M4.2 3.1h7.9l-1.9 2.6 1.9 2.6H4.2"/>',
 		home:
 			'<path d="M2.8 7.4 8 3.1l5.2 4.3"/><path d="M4.2 8.5v4.4h7.6V8.5"/><path d="M6.7 12.9V9.8h2.6v3.1"/>',
+		// Two sliders, set differently. A dial with a tick read as a power
+		// button at 16px.
 		settings:
-			'<circle cx="8" cy="8" r="5.2"/><path d="M8 2.8v2.7"/><circle cx="8" cy="8" r="1.1" fill="currentColor" stroke="none"/>',
+			'<path d="M2.8 5.2h5.8M11.8 5.2h1.4M2.8 10.8h1.4M7.4 10.8h5.8"/><circle cx="10.2" cy="5.2" r="1.6"/><circle cx="5.8" cy="10.8" r="1.6"/>',
 
 		// ── The window header's controls ─────────────────────────────────
 		// Interface symbols, the one place the set draws them, at the set's
@@ -71,6 +73,15 @@
 			'<path class="atlas-fill" d="M4.5 3h2v10h-2a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" fill="currentColor" fill-opacity="0" stroke="none"/><rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M6.5 3v10"/>',
 		plus: '<path d="M8 3.5v9M3.5 8h9"/>',
 		close: '<path d="M4.8 4.8l6.4 6.4M11.2 4.8l-6.4 6.4"/>',
+		// The sidebar rows' hover controls. Drawn here so a row's pin and ⋯
+		// sit at the same line as the door glyphs beside them.
+		more: '<circle cx="4" cy="8" r="0.9" fill="currentColor" stroke="none"/><circle cx="8" cy="8" r="0.9" fill="currentColor" stroke="none"/><circle cx="12" cy="8" r="0.9" fill="currentColor" stroke="none"/>',
+		// Lines that narrow: the list, cut down. Not a funnel (see `sources`).
+		filter: '<path d="M3 4.5h10M5 8h6M7 11.5h2"/>',
+		pin: '<path d="M5.6 2.6h4.8M6.4 2.6v3.5L4.6 8.4v1.3h6.8V8.4L9.6 6.1V2.6M8 9.7v3.7"/>',
+		// The same pin with its head filled: the row is pinned.
+		pinned:
+			'<path d="M6.4 2.6h3.2v3.5l1.8 2.3v1.3H4.6V8.4l1.8-2.3z" fill="currentColor"/><path d="M5.6 2.6h4.8M8 9.7v3.7"/>',
 
 		// ── Settings' own rows ─────────────────────────────────────────────
 		// Drawn objects, for the same reason the wiki's rows are: Remix

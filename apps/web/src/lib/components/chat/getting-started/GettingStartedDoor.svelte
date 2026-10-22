@@ -51,7 +51,7 @@
 		align-items: center;
 		background: none;
 		border: 1px solid transparent;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		padding: 0.25rem 0.4rem;
 		color: var(--color-foreground-muted);
 		cursor: pointer;

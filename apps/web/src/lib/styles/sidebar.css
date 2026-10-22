@@ -173,7 +173,6 @@
 	overflow: hidden;
 	display: flex;
 	flex-direction: column;
-	/* Use margin-bottom on children for DnD compatibility, not gap */
 }
 
 /* -----------------------------
@@ -207,45 +206,6 @@
 	background: color-mix(in srgb, var(--color-primary) 15%, transparent);
 	cursor: text;
 }
-
-/* -----------------------------
-   DRAG-OVER STATE
-   Visual feedback for DnD targets
-   ----------------------------- */
-.sidebar-interactive.drag-over,
-.sidebar-interactive.drop-target {
-	background: color-mix(in srgb, var(--color-primary) 15%, transparent);
-	outline: 2px solid var(--color-primary);
-	outline-offset: -2px;
-}
-
-/* -----------------------------
-   HOVER-TO-EXPAND STATE
-   Visual feedback when dragging over collapsed folder
-   ----------------------------- */
-@keyframes sidebar-expand-pulse {
-
-	0%,
-	100% {
-		background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-	}
-
-	50% {
-		background: color-mix(in srgb, var(--color-primary) 20%, transparent);
-	}
-}
-
-.sidebar-interactive.expand-pending {
-	animation: sidebar-expand-pulse 1s ease-in-out infinite;
-}
-
-/* Smart view styling - drop is blocked via SortableJS group.put: false */
-.sidebar-interactive.smart-view {
-	/* Normal state - no change */
-}
-
-/* Smart views get not-allowed cursor when being hovered during drag */
-/* This is handled by SortableJS returning false from onMove */
 
 /* -----------------------------
    LOADING/EMPTY STATES
@@ -289,69 +249,6 @@
 }
 
 /* -----------------------------
-   DND ITEM WRAPPERS
-   Margin-based spacing for SortableJS compatibility
-   ----------------------------- */
-.sidebar-dnd-item {
-	margin-bottom: var(--sidebar-item-gap, 4px);
-}
-
-/* Override any browser default drag styling */
-.sidebar-dnd-item:focus,
-.sidebar-dnd-item:focus-visible {
-	outline: none;
-}
-
-/* -----------------------------
-   SORTABLEJS DRAG STATES
-   SortableJS applies these classes during drag operations
-   ----------------------------- */
-
-/* Ghost: The placeholder showing where item will drop */
-/* Background-only placeholder - hides text/icons for cleaner visual */
-.sidebar-ghost {
-	background: var(--color-primary) !important;
-	opacity: 0.25 !important;
-	border-radius: 6px;
-	/* Match tab radius */
-	min-height: 28px;
-	/* Match sidebar-interactive height */
-}
-
-/* Hide all content inside ghost - just show the background placeholder */
-.sidebar-ghost * {
-	visibility: hidden !important;
-}
-
-/* Chosen: The original item being dragged (before lift) */
-.sidebar-chosen {
-	background: color-mix(in srgb, var(--color-primary) 10%, transparent);
-	border-radius: 6px;
-	overflow: hidden;
-}
-
-.sidebar-chosen .sidebar-interactive {
-	border-radius: 6px !important;
-}
-
-/* Dragging: The cursor-attached element being moved */
-.sidebar-dragging {
-	opacity: 0.9;
-	transform: scale(1.02);
-	box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
-	border-radius: 6px;
-	overflow: hidden;
-	/* Clip content to border-radius */
-}
-
-/* Override inner element styles when dragging - needs !important to beat .active specificity */
-.sidebar-dragging .sidebar-interactive,
-.sidebar-dragging .sidebar-interactive.active {
-	border-radius: 6px !important;
-	background: color-mix(in srgb, var(--color-primary) 15%, var(--color-background)) !important;
-}
-
-/* -----------------------------
    ITEM-LEVEL HOVER ACTIONS
    "..." button on individual nav items (chats, pages, etc.)
    Same pattern as section actions but on sidebar-interactive items.
@@ -375,7 +272,7 @@
 	justify-content: center;
 	width: 18px;
 	height: 18px;
-	border-radius: 4px;
+	border-radius: var(--radius-sm);
 	border: none;
 	background: transparent;
 	color: var(--color-foreground-subtle);

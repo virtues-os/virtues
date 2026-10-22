@@ -1073,7 +1073,7 @@
 	.card {
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		overflow: hidden;
 	}
 
@@ -1112,7 +1112,7 @@
 		width: 30px;
 		height: 30px;
 		flex: none;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		color: var(--color-foreground-muted);
 	}
@@ -1140,7 +1140,7 @@
 		border: 1px solid var(--color-primary);
 		color: var(--color-primary);
 		background: transparent;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		padding: 7px 14px;
 		font-size: 13px;
 		font-weight: 600;
@@ -1174,7 +1174,7 @@
 		margin-top: 16px;
 		padding: 14px;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 	}
 	.consent p {
 		margin: 0 0 10px;

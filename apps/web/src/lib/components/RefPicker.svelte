@@ -24,17 +24,10 @@
 	import { FloatingContent, useClickOutside, useEscapeKey } from '$lib/floating';
 	import type { VirtualAnchor } from '$lib/floating';
 	import { inComposition } from '$lib/utils/ime';
-	import { searchRefs } from '$lib/api/client';
+	import { searchRefs, type RefSearchResult } from '$lib/api/client';
 
 	/** Entity result from the API */
-	export interface EntityResult {
-		id: string;
-		name: string;
-		entity_type: string;
-		icon: string;
-		url: string;
-		mime_type?: string;
-	}
+	export type EntityResult = RefSearchResult;
 
 	interface FooterAction {
 		label: string;
@@ -402,8 +395,8 @@
 		width: 300px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
-		box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+		border-radius: var(--card-radius);
+		box-shadow: var(--shadow-float);
 		z-index: var(--z-overlay);
 		overflow: hidden;
 	}
@@ -504,7 +497,7 @@
 		width: 16px;
 		height: 16px;
 		border: 1px solid var(--color-border);
-		border-radius: 3px;
+		border-radius: var(--radius-sm);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -544,7 +537,7 @@
 		padding: 1px 4px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 3px;
+		border-radius: var(--radius-sm);
 		font-family: inherit;
 		font-size: 10px;
 	}

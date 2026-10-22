@@ -16,9 +16,24 @@ import {
 	type Pin
 } from '$lib/api/client';
 
+/** The id a pin wears while the box has not answered yet. */
+const PROVISIONAL = 'provisional:';
+let provisionalCount = 0;
+
 class PinsStore {
 	pins = $state<Pin[]>([]);
 	loaded = $state(false);
+	/**
+	 * A pin that began as a provisional one keeps the provisional id as its
+	 * render key, so its row stays the same element when the box's pin
+	 * replaces it, instead of leaving and arriving again.
+	 */
+	private keys = new Map<string, string>();
+
+	/** The key a list of pins should use for this pin's row. */
+	keyOf(pin: Pin): string {
+		return this.keys.get(pin.id) ?? pin.id;
+	}
 
 	async load() {
 		try {
@@ -36,6 +51,60 @@ class PinsStore {
 		const idx = this.pins.findIndex((p) => p.url === pin.url);
 		if (idx >= 0) this.pins[idx] = pin;
 		else this.pins = [...this.pins, pin];
+		return pin;
+	}
+
+	/**
+	 * Pin a URL that is not pinned yet into the gap before pin number `gap`
+	 * (`pins.length` is the end), from a drop.
+	 *
+	 * Optimistic: a provisional pin takes the gap at once, so the row lands
+	 * where it was dropped and an empty Pinned does not close while the box
+	 * answers. The box's pin then replaces it, and the order is saved. If the
+	 * box refuses the pin, the provisional one goes and the error is thrown.
+	 * If it takes the pin but not the order, the list reloads to agree with it.
+	 */
+	async insertAt(gap: number, url: string, label: string | null, icon: string | null, title?: string | null) {
+		const key = `${PROVISIONAL}${++provisionalCount}`;
+		const provisional: Pin = {
+			id: key,
+			url,
+			title: title ?? label ?? undefined,
+			label,
+			icon,
+			sort_order: gap,
+			pinned_at: new Date().toISOString(),
+			color: null,
+		};
+		const at = Math.max(0, Math.min(gap, this.pins.length));
+		this.pins = [...this.pins.slice(0, at), provisional, ...this.pins.slice(at)].map((p, i) => ({ ...p, sort_order: i }));
+
+		let pin: Pin;
+		try {
+			pin = await createPin({ url, label, icon });
+		} catch (e) {
+			this.pins = this.pins.filter((p) => p.id !== key);
+			console.error('[pinsStore] insertAt failed', e);
+			throw e;
+		}
+
+		// The box may answer with a pin it already had for this url, written
+		// its own way, and a load() may have run meanwhile: whatever is in the
+		// list now, the box's pin takes the provisional pin's place.
+		const placed = this.pins.findIndex((p) => p.id === key);
+		const next = this.pins.filter((p) => p.id !== key && p.id !== pin.id);
+		const index =
+			placed >= 0 ? this.pins.slice(0, placed).filter((p) => p.id !== pin.id).length : Math.min(at, next.length);
+		next.splice(index, 0, pin);
+		this.keys.set(pin.id, key);
+		this.pins = next.map((p, i) => ({ ...p, sort_order: i }));
+
+		try {
+			await reorderPins(next.map((p) => p.url));
+		} catch (e) {
+			console.error('[pinsStore] insertAt reorder failed', e);
+			await this.load();
+		}
 		return pin;
 	}
 

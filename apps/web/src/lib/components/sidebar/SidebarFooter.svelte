@@ -10,8 +10,6 @@
 		stagedBundle,
 	} from "$lib/tauri/bridge";
 	import { onBoxBuildChanged } from "$lib/build";
-	import { goto } from "$app/navigation";
-	import { reachability } from "$lib/stores/reachability.svelte";
 	import { reloadApp, uploadsHold } from "$lib/reload";
 
 	interface Props {
@@ -118,14 +116,6 @@
 		};
 	});
 
-	// The app's own copy stays up when the server goes away, and it carries
-	// /reconnect, which tells this computer being offline from the server being
-	// off, refused or moved. A browser on the LAN has no radio and no pairing
-	// to repair, so it gets the words without the click.
-	const canReconnect =
-		typeof window !== "undefined" &&
-		!!(window as unknown as { __VIRTUES_BACKEND_ORIGIN__?: string }).__VIRTUES_BACKEND_ORIGIN__;
-
 	// Sources and Developer are headings in Settings, and Settings is the
 	// row above this footer. A second door to either here would be the same
 	// destination twice on one screen.
@@ -151,32 +141,12 @@
 
 	     Neither ever acts on its own: an update that interrupts what you were
 	     typing is worse than an update that waits. -->
-	<!-- Offline is listed first: neither update can land while the server
-	     is unreachable. It goes away by itself when the server answers
-	     (reachability retries on its own). -->
-	{#if reachability.unreachable && !collapsed}
-		{#if canReconnect}
-			<button
-				type="button"
-				class="offline"
-				onclick={() => void goto("/reconnect")}
-				title="Find out why and fix it"
-			>
-				<span class="offline-label"><span class="offline-dot"></span>Can't reach your server</span>
-				<span class="offline-hint">Reconnect</span>
-			</button>
-		{:else}
-			<div class="offline" role="status">
-				<span class="offline-label"><span class="offline-dot"></span>Can't reach your server</span>
-			</div>
-		{/if}
-	{/if}
 	{#if stagedVersion && !collapsed}
 		<button
 			type="button"
 			class="relaunch"
 			onclick={() => void relaunch()}
-			title="Restart into the downloaded update - takes a few seconds"
+			data-tip="Restart into the downloaded update - takes a few seconds"
 		>
 			<span class="relaunch-label">Relaunch to update</span>
 			<span class="relaunch-version">v{stagedVersion}</span>
@@ -187,7 +157,7 @@
 			type="button"
 			class="relaunch"
 			onclick={() => reloadApp()}
-			title={ownCopy
+			data-tip={ownCopy
 				? "This app downloaded a newer interface - reload to switch to it"
 				: "Your server is serving a newer interface - reload to pick it up"}
 		>
@@ -261,57 +231,6 @@
 	.relaunch:focus-visible {
 		outline: 2px solid var(--color-info);
 		outline-offset: -2px;
-	}
-
-	/* Offline: the same chip shape as the update chips, in neutral tokens.
-	   The server being asleep is ordinary, so it gets no warning color. */
-	.offline {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 1px;
-		width: 100%;
-		padding: 6px var(--sidebar-interactive-padding);
-		margin-bottom: 4px;
-		border: 1px solid var(--color-border);
-		border-radius: var(--sidebar-interactive-radius);
-		background: color-mix(in srgb, var(--wash-ink) 4%, transparent);
-		text-align: left;
-	}
-
-	button.offline {
-		cursor: pointer;
-	}
-
-	button.offline:hover {
-		border-color: var(--color-border-strong);
-	}
-
-	button.offline:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
-
-	.offline-label {
-		display: flex;
-		align-items: center;
-		gap: 7px;
-		font-size: var(--sidebar-interactive-font-size);
-		color: var(--color-foreground-muted);
-	}
-
-	.offline-dot {
-		flex: none;
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: var(--color-foreground-subtle);
-	}
-
-	.offline-hint {
-		padding-left: 13px;
-		font-size: 11px;
-		color: var(--color-foreground-subtle);
 	}
 
 	.footer.collapsed {

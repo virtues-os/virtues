@@ -25,7 +25,7 @@
 
 	/** The shortest a frame is dragged to. */
 	const MIN_HEIGHT = 120;
-	/** The tallest the keys and the menu set it to. */
+	/** The tallest a drag or the keys set it to; a frame already taller keeps its height as the most. */
 	const MAX_HEIGHT = 1200;
 
 	const ref = $derived(String(view.attrs.ref ?? ""));
@@ -51,7 +51,7 @@
 			axis: "y",
 			start: height,
 			min: MIN_HEIGHT,
-			max: Infinity,
+			max: Math.max(MAX_HEIGHT, height),
 			onSize: (size) => (dragHeight = size),
 			onEnd: (size) => {
 				if (size !== null && size !== height) view.setAttrs({ height: size });
@@ -133,7 +133,7 @@
 	.doc-applet.selected .doc-applet-face {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 	}
 
 	.doc-applet-name {
@@ -149,17 +149,19 @@
 		height: 8px;
 		margin: 4px auto 0;
 		width: 48px;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		background: var(--color-border);
 		cursor: ns-resize;
 		touch-action: none;
 		opacity: 0;
+		transition: opacity var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.doc-applet:hover .doc-applet-handle,
 	.doc-applet.selected .doc-applet-handle,
 	.doc-applet-handle:focus-visible {
 		opacity: 1;
+		transition-duration: var(--motion-hover-in);
 	}
 
 	.doc-applet-handle:focus-visible {
@@ -198,7 +200,7 @@
 			break-inside: avoid;
 			padding: 12px;
 			border: 1px solid var(--color-border);
-			border-radius: 12px;
+			border-radius: var(--radius-xl);
 		}
 
 		.doc-applet-face,

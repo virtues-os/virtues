@@ -4,6 +4,7 @@
 	import { fade, fly } from "svelte/transition";
 	import { cubicOut } from "svelte/easing";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { askVirtues } from "$lib/stores/pendingPrompt.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
@@ -100,14 +101,14 @@
 			id: "new-chat",
 			label: "New Chat",
 			icon: "ri:add-line",
-			shortcut: "⌘N",
-			action: () => windowShellStore.openTabFromRoute("/"),
+			shortcut: shortcuts.format("mod+n"),
+			action: () => windowShellStore.newChat(),
 		},
 		{
 			id: "new-temp-chat",
 			label: "New Temporary Chat",
 			icon: "ri:ghost-line",
-			shortcut: "⌘⇧T",
+			shortcut: shortcuts.format("mod+shift+i"),
 			action: () =>
 				windowShellStore.openTabFromRoute("/?temporary=1", {
 					label: "Temporary Chat",
@@ -117,7 +118,7 @@
 			id: "new-page",
 			label: "New Page",
 			icon: "ri:file-text-line",
-			shortcut: "⌘⇧N",
+			shortcut: shortcuts.format("mod+shift+n"),
 			action: createNewPage,
 		},
 		{
@@ -136,7 +137,7 @@
 			id: "wiki",
 			label: "Go to Wiki",
 			icon: "ri:book-2-line",
-			shortcut: "⌘W",
+			shortcut: shortcuts.format("mod+w"),
 			action: () => windowShellStore.openTabFromRoute("/wiki"),
 		},
 		{
@@ -826,7 +827,7 @@
 		max-height: 100%;
 		background: var(--surface);
 		border: 1px solid var(--border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
 		overflow: hidden;
 		outline: none;
@@ -851,7 +852,7 @@
 		font-size: 11px;
 		font-weight: 500;
 		padding: 3px 7px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--primary-subtle);
 		color: var(--primary);
 	}
@@ -874,7 +875,7 @@
 		font-size: 11px;
 		padding: 3px 6px;
 		background: var(--surface-elevated);
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		color: var(--foreground-subtle);
 	}
 
@@ -908,7 +909,7 @@
 		gap: 10px;
 		width: 100%;
 		padding: 10px 12px;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		cursor: pointer;
 		background: transparent;
 		border: none;
@@ -965,7 +966,7 @@
 		font-size: 11px;
 		line-height: 1;
 		padding: 2px 5px;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		background: color-mix(in srgb, var(--wash-ink) 8%, transparent);
 		color: var(--color-foreground-muted);
 	}
@@ -1015,7 +1016,7 @@
 		font-size: 11px;
 		padding: 2px 6px;
 		background: var(--surface-elevated);
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		color: var(--foreground-subtle);
 	}
 
@@ -1047,7 +1048,7 @@
 		background: transparent;
 		color: var(--foreground-muted);
 		cursor: pointer;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		transition: background-color 80ms ease-out;
 	}
 

@@ -769,7 +769,7 @@
 		width: 100%;
 		max-width: 46rem;
 		padding: clamp(2rem, 6vw, 4.5rem) clamp(1.25rem, 6vw, 4.5rem) clamp(2.5rem, 6vw, 4.5rem);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		/* The overlay color is the one every theme designs to sit above its
 		   page; the shadow and hairline do the lifting. */
 		background: var(--color-surface-overlay, var(--color-surface));

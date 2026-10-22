@@ -149,7 +149,7 @@
 		gap: 0.25rem;
 		padding: 0.125rem 0.25rem 0.125rem 0.5rem;
 		border: 1px solid var(--color-border);
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		font-size: 12px;
 		color: var(--color-foreground);
 		white-space: nowrap;

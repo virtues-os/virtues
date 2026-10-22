@@ -450,7 +450,7 @@
 		flex-direction: column;
 		gap: 1.1rem;
 		padding: 1.25rem 1.25rem 1.1rem;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
 		outline-offset: -1px;
 		background: var(--color-surface-overlay, var(--color-surface));
@@ -471,7 +471,7 @@
 		place-items: center;
 		width: 40px;
 		height: 40px;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		color: var(--color-foreground);
 		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
 	}
@@ -500,7 +500,7 @@
 		align-items: center;
 		gap: 6px;
 		padding: 4px 8px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		font-size: 13px;
 		color: var(--color-foreground-muted);
 		outline: 1px solid var(--color-border);

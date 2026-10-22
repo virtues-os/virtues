@@ -159,64 +159,37 @@ impl ModelSlot {
 /// here, and wants re-evaluating before the next slot decision.
 pub fn default_model_for_slot(slot: ModelSlot) -> &'static str {
     match slot {
-        // Took the slot from `spacexai/grok-4.5` on 2026-08-27, when the
-        // gateway's retention posture became visible to us: grok-4.5 is
-        // `zdr: none`, and the chat slot is the one every unpinned user rides.
+        // DeepSeek V4.1 Flash 1017, chosen 2026-10-22 on cost at about the
+        // same quality as the models it was measured against. Chat spend is
+        // almost all input (a 26-turn chat billed 2.0M input tokens against
+        // 25k output), and this model's input is $0.07-0.30/M depending on
+        // the route, against $2.00/M for grok-4.7 and Sonnet 5.5.
         //
-        // The swap costs nothing it was supposed to cost. Measured on the same
-        // turn, uncapped, against the model it replaced:
+        // Measured on a real box, the same questions against Sonnet 5.5:
+        // $0.015 a turn against $0.052, 30s median against 21s, 5.4 steps a
+        // turn against 3.0. It queries again where Sonnet answers, so it
+        // sends about twice the input and is slower than its token rate
+        // suggests. The Artificial Analysis index puts it at 45, grok-4.7 at
+        // 46 and Sonnet 5.5 at 47-56.
         //
-        //   grok-4.5      13-23s   42-92 reasoning tokens   $5.90/mo
-        //   sonnet-5       7-9s        0 reasoning tokens   $7.33/mo
+        // It wrote broken citation links until `agent::citations` gave the
+        // model short handles to cite: 52 of 55 broken before, every link
+        // resolving after. Before promoting another model to this slot, check
+        // its links against real tool output, not only `slot_model_smoke`.
         //
-        // (per month at 50 turns/day). It is FASTER than the model it replaced
-        // in every sample, not slower — the higher sticker price per token is
-        // mostly absorbed by being terser and paying no thinking tax.
+        // `zdr: some`: virtues-api pins every request to its zero-retention
+        // routes (`Catalog::enforce_zdr`). If that enforcement is ever
+        // removed, re-check this slot first.
         //
-        // And the tax is the real reversal. The note this replaces called
-        // Grok's per-turn reasoning an "accepted cost... NO reasoning_effort
-        // value reduces it" — the gateway confirms grok-4.5 exposes only
-        // `effort`, which is inert on it. Sonnet 5 exposes a toggle AND
-        // effort (low/medium/high/xhigh), so thinking is ours to spend rather
-        // than a fixed levy.
-        //
-        // Passed the tool gate below on 2026-08-27, including parallel calls.
-        // Tool-call COUNT is not stable run to run (the same prompt drew one
-        // sql_query on one run and three on the next), so do not read a tidy
-        // number here as a property of the model — the gate asserts that
-        // calls are well-formed and that parallel works, which is what the
-        // agent loop actually depends on.
-        //
-        // Rejected for this slot the same day, all `zdr: all`, all measured:
-        //   opus-5              824 reasoning tokens, UNTUNABLE (no
-        //                       reasoning_options at all), $55.01/mo — 9.3x
-        //                       the incumbent, more than the subscription
-        //                       itself. A fine thing to PIN, never a default.
-        //   kimi-k3-fast        leaked its own scratchpad into the answer
-        //                       ("The person is describing..."), $18.49/mo.
-        //   qwen3.7-plus        1,077 reasoning tokens over 33s.
-        //   nova-2-lite         rambled straight into the length cap.
-        //   grok-4.1-fast       `zdr: all` and 10x cheaper, but fired FIVE
-        //                       duplicate sql_query calls for one question.
-        //   haiku-4.5           passed everything and costs $1.97/mo — a
-        //                       third of the incumbent. Held back only
-        //                       because it is a smaller model and this slot
-        //                       answers the hard turns; revisit if per-user
-        //                       cost ever becomes the binding constraint.
-        //
-        // Took the slot from `anthropic/claude-sonnet-5` on 2026-09-25, on
-        // cost. Chat spend is almost all INPUT: a real 26-turn chat on
-        // 2026-09-24 billed 2.0M input tokens against 25k output. The gateway
-        // lists grok-4.7 at $1.20/M input, $3.60/M output and $0.30/M cached,
-        // against Sonnet 5's $2.00 / $10.00 / $0.20. It is `zdr: all` and
-        // `no_training: all`, so the retention reason that moved this slot
-        // off grok-4.5 does not apply.
-        //
-        // Known gaps: no `pdf` input modality, so a PDF attachment makes the
-        // composer offer a model that reads PDFs (`modelChoice.svelte.ts`).
-        // Caching is implicit and per server, so it leans on the session
-        // affinity header (`BearerClient::stream_affine`) for its hit rate.
-        ModelSlot::Standard => "spacexai/grok-4.7",
+        // Measured and not chosen:
+        //   grok-4.7            the gateway now bills $2.00/M input and
+        //                       $0.50/M cached, so on cached chats it costs
+        //                       more than Sonnet 5.5 for the same quality.
+        //   deepseek-v4-pro     index 36; fast only because it barely reasons.
+        //   kimi-k2.6           its one zero-retention route runs ~47 tok/s.
+        //   glm-5.3             3k reasoning tokens over 36s on a judgment turn.
+        //   v4.1-flash-*-fast   Baseten is its only route.
+        ModelSlot::Standard => "deepseek/deepseek-v4.1-flash-1017",
         // Opus 5.5, chosen 2026-10-05 for the slot's first callers, deep
         // research. `zdr: all` and `no_training: all`, $4/M input
         // and $20/M output — cheaper per token than the opus-5 that was turned

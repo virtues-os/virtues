@@ -407,7 +407,7 @@
 	   =================================== */
 	.input-wrapper {
 		position: relative;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 	}
 
 	.input-field {
@@ -418,7 +418,7 @@
 		color: var(--color-foreground);
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		outline: none;
 		transition: border-color 0.25s ease;
 		position: relative;
@@ -697,7 +697,7 @@
 	.focus-ring {
 		position: absolute;
 		inset: 0;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		box-shadow: 0 0 0 2px
 			color-mix(in srgb, var(--color-primary) 25%, transparent);
 		opacity: 0;

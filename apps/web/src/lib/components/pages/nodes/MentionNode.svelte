@@ -2,10 +2,12 @@
 	MentionNode: a mention in a block page, an inline widget.
 
 	Drawn by `Ref`: the hover preview, the live title of a page, chat or
-	project, the words written for a person or place (record/names.md), and a
-	click opens it beside the page. `label` is the text written in the page,
-	which is what the markdown export holds; `to` stays a route so redirects
-	work. Right-click or a long press: Open beside, Copy link, Edit, Remove.
+	project, the words written for a person or place (record/names.md); a
+	click opens it in the tab you are on and ⌘ or Ctrl-click in a new tab.
+	`label` is the text written in the page, which is what the markdown
+	export holds; `to` stays a route so redirects work. Right-click or a long
+	press: Open in new tab, Open beside (`openMenuItems`), Copy link, Edit,
+	Remove.
 -->
 <script lang="ts">
 	import { onMount } from "svelte";
@@ -13,7 +15,7 @@
 	import { onContextGesture } from "$lib/components/contextMenu/gesture";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import { linkEditor } from "$lib/stores/linkEditor.svelte";
-	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { openMenuItems } from "$lib/utils/openMenuItems";
 	import { isRoute } from "$lib/document/schema";
 	import { shareableHref } from "$lib/document/links";
 	import type { ViewState } from "$lib/document/nodeviews.svelte";
@@ -44,14 +46,7 @@
 	onMount(() => {
 		onContextGesture(el, (x, y) => {
 			contextMenu.show({ x, y }, [
-				{
-					id: "open-beside",
-					label: "Open beside",
-					icon: "ri:layout-column-line",
-					action: () => {
-						windowShellStore.openRouteBeside(to, label);
-					},
-				},
+				...openMenuItems(to, label),
 				{
 					id: "copy-link",
 					label: "Copy link",
@@ -97,6 +92,6 @@
 	.doc-mention.selected {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 1px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 </style>

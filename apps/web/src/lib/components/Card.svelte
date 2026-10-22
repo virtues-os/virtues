@@ -57,7 +57,7 @@
 <style>
 	.v-card {
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 	}
 

@@ -16,7 +16,7 @@ import Collaboration, { isChangeOrigin } from '@tiptap/extension-collaboration';
 import CollaborationCaret from '@tiptap/extension-collaboration-caret';
 import UniqueID from '@tiptap/extension-unique-id';
 import { ListKeymap } from '@tiptap/extension-list';
-import { Dropcursor, Gapcursor, Placeholder } from '@tiptap/extensions';
+import { Gapcursor, Placeholder } from '@tiptap/extensions';
 import type { Node as PmNode, Slice } from '@tiptap/pm/model';
 import { Plugin, TextSelection, type EditorState, type NodeSelection } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
@@ -36,11 +36,13 @@ import {
 } from './commands';
 import { TableKeys } from './tables';
 import { localUser, renderCaret, renderSelection } from './presence';
+import { drawnCaret } from './caret';
 import { pageNodeViews } from './views';
 import { clipboardText } from './markdown';
 import { ProposalsPasted, ProposalsRead, TypingOutsideDeletions } from './suggestions';
 import { KeptThroughOthersEdits } from './anchor';
 import { DragHandle } from './drag-handle';
+import { dropLine } from './drop-line';
 import { scrollerOf } from './outline';
 
 /** What the editor binds to: a `TreeDocument`, or anything with its document and caret channel. */
@@ -168,7 +170,7 @@ const ClickBelowEnd = Extension.create({
  */
 export function editorAttributes(o: { spellcheck: boolean; editable: boolean; label?: string }): Record<string, string> {
 	return {
-		class: 'doc-prose',
+		class: 'doc-prose prose',
 		spellcheck: String(o.spellcheck),
 		'aria-multiline': 'true',
 		'aria-label': o.label || 'Page',
@@ -254,7 +256,7 @@ function draggedRange(source: EditorView): { from: number; to: number } | null {
  * as the person's own edit there. A drag with the copy modifier, or a drop
  * that put nothing in, takes nothing out. Tiptap's own version, which
  * deleted the other page's selection once per paste rule, is patched out
- * (`patches/@tiptap__core@3.31.4.patch`).
+ * (`patches/@tiptap__core@3.32.0.patch`).
  */
 const DragBetweenPages = Extension.create({
 	name: 'dragBetweenPages',
@@ -317,7 +319,7 @@ export function createPageEditor(o: PageEditorOptions): Editor {
 					}),
 				]
 			: []),
-		Dropcursor.configure({ color: false, width: 2, class: 'doc-dropcursor' }),
+		dropLine(),
 		DragHandle.configure({
 			dragStarted: (view) => (dragSource = view),
 			dragEnded: (view) => {
@@ -325,6 +327,7 @@ export function createPageEditor(o: PageEditorOptions): Editor {
 			},
 		}),
 		Gapcursor,
+		drawnCaret(),
 		ListKeymap,
 		Placeholder.configure({ placeholder: o.placeholder }),
 		pageInputRules,

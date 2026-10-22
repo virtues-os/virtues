@@ -367,7 +367,7 @@
 		width: 100%;
 		max-width: 100%;
 		height: auto;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	.doc-image-handle {
@@ -377,17 +377,19 @@
 		width: 8px;
 		height: 48px;
 		transform: translateY(-50%);
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		background: var(--color-foreground-muted);
 		opacity: 0;
 		cursor: ew-resize;
 		touch-action: none;
+		transition: opacity var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.doc-image-frame:hover .doc-image-handle,
 	.doc-media.selected .doc-image-handle,
 	.doc-image-handle:focus-visible {
 		opacity: 0.6;
+		transition-duration: var(--motion-hover-in);
 	}
 
 	.doc-image-handle:focus-visible {
@@ -426,7 +428,7 @@
 		gap: 8px;
 		padding: 12px;
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 	}
 
@@ -444,7 +446,7 @@
 	video {
 		display: block;
 		max-width: 100%;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 	}
 
 	.doc-file-card {
@@ -454,7 +456,7 @@
 		max-width: 100%;
 		padding: 8px 12px;
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		color: var(--color-foreground);
 		text-decoration: none;
@@ -513,7 +515,7 @@
 	.doc-upload-actions button {
 		padding: 4px 8px;
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface);
 		color: var(--color-foreground);
 		font-size: 0.875rem;
@@ -532,7 +534,7 @@
 		left: 8px;
 		bottom: 8px;
 		padding: 2px 8px;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		background: var(--color-surface);
 		color: var(--color-foreground-muted);
 		font-size: 0.75rem;

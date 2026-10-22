@@ -2,6 +2,8 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import RefPreview from "$lib/components/RefPreview.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
+	import { contextMenu } from "$lib/stores/contextMenu.svelte";
+	import { openMenuItems } from "$lib/utils/openMenuItems";
 	import { refIcon, getEntityTypeFromRoute } from "$lib/utils/refRoutes";
 	import { createRefHover } from "$lib/utils/refHover.svelte";
 	import { identityOf, ownedRef } from "$lib/refs/identity.svelte";
@@ -28,19 +30,24 @@
 	// their prose. The written text is also the fallback for anything gone.
 	const shown = $derived(ownedRef(url) ? identityOf(url, { title: displayName }).title : displayName);
 
+	// A ref opens like any link: here, in the tab you are on (Back returns),
+	// or in the tab already showing it. ⌘-click (Ctrl elsewhere) opens a new
+	// tab; right-click offers a new tab or the pane beside.
 	function open() {
-		// Open beside — in the pane next to the one you're in (splits if needed),
-		// so you keep your place. See the Phase 5 click model.
-		windowShellStore.openRouteBeside(url, shown);
+		windowShellStore.openTabFromRoute(url, { label: shown, focusExisting: true });
 	}
 
 	function handleClick(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
-		// Rendered refs/citations: plain click opens the source beside you (hover
-		// already peeks, so a click means "take me there"). This is the flip of
-		// the editor's peek-on-click model — see the Phase C citation decision.
-		open();
+		if (e.metaKey || e.ctrlKey) windowShellStore.openInNewTab(url, shown);
+		else open();
+	}
+
+	function handleContextMenu(e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		contextMenu.show({ x: e.clientX, y: e.clientY }, openMenuItems(url, shown));
 	}
 
 	const hover = createRefHover();
@@ -49,6 +56,7 @@
 <button
 	class="ref-link {variant === 'quiet' ? 'ref-link--quiet' : ''}"
 	onclick={handleClick}
+	oncontextmenu={handleContextMenu}
 	title="View {shown}"
 	onmouseenter={(e) => hover.enter(e.currentTarget)}
 	onmouseleave={() => hover.leave()}

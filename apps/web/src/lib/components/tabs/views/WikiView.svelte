@@ -36,6 +36,7 @@
 	import { TextAction } from '$lib';
 	import { WIKI_SECTION_RE } from '$lib/tabs/registry';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { openMenuItems } from '$lib/utils/openMenuItems';
 	import {
 		ActivityHeatmap,
 		ChaptersSection,
@@ -322,14 +323,7 @@
 	function entityContextMenu(entity: UnifiedEntity, e: MouseEvent) {
 		e.preventDefault();
 		const items = [
-			{
-				id: 'open-beside',
-				label: 'Open beside',
-				icon: 'ri:layout-column-line',
-				action: () => {
-					windowShellStore.openRouteBeside(entity.route, entity.name);
-				},
-			},
+			...openMenuItems(entity.route, entity.name),
 			...getKeepMenuItems({
 				url: entity.route,
 				label: entity.name,
@@ -1083,14 +1077,14 @@
 		display: flex;
 		gap: 4px;
 		padding: 4px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: color-mix(in oklab, var(--color-foreground) 5%, var(--color-surface));
 	}
 
 	.year-seg {
 		padding: 4px 12px;
 		border: 0;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font: inherit;

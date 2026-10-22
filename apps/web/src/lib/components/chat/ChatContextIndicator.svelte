@@ -59,7 +59,7 @@
 		color: var(--color-foreground-muted);
 		background: var(--color-surface-elevated);
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		cursor: pointer;
 		transition: all 150ms ease;
 	}

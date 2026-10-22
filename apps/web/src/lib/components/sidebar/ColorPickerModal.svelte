@@ -306,7 +306,7 @@
 		color: var(--color-foreground);
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		outline: none;
 		transition: border-color 150ms ease;
 	}
@@ -322,7 +322,7 @@
 		color: var(--color-foreground);
 		background: var(--color-surface-overlay);
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		cursor: pointer;
 		transition: all 150ms ease;
 		flex-shrink: 0;

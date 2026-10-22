@@ -75,6 +75,7 @@
 		pressed,
 		expanded,
 		haspopup,
+		shortcut,
 		disabled = false,
 		type = "button",
 		onclick,
@@ -96,6 +97,12 @@
 		expanded?: boolean;
 		/** For a popover trigger: renders `aria-haspopup`. */
 		haspopup?: "menu" | "listbox" | "tree" | "grid" | "dialog" | true;
+		/**
+		 * The key that does the same thing, as the platform writes it ("⌘B").
+		 * Shown after the label in the tooltip and said by `aria-keyshortcuts`,
+		 * so the accessible name stays the verb alone.
+		 */
+		shortcut?: string;
 		disabled?: boolean;
 		type?: "button" | "submit" | "reset";
 		onclick?: (e: MouseEvent) => void;
@@ -109,8 +116,9 @@
 	data-size={size}
 	data-variant={variant}
 	{disabled}
-	title={label}
+	title={shortcut ? `${label} (${shortcut})` : label}
 	aria-label={label}
+	aria-keyshortcuts={shortcut}
 	aria-pressed={pressed}
 	aria-expanded={expanded}
 	aria-haspopup={haspopup}
@@ -132,7 +140,7 @@
 		border: 1px solid transparent;
 		/* One radius at every size. The shell's 6px (design.md), which grammar
 		   §6 allows and which was already the plurality of the seventeen. */
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-family: var(--font-sans);

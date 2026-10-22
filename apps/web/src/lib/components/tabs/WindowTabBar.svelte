@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { flip } from "svelte/animate";
+	import { untrack } from "svelte";
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
 	import Icon from "$lib/components/Icon.svelte";
@@ -16,7 +17,7 @@
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { projectMenuItems, targetForTab } from "$lib/utils/projectActions";
 	import { identityOf, ownedRef, renameRef, setRefLook } from "$lib/refs/identity.svelte";
-	import { accentCss } from "$lib/sidebar/pin-colors";
+	import { accentCss, clothFor } from "$lib/sidebar/pin-colors";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
@@ -56,6 +57,17 @@
 	});
 
 	// Derive tabs and active state based on mode
+	// Tabs shrink together as they fill the strip. Once each would get less
+	// than COMPACT_TAB_PX, the tabs you are not on drop their labels and show
+	// only their icon, as a browser's do.
+	const COMPACT_TAB_PX = 80;
+	/** The strip's room besides its tabs: the +, a view's actions, the gaps. */
+	const STRIP_RESERVE_PX = 120;
+	let barWidth = $state(0);
+	const tabsCompact = $derived(
+		barWidth > 0 && dndItems.length > 1 && (barWidth - STRIP_RESERVE_PX) / dndItems.length < COMPACT_TAB_PX,
+	);
+
 	const tabs = $derived(
 		paneId
 			? (paneId === "left"
@@ -135,10 +147,13 @@
 		}));
 	}
 
-	// Sync DnD items when tabs change
+	// Sync DnD items when tabs change. Not while a tab is in the air: the
+	// library's placeholder lives in this list, and a chat naming itself mid
+	// drag would wipe it. The drop rebuilds the list anyway.
 	$effect(() => {
-		// Rebuild from tabs (the source of truth)
-		dndItems = buildDndItems();
+		const items = buildDndItems();
+		if (untrack(() => dndManager.session)) return;
+		dndItems = items;
 	});
 
 	function handleTabClick(id: string) {
@@ -188,14 +203,6 @@
 
 		// Build context menu items
 		const items: ContextMenuItem[] = [];
-		if (tab.preview) {
-			items.push({
-				id: "keep",
-				label: "Keep open",
-				icon: "ri:check-line",
-				action: () => windowShellStore.keepTab(tabId),
-			});
-		}
 		items.push(
 			// Compact/Expand
 			{
@@ -253,6 +260,8 @@
 						{
 							anchor: { x: e.clientX, y: e.clientY, width: 0, height: 0 },
 							color: look.color,
+							label: look.title,
+							autoColor: clothFor({ url: tab.route }),
 							// Persisted on click, without closing — so you can
 							// try a color against the grid before choosing the
 							// glyph, which is the point of one panel.
@@ -377,11 +386,9 @@
 	}
 
 	// A double-click renames the thing, when the thing has a name of its own.
-	// On a preview tab it also keeps the tab, as in VS Code.
 	function handleDoubleClick(e: MouseEvent, tabId: string) {
 		e.preventDefault();
 		const tab = tabs.find((t) => t.id === tabId);
-		if (tab?.preview) windowShellStore.keepTab(tabId);
 		if (!tab || tab.pinned || !ownedRef(tab.route ?? "")) return;
 		renamingTabId = tabId;
 		renameValue = tabLook(tab).title;
@@ -401,10 +408,19 @@
 		);
 	}
 
-	function handleDndFinalize(e: CustomEvent<DndEvent<DndTabItem>>) {
-		dndManager.handleFinalize(e, zoneId, (items) => {
+	async function handleDndFinalize(e: CustomEvent<DndEvent<DndTabItem>>) {
+		await dndManager.handleFinalize(e, zoneId, (items) => {
 			dndItems = items;
 		});
+		// The library took the tab out of this strip's list while it was
+		// dragged. A drop that changed nothing leaves the store as it was, so
+		// rebuild from the store or the tab stays missing from the strip.
+		dndItems = buildDndItems();
+	}
+
+	/** The dragged copy of a tab, lifted off the strip (styles below). */
+	function liftDraggedTab(el: HTMLElement | undefined) {
+		el?.classList.add("tab-lifted");
 	}
 
 	// Get icon for tab type
@@ -439,6 +455,8 @@
 <div
 	data-tauri-drag-region
 	class="tab-bar"
+	class:compact={tabsCompact}
+	bind:clientWidth={barWidth}
 	role="toolbar"
 	aria-label="Tab bar"
 	tabindex="0"
@@ -456,6 +474,11 @@
 			flipDurationMs: FLIP_DURATION_MS,
 			dropTargetStyle: {},
 			dragDisabled: renamingTabId !== null,
+			// The dragged tab keeps its own shape. Morphing copies the
+			// styles of the hidden placeholder it is over, which left only
+			// the label showing.
+			morphDisabled: true,
+			transformDraggedElement: liftDraggedTab,
 		}}
 		onconsider={handleDndConsider}
 		onfinalize={handleDndFinalize}
@@ -468,10 +491,10 @@
 			<div
 				class="tab"
 				class:active={tab.id === activeTabId}
+				class:only={dndItems.length === 1}
 				class:active-in-active-pane={tab.id === activeTabId &&
 					isActivePane}
 				class:pinned={tab.pinned}
-				class:preview={tab.preview}
 				class:renaming={tab.id === renamingTabId}
 				animate:flip={{ duration: FLIP_DURATION_MS }}
 				onclick={() =>
@@ -483,11 +506,7 @@
 					e.key === "Enter" &&
 					tab.id !== renamingTabId &&
 					handleTabClick(tab.id)}
-				title={tab.id !== renamingTabId
-					? tab.preview
-						? `${identity.title} · Preview. Double-click to keep it open.`
-						: identity.title
-					: ""}
+				data-tip={tab.id !== renamingTabId ? identity.title : ""}
 				role="button"
 				tabindex="0"
 			>
@@ -550,7 +569,8 @@
 		class="new-tab-btn"
 		onclick={handleNewTab}
 		aria-label="New chat"
-		title="New chat"
+		data-tip="New chat"
+		data-tip-key="mod+n"
 	>
 		<AtlasIcon name="plus" size={16} bare />
 	</button>
@@ -570,7 +590,7 @@
 					disabled={action.disabled}
 					onclick={action.run}
 					aria-label={action.label}
-					title={action.label}
+					data-tip={action.label}
 				>
 					<Icon icon={action.icon} />
 					{#if action.primary}<span class="pane-action-label">{action.label}</span>{/if}
@@ -582,7 +602,7 @@
 					class="pane-action"
 					onclick={showActionOverflow}
 					aria-label="More actions"
-					title="More actions"
+					data-tip="More actions"
 				>
 					<Icon icon="ri:more-line" />
 				</button>
@@ -646,13 +666,16 @@
 		border-radius: var(--card-radius);
 		background: transparent;
 		color: var(--color-foreground-muted);
-		font-size: 12px;
+		/* The sidebar rows' size, so the header and the column read as one. */
+		font-size: 13px;
 		cursor: pointer;
 		white-space: nowrap;
-		/* Sized to its label, so the gaps between tabs are even and the +
-		   sits one gap after the last. */
-		max-width: 160px;
-		flex-shrink: 0;
+		/* Sized to its label up to 200px, so the gaps between tabs are even
+		   and the + sits one gap after the last. Past that the tabs shrink
+		   together, down to their icon. */
+		max-width: 200px;
+		min-width: 36px;
+		flex-shrink: 1;
 		/* The scale's motion (design.md, "The scale"): hover in fast and out
 		   slow. A new tab grows into its place. */
 		transition:
@@ -699,9 +722,75 @@
 	   whichever one you were looking at — it read as permanently selected.
 	   Identity moved to the icon, which the user picks and can color. */
 
-	/* Dragging state - svelte-dnd-action applies aria-grabbed */
-	:global(.tab[aria-grabbed="true"]) {
-		opacity: 0.5;
+	/* The dragged tab: the whole pill, lifted off the strip. It takes the
+	   active tab's fill whichever tab it was, tilts a little and rises on a
+	   soft shadow. Over a pane it can be dropped into it straightens and
+	   takes the accent edge (SplitContainer sets .tab-docking). The library
+	   copies the source's computed styles inline, hence !important. */
+	:global(.tab.tab-lifted) {
+		background: var(--color-page) !important;
+		color: var(--color-foreground) !important;
+		opacity: 1 !important;
+		/* design-ok: a dragged tab floats above the window; the shadow is its lift */
+		box-shadow: inset 0 0 0 1px var(--card-edge), 0 10px 24px -8px rgb(0 0 0 / 0.28), 0 2px 6px -2px rgb(0 0 0 / 0.12) !important;
+		scale: 1.06;
+		rotate: -2deg;
+		animation: -global-tab-lift var(--motion-enter) var(--ease-premium) both !important;
+	}
+
+	/* Nothing on a tab in the air can be clicked, and the label gets the
+	   close button's room in the copy's fixed width. */
+	:global(.tab.tab-lifted .tab-close) {
+		display: none !important;
+	}
+
+	:global(.tab.tab-lifted.tab-docking) {
+		/* design-ok: a dragged tab floats above the window; the shadow is its lift */
+		box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--color-primary) 70%, transparent), 0 6px 16px -8px rgb(0 0 0 / 0.24) !important;
+		scale: 1;
+		rotate: 0deg;
+		animation: -global-tab-dock var(--motion-state) var(--ease-premium) both !important;
+	}
+
+	/* Let go over the sidebar: the tab fades where it was dropped, since the
+	   library would otherwise fly it home as if the drop were refused
+	   (dndManager `release`). */
+	:global(.tab.tab-lifted.tab-landed) {
+		animation: -global-tab-land var(--motion-hover-in) var(--ease-premium) forwards !important;
+	}
+
+	@keyframes -global-tab-land {
+		to {
+			opacity: 0;
+			scale: 0.9;
+		}
+	}
+
+	@keyframes -global-tab-lift {
+		from {
+			scale: 1;
+			rotate: 0deg;
+		}
+	}
+
+	@keyframes -global-tab-dock {
+		from {
+			scale: 1.06;
+			rotate: -2deg;
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		:global(.tab.tab-lifted),
+		:global(.tab.tab-lifted.tab-docking) {
+			rotate: 0deg;
+			scale: 1;
+			animation: none !important;
+		}
+
+		:global(.tab.tab-lifted.tab-landed) {
+			opacity: 0 !important;
+		}
 	}
 
 	/* A compacted tab — the "Compact / Expand" context action, which shrinks a
@@ -728,10 +817,15 @@
 		opacity: 1;
 	}
 
-	/* A preview tab: the one the next ordinary open replaces. Italic, as in
-	   VS Code, so you can tell it will not stay. */
-	.tab.preview .tab-label-text {
-		font-style: italic;
+	/* A crowded strip: the tabs you are not on show only their icon. */
+	.tab-bar.compact .tab:not(.active) {
+		padding: 0 10px;
+		gap: 0;
+	}
+
+	.tab-bar.compact .tab:not(.active) .tab-label,
+	.tab-bar.compact .tab:not(.active):not(:hover) .tab-close {
+		display: none;
 	}
 
 	/* An odometer: two lines stacked in a one-line window, shifted by 100% to
@@ -739,6 +833,7 @@
 	   nothing in this shell should be more saturated than the work. */
 	.tab-label {
 		position: relative;
+		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
 		flex: 1;
@@ -842,7 +937,7 @@
 		height: 24px;
 		padding: 0;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 15px;
@@ -906,7 +1001,7 @@
 		height: 20px;
 		padding: 0;
 		border: none;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 13px;
@@ -918,8 +1013,10 @@
 		flex-shrink: 0;
 	}
 
+	/* A pane's only tab hides its × until you point at it: shown at rest, it
+	   offers to close the one view you have. */
 	.tab:hover .tab-close,
-	.tab.active .tab-close {
+	.tab.active:not(.only) .tab-close {
 		opacity: 1;
 	}
 
@@ -928,7 +1025,7 @@
 	   treatment (plus a red wash over the whole tab) read as a warning for an
 	   action that doesn't warrant one. */
 	.tab-close:hover {
-		background: color-mix(in srgb, var(--wash-ink) 10%, transparent);
+		background: var(--active-bg);
 		color: var(--color-foreground);
 	}
 
@@ -950,7 +1047,7 @@
 		height: 28px;
 		padding: 0;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 16px;
@@ -990,27 +1087,16 @@
 		margin-left: 0;
 	}
 
-	/* svelte-dnd-action drop indicator */
-	:global(.tabs-scroll > [data-is-dnd-shadow-item-hint="true"]) {
-		width: 2px !important;
-		min-width: 2px !important;
-		max-width: 2px !important;
-		height: 20px !important;
-		padding: 0 !important;
-		margin: 0 2px;
-		background: var(--color-primary) !important;
-		border-radius: 1px;
-		opacity: 1;
-		animation: pulse 0.8s ease-in-out infinite;
+	/* The slot a dragged tab will take. The library keeps the tab's own
+	   width open there and hides it; the slot shows as the drop tint, and
+	   moves along the strip as the neighbours slide aside. */
+	:global(.tabs-scroll > [data-is-dnd-shadow-item-internal]) {
+		visibility: visible !important;
+		background: var(--drop-tint) !important;
+		animation: none !important;
 	}
 
-	@keyframes pulse {
-		0%,
-		100% {
-			opacity: 1;
-		}
-		50% {
-			opacity: 0.5;
-		}
+	:global(.tabs-scroll > [data-is-dnd-shadow-item-internal] > *) {
+		visibility: hidden;
 	}
 </style>

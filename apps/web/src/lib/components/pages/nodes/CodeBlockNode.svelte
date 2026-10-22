@@ -90,7 +90,7 @@
 	}
 </script>
 
-<div class="doc-code-head">
+<div class="doc-code-head prose-code-head">
 	{#if view.editable && typing}
 		<input
 			class="doc-code-language"
@@ -112,24 +112,19 @@
 			<option value={OTHER_LANGUAGE}>Other…</option>
 		</select>
 	{:else}
-		<span class="doc-code-language">{languageLabel(language) || "Plain text"}</span>
+		<span class="prose-code-lang">{languageLabel(language) || "Plain text"}</span>
 	{/if}
 	<IconButton icon={copied ? "ri:check-line" : "ri:file-copy-line"} label="Copy code" size="sm" onclick={copy} />
 </div>
 
 <style>
-	.doc-code-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		gap: 8px;
-		padding: 4px 8px;
-	}
-
+	/* The header's layout and the label's look are prose.css's
+	   (`.prose-code-head`, `.prose-code-lang`), shared with chat; these are
+	   the editable picker's. */
 	.doc-code-language {
 		padding: 0 4px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 0.75rem;

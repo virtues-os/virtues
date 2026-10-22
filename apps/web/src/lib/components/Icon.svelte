@@ -1,8 +1,9 @@
 <script lang="ts">
-	import Icon from '@iconify/svelte';
+	import Icon, { iconLoaded } from '@iconify/svelte';
 	// Import icon registry to ensure icons are pre-loaded
 	import '$lib/icons';
 	import { isEmoji } from '$lib/utils/iconHelpers';
+	import { loadLucide } from '$lib/lucide';
 
 	interface Props {
 		icon: string;
@@ -21,6 +22,14 @@
 	// nothing and left a gap where the icon should be.
 	const emoji = $derived(!!icon && isEmoji(icon));
 	const box = $derived(Number(width ?? height ?? 16) || 16);
+
+	// A Lucide name waits for the bundled collection (see lucide.ts). Handed to
+	// iconify before then, it would be fetched from iconify's public API.
+	let lucideReady = $state(false);
+	const waiting = $derived(!!icon && icon.startsWith('lucide:') && !lucideReady && !iconLoaded(icon));
+	$effect(() => {
+		if (waiting) loadLucide().then(() => (lucideReady = true));
+	});
 </script>
 
 {#if emoji}
@@ -29,6 +38,8 @@
 		style="width: {box}px; height: {box}px; font-size: {Math.round(box * 0.85)}px;{style ? ` ${style}` : ''}"
 		aria-hidden="true">{icon}</span
 	>
+{:else if waiting}
+	<span class="v-icon-emoji {className}" style="width: {box}px; height: {box}px;" aria-hidden="true"></span>
 {:else}
 	<Icon {icon} {width} {height} class={className} {style} {...rest} />
 {/if}

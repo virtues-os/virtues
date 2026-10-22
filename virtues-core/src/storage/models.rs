@@ -75,9 +75,23 @@ pub struct UserProfile {
     /// Dismissed means gone, not collapsed — the features stay reachable where
     /// they permanently live. See agents/record/getting-started.md.
     pub getting_started_dismissed: Vec<String>,
+    /// How the owner arranged the sidebar's doors. None is the shipped
+    /// arrangement (migration 0058).
+    pub sidebar_doors: Option<sqlx::types::Json<SidebarDoors>>,
     // Audit
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+/// The sidebar's doors as the owner arranged them, by door id. The client
+/// owns the set of doors: an id it no longer knows is skipped when read, and
+/// a door missing from `order` takes its shipped place.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SidebarDoors {
+    #[serde(default)]
+    pub order: Vec<String>,
+    #[serde(default)]
+    pub hidden: Vec<String>,
 }
 
 /// Assistant profile - AI assistant preferences (singleton table)
@@ -111,6 +125,12 @@ pub struct AssistantProfile {
     /// the assistant's character in the prompt, never in place of it.
     /// NULL = no notes. Migration 0035.
     pub style_notes: Option<String>,
+    /// Ceiling on wallet spend for one background request run, in
+    /// micros-USD (`crate::task_runner`). Migration 0060.
+    pub request_run_limit_micros: i64,
+    /// Ceiling on wallet spend across all request runs in a rolling day,
+    /// in micros-USD. Zero means requests never start.
+    pub request_day_limit_micros: i64,
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
 }

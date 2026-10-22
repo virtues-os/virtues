@@ -151,7 +151,7 @@
 	.map {
 		width: 100%;
 		height: 260px;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		overflow: hidden;
 		background: var(--color-surface);
 	}

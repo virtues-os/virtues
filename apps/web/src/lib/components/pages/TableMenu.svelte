@@ -8,6 +8,7 @@
 -->
 <script lang="ts">
 	import type { Editor } from "@tiptap/core";
+	import { onDestroy } from "svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
 	import { FloatingContent, type VirtualAnchor } from "$lib/floating";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
@@ -68,15 +69,24 @@
 	 * reached, so the menu holds the focus): the bar stays while it does,
 	 * and until the focus lands outside both.
 	 */
+	let stopWatching: (() => void) | null = null;
+
 	function keepWhileMenuHasKeys() {
+		stopWatching?.();
 		const landed = (e: FocusEvent) => {
 			const at = e.target as Element | null;
 			if (at?.closest?.('[role="menu"]')) return;
-			document.removeEventListener("focusin", landed, true);
+			stopWatching?.();
 			if (!bar?.contains(at)) onFocusChange?.(false);
 		};
 		document.addEventListener("focusin", landed, true);
+		stopWatching = () => {
+			document.removeEventListener("focusin", landed, true);
+			stopWatching = null;
+		};
 	}
+
+	onDestroy(() => stopWatching?.());
 </script>
 
 <FloatingContent
@@ -125,8 +135,9 @@
 		gap: 0;
 		padding: 4px;
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 12px;
+		border-radius: var(--card-radius);
 		background: var(--color-surface);
+		box-shadow: var(--shadow-float);
 	}
 
 	.sep {

@@ -324,7 +324,7 @@
 		margin: 4px 16px 6px;
 		padding: 8px 12px;
 		border: 1px solid var(--color-border);
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		color: var(--color-foreground-muted);
 		flex: none;
 	}
@@ -351,7 +351,7 @@
 	}
 	.card {
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		overflow: hidden;
 		margin-top: 10px;
 	}
@@ -385,7 +385,7 @@
 		width: 28px;
 		height: 28px;
 		flex: none;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
 		color: var(--color-foreground-muted);
 	}
@@ -419,7 +419,7 @@
 		color: var(--color-foreground);
 		background: transparent;
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		padding: 7px 10px;
 	}
 	.act {
@@ -427,7 +427,7 @@
 		border: 1px solid var(--color-primary);
 		color: var(--color-primary);
 		background: transparent;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		padding: 7px 14px;
 		font-size: 13px;
 		font-weight: 600;

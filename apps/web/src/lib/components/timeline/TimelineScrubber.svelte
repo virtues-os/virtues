@@ -631,7 +631,7 @@
 		/* design-ok: the Dayback prototype's segmented control (owner's call, 2026-09-30) */
 		padding: 2px;
 		/* design-ok: the Dayback prototype's segmented control (owner's call, 2026-10-08: match the prototype) */
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 	}
 	.tiers button {
@@ -639,7 +639,7 @@
 		background: none;
 		/* design-ok: the Dayback prototype's segment (owner's call, 2026-09-30) */
 		padding: 5px 10px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		font-family: var(--font-sans);
 		font-size: 11px;
 		font-weight: 600;
@@ -847,7 +847,7 @@
 		max-width: 290px;
 		/* design-ok: the Dayback prototype's peek padding (owner's call, 2026-09-30) */
 		padding: 11px 14px;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		pointer-events: none;

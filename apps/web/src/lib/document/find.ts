@@ -19,11 +19,19 @@
 import { Extension } from '@tiptap/core';
 import type { Node as PmNode } from '@tiptap/pm/model';
 import { Plugin, PluginKey, TextSelection, type EditorState } from '@tiptap/pm/state';
+import { Mapping, StepMap } from '@tiptap/pm/transform';
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view';
 
 export interface FindMatch {
 	from: number;
 	to: number;
+	/**
+	 * For a regular expression, the match and its groups as the pattern found
+	 * them in the whole block, so a replacement's `$1` reads what lookbehind
+	 * and lookahead saw. Index 0 is the whole match.
+	 */
+	captures?: (string | undefined)[];
+	named?: Record<string, string | undefined>;
 }
 
 export interface FindOptions {
@@ -73,6 +81,26 @@ export function findPattern(query: string, options: FindOptions = NO_FIND_OPTION
 	}
 }
 
+/** Push the matches of `pattern` in the textblock `node` at `pos` onto `out`. */
+function scanBlock(node: PmNode, pos: number, pattern: RegExp, captures: boolean, out: FindMatch[]): void {
+	// One character per position: an inline widget reads as one.
+	const text = node.textBetween(0, node.content.size, undefined, WIDGET);
+	pattern.lastIndex = 0;
+	for (let m = pattern.exec(text); m; m = pattern.exec(text)) {
+		// A pattern that matches nothing would match here forever.
+		if (!m[0].length) {
+			pattern.lastIndex += 1;
+			continue;
+		}
+		const match: FindMatch = { from: pos + 1 + m.index, to: pos + 1 + m.index + m[0].length };
+		if (captures) {
+			match.captures = [...m];
+			if (m.groups) match.named = { ...m.groups };
+		}
+		out.push(match);
+	}
+}
+
 /** Every match of `query` in the page's text, in order. */
 export function findMatches(doc: PmNode, query: string, options: FindOptions = NO_FIND_OPTIONS): FindMatch[] {
 	const pattern = findPattern(query, options);
@@ -80,30 +108,22 @@ export function findMatches(doc: PmNode, query: string, options: FindOptions = N
 	const out: FindMatch[] = [];
 	doc.descendants((node, pos) => {
 		if (!node.isTextblock) return true;
-		// One character per position: an inline widget reads as one.
-		const text = node.textBetween(0, node.content.size, undefined, WIDGET);
-		pattern.lastIndex = 0;
-		for (let m = pattern.exec(text); m; m = pattern.exec(text)) {
-			// A pattern that matches nothing would match here forever.
-			if (!m[0].length) {
-				pattern.lastIndex += 1;
-				continue;
-			}
-			out.push({ from: pos + 1 + m.index, to: pos + 1 + m.index + m[0].length });
-		}
+		scanBlock(node, pos, pattern, options.regexp, out);
 		return false;
 	});
 	return out;
 }
 
+function matchDecoration(m: FindMatch, current: boolean): Decoration {
+	return current
+		? Decoration.inline(m.from, m.to, { class: 'doc-find-match doc-find-current' }, { current: true })
+		: Decoration.inline(m.from, m.to, { class: 'doc-find-match' });
+}
+
 function decorate(doc: PmNode, matches: FindMatch[], current: number): DecorationSet {
 	return DecorationSet.create(
 		doc,
-		matches.map((m, i) =>
-			Decoration.inline(m.from, m.to, {
-				class: i === current ? 'doc-find-match doc-find-current' : 'doc-find-match',
-			}),
-		),
+		matches.map((m, i) => matchDecoration(m, i === current)),
 	);
 }
 
@@ -114,10 +134,83 @@ function firstAfter(matches: FindMatch[], pos: number): number {
 	return i < 0 ? 0 : i;
 }
 
-function rebuild(state: EditorState, prev: FindState, current: number): FindState {
-	const matches = findMatches(state.doc, prev.query, prev.options);
-	const at = matches.length ? Math.min(Math.max(current, 0), matches.length - 1) : -1;
-	return { ...prev, matches, current: at, decorations: decorate(state.doc, matches, at) };
+/**
+ * The find state after the page changed from `before` to `doc`. Only the
+ * textblocks the change touched are searched again; the other matches and
+ * their decorations shift past the change. The change is read off the two
+ * documents rather than the transaction's steps, because a collaborative
+ * update replaces the whole document in one step while changing a few
+ * characters of it. The current match stays the same text when it survived
+ * the edit, or else becomes the nearest match after where it was.
+ */
+function remap(before: PmNode, doc: PmNode, prev: FindState): FindState {
+	const pattern = findPattern(prev.query, prev.options);
+	if (!pattern) return prev;
+	const start = before.content.findDiffStart(doc.content);
+	if (start == null) return prev;
+	const end = before.content.findDiffEnd(doc.content) ?? { a: before.content.size, b: doc.content.size };
+	let { a: endA, b: endB } = end;
+	// A repeated character lets the two scans pass each other; widen both
+	// ends so the changed range starts at `start`.
+	const overlap = start - Math.min(endA, endB);
+	if (overlap > 0) {
+		endA += overlap;
+		endB += overlap;
+	}
+	const map = new Mapping([new StepMap([start, endA - start, endB - start])]);
+
+	// The textblocks around the change, searched again. One position either
+	// side catches the blocks on both sides of a change at a block boundary.
+	const blocks: { from: number; to: number }[] = [];
+	const found: FindMatch[] = [];
+	doc.nodesBetween(Math.max(0, start - 1), Math.min(doc.content.size, endB + 1), (node, pos) => {
+		if (!node.isTextblock) return true;
+		blocks.push({ from: pos, to: pos + node.nodeSize });
+		scanBlock(node, pos, pattern, prev.options.regexp, found);
+		return false;
+	});
+	const inBlocks = (m: FindMatch) => blocks.some((b) => m.from >= b.from && m.to <= b.to);
+
+	const old = prev.matches[prev.current];
+	let kept: FindMatch | null = null;
+	const shifted: FindMatch[] = [];
+	for (const m of prev.matches) {
+		// A match touching the change may have grown, shrunk or gone.
+		if (m.to >= start && m.from <= endA) continue;
+		const moved = { ...m, from: map.map(m.from), to: map.map(m.to) };
+		if (inBlocks(moved)) continue;
+		shifted.push(moved);
+		if (m === old) kept = moved;
+	}
+	const matches = [...shifted, ...found].sort((x, y) => x.from - y.from);
+
+	let current = -1;
+	if (matches.length) {
+		if (kept) current = matches.indexOf(kept);
+		else if (old) {
+			const at = map.map(old.from, -1);
+			const next = matches.findIndex((m) => m.from >= at);
+			current = next < 0 ? matches.length - 1 : next;
+		} else current = 0;
+	}
+
+	let decorations = prev.decorations.map(map, doc);
+	const stale = [
+		...blocks.flatMap((b) => decorations.find(b.from, b.to)),
+		...decorations.find(undefined, undefined, (spec) => !!spec.current),
+	];
+	const fresh = found.map((m) => matchDecoration(m, m === matches[current]));
+	if (kept) {
+		const k = kept;
+		stale.push(...decorations.find(k.from, k.to).filter((d) => d.from === k.from && d.to === k.to));
+		fresh.push(matchDecoration(k, true));
+	} else if (current >= 0 && !found.includes(matches[current])) {
+		const c = matches[current];
+		stale.push(...decorations.find(c.from, c.to).filter((d) => d.from === c.from && d.to === c.to));
+		fresh.push(matchDecoration(c, true));
+	}
+	decorations = decorations.remove(stale).add(doc, fresh);
+	return { ...prev, matches, current, decorations };
 }
 
 export function findPlugin(): Plugin<FindState> {
@@ -125,7 +218,7 @@ export function findPlugin(): Plugin<FindState> {
 		key: findKey,
 		state: {
 			init: () => EMPTY,
-			apply(tr, prev, _old, state) {
+			apply(tr, prev, old, state) {
 				const meta = tr.getMeta(findKey) as FindMeta | undefined;
 				if (meta && 'clear' in meta) return EMPTY;
 				if (meta && 'query' in meta) {
@@ -146,7 +239,7 @@ export function findPlugin(): Plugin<FindState> {
 					return { ...prev, current, decorations: decorate(state.doc, prev.matches, current) };
 				}
 				if (!prev.query || !tr.docChanged) return prev;
-				return rebuild(state, prev, prev.current);
+				return remap(old.doc, state.doc, prev);
 			},
 		},
 		props: {
@@ -249,14 +342,25 @@ function replaceable(doc: PmNode, m: FindMatch): boolean {
 	return text;
 }
 
-/** What replaces `m`: `replacement`, with `$1` and `$&` read from the match when the query is a pattern. */
-function replacementFor(state: EditorState, m: FindMatch, replacement: string): string {
-	const s = findState(state);
-	if (!s.options.regexp) return replacement;
-	const pattern = findPattern(s.query, s.options);
-	if (!pattern) return replacement;
-	const text = state.doc.textBetween(m.from, m.to, undefined, WIDGET);
-	return text.replace(new RegExp(pattern.source, pattern.flags.replace('g', '')), replacement);
+/**
+ * What replaces `m`: `replacement`, with `$&`, `$1` to `$99`, `$<name>` and
+ * `$$` read as `String.prototype.replace` reads them, from the groups the
+ * pattern found in the whole block. The tokens for the text before and
+ * after the match are not supported and stay as written.
+ */
+export function replacementFor(m: FindMatch, replacement: string): string {
+	const groups = m.captures;
+	if (!groups) return replacement;
+	return replacement.replace(/\$(\$|&|<([^>]*)>|\d{1,2})/g, (all, token: string, name: string | undefined) => {
+		if (token === '$') return '$';
+		if (token === '&') return groups[0] ?? '';
+		if (name !== undefined) return m.named ? (m.named[name] ?? '') : all;
+		const two = Number(token);
+		if (token.length === 2 && two >= 1 && two < groups.length) return groups[two] ?? '';
+		const one = Number(token[0]);
+		if (one >= 1 && one < groups.length) return (groups[one] ?? '') + token.slice(1);
+		return all;
+	});
 }
 
 /**
@@ -271,7 +375,7 @@ export function replaceCurrent(view: EditorView, replacement: string): boolean {
 		findNext(view);
 		return false;
 	}
-	const text = replacementFor(view.state, m, replacement);
+	const text = replacementFor(m, replacement);
 	const tr = view.state.tr;
 	if (text) tr.insertText(text, m.from, m.to);
 	else tr.delete(m.from, m.to);
@@ -294,7 +398,7 @@ export function replaceAll(view: EditorView, replacement: string): number {
 	// Last to first, so each match's position still holds when it is reached.
 	for (const m of [...s.matches].reverse()) {
 		if (!replaceable(view.state.doc, m)) continue;
-		const text = replacementFor(view.state, m, replacement);
+		const text = replacementFor(m, replacement);
 		if (text) tr.insertText(text, m.from, m.to);
 		else tr.delete(m.from, m.to);
 		count++;

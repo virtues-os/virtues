@@ -276,7 +276,7 @@
 		font-size: 0.75rem;
 		padding: 0.25rem 0.5rem 0.25rem 0.375rem;
 		margin-left: -0.375rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		border: 1px solid transparent;
 		color: var(--color-foreground-muted, #6b7280);
@@ -333,7 +333,7 @@
 		font-weight: 600;
 		padding: 0.125rem 0.375rem;
 		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface, #fff);
 	}
 	.title-meta {
@@ -358,7 +358,7 @@
 
 	.card {
 		padding: 1rem 1.125rem;
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		border: 1px solid var(--color-border, #e5e7eb);
 		background: var(--color-surface, #fff);
 	}
@@ -413,7 +413,7 @@
 		justify-content: space-between;
 		gap: 1rem;
 		padding: 0.5rem 0.625rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		border: 1px solid var(--color-border-subtle, #f3f4f6);
 		background: var(--color-surface-elevated, #f9fafb);
 	}

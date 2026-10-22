@@ -97,8 +97,38 @@ pub fn default_tools() -> Vec<ToolConfig> {
     ]
     .into_iter()
     .chain(browser_tools())
-    .chain([send_imessage_tool(), create_task_tool(), update_task_tool()])
+    .chain([send_imessage_tool(), create_task_tool(), update_task_tool(), save_skill_tool()])
     .collect()
+}
+
+/// Save one of the person's own skills: a prompt they can pick from the
+/// composer's `/` menu (virtues-core `api/skills.rs`). Offered only inside the
+/// shipped `new-skill` skill, and gated like `setup_applet`, because a skill
+/// is a prompt that later runs with tools.
+fn save_skill_tool() -> ToolConfig {
+    ToolConfig {
+        id: "save_skill".to_string(),
+        name: "Save Skill".to_string(),
+        description: "Save a skill the person can run from the / menu".to_string(),
+        llm_description: r#"Save one of the user's skills, which they run by typing / in the composer. Agree the name and what it does with them first. `body` is the prompt the skill's turn runs with: say what to read, what to write, and in what shape, addressed to the assistant. `tools`: only what the body needs. `model`: deep only for slow, high-stakes work. Saving an existing name of theirs replaces it."#.to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["name", "description", "body", "tools"],
+            "properties": {
+                "name": { "type": "string", "description": "lowercase-with-dashes" },
+                "description": { "type": "string", "description": "One line: when to use it" },
+                "icon": { "type": "string", "description": "A Remix icon id, e.g. ri:book-line" },
+                "tools": { "type": "array", "items": { "type": "string" } },
+                "body": { "type": "string" },
+                "model": { "type": "string", "enum": ["standard", "deep"] }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:flashlight-line".to_string(),
+        display_order: 0,
+        is_system: false,
+    }
 }
 
 /// Add tasks to the to-do list the owner and the assistant share (virtues-core
@@ -109,7 +139,7 @@ fn create_task_tool() -> ToolConfig {
         id: "create_task".to_string(),
         name: "Add a task".to_string(),
         description: "Add tasks to your list".to_string(),
-        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). Never for things only mentioned in passing. Titles: short, in their words. The chat shows the tasks."#.to_string(),
+        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). A task for "assistant" runs in the background, at its due time if it has one. Never for things only mentioned in passing. Titles: short, in their words."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["tasks"],
@@ -145,7 +175,7 @@ fn update_task_tool() -> ToolConfig {
         id: "update_task".to_string(),
         name: "Update a task".to_string(),
         description: "Edit, finish or dismiss a task".to_string(),
-        llm_description: r#"Change one task by id: fields, status, or a note in its history. Working one assigned to you: "active", then a note on what you did and where, then "done"; if blocked, "open" with a note why. due "none" clears it."#.to_string(),
+        llm_description: r#"Change one task by id: fields, status, or a note in its history. To finish one assigned to you: "ready" with a result, never "done". due "none" clears it."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["id"],
@@ -156,7 +186,9 @@ fn update_task_tool() -> ToolConfig {
                 "due": { "type": "string" },
                 "for": { "type": "string", "enum": ["owner", "assistant"] },
                 "project_id": { "type": "string" },
-                "status": { "type": "string", "enum": ["open", "active", "done", "dismissed"] },
+                "status": { "type": "string", "enum": ["open", "active", "ready", "done", "dismissed"] },
+                "result": { "type": "string" },
+                "result_url": { "type": "string" },
                 "note": { "type": "string" }
             }
         }),

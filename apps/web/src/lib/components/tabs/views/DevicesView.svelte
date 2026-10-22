@@ -529,7 +529,7 @@
 		gap: 0.6rem;
 		padding: 1.4rem 1rem;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		font: inherit;
 		font-size: 14px;
@@ -546,7 +546,7 @@
 	.dot {
 		width: 8px;
 		height: 8px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		flex: none;
 		background: var(--color-foreground-subtle);
 	}

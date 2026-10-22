@@ -493,7 +493,7 @@
 		width: auto;
 		height: auto;
 		padding: 0.95rem 2rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		font: inherit;
 		font-family: var(--font-sans, system-ui);
 		font-size: 17px;

@@ -292,7 +292,7 @@
 		gap: 12px;
 		padding: 12px 16px;
 		border: 0;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		outline: 1px solid color-mix(in srgb, var(--color-foreground) 12%, transparent);
 		outline-offset: -1px;
 		background: transparent;

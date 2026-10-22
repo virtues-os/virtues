@@ -40,7 +40,9 @@
  *   edit is an undo step of its own (`ownUndoStep`). If the converter cannot
  *   run, refuses the text, or makes nothing of it, the text is pasted as it
  *   is; more than one paste converts is said, and so, once, is a converter
- *   that cannot run.
+ *   that cannot run. Clipboard HTML that only wraps the text, with no
+ *   formatting of its own (`onlyWrapsText`), as Slack and many note apps
+ *   write it, does not stop markdown in the text being read as markdown.
  * - Pasted as plain text (Shift with the paste, as Paste and Match Style
  *   is): the text as written, a paragraph a line, never read as markdown
  *   and its words never formatted by the paste rules, so text misread as
@@ -195,12 +197,36 @@ function pastingPlain(view: EditorView): boolean {
  * paste's HTML loads or runs.
  */
 export function isCodeEditorHtml(html: string): boolean {
-	const body = new DOMParser().parseFromString(html, 'text/html').body;
+	const body = inertHtml(html);
 	const roots = [...body.children].filter((el) => el.tagName !== 'META' && el.tagName !== 'STYLE');
 	if (roots.length !== 1) return false;
 	const root = roots[0];
 	if (root.tagName !== 'DIV' || !/(^|;)\s*white-space\s*:\s*pre/i.test(root.getAttribute('style') ?? '')) return false;
 	return [...root.querySelectorAll('*')].every((el) => el.tagName === 'DIV' || el.tagName === 'SPAN' || el.tagName === 'BR');
+}
+
+/** Tags that hold text without formatting it. */
+const PLAIN_TAGS = new Set(['DIV', 'P', 'SPAN', 'BR', 'META', 'STYLE']);
+/** A style that formats words: bold, italic, underline, strike, a font of its own. */
+const FORMATTING_STYLE = /font-weight\s*:\s*(bold|[6-9]00)|font-style\s*:\s*italic|text-decoration[^;]*:\s*[^;]*(underline|line-through)|font-family\s*:[^;]*mono/i;
+
+/**
+ * Whether clipboard HTML only wraps `text`: no tag or style that formats
+ * it, and the same text. Slack, terminals and many note apps put such a
+ * wrapper beside the plain text, and markdown written in them is markdown.
+ * HTML with formatting of its own (a heading, a list, a link, bold) is a
+ * rich copy, and the page reads that instead. Read in an inert document.
+ */
+export function onlyWrapsText(html: string, text: string): boolean {
+	const body = inertHtml(html);
+	for (const el of body.querySelectorAll('*')) {
+		if (!PLAIN_TAGS.has(el.tagName)) return false;
+		if (el.tagName !== 'STYLE' && FORMATTING_STYLE.test(el.getAttribute('style') ?? '')) return false;
+	}
+	for (const el of body.querySelectorAll('style')) el.remove();
+	// Line breaks and block edges hold no text in `textContent`: compared without any white space.
+	const bare = (s: string) => s.replace(/[\s\u00a0]+/g, '');
+	return bare(body.textContent ?? '') === bare(text);
 }
 
 /** Word's list paragraph: the list it belongs to and its level (`mso-list:l0 level2 lfo1`). */
@@ -285,11 +311,17 @@ export function plainSlice(schema: Schema, text: string): Slice {
 	return new Slice(Fragment.from(paragraphs), 1, 1);
 }
 
+/**
+ * HTML read in a document of its own, which loads nothing: an image the
+ * converter's output names is not fetched before it is in the page.
+ */
+export function inertHtml(html: string): HTMLElement {
+	return new DOMParser().parseFromString(html, 'text/html').body;
+}
+
 /** HTML as the slice a paste of it would insert. */
 export function htmlSlice(schema: Schema, html: string): Slice {
-	const div = document.createElement('div');
-	div.innerHTML = html;
-	return PmDOMParser.fromSchema(schema).parseSlice(div);
+	return PmDOMParser.fromSchema(schema).parseSlice(inertHtml(html));
 }
 
 function isList(node: PmNode): boolean {
@@ -495,7 +527,7 @@ export function pasteHandling(convert: Convert = convertPaste): Extension {
 									// of its prose included, which has no block's sign.
 									if (mode !== 'markdown' || readsAsCode(text)) return false;
 								} else if (!isCodeEditorHtml(html)) {
-									return false;
+									if (!markdown || !onlyWrapsText(html, text)) return false;
 								} else if (!markdown) {
 									place(view, view.state.tr.replaceSelection(plainSlice(view.state.schema, text)));
 									return true;
@@ -509,9 +541,11 @@ export function pasteHandling(convert: Convert = convertPaste): Extension {
 						},
 						handleDrop(view, event, _slice, moved) {
 							const data = event.dataTransfer;
-							if (moved || !data || data.files?.length || data.getData('text/html')) return false;
+							if (moved || !data || data.files?.length) return false;
 							const text = data.getData('text/plain');
 							if (!text || !looksLikeMarkdown(text)) return false;
+							const html = data.getData('text/html');
+							if (html && !onlyWrapsText(html, text)) return false;
 							const at = view.posAtCoords({ left: event.clientX, top: event.clientY })?.pos;
 							if (at === undefined || view.state.doc.resolve(at).parent.type.spec.code) return false;
 							event.preventDefault();

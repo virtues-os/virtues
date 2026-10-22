@@ -178,7 +178,7 @@
 		border: none;
 		background: transparent;
 		text-align: left;
-		border-radius: 0.5rem;
+		border-radius: var(--radius-lg);
 		cursor: pointer;
 		transition: background-color 0.12s ease;
 	}

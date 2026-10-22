@@ -478,7 +478,7 @@
 		margin: 0 0 1rem;
 		padding: 0.75rem 1rem;
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		font-size: 0.875rem;
 		color: var(--color-foreground-muted);
 	}
@@ -609,7 +609,7 @@
 		font-size: 1rem;
 		padding: 0.375rem 0.625rem;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface-elevated);
 		color: var(--color-foreground);
 	}

@@ -2,5 +2,5 @@ onlyBuiltDependencies:
   - esbuild
   - '@tailwindcss/oxide'
 patchedDependencies:
-  '@tiptap/core@3.31.4': patches/@tiptap__core@3.31.4.patch
+  '@tiptap/core@3.32.0': patches/@tiptap__core@3.32.0.patch
   '@tiptap/y-tiptap@3.0.9': patches/@tiptap__y-tiptap@3.0.9.patch
