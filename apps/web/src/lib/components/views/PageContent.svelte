@@ -912,8 +912,7 @@
 		flex: 1;
 		min-width: 0;
 		overflow-y: auto;
-		padding: 2rem 1.5rem;
-		padding-bottom: 4rem;
+		padding: 2rem var(--reading-gutter) 4rem;
 		/* Text scrolling up under the toolbar fades over its last 24px instead
 		   of being cut through a line. The fade grows in over the first 24px
 		   of scroll, so a page at its top, cover and all, is not masked.
@@ -946,8 +945,10 @@
 		max-width: 32rem; /* ~512px */
 	}
 
+	/* The reading column chat's messages use, so a page and a chat start
+	   their text at one edge when you switch tabs (themes.css). */
 	.page-inner.width-medium {
-		max-width: 42rem; /* ~672px, similar to max-w-2xl */
+		max-width: var(--reading-measure);
 	}
 
 	.page-inner.width-full {
