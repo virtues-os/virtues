@@ -733,6 +733,7 @@
 				style:--prose-family={pageDisplay.fontFamily}
 				style:--prose-size={pageDisplay.fontSize}
 				style:--prose-lh={pageDisplay.lineHeight}
+				style:--prose-scale={pageDisplay.scale}
 			>
 				<!-- Cover Image - above title, full bleed -->
 				{#if coverUrl}
@@ -1025,7 +1026,8 @@
 	}
 
 	/* Page Header: a step of room under the title, which stays a clear size
-	   above the page's own first heading (36px over --md-h1-size, 26px). */
+	   above the page's own first heading (36px over --md-h1-size, 26px at
+	   medium text and 29px at large). */
 	.page-header {
 		display: flex;
 		align-items: flex-start;

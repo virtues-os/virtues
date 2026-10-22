@@ -13,6 +13,9 @@
    settings arrive as --prose-family, --prose-size, --prose-lh and
    --prose-color on an ancestor (a page's display settings, pageDisplay; a
    quiet note's smaller, muted text) and win over the body tokens.
+   --prose-scale is the text size against its medium (a page at Large is
+   1.125), and the headings multiply their sizes by it, so they keep their
+   step above the body text at every size.
 
    Chat replies and the articles carry it on Streamdown's root
    (Markdown.svelte), whose own theme is emptied so nothing of its look
@@ -89,7 +92,7 @@
 .prose h1 {
 	margin-top: var(--prose-heading-space-1);
 	font-family: var(--md-heading-major-family);
-	font-size: var(--md-h1-size);
+	font-size: calc(var(--md-h1-size) * var(--prose-scale, 1));
 	line-height: var(--md-h1-lh);
 	font-weight: var(--md-h1-weight);
 }
@@ -97,7 +100,7 @@
 .prose h2 {
 	margin-top: var(--prose-heading-space-2);
 	font-family: var(--md-heading-major-family);
-	font-size: var(--md-h2-size);
+	font-size: calc(var(--md-h2-size) * var(--prose-scale, 1));
 	line-height: var(--md-h2-lh);
 	font-weight: var(--md-h2-weight);
 }
@@ -105,7 +108,7 @@
 .prose h3 {
 	margin-top: var(--prose-heading-space-3);
 	font-family: var(--md-heading-major-family);
-	font-size: var(--md-h3-size);
+	font-size: calc(var(--md-h3-size) * var(--prose-scale, 1));
 	line-height: var(--md-h3-lh);
 	font-weight: var(--md-h3-weight);
 }
@@ -113,7 +116,7 @@
 .prose h4 {
 	margin-top: var(--prose-heading-space-4);
 	font-family: inherit;
-	font-size: var(--md-h4-size);
+	font-size: calc(var(--md-h4-size) * var(--prose-scale, 1));
 	line-height: var(--md-h4-lh);
 	font-weight: var(--md-h4-weight);
 }
@@ -121,7 +124,7 @@
 .prose h5 {
 	margin-top: var(--prose-heading-space-5);
 	font-family: inherit;
-	font-size: var(--md-h5-size);
+	font-size: calc(var(--md-h5-size) * var(--prose-scale, 1));
 	line-height: var(--md-h5-lh);
 	font-weight: var(--md-h5-weight);
 }
@@ -129,7 +132,7 @@
 .prose h6 {
 	margin-top: var(--prose-heading-space-6);
 	font-family: inherit;
-	font-size: var(--md-h6-size);
+	font-size: calc(var(--md-h6-size) * var(--prose-scale, 1));
 	line-height: var(--md-h6-lh);
 	font-weight: var(--md-h6-weight);
 	color: var(--color-foreground-muted);

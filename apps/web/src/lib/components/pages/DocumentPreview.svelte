@@ -49,6 +49,7 @@
 	style:--prose-family={pageDisplay.fontFamily}
 	style:--prose-size={pageDisplay.fontSize}
 	style:--prose-lh={pageDisplay.lineHeight}
+	style:--prose-scale={pageDisplay.scale}
 	bind:this={host}
 ></div>
 

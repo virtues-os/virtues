@@ -692,6 +692,7 @@
 	style:--prose-family={pageDisplay.fontFamily}
 	style:--prose-size={pageDisplay.fontSize}
 	style:--prose-lh={pageDisplay.lineHeight}
+	style:--prose-scale={pageDisplay.scale}
 >
 	{#if findOpen && editor && findHost}
 		<!-- In from the right, where the toolbar's icons were; out as they come back. -->

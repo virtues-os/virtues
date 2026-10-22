@@ -4,9 +4,9 @@
  * One persisted, app-wide set of reading/writing preferences for the page
  * editor: font mode, text size, page width, and focus/typewriter mode.
  * Width `page` sets the page as an A4 sheet (210 mm), the width it prints at.
- * Font + size are surfaced to the editor via the `--prose-family` /
- * `--prose-size` custom properties (see lib/styles/prose.css), set
- * on an ancestor of the editor so they cascade in.
+ * Font + size are surfaced to the editor via the `--prose-family`,
+ * `--prose-size`, `--prose-lh` and `--prose-scale` custom properties (see
+ * lib/styles/prose.css), set on an ancestor of the editor so they cascade in.
  */
 
 export type FontMode = "sans" | "serif" | "mono";
@@ -53,6 +53,11 @@ const SERIF_LINE_HEIGHT: Record<TextSize, string> = {
 	m: "var(--md-article-lh)",
 	l: "1.875rem",
 };
+
+// The text size against medium, in each set: what the headings' sizes are
+// multiplied by (`--prose-scale`), so a heading keeps its step above the text.
+const SCALE: Record<TextSize, number> = { s: 15 / 16, m: 1, l: 18 / 16 };
+const SERIF_SCALE: Record<TextSize, number> = { s: 16 / 17, m: 1, l: 19 / 17 };
 
 interface Persisted {
 	fontMode: FontMode;
@@ -109,6 +114,11 @@ class PageDisplay {
 	/** CSS value for `--prose-lh`. Tracks the text size. */
 	get lineHeight(): string {
 		return (this.article ? SERIF_LINE_HEIGHT : LINE_HEIGHT)[this.textSize];
+	}
+
+	/** CSS value for `--prose-scale`: the text size against its medium. */
+	get scale(): number {
+		return (this.article ? SERIF_SCALE : SCALE)[this.textSize];
 	}
 
 	/** Serif mode reads as an article: the page wears `prose--article`, so its tables follow too. */

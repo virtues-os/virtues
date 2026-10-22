@@ -1,6 +1,6 @@
 # One prose stylesheet for chat, pages and the composer
 
-**Status: slices 1-7 done (2026-10-21).** What is left is in themes.css:
+**Status: slices 1-7 done, and headings scale with the text size (2026-10-21).** What is left is in themes.css:
 set `--md-h3-weight` and `--md-th-weight` to 400 and read the second in
 prose.css (its TODO), and drop the `.markdown--article` name from the
 article tokens' comment. Delete this plan when that lands. The rest of this
