@@ -38,7 +38,7 @@
 	import { toast } from "svelte-sonner";
 	import ShareSheet from "$lib/components/applets/ShareSheet.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
-	import { untitled } from "$lib/refs/identity.svelte";
+	import { isUntitled, untitled } from "$lib/refs/identity.svelte";
 	import { pageDisplay } from "$lib/stores/pageDisplay.svelte";
 	import type { TreeDocument } from "$lib/yjs";
 	import { cutServerVersion } from "$lib/yjs/versions";
@@ -782,9 +782,15 @@
 								{/snippet}
 							</Popover>
 						{/if}
+						<!-- A default title is shown muted and selected on focus, so the
+						     first keystroke names the page. -->
 						<textarea
 							bind:value={title}
 							placeholder="Untitled"
+							class:untitled={isUntitled(title, "page")}
+							onfocus={(e) => {
+								if (isUntitled(title, "page")) e.currentTarget.select();
+							}}
 							onkeydown={handleTitleKeydown}
 							rows="1"
 							class="page-title-input"
@@ -986,6 +992,10 @@
 	}
 
 	.page-title-input::placeholder {
+		color: var(--color-foreground-subtle);
+	}
+
+	.page-title-input.untitled {
 		color: var(--color-foreground-subtle);
 	}
 
