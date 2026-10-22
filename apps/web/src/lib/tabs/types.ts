@@ -54,12 +54,6 @@ export interface Tab {
 	route: string; // URL-native: '/chat/chat_abc123', '/page/page_xyz'
 	icon?: string;
 	pinned?: boolean;
-	/**
-	 * A preview tab: the one tab per pane that ordinary opens replace. It
-	 * becomes a kept tab when you commit to it (window-shell `keepTab`).
-	 * Absent on tabs saved before previews existed, which restore as kept.
-	 */
-	preview?: boolean;
 
 	// Per-tab navigation history (browser model). `route` is a denormalized
 	// mirror of `history[historyIndex]`, always written together with them.

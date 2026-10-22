@@ -203,14 +203,6 @@
 
 		// Build context menu items
 		const items: ContextMenuItem[] = [];
-		if (tab.preview) {
-			items.push({
-				id: "keep",
-				label: "Keep open",
-				icon: "ri:check-line",
-				action: () => windowShellStore.keepTab(tabId),
-			});
-		}
 		items.push(
 			// Compact/Expand
 			{
@@ -394,16 +386,9 @@
 	}
 
 	// A double-click renames the thing, when the thing has a name of its own.
-	// On a preview tab it also keeps the tab, as in VS Code.
 	function handleDoubleClick(e: MouseEvent, tabId: string) {
 		e.preventDefault();
 		const tab = tabs.find((t) => t.id === tabId);
-		// A preview tab's double-click keeps it, and that is all it does. A
-		// second double-click, on a kept tab, renames.
-		if (tab?.preview) {
-			windowShellStore.keepTab(tabId);
-			return;
-		}
 		if (!tab || tab.pinned || !ownedRef(tab.route ?? "")) return;
 		renamingTabId = tabId;
 		renameValue = tabLook(tab).title;
@@ -510,7 +495,6 @@
 				class:active-in-active-pane={tab.id === activeTabId &&
 					isActivePane}
 				class:pinned={tab.pinned}
-				class:preview={tab.preview}
 				class:renaming={tab.id === renamingTabId}
 				animate:flip={{ duration: FLIP_DURATION_MS }}
 				onclick={() =>
@@ -522,11 +506,7 @@
 					e.key === "Enter" &&
 					tab.id !== renamingTabId &&
 					handleTabClick(tab.id)}
-				data-tip={tab.id !== renamingTabId
-					? tab.preview
-						? `${identity.title} · Preview. Double-click to keep it open`
-						: identity.title
-					: ""}
+				data-tip={tab.id !== renamingTabId ? identity.title : ""}
 				role="button"
 				tabindex="0"
 			>
@@ -835,17 +815,6 @@
 
 	.tab.active :global(.tab-icon) {
 		opacity: 1;
-	}
-
-	/* A preview tab: the one the next ordinary open replaces. Roman like
-	   every label; it says it will not stay by having no fill of its own,
-	   only a dashed edge when it is the one showing. Typing in it, or a
-	   double-click, keeps it. */
-	.tab.preview.active {
-		background: transparent;
-		box-shadow: none;
-		outline: 1px dashed var(--card-edge);
-		outline-offset: -1px;
 	}
 
 	/* A crowded strip: the tabs you are not on show only their icon. */

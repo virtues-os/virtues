@@ -47,7 +47,7 @@
 	import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
 	import DataGridFilterRail from './DataGridFilterRail.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
-	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { openMenuItems } from '$lib/utils/openMenuItems';
 	import { getKeepMenuItems } from '$lib/utils/contextMenuItems';
 	import Popover from '$lib/floating/primitives/Popover.svelte';
 	import type {
@@ -198,14 +198,7 @@
 						e.preventDefault();
 						const label = getRowLabel(item);
 						contextMenu.show({ x: e.clientX, y: e.clientY }, [
-							{
-								id: 'open-beside',
-								label: 'Open beside',
-								icon: 'ri:layout-column-line',
-								action: () => {
-									windowShellStore.openRouteBeside(url, label);
-								},
-							},
+							...openMenuItems(url, label),
 							...getKeepMenuItems({ url, label, icon: rowIcon?.(item) }),
 						]);
 					}

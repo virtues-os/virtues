@@ -11,6 +11,7 @@
 	import ProjectSection from '$lib/components/projects/ProjectSection.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
+	import { openMenuItems } from '$lib/utils/openMenuItems';
 	import { projectColor } from '$lib/sidebar/pin-colors';
 	import { formatRelativeTimestamp } from '$lib/utils/dateUtils';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
@@ -46,12 +47,7 @@
 		}));
 		contextMenu.show({ x: e.clientX, y: e.clientY }, [
 			{ id: 'open', label: 'Open', icon: 'ri:chat-3-line', action: () => open(chat) },
-			{
-				id: 'open-beside',
-				label: 'Open beside',
-				icon: 'ri:layout-column-line',
-				action: () => void windowShellStore.openRouteBeside(url, chat.title)
-			},
+			...openMenuItems(url, chat.title),
 			...elsewhere,
 			{
 				id: 'remove',

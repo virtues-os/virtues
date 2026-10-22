@@ -90,6 +90,7 @@
 	import { setup } from '$lib/components/setup/setup.svelte';
 	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { openWebLink } from '$lib/utils/webLinks';
+	import { openMenuItems } from '$lib/utils/openMenuItems';
 
 	// Skipped is not done: a step set aside keeps the door, because Finish
 	// later and Skip both mean "not now", never "not ever". It goes once every
@@ -665,10 +666,10 @@
 		return !!pin && ['web', 'route'].includes(pinIdentity(pin).kind);
 	}
 
-	/** A row's open: ⌘-click (Ctrl on Windows and Linux) opens it in the other pane. */
+	/** A row's open: ⌘-click (Ctrl on Windows and Linux) opens it in a new tab. */
 	function openFromRow(e: MouseEvent, url: string, title: string, open: () => void) {
 		if (renaming?.url === url) return;
-		if ((e.metaKey || e.ctrlKey) && !isExternal(url)) windowShellStore.openRouteBeside(url, title);
+		if ((e.metaKey || e.ctrlKey) && !isExternal(url)) windowShellStore.openInNewTab(url, title);
 		else open();
 	}
 
@@ -736,14 +737,7 @@
 		const url = chatRoute(s);
 		const label = titleOf(s);
 		return [
-			{
-				id: 'open-beside',
-				label: 'Open beside',
-				icon: 'ri:layout-column-line',
-				action: () => {
-					windowShellStore.openRouteBeside(url, label);
-				},
-			},
+			...openMenuItems(url, label),
 			{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renameChat(s) },
 			...getProjectMenuItems(url, label),
 			pinMenuItem({ url, label, icon: s.icon }),
@@ -762,14 +756,7 @@
 		const url = pageRoute(p);
 		const label = pageTitle(p);
 		return [
-			{
-				id: 'open-beside',
-				label: 'Open beside',
-				icon: 'ri:layout-column-line',
-				action: () => {
-					windowShellStore.openRouteBeside(url, label);
-				},
-			},
+			...openMenuItems(url, label),
 			{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renamePage(p) },
 			...getProjectMenuItems(url, label),
 			pinMenuItem({ url, label, icon: p.icon }),
@@ -863,16 +850,7 @@
 		// No record behind it: an external URL or an app screen, where the pin
 		// is the thing, so its name and icon are the pin's own.
 		const items: ContextMenuItem[] = [];
-		if (!isExternal(pin.url)) {
-			items.push({
-				id: 'open-beside',
-				label: 'Open beside',
-				icon: 'ri:layout-column-line',
-				action: () => {
-					windowShellStore.openRouteBeside(pin.url, pinLabel(pin));
-				},
-			});
-		}
+		if (!isExternal(pin.url)) items.push(...openMenuItems(pin.url, pinLabel(pin)));
 		if (look.kind === 'web' || look.kind === 'route') {
 			items.push({
 				id: 'rename',
@@ -906,14 +884,7 @@
 		if (row.kind === 'page') return pageMenu(row.page);
 		if (row.kind === 'project') return projectRowMenuItems(row.project);
 		return [
-			{
-				id: 'open-beside',
-				label: 'Open beside',
-				icon: 'ri:layout-column-line',
-				action: () => {
-					windowShellStore.openRouteBeside(row.url, row.title);
-				},
-			},
+			...openMenuItems(row.url, row.title),
 			pinMenuItem({ url: row.url, label: row.title }),
 		];
 	}

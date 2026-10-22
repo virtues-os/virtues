@@ -446,8 +446,6 @@
 	>
 	</div>
 
-	<!-- Typing anywhere in a preview tab (a composer, a page, a field) keeps
-	     it: you have started working in it. -->
 	<!-- Tab Content Layer: single {#each} loop, absolutely positioned per-pane.
 	     When a tab moves between panes, only its box changes, so a mounted
 	     view survives the move and slides to its new place. A hidden tab
@@ -472,7 +470,6 @@
 			style:left={box.left}
 			style:width={box.width}
 			onpointerdown={() => isSplitEnabled && handlePaneClick(paneId)}
-			onbeforeinput={() => tab.preview && windowShellStore.keepTab(tab.id)}
 		>
 			{#if mountedTabIds.has(tab.id)}
 				<TabContent {tab} active={isActive} />
