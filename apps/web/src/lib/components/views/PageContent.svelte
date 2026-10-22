@@ -597,17 +597,16 @@
 		if (!pageData) return;
 
 		try {
-			// Use store method - handles tab closing, API call, cache invalidation, sidebar refresh
+			// The store closes every tab showing the page, so there is nowhere
+			// left to navigate: the tab beside it comes to the front, as on close.
 			await pagesStore.removePage(pageData.id);
-			// Navigate to pages list
-			onNavigate?.("/pages");
 		} catch (err) {
 			console.error("Failed to delete page:", err);
 		}
 	}
 
 	function handleBackClick() {
-		onNavigate?.("/pages");
+		onNavigate?.("/page");
 	}
 
 	function handleTitleKeydown(e: KeyboardEvent) {
