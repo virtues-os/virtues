@@ -231,11 +231,15 @@ class Grip {
 		// reads it, and so does a drop on another page.
 		view.dragging = { slice, move: true, node: selection } as EditorView['dragging'];
 		this.options.dragStarted?.(view);
-		this.hide();
+		// Faded, not hidden: Chrome ends a drag at once when its source stops
+		// taking the pointer during dragstart.
+		this.dom.classList.add('is-dragging');
 	};
 
 	private onDragEnd = (): void => {
 		const { view } = this;
+		this.dom.classList.remove('is-dragging');
+		this.hide();
 		this.options.dragEnded?.(view);
 		// After the drop has read it, as ProseMirror clears its own.
 		setTimeout(() => {

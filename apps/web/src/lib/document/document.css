@@ -870,6 +870,9 @@
 	background: var(--hover-bg);
 	color: var(--color-foreground-muted);
 }
+.doc-grip.is-dragging {
+	opacity: 0;
+}
 .doc-grip:active {
 	cursor: grabbing;
 }
