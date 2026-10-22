@@ -439,21 +439,18 @@
 	{/if}
 
 	<!-- Main Content -->
-	<!-- With one pane, `main` is its card: it paints the page (`--page`) and
-	     clips the corners. In split it is only the desk, and each pane draws
-	     a card of its own, a desk gap apart (SplitContainer). -->
+	<!-- On the desktop `main` is only the desk: each pane draws its own card
+	     (SplitContainer), so one card can divide into two and merge back.
+	     On the phone `main` is the page itself. -->
 	<main
 		class="flex-1 flex flex-col z-0 min-w-0 text-foreground overflow-hidden bg-page"
 		class:mx-2={!mobileLayout.isMobile}
 		class:mb-2={!mobileLayout.isMobile}
-		class:pane-card={!mobileLayout.isMobile && !windowShellStore.isSplit}
-		class:border={!mobileLayout.isMobile && !windowShellStore.isSplit}
-		class:split-desk={!mobileLayout.isMobile && windowShellStore.isSplit}
+		class:split-desk={!mobileLayout.isMobile}
 		class:is-mobile={mobileLayout.isMobile}
-		class:card-edge={!mobileLayout.isMobile}
-		style={windowShellStore.isSplit && !mobileLayout.isMobile
-			? undefined
-			: "background-image: var(--background-image); background-blend-mode: multiply;"}
+		style={mobileLayout.isMobile
+			? "background-image: var(--background-image); background-blend-mode: multiply;"
+			: undefined}
 	>
 		{#if initialized}
 			{#if mobileLayout.isMobile}
@@ -663,13 +660,8 @@
 		background-color: var(--desk);
 	}
 
-	/* The shell's cards all share --card-radius. Their edge is the theme's
-	   --card-edge, a faint hairline over the desk's step in tone. */
-	.pane-card { border-radius: var(--card-radius); }
-	main.card-edge { border-color: var(--card-edge); }
-
-	/* In split each pane draws its own card (SplitContainer), a desk gap apart, so
-	   `main` is only the desk they stand on. */
+	/* Each pane draws its own card (SplitContainer), a desk gap apart in
+	   split, so `main` is only the desk they stand on. */
 	main.split-desk {
 		background-color: transparent;
 	}

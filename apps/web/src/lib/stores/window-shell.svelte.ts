@@ -100,6 +100,10 @@ class WindowShellStore {
 	]);
 	activePaneId = $state<string>('left');
 
+	/** True while the seam between the panes is held. The header's strips
+	 *  then follow the pointer instead of easing after it. */
+	paneResizing = $state(false);
+
 	// Derived - computed, not stored
 	get isSplit(): boolean {
 		return this.panes.length > 1;

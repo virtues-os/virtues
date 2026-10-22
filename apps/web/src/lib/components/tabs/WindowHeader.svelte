@@ -33,6 +33,7 @@
 	const isSplit = $derived(windowShellStore.isSplit);
 	const leftWidth = $derived(isSplit ? windowShellStore.leftPane?.width || 50 : 100);
 	const rightWidth = $derived(isSplit ? windowShellStore.rightPane?.width || 50 : 0);
+	const gutterPx = $derived(isSplit ? SPLIT_GUTTER_PX : 0);
 
 	const cardLeft = $derived(sidebarState.cardLeft);
 
@@ -70,7 +71,7 @@
 <header
 	data-tauri-drag-region
 	class="window-header"
-	class:resizing={sidebarState.resizing}
+	class:resizing={sidebarState.resizing || windowShellStore.paneResizing}
 	style:--card-left="{cardLeft}px"
 >
 	<!-- Three groups set apart by air alone: the mark, history (back,
@@ -125,17 +126,19 @@
 		<div
 			data-tauri-drag-region
 			class="strip"
-			style:width={isSplit ? `calc(${leftWidth}% - ${SPLIT_GUTTER_PX / 2}px)` : '100%'}
+			style:width="calc({leftWidth}% - {gutterPx / 2}px)"
 			style:padding-left="{overlap}px"
 		>
 			<WindowTabBar paneId={isSplit ? 'left' : undefined} />
 		</div>
-		{#if isSplit}
-			<div class="gutter" style:width="{SPLIT_GUTTER_PX}px" aria-hidden="true"></div>
-			<div class="strip" data-tauri-drag-region style:width="calc({rightWidth}% - {SPLIT_GUTTER_PX / 2}px)">
+		<!-- The gutter and the right strip stay mounted at zero width with one
+		     pane, so they open and close on the cards' clock. -->
+		<div class="gutter" style:width="{gutterPx}px" aria-hidden="true"></div>
+		<div class="strip" data-tauri-drag-region style:width="calc({rightWidth}% - {gutterPx / 2}px)">
+			{#if isSplit}
 				<WindowTabBar paneId="right" />
-			</div>
-		{/if}
+			{/if}
+		</div>
 	</div>
 </header>
 
@@ -173,19 +176,25 @@
 		transition: left var(--motion-layout) var(--ease-premium);
 	}
 
+	/* The strips open and close with the cards below them (SplitContainer),
+	   on the same clock, so a tab never runs ahead of its pane. */
 	.strip {
 		min-width: 0;
-		transition: padding-left var(--motion-layout) var(--ease-premium);
+		transition:
+			padding-left var(--motion-layout) var(--ease-premium),
+			width var(--motion-layout) var(--ease-premium);
 	}
 
 	.resizing .strips,
 	.resizing .strip,
+	.resizing .gutter,
 	.resizing .lead {
 		transition: none;
 	}
 
 	.gutter {
 		flex: none;
+		transition: width var(--motion-layout) var(--ease-premium);
 	}
 
 	.lead-gap {

@@ -36,6 +36,7 @@
 	// Track isDragging reactively via direct session access
 	// Public session property enables Svelte 5 fine-grained reactivity
 	const isDragging = $derived(dndManager.session !== null);
+	const draggedLabel = $derived(dndManager.session?.item.label ?? "");
 
 	// Direct pane access (unified model - tabs always live in panes)
 	const leftPaneTabs = $derived(windowShellStore.panes[0]?.tabs ?? []);
@@ -51,6 +52,13 @@
 	// All tabs across all panes - single source for the unified {#each} loop
 	// Svelte 5 keyed {#each} preserves component identity when items stay in the array
 	const allTabs = $derived(windowShellStore.getAllTabs());
+	// The slots are rendered in the order the tabs were made, never in pane
+	// order: merging the panes reorders `allTabs`, and a keyed {#each} moves
+	// a reordered slot's node, which drops the transition carrying it to its
+	// new place.
+	const slotTabs = $derived(
+		[...allTabs].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
+	);
 
 	// Which hidden tabs keep their view mounted ($lib/tabs/keepAlive). The
 	// visible ones always do; the recency list decides the rest.
@@ -75,10 +83,150 @@
 		isSplitEnabled ? windowShellStore.rightPane?.width || 50 : 0,
 	);
 
+	// ---------------------------------------------------------------------
+	// Opening and closing a side
+	//
+	// Both panes always draw a card. With one pane the right card is zero
+	// wide, so splitting is the right card growing out of the window's edge
+	// as the gutter opens, and closing is the reverse: the gutter shuts and
+	// one card is left. Everything moves on --motion-layout, the header's
+	// strips included.
+	//
+	// A view that appears with its pane is revealed with its card's edge; a
+	// view that goes with its pane is clipped away with it. When the side
+	// that stays is the right one, the right card grows over the whole window
+	// and the panes swap back, unseen, once it has.
+	// ---------------------------------------------------------------------
+
+	type Side = "left" | "right";
+	/** The two cards' widths (%) and the desk gap between them (px). */
+	type Frame = { left: number; right: number; gutter: number };
+	type Leaving = { id: string; side: Side; frame: Frame; clip: boolean };
+	type Entering = { side: Side; clip: boolean };
+	type Motion = {
+		leaving: Leaving[];
+		entering: Map<string, Entering>;
+		/** The tab that keeps the window when the right side survives. */
+		survivor: string | null;
+	};
+
+	const WHOLE: Frame = { left: 100, right: 0, gutter: 0 };
+	const RIGHT_WHOLE: Frame = { left: 0, right: 100, gutter: 0 };
+
+	let motion = $state<Motion | null>(null);
+	/** One frame with transitions off, for the unseen swap back. */
+	let settling = $state(false);
+	let motionTimer: ReturnType<typeof setTimeout> | undefined;
+
+	const storeFrame = $derived<Frame>(
+		isSplitEnabled
+			? { left: leftWidth, right: rightWidth, gutter: GUTTER_PX }
+			: WHOLE,
+	);
+	const frame = $derived<Frame>(motion?.survivor ? RIGHT_WHOLE : storeFrame);
+
+	function sideOf(tabId: string): Side {
+		if (motion?.survivor === tabId) return "right";
+		return isSplitEnabled && windowShellStore.findTabPane(tabId) === "right"
+			? "right"
+			: "left";
+	}
+
+	/** A view's box inside its side's card, 1px in from the card's border. */
+	function slotBox(side: Side, f: Frame): { left: string; width: string } {
+		const half = f.gutter / 2;
+		return side === "left"
+			? { left: "1px", width: `calc(${f.left}% - ${half + 2}px)` }
+			: {
+					left: `calc(${f.left}% + ${half + 1}px)`,
+					width: `calc(${f.right}% - ${half + 2}px)`,
+				};
+	}
+
+	type Arrangement = {
+		split: boolean;
+		frame: Frame;
+		visible: Map<string, Side>;
+		panes: Map<string, string | null>;
+	};
+	// Plain: only read to compare the arrangement before a change with after.
+	let previous: Arrangement | null = null;
+
+	function layoutMs(): number {
+		if (!containerRef) return 300;
+		const raw = getComputedStyle(containerRef).getPropertyValue("--motion-layout");
+		return parseFloat(raw) || 300;
+	}
+
+	function startMotion(before: Arrangement, after: Arrangement) {
+		const splitChanged = before.split !== after.split;
+		const moved = [...after.panes].some(
+			([id, pane]) => before.panes.has(id) && before.panes.get(id) !== pane,
+		);
+		if (!splitChanged && !moved) return;
+
+		let survivor: string | null = null;
+		if (before.split && !after.split) {
+			const [kept] = after.visible.keys();
+			if (kept && before.visible.get(kept) === "right") survivor = kept;
+		}
+		const to = survivor ? RIGHT_WHOLE : after.frame;
+		const from = before.frame;
+		const grew = (side: Side) => to[side] > from[side];
+		const shrank = (side: Side) => to[side] < from[side];
+
+		const leaving: Leaving[] = [];
+		for (const [id, side] of before.visible) {
+			if (after.visible.has(id) || !after.panes.has(id)) continue;
+			leaving.push({ id, side, frame: from, clip: shrank(side) });
+		}
+		const entering = new Map<string, Entering>();
+		for (const [id, side] of after.visible) {
+			if (before.visible.has(id)) continue;
+			entering.set(id, { side, clip: grew(side) });
+		}
+
+		clearTimeout(motionTimer);
+		settling = false;
+		motion = { leaving, entering, survivor };
+		motionTimer = setTimeout(endMotion, layoutMs() + 40);
+	}
+
+	function endMotion() {
+		if (!motion) return;
+		const swap = motion.survivor !== null;
+		motion = null;
+		if (!swap) return;
+		settling = true;
+		requestAnimationFrame(() =>
+			requestAnimationFrame(() => (settling = false)),
+		);
+	}
+
+	$effect.pre(() => {
+		const visible = new Map<string, Side>();
+		if (leftPaneActiveTabId) visible.set(leftPaneActiveTabId, "left");
+		if (isSplitEnabled && rightPaneActiveTabId)
+			visible.set(rightPaneActiveTabId, "right");
+		const next: Arrangement = {
+			split: isSplitEnabled,
+			frame: storeFrame,
+			visible,
+			panes: new Map(allTabs.map((t) => [t.id, windowShellStore.findTabPane(t.id)])),
+		};
+		untrack(() => {
+			if (previous && !isResizing) startMotion(previous, next);
+			previous = next;
+		});
+	});
+
+	onMount(() => () => clearTimeout(motionTimer));
+
 	function handleMouseDown(e: MouseEvent) {
 		if (!isSplitEnabled) return;
 		e.preventDefault();
 		isResizing = true;
+		windowShellStore.paneResizing = true;
 	}
 
 	function handleMouseMove(e: MouseEvent) {
@@ -95,7 +243,9 @@
 	}
 
 	function handleMouseUp() {
+		if (!isResizing) return;
 		isResizing = false;
+		windowShellStore.paneResizing = false;
 	}
 
 	function handlePaneClick(paneId: "left" | "right") {
@@ -160,12 +310,21 @@
 	bind:this={containerRef}
 	class:dragging={isResizing}
 	class:split-enabled={isSplitEnabled}
-	style:--left-width="{leftWidth}%"
-	style:--right-width="{rightWidth}%"
-	style:--gutter-width="{isSplitEnabled ? GUTTER_PX : 0}px"
+	class:in-motion={motion !== null}
+	class:settling
+	style:--left-width="{frame.left}%"
+	style:--right-width="{frame.right}%"
+	style:--gutter-width="{frame.gutter}px"
+	style:--split-gap="{GUTTER_PX}px"
 >
-	<!-- Drag to Split Overlays - Always mounted so svelte-dnd-action registers zones before drag starts -->
-	<div class="drag-overlays" class:visible={isDragging}>
+	<!-- Drag to Split Overlays - Always mounted so svelte-dnd-action registers zones before drag starts.
+	     With one pane only the right half takes a drop, and only when there is
+	     a tab left behind: it previews the card the drop would open. -->
+	<div
+		class="drag-overlays"
+		class:visible={isDragging}
+		class:previewing={!isSplitEnabled && rightDropItems.length > 0}
+	>
 		<div
 			class="drag-overlay left"
 			class:active={leftDropItems.length > 0}
@@ -175,7 +334,7 @@
 				type: "tab",
 				flipDurationMs: 0,
 				dragDisabled: true,
-				dropFromOthersDisabled: !isDragging,
+				dropFromOthersDisabled: !isDragging || !isSplitEnabled,
 				dropAnimationDisabled: true,
 			}}
 			onconsider={handleLeftDndConsider}
@@ -190,21 +349,28 @@
 				type: "tab",
 				flipDurationMs: 0,
 				dragDisabled: true,
-				dropFromOthersDisabled: !isDragging,
+				dropFromOthersDisabled: !isDragging || (!isSplitEnabled && leftPaneTabs.length < 2),
 				dropAnimationDisabled: true,
 			}}
 			onconsider={handleRightDndConsider}
 			onfinalize={handleRightDndFinalize}
-		></div>
+		>
+			{#if !isSplitEnabled}
+				<div class="ghost-card" aria-hidden="true">
+					<span class="ghost-label">{draggedLabel}</span>
+				</div>
+			{/if}
+		</div>
 	</div>
 
-	<!-- Left Pane Shell: background + click zone. Its tabs are in the window
+	<!-- Left Pane Shell: the card and a click zone. Its tabs are in the window
 	     header (WindowHeader), and no content is rendered here. -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
 	<div
 		class="pane-shell left-pane"
 		class:active={!isSplitEnabled || windowShellStore.activePaneId === "left"}
-		style:width={isSplitEnabled ? `calc(${leftWidth}% - ${GUTTER_PX / 2}px)` : '100%'}
+		class:collapsed={frame.left === 0}
+		style:width="calc({frame.left}% - {frame.gutter / 2}px)"
 		onclick={() => handlePaneClick("left")}
 		onkeydown={(e) => e.key === "Enter" && handlePaneClick("left")}
 		role="region"
@@ -226,13 +392,14 @@
 		tabindex={isSplitEnabled ? 0 : -1}
 	><span class="resize-grip" aria-hidden="true"></span></div>
 
-	<!-- Right Pane Shell: background + click zone, as the left. -->
+	<!-- Right Pane Shell: the card and a click zone, as the left. Zero wide
+	     with one pane. -->
 	<!-- svelte-ignore a11y_no_noninteractive_tabindex a11y_no_noninteractive_element_interactions -->
 	<div
 		class="pane-shell right-pane"
 		class:active={isSplitEnabled && windowShellStore.activePaneId === "right"}
-		class:collapsed={!isSplitEnabled}
-		style:width={isSplitEnabled ? `calc(${rightWidth}% - ${GUTTER_PX / 2}px)` : '0'}
+		class:collapsed={frame.right === 0}
+		style:width="calc({frame.right}% - {frame.gutter / 2}px)"
 		onclick={() => handlePaneClick("right")}
 		onkeydown={(e) => e.key === "Enter" && handlePaneClick("right")}
 		role="region"
@@ -245,21 +412,28 @@
 	<!-- Typing anywhere in a preview tab (a composer, a page, a field) keeps
 	     it: you have started working in it. -->
 	<!-- Tab Content Layer: single {#each} loop, absolutely positioned per-pane.
-	     When a tab moves between panes, only CSS classes change, so a mounted
-	     view survives the move. A hidden tab outside the keep-alive set
-	     ($lib/tabs/keepAlive) keeps its slot but not its view, and remounts
-	     from its route when it is opened again. -->
+	     When a tab moves between panes, only its box changes, so a mounted
+	     view survives the move and slides to its new place. A hidden tab
+	     outside the keep-alive set ($lib/tabs/keepAlive) keeps its slot but
+	     not its view, and remounts from its route when it is opened again. -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	{#each allTabs as tab (tab.id)}
+	{#each slotTabs as tab (tab.id)}
 		{@const paneId = windowShellStore.findTabPane(tab.id) ?? "left"}
 		{@const isActive =
 			tab.id ===
 			(paneId === "left" ? leftPaneActiveTabId : rightPaneActiveTabId)}
+		{@const leaving = isActive ? undefined : motion?.leaving.find((l) => l.id === tab.id)}
+		{@const entering = isActive ? motion?.entering.get(tab.id) : undefined}
+		{@const side = leaving ? leaving.side : sideOf(tab.id)}
+		{@const box = slotBox(side, leaving ? leaving.frame : frame)}
 		<div
 			class="tab-slot"
-			class:in-left={paneId === "left" || !isSplitEnabled}
-			class:in-right={paneId === "right" && isSplitEnabled}
-			style:display={isActive ? "flex" : "none"}
+			data-side={side}
+			data-motion={leaving ? "leave" : entering ? "enter" : undefined}
+			data-clip={(leaving?.clip ?? entering?.clip) ? "" : undefined}
+			style:display={isActive || leaving ? "flex" : "none"}
+			style:left={box.left}
+			style:width={box.width}
 			onpointerdown={() => isSplitEnabled && handlePaneClick(paneId)}
 			onbeforeinput={() => tab.preview && windowShellStore.keepTab(tab.id)}
 		>
@@ -273,7 +447,15 @@
 	     only made by putting a tab in it (window-shell `moveTabAcross`). -->
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	{#if leftPaneTabs.length === 0}
-		<div class="tab-slot in-left" style:display="flex" onpointerdown={() => isSplitEnabled && handlePaneClick("left")}>
+		{@const box = slotBox("left", frame)}
+		<div
+			class="tab-slot"
+			data-side="left"
+			style:display="flex"
+			style:left={box.left}
+			style:width={box.width}
+			onpointerdown={() => isSplitEnabled && handlePaneClick("left")}
+		>
 			<ChatView
 				tab={{
 					id: "new-chat-left",
@@ -304,83 +486,148 @@
 		user-select: none;
 	}
 
-	/* Pane shells: tab bar + background only, no content */
+	/* Pane shells: each is a card on the desk (`main` is only the desk in
+	   the app layout): the page's surface, the card's border and corners.
+	   The focused pane is told by its active tab's ink, not by its card.
+	   With one pane the right card is zero wide and faded out, so opening
+	   a side is that card growing in from the edge as the gutter opens. */
 	.pane-shell {
 		display: flex;
 		flex-direction: column;
+		flex: none;
 		min-width: 0;
 		overflow: hidden;
-		transition:
-			width 150ms var(--ease-premium),
-			border-color 150ms var(--ease-premium);
-	}
-
-	.split-container.dragging .pane-shell {
-		transition: none;
-	}
-
-	/* One pane is `main`'s card, so the shell paints nothing. In split each
-	   pane is a card of its own on the desk (`main` turns transparent in the
-	   app layout): the page's surface, the card's border and corners. The
-	   focused pane is told by its active tab's ink, not by its card. */
-	.split-enabled .pane-shell {
 		background-color: var(--color-page);
 		background-image: var(--background-image);
 		background-blend-mode: multiply;
 		border: 1px solid var(--card-edge);
 		border-radius: var(--card-radius);
+		transition: width var(--motion-layout) var(--ease-premium);
 	}
 
-	/* Right pane collapsed styles */
+	/* A card that has closed leaves its border behind as a 2px sliver, so
+	   it hides, but only once it has finished closing: fading it on the way
+	   would show the desk through the card that is taking its place. */
 	.pane-shell.collapsed {
 		opacity: 0;
 		pointer-events: none;
+		transition:
+			width var(--motion-layout) var(--ease-premium),
+			opacity 0s linear var(--motion-layout);
 	}
 
-	/* Tab content slots: absolutely positioned into pane areas. Each slot
-	   covers its whole pane; the tabs are in the window header above. */
+	/* Tab content slots: absolutely positioned inside their side's card.
+	   Their box is set inline (`slotBox`) and eases with the cards, so a
+	   view that changes sides slides there. */
 	.tab-slot {
 		position: absolute;
-		top: 0;
-		bottom: 0;
+		top: 1px;
+		bottom: 1px;
 		flex-direction: column;
 		overflow: hidden;
-		transition: width 150ms var(--ease-premium);
+		border-radius: calc(var(--card-radius) - 1px);
+		transition:
+			left var(--motion-layout) var(--ease-premium),
+			width var(--motion-layout) var(--ease-premium);
 	}
 
-	.split-container.dragging .tab-slot {
+	.split-container.dragging .pane-shell,
+	.split-container.dragging .tab-slot,
+	.split-container.dragging .resize-handle,
+	.split-container.settling .pane-shell,
+	.split-container.settling .tab-slot {
 		transition: none;
 	}
 
-	.tab-slot.in-left {
-		left: 0;
-		width: calc(var(--left-width) - (var(--gutter-width, 0px) / 2));
+	/* While a side opens or closes, the views that stay are opaque and sit
+	   over the ones going, which fade and clip away beneath them. */
+	.in-motion .tab-slot:not([data-motion="leave"]) {
+		z-index: 1;
+		background-color: var(--color-page);
+		background-image: var(--background-image);
+		background-blend-mode: multiply;
 	}
 
-	.tab-slot.in-right {
-		right: 0;
-		width: calc(var(--right-width) - (var(--gutter-width, 0px) / 2));
+	.tab-slot[data-motion="leave"] {
+		pointer-events: none;
+		animation: slot-fade-out var(--motion-state) var(--ease-premium) forwards;
 	}
 
-	/* In split, inside each card's border, and clipped to its corners. */
-	.split-enabled .tab-slot {
-		top: 1px;
-		bottom: 1px;
-		border-radius: calc(var(--card-radius) - 1px);
+	/* Going with its card: clipped at the card's moving edge. */
+	.tab-slot[data-motion="leave"][data-clip][data-side="right"] {
+		animation:
+			slot-close-right var(--motion-layout) var(--ease-premium) forwards,
+			slot-fade-out var(--motion-layout) var(--ease-premium) forwards;
 	}
 
-	.split-enabled .tab-slot.in-left {
-		left: 1px;
-		width: calc(var(--left-width) - (var(--gutter-width, 0px) / 2) - 2px);
+	.tab-slot[data-motion="leave"][data-clip][data-side="left"] {
+		animation:
+			slot-close-left var(--motion-layout) var(--ease-premium) forwards,
+			slot-fade-out var(--motion-layout) var(--ease-premium) forwards;
 	}
 
-	.split-enabled .tab-slot.in-right {
-		right: 1px;
-		width: calc(var(--right-width) - (var(--gutter-width, 0px) / 2) - 2px);
+	/* Arriving in a pane that is already there: a short fade and drift in
+	   from its own side. */
+	.tab-slot[data-motion="enter"][data-side="right"] {
+		animation: slot-drift-in-right var(--motion-enter) var(--ease-premium) both;
+	}
+
+	.tab-slot[data-motion="enter"][data-side="left"] {
+		animation: slot-drift-in-left var(--motion-enter) var(--ease-premium) both;
+	}
+
+	/* Arriving with its card: revealed at the card's moving edge, the view
+	   itself settling in just behind it. */
+	.tab-slot[data-motion="enter"][data-clip][data-side="right"] {
+		animation:
+			slot-open-right var(--motion-layout) var(--ease-premium) both,
+			slot-drift-in-right var(--motion-layout) var(--ease-premium) 60ms both;
+	}
+
+	.tab-slot[data-motion="enter"][data-clip][data-side="left"] {
+		animation:
+			slot-open-left var(--motion-layout) var(--ease-premium) both,
+			slot-drift-in-left var(--motion-layout) var(--ease-premium) 60ms both;
+	}
+
+	@keyframes slot-open-right {
+		from { clip-path: inset(0 0 0 100% round var(--card-radius)); }
+		to { clip-path: inset(0 0 0 0 round var(--card-radius)); }
+	}
+
+	@keyframes slot-open-left {
+		from { clip-path: inset(0 100% 0 0 round var(--card-radius)); }
+		to { clip-path: inset(0 0 0 0 round var(--card-radius)); }
+	}
+
+	@keyframes slot-close-right {
+		from { clip-path: inset(0 0 0 0 round var(--card-radius)); }
+		to { clip-path: inset(0 0 0 100% round var(--card-radius)); }
+	}
+
+	@keyframes slot-close-left {
+		from { clip-path: inset(0 0 0 0 round var(--card-radius)); }
+		to { clip-path: inset(0 100% 0 0 round var(--card-radius)); }
+	}
+
+	@keyframes slot-drift-in-right {
+		from { opacity: 0; translate: 12px 0; }
+	}
+
+	@keyframes slot-drift-in-left {
+		from { opacity: 0; translate: -12px 0; }
+	}
+
+	@keyframes slot-fade-in {
+		from { opacity: 0; }
+	}
+
+	@keyframes slot-fade-out {
+		to { opacity: 0; }
 	}
 
 	.resize-handle {
-		width: 0;
+		width: var(--gutter-width, 0px);
 		cursor: col-resize;
 		background: transparent;
 		display: flex;
@@ -388,9 +635,8 @@
 		justify-content: center;
 		flex-shrink: 0;
 		transition:
-			width 200ms var(--ease-premium),
-			opacity 200ms var(--ease-premium),
-			background-color 150ms var(--ease-premium);
+			width var(--motion-layout) var(--ease-premium),
+			opacity var(--motion-layout) var(--ease-premium);
 		position: relative;
 		opacity: 0;
 		pointer-events: none;
@@ -401,8 +647,6 @@
 	   composer), which otherwise paints over the pill's overhang. */
 	.resize-handle.visible {
 		z-index: 5;
-		width: var(--gutter-width, 1px);
-		background: transparent;
 		opacity: 1;
 		pointer-events: auto;
 	}
@@ -459,12 +703,6 @@
 		transition: none;
 	}
 
-	@media (prefers-reduced-motion: reduce) {
-		.resize-handle.visible .resize-grip {
-			transition: none;
-		}
-	}
-
 	/* Drag to Split Overlays - Always in DOM but hidden until drag starts */
 	.drag-overlays {
 		position: absolute;
@@ -482,12 +720,14 @@
 	}
 
 	.drag-overlay {
+		position: relative;
 		flex: 1;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		pointer-events: none; /* Default: pass-through when hidden */
-		transition: background-color 75ms linear;
+		border-radius: var(--card-radius);
+		transition: background-color var(--motion-state) var(--ease-premium);
 		background: transparent;
 	}
 
@@ -496,23 +736,90 @@
 		pointer-events: auto;
 	}
 
-	.drag-overlay.active {
-		background: color-mix(in srgb, var(--color-primary) 15%, transparent);
-	}
-
-	/* Card-aware drag overlays in split mode */
+	/* In split each half lies over its own card. */
 	.split-enabled .drag-overlay.left {
-		border-radius: var(--card-radius);
-		margin-right: calc(var(--gutter-width, 0px) / 2);
+		flex: none;
+		width: calc(var(--left-width) - (var(--gutter-width) / 2));
+		margin-right: var(--gutter-width);
 	}
 
 	.split-enabled .drag-overlay.right {
+		flex: none;
+		width: calc(var(--right-width) - (var(--gutter-width) / 2));
+	}
+
+	.split-enabled .drag-overlay.active {
+		background: color-mix(in srgb, var(--color-primary) 8%, transparent);
+		outline: 1px solid color-mix(in srgb, var(--color-primary) 45%, transparent);
+		outline-offset: -1px;
+	}
+
+	/* With one pane, the right half shows the card a drop would open: where
+	   it will stand, with the dragged tab's name, while the view it would
+	   share the window with dims. */
+	.drag-overlays.previewing .drag-overlay.left {
+		margin-right: var(--split-gap);
+		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
+	}
+
+	.ghost-card {
+		position: absolute;
+		top: 0;
+		bottom: 0;
+		right: 0;
+		left: 0;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		border: 1px solid color-mix(in srgb, var(--color-primary) 40%, var(--card-edge));
 		border-radius: var(--card-radius);
-		margin-left: calc(var(--gutter-width, 0px) / 2);
+		background-color: color-mix(in srgb, var(--color-primary) 6%, var(--color-page));
+		opacity: 0;
+		translate: 24px 0;
+		transition:
+			opacity var(--motion-state) var(--ease-premium),
+			translate var(--motion-layout) var(--ease-premium);
+		pointer-events: none;
+	}
+
+	.drag-overlay.active .ghost-card {
+		opacity: 1;
+		translate: 0 0;
+	}
+
+	.ghost-label {
+		max-width: 80%;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
 	}
 
 	/* Hide the ghost/shadow item that svelte-dnd-action creates in the drop zone */
 	.drag-overlay :global([data-is-dnd-shadow-item-hint="true"]) {
 		display: none !important;
+	}
+
+	/* Without motion the cards and views change place at once, and views
+	   only cross-fade. */
+	@media (prefers-reduced-motion: reduce) {
+		.pane-shell,
+		.tab-slot,
+		.resize-handle,
+		.ghost-card,
+		.resize-handle.visible .resize-grip {
+			transition: none;
+		}
+
+		.tab-slot[data-motion="enter"],
+		.tab-slot[data-motion="enter"][data-clip][data-side] {
+			animation: slot-fade-in var(--motion-state) linear both;
+		}
+
+		.tab-slot[data-motion="leave"],
+		.tab-slot[data-motion="leave"][data-clip][data-side] {
+			animation: slot-fade-out var(--motion-state) linear forwards;
+		}
 	}
 </style>
