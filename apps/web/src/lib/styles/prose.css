@@ -393,6 +393,18 @@
 	--md-body-family: var(--md-article-family);
 	--md-body-size: var(--md-article-size);
 	--md-body-lh: var(--md-article-lh);
+	/* The serif has one weight (agents/build/typography.md), so the lower
+	   headings step by size and color, not by the sans's 500 and 600. h4 is
+	   a step over the 17px body and h3 a step over h4; h5 is the body's size
+	   in the muted ink; h6 is smaller, also muted, as in the sans. */
+	--md-h3-size: 1.25rem;
+	--md-h4-size: 1.125rem;
+	--md-h5-size: var(--md-article-size);
+	--md-h6-size: 0.9375rem;
+}
+
+.prose--article h5 {
+	color: var(--color-foreground-muted);
 }
 
 /* In an article a table is part of the prose: its cells read at the body's
