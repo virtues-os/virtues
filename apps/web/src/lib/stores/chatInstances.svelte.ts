@@ -113,7 +113,6 @@ export interface TurnInputs {
     agentMode: string;
     chatMode: string;
     timezone: string;
-    persona: string;
     temporary?: true;
     think?: boolean;
     projectId?: string;
@@ -156,7 +155,6 @@ interface CreateChatConfig {
     getModel: () => string | undefined;
     getProjectId: () => string | null; // Getter for space ID (null for system space)
     getActivePageContext?: () => ActivePageContext | null; // Getter for active page context (bound page)
-    getPersona?: () => string; // Getter for selected persona (per-chat)
     getAgentMode?: () => string; // Getter for agent mode (agent, chat, research)
     getChatMode?: () => string; // Getter for retrieval scope: 'open' | 'scoped' (project chats)
     getTemporary?: () => boolean; // Getter for temporary/ghost mode (don't persist server-side)
@@ -229,7 +227,7 @@ class ChatInstanceStore {
      * @param config - Configuration including conversationId and getModel getter
      */
     getOrCreate(config: CreateChatConfig): Chat {
-        const { conversationId, getModel, getProjectId, getActivePageContext, getPersona, getAgentMode, getChatMode, getTemporary, getThink, getOpening } = config;
+        const { conversationId, getModel, getProjectId, getActivePageContext, getAgentMode, getChatMode, getTemporary, getThink, getOpening } = config;
         const existing = this.instances.get(conversationId);
 
         if (existing) {
@@ -250,7 +248,6 @@ class ChatInstanceStore {
             const model = getModel();
             const opening = getOpening?.();
             return {
-                persona: getPersona?.() || 'default',
                 agentMode,
                 // Retrieval scope for project chats: 'open' (whole graph,
                 // project up-weighted) or 'scoped' (grounded).

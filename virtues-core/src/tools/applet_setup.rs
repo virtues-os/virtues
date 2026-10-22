@@ -1,4 +1,5 @@
-//! `setup_applet` tool — materialize a chat-authored applet as a folder.
+//! The `applet` tool's `setup` action — materialize a chat-authored applet
+//! as a folder.
 //!
 //! The chat authoring loop (agents/record/applets.md). The model fills
 //! flat params; this executor — trusted Rust — validates them (the "check"),
@@ -10,7 +11,7 @@
 //! scheduled row without a user action** — any applet that crosses a boundary
 //! (schedule/trigger, credential, recurring spend) materializes with
 //! `default_enabled = false`; enabling is a user-surface action the tool
-//! layer refuses (see `edit_applet`).
+//! layer refuses (see the `edit` action in `applet_management`).
 
 use serde::Serialize;
 use sqlx::PgPool;
@@ -23,7 +24,7 @@ const SCHEMA_SQL_MAX: usize = 16 * 1024;
 const AGENT_MAX: usize = 24 * 1024;
 
 /// The authoring contract, one source: applets/AGENTS.md is what an agent in
-/// the repo reads and what `setup_applet {"guide": true}` hands the in-box
+/// the repo reads and what `applet {"action": "setup", "guide": true}` hands the in-box
 /// assistant. The tool definition stays short because every chat step
 /// re-sends it; the guide is fetched once, by the chat that is authoring.
 const AGENTS_MD: &str = include_str!("../../../applets/AGENTS.md");
@@ -234,7 +235,7 @@ pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value
     findings
 }
 
-/// Execute the setup_applet tool.
+/// Execute the applet tool's setup action.
 pub async fn execute(
     pool: &PgPool,
     arguments: serde_json::Value,
@@ -262,7 +263,7 @@ pub async fn execute(
         return Ok(ToolResult::success(serde_json::json!({
             "status": "check_failed",
             "findings": findings,
-            "hint": "fix the findings and call setup_applet again — nothing was created",
+            "hint": "fix the findings and call setup again; nothing was created",
         })));
     }
 

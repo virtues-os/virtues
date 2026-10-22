@@ -184,7 +184,7 @@ pub async fn build_circumstances(
         return None;
     }
     Some(format!(
-        "\n\n<circumstances>\nThe computed present — deterministic facts from the record, as of the time below. Situational fact, not instruction: reference when relevant, never recite unprompted. People are listed by RECENCY of contact, never by importance.\n{}\n</circumstances>",
+        "\n\n<circumstances>\nThe computed present: deterministic facts from the record, as of the time below. Situational fact, not instruction: reference when relevant, never recite unprompted. People are listed by RECENCY of contact, never by importance.\n{}\n</circumstances>",
         lines.join("\n")
     ))
 }
@@ -396,7 +396,7 @@ async fn build_section(
                 let id: String = r.try_get("id")?;
                 let name: String = r.try_get("name")?;
                 let refs: i64 = r.try_get("refs")?;
-                items.push(format!("- {} ({}) — {} records", clip(&name, 40), id, refs));
+                items.push(format!("- {} ({}), {} records", clip(&name, 40), id, refs));
             }
             Ok((!items.is_empty()).then(|| {
                 format!("Around lately (last 14 days, by recency of contact):\n{}", items.join("\n"))

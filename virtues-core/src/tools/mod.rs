@@ -142,13 +142,17 @@ const APPLET_RUN_ALLOWED_TOOLS: &[&str] = &[
     // allowlist is what makes it available at all.
     "revise_article",
     "code_interpreter",
-    "list_applets",
-    "get_applet",
 ];
 
-/// Tools for an autonomous **applet** run: the explicit allowlist above.
+/// Tools for an autonomous **applet** run: the explicit allowlist above, and
+/// the applet tool with only its reads (`applet_management::execute` refuses
+/// the rest from a run as well).
 pub fn get_tools_for_applet() -> Vec<serde_json::Value> {
-    tools_named(APPLET_RUN_ALLOWED_TOOLS)
+    let mut tools = tools_named(APPLET_RUN_ALLOWED_TOOLS);
+    tools.push(llm_definition(virtues_registry::tools::applet_tool(
+        &virtues_registry::tools::APPLET_READ_ACTIONS,
+    )));
+    tools
 }
 
 /// The allowlist for a request's background run (`crate::task_runner`):
@@ -177,27 +181,35 @@ pub fn get_tools_for_request() -> Vec<serde_json::Value> {
 /// The tools behind the CLI's data verbs (`virtues query`, `search`,
 /// `schema`, `applet`, `page`). Each verb is one of these run through the
 /// executor, so it gets the same role drop, timeout and arguments as chat;
-/// `cli::data` refuses anything not named here.
-pub(crate) const CLI_TOOLS: &[&str] = &[
-    "sql_query",
-    "semantic_search",
-    "list_applets",
-    "get_applet",
-    "get_page_content",
-    // `virtues applet check` only, which always sends `check_only`.
-    "setup_applet",
-];
+/// `cli::data` refuses anything [`cli_reads`] does not allow.
+const CLI_TOOLS: &[&str] = &["sql_query", "semantic_search", "get_page_content"];
 
 /// The tools behind the CLI's write verbs. These run in the server, not the
 /// CLI process (`server/api/console.rs` says why), and that door refuses
-/// anything not named here.
-pub(crate) const CLI_WRITE_TOOLS: &[&str] = &[
-    "create_page",
-    "edit_page",
-    "setup_applet",
-    "run_applet",
-    "sql_write",
-];
+/// anything [`cli_reads`] or [`cli_writes`] does not allow.
+const CLI_WRITE_TOOLS: &[&str] = &["create_page", "edit_page", "sql_write"];
+
+/// Whether a CLI read verb may make this call. For `applet` that is
+/// `virtues applet ls` and `get`, and `check`, which always sends
+/// `check_only` and so creates nothing.
+pub(crate) fn cli_reads(tool: &str, arguments: &serde_json::Value) -> bool {
+    match tool {
+        "applet" => {
+            applet_management::is_read(arguments)
+                || (applet_management::action(arguments) == Some("setup") && applet_setup::wants_check_only(arguments))
+        }
+        _ => CLI_TOOLS.contains(&tool),
+    }
+}
+
+/// Whether a CLI write verb may make this call. For `applet` that is
+/// `virtues applet put` (setup) and `run`; edit and delete have no verb.
+pub(crate) fn cli_writes(tool: &str, arguments: &serde_json::Value) -> bool {
+    match tool {
+        "applet" => matches!(applet_management::action(arguments), Some("setup" | "run")),
+        _ => CLI_WRITE_TOOLS.contains(&tool),
+    }
+}
 
 /// The read-only research tools a Deep Research **subagent** (worker) may use. Explicit allow-list
 /// (not a category filter) so workers get pure research capability — no memory/profile writes, and

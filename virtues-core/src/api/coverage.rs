@@ -63,7 +63,7 @@ pub async fn build_coverage(pool: &PgPool, today: NaiveDate) -> Option<String> {
             Ok((Some(first), Some(last))) => {
                 let gap = (today - last).num_days();
                 let tail = if gap >= STALE_AFTER_DAYS {
-                    format!(" — nothing for {gap} days")
+                    format!(", then nothing for {gap} days")
                 } else {
                     String::new()
                 };
@@ -78,7 +78,7 @@ pub async fn build_coverage(pool: &PgPool, today: NaiveDate) -> Option<String> {
         return None;
     }
     Some(format!(
-        "\n\n<coverage>\nWhat the record holds, per table: earliest → latest observation, to the day. A table not listed holds nothing yet. A question about a time outside a table's range cannot be answered from that table — say what is not covered rather than reporting an absence. An empty result INSIDE the range, from a table still flowing, is evidence of absence and can be said plainly.\n{}\n</coverage>",
+        "\n\n<coverage>\nWhat the record holds, per table: earliest → latest observation, to the day. A table not listed holds nothing yet.\n{}\n</coverage>",
         lines.join("\n")
     ))
 }
@@ -132,7 +132,7 @@ mod tests {
         let block = build_coverage(&pool, NaiveDate::from_ymd_opt(2026, 9, 21).unwrap())
             .await
             .expect("a block");
-        assert!(block.contains("data_health_steps: 2026-09-01 → 2026-09-10 — nothing for 11 days"), "{block}");
+        assert!(block.contains("data_health_steps: 2026-09-01 → 2026-09-10, then nothing for 11 days"), "{block}");
         assert!(!block.contains("data_health_sleep"), "empty tables render nothing: {block}");
     }
 }

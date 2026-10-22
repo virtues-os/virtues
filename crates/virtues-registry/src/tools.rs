@@ -83,13 +83,8 @@ pub fn default_tools() -> Vec<ToolConfig> {
         create_page_tool(),
         get_page_content_tool(),
         edit_page_tool(),
-        setup_applet_tool(),
+        applet_tool(&APPLET_ALL_ACTIONS),
         update_applet_memory_tool(),
-        list_applets_tool(),
-        get_applet_tool(),
-        edit_applet_tool(),
-        delete_applet_tool(),
-        run_applet_tool(),
         get_project_item_tool(),
         generate_image_tool(),
         show_tool(),
@@ -103,7 +98,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
 
 /// Save one of the person's own skills: a prompt they can pick from the
 /// composer's `/` menu (virtues-core `api/skills.rs`). Offered only inside the
-/// shipped `new-skill` skill, and gated like `setup_applet`, because a skill
+/// shipped `new-skill` skill, and gated like applet setup, because a skill
 /// is a prompt that later runs with tools.
 fn save_skill_tool() -> ToolConfig {
     ToolConfig {
@@ -404,7 +399,7 @@ fn show_tool() -> ToolConfig {
         id: "show".to_string(),
         name: "Show".to_string(),
         description: "Show a chart, numbers, a table, a map or a timeline in a reply".to_string(),
-        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. It appears where you call it, so words written before the call are the start of your reply, not a status line. Data is never typed in: give `sql`, one read-only SELECT over the tables sql_query reads. The server runs it, draws the rows, and returns them to you; say what they show without listing them again, and quote no figure that is not in them. Use it when seeing beats reading (a trend, a comparison, places, a day's shape), once or twice a reply at most. A single number belongs in a sentence."#.to_string(),
+        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. It appears where you call it, so the words before it are part of your reply. Data is never typed in: give `sql`, one read-only SELECT over the tables sql_query reads. The server runs it, draws the rows, and returns them to you; say what they show without listing them again, and quote no figure that is not in them. Use it when seeing beats reading (a trend, a comparison, places, a day's shape), once or twice a reply at most. Chart rows from the record here rather than with code_interpreter. A single number belongs in a sentence."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["kind"],
@@ -556,7 +551,7 @@ fn record_introductions_tool() -> ToolConfig {
         id: "record_introductions".to_string(),
         name: "Write the introductions down".to_string(),
         description: "Record what the person said about themselves and show it back".to_string(),
-        llm_description: "Write down what the person said about themselves: their full name, what to call them, what they will call you, the city they live in with the IANA time zone you resolve from it, and their birth date (pass it EXACTLY as they wrote it — October 3 1984, 10/3/84, whatever they typed; it is parsed on the other side, and dropping a date you were unsure how to format is the one failure that matters here). Include only what they gave; leave the rest out rather than guessing, and each field you omit is left as it was. Call this the moment you have anything — it writes immediately and shows what it wrote under your turn, so do not ask them to confirm and do not list the fields back in your own words. If they gave only a first name, or left out the birth date, or gave a year without a day, ask once for what is missing. The result tells you what is still missing after the write; if it names anything, ask for that in one short question rather than moving on. If they correct something afterwards, call this again with only what changed.".to_string(),
+        llm_description: "Write down what the person said about themselves: their full name, what to call them, what they will call you, the city they live in with the IANA time zone you resolve from it, and their birth date (pass it EXACTLY as they wrote it — October 3 1984, 10/3/84, whatever they typed; it is parsed on the other side, and dropping a date you were unsure how to format is the one failure that matters here). Include only what they gave; leave the rest out rather than guessing, and each field you omit is left as it was. Call this the moment you have anything — it writes immediately and shows what it wrote under your turn, so do not ask them to confirm and do not list the fields back in your own words. If they gave only a first name, or left out the birth date, or gave a year without a day, ask once for what is missing. The result tells you what is still missing after the write; if it names anything you have not asked for yet, ask for that in one short question. If they decline, move on. If they correct something afterwards, call this again with only what changed.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "properties": {
@@ -776,7 +771,7 @@ GROUP BY p.name ORDER BY 2 DESC LIMIT 10"#
                     "items": { "type": "string" },
                     "description": "For get_schema"
                 },
-                "limit": { "type": "integer", "description": "Default 50; 10,000 with save_as" },
+                "limit": { "type": "integer", "description": "Rows if no LIMIT in sql; default 50" },
                 "save_as": { "type": "string", "description": "CSV name, e.g. 'sleep.csv' (saved chats only)" }
             }
         }),
@@ -998,7 +993,7 @@ fn sql_write_tool() -> ToolConfig {
         id: "sql_write".to_string(),
         name: "SQL Write".to_string(),
         description: "Write to applet-owned tables".to_string(),
-        llm_description: r#"One INSERT, UPDATE or DELETE on an applet's own tables (applet_* schemas; everything else is read-only). Create tables with setup_applet's schema_sql first. Add RETURNING to get rows back (max 500)."#.to_string(),
+        llm_description: r#"One INSERT, UPDATE or DELETE on an applet's own tables (applet_* schemas; everything else is read-only). Create tables with the applet tool's setup action (schema_sql) first. Add RETURNING to get rows back (max 500)."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["sql"],
@@ -1057,181 +1052,116 @@ This server is running this conversation: restarting the virtues service, reboot
     }
 }
 
-/// Setup Applet tool — materialize a chat-authored applet as a folder
-fn setup_applet_tool() -> ToolConfig {
-    ToolConfig {
-        id: "setup_applet".to_string(),
-        name: "Setup Applet".to_string(),
-        description: "Create or update an applet".to_string(),
-        // The authoring contract is applets/AGENTS.md, returned by
-        // `{"guide": true}`. It is one source for the in-box assistant and
-        // for agents working in the repo, and it stays out of the definition
-        // every chat step re-sends.
-        llm_description: r#"Create or update an applet: a scheduled task, reminder, monitor, tracker or dashboard. First call with {"guide": true} and follow the guide it returns. The same name updates that applet. name and description are required except for the guide. On check_failed, fix the findings and retry; nothing was created. check_only runs the check alone."#.to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "guide": { "type": "boolean" },
-                "check_only": { "type": "boolean" },
-                "name": { "type": "string" },
-                "description": { "type": "string" },
-                "agent": { "type": "string", "description": "Run prompt; omit for a face-only dashboard" },
-                "schedule": { "type": "string" },
-                "triggers": {
-                    "type": "array",
-                    "items": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook", "message"] }
-                },
-                "condition": { "type": "string" },
-                "until": { "type": "string" },
-                "schema_sql": { "type": "string" },
-                "face_html": { "type": "string" },
-                "delivers": {
-                    "type": "string",
-                    "enum": ["page", "chat", "dashboard"]
-                },
-                "limits": {
-                    "type": "object",
-                    "properties": {
-                        "max_llm_cost":         { "type": "number"  },
-                        "max_llm_cost_per_day": { "type": "number"  },
-                        "max_runs_per_day":     { "type": "integer" },
-                        "max_runs_per_hour":    { "type": "integer" },
-                        "timeout_s":            { "type": "integer" }
-                    }
+/// What each of the applet tool's actions does, in the words the model reads.
+/// The tool's description and schema are built from this table, so a caller
+/// offered only some actions (an applet's own run may only read) is told
+/// about exactly those.
+const APPLET_ACTIONS: [(&str, &str); 6] = [
+    ("list", "applets and their last run. Filter with owner (ai = made in a chat), enabled, trigger, include_archived."),
+    ("get", "one applet's full config and last 10 runs, by id. Read it before editing or debugging one."),
+    ("setup", "create or update one: a scheduled task, reminder, monitor, tracker or dashboard. First call with guide=true and follow the guide it returns. The same name updates that applet. name and description are required except for the guide. On check_failed, fix the findings and retry; nothing was created. check_only runs the check alone."),
+    ("edit", "change one by id: only the fields to change go in `patch`; null clears. `config` replaces the whole object. `schedule`: 6-field cron, local time. System applets take only enabled, schedule, config, memory."),
+    ("run", "run one by id now; it needs the `tool` trigger. `payload` is context for the run; `date` (YYYY-MM-DD) is for a date-scoped applet."),
+    ("delete", "delete a user-owned one by id; system ones refuse, so offer to disable. Confirm unless the ask was explicit."),
+];
+
+/// Every applet action, as chat offers them.
+pub const APPLET_ALL_ACTIONS: [&str; 6] = ["list", "get", "setup", "edit", "run", "delete"];
+
+/// The applet actions that change nothing.
+pub const APPLET_READ_ACTIONS: [&str; 2] = ["list", "get"];
+
+const APPLET_TRIGGERS: [&str; 6] = ["cron", "manual", "tool", "api", "webhook", "message"];
+
+/// The applet tool, offering `actions`. One tool for everything chat does with
+/// applets, so their schema is sent once per step rather than six times.
+pub fn applet_tool(actions: &[&str]) -> ToolConfig {
+    let offers = |a: &str| actions.contains(&a);
+    let lines: Vec<String> = APPLET_ACTIONS
+        .iter()
+        .filter(|(a, _)| offers(a))
+        .map(|(a, what)| format!("- {a}: {what}"))
+        .collect();
+    let mut properties = serde_json::Map::new();
+    let mut add = |key: &str, schema: serde_json::Value| {
+        properties.insert(key.to_string(), schema);
+    };
+    add("action", serde_json::json!({ "type": "string", "enum": actions }));
+    if ["get", "edit", "run", "delete"].iter().any(|a| offers(a)) {
+        add("id", serde_json::json!({ "type": "string" }));
+    }
+    if offers("list") {
+        add("owner", serde_json::json!({ "type": "string", "enum": ["system", "user", "ai"] }));
+        add("enabled", serde_json::json!({ "type": "boolean" }));
+        add("trigger", serde_json::json!({ "type": "string", "enum": APPLET_TRIGGERS }));
+        add("include_archived", serde_json::json!({ "type": "boolean" }));
+    }
+    if offers("setup") {
+        add("guide", serde_json::json!({ "type": "boolean" }));
+        add("check_only", serde_json::json!({ "type": "boolean" }));
+        add("name", serde_json::json!({ "type": "string" }));
+        add("description", serde_json::json!({ "type": "string" }));
+        add("agent", serde_json::json!({ "type": "string", "description": "Run prompt; omit for a face-only dashboard" }));
+        add("schedule", serde_json::json!({ "type": "string" }));
+        add("triggers", serde_json::json!({ "type": "array", "items": { "type": "string", "enum": APPLET_TRIGGERS } }));
+        add("condition", serde_json::json!({ "type": "string" }));
+        add("until", serde_json::json!({ "type": "string" }));
+        add("schema_sql", serde_json::json!({ "type": "string" }));
+        add("face_html", serde_json::json!({ "type": "string" }));
+        add("delivers", serde_json::json!({ "type": "string", "enum": ["page", "chat", "dashboard"] }));
+        add(
+            "limits",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "max_llm_cost":         { "type": "number"  },
+                    "max_llm_cost_per_day": { "type": "number"  },
+                    "max_runs_per_day":     { "type": "integer" },
+                    "max_runs_per_hour":    { "type": "integer" },
+                    "timeout_s":            { "type": "integer" }
                 }
-            }
-        }),
+            }),
+        );
+    }
+    if offers("edit") {
+        add(
+            "patch",
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "name": { "type": "string" },
+                    "agent": { "type": ["string", "null"] },
+                    "schedule": { "type": ["string", "null"] },
+                    "enabled": { "type": "boolean" },
+                    "config": { "type": "object" },
+                    "condition": { "type": ["string", "null"] },
+                    "triggers": { "type": "array", "items": { "type": "string" } },
+                    "memory": { "type": ["string", "null"] }
+                }
+            }),
+        );
+    }
+    if offers("run") {
+        add("payload", serde_json::json!({ "description": "Context for the run" }));
+        add("date", serde_json::json!({ "type": "string" }));
+    }
+    ToolConfig {
+        id: "applet".to_string(),
+        name: "Applets".to_string(),
+        description: "List, read, set up, change, run or delete applets".to_string(),
+        // The authoring contract is applets/AGENTS.md, returned by setup with
+        // `{"guide": true}`. It is one source for the in-box assistant and for
+        // agents working in the repo, and it stays out of the definition every
+        // chat step re-sends.
+        llm_description: format!(
+            "Applets are the owner's scheduled tasks, reminders, monitors, trackers and dashboards. Set `action`:\n{}",
+            lines.join("\n")
+        ),
+        parameters: serde_json::json!({ "type": "object", "required": ["action"], "properties": properties }),
         tool_type: ToolType::Builtin,
         category: ToolCategory::Edit,
         icon: "ri:robot-2-line".to_string(),
         display_order: 8,
-        is_system: false,
-    }
-}
-
-/// List actions — lightweight catalog for chat-driven discovery
-fn list_applets_tool() -> ToolConfig {
-    ToolConfig {
-        id: "list_applets".to_string(),
-        name: "List Applets".to_string(),
-        description: "List applets".to_string(),
-        llm_description: "List applets and their last run.".to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "properties": {
-                "owner": { "type": "string", "enum": ["system", "user", "ai"], "description": "ai = made in a chat" },
-                "enabled": { "type": "boolean" },
-                "trigger": { "type": "string", "enum": ["cron", "manual", "tool", "api", "webhook", "message"] },
-                "include_archived": { "type": "boolean" }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Data,
-        icon: "ri:list-check".to_string(),
-        display_order: 10,
-        is_system: false,
-    }
-}
-
-/// Get a single action's full details + recent runs
-fn get_applet_tool() -> ToolConfig {
-    ToolConfig {
-        id: "get_applet".to_string(),
-        name: "Get Applet".to_string(),
-        description: "Fetch a single applet".to_string(),
-        llm_description: "An applet's full config and last 10 runs. Read it before editing or debugging one.".to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["id"],
-            "properties": {
-                "id": { "type": "string" }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Data,
-        icon: "ri:file-search-line".to_string(),
-        display_order: 11,
-        is_system: false,
-    }
-}
-
-/// Edit an existing action — partial update with system-owner guard
-fn edit_applet_tool() -> ToolConfig {
-    ToolConfig {
-        id: "edit_applet".to_string(),
-        name: "Edit Applet".to_string(),
-        description: "Update an action's configuration".to_string(),
-        llm_description: "Change an applet: only the fields to change go in `patch`; null clears. `config` replaces the whole object. `schedule`: 6-field cron, local time. System applets take only enabled, schedule, config, memory.".to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["id", "patch"],
-            "properties": {
-                "id": { "type": "string" },
-                "patch": {
-                    "type": "object",
-                    "properties": {
-                        "name": { "type": "string" },
-                        "agent": { "type": ["string", "null"] },
-                        "schedule": { "type": ["string", "null"] },
-                        "enabled": { "type": "boolean" },
-                        "config": { "type": "object" },
-                        "condition": { "type": ["string", "null"] },
-                        "triggers": { "type": "array", "items": { "type": "string" } },
-                        "memory": { "type": ["string", "null"] }
-                    }
-                }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Edit,
-        icon: "ri:edit-2-line".to_string(),
-        display_order: 12,
-        is_system: false,
-    }
-}
-
-/// Delete a user-owned action
-fn delete_applet_tool() -> ToolConfig {
-    ToolConfig {
-        id: "delete_applet".to_string(),
-        name: "Delete Applet".to_string(),
-        description: "Delete a user-owned action".to_string(),
-        llm_description: "Delete a user-owned applet; system ones refuse, so offer to disable. Confirm unless the ask was explicit.".to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["id"],
-            "properties": {
-                "id": { "type": "string" }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Edit,
-        icon: "ri:delete-bin-line".to_string(),
-        display_order: 13,
-        is_system: false,
-    }
-}
-
-/// Manually run an action
-fn run_applet_tool() -> ToolConfig {
-    ToolConfig {
-        id: "run_applet".to_string(),
-        name: "Run Applet".to_string(),
-        description: "Trigger an action to run now".to_string(),
-        llm_description: "Run an applet now; it needs the `tool` trigger.".to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["id"],
-            "properties": {
-                "id": { "type": "string" },
-                "payload": { "description": "Context for the run" },
-                "date": { "type": "string", "description": "YYYY-MM-DD for date-scoped applets" }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Edit,
-        icon: "ri:play-circle-line".to_string(),
-        display_order: 14,
         is_system: false,
     }
 }
@@ -1298,7 +1228,7 @@ pub fn default_enabled_tools() -> serde_json::Value {
         "create_page": true,
         "get_page_content": true,
         "edit_page": true,
-        "setup_applet": true,
+        "applet": true,
         "get_project_item": true
     })
 }
@@ -1351,7 +1281,20 @@ mod tests {
         assert!(ids.contains(&"create_page"));
         assert!(ids.contains(&"get_page_content"));
         assert!(ids.contains(&"edit_page"));
-        assert!(ids.contains(&"setup_applet"));
+        assert!(ids.contains(&"applet"));
+    }
+
+    /// An applet's own run may only read, so its applet tool offers and
+    /// describes list and get and nothing else.
+    #[test]
+    fn a_read_only_applet_tool_mentions_only_reads() {
+        let tool = applet_tool(&APPLET_READ_ACTIONS);
+        assert_eq!(tool.parameters["properties"]["action"]["enum"], serde_json::json!(["list", "get"]));
+        for write in ["setup", "edit", "run", "delete"] {
+            assert!(!tool.llm_description.contains(&format!("- {write}:")), "{}", tool.llm_description);
+        }
+        assert!(tool.parameters["properties"].get("patch").is_none());
+        assert!(tool.parameters["properties"].get("schema_sql").is_none());
     }
 
     #[test]

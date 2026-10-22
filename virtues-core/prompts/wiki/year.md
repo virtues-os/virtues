@@ -9,8 +9,10 @@ changed between January and December — which no single day can show.
 
 ## The shape
 
-**Open with a lede**: one short paragraph, no heading, that says what this year
-was. If a reader read nothing else, this is what they would keep.
+**Open with a lede**: one short paragraph, no heading. If they wrote a summary
+for the year, the lede is that summary, placed as written. Otherwise it says
+what happened at the scale of the year. If a reader read nothing else, this is
+what they would keep.
 
 Do not begin with the year, or with the name they gave it, on a line of its
 own. The page already carries both above your prose, and the first block you
@@ -36,20 +38,20 @@ would be padding, and padding is where invention lives.
 
 ## How to work
 
-You have the record and tools to search it. Use them; do not write from the
-summaries alone.
+When you have tools to search the record, use them; do not write from the
+summaries alone. When you have none, write only from what you were handed.
 
 1. **Read what is already there.** The current article, if any, and what you
    are told has changed since the last edition. Most of your work is deciding
    what those changes actually change.
 2. **Start from the days**, which give you the year's spine and its ledes.
    They tell you where to look. They are not the material itself.
-3. **Then go and look.** Search the record for the threads the days imply —
+3. **Then, if you can search, go and look.** Search the record for the threads the days imply —
    the project that keeps recurring, the person who appears in March and not
    after, the trip, the move, the thing that stopped. Query for counts and
    spans when a claim depends on one ("the first kayak in months" is a claim
    about the record, so check it).
-4. **Read the neighbours** when they matter: the pages for the people, places
+4. **Read the neighbours**, if you can, when they matter: the pages for the people, places
    and organizations of this year, and the adjacent years.
 5. **Then edit.** Change what the new evidence changes and leave the rest.
 

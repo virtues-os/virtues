@@ -81,7 +81,8 @@ async fn main() -> Result<()> {
         let task = if never_written {
             "WRITE this article for the first time. The record has never written it: \
              what follows is the owner's own seeding text, which is theirs to keep \
-             and not an article. Research the subject and write the piece."
+             and not an article. Research the subject and write the piece, unless \
+             its brief says a page like this one stays empty."
         } else {
             "REVISE this article. Change what the new evidence actually changes and \
              leave every sentence that is still true exactly as it is."
@@ -150,7 +151,8 @@ async fn changed_since(
     }
     Ok(format!(
         "Every written-up day of {year}, with its opening line. Compare them \
-         against the article: what is here and not there is what you are for.\n{}",
+         against the article. A day the article lacks matters only if it changes a \
+         thread; the article does not retell days.\n{}",
         lines.join("\n")
     ))
 }

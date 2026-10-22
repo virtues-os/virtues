@@ -1,7 +1,7 @@
 //! Applet-owned tables: versioned, append-only, and honest about drift.
 //!
 //! `schema_sql` used to be applied as one idempotent file. That works exactly
-//! once. Re-calling `setup_applet` is the edit path, so the second call
+//! once. Re-calling the applet tool's setup is the edit path, so the second call
 //! rewrote the file and re-applied it — and `CREATE TABLE IF NOT EXISTS`, on a
 //! table that already exists, does nothing.
 //!
@@ -490,7 +490,7 @@ impl Drift {
             })
             .collect();
         format!(
-            "each setup_applet call is one MIGRATION, not the whole schema — \
+            "each applet setup call is one MIGRATION, not the whole schema — \
              submit only what changed: {}",
             alters.join(" ")
         )

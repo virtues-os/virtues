@@ -135,21 +135,16 @@ describe("toUiMessage", () => {
 	});
 });
 
-describe("splitTurn intent", () => {
+describe("splitTurn narration", () => {
 	const t = (s: string) => ({ type: "text", text: s });
 	const call = (n: string) => ({ type: `tool-${n}`, toolCallId: n });
 
-	it("is the line that introduced the call in flight", () => {
-		const turn = splitTurn([t("Checking your messages."), call("sql_query")], true);
-		expect(turn.intent).toBe("Checking your messages.");
-	});
-
-	it("goes quiet once the model makes a call without a word", () => {
+	it("keeps a line written before a call out of the reply while streaming", () => {
 		const turn = splitTurn(
 			[t("Checking your messages."), call("sql_query"), call("web_search")],
 			true,
 		);
-		expect(turn.intent).toBe("");
 		expect(turn.narration).toEqual(["Checking your messages."]);
+		expect(turn.bodyFromIndex).toBe(3);
 	});
 });

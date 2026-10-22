@@ -652,7 +652,7 @@
 				suggestion = null;
 				suggestionAskedFor = null;
 			}
-			// Get or create new instance with model, space, active page, persona, and agent mode getters
+			// Get or create new instance with model, space, active page, and agent mode getters
 			chat = chatInstances.getOrCreate({
 				conversationId,
 				getModel: () => models.idForWire(),
@@ -660,7 +660,6 @@
 				// context block and the server keeps the binding fresh.
 				getProjectId: () => chatProjectId,
 				getActivePageContext: activePageContext,
-				getPersona: () => selectedPersona,
 				getAgentMode: () => turnSkill ?? selectedAgentMode,
 				getChatMode: () => chatMode,
 				getTemporary: () => isGhost,
@@ -895,7 +894,6 @@
 			const tabConversationId = extractConversationId(tab.route);
 
 			let profileDefaultModelId: string | undefined;
-			let profileDefaultPersona: string | undefined;
 
 			const profilePromise = (async () => {
 				try {
@@ -903,11 +901,9 @@
 						standard_model_id?: string;
 						/** The same pin, from a box older than the Standard rename. */
 						chat_model_id?: string;
-						persona?: string;
 					}>();
 					profileDefaultModelId =
 						profile.standard_model_id ?? profile.chat_model_id;
-					profileDefaultPersona = profile.persona;
 				} catch (error) {
 					console.error("Failed to load assistant profile:", error);
 				}
@@ -943,11 +939,7 @@
 					editAllowListStore.init(tabConversationId),
 				]);
 			} else {
-				// New chat - set defaults from profile
 				editAllowListStore.setChatId(conversationId, isGhost);
-				if (profileDefaultPersona) {
-					selectedPersona = profileDefaultPersona;
-				}
 			}
 
 			isLoading = false;
@@ -1096,7 +1088,7 @@
 	let titleDone = $state(false);
 	let refreshDataTimeout: ReturnType<typeof setTimeout> | null = null;
 
-	// Agent mode and persona selection state - used for tool filtering on backend
+	// Agent mode selection, used for tool filtering on the backend.
 	let selectedAgentMode = $state<AgentModeId>('chat');
 	// Local mode's "Think first" switch, sent with each local turn.
 	let localThink = $state(false);
@@ -1119,7 +1111,6 @@
 		if (!skills.loaded) await skills.load();
 		return skills.names.has(m[1]) ? m[1] : null;
 	}
-	let selectedPersona = $state<string>('default');
 
 	// Retrieval scope. 'scoped' (grounded in a project's items only) still
 	// exists on the wire and in the retriever — what's gone is the pill above
@@ -2052,7 +2043,6 @@
 													toolCalls={turn.toolParts}
 													reasoningContent={turn.reasoning}
 													narration={turn.narration}
-													intent={turn.intent}
 													browseStep={isStreaming
 														? chatInstances.getBrowseStep(conversationId)
 														: undefined}
@@ -2096,7 +2086,7 @@
 											{:else if part.type === "file"}
 												<MessageFile part={part as any} onOpenImage={openLightbox} />
 											{:else if part.type.startsWith("tool-") && (part as any).state === "output-available" && (part as any).output?.permission_needed}
-												<!-- Any gated tool (run_action, delete_action, …) awaiting the user's "I allow" -->
+												<!-- Any gated tool (an applet run or delete, sql_write, …) awaiting the user's "I allow" -->
 												{@const output = (part as any).output}
 												<PageBindingInline
 													entityId={output.entity_id}
@@ -2175,7 +2165,7 @@
 														} : undefined}
 													/>
 												{/if}
-											{:else if part.type === "tool-setup_applet" && (part as any).state === "output-available"}
+											{:else if (part.type === "tool-applet" && (part as any).input?.action === "setup" || part.type === "tool-setup_applet") && (part as any).state === "output-available"}
 											{@const out = (part as any).output}
 											{#if out?.applet_id && out?.status !== "check_failed"}
 												<!-- The gate, in the conversation. An applet that crosses a

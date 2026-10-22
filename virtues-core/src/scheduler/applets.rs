@@ -195,7 +195,7 @@ pub async fn update_memory(db: &PgPool, applet_id: &str, memory: &str) -> Result
 /// private `applet_<slug>` schema it owns. System rows are refused.
 ///
 /// Folder + schema teardown live here so BOTH the HTTP delete and the chat
-/// `delete_applet` tool tear down identically (one door). `drop_data` defaults
+/// applet tool's delete tear down identically (one door). `drop_data` defaults
 /// to keeping data: an applet's tables outlive it unless the user opts in.
 pub async fn delete_applet(db: &PgPool, applet_id: &str, drop_data: bool) -> Result<()> {
     let owner: Option<String> = sqlx::query_scalar("SELECT owner FROM app_applets WHERE id = $1")

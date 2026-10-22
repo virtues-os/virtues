@@ -23,7 +23,7 @@ use super::types::{AppletCmd, OutputArgs, PageCmd};
 use super::ui;
 use super::types::Commands;
 use crate::server::api::console::AGENT_KEY_HEADER;
-use crate::tools::{ToolContext, ToolExecutor, CLI_TOOLS};
+use crate::tools::{cli_reads, ToolContext, ToolExecutor};
 
 /// The widest a cell may print on a terminal. Piped output is never cut.
 const MAX_CELL: usize = 60;
@@ -35,7 +35,7 @@ const MAX_CELL: usize = 60;
 const DEFAULT_MAX_LLM_COST_PER_DAY: f64 = 1.0;
 
 /// A tool's data says it failed even when the call itself succeeded:
-/// `sql_write` returns `status: "error"`, `edit_applet` `"refused"`, the
+/// `sql_write` returns `status: "error"`, an applet edit `"refused"`, the
 /// check `"check_failed"`.
 fn failed_status(data: &Value) -> Option<String> {
     let status = data.get("status").and_then(Value::as_str)?;
@@ -147,7 +147,7 @@ impl Verbs {
 
     /// Run one allowlisted read tool and return its data, or its error as text.
     async fn call(&self, tool: &str, args: Value) -> Result<Value, String> {
-        if !CLI_TOOLS.contains(&tool) {
+        if !cli_reads(tool, &args) {
             return Err(format!("{tool} is not available to the CLI"));
         }
         let Some((exec, _)) = &self.local else {
@@ -319,7 +319,7 @@ impl Verbs {
         Ok(())
     }
 
-    /// `setup_applet` arguments from a folder, or from JSON on stdin (`-`).
+    /// Applet setup arguments from a folder, or from JSON on stdin (`-`).
     async fn draft_args(&self, path: &str) -> Result<(Value, Vec<Value>), String> {
         if path == "-" {
             let text = std::io::read_to_string(std::io::stdin()).map_err(|e| format!("reading stdin: {e}"))?;
@@ -335,7 +335,7 @@ impl Verbs {
     pub async fn applet(&self, cmd: AppletCmd) -> Result<(), String> {
         match cmd {
             AppletCmd::Ls { all, out } => {
-                let data = self.call("list_applets", json!({ "include_archived": all })).await?;
+                let data = self.call("applet", json!({ "action": "list", "include_archived": all })).await?;
                 if out.json {
                     return print_json(&data);
                 }
@@ -353,7 +353,7 @@ impl Verbs {
                 Ok(())
             }
             AppletCmd::Get { id, out } => {
-                let data = self.call("get_applet", json!({ "id": id })).await?;
+                let data = self.call("applet", json!({ "action": "get", "id": id })).await?;
                 if out.json {
                     return print_json(&data);
                 }
@@ -393,7 +393,8 @@ impl Verbs {
                     args["limits"]["max_llm_cost_per_day"] = json!(DEFAULT_MAX_LLM_COST_PER_DAY);
                 }
                 let console = &self.console;
-                let data = console.tool("setup_applet", args).await?;
+                args["action"] = json!("setup");
+                let data = console.tool("applet", args).await?;
                 if data["status"] == "check_failed" {
                     let findings = array(&data, "findings");
                     table(&["field", "error", "suggestion"], findings);
@@ -421,11 +422,11 @@ impl Verbs {
             AppletCmd::On { id } => self.switch(&id, true).await,
             AppletCmd::Off { id } => self.switch(&id, false).await,
             AppletCmd::Run { id, date, out } => {
-                let mut args = json!({ "id": &id });
+                let mut args = json!({ "action": "run", "id": &id });
                 if let Some(d) = date {
                     args["date"] = json!(d);
                 }
-                let data = self.console.tool_data("run_applet", args).await?;
+                let data = self.console.tool_data("applet", args).await?;
                 if out.json {
                     print_json(&data)?;
                 }
@@ -454,8 +455,9 @@ impl Verbs {
             }
             AppletCmd::Check { path, out } => {
                 let (mut args, mut findings) = self.draft_args(&path).await?;
+                args["action"] = json!("setup");
                 args["check_only"] = json!(true);
-                let data = self.call("setup_applet", args).await?;
+                let data = self.call("applet", args).await?;
                 findings.extend(array(&data, "findings").iter().cloned());
                 if out.json {
                     print_json(&json!({
@@ -734,7 +736,7 @@ fn array_of(v: &Value) -> &[Value] {
     v.as_array().map(Vec::as_slice).unwrap_or(&[])
 }
 
-/// The manifest keys an authored applet can set: what `setup_applet` writes.
+/// The manifest keys an authored applet can set: what applet setup writes.
 /// Anything else in a folder's manifest (`command`, `credential`, …) belongs
 /// to shipped or trusted applets, and would not survive being put.
 const AUTHORED_KEYS: &[&str] = &[
@@ -742,7 +744,7 @@ const AUTHORED_KEYS: &[&str] = &[
     "condition", "until", "default_enabled", "enabled", "config",
 ];
 
-/// An applet folder as `setup_applet` arguments, plus the findings only the
+/// An applet folder as applet setup arguments, plus the findings only the
 /// folder can have (an unreadable or unauthorable manifest).
 ///
 /// Schema: the versions on disk this box has not applied yet, joined in

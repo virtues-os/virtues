@@ -29,20 +29,14 @@
 		reasoningContent?: string;
 		/**
 		 * What the model said on its way here — every text run in this turn
-		 * except the last, which is the reply. These are the lines it writes
-		 * before reaching for a tool; the newest one is the status label.
+		 * except the last, which is the reply. Shown in the fold, never as
+		 * the label.
 		 */
 		narration?: string[];
 		/**
-		 * The narration line that introduced the call in flight, if one did
-		 * (`splitTurn`). An older line is not a status: the model may make
-		 * later calls without a word, and the label kept saying the first.
-		 */
-		intent?: string;
-		/**
-		 * The browsing agent's call in flight, while a `browse` call runs. It
-		 * outranks the narration: the chat model said why once, and a task
-		 * of twenty steps is better described by the one happening now.
+		 * The browsing agent's call in flight, while a `browse` call runs. A
+		 * task of twenty steps is better described by the step happening now
+		 * than by the one `browse` call that started it.
 		 */
 		browseStep?: WorkerStep;
 		/** How long the turn worked, in seconds; 0 when nobody measured it. */
@@ -63,7 +57,6 @@
 		toolCalls = [],
 		reasoningContent = "",
 		narration = [],
-		intent = "",
 		browseStep = undefined,
 		startedAt = null,
 		stalled = false,
@@ -111,23 +104,18 @@
 	 * waiting on their own records was told the box was speaking pompously at
 	 * length.
 	 *
-	 * Everything needed to say something true was already on screen. The model
-	 * narrates before it reaches for a tool, and the tool call itself says what
-	 * it is doing. So: the model's own last clause, or the tool in flight, and
-	 * only then a plain fallback. Nothing new is fetched and no second model is
-	 * asked — a lite model reading the tool's arguments could only paraphrase
-	 * what `describeTool` already derives for free, and would not know WHY
-	 * the call is being made, which is the one thing the narration does.
+	 * The tool call says what it is doing, so the label is built from the
+	 * call's name and arguments (`describeTool`), and only then a plain
+	 * fallback. The model is not asked to narrate for it: writing a status
+	 * line before every call was one more instruction competing with the
+	 * work, and no second model is asked either, because it could only
+	 * paraphrase what `describeTool` derives for free.
 	 */
 	const thinkingLabel = $derived.by(() => {
 		if (browseStep && toolRunning && toolName(toolRunning) === "browse") {
 			return describeTool({ type: `tool-${browseStep.tool}`, input: browseStep.input }, true, true);
 		}
-		const said = lastIntent(intent);
-		if (said) return said;
-
-		// Nothing said for this call — the call itself is the next best truth.
-		// Only one still running: a finished call in the present tense was
+		// Only a call still running: a finished call in the present tense was
 		// the label while the reply was already being written.
 		const current = toolRunning;
 		if (current && toolName(current) !== "think") {
@@ -141,26 +129,6 @@
 		// the model has not already said.
 		return elapsedMs > LONG_TURN_MS ? "Sitting with this one" : "Thinking";
 	});
-
-	/**
-	 * The last clause of the newest thing the model said.
-	 *
-	 * The prompt asks for the line to END with a clause naming what it is
-	 * about to do, because what comes before is usually a finding — worth
-	 * reading, but not a status. A clause is often joined by a dash or a
-	 * semicolon rather than a full stop ("He wrote twice in August — checking
-	 * September."), so those split too. Degrades to the whole line for a
-	 * model that ignores the shape.
-	 */
-	function lastIntent(line: string): string {
-		line = line.trim();
-		if (!line) return "";
-		const pieces = line.split(/(?<=[.!?])\s+|\s+[—–]\s+|;\s+/).filter((t) => t.trim());
-		const last = (pieces.at(-1) ?? line).trim();
-		// A whole paragraph is not a label; better to fall through to the tool.
-		if (last.length > 90) return "";
-		return last.charAt(0).toUpperCase() + last.slice(1);
-	}
 
 	/**
 	 * HOW DEEP, in dots. See ThinkingMark for what the dots mean and why they

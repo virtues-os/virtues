@@ -195,7 +195,7 @@ Rules:
 - "title": their name for the era, verbatim or near-verbatim. null ONLY for a stretch they deliberately left unnamed.
 - "start_year"/"end_year": the rough year they said - "about '05" is 2005. When they wavered ("'04 or '05"), take the one they settled on, or the later mention. "end_year": null means the chapter is still running.
 - "start_month"/"end_month": 1-12, ONLY when they gave a month ("Mar 2014" is start_year 2014, start_month 3; "October 17 2015" is 2015, 10). A bare year is null. Never invent a month to make eras line up.
-- Several eras can begin in one year — keep every one of them, with its month. Two eras with the same start year AND the same month (or both no month) are one era: keep the one they said more about.
+- Several eras can begin in one year: keep every one that has its own month. Two eras with the same start year and the same month, or both with no month, are one era: keep the one they said more about.
 - "changepoint": what ENDED the era, in their words, if they said. Otherwise null.
 - "summary": one or two of their own sentences about the era, kept close to verbatim. Otherwise null. Never diagnose, never interpret.
 - If they gave no chapters at all, output [].
