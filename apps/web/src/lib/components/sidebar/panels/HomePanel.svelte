@@ -1016,7 +1016,8 @@
 			}}
 			onclick={act.open}
 			onkeydown={(e) => {
-				if (e.key === 'Enter' || e.key === ' ') {
+				// The row's own keys only: Enter on its + presses the +.
+				if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
 					e.preventDefault();
 					act.open();
 					return;
@@ -1117,7 +1118,8 @@
 		onclick={(e) => openFromRow(e, row.url, row.title, () => openRecent(row))}
 		ondblclick={(e) => renameFromRow(e, row.url, row.title, row.kind)}
 		onkeydown={(e) => {
-			if (e.key === 'Enter' || e.key === ' ') {
+			// The row's own keys only: Enter on Pin or More presses that button.
+			if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
 				e.preventDefault();
 				openRecent(row);
 			} else if (e.key === 'F2') {
@@ -1275,7 +1277,8 @@
 					onclick={(e) => openFromRow(e, pin.url, look.title, () => openPin(pin))}
 					ondblclick={(e) => renameFromRow(e, pin.url, look.title, look.kind)}
 					onkeydown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
+						// The row's own keys only: Enter on Unpin or More presses that button.
+						if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
 							e.preventDefault();
 							openPin(pin);
 							return;
