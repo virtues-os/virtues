@@ -375,7 +375,6 @@
 			// is chrome, and chrome paints nothing of its own (design.md).
 			"mb-2 ml-2 overflow-hidden",
 			"sidebar-column",
-			isCollapsed ? "pointer-events-none" : "",
 			// Dimmed while releasing the seam would close the sidebar.
 			"transition-opacity duration-150 ease-[var(--ease-premium)]",
 			collapseArmed ? "opacity-50" : "",
@@ -385,7 +384,10 @@
 
 <aside class={sidebarClass} style="width: {asideWidth}px">
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class={panelColumnClass} style="width: {panelWidth}px; min-width: {panelWidth}px" onkeydown={onColumnKey}>
+	<!-- Closed, the column is inert: still in the page while the width
+	     animates, but out of the Tab order, the pointer's reach and the
+	     accessibility tree. -->
+	<div class={panelColumnClass} style="width: {panelWidth}px; min-width: {panelWidth}px" inert={isCollapsed} onkeydown={onColumnKey}>
 		<nav class="workspace-nav">
 			{#if !storeReady}
 				<div class="loading-state">
