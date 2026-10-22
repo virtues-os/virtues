@@ -79,19 +79,26 @@ export function canPin(url: string): boolean {
 /**
  * Pin `target` into the gap before pin number `gap` (`pins.length` is the
  * end), from a drop. A url that is already pinned moves to that gap instead
- * of pinning twice.
+ * of pinning twice. A new pin shows in the gap before the box answers
+ * (`pinsStore.insertAt`), and the store changes before this first awaits, so
+ * a drop handler's own cleanup never sees an empty Pinned in between.
  */
 export async function pinAtGap(target: PinTarget, gap: number): Promise<void> {
 	if (!canPin(target.url)) return;
-	let from = pinsStore.pins.findIndex((p) => p.url === target.url);
-	if (from < 0) {
-		const owned = ownedRef(target.url);
-		const pin = await pinsStore.add(target.url, owned ? null : (target.label ?? null), owned ? null : (target.icon ?? null));
-		// The box may write the url its own way; find the pin it made.
-		from = pinsStore.pins.findIndex((p) => p.id === pin.id);
+	const from = pinsStore.pins.findIndex((p) => p.url === target.url);
+	if (from >= 0) {
+		const to = from < gap ? gap - 1 : gap;
+		await pinsStore.reorder(from, Math.min(to, pinsStore.pins.length - 1));
+		return;
 	}
-	const to = from < gap ? gap - 1 : gap;
-	await pinsStore.reorder(from, Math.min(to, pinsStore.pins.length - 1));
+	const owned = ownedRef(target.url);
+	await pinsStore.insertAt(
+		gap,
+		target.url,
+		owned ? null : (target.label ?? null),
+		owned ? null : (target.icon ?? null),
+		target.label,
+	);
 }
 
 /**

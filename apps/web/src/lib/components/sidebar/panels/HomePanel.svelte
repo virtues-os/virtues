@@ -44,7 +44,8 @@
 	import { onMount, tick } from 'svelte';
 	import { crossfade, slide } from 'svelte/transition';
 	import { flip } from 'svelte/animate';
-	import { cubicOut } from 'svelte/easing';
+	import { prefersReducedMotion } from 'svelte/motion';
+	import { easePremium, motionMs } from '$lib/utils/motion';
 	import { chatSessions, type ChatSession } from '$lib/stores/chatSessions.svelte';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { pagesStore } from '$lib/stores/pages.svelte';
@@ -115,31 +116,110 @@
 	// A pin being dragged within Pinned, and the gap a drag over Pinned would
 	// land in: before pin number `pinGap`, or at the end when it equals
 	// pins.length. A dragged tab is tracked by dndManager; either draws the line.
-	let draggingPin = $state<number | null>(null);
+	let draggingPinId = $state<string | null>(null);
 	let pinGap = $state<number | null>(null);
 	const shownGap = $derived(dndManager.pinGap ?? pinGap);
+	// Where the thing in hand already sits in Pinned: the pin being dragged,
+	// or the pin of a dragged tab's page. Dropping it beside itself changes
+	// nothing, so those two gaps draw no line.
+	const pinFrom = $derived.by(() => {
+		if (draggingPinId !== null) return pins.findIndex((p) => p.id === draggingPinId);
+		const route = dndManager.session?.item.tab?.route;
+		return route ? pins.findIndex((p) => p.url === route) : -1;
+	});
+	const pinLine = $derived(
+		shownGap !== null && pinFrom >= 0 && (shownGap === pinFrom || shownGap === pinFrom + 1) ? null : shownGap,
+	);
 	// A sidebar row is in the air, so an empty Pinned shows where to drop it.
+	// A drop that pins puts a provisional pin in the list before this clears
+	// (pinsStore.insertAt), so Pinned stays open while the box answers.
 	let refDragging = $state(false);
 	const tabCanPin = $derived(!!dndManager.session?.item.tab?.route && canPin(dndManager.session.item.tab.route));
 	const pinnedOpenForDrop = $derived(pins.length === 0 && (refDragging || tabCanPin));
+	// A Recent row in the air, dimmed in its place like a pin or a door.
+	let draggingRecent = $state<string | null>(null);
+
+	// ── one drag at a time ─────────────────────────────────────────────────
+	// The browser takes its picture of a dragged row after dragstart returns.
+	// The row wears its lifted look for that moment (liftRow), and the next
+	// task takes it off so the dimmed source shows instead. Anything that
+	// changes the layout, like opening an empty Pinned, waits for that task
+	// too: moving rows under a starting drag can cancel it.
+	let dragSource: HTMLElement | null = null;
+	let liftTimer: ReturnType<typeof setTimeout> | undefined;
+	let refTimer: ReturnType<typeof setTimeout> | undefined;
+	// The browser keeps the row's :hover from when the drag began until the
+	// pointer next moves, which can be well after the drop. Rows ignore hover
+	// until then (`.stale-hover`).
+	let staleHover = $state(false);
+
+	function liftRow(e: DragEvent) {
+		const row = e.currentTarget as HTMLElement;
+		clearTimeout(liftTimer);
+		dragSource?.classList.remove('lifting');
+		dragSource = row;
+		row.classList.add('lifting');
+		staleHover = true;
+		liftTimer = setTimeout(() => row.classList.remove('lifting'));
+	}
+
+	/** Every mark a drag left: the line, the tint, the dimming. */
+	function endDrag() {
+		clearTimeout(liftTimer);
+		clearTimeout(refTimer);
+		cancelAnimationFrame(pinLeaveFrame);
+		cancelAnimationFrame(doorLeaveFrame);
+		if (dragSource) {
+			dragSource.classList.remove('lifting');
+			// Pressing a row to drag it focused it, and a focused row shows its
+			// controls. A pointer's focus is not worth keeping; a keyboard's is.
+			if (dragSource.matches(':focus:not(:focus-visible)')) dragSource.blur();
+		}
+		dragSource = null;
+		draggingPinId = null;
+		draggingDoorId = null;
+		draggingRecent = null;
+		pinGap = null;
+		doorGap = null;
+		rowDropTarget = null;
+		refDragging = false;
+	}
 
 	$effect(() => {
 		const start = (e: DragEvent) => {
-			if (isRefDrag(e)) refDragging = true;
+			if (!isRefDrag(e)) return;
+			dragSource ??= e.target instanceof HTMLElement ? e.target : null;
+			clearTimeout(refTimer);
+			refTimer = setTimeout(() => (refDragging = true));
 		};
-		const end = () => {
-			refDragging = false;
-			pinGap = null;
+		// A source row that unmounted mid-drag gets its dragend, if the browser
+		// sends one at all, outside the document. No pointer events fire during
+		// a native drag, so the first one after it ends clears what was left.
+		const moved = () => {
+			if (staleHover) staleHover = false;
+			if (dragSource && !dragSource.isConnected) endDrag();
 		};
 		document.addEventListener('dragstart', start);
-		document.addEventListener('dragend', end);
-		document.addEventListener('drop', end);
+		document.addEventListener('dragend', endDrag);
+		document.addEventListener('drop', endDrag);
+		document.addEventListener('pointermove', moved, { passive: true });
+		document.addEventListener('pointerdown', moved, { passive: true });
 		return () => {
 			document.removeEventListener('dragstart', start);
-			document.removeEventListener('dragend', end);
-			document.removeEventListener('drop', end);
+			document.removeEventListener('dragend', endDrag);
+			document.removeEventListener('drop', endDrag);
+			document.removeEventListener('pointermove', moved);
+			document.removeEventListener('pointerdown', moved);
+			endDrag();
 		};
 	});
+
+	// Leaving a group takes its line away a frame later, unless a dragover
+	// inside it comes first. dragleave fires on every child boundary, and
+	// WebKit can report its relatedTarget as null even then, so clearing at
+	// once made the line blink between rows.
+	let pinLeaveFrame = 0;
+	let doorLeaveFrame = 0;
 	// The page list is loaded by the rooms that show pages; this panel is
 	// mounted before any of them, so it asks once. The store dedupes nothing,
 	// hence the guard on both the list and the in-flight flag.
@@ -211,34 +291,40 @@
 	// the top, and a pinned row travels from Recent to Pinned and back. The
 	// lists arriving on load, and a change of filter, swap in place.
 
-	const MOVE_MS = 200;
+	// Rows that move on a change slide on --motion-state and --ease-premium,
+	// like everything else in the shell that changes state.
+	const MOVE_MS = motionMs('--motion-state', 150);
 	let motionOn = $state(false);
 	let motionTimer: ReturnType<typeof setTimeout> | undefined;
+	// Read on every move, so turning reduced motion on or off applies at once.
+	const moving = () => motionOn && !prefersReducedMotion.current;
 
 	/** Hold motion off until the lists settle. */
 	function holdMotion(ms = 400) {
 		motionOn = false;
 		clearTimeout(motionTimer);
-		const reduced = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
-		if (!reduced) motionTimer = setTimeout(() => (motionOn = true), ms);
+		motionTimer = setTimeout(() => (motionOn = true), ms);
 	}
 	// The stores fill over the first second or so, one after another.
 	holdMotion(1500);
 
 	const [sendRow, receiveRow] = crossfade({
 		duration: MOVE_MS,
-		easing: cubicOut,
+		easing: easePremium,
 		// A row with no partner (a new chat, one past Recent's ten) opens its
 		// own height instead of crossing the column.
-		fallback: (node) => slide(node, { duration: motionOn ? 160 : 0, easing: cubicOut }),
+		fallback: (node) => slide(node, { duration: moving() ? MOVE_MS : 0, easing: easePremium }),
 	});
 
 	const rowOut = (node: Element, key: string) =>
-		motionOn ? sendRow(node, { key }) : { duration: 0 };
+		moving() ? sendRow(node, { key }) : { duration: 0 };
 	const rowIn = (node: Element, key: string) =>
-		motionOn ? receiveRow(node, { key }) : { duration: 0 };
+		moving() ? receiveRow(node, { key }) : { duration: 0 };
 	const rowFlip = (node: Element, rects: { from: DOMRect; to: DOMRect }) =>
-		flip(node, rects, { duration: motionOn ? MOVE_MS : 0, easing: cubicOut });
+		flip(node, rects, { duration: moving() ? MOVE_MS : 0, easing: easePremium });
+	// An empty Pinned opens for a drop and closes after one: it slides, so
+	// the rows under it are not thrown down a group's height in one frame.
+	const zoneSlide = (node: Element) => slide(node, { duration: moving() ? MOVE_MS : 0, easing: easePremium });
 
 	/** The glyph a pin with no chosen mark wears, by what it opens. */
 	function pinKindGlyph(url: string): string {
@@ -394,13 +480,17 @@
 
 	const doors = $derived(sidebarDoors.visible);
 	onMount(() => void sidebarDoors.load());
-	let draggingDoor = $state<number | null>(null);
+	// A door being dragged, and the gap it would land in among the doors.
+	let draggingDoorId = $state<DoorId | null>(null);
 	let doorGap = $state<number | null>(null);
-
-	function endDoorDrag() {
-		draggingDoor = null;
-		doorGap = null;
-	}
+	// Beside the dragged door itself a drop changes nothing, so no line there.
+	const doorLine = $derived.by(() => {
+		const from = doors.findIndex((d) => d.id === draggingDoorId);
+		return doorGap !== null && from >= 0 && (doorGap === from || doorGap === from + 1) ? null : doorGap;
+	});
+	// A door carries its id under its own type. In text/plain, a door dropped
+	// in the composer or a text field would type its label there.
+	const DOOR_DRAG_TYPE = 'application/x-virtues-door';
 
 	function moveDoor(from: number, to: number) {
 		sidebarDoors.move(from, to).catch(() => toast.error("Couldn't move that. Try again."));
@@ -477,11 +567,6 @@
 		pinsStore.reorder(from, to).catch(() => toast.error("Couldn't move that pin. Try again."));
 	}
 
-	function endPinDrag() {
-		draggingPin = null;
-		pinGap = null;
-	}
-
 	/**
 	 * A drag over Pinned: a pin moving, or a Recent row (or any sidebar row)
 	 * arriving. Over a pinned project's row, the middle files the dragged
@@ -489,7 +574,8 @@
 	 */
 	function overPinned(e: DragEvent, project: string | null = null, self = false) {
 		const ref = isRefDrag(e);
-		if (draggingPin === null && !ref) return;
+		if (draggingPinId === null && !ref) return;
+		cancelAnimationFrame(pinLeaveFrame);
 		const at = pinGapAt(e.currentTarget as Element, e.clientY, ref && !!project && !self);
 		e.preventDefault();
 		if (at === 'file') {
@@ -498,9 +584,9 @@
 			if (e.dataTransfer) e.dataTransfer.dropEffect = 'link';
 			return;
 		}
-		if (rowDropTarget === project) rowDropTarget = null;
+		rowDropTarget = null;
 		pinGap = at;
-		if (e.dataTransfer) e.dataTransfer.dropEffect = draggingPin !== null ? 'move' : 'link';
+		if (e.dataTransfer) e.dataTransfer.dropEffect = draggingPinId !== null ? 'move' : 'link';
 	}
 
 	/** A drop on Pinned at the line: move the pin, or pin what arrived. True if it took the drop. */
@@ -509,10 +595,9 @@
 		pinGap = null;
 		if (gap === null) return false;
 		e.preventDefault();
-		if (draggingPin !== null) {
-			const from = draggingPin;
-			endPinDrag();
-			movePin(from, from < gap ? gap - 1 : gap);
+		if (draggingPinId !== null) {
+			const from = pins.findIndex((p) => p.id === draggingPinId);
+			if (from >= 0) movePin(from, from < gap ? gap - 1 : gap);
 			return true;
 		}
 		const url = e.dataTransfer?.getData(REF_DRAG_TYPE);
@@ -523,10 +608,22 @@
 		return true;
 	}
 
-	/** Leaving Pinned altogether takes the line away. */
+	/** Leaving Pinned altogether takes the line and the tint away. */
 	function leavePinned(e: DragEvent) {
 		const area = e.currentTarget as HTMLElement;
-		if (!e.relatedTarget || !area.contains(e.relatedTarget as Node)) pinGap = null;
+		if (e.relatedTarget && area.contains(e.relatedTarget as Node)) return;
+		cancelAnimationFrame(pinLeaveFrame);
+		pinLeaveFrame = requestAnimationFrame(() => {
+			pinGap = null;
+			rowDropTarget = null;
+		});
+	}
+
+	function leaveDoors(e: DragEvent) {
+		const area = e.currentTarget as HTMLElement;
+		if (e.relatedTarget && area.contains(e.relatedTarget as Node)) return;
+		cancelAnimationFrame(doorLeaveFrame);
+		doorLeaveFrame = requestAnimationFrame(() => (doorGap = null));
 	}
 
 	function openPin(pin: Pin) {
@@ -823,10 +920,7 @@
 	class="panel-doors"
 	role="group"
 	aria-label="Doors"
-	ondragleave={(e) => {
-		const area = e.currentTarget as HTMLElement;
-		if (!e.relatedTarget || !area.contains(e.relatedTarget as Node)) doorGap = null;
-	}}
+	ondragleave={leaveDoors}
 	oncontextmenu={(e) => {
 		// Between the rows, or under them when every door is hidden: the
 		// way back to a hidden door.
@@ -844,34 +938,38 @@
 		{@const act = doorActions[door.id]}
 		<!-- A div, not a button, so a door's + can be a real button inside it. -->
 		<div
-			class="panel-row panel-door"
+			animate:rowFlip
+			class="panel-row panel-door drop-slot"
 			class:panel-row-has-actions={!!act.add}
-			class:drop-before={doorGap === index}
-			class:drop-after={doorGap === doors.length && index === doors.length - 1}
-			class:dragging={draggingDoor === index}
+			class:drop-before={doorLine === index}
+			class:drop-after={doorLine === doors.length && index === doors.length - 1}
+			class:dragging={draggingDoorId === door.id}
+			class:stale-hover={staleHover}
 			role="link"
 			tabindex="0"
 			aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
 			draggable="true"
 			ondragstart={(e) => {
-				draggingDoor = index;
-				e.dataTransfer?.setData('text/plain', door.label);
+				liftRow(e);
+				draggingDoorId = door.id;
+				e.dataTransfer?.setData(DOOR_DRAG_TYPE, door.id);
 				if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
 			}}
-			ondragend={endDoorDrag}
+			ondragend={endDrag}
 			ondragover={(e) => {
-				if (draggingDoor === null) return;
+				if (draggingDoorId === null) return;
 				e.preventDefault();
+				cancelAnimationFrame(doorLeaveFrame);
 				const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
 				doorGap = e.clientY - box.top < box.height / 2 ? index : index + 1;
 				if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
 			}}
 			ondrop={(e) => {
-				if (draggingDoor === null || doorGap === null) return;
-				e.preventDefault();
-				const from = draggingDoor;
+				const from = doors.findIndex((d) => d.id === draggingDoorId);
 				const gap = doorGap;
-				endDoorDrag();
+				if (from < 0 || gap === null) return;
+				e.preventDefault();
+				endDrag();
 				moveDoor(from, from < gap ? gap - 1 : gap);
 			}}
 			onclick={act.open}
@@ -959,14 +1057,19 @@
 	<div
 		class="panel-row panel-row-has-actions"
 		class:active={activeRoute === row.url}
+		class:dragging={draggingRecent === row.url}
+		class:stale-hover={staleHover}
 		role="link"
 		tabindex="0"
 		title={`${row.title} · ${home ? home.name : RECENT_KIND_LABEL[row.kind]}`}
 		draggable="true"
 		ondragstart={(e) => {
+			liftRow(e);
+			draggingRecent = row.url;
 			if (projectMemberUrl(row.url)) startRefDrag(e, row.url, row.title);
 			else e.dataTransfer?.setData('text/plain', row.title);
 		}}
+		ondragend={endDrag}
 		onclick={() => openRecent(row)}
 		onkeydown={(e) => {
 			if (e.key === 'Enter' || e.key === ' ') {
@@ -1020,8 +1123,12 @@
 <!-- Pinned takes drops anywhere in it: a pin moving, a Recent row or a tab
      being pinned. The head pins at the top; an empty Pinned shows only while
      something is being dragged, as a row to drop on. -->
-<div class="pinned-zone" role="group" aria-label="Pinned" ondragleave={leavePinned}>
+<div class="pinned-zone" role="group" aria-label="Pinned" ondragleave={leavePinned} transition:zoneSlide>
+	<!-- Folded, the rows are out of reach and every drop lands at the top,
+	     so the head draws that gap's line under itself. -->
 	<div
+		class="pin-head"
+		class:drop-under={pinLine === 0 && pins.length > 0 && folded('pinned')}
 		{...{ [PIN_DROP_ATTR]: 'head' }}
 		ondragover={(e) => overPinned(e)}
 		ondrop={(e) => dropOnPinned(e)}
@@ -1041,7 +1148,7 @@
 	{/if}
 	<div class="sidebar-expandable fold" class:expanded={!folded('pinned')} style={foldStyle(pins.length)}>
 		<div class="sidebar-expandable-inner">
-			{#each pins as pin, index (pin.id)}
+			{#each pins as pin, index (pinsStore.keyOf(pin))}
 				{@const pinChat = pin.url.startsWith('/chat/') ? pin.url.slice('/chat/'.length) : null}
 				{@const look = pinIdentity(pin)}
 				{@const owned = ownedRef(pin.url)}
@@ -1050,13 +1157,14 @@
 					in:rowIn={pin.url}
 					out:rowOut={pin.url}
 					animate:rowFlip
-					class="panel-row panel-row-has-actions"
+					class="panel-row panel-row-has-actions drop-slot"
 					class:active={activeRoute === pin.url}
 					class:drop-target={pinProject !== null &&
 						(dndManager.projectTarget === pinProject || rowDropTarget === pinProject)}
-					class:drop-before={shownGap === index}
-					class:drop-after={shownGap === pins.length && index === pins.length - 1}
-					class:dragging={draggingPin === index}
+					class:drop-before={pinLine === index}
+					class:drop-after={pinLine === pins.length && index === pins.length - 1}
+					class:dragging={draggingPinId === pin.id}
+					class:stale-hover={staleHover}
 					{...pinProject ? { [PROJECT_DROP_ATTR]: pinProject } : {}}
 					{...{ [PIN_DROP_ATTR]: String(index) }}
 					role="link"
@@ -1065,21 +1173,16 @@
 					aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
 					draggable="true"
 					ondragstart={(e) => {
-						draggingPin = index;
+						liftRow(e);
+						draggingPinId = pin.id;
 						// A thing that can be filed also drags as a row, so it can
 						// still be dropped on a project or into a page.
 						if (projectMemberUrl(pin.url)) startRefDrag(e, pin.url, look.title);
 						else e.dataTransfer?.setData('text/plain', look.title);
 						if (e.dataTransfer) e.dataTransfer.effectAllowed = 'linkMove';
 					}}
-					ondragend={endPinDrag}
-					ondragover={(e) => overPinned(e, pinProject, draggingPin === index)}
-					ondragleave={(e) => {
-						const row = e.currentTarget as HTMLElement;
-						if (!e.relatedTarget || !row.contains(e.relatedTarget as Node)) {
-							if (rowDropTarget === pinProject) rowDropTarget = null;
-						}
-					}}
+					ondragend={endDrag}
+					ondragover={(e) => overPinned(e, pinProject, draggingPinId === pin.id)}
 					ondrop={(e) => {
 						rowDropTarget = null;
 						if (dropOnPinned(e)) return;
@@ -1346,7 +1449,7 @@
 		transition: color var(--motion-hover-out) var(--ease-premium);
 	}
 
-	.panel-door:hover > :global(.atlas-icon) {
+	.panel-door:not(.stale-hover):hover > :global(.atlas-icon) {
 		color: var(--color-foreground);
 		transition-duration: var(--motion-hover-in);
 	}
@@ -1366,9 +1469,19 @@
 		text-align: left;
 		font-size: var(--sidebar-interactive-font-size);
 		color: var(--color-foreground);
+		/* A drag starts from a row, so a press-and-move must not select its
+		   text instead, which WebKit tries first. */
+		user-select: none;
+		-webkit-user-select: none;
+		/* The scale's motion (design.md, "The scale"), as on the tab strip:
+		   hover in fast and out slow. */
+		transition:
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
+			opacity var(--motion-hover-out) var(--ease-premium);
 	}
 
-	.panel-row:hover {
+	.panel-row:not(.stale-hover):hover {
 		background: var(--hover-bg);
 		transition-duration: var(--motion-hover-in);
 	}
@@ -1381,55 +1494,92 @@
 		box-shadow: inset 0 0 0 1px var(--color-border);
 	}
 
-	/* A pinned project with something held over it: the row says it will take
-	   it, in the same ring the focus state draws, so a drop is never a
-	   guess about which row is under the pointer. */
-	.panel-row.drop-target {
-		background: var(--active-bg);
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
+	/* A pinned project with something held over it: the row takes the drop
+	   tint, the same one a pane shows for a tab it will take. It outranks
+	   the active row's fill, which would otherwise hide it. */
+	.panel-row.drop-target,
+	.panel-row.drop-target:hover {
+		background: var(--drop-tint);
+		transition-duration: var(--motion-hover-in);
 	}
 
-	/* Where a dragged pin will land: a line in the gap above or below the row
-	   it is over, across the row's width. */
-	.panel-row.drop-before,
-	.panel-row.drop-after {
-		position: relative;
-	}
-	.panel-row.drop-before::after,
-	.panel-row.drop-after::after {
+	/* Where a dragged pin or door will land: a line in the gap above or below
+	   the row it is over. It is drawn inside the row, along its top or bottom
+	   edge, because the fold that holds Pinned clips anything outside its
+	   rows. Both lines are always there, at zero opacity, so they fade. */
+	.drop-slot::before,
+	.drop-slot::after,
+	.pin-head::after {
 		content: '';
 		position: absolute;
 		left: 6px;
 		right: 6px;
-		height: 2px;
-		border-radius: 1px;
-		background: var(--color-primary);
+		height: var(--drop-line-width);
+		border-radius: calc(var(--drop-line-width) / 2);
+		background: var(--drop-line);
 		pointer-events: none;
+		opacity: 0;
+		transition: opacity var(--motion-hover-out) var(--ease-premium);
 	}
-	.panel-row.drop-before::after {
-		top: -1px;
+	.drop-slot::before {
+		top: 0;
 	}
-	.panel-row.drop-after::after {
-		bottom: -1px;
+	.drop-slot::after,
+	.pin-head::after {
+		bottom: 0;
+	}
+	.drop-slot.drop-before::before,
+	.drop-slot.drop-after::after,
+	.pin-head.drop-under::after {
+		opacity: 1;
+		transition-duration: var(--motion-hover-in);
+	}
+
+	.pin-head {
+		position: relative;
 	}
 
 	/* Only while something is dragged and nothing is pinned yet: the row to
-	   drop on, in the meta ink, lit like a drop target when it is under the
-	   pointer. */
+	   drop on, in the meta ink, tinted like a drop target when it is under
+	   the pointer. */
 	.pin-drop-empty {
 		color: var(--color-foreground-subtle);
 		cursor: default;
 	}
 	.pin-drop-empty.drop-here {
-		background: var(--active-bg);
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
+		background: var(--drop-tint);
+		transition-duration: var(--motion-hover-in);
 	}
 
-	/* The pin in hand stays in its place, dimmed, until it lands. */
+	/* The row in hand stays in its place, dimmed, until it lands. */
 	.panel-row.dragging {
-		opacity: 0.4;
+		opacity: var(--drag-source-opacity);
+	}
+
+	/* The row as the browser pictures it when a drag starts: the whole pill
+	   in the page's fill, with no hover wash, no controls and no fade on its
+	   title. liftRow sets it during dragstart and takes it off in the next
+	   task. The browser still holds the row's :hover and :focus-within while
+	   it takes the picture, hence !important. */
+	.panel-row:global(.lifting) {
+		background: var(--color-page) !important;
+		color: var(--color-foreground) !important;
+		opacity: 1 !important;
+		border-radius: var(--card-radius);
+		box-shadow: none !important;
+		outline: 1px solid var(--card-edge) !important;
+		outline-offset: -1px;
+		transition: none !important;
+	}
+	.panel-row:global(.lifting) .row-actions {
+		visibility: hidden;
+	}
+	.panel-row:global(.lifting) .panel-row-text {
+		mask-image: none !important;
+	}
+	.panel-row:global(.lifting) :is(.row-unread, .row-running) {
+		opacity: 1 !important;
+		transition: none;
 	}
 
 	.panel-row:focus-visible {
@@ -1509,8 +1659,7 @@
 		transition: opacity var(--motion-hover-out) var(--ease-premium);
 	}
 
-	.panel-row-has-actions:hover :is(.row-unread, .row-running),
-	.panel-row-has-actions:focus-within :is(.row-unread, .row-running) {
+	.panel-row-has-actions:not(.stale-hover):is(:hover, :focus-within) :is(.row-unread, .row-running) {
 		opacity: 0;
 	}
 
@@ -1531,8 +1680,7 @@
 		transition: opacity var(--motion-hover-out) var(--ease-premium);
 	}
 
-	.panel-row-has-actions:hover .row-actions,
-	.panel-row-has-actions:focus-within .row-actions {
+	.panel-row-has-actions:not(.stale-hover):is(:hover, :focus-within) .row-actions {
 		opacity: 1;
 		pointer-events: auto;
 		transition-duration: var(--motion-hover-in);
@@ -1540,7 +1688,7 @@
 
 	/* The last 48px of the row hold the controls: the title is clear up to
 	   20px before them and gone under them. */
-	.panel-row-has-actions:is(:hover, :focus-within) .panel-row-text {
+	.panel-row-has-actions:not(.stale-hover):is(:hover, :focus-within) .panel-row-text {
 		mask-image: linear-gradient(to left, transparent 42px, #000 62px);
 	}
 
@@ -1581,7 +1729,7 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	.panel-empty:hover {
+	.panel-row.panel-empty:hover {
 		background: none;
 	}
 
