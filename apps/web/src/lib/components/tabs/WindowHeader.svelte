@@ -46,13 +46,14 @@
 	const ICON_LINE_PX = SIDEBAR_INSET + 4 + 12;
 	/**
 	 * In the Mac app the title bar is an overlay (src-tauri main.rs) and the
-	 * traffic lights sit in this row, from 16pt to 70pt: three 14pt buttons
-	 * 20pt apart. The mark and the controls follow them after 12pt of air,
-	 * as in a native Mac app, rather than on the sidebar's icon line.
+	 * traffic lights sit in this row, from 20pt to 74pt: three 14pt buttons
+	 * 20pt apart, set in from the window's edge as far as from its top. The
+	 * mark and the controls follow them after 16pt of air, as in a native
+	 * Mac app, rather than on the sidebar's icon line.
 	 */
-	const TRAFFIC_LIGHTS_END_PX = 16 + 2 * 20 + 14;
+	const TRAFFIC_LIGHTS_END_PX = 20 + 2 * 20 + 14;
 	const leadLeft = isMacOS
-		? TRAFFIC_LIGHTS_END_PX + 12
+		? TRAFFIC_LIGHTS_END_PX + 16
 		: ICON_LINE_PX - (CONTROL_PX - MARK_GLYPH_PX) / 2;
 
 	let leadWidth = $state(0);
