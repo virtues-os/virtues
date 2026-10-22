@@ -76,6 +76,7 @@
 		"ai": "7.0.16",
 		"emojibase-data": "^17.0.0",
 		"heic2any": "^0.0.4",
+		"katex": "^0.16.47",
 		"leaflet": "^1.9.4",
 		"maplibre-gl": "^6.11.1",
 		"motion": "^12.43.0",

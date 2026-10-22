@@ -3,77 +3,34 @@
 	import CitationTooltip from "./CitationTooltip.svelte";
 	import Icon from "$lib/components/Icon.svelte";
 
-	let { citationId, citation, onPanelOpen } = $props<{
-		citationId: string;
-		citation?: Citation;
+	// A source badge in a reply: its tool's icon, the source named on hover or
+	// focus, the citation panel on click. Markdown.svelte draws one for each
+	// `[key]` that names a source and leaves any other brackets as text.
+	let { citation, onPanelOpen } = $props<{
+		citation: Citation;
 		onPanelOpen?: (citation: Citation) => void;
 	}>();
 
 	let showTooltip = $state(false);
-
-	function handleClick() {
-		if (citation && onPanelOpen) {
-			onPanelOpen(citation);
-		}
-	}
-
-	function handleMouseEnter() {
-		if (citation) {
-			showTooltip = true;
-		}
-	}
-
-	function handleMouseLeave() {
-		showTooltip = false;
-	}
-
-	function handleFocus() {
-		if (citation) {
-			showTooltip = true;
-		}
-	}
-
-	function handleBlur() {
-		showTooltip = false;
-	}
-
-	function handleKeyDown(e: KeyboardEvent) {
-		if ((e.key === "Enter" || e.key === " ") && citation) {
-			e.preventDefault();
-			handleClick();
-		}
-	}
-
-	// Determine if this is an active (has data) or pending (streaming) citation
-	const isActive = $derived(!!citation);
 </script>
 
 <span class="inline-citation-wrapper">
-	{#if isActive && citation}
-		<!-- Active citation with data - show icon -->
-		<button
-			class="citation-badge active"
-			onmouseenter={handleMouseEnter}
-			onmouseleave={handleMouseLeave}
-			onfocus={handleFocus}
-			onblur={handleBlur}
-			onclick={handleClick}
-			onkeydown={handleKeyDown}
-			aria-label="View source: {citation.label}"
-			aria-describedby={showTooltip
-				? `tooltip-${citation.id}`
-				: undefined}
-		>
-			<Icon icon={citation.icon} width="12" height="12"
-			/>
-		</button>
+	<button
+		type="button"
+		class="citation-badge"
+		onmouseenter={() => (showTooltip = true)}
+		onmouseleave={() => (showTooltip = false)}
+		onfocus={() => (showTooltip = true)}
+		onblur={() => (showTooltip = false)}
+		onclick={() => onPanelOpen?.(citation)}
+		aria-label="View source: {citation.label}"
+		aria-describedby={showTooltip ? `tooltip-${citation.id}` : undefined}
+	>
+		<Icon icon={citation.icon} width="12" height="12" />
+	</button>
 
-		{#if showTooltip}
-			<CitationTooltip {citation} />
-		{/if}
-	{:else}
-		<!-- Pending citation - show number only -->
-		<span class="citation-badge pending">{citationId}</span>
+	{#if showTooltip}
+		<CitationTooltip {citation} />
 	{/if}
 </span>
 
@@ -109,26 +66,19 @@
 		margin: auto;
 	}
 
-	/* Active badge (has citation data) - interactive */
-	.citation-badge.active {
+	.citation-badge {
 		cursor: pointer;
 		transition: all 0.15s ease;
 	}
 
-	.citation-badge.active:hover {
+	.citation-badge:hover {
 		background: var(--color-primary-subtle);
 		border-color: var(--color-primary);
 	}
 
-	.citation-badge.active:focus {
+	.citation-badge:focus {
 		outline: none;
 		box-shadow: 0 0 0 2px var(--color-primary);
-	}
-
-	/* Pending badge (no data yet) - non-interactive */
-	.citation-badge.pending {
-		color: var(--color-foreground-muted);
-		cursor: default;
 	}
 
 	/* Color classes applied via the color prop. Semantic hues route through

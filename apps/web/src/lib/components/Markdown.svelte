@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { Component } from 'svelte';
 	import { Streamdown, theme as streamdownTheme } from 'svelte-streamdown';
 	import type { CitationContext, Citation } from '$lib/types/Citation';
 	import InlineCitation from './citations/InlineCitation.svelte';
@@ -74,18 +75,14 @@
 		return preprocessMarkdown(content.replace(/\](\[\d+\])/g, '] $1'));
 	});
 
-	// Convert CitationContext to Streamdown's sources format
-	const sources = $derived.by(() => {
-		if (!citations) return {};
-		const result: Record<string, { title: string; url?: string; content?: string }> = {};
-		for (const [id, citation] of citations.byId) {
-			result[id] = {
-				title: citation.title || citation.label || 'Source',
-				url: citation.url,
-				content: citation.preview
-			};
-		}
-		return result;
+	// TeX (`$…$`, `$$…$$`) is drawn by KaTeX, which Streamdown's math
+	// component loads. It is fetched the first time a reply holds a `$`, so
+	// a reply without math never downloads it. Until it arrives (and when it
+	// cannot parse the TeX) the formula shows as its source.
+	let mathElement = $state<Component<any> | undefined>();
+	$effect(() => {
+		if (mathElement || !processedContent.includes('$')) return;
+		import('svelte-streamdown/math').then((m) => (mathElement = m.default));
 	});
 
 	// Base for resolving relative URLs. The app is SPA-only (routes/+layout.js
@@ -108,9 +105,9 @@
 	 * element both renderers share, and Streamdown's default classes leaked
 	 * wherever a rule set nothing (a heading's top margin, a list item's
 	 * padding, 200-400px table cells, hard-coded grays that ignore the dark
-	 * themes). Code, images and tables are our snippets below; callouts,
-	 * mermaid, math, citations and the popover components keep Streamdown's
-	 * classes, which place things rather than style text.
+	 * themes). Code, images, tables, callouts and citations are our snippets
+	 * below; mermaid and math keep Streamdown's classes, which place things
+	 * rather than style text.
 	 */
 	const BLANKED = [
 		'link', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'paragraph', 'ul', 'ol', 'li', 'codespan',
@@ -129,12 +126,11 @@
 <div class="markdown">
 		<Streamdown
 			content={processedContent}
-			{sources}
-			inlineCitationsMode="list"
 			class={variant === "article" ? "streamdown-content prose prose--article" : "streamdown-content prose"}
 			theme={proseTheme}
 			mergeTheme={false}
 			defaultOrigin={origin}
+			components={mathElement ? { math: mathElement } : undefined}
 			allowedLinkPrefixes={['*']}
 			animation={{
 				enabled: animate,
@@ -144,17 +140,20 @@
 				animateOnMount: false
 			}}
 		>
-			{#snippet inlineCitationPreview({ token })}
-				{@const citation = getCitation(token.keys[0])}
-				<InlineCitation
-					citationId={token.keys[0]}
-					{citation}
-					onPanelOpen={onCitationClick}
-				/>
-			{/snippet}
-
-			{#snippet inlineCitationPopover()}
-				<!-- Empty - we use CitationPanel at page level instead -->
+			<!-- `[1]` as a source badge that opens the citation panel. The whole
+			     element is ours: Streamdown's own wraps its preview in a button,
+			     which put our badge's button inside another. Brackets that name
+			     no source stay as written. -->
+			{#snippet inlineCitation({ token }: { token: any })}
+				{@const cited = (token.keys as string[]).flatMap((key) => {
+					const citation = getCitation(key);
+					return citation ? [citation] : [];
+				})}
+				{#if cited.length}
+					{#each cited as citation (citation.id)}<InlineCitation {citation} onPanelOpen={onCitationClick} />{/each}
+				{:else}
+					{token.raw}
+				{/if}
 			{/snippet}
 
 			<!-- The page editor's table markup, so prose.css draws one table for both. -->
@@ -251,9 +250,7 @@
 </div>
 
 <style>
-	/* Scoped to this component's own .markdown div (Svelte hashes the class),
-	   so these don't touch app.css's global .markdown rules. `cited-markdown`
-	   is gone: it named a second renderer that no longer exists. */
+	/* Scoped to this component's own .markdown div (Svelte hashes the class). */
 	.markdown {
 		display: block;
 	}
@@ -292,14 +289,5 @@
 
 	.markdown :global(.query-ref:hover) {
 		text-decoration-style: solid;
-	}
-
-	.markdown :global([data-streamdown-citation-preview]) {
-		all: unset;
-		display: inline;
-	}
-
-	.markdown :global([data-streamdown-citation-popover]) {
-		display: none !important;
 	}
 </style>

@@ -145,6 +145,9 @@ importers:
       heic2any:
         specifier: ^0.0.4
         version: 0.0.4
+      katex:
+        specifier: ^0.16.47
+        version: 0.16.47
       leaflet:
         specifier: ^1.9.4
         version: 1.9.4
