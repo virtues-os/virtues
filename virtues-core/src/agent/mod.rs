@@ -35,6 +35,7 @@
 
 pub mod applet_runner;
 pub(crate) mod cache_watch;
+pub mod citations;
 pub mod caps;
 pub mod executor;
 pub mod guard;
@@ -184,6 +185,9 @@ impl AgentLoop {
 
         Box::pin(stream! {
             let mut messages = initial_messages;
+            // The routes replayed history shows, and the handles this turn's
+            // tool results get; every link the model writes is checked here.
+            let mut cites = citations::Citations::from_messages(&messages);
             let mut turn = turn::TurnState::new(&budget);
             // How this turn ends. Assigned at each break; reported once, below.
             let finish: FinishReason;
@@ -251,14 +255,28 @@ impl AgentLoop {
                 // stands. The gateway may still read the provider's reply to
                 // its end and bill it, which this box never sees.
                 let mut cancelled_mid_stream = false;
+                let mut links = citations::LinkRewriter::default();
                 while let Some(event) = events.recv().await {
-                    yield event;
+                    match event {
+                        AgentEvent::TextDelta { content } => {
+                            let out = links.push(&content, &cites);
+                            if !out.is_empty() {
+                                yield AgentEvent::text(out);
+                            }
+                        }
+                        other => yield other,
+                    }
                     if cancelled(&cancel_token) {
                         tracing::info!(step, "Stop pressed mid-stream — dropping the provider call");
                         stream_handle.abort();
                         cancelled_mid_stream = true;
                         break;
                     }
+                }
+                // Text still held as a possible link when the step ended.
+                let rest = links.finish();
+                if !rest.is_empty() {
+                    yield AgentEvent::text(rest);
                 }
                 if cancelled_mid_stream {
                     // No error event: the person asked for this ending.
@@ -348,6 +366,7 @@ impl AgentLoop {
                     &tool_results,
                     crate::api::model_catalog::supports_vision(&model),
                     config.max_steps.saturating_sub(step),
+                    &mut cites,
                 );
             }
 
