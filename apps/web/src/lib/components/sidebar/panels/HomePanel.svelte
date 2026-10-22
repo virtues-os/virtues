@@ -18,7 +18,8 @@
 	 *             page, a project, an applet, a task, anything with a url.
 	 *             Everything you want one click away lives here, so the doors
 	 *             above never grow lists of their own. A pinned project takes
-	 *             a dropped row or tab, which files it there.
+	 *             a dropped row or tab, which files it there. A pin moves by
+	 *             drag, by Alt and an arrow, or by Move up and Move down.
 	 *   Recent    the chats AND the pages, blended by when they last moved,
 	 *             newest first, ten of them: a glance, not an archive. When
 	 *             there are more, "See all" ends the list and opens All
@@ -40,6 +41,7 @@
 	 * a tab's menu pins whatever the tab shows. A project cannot hold a
 	 * project. The server refuses it and the menus never offer it.
 	 */
+	import { tick } from 'svelte';
 	import { chatSessions, type ChatSession } from '$lib/stores/chatSessions.svelte';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { pagesStore } from '$lib/stores/pages.svelte';
@@ -97,6 +99,10 @@
 	// tracked by dndManager instead (it is not an HTML drag); either lights
 	// the row.
 	let rowDropTarget = $state<string | null>(null);
+	// A pin being dragged within Pinned, and where it would land: the gap
+	// before or after the row it is over.
+	let draggingPin = $state<number | null>(null);
+	let pinDrop = $state<{ index: number; edge: 'before' | 'after' } | null>(null);
 	// The page list is loaded by the rooms that show pages; this panel is
 	// mounted before any of them, so it asks once. The store dedupes nothing,
 	// hence the guard on both the list and the in-flight flag.
@@ -310,6 +316,36 @@
 		windowShellStore.openTabFromRoute(pageRoute(p), { label: pageTitle(p), focusExisting: true });
 	}
 
+	/**
+	 * Move a pin, from a drop or the keyboard. The store moves it at once and
+	 * puts it back if the box refuses, so a failure needs saying.
+	 */
+	function movePin(from: number, to: number) {
+		pinsStore.reorder(from, to).catch(() => toast.error("Couldn't move that pin. Try again."));
+	}
+
+	/** Where a pin dragged over row `index` lands, and whether this is a move. */
+	function pinDropAt(e: DragEvent, index: number, fileInto: boolean): 'move' | 'file' {
+		const row = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		const y = (e.clientY - row.top) / row.height;
+		// Over a pinned project, the middle of the row files the dragged thing
+		// into it and only the edges move it, so both stay reachable.
+		if (fileInto && y > 0.25 && y < 0.75) return 'file';
+		pinDrop = { index, edge: y < 0.5 ? 'before' : 'after' };
+		return 'move';
+	}
+
+	/** The index a dragged pin ends at, from the gap it was dropped in. */
+	function pinTarget(from: number, drop: { index: number; edge: 'before' | 'after' }): number {
+		const gap = drop.edge === 'before' ? drop.index : drop.index + 1;
+		return from < gap ? gap - 1 : gap;
+	}
+
+	function endPinDrag() {
+		draggingPin = null;
+		pinDrop = null;
+	}
+
 	function openPin(pin: Pin) {
 		if (isExternal(pin.url)) {
 			void openWebLink(pin.url);
@@ -441,6 +477,21 @@
 	 * pin's resolved name; the verbs only need the id.
 	 */
 	function pinMenu(pin: Pin, at: { x: number; y: number }): ContextMenuItem[] {
+		const items = pinMenuItems(pin, at);
+		// Moving is the keyboard's drag, and the menu is where it is found.
+		const index = pins.findIndex((p) => p.id === pin.id);
+		const moves: ContextMenuItem[] = [];
+		if (index > 0) {
+			moves.push({ id: 'pin-up', label: 'Move up', icon: 'ri:arrow-up-line', shortcut: '⌥↑', action: () => movePin(index, index - 1) });
+		}
+		if (index >= 0 && index < pins.length - 1) {
+			moves.push({ id: 'pin-down', label: 'Move down', icon: 'ri:arrow-down-line', shortcut: '⌥↓', action: () => movePin(index, index + 1) });
+		}
+		if (moves.length) moves[0] = { ...moves[0], dividerBefore: true };
+		return [...items, ...moves];
+	}
+
+	function pinMenuItems(pin: Pin, at: { x: number; y: number }): ContextMenuItem[] {
 		const owned = ownedRef(pin.url);
 		const look = pinIdentity(pin);
 		const iconItem = pinIconMenuItem(pin.url, { ...at, width: 0, height: 0 });
@@ -809,7 +860,7 @@
 	{@render groupHead('pinned', 'Pinned', pins.length)}
 	<div class="sidebar-expandable fold" class:expanded={!folded('pinned')} style={foldStyle(pins.length)}>
 		<div class="sidebar-expandable-inner">
-			{#each pins as pin (pin.id)}
+			{#each pins as pin, index (pin.id)}
 				{@const pinChat = pin.url.startsWith('/chat/') ? pin.url.slice('/chat/'.length) : null}
 				{@const look = pinIdentity(pin)}
 				{@const owned = ownedRef(pin.url)}
@@ -819,13 +870,33 @@
 					class:active={activeRoute === pin.url}
 					class:drop-target={pinProject !== null &&
 						(dndManager.projectTarget === pinProject || rowDropTarget === pinProject)}
+					class:drop-before={pinDrop?.index === index && pinDrop.edge === 'before'}
+					class:drop-after={pinDrop?.index === index && pinDrop.edge === 'after'}
+					class:dragging={draggingPin === index}
 					{...pinProject ? { [PROJECT_DROP_ATTR]: pinProject } : {}}
 					role="link"
 					tabindex="0"
 					title={look.title}
-					draggable={projectMemberUrl(pin.url) ? 'true' : 'false'}
-					ondragstart={(e) => startRefDrag(e, pin.url, look.title)}
+					aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+					draggable="true"
+					ondragstart={(e) => {
+						draggingPin = index;
+						// A thing that can be filed also drags as a row, so it can
+						// still be dropped on a project or into a page.
+						if (projectMemberUrl(pin.url)) startRefDrag(e, pin.url, look.title);
+						else e.dataTransfer?.setData('text/plain', look.title);
+						if (e.dataTransfer) e.dataTransfer.effectAllowed = 'linkMove';
+					}}
+					ondragend={endPinDrag}
 					ondragover={(e) => {
+						const fileInto = !!pinProject && isRefDrag(e) && draggingPin !== index;
+						if (draggingPin !== null && pinDropAt(e, index, fileInto) === 'move') {
+							e.preventDefault();
+							if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+							if (rowDropTarget === pinProject) rowDropTarget = null;
+							return;
+						}
+						pinDrop = null;
 						if (!pinProject || !isRefDrag(e)) return;
 						e.preventDefault();
 						if (e.dataTransfer) e.dataTransfer.dropEffect = 'link';
@@ -835,10 +906,19 @@
 						const row = e.currentTarget as HTMLElement;
 						if (!e.relatedTarget || !row.contains(e.relatedTarget as Node)) {
 							if (rowDropTarget === pinProject) rowDropTarget = null;
+							if (pinDrop?.index === index) pinDrop = null;
 						}
 					}}
 					ondrop={(e) => {
 						rowDropTarget = null;
+						if (draggingPin !== null && pinDrop) {
+							e.preventDefault();
+							const from = draggingPin;
+							const to = pinTarget(from, pinDrop);
+							endPinDrag();
+							movePin(from, to);
+							return;
+						}
 						const dropped = droppedRefUrl(e);
 						if (!pinProject || !dropped) return;
 						e.preventDefault();
@@ -852,6 +932,17 @@
 						if (e.key === 'Enter' || e.key === ' ') {
 							e.preventDefault();
 							openPin(pin);
+							return;
+						}
+						// The keyboard's drag: Alt and an arrow move the pin a row,
+						// as Alt-arrows move a line on a page. Focus stays on it.
+						if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+							e.preventDefault();
+							const to = index + (e.key === 'ArrowUp' ? -1 : 1);
+							if (to < 0 || to >= pins.length) return;
+							const row = e.currentTarget as HTMLElement;
+							movePin(index, to);
+							void tick().then(() => row.focus());
 						}
 					}}
 					oncontextmenu={(e) => showMenu(e, pinMenu(pin, { x: e.clientX, y: e.clientY }))}
@@ -1127,6 +1218,35 @@
 		background: var(--active-bg);
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
+	}
+
+	/* Where a dragged pin will land: a line in the gap above or below the row
+	   it is over, across the row's width. */
+	.panel-row.drop-before,
+	.panel-row.drop-after {
+		position: relative;
+	}
+	.panel-row.drop-before::after,
+	.panel-row.drop-after::after {
+		content: '';
+		position: absolute;
+		left: 6px;
+		right: 6px;
+		height: 2px;
+		border-radius: 1px;
+		background: var(--color-primary);
+		pointer-events: none;
+	}
+	.panel-row.drop-before::after {
+		top: -1px;
+	}
+	.panel-row.drop-after::after {
+		bottom: -1px;
+	}
+
+	/* The pin in hand stays in its place, dimmed, until it lands. */
+	.panel-row.dragging {
+		opacity: 0.4;
 	}
 
 	.panel-row:focus-visible {

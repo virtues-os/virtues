@@ -37,41 +37,48 @@ Every card keeps all four rounded corners, and nothing joins: opening the
 sidebar or a split only moves cards. There is no rail.
 
 The sidebar is one list, and it never changes: the doors (Setup while it
-is not done, New chat, Pages, Tasks, Applets, Wiki), Pinned, Projects and
-Recents, with Settings at the foot. Every door opens a page. A page that
+is not done, New chat, Pages, Tasks, Projects, Applets, Wiki), Pinned and
+Recent, with Settings at the foot. Every door opens a page. A page that
 has sections carries their list itself: the Wiki's overview has an index,
 every Settings page has Settings' section list down its left inside the
 card (`SectionNav`, drawn by TabContent), and Setup's tab has its steps
 across its top.
 
 - **The sidebar has no title.** Its doors say what it holds.
-- **Applets, Pages, Tasks and the Wiki are doors**, not places of their own
-  in the chrome. A project is the room a chat lives in, so
-  projects are listed in Home too.
+- **Pages, Tasks, Projects, Applets and the Wiki are doors**, not places of
+  their own in the chrome. None of them lists its contents in the sidebar.
 - **Settings stands at the foot**, apart from the places above it: you do
   something to the server and leave.
+- **The doors are fixed.** They cannot be hidden, reordered or added to.
+  What a person wants one click away goes in Pinned.
 - Routes did not move.
 
 The Home panel, top to bottom:
 
 1. **Doors**: Setup (while it is not done), New chat, Pages, Tasks,
-   Applets, Wiki. The verb, then the places. Pages and Tasks carry a `+` on
-   hover for a new one, the same shape as the Projects label. Search has no
-   door: it is the ⌘K palette.
-2. **Pinned.** A chat, a project, an applet or a page can be pinned.
-3. **Projects.** Five, then "Show more"; the label opens the full list. A
-   project cannot contain a project.
-4. **Today, Recent**: the ten newest chats and pages, then "See all", which
-   opens All chats.
+   Projects, Applets, Wiki. The verb, then the places. Pages, Tasks and
+   Projects carry a `+` on hover for a new one. Search has no door: it is
+   the ⌘K palette.
+2. **Pinned.** A chat, a project, an applet, a page, or any other url can be
+   pinned, from the thing's own pin control or menu. A pin shows the mark
+   picked for it, else a solid dot in its color. Pins stay in the order the
+   person puts them: drag a pin, press Alt with an arrow on a focused pin, or
+   use Move up and Move down in its menu. A line in the gap shows where a
+   dragged pin will land. A pinned project takes a dropped row or tab, which
+   files it there; while a pin is being dragged, the middle of a pinned
+   project's row files it and the edges move it.
+3. **Recent**: the ten newest chats and pages together, newest first, then
+   "See all", which opens All chats. The group's head filters it to chats or
+   pages, and its label says which. Chats are set in the sans and pages in
+   the serif, with no glyphs.
 
 Every group folds from its label, and the fold is remembered. A group with
 nothing in it is not drawn: no empty-state line, because the doors above
 already say how to make the first one.
 
-Hovering a project row opens a hover card: the name, its counts, a pin
-control, and two doors, "Open project" and "New chat here". Hovering a chat
-row or a pinned row reveals inline controls (pin, more). Both need the
-keyboard path and the touch fallback the interaction rules below require.
+Hovering a chat row or a pinned row reveals inline controls (pin, more).
+Both need the keyboard path and the touch fallback the interaction rules
+below require.
 
 **Pinned replaces the Desk.** "Desk" is retired as a name: the verb is pin and
 unpin, the section is Pinned. "The desk" in [Sidebar and pane](#sidebar-and-pane)
@@ -328,13 +335,16 @@ should do the work, as they do in a table of contents.
   section looked like a duplicate of the nav directly beneath it. The `app_pins`
   table, its API and the reorder endpoint stayed through that. Pinning came
   back as **Pinned** at the top of the Home panel (see The shell), reached
-  by a pin control on the thing itself rather than a tab menu: what gets
-  pinned is a chat, a project, an applet or a page, never a room, which is
-  the different shape the rule asked for.
+  by a pin control on the thing itself or by a tab's menu, which can pin any
+  route. A pin wears its own mark, or a dot in its color, so a pinned room
+  does not read as a copy of its door.
 - **Recents as a sidebar-wide list.** Six of twelve rows were destinations
   already in the nav; the sidebar was the largest contributor to its own
-  history list. Recents returned at the foot of the Home panel, where it
-  lists chats only, so no row in it can be a room.
+  history list. Recent returned at the foot of the Home panel, where it
+  lists chats and pages only, so no row in it can be a room.
+- **Projects as a group in the sidebar.** Five projects, "Show more" and a
+  hover card on each row. Projects became a door like Tasks: the list is
+  the Projects page, and a project someone wants close is pinned.
 - **Today.** The Timeline is the live view of today; `/day` only exists
   after the nightly run.
 
