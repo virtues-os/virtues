@@ -34,9 +34,6 @@ const MAX_CANDIDATES: usize = 3;
 const OFFERED_WITHIN_HOURS: i64 = 72;
 /// The narrative identity is cut at a paragraph inside this many characters.
 const NI_BUDGET_CHARS: usize = 6_000;
-/// The most this job may spend in a rolling day, in micro-dollars. About a
-/// hundred runs on today's Standard model; a ceiling against a costlier one.
-const DAY_SPEND_LIMIT_MICROS: i64 = 250_000;
 /// Candidates older than this leave the ledger.
 const KEEP_DAYS: i32 = 30;
 /// The longest question offered, in words.
@@ -86,6 +83,13 @@ struct Dossier {
 }
 
 impl Dossier {
+    /// Whether a word in the question is one of this dossier's handles.
+    fn has_handle(&self, question: &str) -> bool {
+        question
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .any(|w| !w.is_empty() && self.handles.contains_key(w))
+    }
+
     /// The question with any handle it names in `about` (`P2`) replaced by
     /// the name of what it stands for. Only those: "Q3" in "How did Q3 go?"
     /// is a quarter unless the candidate says it is about line Q3.
@@ -121,21 +125,13 @@ impl Dossier {
 
 /// Write new suggestions when something the job reads has changed and it is
 /// not quiet hours. `force` (a run started by hand) skips both of those
-/// checks, but never the spend ceiling or a missing AI connection.
+/// checks, never a missing AI connection. The daily spend ceiling is the
+/// applet's `max_llm_cost_per_day`, which the runner checks before a run.
 pub async fn refresh(pool: &PgPool, force: bool) -> Result<RunSummary> {
     let skip = |why| Ok(RunSummary { skipped: Some(why), candidates: 0, offered: 0 });
     // A box still setting up has no model to ask; that is not a failure.
     if !crate::api::getting_started::ai_connected(pool).await {
         return skip("no AI connected");
-    }
-    let spent: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(sum(cost_micros), 0)::bigint FROM app_ai_calls \
-         WHERE feature = 'suggested_questions' AND created_at > now() - interval '24 hours'",
-    )
-    .fetch_one(pool)
-    .await?;
-    if spent >= DAY_SPEND_LIMIT_MICROS {
-        return skip("spend ceiling reached");
     }
     sqlx::query("DELETE FROM app_suggestion_runs WHERE created_at < now() - make_interval(days => $1)")
         .bind(KEEP_DAYS)
@@ -181,11 +177,23 @@ pub async fn refresh(pool: &PgPool, force: bool) -> Result<RunSummary> {
     Ok(RunSummary { skipped: None, candidates: rows.len(), offered })
 }
 
+/// The applet whose `enabled` flag is the owner's switch for suggestions:
+/// off, the job does not run and the composer shows none.
+pub const APPLET_ID: &str = "applet_suggested_questions";
+
 /// The suggestion to show now, or none. Reading it marks nothing: the
 /// composer reports `shown` when it actually draws it. Only the newest
 /// run that offered anything counts: it read the latest record, so an older
 /// run's leftovers are out of date even before they expire.
 pub async fn current(pool: &PgPool) -> Result<Option<Suggestion>> {
+    // absent-ok: a box without the applet row has never offered suggestions.
+    let enabled: Option<bool> = sqlx::query_scalar("SELECT enabled FROM app_applets WHERE id = $1")
+        .bind(APPLET_ID)
+        .fetch_optional(pool)
+        .await?;
+    if enabled != Some(true) {
+        return Ok(None);
+    }
     let row: Option<(String, String, String, serde_json::Value)> = sqlx::query_as(
         "SELECT id, kind, question, refs FROM app_suggestions \
          WHERE run_id = (SELECT run_id FROM app_suggestions WHERE dropped_reason IS NULL \
@@ -629,6 +637,10 @@ fn judge(candidates: Vec<Candidate>, d: &Dossier, now: DateTime<Utc>) -> Vec<Row
                 Some("empty or too long".to_string())
             } else if !question.ends_with('?') {
                 Some("not a question".to_string())
+            } else if d.has_handle(&question) {
+                // A handle the candidate did not list stays in the text, and
+                // "P6" means nothing to the person reading it.
+                Some("contains a handle".to_string())
             } else if carries_address {
                 // A question is sent as the owner's own words; an address in
                 // one most likely came from someone else's email.
@@ -773,6 +785,7 @@ mod tests {
                 c("guesswork", &["M1"], "Anything else?"),
                 c("arrival", &["M1"], "Send the invoice to billing@example.com?"),
                 c("arrival", &["M1"], "Pay the invoice now"),
+                c("arrival", &["M1"], "Is the invoice due before K1?"),
             ],
             &dossier(),
             now,
@@ -787,6 +800,7 @@ mod tests {
         assert_eq!(rows[4].dropped_reason.as_deref(), Some("unknown kind: guesswork"));
         assert_eq!(rows[5].dropped_reason.as_deref(), Some("carries an address"));
         assert_eq!(rows[6].dropped_reason.as_deref(), Some("not a question"));
+        assert_eq!(rows[7].dropped_reason.as_deref(), Some("contains a handle"));
     }
 
     fn row(question: &str, hours: i64, dropped_reason: Option<&str>) -> Row {
@@ -804,6 +818,11 @@ mod tests {
     /// takes one outcome.
     #[sqlx::test]
     async fn the_composer_gets_one_live_suggestion(pool: PgPool) {
+        sqlx::query("INSERT INTO app_applets (id, name, owner) VALUES ($1, 'Suggested Questions', 'system')")
+            .bind(APPLET_ID)
+            .execute(&pool)
+            .await
+            .unwrap();
         store(&pool, "fp", &[row("What is the invoice for?", 2, None), row("Dropped?", 2, Some("not tied to a record"))])
             .await
             .unwrap();
@@ -838,6 +857,10 @@ mod tests {
         store(&pool, "fp", &[row("Older?", 2, None)]).await.unwrap();
         store(&pool, "fp", &[row("Expired?", -1, None), row("Newer?", 2, None)]).await.unwrap();
         assert_eq!(current(&pool).await.unwrap().map(|s| s.question).as_deref(), Some("Newer?"));
+
+        // Turned off, the composer gets none.
+        sqlx::query("UPDATE app_applets SET enabled = false WHERE id = $1").bind(APPLET_ID).execute(&pool).await.unwrap();
+        assert!(current(&pool).await.unwrap().is_none(), "off means none");
 
         assert!(matches!(record_outcome(&pool, "sug_none", "used").await, Err(Error::NotFound(_))));
         assert!(matches!(record_outcome(&pool, &s.id, "maybe").await, Err(Error::InvalidInput(_))));

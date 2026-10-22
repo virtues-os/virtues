@@ -1102,8 +1102,10 @@ fn split_draft(raw: &str) -> (String, Vec<String>) {
 /// The Standard slot, not Lite, for BOTH — including the chapters extraction that
 /// a cheaper model could do — because the interview promised a no-retention
 /// agreement in as many words, and the Lite slot honors the owner's
-/// background pin, which may be a BYO endpoint or a provider with no ZDR.
-/// The Standard slot is the Virtues-curated map and stays ZDR-capable. (See
+/// background pin, which may be a provider with no ZDR. The Standard slot is
+/// the Virtues-curated map and stays ZDR-capable on the wallet route. While
+/// BYO is active every call goes to the owner's own endpoint, this one
+/// included: the slot keeps it off a pinned background model, not off BYO. (See
 /// `model_choice::honors_pin` for the same ruling on the interview turns.)
 ///
 /// Thinking OFF, no cap: both jobs are arrangement, not composition. There

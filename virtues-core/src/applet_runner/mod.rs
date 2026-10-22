@@ -458,6 +458,7 @@ async fn execute_prepared_inner(
             credentials.clone(),
             payload.as_ref(),
             &trigger,
+            &run_id,
         )
         .await
         {
@@ -1063,6 +1064,7 @@ async fn run_subprocess(
     credentials: Option<serde_json::Value>,
     payload: Option<&serde_json::Value>,
     trigger: &str,
+    run_id: &str,
 ) -> Result<SubprocessOutcome> {
     let argv0 = command
         .first()
@@ -1087,7 +1089,10 @@ async fn run_subprocess(
         .map_err(|e| Error::Other(format!("failed to serialize action input: {e}")))?;
 
     let shipped = is_shipped_applet(&action.id);
-    let env = env_pairs(&action.id, shipped);
+    let mut env = env_pairs(&action.id, shipped);
+    // The run the subprocess's AI calls are recorded against, so this
+    // applet's spend reaches its `max_llm_cost_per_day` (`limits.rs`).
+    env.push((crate::virtues_api::client::APPLET_RUN_ENV.to_string(), run_id.to_string()));
     let mut cmd = build_command(
         &program,
         &command[1..],

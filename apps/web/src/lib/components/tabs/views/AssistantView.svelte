@@ -8,6 +8,7 @@
 	import MemorySettings from '$lib/components/MemorySettings.svelte';
 	import ModelSettings from '$lib/components/ModelSettings.svelte';
 	import RequestLimitsSettings from '$lib/components/RequestLimitsSettings.svelte';
+	import SuggestionsSettings from '$lib/components/SuggestionsSettings.svelte';
 
 	// The profile is read once here: the name feeds every section's copy, so
 	// a rename shows in all of them as soon as the server has it.
@@ -62,6 +63,7 @@
 		<RulesSettings assistantName={spoken} />
 		<MemorySettings assistantName={spoken} />
 		<ModelSettings assistantName={spoken} />
+		<SuggestionsSettings assistantName={spoken} />
 		<RequestLimitsSettings assistantName={spoken} />
 	</div>
 </Page>
