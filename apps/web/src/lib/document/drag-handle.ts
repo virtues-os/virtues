@@ -103,8 +103,8 @@ const heldKey = new PluginKey<Held | null>('dragHandle');
 
 const GRIP_WIDTH = 18;
 const GRIP_HEIGHT = 24;
-/** Between the grip and the block (or a list's markers). */
-const GRIP_GAP = 6;
+/** Between the grip and the block (or a list's markers): room enough that the grip reads as the margin's, not the line's. */
+const GRIP_GAP = 12;
 /** How far left of the text the pointer still counts as over a block: past the grip, with room to spare. */
 const GUTTER = 48;
 

@@ -855,8 +855,10 @@
 	justify-content: center;
 	width: 18px;
 	height: 24px;
-	border-radius: 4px;
-	color: var(--color-foreground-subtle);
+	border-radius: var(--card-radius);
+	/* Softer than the subtle ink at rest, so it sits back in the margin;
+	   the muted ink on hover. */
+	color: color-mix(in srgb, var(--color-foreground-subtle) 55%, transparent);
 	cursor: grab;
 	opacity: 0;
 	pointer-events: none;

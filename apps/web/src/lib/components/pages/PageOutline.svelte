@@ -1,17 +1,18 @@
 <!--
 	PageOutline.svelte
 
-	Table of contents, "Library drawer" style: a slim bar showing the current
-	section; click it and a panel drops down with the full h1–h3 outline (active
-	entry emphasized, the rest dimmed), over a blurred navy scrim. Click an entry
-	to scroll the editor there. Scroll-spy keeps the bar's label and the active
-	entry in sync as you read.
+	Table of contents: a slim bar in the top bar's middle naming the section
+	you are in; click it and the h1–h3 outline opens under it as a menu, the
+	page left as it is behind it (no scrim). Click an entry to scroll the
+	editor there. Scroll-spy keeps the bar's label and the current entry in
+	sync as you read.
 
 	Knows no editor: the editor hands over an `OutlineNav` (`treeOutlineNav`)
 	that scrolls to a heading and says where one starts in its scroller.
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import { Popover } from "$lib/floating";
 	import { sameHeading, type OutlineNav, type PageHeading } from "$lib/components/pages/outline";
 
 	let { headings, nav }: { headings: PageHeading[]; nav: OutlineNav | null } = $props();
@@ -64,48 +65,53 @@
 
 {#if headings.length > 0}
 	<div class="page-outline">
-		<button class="outline-bar" onclick={() => (open = !open)} aria-expanded={open}>
-			<span class="outline-current">{activeHeading?.text ?? "Contents"}</span>
-			<Icon icon={open ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"} width="18" />
-		</button>
-
-		{#if open}
-			<button class="outline-scrim" aria-label="Close outline" onclick={() => (open = false)}></button>
-			<nav class="outline-drawer" aria-label="Table of contents">
-				{#each headings as h}
-					<button
-						class="outline-item level-{h.level}"
-						class:active={activeHeading !== null && sameHeading(h, activeHeading)}
-						onclick={() => scrollTo(h)}
-					>
-						{h.text}
-					</button>
-				{/each}
-			</nav>
-		{/if}
+		<Popover bind:open placement="bottom" offset={4}>
+			{#snippet trigger({ toggle })}
+				<button class="outline-bar" onclick={toggle} aria-expanded={open} aria-haspopup="menu">
+					<span class="outline-current">{activeHeading?.text ?? "Contents"}</span>
+					<Icon icon={open ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"} width="16" />
+				</button>
+			{/snippet}
+			{#snippet children()}
+				<nav class="outline-menu" aria-label="Table of contents">
+					{#each headings as h}
+						<button
+							class="outline-item"
+							style:--level={h.level}
+							class:active={activeHeading !== null && sameHeading(h, activeHeading)}
+							aria-current={activeHeading !== null && sameHeading(h, activeHeading) ? "location" : undefined}
+							onclick={() => scrollTo(h)}
+						>
+							{h.text}
+						</button>
+					{/each}
+				</nav>
+			{/snippet}
+		</Popover>
 	</div>
 {/if}
 
 <style>
-	/* No box of its own: the trigger is a cell of the top bar's grid, and
-	   the drawer anchors to the bar (.page-topbar is the positioned ancestor). */
+	/* No box of its own: the trigger's wrapper is the middle cell of the top
+	   bar's grid (.page-topbar), centred, and as narrow as the row needs. */
 	.page-outline {
 		display: contents;
 	}
+	.page-outline :global(.popover-trigger) {
+		grid-column: 2;
+		justify-self: center;
+		min-width: 0;
+		max-width: min(42ch, 100%);
+	}
 
-	/* The middle column of the top bar's grid (.page-topbar): centred, and
-	   as narrow as the row needs, down to its chevron. */
 	.outline-bar {
 		all: unset;
 		box-sizing: border-box;
-		grid-column: 2;
-		justify-self: center;
-		z-index: var(--z-sticky);
 		display: inline-flex;
 		align-items: center;
-		gap: 3px;
+		gap: 4px;
 		min-width: 0;
-		max-width: min(42ch, 100%);
+		max-width: 100%;
 		padding: 4px 8px 4px 12px;
 		border-radius: var(--card-radius);
 		cursor: pointer;
@@ -116,9 +122,14 @@
 			color 0.12s ease,
 			background 0.12s ease;
 	}
-	.outline-bar:hover {
+	.outline-bar:hover,
+	.outline-bar[aria-expanded="true"] {
 		color: var(--color-foreground);
 		background: var(--hover-bg);
+	}
+	.outline-bar:focus-visible {
+		outline: 2px solid var(--color-border-focus);
+		outline-offset: 2px;
 	}
 	/* The chevron is what opens the outline when the title has no room. */
 	.outline-bar > :global(:not(.outline-current)) {
@@ -131,84 +142,39 @@
 		white-space: nowrap;
 	}
 
-	/* Blurred navy scrim over just the PAGE content (below the bar) — not the app
-	   sidebar/chrome. Anchored to .page-topbar, which spans only the page column,
-	   and starting at the bar's bottom so the bar itself stays clear. */
-	.outline-scrim {
-		all: unset;
-		position: absolute;
-		top: 100%;
-		left: 0;
-		right: 0;
-		height: 100vh;
-		z-index: var(--z-sticky);
-		cursor: default;
-		background: rgba(2, 6, 23, 0.32);
-		backdrop-filter: blur(2px);
-		-webkit-backdrop-filter: blur(2px);
-		animation: outline-fade 0.14s ease-out;
-	}
-
-	.outline-drawer {
-		position: absolute;
-		top: 100%;
-		left: 0;
-		right: 0;
-		z-index: var(--z-sticky);
+	/* A menu, as the toolbar's are: MenuItem's rows, each heading indented
+	   16px a level. */
+	.outline-menu {
 		display: flex;
 		flex-direction: column;
-		padding: 0.4rem 1.25rem 0.7rem;
-		background: var(--color-surface);
-		border-bottom: 1px solid var(--color-border);
-		box-shadow: var(--shadow-float);
+		min-width: 240px;
+		max-width: 360px;
 		max-height: 60vh;
 		overflow-y: auto;
-		animation: outline-drop 0.16s cubic-bezier(0.22, 1, 0.36, 1);
+		padding: 4px;
 	}
 
 	.outline-item {
 		all: unset;
 		box-sizing: border-box;
 		cursor: pointer;
-		padding: 4px 8px;
+		padding: 6px 10px 6px calc(10px + (var(--level) - 1) * 16px);
 		border-radius: var(--card-radius);
 		font-family: var(--font-sans, ui-sans-serif, system-ui, sans-serif);
-		font-size: 0.875rem;
-		line-height: 1.35;
-		color: var(--color-foreground-subtle);
+		font-size: 13px;
+		color: var(--color-foreground-muted);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
-		transition:
-			color 0.12s ease,
-			background 0.12s ease;
+		transition: background-color 0.12s ease;
 	}
-	.outline-item:hover {
+	.outline-item:hover,
+	.outline-item:focus-visible {
 		background: var(--hover-bg);
-		color: var(--color-foreground-muted);
+		color: var(--color-foreground);
 	}
 	/* The heading you are in, by ink alone: weight never signals state (design.md). */
 	.outline-item.active {
 		color: var(--color-foreground);
-	}
-
-	.level-1 { padding-left: 0.5rem; }
-	.level-2 { padding-left: 1.5rem; }
-	.level-3 { padding-left: 2.5rem; }
-
-	@keyframes outline-drop {
-		from { opacity: 0; transform: translateY(-6px); }
-		to { opacity: 1; transform: translateY(0); }
-	}
-	@keyframes outline-fade {
-		from { opacity: 0; }
-		to { opacity: 1; }
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.outline-scrim,
-		.outline-drawer {
-			animation: none;
-		}
 	}
 </style>

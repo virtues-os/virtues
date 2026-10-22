@@ -132,6 +132,8 @@
 	let unsubRefused: (() => void) | null = null;
 	// Why the server will not sync this page with this editor, once it says so.
 	let refusedReason = $state<string | null>(null);
+	/** The top bar, which the editor's find bar hangs from. */
+	let topbarEl = $state<HTMLElement | null>(null);
 	// Track sync/connection state reactively (subscribed from Yjs stores)
 	let isSynced = $state(false);
 	let isConnected = $state(false);
@@ -653,7 +655,7 @@
 	{:else if pageData}
 		<div class="page-layout">
 			<!-- Top bar: TOC (left) + page actions (right), one classic row -->
-			<div class="page-topbar" data-print="hide">
+			<div class="page-topbar" data-print="hide" bind:this={topbarEl}>
 			<PageOutline
 				headings={outline}
 				nav={treeNav}
@@ -821,6 +823,7 @@
 									article={pageData?.kind === "article"}
 									editable={!treeDoc.readOnly && !refusedReason}
 									ai={treeAiDriver}
+									findHost={topbarEl}
 									placeholder="Start writing, or press / for commands…"
 									onDocChange={handleDocChange}
 									onOutline={(h) => (outline = h)}

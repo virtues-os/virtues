@@ -69,6 +69,7 @@
 	import SelectionToolbar from "$lib/components/SelectionToolbar.svelte";
 	import AiPromptPopover from "$lib/components/pages/AiPromptPopover.svelte";
 	import FindBar from "$lib/components/pages/FindBar.svelte";
+	import { portal } from "$lib/actions/portal";
 	import TableMenu from "$lib/components/pages/TableMenu.svelte";
 	import SuggestionBar from "$lib/components/pages/SuggestionBar.svelte";
 
@@ -93,6 +94,11 @@
 		onOutline?: (headings: PageHeading[]) => void;
 		onOutlineNav?: (nav: OutlineNav | null) => void;
 		onEditorReady?: (editor: Editor | null) => void;
+		/**
+		 * Where the find bar hangs: the page's top bar, so it sits under the
+		 * toolbar's right edge. Without one it floats at the top of the text.
+		 */
+		findHost?: HTMLElement | null;
 	}
 
 	let {
@@ -107,6 +113,7 @@
 		onOutline,
 		onOutlineNav,
 		onEditorReady,
+		findHost = null,
 	}: Props = $props();
 
 	const DOC_CHANGE_MS = 300;
@@ -676,7 +683,11 @@
 	style:--editor-font-size={pageDisplay.fontSize}
 	style:--editor-line-height={pageDisplay.lineHeight}
 >
-	{#if findOpen && editor}
+	{#if findOpen && editor && findHost}
+		<div class="find-dock" use:portal={findHost}>
+			<FindBar editor={editor} initial={findInitial} {revision} onClose={() => (findOpen = false)} />
+		</div>
+	{:else if findOpen && editor}
 		<FindBar editor={editor} initial={findInitial} {revision} onClose={() => (findOpen = false)} />
 	{/if}
 
@@ -757,6 +768,16 @@
 </div>
 
 <style>
+	/* Under the toolbar's right edge (12px in, as the toolbar is), over the
+	   page: the top bar is the positioned ancestor. */
+	.find-dock {
+		position: absolute;
+		top: 100%;
+		right: 12px;
+		margin-top: 4px;
+		z-index: var(--z-sticky);
+	}
+
 	.document-editor {
 		position: relative;
 	}
