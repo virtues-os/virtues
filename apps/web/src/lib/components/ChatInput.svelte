@@ -843,7 +843,7 @@
 		border-radius: var(--shell-radius);
 		background: color-mix(in srgb, var(--color-foreground) 3%, var(--color-surface));
 		/* design-ok: the composer floats over the page (§6 elevation), so it takes a soft lift. */
-		box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--color-foreground) 12%, transparent);
+		box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--color-foreground) 11%, transparent);
 		/* Out at hover-out. A state that comes on (ChatView's drop ring) sets
 		   its own hover-in duration. */
 		transition:
