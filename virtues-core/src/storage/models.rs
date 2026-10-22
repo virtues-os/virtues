@@ -75,9 +75,23 @@ pub struct UserProfile {
     /// Dismissed means gone, not collapsed — the features stay reachable where
     /// they permanently live. See agents/record/getting-started.md.
     pub getting_started_dismissed: Vec<String>,
+    /// How the owner arranged the sidebar's doors. None is the shipped
+    /// arrangement (migration 0058).
+    pub sidebar_doors: Option<sqlx::types::Json<SidebarDoors>>,
     // Audit
     pub created_at: Timestamp,
     pub updated_at: Timestamp,
+}
+
+/// The sidebar's doors as the owner arranged them, by door id. The client
+/// owns the set of doors: an id it no longer knows is skipped when read, and
+/// a door missing from `order` takes its shipped place.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SidebarDoors {
+    #[serde(default)]
+    pub order: Vec<String>,
+    #[serde(default)]
+    pub hidden: Vec<String>,
 }
 
 /// Assistant profile - AI assistant preferences (singleton table)

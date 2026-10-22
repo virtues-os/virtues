@@ -4,7 +4,7 @@
 //! The profile is a singleton table containing non-ephemeral metadata about the user.
 
 use crate::error::{Error, Result};
-use crate::storage::models::UserProfile;
+use crate::storage::models::{SidebarDoors, UserProfile};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 
@@ -39,6 +39,26 @@ pub struct UpdateProfileRequest {
     /// Getting-started sections dismissed from Home. The full array each time —
     /// the client owns the merge, the box just remembers it.
     pub getting_started_dismissed: Option<Vec<String>>,
+    /// The sidebar's door order and hidden doors. The whole value each time.
+    pub sidebar_doors: Option<SidebarDoors>,
+}
+
+/// A door id is a short slug, and there are a handful of doors; anything
+/// else is not an arrangement of them.
+const MAX_DOORS: usize = 32;
+
+fn check_sidebar_doors(doors: &SidebarDoors) -> Result<()> {
+    let ok = |ids: &[String]| {
+        ids.len() <= MAX_DOORS
+            && ids.iter().all(|id| {
+                !id.is_empty() && id.len() <= 40 && id.chars().all(|c| c.is_ascii_lowercase() || c == '-')
+            })
+    };
+    if ok(&doors.order) && ok(&doors.hidden) {
+        Ok(())
+    } else {
+        Err(Error::InvalidInput("sidebar_doors holds door ids: short lowercase slugs".into()))
+    }
 }
 
 /// Get the user's profile (singleton row)
@@ -87,6 +107,10 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     if request.theme.is_some()                 { push("theme", &mut set_clauses, &mut next); }
     if request.home_timezone.is_some()         { push("home_timezone", &mut set_clauses, &mut next); }
     if request.getting_started_dismissed.is_some() { push("getting_started_dismissed", &mut set_clauses, &mut next); }
+    if let Some(ref doors) = request.sidebar_doors {
+        check_sidebar_doors(doors)?;
+        push("sidebar_doors", &mut set_clauses, &mut next);
+    }
 
     if set_clauses.is_empty() {
         // No updates requested, just return current profile
@@ -151,6 +175,9 @@ pub async fn update_profile(db: &PgPool, request: UpdateProfileRequest) -> Resul
     }
     if let Some(ref v) = request.getting_started_dismissed {
         query_builder = query_builder.bind(v);
+    }
+    if let Some(ref v) = request.sidebar_doors {
+        query_builder = query_builder.bind(sqlx::types::Json(v.clone()));
     }
 
     query_builder
@@ -229,6 +256,26 @@ pub async fn ensure_home_timezone(db: &PgPool) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[sqlx::test]
+    async fn the_sidebar_doors_round_trip_and_junk_is_refused(pool: PgPool) {
+        assert_eq!(get_profile(&pool).await.unwrap().sidebar_doors, None, "shipped arrangement");
+        let doors = SidebarDoors {
+            order: vec!["wiki".into(), "new-chat".into(), "pages".into()],
+            hidden: vec!["applets".into()],
+        };
+        let updated = update_profile(
+            &pool,
+            UpdateProfileRequest { sidebar_doors: Some(doors.clone()), ..Default::default() },
+        )
+        .await
+        .expect("update the doors");
+        assert_eq!(updated.sidebar_doors.map(|d| d.0), Some(doors));
+
+        let junk = SidebarDoors { order: vec!["<script>".into()], hidden: vec![] };
+        let refused = update_profile(&pool, UpdateProfileRequest { sidebar_doors: Some(junk), ..Default::default() }).await;
+        assert!(matches!(refused, Err(Error::InvalidInput(_))), "{refused:?}");
+    }
 
     #[sqlx::test]
     async fn birth_date_round_trips_as_a_real_date(pool: PgPool) {

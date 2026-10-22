@@ -49,16 +49,25 @@ across its top.
   their own in the chrome. None of them lists its contents in the sidebar.
 - **Settings stands at the foot**, apart from the places above it: you do
   something to the server and leave.
-- **The doors are fixed.** They cannot be hidden, reordered or added to.
-  What a person wants one click away goes in Pinned.
+- **The doors are the owner's to arrange, not to add to.** They can be
+  reordered and hidden, and that is saved on the profile (`sidebar_doors`)
+  so every device shows the same sidebar. What a person wants one click
+  away goes in Pinned. Doors and pins stay two groups: hiding a door hides
+  a place that still exists, and unpinning removes the person's own entry,
+  so one list would make the same gesture mean two things.
 - Routes did not move.
 
 The Home panel, top to bottom:
 
-1. **Doors**: Setup (while it is not done), New chat, Pages, Tasks,
-   Projects, Applets, Wiki. The verb, then the places. Pages, Tasks and
+1. **Doors**: Setup (while it is not done), then New chat, Pages, Tasks,
+   Projects, Applets, Wiki in their shipped order. Pages, Tasks and
    Projects carry a `+` on hover for a new one. Search has no door: it is
-   the ⌘K palette.
+   the ⌘K palette. A door moves the way a pin does: by drag, by Alt and an
+   arrow, or by Move up and Move down in its menu. Hide in its menu hides
+   it. Customize sidebar, in every door's menu and on the space between the
+   doors, lists every door with a check beside the shown ones, and Reset to
+   default. The last shown door cannot be hidden, so that menu is always
+   reachable. Setup is not arranged: it shows until setup is done.
 2. **Pinned.** A chat, a project, an applet, a page, or any other url can be
    pinned, from the thing's own pin control or menu, or by dragging a Recent
    row or a pane's tab into Pinned, where a line shows the gap it will land

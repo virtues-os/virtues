@@ -41,11 +41,12 @@
 	 * a tab's menu pins whatever the tab shows. A project cannot hold a
 	 * project. The server refuses it and the menus never offer it.
 	 */
-	import { tick } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { chatSessions, type ChatSession } from '$lib/stores/chatSessions.svelte';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { pagesStore } from '$lib/stores/pages.svelte';
 	import { pinsStore } from '$lib/stores/pins.svelte';
+	import { sidebarDoors, type DoorId } from '$lib/stores/sidebarDoors.svelte';
 	import { chatActivity } from '$lib/stores/chatActivity.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
@@ -329,6 +330,102 @@
 
 	function openApplets() {
 		windowShellStore.openTabFromRoute('/applets', { label: 'Applets', focusExisting: true });
+	}
+
+	function openWiki() {
+		windowShellStore.openTabFromRoute('/wiki', { label: 'Wiki', focusExisting: true });
+	}
+
+	/**
+	 * What each door does. Pages, Tasks and Projects carry a + on hover: the
+	 * word is the list, the plus is a new one. Tasks never shows a count: the
+	 * list does not nag from the sidebar (agents/plan/tasks-plan.md). The
+	 * Wiki opens its overview, whose index reaches its sections.
+	 */
+	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; run: (e: MouseEvent) => void } }> = {
+		'new-chat': { open: newChat },
+		pages: { open: openPages, add: { label: 'New page', run: newPage } },
+		tasks: { open: openTasks, add: { label: 'New task', run: newTask } },
+		projects: { open: openProjects, add: { label: 'New project', run: addProject } },
+		applets: { open: openApplets },
+		wiki: { open: openWiki },
+	};
+
+	// ── arranging the doors ────────────────────────────────────────────────
+
+	const doors = $derived(sidebarDoors.visible);
+	onMount(() => void sidebarDoors.load());
+	let draggingDoor = $state<number | null>(null);
+	let doorGap = $state<number | null>(null);
+
+	function endDoorDrag() {
+		draggingDoor = null;
+		doorGap = null;
+	}
+
+	function moveDoor(from: number, to: number) {
+		sidebarDoors.move(from, to).catch(() => toast.error("Couldn't move that. Try again."));
+	}
+
+	function setDoorHidden(id: DoorId, hide: boolean) {
+		sidebarDoors.setHidden(id, hide).catch(() => toast.error("Couldn't change the sidebar. Try again."));
+	}
+
+	/**
+	 * Every door with a check beside the shown ones: the way back to a hidden
+	 * door. The last shown door cannot be unchecked, so a door, and this menu
+	 * on it, is always there.
+	 */
+	function customizeSidebarItem(divider = true): ContextMenuItem {
+		const lastShown = sidebarDoors.visible.length === 1;
+		return {
+			id: 'customize-sidebar',
+			label: 'Customize sidebar',
+			icon: 'ri:layout-left-line',
+			dividerBefore: divider,
+			submenu: [
+				...sidebarDoors.all.map((d): ContextMenuItem => {
+					const shown = !sidebarDoors.hidden.has(d.id);
+					return {
+						id: `door-${d.id}`,
+						label: d.label,
+						role: 'menuitemcheckbox',
+						checked: shown,
+						disabled: shown && lastShown,
+						action: () => setDoorHidden(d.id, shown),
+					};
+				}),
+				{
+					id: 'doors-reset',
+					label: 'Reset to default',
+					dividerBefore: true,
+					disabled: !sidebarDoors.customized,
+					action: () => {
+						sidebarDoors.reset().catch(() => toast.error("Couldn't change the sidebar. Try again."));
+					},
+				},
+			],
+		};
+	}
+
+	function doorMenu(id: DoorId, index: number): ContextMenuItem[] {
+		const items: ContextMenuItem[] = [];
+		if (index > 0) {
+			items.push({ id: 'door-up', label: 'Move up', icon: 'ri:arrow-up-line', shortcut: '⌥↑', action: () => moveDoor(index, index - 1) });
+		}
+		if (index < doors.length - 1) {
+			items.push({ id: 'door-down', label: 'Move down', icon: 'ri:arrow-down-line', shortcut: '⌥↓', action: () => moveDoor(index, index + 1) });
+		}
+		items.push({
+			id: 'door-hide',
+			label: 'Hide',
+			icon: 'ri:eye-off-line',
+			dividerBefore: items.length > 0,
+			disabled: doors.length === 1,
+			action: () => setDoorHidden(id, true),
+		});
+		items.push(customizeSidebarItem());
+		return items;
 	}
 
 // ── opening rows ───────────────────────────────────────────────────────
@@ -668,7 +765,20 @@
      not a rule. They wear Atlas like every nav door in the shell. Search
      has no door here: it is the ⌘K palette, which has the room for results
      across chats, pages and projects. -->
-<div class="panel-doors">
+<div
+	class="panel-doors"
+	role="group"
+	aria-label="Doors"
+	ondragleave={(e) => {
+		const area = e.currentTarget as HTMLElement;
+		if (!e.relatedTarget || !area.contains(e.relatedTarget as Node)) doorGap = null;
+	}}
+	oncontextmenu={(e) => {
+		// Between the rows, or under them when every door is hidden: the
+		// way back to a hidden door.
+		if (e.target === e.currentTarget) showMenu(e, [customizeSidebarItem(false)]);
+	}}
+>
 	{#if setupOpen}
 		<button type="button" class="panel-row panel-door" onclick={openSetup}>
 			<SetupRing size={16} />
@@ -676,88 +786,71 @@
 			<span class="door-meta">{setupCount}</span>
 		</button>
 	{/if}
-	<button type="button" class="panel-row panel-door" onclick={newChat}>
-		<AtlasIcon name="new-chat" size={SHELL_GLYPH_PX} bare />
-		<span class="panel-row-text">New chat</span>
-	</button>
-	<!-- The word opens the list; the + that appears beside it makes a new
-	     one. A div, not a button, so the + can be a real button inside it. -->
-	<div
-		class="panel-row panel-door panel-row-has-actions"
-		role="link"
-		tabindex="0"
-		onclick={openPages}
-		onkeydown={(e) => {
-			if (e.key === 'Enter' || e.key === ' ') {
+	{#each doors as door, index (door.id)}
+		{@const act = doorActions[door.id]}
+		<!-- A div, not a button, so a door's + can be a real button inside it. -->
+		<div
+			class="panel-row panel-door"
+			class:panel-row-has-actions={!!act.add}
+			class:drop-before={doorGap === index}
+			class:drop-after={doorGap === doors.length && index === doors.length - 1}
+			class:dragging={draggingDoor === index}
+			role="link"
+			tabindex="0"
+			aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
+			draggable="true"
+			ondragstart={(e) => {
+				draggingDoor = index;
+				e.dataTransfer?.setData('text/plain', door.label);
+				if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+			}}
+			ondragend={endDoorDrag}
+			ondragover={(e) => {
+				if (draggingDoor === null) return;
 				e.preventDefault();
-				openPages();
-			}
-		}}
-	>
-		<AtlasIcon name="pages" size={SHELL_GLYPH_PX} bare />
-		<span class="panel-row-text">Pages</span>
-		<span class="row-actions">
-			<button type="button" class="row-action" aria-label="New page" title="New page" onclick={newPage}>
-				<AtlasIcon name="plus" size={14} bare />
-			</button>
-		</span>
-	</div>
-	<!-- No count beside the word, ever: the list never nags from the
-	     sidebar (agents/plan/tasks-plan.md). -->
-	<div
-		class="panel-row panel-door panel-row-has-actions"
-		role="link"
-		tabindex="0"
-		onclick={openTasks}
-		onkeydown={(e) => {
-			if (e.key === 'Enter' || e.key === ' ') {
+				const box = (e.currentTarget as HTMLElement).getBoundingClientRect();
+				doorGap = e.clientY - box.top < box.height / 2 ? index : index + 1;
+				if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+			}}
+			ondrop={(e) => {
+				if (draggingDoor === null || doorGap === null) return;
 				e.preventDefault();
-				openTasks();
-			}
-		}}
-	>
-		<AtlasIcon name="tasks" size={SHELL_GLYPH_PX} bare />
-		<span class="panel-row-text">Tasks</span>
-		<span class="row-actions">
-			<button type="button" class="row-action" aria-label="New task" title="New task" onclick={newTask}>
-				<AtlasIcon name="plus" size={14} bare />
-			</button>
-		</span>
-	</div>
-	<div
-		class="panel-row panel-door panel-row-has-actions"
-		role="link"
-		tabindex="0"
-		onclick={openProjects}
-		onkeydown={(e) => {
-			if (e.key === 'Enter' || e.key === ' ') {
-				e.preventDefault();
-				openProjects();
-			}
-		}}
-	>
-		<AtlasIcon name="projects" size={SHELL_GLYPH_PX} bare />
-		<span class="panel-row-text">Projects</span>
-		<span class="row-actions">
-			<button type="button" class="row-action" aria-label="New project" title="New project" onclick={addProject}>
-				<AtlasIcon name="plus" size={14} bare />
-			</button>
-		</span>
-	</div>
-	<button type="button" class="panel-row panel-door" onclick={openApplets}>
-		<AtlasIcon name="applets" size={SHELL_GLYPH_PX} bare />
-		<span class="panel-row-text">Applets</span>
-	</button>
-	<!-- The record, a door like the tools above it. It opens the Wiki's
-	     overview, whose index reaches its sections; the sidebar stays Home. -->
-	<button
-		type="button"
-		class="panel-row panel-door"
-		onclick={() => windowShellStore.openTabFromRoute('/wiki', { label: 'Wiki', focusExisting: true })}
-	>
-		<AtlasIcon name="wiki" size={SHELL_GLYPH_PX} bare />
-		<span class="panel-row-text">Wiki</span>
-	</button>
+				const from = draggingDoor;
+				const gap = doorGap;
+				endDoorDrag();
+				moveDoor(from, from < gap ? gap - 1 : gap);
+			}}
+			onclick={act.open}
+			onkeydown={(e) => {
+				if (e.key === 'Enter' || e.key === ' ') {
+					e.preventDefault();
+					act.open();
+					return;
+				}
+				// The keyboard's drag, as on a pin.
+				if (e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+					e.preventDefault();
+					const to = index + (e.key === 'ArrowUp' ? -1 : 1);
+					if (to < 0 || to >= doors.length) return;
+					const row = e.currentTarget as HTMLElement;
+					moveDoor(index, to);
+					void tick().then(() => row.focus());
+				}
+			}}
+			oncontextmenu={(e) => showMenu(e, doorMenu(door.id, index))}
+		>
+			<AtlasIcon name={door.glyph} size={SHELL_GLYPH_PX} bare />
+			<span class="panel-row-text">{door.label}</span>
+			{#if act.add}
+				{@const add = act.add}
+				<span class="row-actions">
+					<button type="button" class="row-action" aria-label={add.label} title={add.label} onclick={add.run}>
+						<AtlasIcon name="plus" size={14} bare />
+					</button>
+				</span>
+			{/if}
+		</div>
+	{/each}
 </div>
 
 <!-- A group's head: the label folds the group; the chevron says so on

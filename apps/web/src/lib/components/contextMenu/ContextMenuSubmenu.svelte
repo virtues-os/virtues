@@ -86,7 +86,8 @@
 			class:destructive={subItem.variant === 'destructive'}
 			onclick={() => handleItemClick(subItem)}
 			disabled={subItem.disabled}
-			role="menuitem"
+			role={subItem.role ?? 'menuitem'}
+			aria-checked={subItem.role ? !!subItem.checked : undefined}
 			aria-disabled={subItem.disabled}
 		>
 			{#if subItem.icon}

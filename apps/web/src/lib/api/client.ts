@@ -1127,6 +1127,9 @@ export interface Profile {
 	/** Getting-started sections dismissed from Home. Send the whole array —
 	 *  the box remembers it verbatim; the client owns the merge. */
 	getting_started_dismissed?: string[];
+	/** The sidebar's doors as the owner arranged them, by door id. Null is the
+	 *  shipped arrangement. Send the whole value. */
+	sidebar_doors?: { order: string[]; hidden: string[] } | null;
 }
 
 export function getProfile(): Promise<Profile> {

@@ -1,7 +1,8 @@
 /**
  * Reload the shared lists when the app comes back into view.
  *
- * The chat, page, project and pin lists load once at boot. Nothing pushes
+ * The chat, page, project and pin lists and the sidebar's doors load once
+ * at boot. Nothing pushes
  * changes, so a chat started on the phone, a page the assistant renamed or a
  * project filed from another device stayed invisible here until a full
  * reload. The Mac app in particular stays open for days.
@@ -16,6 +17,7 @@ import { chatSessions } from './chatSessions.svelte';
 import { pagesStore } from './pages.svelte';
 import { pinsStore } from './pins.svelte';
 import { projectStore } from './project.svelte';
+import { sidebarDoors } from './sidebarDoors.svelte';
 
 const MIN_GAP_MS = 30_000;
 
@@ -29,6 +31,7 @@ function revalidate() {
 	void chatSessions.load();
 	void pinsStore.load();
 	void projectStore.load();
+	void sidebarDoors.load();
 	// Pages load on demand (the sidebar asks when it first draws them), so
 	// only a list that has been loaded, or tried to, is reloaded here.
 	if (pagesStore.pages.length > 0 || pagesStore.pagesError) void pagesStore.loadPages();
