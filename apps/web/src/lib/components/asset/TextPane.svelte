@@ -141,7 +141,7 @@
 	.text-toggle {
 		padding: 3px 10px;
 		font-size: 0.75rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		border: 1px solid transparent;
 		background: transparent;
 		color: var(--color-foreground-muted);

@@ -643,7 +643,7 @@
 	   highlight while its card is open. */
 	.s {
 		cursor: pointer;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		box-decoration-break: clone;
 		-webkit-box-decoration-break: clone;
 		transition: background-color 0.12s ease;
@@ -677,7 +677,7 @@
 		clip-path: none;
 		margin-left: 0.25rem;
 		padding: 0 0.375rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-highlight);
 		font-family: var(--font-sans);
 		font-size: 0.75rem;
@@ -708,7 +708,7 @@
 
 	.s-block {
 		display: block;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	.s-block:hover {
@@ -745,7 +745,7 @@
 		display: block;
 		width: 100%;
 		margin: 0.375rem 0 0.625rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	.row-figure .text :global(p) {
@@ -817,7 +817,7 @@
 		width: 8px;
 		border: 1.5px solid var(--color-foreground-muted);
 		border-left: 0;
-		border-radius: 0 3px 3px 0;
+		border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 		opacity: 0.75;
 		transform: rotate(0.6deg);
 		transform-origin: top;

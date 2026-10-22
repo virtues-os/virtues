@@ -164,10 +164,19 @@
 	--drop-tint: color-mix(in srgb, var(--color-primary) 15%, transparent);
 	--drag-source-opacity: 0.4;
 
-	/* Radius — sm/md/lg/xl (4/6/8/12px) already match Tailwind v4 defaults,
-	   so `rounded-*` utilities are unchanged. `--radius-full` is the one gap:
-	   Tailwind's `rounded-full` is a static calc(infinity*1px) with no var,
-	   so this exposes a pill radius to hand-written `<style>` blocks. */
+	/* Radius. Every corner in the app is one of these steps, in `rounded-*`
+	   utilities and hand-written `<style>` blocks alike. md and lg sit 2px
+	   above Tailwind's defaults (6/8px) so cards, tabs, rows and menus round
+	   like the macOS window around them. xs and sm stay small because 2px
+	   more on a checkbox or inline code would soften it visibly. A step
+	   inside a padded container should be at least one step below it.
+	   `--radius-full` is here because Tailwind's `rounded-full` is a static
+	   calc(infinity*1px) with no var. */
+	--radius-xs: 2px;
+	--radius-sm: 4px;
+	--radius-md: 8px;
+	--radius-lg: 10px;
+	--radius-xl: 12px;
 	--radius-full: 9999px;
 
 	/* Named breakpoint for the app's dominant hand-written media query (900px),
@@ -323,7 +332,7 @@
 
 	/* Sidebar Component Tokens */
 	--sidebar-interactive-padding: 6px 10px;
-	--sidebar-interactive-radius: 6px;
+	--sidebar-interactive-radius: var(--radius-md);
 	--sidebar-interactive-gap: 8px;
 	--sidebar-interactive-font-size: 13px;
 	--sidebar-interactive-icon-size: 16px; /* SHELL_GLYPH_PX in AtlasIcon.svelte */
@@ -401,7 +410,7 @@
 	/* One radius for every card in the shell — the pane, the split panes and the
 	   sidebar panel. They used to disagree (8px mono, 4px split, 6px fallback),
 	   which read as the sidebar being rounded differently from the pages. */
-	--card-radius: 6px;
+	--card-radius: var(--radius-md);
 	/* The one shadow (design.md, Corners and elevation): every layer that
 	   floats over a page or the shell carries this and no other, at
 	   --card-radius. The chrome and the pane never carry one. */

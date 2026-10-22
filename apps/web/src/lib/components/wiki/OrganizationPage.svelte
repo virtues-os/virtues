@@ -207,7 +207,7 @@
 	.org-logo {
 		width: 64px;
 		height: 64px;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		overflow: hidden;
 		margin-bottom: 1rem;
 		border: 1px solid var(--color-border);

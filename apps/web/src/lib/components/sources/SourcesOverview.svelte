@@ -375,7 +375,7 @@
 	.vital {
 		padding: 0.9375rem 1.0625rem 1rem;
 		border: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
-		border-radius: 9px;
+		border-radius: var(--radius-lg);
 	}
 	@media (min-resolution: 2dppx) {
 		/* Where the display can render it, take the rule below 1px so the card
@@ -434,7 +434,7 @@
 		margin: 0;
 		padding: 0;
 		border: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
-		border-radius: 9px;
+		border-radius: var(--radius-lg);
 		overflow: hidden;
 	}
 	@media (min-resolution: 2dppx) {
@@ -485,7 +485,7 @@
 	.error {
 		padding: 0.5rem 0.75rem;
 		margin-bottom: 0.75rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-error-subtle);
 		color: color-mix(in srgb, var(--color-error) 75%, #000);
 		font-size: 0.8125rem;
@@ -501,7 +501,7 @@
 		gap: 0.5rem;
 		padding: 0.5rem 0.75rem;
 		margin-bottom: 0.75rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		font-size: 0.8125rem;
 		background: var(--color-muted, #f3f4f6);
 		color: var(--color-foreground, #111827);

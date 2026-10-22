@@ -96,7 +96,7 @@
 	.face-frame {
 		width: 100%;
 		border: 1px solid var(--color-border, #e5e7eb);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: var(--color-surface, #fff);
 	}
 	.face-error,
@@ -105,6 +105,6 @@
 		font-size: 0.8125rem;
 		color: var(--color-foreground-subtle, #9ca3af);
 		border: 1px dashed var(--color-border, #e5e7eb);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 	}
 </style>

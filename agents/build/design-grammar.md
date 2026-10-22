@@ -243,11 +243,12 @@ you met depended on which page you had opened.
 
 ## 6. Radius, spacing, surfaces
 
-- **Radius is `{0, 6px, 12px, 50%, a pill}` and nothing else.** 12px on a card
-  in the pane (`Card.svelte`, since 2026-09-16); a pill on a button; 50% on a
-  dot; 6px inside the shell (design.md). The tree still carries 4, 5, 7, 8, 9
-  and 10px from before the rule — `tools/design-lint.sh` holds that count as a
-  baseline, so do not add to them.
+- **Radius is a `--radius-*` step, 0, 50% or a pill, and nothing else.** The
+  steps live in `themes.css` and drive the `rounded-*` utilities too: xs 2px,
+  sm 4px, md 8px, lg 10px, xl 12px, full. md is the shell's box (design.md);
+  xl is a card in the pane (`Card.svelte`); 50% is a dot. Write the token, not
+  the length: `tools/design-lint.sh` counts every radius length written
+  outside `themes.css`.
 - **No shadows in the pane.** A card is a hairline (`--color-border`) on
   `--color-surface`. A card marks something you can act on; do not use one
   only to group content.
@@ -366,7 +367,7 @@ check that fails on day one gets switched off by the end of the week. Escape a l
 | colored things that mean neither *now* nor *pressable* | 0 |
 | `border` + `background` on a block holding no input, button or link | 0 |
 | `box-shadow` in the pane | 0 |
-| `border-radius` outside `{0, 6px, 12px, 50%, a pill}` | 0 |
+| `border-radius` that is not a `--radius-*` step, 0, 50% or a pill | 0 |
 | off-grid px in `padding` / `margin` / `gap` | 0 |
 | `var(--font-mono)` outside a chart's SVG and a clock time | 0 |
 | `font-size` under 11px outside a chart's SVG | 0 |

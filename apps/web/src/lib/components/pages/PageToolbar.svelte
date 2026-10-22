@@ -358,7 +358,7 @@
 		background: none;
 		color: var(--color-foreground-muted);
 		cursor: pointer;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		transition:
 			color 0.12s ease,
 			background-color 0.12s ease;

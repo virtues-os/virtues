@@ -1454,7 +1454,7 @@
 		color: var(--color-foreground);
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		outline: none;
 		transition: border-color 0.25s ease, box-shadow 0.25s ease;
 	}
@@ -1482,7 +1482,7 @@
 		height: 20px;
 		background: transparent;
 		border: none;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		color: var(--color-foreground-subtle);
 		cursor: pointer;
 		z-index: 2;
@@ -1515,7 +1515,7 @@
 		height: 32px;
 		background: var(--color-background-secondary);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		color: var(--color-foreground-muted);
 		cursor: pointer;
 		transition: all 0.15s ease;
@@ -1554,7 +1554,7 @@
 		padding: 0.25rem;
 		background: var(--color-background, #fff);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 	}
 	/* Filter add: button + popover wrapper */
@@ -1591,7 +1591,7 @@
 		padding: 0.25rem;
 		background: var(--color-background, #fff);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 	}
 
@@ -1720,7 +1720,7 @@
 		border: none;
 		padding: 0;
 		cursor: pointer;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 	}
 
 	th.sortable:hover .th-sort,
@@ -1854,7 +1854,7 @@
 		place-content: center;
 		vertical-align: middle;
 		border: 1.5px solid var(--color-border-strong, var(--color-border));
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		background: var(--color-surface);
 		cursor: pointer;
 		transition: background-color 0.12s ease, border-color 0.12s ease;
@@ -1927,7 +1927,7 @@
 	.sk-box, .sk-bar {
 		display: block;
 		height: 9px;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		background: linear-gradient(
 			90deg,
 			var(--color-surface-elevated) 0%,
@@ -1938,7 +1938,7 @@
 		animation: sk-sweep 1.4s ease-in-out infinite;
 		animation-delay: var(--sk-delay, 0ms);
 	}
-	.sk-box { width: 14px; height: 14px; border-radius: 3px; flex: none; }
+	.sk-box { width: 14px; height: 14px; border-radius: var(--radius-sm); flex: none; }
 	.sk-narrow { width: 68px; flex: none; }
 	@keyframes sk-sweep {
 		from { background-position: 200% 0; }
@@ -1983,7 +1983,7 @@
 		font-variant-numeric: tabular-nums;
 		color: var(--color-foreground-subtle);
 		background: var(--color-surface-elevated);
-		border-radius: 3px;
+		border-radius: var(--radius-sm);
 		padding: 1px 6px;
 	}
 
@@ -2052,7 +2052,7 @@
 	.wall-tile:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
-		border-radius: 0.375rem;
+		border-radius: var(--radius-md);
 	}
 
 	@media (max-width: 900px) {
@@ -2107,7 +2107,7 @@
 	.card:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 	}
 
 	/* The default card body. `.card` itself stays an unstyled button because
@@ -2125,7 +2125,7 @@
 		height: 100%;
 		padding: 0.85rem 0.9rem;
 		border: 1px solid var(--color-border);
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		transition: background-color 0.12s ease, border-color 0.12s ease;
 	}

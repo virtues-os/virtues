@@ -213,7 +213,7 @@
 		font: inherit;
 		font-size: 0.75rem;
 		padding: 0.25rem 0.625rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		border: 1px solid var(--color-border);
 		background: none;
 		color: var(--color-foreground-subtle);

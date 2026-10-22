@@ -278,7 +278,7 @@
 		color: var(--color-foreground-muted);
 		background: var(--color-surface-elevated);
 		border-left: 2px solid var(--color-border-strong, var(--color-border));
-		border-radius: 0 0.25rem 0.25rem 0;
+		border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
 	}
 
 	/* The note: the one editable thing, and the first thing. */
@@ -300,7 +300,7 @@
 		color: var(--color-foreground);
 		background: var(--color-surface-elevated);
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 0.375rem;
+		border-radius: var(--radius-md);
 		resize: vertical;
 	}
 	.note-input:focus {
@@ -330,7 +330,7 @@
 		width: 100%;
 		max-height: 26rem;
 		object-fit: cover;
-		border-radius: 0.375rem;
+		border-radius: var(--radius-md);
 		background: var(--color-surface);
 	}
 
@@ -411,7 +411,7 @@
 		color: var(--color-foreground-muted);
 		background: var(--color-surface-elevated);
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 0.25rem;
+		border-radius: var(--radius-sm);
 	}
 	/* The user's own containers read as theirs, not as machine output. */
 	.chip.user {

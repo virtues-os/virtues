@@ -48,7 +48,7 @@
 		height: 28px;
 		padding: 0 10px 0 8px;
 		border: 0;
-		border-radius: 9px;
+		border-radius: var(--radius-lg);
 		font-size: 13px;
 		color: var(--color-foreground-muted);
 		background: color-mix(in srgb, var(--color-surface) 72%, transparent);

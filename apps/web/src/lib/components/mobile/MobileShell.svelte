@@ -431,7 +431,7 @@
 		margin: 0 10px 6px;
 		padding: 4px 6px 4px 12px;
 		border: 1px solid var(--color-border);
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		background: color-mix(in srgb, var(--wash-ink) 4%, transparent);
 	}
 
@@ -448,7 +448,7 @@
 		min-height: 28px;
 		padding: 0 10px;
 		border: 0;
-		border-radius: 7px;
+		border-radius: var(--radius-md);
 		background: color-mix(in srgb, var(--wash-ink) 7%, transparent);
 		color: var(--color-foreground);
 		font-size: 13px;
@@ -469,7 +469,7 @@
 		width: 44px;
 		height: 44px;
 		border: 0;
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		background: transparent;
 		color: var(--color-foreground);
 		cursor: pointer;

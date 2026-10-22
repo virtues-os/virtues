@@ -673,7 +673,7 @@
 		display: flex;
 		flex-direction: column;
 		gap: 1.6rem;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		transition: background-color var(--motion-hover-out) var(--ease-premium);
 	}
 	/* The drop tint, on at hover-in and off at hover-out. */
@@ -694,7 +694,7 @@
 		min-height: 44px;
 		padding: 4px 6px 4px 16px;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		transition: border-color 120ms ease;
 	}
@@ -740,7 +740,7 @@
 
 	.add-row {
 		display: flex; align-items: center; gap: 8px; width: 100%; text-align: left;
-		padding: 1rem 0.6rem; border: 1px dashed var(--color-border); border-radius: 8px;
+		padding: 1rem 0.6rem; border: 1px dashed var(--color-border); border-radius: var(--radius-lg);
 		background: transparent; cursor: pointer;
 		font: inherit; font-size: 0.9rem; color: var(--color-foreground-subtle);
 	}
@@ -773,7 +773,7 @@
 	.project-card {
 		display: flex; flex-direction: column; gap: 0.4rem;
 		width: 100%; height: 100%; padding: 0.85rem 0.9rem;
-		border: 1px solid var(--color-border); border-radius: 10px;
+		border: 1px solid var(--color-border); border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		transition: background-color 0.12s ease, border-color 0.12s ease;
 	}

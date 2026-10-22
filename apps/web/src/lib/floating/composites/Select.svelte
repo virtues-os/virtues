@@ -197,7 +197,7 @@
 		padding: 0;
 		text-align: left;
 		cursor: pointer;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	.select-option.highlighted {

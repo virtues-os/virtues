@@ -133,7 +133,7 @@
 	.doc-applet.selected .doc-applet-face {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 	}
 
 	.doc-applet-name {
@@ -149,7 +149,7 @@
 		height: 8px;
 		margin: 4px auto 0;
 		width: 48px;
-		border-radius: 9999px;
+		border-radius: var(--radius-full);
 		background: var(--color-border);
 		cursor: ns-resize;
 		touch-action: none;
@@ -200,7 +200,7 @@
 			break-inside: avoid;
 			padding: 12px;
 			border: 1px solid var(--color-border);
-			border-radius: 12px;
+			border-radius: var(--radius-xl);
 		}
 
 		.doc-applet-face,

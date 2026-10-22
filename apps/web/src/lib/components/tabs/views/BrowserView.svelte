@@ -387,7 +387,7 @@
 		gap: 4px;
 		height: 36px;
 		padding: 0 4px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--surface-elevated, var(--surface));
 		flex-shrink: 0;
 	}
@@ -417,7 +417,7 @@
 		min-width: 0;
 		height: 36px;
 		padding: 0 16px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		border: 1px solid transparent;
 		background: var(--surface-elevated, var(--surface));
 		color: var(--color-foreground);
@@ -456,7 +456,7 @@
 		gap: 8px;
 		margin: 0 12px 8px;
 		padding: 8px 8px 8px 16px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		font-size: 13px;
 		color: var(--color-foreground);
 	}
@@ -493,7 +493,7 @@
 	.bar-btn {
 		height: 26px;
 		padding: 0 12px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		border: 1px solid var(--border);
 		background: var(--surface);
 		color: var(--color-foreground);
@@ -518,7 +518,7 @@
 		display: flex;
 		margin: 0 12px 12px;
 		border: 2px solid transparent;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		overflow: hidden;
 	}
 	.stage.driving {
@@ -570,7 +570,7 @@
 		max-width: 240px;
 		padding-right: 12px;
 		border: 1px solid var(--border);
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		overflow: hidden;
 		background: var(--surface);
 	}

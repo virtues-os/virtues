@@ -46,7 +46,7 @@
 		display: block;
 		max-width: 100%;
 		height: auto;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		border: 1px solid var(--color-border);
 	}
 </style>

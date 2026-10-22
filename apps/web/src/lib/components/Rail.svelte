@@ -307,7 +307,7 @@
 		/* A pill, said the way the grammar says one. The browser clamps a
 		   radius to half the shorter side, so on a 2px bar this renders
 		   exactly as the 1px it replaces. */
-		border-radius: 100px;
+		border-radius: var(--radius-full);
 		/* 10px at rest; the pointer's nearness adds up to 12 more, and the
 		   mark directly under it adds the rest. A deeper level is `--cut`
 		   shorter in every state. */

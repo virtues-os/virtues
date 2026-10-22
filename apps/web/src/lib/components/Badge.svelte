@@ -57,7 +57,7 @@
 		height: 20px;
 		padding: 0 8px;
 		border: 1px solid transparent;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		font-family: var(--font-sans);
 		font-size: 11px;
 		font-weight: 500;

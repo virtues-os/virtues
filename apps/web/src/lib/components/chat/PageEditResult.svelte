@@ -84,7 +84,7 @@
 		justify-content: space-between;
 		gap: 0.75rem;
 		padding: 0.625rem 0.875rem;
-		border-radius: 0.5rem;
+		border-radius: var(--radius-lg);
 		margin: 0.5rem 0;
 		font-size: 0.8125rem;
 		border: 1px solid;

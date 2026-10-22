@@ -86,7 +86,7 @@
 <style>
 	.checkpoint-card {
 		border: 1px solid var(--color-border);
-		border-radius: 0.5rem;
+		border-radius: var(--radius-lg);
 		margin: 0.75rem 0;
 		background: var(--color-surface-elevated);
 		overflow: hidden;
@@ -126,7 +126,7 @@
 		padding: 0.125rem 0.375rem;
 		background: var(--color-primary-subtle);
 		color: var(--color-primary);
-		border-radius: 0.25rem;
+		border-radius: var(--radius-sm);
 		letter-spacing: 0.025em;
 	}
 

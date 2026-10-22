@@ -389,7 +389,7 @@
 		padding: 0;
 		list-style: none;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 		overflow: hidden;
 	}
@@ -452,7 +452,7 @@
 		min-height: 40px;
 		padding: 0 12px;
 		border: 1px solid transparent;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: color-mix(in srgb, var(--color-foreground) 7%, var(--color-surface));
 		cursor: text;
 	}

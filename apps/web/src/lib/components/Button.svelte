@@ -104,7 +104,7 @@
 		justify-content: center;
 		gap: 6px;
 		border: 1px solid transparent;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		font-family: var(--font-sans);
 		font-weight: 500;
 		white-space: nowrap;

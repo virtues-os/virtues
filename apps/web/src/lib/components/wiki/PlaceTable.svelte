@@ -135,7 +135,7 @@
 	.place-icon {
 		width: 48px;
 		height: 48px;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: color-mix(in srgb, var(--color-primary) 15%, transparent);
 		color: var(--color-primary);
 		display: flex;

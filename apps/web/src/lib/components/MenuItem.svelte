@@ -149,7 +149,7 @@
 		width: 100%;
 		padding: 6px 10px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground);
 		font-family: var(--font-sans);

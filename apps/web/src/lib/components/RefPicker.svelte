@@ -504,7 +504,7 @@
 		width: 16px;
 		height: 16px;
 		border: 1px solid var(--color-border);
-		border-radius: 3px;
+		border-radius: var(--radius-sm);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -544,7 +544,7 @@
 		padding: 1px 4px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 3px;
+		border-radius: var(--radius-sm);
 		font-family: inherit;
 		font-size: 10px;
 	}

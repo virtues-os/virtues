@@ -1088,7 +1088,7 @@
 		display: block;
 		padding: 8px 12px;
 		border: 1px solid color-mix(in oklab, var(--color-background) 14%, var(--color-foreground));
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-foreground);
 		color: var(--color-background);
 		opacity: 0;

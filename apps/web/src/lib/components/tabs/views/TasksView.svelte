@@ -605,7 +605,7 @@
 		padding: 0;
 	}
 	.row {
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 	}
 	.row.open-detail {
 		background: color-mix(in srgb, var(--wash-ink) 4%, transparent);
@@ -704,7 +704,7 @@
 		background: none;
 		border: none;
 		padding: 0.25rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		color: var(--color-foreground-subtle);
 		cursor: pointer;
 		opacity: 0;
@@ -733,7 +733,7 @@
 		width: 100%;
 		background: transparent;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		padding: 0.375rem 0.5rem;
 		color: var(--color-foreground);
 		font: inherit;
@@ -803,7 +803,7 @@
 	.fact select {
 		background: transparent;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		padding: 0.125rem 0.375rem;
 		color: var(--color-foreground);
 		font: inherit;

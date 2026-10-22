@@ -937,7 +937,7 @@
 		height: 24px;
 		padding: 0;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 15px;
@@ -1001,7 +1001,7 @@
 		height: 20px;
 		padding: 0;
 		border: none;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 13px;
@@ -1047,7 +1047,7 @@
 		height: 28px;
 		padding: 0;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 16px;

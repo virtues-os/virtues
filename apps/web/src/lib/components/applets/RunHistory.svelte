@@ -267,7 +267,7 @@
 		align-items: center;
 		justify-content: center;
 		height: 32px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		box-sizing: border-box;
 		font-size: 13px;
 		font-variant-numeric: tabular-nums;
@@ -318,7 +318,7 @@
 	.key {
 		width: 14px;
 		height: 14px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		box-sizing: border-box;
 	}
 	.key.ran {

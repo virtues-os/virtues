@@ -215,7 +215,7 @@
 		height: 28px;
 		padding: 0;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		cursor: pointer;

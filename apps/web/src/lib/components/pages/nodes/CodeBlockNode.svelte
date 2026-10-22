@@ -130,7 +130,7 @@
 	.doc-code-language {
 		padding: 0 4px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-size: 0.75rem;

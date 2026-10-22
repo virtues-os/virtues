@@ -188,7 +188,7 @@
 	color: transparent;
 	text-decoration: none;
 	background: color-mix(in srgb, var(--color-foreground) 12%, transparent);
-	border-radius: 6px;
+	border-radius: var(--radius-md);
 	box-decoration-break: clone;
 	-webkit-box-decoration-break: clone;
 }
@@ -319,7 +319,7 @@
 	gap: 8px;
 	padding: 12px 16px 12px 12px;
 	border: 1px solid var(--color-border-subtle, var(--color-border));
-	border-radius: 12px;
+	border-radius: var(--radius-xl);
 	background: var(--color-surface-elevated);
 }
 
@@ -359,7 +359,7 @@
 
 .doc-block-codeBlock {
 	border: 1px solid var(--color-border-subtle, var(--color-border));
-	border-radius: 12px;
+	border-radius: var(--radius-xl);
 	background: var(--color-surface-elevated);
 	overflow: hidden;
 }
@@ -402,7 +402,7 @@
 	border-collapse: separate;
 	border-spacing: 0;
 	border: 1px solid var(--md-table-border-color);
-	border-radius: 6px;
+	border-radius: var(--radius-md);
 	table-layout: auto;
 }
 
@@ -458,7 +458,7 @@
 
 /* A block of text selected whole, as a click on its grip selects it. */
 .doc-prose :is(p, h1, h2, h3, h4, h5, h6, blockquote, pre, ul, ol, li, table).ProseMirror-selectednode {
-	border-radius: 4px;
+	border-radius: var(--radius-sm);
 	background: var(--color-primary-subtle);
 }
 
@@ -482,7 +482,7 @@
 	align-items: center;
 	justify-content: center;
 	border: 1px dashed var(--color-border);
-	border-radius: 12px;
+	border-radius: var(--radius-xl);
 	color: var(--color-foreground-muted);
 	font-size: 0.8125rem;
 }
@@ -545,7 +545,7 @@
 	top: -1.4em;
 	left: -1px;
 	padding: 0 4px;
-	border-radius: 6px 6px 6px 0;
+	border-radius: var(--radius-md) var(--radius-md) var(--radius-md) 0;
 	background: var(--caret-color);
 	color: var(--color-background);
 	font-family: var(--font-sans);
@@ -587,7 +587,7 @@
 
 .doc-flash {
 	animation: doc-flash 1.4s ease forwards;
-	border-radius: 6px;
+	border-radius: var(--radius-md);
 }
 
 @keyframes doc-flash {
@@ -622,7 +622,7 @@
 	top: -16px;
 	left: 0;
 	padding: 0 4px;
-	border-radius: 6px;
+	border-radius: var(--radius-md);
 	background: var(--color-primary);
 	color: var(--color-primary-foreground, var(--color-background));
 	font-family: var(--font-sans);

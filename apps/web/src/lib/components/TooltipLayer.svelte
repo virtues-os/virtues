@@ -158,7 +158,7 @@
 		max-width: 280px;
 		padding: 4px 8px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface-elevated);
 		color: var(--color-foreground);
 		font-size: 12px;

@@ -832,7 +832,7 @@
 	   are over it, coming on at hover-in and going at hover-out, and at once
 	   under reduced motion. */
 	.drop-zone {
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		transition: background-color var(--motion-hover-out) var(--ease-premium);
 	}
 

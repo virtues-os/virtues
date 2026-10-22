@@ -262,7 +262,7 @@
 		border: none;
 		padding: 0.875rem 0.5rem;
 		cursor: pointer;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	.chapter:hover {
@@ -320,7 +320,7 @@
 		font: inherit;
 		font-size: 0.8125rem;
 		padding: 0.375rem 0.875rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		border: 1px solid var(--color-border);
 		background: var(--color-surface-elevated);
 		color: var(--color-foreground);

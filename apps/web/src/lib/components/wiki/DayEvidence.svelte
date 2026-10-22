@@ -254,7 +254,7 @@
 		overflow: visible;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		animation: rise 0.14s ease-out;
 	}
 
@@ -270,7 +270,7 @@
 		padding-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
 		background: var(--color-surface);
 		border-top: 1px solid var(--color-border);
-		border-radius: 12px 12px 0 0;
+		border-radius: var(--radius-xl) var(--radius-xl) 0 0;
 		animation: sheet-up 0.18s ease-out;
 	}
 

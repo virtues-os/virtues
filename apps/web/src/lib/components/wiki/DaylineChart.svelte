@@ -432,7 +432,7 @@
 		padding: 0.4rem 0.6rem;
 		background: var(--color-surface-overlay, var(--color-surface));
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		pointer-events: none;
 		font-family: var(--font-sans, system-ui, sans-serif);
 	}

@@ -217,8 +217,8 @@ See [Type](#type).
 
 | Step | Radius | Used by |
 |---|---|---|
-| Box | 6px (`--card-radius`) | cards, controls, tabs, rows, popovers |
-| Nested | 4px | a box inside a box, such as a tab's × |
+| Box | 8px (`--card-radius`, `--radius-md`) | cards, controls, tabs, rows, popovers |
+| Nested | 4px (`--radius-sm`) | a box inside a box, such as a tab's × |
 | Pill | `--radius-full` | the composer |
 
 Floating layers (popovers, menus, modals) carry the one shadow. The chrome

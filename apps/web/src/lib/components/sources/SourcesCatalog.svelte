@@ -302,7 +302,7 @@
 	.error {
 		padding: 0.5rem 0.75rem;
 		margin-bottom: 0.75rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-error-subtle);
 		color: color-mix(in srgb, var(--color-error) 75%, #000);
 		font-size: 0.8125rem;

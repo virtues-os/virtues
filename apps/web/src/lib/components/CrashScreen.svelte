@@ -174,7 +174,7 @@
 	.link:focus-visible {
 		outline: 2px solid var(--border-focus);
 		outline-offset: 3px;
-		border-radius: 2px;
+		border-radius: var(--radius-xs);
 	}
 	.details {
 		position: relative;
@@ -182,7 +182,7 @@
 		width: 100%;
 		text-align: left;
 		border: 1px solid var(--border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--surface);
 		animation: rise 0.3s ease both;
 	}

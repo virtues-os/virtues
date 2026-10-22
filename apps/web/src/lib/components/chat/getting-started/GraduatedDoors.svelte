@@ -104,7 +104,7 @@
 		text-align: left;
 		background: none;
 		border: 1px solid var(--color-border-subtle);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		cursor: pointer;
 		transition:
 			border-color 150ms var(--ease-premium, ease),

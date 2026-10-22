@@ -140,7 +140,7 @@
 		border: 1px solid transparent;
 		/* One radius at every size. The shell's 6px (design.md), which grammar
 		   §6 allows and which was already the plurality of the seventeen. */
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font-family: var(--font-sans);

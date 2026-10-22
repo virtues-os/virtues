@@ -93,7 +93,7 @@
 		margin: 0;
 		padding: 12px 16px;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		color: var(--color-foreground);
 	}
 
@@ -126,7 +126,7 @@
 	img {
 		display: block;
 		max-width: 100%;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	.kicker {

@@ -712,7 +712,7 @@
 		width: 4px;
 		height: 32px;
 		transform: translate(-50%, -50%);
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-foreground-subtle);
 		opacity: 0;
 		pointer-events: none;

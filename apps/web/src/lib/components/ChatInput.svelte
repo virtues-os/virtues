@@ -581,7 +581,7 @@
 	.chat-input :global(.composer-prose pre) {
 		margin: 0;
 		padding: 0.5rem 0.625rem;
-		border-radius: 0.375rem;
+		border-radius: var(--radius-md);
 		background: var(--color-surface-elevated);
 		/* design-ok: a code block is code; a fixed advance is the content */
 		font-family: var(--font-mono);
@@ -590,7 +590,7 @@
 	}
 	.chat-input :global(.composer-prose :not(pre) > code) {
 		padding: 0.0625rem 0.25rem;
-		border-radius: 0.25rem;
+		border-radius: var(--radius-sm);
 		background: var(--color-surface-elevated);
 		/* design-ok: inline code is code; a fixed advance is the content */
 		font-family: var(--font-mono);

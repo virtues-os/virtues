@@ -353,7 +353,7 @@
 		font-size: 0.875rem;
 		background: var(--color-background-secondary);
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		color: var(--color-foreground);
 	}
 </style>

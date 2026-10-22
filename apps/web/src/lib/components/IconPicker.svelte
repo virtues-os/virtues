@@ -392,7 +392,7 @@
 		height: 32px;
 		margin: 10px 10px 0;
 		padding: 0 10px;
-		border-radius: 7px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface-overlay);
 		color: var(--color-foreground-muted);
 	}
@@ -512,7 +512,7 @@
 		display: flex;
 		flex: none;
 		padding: 2px;
-		border-radius: 7px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface-overlay);
 	}
 
@@ -523,7 +523,7 @@
 		color: var(--color-foreground-muted);
 		background: none;
 		border: none;
-		border-radius: 5px;
+		border-radius: var(--radius-md);
 		cursor: pointer;
 	}
 
@@ -568,7 +568,7 @@
 		padding: 0;
 		background: none;
 		border: none;
-		border-radius: 7px;
+		border-radius: var(--radius-md);
 		cursor: pointer;
 		transition: background 100ms;
 	}

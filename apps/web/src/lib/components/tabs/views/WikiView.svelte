@@ -1077,14 +1077,14 @@
 		display: flex;
 		gap: 4px;
 		padding: 4px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: color-mix(in oklab, var(--color-foreground) 5%, var(--color-surface));
 	}
 
 	.year-seg {
 		padding: 4px 12px;
 		border: 0;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		font: inherit;

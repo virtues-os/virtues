@@ -76,7 +76,7 @@
 	.doc-footnote.selected {
 		outline: 2px solid var(--color-border-focus);
 		outline-offset: 1px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	.note {
@@ -90,7 +90,7 @@
 		padding: 4px 8px;
 		transform: translateX(-50%);
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface);
 		color: var(--color-foreground);
 		font-family: var(--md-body-family);

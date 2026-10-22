@@ -352,7 +352,7 @@
 		left: 50%;
 		transform: translateX(-50%);
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		padding: 2rem 1.75rem 1.25rem;
 		background: var(--color-background);
 		box-sizing: border-box;

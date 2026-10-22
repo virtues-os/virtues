@@ -178,7 +178,7 @@
 	}
 	.ref-figure-media {
 		width: 100%;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		overflow: hidden;
 		background: var(--color-surface-elevated);
 	}
@@ -212,7 +212,7 @@
 	.ref-anchor {
 		width: 44px;
 		height: 44px;
-		border-radius: 9px;
+		border-radius: var(--radius-lg);
 		flex-shrink: 0;
 	}
 	.ref-anchor.round {

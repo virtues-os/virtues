@@ -691,7 +691,7 @@
 		width: 34px;
 		height: 34px;
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: var(--color-surface);
 		color: var(--color-foreground-muted);
 		cursor: pointer;
@@ -726,7 +726,7 @@
 		z-index: calc(var(--z-popover, 1000) + 1);
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
 	}
 </style>

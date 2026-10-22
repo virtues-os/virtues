@@ -353,7 +353,7 @@
 		font-weight: 600;
 		color: var(--color-primary);
 		background: color-mix(in srgb, var(--color-primary) 12%, transparent);
-		border-radius: 3px;
+		border-radius: var(--radius-sm);
 	}
 
 	.badge-auto {
@@ -362,7 +362,7 @@
 		font-weight: 600;
 		color: var(--color-foreground-muted);
 		background: color-mix(in srgb, var(--color-foreground-muted) 12%, transparent);
-		border-radius: 3px;
+		border-radius: var(--radius-sm);
 	}
 
 	.preview {

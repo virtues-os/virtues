@@ -32,7 +32,7 @@
 		font-size: 0.875rem;
 		line-height: 1.2;
 		padding: 0.45rem 0.95rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		border: 1px solid var(--color-border);
 		background: transparent;
 		color: var(--color-foreground);

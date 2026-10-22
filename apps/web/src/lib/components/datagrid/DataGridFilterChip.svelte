@@ -208,7 +208,7 @@
 		color: var(--color-foreground-muted);
 		background: transparent;
 		border: none;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		cursor: pointer;
 	}
 
@@ -248,7 +248,7 @@
 		padding: 0.25rem;
 		background: var(--color-background, #fff);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
 	}
 

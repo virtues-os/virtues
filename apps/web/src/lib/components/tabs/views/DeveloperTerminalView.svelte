@@ -520,7 +520,7 @@
         gap: 4px;
         font-size: 12px;
         padding: 4px 10px;
-        border-radius: 6px;
+        border-radius: var(--radius-md);
         background: var(--color-surface-elevated);
         color: var(--color-foreground-muted);
     }

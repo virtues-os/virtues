@@ -71,7 +71,7 @@
 		height: 32px;
 		margin-top: 8px;
 		padding: 0 4px 0 12px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		font-family: var(--font-sans);
 		font-size: 13px;
 		font-weight: 500;
@@ -105,7 +105,7 @@
 		min-width: 18px;
 		height: 18px;
 		padding: 0 4px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: color-mix(in srgb, var(--color-foreground-muted) 22%, transparent);
 		font-size: 11px;
 		font-weight: 600;

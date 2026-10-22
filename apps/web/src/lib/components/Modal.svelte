@@ -118,7 +118,7 @@
 		width: 100%;
 		background: var(--surface);
 		border: 1px solid var(--border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
 		overflow: hidden;
 		animation: modal-slide-in 150ms ease-out;
@@ -171,7 +171,7 @@
 		justify-content: center;
 		width: 28px;
 		height: 28px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--foreground-muted);
 		border: none;
@@ -206,7 +206,7 @@
 		padding: 10px 12px;
 		font-size: 14px;
 		border: 1px solid var(--border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: var(--surface);
 		color: var(--foreground);
 		outline: none;

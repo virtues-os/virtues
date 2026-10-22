@@ -280,7 +280,7 @@
 		gap: 12px;
 		min-height: 72px;
 		padding: 0 8px;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 	}
 	.row:hover {
 		background: color-mix(in srgb, var(--color-foreground) 4%, transparent);
@@ -306,7 +306,7 @@
 		display: inline-flex;
 		align-items: center;
 		justify-content: center;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: color-mix(in srgb, var(--color-foreground) 6%, transparent);
 		color: var(--color-foreground-muted);
 	}

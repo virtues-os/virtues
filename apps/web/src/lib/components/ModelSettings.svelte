@@ -189,7 +189,7 @@
 		font-size: 14px;
 		height: 40px;
 		padding: 0 12px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		border: 1px solid var(--color-border);
 		background: var(--color-surface);
 		color: var(--color-foreground);
@@ -241,7 +241,7 @@
 	/* Placeholder bars, sized like a label and a select. */
 	.ph {
 		display: block;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--hover-bg);
 	}
 	.ph-label {

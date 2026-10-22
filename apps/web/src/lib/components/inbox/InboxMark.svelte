@@ -99,7 +99,7 @@
 		flex: none;
 		padding: 0;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground);
 		cursor: pointer;
@@ -223,7 +223,7 @@
 		width: 100%;
 		padding: 8px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		text-align: left;
 		cursor: pointer;

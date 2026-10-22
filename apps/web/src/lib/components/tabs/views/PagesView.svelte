@@ -288,7 +288,7 @@
 		background-size: cover;
 		background-position: center;
 		background-color: var(--color-surface-elevated);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 	.card-body {
 		display: flex;

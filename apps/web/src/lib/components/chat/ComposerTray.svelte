@@ -137,7 +137,7 @@
 		gap: 0.5rem;
 		padding: 0.375rem 0.625rem;
 		border: 1px solid var(--color-border);
-		border-radius: 0.625rem;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface-elevated);
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
@@ -157,7 +157,7 @@
 		align-items: center;
 		justify-content: center;
 		padding: 0.125rem;
-		border-radius: 0.375rem;
+		border-radius: var(--radius-md);
 		color: var(--color-foreground-muted);
 		transition: background-color 0.15s ease;
 	}
@@ -179,7 +179,7 @@
 		gap: 0.5rem;
 		padding: 0.375rem 0.5rem 0.375rem 0.375rem;
 		border: 1px solid var(--color-border-subtle);
-		border-radius: 0.625rem;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface-elevated);
 		max-width: 15rem;
 	}
@@ -192,7 +192,7 @@
 	.attachment-thumb {
 		width: 4.5rem;
 		height: 4.5rem;
-		border-radius: 0.4rem;
+		border-radius: var(--radius-md);
 		object-fit: cover;
 		flex-shrink: 0;
 		display: block;
@@ -201,7 +201,7 @@
 	.attachment-icon {
 		width: 2.25rem;
 		height: 2.25rem;
-		border-radius: 0.4rem;
+		border-radius: var(--radius-md);
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -236,7 +236,7 @@
 		align-items: center;
 		justify-content: center;
 		padding: 0.125rem;
-		border-radius: 0.375rem;
+		border-radius: var(--radius-md);
 		color: var(--color-foreground-muted);
 		transition: background-color 0.15s ease;
 	}
@@ -269,7 +269,7 @@
 		margin-bottom: 0.5rem;
 		padding: 0.375rem 0.625rem;
 		border: 1px solid var(--color-warning, var(--color-border));
-		border-radius: 0.625rem;
+		border-radius: var(--radius-xl);
 		background: var(--color-warning-subtle, var(--color-surface-elevated));
 		font-size: 0.8125rem;
 		color: var(--color-foreground);

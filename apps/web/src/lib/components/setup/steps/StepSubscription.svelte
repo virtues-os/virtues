@@ -395,7 +395,7 @@
 		max-width: 25rem;
 		margin: 0 auto;
 		padding: 1.75rem 1.75rem 1.5rem;
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface-overlay, var(--color-surface));
 		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
 		outline-offset: -1px;

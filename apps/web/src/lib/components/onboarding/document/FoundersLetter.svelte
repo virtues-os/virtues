@@ -304,7 +304,7 @@
 		margin: 2rem 0 0;
 		aspect-ratio: 16 / 9;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: color-mix(in srgb, var(--color-foreground) 3%, transparent);
 		display: grid;
 		place-items: center;
@@ -607,7 +607,7 @@
 		gap: 0.4rem;
 		padding: 0.35rem 0.7rem;
 		border: 1px solid var(--color-border);
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		font-size: var(--t-small);
 		color: var(--color-foreground-muted);
 		text-decoration: none;

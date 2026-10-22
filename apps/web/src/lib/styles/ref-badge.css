@@ -13,7 +13,7 @@
 	--ref-pill-bg: color-mix(in srgb, var(--color-primary) 12%, transparent);
 	--ref-pill-bg-hover: color-mix(in srgb, var(--color-primary) 20%, transparent);
 	--ref-pill-color: var(--color-primary);
-	--ref-pill-radius: 100px;
+	--ref-pill-radius: var(--radius-full);
 	--ref-pill-font-size: 0.8125rem;
 	--ref-pill-transition: background-color 0.15s ease;
 }

@@ -119,7 +119,7 @@
 	.switch {
 		width: 44px;
 		height: 26px;
-		border-radius: 13px;
+		border-radius: var(--radius-full);
 		background: var(--color-border);
 		position: relative;
 		flex: none;

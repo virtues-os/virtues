@@ -92,6 +92,6 @@
 	.doc-mention.selected {
 		outline: 2px solid var(--color-primary);
 		outline-offset: 1px;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 </style>

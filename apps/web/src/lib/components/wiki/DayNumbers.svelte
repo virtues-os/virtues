@@ -480,7 +480,7 @@
 		width: max-content;
 		max-width: 16rem;
 		padding: 0.5rem 0.625rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
@@ -613,7 +613,7 @@
 		align-items: center;
 		column-gap: 0.55rem;
 		padding: 0.4rem 0.35rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		color: var(--color-foreground);
 		cursor: pointer;
 	}

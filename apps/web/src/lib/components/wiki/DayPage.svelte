@@ -1453,7 +1453,7 @@
 		display: flex;
 		padding: 2px;
 		background: var(--color-surface-elevated);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	.seg {
@@ -1462,7 +1462,7 @@
 		background: transparent;
 		color: var(--color-foreground-subtle);
 		font: inherit;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		cursor: pointer;
 	}
 
@@ -1518,7 +1518,7 @@
 	.picture-choice {
 		padding: 4px 8px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground);
 		font: inherit;
@@ -1733,7 +1733,7 @@
 	/* ── Record, arrived at from a citation ── */
 	.cited {
 		background: var(--color-surface-elevated);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		padding: 0.875rem 1rem;
 		margin-bottom: 1.5rem;
 	}

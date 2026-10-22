@@ -49,7 +49,7 @@
 <style>
 	.subagent-panel {
 		border: 1px solid var(--color-border);
-		border-radius: 0.5rem;
+		border-radius: var(--radius-lg);
 		background: color-mix(in srgb, var(--color-info) 5%, transparent);
 		padding: 0.6rem 0.75rem;
 		margin-bottom: 0.75rem;
@@ -91,7 +91,7 @@
 		align-items: center;
 		gap: 0.35rem;
 		padding: 0.3rem 0.45rem;
-		border-radius: 0.375rem;
+		border-radius: var(--radius-md);
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
 		min-width: 0;

@@ -144,7 +144,7 @@
 		gap: 2px;
 		padding: 2px;
 		background: var(--color-surface-elevated);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	.seg {
@@ -158,7 +158,7 @@
 		color: var(--color-foreground-muted);
 		font-size: 12px;
 		font-weight: 500;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		cursor: pointer;
 		transition:
 			color 0.12s ease,
@@ -194,7 +194,7 @@
 		border: none;
 		background: transparent;
 		color: var(--color-foreground-muted);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		cursor: pointer;
 		transition:
 			color 0.12s ease,

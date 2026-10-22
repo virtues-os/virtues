@@ -750,7 +750,7 @@ h6 {
 	color: var(--surface) !important;
 	font-family: var(--font-sans) !important;
 	height: 26px !important;
-	border-radius: 6px !important;
+	border-radius: var(--radius-md) !important;
 }
 
 /* The secondary one (View). Quieter than Undo on purpose: the room is still

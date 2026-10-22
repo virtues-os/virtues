@@ -45,7 +45,7 @@
 	.msg-image {
 		max-width: min(420px, 100%);
 		max-height: 420px;
-		border-radius: 0.75rem;
+		border-radius: var(--radius-xl);
 		border: 1px solid var(--color-border-subtle);
 		display: block;
 		cursor: zoom-in;
@@ -68,7 +68,7 @@
 		gap: 0.375rem;
 		padding: 0.5rem 0.75rem;
 		border: 1px solid var(--color-border-subtle);
-		border-radius: 0.625rem;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface-elevated);
 		font-size: 0.875rem;
 		color: var(--color-foreground);

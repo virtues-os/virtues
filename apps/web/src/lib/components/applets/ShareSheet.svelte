@@ -420,7 +420,7 @@
 		width: 100%;
 		height: 260px;
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: var(--color-surface);
 	}
 	.facts {
@@ -436,7 +436,7 @@
 		gap: 0.5rem;
 		margin-top: 0.75rem;
 		padding: 0.625rem 0.75rem;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		border: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
 		background: color-mix(in srgb, var(--color-warning) 10%, transparent);
 		color: var(--color-foreground);
@@ -473,7 +473,7 @@
 	pre {
 		margin: 0.25rem 0 0;
 		padding: 0.5rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface-elevated);
 		font-size: 0.75rem;
 		white-space: pre-wrap;
@@ -509,7 +509,7 @@
 		gap: 0.375rem;
 		padding: 0.75rem;
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		min-width: 0;
 	}
 	.link {
@@ -550,7 +550,7 @@
 		font-size: 0.875rem;
 		padding: 0.4rem 0.5rem;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface);
 		color: var(--color-foreground);
 	}
@@ -565,6 +565,6 @@
 		color: var(--color-error);
 		padding: 0.5rem 0.625rem;
 		background: var(--color-error-bg);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 </style>

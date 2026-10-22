@@ -26,7 +26,7 @@
 	.dot {
 		width: 0.45rem;
 		height: 0.45rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-foreground);
 		animation: breathe 1.3s ease-in-out infinite alternate;
 		flex: none;

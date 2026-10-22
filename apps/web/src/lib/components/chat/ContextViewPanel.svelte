@@ -385,7 +385,7 @@
 		padding: 0.5rem 1rem;
 		border: 1px solid var(--color-border);
 		background: var(--color-surface);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		cursor: pointer;
 	}
 
@@ -458,7 +458,7 @@
 	.cv-bar {
 		display: flex;
 		height: 8px;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		overflow: hidden;
 		background: var(--color-surface-elevated);
 	}
@@ -572,7 +572,7 @@
 		margin: 0 0 0.75rem;
 		padding: 0.75rem;
 		background: var(--color-surface-elevated);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		font-family: inherit;
 		font-size: 0.75rem;
 		white-space: pre-wrap;
@@ -602,7 +602,7 @@
 		padding: 0.5rem 1rem;
 		background: transparent;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		font-size: 0.875rem;
 		color: var(--color-foreground);
 		cursor: pointer;

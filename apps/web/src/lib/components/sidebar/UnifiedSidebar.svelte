@@ -461,7 +461,7 @@
 		width: 4px;
 		height: 32px;
 		transform: translateY(-50%);
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-foreground-subtle);
 		opacity: 0;
 		pointer-events: none;
@@ -497,7 +497,7 @@
 		gap: 4px;
 		padding: 8px 12px;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface-elevated);
 		color: var(--color-foreground);
 		font-size: 13px;

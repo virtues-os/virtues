@@ -202,7 +202,7 @@
 	.diff {
 		margin: 0 0 0.75rem;
 		padding: 0.5rem 0.625rem;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		background: var(--color-surface-raised, rgba(0, 0, 0, 0.03));
 		font-family: var(--font-mono, ui-monospace, monospace);
 		font-size: 0.75rem;

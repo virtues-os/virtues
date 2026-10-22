@@ -454,7 +454,7 @@
 		gap: 8px;
 		padding: 24px;
 		border: 2px dashed var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		cursor: pointer;
 		transition:
 			border-color var(--motion-hover-out) var(--ease-premium),
@@ -504,7 +504,7 @@
 		max-width: 200px;
 		height: 4px;
 		background: var(--color-surface-overlay);
-		border-radius: 2px;
+		border-radius: var(--radius-xs);
 		overflow: hidden;
 		margin-top: 4px;
 	}
@@ -524,7 +524,7 @@
 		font-size: 13px;
 		color: var(--color-error);
 		background: color-mix(in srgb, var(--color-error) 10%, transparent);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 	}
 
 	/* Library tab */
@@ -585,7 +585,7 @@
 		padding: 10px 12px;
 		font-size: 14px;
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: var(--color-background);
 		color: var(--color-foreground);
 		outline: none;

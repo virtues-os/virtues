@@ -251,7 +251,7 @@
 	.swatch.bar {
 		height: 8px;
 		width: 8px;
-		border-radius: 2px;
+		border-radius: var(--radius-xs);
 	}
 	.swatch.s1 {
 		background: color-mix(in srgb, var(--color-foreground) 60%, transparent);

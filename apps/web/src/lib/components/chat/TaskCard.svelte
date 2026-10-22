@@ -87,7 +87,7 @@
 		max-width: 40em;
 		padding: 0.625rem 0.875rem 0.5rem;
 		border: 1px solid var(--color-border);
-		border-radius: 12px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface);
 	}
 	figcaption {

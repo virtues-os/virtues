@@ -2626,7 +2626,7 @@
 		justify-content: center;
 		width: 28px;
 		height: 28px;
-		border-radius: 9px;
+		border-radius: var(--radius-lg);
 		color: var(--color-foreground-subtle);
 		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
 		backdrop-filter: blur(8px);
@@ -2861,7 +2861,7 @@
 		place-items: center;
 		width: 2.25rem;
 		height: 2.25rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		border: 1px solid var(--color-border);
 		background: var(--color-surface-elevated);
 		color: var(--color-foreground-muted);
@@ -2889,7 +2889,7 @@
 	.jump-dots i {
 		width: 0.3125rem;
 		height: 0.3125rem;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		background: var(--color-primary);
 		opacity: 0.45;
 	}
@@ -2950,7 +2950,7 @@
 		margin: 0.5rem 0;
 		padding: 0.5rem 0.75rem;
 		border: 1px solid var(--color-border-subtle);
-		border-radius: 0.625rem;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface-elevated);
 		font-size: 0.8125rem;
 		color: var(--color-foreground-muted);
@@ -3159,7 +3159,7 @@
 		padding: 0.25rem;
 		border: none;
 		background: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		color: var(--foreground-subtle);
 		cursor: pointer;
 	}

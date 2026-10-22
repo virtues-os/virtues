@@ -58,7 +58,7 @@
 		margin-left: auto;
 		margin-right: auto;
 		margin-bottom: 1.5rem;
-		border-radius: 0.5rem;
+		border-radius: var(--radius-lg);
 		overflow: hidden;
 		transition: max-width 0.2s ease-out;
 	}
@@ -117,7 +117,7 @@
 		background: rgba(0, 0, 0, 0.6);
 		backdrop-filter: blur(4px);
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		cursor: pointer;
 		transition: background 150ms;
 	}

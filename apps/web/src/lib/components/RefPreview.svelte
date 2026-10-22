@@ -94,7 +94,7 @@
 		width: 260px;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		box-shadow:
 			0 4px 6px -1px rgba(0, 0, 0, 0.1),
 			0 10px 20px -5px rgba(0, 0, 0, 0.15);
@@ -130,7 +130,7 @@
 		gap: 3px;
 		padding: 3px 8px;
 		font-size: 0.6875rem;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		border: 1px solid var(--color-border);
 		background: transparent;
 		color: var(--color-foreground-muted);

@@ -153,7 +153,7 @@
 		padding: 0.75rem 1rem;
 		background: var(--color-surface-elevated);
 		border: 1px solid var(--color-border);
-		border-radius: 0.5rem;
+		border-radius: var(--radius-lg);
 		margin: 0.75rem 0;
 	}
 
@@ -235,7 +235,7 @@
 	.action-btn {
 		padding: 0.375rem 0.75rem;
 		border: none;
-		border-radius: 0.375rem;
+		border-radius: var(--radius-md);
 		font-size: 0.8125rem;
 		font-weight: 500;
 		cursor: pointer;

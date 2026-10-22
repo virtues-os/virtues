@@ -1686,7 +1686,7 @@
 		margin: 0 -4px;
 		padding: 0 4px;
 		border: none;
-		border-radius: 4px;
+		border-radius: var(--radius-sm);
 		background: var(--color-page);
 		box-shadow: inset 0 0 0 1px var(--color-border);
 		color: var(--color-foreground);
@@ -1741,7 +1741,7 @@
 		height: 7px;
 		margin-right: 2px;
 		flex: none;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		/* The accent, as on the header mark's inbox dot: "something new" has
 		   one color everywhere. Green would say something succeeded. */
 		background: var(--color-primary);
@@ -1803,7 +1803,7 @@
 		height: 22px;
 		padding: 0;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-subtle);
 		cursor: pointer;

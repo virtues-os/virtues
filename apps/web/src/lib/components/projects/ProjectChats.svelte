@@ -110,7 +110,7 @@
 		position: relative;
 		display: flex;
 		align-items: center;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 	}
 	.chat-item:hover {
 		background: var(--color-background-hover);
@@ -132,7 +132,7 @@
 	.chat-open:focus-visible {
 		outline: 2px solid var(--color-primary);
 		outline-offset: -2px;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 	}
 	.chat-glyph {
 		display: flex;
@@ -166,7 +166,7 @@
 		align-self: flex-start;
 		padding: 4px 8px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: none;
 		cursor: pointer;
 		font-size: 0.8125rem;

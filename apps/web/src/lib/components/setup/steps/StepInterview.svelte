@@ -672,7 +672,7 @@
 		align-items: baseline;
 		gap: 8px;
 		padding: 6px 12px;
-		border-radius: 999px;
+		border-radius: var(--radius-full);
 		outline: 1px solid var(--color-border);
 		outline-offset: -1px;
 	}

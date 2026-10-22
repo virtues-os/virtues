@@ -1032,7 +1032,7 @@
 		padding: 3px 6px;
 		font-size: 0.8125rem;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground);
 	}
@@ -1048,7 +1048,7 @@
 		align-items: center;
 		padding: 4px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		cursor: pointer;
@@ -1063,7 +1063,7 @@
 		text-align: center;
 		font-size: 0.75rem;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground);
 	}
@@ -1104,7 +1104,7 @@
 		font-size: 0.625rem;
 		line-height: 1.4;
 		font-weight: 600;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: var(--color-primary);
 		color: var(--color-on-primary, #fff);
 	}
@@ -1138,7 +1138,7 @@
 	.pdf-rail-count {
 		padding: 0 6px;
 		font-size: 0.6875rem;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: var(--ref-pill-bg);
 		color: var(--color-foreground-muted);
 	}
@@ -1171,7 +1171,7 @@
 		width: 20px;
 		height: 20px;
 		border: none;
-		border-radius: 5px;
+		border-radius: var(--radius-md);
 		background: var(--color-surface-elevated, #222);
 		color: var(--color-foreground-subtle);
 		cursor: pointer;
@@ -1190,7 +1190,7 @@
 		padding: 3px 7px;
 		font-size: 0.6875rem;
 		border: none;
-		border-radius: 5px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground-muted);
 		cursor: pointer;
@@ -1207,7 +1207,7 @@
 		width: 100%;
 		padding: 8px;
 		border: none;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: transparent;
 		text-align: left;
 		cursor: pointer;
@@ -1220,7 +1220,7 @@
 		width: 10px;
 		height: 10px;
 		margin-top: 3px;
-		border-radius: 3px;
+		border-radius: var(--radius-sm);
 		border: 1px solid rgba(0, 0, 0, 0.2);
 	}
 	.pdf-rail-body {
@@ -1292,7 +1292,7 @@
 	   boxes alike. */
 	:global(.pdf-flash) {
 		animation: pdf-flash-pulse 2.4s ease-out;
-		border-radius: 2px;
+		border-radius: var(--radius-xs);
 	}
 	@keyframes pdf-flash-pulse {
 		0%,
@@ -1313,7 +1313,7 @@
 		display: flex;
 		gap: 4px;
 		padding: 5px 6px;
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		background: var(--color-surface-elevated, #222);
 		border: 1px solid var(--color-border);
 		box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
@@ -1347,7 +1347,7 @@
 		z-index: 50;
 		width: 260px;
 		padding: 8px;
-		border-radius: 10px;
+		border-radius: var(--radius-xl);
 		background: var(--color-surface-elevated, #222);
 		border: 1px solid var(--color-border);
 		box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
@@ -1368,7 +1368,7 @@
 		padding: 6px 8px;
 		font-size: 0.8125rem;
 		border: 1px solid var(--color-border);
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground);
 	}

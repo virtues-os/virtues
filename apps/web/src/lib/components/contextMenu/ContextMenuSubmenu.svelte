@@ -129,7 +129,7 @@
 		position: fixed;
 		background: var(--color-surface);
 		border: 1px solid var(--color-border);
-		border-radius: 8px;
+		border-radius: var(--radius-lg);
 		box-shadow: var(--shadow-float);
 		padding: 4px;
 		min-width: 160px;
@@ -176,7 +176,7 @@
 		width: 100%;
 		padding: 6px 10px;
 		border: none;
-		border-radius: 6px;
+		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground);
 		font-size: 13px;

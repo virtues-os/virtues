@@ -400,7 +400,7 @@
 		color: var(--color-foreground);
 		background: var(--color-surface-elevated);
 		border: 1px solid var(--color-border);
-		border-radius: 0.375rem;
+		border-radius: var(--radius-md);
 	}
 
 	.save-input::placeholder {
@@ -428,7 +428,7 @@
 		padding: 0.875rem;
 		background: var(--color-surface-elevated);
 		border: 1px solid var(--color-border-subtle, var(--color-border));
-		border-radius: 0.375rem;
+		border-radius: var(--radius-md);
 		transition:
 			border-color 0.16s ease,
 			transform 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.2);
@@ -462,7 +462,7 @@
 		width: 100%;
 		max-height: 15rem;
 		object-fit: cover;
-		border-radius: 0.25rem;
+		border-radius: var(--radius-sm);
 		background: var(--color-surface);
 	}
 
