@@ -1,259 +1,314 @@
-# Tasks: one list for the owner and their assistant
+# Tasks: your to-dos and requests to the assistant
 
-**Status:** Slices 1 and 2 built on `wave` 2026-10-20, not yet on
-`staging`. Left: slice 3, and the drag-to-reorder question below.
+**Status:** Rewritten 2026-10-21. The list, the two task tools and Hand to
+assistant are built on `wave` (`20c0f35f5`, `a7a2df843`). Nothing in this
+version is built yet. Slice 1 makes the assistant do its tasks without a chat
+open. Slice 2 rebuilds the page around what it produces.
 
-Tasks is a plain to-do list in Home, between Pages and Applets. The owner
-and the assistant work from the same list. Think of a light version of
-Linear for one person and their agent: a title, an optional due date, a
-checkbox, an optional project, and a short history of who did what.
+## Why the first version fell short
 
-This plan covers that core and nothing else. Picking up tasks from the
-record (overheard intentions, emails waiting for a reply), syncing from other
-task apps, and reminders by time or place are later work. They are sketched
-at the end only so that the core leaves room for them.
+The first version shipped a list shaped like Apple Reminders, with an
+assignee column for the assistant. On a running box it has these problems:
+
+- **Assistant tasks never run.** Background runs were left for a later slice,
+  so a task assigned to the assistant does nothing until the owner opens a
+  chat about it. Hand to assistant opens a new chat tab with the task id
+  typed into the owner's own message.
+- **The result has nowhere to go.** When the assistant finishes, the answer is
+  a history line or a chat message. The person who asked "how did my sleep
+  track caffeine last month" wants that answer as prose or a chart, and has to
+  go looking for it.
+- **The assistant's work is hidden by default.** The page opens on **Mine**,
+  which hides every assistant task.
+- **The detail is a form.** Boxed inputs, the browser's date and time pickers,
+  a `<select>` for project, and the title drawn twice.
+- **Every fact is a grey pill,** and an overdue task turns its header and its
+  pill red. That breaks the rule that nothing gets louder.
+- **Tasks crowd the sidebar.** Recent blends tasks with chats and pages, so a
+  handful of tasks pushes the owner's pages out of it.
+- **Nothing says where the work ran,** on the owner's server or at a model
+  provider.
+
+## What the page is for
+
+One page holds two kinds of item:
+
+- **To-dos** are the owner's own. They stay as light as Reminders: type a
+  line, press Return, tick it off.
+- **Requests** are things the owner asked the assistant to do. A request is a
+  question with an answer. The assistant works on it in the background and
+  brings back a **result**: a few paragraphs, a chart from the owner's data,
+  or a page it drafted.
+
+A request moves through a short lifecycle, shown on the page:
+
+| State | Status value | Means |
+|---|---|---|
+| Queued | `open` | waiting to run, now or at its time |
+| Working | `active` | a run is in progress |
+| Ready | `ready` | the result is waiting for the owner |
+| Done | `done` | the owner accepted it |
+| Dismissed | `dismissed` | the owner dropped it |
+
+**Ready** is the new state, and it is what the page is for. The assistant
+never marks its own request done. It marks it ready, and the owner closes it
+by accepting the result. Ready also covers "I need something from you": the
+result says what is missing, and the owner answers by replying.
+
+To-dos keep `open`, `done` and `dismissed`. Their rows have no Working or
+Ready state.
+
+### What each persona gets
+
+| Persona | What the page gives them |
+|---|---|
+| Narrative seeker | results written as prose, on the request itself |
+| Quantified self | requests that come back as charts from their own data |
+| Tech prosumer | ask, close the laptop, come back to finished work |
+| Recovery | no red, no overdue alarm, no counts, no streaks |
+| Data sovereign | every request says which model did the work and who paid |
 
 ## What stays out
 
-The test for every feature: would someone who uses Apple Reminders miss it?
-If not, it stays out.
+The test for every feature is still: would someone who uses Apple Reminders
+miss it? Requests are the one exception, and they are the reason the page
+exists.
 
-No priorities, labels, estimates, cycles, boards or subtasks. No statuses
-beyond the four below. Assignees are the owner and the assistant, and
-nobody else. Anything that needs more structure goes in the notes field.
-
-There are no badges, counts or nagging, which carries forward the glossary's
-line on commitments. The sidebar entry never shows a number. An overdue task
-sits under Overdue and nothing gets louder. A task can notify only when its
-owner gave it a time or a place, which is the reminders slice and not this
-one.
+No priorities, labels, estimates, boards or subtasks. Assignees are the owner
+and the assistant, and nobody else. No badges, counts or nagging: the sidebar
+entry never shows a number, and an overdue to-do never turns red.
 
 ## The object
 
-A task is one sentence with a few facts attached.
+The facts from the first version stay as they are: title, notes, assignee,
+status, due, project, origin, source, and the signed, append-only history in
+`app_task_events`. This version adds:
 
 | Fact | Values | Notes |
 |---|---|---|
-| **Title** | one line | the only required field |
-| **Notes** | markdown, optional | where anything bigger goes |
-| **Assignee** | `owner` · `assistant` | the owner is the default |
-| **Status** | `open` · `active` · `done` · `dismissed` | `active` means the assistant is working on it now. The owner's own tasks are open or done; the list shows no in-progress control for them |
-| **Due** | none · a date · a date and time | a date is enough most of the time |
-| **Project** | none · one project | the existing Projects (`app_projects`) |
-| **Origin** | `owner` · `chat` · `assistant` | who created it: typed into the list, asked for in chat, or added by the assistant on its own |
-| **Source** | optional app URL | `/page/page_…`, `/chat/chat_…`: the URL convention pins and refs use, so it opens anywhere a ref opens |
+| **Status** | adds `ready` | only on requests |
+| **Result** | markdown, optional | set when a run finishes. Rendered with the chat's prose and chart blocks |
+| **Result URL** | optional app URL | a page or applet the run made, using the ref URL convention |
+| **Chat** | optional chat id | the request's own work chat, created by its first run and reused by every later run |
+| **Run after** | timestamp, optional | when the worker may pick the request up. Null means it never runs on its own |
+| **Attempts** | integer | failed runs in a row. Reset by a successful run |
 
-**The three ways a task ends,** taken from the glossary's commitment:
-*done*, *dismissed* (abandoned, or never a real task) and *superseded*. In
-the core, superseded is simply dismissed with a note. It gets its own value
-only if the record-capture slice needs one.
+A request is a task with `assignee = 'assistant'`. There is no separate
+table.
 
-### History
+### When a request runs
 
-Each task keeps a short, append-only log of what happened to it: created,
-edited, status changed, a note added. Each entry is signed `owner` or
-`assistant`. This is how the owner sees what the assistant did ("Drafted
-the reply. It's in Pages under *Lease renewal*.") without reading a chat
-transcript. It is the one Linear idea worth keeping. Comment threads,
-mentions and reactions are not.
+- A request with a date and time (`due_at`) runs at that time. "Check
+  tomorrow at 9 whether the reply came in" means exactly that.
+- A request with only a date, or with no date, runs as soon as it is queued.
+  The date says when the owner wants the answer, not when to start.
+- Handing a to-do to the assistant queues it.
+- Replying to a ready request appends the reply as a note, sets the status
+  back to `open`, and queues it again in the same chat.
 
 ## Data
 
-The schema is migration `0057_add_tasks.sql`: `app_tasks` (text ids,
-`task_…`) and the append-only `app_task_events`. `due_on` is always set when
-`due_at` is, and `closed_at` is set exactly when the status is done or
-dismissed. Both rules are enforced by CHECK constraints.
+One migration, claimed with `make migration NAME=task_requests`:
 
-There is no delete. A task leaves the list as done or dismissed, and both
-stay visible under Done. That keeps one way to remove a task, and the
-record-capture slice will later use dismissed tasks as examples of what not
-to pick up again. A deleted project leaves its tasks with no project
-(`ON DELETE SET NULL`); it does not take them with it.
+- Add `ready` to the `status` CHECK. `closed_at` stays null for `ready`,
+  because a ready request is not closed.
+- Add `result text`, `result_url text`, `chat_id text REFERENCES
+  app_chats(id) ON DELETE SET NULL`, `run_after timestamptz` and
+  `attempts integer NOT NULL DEFAULT 0`.
+- Add a partial index for the worker:
+  `(run_after) WHERE assignee = 'assistant' AND status = 'open' AND run_after IS NOT NULL`.
 
-Register both tables in `crates/virtues-registry/src/sql_catalog.rs` so the
-assistant can read them through `sql_query`.
+**Trap: existing assistant tasks must not all start at once.** The migration
+leaves `run_after` null on every existing row. Code sets `run_after` only on
+new requests and on hand-overs and replies after the migration. Without
+this, every assistant task on a box starts a model run, and charges, the
+minute the upgrade lands.
 
-## API
+Spend needs no new attribution column. `app_ai_calls.chat_id` already
+records the chat for every call, and each request has one chat, so a
+request's cost is the sum over its chat. The same rows carry `model` and
+`route` (`wallet` or `byo`), which is where the page's "where it ran" line
+comes from.
 
-| Route | Does |
-|---|---|
-| `GET /tasks?status=&assignee=&project_id=` | the list (open and active by default) |
-| `POST /tasks` | create |
-| `PATCH /tasks/:id` | edit any field, including status; writes an event |
-| `POST /tasks/:id/notes` | append a note event |
-| `GET /tasks/:id/events` | the history |
+Register the new columns in `sql_catalog.rs` with the rest of `app_tasks`.
 
-Every write goes through one function in core that updates the row and
-appends the event in a single transaction. The HTTP handler and the chat
-tools both call that function, so nothing writes to `app_tasks` directly.
+## Slice 1: requests run in the background
 
-## Surface
+### One headless agent loop
+
+`crate::agent::applet_runner::run_agent_loop` takes an `&Applet` and reads
+its chat, model slot and limits from the applet's config. Tasks need the
+same loop without an applet row.
+
+Split it in the same change. The loop body becomes a function that takes a
+job: chat id, prompt, model slot, `Limits`, and an attribution for the AI
+calls. Applets build a job from their row. Requests build one from the
+task. Both callers move onto it in one commit, with no second copy of the
+loop.
+
+### The worker
+
+A loop in the scheduler, started next to the applet cron scheduler, checks
+once a minute for requests where `status = 'open'`, `assignee = 'assistant'`
+and `run_after <= now()`. It runs one request at a time.
+
+For each request:
+
+1. Set `active`, signed `assistant`, in one transaction with the event, the
+   same way every task write goes through `api::tasks`.
+2. Create the request's chat on its first run. The opening message carries
+   the title, the notes and the history's notes. The chat belongs to the
+   request: it does not appear in Recent or in the chat list.
+3. Run the loop with the slot for background work, under the task limits.
+   The tool context carries the request's chat id, so every tool call lands
+   in the task history signed `assistant` with that chat.
+4. On success: store the final assistant message as `result`, set `ready`,
+   reset `attempts` and clear `run_after`. The assistant can set
+   `result_url` through `update_task` when it made a page.
+5. On a model or tool failure: increment `attempts`, keep `open`, and set
+   `run_after` with a backoff. After three failures, set `ready` with a
+   result that says what failed and what the owner can do.
+6. When a spending ceiling stops the run: set `ready` with a result that
+   names the ceiling and where to raise it. A ceiling is not a failure, the
+   same distinction `AppletRunStatus` draws.
+
+**A request cannot start another request.** Tasks created during a run are
+created for the owner, and `update_task` from a run cannot assign a task to
+the assistant. Without this guard, a run that creates a request can keep
+the worker busy, and spending, indefinitely.
+
+### Limits
+
+Request runs use `applet_runner::limits::Limits`: a ceiling per run and a
+ceiling per day across all requests, both settable by the owner in
+Settings. The default values are an open question below.
+
+### Changes to the tools and the chat side
+
+- `update_task` gains `ready` with `result`, and `result_url`.
+- **Hand to assistant** no longer opens a chat. It sets the assignee,
+  queues the request, and the row shows Queued at once.
+- A chat that creates a request with `create_task` queues it the same way.
+  The chat's task card shows the request's state and links to the page.
+- The chat prompt's tasks line (`tasks_line` in `api/circumstances.rs`)
+  adds ready requests to its counts, so "what came back?" needs no query.
+
+### What slice 1 does not change
+
+The page keeps its current layout. Ready requests show under their date
+group with a Ready chip and the result in the detail. That is enough to
+test runs end to end before the page is rebuilt.
+
+## Slice 2: the page
+
+### Layout
+
+One page, top to bottom, with no Mine / Assistant / All tabs:
+
+1. **Ready.** Each ready request shows its title and its result in the
+   chat's prose style. Charts and code blocks render as they do in chat. A
+   result URL shows as a ref card. Two actions: **Accept**, which sets
+   done, and **Reply**, which opens an inline composer under the result and
+   queues the request again.
+2. **Working.** Queued and active requests. Active ones show a quiet
+   progress mark. Each shows one line on where the work runs: the model's
+   display name, and "on your account" for BYO or "through Virtues" for the
+   wallet. A BYO model at a loopback or LAN address reads "on your server".
+3. **To-dos.** Dated to-dos first, in date order, then undated ones. The
+   date is muted text at the end of the line ("Tomorrow", "Fri", "2 days
+   ago"). No group headers until the list is long enough to need them,
+   and no red.
+4. **Done,** folded. It holds accepted requests, finished to-dos and
+   dismissed items, newest first.
+
+The add row stays at the top. A line typed there is a to-do. Pressing
+⌘Return instead of Return makes it a request.
+
+### Rows
+
+- To-do row: checkbox, title, muted date, and the project name in muted
+  text when there is one.
+- Request row: the Virtues mark in place of the checkbox, title, and a
+  status word (Queued, Working, Ready) in muted text.
+- No pills anywhere on the page.
+
+### Detail, in place
+
+Clicking a row opens it under itself, as now, but with no form fields:
+
+- The title edits in place in the row.
+- Notes use the composer's ProseMirror editor.
+- Due and project are text buttons ("Tomorrow · Kitchen remodel") that open
+  small popovers. The date popover takes the same plain-language input as
+  the add row (`tasks/due.ts`), with a calendar under it.
+- History is a quiet timeline under the notes. For a request, it includes
+  each run, its cost, and a link to the work chat for anyone who wants the
+  full transcript.
+
+### Keyboard
+
+j and k move between rows. x completes a to-do or accepts a ready request.
+e edits the title. ⌘Return on a to-do hands it to the assistant. Escape
+closes the detail.
 
 ### Sidebar
 
-- Add a **Tasks** entry to the Home list in `HomePanel.svelte`, between
-  Pages and Applets, with a `tasks` glyph in `AtlasIcon.svelte`. Like
-  Pages, it gets a hover "+" for quick add. ⌘⇧E (`task.new`; ⌘⇧T is the temporary chat's) opens the
-  list with the add row focused.
-- **Remove the Search entry from that list.** ⌘K, the summon chord and the
-  palette are not affected. Move the "All chats via search" comment
-  (`HomePanel.svelte:34`) to point at ⌘K.
-- In the mobile drawer (`MobileDrawer.svelte`), add a Tasks row. Keep the
-  search pill, because the phone has no ⌘K.
-- Add a `tasks` tab type in `tabs/types.ts` and `tabs/registry.ts`,
-  including `orderedTypes`.
+Tasks leave Recent. `recents.svelte.ts` stops blending tasks, and the
+`?task=` links stay for anything that already points at one. The Tasks entry
+in Home stays, with no count.
 
-### The list
+### Mobile
 
-The list follows Apple Reminders, not a data grid.
-
-- An **add row** at the top. Typing and pressing Return creates a task.
-  The row accepts a plain-language date ("fri", "tomorrow 5pm"), parsed on
-  the client and shown as a chip before the task is saved.
-- **Groups:** Overdue · Today · Upcoming · No date. Done is collapsed at
-  the bottom.
-- **Filter tabs** in a `SubNav`: **Mine** · **Assistant** · **All**, plus a
-  project picker.
-- **Row:** checkbox, title, due chip, project chip, an assistant mark when
-  the assignee is the assistant, and a source chip when there is a source.
-  `active` shows as a quiet in-progress dot. A row never has more than
-  that.
-- **Actions:** click the checkbox to complete, × to dismiss (on hover;
-  always drawn on a phone), and click a row to open the detail.
-
-### Detail
-
-The detail opens in place under its row, on desktop and phone alike. It holds the
-editable title and notes, the facts as inline pickers, and the history
-underneath. Two actions:
-
-- **Hand to assistant.** Sets the assignee to `assistant` and opens a new
-  chat seeded with the task. It always opens a new chat, even when a chat
-  created the task, because an old chat brings unrelated context and the
-  history already links every chat. That chat changes the task only through the task
-  tools, so everything it does lands in the history with its `chat_id`.
-- **Take back.** Sets the assignee to `owner`.
-
-## The assistant
-
-### Tools
-
-Add two native tools in `virtues-registry/src/tools.rs`, routed through
-`tools/executor.rs` the same way `update_memory` is:
-
-- **`create_task`** takes title, notes, assignee, due and project. It
-  accepts a list, so "make tasks for X, Y and Z" is one call.
-- **`update_task`** takes an id and any of: edit fields, set status, or
-  add a note.
-
-Reading the list goes through `sql_query` against the catalog entry. That
-keeps the tool count at two.
-
-Neither tool goes in `PERMISSION_REQUIRED`. Tasks are low-stakes, the
-history shows every change, and the owner can undo any of them.
-
-Regenerate `apps/web/src/lib/ai/fixtures/tool-ids.json` and add entries in
-`toolPresentation.ts`. A task tool call renders in chat as the task row
-itself, with a working checkbox.
-
-### When the assistant creates a task
-
-The assistant creates a task in two cases:
-
-- **Asked:** the owner says "add a task…" in chat. Origin is `chat`.
-- **Its own:** the assistant commits to doing something later ("I'll check
-  whether the reply came in tomorrow"). Origin is `assistant`, and the
-  assignee is `assistant`.
-
-It does not create tasks from things the owner merely mentions. That is
-the record-capture slice, and it needs its own threshold and its own
-dismissal loop.
-
-### Working an assistant task
-
-In the core, the assistant works a task only inside a chat: one the owner
-opened with **Hand to assistant**, or any chat where the owner asks it to.
-It marks the task `active` while working, adds a note with the result,
-then marks it `done`. If it cannot finish, it marks the task `open`
-again with a note saying what is blocking it.
-
-Running assistant tasks in the background when they come due, through the
-applet runner's agent phase, is a later slice. The tools and the history
-work the same either way, so nothing in the core changes when that slice
-lands.
-
-### The brief
-
-The chat prompt gets a single line with the number of open tasks due today
-or overdue, so "what's on my plate" doesn't need a query to start. The
-line never lists the tasks themselves, so the prompt prefix stays
-cacheable.
-
-## Glossary
-
-`agents/build/glossary.md` currently reads "no task manager (no badges,
-counts, or nagging…)". Tasks is a task manager, so rewrite the line in the
-same change: tasks are how commitments become visible, and the parenthetical
-rule stays. Leaving the old line in place would put a doc in conflict with a
-feature that ships.
-
-## Slices
-
-1. **Core list** (built). The tables, the API,
-   the Tasks view and detail, the sidebar change, and adding and editing
-   by hand. Useful alone.
-2. **Assistant** (built). `create_task` and `update_task`, Hand to assistant, the
-   history pane, the brief line, and the glossary edit.
-3. **Background work** (not started). Assistant tasks that come due run headless through
-   the applet runner, under the same spending cap as applets.
-
-Each slice is one PR to `staging`.
+The same order on the phone. Accept and Reply sit under the result, always
+visible.
 
 ## Later: designed for, not built
 
-Each of these adds columns or a producer. None of them changes the object.
+None of these changes the object; each adds columns or a producer.
 
-- **Reminders.** A task with a *when* (a time, or arriving at or leaving a
-  saved place) is a reminder. There is no separate reminder object. Time
-  and place can fire as local notifications on the phone (iOS region
-  monitoring allows 20 regions), which avoids waiting on the APNs signer in
-  [reminders-plan.md](reminders-plan.md). That plan's idea of "a reminder
-  is an applet row" should be revisited when this lands.
-- **Synced sources.** Apple Reminders through EventKit (the iOS collector
-  already sees them and skips them), Google Tasks, and possibly checkboxes
-  inside pages. Sync is one-way, keyed by `(source, external_id)`, under
-  three rules:
-  1. Closed at the source means closed here.
-  2. Closed here stays closed, and we never write back.
-  3. The source owns the title and date until the owner edits them here.
-- **Capture from the record.** Tasks heard in transcripts, read in
-  messages, or arriving as emails that need a reply. These come in as
-  *tentative*: shown lighter, made permanent with one tap, and quietly
-  lapsing at their horizon if nothing confirms them. A second mention
-  confirms a task, and a completion phrase ("did the laundry") closes it.
-  An email task closes when the owner replies in its thread. This slice
-  adds a `confidence` column and a `lapses_on` date, and adds `heard`,
-  `synced` and `email` to `origin`.
+- **Reminders.** A to-do with a time or a place notifies on the phone. iOS
+  region monitoring allows 20 regions, so place reminders can fire as local
+  notifications without the APNs signer in
+  [reminders-plan.md](reminders-plan.md).
+- **Synced sources.** Apple Reminders through EventKit, Google Tasks, and
+  possibly checkboxes in pages. One-way, keyed by `(source, external_id)`:
+  closed at the source means closed here, closed here stays closed, and the
+  source owns the title and date until the owner edits them here.
+- **Capture from the record.** To-dos heard in transcripts or read in
+  messages arrive as tentative rows and lapse if nothing confirms them. This
+  adds a `confidence` column and a `lapses_on` date.
+- **Recurring requests.** "Every Sunday, summarize my week" is an applet
+  today. If owners start making requests for this, a request with a
+  schedule could replace the applet, but not before the two are compared.
 
 ## Open
 
-- **Drag to reorder** is not built. Groups sort by date, then time, then
-  `sort_order`, so a drag could only change the order of tasks due the same
-  day or of undated ones, and a dragged task would jump back whenever its
-  date sorted it elsewhere. Build it only if manual order is wanted, and
-  then for the No date group alone. The column is already there.
+- **Default spending ceilings** for a request run and for a day of request
+  runs.
+- **Whether Ready gets a sidebar mark.** A count is ruled out. A plain dot on
+  the Tasks entry while something is ready might be acceptable. Decide after
+  using slice 1.
+- **Drag to reorder** is still not built. If it is, it applies to undated
+  to-dos only, since dates decide the rest of the order. `sort_order` already
+  exists.
 
 ## Decided
 
-Settled 2026-10-20:
+Settled 2026-10-20 and still in force:
 
-- `active` appears only on assistant tasks.
-- Hand to assistant always opens a new chat.
-- When the owner finishes an assistant-created task, the assistant is not
-  told. The history records it.
-- The mobile drawer keeps its search pill. Only the desktop Home list
-  loses Search.
-- The glossary line is rewritten, not deleted, and keeps "no badges,
-  counts, or nagging".
-- Quick add is ⌘⇧E, because ⌘⇧T is already New temporary chat.
+- Hand to assistant never reuses an old chat. In this version the request
+  gets its own work chat instead of a new chat tab.
+- When the owner finishes a to-do the assistant created, the assistant is
+  not told. The history records it.
+- The mobile drawer keeps its search pill. Only the desktop Home list lost
+  Search.
+- Quick add is ⌘⇧E, because ⌘⇧T is New temporary chat.
 - A deleted project leaves its tasks with no project.
+- There is no delete. A task leaves the list as done or dismissed.
+
+Settled 2026-10-21:
+
+- Requests run in the background, and the assistant ends a run at `ready`,
+  never `done`.
+- Background runs come before the page rebuild.
+- The Mine / Assistant / All tabs go away.
