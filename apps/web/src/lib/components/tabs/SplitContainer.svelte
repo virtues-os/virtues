@@ -47,12 +47,9 @@
 				: (windowShellStore.panes[0]?.tabs.length ?? 0) >= 2),
 	);
 
-	// svelte-dnd-action's id for the dragged copy of a tab. Over a pane that
-	// will take it, the copy straightens to say so (WindowTabBar styles it).
-	const DRAGGED_EL_ID = "dnd-action-dragged-el";
+	// Over a pane that will take it, the dragged tab straightens to say so.
 	$effect(() => {
-		const docking = leftDropItems.length > 0 || rightDropItems.length > 0;
-		document.getElementById(DRAGGED_EL_ID)?.classList.toggle("tab-docking", docking);
+		dndManager.setOverPane(leftDropItems.length > 0 || rightDropItems.length > 0);
 	});
 
 	// Direct pane access (unified model - tabs always live in panes)
@@ -771,11 +768,6 @@
 
 	.drag-overlay.active {
 		background: color-mix(in srgb, var(--color-primary) 15%, transparent);
-	}
-
-	/* Hide the ghost/shadow item that svelte-dnd-action creates in the drop zone */
-	.drag-overlay :global([data-is-dnd-shadow-item-hint="true"]) {
-		display: none !important;
 	}
 
 	/* Without motion the cards and views change place at once, and views

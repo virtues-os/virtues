@@ -39,6 +39,11 @@ export const PROJECT_DROP_ATTR = 'data-project-drop';
  */
 export const PIN_DROP_ATTR = 'data-pin-drop';
 
+/** svelte-dnd-action's id for the dragged copy of a tab. WindowTabBar styles
+ *  it: lifted in the air, straight over a place that will take it, and
+ *  fading out where it was let go over the sidebar. */
+const DRAGGED_EL_ID = 'dnd-action-dragged-el';
+
 /**
  * The gap a pointer at `clientY` is in over a Pinned element, or `file` for
  * the middle of a pinned project's row when there is something to file.
@@ -136,6 +141,16 @@ class DndManager {
 	/** The gap in Pinned a dragged tab would be pinned into, for its line. */
 	pinGap = $state<number | null>(null);
 
+	/** The pointer is over a split pane that will take the tab. */
+	private overPane = false;
+
+	/**
+	 * The sidebar target under the pointer when the tab was let go. The
+	 * library animates for a moment before it finalizes, and a pointer that
+	 * keeps moving in that time must not change where the tab lands.
+	 */
+	private released: { projectTarget: string | null; pinGap: number | null } | null = null;
+
 	get isDragging(): boolean {
 		return this.session !== null;
 	}
@@ -170,18 +185,62 @@ class DndManager {
 		}
 		if (id !== this.projectTarget) this.projectTarget = id;
 		if (gap !== this.pinGap) this.pinGap = gap;
+		this.styleDragged();
+	};
+
+	/** SplitContainer reports whether a pane under the pointer takes the tab. */
+	setOverPane(on: boolean): void {
+		this.overPane = on;
+		this.styleDragged();
+	}
+
+	/** The dragged tab straightens over any place that will take it. */
+	private styleDragged(): void {
+		const docking =
+			this.released !== null ||
+			this.overPane ||
+			this.projectTarget !== null ||
+			this.pinGap !== null;
+		document.getElementById(DRAGGED_EL_ID)?.classList.toggle('tab-docking', docking);
+	}
+
+	/**
+	 * Let go: read the sidebar target now, and stop following the pointer.
+	 * A tab let go in the strip or over a pane flies straight to its place.
+	 * One let go over the sidebar is a drop "outside" to the library, which
+	 * would fly it home as if refused; it fades where it was let go instead.
+	 */
+	private release = () => {
+		if (!this.session) return;
+		this.released = { projectTarget: this.projectTarget, pinGap: this.pinGap };
+		this.unlistenPointer();
+		this.styleDragged();
+		if (this.released.projectTarget !== null || this.released.pinGap !== null) {
+			document.getElementById(DRAGGED_EL_ID)?.classList.add('tab-landed');
+		}
 	};
 
 	private startTracking(): void {
+		this.released = null;
 		window.addEventListener('mousemove', this.trackPointer, { capture: true, passive: true });
 		window.addEventListener('touchmove', this.trackPointer, { capture: true, passive: true });
+		window.addEventListener('mouseup', this.release, { capture: true });
+		window.addEventListener('touchend', this.release, { capture: true });
+	}
+
+	private unlistenPointer(): void {
+		window.removeEventListener('mousemove', this.trackPointer, { capture: true });
+		window.removeEventListener('touchmove', this.trackPointer, { capture: true });
+		window.removeEventListener('mouseup', this.release, { capture: true });
+		window.removeEventListener('touchend', this.release, { capture: true });
 	}
 
 	private stopTracking(): void {
-		window.removeEventListener('mousemove', this.trackPointer, { capture: true });
-		window.removeEventListener('touchmove', this.trackPointer, { capture: true });
+		this.unlistenPointer();
 		this.projectTarget = null;
 		this.pinGap = null;
+		this.overPane = false;
+		this.released = null;
 	}
 
 	// ============================================================================
@@ -227,8 +286,9 @@ class DndManager {
 		const { items, info } = e.detail;
 		const currentSession = this.session;
 		const fileTarget = this.draggedTarget;
-		const target = this.projectTarget ? projectStore.byId(this.projectTarget) : undefined;
-		const pinGap = this.pinGap;
+		const at = this.released ?? { projectTarget: this.projectTarget, pinGap: this.pinGap };
+		const target = at.projectTarget ? projectStore.byId(at.projectTarget) : undefined;
+		const pinGap = at.pinGap;
 
 		// Always end session
 		this.session = null;

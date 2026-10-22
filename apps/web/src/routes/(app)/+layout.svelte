@@ -65,6 +65,18 @@
 		if (s?.appVersion) setShellAppVersion(s.appVersion);
 	});
 
+	// A place that takes a drag claims it by cancelling its own dragover and
+	// choosing its own dropEffect. Everywhere else the cursor says no: this
+	// listener runs last, and for an unclaimed drag it sets `none`, which the
+	// browser treats as a refused drop, so a file let go outside every zone is
+	// not opened in the window. The root layout swallows a stray `drop` as a
+	// second guard. Hoisted to component scope so onDestroy can remove it.
+	function refuseUnclaimedDrag(e: DragEvent) {
+		if (e.defaultPrevented) return;
+		e.preventDefault();
+		if (e.dataTransfer) e.dataTransfer.dropEffect = "none";
+	}
+
 	// Foreground OTA check — hoisted to component scope so onDestroy can remove
 	// it. `onMount` is async here, so a returned cleanup would never run.
 	function checkForNewUi() {
@@ -178,18 +190,7 @@
 		// listener leaked per layout mount (audit, minor).
 		document.addEventListener("visibilitychange", checkForNewUi);
 
-		// Global dragover handler: Allow drops on document by preventing default
-		// This is a fallback to ensure drops are never blocked by missing handlers.
-		// The matching `drop` guard is in the ROOT layout — cancelling dragover
-		// here is what makes the whole document a drop target, and an unclaimed
-		// drop on that target navigates the window to the file. See
-		// `routes/+layout.svelte`; the two belong together.
-		document.addEventListener("dragover", (e) => {
-			e.preventDefault();
-			if (e.dataTransfer) {
-				e.dataTransfer.dropEffect = "move";
-			}
-		});
+		document.addEventListener("dragover", refuseUnclaimedDrag);
 
 		// Collapse sidebar for new users (first-time onboarding)
 		if (data?.onboardingStatus === 'new') {
@@ -345,6 +346,7 @@
 
 	onDestroy(() => {
 		document.removeEventListener("visibilitychange", checkForNewUi);
+		document.removeEventListener("dragover", refuseUnclaimedDrag);
 		if (sessionExpiryTimer) {
 			clearInterval(sessionExpiryTimer);
 		}

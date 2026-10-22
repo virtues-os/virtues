@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { flip } from "svelte/animate";
+	import { untrack } from "svelte";
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
 	import Icon from "$lib/components/Icon.svelte";
@@ -135,10 +136,13 @@
 		}));
 	}
 
-	// Sync DnD items when tabs change
+	// Sync DnD items when tabs change. Not while a tab is in the air: the
+	// library's placeholder lives in this list, and a chat naming itself mid
+	// drag would wipe it. The drop rebuilds the list anyway.
 	$effect(() => {
-		// Rebuild from tabs (the source of truth)
-		dndItems = buildDndItems();
+		const items = buildDndItems();
+		if (untrack(() => dndManager.session)) return;
+		dndItems = items;
 	});
 
 	function handleTabClick(id: string) {
@@ -467,8 +471,9 @@
 			flipDurationMs: FLIP_DURATION_MS,
 			dropTargetStyle: {},
 			dragDisabled: renamingTabId !== null,
-			// The dragged tab keeps its own shape. Morphing would copy the
-			// drop marker's, a 2px bar, and leave only the label showing.
+			// The dragged tab keeps its own shape. Morphing copies the
+			// styles of the hidden placeholder it is over, which left only
+			// the label showing.
 			morphDisabled: true,
 			transformDraggedElement: liftDraggedTab,
 		}}
@@ -715,11 +720,6 @@
 	   whichever one you were looking at — it read as permanently selected.
 	   Identity moved to the icon, which the user picks and can color. */
 
-	/* Dragging state - svelte-dnd-action applies aria-grabbed */
-	:global(.tab[aria-grabbed="true"]) {
-		opacity: 0.5;
-	}
-
 	/* The dragged tab: the whole pill, lifted off the strip. It takes the
 	   active tab's fill whichever tab it was, tilts a little and rises on a
 	   soft shadow. Over a pane it can be dropped into it straightens and
@@ -750,6 +750,20 @@
 		animation: -global-tab-dock var(--motion-state) var(--ease-premium) both !important;
 	}
 
+	/* Let go over the sidebar: the tab fades where it was dropped, since the
+	   library would otherwise fly it home as if the drop were refused
+	   (dndManager `release`). */
+	:global(.tab.tab-lifted.tab-landed) {
+		animation: -global-tab-land var(--motion-hover-in) var(--ease-premium) forwards !important;
+	}
+
+	@keyframes -global-tab-land {
+		to {
+			opacity: 0;
+			scale: 0.9;
+		}
+	}
+
 	@keyframes -global-tab-lift {
 		from {
 			scale: 1;
@@ -770,6 +784,10 @@
 			rotate: 0deg;
 			scale: 1;
 			animation: none !important;
+		}
+
+		:global(.tab.tab-lifted.tab-landed) {
+			opacity: 0 !important;
 		}
 	}
 
@@ -1061,27 +1079,16 @@
 		margin-left: 0;
 	}
 
-	/* svelte-dnd-action drop indicator */
-	:global(.tabs-scroll > [data-is-dnd-shadow-item-hint="true"]) {
-		width: 2px !important;
-		min-width: 2px !important;
-		max-width: 2px !important;
-		height: 20px !important;
-		padding: 0 !important;
-		margin: 0 2px;
-		background: var(--color-primary) !important;
-		border-radius: 1px;
-		opacity: 1;
-		animation: pulse 0.8s ease-in-out infinite;
+	/* The slot a dragged tab will take. The library keeps the tab's own
+	   width open there and hides it; the slot shows as the drop tint, and
+	   moves along the strip as the neighbours slide aside. */
+	:global(.tabs-scroll > [data-is-dnd-shadow-item-internal]) {
+		visibility: visible !important;
+		background: var(--drop-tint) !important;
+		animation: none !important;
 	}
 
-	@keyframes pulse {
-		0%,
-		100% {
-			opacity: 1;
-		}
-		50% {
-			opacity: 0.5;
-		}
+	:global(.tabs-scroll > [data-is-dnd-shadow-item-internal] > *) {
+		visibility: hidden;
 	}
 </style>
