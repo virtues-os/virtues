@@ -178,25 +178,6 @@
 	const step = $derived<SetupStepId | null>(isSetupStep(param) ? param : null);
 	const current = $derived(setup.steps.find((s) => s.id === step) ?? null);
 
-	// FRAMELESS ON THE MAC. Setup runs full-bleed: the title bar becomes an
-	// overlay, the traffic lights float over the stage, and a thin strip at
-	// the top keeps the window draggable. The app's own windows keep their
-	// title bar, so it goes back the moment Setup is left. Silently nothing
-	// in a browser, or in an app build without the permission.
-	async function titleBar(style: "overlay" | "visible") {
-		if (!isMacOS) return;
-		try {
-			const { getCurrentWindow } = await import("@tauri-apps/api/window");
-			await getCurrentWindow().setTitleBarStyle(style);
-		} catch {
-			/* an older app: the ordinary window is fine */
-		}
-	}
-	onMount(() => {
-		void titleBar("overlay");
-		return () => void titleBar("visible");
-	});
-
 	/** What this copy knows that the server's can't read: how far through the
 	 *  reading they got, and a theme, only if one was picked on Welcome. A
 	 *  followed system mode or this copy's fallback stays here, so the server
@@ -400,7 +381,6 @@
 				: setup.status("timeline") === "done"
 					? "/wiki/chapters"
 					: "/chat";
-		await titleBar("visible");
 		await openApp(dest);
 	}
 
@@ -411,7 +391,6 @@
 		if (!closing || nav.type === "popstate" || !nav.to?.url.pathname.startsWith("/setup")) return;
 		closing = false;
 		closeError = "Your server still has Setup open. Try again.";
-		void titleBar("overlay");
 		// Bounced to bare /setup: stand on the step still open, not an
 		// empty stage. (Not `route()`, which would close again and loop.)
 		if (!step && setup.resumeAt) void goto(`/setup/${setup.resumeAt}`, { replaceState: true });
@@ -425,6 +404,8 @@
 <!-- The paper is down before anything loads, so the first frame is the
      stage, never a blank window. -->
 <div class="setup-stage" aria-hidden="true"></div>
+<!-- The Mac app's title bar is an overlay, so the traffic lights float over
+     the stage and this strip keeps the window draggable. -->
 {#if isMacOS}<div class="drag" data-tauri-drag-region aria-hidden="true"></div>{/if}
 
 {#if unreachable}

@@ -4,8 +4,9 @@
 	 * above the cards.
 	 *
 	 * Over the sidebar it holds the ∴ mark (the inbox) and the window's own
-	 * controls, in a place that never moves: back, forward, the sidebar
-	 * toggle and new chat. Back, forward and new chat act on the focused
+	 * controls: back, forward, the sidebar toggle and new chat. They move
+	 * only when the Mac app's traffic lights come or go, on entering and
+	 * leaving full screen. Back, forward and new chat act on the focused
 	 * pane. Over the cards it holds each pane's tab strip, lined up with the
 	 * pane below it, so a tab always sits on top of its own content.
 	 *
@@ -17,7 +18,7 @@
 	import WindowTabBar from './WindowTabBar.svelte';
 	import { windowShellStore, SPLIT_GUTTER_PX } from '$lib/stores/window-shell.svelte';
 	import { sidebarState, SIDEBAR_INSET } from '$lib/stores/sidebarState.svelte';
-	import { isMacOS } from '$lib/utils/platform';
+	import { trafficLights } from '$lib/tauri/trafficLights.svelte';
 	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 
 	/** Air between the controls and the first tab when they meet. */
@@ -26,8 +27,14 @@
 	const GLYPH_PX = SHELL_GLYPH_PX;
 	/** The scale's control box: every clickable thing in the header. */
 	const CONTROL_PX = 28;
+	/** Between two controls' boxes (`.lead`'s gap). */
+	const CONTROL_GAP_PX = 4;
+	/** Between two neighbouring controls' glyphs: 16px. */
+	const GLYPH_AIR_PX = CONTROL_PX - GLYPH_PX + CONTROL_GAP_PX;
 	/** The ∴ glyph inside InboxMark's control box. */
 	const MARK_GLYPH_PX = 17;
+	/** From the ∴'s box to its glyph. */
+	const MARK_INSET_PX = (CONTROL_PX - MARK_GLYPH_PX) / 2;
 
 	const isSplit = $derived(windowShellStore.isSplit);
 	const leftWidth = $derived(isSplit ? windowShellStore.leftPane?.width || 50 : 100);
@@ -45,16 +52,16 @@
 	 */
 	const ICON_LINE_PX = SIDEBAR_INSET + 4 + 12;
 	/**
-	 * In the Mac app the title bar is an overlay (src-tauri main.rs) and the
-	 * traffic lights sit in this row, from 20pt to 74pt: three 14pt buttons
-	 * 20pt apart, set in from the window's edge as far as from its top. The
-	 * mark and the controls follow them after 16pt of air, as in a native
-	 * Mac app, rather than on the sidebar's icon line.
+	 * In the Mac app the title bar is an overlay and the traffic lights sit
+	 * in this row, on its centre line (src-tauri traffic_lights.rs). The ∴
+	 * follows them with the same air that separates the controls' glyphs, so
+	 * the lights and the controls read as one evenly spaced row. In full
+	 * screen macOS hides the lights, and the ∴ moves back to the sidebar's
+	 * icon line, as it sits in a browser.
 	 */
-	const TRAFFIC_LIGHTS_END_PX = 20 + 2 * 20 + 14;
-	const leadLeft = isMacOS
-		? TRAFFIC_LIGHTS_END_PX + 16
-		: ICON_LINE_PX - (CONTROL_PX - MARK_GLYPH_PX) / 2;
+	const leadLeft = $derived(
+		(trafficLights.shown ? trafficLights.end + GLYPH_AIR_PX : ICON_LINE_PX) - MARK_INSET_PX
+	);
 
 	let leadWidth = $state(0);
 	const overlap = $derived(Math.max(0, leadLeft + leadWidth + LEAD_GAP_PX - cardLeft));
@@ -74,11 +81,16 @@
 	class:resizing={sidebarState.resizing || windowShellStore.paneResizing}
 	style:--card-left="{cardLeft}px"
 >
-	<!-- Three groups set apart by air alone: the mark, history (back,
-	     forward) and the window (sidebar, new chat). -->
-	<div class="lead" data-tauri-drag-region style:left="{leadLeft}px" bind:clientWidth={leadWidth}>
+	<!-- The mark, history (back, forward) and the window (sidebar, new
+	     chat), one gap apart, so every glyph has the same air on each side. -->
+	<div
+		class="lead"
+		data-tauri-drag-region
+		style:left="{leadLeft}px"
+		style:gap="{CONTROL_GAP_PX}px"
+		bind:clientWidth={leadWidth}
+	>
 		<InboxMark />
-		<span class="lead-gap" data-tauri-drag-region aria-hidden="true"></span>
 		<button
 			class="lead-btn"
 			onclick={() => windowShellStore.goBack()}
@@ -97,7 +109,6 @@
 		>
 			<AtlasIcon name="forward" size={GLYPH_PX} bare />
 		</button>
-		<span class="lead-gap" data-tauri-drag-region aria-hidden="true"></span>
 		<button
 			class="lead-btn"
 			class:sidebar-shown={sidebarOpen}
@@ -199,16 +210,9 @@
 		transition: width var(--motion-layout) var(--ease-premium);
 	}
 
-	.lead-gap {
-		width: 8px;
-		flex: none;
-	}
-
 	/* The scale's 28px control (design.md, "The scale"), the same box as the
-	   mark and the tabs, butted together: the 16px glyphs leave 12px of air
-	   between neighbours, so no gap is needed inside a group. Motion is the
-	   scale's too: hover in fast and out slow, and a press that sinks to 94%
-	   and springs back. */
+	   mark and the tabs. Motion is the scale's too: hover in fast and out
+	   slow, and a press that sinks to 94% and springs back. */
 	.lead-btn {
 		display: grid;
 		place-items: center;

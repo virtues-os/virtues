@@ -281,10 +281,12 @@ Every drag in the app uses the same few marks, from tokens in `themes.css`:
 
 **Each group in the window header starts at the column below it.** The ∴'s
 glyph starts on the sidebar's icon line, level with the rows' icons, and the
-window's controls follow it. In the Mac app the title bar is an overlay: the
-traffic lights sit in the header row on its centre line, and the ∴ and the
-controls follow them after 12pt, as in a native Mac app. The row's empty
-space moves the window. Each pane's tabs start at that pane's edge.
+window's controls follow it, 4px apart, so every glyph has 16px of air on
+each side. In the Mac app the title bar is an overlay: the traffic lights sit
+in the header row on its centre line, the close button as far in from the
+left edge as it is down from the top, and the ∴ follows the zoom button with
+the same 16px of air. In full screen macOS hides the lights and the ∴ moves
+back to the sidebar's icon line. The row's empty space moves the window. Each pane's tabs start at that pane's edge.
 With the sidebar closed the controls keep their place, and the left pane's
 tabs start just after them. 
 
