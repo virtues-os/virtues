@@ -30,6 +30,21 @@
 	border-bottom: 1px dotted currentColor;
 }
 
+/* A link to a record is a citation, drawn as `Ref` draws one in a chat
+   answer (ref-badge.css): the accent, a dotted hairline, and a tint on hover.
+   A click opens its card. */
+.doc-cite-link {
+	color: var(--color-primary);
+	border-bottom-color: color-mix(in srgb, var(--color-primary) 55%, transparent);
+	border-radius: var(--radius-xs);
+	transition: background-color var(--motion-hover-out) var(--ease-premium);
+}
+
+.doc-cite-link:hover {
+	background-color: color-mix(in srgb, var(--color-primary) 8%, transparent);
+	transition-duration: var(--motion-hover-in);
+}
+
 /* ── Proposals (suggestions.ts): provisional at a glance, comfortable to read
    through. */
 

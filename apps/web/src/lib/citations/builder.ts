@@ -4,10 +4,8 @@
  */
 
 import type { Citation, CitationContext, RecordSource } from '$lib/types/Citation';
+import { parseRecordRef } from '$lib/utils/refRoutes';
 import { getDisplayInfo, inferSourceType } from './mapping';
-
-const RECORD_ROUTE = /^\/record\/([a-z0-9_]+)\/(.+)$/;
-const TOOL_ROUTE = /^\/chat\/[^/]+\/tool\/([^/?#]+)$/;
 
 /**
  * Tool call part from AI SDK UIMessage
@@ -158,12 +156,12 @@ export function buildCitationContext(toolCallParts: ToolCallPart[]): CitationCon
 				if (!item || typeof item !== 'object') continue;
 				const r = item as Record<string, unknown>;
 				const route = typeof r.ref === 'string' ? r.ref : '';
-				const m = RECORD_ROUTE.exec(route);
-				if (!m || byRoute.has(route)) continue;
+				const record = route.startsWith('/record/') ? parseRecordRef(route) : null;
+				if (!record || byRoute.has(route)) continue;
 				byRoute.set(route, {
 					route,
-					ontology: m[1],
-					recordId: m[2],
+					ontology: record.ontology,
+					recordId: record.id,
 					title: typeof r.title === 'string' ? r.title : undefined,
 					passage: typeof r.preview === 'string' ? r.preview : undefined,
 					timestamp: typeof r.timestamp === 'string' ? r.timestamp : undefined,
@@ -285,26 +283,6 @@ export function buildCitationContext(toolCallParts: ToolCallPart[]): CitationCon
 		byToolCallId,
 		byRoute
 	};
-}
-
-/**
- * The turn's citations in the order the answer first links them: records the
- * turn's tools returned, and query refs whose call is in the context. Each
- * route appears once. This is the order the citation card steps through.
- */
-export function citedRoutes(markdown: string, context: CitationContext): string[] {
-	const seen = new Set<string>();
-	const out: string[] = [];
-	for (const m of markdown.matchAll(/\]\((\/[^)\s]+)\)/g)) {
-		const route = m[1];
-		if (seen.has(route)) continue;
-		const callId = TOOL_ROUTE.exec(route)?.[1];
-		const cited = callId ? context.byToolCallId.has(callId) : context.byRoute.has(route);
-		if (!cited) continue;
-		seen.add(route);
-		out.push(route);
-	}
-	return out;
 }
 
 /**

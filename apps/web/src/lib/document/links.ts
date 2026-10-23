@@ -11,6 +11,10 @@
  *   link elsewhere as its address (`previewType`). In an editable page a plain click places the caret, so
  *   a link's text can be edited like any other; in a page that is read
  *   only, a plain click opens it.
+ * - A link to a record (`/record/…`) is a citation (`doc-cite-link`), as in
+ *   a chat answer: it has no hover preview, and a plain click opens its
+ *   RecordCard (the host's `onCite`). In an editable page the same click
+ *   also places the caret.
  * - The link menu (right-click, or a long press): Open, then for a ref Open
  *   in new tab and Open beside (`openMenuItems`, as on every openable
  *   thing), for a link to the web Open in default browser (in the app on a
@@ -36,7 +40,7 @@ import { toast } from 'svelte-sonner';
 import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { linkEditor } from '$lib/stores/linkEditor.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
-import { getEntityTypeFromRoute, parseRef } from '$lib/utils/refRoutes';
+import { getEntityTypeFromRoute, isRecordRoute, parseRef } from '$lib/utils/refRoutes';
 import { defaultBrowserItem, openWebLink } from '$lib/utils/webLinks';
 import { openMenuItems } from '$lib/utils/openMenuItems';
 import { isRoute, linkAllowed } from './schema';
@@ -117,7 +121,10 @@ function refDecorations(doc: PmNode): DecorationSet {
 		if (!node.isText) return true;
 		const link = node.marks.find((m) => m.type.name === 'link');
 		const href = link ? String(link.attrs.href) : '';
-		if (link && href) {
+		if (link && href && isRecordRoute(href)) {
+			// A link to a record is a citation: its card opens on a click.
+			decos.push(Decoration.inline(pos, pos + node.nodeSize, { class: 'doc-ref-link doc-cite-link', 'data-ref-href': href, 'data-cite-route': href }));
+		} else if (link && href) {
 			const kind = isRef(href) ? 'doc-ref-link' : 'doc-web-link';
 			decos.push(Decoration.inline(pos, pos + node.nodeSize, { class: kind, 'data-ref-href': href }));
 		}
@@ -318,6 +325,8 @@ export interface LinkHover {
 	onHover: (anchor: HTMLElement, href: string, label: string) => void;
 	/** Hide it, unless the pointer moved onto the preview (the host keeps it then). */
 	onLeave: () => void;
+	/** Open the card for a link to a record, which has no hover preview. */
+	onCite?: (anchor: HTMLElement, href: string) => void;
 }
 
 export function links(hover?: LinkHover): Extension {
@@ -363,7 +372,15 @@ export function links(hover?: LinkHover): Extension {
 								const a = (event.target as HTMLElement | null)?.closest?.('a[href]');
 								if (!a || a.closest('.doc-widget, [data-widget-control]')) return false;
 								event.preventDefault();
-								if (view.editable || event.metaKey || event.ctrlKey || event.button !== 0) return false;
+								if (event.metaKey || event.ctrlKey || event.button !== 0) return false;
+								// A link to a record opens its card. In an editable page the
+								// click still places the caret, so the link's words can be edited.
+								const cite = (event.target as HTMLElement).closest<HTMLElement>('[data-cite-route]');
+								if (cite && hover?.onCite) {
+									hover.onCite(cite, cite.dataset.citeRoute ?? '');
+									return !view.editable;
+								}
+								if (view.editable) return false;
 								const link = linkAt(view.state, view.posAtDOM(a, 0));
 								if (!link) return false;
 								openLink(link.href, link.text || link.href);
@@ -383,7 +400,7 @@ export function links(hover?: LinkHover): Extension {
 						};
 						const over = (e: MouseEvent) => {
 							const el = (e.target as HTMLElement | null)?.closest?.(LINK_SELECTOR) as HTMLElement | null;
-							if (!el || el === anchor) return;
+							if (!el || el === anchor || el.dataset.citeRoute) return;
 							clear();
 							anchor = el;
 							showTimer = setTimeout(() => {

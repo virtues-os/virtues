@@ -1,12 +1,15 @@
 # Watch it work: how a chat answer was found
 
-**Status: planned.** Nothing here is built.
+**Status: slices 1 and 1b are on `wave`, unreleased.** Nothing else here
+is built.
 
 Four features for one assistant turn in chat:
 
 1. **The citation popover.** Clicking a citation in an answer opens a card
    under it. The card's body depends on the kind of record, and the arrow
-   keys step through the turn's sources.
+   keys step through the turn's sources. Slice 1b made the same card,
+   `RecordCard`, open for data everywhere in the app: in chat answers, in
+   pages, and on the day page.
 2. **The search, live in the status label.** While a turn searches, the
    status label shows the two searches filling, merging, and the results
    that go to the model. It then settles into the label.
@@ -148,7 +151,19 @@ for reading, so it does not need step times.
 
 ## Slice 1: the citation popover
 
-Client only.
+Client only. **Built on `wave`**, with these differences from the text
+below, which is kept as the spec it was built to:
+
+- The purchase amount uses tabular figures in the sans. The design lint
+  allows mono only for code.
+- The voice body has no play button or waveform yet. It shows the
+  transcript with the cited words marked.
+- The card stays inside the window, 8px from its edges. It is not held to
+  the answer column.
+- The footer has no found-by line, since that needs slice 3.
+- The stale comment at `stores/window-shell.svelte.ts:1378` was not fixed.
+- It was checked in the running app on invented data. It has not been seen
+  on a real chat turn.
 
 - **Look.** Citations in answers are navy with a dotted underline, and
   hovering tints them. Add this as a `ref-link--cite` variant in
@@ -190,6 +205,78 @@ then it says nothing), the "3 of 6" stepper, and "Open beside".
 **Done when:** each body above renders from a real record, the keyboard path
 works with no mouse, and the card never leaves the answer column at any
 window width from phone to wide.
+
+## Slice 1b: one RecordCard wherever data is cited
+
+Client only. **Built on `wave`.** A link to a record opens the same card,
+in the same way, in a chat answer, in a page, and on a day page. It
+replaced two cards: the day page's evidence card and slice 1's chat card.
+
+### What it is
+
+- **`components/RecordCard.svelte`** is the shell. It has three modes: in
+  the margin beside a day page's sentence, a popover under the link, or a
+  sheet from the bottom on a phone (`cardMode`). The popover is placed by
+  `$lib/floating`, with its arrow, and slides to the next stop when the
+  anchor changes. The card closes on Escape or a click outside, and ← and →
+  call the caller's `onstep`. With the veil on, it shows no words or names.
+- **`components/RecordCardBody.svelte`** is one source's body, by kind:
+  - A message as it was sent, and a recording as the turns nearest the
+    citing sentence (`citedTurns`). A search's passage stands in until the
+    record loads, and it places a recording's window.
+  - A purchase's amount, an event's date tile, and a title with its words
+    for mail, bookmarks and pages.
+  - For anything else, the title and the first three fields.
+  - On every kind, the words the citing sentence shares with the record
+    are marked, using `wiki/recordWords.ts`.
+- **A query citation** is drawn by RecordCard itself, as a row count and
+  the first rows.
+- **`parseRecordRef`** (`utils/refRoutes.ts`) reads both
+  `/record/<ontology>/<id>` and `table:id`. `isRecordRoute` says whether a
+  link goes to a record. The citation builder uses the same parser.
+- **`utils/recordCards.svelte.ts`** holds the open card for a chat answer
+  or a page. Its stops are the `[data-cite-route]` links in DOM order, one
+  per record. It finds the sentence a link sits in (`sentenceAround`) and
+  keeps the card on the same record when the text re-renders.
+- **`Ref`** draws any link to a record as a citation, whatever variant it
+  was given. A click sends a `recordcite` event up to the text it is in.
+  Text that draws no card (a list, the chat composer) leaves the event
+  alone, and the record opens in a tab as before. Records have no hover
+  preview anywhere now.
+
+### On each surface
+
+| Surface | What opens the card | Stops for ← → | The open action |
+|---|---|---|---|
+| Chat answer (`Markdown.svelte`) | A link to a record, or a query citation | Links to records and cited queries, in order | "Open beside", or "Show all rows" for a query |
+| Day page (`DayArticleBody.svelte`) | A sentence's sources, or a table, photo or figure | The page's sentences with sources, as before | "Open in Data", which opens the day's Data view |
+| Page (`DocumentEditor.svelte`, `document/links.ts`) | A mention of a record, or a link to one (`doc-cite-link`) | Links to records, in order | "Open beside" |
+
+Every surface marks the words shared with the sentence around the link,
+including a mention in a page.
+
+### Where it differs from what was planned
+
+- **The open action is the surface's.** It does not read "Open beside"
+  everywhere. On the day page it opens the record in the day's Data view,
+  as it did before.
+- **Inside a page's editor, the open link is not tinted.** A class set on
+  the editor's own elements is a change to its DOM, which it would read
+  back and redraw, so the page's host passes `mark: false`.
+- **In an editable page,** a click on a link to a record opens the card
+  and also places the caret, so the link's words can still be edited.
+  This was decision 6.
+- **Stepping stops at the first and last stop** on every surface. Slice
+  1's wrap-around is gone.
+
+### What is not done
+
+- In the page editor, a keyboard user cannot reach a mention's card. The
+  editor has no key that opens it.
+- Voice playback in a recording's body. Slice 1 lacked it too.
+- It was checked by `RecordCard.svelte.test.ts`, which mounts a chat answer
+  and a day page card under happy-dom with invented records. It has not
+  been seen in the running app.
 
 ## Slice 2: the status label says what left
 
@@ -414,12 +501,13 @@ shows the same facts as still frames.
 
 ## Decisions for Adam
 
-1. In chat answers, a plain click on a citation opens the card instead of
-   opening the record in the current tab. Should people, places and
-   organizations in answers also use the card, in place of the hover
-   preview?
-2. Should the navy dotted look stay on chat citations only, or replace
-   `.ref-link` for every rendered ref?
+1. Links to data open RecordCard everywhere (slice 1b). Should people,
+   places, organizations and days also open a card on a click, in place of
+   the hover preview? The recommendation is not yet: they have pages of
+   their own, and RecordCard can gain bodies for them later.
+2. Links to data take the navy dotted look everywhere (slice 1b). Should
+   people, places, organizations and days take it too, or keep
+   `.ref-link`?
 3. Should the replay open in a tab beside the chat, as planned here, or in
    place over the turn?
 4. Should the index size say "passages" now, or wait for a record count?
@@ -427,3 +515,6 @@ shows the same facts as still frames.
    away, or 6f, the plot that shrinks into a mark? The mark stays in the
    label as the way into the inspector and takes no room afterwards. The
    strip is easier to read while it plays.
+6. A click on a mention of a record in a page now opens its card, where a
+   click on a mention used to open its tab. Should Enter open the card for
+   a selected mention, so a keyboard user has a way in?

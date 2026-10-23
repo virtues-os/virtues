@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { buildCitationContext, citedRoutes, type ToolCallPart } from './builder';
+import { buildCitationContext, type ToolCallPart } from './builder';
 
 function part(toolName: string, toolCallId: string, output: unknown): ToolCallPart {
 	return { type: `tool-${toolName}`, toolCallId, toolName, input: {}, state: 'output-available', output };
@@ -36,8 +36,8 @@ describe('buildCitationContext', () => {
 });
 
 /**
- * The citation card reads a cited record's passage from the turn's own tool
- * output, and steps through the answer's citations in the order it links them.
+ * The record card reads a cited record's passage from the turn's own tool
+ * output.
  */
 describe('records by route', () => {
 	const search = part('semantic_search', 'call_search', {
@@ -81,19 +81,5 @@ describe('records by route', () => {
 	it('leaves out refs that are not records', () => {
 		const ctx = buildCitationContext([search]);
 		expect([...ctx.byRoute.keys()]).toEqual(['/record/app_page/page_one']);
-	});
-
-	it('orders citations by their first link in the answer, once each', () => {
-		const ctx = buildCitationContext([search, query]);
-		const answer =
-			'In April you wrote that [the bow](/record/app_page/page_one) was hard. ' +
-			'You practiced [61 evenings](/chat/chat_one/tool/call_rows), ' +
-			'played the [recital](/record/calendar_event/evt_one), and [again](/record/app_page/page_one). ' +
-			'See [your day](/day/2024-12-07) and [a record no tool returned](/record/app_page/page_two).';
-		expect(citedRoutes(answer, ctx)).toEqual([
-			'/record/app_page/page_one',
-			'/chat/chat_one/tool/call_rows',
-			'/record/calendar_event/evt_one',
-		]);
 	});
 });

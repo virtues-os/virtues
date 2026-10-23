@@ -20,7 +20,6 @@ export {
 export {
 	buildCitationContext,
 	buildCitationContextFromParts,
-	citedRoutes,
 	extractToolCallParts,
 	isToolCallPart,
 	hasCitations,

@@ -7,8 +7,8 @@
  *
  * - Ref.svelte (.ref-link, .ref-link--quiet)  — rendered output: chat answers, previews, the day biography,
  *                                               and a mention in a page or the chat composer (MentionNode)
- * - Ref.svelte (.ref-link--cite)               — a citation in a chat answer: a record or a query a tool
- *                                               returned this turn. A click opens its card.
+ * - Ref.svelte (.ref-link--cite)               — a link to a record, anywhere, and a cited query in a
+ *                                               chat answer. A click opens its RecordCard.
  */
 
 :root {
@@ -102,7 +102,7 @@
 }
 
 /*
- * Citation treatment (`variant="cite"`) — accent name, dotted hairline, no icon
+ * Citation treatment (any link to a record) — accent name, dotted hairline, no icon
  * and no `@`. Hover only tints the words; a click opens the card, and the open
  * citation keeps the tint so the card's pointer has something to point at.
  * The tint fades in fast and out slow, on the shell's hover timings.

@@ -426,7 +426,7 @@ or only when the day has a picturable moment.
 ## Frontend
 
 Built (see "The page"): DayNumbers; DayArticleBody, drawing paragraphs
-sentence by sentence (DayInline) beside its margin; DayEvidence; DayGloss;
+sentence by sentence (DayInline) beside its margin; RecordCard; DayGloss;
 DayHand; DayFigure. Data, top to bottom:
 
 1. **Cited in the article**, when a citation opened Data: the cited

@@ -3,7 +3,9 @@
 
 	Drawn by `Ref`: the hover preview, the live title of a page, chat or
 	project, the words written for a person or place (record/names.md); a
-	click opens it in the tab you are on and ⌘ or Ctrl-click in a new tab.
+	click opens it in the tab you are on and ⌘ or Ctrl-click in a new tab. A
+	mention of a record is a citation instead: a click opens its RecordCard,
+	which the page draws (DocumentEditor).
 	`label` is the text written in the page, which is what the markdown
 	export holds; `to` stays a route so redirects work. Right-click or a long
 	press: Open in new tab, Open beside (`openMenuItems`), Copy link, Edit,

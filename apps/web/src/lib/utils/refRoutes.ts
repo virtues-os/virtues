@@ -148,6 +148,28 @@ export function parseRef(url: string): { kind: string; id: string } | null {
 	return { kind, id: decoded(m[2]) };
 }
 
+const RECORD_ROUTE = /^\/record\/([a-z0-9_]+)\/([^?#]+)$/;
+// A table name always has an underscore (`data_calendar_event`, `app_pages`),
+// which keeps `mailto:` and other schemes out.
+const TABLE_REF = /^([a-z][a-z0-9]*_[a-z0-9_]+):(?!\/\/)(.+)$/;
+
+/**
+ * A record's ontology and id, from either way the app writes one: a route
+ * (`/record/<ontology>/<id>`, what chat answers and pages link to) or
+ * `table:id` (what a day article cites). The records API takes a table name
+ * in place of an ontology name, so either goes to `getRecord` as is. Null
+ * for anything else.
+ */
+export function parseRecordRef(ref: string): { ontology: string; id: string } | null {
+	const m = RECORD_ROUTE.exec(ref) ?? TABLE_REF.exec(ref);
+	return m ? { ontology: m[1], id: decoded(m[2]) } : null;
+}
+
+/** A link to a record, which opens the record card where it is cited. */
+export function isRecordRoute(url: string | null | undefined): boolean {
+	return !!url && RECORD_ROUTE.test(url);
+}
+
 /**
  * Get entity type from a route URL
  * @example getEntityTypeFromRoute('/person/david-okafor') → 'person'

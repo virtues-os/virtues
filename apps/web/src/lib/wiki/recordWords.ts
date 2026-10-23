@@ -1,8 +1,9 @@
 /**
- * A cited record's own words, for the day page: a message as it was sent,
- * a recording as the turns nearest the sentence that cites it, and which of
- * the record's words the sentence shares with it. One place, so the evidence
- * card and Data's cited card show the same thing.
+ * A cited record's own words: a message as it was sent, a recording as the
+ * turns nearest the sentence that cites it, and which of the record's words
+ * the sentence shares with it. One place, so the record card (RecordCard,
+ * wherever a record is cited) and the day page's Data view show the same
+ * thing.
  */
 
 import { speakerTurns } from "$lib/timeline/transcript";

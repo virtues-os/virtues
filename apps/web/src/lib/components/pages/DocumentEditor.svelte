@@ -65,6 +65,9 @@
 	import { veil } from "$lib/stores/veil.svelte";
 	import RefPicker, { type EntityResult } from "$lib/components/RefPicker.svelte";
 	import RefPreview from "$lib/components/RefPreview.svelte";
+	import RecordCard from "$lib/components/RecordCard.svelte";
+	import { RECORD_CITE, recordCards, type RecordCiteDetail } from "$lib/utils/recordCards.svelte";
+	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import SlashMenu from "$lib/components/SlashMenu.svelte";
 	import SelectionToolbar from "$lib/components/SelectionToolbar.svelte";
 	import AiPromptPopover from "$lib/components/pages/AiPromptPopover.svelte";
@@ -188,6 +191,10 @@
 
 	let hover = $state<{ anchor: HTMLElement; href: string; label: string } | null>(null);
 	let hoverHide: ReturnType<typeof setTimeout> | null = null;
+
+	// The record card: a mention of a record or a link to one opens it, and
+	// ← and → step through the page's records in order (lib/utils/recordCards).
+	const cards = recordCards(() => frame, { mark: false });
 
 	let fileInput: HTMLInputElement;
 	let fileAccept = $state("*/*");
@@ -488,6 +495,25 @@
 	};
 
 	// ── Link previews ────────────────────────────────────────────────────
+	// A mention of a record is a `Ref`, which asks the page for its card.
+	$effect(() => {
+		const el = frame;
+		if (!el) return;
+		const onCite = (e: Event) => {
+			const { route, focus } = (e as CustomEvent<RecordCiteDetail>).detail;
+			e.preventDefault();
+			cards.show(route, e.target as HTMLElement, focus);
+		};
+		el.addEventListener(RECORD_CITE, onCite);
+		return () => el.removeEventListener(RECORD_CITE, onCite);
+	});
+
+	function openRecordBeside(ref: string) {
+		const label = cards.open?.anchor.textContent ?? undefined;
+		cards.close();
+		windowShellStore.openRouteBeside(ref, label);
+	}
+
 	function showPreview(anchor: HTMLElement, href: string, label: string) {
 		if (hoverHide) clearTimeout(hoverHide);
 		hover = { anchor, href, label };
@@ -585,7 +611,7 @@
 				codeHighlight(),
 				pasteHandling(),
 				mediaUploads(),
-				links({ onHover: showPreview, onLeave: hidePreview }),
+				links({ onHover: showPreview, onLeave: hidePreview, onCite: (el, href) => cards.show(href, el) }),
 				aiPresence(),
 				contextGesture([linkContext(() => editor), proposalContext, tableContext]),
 				proposalKeys(),
@@ -608,6 +634,7 @@
 				updateToolbar(e);
 				updateTable(e);
 				updateSuggestion(e);
+				cards.reattach();
 			});
 		};
 		toolbarTimer = toolbarTiming(e.view, follow);
@@ -763,6 +790,20 @@
 				onReject={() => rejectProposal(e, id)}
 				onAcceptAll={() => acceptAllProposals(e)}
 				onRejectAll={() => rejectAllProposals(e)}
+			/>
+		{/if}
+
+		{#if cards.open}
+			<RecordCard
+				anchor={cards.open.anchor}
+				sources={[{ ref: cards.open.route }]}
+				sentence={cards.open.sentence}
+				mode={cards.open.mode}
+				position={cards.open.position}
+				focus={cards.open.focus}
+				onopen={openRecordBeside}
+				onstep={(by) => cards.step(by)}
+				onclose={(back) => cards.close(back)}
 			/>
 		{/if}
 

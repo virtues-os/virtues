@@ -1,12 +1,11 @@
 <script lang="ts">
-	import { tick, type Component } from 'svelte';
+	import { tick, untrack, type Component } from 'svelte';
 	import { Streamdown, theme as streamdownTheme } from 'svelte-streamdown';
 	import type { CitationContext, Citation } from '$lib/types/Citation';
-	import { citedRoutes } from '$lib/citations/builder';
 	import InlineCitation from './citations/InlineCitation.svelte';
-	import CitationCard from './citations/CitationCard.svelte';
 	import Ref from './Ref.svelte';
-	import RefPreview from './RefPreview.svelte';
+	import RecordCard, { type CardSource, type QueryRows } from './RecordCard.svelte';
+	import { RECORD_CITE, recordCards, type RecordCiteDetail } from '$lib/utils/recordCards.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import LinkChip from './LinkChip.svelte';
 	import MarkdownCodeBlock from './MarkdownCodeBlock.svelte';
@@ -76,77 +75,68 @@
 		return preprocessMarkdown(content.replace(/\](\[\d+\])/g, '] $1'));
 	});
 
-	// The citation card. A link to a record or a query this turn's tools
-	// returned is a citation; a click opens one card for the whole answer,
-	// anchored on that link, and the arrow keys step through the answer's
-	// citations in the order it links them.
+	// The record card. Every link to a record in this text is a citation, and
+	// so is a query whose call this turn made: a click opens one card for the
+	// whole text, anchored on that link, and ← and → step through the records
+	// in the order the text links them (lib/utils/recordCards).
 	let root = $state<HTMLElement | null>(null);
-	let openRoute = $state<string | null>(null);
-	let openAnchor = $state<HTMLElement | null>(null);
-	let openMark = $state('');
-	const order = $derived(citations ? citedRoutes(content ?? '', citations) : []);
+	const cards = recordCards(() => root);
 
-	function openCite(route: string, anchor: HTMLElement) {
-		if (openRoute === route && openAnchor === anchor) {
-			closeCite();
-			return;
-		}
-		openRoute = route;
-		openAnchor = anchor;
-		openMark = anchor.textContent ?? '';
-	}
-
-	function closeCite(how?: 'escape' | 'outside') {
-		const anchor = openAnchor;
-		openRoute = null;
-		openAnchor = null;
-		if (how === 'escape') anchor?.focus();
-	}
-
-	function anchorFor(route: string): HTMLElement | null {
-		return root?.querySelector<HTMLElement>(`[data-cite-route="${CSS.escape(route)}"]`) ?? null;
-	}
-
-	function stepCite(dir: 1 | -1) {
-		if (!openRoute || order.length < 2) return;
-		const at = order.indexOf(openRoute);
-		const next = order[(at + dir + order.length) % order.length];
-		const anchor = anchorFor(next);
-		if (!anchor) return;
-		openRoute = next;
-		openAnchor = anchor;
-		openMark = anchor.textContent ?? '';
-	}
-
-	function onCardKey(e: KeyboardEvent) {
-		if (e.key === 'ArrowRight') {
+	// A Ref to a record asks the text it is in for its card.
+	$effect(() => {
+		const el = root;
+		if (!el) return;
+		const onCite = (e: Event) => {
+			const { route, focus } = (e as CustomEvent<RecordCiteDetail>).detail;
 			e.preventDefault();
-			stepCite(1);
-		} else if (e.key === 'ArrowLeft') {
-			e.preventDefault();
-			stepCite(-1);
-		}
-	}
+			cards.show(route, e.target as HTMLElement, focus);
+		};
+		el.addEventListener(RECORD_CITE, onCite);
+		return () => el.removeEventListener(RECORD_CITE, onCite);
+	});
 
 	// A reply that is still arriving re-renders its links. Keep the card on
-	// the same citation's new link, or close it if the link is gone.
+	// the same record's new link, or close it if the link is gone.
 	$effect(() => {
 		void processedContent;
-		if (!openRoute) return;
-		tick().then(() => {
-			if (!openRoute || openAnchor?.isConnected) return;
-			const anchor = anchorFor(openRoute);
-			if (anchor) openAnchor = anchor;
-			else closeCite();
-		});
+		if (!untrack(() => cards.open)) return;
+		tick().then(() => cards.reattach());
 	});
 
 	const TOOL_ROUTE = /^\/chat\/[^/]+\/tool\/([^/?#]+)$/;
-	const openSource = $derived(openRoute ? citations?.byRoute.get(openRoute) : undefined);
 	const openQuery = $derived.by(() => {
-		const callId = openRoute ? TOOL_ROUTE.exec(openRoute)?.[1] : undefined;
+		const callId = cards.open ? TOOL_ROUTE.exec(cards.open.route)?.[1] : undefined;
 		return callId ? citations?.byToolCallId.get(callId) : undefined;
 	});
+
+	/** A query's count and first rows, from the turn's tool output. */
+	function queryRows(query: Citation): QueryRows {
+		const d = (query.data ?? {}) as Record<string, unknown>;
+		const list = Array.isArray(d.rows) ? (d.rows as Record<string, unknown>[]) : [];
+		const columns = (Array.isArray(d.columns) ? (d.columns as string[]) : Object.keys(list[0] ?? {}))
+			.filter((c) => c !== 'ref' && c !== 'id')
+			.slice(0, 3);
+		const count = typeof d.row_count === 'number' ? d.row_count : list.length;
+		return { rows: list.slice(0, 3), columns, count, truncated: d.truncated === true };
+	}
+
+	// What the open card shows: the query's rows, or the record with the
+	// passage the turn's search matched, when a tool returned it.
+	const openSources = $derived.by((): CardSource[] => {
+		const o = cards.open;
+		if (!o) return [];
+		if (openQuery) return [{ ref: o.route, query: queryRows(openQuery) }];
+		const found = citations?.byRoute.get(o.route);
+		return [{ ref: o.route, passage: found?.passage, title: found?.title }];
+	});
+
+	function openSource(ref: string) {
+		const query = openQuery;
+		const label = openSources[0]?.title ?? cards.open?.anchor.textContent ?? undefined;
+		cards.close();
+		if (query) onCitationClick?.(query);
+		else windowShellStore.openRouteBeside(ref, label);
+	}
 
 	// TeX (`$…$`, `$$…$$`) is drawn by KaTeX, which Streamdown's math
 	// component loads. It is fetched the first time a reply holds a `$`, so
@@ -282,13 +272,11 @@
 					<button
 						type="button"
 						class="ref-link ref-link--cite"
-						class:is-open={openRoute === url}
 						data-cite-route={url}
 						aria-haspopup="dialog"
-						aria-expanded={openRoute === url}
 						onclick={(e) => {
 							if (e.metaKey || e.ctrlKey) onCitationClick?.(queryCitation);
-							else openCite(url, e.currentTarget);
+							else cards.show(url, e.currentTarget, e.detail === 0);
 						}}
 					>{@render children()}</button>
 				{:else if target.kind === 'query'}
@@ -296,18 +284,10 @@
 					     answer whose tool calls are not loaded) has no panel
 					     to open, and no route: the figure reads as text. -->
 					<span>{@render children()}</span>
-				{:else if target.kind === 'entity' && citations?.byRoute.has(url)}
-					<!-- A record this turn's tools returned: a citation. -->
-					<Ref
-						displayName={(token.text ?? '').replace(/^@/, '')}
-						url={url}
-						variant="cite"
-						onCite={openCite}
-						active={openRoute === url}
-					/>
 				{:else if target.kind === 'entity'}
 					<!-- `[@X](/entity/id)`: the editor's `@` marks the ref, and
-					     is no part of its name, as in the image form below. -->
+					     is no part of its name, as in the image form below. A
+					     link to a record draws itself as a citation. -->
 					<Ref displayName={(token.text ?? '').replace(/^@/, '')} url={url} variant={refVariant} />
 				{:else if target.kind === 'external'}
 					<!-- Always quiet, even where entity refs are loud. A web
@@ -340,39 +320,19 @@
 			{/snippet}
 	</Streamdown>
 
-	{#if openRoute && openAnchor && (openSource || openQuery)}
-		<RefPreview
-			anchor={openAnchor}
-			type={openSource ? 'record' : null}
-			label={openSource?.title ?? openMark}
-			url={openRoute}
-			pinned
-			prefer="below"
-			width={384}
-			onclose={closeCite}
-			onkeydown={onCardKey}
-		>
-			<CitationCard
-				route={openRoute}
-				source={openSource}
-				query={openQuery}
-				mark={openMark}
-				index={Math.max(0, order.indexOf(openRoute))}
-				total={order.length}
-				onstep={stepCite}
-				onopenbeside={() => {
-					if (openRoute) windowShellStore.openRouteBeside(openRoute, openSource?.title ?? openMark);
-					closeCite();
-				}}
-				onshowrows={openQuery
-					? () => {
-							const q = openQuery;
-							closeCite();
-							if (q) onCitationClick?.(q);
-						}
-					: undefined}
-			/>
-		</RefPreview>
+	{#if cards.open && openSources.length}
+		<RecordCard
+			anchor={cards.open.anchor}
+			sources={openSources}
+			sentence={cards.open.sentence}
+			label={openSources[0].title}
+			mode={cards.open.mode}
+			position={cards.open.position}
+			focus={cards.open.focus}
+			onopen={openSource}
+			onstep={(by) => cards.step(by)}
+			onclose={(back) => cards.close(back)}
+		/>
 	{/if}
 </div>
 
