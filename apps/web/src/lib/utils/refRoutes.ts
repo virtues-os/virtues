@@ -109,8 +109,15 @@ export function parseEntityRoute(route: string): string | null {
 }
 
 // `/chat/{chat}/tool/{call}`: the whole result of one tool call, the rows
-// behind a computed figure. The box attaches it to every sql_query result.
-const TOOL_REF = /^\/chat\/[^/]+\/tool\/([^/?#]+)$/;
+// behind a computed figure. The box attaches it to every sql_query and
+// show result, and it opens in a tab of its own (QueryView).
+const TOOL_REF = /^\/chat\/([^/?#]+)\/tool\/([^/?#]+)$/;
+
+/** A query ref's chat and call, or null for any other link. */
+export function parseToolRef(url: string): { chatId: string; callId: string } | null {
+	const m = TOOL_REF.exec(url);
+	return m ? { chatId: m[1], callId: m[2] } : null;
+}
 
 export type LinkTarget =
 	| { kind: 'query'; callId: string }
@@ -125,7 +132,7 @@ export type LinkTarget =
  */
 export function linkTarget(url: string | null | undefined): LinkTarget {
 	if (!url) return { kind: 'none' };
-	const callId = TOOL_REF.exec(url)?.[1];
+	const callId = parseToolRef(url)?.callId;
 	if (callId) return { kind: 'query', callId };
 	if (parseEntityRoute(url) !== null) return { kind: 'entity' };
 	if (/^https?:\/\//.test(url)) return { kind: 'external' };

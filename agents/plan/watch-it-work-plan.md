@@ -127,8 +127,10 @@ the scores as well.
 
 - Answers render through `Markdown.svelte`. Its link snippet
   (`Markdown.svelte:199-235`) asks `linkTarget` (`utils/refRoutes.ts:126`).
-  A query ref becomes a button that opens `CitationPanel`, and an entity or
-  record route becomes `<Ref>`.
+  A query ref, and a link to a page the turn's web search returned, become
+  citations that open RecordCard. An entity or record route becomes
+  `<Ref>`. A query's rows open in a tab of their own at its route
+  (`QueryView.svelte`), which reads the call from the stored chat.
 - A plain click on a `Ref` opens the route in the current tab
   (`Ref.svelte:40-45`). Cmd-click opens a new tab, and "Open beside" is only
   in the right-click menu.
@@ -230,7 +232,9 @@ replaced two cards: the day page's evidence card and slice 1's chat card.
   - On every kind, the words the citing sentence shares with the record
     are marked, using `wiki/recordWords.ts`.
 - **A query citation** is drawn by RecordCard itself, as a row count and
-  the first rows.
+  the first rows. Show all rows opens the query's tab (`QueryView`).
+- **A web citation** is drawn by RecordCard as the page's title, its site
+  and date, and the text the search returned, with the shared words marked.
 - **`parseRecordRef`** (`utils/refRoutes.ts`) reads both
   `/record/<ontology>/<id>` and `table:id`. `isRecordRoute` says whether a
   link goes to a record. The citation builder uses the same parser.

@@ -381,10 +381,10 @@ async fn execute_single(
 /// nothing: it was computed over rows, and no one row is the source. So the
 /// pattern answers — the ones where trust is decided — carried a number with
 /// no way to open what it came from. `/chat/{chat}/tool/{call}` is that way:
-/// the UI's citation context already indexes every tool call by id and the
-/// panel already renders `rows` as a table, so the link opens the rows the
-/// figure was computed from. Set here rather than in the tool because the
-/// tool never learns its own call id.
+/// in an answer the link opens a card with the first rows, and the route is
+/// a tab of its own that reads the call back from the stored chat and shows
+/// its SQL and every row it returned. Set here rather than in the tool
+/// because the tool never learns its own call id.
 fn attach_query_ref(tool_call: &ToolCall, context: &ToolContext, result: &mut ToolResult) {
     // `show` draws rows from a query; its figure cites them the same way.
     if !matches!(tool_call.name.as_str(), "sql_query" | "show") || !result.success {

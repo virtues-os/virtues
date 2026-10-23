@@ -6,7 +6,19 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { isRecordRoute, linkTarget, parseRecordRef } from './refRoutes';
+import { isRecordRoute, linkTarget, parseRecordRef, parseToolRef } from './refRoutes';
+
+describe('parseToolRef', () => {
+	it('reads a query ref as its chat and call', () => {
+		expect(parseToolRef('/chat/chat_abc/tool/call_123')).toEqual({ chatId: 'chat_abc', callId: 'call_123' });
+	});
+
+	it('reads a chat, and anything past the call, as no query', () => {
+		expect(parseToolRef('/chat/chat_abc')).toBeNull();
+		expect(parseToolRef('/chat/chat_abc/tool/call_1/extra')).toBeNull();
+		expect(parseToolRef('https://example.com/chat/x/tool/y')).toBeNull();
+	});
+});
 
 describe('parseRecordRef', () => {
 	it('reads a record route and a day article citation alike', () => {

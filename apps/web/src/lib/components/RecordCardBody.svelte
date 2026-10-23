@@ -2,7 +2,8 @@
 	import type { OntologyRecord } from "$lib/api/client";
 	import { contentWords, markRanges, messageBody, nearTurns, sharedRanges } from "$lib/wiki/recordWords";
 
-	export type RecordKind = "message" | "recording" | "purchase" | "event" | "email" | "bookmark" | "page" | "other";
+	/** `web` is a page a web search returned, which has no row: its title and the search's text stand in. */
+	export type RecordKind = "message" | "recording" | "purchase" | "event" | "email" | "bookmark" | "page" | "web" | "other";
 
 	/** The kind of record an ontology or table name holds. A table name drops its `data_`. */
 	export function recordKind(name: string): RecordKind {
@@ -37,6 +38,7 @@
 		email: "Mail",
 		bookmark: "Bookmark",
 		page: "Page",
+		web: "Web",
 		other: null,
 	};
 

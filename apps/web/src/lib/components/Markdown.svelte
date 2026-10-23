@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { tick, untrack, type Component } from 'svelte';
 	import { Streamdown, theme as streamdownTheme } from 'svelte-streamdown';
-	import type { CitationContext, Citation } from '$lib/types/Citation';
-	import InlineCitation from './citations/InlineCitation.svelte';
+	import type { CitationContext } from '$lib/types/Citation';
+	import { webKey } from '$lib/citations/builder';
 	import Ref from './Ref.svelte';
-	import RecordCard, { type CardSource, type QueryRows } from './RecordCard.svelte';
+	import RecordCard, { type CardSource } from './RecordCard.svelte';
 	import { RECORD_CITE, recordCards, type RecordCiteDetail } from '$lib/utils/recordCards.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import LinkChip from './LinkChip.svelte';
@@ -13,6 +13,7 @@
 	import { alertTone } from '$lib/document/callouts';
 	import { linkTarget, parseEntityRoute } from '$lib/utils/refRoutes';
 	import { preprocessMarkdown } from '$lib/utils/markdownPreprocess';
+	import { openWebLink } from '$lib/utils/webLinks';
 	import { backendUrl } from '$lib/config/backend';
 
 	interface Props {
@@ -26,8 +27,8 @@
 		 * first line. The caller keeps it on for a reply it watched arrive.
 		 */
 		animate?: boolean;
+		/** What this text's turn can cite: its links to these open the record card. */
 		citations?: CitationContext;
-		onCitationClick?: (citation: Citation) => void;
 		// How inline entity refs render: "link" (default, chat answers) or "quiet"
 		// (dotted-underline prose links for flowing text like the day biography).
 		refVariant?: "link" | "quiet";
@@ -51,34 +52,17 @@
 		isStreaming = false,
 		animate = false,
 		citations,
-		onCitationClick,
 		refVariant = "link",
 		variant = "ui"
 	}: Props = $props();
 
-	// Helper to get Citation from token key
-	function getCitation(key: string): Citation | undefined {
-		return citations?.byId.get(key);
-	}
-
-	// A figure computed over rows cites the query that computed it. The
-	// citation context already indexes each tool call by id, so the link
-	// resolves to the same panel a numbered citation opens, with the rows
-	// as a table.
-	function citationForToolCall(callId: string): Citation | undefined {
-		return citations?.byToolCallId.get(callId);
-	}
-
-	const processedContent = $derived.by(() => {
-		if (!content) return '';
-		// Fix adjacent citations [1][2] -> [1] [2]
-		return preprocessMarkdown(content.replace(/\](\[\d+\])/g, '] $1'));
-	});
+	const processedContent = $derived(content ? preprocessMarkdown(content) : '');
 
 	// The record card. Every link to a record in this text is a citation, and
-	// so is a query whose call this turn made: a click opens one card for the
-	// whole text, anchored on that link, and ← and → step through the records
-	// in the order the text links them (lib/utils/recordCards).
+	// so is a link to a query or a web page this turn's tools returned: a
+	// click opens one card for the whole text, anchored on that link, and ←
+	// and → step through them in the order the text links them
+	// (lib/utils/recordCards).
 	let root = $state<HTMLElement | null>(null);
 	const cards = recordCards(() => root);
 
@@ -103,38 +87,30 @@
 		tick().then(() => cards.reattach());
 	});
 
-	const TOOL_ROUTE = /^\/chat\/[^/]+\/tool\/([^/?#]+)$/;
-	const openQuery = $derived.by(() => {
-		const callId = cards.open ? TOOL_ROUTE.exec(cards.open.route)?.[1] : undefined;
-		return callId ? citations?.byToolCallId.get(callId) : undefined;
-	});
-
-	/** A query's count and first rows, from the turn's tool output. */
-	function queryRows(query: Citation): QueryRows {
-		const d = (query.data ?? {}) as Record<string, unknown>;
-		const list = Array.isArray(d.rows) ? (d.rows as Record<string, unknown>[]) : [];
-		const columns = (Array.isArray(d.columns) ? (d.columns as string[]) : Object.keys(list[0] ?? {}))
-			.filter((c) => c !== 'ref' && c !== 'id')
-			.slice(0, 3);
-		const count = typeof d.row_count === 'number' ? d.row_count : list.length;
-		return { rows: list.slice(0, 3), columns, count, truncated: d.truncated === true };
-	}
-
-	// What the open card shows: the query's rows, or the record with the
-	// passage the turn's search matched, when a tool returned it.
+	// What the open card shows: the query's rows, the web page as the search
+	// returned it, or the record with the passage the turn's search matched.
 	const openSources = $derived.by((): CardSource[] => {
 		const o = cards.open;
 		if (!o) return [];
-		if (openQuery) return [{ ref: o.route, query: queryRows(openQuery) }];
+		const target = linkTarget(o.route);
+		if (target.kind === 'query') {
+			const query = citations?.queries.get(target.callId);
+			return query ? [{ ref: o.route, query }] : [];
+		}
+		if (target.kind === 'external') {
+			const web = citations?.byUrl.get(webKey(o.route));
+			return web ? [{ ref: o.route, web }] : [];
+		}
 		const found = citations?.byRoute.get(o.route);
 		return [{ ref: o.route, passage: found?.passage, title: found?.title }];
 	});
 
+	// A record or a query's rows open in a tab beside; a web page opens where
+	// a link to the web goes in the app.
 	function openSource(ref: string) {
-		const query = openQuery;
 		const label = openSources[0]?.title ?? cards.open?.anchor.textContent ?? undefined;
 		cards.close();
-		if (query) onCitationClick?.(query);
+		if (linkTarget(ref).kind === 'external') void openWebLink(ref);
 		else windowShellStore.openRouteBeside(ref, label);
 	}
 
@@ -203,21 +179,10 @@
 				animateOnMount: false
 			}}
 		>
-			<!-- `[1]` as a source badge that opens the citation panel. The whole
-			     element is ours: Streamdown's own wraps its preview in a button,
-			     which put our badge's button inside another. Brackets that name
-			     no source stay as written. -->
-			{#snippet inlineCitation({ token }: { token: any })}
-				{@const cited = (token.keys as string[]).flatMap((key) => {
-					const citation = getCitation(key);
-					return citation ? [citation] : [];
-				})}
-				{#if cited.length}
-					{#each cited as citation (citation.id)}<InlineCitation {citation} onPanelOpen={onCitationClick} />{/each}
-				{:else}
-					{token.raw}
-				{/if}
-			{/snippet}
+			<!-- `[1]` stays as written. An answer cites by linking what a tool
+			     returned, so a bracketed number names no source, and Streamdown's
+			     own citation badge would point at nothing. -->
+			{#snippet inlineCitation({ token }: { token: any })}{token.raw}{/snippet}
 
 			<!-- The page editor's table markup, so prose.css draws one table for both. -->
 			{#snippet table({ children }: { children: import('svelte').Snippet })}
@@ -265,38 +230,53 @@
 			{#snippet link({ children, token }: { children: import('svelte').Snippet; token: any })}
 				{@const url = token?.href}
 				{@const target = linkTarget(url)}
-				{@const queryCitation = target.kind === 'query' ? citationForToolCall(target.callId) : undefined}
-				{#if queryCitation}
+				{@const web = target.kind === 'external' ? citations?.byUrl.get(webKey(url)) : undefined}
+				{#if target.kind === 'query' && citations?.queries.has(target.callId)}
 					<!-- The rows behind a figure: a citation like a record's.
-					     A click opens its card; Cmd-click opens the rows. -->
+					     A click opens its card; Cmd-click opens the rows beside. -->
 					<button
 						type="button"
 						class="ref-link ref-link--cite"
 						data-cite-route={url}
 						aria-haspopup="dialog"
 						onclick={(e) => {
-							if (e.metaKey || e.ctrlKey) onCitationClick?.(queryCitation);
+							if (e.metaKey || e.ctrlKey) windowShellStore.openRouteBeside(url, token.text);
 							else cards.show(url, e.currentTarget, e.detail === 0);
 						}}
 					>{@render children()}</button>
 				{:else if target.kind === 'query'}
-					<!-- A query ref with no citation in hand (a page, an
-					     answer whose tool calls are not loaded) has no panel
-					     to open, and no route: the figure reads as text. -->
-					<span>{@render children()}</span>
+					<!-- A query ref with no result in hand (an answer whose
+					     tool calls are not loaded): the rows open beside, read
+					     from the stored chat. -->
+					<button type="button" class="ref-link" onclick={() => windowShellStore.openRouteBeside(url, token.text)}
+						>{@render children()}</button
+					>
+				{:else if web}
+					<!-- A page a web search in this turn returned: a citation,
+					     whose card shows the page as the search read it. A
+					     click opens the card; Cmd-click opens the page. -->
+					<button
+						type="button"
+						class="ref-link ref-link--cite"
+						data-cite-route={url}
+						aria-haspopup="dialog"
+						onclick={(e) => {
+							if (e.metaKey || e.ctrlKey) void openWebLink(url);
+							else cards.show(url, e.currentTarget, e.detail === 0);
+						}}
+					>{@render children()}</button>
 				{:else if target.kind === 'entity'}
 					<!-- `[@X](/entity/id)`: the editor's `@` marks the ref, and
 					     is no part of its name, as in the image form below. A
 					     link to a record draws itself as a citation. -->
 					<Ref displayName={(token.text ?? '').replace(/^@/, '')} url={url} variant={refVariant} />
 				{:else if target.kind === 'external'}
-					<!-- Always quiet, even where entity refs are loud. A web
-					     citation is metadata about the sentence, not part of it,
-					     and an answer that cites six of them was ending every
-					     bullet in a row of blue — the paragraph read as a link
-					     farm with prose in between. Dotted, body-colored, no
-					     globe: the domain name is already the tell, and hovering
-					     names the site in full. -->
+					<!-- A link to the web that no search in this turn returned.
+					     Always quiet, even where entity refs are loud: an answer
+					     that links six sites was ending every bullet in a row of
+					     blue, and the paragraph read as a link farm with prose in
+					     between. Dotted, body-colored, no globe: the domain name
+					     is already the tell, and hovering names the site in full. -->
 					<LinkChip href={url} label={token.text} variant="quiet" />
 				{:else if url}
 					<a href={url} target="_blank" rel="noopener noreferrer">{@render children()}</a>

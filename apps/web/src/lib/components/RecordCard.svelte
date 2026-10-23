@@ -8,6 +8,9 @@
 	turns nearest the citing sentence, a purchase as its amount, with the
 	words the sentence shares with it marked (lib/wiki/recordWords.ts).
 	Nothing is summarized. With the veil on, no words and no names show.
+	A chat answer also cites a query (its first rows, and its own tab for
+	the rest) and a page a web search returned (the page as the search read
+	it).
 
 	Where it sits is the caller's call (`mode`): in the margin beside the
 	sentence when the page has a margin, a popover under the link when it
@@ -18,23 +21,17 @@
 -->
 <script lang="ts" module>
 	import { getRecord, type OntologyRecord } from "$lib/api/client";
+	import type { QueryResult, WebSource } from "$lib/types/Citation";
 
 	export type CardMode = "margin" | "popover" | "sheet";
-
-	/** A query citation's rows, from the turn's tool output. */
-	export interface QueryRows {
-		rows: Record<string, unknown>[];
-		columns: string[];
-		count: number;
-		truncated: boolean;
-	}
 
 	/** One thing the card shows. */
 	export interface CardSource {
 		/**
-		 * `/record/<ontology>/<id>`, `table:id`, or a query's
-		 * `/chat/<chat>/tool/<call>`. Null for a citation with no record: on a
-		 * day page, a question asked in chat that day.
+		 * `/record/<ontology>/<id>`, `table:id`, a query's
+		 * `/chat/<chat>/tool/<call>`, or a web page's address. Null for a
+		 * citation with no record: on a day page, a question asked in chat
+		 * that day.
 		 */
 		ref: string | null;
 		/** The kicker the citation carries ("Message · 4:52 PM"). Without one, the card names the kind and the time. */
@@ -42,7 +39,10 @@
 		/** The passage a search matched, shown before the record arrives. */
 		passage?: string;
 		title?: string;
-		query?: QueryRows;
+		/** A query's result, from the turn's tool output. */
+		query?: QueryResult;
+		/** A web page, as the turn's search returned it. */
+		web?: WebSource;
 	}
 
 	/** On a surface with no margin: a popover, or a sheet on a phone. */
@@ -74,6 +74,7 @@
 	import { portal } from "$lib/actions/portal";
 	import { parseRecordRef } from "$lib/utils/refRoutes";
 	import { contentWords, messageSender } from "$lib/wiki/recordWords";
+	import { plainText } from "$lib/wiki/inlineMarkdown";
 	import { veil } from "$lib/stores/veil.svelte";
 	import RecordCardBody, { KIND_LABEL, citedTurns, recordKind, type RecordKind } from "./RecordCardBody.svelte";
 
@@ -175,11 +176,12 @@
 		// One source per record: a sentence, or a table's lines, can cite the
 		// same moment twice. A citation with no record still shows.
 		const list = sources.filter((n, i, all) => all.findIndex((m) => (m.ref ?? m.label) === (n.ref ?? n.label)) === i);
-		const parsed = list.map((s) => (s.ref && !s.query ? parseRecordRef(s.ref) : null));
+		const parsed = list.map((s) => (s.ref && !s.query && !s.web ? parseRecordRef(s.ref) : null));
 		const run = ++generation;
 		loaded = list.map((source, i) => {
 			const p = parsed[i];
-			return { source, kind: p ? recordKind(p.ontology) : "other", record: p ? (records.get(`${p.ontology}/${p.id}`) ?? null) : null, failed: false };
+			const kind = source.web ? "web" : p ? recordKind(p.ontology) : "other";
+			return { source, kind, record: p ? (records.get(`${p.ontology}/${p.id}`) ?? null) : null, failed: false };
 		});
 		list.forEach((source, i) => {
 			const p = parsed[i];
@@ -211,6 +213,7 @@
 	 *  label says the first two when it has one. */
 	function kicker(s: Loaded): string[] {
 		if (s.source.query) return ["Query", "counted on your server"];
+		if (s.source.web) return ["Web", domainOf(s.source.web.url), stamp(s.source.web.published)].filter(Boolean);
 		const [kind, time] = (s.source.label ?? "").replace(/\s*·\s*$/, "").split(" · ");
 		const at = s.record ? s.record.row[s.record.timestamp_column] : undefined;
 		const parts = [kind || KIND_LABEL[s.kind] || s.record?.display_name || "Record", time || stamp(at)];
@@ -219,7 +222,26 @@
 		return parts.filter(Boolean);
 	}
 
-	const openText = (s: Loaded) => (s.source.query ? "Show all rows" : openLabel);
+	const openText = (s: Loaded) => (s.source.query ? "Show all rows" : s.source.web ? "Open site" : openLabel);
+
+	function domainOf(url: string): string {
+		try {
+			return new URL(url).hostname.replace(/^www\./, "");
+		} catch {
+			return "";
+		}
+	}
+
+	/** A web page's words. The search returns its text as markdown: headings, images and links. */
+	function pageWords(md: string | undefined): string | undefined {
+		if (!md) return undefined;
+		const words = plainText(md.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/^[ \t]*(?:#{1,6}|[-*+]|\d+[.)]|>)[ \t]+/gm, ""));
+		// Emphasis that runs across a line break is not inline markdown, and stays.
+		return words.replace(/\*\*|__/g, "");
+	}
+
+	/** A query's first three rows, in its first three columns. An id says nothing a reader can use here. */
+	const preview = (q: QueryResult) => ({ rows: q.rows.slice(0, 3), columns: q.columns.filter((c) => c !== "id").slice(0, 3) });
 
 	const words = $derived(contentWords(sentence));
 
@@ -262,18 +284,21 @@
 					<p class="quiet">Hidden. Hold V to show this record.</p>
 				{:else if s.source.query}
 					{@const q = s.source.query}
-					<p class="count">{q.count === 1 ? "1 row" : `${q.count.toLocaleString()} rows`}</p>
-					{#if q.rows.length && q.columns.length}
+					{@const p = preview(q)}
+					<p class="count">{q.more && q.count === q.rows.length ? "More than " : ""}{q.count === 1 ? "1 row" : `${q.count.toLocaleString()} rows`}</p>
+					{#if p.rows.length && p.columns.length}
 						<table class="rows">
-							<thead><tr>{#each q.columns as c (c)}<th>{c}</th>{/each}</tr></thead>
+							<thead><tr>{#each p.columns as c (c)}<th>{c}</th>{/each}</tr></thead>
 							<tbody>
-								{#each q.rows as r, j (j)}
-									<tr>{#each q.columns as c (c)}<td>{cell(r[c])}</td>{/each}</tr>
+								{#each p.rows as r, j (j)}
+									<tr>{#each p.columns as c (c)}<td>{cell(r[c])}</td>{/each}</tr>
 								{/each}
 							</tbody>
 						</table>
 					{/if}
-					<p class="quiet">Your server ran this query, and the model read {q.truncated ? "the first part of" : ""} its rows.</p>
+					<p class="quiet">Your server ran this query, and the model read {q.more ? "the first part of its rows" : "all of its rows"}.</p>
+				{:else if s.source.web}
+					<RecordCardBody kind="web" record={null} {sentence} passage={pageWords(s.source.web.text)} title={s.source.web.title} />
 				{:else if s.failed && !s.source.passage}
 					<p class="quiet">Couldn't load this record. Check that your server is running, then open it again.</p>
 				{:else if !s.record && !s.source.passage}

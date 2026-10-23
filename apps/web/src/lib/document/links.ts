@@ -40,7 +40,7 @@ import { toast } from 'svelte-sonner';
 import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { linkEditor } from '$lib/stores/linkEditor.svelte';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
-import { getEntityTypeFromRoute, isRecordRoute, parseRef } from '$lib/utils/refRoutes';
+import { getEntityTypeFromRoute, isRecordRoute, parseRef, parseToolRef } from '$lib/utils/refRoutes';
 import { defaultBrowserItem, openWebLink } from '$lib/utils/webLinks';
 import { openMenuItems } from '$lib/utils/openMenuItems';
 import { isRoute, linkAllowed } from './schema';
@@ -68,6 +68,8 @@ export function isRef(href: string): boolean {
 
 /** What a link's hover preview shows it as: its record for a ref, its address for anything else. */
 export function previewType(href: string): string | null {
+	// A query ref starts as a chat's route does, and is the rows of one call in it.
+	if (parseToolRef(href)) return 'query';
 	return isRef(href) ? getEntityTypeFromRoute(href) : 'link';
 }
 

@@ -157,6 +157,41 @@ describe('the record card in a chat answer', () => {
 	});
 });
 
+describe('a web page in a chat answer', () => {
+	it('cites a page the turn\'s search returned, and its card shows the page as the search read it', async () => {
+		const web = buildCitationContext([
+			{
+				type: 'tool-web_search',
+				toolCallId: 'call_web',
+				toolName: 'web_search',
+				input: {},
+				state: 'output-available',
+				output: {
+					results: [
+						{ title: 'Lakeport Hall reopens', url: 'https://www.example.com/hall/', text: 'The hall reopens after a winter of repairs to its heating.', published_date: '2031-12-01' },
+					],
+				},
+			},
+		]);
+		open = mount(Markdown, {
+			target: document.body,
+			props: { content: 'The hall reopened after [its repairs](https://example.com/hall). There is [another site](https://example.org/) too.', citations: web },
+		});
+		await settle();
+		const links = [...document.body.querySelectorAll<HTMLElement>('[data-cite-route]')];
+		expect(links.map((a) => a.dataset.citeRoute)).toEqual(['https://example.com/hall']);
+
+		links[0].click();
+		await settle();
+		const kick = card()?.querySelector('.kick')?.textContent ?? '';
+		expect(kick).toContain('Web');
+		expect(kick).toContain('example.com');
+		expect(card()?.textContent).toContain('Lakeport Hall reopens');
+		expect([...(card()?.querySelectorAll('mark') ?? [])].map((m) => m.textContent).join(' ')).toContain('repairs');
+		expect(card()?.textContent).toContain('Open site');
+	});
+});
+
 describe('the record card on a day page', () => {
 	it('keeps the citation\'s kicker and marks the words the sentence shares', async () => {
 		const anchor = document.createElement('span');

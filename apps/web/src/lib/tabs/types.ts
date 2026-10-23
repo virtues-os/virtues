@@ -30,6 +30,7 @@ export type TabType =
 	| 'applet' // Applet detail: /applet/applet_{id}
 	| 'applet-view' // Applet full-page face: /applet/applet_{id}/view
 	| 'record' // Single raw record viewer: /record/{ontology}/{id}
+	| 'query' // The rows a chat answer's figure cites: /chat/{chat}/tool/{call}
 	// Storage namespaces
 	| 'storage' // Drive | Streams | App Media | Trash: /storage, /storage/{tab}, /storage/drive/{path}
 	| 'drive' // LEGACY alias of /storage (kept so old links resolve): /drive, /drive/{path}
