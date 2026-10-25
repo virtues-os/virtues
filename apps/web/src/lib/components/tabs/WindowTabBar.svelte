@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { flip } from "svelte/animate";
-	import { untrack } from "svelte";
+	import { onMount, untrack } from "svelte";
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
 	import Icon from "$lib/components/Icon.svelte";
@@ -24,6 +24,8 @@
 	import { isAppleKeyboard } from "$lib/utils/platform";
 	import { pinMenuItem, pinIconMenuItem } from "$lib/pins/pinAction";
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
+	import { newTabMenuItems } from "$lib/utils/newActions";
+	import { canBrowserPane } from "$lib/tauri/bridge";
 
 	const FLIP_DURATION_MS = 150;
 
@@ -131,8 +133,25 @@
 	// the OS shell: a Mac user in a browser still presses Command.
 	const modKeyWord = isAppleKeyboard ? "Command" : "Ctrl";
 
-	function handleNewTab() {
-		windowShellStore.newChat(paneId);
+	// The + offers every kind of new tab. ⌘N still starts a chat directly.
+	let browserAvailable = $state(false);
+	onMount(() => {
+		void canBrowserPane().then((ok) => (browserAvailable = ok));
+	});
+
+	let newTabMenuOpen = $state(false);
+	$effect(() => {
+		if (!contextMenu.visible) newTabMenuOpen = false;
+	});
+
+	function handleNewTab(e: MouseEvent) {
+		e.stopPropagation();
+		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+		contextMenu.show({ x: rect.left, y: rect.bottom }, newTabMenuItems(paneId, { browser: browserAvailable }), {
+			anchor: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
+			placement: "bottom-start",
+		});
+		newTabMenuOpen = true;
 	}
 
 	// Build DnD items from tabs with source information
@@ -567,10 +586,12 @@
 
 	<button
 		class="new-tab-btn"
+		class:open={newTabMenuOpen}
 		onclick={handleNewTab}
-		aria-label="New chat"
-		data-tip="New chat"
-		data-tip-key="mod+n"
+		aria-label="New tab"
+		aria-haspopup="menu"
+		aria-expanded={newTabMenuOpen}
+		data-tip={newTabMenuOpen ? undefined : "New tab"}
 	>
 		<AtlasIcon name="plus" size={16} bare />
 	</button>
@@ -658,9 +679,9 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-		padding: 0 10px;
+		padding: 0 12px;
 		position: relative;
-		/* A pill above the card, the scale's 28px control. */
+		/* A pill above the card, the scale's 32px tab. */
 		height: var(--chrome-tab-h);
 		border: none;
 		border-radius: var(--card-radius);
@@ -1067,6 +1088,12 @@
 		background: var(--hover-bg);
 		color: var(--color-foreground);
 		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
+	}
+
+	/* Lit while its menu is open, as a hovered + is. */
+	.new-tab-btn.open {
+		background: var(--hover-bg);
+		color: var(--color-foreground);
 	}
 
 	.new-tab-btn:active {
