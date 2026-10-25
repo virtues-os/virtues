@@ -16,9 +16,10 @@
 //!
 //! Two protocol facts, both load-bearing and both learned the hard way:
 //!
-//! - Provider-executed tools do NOT exist on `/v1/chat/completions`. It rejects
-//!   them with `expected "function"`. They live only on the gateway's own
-//!   `/v4/ai/language-model` endpoint, which is what the proxy route speaks.
+//! - `/v1/chat/completions` runs the search only as a `vercel:` tool inside
+//!   the chat model's turn and returns no results. The `tool-result` comes
+//!   back only from the gateway's own `/v4/ai/language-model` endpoint, which
+//!   is what the proxy route speaks.
 //! - The wire type is `"provider"`, not `"provider-defined"` — the latter is
 //!   the AI SDK's internal name and the gateway refuses it.
 //!
@@ -148,7 +149,10 @@ pub async fn search(pool: &PgPool, request: SearchRequest) -> Result<SearchRespo
         _ => format!("{SEARCH_INSTRUCTION}Search the web for: {query}"),
     };
 
-    let mut tool_args = json!({});
+    // The calling model's query goes to the search as written. The search
+    // model still composes its own queries from the prompt; these are added
+    // to them, so a paraphrase cannot lose what the caller asked for.
+    let mut tool_args = json!({ "searchQueries": [query] });
     if let Some(n) = request.max_results {
         tool_args["maxResults"] = json!(n);
     }
