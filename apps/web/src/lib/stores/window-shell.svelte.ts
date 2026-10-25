@@ -691,7 +691,7 @@ class WindowShellStore {
 	}
 
 	/**
-	 * Start a new chat in a pane (the header's ✎, a strip's +, ⌘N and the Home
+	 * Start a new chat in a pane (the header's ✎, the strip's + menu, ⌘N and the Home
 	 * panel's New chat). It gets a new tab next to the one you were on, since
 	 * asking for something new means you meant to come back to that one. An
 	 * empty new chat already in the pane is reused rather than doubled.

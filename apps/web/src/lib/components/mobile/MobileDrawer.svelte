@@ -48,6 +48,7 @@
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import { openWebLink } from "$lib/utils/webLinks";
 	import { newProject } from "$lib/utils/projectActions";
+	import { newPage as makePage, newTask as makeTask } from "$lib/utils/newActions";
 	import type { Pin } from "$lib/api/client";
 	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
 	import { search } from "$lib/stores/search.svelte";
@@ -95,16 +96,12 @@
 	}
 
 	/** A page is written the way a chat is started, so its door stands under New chat. */
-	async function newPage() {
-		const { pagesStore } = await import("$lib/stores/pages.svelte");
-		const page = await pagesStore.createNewPage();
-		go(`/page/${page.id}`, page.title);
+	function newPage() {
+		void makePage(go);
 	}
 
-	async function newTask() {
-		const { tasksStore } = await import("$lib/stores/tasks.svelte");
-		tasksStore.requestAdd();
-		go("/tasks", "Tasks");
+	function newTask() {
+		void makeTask(go);
 	}
 
 	function addProject() {

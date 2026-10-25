@@ -67,6 +67,7 @@
 	import ThinkingMark from '$lib/components/ThinkingMark.svelte';
 	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin, canPin, pinAtGap } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
+	import { newPage as makePage, newTask as makeTask } from '$lib/utils/newActions';
 	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
 	import { clothFor } from '$lib/sidebar/pin-colors';
@@ -466,9 +467,7 @@
 	async function newPage(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
-		const { pagesStore } = await import('$lib/stores/pages.svelte');
-		const page = await pagesStore.createNewPage();
-		windowShellStore.openTabFromRoute(`/page/${page.id}`, { label: page.title });
+		await makePage((route, label) => windowShellStore.openTabFromRoute(route, { label }));
 	}
 
 	function openTasks() {
@@ -478,9 +477,7 @@
 	async function newTask(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
-		const { tasksStore } = await import('$lib/stores/tasks.svelte');
-		tasksStore.requestAdd();
-		openTasks();
+		await makeTask(openTasks);
 	}
 
 	async function addProject(e: MouseEvent) {
