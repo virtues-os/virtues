@@ -26,6 +26,9 @@
 	import type { ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { newTabMenuItems } from "$lib/utils/newActions";
 	import { canBrowserPane } from "$lib/tauri/bridge";
+	import { chatActivity } from "$lib/stores/chatActivity.svelte";
+	import { routeToEntityId } from "$lib/utils/urlUtils";
+	import ThinkingMark from "$lib/components/ThinkingMark.svelte";
 
 	const FLIP_DURATION_MS = 150;
 
@@ -398,6 +401,31 @@
 		node.select();
 	}
 
+	/** The chat a tab shows, for its spinner and unread dot. */
+	function chatOf(tab: Tab): string | null {
+		return tab.type === "chat" ? routeToEntityId(tab.route) : null;
+	}
+
+	/**
+	 * Marks a label whose title does not fit, so it fades out at its end as
+	 * a browser tab's does. An ellipsis spends three letters' room saying
+	 * the same thing. Re-measured when the tab resizes or its title changes.
+	 */
+	function fadeWhenClipped(node: HTMLElement, _title: string) {
+		// The title's own line clips itself, so it is the one that overflows.
+		const measure = () => {
+			const text = node.firstElementChild as HTMLElement | null;
+			node.classList.toggle("clipped", !!text && text.scrollWidth > text.clientWidth + 1);
+		};
+		const observer = new ResizeObserver(measure);
+		observer.observe(node);
+		measure();
+		return {
+			update: () => requestAnimationFrame(measure),
+			destroy: () => observer.disconnect(),
+		};
+	}
+
 	function handleRenameCancel() {
 		renamingTabId = null;
 		renameValue = "";
@@ -516,6 +544,7 @@
 			{@const tabOrdinal = ordinalOffset + tabIndex + 1}
 			{@const identity = tabLook(tab)}
 			{@const glyph = identity.icon || item.icon || getDefaultIcon(tab.type)}
+			{@const chatId = chatOf(tab)}
 			<div
 				class="tab"
 				class:active={tab.id === activeTabId}
@@ -544,15 +573,29 @@
 				     selected state and shouted down the actual selection, so
 				     identity now lives in the icon — which is where the user
 				     put it. -->
-				{#if glyph && isEmoji(glyph)}
-					<span class="tab-emoji">{glyph}</span>
-				{:else}
-					<Icon
-						icon={glyph}
-						class="tab-icon"
-						style={identity.color ? `color: ${accentCss(identity.color)}` : undefined}
-					/>
-				{/if}
+				<!-- A chat that is replying shows the ∴ working in place of
+				     its icon, where a browser tab shows its page loading. A
+				     reply that landed while the tab was in the background
+				     leaves the sidebar's unread dot on the icon until you
+				     open it. -->
+				<span class="tab-glyph">
+					{#if chatId && chatActivity.running(chatId)}
+						<span class="tab-running" role="img" aria-label="Replying">
+							<ThinkingMark depth={3} size={14} />
+						</span>
+					{:else if glyph && isEmoji(glyph)}
+						<span class="tab-emoji">{glyph}</span>
+					{:else}
+						<Icon
+							icon={glyph}
+							class="tab-icon"
+							style={identity.color ? `color: ${accentCss(identity.color)}` : undefined}
+						/>
+					{/if}
+					{#if chatId && tab.id !== activeTabId && chatActivity.unread(chatId)}
+						<span class="tab-unread" role="img" aria-label="New reply"></span>
+					{/if}
+				</span>
 				{#if !tab.pinned}
 					{#if tab.id === renamingTabId}
 						<input
@@ -574,7 +617,11 @@
 						     teaching which label it belongs to. Every tab flips
 						     because every tab has its own number, browser-style:
 						     leftmost is ⌘1, counting across both panes. -->
-						<span class="tab-label" class:flipping={showPaneHint && tabOrdinal <= 9}>
+						<span
+							class="tab-label"
+							class:flipping={showPaneHint && tabOrdinal <= 9}
+							use:fadeWhenClipped={identity.title}
+						>
 							<span class="tab-label-text">{identity.title}</span>
 							<span class="tab-label-hint" aria-hidden="true">{modKeyWord} + {tabOrdinal}</span>
 						</span>
@@ -666,7 +713,9 @@
 	.tabs-scroll {
 		display: flex;
 		align-items: flex-start;
-		gap: 2px;
+		/* One radius between tabs: the active tab's flared corner fills the
+		   gap exactly, so it never reaches a neighbour's hover pill. */
+		gap: var(--card-radius);
 		overflow-x: auto;
 		/* Only as wide as its tabs, so the + sits right after the last one,
 		   where the next tab will appear (Brave, Safari). It shrinks and
@@ -722,18 +771,16 @@
 		max-width: 200px;
 		min-width: 36px;
 		flex-shrink: 1;
-		/* The scale's motion (design.md, "The scale"): hover in fast and out
-		   slow. A new tab grows into its place. */
-		transition:
-			background-color var(--motion-hover-out) var(--ease-premium),
-			color var(--motion-hover-out) var(--ease-premium),
-			opacity var(--motion-hover-out) var(--ease-premium);
+		/* Switching tabs is instant, as in a browser: the fill, the edge, the
+		   flares and the ink change in one frame. Fading the fill while the
+		   edge and corners snapped showed the parts of the tab separately.
+		   Only the hover pill moves (below). A new tab rises out of the card
+		   into its place. */
 		animation: tab-in var(--motion-enter) var(--ease-premium);
 	}
 
 	.tab:hover {
 		color: var(--color-foreground);
-		transition-duration: var(--motion-hover-in);
 	}
 
 	/* A tab you are not on lights as the scale's 32px pill, centred on its
@@ -748,20 +795,48 @@
 		height: var(--chrome-tab-h);
 		translate: 0 -50%;
 		border-radius: var(--card-radius);
-		background: var(--hover-bg);
-		opacity: 0;
-		transition: opacity var(--motion-hover-out) var(--ease-premium);
+		/* The pill fades its color, not its opacity. This pseudo-element is
+		   the flared corner while the tab is active, and an opacity fade ran
+		   whenever a tab stopped being active: a ghost pill flashed on the
+		   tab you just left. Nothing the flare paints is a background. */
+		background: transparent;
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.tab:not(.active):hover::before {
-		opacity: 1;
+		background: var(--hover-bg);
 		transition-duration: var(--motion-hover-in);
 	}
 
+	/* Rows and tabs take the press fill (design.md, "Grays"). */
+	.tab:not(.active):active::before {
+		background: var(--press-bg);
+		transition-duration: var(--motion-press);
+	}
+
+	/* The keyboard's ring follows the shape the pointer would light: the
+	   pill on a tab you are not on, the tab itself on the active one. */
+	.tab:focus-visible {
+		outline: none;
+	}
+
+	.tab:not(.active):focus-visible::before {
+		/* design-ok: the focus ring on the pill's shape, not depth */
+		box-shadow: inset 0 0 0 2px var(--color-primary);
+	}
+
+	.tab.active:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -3px;
+	}
+
+	/* Up out of the card by one radius. The active tab is the card's own
+	   color, so it reads as the page lifting into a tab. Scaling it, as
+	   before, pulled its foot off the card for the length of the animation. */
 	@keyframes tab-in {
 		from {
 			opacity: 0;
-			transform: scale(0.92);
+			translate: 0 var(--card-radius);
 		}
 	}
 
@@ -793,6 +868,7 @@
 		width: var(--card-radius);
 		height: var(--card-radius);
 		border-bottom: 1px solid var(--card-edge);
+		/* design-ok: the flare's page fill, clipped to its square, not depth */
 		box-shadow: 0 0 0 var(--card-radius) var(--color-page);
 		clip-path: inset(0);
 		pointer-events: none;
@@ -820,8 +896,11 @@
 		border: none;
 		border-left: 1px solid var(--card-edge);
 		border-radius: 0;
-		background: var(--color-page);
-		box-shadow: none;
+		/* Filled by an inset shadow, not a background, for the reason the
+		   hover pill gives: a background here would fade out on the next tab
+		   switch. */
+		/* design-ok: a fill that must not transition, not depth */
+		box-shadow: inset 0 0 0 var(--card-radius) var(--color-page);
 	}
 
 	/* In split view two tabs are "active" at once and only one takes your
@@ -941,6 +1020,40 @@
 		opacity: 1;
 	}
 
+	.tab-glyph {
+		position: relative;
+		display: flex;
+		flex-shrink: 0;
+	}
+
+	.tab-running {
+		display: flex;
+		color: var(--color-foreground-muted);
+	}
+
+	/* The sidebar row's unread dot (HomePanel), on the icon's corner as a
+	   browser badges a tab. The desk-colored ring keeps it off the glyph.
+	   It arrives once and then holds still. */
+	.tab-unread {
+		position: absolute;
+		top: -2px;
+		right: -3px;
+		width: 6px;
+		height: 6px;
+		border-radius: var(--radius-full);
+		background: var(--color-primary);
+		/* design-ok: the dot's cut-out ring in the desk's color, not depth */
+		box-shadow: 0 0 0 2px var(--desk);
+		animation: unread-in var(--motion-enter) var(--ease-premium);
+	}
+
+	@keyframes unread-in {
+		from {
+			transform: scale(0.6);
+			opacity: 0;
+		}
+	}
+
 	/* A crowded strip: the tabs you are not on show only their icon. */
 	.tab-bar.compact .tab:not(.active) {
 		padding: 0 10px;
@@ -959,7 +1072,6 @@
 		position: relative;
 		min-width: 0;
 		overflow: hidden;
-		text-overflow: ellipsis;
 		flex: 1;
 		text-align: left;
 		height: 1.35em;
@@ -970,7 +1082,6 @@
 	.tab-label-hint {
 		display: block;
 		overflow: hidden;
-		text-overflow: ellipsis;
 		white-space: nowrap;
 		transition: transform var(--motion-state) var(--ease-premium);
 	}
@@ -985,6 +1096,11 @@
 		transform: translateY(100%);
 		font-weight: inherit;
 		color: inherit;
+	}
+
+	/* A title that does not fit fades out over its last 24px. */
+	.tab-label:global(.clipped) {
+		mask-image: linear-gradient(to right, black calc(100% - 24px), transparent);
 	}
 
 	.tab-label.flipping .tab-label-text {
@@ -1007,7 +1123,8 @@
 			transition: none;
 		}
 
-		.tab {
+		.tab,
+		.tab-unread {
 			animation: none;
 		}
 
@@ -1016,21 +1133,27 @@
 		}
 	}
 
+	/* The label's own face and size, so the title does not move or change
+	   size when it becomes editable. The field shows as a wash around the
+	   text, drawn as a spread shadow so it takes no room. The tab keeps its
+	   own fill: tinting the whole tab left its flared corners the page's
+	   color. */
 	.tab-rename-input {
 		flex: 1;
 		min-width: 60px;
 		padding: 0;
 		border: none;
-		background: transparent;
+		border-radius: var(--radius-sm);
+		background: var(--hover-bg);
+		/* design-ok: the field's wash spread past the text, not depth */
+		box-shadow: 0 0 0 3px var(--hover-bg);
 		color: var(--color-foreground);
-		font-size: 12px;
-		font-family: inherit;
+		font: inherit;
 		outline: none;
 		caret-color: var(--color-primary);
 	}
 
 	.tab.renaming {
-		background: color-mix(in srgb, var(--color-primary) 20%, transparent);
 		cursor: text;
 	}
 
@@ -1229,5 +1352,16 @@
 
 	:global(.tabs-scroll > [data-is-dnd-shadow-item-internal] > *) {
 		visibility: hidden;
+	}
+
+	/* The slot is a place, not a tab: no edge, no flared corners, no
+	   hover pill, even when the tab in your hand was the active one. */
+	:global(.tabs-scroll > [data-is-dnd-shadow-item-internal]) {
+		border-color: transparent !important;
+	}
+
+	:global(.tabs-scroll > [data-is-dnd-shadow-item-internal])::before,
+	:global(.tabs-scroll > [data-is-dnd-shadow-item-internal])::after {
+		display: none !important;
 	}
 </style>

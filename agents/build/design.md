@@ -354,14 +354,24 @@ should do the work, as they do in a table of contents.
 
 ## Interaction
 
-- **Tabs are browser tabs on their card.** Sized to their labels, so the
-  gaps between them are even, with the + one flared corner after the last.
-  The first tab starts on the card's left edge. The active tab is the top of
-  its card (see [Grays](#grays)); the others have no fill and light as a
-  pill when hovered. In split view the active tab of the pane you are not
-  working in has muted ink. Joined tabs without flares made a card look
-  half floating sheet and half tab foot. The flared corners are what make
-  the tab and the card read as one surface.
+- **Tabs are browser tabs on their card.** Sized to their labels, one
+  card radius apart, so the active tab's flared corner fills the gap and
+  never reaches a neighbour's hover pill. The + sits the same distance
+  after the last tab. The first tab starts on the card's left edge. The
+  active tab is the top of its card (see [Grays](#grays)); the others have
+  no fill and light as a pill when hovered or pressed. In split view the
+  active tab of the pane you are not working in has muted ink. Joined tabs
+  without flares made a card look half floating sheet and half tab foot.
+  The flared corners are what make the tab and the card read as one
+  surface.
+- **Switching tabs is instant.** The fill, edge, corners and ink change in
+  one frame. Only the hover pill fades, and a new tab rises one radius out
+  of its card.
+- **A tab carries the sidebar's marks.** A chat that is replying shows the
+  working ∴ in place of its icon. A reply that landed while the tab was in
+  the background puts the unread dot on the icon's corner. A title that
+  does not fit fades out over its last 24px instead of ending in an
+  ellipsis.
 - **A view's actions sit at the end of its tab strip** (`paneActions`), the
   chat's ⋮ included, not in a corner of the page. The phone has no strip, so
   there the chat keeps its corner button.
