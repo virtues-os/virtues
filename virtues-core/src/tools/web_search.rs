@@ -114,13 +114,100 @@ impl std::fmt::Debug for WebSearchTool {
     }
 }
 
+/// The search to run before the model's first pass when `message` is a plain
+/// lookup: the person's words as the query, at the tool's ceiling of results
+/// and an hour's freshness, which is what the model asks for on a lookup.
+/// `None` for anything else, which the model handles as before.
+///
+/// A message that passes goes to the search provider whether or not the
+/// model would have searched. The check keeps out questions about the
+/// person, whose answers are in their own records.
+pub fn first_search_for(message: &str) -> Option<crate::agent::ToolCall> {
+    is_lookup(message).then(|| crate::agent::ToolCall {
+        id: format!("call_{}", uuid::Uuid::new_v4().simple()),
+        name: "web_search".to_string(),
+        arguments: serde_json::json!({
+            "query": message.trim(),
+            "num_results": 10,
+            "max_age_hours": 1,
+        }),
+    })
+}
+
+/// Longest message that is still a lookup. Longer messages carry context the
+/// model should read before it decides what to search for.
+const MAX_LOOKUP_CHARS: usize = 200;
+
+/// Words that say a message is about the person.
+const FIRST_PERSON: &[&str] = &[
+    "i", "i'm", "im", "i've", "i'd", "i'll", "me", "my", "mine", "myself", "we", "we're", "our",
+    "ours", "us",
+];
+
+/// Words a question opens with.
+const QUESTION_OPENERS: &[&str] = &[
+    "who", "what", "what's", "whats", "when", "where", "why", "how", "which", "is", "are", "was",
+    "were", "do", "does", "did", "can", "could", "will", "would", "should", "has", "have",
+];
+
+/// Whether a message reads as a question the web answers: short, shaped as a
+/// question, and not about the person.
+fn is_lookup(message: &str) -> bool {
+    let message = message.trim();
+    if message.is_empty() || message.chars().count() > MAX_LOOKUP_CHARS {
+        return false;
+    }
+    let words: Vec<String> = message
+        .split(|c: char| !(c.is_alphanumeric() || c == '\''))
+        .filter(|w| !w.is_empty())
+        .map(|w| w.to_lowercase())
+        .collect();
+    if words.iter().any(|w| FIRST_PERSON.contains(&w.as_str())) {
+        return false;
+    }
+    message.ends_with('?') || words.first().is_some_and(|w| QUESTION_OPENERS.contains(&w.as_str()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_short_question_about_the_world_is_a_lookup() {
+        assert!(is_lookup("are the bengals favored today?"));
+        assert!(is_lookup("what's the price of gold"));
+        assert!(is_lookup("who won the world series"));
+    }
+
+    #[test]
+    fn a_question_about_the_person_is_not_a_lookup() {
+        assert!(!is_lookup("what did I eat yesterday?"));
+        assert!(!is_lookup("how was my week"));
+        assert!(!is_lookup("where did we go on Saturday?"));
+    }
+
+    #[test]
+    fn a_request_or_a_long_message_is_not_a_lookup() {
+        assert!(!is_lookup("write a page about the trip"));
+        assert!(!is_lookup(&format!("{}?", "word ".repeat(60))));
+    }
+
+    #[test]
+    fn a_lookup_searches_for_the_message_itself() {
+        let call = first_search_for("  who won the world series?  ").unwrap();
+        assert_eq!(call.name, "web_search");
+        assert_eq!(call.arguments["query"], "who won the world series?");
+        assert!(first_search_for("how was my week").is_none());
+    }
+}
+
 /// Times whole chat turns that search, through the real agent loop, prompt,
 /// tools and Standard-slot model, and keeps each answer for reading. Spends
 /// real money through virtues-api, so it is ignored:
 ///
 /// ```sh
 /// VIRTUES_API_URL=http://localhost:9002 VIRTUES_API_KEY=<dev key> \
-///   ROUNDS=2 BENCH_LABEL=before BENCH_OUT=/tmp/before.json \
+///   ROUNDS=2 BENCH_LABEL=before BENCH_OUT=/tmp/before.json [BENCH_SEARCH_FIRST=1] \
 ///   cargo test -p virtues --lib web_search_turn_bench -- --ignored --nocapture
 /// ```
 #[cfg(test)]
@@ -152,7 +239,7 @@ mod turn_bench {
         answer: String,
     }
 
-    async fn turn(pool: &PgPool, model: &str, system: &str, q: &str) -> Run {
+    async fn turn(pool: &PgPool, model: &str, system: &str, q: &str, search_first: bool) -> Run {
         let mode = ChatMode::Chat;
         let limits = mode.limits();
         let agent = AgentLoop::new(pool.clone())
@@ -163,6 +250,10 @@ mod turn_bench {
                 thinking: limits.thinking,
             })
             .with_budget(limits.budget);
+        let agent = match super::first_search_for(q).filter(|_| search_first) {
+            Some(call) => agent.with_first_call(call),
+            None => agent,
+        };
         let t0 = Instant::now();
         let messages = vec![
             json!({ "role": "system", "content": system }),
@@ -222,12 +313,15 @@ mod turn_bench {
         println!("{label}: model {model}, prompt ~{} tokens, {rounds} rounds", system.len() / 4);
 
         // Warm the prompt cache so the first measured turn does not pay the write.
-        turn(&pool, &model, &system, "hello").await;
+        turn(&pool, &model, &system, "hello", false).await;
 
+        // `BENCH_SEARCH_FIRST=1` searches a lookup before the model's first
+        // pass, as the chat handler does.
+        let search_first = std::env::var("BENCH_SEARCH_FIRST").as_deref() == Ok("1");
         let mut runs: Vec<(&str, Run)> = vec![];
         for _ in 0..rounds {
             for q in QUESTIONS {
-                let r = turn(&pool, &model, &system, q).await;
+                let r = turn(&pool, &model, &system, q, search_first).await;
                 println!(
                     "{label} {q:60} first text {:>5.1}s  total {:>5.1}s  searches {}  {:?}",
                     r.first_text.map_or(f64::NAN, |d| d.as_secs_f64()),
