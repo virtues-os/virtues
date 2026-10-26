@@ -93,7 +93,7 @@ pub async fn state_handler(
     // but inline so the UI doesn't need a second round-trip.
     let byo_row: Option<(serde_json::Value,)> = match sqlx::query_as(
         "SELECT metadata FROM credentials \
-         WHERE source_id = $1 AND status = 'active' \
+         WHERE kind = 'source' AND key = $1 AND status = 'active' \
          LIMIT 1",
     )
     .bind(crate::api::settings_byo::BYO_SOURCE_ID)

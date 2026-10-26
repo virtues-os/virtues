@@ -44,7 +44,7 @@
 //! `agents/plan/byo-ai-plan.md` phases 2 and 3. The Billing UI and
 //! `agents/build/virtues-api.md` are now true as written.
 //!
-//! The key is stored as a `credentials` row with `source_id = "__byo_ai_key__"`,
+//! The key is stored as a `credentials` row with `key = "__byo_ai_key__"`,
 //! encrypted at rest via the same `TokenEncryptor` that protects every other
 //! secret. It never lives in the chat request body or in the URL.
 //!
@@ -132,7 +132,7 @@ pub struct ByoStatus {
 pub async fn status_handler(State(pool): State<PgPool>, _user: AuthUser) -> impl IntoResponse {
     let row: Option<(serde_json::Value, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
         "SELECT metadata, created_at FROM credentials \
-         WHERE source_id = $1 AND status = 'active' \
+         WHERE kind = 'source' AND key = $1 AND status = 'active' \
          LIMIT 1",
     )
     .bind(BYO_SOURCE_ID)
@@ -344,7 +344,7 @@ pub async fn save_handler(
     let _ = sqlx::query(
         "UPDATE credentials SET status = 'revoked', \
                                  status_reason = 'replaced_by_user', updated_at = now() \
-         WHERE source_id = $1 AND status = 'active'",
+         WHERE kind = 'source' AND key = $1 AND status = 'active'",
     )
     .bind(BYO_SOURCE_ID)
     .execute(&mut *tx)
@@ -352,7 +352,7 @@ pub async fn save_handler(
 
     if let Err(e) = sqlx::query(
         "INSERT INTO credentials \
-         (id, source_id, name, status, secrets_ciphertext, metadata) \
+         (id, key, name, status, secrets_ciphertext, metadata) \
          VALUES ($1, $2, $3, 'active', $4, $5)",
     )
     .bind(&credential_id)
@@ -429,7 +429,7 @@ async fn first_key_during_setup(pool: &PgPool, device_id: &str) -> Result<bool, 
     let (status, had_key, first): (Option<String>, bool, Option<String>) = sqlx::query_as(
         "SELECT \
             (SELECT onboarding_status FROM app_user_profile LIMIT 1), \
-            EXISTS (SELECT 1 FROM credentials WHERE source_id = $1), \
+            EXISTS (SELECT 1 FROM credentials WHERE kind = 'source' AND key = $1), \
             (SELECT id FROM app_device WHERE revoked_at IS NULL AND id <> $2 \
                ORDER BY paired_at ASC, id ASC LIMIT 1)",
     )
@@ -464,7 +464,7 @@ pub async fn delete_handler(
     let _ = sqlx::query(
         "UPDATE credentials SET status = 'revoked', \
                                  status_reason = 'user_deleted', updated_at = now() \
-         WHERE source_id = $1 AND status = 'active'",
+         WHERE kind = 'source' AND key = $1 AND status = 'active'",
     )
     .bind(BYO_SOURCE_ID)
     .execute(&pool)
@@ -516,7 +516,7 @@ pub async fn byo_is_active(pool: &PgPool) -> bool {
 pub async fn byo_is_active_checked(pool: &PgPool) -> Result<bool, sqlx::Error> {
     sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM credentials \
-          WHERE source_id = $1 AND status = 'active')",
+          WHERE kind = 'source' AND key = $1 AND status = 'active')",
     )
     .bind(BYO_SOURCE_ID)
     .fetch_one(pool)
@@ -789,7 +789,7 @@ fn normalize_slot_keys(
 pub async fn load_byo_credential(pool: &PgPool) -> Result<Option<ByoCredential>, crate::Error> {
     let row: Option<(String, serde_json::Value)> = sqlx::query_as(
         "SELECT secrets_ciphertext, metadata FROM credentials \
-         WHERE source_id = $1 AND status = 'active' \
+         WHERE kind = 'source' AND key = $1 AND status = 'active' \
          LIMIT 1",
     )
     .bind(BYO_SOURCE_ID)
@@ -1007,7 +1007,7 @@ mod tests {
 
         // Any key the server has held, even one since removed, ends the exemption.
         sqlx::query(
-            "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext, metadata) \
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext, metadata) \
              VALUES ('cred_old', $1, 'BYO old', 'revoked', 'x', '{}'::jsonb)",
         )
         .bind(BYO_SOURCE_ID)

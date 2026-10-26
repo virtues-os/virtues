@@ -766,7 +766,7 @@ pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
     // of entries even at scale.
     for s in sources {
         let credential_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM credentials WHERE source_id = $1 AND status = 'active'",
+            "SELECT COUNT(*) FROM credentials WHERE kind = 'source' AND key = $1 AND status = 'active'",
         )
         .bind(&s.id)
         .fetch_one(pool)
@@ -864,8 +864,8 @@ pub async fn patch_credential_handler(
 /// - `pending`  → hard-delete the row (used when the user cancels mid-pair
 ///   modal; the row never had a token or fan-out actions, so nothing to
 ///   preserve).
-/// - `active`   → revoke (clear `secret_lookup_hash`, drop fan-out actions,
-///   keep history with `applet_id = NULL`).
+/// - `active`   → revoke (drop fan-out actions, keep history with
+///   `applet_id = NULL`).
 /// - `revoked`  → already revoked, idempotent 204.
 pub async fn delete_credential_handler(
     State(state): State<AppState>,
@@ -874,7 +874,7 @@ pub async fn delete_credential_handler(
     let pool = state.db.pool();
 
     let status: Option<(String,)> =
-        match sqlx::query_as("SELECT status FROM credentials WHERE id = $1")
+        match sqlx::query_as("SELECT status FROM credentials WHERE id = $1 AND kind = 'source'")
             .bind(&credential_id)
             .fetch_optional(pool)
             .await

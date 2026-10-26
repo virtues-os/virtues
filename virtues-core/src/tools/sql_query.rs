@@ -503,29 +503,20 @@ impl SqlQueryTool {
 
         // Drop to the least-privileged role for the rest of this transaction.
         //
-        // READ ONLY is not the boundary the comment above believed it was. It
-        // bounds WRITES; it says nothing about what a superuser may READ, and
-        // the pool role IS a superuser (`CREATE ROLE virtues WITH LOGIN
-        // SUPERUSER`, installer first-boot). So this passed every guard above —
-        // it begins with `select`, contains no forbidden keyword, is short, and
-        // survives the appended LIMIT:
-        //
-        //     SELECT substr(pg_read_file('/var/lib/virtues/virtues.env'),1,4000)
-        //
-        // That file holds VIRTUES_ENCRYPTION_KEY in plaintext, which decrypts
-        // every credential in the vault and the iroh secret that IS this box's
-        // network identity. Verified against a live database: the read
-        // succeeds, and `box_secrets` and `app_credentials` are equally
-        // reachable. The doc comment above already says this tool "runs
-        // unattended, over content nobody reviewed" — so the query text is
+        // READ ONLY bounds writes, not reads. The pool role owns every table,
+        // so without this drop a plain `SELECT` passes every guard above and
+        // reads `credentials`: the encrypted secrets of every source and the
+        // box's own keys. The doc comment above says this tool "runs
+        // unattended, over content nobody reviewed", so the query text is
         // steerable by an email or a saved page, and the model can hand the
-        // result to `web_search`, which is also allowlisted.
+        // result to `web_search`, which is also allowlisted. On a box whose
+        // pool role is still a superuser, the same query could also read
+        // `/var/lib/virtues/virtues.env` with `pg_read_file`, and with it the
+        // key that decrypts all of them.
         //
-        // `virtues_face_reader` is the role `server/faces.rs` already drops to
-        // for exactly this reason: default-deny, SELECT on `data_*`/`wiki_*`
-        // only. Under it both halves fail closed — `permission denied for
-        // function pg_read_file`, `permission denied for table box_secrets`.
-        // The mechanism was in the tree; this executor simply never used it.
+        // `virtues_face_reader` is the role `server/faces.rs` drops to for the
+        // same reason: default-deny, SELECT on `data_*`/`wiki_*` only. Under
+        // it both reads fail closed with "permission denied".
         //
         // SET LOCAL, so it reverts with the transaction and cannot leak onto a
         // pooled connection.

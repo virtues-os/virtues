@@ -280,7 +280,7 @@ pub async fn stream_health(db: &Database) -> Result<Vec<StreamHealth>> {
     // device sources (iOS, Mac) pair into app_device and never do — a stream
     // fed by an iPhone would look unconnected if only credentials were checked.
     let live_sources: std::collections::HashSet<String> = sqlx::query_scalar::<_, String>(
-        "SELECT source_id FROM credentials WHERE status = 'active' \
+        "SELECT key FROM credentials WHERE kind = 'source' AND status = 'active' \
          UNION \
          SELECT source_id FROM app_device WHERE source_id IS NOT NULL AND revoked_at IS NULL",
     )

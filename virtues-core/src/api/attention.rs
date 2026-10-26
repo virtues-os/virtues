@@ -136,7 +136,7 @@ fn backup_items(items: &mut Vec<AttentionItem>, state: &str, age_seconds: Option
 async fn broken_sources(db: &Database) -> Result<Vec<(String, String, String)>> {
     Ok(sqlx::query_as(
         "SELECT id, name, status FROM credentials \
-         WHERE status IN ('reauth_required', 'error') \
+         WHERE kind = 'source' AND status IN ('reauth_required', 'error') \
          ORDER BY name",
     )
     .fetch_all(db.pool())

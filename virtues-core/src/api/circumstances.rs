@@ -498,7 +498,7 @@ async fn build_section(
             // Epistemic fact about right now: what the record can and cannot
             // currently see.
             let rows = sqlx::query_as::<_, (String,)>(
-                "SELECT name FROM credentials WHERE status = 'active' ORDER BY name LIMIT 12",
+                "SELECT name FROM credentials WHERE kind = 'source' AND status = 'active' ORDER BY name LIMIT 12",
             )
             .fetch_all(pool)
             .await?;
@@ -667,7 +667,7 @@ mod tests {
             .unwrap();
         // sources
         sqlx::query(
-            "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) \
              VALUES ('cred_t1', 'google', 'Google', 'active', 'x')",
         )
         .execute(&pool)

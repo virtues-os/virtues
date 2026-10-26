@@ -442,7 +442,7 @@ pub async fn apikey_complete_handler(
     let credential_id = match &req.credential_id {
         Some(existing) => {
             let owner: Option<String> =
-                match sqlx::query_scalar("SELECT source_id FROM credentials WHERE id = $1")
+                match sqlx::query_scalar("SELECT key FROM credentials WHERE id = $1 AND kind = 'source'")
                     .bind(existing)
                     .fetch_optional(pool)
                     .await

@@ -4,7 +4,7 @@
 //! schema (all data PLUS the box's identity — iroh secret, paired
 //! devices, subscription link), re-runs migrations to an empty schema, then
 //! clears the data lake. The encryption key in the env file is left untouched.
-//! Because `box_secrets` is gone, the box must re-register with atlas and
+//! Because the box's own secrets are gone, the box must re-register with atlas and
 //! re-pair every device afterward.
 //!
 //! Guards mirror `restore`/`uninstall`:
