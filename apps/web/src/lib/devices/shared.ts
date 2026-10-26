@@ -20,6 +20,8 @@ export type DevicePermissions = {
 	full_disk_access?: boolean;
 	safari_library?: boolean;
 	accessibility?: boolean;
+	system_audio?: boolean;
+	microphone?: boolean;
 	denied?: string[];
 	checked_at?: string;
 	stale?: boolean;
@@ -156,6 +158,20 @@ export const PERMISSION_COPY: Record<string, PermissionCopy> = {
 		fix: `Turn on ${COLLECTOR_LIST_NAME} in the list.`,
 		pane: 'Accessibility',
 		open: openAccessibilitySettings
+	},
+	// Call recording. No button yet: these panes need their own bridge
+	// commands, which come with the call-recording settings.
+	system_audio: {
+		label: 'System Audio Recording',
+		costs: "your Mac records only your side of calls",
+		fix: `Turn on ${COLLECTOR_LIST_NAME} under Screen & System Audio Recording.`,
+		pane: 'Screen & System Audio Recording'
+	},
+	microphone: {
+		label: 'Microphone',
+		costs: "your Mac records only the other side of calls",
+		fix: `Turn on ${COLLECTOR_LIST_NAME} under Microphone.`,
+		pane: 'Microphone'
 	}
 };
 
