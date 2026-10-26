@@ -139,6 +139,7 @@
 		<div
 			data-tauri-drag-region
 			class="strip"
+			class:flush={overlap === 0}
 			style:width="calc({leftWidth}% - {gutterPx / 2}px)"
 			style:padding-left="{overlap}px"
 		>
@@ -147,7 +148,7 @@
 		<!-- The gutter and the right strip stay mounted at zero width with one
 		     pane, so they open and close on the cards' clock. -->
 		<div class="gutter" style:width="{gutterPx}px" aria-hidden="true"></div>
-		<div class="strip" data-tauri-drag-region style:width="calc({rightWidth}% - {gutterPx / 2}px)">
+		<div class="strip flush" data-tauri-drag-region style:width="calc({rightWidth}% - {gutterPx / 2}px)">
 			{#if isSplit}
 				<WindowTabBar paneId="right" />
 			{/if}
@@ -190,7 +191,9 @@
 	}
 
 	/* The strips open and close with the cards below them (SplitContainer),
-	   on the same clock, so a tab never runs ahead of its pane. */
+	   on the same clock, so a tab never runs ahead of its pane. A `flush`
+	   strip's first tab sits on its card's left edge, so an active first tab
+	   squares off the card's corner instead of flaring (WindowTabBar). */
 	.strip {
 		min-width: 0;
 		transition:

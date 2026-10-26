@@ -33,8 +33,9 @@ header row and the sidebar sit on it and paint nothing of their own. **The
 cards** are the work, raised off it in the page's color (`--page`): one per
 pane, a desk gap (8px, `--pane-inset`) from the window's edges and from each
 other. In split view the gap between the two cards is the resize handle.
-Every card keeps all four rounded corners, and nothing joins: opening the
-sidebar or a split only moves cards. There is no rail.
+Every card keeps its rounded corners, and the one thing that joins a card
+is its active tab, which is the top of the card (see the active tab below).
+Opening the sidebar or a split only moves cards. There is no rail.
 
 The sidebar is one list, and it never changes: the doors (Setup while it
 is not done, New chat, Pages, Tasks, Projects, Applets, Wiki), Pinned and
@@ -118,14 +119,14 @@ are written as prohibitions.
 2. **Separation goes whitespace → 3–5% lightness → elevation, and you stop at
    the first one that works.** Do not reach for a 1px rule. There are no
    hairline separators in the sidebar.
-3. **Nothing in the chrome recedes.** A recessed tab strip was tried, on the
-   reasoning that the browser tab model needs one — and it does, which is why
-   the browser tab model was abandoned rather than the rule bent. Recessing the
-   sidebar (200px wide, full height, lower half empty) turned the emptiness
-   into a visible object; *the empty space was not noticeable while the sidebar
-   matched the page*. Recessing only the strip left a dark band beside a light panel for no
-   gain once tabs became pills. The sidebar sits on `--surface-elevated`, a 4%
-   step, and that is the only shift in the shell.
+3. **Nothing in the chrome recedes.** Recessing the sidebar (200px wide,
+   full height, lower half empty) turned the emptiness into a visible object;
+   *the empty space was not noticeable while the sidebar matched the page*.
+   Recessing only the tab strip left a dark band beside a light panel. The
+   tabs are browser tabs and still need no strip of their own: they stand on
+   the desk, which is already the tone step between the chrome and a card.
+   The sidebar sits on `--surface-elevated`, a 4% step, and that is the only
+   shift in the shell.
 4. **Sizes come from [the scale](#the-scale).** No value between its steps:
    no `12.5px`, `13.5px`, `26px`, `30px`, `34px`. A value that is one or two
    pixels off a neighbour reads as a mistake even when nobody can say why.
@@ -196,8 +197,13 @@ behind it, so it reads in all sixteen themes. Four steps, no others:
 | Press | `--press-bg` | 16% | held down, only for the duration of the press |
 
 **The active tab is marked by fill and ink**: the page's color (`--page`)
-on the desk, the same step that separates a card, and full ink. It sits
-above its card, not joined to it.
+on the desk, the same step that separates a card, and full ink. It is the
+top of its card, as in a browser: it takes the card's edge on three sides,
+paints over the card's top edge, and its bottom corners flare out into that
+edge. A first tab on the card's left edge squares off the card's corner
+instead. Tabs you are not on have no fill until you point at them. In split
+view each pane's active tab joins its own card, and the unfocused one dims
+its ink.
 
 ### Tone, not lines
 
@@ -348,14 +354,14 @@ should do the work, as they do in a table of contents.
 
 ## Interaction
 
-- **Tabs are pills above the card.** Sized to their labels, so the gaps
-  between them are even, with the + one gap after the last. The first tab
-  starts on the card's left edge. The active tab takes the page's fill (see
-  [Grays](#grays)); the others have none until hovered. In split view the
-  active tab of the pane you are not working in has muted ink. Tabs joined
-  to their card (a browser's model) were tried and taken out: on cards that
-  float on a desk they made each card half a floating sheet and half the
-  foot of a tab.
+- **Tabs are browser tabs on their card.** Sized to their labels, so the
+  gaps between them are even, with the + one flared corner after the last.
+  The first tab starts on the card's left edge. The active tab is the top of
+  its card (see [Grays](#grays)); the others have no fill and light as a
+  pill when hovered. In split view the active tab of the pane you are not
+  working in has muted ink. Joined tabs without flares made a card look
+  half floating sheet and half tab foot. The flared corners are what make
+  the tab and the card read as one surface.
 - **A view's actions sit at the end of its tab strip** (`paneActions`), the
   chat's ⋮ included, not in a corner of the page. The phone has no strip, so
   there the chat keeps its corner button.

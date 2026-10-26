@@ -650,12 +650,12 @@
 		display: flex;
 		gap: 4px;
 		/* The first tab starts on the card's left edge, so the strip lines up
-		   with the card below it. */
-		padding: 0 8px 0 0;
+		   with the card below it. The tabs keep the row's 6px of air above
+		   them and run down to the card. */
+		padding: calc((var(--chrome-row-h) - var(--chrome-tab-h)) / 2) 8px 0 0;
 		height: var(--chrome-row-h);
-		/* Everything in the window header shares one centre line: the tabs,
-		   the +, a view's actions and the controls over the sidebar. The
-		   strip is on the desk and paints nothing. */
+		/* The +, a view's actions and the tabs' labels share one centre line,
+		   the middle of a tab. The strip is on the desk and paints nothing. */
 		align-items: center;
 		background: transparent;
 		flex-shrink: 0;
@@ -665,7 +665,7 @@
 
 	.tabs-scroll {
 		display: flex;
-		align-items: center;
+		align-items: flex-start;
 		gap: 2px;
 		overflow-x: auto;
 		/* Only as wide as its tabs, so the + sits right after the last one,
@@ -674,28 +674,42 @@
 		flex: 0 1 auto;
 		min-width: 0;
 		scrollbar-width: none;
-		height: var(--chrome-tab-h);
+		/* A scroller clips on both axes, and the active tab draws its flared
+		   corners one radius past its sides and into the card. The padding
+		   is that room, and the negative margin gives it back to the layout. */
+		align-self: stretch;
+		padding: 0 var(--card-radius) var(--card-radius);
+		margin: 0 calc(-1 * var(--card-radius)) calc(-1 * var(--card-radius));
+		/* The room below reaches into the card. Only the tabs take the
+		   pointer, so the card's top edge stays clickable and the gaps
+		   between tabs still move the window. */
+		pointer-events: none;
+	}
+
+	.tabs-scroll > :global(*) {
+		pointer-events: auto;
 	}
 
 	.tabs-scroll::-webkit-scrollbar {
 		display: none;
 	}
 
-	/* A pill. Inset, rounded on all four corners, centred in the strip with real
-	   air above and below. Both alternatives were tried and rejected: the
-	   full-height container needed a recessed strip it never had, and the
-	   bottom-anchored browser tab needed one badly enough to turn the sidebar
-	   into a slab. A pill states what it is and costs nothing around it. */
+	/* A browser tab. It stands on the card below it, rounded at the top and
+	   square at the bottom, and the active one opens into its card. The
+	   desk is already a step darker than the cards, so the strip needs no
+	   recess of its own. The border is transparent until the tab is active,
+	   so every tab has the same box. */
 	.tab {
 		display: flex;
 		align-items: center;
 		gap: 6px;
 		padding: 0 12px;
 		position: relative;
-		/* A pill above the card, the scale's 32px tab. */
-		height: var(--chrome-tab-h);
-		border: none;
-		border-radius: var(--card-radius);
+		isolation: isolate;
+		height: 100%;
+		border: 1px solid transparent;
+		border-bottom: none;
+		border-radius: var(--card-radius) var(--card-radius) 0 0;
 		background: transparent;
 		color: var(--color-foreground-muted);
 		/* The sidebar rows' size, so the header and the column read as one. */
@@ -718,8 +732,29 @@
 	}
 
 	.tab:hover {
-		background: var(--hover-bg);
 		color: var(--color-foreground);
+		transition-duration: var(--motion-hover-in);
+	}
+
+	/* A tab you are not on lights as the scale's 32px pill, centred on its
+	   label, rather than as a tab shape. It is not part of the card yet. */
+	.tab:not(.active)::before {
+		content: "";
+		position: absolute;
+		z-index: -1;
+		top: 50%;
+		left: 0;
+		right: 0;
+		height: var(--chrome-tab-h);
+		translate: 0 -50%;
+		border-radius: var(--card-radius);
+		background: var(--hover-bg);
+		opacity: 0;
+		transition: opacity var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.tab:not(.active):hover::before {
+		opacity: 1;
 		transition-duration: var(--motion-hover-in);
 	}
 
@@ -730,24 +765,70 @@
 		}
 	}
 
-	/* The active tab is marked by fill and ink: the page's own color on the
-	   desk (the same step that separates the cards) and full ink. Never by
-	   weight: a bolder label is a wider one, and every tab to its right
-	   moved when you switched. It takes the card's edge too, drawn inset so
-	   the tab keeps its size. */
+	/* The active tab is the top of its card: the page's color, the card's
+	   edge on three sides, and full ink. Never marked by weight: a bolder
+	   label is a wider one, and every tab to its right moved when you
+	   switched. It runs 1px further down to paint over the card's top edge,
+	   so the two read as one surface, and sits above its neighbours so its
+	   flared corners do too. */
 	.tab.active {
+		z-index: 1;
+		height: calc(100% + 1px);
+		padding-bottom: 1px;
 		background: var(--color-page);
+		border-color: var(--card-edge);
 		color: var(--color-foreground);
-		box-shadow: inset 0 0 0 1px var(--card-edge);
+	}
+
+	/* The flared corners, where the tab's sides curve out into the card's
+	   top edge. Each is a one-radius square whose rounded corner is the desk
+	   (the curve's inside) with the card's edge drawn along it. Its page
+	   colored shadow, clipped to the square, fills the rest. Offsets are from
+	   inside the tab's border, so the square's edge lands on the tab's. */
+	.tab.active::before,
+	.tab.active::after {
+		content: "";
+		position: absolute;
+		bottom: 0;
+		width: var(--card-radius);
+		height: var(--card-radius);
+		border-bottom: 1px solid var(--card-edge);
+		box-shadow: 0 0 0 var(--card-radius) var(--color-page);
+		clip-path: inset(0);
+		pointer-events: none;
+	}
+
+	.tab.active::before {
+		left: calc(-1 * var(--card-radius));
+		border-right: 1px solid var(--card-edge);
+		border-bottom-right-radius: var(--card-radius);
+	}
+
+	.tab.active::after {
+		right: calc(-1 * var(--card-radius));
+		border-left: 1px solid var(--card-edge);
+		border-bottom-left-radius: var(--card-radius);
+	}
+
+	/* The first tab on the card's own left edge has no corner to flare
+	   into: its side runs straight down into the card's side, and the
+	   square covers the card's rounded corner below it. The header marks a
+	   strip whose first tab sits on that edge (WindowHeader). */
+	:global(.strip.flush) .tab.active:first-child::before {
+		left: -1px;
+		bottom: calc(1px - var(--card-radius));
+		border: none;
+		border-left: 1px solid var(--card-edge);
+		border-radius: 0;
+		background: var(--color-page);
+		box-shadow: none;
 	}
 
 	/* In split view two tabs are "active" at once and only one takes your
-	   typing. The one in the pane you are not in keeps a faint fill and dims
-	   its icon and label, so the focused pane's tab is the only one that
-	   reads as selected. */
+	   typing. Both stay joined to their cards, as each is the top of its
+	   own page. The one in the pane you are not in dims its ink, so the
+	   focused pane's tab is the only one that reads as selected. */
 	.tab.active:not(.active-in-active-pane) {
-		background: var(--hover-bg);
-		box-shadow: none;
 		color: var(--color-foreground-muted);
 	}
 
@@ -768,6 +849,8 @@
 	   copies the source's computed styles inline, hence !important. */
 	:global(.tab.tab-lifted) {
 		background: var(--color-page) !important;
+		border-color: transparent !important;
+		border-radius: var(--card-radius) !important;
 		color: var(--color-foreground) !important;
 		opacity: 1 !important;
 		/* design-ok: a dragged tab floats above the window; the shadow is its lift */
@@ -779,7 +862,9 @@
 
 	/* Nothing on a tab in the air can be clicked, and the label gets the
 	   close button's room in the copy's fixed width. */
-	:global(.tab.tab-lifted .tab-close) {
+	:global(.tab.tab-lifted .tab-close),
+	:global(.tab.tab-lifted)::before,
+	:global(.tab.tab-lifted)::after {
 		display: none !important;
 	}
 
@@ -916,6 +1001,7 @@
 		.tab-label-text,
 		.tab-label-hint,
 		.tab,
+		.tab::before,
 		.tab-close,
 		.new-tab-btn {
 			transition: none;
@@ -1126,10 +1212,10 @@
 		color: var(--color-foreground);
 	}
 
-	/* The strip's own 4px gap is the only space before the +: it is the
-	   next tab's place, not a separate control. */
+	/* The + starts where the last tab's flared corner ends: the strip's
+	   4px gap and 4px more make the one radius the corner takes. */
 	.new-tab-btn {
-		margin-left: 0;
+		margin-left: 4px;
 	}
 
 	/* The slot a dragged tab will take. The library keeps the tab's own
