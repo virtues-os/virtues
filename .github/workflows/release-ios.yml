@@ -119,34 +119,22 @@ jobs:
       # The deployment target needs an iOS SDK at least as new, and nothing
       # promises the runner's default Xcode has one. Take the newest release
       # Xcode installed, and fail here rather than an hour into the build.
-      #
-      # SDK_BELOW caps the SDK. An app built with the iOS 27 SDK must adopt
-      # the UIScene lifecycle or UIKit stops it at launch, before any app code
-      # runs, and such an IPA still verifies and uploads cleanly. The app
-      # adopts it through the scene manifest in Info.ios.plist (tao 0.37), but
-      # a 27-SDK build has so far launched only in the simulator. Lift the cap
-      # once one launches on a device; lifting it also needs `components:
-      # llvm-tools` on the Rust step, since swift-rs links plugins with
-      # llvm-objcopy under Xcode 27.
       - name: Select Xcode
         run: |
           WANT="$(jq -r .bundle.iOS.minimumSystemVersion apps/web/src-tauri/tauri.ios.conf.json)"
-          SDK_BELOW=27
           BEST=""
           BEST_SDK=""
           for x in /Applications/Xcode*.app; do
             case "$x" in *[Bb]eta*) continue ;; esac
             sdk="$(DEVELOPER_DIR="$x/Contents/Developer" xcrun --sdk iphoneos --show-sdk-version 2>/dev/null || true)"
             [ -n "$sdk" ] || continue
-            [ "${sdk%%.*}" -lt "$SDK_BELOW" ] || continue
             if [ -z "$BEST_SDK" ] || [ "$(printf '%s\n%s\n' "$BEST_SDK" "$sdk" | sort -V | tail -1)" = "$sdk" ]; then
               BEST="$x"
               BEST_SDK="$sdk"
             fi
           done
           if [ -z "$BEST" ] || [ "$(printf '%s\n%s\n' "$WANT" "$BEST_SDK" | sort -V | head -1)" != "$WANT" ]; then
-            echo "::error::no Xcode on this runner has an iOS SDK >= $WANT and < $SDK_BELOW (best: ${BEST:-none}, SDK ${BEST_SDK:-none})"
-            echo "::error::iOS $SDK_BELOW SDK builds stay off until one has launched on a device; see the comment on this step."
+            echo "::error::no Xcode on this runner has an iOS SDK >= $WANT (newest: ${BEST:-none}, SDK ${BEST_SDK:-none})"
             for x in /Applications/Xcode*.app; do
               echo "$x: iOS SDK $(DEVELOPER_DIR="$x/Contents/Developer" xcrun --sdk iphoneos --show-sdk-version 2>/dev/null || echo none)"
             done
@@ -170,11 +158,15 @@ jobs:
 
       # aarch64-apple-ios for the app; wasm32 for the page editor's markdown
       # converter, which the UI bake builds (apps/web/scripts/build-converter.mjs).
+      # llvm-tools: under Xcode 27, swift-rs exports the Swift plugins'
+      # `@_cdecl` entry points with llvm-objcopy. Without it every plugin's
+      # `init_plugin_*` symbol stays internal and the app fails to link.
       - name: Install Rust (iOS targets)
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-12
         with:
           toolchain: stable
           targets: aarch64-apple-ios,wasm32-unknown-unknown
+          components: llvm-tools
 
       # A tag build can read only caches made on the default branch, never one
       # another tag made, so only the schedule (which runs there) saves. See
