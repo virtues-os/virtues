@@ -22,6 +22,9 @@
 //! result arrives. After the result the search model goes on to write an
 //! answer of its own, which the box discards; waiting for it added 1-2s to
 //! every search. The box gets the same `{content: [...]}` shape either way.
+//! The route keeps reading the stream to its end in the background and
+//! charges the usage the gateway reports there. Hanging up would not stop the
+//! gateway generating or billing, and the usage would be lost.
 
 use axum::{
     extract::State,
@@ -63,9 +66,9 @@ const SEARCH_FEE_MICROS: i64 = 5_000;
 const UNPRICEABLE_FLOOR_MICROS: i64 = 20_000;
 
 /// Output tokens charged for the answer the search model writes after the
-/// result, when the route stops reading before the gateway reports usage.
-/// Measured answers ran 90-450 tokens; this is the top of that range, so an
-/// early stop never bills less than the gateway may charge us.
+/// result, when the stream breaks before the gateway reports usage. Measured
+/// answers ran 90-450 tokens; this is the top of that range, so a broken
+/// stream never bills less than the gateway may charge us.
 const UNREAD_ANSWER_TOKENS: f64 = 450.0;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -137,62 +140,98 @@ async fn gateway_search(
             .into_response();
     }
 
-    let read = match read_until_result(resp).await {
-        Ok(read) => read,
-        Err(message) => return err(StatusCode::BAD_GATEWAY, "upstream_error", &message),
-    };
-    let body = json!({ "content": read.content });
-    let priced = match read.usage {
-        Some(usage) => json!({ "content": read.content, "usage": usage }),
-        None => json!({ "content": read.content, "usage": unread_usage(&request, &read.content) }),
-    };
-    let cost = cost_micros(&priced, &state.catalog, &model);
-    if cost > 0 {
-        if let Err(e) = entitlement::settle(&state.db, &ent.account_id, cost).await {
-            tracing::warn!("search settle failed (response already returned): {e:#}");
+    // The reader hands the box its results through `first` and goes on to the
+    // end of the stream, then charges what the gateway reported.
+    let (first, answer) = tokio::sync::oneshot::channel();
+    let (db, catalog, account) = (state.db.clone(), state.catalog.clone(), ent.account_id.clone());
+    tokio::spawn(async move {
+        let read = read_stream(resp, first).await;
+        let usage = match read.usage {
+            Some(usage) => usage,
+            // A broken stream after a result: estimate. No result means no
+            // search ran, and nothing is charged.
+            None if read.content.iter().any(is_result) => unread_usage(&request, &read.content),
+            None => return,
+        };
+        let cost = cost_micros(&json!({ "content": read.content, "usage": usage }), &catalog, &model);
+        if cost > 0 {
+            if let Err(e) = entitlement::settle(&db, &account, cost).await {
+                tracing::warn!("search settle failed (response already returned): {e:#}");
+            }
         }
+    });
+
+    match answer.await {
+        Ok(Ok(content)) => (StatusCode::OK, Json(json!({ "content": content }))).into_response(),
+        Ok(Err(message)) => err(StatusCode::BAD_GATEWAY, "upstream_error", &message),
+        Err(_) => err(StatusCode::BAD_GATEWAY, "upstream_error", "the search ended without an answer"),
     }
-    (StatusCode::OK, Json(body)).into_response()
 }
 
-/// What the route read off the gateway's stream.
+/// What the reader collected from the gateway's stream.
 struct Read {
     /// The `tool-call` and `tool-result` events, in order: the blocks the box
     /// parses.
     content: Vec<Value>,
-    /// The gateway's usage, present only when the stream ran to its end
-    /// before a result arrived (the model answered without searching).
+    /// The gateway's usage, from the `finish` event at the end of the stream.
     usage: Option<Value>,
 }
 
-/// Read the gateway's stream until the first search result, then drop it.
-/// Dropping the response closes the connection, so the search model's answer
-/// is never read. An `error` event, or a stream that breaks, is an error.
-async fn read_until_result(resp: reqwest::Response) -> Result<Read, String> {
+/// What `first` carries: the blocks so far, or why the search failed.
+type First = tokio::sync::oneshot::Sender<Result<Vec<Value>, String>>;
+
+/// Read the gateway's stream to its end. The blocks go out through `first`
+/// as soon as the first search result arrives, or when the stream ends
+/// without one; an `error` event or a broken stream before then is sent as
+/// the failure.
+async fn read_stream(resp: reqwest::Response, first: First) -> Read {
     let mut read = Read { content: vec![], usage: None };
+    let mut first = Some(first);
     let mut buffer = String::new();
     let mut bytes = resp.bytes_stream();
-    while let Some(chunk) = bytes.next().await {
-        let chunk = chunk.map_err(|e| format!("the search stream broke: {e}"))?;
+    let failure = loop {
+        let Some(chunk) = bytes.next().await else {
+            // The last line may arrive without its newline.
+            buffer.push('\n');
+            break take_events(&mut buffer).into_iter().find_map(|e| apply_event(&mut read, e).err());
+        };
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(e) => break Some(format!("the search stream broke: {e}")),
+        };
         buffer.push_str(&String::from_utf8_lossy(&chunk));
+        let mut failed = None;
         for event in take_events(&mut buffer) {
-            if apply_event(&mut read, event)? {
-                return Ok(read);
+            match apply_event(&mut read, event) {
+                Ok(true) => {
+                    if let Some(tx) = first.take() {
+                        let _ = tx.send(Ok(read.content.clone()));
+                    }
+                }
+                Ok(false) => {}
+                Err(message) => failed = Some(message),
             }
         }
-    }
-    // The last line may arrive without its newline.
-    buffer.push('\n');
-    for event in take_events(&mut buffer) {
-        if apply_event(&mut read, event)? {
-            break;
+        if failed.is_some() {
+            break failed;
         }
+    };
+    if let Some(tx) = first.take() {
+        let _ = tx.send(match failure {
+            Some(message) => Err(message),
+            None => Ok(read.content.clone()),
+        });
+    } else if let Some(message) = failure {
+        tracing::warn!("search stream ended badly after its result was sent: {message}");
     }
-    Ok(read)
+    read
 }
 
-/// Fold one stream event into `read`. True when the first result has arrived
-/// and reading should stop.
+fn is_result(block: &Value) -> bool {
+    block.get("type").and_then(|t| t.as_str()) == Some("tool-result")
+}
+
+/// Fold one stream event into `read`. True when the event is a search result.
 fn apply_event(read: &mut Read, event: Value) -> Result<bool, String> {
     match event.get("type").and_then(|t| t.as_str()) {
         Some("tool-call") => read.content.push(event),
@@ -225,10 +264,10 @@ fn take_events(buffer: &mut String) -> Vec<Value> {
     events
 }
 
-/// Usage for a call the route stopped reading before the gateway reported
-/// any. Counted as if the model went on to read the results and write its
-/// answer, at about four characters a token, so an early stop bills at least
-/// what the full call would have.
+/// Usage for a stream that broke after its result, before the gateway
+/// reported any. Counted as if the model went on to read the results and
+/// write its answer, at about four characters a token, so a broken stream
+/// bills at least what the full call would have.
 fn unread_usage(request: &Value, content: &[Value]) -> Value {
     let chars = |v: &Value| v.to_string().chars().count() as f64;
     let input = (chars(request) + content.iter().map(chars).sum::<f64>()) / 4.0;
@@ -351,7 +390,7 @@ mod tests {
     }
 
     #[test]
-    fn reading_stops_at_the_first_result() {
+    fn a_result_event_is_reported_as_one() {
         let mut read = Read { content: vec![], usage: None };
         assert!(!apply_event(&mut read, json!({"type": "tool-input-start"})).unwrap());
         assert!(!apply_event(&mut read, json!({"type": "tool-call", "input": "{}"})).unwrap());
@@ -367,7 +406,7 @@ mod tests {
     }
 
     #[test]
-    fn an_early_stop_bills_the_answer_it_did_not_read() {
+    fn a_broken_stream_bills_the_answer_it_did_not_read() {
         let usage = unread_usage(&json!({"prompt": "x".repeat(400)}), &[json!({"type": "tool-result"})]);
         assert!(usage["inputTokens"]["total"].as_f64().unwrap() > 100.0);
         assert_eq!(usage["outputTokens"]["total"].as_f64(), Some(UNREAD_ANSWER_TOKENS));
