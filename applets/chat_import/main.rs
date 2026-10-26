@@ -11,7 +11,7 @@
 mod transform;
 
 use anyhow::{Context, Result};
-use virtues_helpers::{connect_from_env, output, read_input};
+use virtues_helpers::{connect_from_env, conversations, output, read_input};
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -37,7 +37,7 @@ async fn main() -> Result<()> {
     let parsed = messages.len();
 
     let pool = connect_from_env("virtues-action-chat_import").await?;
-    let written = transform::write_messages(&pool, &messages).await?;
+    let written = conversations::write_messages(&pool, &messages).await?;
 
     // Best-effort cleanup of the transient upload (it's input, not a kept file).
     let _ = std::fs::remove_file(file_path);

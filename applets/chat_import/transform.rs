@@ -5,21 +5,32 @@
 //! and partial success beats none). Unknown providers fall back to trying the
 //! ChatGPT shape, then the Claude shape.
 
-use anyhow::Result;
 use chrono::{DateTime, TimeZone, Utc};
 use serde_json::Value;
-use sqlx::PgPool;
-use virtues_helpers::dedup::{build_batch_insert_query, BATCH_SIZE};
+use virtues_helpers::conversations::{stream_id, ConversationMsg};
 
-/// One normalized conversation message ready for insert.
-pub struct Msg {
-    pub stream_id: String,
-    pub conversation_id: String,
-    pub message_id: String,
-    pub role: String,
-    pub content: String,
-    pub provider: String,
-    pub timestamp: DateTime<Utc>,
+/// The `source_table` every imported row carries.
+const SOURCE_TABLE: &str = "chat_import";
+
+/// One parsed message as a row, with the fields every import shares.
+fn msg(
+    provider: &str,
+    conversation_id: &str,
+    message_id: String,
+    role: &str,
+    content: String,
+    timestamp: DateTime<Utc>,
+) -> ConversationMsg {
+    ConversationMsg {
+        stream_id: stream_id(provider, conversation_id, &message_id),
+        conversation_id: conversation_id.to_string(),
+        message_id,
+        role: role.to_string(),
+        content,
+        provider: provider.to_string(),
+        timestamp,
+        source_table: SOURCE_TABLE.to_string(),
+    }
 }
 
 /// Map a provider's sender label to the ontology's role CHECK
@@ -34,11 +45,7 @@ fn normalize_role(raw: &str) -> Option<&'static str> {
     }
 }
 
-fn stream_id(provider: &str, conversation_id: &str, message_id: &str) -> String {
-    format!("chatimport:{provider}:{conversation_id}:{message_id}")
-}
-
-pub fn parse(provider: &str, json: &Value) -> Vec<Msg> {
+pub fn parse(provider: &str, json: &Value) -> Vec<ConversationMsg> {
     match provider {
         "chatgpt" => parse_chatgpt(json),
         "claude" => parse_claude(json),
@@ -57,7 +64,7 @@ pub fn parse(provider: &str, json: &Value) -> Vec<Msg> {
 /// Claude `conversations.json`: an array of conversations, each with `uuid`,
 /// `name`, and `chat_messages[]` whose entries carry `uuid`, `sender`
 /// (`human`/`assistant`), `created_at` (RFC3339), and `text` (or `content[]`).
-fn parse_claude(json: &Value) -> Vec<Msg> {
+fn parse_claude(json: &Value) -> Vec<ConversationMsg> {
     let mut out = Vec::new();
     let Some(convos) = json.as_array() else {
         return out;
@@ -92,15 +99,7 @@ fn parse_claude(json: &Value) -> Vec<Msg> {
                 continue;
             }
             let timestamp = parse_ts(m.get("created_at"));
-            out.push(Msg {
-                stream_id: stream_id("claude", &conversation_id, &message_id),
-                conversation_id: conversation_id.clone(),
-                message_id,
-                role: role.to_string(),
-                content,
-                provider: "claude".into(),
-                timestamp,
-            });
+            out.push(msg("claude", &conversation_id, message_id, role, content, timestamp));
         }
     }
     out
@@ -109,7 +108,7 @@ fn parse_claude(json: &Value) -> Vec<Msg> {
 /// ChatGPT `conversations.json`: an array of conversations, each with a
 /// `mapping` object of nodes; each node's `message` has `id`, `author.role`,
 /// `create_time` (epoch seconds), and `content.parts[]`.
-fn parse_chatgpt(json: &Value) -> Vec<Msg> {
+fn parse_chatgpt(json: &Value) -> Vec<ConversationMsg> {
     let mut out = Vec::new();
     let Some(convos) = json.as_array() else {
         return out;
@@ -150,15 +149,7 @@ fn parse_chatgpt(json: &Value) -> Vec<Msg> {
                 continue;
             }
             let timestamp = parse_ts(message.get("create_time"));
-            out.push(Msg {
-                stream_id: stream_id("chatgpt", &conversation_id, &message_id),
-                conversation_id: conversation_id.clone(),
-                message_id,
-                role: role.to_string(),
-                content,
-                provider: "chatgpt".into(),
-                timestamp,
-            });
+            out.push(msg("chatgpt", &conversation_id, message_id, role, content, timestamp));
         }
     }
     out
@@ -166,7 +157,7 @@ fn parse_chatgpt(json: &Value) -> Vec<Msg> {
 
 /// Gemini / Google Takeout exports vary widely (and are often HTML). Handle the
 /// JSON case best-effort: an array of records with a text + role + timestamp.
-fn parse_gemini(json: &Value) -> Vec<Msg> {
+fn parse_gemini(json: &Value) -> Vec<ConversationMsg> {
     let mut out = Vec::new();
     let Some(items) = json.as_array() else {
         return out;
@@ -185,15 +176,7 @@ fn parse_gemini(json: &Value) -> Vec<Msg> {
             .unwrap_or_else(|| "gemini".into());
         let message_id = first_str(item, &["id", "message_id"]).unwrap_or_else(|| i.to_string());
         let timestamp = parse_ts(item.get("timestamp").or_else(|| item.get("time")));
-        out.push(Msg {
-            stream_id: stream_id("gemini", &conversation_id, &message_id),
-            conversation_id,
-            message_id,
-            role: role.to_string(),
-            content,
-            provider: "gemini".into(),
-            timestamp,
-        });
+        out.push(msg("gemini", &conversation_id, message_id, role, content, timestamp));
     }
     out
 }
@@ -229,53 +212,4 @@ fn parse_ts(v: Option<&Value>) -> DateTime<Utc> {
             .unwrap_or_else(Utc::now),
         _ => Utc::now(),
     }
-}
-
-/// Dedup-insert messages into `data_content_conversation` in batches.
-pub async fn write_messages(db: &PgPool, messages: &[Msg]) -> Result<usize> {
-    let mut written = 0usize;
-    for chunk in messages.chunks(BATCH_SIZE) {
-        written += flush(db, chunk).await?;
-    }
-    Ok(written)
-}
-
-async fn flush(db: &PgPool, records: &[Msg]) -> Result<usize> {
-    if records.is_empty() {
-        return Ok(0);
-    }
-    let sql = build_batch_insert_query(
-        "data_content_conversation",
-        &[
-            "id",
-            "conversation_id",
-            "message_id",
-            "role",
-            "content",
-            "provider",
-            "occurred_at",
-            "source_stream_id",
-            "source_table",
-            "source_provider",
-        ],
-        "source_stream_id",
-        records.len(),
-    );
-
-    let mut q = sqlx::query(&sql);
-    for r in records {
-        q = q
-            .bind(&r.stream_id) // id (reuse the deterministic stream id as PK)
-            .bind(&r.conversation_id)
-            .bind(&r.message_id)
-            .bind(&r.role)
-            .bind(&r.content)
-            .bind(&r.provider)
-            .bind(r.timestamp)
-            .bind(&r.stream_id)
-            .bind("chat_import")
-            .bind(&r.provider);
-    }
-    let result = q.execute(db).await?;
-    Ok(result.rows_affected() as usize)
 }

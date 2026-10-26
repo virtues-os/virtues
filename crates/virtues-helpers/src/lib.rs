@@ -28,6 +28,7 @@
 pub mod auth;
 pub mod bookmarks;
 pub mod contract;
+pub mod conversations;
 pub mod crypto;
 pub mod db;
 pub mod dedup;
