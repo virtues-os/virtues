@@ -43,7 +43,7 @@ pub use executor::{
     SubagentStatus, SubagentUpdate, ToolAttachment, ToolContext, ToolError, ToolExecutor, WorkerStep,
     ToolResult,
 };
-pub use web_search::{first_search_for, WebSearchTool};
+pub use web_search::WebSearchTool;
 pub use sql_query::SqlQueryTool;
 pub use page_editor::PageEditorTool;
 /// The chat's page context says what the page editor's reads say about suggestions.

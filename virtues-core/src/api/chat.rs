@@ -2418,21 +2418,6 @@ fn create_agent_stream(
         };
 
         let tools = mode.tools();
-        // A plain lookup is searched before the model's first pass, so the
-        // model answers from the results instead of spending a pass
-        // deciding to search.
-        let offers_search = tools.iter().any(|t| t["function"]["name"] == "web_search");
-        let first_search = request
-            .messages
-            .iter()
-            .rev()
-            .find(|m| m.role == "user")
-            .filter(|_| offers_search)
-            .and_then(|m| crate::tools::first_search_for(&m.text()));
-        let agent = match first_search {
-            Some(call) => agent.with_first_call(call),
-            None => agent,
-        };
 
         // The message opens, then its first step; the recorder opens and
         // closes the parts inside each step, and the steps after this one.

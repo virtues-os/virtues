@@ -123,7 +123,6 @@ pub struct AgentLoop {
     tool_executor: ToolExecutor,
     config: AgentConfig,
     budget: TurnBudget,
-    first_call: Option<ToolCall>,
 }
 
 impl AgentLoop {
@@ -147,23 +146,12 @@ impl AgentLoop {
             tool_executor,
             config: AgentConfig::default(),
             budget: TurnBudget::default(),
-            first_call: None,
         }
     }
 
     /// Cap what one turn may spend. See `TurnBudget`.
     pub fn with_budget(mut self, budget: TurnBudget) -> Self {
         self.budget = budget;
-        self
-    }
-
-    /// Run `call` before the model's first step, as if the model had made it.
-    /// The chat handler uses it to search for a plain lookup straight away,
-    /// so the model answers from results in its first pass instead of
-    /// spending a pass deciding to search. The call goes through the caps and
-    /// the guard like any other, and streams as a step of its own.
-    pub fn with_first_call(mut self, call: ToolCall) -> Self {
-        self.first_call = Some(call);
         self
     }
 
@@ -190,7 +178,6 @@ impl AgentLoop {
         let tool_executor = self.tool_executor.clone();
         let config = self.config.clone();
         let budget = self.budget;
-        let first_call = self.first_call.clone();
         let executor_config = ExecutorConfig {
             tool_timeout: config.tool_timeout,
             parallel: config.parallel_tools,
@@ -220,45 +207,6 @@ impl AgentLoop {
             };
 
             yield AgentEvent::LoopStarted { max_steps: config.max_steps };
-
-            if let Some(call) = first_call {
-                yield AgentEvent::ToolCallStart { id: call.id.clone(), name: call.name.clone(), args: None };
-                yield AgentEvent::ToolCallArgsComplete { id: call.id.clone(), args: call.arguments.clone() };
-                yield AgentEvent::step_complete(0, StepReason::ToolCalls);
-                let run = turn.run_tools(&tool_executor, vec![call.clone()], &context, &executor_config);
-                let ran = match &cancel_token {
-                    Some(token) => tokio::select! {
-                        results = run => Some(results),
-                        _ = token.cancelled() => None,
-                    },
-                    None => Some(run.await),
-                };
-                let Some(tool_results) = ran else {
-                    yield turn::stopped(&call).to_event();
-                    yield AgentEvent::done(0, FinishReason::Cancelled);
-                    return;
-                };
-                turn.record_tool_spend(&tool_results);
-                for tool_result in &tool_results {
-                    yield tool_result.to_event();
-                }
-                let asked = LlmStreamResult {
-                    content: String::new(),
-                    reasoning_details: vec![],
-                    tool_calls: vec![call],
-                    finish_reason: StepReason::ToolCalls,
-                    usage: None,
-                };
-                turn::append_next_step(
-                    &mut messages,
-                    &model,
-                    &asked,
-                    &tool_results,
-                    crate::api::model_catalog::supports_vision(&model),
-                    config.max_steps,
-                    &mut cites,
-                );
-            }
 
             loop {
                 turn.step += 1;
