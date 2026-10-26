@@ -54,7 +54,7 @@ async fn main() -> Result<()> {
     let mut input = read_input()?;
     let pool = connect_from_env("virtues-action-instagram_saves_sync").await?;
 
-    let cookies = virtues_applets::secret(&input, "cookies")?.trim().to_string();
+    let cookies = virtues_applets::cookie_header(&input, "cookies")?.trim().to_string();
     let csrftoken = csrftoken_from(&cookies)
         .context("the saved cookies carry no csrftoken — re-copy the whole cookie jar")?;
     // Optional: only present if the collector harvest captured it. Read without

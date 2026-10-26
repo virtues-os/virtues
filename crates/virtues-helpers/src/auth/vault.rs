@@ -216,6 +216,29 @@ pub async fn update_credential_secrets(
     Ok(())
 }
 
+/// Record when a session credential stops working, from its login cookies.
+///
+/// Leaves `next_refresh_at` alone: nothing can renew a browser session, so
+/// the refresh sweep must not pick it up. `None` clears a date a previous
+/// sign-in set. Attention reads `expires_at` to warn the owner beforehand.
+pub async fn set_credential_expiry(
+    db: &PgPool,
+    credential_id: &str,
+    expires_at: Option<DateTime<Utc>>,
+) -> Result<()> {
+    let result = sqlx::query(
+        "UPDATE credentials SET expires_at = $1 WHERE id = $2 AND kind = 'source'",
+    )
+    .bind(expires_at)
+    .bind(credential_id)
+    .execute(db)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(AuthError::NotFound(credential_id.to_string()));
+    }
+    Ok(())
+}
+
 /// Decrypt the secrets payload of a credential row.
 pub async fn read_credential_secrets(
     db: &PgPool,

@@ -52,6 +52,11 @@ pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
         Err(e) => tracing::warn!("attention: credentials unreadable: {e}"),
     }
 
+    match expiring_sources(db).await {
+        Ok(rows) => expiring_items(&mut items, rows, chrono::Utc::now()),
+        Err(e) => tracing::warn!("attention: credential expiry unreadable: {e}"),
+    }
+
     match crate::api::stream_health::stream_health(db).await {
         Ok(streams) => {
             stream_items(&mut items, &streams);
@@ -161,6 +166,50 @@ fn source_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String, Strin
             kind: "source",
             title,
             body,
+            route: "/sources",
+        });
+    }
+}
+
+/// How far ahead the owner hears that a sign-in is ending. Long enough to
+/// see it on a weekday, and the session still works until then.
+const EXPIRY_WARNING_DAYS: i64 = 3;
+
+/// `(credential id, name, expires_at)` for working sign-ins that end soon.
+/// Only sessions: an OAuth credential has `next_refresh_at` and renews itself.
+async fn expiring_sources(db: &Database) -> Result<Vec<(String, String, chrono::DateTime<chrono::Utc>)>> {
+    Ok(sqlx::query_as(
+        "SELECT id, name, expires_at FROM credentials \
+         WHERE kind = 'source' AND status = 'active' AND next_refresh_at IS NULL \
+           AND expires_at IS NOT NULL \
+           AND expires_at < now() + make_interval(days => $1) \
+         ORDER BY expires_at",
+    )
+    .bind(EXPIRY_WARNING_DAYS as i32)
+    .fetch_all(db.pool())
+    .await?)
+}
+
+fn expiring_items(
+    items: &mut Vec<AttentionItem>,
+    rows: Vec<(String, String, chrono::DateTime<chrono::Utc>)>,
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    for (id, name, expires_at) in rows {
+        let left = expires_at - now;
+        let when = match left.num_hours() {
+            h if h <= 0 => "has ended".to_string(),
+            h if h < 24 => "ends within a day".to_string(),
+            h if h < 48 => "ends tomorrow".to_string(),
+            h => format!("ends in {} days", (h + 23) / 24),
+        };
+        items.push(AttentionItem {
+            key: format!("source:{id}:expiring:{}", expires_at.timestamp()),
+            kind: "source",
+            title: format!("{name} needs you to sign in again soon"),
+            body: format!(
+                "Your server's sign-in to it {when}. Open Sources and reconnect to keep it syncing."
+            ),
             route: "/sources",
         });
     }
@@ -452,5 +501,45 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Mac stopped sending data");
         assert!(items[0].body.contains("for 3 days"), "{}", items[0].body);
+    }
+
+    #[test]
+    fn an_ending_sign_in_is_named_with_the_time_left() {
+        let now = chrono::Utc::now();
+        let mut items = Vec::new();
+        expiring_items(
+            &mut items,
+            vec![
+                ("cred_a".into(), "Grok".into(), now + chrono::Duration::hours(60)),
+                ("cred_b".into(), "X".into(), now + chrono::Duration::hours(30)),
+                ("cred_c".into(), "Instagram".into(), now + chrono::Duration::hours(5)),
+                ("cred_d".into(), "Claude".into(), now - chrono::Duration::hours(1)),
+            ],
+            now,
+        );
+        let bodies: Vec<&str> = items.iter().map(|i| i.body.as_str()).collect();
+        assert!(bodies[0].contains("ends in 3 days"), "{}", bodies[0]);
+        assert!(bodies[1].contains("ends tomorrow"), "{}", bodies[1]);
+        assert!(bodies[2].contains("ends within a day"), "{}", bodies[2]);
+        assert!(bodies[3].contains("has ended"), "{}", bodies[3]);
+        assert_eq!(items[0].title, "Grok needs you to sign in again soon");
+        assert!(items[0].key.starts_with("source:cred_a:expiring:"));
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn only_sessions_ending_soon_are_listed(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext, expires_at, next_refresh_at) VALUES \
+             ('cred_soon', 'grok', 'Grok', 'active', 'x', now() + interval '2 days', NULL), \
+             ('cred_later', 'x', 'X', 'active', 'x', now() + interval '20 days', NULL), \
+             ('cred_oauth', 'google', 'Google', 'active', 'x', now() + interval '1 hour', now()), \
+             ('cred_broken', 'instagram', 'Instagram', 'reauth_required', 'x', now() + interval '1 day', NULL)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let db = Database::from_pool(pool);
+        let ids: Vec<String> = expiring_sources(&db).await.unwrap().into_iter().map(|r| r.0).collect();
+        assert_eq!(ids, ["cred_soon"]);
     }
 }

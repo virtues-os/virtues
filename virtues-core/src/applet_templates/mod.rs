@@ -82,6 +82,10 @@ pub struct SourceLogin {
     /// more of the jar than a fixed list (Instagram).
     #[serde(default)]
     pub jar_field: Option<String>,
+    /// Other domains the sign-in sets cookies on, whose cookies the jar
+    /// includes (ChatGPT signs in through openai.com).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domains: Vec<String>,
 }
 
 /// How a source authenticates. Matches the three auth kinds in the charter.

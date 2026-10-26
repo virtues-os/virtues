@@ -677,7 +677,13 @@ pub async fn go(app: &AppHandle, action: &str) -> Result<(), String> {
 /// Open a source's login page in the pane and resolve with the site's cookies
 /// once every name in `cookies` is set. The session stays in the browser's jar,
 /// so the assistant browsing that site afterwards is logged in too.
-pub async fn login(app: &AppHandle, url: &str, cookies: &[String], timeout: Duration) -> Result<Vec<(String, String)>, String> {
+pub async fn login(
+    app: &AppHandle,
+    url: &str,
+    cookies: &[String],
+    domains: &[String],
+    timeout: Duration,
+) -> Result<Vec<tauri::webview::Cookie<'static>>, String> {
     let page = parse_page(url)?;
     let view = show(app, &page, true).await?;
     let started = std::time::Instant::now();
@@ -687,10 +693,10 @@ pub async fn login(app: &AppHandle, url: &str, cookies: &[String], timeout: Dura
             return Err("timeout".into());
         }
         let Ok(all) = view.cookies() else { continue };
-        let jar = crate::browser::jar_for(all, &page);
+        let jar = crate::browser::site_jar(all, &page, domains);
         let has = |name: &str| jar.iter().any(|c| c.name() == name && !c.value().is_empty());
         if cookies.iter().all(|n| has(n)) {
-            return Ok(jar.iter().map(|c| (c.name().to_string(), c.value().to_string())).collect());
+            return Ok(jar);
         }
     }
 }

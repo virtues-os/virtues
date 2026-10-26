@@ -408,7 +408,7 @@ pub struct ApiKeyCompleteResponse {
 pub async fn apikey_complete_handler(
     State(state): State<AppState>,
     Path(source_id): Path<String>,
-    Json(req): Json<ApiKeyCompleteRequest>,
+    Json(mut req): Json<ApiKeyCompleteRequest>,
 ) -> Response {
     let pool = state.db.pool();
 
@@ -438,6 +438,13 @@ pub async fn apikey_complete_handler(
             }
         }
     }
+
+    // A sign-in through the app also sends `jar`, the whole session.
+    crate::credentials::jar::clean(&mut req.fields);
+    let expires_at = source
+        .login
+        .as_ref()
+        .and_then(|l| crate::credentials::jar::login_expiry(&req.fields, &l.cookies));
 
     let credential_id = match &req.credential_id {
         Some(existing) => {
@@ -472,6 +479,13 @@ pub async fn apikey_complete_handler(
             Err(e) => return auth_error_response(e),
         },
     };
+
+    // Set or clear, so a reconnect without a date does not keep the old one.
+    if let Err(e) =
+        virtues_helpers::auth::vault::set_credential_expiry(pool, &credential_id, expires_at).await
+    {
+        return auth_error_response(e);
+    }
 
     // Reconcile so per-credential fan-out picks up (e.g. MCP server actions).
     if let Err(e) = reconcile_templates(pool).await {

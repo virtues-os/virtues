@@ -71,6 +71,41 @@ pub fn secret<'a>(input: &'a AppletInput, key: &str) -> Result<&'a str> {
         .with_context(|| format!("credentials missing secrets.{key}"))
 }
 
+/// The credential's browser session (`secrets.jar`), if a sign-in through the
+/// app stored one. Each entry has at least `name` and `value`.
+fn jar(input: &AppletInput) -> Option<&Vec<serde_json::Value>> {
+    input.credentials.as_ref()?.get("secrets")?.get("jar")?.as_array()
+}
+
+/// One session cookie's value: from `secrets.jar`, else from the named field
+/// a sign-in older than the jar stored (`secrets.<name>`).
+pub fn cookie<'a>(input: &'a AppletInput, name: &str) -> Result<&'a str> {
+    let from_jar = jar(input).and_then(|j| {
+        j.iter()
+            .find(|c| c.get("name").and_then(|v| v.as_str()) == Some(name))
+            .and_then(|c| c.get("value"))
+            .and_then(|v| v.as_str())
+            .filter(|v| !v.is_empty())
+    });
+    match from_jar {
+        Some(v) => Ok(v),
+        None => secret(input, name),
+    }
+}
+
+/// The whole session as a `Cookie:` header: built from `secrets.jar`, else
+/// the header string a sign-in older than the jar stored in `secrets.<field>`.
+pub fn cookie_header(input: &AppletInput, field: &str) -> Result<String> {
+    if let Some(j) = jar(input).filter(|j| !j.is_empty()) {
+        let pairs: Vec<String> = j
+            .iter()
+            .filter_map(|c| Some(format!("{}={}", c.get("name")?.as_str()?, c.get("value")?.as_str()?)))
+            .collect();
+        return Ok(pairs.join("; "));
+    }
+    secret(input, field).map(str::to_string)
+}
+
 /// Mark this run's credential as needing the owner to reconnect, with the
 /// sentence the Sources page shows beside its Reconnect button. For a session
 /// the site ended: retrying cannot fix it, and a run that just fails looks the
@@ -150,4 +185,34 @@ pub async fn service_proxy_raw(
         .await
         .with_context(|| format!("{service} proxy call to {route} failed"))?;
     Ok((resp.status, resp.body))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn input(secrets: serde_json::Value) -> AppletInput {
+        serde_json::from_value(json!({ "config": {}, "credentials": { "id": "cred_t", "secrets": secrets } })).unwrap()
+    }
+
+    #[test]
+    fn cookies_come_from_the_jar_before_the_old_fields() {
+        let both = input(json!({
+            "auth_token": "old", "cookies": "a=old",
+            "jar": [{"name": "auth_token", "value": "new", "domain": ".example.com"},
+                    {"name": "ct0", "value": "csrf"}]
+        }));
+        assert_eq!(cookie(&both, "auth_token").unwrap(), "new");
+        assert_eq!(cookie(&both, "ct0").unwrap(), "csrf");
+        assert_eq!(cookie_header(&both, "cookies").unwrap(), "auth_token=new; ct0=csrf");
+    }
+
+    #[test]
+    fn a_credential_without_a_jar_reads_its_old_fields() {
+        let old = input(json!({ "auth_token": "old", "cookies": "a=1; b=2" }));
+        assert_eq!(cookie(&old, "auth_token").unwrap(), "old");
+        assert_eq!(cookie_header(&old, "cookies").unwrap(), "a=1; b=2");
+        assert!(cookie(&old, "ct0").is_err());
+    }
 }

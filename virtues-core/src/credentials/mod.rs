@@ -7,6 +7,7 @@
 //! - Status state machine: `pending` → `active` → (`reauth_required` |
 //!   `error` | `revoked`). Only `active` credentials are usable.
 
+pub mod jar;
 pub mod types;
 
 pub use types::{Credential, CredentialStatus, IosSecrets};

@@ -156,16 +156,14 @@ async fn main() -> Result<()> {
 
 /// The `Cookie:` header for grok.com, from this run's credential.
 ///
-/// The Mac app's source login fills `cookies` with the site's whole jar
-/// (`jar_field` in sources.toml). The only place this applet reads its
-/// credential, so the planned `jar` list (agents/plan/secrets-plan.md) changes
-/// this function alone.
-///
-/// Cloudflare's cookies are left out. They belong to the browser that earned
-/// them, and the box makes its own requests.
+/// Read from the stored session (`secrets.jar`), or from the `cookies` header
+/// a sign-in older than the jar stored. Cloudflare's cookies are left out of
+/// both: they belong to the browser that earned them, and the box makes its
+/// own requests. The box already drops them from `jar`; the old header still
+/// carries them.
 fn session_cookies(input: &AppletInput) -> Result<String> {
     const CLOUDFLARE: [&str; 4] = ["cf_clearance", "__cf_bm", "__cflb", "_cfuvid"];
-    let header = virtues_applets::secret(input, "cookies")?
+    let header = virtues_applets::cookie_header(input, "cookies")?
         .split(';')
         .map(str::trim)
         .filter(|c| !c.is_empty())
