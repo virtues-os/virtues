@@ -249,8 +249,8 @@ Seven tokens in `themes.css`, always on `--ease-premium`:
 | `--motion-press` | 60ms | sinking on press |
 | `--motion-release` | 180ms | springing back |
 | `--motion-state` | 150ms | a selection changing, a group folding |
-| `--motion-enter` | 180ms | a popover, a menu or a new tab appearing |
-| `--motion-layout` | 300ms | the sidebar opening, a pane resizing, the sidebar glyph's tint |
+| `--motion-enter` | 180ms | a popover or a menu appearing |
+| `--motion-layout` | 300ms | the sidebar opening, a pane resizing, the sidebar glyph's tint, a tab opening or closing |
 
 Square controls sink to 94% while pressed. Rows and tabs take the press fill
 only, because a wide row that shrank would read as a wobble. The ∴ dot's
@@ -365,8 +365,18 @@ should do the work, as they do in a table of contents.
   The flared corners are what make the tab and the card read as one
   surface.
 - **Switching tabs is instant.** The fill, edge, corners and ink change in
-  one frame. Only the hover pill fades, and a new tab rises one radius out
-  of its card.
+  one frame. Only the hover pill fades.
+- **Opening and closing a tab is one motion run both ways**, on
+  `--motion-layout`, in two beats that overlap a little. Opening: the space
+  opens and the tabs to its right and the + glide aside, then the tab rises
+  one radius out of the card and fades in. Closing: the tab sinks toward
+  the card and fades, then the space closes and its neighbours glide in.
+  Nothing is squeezed while it can be seen. Tabs already open when the
+  window loads do not animate.
+- **A crowded strip compacts, then scrolls.** The tabs you are not on drop
+  to their icons. The tab you are on keeps its full width. Past that the
+  strip scrolls, and an edge fades over 32px while there are tabs past it.
+  Switching to a tab scrolls it into view clear of the fades.
 - **A tab carries the sidebar's marks.** A chat that is replying shows the
   working ∴ in place of its icon. A reply that landed while the tab was in
   the background puts the unread dot on the icon's corner. A title that

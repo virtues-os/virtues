@@ -29,6 +29,7 @@
 	import { chatActivity } from "$lib/stores/chatActivity.svelte";
 	import { routeToEntityId } from "$lib/utils/urlUtils";
 	import ThinkingMark from "$lib/components/ThinkingMark.svelte";
+	import { cubicBezier, easePremium, motionMs } from "$lib/utils/motion";
 
 	const FLIP_DURATION_MS = 150;
 
@@ -401,6 +402,181 @@
 		node.select();
 	}
 
+	const reducedMotion =
+		typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+	/** `--ease-in-out-quad`. */
+	const easeInOut = cubicBezier(0.45, 0, 0.55, 1);
+
+	/** Progress `p` re-mapped onto the stretch [from, to], eased. */
+	function phase(p: number, from: number, to: number, ease = easePremium): number {
+		return ease(Math.min(1, Math.max(0, (p - from) / (to - from))));
+	}
+
+	/**
+	 * A tab's box at its full size, for the open and close to run between:
+	 * its width, its padding, and the strip gap on the side it takes (the
+	 * first tab has none before it, so it takes the one after).
+	 */
+	function tabBox(node: HTMLElement) {
+		const style = getComputedStyle(node);
+		return {
+			width: node.getBoundingClientRect().width,
+			padLeft: parseFloat(style.paddingLeft),
+			padRight: parseFloat(style.paddingRight),
+			gap: parseFloat(getComputedStyle(node.parentElement!).columnGap) || 0,
+			side: node.previousElementSibling ? "left" : "right",
+		};
+	}
+
+	/** The box at `size` of its full width (0..1). */
+	function boxCss(box: ReturnType<typeof tabBox>, size: number): string {
+		return (
+			`max-width: ${size * box.width}px; padding-left: ${size * box.padLeft}px; ` +
+			`padding-right: ${size * box.padRight}px; margin-${box.side}: ${(size - 1) * box.gap}px;`
+		);
+	}
+
+	/**
+	 * Opening and closing are one motion run both ways, on the scale's
+	 * layout timing (300ms on --ease-premium), in two beats that overlap a
+	 * little, so one hands off to the other. Opening: the space opens first, so the tabs to the right
+	 * and the + glide aside, then the tab rises one radius out of the card
+	 * and fades in. The active tab is the card's color, so it reads as the
+	 * page lifting into a tab. Closing: the tab sinks back toward the card
+	 * and fades, then the space closes and its neighbours glide in. Nothing
+	 * is squeezed while it can be seen: the tab is invisible before its box
+	 * gets narrow, and the box is full size before it becomes visible.
+	 */
+	const TAB_MOTION_MS = motionMs("--motion-layout", 300);
+	/** Tabs still opening, which the strip waits for before scrolling to one. */
+	const unfolding = new WeakSet<Element>();
+	/**
+	 * Instant while a tab is in the air: the drag library adds and removes
+	 * its placeholder as the pointer crosses zones, and it measures the
+	 * strip as it goes.
+	 */
+	const tabMotionMs = () => (reducedMotion || dndManager.session ? 0 : TAB_MOTION_MS);
+	const RISE_PX = 8;
+	const SINK_PX = 4;
+
+	function unfold(node: HTMLElement) {
+		const box = tabBox(node);
+		unfolding.add(node);
+		node.addEventListener("introend", () => unfolding.delete(node), { once: true });
+		return {
+			duration: tabMotionMs(),
+			css: (t: number) => {
+				// The fade is shorter than the rise: half see-through, the
+				// tab showed the card's top edge through it.
+				const size = phase(t, 0, 0.55);
+				const show = phase(t, 0.3, 0.75, easeInOut);
+				const rise = phase(t, 0.3, 1);
+				return (
+					boxCss(box, size) +
+					` min-width: 0; overflow: ${t < 0.3 ? "hidden" : "visible"};` +
+					` opacity: ${show}; translate: 0 ${(1 - rise) * RISE_PX}px;`
+				);
+			},
+		};
+	}
+
+	/** Every way to close a tab ends here: it runs when the tab leaves the list. */
+	function foldAway(node: HTMLElement) {
+		// For a list with animate:, Svelte takes a leaving item out of the
+		// flow (position: absolute) just before this runs, so the others can
+		// slide over it. The tab closes its own space instead, so it goes
+		// back in the flow.
+		if (node.style.position === "absolute") {
+			node.style.position = "";
+			node.style.width = "";
+			node.style.height = "";
+			node.style.transform = "";
+		}
+		node.classList.add("closing");
+		const box = tabBox(node);
+		return {
+			duration: tabMotionMs(),
+			css: (t: number) => {
+				// Svelte runs an outro from t = 1 down to 0.
+				const p = 1 - t;
+				// The fade eases in and out: --ease-premium front-loads it, and
+				// a third of the tab vanished in the first frame or two. The
+				// space starts closing as the fade ends, so no frame holds
+				// an invisible tab at full width.
+				const hide = phase(p, 0, 0.4, easeInOut);
+				const size = 1 - phase(p, 0.2, 1);
+				return (
+					boxCss(box, size) +
+					` min-width: 0; overflow: ${p > 0.35 ? "hidden" : "visible"};` +
+					` opacity: ${1 - hide}; translate: 0 ${hide * SINK_PX}px;`
+				);
+			},
+		};
+	}
+
+	/**
+	 * svelte-dnd-action maps each child element to an item by its index,
+	 * and it last counted while the closed tab was still folding in the
+	 * strip, so every tab after it was one off. A fresh list makes the
+	 * library count again.
+	 */
+	function recountAfterFold() {
+		if (!dndManager.session) dndItems = [...dndItems];
+	}
+
+	/**
+	 * The edge fades of a strip that scrolls: a side fades while there are
+	 * tabs past it. Measured on scroll and whenever the strip or a tab
+	 * resizes.
+	 */
+	let fadeStart = $state(false);
+	let fadeEnd = $state(false);
+	function trackOverflow(node: HTMLElement) {
+		const measure = () => {
+			const max = node.scrollWidth - node.clientWidth;
+			fadeStart = max > 1 && node.scrollLeft > 1;
+			fadeEnd = max > 1 && node.scrollLeft < max - 1;
+		};
+		const observer = new ResizeObserver(measure);
+		observer.observe(node);
+		const children = new MutationObserver(() => {
+			for (const child of node.children) observer.observe(child);
+			measure();
+		});
+		children.observe(node, { childList: true });
+		for (const child of node.children) observer.observe(child);
+		node.addEventListener("scroll", measure, { passive: true });
+		measure();
+		return {
+			destroy() {
+				observer.disconnect();
+				children.disconnect();
+				node.removeEventListener("scroll", measure);
+			},
+		};
+	}
+
+	/**
+	 * A strip that scrolls brings the tab you switch to into view (⌘9, a
+	 * link that opens an existing tab), as a browser's does, clear of the
+	 * edge fades (the strip's scroll-padding). A tab that is still opening
+	 * is 0px wide, so the strip waits for it to finish opening first.
+	 */
+	let scroller = $state<HTMLElement | null>(null);
+	$effect(() => {
+		const id = activeTabId;
+		if (!scroller || !id) return;
+		requestAnimationFrame(() => {
+			const el = scroller?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`);
+			if (!el) return;
+			const reveal = () =>
+				el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
+			if (unfolding.has(el)) el.addEventListener("introend", reveal, { once: true });
+			else reveal();
+		});
+	});
+
 	/** The chat a tab shows, for its spinner and unread dot. */
 	function chatOf(tab: Tab): string | null {
 		return tab.type === "chat" ? routeToEntityId(tab.route) : null;
@@ -522,6 +698,10 @@
 	<div
 		data-tauri-drag-region
 		class="tabs-scroll"
+		class:fade-start={fadeStart}
+		class:fade-end={fadeEnd}
+		bind:this={scroller}
+		use:trackOverflow
 		role="tablist"
 		tabindex="0"
 		use:dndzone={{
@@ -553,7 +733,11 @@
 					isActivePane}
 				class:pinned={tab.pinned}
 				class:renaming={tab.id === renamingTabId}
+				data-tab-id={tab.id}
 				animate:flip={{ duration: FLIP_DURATION_MS }}
+				in:unfold
+				out:foldAway
+				onoutroend={recountAfterFold}
 				onclick={() =>
 					tab.id !== renamingTabId && handleTabClick(tab.id)}
 				ondblclick={(e) => handleDoubleClick(e, tab.id)}
@@ -729,6 +913,8 @@
 		align-self: stretch;
 		padding: 0 var(--card-radius) var(--card-radius);
 		margin: 0 calc(-1 * var(--card-radius)) calc(-1 * var(--card-radius));
+		/* A tab scrolled into view stops clear of the edge fades. */
+		scroll-padding-inline: 32px;
 		/* The room below reaches into the card. Only the tabs take the
 		   pointer, so the card's top edge stays clickable and the gaps
 		   between tabs still move the window. */
@@ -737,6 +923,30 @@
 
 	.tabs-scroll > :global(*) {
 		pointer-events: auto;
+	}
+
+	/* Tabs past an edge fade out over 32px of it: the strip's 8px of flare
+	   room and 24px of tab, the same fade a clipped title gets. A side
+	   fades only while there is something past it. */
+	.tabs-scroll.fade-start,
+	.tabs-scroll.fade-end {
+		--fade-start: 0px;
+		--fade-end: 0px;
+		mask-image: linear-gradient(
+			to right,
+			transparent,
+			black var(--fade-start),
+			black calc(100% - var(--fade-end)),
+			transparent
+		);
+	}
+
+	.tabs-scroll.fade-start {
+		--fade-start: 32px;
+	}
+
+	.tabs-scroll.fade-end {
+		--fade-end: 32px;
 	}
 
 	.tabs-scroll::-webkit-scrollbar {
@@ -774,9 +984,9 @@
 		/* Switching tabs is instant, as in a browser: the fill, the edge, the
 		   flares and the ink change in one frame. Fading the fill while the
 		   edge and corners snapped showed the parts of the tab separately.
-		   Only the hover pill moves (below). A new tab rises out of the card
-		   into its place. */
-		animation: tab-in var(--motion-enter) var(--ease-premium);
+		   Only the hover pill moves (below). Opening and closing a tab are
+		   transitions (unfold, foldAway), so the tabs already open when the
+		   window loads do not animate in. */
 	}
 
 	.tab:hover {
@@ -830,16 +1040,6 @@
 		outline-offset: -3px;
 	}
 
-	/* Up out of the card by one radius. The active tab is the card's own
-	   color, so it reads as the page lifting into a tab. Scaling it, as
-	   before, pulled its foot off the card for the length of the animation. */
-	@keyframes tab-in {
-		from {
-			opacity: 0;
-			translate: 0 var(--card-radius);
-		}
-	}
-
 	/* The active tab is the top of its card: the page's color, the card's
 	   edge on three sides, and full ink. Never marked by weight: a bolder
 	   label is a wider one, and every tab to its right moved when you
@@ -848,6 +1048,10 @@
 	   flared corners do too. */
 	.tab.active {
 		z-index: 1;
+		/* The tab you are on keeps its full width in a crowded strip; the
+		   others compact to their icons and then scroll. Squeezed to its
+		   minimum, it lost its label and its × ran into the next tab. */
+		flex-shrink: 0;
 		height: calc(100% + 1px);
 		padding-bottom: 1px;
 		background: var(--color-page);
@@ -901,6 +1105,13 @@
 		   switch. */
 		/* design-ok: a fill that must not transition, not depth */
 		box-shadow: inset 0 0 0 var(--card-radius) var(--color-page);
+	}
+
+	/* A closing tab takes no pointer, so the tab gliding in under it does.
+	   It keeps its look while it fades: the tab that takes over is active
+	   from the first frame, and the two cross-fade. */
+	.tab:global(.closing) {
+		pointer-events: none;
 	}
 
 	/* In split view two tabs are "active" at once and only one takes your
@@ -1123,7 +1334,6 @@
 			transition: none;
 		}
 
-		.tab,
 		.tab-unread {
 			animation: none;
 		}
