@@ -133,7 +133,10 @@
 	// the OS shell: a Mac user in a browser still presses Command.
 	const modKeyWord = isAppleKeyboard ? "Command" : "Ctrl";
 
-	// The + offers every kind of new tab. ⌘N still starts a chat directly.
+	// The + starts a chat. When the pane already has an empty one, that would
+	// only bring it to the front, so the + offers every kind of new tab
+	// instead. A right-click on the + always offers them.
+	const hasEmptyChat = $derived(!!windowShellStore.emptyChatIn(paneId));
 	let browserAvailable = $state(false);
 	onMount(() => {
 		void canBrowserPane().then((ok) => (browserAvailable = ok));
@@ -145,6 +148,12 @@
 	});
 
 	function handleNewTab(e: MouseEvent) {
+		if (hasEmptyChat) showNewTabMenu(e);
+		else windowShellStore.newChat(paneId);
+	}
+
+	function showNewTabMenu(e: MouseEvent) {
+		e.preventDefault();
 		e.stopPropagation();
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		contextMenu.show({ x: rect.left, y: rect.bottom }, newTabMenuItems(paneId, { browser: browserAvailable }), {
@@ -588,10 +597,12 @@
 		class="new-tab-btn"
 		class:open={newTabMenuOpen}
 		onclick={handleNewTab}
-		aria-label="New tab"
+		oncontextmenu={showNewTabMenu}
+		aria-label={hasEmptyChat ? "New tab" : "New chat"}
 		aria-haspopup="menu"
 		aria-expanded={newTabMenuOpen}
-		data-tip={newTabMenuOpen ? undefined : "New tab"}
+		data-tip={newTabMenuOpen ? undefined : hasEmptyChat ? "New tab" : "New chat"}
+		data-tip-key={hasEmptyChat ? undefined : "mod+n"}
 	>
 		<AtlasIcon name="plus" size={16} bare />
 	</button>
