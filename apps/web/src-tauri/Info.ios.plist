@@ -63,5 +63,31 @@
 	<array>
 		<string>_http._tcp</string>
 	</array>
+	<!--
+	  The UIScene lifecycle. An app built with the iOS 27 SDK that does not
+	  declare a scene manifest is stopped by UIKit at launch, before any app
+	  code runs. UIKit checks only this static manifest, so the configuration
+	  must name tao's scene delegate here even though tao also hands UIKit one
+	  at runtime. TaoSceneDelegate is tao's Objective-C class name (tao 0.37+,
+	  src/platform_impl/ios/scene.rs); older tao crashes release builds when
+	  this key is present. One scene only: the app has a single window.
+	-->
+	<key>UIApplicationSceneManifest</key>
+	<dict>
+		<key>UIApplicationSupportsMultipleScenes</key>
+		<false/>
+		<key>UISceneConfigurations</key>
+		<dict>
+			<key>UIWindowSceneSessionRoleApplication</key>
+			<array>
+				<dict>
+					<key>UISceneConfigurationName</key>
+					<string>Default Configuration</string>
+					<key>UISceneDelegateClassName</key>
+					<string>TaoSceneDelegate</string>
+				</dict>
+			</array>
+		</dict>
+	</dict>
 </dict>
 </plist>
