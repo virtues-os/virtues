@@ -68,6 +68,7 @@ pub mod publish_page;
 pub mod publish_chat;
 pub mod search_local;
 pub mod skills;
+pub mod sky;
 pub mod suggestions;
 pub mod place_review;
 pub mod search_status;

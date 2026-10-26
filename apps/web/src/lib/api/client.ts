@@ -2254,6 +2254,33 @@ export function getSuggestedQuestion(): Promise<{ suggestion: SuggestedQuestion 
 	return apiGet<{ suggestion: SuggestedQuestion | null }>("/suggestions/current");
 }
 
+/** One part of a day in the chat sky (`api::sky::Moment`). Hours count from
+ *  the day's local midnight in its own zone; last night starts below zero. */
+export interface SkyMoment {
+	id: string;
+	kind: "stay" | "event" | "workout" | "sleep";
+	start_hour: number;
+	end_hour: number;
+	label: string;
+	place_id: string | null;
+	/** A calendar item that has not started yet. */
+	planned: boolean;
+}
+
+export interface SkyDay {
+	date: string;
+	zone: string;
+	/** Hours since local midnight, when the day is today. */
+	now_hour: number | null;
+	moments: SkyMoment[];
+	weather: { temperature_c: number | null; condition: string } | null;
+}
+
+/** A local day (`YYYY-MM-DD`) as the chat sky draws it. */
+export function getSkyDay(date: string): Promise<SkyDay> {
+	return apiGet<SkyDay>(`/sky/day/${encodeURIComponent(date)}`);
+}
+
 /** The suggestion was drawn, sent or put away; the box keeps a ledger. */
 export function recordSuggestionOutcome(
 	id: string,

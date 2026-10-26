@@ -1,12 +1,17 @@
 <script lang="ts">
 	/**
-	 * The switch for suggested questions. It turns the built-in applet that
-	 * writes them on or off (`applets/suggested_questions`), which is also
-	 * what the server checks before offering one (`api::suggestions::current`),
-	 * so off means no hourly run and no question in a new chat.
+	 * What an empty new chat shows above the composer.
+	 *
+	 * The chat sky is `ui_preferences.chat_sky`, on unless it is `false`;
+	 * ChatSky reads the same key.
+	 *
+	 * Suggested questions turn the built-in applet that writes them on or off
+	 * (`applets/suggested_questions`), which is also what the server checks
+	 * before offering one (`api::suggestions::current`), so off means no
+	 * hourly run and no question in a new chat.
 	 */
 	import { onMount } from 'svelte';
-	import { getApplet, patchApplet } from '$lib/api/client';
+	import { getApplet, getAssistantProfile, patchApplet, updateUiPreferences } from '$lib/api/client';
 
 	let { assistantName = 'Ari' }: { assistantName?: string } = $props();
 
@@ -17,6 +22,33 @@
 	let missing = $state(false);
 	let saving = $state(false);
 	let error = $state<string | null>(null);
+
+	let sky = $state(true);
+	let skyLoaded = $state(false);
+	let skySaving = $state(false);
+	let skyError = $state<string | null>(null);
+
+	onMount(() => {
+		getAssistantProfile<{ ui_preferences?: Record<string, unknown> }>()
+			.then((p) => {
+				sky = p?.ui_preferences?.chat_sky !== false;
+				skyLoaded = true;
+			})
+			.catch(() => (skyError = "Your server couldn't read this setting. Reload to try again."));
+	});
+
+	async function toggleSky() {
+		skySaving = true;
+		skyError = null;
+		try {
+			await updateUiPreferences({ chat_sky: !sky });
+			sky = !sky;
+		} catch {
+			skyError = "Your server couldn't change this setting. Try again.";
+		} finally {
+			skySaving = false;
+		}
+	}
 
 	onMount(async () => {
 		try {
@@ -41,6 +73,31 @@
 		}
 	}
 </script>
+
+<section>
+	<div class="row">
+		<div>
+			<h2 class="settings-label">Chat sky</h2>
+			<p class="sec-hint">
+				When you open a new chat, a dot for each part of your day sits above the message box: places,
+				calendar, workouts and last night. Hover one to see what it was.
+			</p>
+		</div>
+		<button
+			type="button"
+			class="switch"
+			class:on={sky}
+			role="switch"
+			aria-checked={sky}
+			aria-label="Chat sky"
+			disabled={!skyLoaded || skySaving}
+			onclick={toggleSky}
+		></button>
+	</div>
+	{#if skyError}
+		<p class="error">{skyError}</p>
+	{/if}
+</section>
 
 {#if !missing}
 	<section>

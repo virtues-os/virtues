@@ -56,7 +56,7 @@
 	import Composing from "$lib/components/chat/Composing.svelte";
 	import Rail, { topOfElement } from "$lib/components/Rail.svelte";
 	import RestingMark from "$lib/components/chat/RestingMark.svelte";
-	import NewChatMark from "$lib/components/chat/NewChatMark.svelte";
+	import ChatSky from "$lib/components/chat/ChatSky.svelte";
 	// Getting started — the room after the founder's letter. Same shape as
 	// the interview: the id decides everything, the top of the room is
 	// synthetic and rebuilt from derived state, the cards do the work.
@@ -2422,12 +2422,13 @@
 							<ThreeBody onClose={() => (threeBodyOpen = false)} />
 						{/await}
 					{:else if isEmpty && !isGhost && !isLocal && attachments.count === 0}
-						<!-- The mark and word. Positioned off the midpoint, so it sits
+						<!-- The chat sky, or the mark and word before the day has
+						     anything in it. Positioned off the midpoint, so it sits
 						     above the composer on the phone and the desktop alike. It
 						     yields to staged attachments, whose chips grow upward from
 						     the composer. -->
 						<div class="init-hero" out:fade={{ duration: 200 }}>
-							<NewChatMark />
+							<ChatSky />
 						</div>
 					{/if}
 
@@ -2732,9 +2733,10 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	/* ── The mark on an empty chat ──
+	/* ── The sky on an empty chat ──
 	   Seated above center, so the phone's bottom-docked composer and rising
-	   keyboard never crowd it. What it draws is NewChatMark's. */
+	   keyboard never crowd it. What it draws is ChatSky's, which takes its own
+	   pointer events back for hover. */
 	.init-hero {
 		position: absolute;
 		left: 0;
