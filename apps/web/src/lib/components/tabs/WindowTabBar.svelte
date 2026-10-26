@@ -742,10 +742,17 @@
 	}
 
 	/* In split view two tabs are "active" at once and only one takes your
-	   typing. Both take their page's fill; the one you are not in says so in
-	   its ink. */
+	   typing. The one in the pane you are not in keeps a faint fill and dims
+	   its icon and label, so the focused pane's tab is the only one that
+	   reads as selected. */
 	.tab.active:not(.active-in-active-pane) {
+		background: var(--hover-bg);
+		box-shadow: none;
 		color: var(--color-foreground-muted);
+	}
+
+	.tab.active:not(.active-in-active-pane) :is(:global(.tab-icon), .tab-label) {
+		opacity: 0.85;
 	}
 
 	/* The `.clothed` rules that lived here are gone with the fill. A pinned
