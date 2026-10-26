@@ -119,23 +119,36 @@ jobs:
       # The deployment target needs an iOS SDK at least as new, and nothing
       # promises the runner's default Xcode has one. Take the newest release
       # Xcode installed, and fail here rather than an hour into the build.
+      #
+      # SDK_BELOW caps the SDK. An app built with the iOS 27 SDK must adopt
+      # the UIScene lifecycle or UIKit stops it at launch, before any app code
+      # runs, and tao 0.35 does not adopt it. Such an IPA verifies and uploads
+      # cleanly, then crashes for every tester. Lift the cap once the app
+      # declares a scene manifest; lifting it also needs `components:
+      # llvm-tools` on the Rust step, since swift-rs links plugins with
+      # llvm-objcopy under Xcode 27.
       - name: Select Xcode
         run: |
           WANT="$(jq -r .bundle.iOS.minimumSystemVersion apps/web/src-tauri/tauri.ios.conf.json)"
+          SDK_BELOW=27
           BEST=""
           BEST_SDK=""
           for x in /Applications/Xcode*.app; do
             case "$x" in *[Bb]eta*) continue ;; esac
             sdk="$(DEVELOPER_DIR="$x/Contents/Developer" xcrun --sdk iphoneos --show-sdk-version 2>/dev/null || true)"
             [ -n "$sdk" ] || continue
+            [ "${sdk%%.*}" -lt "$SDK_BELOW" ] || continue
             if [ -z "$BEST_SDK" ] || [ "$(printf '%s\n%s\n' "$BEST_SDK" "$sdk" | sort -V | tail -1)" = "$sdk" ]; then
               BEST="$x"
               BEST_SDK="$sdk"
             fi
           done
           if [ -z "$BEST" ] || [ "$(printf '%s\n%s\n' "$WANT" "$BEST_SDK" | sort -V | head -1)" != "$WANT" ]; then
-            echo "::error::no Xcode on this runner has an iOS SDK >= $WANT (newest: ${BEST:-none}, SDK ${BEST_SDK:-none})"
-            ls -d /Applications/Xcode*.app || true
+            echo "::error::no Xcode on this runner has an iOS SDK >= $WANT and < $SDK_BELOW (best: ${BEST:-none}, SDK ${BEST_SDK:-none})"
+            echo "::error::An iOS $SDK_BELOW SDK build crashes at launch until the app adopts UIScene; see the comment on this step."
+            for x in /Applications/Xcode*.app; do
+              echo "$x: iOS SDK $(DEVELOPER_DIR="$x/Contents/Developer" xcrun --sdk iphoneos --show-sdk-version 2>/dev/null || echo none)"
+            done
             exit 1
           fi
           echo "DEVELOPER_DIR=$BEST/Contents/Developer" >> "$GITHUB_ENV"
