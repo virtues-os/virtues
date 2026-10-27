@@ -6,6 +6,13 @@ use virtues::VirtuesBuilder;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Inside a sandboxed unit, before any startup: there is no box
+    // environment to read and no service user to become.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("sandbox-bridge") {
+        std::process::exit(virtues::sandbox::bridge::main(&args[2..]));
+    }
+
     // Trivial subcommands (--version, --help) skip the heavy startup path:
     // no tracing init, no observability, no .env loading, no rustls provider.
     // Without this, `virtues --version` prints two lines of OTel/observability

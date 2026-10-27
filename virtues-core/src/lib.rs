@@ -42,6 +42,7 @@ pub mod observe;
 pub mod outbox;
 pub mod peer_addr;
 pub mod relay;
+pub mod sandbox;
 pub mod scheduler;
 pub mod search;
 pub mod secrets;
