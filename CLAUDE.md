@@ -228,6 +228,21 @@ replaced:
   cannot describe a command no released box has. Prose describes shape
   (`vX.Y.Z`); concrete versions belong in code fences. Enforced by the lint.
 
+## Who Virtues is for
+
+Five personas, defined in [`agents/build/personas.md`](agents/build/personas.md).
+Read it before designing or reviewing any surface.
+
+- **Primary:** narrative seeker (answers about my life, written with care) and
+  quantified self (charts and numbers from my own data, in the reply).
+- **Secondary:** tech prosumer (new, polished, worth showing off).
+- **Tertiary:** recovery (remembers progress and setbacks; no streaks or
+  games) and data sovereign (shows when work stays on the server and when it
+  leaves).
+
+The primaries set the defaults. Don't add, rename or re-tier personas without
+the owner.
+
 ## Conventions
 
 - Authored applets (chat/AI-created) are per-box runtime state and live in the
