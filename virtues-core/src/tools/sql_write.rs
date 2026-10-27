@@ -17,7 +17,12 @@ use super::executor::{ToolError, ToolResult};
 const SQL_MAX: usize = 16 * 1024;
 const RETURN_ROWS_MAX: usize = 500;
 
-pub async fn execute(pool: &PgPool, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
+/// `timezone` is the owner's; it only puts returned times on their clock.
+pub async fn execute(
+    pool: &PgPool,
+    arguments: serde_json::Value,
+    timezone: Option<&str>,
+) -> Result<ToolResult, ToolError> {
     let sql = arguments
         .get("sql")
         .and_then(|v| v.as_str())
@@ -65,7 +70,13 @@ pub async fn execute(pool: &PgPool, arguments: serde_json::Value) -> Result<Tool
                     return Ok(fail(&format!("commit failed: {e}")));
                 }
                 let capped = rows.len().min(RETURN_ROWS_MAX);
-                let json_rows = super::sql_query::convert_rows_to_json(&rows[..capped]);
+                // The write has committed; a failed zone lookup only leaves the
+                // returned times in UTC, marked `+00:00`.
+                let zone = crate::timezone::resolve_timezone(pool, timezone)
+                    .await
+                    .inspect_err(|e| tracing::warn!(error = %e, "sql_write: zone lookup failed; times stay UTC"))
+                    .ok();
+                let json_rows = super::sql_query::convert_rows_to_json(&rows[..capped], zone.as_deref());
                 Ok(ToolResult::success(serde_json::json!({
                     "rows": json_rows,
                     "row_count": rows.len(),

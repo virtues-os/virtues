@@ -182,6 +182,29 @@ pub async fn apply_timezone(conn: &mut sqlx::PgConnection, zone: &str) -> Result
         .await
 }
 
+/// An instant as RFC 3339 on the owner's clock, with its offset
+/// (`2026-10-13T22:12:00-05:00`), or in UTC when `zone` is not a zone chrono
+/// knows. Tools hand the model times this way so it never converts a clock
+/// time itself: a model given an evening message's UTC stamp quoted it
+/// as the next morning. Postgres reads
+/// the offset form back exactly, so a time pasted into a query still matches.
+pub fn owner_rfc3339(at: DateTime<Utc>, zone: Option<&str>) -> String {
+    match zone.and_then(|z| z.parse::<chrono_tz::Tz>().ok()) {
+        Some(tz) => at.with_timezone(&tz).to_rfc3339(),
+        None => at.to_rfc3339(),
+    }
+}
+
+/// The same instant as a person reads it: `Tue Oct 13 2026, 10:12 PM`. The
+/// weekday is spelled out because a model works it out from a date wrongly.
+pub fn owner_label(at: DateTime<Utc>, zone: Option<&str>) -> String {
+    const FORMAT: &str = "%a %b %-d %Y, %-I:%M %p";
+    match zone.and_then(|z| z.parse::<chrono_tz::Tz>().ok()) {
+        Some(tz) => at.with_timezone(&tz).format(FORMAT).to_string(),
+        None => format!("{} UTC", at.format(FORMAT)),
+    }
+}
+
 /// `date`'s local midnight to the next local midnight, in [`day_timezone`].
 pub async fn day_window(
     pool: &PgPool,
@@ -189,4 +212,38 @@ pub async fn day_window(
 ) -> crate::error::Result<(DateTime<Utc>, DateTime<Utc>)> {
     let tz = day_timezone(pool, date).await?;
     Ok(crate::api::day_summary::day_bounds(date, Some(&tz)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(s: &str) -> DateTime<Utc> {
+        DateTime::parse_from_rfc3339(s).unwrap().to_utc()
+    }
+
+    /// An evening message is early-morning UTC; quoted raw, it moved to the
+    /// next day.
+    #[test]
+    fn a_tool_time_is_on_the_owners_clock() {
+        let sent = at("2026-10-14T03:12:00Z");
+        assert_eq!(owner_rfc3339(sent, Some("America/Chicago")), "2026-10-13T22:12:00-05:00");
+        assert_eq!(owner_label(sent, Some("America/Chicago")), "Tue Oct 13 2026, 10:12 PM");
+        // Postgres and chrono read the offset form back as the same instant.
+        assert_eq!(at(&owner_rfc3339(sent, Some("America/Chicago"))), sent);
+    }
+
+    /// Across a DST change each time carries its own offset.
+    #[test]
+    fn each_time_carries_its_own_offset() {
+        assert!(owner_rfc3339(at("2026-11-02T15:00:00Z"), Some("America/Chicago")).ends_with("-06:00"));
+        assert!(owner_rfc3339(at("2026-10-30T15:00:00Z"), Some("America/Chicago")).ends_with("-05:00"));
+    }
+
+    #[test]
+    fn an_unknown_zone_stays_utc_and_says_so() {
+        let sent = at("2026-10-14T03:12:00Z");
+        assert_eq!(owner_rfc3339(sent, Some("Not/AZone")), "2026-10-14T03:12:00+00:00");
+        assert_eq!(owner_label(sent, None), "Wed Oct 14 2026, 3:12 AM UTC");
+    }
 }

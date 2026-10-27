@@ -495,7 +495,12 @@ impl ToolExecutor {
             "web_search" => self.web_search.execute(arguments).await,
             "semantic_search" => {
                 self.semantic_search
-                    .execute(arguments, context.project_id.as_deref(), context.scope_mode)
+                    .execute(
+                        arguments,
+                        context.project_id.as_deref(),
+                        context.scope_mode,
+                        context.timezone.as_deref(),
+                    )
                     .await
             }
             // Sudo: the database tools run any statement on any table, as the
@@ -517,7 +522,7 @@ impl ToolExecutor {
                 let chat_id = context.chat_id.as_deref().filter(|_| !context.temporary);
                 self.sql_query.execute(arguments, chat_id, context.timezone.as_deref()).await
             }
-            "sql_write" => super::sql_write::execute(&self._pool, arguments).await,
+            "sql_write" => super::sql_write::execute(&self._pool, arguments, context.timezone.as_deref()).await,
             // The tool lists already keep it out of every other mode; this is
             // the second lock, for a model that names a tool it was not given.
             "shell" if context.sudo && context.applet_id.is_none() => {

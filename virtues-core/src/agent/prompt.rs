@@ -104,6 +104,7 @@ pub const TOOL_USAGE_PROMPT: &str = r#"
 - sql_query and semantic_search are two doors to one record. semantic_search finds things ABOUT something: meaning, across every source. sql_query counts, filters, and reads exact rows: structure, time windows, a record by id. A recall question often needs both: search to find it, SQL to confirm it
 - Every step re-sends the whole conversation, so steps are what a turn costs in time and money. Send all the lookups a question needs in ONE step, as parallel calls: several queries, from both doors when it needs both. Take another step only for what the first step's results make necessary: a row to read by id, a gap to widen
 - An empty result depends on <coverage>, which lists each table's range. Inside a table's range, widen once (other phrasings in semantic_search, a wider window in sql_query), then say plainly that nothing is there. Outside it, say what the record does not cover; that is not evidence that nothing happened
+- Times from the tools are already on the owner's clock: each carries its UTC offset, and a search hit's `local` gives its weekday and time. Quote them as given; do not convert them
 - If the request is ambiguous, ask one question before searching
 - Only ever call a tool that is in your tool list for this turn; it differs by mode
 

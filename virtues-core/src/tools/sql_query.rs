@@ -479,10 +479,10 @@ impl SqlQueryTool {
         // The owner's zone, so a model's `'2026-10-06'`, `::date` and
         // `to_char(…, 'HH12:MI AM')` mean their day and their clock, as the
         // prompt's clock does. Left at the server's UTC, a day's window slid
-        // by the offset and a chart labelled a 6 AM point "11:00 AM". JSON
-        // output is unaffected: `convert_rows_to_json` writes timestamptz as
-        // RFC 3339 UTC either way. Read on the main pool, because the profile
-        // it falls back to is hidden from the reader.
+        // by the offset and a chart labelled a 6 AM point "11:00 AM". The
+        // same zone puts the JSON's timestamptz values on their clock. Read on
+        // the main pool, because the profile it falls back to is hidden from
+        // the reader.
         let zone = crate::timezone::resolve_timezone(&*self.pool, timezone)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
@@ -545,7 +545,7 @@ impl SqlQueryTool {
         let _ = tx.rollback().await;
 
         // Convert rows to JSON
-        let mut json_rows = convert_rows_to_json(&rows);
+        let mut json_rows = convert_rows_to_json(&rows, Some(&zone));
 
         // The SELECT's own column order. Each row is a JSON object, whose keys
         // serialize sorted, so this is the only place the order survives; the
@@ -766,8 +766,9 @@ fn mentions_table(lowered_query: &str, table: &str) -> bool {
 /// five steps of one turn, then replayed it into the rest of that chat.
 const MAX_RESULT_BYTES: usize = 64 * 1024;
 
-/// Convert Postgres rows to JSON array
-pub fn convert_rows_to_json(rows: &[sqlx::postgres::PgRow]) -> Vec<serde_json::Value> {
+/// Convert Postgres rows to JSON array. `timestamptz` values are written on
+/// the owner's clock in `zone` (see [`crate::timezone::owner_rfc3339`]).
+pub fn convert_rows_to_json(rows: &[sqlx::postgres::PgRow], zone: Option<&str>) -> Vec<serde_json::Value> {
     let mut json_rows = Vec::new();
 
     for row in rows {
@@ -804,9 +805,9 @@ pub fn convert_rows_to_json(rows: &[sqlx::postgres::PgRow]) -> Vec<serde_json::V
                 }
                 // Date/time types → strings (RFC3339 for tz-aware)
                 else if let Ok(v) = row.try_get::<sqlx::types::chrono::DateTime<sqlx::types::chrono::Utc>, _>(i) {
-                    serde_json::Value::String(v.to_rfc3339())
+                    serde_json::Value::String(crate::timezone::owner_rfc3339(v, zone))
                 } else if let Ok(v) = row.try_get::<sqlx::types::chrono::DateTime<sqlx::types::chrono::FixedOffset>, _>(i) {
-                    serde_json::Value::String(v.to_rfc3339())
+                    serde_json::Value::String(crate::timezone::owner_rfc3339(v.to_utc(), zone))
                 } else if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDateTime, _>(i) {
                     serde_json::Value::String(v.format("%Y-%m-%d %H:%M:%S%.f").to_string())
                 } else if let Ok(v) = row.try_get::<sqlx::types::chrono::NaiveDate, _>(i) {
@@ -1224,7 +1225,8 @@ mod tests {
         let tool = SqlQueryTool::new(Arc::new(pool.clone()));
         let sql = "SELECT current_setting('TimeZone') AS tz, \
                    to_char('2026-10-07 11:00:00+00'::timestamptz, 'HH24:MI') AS label, \
-                   '2026-10-07'::timestamptz = '2026-10-07 05:00:00+00' AS local_midnight";
+                   '2026-10-07'::timestamptz = '2026-10-07 05:00:00+00' AS local_midnight, \
+                   '2026-10-14 03:12:00+00'::timestamptz AS sent_at";
         let run = |tz: Option<&'static str>| {
             let tool = &tool;
             async move {
@@ -1237,10 +1239,15 @@ mod tests {
         assert_eq!(row["tz"], "America/Chicago");
         assert_eq!(row["label"], "06:00", "an 11:00 UTC point is 6 AM in Chicago");
         assert_eq!(row["local_midnight"], true, "a bare day starts at the owner's midnight");
+        assert_eq!(
+            row["sent_at"], "2026-10-13T22:12:00-05:00",
+            "a timestamptz comes back on the owner's clock, not as 03:12 UTC"
+        );
 
         // No zone known anywhere: UTC.
         assert_eq!(run(Some("Not/AZone")).await["tz"], "UTC");
         assert_eq!(run(None).await["tz"], "UTC");
+        assert_eq!(run(None).await["sent_at"], "2026-10-14T03:12:00+00:00");
 
         // An unknown or absent client zone falls back to the home zone.
         sqlx::query("UPDATE app_user_profile SET home_timezone = 'Europe/Berlin'")
