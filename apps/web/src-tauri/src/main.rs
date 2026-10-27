@@ -1809,18 +1809,18 @@ fn main() {
             app.manage(std::sync::Mutex::new(UpdateState::default()));
 
             // The Mac's own copy of the UI (`virtues://`), kept current like
-            // the phone's: drop an overlay a newer app build has overtaken
-            // (pointers only, before any page exists), then look for a newer
-            // bundle on the box off the launch path. A staged bundle applies at
-            // the next page load. See agents/record/local-ui.md.
+            // the phone's: on a dev build, stop serving any overlay (pointers
+            // only, before any page exists), then fetch the box's bundle off
+            // the launch path. A staged bundle applies at the next page load.
+            // See agents/record/local-ui.md.
             #[cfg(target_os = "macos")]
             {
                 if let Some(dir) = virtues_lib::ui_data_dir(app.handle()) {
                     let baked = virtues_lib::baked_bundle_version(app.handle());
                     if let Some(dropped) =
-                        virtues_lib::web_bundle::drop_stale_overlay(&dir, baked.as_deref())
+                        virtues_lib::web_bundle::drop_overlay_for_dev_build(&dir, baked.as_deref())
                     {
-                        eprintln!("[ota] overlay {dropped} is older than this app's own UI; back to the build it shipped with");
+                        eprintln!("[ota] dev build: stopped serving overlay {dropped}");
                     }
                 }
                 if app.reach().is_paired() {

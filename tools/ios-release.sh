@@ -88,35 +88,29 @@ python3 "$REPO_ROOT/tools/strip-icon-alpha.py"
 # baked into the binary as its own `version`.
 #
 # STAMP IT, or the binary bakes a SPA calling itself `dev`. That is not
-# cosmetic: `web_bundle::version_gate` refuses any bundle it cannot prove is
-# forward, and `dev` orders against nothing — a TestFlight build with an
-# unstamped SPA takes no OTA update, ever. (It also reported `version=dev` in
+# cosmetic: a `dev` bake is treated as a local build, which takes no OTA update
+# and stops serving any overlay at startup, so a TestFlight build with an
+# unstamped SPA never shows its box's UI. (It also reported `version=dev` in
 # the X-Virtues-Client header, so every TestFlight phone showed as `dev` on the
 # Devices page.)
 #
-# The NEAREST TAG, not `git describe`'s full form. `--abbrev=0` deliberately
-# drops the `-40-g6b999a11` offset: git puts that in the semver PRERELEASE
-# field, where an alphanumeric identifier outranks a numeric one — so
-# `0.1.7-staging.78-40-gabc` sorts ABOVE `0.1.7-staging.79`, and a phone stamped
-# that way would refuse every later staging bundle the box ever serves. The
-# nearest clean tag understates a build that is ahead of it, which is the
-# harmless direction: same tag compares equal and the content hash decides.
+# The NEAREST TAG, not `git describe`'s full form. `--abbrev=0` drops the
+# `-40-g6b999a11` offset, so the stamp names a release, which is what the
+# Interface row and the Devices page show.
 #
 # `v[0-9]*` because this repo publishes several tag lines into one namespace
-# (`mac-v*`, `win-edge`, `edge`) and only the box/SPA line is orderable here.
+# (`mac-v*`, `win-edge`, `edge`) and only the box/SPA line names a UI build.
 #
 # AN OPERATOR-SET GIT_DESCRIBE WINS — deriving over the top of it would hand
-# back a build that is not the one asked for, silently. The physical-device
-# recipe stamps `v<box-tag>.local1` on purpose: one prerelease identifier above
-# the version the box serves, so `drop_stale_overlay` evicts the box's overlay
-# at startup and local UI changes are actually visible on the phone. The nearest
-# tag alone compares EQUAL to the box's and loses to the overlay already applied.
+# back a build that is not the one asked for, silently. To see local UI
+# changes on a physical phone, stamp `GIT_DESCRIBE=dev`: a tagged build takes
+# its box's bundle, which replaces the UI you just built.
 if [[ -n "${GIT_DESCRIBE:-}" ]]; then
   say "SPA stamped $GIT_DESCRIBE (preset — not derived)"
 else
   GIT_DESCRIBE="$(git -C "$REPO_ROOT" describe --tags --match 'v[0-9]*' --abbrev=0 2>/dev/null || echo dev)"
   if [[ "$GIT_DESCRIBE" == dev ]]; then
-    printf '⚠ %s\n' "no v* tag reachable — the SPA stamps as 'dev', and a 'dev' bake takes no OTA update and cannot evict an overlay already on the device"
+    printf '⚠ %s\n' "no v* tag reachable — the SPA stamps as 'dev', and a 'dev' bake takes no OTA update from the box"
   else
     say "SPA stamped $GIT_DESCRIBE (nearest tag)"
   fi

@@ -162,13 +162,12 @@ export type OtaCheck = { at?: number } & (
 	/** The box answered 404: it serves no bundle. */
 	| { state: 'no_bundle_on_box' }
 	| { state: 'box_unavailable'; status: number | null }
-	| { state: 'same_version'; version: string }
+	/** This app's own UI is a local `dev` build, so it takes no box bundle. */
+	| { state: 'dev_build' }
 	| { state: 'unusable'; contentHash: string }
 	| { state: 'refused_before'; contentHash: string }
 	| { state: 'check_failed'; error: string }
 	| { state: 'rolled_back'; contentHash: string }
-	| { state: 'box_behind'; boxVersion: string; have: string }
-	| { state: 'version_unreadable'; boxVersion: string; have: string | null }
 );
 
 /**
@@ -215,19 +214,13 @@ export function describeOtaCheck(s: ShellIdentity): string | null {
 			// The device is deliberately refusing the box's bundle after a
 			// failed boot, which otherwise looks like OTA silently not working.
 			return "A newer interface didn't start on this device, so the app set it aside. Your next server update clears it.";
-		case 'box_behind':
-			// The app updates on Apple's cadence, the box when its owner
-			// upgrades it. Silence here would read as OTA being broken.
-			return `This app already has a newer interface than your server (server ${c.boxVersion}, app ${c.have}). It keeps its own until you run \`sudo virtues upgrade\`.`;
-		case 'version_unreadable':
-			return "This app can't tell whether your server's interface is newer than its own, so it's staying on the one it shipped with.";
 		case 'box_unavailable':
 		case 'check_failed':
 			// A missed check is retried on the next foreground and launch; it
 			// is news only when it is the last word on why nothing changed.
 			return "This app couldn't check your server for a newer interface. It tries again the next time you open it.";
 		case 'up_to_date':
-		case 'same_version':
+		case 'dev_build':
 		case 'no_bundle_on_box':
 		default:
 			return null;

@@ -102,10 +102,11 @@ That is everything the tiers share. Everything else is per-tier native mechanism
 
 1. **The app ↔ box floor.** A shell runs ahead of its box as the ordinary
    case — phones update themselves, boxes when their owner (or the nightly
-   pass) does — and OTA is forward-only, so a newer shell keeps UI newer than
-   its box's API. The version coordinates already travel both ways; nothing
-   acts on them, and no bundle declares a minimum box. See
-   [version-compat-plan.md](../plan/version-compat-plan.md).
+   pass) does. OTA takes the box's bundle whenever the shell can run it, so
+   the UI matches its box's API, and the SPA refuses a box below
+   `MIN_BOX_API`. What is left is the other direction: a newer shell running
+   an older bundle has to keep the commands and the airlock handoff that
+   bundle uses. See [version-compat-plan.md](../plan/version-compat-plan.md).
 2. **One origin on the Mac.** The Mac bakes the SPA for setup and recovery but
    runs the box's live copy once paired, so with the box unreachable it can
    show the reconnect screen and none of the owner's documents. See
