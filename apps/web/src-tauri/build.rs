@@ -85,6 +85,8 @@ const APP_COMMANDS: &[&str] = &[
     "recheck_collector",
     "open_full_disk_access",
     "open_accessibility_settings",
+    // An AI agent's MCP bridge, paired as its own device (desktop).
+    "connect_agent",
     // The composer's mic: the Mac's own dictation (desktop).
     "start_dictation",
     // Window chrome (desktop).

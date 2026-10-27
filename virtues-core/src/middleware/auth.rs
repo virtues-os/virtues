@@ -127,7 +127,14 @@ where
                 Ok(user) => user,
                 Err(e) => return Err(unavailable(e)),
             };
-            if let Some(user) = user {
+            if let Some((user, kind)) = user {
+                // An agent device (an MCP bridge on the owner's machine,
+                // agents/plan/mcp-plan.md) reaches the MCP endpoint and no
+                // other route. Refused outright: falling through would let the
+                // dev fallback below admit it.
+                if kind == AGENT_KIND && parts.uri.path() != crate::server::api::mcp::PATH {
+                    return Err(agent_refused());
+                }
                 // Best-effort: refresh the device's reported build identity from
                 // the X-Virtues-Client header (update-manifold Phase 1). Never
                 // affects auth — a missing/malformed header is simply skipped.
@@ -213,14 +220,16 @@ pub fn is_dev() -> bool {
 /// QUIC handshake + `serve()`'s allowlist gate) that the peer holds this key, so
 /// a live device row owning it is sufficient to authenticate. Touches last-seen.
 ///
+/// Returns the device's kind beside the user, for the agent check above.
+///
 /// `Ok(None)` is "no live device holds this key"; `Err` is "could not look",
 /// and the caller must not read the second as the first.
 pub(crate) async fn validate_iroh_peer(
     pool: &PgPool,
     endpoint_id: &str,
-) -> Result<Option<AuthUser>, sqlx::Error> {
-    let row: Option<(String, String, String)> = sqlx::query_as(
-        "SELECT u.id, d.id, d.label \
+) -> Result<Option<(AuthUser, String)>, sqlx::Error> {
+    let row: Option<(String, String, String, String)> = sqlx::query_as(
+        "SELECT u.id, d.id, d.label, d.kind \
          FROM app_device d \
          JOIN app_auth_user u ON u.id = d.user_id \
          WHERE d.endpoint_id = $1 AND d.revoked_at IS NULL",
@@ -228,7 +237,7 @@ pub(crate) async fn validate_iroh_peer(
     .bind(endpoint_id)
     .fetch_optional(pool)
     .await?;
-    let Some((user_id, device_id, device_label)) = row else {
+    let Some((user_id, device_id, device_label, kind)) = row else {
         return Ok(None);
     };
 
@@ -237,11 +246,14 @@ pub(crate) async fn validate_iroh_peer(
         .execute(pool)
         .await;
 
-    Ok(Some(AuthUser {
-        id: user_id,
-        device_id,
-        device_label,
-    }))
+    Ok(Some((
+        AuthUser {
+            id: user_id,
+            device_id,
+            device_label,
+        },
+        kind,
+    )))
 }
 
 /// The build identity a client reports via
@@ -335,6 +347,17 @@ pub async fn ensure_console_device(pool: &PgPool) -> crate::Result<()> {
     Ok(())
 }
 
+/// The device kind of an MCP bridge (`api::pair`, migration 0064).
+pub const AGENT_KIND: &str = "agent";
+
+/// An agent device asked for a route other than the MCP endpoint.
+fn agent_refused() -> AuthError {
+    AuthError {
+        error: "This device is an agent and can reach only the MCP endpoint.".to_string(),
+        status: StatusCode::FORBIDDEN,
+    }
+}
+
 fn unauthorized() -> AuthError {
     AuthError {
         error: "Unauthorized".to_string(),
@@ -374,6 +397,41 @@ pub async fn cleanup_expired(pool: &PgPool) -> crate::Result<u64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An agent device reaches `/api/mcp` and is refused everywhere else; a
+    /// desktop app's key is not limited the same way.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_agent_device_reaches_only_the_mcp_endpoint(pool: PgPool) {
+        let key = |seed: u8| virtues_iroh::SecretKey::from_bytes(&[seed; 32]).public();
+        for (id, kind, seed) in [("dev_agent", AGENT_KIND, 7u8), ("dev_mac", "desktop_app", 8u8)] {
+            sqlx::query(
+                "INSERT INTO app_device (id, user_id, kind, label, endpoint_id) VALUES ($1, $2, $3, 'test', $4)",
+            )
+            .bind(id)
+            .bind(crate::middleware::http::OWNER_USER_ID)
+            .bind(kind)
+            .bind(key(seed).to_string())
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+        let ask = |seed: u8, path: &str| {
+            let (mut parts, _) = axum::http::Request::builder().uri(path).body(()).unwrap().into_parts();
+            parts.extensions.insert(virtues_iroh::ProvenPeer(key(seed)));
+            parts
+        };
+
+        let mut mcp = ask(7, crate::server::api::mcp::PATH);
+        let user = AuthUser::from_request_parts(&mut mcp, &pool).await.unwrap();
+        assert_eq!(user.device_id, "dev_agent");
+
+        let mut pages = ask(7, "/api/pages");
+        let refused = AuthUser::from_request_parts(&mut pages, &pool).await.unwrap_err();
+        assert_eq!(refused.status, StatusCode::FORBIDDEN);
+
+        let mut mac = ask(8, "/api/pages");
+        assert_eq!(AuthUser::from_request_parts(&mut mac, &pool).await.unwrap().device_id, "dev_mac");
+    }
 
     fn headers(v: &str) -> axum::http::HeaderMap {
         let mut h = axum::http::HeaderMap::new();

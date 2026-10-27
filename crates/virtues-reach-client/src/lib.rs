@@ -10,6 +10,7 @@ mod model;
 mod store;
 
 pub mod handoff;
+pub mod mcp;
 pub mod outbox;
 pub mod owner;
 pub mod pair;

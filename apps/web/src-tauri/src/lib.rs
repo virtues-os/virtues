@@ -72,6 +72,8 @@ pub mod web_bundle;
 /// |   | the Mac `browser_login` opens there instead of a window of its own |
 /// | 12 | `start_dictation` (desktop; the Mac implements it): the composer's
 /// |   | mic button starts the system's dictation in the focused field |
+/// | 13 | `connect_agent` (desktop): pair an AI agent's MCP bridge as a device
+/// |   | of its own; the bridge is this binary run as `mcp --name <name>` |
 ///
 /// `bundle-contract.json` requires 9. No shell below it has ever run a box
 /// bundle (they all boot white), so requiring it strands no client: they keep
@@ -79,7 +81,7 @@ pub mod web_bundle;
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 12;
+pub const COMMAND_SURFACE_VERSION: u32 = 13;
 
 /// What the native shell knows about itself.
 ///

@@ -24,6 +24,7 @@
     "allow-restart-app",
     "allow-get-collector-status",
     "allow-install-collector",
+    "allow-connect-agent",
     "allow-uninstall-collector",
     "allow-pause-collector",
     "allow-resume-collector",

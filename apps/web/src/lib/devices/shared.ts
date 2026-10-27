@@ -14,7 +14,7 @@ import { isTauri } from '$lib/utils/platform';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import { toast } from 'svelte-sonner';
 
-export type DeviceKind = 'mobile_app' | 'desktop_app' | 'sensor' | 'cli';
+export type DeviceKind = 'mobile_app' | 'desktop_app' | 'sensor' | 'cli' | 'agent';
 
 export type DevicePermissions = {
 	full_disk_access?: boolean;
@@ -86,6 +86,8 @@ export function kindLabel(k: DeviceKind): string {
 			return 'Sensor';
 		case 'cli':
 			return 'CLI';
+		case 'agent':
+			return 'Agent';
 	}
 }
 
@@ -99,6 +101,8 @@ export function kindIcon(k: DeviceKind): string {
 			return 'ri:cpu-line';
 		case 'cli':
 			return 'ri:terminal-line';
+		case 'agent':
+			return 'ri:robot-2-line';
 	}
 }
 

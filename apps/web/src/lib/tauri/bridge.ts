@@ -625,6 +625,30 @@ export async function getCollectorStatus(): Promise<CollectorStatus | null> {
 	return probe.kind === 'ok' ? probe.status : null;
 }
 
+/** How an agent's MCP settings launch the bridge for one connected agent
+ *  (`connect_agent` in main.rs). `env` is set only for a dev profile. */
+export interface AgentConnection {
+	name: string;
+	command: string;
+	args: string[];
+	env: Record<string, string>;
+}
+
+/** The command surface that has `connect_agent`. */
+export const CONNECT_AGENT_SURFACE = 13;
+
+/**
+ * Pair an AI agent's MCP bridge as a device of its own, with a token minted
+ * for kind `agent`, and return how to launch it. Mac only.
+ */
+export async function connectAgent(token: string, name: string): Promise<AgentConnection> {
+	const invoke = await getInvoke();
+	if (!invoke) {
+		throw new Error('Open this in the Virtues app on your Mac to connect an agent.');
+	}
+	return (await invoke('connect_agent', { token, name })) as AgentConnection;
+}
+
 /**
  * Install the collector daemon as a LaunchAgent
  * This copies the binary to ~/.virtues/bin and creates a LaunchAgent plist

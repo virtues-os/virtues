@@ -31,10 +31,11 @@
 	import { createResource } from "$lib/utils/resource.svelte";
 	import { formatDateTime } from "$lib/utils/dateUtils";
 	import { toast } from "svelte-sonner";
-	import { isTauri } from "$lib/utils/platform";
+	import { isMacOS, isTauri } from "$lib/utils/platform";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import ReopenSection from "$lib/components/settings/ReopenSection.svelte";
 	import DevicePairModal from "$lib/components/sources/DevicePairModal.svelte";
+	import AgentConnectModal from "$lib/components/devices/AgentConnectModal.svelte";
 	import Modal from "$lib/components/Modal.svelte";
 	import {
 		kindLabel,
@@ -229,6 +230,9 @@
 	// it. One sheet everywhere now. (Setup review, 2026-09-25.)
 	let addOpen = $state(false);
 	let pairing = $state<{ deviceType: "ios" | "mac"; displayName: string } | null>(null);
+	// An AI agent on this Mac, connected over MCP as a device of its own.
+	// Only the Mac app can run its bridge.
+	let connectingAgent = $state(false);
 
 	async function revoke(device: Device) {
 		if (await revokeDeviceFlow(device)) await res.reload();
@@ -238,8 +242,12 @@
 		addOpen = true;
 	}
 
-	function choose(kind: "ios" | "mac") {
+	function choose(kind: "ios" | "mac" | "agent") {
 		addOpen = false;
+		if (kind === "agent") {
+			connectingAgent = true;
+			return;
+		}
 		pairing = kind === "ios" ? { deviceType: "ios", displayName: "iPhone" } : { deviceType: "mac", displayName: "computer" };
 	}
 
@@ -499,8 +507,20 @@
 			<Icon icon="ri:macbook-line" width="22" />
 			<span>A computer</span>
 		</button>
+		{#if isMacOS}
+			<button type="button" class="add-choice" onclick={() => choose("agent")}>
+				<Icon icon="ri:robot-2-line" width="22" />
+				<span>An AI agent on this Mac</span>
+			</button>
+		{/if}
 	</div>
 </Modal>
+
+<AgentConnectModal
+	open={connectingAgent}
+	onClose={() => (connectingAgent = false)}
+	onConnected={() => void res.reload()}
+/>
 
 {#if pairing}
 	<DevicePairModal
@@ -519,7 +539,7 @@
 <style>
 	.add-choices {
 		display: grid;
-		grid-template-columns: 1fr 1fr;
+		grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
 		gap: 0.75rem;
 	}
 	.add-choice {

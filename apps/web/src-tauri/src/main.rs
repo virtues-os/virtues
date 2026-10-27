@@ -606,6 +606,58 @@ fn deny_collector_in_profile() -> Result<(), String> {
     }
 }
 
+/// How an agent's MCP settings launch the bridge for one connected agent.
+#[derive(serde::Serialize)]
+struct AgentConnection {
+    name: String,
+    command: String,
+    args: Vec<String>,
+    /// Set only for a dev profile, whose pairing lives in its own directory.
+    env: std::collections::BTreeMap<String, String>,
+}
+
+/// Pair a new agent with a token minted for kind `agent`, and say how to
+/// launch it. The bridge is this binary run as `mcp --name <name>` (see
+/// [`mcp_main`]); it is its own device on the box, with its own key, and can
+/// reach only the MCP endpoint. agents/plan/mcp-plan.md, tier 1.
+#[tauri::command]
+async fn connect_agent(token: String, name: String) -> Result<AgentConnection, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Give the agent a name, such as Claude Code.".into());
+    }
+    let origin = format!("http://localhost:{}", tauri_plugin_reach::loopback_port());
+    virtues_reach_client::mcp::pair(&tauri_plugin_reach::virtues_dir(), &origin, &token, &name)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    let command = std::env::current_exe().map_err(|e| e.to_string())?.to_string_lossy().into_owned();
+    let mut env = std::collections::BTreeMap::new();
+    if let Some(profile) = tauri_plugin_reach::profile() {
+        env.insert("VIRTUES_PROFILE".to_string(), profile.to_string());
+    }
+    Ok(AgentConnection { args: vec!["mcp".into(), "--name".into(), name.clone()], name, command, env })
+}
+
+/// `virtues mcp [--name <name>]`: the MCP bridge an agent launches as a
+/// stdio server. It runs before any part of the app starts, so it opens no
+/// window and binds no port, and it writes nothing but JSON-RPC to stdout.
+fn mcp_main(args: &[String]) -> ! {
+    let name = args
+        .windows(2)
+        .find(|pair| pair[0] == "--name")
+        .map(|pair| pair[1].clone())
+        .unwrap_or_else(|| "agent".to_string());
+    virtues_reach_client::install_crypto_provider();
+    let store = virtues_reach_client::mcp::AgentStore::new(&tauri_plugin_reach::virtues_dir(), &name);
+    match tauri::async_runtime::block_on(virtues_reach_client::mcp::serve_stdio(&store)) {
+        Ok(()) => std::process::exit(0),
+        Err(e) => {
+            eprintln!("virtues mcp: {e:#}");
+            std::process::exit(1)
+        }
+    }
+}
+
 /// Install the collector as a LaunchAgent
 #[tauri::command]
 async fn install_collector(app: AppHandle, token: String) -> Result<(), String> {
@@ -1663,6 +1715,11 @@ const ZOOM_HOTKEYS_JS: &str = r#"
 "#;
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("mcp") {
+        mcp_main(&args);
+    }
+
     let builder = tauri::Builder::default();
 
     // The app's own copy of the UI, on the phone's scheme and through the
@@ -1730,6 +1787,7 @@ fn main() {
             get_collector_status,
             install_collector,
             uninstall_collector,
+            connect_agent,
             pause_collector,
             resume_collector,
             stop_collector,

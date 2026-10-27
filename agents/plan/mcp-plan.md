@@ -1,6 +1,6 @@
 # MCP: connections in, the box as a server
 
-**Written 2026-10-26. Slice 1 built the same day.** Two directions over the Model Context
+**Written 2026-10-26. Slices 1 and 2 built the same day; `virtues mcp` over `agent-key` is left from slice 2.** Two directions over the Model Context
 Protocol. Inbound, the box connects to other services' MCP servers and uses
 their tools: actions and live lookups only, with no ingest. Outbound, the box
 serves its own MCP endpoint, so agents the owner already uses (Claude Desktop,
@@ -290,10 +290,34 @@ name.
    2.12.0: tools/list, a query, an applet list and a page created over MCP;
    a legacy `initialize` and a 2026-07-28 `server/discover`; `shell` and an
    applet delete refused; an `Origin` answered 403.
-2. **The Mac bridge.** `agent` device kind, the "Connect an agent" button,
-   the stdio shim in the reach client, and `virtues mcp` over `agent-key`.
-   Done when Claude Code on a Mac away from home builds an applet through it,
-   the test the CLI plan set for its verbs.
+2. **The Mac bridge.** Built 2026-10-26, except `virtues mcp` over
+   `agent-key`, which is still to do.
+   - Migration 0064 adds the `agent` device kind to `app_device` and to
+     `app_pair_token.intended_kind`. In `middleware/auth.rs`, a proven peer
+     whose device is an agent reaches `/api/mcp` and gets 403 on every other
+     route, before the dev fallback can admit it. Pairing labels an agent by
+     its name, files it under the device that minted its token
+     (`installed_by`, as for the collector), and does not count it as a paired
+     device for setup.
+   - `crates/virtues-reach-client/src/mcp.rs` is the bridge: an `AgentStore`
+     (`<app dir>/agents/<name>.json`, 0600, apart from the app's own
+     pairing), `pair`, and `serve_stdio`, which relays each stdio JSON-RPC
+     message to `/api/mcp` over iroh with the Streamable HTTP routing headers
+     and turns JSON, chunked and event-stream answers back into lines.
+   - The Mac app's binary is the bridge: `virtues mcp --name <name>` branches
+     before any of the app starts. `connect_agent` (command surface 13) pairs
+     an agent through the `:7117` loopback with a token minted for kind
+     `agent`, and returns the command, arguments and, for a dev profile, its
+     environment. Devices › Add device › An AI agent on this Mac
+     (`AgentConnectModal.svelte`) runs it and shows the `claude mcp add` line
+     and the `mcpServers` JSON.
+   - Checked against a scratch core: an agent paired with the same pairing
+     call the app makes; MCP Inspector 2.12.0 drove the built app binary over
+     stdio for tools/list, a query and a refused applet delete, with the audit
+     line naming the agent device; the agent's key got 403 on `/api/pages`
+     and `/api/devices`. Not yet checked: the sheet inside a built Mac app,
+     and Claude Code building an applet through the bridge away from home,
+     the test the CLI plan set for its verbs.
 3. **One MCP connection.** `mcp_oauth` with a hosted Client ID Metadata
    Document and the code-only redirect, tool rows with `<connection>__`
    names, the executor branch, the `connection` worker, receipts and the
