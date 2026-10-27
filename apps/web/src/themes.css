@@ -112,6 +112,9 @@
 	/* Font Families */
 	--font-mono: 'IBM Plex Mono', monospace;
 	--font-sans: 'Avenir', sans-serif;
+	/* Every Avenir label you click in the chrome: sidebar rows, menu items,
+	   the slash menu, picker rows and search fields, the project chip. */
+	--chrome-label-font-size: 14px;
 	/* EB Garamond is regular 400 here: no bold, no italic. That is a technical
 	   constraint on any serif hierarchy, not only house taste; the @font-face
 	   note in app.css says what follows from it. The tail is a system stack,
@@ -334,7 +337,6 @@
 	--sidebar-interactive-padding: 6px 10px;
 	--sidebar-interactive-radius: var(--radius-md);
 	--sidebar-interactive-gap: 8px;
-	--sidebar-interactive-font-size: 13px;
 	--sidebar-interactive-icon-size: 16px; /* SHELL_GLYPH_PX in AtlasIcon.svelte */
 	--sidebar-interactive-icon-size-small: 14px;
 	--sidebar-interactive-height: 28px;
@@ -350,7 +352,7 @@
 	   never needed the size anyway. It is carried by four other things:
 	   indentation, no icon, regular weight against 500, and muted colour. */
 	--sidebar-child-height: var(--sidebar-interactive-height);
-	--sidebar-child-font-size: var(--sidebar-interactive-font-size);
+	--sidebar-child-font-size: var(--chrome-label-font-size);
 	/* The specific thing that made this look like every SaaS menu: eight
 	   identical 16px icons at full contrast in a column. The words should carry
 	   a contents page; icon and label at equal weight turn it into a toolbar

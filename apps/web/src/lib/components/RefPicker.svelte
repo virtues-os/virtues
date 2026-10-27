@@ -420,7 +420,7 @@
 		border: none;
 		background: none;
 		outline: none;
-		font-size: 13px;
+		font-size: var(--chrome-label-font-size);
 		color: var(--color-foreground);
 	}
 
@@ -468,7 +468,7 @@
 		text-align: left;
 		cursor: pointer;
 		color: var(--color-foreground);
-		font-size: 13px;
+		font-size: var(--chrome-label-font-size);
 		transition: background-color 0.1s;
 	}
 

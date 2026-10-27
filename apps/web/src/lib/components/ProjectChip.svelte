@@ -49,7 +49,7 @@
 		padding: 0 10px 0 8px;
 		border: 0;
 		border-radius: var(--radius-lg);
-		font-size: 13px;
+		font-size: var(--chrome-label-font-size);
 		color: var(--color-foreground-muted);
 		background: color-mix(in srgb, var(--color-surface) 72%, transparent);
 		backdrop-filter: blur(8px);

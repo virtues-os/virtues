@@ -1550,7 +1550,7 @@
 		background: none;
 		cursor: pointer;
 		text-align: left;
-		font-size: var(--sidebar-interactive-font-size);
+		font-size: var(--chrome-label-font-size);
 		color: var(--color-foreground);
 		/* A drag starts from a row, so a press-and-move must not select its
 		   text instead, which WebKit tries first. */
@@ -1844,7 +1844,7 @@
 		background: none;
 	}
 
-	/* Avenir's regular is thin at 13px on a 1x display; its medium holds up. */
+	/* Avenir's regular is thin at row size on a 1x display; its medium holds up. */
 	@media (max-resolution: 1.5dppx) {
 		.panel-row {
 			font-weight: 500;

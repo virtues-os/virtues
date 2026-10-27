@@ -153,7 +153,7 @@
 		background: transparent;
 		color: var(--color-foreground);
 		font-family: var(--font-sans);
-		font-size: 13px;
+		font-size: var(--chrome-label-font-size);
 		text-align: left;
 		cursor: pointer;
 		transition: background-color var(--motion-hover-out) var(--ease-premium);

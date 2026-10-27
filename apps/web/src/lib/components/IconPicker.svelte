@@ -498,7 +498,7 @@
 		background: none;
 		border: none;
 		outline: none;
-		font-size: 13px;
+		font-size: var(--chrome-label-font-size);
 		color: var(--color-foreground);
 	}
 

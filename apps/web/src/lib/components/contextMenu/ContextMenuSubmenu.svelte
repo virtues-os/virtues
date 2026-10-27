@@ -179,7 +179,7 @@
 		border-radius: var(--radius-md);
 		background: transparent;
 		color: var(--color-foreground);
-		font-size: 13px;
+		font-size: var(--chrome-label-font-size);
 		text-align: left;
 		cursor: pointer;
 		transition: background-color var(--motion-hover-out) var(--ease-premium);
