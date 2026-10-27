@@ -23,6 +23,7 @@
 	               /virtues/devices/:id    — another device, as the box knows it
 	  Shared links /virtues/shared         — every link shared through the door
 	  Applets      /virtues/applets        — every applet, built-in ones included
+	  Connections  /virtues/connections    — other services' tools the assistant can use
 	  Display      /virtues/display        — the screen on the box, and what it shows
 	  Developer    /virtues/developer      — SQL · Terminal
 
@@ -62,6 +63,7 @@
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
 	import ManageApplets from '$lib/components/applets/ManageApplets.svelte';
+	import ConnectionsView from '$lib/components/tabs/views/ConnectionsView.svelte';
 	import SearchSettingsView from '$lib/components/tabs/views/SearchSettingsView.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -140,7 +142,6 @@
 	// only `navigate` re-resolves that through the registry.
 	const SOURCES_ALIASES = [
 		'/virtues/sources',
-		'/virtues/connections',
 		'/virtues/connections/sources',
 		'/virtues/connections/tools',
 		'/virtues/tools',
@@ -180,6 +181,7 @@
 		| 'devices'
 		| 'shared'
 		| 'applets'
+		| 'connections'
 		| 'display'
 		| 'developer';
 
@@ -191,6 +193,7 @@
 		'devices',
 		'shared',
 		'applets',
+		'connections',
 		'display',
 		'developer',
 	];
@@ -247,6 +250,8 @@
 					<ManageApplets {tab} />
 				</div>
 			</div>
+		{:else if section === 'connections'}
+			<ConnectionsView />
 		{:else if section === 'devices'}
 			{#if !sub}
 				<DevicesView {tab} {active} />

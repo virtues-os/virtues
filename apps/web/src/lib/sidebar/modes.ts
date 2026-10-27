@@ -144,6 +144,16 @@ export const SETTINGS_MODE: SidebarMode = {
 			href: '/virtues/applets',
 			group: 'Server',
 		},
+		// Other services' MCP servers, whose tools the assistant uses when you
+		// ask in chat. Connecting signs in there; nothing syncs from them.
+		{
+			id: 'connections',
+			label: 'Connections',
+			icon: 'mynaui:link',
+			glyph: 'connections',
+			href: '/virtues/connections',
+			group: 'Server',
+		},
 		// The screen on the server: what it shows, its hours, other screens.
 		{
 			id: 'display',

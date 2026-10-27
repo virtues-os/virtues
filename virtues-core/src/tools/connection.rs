@@ -1,12 +1,14 @@
 //! Connections: other services' MCP servers, whose tools the assistant can use
 //! (agents/plan/mcp-plan.md, part 1). Tools only; a connection never syncs.
 //!
-//! Signing in is OAuth 2.1 with PKCE through rmcp, as a public client the box
-//! registers with the service at sign-in (dynamic client registration). The
-//! redirect comes back to the box at the address the owner's app reaches it
-//! by, so no proxy ever holds the code or the token. The tokens live sealed in
-//! `credentials` (kind `source`, id `mcp:<connection>`), and rmcp refreshes
-//! them through the same row.
+//! Any server in the public MCP Registry can be connected, or any server
+//! address the owner pastes (`connection_registry.rs`). Signing in is OAuth
+//! 2.1 with PKCE through rmcp, as a public client the box registers with the
+//! service at sign-in (dynamic client registration). The redirect comes back
+//! to the box at the address the owner's app reaches it by, so no proxy ever
+//! holds the code or the token. The tokens live sealed in `credentials` (kind
+//! `connection`, key the connection's short name), with the server's address
+//! in the row's metadata, and rmcp refreshes them through the same row.
 //!
 //! The chat reaches a connection through one tool, `connection`, which runs a
 //! worker loop with only that service's tools on the Lite slot, the way
@@ -28,6 +30,7 @@ use rmcp::transport::auth::{
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
 use rmcp::{RoleClient, ServiceExt};
+use serde::Serialize;
 use serde_json::{json, Value};
 use sqlx::PgPool;
 use tokio::sync::Mutex;
@@ -44,26 +47,87 @@ pub const TOOL: &str = "connection";
 /// owner's app reaches it by (`server/api/connections.rs`).
 pub const CALLBACK_PATH: &str = "/api/connections/callback";
 
-/// One service the box can connect to.
+/// The `credentials` kind a connection's sign-in is stored under.
+const KIND: &str = "connection";
+
+/// One service's MCP server, connected or being connected.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct Connection {
-    pub id: &'static str,
-    pub name: &'static str,
-    /// What its tools reach, for the chat tool's description of it.
-    pub about: &'static str,
-    pub url: &'static str,
+    /// Short name: the prefix of its tool names and what the chat calls it.
+    pub id: String,
+    pub name: String,
+    pub about: String,
+    pub url: String,
+    /// Its registry name, when it came from the registry.
+    pub registry: Option<String>,
+    pub icon: Option<String>,
 }
 
-// TODO(2026-10-26): migrate this catalog into applets/sources.toml as an
-// `mcp_oauth` source auth kind, as agents/plan/mcp-plan.md says.
-pub const CATALOG: &[Connection] = &[Connection {
-    id: "linear",
-    name: "Linear",
-    about: "issues, projects, cycles and comments",
-    url: "https://mcp.linear.app/mcp",
-}];
+impl Connection {
+    /// A registry server, under a short name no other connection holds.
+    pub fn listed(listing: super::connection_registry::Listing, taken: &[Connection]) -> Self {
+        let id = short_name(&listing.title, &listing.url, taken);
+        Connection {
+            id,
+            name: listing.title,
+            about: listing.about,
+            url: listing.url,
+            registry: Some(listing.registry),
+            icon: listing.icon,
+        }
+    }
 
-pub fn find(id: &str) -> Option<&'static Connection> {
-    CATALOG.iter().find(|c| c.id == id)
+    /// A server the owner gave by address, named for its host.
+    pub fn pasted(url: &str, taken: &[Connection]) -> Result<Self> {
+        let Ok(parsed) = url::Url::parse(url.trim()) else { bail!("That is not a web address.") };
+        let host = parsed.host_str().filter(|_| parsed.scheme() == "https");
+        let Some(host) = host else { bail!("A server address starts with https://.") };
+        let name = host
+            .split('.')
+            .find(|w| !matches!(*w, "mcp" | "api" | "www" | "app" | "server"))
+            .unwrap_or(host)
+            .to_string();
+        let url = parsed.to_string();
+        Ok(Connection {
+            id: short_name(&name, &url, taken),
+            name: host.to_string(),
+            about: String::new(),
+            url,
+            registry: None,
+            icon: None,
+        })
+    }
+}
+
+/// `title` as a tool-name prefix: lowercase letters, digits and dashes. A
+/// connection to the same address keeps its name; another server with the
+/// same title gets a number.
+fn short_name(title: &str, url: &str, taken: &[Connection]) -> String {
+    if let Some(same) = taken.iter().find(|c| c.url == url) {
+        return same.id.clone();
+    }
+    let lower = title.to_lowercase();
+    let mut base = String::new();
+    for word in lower
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .filter(|w| !w.is_empty() && !matches!(*w, "mcp" | "server" | "official" | "the"))
+    {
+        if base.len() + word.len() + 1 > 20 {
+            if base.is_empty() {
+                base = word.chars().take(20).collect();
+            }
+            break;
+        }
+        if !base.is_empty() {
+            base.push('-');
+        }
+        base.push_str(word);
+    }
+    let base = if base.is_empty() { "service" } else { base.as_str() };
+    (1..)
+        .map(|n| if n == 1 { base.to_string() } else { format!("{base}-{n}") })
+        .find(|id| !taken.iter().any(|c| &c.id == id))
+        .unwrap_or_default()
 }
 
 /// A sign-in that has sent the owner to the service and waits for the code.
@@ -85,13 +149,13 @@ When you finish, answer in a few sentences: what you did or found, with each ite
 // ── Stored tokens ───────────────────────────────────────────────────────────
 
 fn credential_id(connection: &Connection) -> String {
-    format!("mcp:{}", connection.id)
+    format!("{KIND}:{}", connection.id)
 }
 
 /// rmcp's credential store over one sealed `credentials` row.
 struct Stored {
     pool: PgPool,
-    connection: &'static Connection,
+    connection: Connection,
 }
 
 fn store_error(e: impl std::fmt::Display) -> AuthError {
@@ -102,9 +166,10 @@ fn store_error(e: impl std::fmt::Display) -> AuthError {
 impl CredentialStore for Stored {
     async fn load(&self) -> Result<Option<StoredCredentials>, AuthError> {
         let sealed: Option<String> = sqlx::query_scalar(
-            "SELECT secrets_ciphertext FROM credentials WHERE id = $1 AND kind = 'source' AND status = 'active'",
+            "SELECT secrets_ciphertext FROM credentials WHERE id = $1 AND kind = $2 AND status = 'active'",
         )
-        .bind(credential_id(self.connection))
+        .bind(credential_id(&self.connection))
+        .bind(KIND)
         .fetch_optional(&self.pool)
         .await
         .map_err(store_error)?;
@@ -118,16 +183,22 @@ impl CredentialStore for Stored {
         let sealed = TokenEncryptor::from_env().map_err(store_error)?.encrypt(&json).map_err(store_error)?;
         sqlx::query(
             "INSERT INTO credentials (id, kind, key, name, status, secrets_ciphertext, metadata)
-             VALUES ($1, 'source', $2, $3, 'active', $4, $5)
+             VALUES ($1, $2, $3, $4, 'active', $5, $6)
              ON CONFLICT (id) DO UPDATE
                SET secrets_ciphertext = EXCLUDED.secrets_ciphertext, status = 'active',
-                   metadata = EXCLUDED.metadata, updated_at = now()",
+                   name = EXCLUDED.name, metadata = EXCLUDED.metadata, updated_at = now()",
         )
-        .bind(credential_id(self.connection))
-        .bind(self.connection.id)
-        .bind(self.connection.name)
+        .bind(credential_id(&self.connection))
+        .bind(KIND)
+        .bind(&self.connection.id)
+        .bind(&self.connection.name)
         .bind(&sealed)
-        .bind(json!({ "mcp": self.connection.url }))
+        .bind(json!({
+            "url": self.connection.url,
+            "about": self.connection.about,
+            "registry": self.connection.registry,
+            "icon": self.connection.icon,
+        }))
         .execute(&self.pool)
         .await
         .map_err(store_error)?;
@@ -135,36 +206,55 @@ impl CredentialStore for Stored {
     }
 
     async fn clear(&self) -> Result<(), AuthError> {
-        disconnect(&self.pool, self.connection).await.map_err(store_error)
+        disconnect(&self.pool, &self.connection.id).await.map_err(store_error)
     }
 }
 
-/// Whether the box holds a live sign-in for `connection`.
-pub async fn is_connected(pool: &PgPool, connection: &Connection) -> Result<bool> {
-    let n: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM credentials WHERE id = $1 AND kind = 'source' AND status = 'active'",
+/// Every connection with a live sign-in, by name.
+pub async fn connected(pool: &PgPool) -> Result<Vec<Connection>, sqlx::Error> {
+    let rows: Vec<(String, String, Value)> = sqlx::query_as(
+        "SELECT key, name, metadata FROM credentials WHERE kind = $1 AND status = 'active' ORDER BY name",
     )
-    .bind(credential_id(connection))
-    .fetch_one(pool)
+    .bind(KIND)
+    .fetch_all(pool)
     .await?;
-    Ok(n > 0)
+    Ok(rows
+        .into_iter()
+        .filter_map(|(id, name, metadata)| {
+            let text = |key: &str| metadata.get(key).and_then(Value::as_str).map(str::to_string);
+            Some(Connection {
+                url: text("url")?,
+                about: text("about").unwrap_or_default(),
+                registry: text("registry"),
+                icon: text("icon"),
+                id,
+                name,
+            })
+        })
+        .collect())
+}
+
+/// The connected service with this short name.
+async fn load(pool: &PgPool, id: &str) -> Result<Option<Connection>> {
+    Ok(connected(pool).await?.into_iter().find(|c| c.id == id))
 }
 
 /// Forgets the sign-in. The service keeps its own record of the grant until
 /// the owner removes it there.
-pub async fn disconnect(pool: &PgPool, connection: &Connection) -> Result<()> {
-    sqlx::query("DELETE FROM credentials WHERE id = $1 AND kind = 'source'")
-        .bind(credential_id(connection))
+pub async fn disconnect(pool: &PgPool, id: &str) -> Result<()> {
+    sqlx::query("DELETE FROM credentials WHERE kind = $1 AND key = $2")
+        .bind(KIND)
+        .bind(id)
         .execute(pool)
         .await?;
-    clients().lock().await.remove(connection.id);
+    clients().lock().await.remove(id);
     Ok(())
 }
 
 // ── Signing in ──────────────────────────────────────────────────────────────
 
 struct Pending {
-    connection: &'static Connection,
+    connection: Connection,
     state: OAuthState,
     started: Instant,
 }
@@ -177,10 +267,10 @@ fn pending() -> &'static Mutex<HashMap<String, Pending>> {
 /// Starts a sign-in and returns the service's authorization URL for the
 /// owner's browser. `redirect_uri` is [`CALLBACK_PATH`] at the origin the
 /// owner's app uses.
-pub async fn start(pool: &PgPool, connection: &'static Connection, redirect_uri: &str) -> Result<String> {
-    let mut state = OAuthState::new(connection.url, None).await.context("reach the service")?;
+pub async fn start(pool: &PgPool, connection: Connection, redirect_uri: &str) -> Result<String> {
+    let mut state = OAuthState::new(&connection.url, None).await.context("reach the service")?;
     if let OAuthState::Unauthorized(manager) = &mut state {
-        manager.set_credential_store(Stored { pool: pool.clone(), connection });
+        manager.set_credential_store(Stored { pool: pool.clone(), connection: connection.clone() });
     }
     let request = AuthorizationRequest::new(redirect_uri)
         .with_client_name("Virtues")
@@ -200,7 +290,7 @@ pub async fn start(pool: &PgPool, connection: &'static Connection, redirect_uri:
 }
 
 /// Finishes a sign-in from the redirect's query. Returns the connection.
-pub async fn finish(code: &str, csrf: &str, issuer: Option<&str>) -> Result<&'static Connection> {
+pub async fn finish(code: &str, csrf: &str, issuer: Option<&str>) -> Result<Connection> {
     let Some(mut sign_in) = pending().lock().await.remove(csrf) else {
         bail!("this sign-in is unknown or more than ten minutes old. Start it again.");
     };
@@ -212,7 +302,7 @@ pub async fn finish(code: &str, csrf: &str, issuer: Option<&str>) -> Result<&'st
         .handle_callback_with_issuer(code, csrf, issuer)
         .await
         .context("exchange the code for a token")?;
-    clients().lock().await.remove(sign_in.connection.id);
+    clients().lock().await.remove(&sign_in.connection.id);
     Ok(sign_in.connection)
 }
 
@@ -220,26 +310,26 @@ pub async fn finish(code: &str, csrf: &str, issuer: Option<&str>) -> Result<&'st
 
 type Client = RunningService<RoleClient, ClientConfig>;
 
-fn clients() -> &'static Mutex<HashMap<&'static str, Arc<Client>>> {
-    static CLIENTS: OnceLock<Mutex<HashMap<&'static str, Arc<Client>>>> = OnceLock::new();
+fn clients() -> &'static Mutex<HashMap<String, Arc<Client>>> {
+    static CLIENTS: OnceLock<Mutex<HashMap<String, Arc<Client>>>> = OnceLock::new();
     CLIENTS.get_or_init(Default::default)
 }
 
 /// A live MCP session with `connection`, signed in from its stored tokens.
-async fn client(pool: &PgPool, connection: &'static Connection) -> Result<Arc<Client>> {
-    if let Some(client) = clients().lock().await.get(connection.id) {
+async fn client(pool: &PgPool, connection: &Connection) -> Result<Arc<Client>> {
+    if let Some(client) = clients().lock().await.get(&connection.id) {
         if !client.is_transport_closed() {
             return Ok(client.clone());
         }
     }
-    let mut manager = AuthorizationManager::new(connection.url).await.context("reach the service")?;
-    manager.set_credential_store(Stored { pool: pool.clone(), connection });
+    let mut manager = AuthorizationManager::new(&connection.url).await.context("reach the service")?;
+    manager.set_credential_store(Stored { pool: pool.clone(), connection: connection.clone() });
     if !manager.initialize_from_store().await.context("read the sign-in")? {
         bail!("{} is not connected. Connect it in Settings, then try again.", connection.name);
     }
     let transport = StreamableHttpClientTransport::with_client(
         AuthClient::new(reqwest_rmcp::Client::default(), manager),
-        StreamableHttpClientTransportConfig::with_uri(connection.url),
+        StreamableHttpClientTransportConfig::with_uri(connection.url.clone()),
     );
     let client = Arc::new(
         ClientConfig::default()
@@ -247,7 +337,7 @@ async fn client(pool: &PgPool, connection: &'static Connection) -> Result<Arc<Cl
             .await
             .with_context(|| format!("open a session with {}", connection.name))?,
     );
-    clients().lock().await.insert(connection.id, client.clone());
+    clients().lock().await.insert(connection.id.clone(), client.clone());
     Ok(client)
 }
 
@@ -256,10 +346,12 @@ fn prefixed(connection: &Connection, tool: &str) -> String {
     format!("{}__{tool}", connection.id)
 }
 
-/// Splits a prefixed tool name into its connection and the service's name.
-pub fn split(name: &str) -> Option<(&'static Connection, &str)> {
+/// Splits a prefixed tool name into its connection's short name and the
+/// service's name for the tool.
+pub fn split(name: &str) -> Option<(&str, &str)> {
     let (id, tool) = name.split_once("__")?;
-    Some((find(id)?, tool))
+    let short = !id.is_empty() && id.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+    (short && !tool.is_empty()).then_some((id, tool))
 }
 
 /// Whether a tool declares that it destroys or overwrites. Only an explicit
@@ -292,9 +384,15 @@ async fn tool_definitions(client: &Client, connection: &Connection, confirmed: b
 /// Runs one of a connection's tools, for the worker. A destructive tool runs
 /// only when the owner confirmed in chat.
 pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, context: &ToolContext) -> ToolResult {
-    let Some((connection, tool)) = split(name) else {
+    let Some((id, tool)) = split(name) else {
         return ToolResult::error(format!("{name} is not a connected service's tool."));
     };
+    let connection = match load(pool, id).await {
+        Ok(Some(c)) => c,
+        Ok(None) => return ToolResult::error(format!("{id} is not connected.")),
+        Err(e) => return ToolResult::error(format!("{e:#}")),
+    };
+    let connection = &connection;
     let client = match client(pool, connection).await {
         Ok(client) => client,
         Err(e) => return ToolResult::error(format!("{e:#}")),
@@ -316,7 +414,7 @@ pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, context: &To
     let mut request = CallToolRequestParams::new(tool.to_string());
     request.arguments = arguments;
     let outcome = client.call_tool(request).await;
-    tracing::info!(audit = "connection_tool", connection = connection.id, tool, ok = outcome.is_ok(), "connection tool call");
+    tracing::info!(audit = "connection_tool", connection = %connection.id, tool, ok = outcome.is_ok(), "connection tool call");
     match outcome {
         Ok(result) => {
             let text: Vec<String> = result
@@ -336,7 +434,7 @@ pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, context: &To
         }
         Err(e) => {
             // A dead session is dropped so the next call opens a fresh one.
-            clients().lock().await.remove(connection.id);
+            clients().lock().await.remove(&connection.id);
             ToolResult::error(format!("{} did not answer: {e}", connection.name))
         }
     }
@@ -353,16 +451,12 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
     };
     let confirmed = args.get("confirmed").and_then(Value::as_bool) == Some(true);
 
-    let mut connected = Vec::new();
-    for c in CATALOG {
-        match is_connected(pool, c).await {
-            Ok(true) => connected.push(c),
-            Ok(false) => {}
-            Err(e) => return ToolResult::error(format!("Could not read the connections: {e}")),
-        }
-    }
-    let Some(connection) = connected.iter().copied().find(|c| c.id == name || c.name.to_lowercase() == name) else {
-        let list: Vec<String> = connected.iter().map(|c| format!("{} ({})", c.id, c.about)).collect();
+    let connected = match connected(pool).await {
+        Ok(c) => c,
+        Err(e) => return ToolResult::error(format!("Could not read the connections: {e}")),
+    };
+    let Some(connection) = connected.iter().find(|c| c.id == name || c.name.to_lowercase() == name) else {
+        let list: Vec<String> = connected.iter().map(|c| c.id.clone()).collect();
         return ToolResult::error(if list.is_empty() {
             "No services are connected. The owner can connect one in Settings.".to_string()
         } else {
@@ -445,14 +539,46 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
 mod tests {
     use super::*;
 
+    fn listed(title: &str, url: &str) -> super::super::connection_registry::Listing {
+        super::super::connection_registry::Listing {
+            registry: format!("com.example/{title}"),
+            title: title.to_string(),
+            about: String::new(),
+            url: url.to_string(),
+            icon: None,
+            website: None,
+        }
+    }
+
     #[test]
     fn a_prefixed_name_splits_back_to_its_connection() {
-        let linear = find("linear").unwrap();
-        assert_eq!(prefixed(linear, "create_issue"), "linear__create_issue");
-        let (c, tool) = split("linear__create_issue").unwrap();
-        assert_eq!((c.id, tool), ("linear", "create_issue"));
-        assert!(split("nobody__x").is_none());
+        let linear = Connection::listed(listed("Linear", "https://mcp.linear.app/mcp"), &[]);
+        assert_eq!(prefixed(&linear, "create_issue"), "linear__create_issue");
+        assert_eq!(split("linear__create_issue"), Some(("linear", "create_issue")));
+        assert!(split("Linear__x").is_none());
+        assert!(split("linear__").is_none());
         assert!(split("sql_query").is_none());
+    }
+
+    #[test]
+    fn short_names_are_tool_safe_and_unique() {
+        let notion = Connection::listed(listed("Notion", "https://mcp.notion.com/mcp"), &[]);
+        assert_eq!(notion.id, "notion");
+        let other = Connection::listed(listed("Notion", "https://notion.example.com/mcp"), &[notion.clone()]);
+        assert_eq!(other.id, "notion-2");
+        let again = Connection::listed(listed("Notion MCP", "https://mcp.notion.com/mcp"), &[notion.clone()]);
+        assert_eq!(again.id, "notion", "the same address keeps its name");
+        let odd = Connection::listed(listed("Atlassian Rovo MCP Server!", "https://mcp.atlassian.com/v2/mcp"), &[]);
+        assert_eq!(odd.id, "atlassian-rovo");
+        assert!(split(&prefixed(&odd, "search")).is_some());
+    }
+
+    #[test]
+    fn a_pasted_address_is_named_for_its_host() {
+        let c = Connection::pasted("https://mcp.example.com/mcp", &[]).unwrap();
+        assert_eq!((c.id.as_str(), c.name.as_str()), ("example", "mcp.example.com"));
+        assert!(Connection::pasted("http://mcp.example.com/mcp", &[]).is_err());
+        assert!(Connection::pasted("not an address", &[]).is_err());
     }
 
     #[test]
@@ -463,6 +589,29 @@ mod tests {
         let delete = Tool::new("delete_issue", "", schema)
             .with_annotations(rmcp::model::ToolAnnotations::new().destructive(true));
         assert!(destructive(&delete));
+    }
+
+    /// A connection is listed as one and never as a data source, which
+    /// would count toward setup and the sources list.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_connection_is_not_a_source(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO credentials (id, kind, key, name, status, secrets_ciphertext, metadata)
+             VALUES ('connection:notion', 'connection', 'notion', 'Notion', 'active', 'sealed', $1)",
+        )
+        .bind(json!({ "url": "https://mcp.notion.com/mcp", "registry": "com.notion/mcp" }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let listed = connected(&pool).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!((listed[0].id.as_str(), listed[0].url.as_str()), ("notion", "https://mcp.notion.com/mcp"));
+        assert_eq!(listed[0].registry.as_deref(), Some("com.notion/mcp"));
+        let sources = crate::api::credentials::list_credentials(&pool).await.unwrap();
+        assert!(sources.iter().all(|c| c.id != "connection:notion"));
+
+        disconnect(&pool, "notion").await.unwrap();
+        assert!(connected(&pool).await.unwrap().is_empty());
     }
 
     /// The chat is told which services are connected when it names another.

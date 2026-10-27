@@ -140,6 +140,7 @@ pub(crate) const SECTIONS: &[&str] = &[
     "recent_days",
     "sources",
     "keys",
+    "connections",
 ];
 
 /// Build the block. `now_quantized` is the quarter-hour-floored instant the
@@ -521,6 +522,19 @@ async fn build_section(
                     "Keys they have set in Settings (names only, you cannot read values): {}.",
                     names.join(", ")
                 )
+            }))
+        }
+        "connections" => {
+            // Which services' tools the `connection` tool can use, by the
+            // short name it takes.
+            let names: Vec<String> = crate::tools::connection::connected(pool)
+                .await?
+                .iter()
+                .take(20)
+                .map(|c| format!("{} ({})", clip(&c.id, 24), clip(&c.name, 40)))
+                .collect();
+            Ok((!names.is_empty()).then(|| {
+                format!("Services connected for the connection tool: {}.", names.join(", "))
             }))
         }
         other => {

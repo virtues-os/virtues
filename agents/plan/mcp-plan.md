@@ -24,7 +24,7 @@ slice.
 | Noun | What it is | Where it lives |
 |---|---|---|
 | **Tool** | A verb the model or a person can call. Native, or provided by a connection. | Native: `crates/virtues-registry/src/tools.rs`. Connection: listed from its MCP server at runtime. |
-| **Connection** | An account the box holds a credential for, plus the tools it provides. Some connections also sync data; an MCP connection only provides tools. | A source entry (`applets/sources.toml`, or the state root for one the owner adds by URL) and a row in `credentials`. |
+| **Connection** | An account the box holds a credential for, plus the tools it provides. Some connections also sync data; an MCP connection only provides tools. | A `credentials` row of kind `connection`, keyed by the connection's short name, with the server's address in its metadata. |
 | **Applet** | A skill folder (`applet-shape.md` in this directory): instructions, plus an optional trigger, run step, tables and view. It uses the tools its `allowed-tools` names. | `applets/` when shipped, the state root when authored. |
 
 A view (`view.html`, called a face in today's code) is a file in an applet's
@@ -75,14 +75,15 @@ and change feeds are rarely implemented. Syncs stay native sources, exports
 or the phone. A service with a native source (Google) can also be an MCP
 connection later; the two do not share a credential row.
 
-### A connection is a source entry
+### A connection is a credentials row
 
-A curated server is a `[[source]]` entry with an `mcp` URL and a new auth
-kind, `mcp_oauth`. A server that takes a pasted token uses the existing
-`api_key` kind with an `mcp` URL. An owner adds an arbitrary server by URL
-from Settings; that entry lives in the state root's catalog, which
-[sources-packages-plan.md](sources-packages-plan.md) already wants
-`load_catalog` to merge. Tokens go in `credentials` like any other source's.
+A connection is one `credentials` row of kind `connection` (migration 0066).
+Its `key` is a short name such as `notion`, which prefixes the service's tool
+names and is what the chat calls it. Its metadata holds the server's address,
+its registry name when it has one, and its description. It is not a `source`,
+so it does not count toward setup, the sources list, stream health or the
+chat's list of sources. The servers the owner can pick from come from the
+public MCP Registry, not from `sources.toml`; see "Which servers".
 
 ### Signing in
 
@@ -161,10 +162,19 @@ scope, and so does this plan.
 
 ### Which servers
 
-Official vendor servers on a short curated list in `sources.toml`. Any other
-URL is a power-user option on the Settings page. Third-party registries carry
-thousands of servers, many unofficial or unmaintained, and none of them is
-the list.
+Any server in the public MCP Registry (registry.modelcontextprotocol.io) that
+the box can connect with a sign-in alone: a streamable HTTP remote at a fixed
+address, with no API key header. The box searches the registry for the owner
+(`tools/connection_registry.rs`). The registry has no usage numbers, so the
+order is a short featured list of first-party servers, then the registry's
+own. The featured list is registry names, so addresses and descriptions stay
+current. Any other address is a power-user option on the same page.
+
+Anyone can publish to the registry, and much of it is unofficial or
+throwaway, so the page tells the owner to connect only services they trust.
+Google publishes no server for Gmail or Calendar; the registry's entries for
+them are third parties that would read the mail. Zapier is on the featured
+list as the way there until Google publishes one.
 
 ## Part 2: the box as an MCP server
 
@@ -333,26 +343,28 @@ name.
      Sign-in is OAuth 2.1 with PKCE as a public client registered by dynamic
      client registration; the redirect is `/api/connections/callback` at the
      origin the owner's app sends, so no proxy holds the code. Tokens are a
-     sealed `credentials` row (`mcp:linear`, kind `source`), which rmcp loads
-     and refreshes. Chat gets one `connection(name, task, confirmed)` tool
+     sealed `credentials` row (kind `connection`), which rmcp loads and
+     refreshes. Chat gets one `connection(name, task, confirmed)` tool
      (its own 900-character budget group); a Lite-slot worker gets the
      service's tools as `<connection>__<tool>` definitions, built from
      `tools/list`, never registry rows. A tool whose annotations say
      `destructiveHint: true` is left out of the worker's list and refused by
      the executor branch unless the chat called with `confirmed`, which sets
      `ToolContext::owner_confirmed`.
-   - Checked against Linear: discovery, dynamic registration and the sign-in
-     URL (PKCE S256, `resource`, scopes `read write`).
-   - Left: a sign-in and a chat run against a real Linear account; a
-     Connect button (there is none yet; the routes are `GET
-     /api/connections`, `POST /api/connections/:id/connect {origin}`,
-     `DELETE /api/connections/:id`); receipts in the chat for writes. Two
-     changes from the design above, each waiting on something outside this
-     slice: the catalog is a constant in `tools/connection.rs` until
-     `applet_templates` can take an `mcp_oauth` kind (a dated TODO marks
-     it), and the client registers dynamically until a Client ID Metadata
-     Document is hosted on virtues.com, which rmcp prefers once it is
-     passed in.
+   - Built after: any registry server or pasted address, not one constant
+     (`tools/connection_registry.rs`); Settings → Connections with the
+     featured list, a registry search and an address field
+     (`ConnectionsView.svelte`); routes `GET /api/connections`, `GET
+     /api/connections/search?q=`, `POST /api/connections/connect {origin,
+     registry | url}`, `DELETE /api/connections/:id`; the connected services'
+     short names in the chat's context.
+   - Checked: each featured server starts a sign-in from the box (discovery,
+     dynamic registration, a sign-in URL with PKCE S256 and `resource`).
+     GitHub, Figma and Zoom refuse dynamic registration, so they are not
+     featured until a Client ID Metadata Document is hosted on virtues.com,
+     which rmcp prefers once it is passed in.
+   - Left: a sign-in and a chat run against a real account; receipts in the
+     chat for writes; servers that take an API key in a header.
 4. **Connections in applets.** `allowed-tools` entries for connection tools,
    the Rule of Two legs, owner-only adding. Then owner-added URLs from
    Settings.
@@ -363,7 +375,6 @@ name.
 
 ## Open
 
-- **Which server goes first** in slice 3.
 - **Whether chat's own tool calls go through the same allowlist layer** (the
   CLI plan's open question), now that three callers share one table.
 - **What the Lite slot gets wrong on writes**, measured in slice 3.
