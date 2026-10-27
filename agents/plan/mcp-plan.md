@@ -363,8 +363,15 @@ name.
      GitHub, Figma and Zoom refuse dynamic registration, so they are not
      featured until a Client ID Metadata Document is hosted on virtues.com,
      which rmcp prefers once it is passed in.
-   - Left: a sign-in and a chat run against a real account; receipts in the
-     chat for writes; servers that take an API key in a header.
+   - Run live on 2026-10-27 against a real Linear workspace: the owner
+     approved the sign-in, the box stored the `connection` row, and a chat
+     question about the owner's issues went through one `connection` call.
+     The Lite-slot worker made five read calls (four `list_issues`, one
+     `list_custom_views`) and spent about a quarter of a cent; the chat
+     answered with linked issue identifiers.
+   - Left: a write run (asks first); receipts in the chat for writes;
+     whether Linear marks any tool `destructiveHint`, which decides whether
+     its deletes ask; servers that take an API key in a header.
 4. **Connections in applets.** `allowed-tools` entries for connection tools,
    the Rule of Two legs, owner-only adding. Then owner-added URLs from
    Settings.
