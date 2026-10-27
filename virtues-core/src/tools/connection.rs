@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures::StreamExt;
-use rmcp::model::{CallToolRequestParams, ClientConfig, Tool};
+use rmcp::model::{CallToolRequestParams, ClientConfig};
 use rmcp::service::RunningService;
 use rmcp::transport::auth::{
     AuthClient, AuthError, AuthorizationManager, AuthorizationRequest, CredentialStore, OAuthState,
@@ -141,8 +141,6 @@ const MAX_WALL_CLOCK: Duration = Duration::from_secs(5 * 60);
 const PROMPT: &str = "You act in one service the owner connected, using only its tools. Do the task you are given and nothing more.
 
 Read before you change anything: find the exact item the task names. If two items could match, stop and say which ones.
-
-Deleting, archiving or overwriting something needs the owner's OK. If the task needs it and those tools are not offered to you, stop and say exactly what you would change.
 
 When you finish, answer in a few sentences: what you did or found, with each item's identifier and link as the service returned them.";
 
@@ -354,20 +352,12 @@ pub fn split(name: &str) -> Option<(&str, &str)> {
     (short && !tool.is_empty()).then_some((id, tool))
 }
 
-/// Whether a tool declares that it destroys or overwrites. Only an explicit
-/// `true` counts: the owner decided assistant actions do not ask, and deletes
-/// and real money do.
-fn destructive(tool: &Tool) -> bool {
-    tool.annotations.as_ref().and_then(|a| a.destructive_hint) == Some(true)
-}
-
-/// The connection's tools as LLM definitions, leaving out the destructive
-/// ones unless the owner confirmed.
-async fn tool_definitions(client: &Client, connection: &Connection, confirmed: bool) -> Result<Vec<Value>> {
+/// The connection's tools as LLM definitions, all of them: the owner decided
+/// connection tools run without asking, whatever their annotations say.
+async fn tool_definitions(client: &Client, connection: &Connection) -> Result<Vec<Value>> {
     let tools = client.list_all_tools().await.context("list the service's tools")?;
     Ok(tools
         .iter()
-        .filter(|t| confirmed || !destructive(t))
         .map(|t| {
             json!({
                 "type": "function",
@@ -381,9 +371,8 @@ async fn tool_definitions(client: &Client, connection: &Connection, confirmed: b
         .collect())
 }
 
-/// Runs one of a connection's tools, for the worker. A destructive tool runs
-/// only when the owner confirmed in chat.
-pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, context: &ToolContext) -> ToolResult {
+/// Runs one of a connection's tools, for the worker.
+pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, _context: &ToolContext) -> ToolResult {
     let Some((id, tool)) = split(name) else {
         return ToolResult::error(format!("{name} is not a connected service's tool."));
     };
@@ -397,15 +386,6 @@ pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, context: &To
         Ok(client) => client,
         Err(e) => return ToolResult::error(format!("{e:#}")),
     };
-    if !context.owner_confirmed {
-        let listed = client.list_all_tools().await.unwrap_or_default();
-        if listed.iter().any(|t| t.name == tool && destructive(t)) {
-            return ToolResult::error(format!(
-                "{tool} deletes or overwrites something in {}. Stop and say what it would change; the owner has to agree first.",
-                connection.name
-            ));
-        }
-    }
     let arguments = match arguments {
         Value::Object(map) => Some(map),
         Value::Null => None,
@@ -449,7 +429,6 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
     let Some(task) = args.get("task").and_then(Value::as_str).filter(|t| !t.trim().is_empty()) else {
         return ToolResult::error("connection needs a `task`.");
     };
-    let confirmed = args.get("confirmed").and_then(Value::as_bool) == Some(true);
 
     let connected = match connected(pool).await {
         Ok(c) => c,
@@ -478,7 +457,7 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
         Ok(client) => client,
         Err(e) => return ToolResult::error(format!("{e:#}")),
     };
-    let tools = match tool_definitions(&client, connection, confirmed).await {
+    let tools = match tool_definitions(&client, connection).await {
         Ok(tools) => tools,
         Err(e) => return ToolResult::error(format!("{e:#}")),
     };
@@ -497,7 +476,6 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
         user_id: Some(TOOL.to_string()),
         chat_id: context.chat_id.as_ref().map(|chat| format!("{chat}:{TOOL}")),
         cancel_token: context.cancel_token.clone(),
-        owner_confirmed: confirmed,
         ..Default::default()
     };
     let cancel = context.cancel_token.clone();
@@ -579,16 +557,6 @@ mod tests {
         assert_eq!((c.id.as_str(), c.name.as_str()), ("example", "mcp.example.com"));
         assert!(Connection::pasted("http://mcp.example.com/mcp", &[]).is_err());
         assert!(Connection::pasted("not an address", &[]).is_err());
-    }
-
-    #[test]
-    fn only_an_explicit_destructive_hint_counts() {
-        let schema = Arc::new(serde_json::Map::new());
-        let plain = Tool::new("list_issues", "", schema.clone());
-        assert!(!destructive(&plain));
-        let delete = Tool::new("delete_issue", "", schema)
-            .with_annotations(rmcp::model::ToolAnnotations::new().destructive(true));
-        assert!(destructive(&delete));
     }
 
     /// A connection is listed as one and never as a data source, which

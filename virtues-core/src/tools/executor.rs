@@ -111,11 +111,6 @@ pub struct ToolContext {
     /// to `/api/mcp` (`server/api/mcp.rs`). Set only by those two handlers,
     /// never from a tool's arguments, so the model cannot claim it.
     pub console: bool,
-    /// The owner agreed in chat to a change that deletes or overwrites
-    /// something in a connected service: the chat's `connection` call carried
-    /// `confirmed`, and this is its worker. A connection tool that declares
-    /// itself destructive runs only with it (`tools/connection.rs`).
-    pub owner_confirmed: bool,
 }
 
 impl Default for ToolContext {
@@ -137,7 +132,6 @@ impl Default for ToolContext {
             timezone: None,
             turn: None,
             console: false,
-            owner_confirmed: false,
         }
     }
 }

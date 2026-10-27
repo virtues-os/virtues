@@ -131,22 +131,12 @@ worker moves to the Standard slot. That is a measurement for slice 2.
 
 ### What asks
 
-The owner decided that assistant capabilities do not get approval cards.
-Deletes and real money still ask. So:
-
-- A call runs when the tool is read-only, or is a write without
-  `destructiveHint: true`.
-- A call to a tool that declares `destructiveHint: true` asks, once per call,
-  through the existing `permission_needed` result.
-- The owner can change either for one tool on the connection's page.
-- Every write shows a receipt in the chat: which service, what was done, and a
-  link to it there.
-- The worker's prompt carries the rule chat already has: ask before anything
-  irreversible.
-
-Annotations are claims made by the server. A server that leaves out
-`destructiveHint` on a delete gets no prompt. That is why the curated list
-matters and why an arbitrary URL is the owner's choice, made on purpose.
+Nothing. The owner decided on 2026-10-27 that connection tools run without
+asking, deletes included, and that the box adds no rules of its own for
+deletes, money or messages. MCP tool annotations (`readOnlyHint`,
+`destructiveHint`) are passed over: they are claims the server makes, and
+the box does not act on them. Every write shows a receipt in the chat:
+which service, what was done, and a link to it there.
 
 ### Applets and connections
 
@@ -337,20 +327,18 @@ name.
      through the bridge away from home, the test the CLI plan set for its
      verbs.
 3. **One MCP connection: Linear** (the owner's pick, 2026-10-26). Done when
-   a chat files an issue on it and a delete asks.
+   a chat files an issue on it and the chat shows the receipt.
    - Built: `tools/connection.rs` and `server/api/connections.rs`, on rmcp's
      client and `auth` features over the reqwest 0.13 iroh already links.
      Sign-in is OAuth 2.1 with PKCE as a public client registered by dynamic
      client registration; the redirect is `/api/connections/callback` at the
      origin the owner's app sends, so no proxy holds the code. Tokens are a
      sealed `credentials` row (kind `connection`), which rmcp loads and
-     refreshes. Chat gets one `connection(name, task, confirmed)` tool
+     refreshes. Chat gets one `connection(name, task)` tool
      (its own 900-character budget group); a Lite-slot worker gets the
      service's tools as `<connection>__<tool>` definitions, built from
-     `tools/list`, never registry rows. A tool whose annotations say
-     `destructiveHint: true` is left out of the worker's list and refused by
-     the executor branch unless the chat called with `confirmed`, which sets
-     `ToolContext::owner_confirmed`.
+     `tools/list`, never registry rows. Every tool the service lists is
+     offered and runs without asking.
    - Built after: any registry server or pasted address, not one constant
      (`tools/connection_registry.rs`); Settings → Connections with the
      featured list, a registry search and an address field
@@ -369,9 +357,8 @@ name.
      The Lite-slot worker made five read calls (four `list_issues`, one
      `list_custom_views`) and spent about a quarter of a cent; the chat
      answered with linked issue identifiers.
-   - Left: a write run (asks first); receipts in the chat for writes;
-     whether Linear marks any tool `destructiveHint`, which decides whether
-     its deletes ask; servers that take an API key in a header.
+   - Left: a write run; receipts in the chat for writes; servers that take
+     an API key in a header.
 4. **Connections in applets.** `allowed-tools` entries for connection tools,
    the Rule of Two legs, owner-only adding. Then owner-added URLs from
    Settings.
