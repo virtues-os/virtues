@@ -734,13 +734,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // ─── `virtues agent-key` / `agent-exec` ─────────────────────────────────
-    // Neither opens the database. An agent key's file is a file, and the
-    // agent user it serves has no database role: its verbs go to the server.
-    if matches!(cli.command, Some(Commands::AgentKey { .. } | Commands::AgentExec { .. })) {
+    // ─── `virtues agent-key` / `agent-exec` / `mcp` ─────────────────────────
+    // None opens the database. An agent key's file is a file, and the agent
+    // user it serves has no database role: its verbs go to the server, and
+    // `mcp` only relays to it.
+    if matches!(cli.command, Some(Commands::AgentKey { .. } | Commands::AgentExec { .. } | Commands::Mcp)) {
         let outcome = match cli.command {
             Some(Commands::AgentKey { cmd }) => virtues::cli::agent_key::manage(cmd).await,
             Some(Commands::AgentExec { key }) => virtues::cli::agent_key::exec(key).await,
+            Some(Commands::Mcp) => virtues::cli::mcp::serve(None).await,
             _ => unreachable!(),
         };
         if let Err(e) = outcome {

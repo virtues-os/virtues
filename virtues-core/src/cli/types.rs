@@ -67,6 +67,8 @@ pub const DATA_VERBS: &[&str] = &[
     "pages",
     "agent-key",
     "agent-exec",
+    // Its stdout is the MCP stream; the floor keeps stderr quiet too.
+    "mcp",
 ];
 
 #[derive(Parser)]
@@ -789,6 +791,14 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: AgentKeyCmd,
     },
+
+    /// Serve this box's MCP tools on stdio, for an AI agent.
+    ///
+    /// Each message is relayed to the server's `/api/mcp` on this machine.
+    /// An agent elsewhere reaches it over SSH with an agent key, for example
+    /// `ssh virtues-agent@<box> mcp` as its MCP command. Needs the virtues
+    /// server running here.
+    Mcp,
 
     /// The forced command behind an agent key. sshd runs it; never by hand.
     #[command(hide = true)]

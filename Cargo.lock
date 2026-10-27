@@ -9053,6 +9053,7 @@ dependencies = [
  "virtues-improv",
  "virtues-iroh",
  "virtues-qairt",
+ "virtues-reach-client",
  "virtues-registry",
  "yrs",
  "zip",

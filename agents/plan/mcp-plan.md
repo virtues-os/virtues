@@ -1,6 +1,6 @@
 # MCP: connections in, the box as a server
 
-**Written 2026-10-26. Slices 1 and 2 built the same day; `virtues mcp` over `agent-key` is left from slice 2.** Two directions over the Model Context
+**Written 2026-10-26. Slices 1 and 2 built the same day.** Two directions over the Model Context
 Protocol. Inbound, the box connects to other services' MCP servers and uses
 their tools: actions and live lookups only, with no ingest. Outbound, the box
 serves its own MCP endpoint, so agents the owner already uses (Claude Desktop,
@@ -290,8 +290,7 @@ name.
    2.12.0: tools/list, a query, an applet list and a page created over MCP;
    a legacy `initialize` and a 2026-07-28 `server/discover`; `shell` and an
    applet delete refused; an `Origin` answered 403.
-2. **The Mac bridge.** Built 2026-10-26, except `virtues mcp` over
-   `agent-key`, which is still to do.
+2. **The Mac bridge.** Built 2026-10-26.
    - Migration 0064 adds the `agent` device kind to `app_device` and to
      `app_pair_token.intended_kind`. In `middleware/auth.rs`, a proven peer
      whose device is an agent reaches `/api/mcp` and gets 403 on every other
@@ -311,13 +310,22 @@ name.
      environment. Devices › Add device › An AI agent on this Mac
      (`AgentConnectModal.svelte`) runs it and shows the `claude mcp add` line
      and the `mcpServers` JSON.
+   - `virtues mcp` on the box is the same bridge over loopback TCP
+     (`cli/mcp.rs`, with `Loopback` beside the iroh client as a
+     `pair_door::Forwarder`). The server takes it as the local console. An
+     agent elsewhere runs it as `ssh virtues-agent@<box> mcp`: `agent-exec`
+     allows the `mcp` verb and sends the key's name, which the `mcp_tool`
+     audit line records as `agent_key`.
    - Checked against a scratch core: an agent paired with the same pairing
      call the app makes; MCP Inspector 2.12.0 drove the built app binary over
      stdio for tools/list, a query and a refused applet delete, with the audit
      line naming the agent device; the agent's key got 403 on `/api/pages`
-     and `/api/devices`. Not yet checked: the sheet inside a built Mac app,
-     and Claude Code building an applet through the bridge away from home,
-     the test the CLI plan set for its verbs.
+     and `/api/devices`. `virtues mcp`, and `agent-exec` with
+     `SSH_ORIGINAL_COMMAND=mcp`, were driven the same way, and the audit line
+     named the key. Not yet checked: a real sshd in front of `agent-exec`,
+     the sheet inside a built Mac app, and Claude Code building an applet
+     through the bridge away from home, the test the CLI plan set for its
+     verbs.
 3. **One MCP connection.** `mcp_oauth` with a hosted Client ID Metadata
    Document and the code-only redirect, tool rows with `<connection>__`
    names, the executor branch, the `connection` worker, receipts and the

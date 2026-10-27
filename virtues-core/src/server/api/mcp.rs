@@ -101,14 +101,19 @@ impl ServerHandler for BoxServer {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        let device = context
-            .extensions
-            .get::<Parts>()
+        let parts = context.extensions.get::<Parts>();
+        let device = parts
             .and_then(|parts| parts.extensions.get::<AuthUser>())
             .map(|user| user.device_id.clone())
             .unwrap_or_default();
+        // The agent key a console call came in on (`virtues mcp` behind
+        // `agent-exec`), for the audit line only, as in `console.rs`.
+        let agent_key = parts
+            .and_then(|parts| parts.headers.get(super::console::AGENT_KEY_HEADER))
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
         let arguments = serde_json::Value::Object(request.arguments.unwrap_or_default());
-        let result = call(&self.pool, &self.yjs, &request.name, arguments, &device).await?;
+        let result = call(&self.pool, &self.yjs, &request.name, arguments, &device, agent_key).await?;
         Ok(result.into())
     }
 }
@@ -139,6 +144,7 @@ async fn call(
     tool: &str,
     mut arguments: serde_json::Value,
     device: &str,
+    agent_key: &str,
 ) -> Result<CallToolResult, McpError> {
     if !mcp_allows(tool, &arguments) {
         return Err(McpError::invalid_params(format!("{tool} is not offered over MCP"), None));
@@ -167,6 +173,7 @@ async fn call(
         audit = "mcp_tool",
         tool = %tool,
         device = %device,
+        agent_key = %agent_key,
         args_sha = %args_sha,
         is_error = result.is_error.unwrap_or(false),
         "mcp tool call"
@@ -216,7 +223,7 @@ mod tests {
     #[sqlx::test]
     async fn a_tool_not_offered_is_refused(pool: PgPool) {
         let yjs = YjsState::new(pool.clone());
-        let refused = call(&pool, &yjs, "shell", serde_json::json!({ "command": "true" }), "test").await;
+        let refused = call(&pool, &yjs, "shell", serde_json::json!({ "command": "true" }), "test", "").await;
         assert!(refused.is_err());
     }
 
@@ -226,7 +233,7 @@ mod tests {
     async fn a_read_runs_through_the_executor(pool: PgPool) {
         let yjs = YjsState::new(pool.clone());
         let args = serde_json::json!({ "operation": "query", "sql": "SELECT 1 AS one" });
-        let result = call(&pool, &yjs, "sql_query", args, "test").await.unwrap();
+        let result = call(&pool, &yjs, "sql_query", args, "test", "").await.unwrap();
         assert_eq!(result.is_error, Some(false), "{result:?}");
         assert!(result.structured_content.is_some(), "{result:?}");
     }

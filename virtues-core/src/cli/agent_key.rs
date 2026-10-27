@@ -32,7 +32,7 @@ const COMMENT_PREFIX: &str = "virtues-agent:";
 
 /// The verbs an agent key may run. Lifecycle verbs (`upgrade`, `reset`,
 /// `backup`) are the owner's, at the box.
-const AGENT_VERBS: &[&str] = &["query", "search", "schema", "write", "applet", "page"];
+const AGENT_VERBS: &[&str] = &["query", "search", "schema", "write", "applet", "page", "mcp"];
 
 const KEY_TYPES: &[&str] = &[
     "ssh-ed25519",
@@ -264,6 +264,7 @@ pub async fn exec(key: String) -> Result<(), String> {
             println!("{text}");
             Ok(())
         }
+        Request::Run(Commands::Mcp) => super::mcp::serve(Some(key)).await,
         Request::Run(command) => super::data::run(&super::data::Verbs::remote(key), command).await,
     }
 }
@@ -371,6 +372,7 @@ mod tests {
         assert!(matches!(run("virtues query 'select 1'"), Some(Commands::Query { .. })));
         assert!(matches!(run("schema"), Some(Commands::Schema { .. })));
         assert!(matches!(run("applet put -"), Some(Commands::Applet { .. })));
+        assert!(matches!(run("virtues mcp"), Some(Commands::Mcp)));
         assert!(matches!(parse_request("query --help"), Ok(Request::Help(_))));
         for refused in ["upgrade", "reset --yes", "sh -c id", "virtues agent-key ls", "", "query 'unclosed"] {
             assert!(parse_request(refused).is_err(), "{refused}");

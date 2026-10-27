@@ -193,6 +193,9 @@ schemars = "1.0"
 # The box's MCP server (`server/api/mcp.rs`): the server half and its
 # Streamable HTTP transport only. The 2026-07-28 spec arrived in 3.0.
 rmcp = { version = "3.8", default-features = false, features = ["server", "transport-streamable-http-server"] }
+# `virtues mcp` (`cli/mcp.rs`) is the same stdio bridge the Mac app runs,
+# carried over loopback instead of iroh.
+virtues-reach-client = { path = "../crates/virtues-reach-client" }
 
 # Geospatial/clustering
 geo = "0.28"  # Geospatial calculations (Haversine distance)

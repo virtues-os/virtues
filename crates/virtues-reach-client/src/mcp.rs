@@ -10,15 +10,22 @@
 //! lets an agent key reach `/api/mcp` and no other route, and the owner can
 //! revoke it on its own. Its record lives in a file of its own under the
 //! host's directory, so pairing it never touches the app's own pairing.
+//!
+//! The relay itself does not care how a request reaches the box: [`serve`]
+//! takes a [`Forwarder`]. The Mac app passes its iroh client; the box's own
+//! `virtues mcp` passes [`Loopback`], for an agent that reaches the box over
+//! SSH with an agent key.
 
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anyhow::{anyhow, bail, Context, Result};
 use serde_json::{json, Value};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 
 use crate::model::PairedBox;
+pub use crate::pair_door::Forwarder;
 use crate::store::BoxStore;
 
 /// The device kind the box records for a bridge.
@@ -108,9 +115,8 @@ pub async fn pair(dir: &Path, origin: &str, token: &str, name: &str) -> Result<P
     Ok(store.path)
 }
 
-/// Serves MCP on stdio for the agent whose record `store` holds, until stdin
-/// closes. Nothing but JSON-RPC is written to stdout; diagnostics go to
-/// stderr.
+/// Serves MCP on stdio for the agent whose record `store` holds, over iroh
+/// with its own key, until stdin closes.
 pub async fn serve_stdio(store: &AgentStore) -> Result<()> {
     let rec = store.load()?.ok_or_else(|| {
         anyhow!(
@@ -119,6 +125,45 @@ pub async fn serve_stdio(store: &AgentStore) -> Result<()> {
         )
     })?;
     let client = crate::proxy::build_client(&rec).await?;
+    serve(Arc::new(client), Vec::new()).await
+}
+
+/// A server on this machine, reached over loopback TCP. The box authenticates
+/// a loopback caller as its local console, so this is for a process on the
+/// box itself.
+pub struct Loopback {
+    addr: SocketAddr,
+}
+
+impl Loopback {
+    pub fn new(addr: SocketAddr) -> Self {
+        Loopback { addr }
+    }
+}
+
+impl Forwarder for Loopback {
+    fn forward(
+        &self,
+        raw: Vec<u8>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<Vec<u8>>> + Send>> {
+        let addr = self.addr;
+        Box::pin(async move {
+            let mut stream = tokio::net::TcpStream::connect(addr)
+                .await
+                .with_context(|| format!("connect to the server at {addr}; is it running?"))?;
+            stream.write_all(&raw).await?;
+            let mut response = Vec::new();
+            stream.read_to_end(&mut response).await?;
+            Ok(response)
+        })
+    }
+}
+
+/// Relays MCP between stdio and `/api/mcp` through `carrier`, until stdin
+/// closes. `extra_headers` go on every request. Nothing but JSON-RPC is
+/// written to stdout; diagnostics go to stderr.
+pub async fn serve(carrier: Arc<dyn Forwarder>, extra_headers: Vec<(String, String)>) -> Result<()> {
+    let extra_headers = Arc::new(extra_headers);
     let stdout = Arc::new(tokio::sync::Mutex::new(tokio::io::stdout()));
     let version: Arc<Mutex<Option<String>>> = Arc::default();
     let mut lines = BufReader::new(tokio::io::stdin()).lines();
@@ -141,11 +186,12 @@ pub async fn serve_stdio(store: &AgentStore) -> Result<()> {
                 continue;
             }
         };
-        let (client, stdout, version) = (client.clone(), stdout.clone(), version.clone());
+        let (carrier, extra, stdout, version) =
+            (carrier.clone(), extra_headers.clone(), stdout.clone(), version.clone());
         calls.spawn(async move {
             let known = version.lock().map(|v| v.clone()).unwrap_or(None);
-            let raw = request_bytes(&message, known.as_deref());
-            let replies = match client.request(&raw).await {
+            let raw = request_bytes(&message, known.as_deref(), &extra);
+            let replies = match carrier.forward(raw).await {
                 Ok(response) => replies(&message, &response),
                 Err(e) => error_reply(&message, &format!("Could not reach your server: {e:#}")).into_iter().collect(),
             };
@@ -179,8 +225,8 @@ async fn write_line(stdout: &tokio::sync::Mutex<tokio::io::Stdout>, message: &Va
 /// Streamable HTTP routes by headers: `Mcp-Method` always, `Mcp-Name` for a
 /// call that names its target, and `MCP-Protocol-Version` once a version is
 /// known, from the message's own `_meta` (2026-07-28 clients) or from the
-/// `initialize` answer (older clients).
-fn request_bytes(message: &Value, known_version: Option<&str>) -> Vec<u8> {
+/// `initialize` answer (older clients). `extra` follows them.
+fn request_bytes(message: &Value, known_version: Option<&str>, extra: &[(String, String)]) -> Vec<u8> {
     let body = message.to_string();
     let method = message.get("method").and_then(Value::as_str);
     let params = message.get("params");
@@ -200,7 +246,9 @@ fn request_bytes(message: &Value, known_version: Option<&str>) -> Vec<u8> {
          Accept: application/json, text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n",
         body.len()
     );
-    for (header, value) in [("Mcp-Method", method), ("Mcp-Name", name), ("MCP-Protocol-Version", version)] {
+    let routing = [("Mcp-Method", method), ("Mcp-Name", name), ("MCP-Protocol-Version", version)];
+    let extra = extra.iter().map(|(h, v)| (h.as_str(), Some(v.as_str())));
+    for (header, value) in routing.into_iter().chain(extra) {
         // A value that cannot sit in a header line is left out; the body
         // still carries it.
         if let Some(value) = value.filter(|v| v.bytes().all(|b| (0x20..0x7f).contains(&b))) {
@@ -334,7 +382,9 @@ mod tests {
     #[test]
     fn a_tool_call_carries_its_routing_headers() {
         let call = json!({ "jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": { "name": "sql_query" } });
-        let raw = String::from_utf8(request_bytes(&call, Some("2025-11-25"))).unwrap();
+        let extra = [("x-virtues-agent-key".to_string(), "laptop".to_string())];
+        let raw = String::from_utf8(request_bytes(&call, Some("2025-11-25"), &extra)).unwrap();
+        assert!(raw.contains("x-virtues-agent-key: laptop\r\n"), "{raw}");
         assert!(raw.starts_with("POST /api/mcp HTTP/1.1\r\n"), "{raw}");
         assert!(raw.contains("Mcp-Method: tools/call\r\n"), "{raw}");
         assert!(raw.contains("Mcp-Name: sql_query\r\n"), "{raw}");
@@ -346,7 +396,7 @@ mod tests {
     fn a_2026_message_names_its_own_version() {
         let ping = json!({ "jsonrpc": "2.0", "id": 1, "method": "ping",
             "params": { "_meta": { "io.modelcontextprotocol/protocolVersion": "2026-07-28" } } });
-        let raw = String::from_utf8(request_bytes(&ping, Some("2025-11-25"))).unwrap();
+        let raw = String::from_utf8(request_bytes(&ping, Some("2025-11-25"), &[])).unwrap();
         assert!(raw.contains("MCP-Protocol-Version: 2026-07-28\r\n"), "{raw}");
     }
 
