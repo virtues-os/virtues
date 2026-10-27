@@ -256,15 +256,15 @@ comma always separates two triggers.
 | | `on 2026-11-02 at 09:00` | none; archives itself after the run |
 | | `cron 0 0 7 * * *` (six fields) | none |
 | Data | `new <table>` | the new rows |
-| | `30 minutes before <table>` | the row whose `start_time` is coming up |
-| | `15 minutes after <table> ends` | the row whose `end_time` has passed |
+| | `30 minutes before <table>` | the row whose `started_at` is coming up |
+| | `15 minutes after <table> ends` | the row whose `ended_at` has passed |
 | Outside | `webhook` (needs `source`) | the posted payload and the sending device |
 
 Times are in the box's timezone. A schedule and the trigger that fires it are
 one value, so an applet with a schedule and no `cron` trigger, which setup
 accepts today and the scheduler never registers, cannot be written.
 
-The data tables already name their span `start_time` and `end_time`
+Data tables name a span `started_at` and `ended_at`
 (`data_calendar_event`, `data_audio_session`), so `before` and `after … ends`
 work on any table that has those columns.
 
@@ -550,7 +550,7 @@ failure is refused with a sentence:
    matches its folder, `metadata` values are strings.
 2. `name` does not clash with a shipped applet.
 3. Every `trigger` value parses. A data trigger names an existing table;
-   `before` needs `start_time` and `after … ends` needs `end_time`. `on` and
+   `before` needs `started_at` and `after … ends` needs `ended_at`. `on` and
    `until` dates are in the future.
 4. `run` names a shipped binary, a file under `scripts/`, or `sql …`. SQL
    prepares in Postgres. `new_rows` appears only when there is a data trigger.
@@ -891,7 +891,7 @@ wrote.
 watermark per applet and table, batching, a short delay, no waking on the
 applet's own rows, one hop per pass, no waking on a source's first backfill,
 and rate limits on by default, per [applets-next-plan.md](applets-next-plan.md).
-`before` and `after … ends` follow, reading `start_time` and `end_time`.
+`before` and `after … ends` follow, reading `started_at` and `ended_at`.
 
 ### 9. A role per applet
 
