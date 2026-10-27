@@ -850,10 +850,27 @@ pub fn declared_secrets(applet_id: &str) -> Vec<String> {
         .unwrap_or_default()
 }
 
+/// Every declared key name, with the names of the applets that declare it,
+/// sorted. What Settings shows as a key's "used by".
+pub fn secret_declarers() -> std::collections::BTreeMap<String, Vec<String>> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    let mut out: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    for t in &guard.action {
+        for name in &t.secrets {
+            out.entry(name.clone()).or_default().push(t.name.clone());
+        }
+    }
+    for names in out.values_mut() {
+        names.sort();
+        names.dedup();
+    }
+    out
+}
+
 /// A name an applet may declare: an environment variable name in capitals
 /// (`OPENAI_API_KEY`) that the box does not set itself. A declared
 /// `DATABASE_URL` or `PATH` would otherwise replace the box's own.
-fn valid_secret_name(name: &str) -> bool {
+pub fn valid_secret_name(name: &str) -> bool {
     let mut chars = name.chars();
     let starts = chars.next().is_some_and(|c| c.is_ascii_uppercase());
     starts
@@ -930,28 +947,41 @@ fn stamp_forked_from(manifest: &std::path::Path, origin: &str) -> Result<()> {
         .map_err(|e| Error::Other(format!("write {}: {e}", manifest.display())))
 }
 
+/// The template that produced an applet id: the one whose `id_prefix` is the
+/// id, or one that fans out per credential or device and whose
+/// `<id_prefix>_<anchor>` it is. An exact id wins, then the longest prefix.
+///
+/// Matching the first prefix in catalog order, which is unsorted, let
+/// `applet_daily_2` resolve to `applet_daily`'s folder, so deleting one
+/// applet could remove another's folder. A template that does not fan out
+/// never claims a suffixed id, so an id whose own folder is gone resolves to
+/// nothing instead of to a neighbor.
+fn template_for_applet_id<'a>(templates: &'a [Template], applet_id: &str) -> Option<&'a Template> {
+    if let Some(exact) = templates.iter().find(|t| t.id_prefix.as_deref() == Some(applet_id)) {
+        return Some(exact);
+    }
+    templates
+        .iter()
+        .filter(|t| t.per_credential)
+        .filter_map(|t| {
+            let p = t.id_prefix.as_deref()?;
+            applet_id.strip_prefix(p)?.starts_with('_').then_some((p.len(), t))
+        })
+        .max_by_key(|(len, _)| *len)
+        .map(|(_, t)| t)
+}
+
 /// Resolve the manifest folder (relative to an applet root) that produced
-/// an action id. Matches the base id (`id_prefix`) and per-credential /
-/// per-device fan-out ids (`<id_prefix>_<anchor>`). Used by the face server
-/// to root static serving at the applet's folder.
+/// an action id, by [`template_for_applet_id`]. Used by the face server to
+/// root static serving at the applet's folder.
 pub fn dir_for_applet_id(applet_id: &str) -> Option<String> {
     let guard = catalog_lock().read().expect("catalog rwlock poisoned");
-    guard
-        .action
-        .iter()
-        .find(|t| {
-            t.id_prefix.as_deref().is_some_and(|p| {
-                applet_id == p || applet_id.strip_prefix(p).is_some_and(|r| r.starts_with('_'))
-            })
-        })
-        .map(|t| t.dir.clone())
+    template_for_applet_id(&guard.action, applet_id).map(|t| t.dir.clone())
 }
 
 /// Which ontologies a live applet instance writes, resolved from its id.
 ///
-/// The instance-id → template match is the same rule [`dir_for_applet_id`]
-/// uses: the base `id_prefix`, plus the per-credential / per-device fan-out
-/// form `<id_prefix>_<anchor>`.
+/// The instance-id → template match is [`template_for_applet_id`].
 ///
 /// This is the join that lets a stream say *why* it is empty. Freshness alone
 /// cannot: a stream whose writing applet has failed on every run for three days
@@ -959,14 +989,7 @@ pub fn dir_for_applet_id(applet_id: &str) -> Option<String> {
 /// therefore reported as `idle`.
 pub fn ontologies_written_by_applet_id(applet_id: &str) -> Vec<String> {
     let guard = catalog_lock().read().expect("catalog rwlock poisoned");
-    guard
-        .action
-        .iter()
-        .find(|t| {
-            t.id_prefix.as_deref().is_some_and(|p| {
-                applet_id == p || applet_id.strip_prefix(p).is_some_and(|r| r.starts_with('_'))
-            })
-        })
+    template_for_applet_id(&guard.action, applet_id)
         .map(|t| t.writes.clone())
         .unwrap_or_default()
 }
@@ -1355,9 +1378,10 @@ async fn upsert_row(
     // Owner determines reconcile semantics:
     //
     //   system: UPSERT with overwrite of template-managed fields (name, owner,
-    //           agent, condition, triggers, credential_id, runtime, command).
-    //           Preserves user-managed runtime state
-    //           (schedule, enabled, config, memory).
+    //           agent, config, condition, triggers, credential_id, runtime,
+    //           command). Preserves user-managed runtime state (schedule,
+    //           enabled, memory) and the code's own `state`, which no branch
+    //           here writes.
     //
     //   user:   ON CONFLICT DO NOTHING. Factory defaults are seeded the first time
     //           the template is added; after that the row is fully owned by
@@ -2141,6 +2165,42 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
             "their edit stands, and `agent_shipped` still says what we ship — \
              which is what lets the page offer a diff rather than a surprise"
         );
+    }
+
+    fn template(id_prefix: &str, dir: &str, per_credential: bool) -> Template {
+        let mut t: Template = toml::from_str(&format!(
+            "id_prefix = \"{id_prefix}\"\nname = \"{dir}\"\nowner = \"ai\"\nper_credential = {per_credential}"
+        ))
+        .expect("template toml");
+        t.dir = dir.to_string();
+        t
+    }
+
+    /// An applet's own folder wins over a neighbor whose id is a prefix of
+    /// its id, in either catalog order. Before, the first prefix in an
+    /// unsorted catalog won, so deleting `daily_2` could remove `daily`.
+    #[test]
+    fn an_id_resolves_to_its_own_folder_and_never_a_prefix_neighbors() {
+        let daily = template("applet_daily", "user/daily", false);
+        let daily_2 = template("applet_daily_2", "user/daily_2", false);
+        for catalog in [vec![daily.clone(), daily_2.clone()], vec![daily_2.clone(), daily.clone()]] {
+            let found = template_for_applet_id(&catalog, "applet_daily_2").map(|t| t.dir.as_str());
+            assert_eq!(found, Some("user/daily_2"));
+        }
+        // Its folder gone, the id resolves to nothing, not to `daily`.
+        assert!(template_for_applet_id(&[daily], "applet_daily_2").is_none());
+    }
+
+    /// A fan-out id still finds its template, and the longest prefix wins.
+    #[test]
+    fn a_fan_out_id_finds_the_longest_matching_template() {
+        let sync = template("applet_mail", "mail", true);
+        let sync_work = template("applet_mail_work", "mail_work", true);
+        let catalog = [sync, sync_work];
+        let dir = |id: &str| template_for_applet_id(&catalog, id).map(|t| t.dir.clone());
+        assert_eq!(dir("applet_mail_cred_1").as_deref(), Some("mail"));
+        assert_eq!(dir("applet_mail_work_cred_1").as_deref(), Some("mail_work"));
+        assert_eq!(dir("applet_mailbox"), None);
     }
 
     /// A key the manifest adds reaches a box that seeded before it existed,
