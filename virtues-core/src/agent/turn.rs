@@ -13,7 +13,7 @@ use super::executor::{self, ExecutorConfig, ToolExecutionError, ToolExecutionRes
 use super::protocol::{AgentEvent, DelegatedUsage, ErrorCode, FinishReason, StepReason};
 use super::stream::{self, LlmConfig, LlmStreamResult, StepOptions, StreamError, ToolCall};
 use super::{caps, guard, TurnBudget};
-use crate::tools::{ToolContext, ToolExecutor};
+use crate::tools::{ToolContext, ToolExecutor, ToolResult};
 
 /// What one turn has done so far: the step it is on, what it has spent, and
 /// what its tools have been allowed and refused.
@@ -25,16 +25,27 @@ pub(super) struct TurnState {
     repeat_guard: guard::RepeatGuard,
     /// Calls spent against each capped tool — see `caps`.
     tool_caps: caps::ToolCaps,
+    /// The names of the tools this turn offers. The model can name any tool
+    /// in a call, and the executor runs whatever it is handed, so a call to
+    /// a tool the turn did not offer is refused here. Without this a run's
+    /// tool list (an applet's `allowed-tools`, the applet allowlist) only
+    /// decided what the model was shown.
+    offered: std::collections::HashSet<String>,
 }
 
 impl TurnState {
-    pub fn new(budget: &TurnBudget) -> Self {
+    /// `tools` is the turn's tool list, in the shape the model is sent.
+    pub fn new(budget: &TurnBudget, tools: &[Value]) -> Self {
         Self {
             step: 0,
             started: Instant::now(),
             spent_micros: 0,
             repeat_guard: guard::RepeatGuard::new(),
             tool_caps: caps::ToolCaps::new(budget.tool_caps),
+            offered: tools
+                .iter()
+                .filter_map(|t| t["function"]["name"].as_str().map(String::from))
+                .collect(),
         }
     }
 
@@ -128,6 +139,8 @@ impl TurnState {
         executor_config: &ExecutorConfig,
     ) -> Vec<ToolExecutionResult> {
         tracing::info!(count = calls.len(), "Executing tool calls");
+        let (calls, not_offered): (Vec<ToolCall>, Vec<ToolCall>) =
+            calls.into_iter().partition(|c| self.offered.contains(&c.name));
         let (within_caps, over_caps) = self.tool_caps.admit(calls);
         let (admitted, refused) = self.repeat_guard.admit(&within_caps);
         let mut results =
@@ -135,6 +148,17 @@ impl TurnState {
         results.extend(refused);
         self.repeat_guard.record(&within_caps, &results);
         results.extend(over_caps);
+        results.extend(not_offered.into_iter().map(|call| {
+            tracing::warn!(tool_name = %call.name, "refused a call to a tool this turn did not offer");
+            ToolExecutionResult {
+                result: Ok(ToolResult::error(format!(
+                    "There is no {} tool in this conversation. Use one of the tools you were given.",
+                    call.name
+                ))),
+                tool_call_id: call.id,
+                tool_name: call.name,
+            }
+        }));
         results
     }
 }
@@ -366,7 +390,7 @@ pub(super) fn append_next_step(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::tools::{ToolAttachment, ToolResult};
+    use crate::tools::ToolAttachment;
     use serde_json::json;
 
     #[test]
@@ -392,7 +416,7 @@ mod tests {
     #[test]
     fn spend_reaching_the_cost_budget_makes_the_next_step_the_last() {
         let budget = TurnBudget { max_cost_micros: Some(1_000), ..Default::default() };
-        let mut turn = TurnState::new(&budget);
+        let mut turn = TurnState::new(&budget, &offer());
         turn.step = 1;
         assert_eq!(turn.last_step(20, &budget), None);
         turn.record_usage(&usage(Some(600)), "m", None, super::super::cache_watch::sign("m", &[], &[]));
@@ -410,7 +434,7 @@ mod tests {
     #[test]
     fn what_a_tool_spends_for_the_turn_counts_toward_its_cost_budget() {
         let budget = TurnBudget { max_cost_micros: Some(1_000), ..Default::default() };
-        let mut turn = TurnState::new(&budget);
+        let mut turn = TurnState::new(&budget, &offer());
         turn.step = 1;
         turn.record_tool_spend(&[spent("a", 600), done("b", vec![])]);
         assert_eq!(turn.last_step(20, &budget), None);
@@ -424,7 +448,7 @@ mod tests {
             max_wall_clock: Some(std::time::Duration::ZERO),
             ..Default::default()
         };
-        let mut turn = TurnState::new(&budget);
+        let mut turn = TurnState::new(&budget, &offer());
         turn.step = 1;
         assert_eq!(turn.last_step(20, &budget), Some(FinishReason::BudgetExceeded));
         // No budget: only the ceiling.
@@ -490,6 +514,38 @@ mod tests {
         }
     }
 
+    /// A tool list naming the tools these tests call.
+    fn offer() -> Vec<Value> {
+        ["sql_query", "web_search", "browse"]
+            .iter()
+            .map(|n| json!({ "type": "function", "function": { "name": n } }))
+            .collect()
+    }
+
+    /// The model can name a tool the turn never offered, and the executor
+    /// would run it. An applet whose `allowed-tools` leaves out `sql_write`
+    /// must not get it by asking.
+    #[tokio::test]
+    async fn a_call_to_a_tool_the_turn_did_not_offer_is_refused() {
+        let budget = TurnBudget::default();
+        let pool = sqlx::postgres::PgPoolOptions::new()
+            .connect_lazy("postgres://nobody@127.0.0.1:1/none")
+            .unwrap();
+        let exec = ToolExecutor::new(pool);
+        let mut turn = TurnState::new(&budget, &offer());
+        let rs = turn
+            .run_tools(
+                &exec,
+                vec![broken("a", "sql_write", "X"), broken("b", "sql_query", "X")],
+                &ToolContext::default(),
+                &ExecutorConfig::default(),
+            )
+            .await;
+        let by_id = |id: &str| rs.iter().find(|r| r.tool_call_id == id).unwrap().to_llm_content();
+        assert!(by_id("a").contains("There is no sql_write tool"), "{}", by_id("a"));
+        assert!(by_id("b").contains("not valid JSON"), "an offered tool still runs: {}", by_id("b"));
+    }
+
     #[tokio::test]
     async fn run_tools_orders_ran_then_refused_then_over_cap_and_records_refusals() {
         static CAPS: &[(&str, u32)] = &[("web_search", 1)];
@@ -500,7 +556,7 @@ mod tests {
         let exec = ToolExecutor::new(pool);
         let ctx = ToolContext::default();
         let cfg = ExecutorConfig::default();
-        let mut turn = TurnState::new(&budget);
+        let mut turn = TurnState::new(&budget, &offer());
         let ids = |rs: &[ToolExecutionResult]| rs.iter().map(|r| r.tool_call_id.clone()).collect::<Vec<_>>();
 
         // Consecutive failures of sql_query: 1.
