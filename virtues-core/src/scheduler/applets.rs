@@ -626,21 +626,31 @@ pub async fn update_applet(
     }
     q = q.bind(applet_id);
 
+    // A chat-authored applet's manifest is what reconcile restores it from,
+    // so the edit is written there too, inside the row's transaction: a
+    // manifest that cannot be written rolls the row back instead of leaving
+    // an edit the next reconcile undoes. The reconcile lock keeps a reconcile
+    // from reading the old catalog between the write and the reload.
+    let is_ai = current.owner == "ai";
+    let _reconcile = if is_ai {
+        Some(crate::applet_templates::reconcile_lock().lock().await)
+    } else {
+        None
+    };
+    let mut tx = db.begin().await?;
     let res = q
-        .execute(db)
+        .execute(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("failed to update action: {e}")))?;
     if res.rows_affected() == 0 {
         return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
     }
-
-    // Restore fidelity for chat-authored applets: the user's enable/disable
-    // choice mirrors into the manifest's default_enabled, so a DB rebuilt
-    // from disk comes back in the last chosen state (authoring plan §E).
-    if current.owner == "ai" {
-        if let Some(enabled) = obj.get("enabled").and_then(|v| v.as_bool()) {
-            crate::applet_templates::mirror_enabled_to_manifest(applet_id, enabled);
-        }
+    if is_ai {
+        crate::applet_templates::mirror_patch_to_manifest(applet_id, obj)?;
+    }
+    tx.commit().await?;
+    if is_ai {
+        crate::applet_templates::reload_catalog();
     }
 
     get_applet(db, applet_id).await

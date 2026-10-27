@@ -745,35 +745,98 @@ fn scan_root(root: &std::path::Path) -> Vec<Template> {
     actions
 }
 
-/// Mirror an ai-owned applet's enabled flag into its manifest
-/// (`default_enabled`) so a DB rebuilt from disk restores the user's last
-/// choice. Best-effort — only chat-authored folders (`user/` namespace) are
-/// ever touched, and failures just log.
-pub fn mirror_enabled_to_manifest(applet_id: &str, enabled: bool) {
+/// Write an edit to an ai-owned applet into its manifest.
+///
+/// Reconcile's `ai` branch overwrites name, agent, schedule, condition,
+/// triggers and the manifest's config keys from the manifest, so an edit
+/// that only reached the row was undone by the next reconcile. The manifest
+/// is where the edit has to land. `enabled` goes to `default_enabled`, so a
+/// database rebuilt from disk comes back in the owner's last choice.
+///
+/// Only chat-authored folders (`user/`) are written. An id with no folder in
+/// the catalog has nothing for reconcile to revert from, so it is a no-op.
+/// The caller reloads the catalog once the row is committed.
+pub fn mirror_patch_to_manifest(
+    applet_id: &str,
+    patch: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
     let Some(dir) = dir_for_applet_id(applet_id) else {
-        return;
+        return Ok(());
     };
     if !dir.starts_with("user/") {
-        return;
+        return Ok(());
     }
     let path = resolve_applet_dir(&dir).join("manifest.toml");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return;
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| Error::Other(format!("could not read {}: {e}", path.display())))?;
+    let mut doc = text
+        .parse::<toml::Value>()
+        .map_err(|e| Error::Other(format!("could not parse {}: {e}", path.display())))?;
+    apply_patch_to_manifest(&mut doc, patch)?;
+    let out = toml::to_string_pretty(&doc)
+        .map_err(|e| Error::Other(format!("could not serialize {}: {e}", path.display())))?;
+    std::fs::write(&path, out)
+        .map_err(|e| Error::Other(format!("could not write {}: {e}", path.display())))
+}
+
+/// The manifest half of [`mirror_patch_to_manifest`], without the disk.
+///
+/// A null clears the key. `config` replaces only the keys the manifest
+/// already declares: a key the patch leaves out is dropped so reconcile does
+/// not put it back, and a key the manifest never had stays in the row only,
+/// where runtime keys such as `date` belong. `memory` is not here because
+/// reconcile never writes it.
+fn apply_patch_to_manifest(
+    doc: &mut toml::Value,
+    patch: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| Error::Other("manifest is not a table".into()))?;
+    let to_toml = |key: &str, v: &serde_json::Value| {
+        toml::Value::try_from(v)
+            .map_err(|e| Error::InvalidInput(format!("{key} cannot be written to the manifest: {e}")))
     };
-    let Ok(mut doc) = text.parse::<toml::Value>() else {
-        return;
-    };
-    if let Some(table) = doc.as_table_mut() {
-        table.insert("default_enabled".into(), toml::Value::Boolean(enabled));
-        match toml::to_string_pretty(&doc) {
-            Ok(out) => {
-                if let Err(e) = std::fs::write(&path, out) {
-                    tracing::warn!(applet_id, error = %e, "enabled mirror write failed");
+    for (key, value) in patch {
+        match key.as_str() {
+            "name" | "agent" | "schedule" | "condition" | "triggers" => {
+                if key == "schedule" {
+                    // The old spelling; leaving it beside `schedule` is a
+                    // duplicate-field error on the next load.
+                    table.remove("default_cron");
+                }
+                if value.is_null() {
+                    table.remove(key);
+                } else {
+                    table.insert(key.clone(), to_toml(key, value)?);
                 }
             }
-            Err(e) => tracing::warn!(applet_id, error = %e, "enabled mirror serialize failed"),
+            "enabled" => {
+                if let Some(b) = value.as_bool() {
+                    table.insert("default_enabled".into(), toml::Value::Boolean(b));
+                }
+            }
+            "config" => {
+                let Some(new) = value.as_object() else { continue };
+                let Some(declared) = table.get_mut("config").and_then(|c| c.as_table_mut()) else {
+                    continue;
+                };
+                let keys: Vec<String> = declared.keys().cloned().collect();
+                for k in keys {
+                    match new.get(&k) {
+                        Some(v) if !v.is_null() => {
+                            declared.insert(k.clone(), to_toml(&k, v)?);
+                        }
+                        _ => {
+                            declared.remove(&k);
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
+    Ok(())
 }
 
 /// Copy a shipped applet into the state root so the owner can change it.
@@ -1389,10 +1452,11 @@ async fn upsert_row(
     //
     //   ai:     the third branch (authoring plan §E). The folder is written by
     //           the applet tool's setup, so COMPILED fields (name, agent, condition,
-    //           until, triggers, schedule) overwrite on reconcile — re-setup
-    //           IS the edit path and must propagate. OPERATIONAL state is
-    //           never touched: `enabled` (the gate lives there; the user
-    //           toggle mirrors back into the manifest for restore fidelity),
+    //           until, triggers, schedule) overwrite on reconcile, so every
+    //           edit goes to the manifest: re-setup writes the folder, and the
+    //           PATCH path writes it through `mirror_patch_to_manifest`.
+    //           OPERATIONAL state is never touched: `enabled` (the gate lives
+    //           there; the toggle mirrors into the manifest for restore),
     //           `memory`, and non-manifest config keys — manifest config
     //           merges OVER existing config so runtime keys survive.
     let sql = if template.owner == "user" {
@@ -2442,6 +2506,72 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
             names.iter().any(|n| n.ends_with("— Brex"))
                 && names.iter().any(|n| n.ends_with("— SoFi")),
             "each row should name its institution: {names:?}"
+        );
+    }
+
+    /// A chat-made applet that is retimed keeps its new schedule through a
+    /// reconcile, and so does the rest of the edit.
+    ///
+    /// Reconcile's `ai` branch rewrites name, agent, schedule, condition,
+    /// triggers and the manifest's config keys from the manifest. The edit
+    /// path wrote only the row, so the next boot or Reconcile put the old
+    /// values back without a word.
+    ///
+    /// Drives the row through `update_applet` and the folder through
+    /// `apply_patch_to_manifest` on a temp copy, because the catalog that
+    /// resolves an id to its folder is global to the test process.
+    #[sqlx::test]
+    async fn a_retimed_applet_survives_a_reconcile(pool: sqlx::PgPool) {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("manifest.toml");
+        std::fs::write(
+            &path,
+            "name = \"Retime probe\"\nowner = \"ai\"\ntriggers = [\"cron\", \"manual\"]\n\
+             default_cron = \"0 0 7 * * *\"\nagent = \"Say good morning.\"\n\
+             [config]\nchat_id = \"chat_a\"\nnote = \"keep\"\n",
+        )
+        .unwrap();
+        let id = "applet_user__retime_probe";
+        let reconcile = |pool: sqlx::PgPool| {
+            let path = path.clone();
+            async move {
+                let t = parse_template(&path, "user/retime_probe").expect("manifest loads");
+                upsert_row(&pool, &t, id, None, None, None).await.expect("upsert");
+            }
+        };
+        reconcile(pool.clone()).await;
+
+        let patch = serde_json::json!({
+            "schedule": "0 30 9 * * *",
+            "agent": "Say good evening.",
+            "config": { "chat_id": "chat_b", "date": "2026-01-02" },
+        });
+        crate::scheduler::applets::update_applet(&pool, id, &patch)
+            .await
+            .expect("update");
+        let mut doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        apply_patch_to_manifest(&mut doc, patch.as_object().unwrap()).unwrap();
+        std::fs::write(&path, toml::to_string_pretty(&doc).unwrap()).unwrap();
+
+        reconcile(pool.clone()).await;
+
+        let (schedule, agent, config): (Option<String>, Option<String>, serde_json::Value) =
+            sqlx::query_as("SELECT schedule, agent, config FROM app_applets WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(schedule.as_deref(), Some("0 30 9 * * *"), "the new schedule must survive");
+        assert_eq!(agent.as_deref(), Some("Say good evening."));
+        assert_eq!(config["chat_id"], "chat_b", "a manifest config key takes the edit");
+        assert!(config.get("note").is_none(), "a manifest key the edit dropped stays dropped");
+        assert_eq!(config["date"], "2026-01-02", "a runtime key stays in the row");
+
+        let reparsed = parse_template(&path, "user/retime_probe").unwrap();
+        assert_eq!(reparsed.schedule.as_deref(), Some("0 30 9 * * *"));
+        assert!(
+            !std::fs::read_to_string(&path).unwrap().contains("default_cron"),
+            "the old spelling must go, or the manifest has the field twice"
         );
     }
 }
