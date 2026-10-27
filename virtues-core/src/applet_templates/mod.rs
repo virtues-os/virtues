@@ -202,6 +202,13 @@ struct Template {
     /// `reauth_required`.
     #[serde(default)]
     needs_vault_key: bool,
+    /// Named keys this applet needs, such as `OPENAI_API_KEY`. The runner
+    /// sets each as an environment variable for the applet's runs, from the
+    /// owner's `env` secrets (`crate::secrets`), and fails a run whose key is
+    /// not set. An undeclared key is never passed. Names the box uses itself
+    /// are refused when the manifest loads (`reserved_env_name`).
+    #[serde(default)]
+    secrets: Vec<String>,
     /// Where this folder came from, when it is a copy of something else:
     /// `<origin>@<version>` — e.g. `virtues@v0.3.0` for a forked built-in, or
     /// `https://host/owner/repo@<sha>` for an edited import.
@@ -493,6 +500,19 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
              manifest format than this box runs."
         );
     }
+
+    let (kept, refused): (Vec<String>, Vec<String>) =
+        std::mem::take(&mut tmpl.secrets).into_iter().partition(|n| valid_secret_name(n));
+    if !refused.is_empty() {
+        tracing::warn!(
+            path = %manifest_path.display(),
+            names = %refused.join(", "),
+            "manifest.toml declares secrets with names an applet cannot have: they \
+             are being ignored. A name is CAPITALS_AND_UNDERSCORES and not one the \
+             box sets itself."
+        );
+    }
+    tmpl.secrets = kept;
 
     if tmpl.id_prefix.is_none() {
         // Migration 0077 rewrote the stored ids to this prefix. `manifest.toml`
@@ -813,6 +833,32 @@ pub fn declares_vault_key_need(applet_id: &str) -> bool {
         Some(dir) => template_needs_vault_key(&dir),
         None => false,
     }
+}
+
+/// The named keys the applet behind this id declares (`secrets = [...]`),
+/// already checked by [`valid_secret_name`]. Resolves fan-out ids too.
+pub fn declared_secrets(applet_id: &str) -> Vec<String> {
+    let Some(dir) = dir_for_applet_id(applet_id) else {
+        return Vec::new();
+    };
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    guard
+        .action
+        .iter()
+        .find(|t| t.dir == dir)
+        .map(|t| t.secrets.clone())
+        .unwrap_or_default()
+}
+
+/// A name an applet may declare: an environment variable name in capitals
+/// (`OPENAI_API_KEY`) that the box does not set itself. A declared
+/// `DATABASE_URL` or `PATH` would otherwise replace the box's own.
+fn valid_secret_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let starts = chars.next().is_some_and(|c| c.is_ascii_uppercase());
+    starts
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        && !crate::applet_runner::reserved_env_name(name)
 }
 
 /// What the folder at `dir` was forked from, if its manifest records it —
@@ -1472,6 +1518,24 @@ mod tests {
             vec!["not_a_key", "runtime"],
             "unknown keys must be captured so the loader can name them"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A declared key the box sets itself would replace the box's own value
+    /// in the applet's environment, so the loader drops it, and keeps the rest.
+    #[test]
+    fn declared_secrets_keep_only_names_an_applet_may_have() {
+        let dir = std::env::temp_dir().join(format!("tmpl-secrets-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("manifest.toml");
+        std::fs::write(
+            &path,
+            "name = \"Keys\"\nowner = \"user\"\nsecrets = [\"OPENAI_API_KEY\", \"DATABASE_URL\", \"VIRTUES_ENCRYPTION_KEY\", \"lower_case\", \"GITHUB_TOKEN\", \"9LIVES\"]\n",
+        )
+        .unwrap();
+
+        let t = super::parse_template(&path, "keys").expect("manifest should still load");
+        assert_eq!(t.secrets, ["OPENAI_API_KEY", "GITHUB_TOKEN"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 

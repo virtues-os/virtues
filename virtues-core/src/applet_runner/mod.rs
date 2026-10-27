@@ -783,6 +783,13 @@ struct SubprocessOutcome {
 /// Environment every applet gets. Deliberately short: an applet receives its
 /// config, its payload and its already-decrypted credentials on **stdin**, so
 /// the environment is for reaching the box's own services, not for secrets.
+/// Whether the box sets `name` in an applet's environment itself, so an
+/// applet may not declare it as one of its `secrets`: the passthrough list,
+/// the box key, and anything under the `VIRTUES_` prefix.
+pub fn reserved_env_name(name: &str) -> bool {
+    ENV_PASSTHROUGH.contains(&name) || name.starts_with("VIRTUES_")
+}
+
 const ENV_PASSTHROUGH: &[&str] = &[
     // Process basics. Without PATH a bare `python3` argv0 cannot resolve.
     "PATH",
@@ -1057,6 +1064,39 @@ fn env_pairs(applet_id: &str, shipped: bool) -> Vec<(String, String)> {
     out
 }
 
+/// The owner's `env` secrets this applet declares, as environment variables.
+/// A declared key that is not set fails the run before it starts, with the
+/// sentence the run's status shows: the applet would otherwise start and fail
+/// somewhere less clear.
+async fn declared_env_secrets(db: &PgPool, applet_id: &str) -> Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    let mut missing = Vec::new();
+    for name in crate::applet_templates::declared_secrets(applet_id) {
+        match crate::secrets::get(db, crate::secrets::Kind::Env, &name)
+            .await
+            .map_err(|e| Error::Other(format!("reading {name}: {e:#}")))?
+        {
+            Some((value, _)) => out.push((name, value)),
+            None => missing.push(name),
+        }
+    }
+    if !missing.is_empty() {
+        return Err(Error::Other(missing_secrets_sentence(&missing)));
+    }
+    Ok(out)
+}
+
+/// "Add OPENAI_API_KEY in Settings, under Keys and passwords." Names joined
+/// as a person would list them.
+fn missing_secrets_sentence(missing: &[String]) -> String {
+    let names = match missing {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    format!("Add {names} in Settings, under Keys and passwords.")
+}
+
 async fn run_subprocess(
     db: &PgPool,
     action: &Applet,
@@ -1093,6 +1133,7 @@ async fn run_subprocess(
     // The run the subprocess's AI calls are recorded against, so this
     // applet's spend reaches its `max_llm_cost_per_day` (`limits.rs`).
     env.push((crate::virtues_api::client::APPLET_RUN_ENV.to_string(), run_id.to_string()));
+    env.extend(declared_env_secrets(db, &action.id).await?);
     let mut cmd = build_command(
         &program,
         &command[1..],
@@ -1431,6 +1472,25 @@ pub(crate) fn resolve_program(argv0: &str) -> PathBuf {
 mod tests {
     use super::ENV_PASSTHROUGH;
     use super::*;
+
+    #[test]
+    fn a_missing_key_names_itself_and_where_to_add_it() {
+        let one = ["OPENAI_API_KEY".to_string()];
+        assert_eq!(missing_secrets_sentence(&one), "Add OPENAI_API_KEY in Settings, under Keys and passwords.");
+        let three = ["A_KEY".to_string(), "B_KEY".to_string(), "C_KEY".to_string()];
+        assert_eq!(
+            missing_secrets_sentence(&three),
+            "Add A_KEY, B_KEY and C_KEY in Settings, under Keys and passwords."
+        );
+    }
+
+    #[test]
+    fn the_box_names_are_reserved() {
+        for name in ["PATH", "DATABASE_URL", "VIRTUES_ENCRYPTION_KEY", "VIRTUES_API_KEY", "VIRTUES_APPLET_RUN_ID"] {
+            assert!(reserved_env_name(name), "{name} must be reserved");
+        }
+        assert!(!reserved_env_name("OPENAI_API_KEY"));
+    }
     use crate::server::yjs::YjsState;
 
     async fn applet_with_falsy_condition(pool: &sqlx::PgPool, id: &str, triggers: &str) {

@@ -507,6 +507,27 @@ pub async fn message_applet_handler(
     }
 }
 
+/// The keys an applet declares (`secrets = [...]` in its manifest), each with
+/// whether the owner has set it. Names only: a value never leaves the box here.
+async fn declared_secrets_status(pool: &sqlx::PgPool, applet_id: &str) -> anyhow::Result<Vec<serde_json::Value>> {
+    let declared = crate::applet_templates::declared_secrets(applet_id);
+    if declared.is_empty() {
+        return Ok(Vec::new());
+    }
+    let set: std::collections::HashSet<String> = crate::secrets::list(pool, crate::secrets::Kind::Env)
+        .await?
+        .into_iter()
+        .map(|n| n.key)
+        .collect();
+    Ok(declared
+        .into_iter()
+        .map(|name| {
+            let is_set = set.contains(&name);
+            serde_json::json!({ "name": name, "is_set": is_set })
+        })
+        .collect())
+}
+
 /// GET /api/applets/:id — single applet with its last run inlined.
 pub async fn get_applet_handler(
     State(state): State<AppState>,
@@ -519,6 +540,16 @@ pub async fn get_applet_handler(
                 .await
                 .ok()
                 .flatten();
+            let secrets = match declared_secrets_status(pool, &action.id).await {
+                Ok(s) => s,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": format!("{e:#}") })),
+                    )
+                        .into_response()
+                }
+            };
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
@@ -542,6 +573,7 @@ pub async fn get_applet_handler(
                     "next_due_at": action.next_due_at,
                     "last_slot_at": action.last_slot_at,
                     "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
+                    "secrets": secrets,
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,
                     "last_run": last_run,
