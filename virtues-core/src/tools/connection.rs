@@ -21,7 +21,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures::StreamExt;
-use rmcp::model::{CallToolRequestParams, ClientConfig};
+use rmcp::model::{CallToolRequestParams, ClientConfig, Tool};
 use rmcp::service::RunningService;
 use rmcp::transport::auth::{
     AuthClient, AuthError, AuthorizationManager, AuthorizationRequest, CredentialStore, OAuthState,
@@ -142,6 +142,8 @@ const PROMPT: &str = "You act in one service the owner connected, using only its
 
 Read before you change anything: find the exact item the task names. If two items could match, stop and say which ones.
 
+Deleting, archiving or overwriting something needs the owner's OK. If the task needs it and those tools are not offered to you, stop and say exactly what you would change.
+
 When you finish, answer in a few sentences: what you did or found, with each item's identifier and link as the service returned them.";
 
 // ── Stored tokens ───────────────────────────────────────────────────────────
@@ -245,7 +247,7 @@ pub async fn disconnect(pool: &PgPool, id: &str) -> Result<()> {
         .bind(id)
         .execute(pool)
         .await?;
-    clients().lock().await.remove(id);
+    forget_session(id).await;
     Ok(())
 }
 
@@ -300,7 +302,7 @@ pub async fn finish(code: &str, csrf: &str, issuer: Option<&str>) -> Result<Conn
         .handle_callback_with_issuer(code, csrf, issuer)
         .await
         .context("exchange the code for a token")?;
-    clients().lock().await.remove(&sign_in.connection.id);
+    forget_session(&sign_in.connection.id).await;
     Ok(sign_in.connection)
 }
 
@@ -313,6 +315,29 @@ fn clients() -> &'static Mutex<HashMap<String, Arc<Client>>> {
     CLIENTS.get_or_init(Default::default)
 }
 
+/// Each connection's tool list, read once per session: the worker's
+/// definitions, the destructive check on each call and the receipts all read
+/// it. Dropped with the session.
+fn tool_lists() -> &'static Mutex<HashMap<String, Arc<Vec<Tool>>>> {
+    static LISTS: OnceLock<Mutex<HashMap<String, Arc<Vec<Tool>>>>> = OnceLock::new();
+    LISTS.get_or_init(Default::default)
+}
+
+/// Drops the cached session and tool list, so the next call opens fresh.
+async fn forget_session(id: &str) {
+    clients().lock().await.remove(id);
+    tool_lists().lock().await.remove(id);
+}
+
+async fn tools(client: &Client, connection: &Connection) -> Result<Arc<Vec<Tool>>> {
+    if let Some(tools) = tool_lists().lock().await.get(&connection.id) {
+        return Ok(tools.clone());
+    }
+    let tools = Arc::new(client.list_all_tools().await.context("list the service's tools")?);
+    tool_lists().lock().await.insert(connection.id.clone(), tools.clone());
+    Ok(tools)
+}
+
 /// A live MCP session with `connection`, signed in from its stored tokens.
 async fn client(pool: &PgPool, connection: &Connection) -> Result<Arc<Client>> {
     if let Some(client) = clients().lock().await.get(&connection.id) {
@@ -320,6 +345,7 @@ async fn client(pool: &PgPool, connection: &Connection) -> Result<Arc<Client>> {
             return Ok(client.clone());
         }
     }
+    tool_lists().lock().await.remove(&connection.id);
     let mut manager = AuthorizationManager::new(&connection.url).await.context("reach the service")?;
     manager.set_credential_store(Stored { pool: pool.clone(), connection: connection.clone() });
     if !manager.initialize_from_store().await.context("read the sign-in")? {
@@ -352,12 +378,28 @@ pub fn split(name: &str) -> Option<(&str, &str)> {
     (short && !tool.is_empty()).then_some((id, tool))
 }
 
-/// The connection's tools as LLM definitions, all of them: the owner decided
-/// connection tools run without asking, whatever their annotations say.
-async fn tool_definitions(client: &Client, connection: &Connection) -> Result<Vec<Value>> {
-    let tools = client.list_all_tools().await.context("list the service's tools")?;
-    Ok(tools
+// What a tool does comes only from the labels its server publishes (MCP tool
+// annotations). The box never guesses from a tool's name or description.
+
+/// The server labels the tool as destroying or overwriting. Only an explicit
+/// `true` counts: the owner decided assistant actions do not ask, and deletes
+/// do.
+fn destructive(tool: &Tool) -> bool {
+    tool.annotations.as_ref().and_then(|a| a.destructive_hint) == Some(true)
+}
+
+/// The server labels the tool as only reading. Every other call is a write,
+/// and gets a receipt.
+fn read_only(tool: &Tool) -> bool {
+    tool.annotations.as_ref().and_then(|a| a.read_only_hint) == Some(true)
+}
+
+/// The connection's tools as LLM definitions, leaving out the destructive
+/// ones unless the owner confirmed.
+fn tool_definitions(tools: &[Tool], connection: &Connection, confirmed: bool) -> Vec<Value> {
+    tools
         .iter()
+        .filter(|t| confirmed || !destructive(t))
         .map(|t| {
             json!({
                 "type": "function",
@@ -368,11 +410,69 @@ async fn tool_definitions(client: &Client, connection: &Connection) -> Result<Ve
                 }
             })
         })
-        .collect())
+        .collect()
 }
 
-/// Runs one of a connection's tools, for the worker.
-pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, _context: &ToolContext) -> ToolResult {
+/// A write the worker made in a connected service, for the chat's receipt.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct Receipt {
+    pub service: String,
+    /// What was done: the tool's title as its server gives it, or its name
+    /// as a sentence.
+    pub action: String,
+    /// The item it touched, such as `VIR-412 Fix the sync`, when the
+    /// service's answer names one.
+    pub item: Option<String>,
+    pub link: Option<String>,
+}
+
+fn receipt(connection: &Connection, tool: &Tool, result: &Value) -> Receipt {
+    let action = tool
+        .title
+        .clone()
+        .or_else(|| tool.annotations.as_ref().and_then(|a| a.title.clone()))
+        .filter(|t| !t.trim().is_empty())
+        .unwrap_or_else(|| as_sentence(&tool.name));
+    // The service's answer: structured content, or JSON in its text.
+    let body = result
+        .get("structured")
+        .filter(|v| v.is_object())
+        .cloned()
+        .or_else(|| result.get("content").and_then(Value::as_str).and_then(|t| serde_json::from_str(t).ok()));
+    let (item, link) = body.as_ref().map(item_and_link).unwrap_or_default();
+    Receipt { service: connection.name.clone(), action, item, link }
+}
+
+/// `save_comment` as `Save comment`.
+fn as_sentence(name: &str) -> String {
+    let words = name.replace(['_', '-'], " ");
+    let mut chars = words.trim().chars();
+    chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
+}
+
+/// The item a service's answer names, and its link: the answer's own fields,
+/// then those of an object one level in (a comment's issue, say).
+fn item_and_link(body: &Value) -> (Option<String>, Option<String>) {
+    let Some(top) = body.as_object() else { return (None, None) };
+    let objects: Vec<&serde_json::Map<String, Value>> =
+        std::iter::once(top).chain(top.values().filter_map(Value::as_object)).collect();
+    let text = |o: &serde_json::Map<String, Value>, key: &str| {
+        o.get(key).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
+    };
+    let link = objects.iter().find_map(|o| text(o, "url").filter(|u| u.starts_with("https://")));
+    let item = objects.iter().find_map(|o| {
+        let name = text(o, "title").or_else(|| text(o, "name"));
+        match (text(o, "identifier"), name) {
+            (Some(id), Some(name)) => Some(format!("{id} {name}")),
+            (id, name) => id.or(name),
+        }
+    });
+    (item, link)
+}
+
+/// Runs one of a connection's tools, for the worker. A destructive tool runs
+/// only when the owner confirmed in chat.
+pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, context: &ToolContext) -> ToolResult {
     let Some((id, tool)) = split(name) else {
         return ToolResult::error(format!("{name} is not a connected service's tool."));
     };
@@ -386,6 +486,18 @@ pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, _context: &T
         Ok(client) => client,
         Err(e) => return ToolResult::error(format!("{e:#}")),
     };
+    if !context.owner_confirmed {
+        let listed = match tools(&client, connection).await {
+            Ok(listed) => listed,
+            Err(e) => return ToolResult::error(format!("{e:#}")),
+        };
+        if listed.iter().any(|t| t.name == tool && destructive(t)) {
+            return ToolResult::error(format!(
+                "{tool} deletes or overwrites something in {}. Stop and say what it would change; the owner has to agree first.",
+                connection.name
+            ));
+        }
+    }
     let arguments = match arguments {
         Value::Object(map) => Some(map),
         Value::Null => None,
@@ -414,7 +526,7 @@ pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, _context: &T
         }
         Err(e) => {
             // A dead session is dropped so the next call opens a fresh one.
-            clients().lock().await.remove(&connection.id);
+            forget_session(&connection.id).await;
             ToolResult::error(format!("{} did not answer: {e}", connection.name))
         }
     }
@@ -429,6 +541,7 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
     let Some(task) = args.get("task").and_then(Value::as_str).filter(|t| !t.trim().is_empty()) else {
         return ToolResult::error("connection needs a `task`.");
     };
+    let confirmed = args.get("confirmed").and_then(Value::as_bool) == Some(true);
 
     let connected = match connected(pool).await {
         Ok(c) => c,
@@ -457,10 +570,11 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
         Ok(client) => client,
         Err(e) => return ToolResult::error(format!("{e:#}")),
     };
-    let tools = match tool_definitions(&client, connection).await {
-        Ok(tools) => tools,
+    let listed = match tools(&client, connection).await {
+        Ok(listed) => listed,
         Err(e) => return ToolResult::error(format!("{e:#}")),
     };
+    let definitions = tool_definitions(&listed, connection, confirmed);
 
     let mut messages = build_context_for_llm(&[], None, 0, Some(PROMPT), None, None);
     messages.push(json!({ "role": "user", "content": format!("Service: {}\n\nTask: {task}", connection.name) }));
@@ -476,21 +590,40 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
         user_id: Some(TOOL.to_string()),
         chat_id: context.chat_id.as_ref().map(|chat| format!("{chat}:{TOOL}")),
         cancel_token: context.cancel_token.clone(),
+        owner_confirmed: confirmed,
         ..Default::default()
     };
     let cancel = context.cancel_token.clone();
-    let mut stream = agent.run(model.clone(), messages, tools, worker, cancel);
+    let mut stream = agent.run(model.clone(), messages, definitions, worker, cancel);
 
     let mut answer = String::new();
-    let mut changed: Vec<String> = Vec::new();
+    let mut used: Vec<String> = Vec::new();
+    let mut calls: HashMap<String, String> = HashMap::new();
+    let mut receipts: Vec<Receipt> = Vec::new();
     let mut usage = DelegatedUsage { model: model.clone(), ..Default::default() };
     while let Some(event) = stream.next().await {
         match event {
             AgentEvent::TextDelta { content } => answer.push_str(&content),
-            AgentEvent::ToolCallStart { name, .. } => {
+            AgentEvent::ToolCallStart { id, name, .. } => {
                 answer.clear();
                 if let Some((_, tool)) = split(&name) {
-                    changed.push(tool.to_string());
+                    used.push(tool.to_string());
+                    calls.insert(id, tool.to_string());
+                }
+            }
+            AgentEvent::ToolCallResult { id, result, success: true, .. } => {
+                let tool = calls.get(&id).and_then(|name| listed.iter().find(|t| t.name == *name));
+                if let Some(tool) = tool.filter(|t| !read_only(t)) {
+                    let r = receipt(connection, tool, &result);
+                    tracing::info!(
+                        audit = "connection_write",
+                        connection = %connection.id,
+                        tool = %tool.name,
+                        item = r.item.as_deref().unwrap_or(""),
+                        link = r.link.as_deref().unwrap_or(""),
+                        "connection write"
+                    );
+                    receipts.push(r);
                 }
             }
             AgentEvent::Usage { prompt_tokens, completion_tokens, reasoning_tokens, cache_read_tokens, cost_micros, .. } => {
@@ -508,7 +641,8 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
     ToolResult::success(json!({
         "service": connection.name,
         "answer": answer.trim(),
-        "tools_used": changed,
+        "tools_used": used,
+        "receipts": receipts,
         "usage": [usage],
     }))
 }
@@ -557,6 +691,47 @@ mod tests {
         assert_eq!((c.id.as_str(), c.name.as_str()), ("example", "mcp.example.com"));
         assert!(Connection::pasted("http://mcp.example.com/mcp", &[]).is_err());
         assert!(Connection::pasted("not an address", &[]).is_err());
+    }
+
+    #[test]
+    fn only_an_explicit_destructive_hint_counts() {
+        let schema = Arc::new(serde_json::Map::new());
+        let plain = Tool::new("list_issues", "", schema.clone());
+        assert!(!destructive(&plain));
+        let delete = Tool::new("delete_issue", "", schema)
+            .with_annotations(rmcp::model::ToolAnnotations::new().destructive(true));
+        assert!(destructive(&delete));
+    }
+
+    fn linear() -> Connection {
+        Connection::listed(listed("Linear", "https://mcp.linear.app/mcp"), &[])
+    }
+
+    #[test]
+    fn only_the_servers_read_only_label_makes_a_read() {
+        let schema = Arc::new(serde_json::Map::new());
+        let unlabeled = Tool::new("list_issues", "", schema.clone());
+        assert!(!read_only(&unlabeled), "an unlabeled tool is a write, whatever its name");
+        let read = Tool::new("list_issues", "", schema)
+            .with_annotations(rmcp::model::ToolAnnotations::new().read_only(true));
+        assert!(read_only(&read));
+    }
+
+    #[test]
+    fn a_receipt_names_the_item_and_link_the_service_returned() {
+        let schema = Arc::new(serde_json::Map::new());
+        let save = Tool::new("save_comment", "", schema.clone());
+        let answer = json!({ "id": "c1", "url": "https://linear.app/x/issue/VIR-1#comment-c1",
+            "issue": { "identifier": "VIR-1", "title": "Fix the sync", "url": "https://linear.app/x/issue/VIR-1" } });
+        let r = receipt(&linear(), &save, &json!({ "content": answer.to_string(), "structured": null }));
+        assert_eq!(r.action, "Save comment");
+        assert_eq!(r.item.as_deref(), Some("VIR-1 Fix the sync"));
+        assert_eq!(r.link.as_deref(), Some("https://linear.app/x/issue/VIR-1#comment-c1"));
+        assert_eq!(r.service, "Linear");
+
+        let titled = Tool::new("create_page", "", schema).with_title("Create a page");
+        let plain = receipt(&linear(), &titled, &json!({ "content": "Done.", "structured": null }));
+        assert_eq!((plain.action.as_str(), plain.item, plain.link), ("Create a page", None, None));
     }
 
     /// A connection is listed as one and never as a data source, which

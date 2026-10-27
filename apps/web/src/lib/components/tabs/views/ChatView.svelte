@@ -122,6 +122,7 @@
 	import CodeInterpreterCard from "$lib/components/chat/CodeInterpreterCard.svelte";
 	import SentMessageCard from "$lib/components/chat/SentMessageCard.svelte";
 	import TaskCard from "$lib/components/chat/TaskCard.svelte";
+	import ConnectionReceiptCard from "$lib/components/chat/ConnectionReceiptCard.svelte";
 	import Show from "$lib/components/chat/show/Show.svelte";
 	import AppletProposalCard from '$lib/components/chat/AppletProposalCard.svelte';
 	import CompactionCheckpoint from "$lib/components/chat/CompactionCheckpoint.svelte";
@@ -2187,6 +2188,10 @@
 													tasks={out?.tasks ?? (out?.task ? [out.task] : [])}
 													verb={part.type === "tool-create_task" ? "added" : "updated"}
 												/>
+											{:else if part.type === "tool-connection" && (part as any).state === "output-available" && (part as any).output?.receipts?.length}
+												<!-- What changed in a connected service, one card per write.
+												     Reads leave nothing here; they are in the thinking block. -->
+												<ConnectionReceiptCard receipts={(part as any).output.receipts} />
 											{:else if part.type === "tool-generate_image"}
 												{@const gen = part as any}
 												{#if gen.state === "output-available" && gen.output?.url}

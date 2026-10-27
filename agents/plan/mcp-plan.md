@@ -131,12 +131,22 @@ worker moves to the Standard slot. That is a measurement for slice 2.
 
 ### What asks
 
-Nothing. The owner decided on 2026-10-27 that connection tools run without
-asking, deletes included, and that the box adds no rules of its own for
-deletes, money or messages. MCP tool annotations (`readOnlyHint`,
-`destructiveHint`) are passed over: they are claims the server makes, and
-the box does not act on them. Every write shows a receipt in the chat:
-which service, what was done, and a link to it there.
+Only what the server itself labels. MCP tool annotations carry
+`readOnlyHint` and `destructiveHint`, and the box acts on them and on
+nothing else: it keeps no lists of tool names or words of its own for
+deletes, money or messages (the owner, 2026-10-27).
+
+- A tool labeled `destructiveHint: true` is left out of the worker's list
+  and refused unless the chat called with `confirmed`, after the owner
+  agreed in chat.
+- Every other tool runs without asking.
+- A tool labeled `readOnlyHint: true` is a read. Any other call is a write,
+  and each write shows a receipt in the chat: which service, what was done,
+  and a link to it there.
+
+A server that leaves out the labels gets no prompt on a delete and a receipt
+on every call. That is the server's choice, and the featured list is why it
+matters which servers come first.
 
 ### Applets and connections
 
@@ -334,11 +344,13 @@ name.
      client registration; the redirect is `/api/connections/callback` at the
      origin the owner's app sends, so no proxy holds the code. Tokens are a
      sealed `credentials` row (kind `connection`), which rmcp loads and
-     refreshes. Chat gets one `connection(name, task)` tool
+     refreshes. Chat gets one `connection(name, task, confirmed)` tool
      (its own 900-character budget group); a Lite-slot worker gets the
      service's tools as `<connection>__<tool>` definitions, built from
-     `tools/list`, never registry rows. Every tool the service lists is
-     offered and runs without asking.
+     `tools/list`, never registry rows. A tool whose annotations say
+     `destructiveHint: true` is left out of the worker's list and refused by
+     the executor branch unless the chat called with `confirmed`, which sets
+     `ToolContext::owner_confirmed`.
    - Built after: any registry server or pasted address, not one constant
      (`tools/connection_registry.rs`); Settings → Connections with the
      featured list, a registry search and an address field
@@ -357,8 +369,17 @@ name.
      The Lite-slot worker made five read calls (four `list_issues`, one
      `list_custom_views`) and spent about a quarter of a cent; the chat
      answered with linked issue identifiers.
-   - Left: a write run; receipts in the chat for writes; servers that take
-     an API key in a header.
+   - Receipts: the worker loop builds one for each call to a tool its
+     server does not label `readOnlyHint: true`, from the tool's title and
+     the service's answer (its item and `url`), never the model's wording.
+     They return in the `connection` result as `receipts` and the chat draws
+     `ConnectionReceiptCard` for them; each is also logged as
+     `audit="connection_write"`. Each connection's tool list is read once
+     per session and shared by the definitions, the destructive check and
+     the receipts. Checked live: Linear labels `get_issue` read-only, and a
+     read question made no receipt.
+   - Left: a write run against a real account; servers that take an API key
+     in a header.
 4. **Connections in applets.** `allowed-tools` entries for connection tools,
    the Rule of Two legs, owner-only adding. Then owner-added URLs from
    Settings.
