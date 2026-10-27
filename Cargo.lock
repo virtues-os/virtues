@@ -9046,6 +9046,7 @@ dependencies = [
  "hex",
  "hmac",
  "html-escape",
+ "httparse",
  "iana-time-zone",
  "image",
  "indicatif 0.17.11",

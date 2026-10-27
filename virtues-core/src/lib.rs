@@ -18,6 +18,7 @@ pub mod data_disk;
 pub mod database;
 pub mod dayline;
 pub mod door;
+pub mod egress;
 pub mod entity_resolution;
 pub mod error;
 pub mod extraction;
