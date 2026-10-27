@@ -796,11 +796,12 @@ Each was checked against the code on that date.
   registers it
   ([tools/applet_setup.rs](../../virtues-core/src/tools/applet_setup.rs)).
   Refuse it.
-
-The DST drift listed in the refactor plan is already fixed: jobs register with
-`new_async_tz` and a `chrono_tz::Tz`. The header comment in
-[scheduler/mod.rs](../../virtues-core/src/scheduler/mod.rs) still describes
-the old behavior and should be corrected.
+- Cron jobs drift an hour after a DST change. `new_async_tz` takes a
+  `chrono_tz::Tz` but fixes its UTC offset when the job is registered, and
+  the sync pass re-registered only retimed jobs
+  ([scheduler/mod.rs](../../virtues-core/src/scheduler/mod.rs)). Each job
+  now records its offset, and the sync pass re-registers it when the offset
+  changes.
 
 ### 1. Read applet folders written as SKILL.md
 

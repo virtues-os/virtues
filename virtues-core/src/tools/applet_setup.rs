@@ -181,6 +181,15 @@ pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value
                 Some("6 fields (seconds first), box-local timezone — e.g. '0 0 6 * * *' = daily 6am"),
             ));
         }
+        // The scheduler only picks up rows whose triggers include `cron`, so
+        // a schedule without it is saved, shown, and never fires.
+        if !triggers.iter().any(|t| t == "cron") {
+            findings.push(finding(
+                "triggers",
+                "a schedule is set but `triggers` has no `cron`, so it would never run on that schedule",
+                Some("add \"cron\" to triggers, or remove the schedule"),
+            ));
+        }
     }
 
     if agent.as_deref().is_some_and(|a| a.len() > AGENT_MAX) {
@@ -881,5 +890,31 @@ mod tests {
         )
         .await;
         assert!(out.is_empty(), "unexpected findings: {out:?}");
+    }
+
+    /// The scheduler only runs rows whose triggers include `cron`. A draft
+    /// that sets a schedule and lists its own triggers without it was saved
+    /// and shown as scheduled, and never ran.
+    #[sqlx::test]
+    async fn a_schedule_without_a_cron_trigger_is_a_finding(pool: PgPool) {
+        let draft = |triggers: serde_json::Value| {
+            Draft::parse(&serde_json::json!({
+                "name": "Morning note",
+                "description": "Writes a short note each morning.",
+                "agent": "Write one sentence about the weather.",
+                "schedule": "0 0 7 * * *",
+                "triggers": triggers,
+            }))
+            .unwrap()
+        };
+        let on_triggers = |out: &[serde_json::Value]| {
+            out.iter().filter(|f| f["field"] == "triggers").count()
+        };
+
+        let out = check(&pool, &draft(serde_json::json!(["manual", "tool"]))).await;
+        assert_eq!(on_triggers(&out), 1, "a schedule with no cron must be refused: {out:?}");
+
+        let out = check(&pool, &draft(serde_json::json!(["cron", "manual"]))).await;
+        assert_eq!(on_triggers(&out), 0, "unexpected findings: {out:?}");
     }
 }
