@@ -18,7 +18,11 @@
 //! - its credentials as a file, `$CREDENTIALS_DIRECTORY/credentials.json`
 //!   (systemd `LoadCredential=`), which only the run can read. The stdin
 //!   input carries `"credentials": null`;
-//! - its environment, including declared keys, from a file only PID 1 reads.
+//! - its environment, including declared keys, from a file only PID 1 reads;
+//! - no network, unless its file asks for hosts with `net(host)` and the
+//!   owner has allowed them on the applet's page ([`allowed_hosts`]). Then it
+//!   gets an egress proxy for the run ([`crate::egress`]) that reaches only
+//!   those hosts, and every request is recorded on the run.
 //!
 //! Shipped code keeps running directly as the box user, outside all of this.
 //! The design is in agents/plan/applet-shape.md, under "A real boundary for
@@ -125,7 +129,67 @@ fn prepare_lake_folder(dir: &Path) -> Result<()> {
         .map_err(|e| Error::Other(format!("could not open the applet's lake folder {}: {e}", dir.display())))
 }
 
+/// The hosts this run may reach: the ones its file asks for with `net(host)`
+/// that the owner has also allowed. Neither list alone opens anything, so a
+/// file the assistant or an import wrote cannot give itself a way out, and
+/// the owner cannot hand an applet a host it never asked for. This is the
+/// Rule of Two's third leg, which only the owner adds (agents/plan/
+/// applet-shape.md, "The Rule of Two, checked at save").
+pub(super) async fn allowed_hosts(db: &PgPool, applet_id: &str, config: &serde_json::Value) -> Result<Vec<String>> {
+    let requested: Vec<String> = config
+        .get("net_hosts")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|h| h.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    if requested.is_empty() {
+        return Ok(Vec::new());
+    }
+    let owner: Vec<String> = sqlx::query_scalar("SELECT net_hosts FROM app_applets WHERE id = $1")
+        .bind(applet_id)
+        .fetch_one(db)
+        .await?;
+    Ok(requested.into_iter().filter(|h| owner.contains(h)).collect())
+}
+
+/// The egress proxy for one run, with its socket in a folder only the box
+/// user can open.
+pub(super) fn start_proxy(run_id: &str, hosts: &[String]) -> Result<crate::egress::Proxy> {
+    use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
+    let grant = crate::egress::Grant::new(hosts.iter().map(String::as_str)).map_err(Error::Other)?;
+    let dir = crate::data_disk::data_dir().join("egress");
+    std::fs::DirBuilder::new()
+        .recursive(true)
+        .mode(0o700)
+        .create(&dir)
+        .and_then(|_| std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700)))
+        .map_err(|e| Error::Other(format!("could not create the egress folder {}: {e}", dir.display())))?;
+    let path = dir.join(format!("{run_id}.sock"));
+    let _ = std::fs::remove_file(&path);
+    crate::egress::Proxy::start(&path, grant)
+        .map_err(|e| Error::Other(format!("could not start the egress proxy at {}: {e}", path.display())))
+}
+
+/// Write what a run's proxy saw onto the run.
+pub(super) async fn record_requests(db: &PgPool, run_id: &str, requests: &[crate::egress::Request]) -> Result<()> {
+    for r in requests {
+        sqlx::query(
+            "INSERT INTO app_applet_run_requests (run_id, host, method, sent_bytes, received_bytes, refused_reason)
+             VALUES ($1, $2, $3, $4, $5, $6)",
+        )
+        .bind(run_id)
+        .bind(&r.host)
+        .bind(&r.method)
+        .bind(r.bytes_sent as i64)
+        .bind(r.bytes_received as i64)
+        .bind(&r.refused)
+        .execute(db)
+        .await?;
+    }
+    Ok(())
+}
+
 /// The run's command, and the files it needs until it ends.
+#[allow(clippy::too_many_arguments)]
 pub(super) fn command(
     applet_id: &str,
     program: &Path,
@@ -134,6 +198,7 @@ pub(super) fn command(
     env: &[(String, String)],
     credentials: Option<&serde_json::Value>,
     whole_lake: bool,
+    egress: Option<&Path>,
 ) -> Result<(Command, Vec<super::RunFile>)> {
     let folder = crate::applet_templates::dir_for_applet_id(applet_id)
         .map(|d| crate::applet_templates::resolve_applet_dir(&d))
@@ -175,7 +240,7 @@ pub(super) fn command(
         memory_max: MEMORY_MAX,
         working_directory: if folder.is_some() { FOLDER } else { "/tmp" },
         binds,
-        egress: None,
+        egress: egress.map(Path::to_path_buf),
         postgres: true,
         extra,
     };
@@ -362,6 +427,21 @@ mod tests {
             assert!(url.starts_with("postgres://virtues_applet_writer:"), "{url}");
             assert!(url.ends_with("?host=/run/postgresql"), "{url}");
         }
+    }
+
+    /// A host reaches a run only when the file asks for it and the owner
+    /// allowed it.
+    #[sqlx::test]
+    async fn a_run_reaches_hosts_both_the_file_and_the_owner_name(pool: PgPool) {
+        sqlx::query("INSERT INTO app_applets (id, name, owner, net_hosts) VALUES ('applet_tides', 'Tides', 'user', $1)")
+            .bind(vec!["api.weather.gov".to_string(), "api.tides.example.com".to_string()])
+            .execute(&pool)
+            .await
+            .unwrap();
+        let config = serde_json::json!({ "net_hosts": ["api.weather.gov", "api.other.example.com"] });
+        assert_eq!(allowed_hosts(&pool, "applet_tides", &config).await.unwrap(), ["api.weather.gov"]);
+        let none = serde_json::json!({});
+        assert!(allowed_hosts(&pool, "applet_tides", &none).await.unwrap().is_empty(), "the owner alone opens nothing");
     }
 
     /// Files the code wrote become rows; a changed file updates its row and

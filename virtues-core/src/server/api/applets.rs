@@ -48,6 +48,12 @@ pub fn routes() -> Router<AppState> {
                 .patch(patch_applet_handler)
                 .delete(delete_applet_handler),
         )
+        // The hosts an applet's code may reach. Here only: PATCH and the
+        // applet tool cannot set them (scheduler::applets::set_net_hosts).
+        .route(
+            "/api/applets/:id/hosts",
+            get(get_applet_hosts_handler).put(put_applet_hosts_handler),
+        )
         .route("/api/applets/:id/run", post(trigger_applet_handler))
         .route("/api/applets/:id/message", post(message_applet_handler))
         .route("/api/applets/:id/data", get(get_applet_data_handler))
@@ -626,6 +632,29 @@ pub async fn create_applet_handler(
         Ok(action) => (StatusCode::CREATED, Json(action)).into_response(),
         Err(e) => error_response(e),
     }
+}
+
+/// GET /api/applets/:id/hosts — the hosts the applet's file asks for and the
+/// ones the owner allowed.
+pub async fn get_applet_hosts_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+) -> Result<Json<crate::scheduler::applets::NetHosts>, Error> {
+    Ok(Json(crate::scheduler::applets::net_hosts(state.db.pool(), &applet_id).await?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PutHostsBody {
+    pub hosts: Vec<String>,
+}
+
+/// PUT /api/applets/:id/hosts — set the hosts the owner allows.
+pub async fn put_applet_hosts_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+    Json(body): Json<PutHostsBody>,
+) -> Result<Json<crate::scheduler::applets::NetHosts>, Error> {
+    Ok(Json(crate::scheduler::applets::set_net_hosts(state.db.pool(), &applet_id, &body.hosts).await?))
 }
 
 /// PATCH /api/applets/:id — partial update. Enforces system-owner guard.

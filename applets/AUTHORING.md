@@ -123,6 +123,7 @@ sandbox with no network, as a throwaway user, and sees:
 | `/data/lake` | the whole lake, read-only, only when `allowed-tools` lists `lake` |
 | `DATABASE_URL` | the Postgres socket as `virtues_applet_writer`, which writes applet schemas only |
 | `$CREDENTIALS_DIRECTORY/credentials.json` | its credentials; `inp["credentials"]` is `None` |
+| `HTTPS_PROXY`, `HTTP_PROXY` | set only when the run may reach hosts: the ones its `allowed-tools` asks for with `net(host)` that the owner allowed on the applet's page. Every request is recorded on the run |
 
 ### A face-only applet
 

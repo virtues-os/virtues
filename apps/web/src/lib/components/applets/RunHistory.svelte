@@ -132,6 +132,19 @@
 	// header's job: it sits on the problem line under the applet's name.
 	const recent = $derived(log.slice(0, 5));
 
+	/** "Reached api.weather.gov (3 requests). Refused 1 to elsewhere.example.com." */
+	function reachedLine(e: AppletLogEntry): string {
+		const plural = (n: number) => (n === 1 ? '1 request' : `${n} requests`);
+		const reached = e.requests
+			.filter((h) => h.requests > h.refused)
+			.map((h) => `${h.host} (${plural(h.requests - h.refused)})`);
+		const refused = e.requests.filter((h) => h.refused > 0).map((h) => `${plural(h.refused)} to ${h.host}`);
+		const parts = [];
+		if (reached.length) parts.push(`Reached ${reached.join(', ')}.`);
+		if (refused.length) parts.push(`Refused ${refused.join(', ')}.`);
+		return parts.join(' ');
+	}
+
 	// Same relaxation DevicesView chose for its fix button: the deep link opens
 	// THIS machine's settings, so it appears only in the native app.
 	const canFix = isTauri;
@@ -163,6 +176,11 @@
 			{/if}
 			{#if e.summary}
 				<p class="run-text">{e.summary}</p>
+			{/if}
+			{#if e.requests?.length}
+				<!-- Where its code reached through the egress proxy, so a
+				     host you allowed is seen being used. -->
+				<p class="run-span">{reachedLine(e)}</p>
 			{/if}
 			{#if e.error}
 				<!-- A permission failure is a checkbox in System Settings,

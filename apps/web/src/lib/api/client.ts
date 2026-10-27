@@ -154,7 +154,20 @@ export interface AppletRun {
 	 *  gateway's authoritative per-call figures. Zero for runs that called no
 	 *  model, and for every run recorded before spend was attributed. */
 	cost_micros: number;
+	/** What the run reached through its egress proxy, one entry per host.
+	 *  Empty for a run with no network. */
+	requests: HostRequests[];
 	created_at: string;
+}
+
+/** Requests to one host through an applet run's egress proxy. */
+export interface HostRequests {
+	host: string;
+	requests: number;
+	/** How many the proxy refused. */
+	refused: number;
+	sent_bytes: number;
+	received_bytes: number;
 }
 
 export interface AppletLastRun {
@@ -583,6 +596,21 @@ export function patchApplet(id: string, patch: PatchAppletBody): Promise<Applet>
 	return apiSend<Applet>('PATCH', `/applets/${encodeURIComponent(id)}`, patch);
 }
 
+/** The hosts an applet's code asks to reach (`net(host)` in its
+ *  `allowed-tools`) and the ones you allowed. It reaches the hosts on both. */
+export interface AppletHosts {
+	requested: string[];
+	allowed: string[];
+}
+
+export function getAppletHosts(id: string): Promise<AppletHosts> {
+	return apiGet<AppletHosts>(`/applets/${encodeURIComponent(id)}/hosts`);
+}
+
+export function putAppletHosts(id: string, hosts: string[]): Promise<AppletHosts> {
+	return apiSend<AppletHosts>('PUT', `/applets/${encodeURIComponent(id)}/hosts`, { hosts });
+}
+
 export async function deleteApplet(id: string, dropData = false): Promise<void> {
 	await request(`/applets/${encodeURIComponent(id)}`, {
 		method: 'DELETE',
@@ -606,6 +634,8 @@ export interface AppletLogEntry {
 	first_at: string | null;
 	last_at: string | null;
 	cost_micros: number;
+	/** Summed per host across the runs this line stands for. */
+	requests: HostRequests[];
 }
 
 /** A page an applet's runs wrote, with the last time one of them did. */

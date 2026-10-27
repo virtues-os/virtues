@@ -1069,6 +1069,14 @@ async fn run_subprocess(
         .map_err(|e| Error::Other(format!("failed to serialize action input: {e}")))?;
 
     let declared = declared_env_secrets(db, &action.id).await?;
+    // The run's way out, when its file asks for hosts the owner allowed.
+    // Dropping it stops the proxy and removes the socket.
+    let proxy = if sandbox {
+        let hosts = sandboxed::allowed_hosts(db, &action.id, &action.config).await?;
+        if hosts.is_empty() { None } else { Some(sandboxed::start_proxy(run_id, &hosts)?) }
+    } else {
+        None
+    };
     // `_run_files` live until the run ends; dropping them removes the files.
     let (mut cmd, _run_files) = if sandbox {
         let env = sandboxed::env(run_id, declared);
@@ -1085,6 +1093,7 @@ async fn run_subprocess(
             &env,
             credentials.as_ref(),
             whole_lake,
+            proxy.as_ref().map(|p| p.path()),
         )?
     } else {
         let mut env = env_pairs(&action.id, shipped);
@@ -1145,6 +1154,12 @@ async fn run_subprocess(
     if sandbox {
         if let Err(e) = sandboxed::index_lake_folder(db, &action.id).await {
             tracing::error!(applet_id = %action.id, error = %e, "could not index the applet's lake folder");
+        }
+    }
+    if let Some(proxy) = proxy {
+        let requests = proxy.finish(std::time::Duration::from_secs(2)).await;
+        if let Err(e) = sandboxed::record_requests(db, run_id, &requests).await {
+            tracing::error!(applet_id = %action.id, error = %e, "could not record the run's network requests");
         }
     }
 

@@ -468,11 +468,16 @@ Any applet that reads your records already has two legs. So:
 - An applet the assistant writes or an import brings may not hold the third.
   The check refuses `net(…)` entries, `browse` or `send_imessage` alongside any
   data tool on such an applet.
-- **Only the owner can add the third leg**, by adding a host on the applet's
-  page. The assistant's `applet` tool cannot. The row records the hosts the
-  owner set, and reconcile refuses a file whose `net(…)` entries differ from
-  the owner's for any applet that is not shipped. That owner action is the
-  person the Rule of Two asks for, without an approval card.
+- **Only the owner can add the third leg**, by allowing a host on the
+  applet's page. The file's `net(…)` entries ask for hosts; the row records
+  the hosts the owner allowed (`app_applets.net_hosts`, set only by
+  `PUT /api/applets/:id/hosts`, never by PATCH, the `applet` tool or
+  reconcile); a run reaches the hosts on both lists. So neither a file the
+  assistant or an import wrote, nor the owner alone, opens a host the other
+  did not name. That owner action is the person the Rule of Two asks for,
+  without an approval card. Decided on 2026-10-27 in place of reconcile
+  refusing a file whose entries differ from the owner's, which would have
+  meant writing the file from the API.
 - The applet's sentence shows the combination: "It reads your records and can
   send to hooks.example.com."
 
@@ -851,9 +856,8 @@ LAN, a refused host or an unlisted host, and can reach a listed host; the
 request appears on the run; and the `applet` tool cannot add a host to an
 applet that lists `sql_query`.
 
-The agent loop also refuses a call to a tool the run was not offered. Today
-it runs whatever tool the model names, so `allowed-tools`, like the applet
-allowlist before it, only decides what is offered.
+The agent loop also refuses a call to a tool the run was not offered, so
+`allowed-tools` limits what a run can call and not only what it is shown.
 
 ### 3. Move skills into applets
 

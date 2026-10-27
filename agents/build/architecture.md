@@ -90,8 +90,12 @@ while over 2 GB), the whole lake read-only at `/data/lake` only when
 `allowed-tools` lists `lake`, and the Postgres socket with `DATABASE_URL`
 logged in as `virtues_applet_writer`. Its credentials are a file,
 `$CREDENTIALS_DIRECTORY/credentials.json`, and stdin carries `"credentials":
-null`. In a Linux release build a missing `systemd-run` refuses the run
-rather than running it unsandboxed.
+null`. It has no network unless its `allowed-tools` asks for hosts with
+`net(host)` and the owner allowed them on the applet's page
+(`app_applets.net_hosts`); then the run gets an egress proxy (`egress`) that
+reaches only those hosts, and each request is recorded in
+`app_applet_run_requests`. In a Linux release build a missing `systemd-run`
+refuses the run rather than running it unsandboxed.
 
 **Faces** are served by `server/faces.rs` into a `sandbox="allow-scripts"`
 iframe with an opaque origin, and every file carries a CSP `sandbox

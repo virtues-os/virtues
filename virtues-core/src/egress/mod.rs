@@ -103,6 +103,8 @@ impl Grant {
 pub struct Proxy {
     path: PathBuf,
     log: Arc<Mutex<Vec<Request>>>,
+    /// Connections being served, so [`Proxy::finish`] can wait for them.
+    open: Arc<std::sync::atomic::AtomicUsize>,
     task: JoinHandle<()>,
 }
 
@@ -110,24 +112,33 @@ impl Proxy {
     /// Listen on `path`, which must not exist yet.
     pub fn start(path: &Path, grant: Grant) -> std::io::Result<Self> {
         let listener = UnixListener::bind(path)?;
+        // The run's throwaway user connects to it; the socket is bind-mounted
+        // into that run's unit alone, so the mode is not what keeps others out.
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o666))?;
+        }
         let log: Arc<Mutex<Vec<Request>>> = Arc::default();
+        let open: Arc<std::sync::atomic::AtomicUsize> = Arc::default();
         let grant = Arc::new(grant);
         let task = {
-            let log = log.clone();
+            let (log, open) = (log.clone(), open.clone());
             tokio::spawn(async move {
                 loop {
                     let Ok((stream, _)) = listener.accept().await else { break };
-                    let (grant, log) = (grant.clone(), log.clone());
+                    let (grant, log, open) = (grant.clone(), log.clone(), open.clone());
+                    open.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     tokio::spawn(async move {
                         let request = serve(stream, &grant).await;
                         if let Some(r) = request {
                             log.lock().expect("egress log poisoned").push(r);
                         }
+                        open.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
                     });
                 }
             })
         };
-        Ok(Self { path: path.to_path_buf(), log, task })
+        Ok(Self { path: path.to_path_buf(), log, open, task })
     }
 
     pub fn path(&self) -> &Path {
@@ -137,6 +148,18 @@ impl Proxy {
     /// Every request so far, in the order each finished.
     pub fn requests(&self) -> Vec<Request> {
         self.log.lock().expect("egress log poisoned").clone()
+    }
+
+    /// Stop taking connections, give the open ones up to `grace` to close,
+    /// and return every request. A request is recorded when its connection
+    /// closes, which can be just after the client process has exited.
+    pub async fn finish(self, grace: Duration) -> Vec<Request> {
+        self.task.abort();
+        let deadline = tokio::time::Instant::now() + grace;
+        while self.open.load(std::sync::atomic::Ordering::SeqCst) > 0 && tokio::time::Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        self.requests()
     }
 }
 
@@ -428,9 +451,9 @@ mod tests {
         c.read_to_end(&mut out).await.unwrap();
         assert_eq!(out, b"pong");
         assert_eq!(seen.await.unwrap(), b"ping");
-        // A request is recorded when both sides have closed.
+        // A request is recorded when both sides have closed; finish waits.
         drop(c);
-        let log = settled(&proxy, 1).await;
+        let log = proxy.finish(Duration::from_secs(2)).await;
         assert_eq!((log[0].method.as_str(), log[0].bytes_sent, log[0].bytes_received), ("CONNECT", 4, 4));
     }
 

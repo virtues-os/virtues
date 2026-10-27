@@ -11,8 +11,12 @@
 //! when there is any.
 //!
 //! Parts of the format that have nothing behind them yet are refused rather
-//! than accepted and ignored: data triggers (`new <table>`), SQL in `run`,
-//! and `net(…)` entries in `allowed-tools`.
+//! than accepted and ignored: data triggers (`new <table>`) and SQL in `run`.
+//!
+//! A `net(host)` entry asks for a host. It is kept in `config.net_hosts`,
+//! and a run reaches it only when the owner has also allowed it on the
+//! applet's page (`app_applets.net_hosts`), so nothing written in the file
+//! opens a way out on its own.
 
 use std::path::Path;
 
@@ -132,8 +136,13 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
     let agent = Some(body.trim()).filter(|b| !b.is_empty()).map(str::to_string);
     let has_prompt = agent.is_some();
 
-    let allowed_tools = string("allowed-tools", &mut errors)
-        .map(|s| check_allowed_tools(&s, &mut errors));
+    let (allowed_tools, net_hosts) = match string("allowed-tools", &mut errors) {
+        Some(s) => {
+            let (tools, hosts) = check_allowed_tools(&s, &mut errors);
+            (Some(tools), hosts)
+        }
+        None => (None, Vec::new()),
+    };
 
     // Virtues keys.
     let metadata = match get("metadata") {
@@ -262,6 +271,12 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
             toml::Value::Array(tools.into_iter().map(toml::Value::String).collect()),
         );
     }
+    if !net_hosts.is_empty() {
+        config.insert(
+            "net_hosts".into(),
+            toml::Value::Array(net_hosts.into_iter().map(toml::Value::String).collect()),
+        );
+    }
 
     Ok(Template {
         id_prefix: Some(id_for_dir(dir)),
@@ -384,16 +399,23 @@ fn check_name(name: &str) -> Result<(), String> {
 }
 
 /// The tool ids an applet asked for, checked against what an applet's run
-/// can be given.
-fn check_allowed_tools(list: &str, errors: &mut Vec<String>) -> Vec<String> {
+/// can be given, and the hosts its `net(host)` entries ask for.
+fn check_allowed_tools(list: &str, errors: &mut Vec<String>) -> (Vec<String>, Vec<String>) {
     let available = crate::tools::applet_run_tool_ids();
     let known: Vec<String> = virtues_registry::tools::default_tools().into_iter().map(|t| t.id).collect();
     let mut out = Vec::new();
+    let mut hosts: Vec<String> = Vec::new();
     for entry in list.split_whitespace() {
-        if entry.starts_with("net(") {
-            errors.push(format!(
-                "`{entry}`: an applet cannot reach the network yet. Remove the `net(…)` entry."
-            ));
+        if let Some(rest) = entry.strip_prefix("net(") {
+            let Some(host) = rest.strip_suffix(')') else {
+                errors.push(format!("`{entry}` must be written as `net(host)`, such as `net(api.weather.gov)`."));
+                continue;
+            };
+            match crate::egress::policy::check_host(host) {
+                Ok(h) if !hosts.contains(&h) => hosts.push(h),
+                Ok(_) => {}
+                Err(why) => errors.push(format!("`{entry}`: {why}")),
+            }
         } else if entry == LAKE_GRANT {
             // Not a tool: the whole lake, read-only, for the applet's code.
             if !out.iter().any(|t| t == entry) {
@@ -412,7 +434,7 @@ fn check_allowed_tools(list: &str, errors: &mut Vec<String>) -> Vec<String> {
             errors.push(unknown_key(entry, "a tool an applet can use", &names));
         }
     }
-    out
+    (out, hosts)
 }
 
 #[derive(Debug, PartialEq)]
@@ -930,8 +952,18 @@ mod tests {
 
     #[test]
     fn allowed_tools_lists_tools_an_applet_run_can_have() {
-        let e = refused(&format!("{BASE}\nallowed-tools: sql_query net(api.weather.gov)"), "Do it.");
-        assert!(e.contains("cannot reach the network yet"), "{e}");
+        let t = ok(&format!("{BASE}\nallowed-tools: sql_query net(API.Weather.gov) net(api.weather.gov)"), "Do it.");
+        let cfg = t.config.unwrap();
+        assert_eq!(cfg["net_hosts"].as_array().unwrap().len(), 1, "one host, normalized: {cfg:?}");
+        assert_eq!(cfg["net_hosts"][0].as_str(), Some("api.weather.gov"));
+        for (entry, expect) in [
+            ("net(93.184.216.34)", "is an IP address"),
+            ("net(gist.github.com)", "refused even when listed"),
+            ("net(api.weather.gov", "must be written as `net(host)`"),
+        ] {
+            let e = refused(&format!("{BASE}\nallowed-tools: {entry}"), "Do it.");
+            assert!(e.contains(expect), "{entry}: {e}");
+        }
         let e = refused(&format!("{BASE}\nallowed-tools: shell"), "Do it.");
         assert!(e.contains("`shell` is not available to an applet's run"), "{e}");
         let e = refused(&format!("{BASE}\nallowed-tools: sql_qeury"), "Do it.");

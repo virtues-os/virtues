@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
 	import AppletSource from '$lib/components/applets/AppletSource.svelte';
+	import AppletHosts from '$lib/components/applets/AppletHosts.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import { patchApplet, type Applet, type PatchAppletBody } from '$lib/api/client';
@@ -207,6 +208,8 @@
 			</ul>
 		</div>
 	{/if}
+
+	<AppletHosts appletId={action.id} />
 
 	<!-- Three facts the page never showed, and the reason a person
 	     could not tell why an applet had or hadn't run: what wakes
