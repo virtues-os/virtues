@@ -14,7 +14,7 @@
 //! 6. Resolve credentials from the `credentials` Vault and decrypt secrets
 //!    (if `credential_id` set). Subprocess receives plaintext JSON.
 //! 7. **Subprocess phase**: if `command` set, resolve argv[0] + spawn, pipe stdin
-//!    JSON, read stdout JSON, save returned config back to `app_applets.config`.
+//!    JSON, read stdout JSON, save returned config to `app_applets.state`.
 //! 8. **Agent phase**: if `agent` (instruction) set, run LLM agent loop with the
 //!    subprocess result as context.
 //! 9. Complete run row with final status + result summary.
@@ -1097,6 +1097,31 @@ fn missing_secrets_sentence(missing: &[String]) -> String {
     format!("Add {names} in Settings, under Keys and passwords.")
 }
 
+/// The `config` a subprocess receives: its saved state with the row's config
+/// laid over it, so a sync gets its cursor back and a manifest change (a new
+/// limit) still wins over a stale copy the code returned.
+async fn input_config(db: &PgPool, action: &Applet) -> Result<serde_json::Value> {
+    let state: serde_json::Value = sqlx::query_scalar("SELECT state FROM app_applets WHERE id = $1")
+        .bind(&action.id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Database(format!("failed to read applet state: {e}")))?;
+    Ok(merge_config(state, &action.config))
+}
+
+fn merge_config(state: serde_json::Value, config: &serde_json::Value) -> serde_json::Value {
+    let mut merged = match state {
+        serde_json::Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    };
+    if let serde_json::Value::Object(cfg) = config {
+        for (k, v) in cfg {
+            merged.insert(k.clone(), v.clone());
+        }
+    }
+    serde_json::Value::Object(merged)
+}
+
 async fn run_subprocess(
     db: &PgPool,
     action: &Applet,
@@ -1120,7 +1145,7 @@ async fn run_subprocess(
     }
 
     let input = AppletInput {
-        config: action.config.clone(),
+        config: input_config(db, action).await?,
         credentials,
         payload: payload.cloned(),
         trigger: Some(trigger.to_string()),
@@ -1209,13 +1234,15 @@ async fn run_subprocess(
         ))
     })?;
 
-    // Persist returned config back to the action row (JSONB column)
-    sqlx::query("UPDATE app_applets SET config = $1, updated_at = now() WHERE id = $2")
+    // What the code hands back is its state for the next run. It goes in
+    // `state`, never `config`: reconcile replaces a shipped applet's config
+    // with the manifest's, and a cursor kept there was wiped on every boot.
+    sqlx::query("UPDATE app_applets SET state = $1, updated_at = now() WHERE id = $2")
         .bind(&applet_output.config)
         .bind(&action.id)
         .execute(db)
         .await
-        .map_err(|e| Error::Database(format!("failed to save action config: {e}")))?;
+        .map_err(|e| Error::Database(format!("failed to save applet state: {e}")))?;
 
     // Surface stderr even on a clean exit. An action can succeed (exit 0, valid
     // JSON) while warning on stderr — that channel used to be swallowed, which
@@ -1473,6 +1500,19 @@ mod tests {
     use super::ENV_PASSTHROUGH;
     use super::*;
 
+    /// A sync gets its cursor back, and a manifest value beats a stale copy
+    /// the code returned last run.
+    #[test]
+    fn the_input_is_state_with_config_laid_over_it() {
+        let state = serde_json::json!({ "cursor": "c-41", "limits": { "timeout_s": 60 } });
+        let config = serde_json::json!({ "limits": { "timeout_s": 600 } });
+        assert_eq!(
+            merge_config(state, &config),
+            serde_json::json!({ "cursor": "c-41", "limits": { "timeout_s": 600 } })
+        );
+        assert_eq!(merge_config(serde_json::Value::Null, &config), config);
+    }
+
     #[test]
     fn a_missing_key_names_itself_and_where_to_add_it() {
         let one = ["OPENAI_API_KEY".to_string()];
@@ -1553,6 +1593,73 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(said.as_deref(), Some("I had eggs"), "the words are on the run");
+    }
+
+    /// A shipped applet's code state survives reconcile. Reconcile replaces a
+    /// shipped applet's config with the manifest's, and while syncs kept
+    /// their cursors in config, every boot reset every cursor.
+    #[sqlx::test]
+    async fn a_shipped_applets_state_survives_a_reconcile(pool: sqlx::PgPool) {
+        crate::applet_templates::reconcile_templates(&pool).await.expect("reconcile");
+        let set = sqlx::query(
+            "UPDATE app_applets SET state = '{\"cursor\": \"c-41\"}'::jsonb \
+             WHERE id = 'applet_embedding_index' AND owner = 'system'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(set.rows_affected(), 1, "the test needs a shipped code applet");
+
+        crate::applet_templates::reconcile_templates(&pool).await.expect("reconcile");
+        let (state, config): (serde_json::Value, serde_json::Value) =
+            sqlx::query_as("SELECT state, config FROM app_applets WHERE id = 'applet_embedding_index'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(state, serde_json::json!({ "cursor": "c-41" }));
+        assert!(config.get("limits").is_some(), "config is still the manifest's: {config}");
+    }
+
+    /// The code's state comes back on the next run even after its config is
+    /// replaced, which is what reconcile does to a shipped applet on boot.
+    #[sqlx::test]
+    async fn a_cursor_survives_its_config_being_replaced(pool: sqlx::PgPool) {
+        let deps = RunnerDeps {
+            db: pool.clone(),
+            yjs: YjsState::new(pool.clone()),
+        };
+        let script = "import json,sys; c=json.load(sys.stdin)['config']; \
+                      c['cursor']=c.get('cursor',0)+1; print(json.dumps({'result':'ok','config':c}))";
+        // A shipped row, so the command runs directly on every platform
+        // rather than through the Linux jail, which needs the box user.
+        crate::applet_templates::reconcile_templates(&pool).await.expect("reconcile");
+        let id = "applet_embedding_index";
+        let set = sqlx::query(
+            "UPDATE app_applets SET command = $1::jsonb, triggers = '[\"manual\"]', \
+             condition = NULL, enabled = TRUE WHERE id = $2",
+        )
+        .bind(serde_json::json!(["/usr/bin/python3", "-c", script]))
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("update");
+        assert_eq!(set.rows_affected(), 1);
+
+        for _ in 0..2 {
+            let run = run_applet(&deps, id, "manual", None).await.unwrap();
+            assert_eq!(run.status, AppletRunStatus::Success, "{run:?}");
+            sqlx::query("UPDATE app_applets SET config = '{\"limits\": {}}' WHERE id = $1")
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let state: serde_json::Value =
+            sqlx::query_scalar("SELECT state FROM app_applets WHERE id = 'applet_embedding_index'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(state["cursor"], 2, "{state}");
     }
 
     /// `message` still has to be granted like any other trigger.
