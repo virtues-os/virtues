@@ -48,6 +48,7 @@ const ProjectsListView: ViewLoader = () => import('$lib/components/tabs/views/Pr
 const ProjectDetailView: ViewLoader = () => import('$lib/components/tabs/views/ProjectDetailView.svelte');
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
 const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
+const QueryView: ViewLoader = () => import('$lib/components/tabs/views/QueryView.svelte');
 const SetupView: ViewLoader = () => import('$lib/components/tabs/views/SetupView.svelte');
 const TimelineView: ViewLoader = () => import('$lib/components/tabs/views/TimelineView.svelte');
 
@@ -712,6 +713,26 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		detailComponent: DataView,
 	},
 
+	query: {
+		// /chat/<chat>/tool/<call> — the rows one query returned, which a chat
+		// answer's figure links to. Matched before `chat`, whose own routes
+		// stop at the chat id.
+		match: (path) => /^\/chat\/[^/]+\/tool\/[^/]+$/.test(path),
+		parse: (path) => ({
+			type: 'query',
+			label: 'Query',
+			icon: 'ri:table-line',
+			entityId: path.slice('/chat/'.length),
+		}),
+		serialize: (id) => (id ? `query_${id}` : 'query'),
+		deserialize: (serialized) =>
+			serialized.startsWith('query_') ? `/chat/${serialized.slice(6)}` : '/chat',
+		icon: 'ri:table-line',
+		defaultLabel: 'Query',
+		component: QueryView,
+		detailComponent: QueryView,
+	},
+
 	// ========================================================================
 	// ASSET: /drive/file_{id} — single-file viewer (open density for a file ref)
 	// Matched before `drive` so an id-addressed file opens the viewer, while
@@ -931,6 +952,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'applet-view', // Applet full-page face (must come before 'applet')
 		'applet', // Applet detail page
 		'record', // /record/<ontology>/<id> — single raw record
+		'query', // /chat/<chat>/tool/<call> — must precede 'chat'
 		'virtues', // Has /virtues/* pattern
 		'storage', // /storage — Drive surface (unified bytes view)
 		'asset', // /drive/file_{id} — must precede 'drive' (which matches all /drive/*)

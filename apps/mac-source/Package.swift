@@ -1,6 +1,9 @@
 // swift-tools-version:5.9
 import PackageDescription
 
+/// Absolute, because the linker's working directory is not the package root.
+let infoPlist = String(#filePath.dropLast("Package.swift".count)) + "Support/Info.plist"
+
 let package = Package(
     name: "virtues-collector",
     platforms: [
@@ -50,7 +53,11 @@ let package = Package(
                 // watch WiFi changes; without this the Obj-C class isn't found at
                 // runtime and every upload panics ("class CWWiFiClient could not be
                 // found").
-                .linkedFramework("CoreWLAN")
+                .linkedFramework("CoreWLAN"),
+                // Usage strings for the call-audio permissions. See Support/Info.plist
+                // for why it carries no bundle id.
+                .unsafeFlags(["-Xlinker", "-sectcreate", "-Xlinker", "__TEXT",
+                              "-Xlinker", "__info_plist", "-Xlinker", infoPlist])
             ]
         )
     ]

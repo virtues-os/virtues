@@ -690,16 +690,21 @@ class WindowShellStore {
 		return paneId ?? this.activePaneId;
 	}
 
+	/** The new chat in a pane that has no message yet, if there is one. */
+	emptyChatIn(paneId?: 'left' | 'right'): Tab | undefined {
+		const pane = this.panes.find(p => p.id === (paneId ?? this.activePaneId));
+		return pane?.tabs.find(t => this.isNewChatRoute(t.route));
+	}
+
 	/**
-	 * Start a new chat in a pane (the header's ✎, a strip's +, ⌘N and the Home
+	 * Start a new chat in a pane (the header's ✎, the strip's +, ⌘N and the Home
 	 * panel's New chat). It gets a new tab next to the one you were on, since
 	 * asking for something new means you meant to come back to that one. An
 	 * empty new chat already in the pane is reused rather than doubled.
 	 */
 	newChat(paneId?: 'left' | 'right'): string {
 		const targetPaneId = paneId ?? this.activePaneId;
-		const pane = this.panes.find(p => p.id === targetPaneId);
-		const empty = pane?.tabs.find(t => this.isNewChatRoute(t.route));
+		const empty = this.emptyChatIn(targetPaneId as 'left' | 'right');
 		if (empty) {
 			this.setActiveTab(empty.id);
 			return empty.id;

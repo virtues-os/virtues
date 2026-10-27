@@ -9,6 +9,7 @@ private var globalMessageMonitor: MessageMonitor?
 private var globalBrowserMonitor: BrowserMonitor?
 private var globalBookmarkMonitor: BookmarkMonitor?
 private var globalPresenceMonitor: PresenceMonitor?
+private var globalCallAudioStop: (() -> Void)?
 private var recheckSignalSource: DispatchSourceSignal?
 
 struct StartCommand: ParsableCommand {
@@ -54,6 +55,9 @@ struct StartCommand: ParsableCommand {
 
         print("Full Disk Access: \(MessageMonitor.canReadMessagesDB() ? "granted" : "DENIED")")
         print("Accessibility:    \(WindowTitle.isTrusted ? "granted" : "DENIED (window titles will be empty)")")
+        // Call recording is on by default, so ask for its two grants now. The
+        // daemon starts during Setup; asking here keeps the prompts out of a call.
+        CallAudioPermission.requestIfNeeded()
         print("Press Ctrl+C to stop\n")
 
         // Touch the Messages DB with a real read-open right at startup. A denied
@@ -106,6 +110,13 @@ struct StartCommand: ParsableCommand {
         browserMonitor.start()
         bookmarkMonitor.start()
         presenceMonitor.start()
+        // Process taps need macOS 14.4. The app requires newer, but the
+        // collector still builds for older systems.
+        if #available(macOS 14.4, *) {
+            let callAudioMonitor = CallAudioMonitor()
+            callAudioMonitor.start()
+            globalCallAudioStop = callAudioMonitor.stop
+        }
         uploader.start()
         
         // Set up signal handlers for graceful shutdown
@@ -116,6 +127,7 @@ struct StartCommand: ParsableCommand {
             globalBrowserMonitor?.stop()
             globalBookmarkMonitor?.stop()
             globalPresenceMonitor?.stop()
+            globalCallAudioStop?()
             globalUploader?.stop()
             Foundation.exit(0)
         }
@@ -127,6 +139,7 @@ struct StartCommand: ParsableCommand {
             globalBrowserMonitor?.stop()
             globalBookmarkMonitor?.stop()
             globalPresenceMonitor?.stop()
+            globalCallAudioStop?()
             globalUploader?.stop()
             Foundation.exit(0)
         }

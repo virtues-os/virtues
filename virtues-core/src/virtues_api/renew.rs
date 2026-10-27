@@ -288,7 +288,7 @@ pub async fn fetch_checkout_session(
 
 async fn find_credential_id(db: &PgPool) -> Result<Option<String>> {
     let row: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM credentials WHERE source_id = $1 LIMIT 1")
+        sqlx::query_as("SELECT id FROM credentials WHERE kind = 'source' AND key = $1 LIMIT 1")
             .bind(SOURCE_ID)
             .fetch_optional(db)
             .await?;

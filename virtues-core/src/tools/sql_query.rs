@@ -91,11 +91,13 @@ impl SqlQueryTool {
                 let sql = args.sql.ok_or_else(|| {
                     ToolError::InvalidParameters("'sql' is required for query operation".into())
                 })?;
-                let Some(name) = args.save_as else {
+                // A blank save_as is no save_as: models that fill every field
+                // the schema offers send '' or ' ' for one they do not want.
+                let Some(name) = args.save_as.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
                     let limit = args.limit.unwrap_or(50).min(200);
                     return self.execute_query(&sql, limit, None, timezone).await;
                 };
-                let name = saved_file_name(&name)?;
+                let name = saved_file_name(name)?;
                 let chat_id = chat_id.ok_or_else(|| {
                     ToolError::InvalidParameters(
                         "save_as keeps a file for code_interpreter in a saved chat, and this \
@@ -501,29 +503,20 @@ impl SqlQueryTool {
 
         // Drop to the least-privileged role for the rest of this transaction.
         //
-        // READ ONLY is not the boundary the comment above believed it was. It
-        // bounds WRITES; it says nothing about what a superuser may READ, and
-        // the pool role IS a superuser (`CREATE ROLE virtues WITH LOGIN
-        // SUPERUSER`, installer first-boot). So this passed every guard above —
-        // it begins with `select`, contains no forbidden keyword, is short, and
-        // survives the appended LIMIT:
-        //
-        //     SELECT substr(pg_read_file('/var/lib/virtues/virtues.env'),1,4000)
-        //
-        // That file holds VIRTUES_ENCRYPTION_KEY in plaintext, which decrypts
-        // every credential in the vault and the iroh secret that IS this box's
-        // network identity. Verified against a live database: the read
-        // succeeds, and `box_secrets` and `app_credentials` are equally
-        // reachable. The doc comment above already says this tool "runs
-        // unattended, over content nobody reviewed" — so the query text is
+        // READ ONLY bounds writes, not reads. The pool role owns every table,
+        // so without this drop a plain `SELECT` passes every guard above and
+        // reads `credentials`: the encrypted secrets of every source and the
+        // box's own keys. The doc comment above says this tool "runs
+        // unattended, over content nobody reviewed", so the query text is
         // steerable by an email or a saved page, and the model can hand the
-        // result to `web_search`, which is also allowlisted.
+        // result to `web_search`, which is also allowlisted. On a box whose
+        // pool role is still a superuser, the same query could also read
+        // `/var/lib/virtues/virtues.env` with `pg_read_file`, and with it the
+        // key that decrypts all of them.
         //
-        // `virtues_face_reader` is the role `server/faces.rs` already drops to
-        // for exactly this reason: default-deny, SELECT on `data_*`/`wiki_*`
-        // only. Under it both halves fail closed — `permission denied for
-        // function pg_read_file`, `permission denied for table box_secrets`.
-        // The mechanism was in the tree; this executor simply never used it.
+        // `virtues_face_reader` is the role `server/faces.rs` drops to for the
+        // same reason: default-deny, SELECT on `data_*`/`wiki_*` only. Under
+        // it both reads fail closed with "permission denied".
         //
         // SET LOCAL, so it reverts with the transaction and cannot leak onto a
         // pooled connection.
@@ -1211,6 +1204,22 @@ mod tests {
         let tool = SqlQueryTool::new(Arc::new(pool));
         let result = tool.execute_query("SELECT 1 AS n", 10, None, None).await;
         assert!(result.is_ok(), "a plain SELECT must still run: {result:?}");
+    }
+
+    /// An empty or whitespace save_as runs the query as if it were absent,
+    /// even with no chat to keep a file in. A real name still needs a chat.
+    #[sqlx::test]
+    async fn a_blank_save_as_is_no_save_as(pool: sqlx::PgPool) {
+        let tool = SqlQueryTool::new(Arc::new(pool));
+        let query = |save_as: &str| {
+            serde_json::json!({ "operation": "query", "sql": "SELECT 1 AS n", "save_as": save_as })
+        };
+        for blank in ["", " ", "\t\n"] {
+            let result = tool.execute(query(blank), None, None).await;
+            assert!(result.is_ok(), "save_as {blank:?} must run the query: {result:?}");
+        }
+        let result = tool.execute(query("sleep.csv"), None, None).await;
+        assert!(matches!(result, Err(ToolError::InvalidParameters(_))), "{result:?}");
     }
 
     /// A query's dates are the owner's: a bare day literal starts at their

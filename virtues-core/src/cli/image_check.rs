@@ -286,7 +286,7 @@ pub async fn run() -> i32 {
     }
 
     // ── The database ────────────────────────────────────────────────────────
-    // `box_secrets` holds the iroh secret. Checked by looking rather than by
+    // `credentials` holds the iroh secret. Checked by looking rather than by
     // trusting that deprovision ran: this is the single most expensive thing
     // to get wrong, and looking again is the whole point of a separate command.
     //
@@ -313,7 +313,7 @@ pub async fn run() -> i32 {
         ClusterState::Present => match database_is_present().await {
             Some(true) => findings.push(Finding {
                 what: "database still exists",
-                detail: "the `virtues` database is present — box_secrets holds the iroh secret, which IS this box's network identity. Clones would all be the same box.".to_string(),
+                detail: "the `virtues` database is present. It holds the iroh secret, which is this box's network identity. Clones would all be the same box.".to_string(),
                 fix: "sudo virtues deprovision",
             }),
             Some(false) => {}

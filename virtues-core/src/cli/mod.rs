@@ -299,8 +299,8 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
 
         Commands::Subscribe => {
             // Idempotent — sqlx::migrate skips applied steps. Without this,
-            // a fresh box hits "relation \"box_secrets\" does not exist"
-            // mid-subscribe because no other startup path has been run yet.
+            // a fresh box fails mid-subscribe on a missing `credentials`
+            // table because no other startup path has been run yet.
             virtues.database.initialize().await?;
             commands::deploy::handle_subscribe(&virtues)
                 .await

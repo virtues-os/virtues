@@ -57,8 +57,7 @@ impl fmt::Display for CredentialStatus {
 /// One row of the `credentials` Vault, with secrets already decrypted.
 ///
 /// `secrets` is parsed into `serde_json::Value` because the shape varies by
-/// connector. Today only `IosSecrets` exists; future connectors define their
-/// own shapes (still as JSON inside the encrypted payload).
+/// source.
 #[derive(Debug, Clone)]
 pub struct Credential {
     pub id: String,
@@ -80,7 +79,6 @@ pub struct Credential {
 /// `auth.kind = self_issued_bearer` connectors like Mac).
 ///
 /// Stored encrypted as JSON `{"token": "..."}` inside `secrets_ciphertext`.
-/// The lookup HMAC of `token` lives in `secret_lookup_hash`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct IosSecrets {
     pub token: String,

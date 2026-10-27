@@ -8,8 +8,8 @@
 	where they wrote), as a dot a day; how many; the earliest message between
 	you on record; and the last day before it, which opens that day. Facts are
 	computed from the record, never written by the narrator
-	(`/api/wiki/person/:id/gloss`). Its anatomy is the evidence card's
-	(DayEvidence): a kicker line, the body, one row of actions.
+	(`/api/wiki/person/:id/gloss`). Its anatomy is the record card's
+	(RecordCard): a kicker line, the body, one row of actions.
 
 	It keeps the quiet ref look and the `ref-link` class, so the veil hides
 	the name like any other. Their picture (initials when there is none)

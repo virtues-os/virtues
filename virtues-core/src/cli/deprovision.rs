@@ -17,8 +17,8 @@
 //! being a step someone remembers.
 //!
 //! **What it removes**, and where each lives:
-//!   * the whole database — `box_secrets` holds the iroh secret, `app_device`
-//!     the pairings, `credentials` the source tokens (delegated to `reset`)
+//!   * the whole database — `credentials` holds the iroh secret and the
+//!     source tokens, `app_device` the pairings (delegated to `reset`)
 //!   * the data lake
 //!   * database dumps in `backups/` — `upgrade` writes one per upgrade and
 //!     nothing else ever reclaims it
@@ -96,7 +96,7 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     }
 
     // ── 1. Database + lake ──────────────────────────────────────────────────
-    // `reset` already drops every app object (taking `box_secrets`, and with it
+    // `reset` already drops every app object (taking `credentials`, and with it
     // the iroh secret) and clears the lake. Reuse it rather than restating the
     // schema surgery, which has real subtleties about not dropping the `vector`
     // extension. `yes = true` because we just took our own confirmation.

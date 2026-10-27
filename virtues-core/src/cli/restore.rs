@@ -743,7 +743,7 @@ mod drill {
         write(&applets.join("user/drill/manifest.json"), "{\"name\":\"drill\"}");
         write(&env_file, "VIRTUES_ENCRYPTION_KEY=drill-key\n");
         sqlx::query(
-            "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) \
              VALUES ($1, 'ios', 'drill', 'active', 'x')",
         )
         .bind("cred_drill")

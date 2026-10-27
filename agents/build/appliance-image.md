@@ -283,7 +283,7 @@ the most important thing" must never show as a pass.
 
 ### Why each of those matters
 
-The iroh secret in `box_secrets` **is** the box's network identity. Two units
+The iroh secret (a `kind = 'box'` row in `credentials`) **is** the box's network identity. Two units
 flashed from a master that still had one share a single identity — a device paired to one dials the other, and the relay cannot tell
 them apart. One surviving encryption key decrypts every unit ever shipped. A
 shared machine-id collides in DHCP and journald; shared SSH host keys make

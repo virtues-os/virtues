@@ -5,16 +5,26 @@
 //! whole point of this route: **no search vendor account, no second API key.**
 //! Exa needed one; a direct Parallel client needed one; this needs neither.
 //!
-//! It is NOT the OpenAI-compatible surface. Provider-executed tools only exist
-//! on the gateway's own protocol endpoint (`/v4/ai/language-model`), which
-//! `/v1/chat/completions` rejects outright — verified: `expected "function"`.
-//! So this route speaks that protocol, and it is the only thing here that does.
+//! It is NOT the OpenAI-compatible surface. `/v1/chat/completions` takes the
+//! gateway's search only as its own `vercel:parallel_search` tool, which runs
+//! inside the chat model's turn and returns no results to the caller (checked
+//! 2026-10-25). The box needs the results as structured sources, so this route
+//! speaks the gateway's protocol endpoint (`/v4/ai/language-model`), where the
+//! `tool-result` comes back, and it is the only thing here that does.
 //! Chat stays on chat/completions, because BYO AI depends on the endpoint being
 //! OpenAI-compatible and moving it would fork every request path in two.
 //!
 //! The vendor is one string. `gateway.parallel_search` becomes
 //! `gateway.exa_search` or `gateway.perplexity_search` with no other change,
 //! which is a better position than owning a client for any of them.
+//!
+//! The call is streamed, and the route answers as soon as the first search
+//! result arrives. After the result the search model goes on to write an
+//! answer of its own, which the box discards; waiting for it added 1-2s to
+//! every search. The box gets the same `{content: [...]}` shape either way.
+//! The route keeps reading the stream to its end in the background and
+//! charges the usage the gateway reports there. Hanging up would not stop the
+//! gateway generating or billing, and the usage would be lost.
 
 use axum::{
     extract::State,
@@ -23,6 +33,7 @@ use axum::{
     routing::post,
     Router,
 };
+use futures::StreamExt;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -53,6 +64,12 @@ const SEARCH_FEE_MICROS: i64 = 5_000;
 /// over-billing is visible and refundable. It should essentially never be hit —
 /// if it is, the warning says why.
 const UNPRICEABLE_FLOOR_MICROS: i64 = 20_000;
+
+/// Output tokens charged for the answer the search model writes after the
+/// result, when the stream breaks before the gateway reports usage. Measured
+/// answers ran 90-450 tokens; this is the top of that range, so a broken
+/// stream never bills less than the gateway may charge us.
+const UNREAD_ANSWER_TOKENS: f64 = 450.0;
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new().route("/v1/ai/search", post(gateway_search))
@@ -103,32 +120,161 @@ async fn gateway_search(
             LANGUAGE_MODEL_SPEC_VERSION,
         )
         .header("ai-language-model-id", &model)
-        .header("ai-language-model-streaming", "false")
+        .header("ai-language-model-streaming", "true")
         .header("Content-Type", "application/json")
         .json(&request)
         .send()
         .await;
 
-    match upstream {
-        Ok(resp) => {
-            let status = resp.status();
-            let body: Value = resp.json().await.unwrap_or_else(|_| json!({}));
-            if status.is_success() {
-                let cost = cost_micros(&body, &state.catalog, &model);
-                if cost > 0 {
-                    if let Err(e) = entitlement::settle(&state.db, &ent.account_id, cost).await {
-                        tracing::warn!("search settle failed (response already returned): {e:#}");
+    let resp = match upstream {
+        Ok(resp) => resp,
+        Err(e) => return err(StatusCode::BAD_GATEWAY, "upstream_error", &e.to_string()),
+    };
+    let status = resp.status();
+    if !status.is_success() {
+        let body: Value = resp.json().await.unwrap_or_else(|_| json!({}));
+        return (
+            StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            Json(body),
+        )
+            .into_response();
+    }
+
+    // The reader hands the box its results through `first` and goes on to the
+    // end of the stream, then charges what the gateway reported.
+    let (first, answer) = tokio::sync::oneshot::channel();
+    let (db, catalog, account) = (state.db.clone(), state.catalog.clone(), ent.account_id.clone());
+    tokio::spawn(async move {
+        let read = read_stream(resp, first).await;
+        let usage = match read.usage {
+            Some(usage) => usage,
+            // A broken stream after a result: estimate. No result means no
+            // search ran, and nothing is charged.
+            None if read.content.iter().any(is_result) => unread_usage(&request, &read.content),
+            None => return,
+        };
+        let cost = cost_micros(&json!({ "content": read.content, "usage": usage }), &catalog, &model);
+        if cost > 0 {
+            if let Err(e) = entitlement::settle(&db, &account, cost).await {
+                tracing::warn!("search settle failed (response already returned): {e:#}");
+            }
+        }
+    });
+
+    match answer.await {
+        Ok(Ok(content)) => (StatusCode::OK, Json(json!({ "content": content }))).into_response(),
+        Ok(Err(message)) => err(StatusCode::BAD_GATEWAY, "upstream_error", &message),
+        Err(_) => err(StatusCode::BAD_GATEWAY, "upstream_error", "the search ended without an answer"),
+    }
+}
+
+/// What the reader collected from the gateway's stream.
+struct Read {
+    /// The `tool-call` and `tool-result` events, in order: the blocks the box
+    /// parses.
+    content: Vec<Value>,
+    /// The gateway's usage, from the `finish` event at the end of the stream.
+    usage: Option<Value>,
+}
+
+/// What `first` carries: the blocks so far, or why the search failed.
+type First = tokio::sync::oneshot::Sender<Result<Vec<Value>, String>>;
+
+/// Read the gateway's stream to its end. The blocks go out through `first`
+/// as soon as the first search result arrives, or when the stream ends
+/// without one; an `error` event or a broken stream before then is sent as
+/// the failure.
+async fn read_stream(resp: reqwest::Response, first: First) -> Read {
+    let mut read = Read { content: vec![], usage: None };
+    let mut first = Some(first);
+    let mut buffer = String::new();
+    let mut bytes = resp.bytes_stream();
+    let failure = loop {
+        let Some(chunk) = bytes.next().await else {
+            // The last line may arrive without its newline.
+            buffer.push('\n');
+            break take_events(&mut buffer).into_iter().find_map(|e| apply_event(&mut read, e).err());
+        };
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(e) => break Some(format!("the search stream broke: {e}")),
+        };
+        buffer.push_str(&String::from_utf8_lossy(&chunk));
+        let mut failed = None;
+        for event in take_events(&mut buffer) {
+            match apply_event(&mut read, event) {
+                Ok(true) => {
+                    if let Some(tx) = first.take() {
+                        let _ = tx.send(Ok(read.content.clone()));
                     }
                 }
+                Ok(false) => {}
+                Err(message) => failed = Some(message),
             }
-            (
-                StatusCode::from_u16(status.as_u16()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
-                Json(body),
-            )
-                .into_response()
         }
-        Err(e) => err(StatusCode::BAD_GATEWAY, "upstream_error", &e.to_string()),
+        if failed.is_some() {
+            break failed;
+        }
+    };
+    if let Some(tx) = first.take() {
+        let _ = tx.send(match failure {
+            Some(message) => Err(message),
+            None => Ok(read.content.clone()),
+        });
+    } else if let Some(message) = failure {
+        tracing::warn!("search stream ended badly after its result was sent: {message}");
     }
+    read
+}
+
+fn is_result(block: &Value) -> bool {
+    block.get("type").and_then(|t| t.as_str()) == Some("tool-result")
+}
+
+/// Fold one stream event into `read`. True when the event is a search result.
+fn apply_event(read: &mut Read, event: Value) -> Result<bool, String> {
+    match event.get("type").and_then(|t| t.as_str()) {
+        Some("tool-call") => read.content.push(event),
+        Some("tool-result") => {
+            read.content.push(event);
+            return Ok(true);
+        }
+        Some("finish") => read.usage = event.get("usage").cloned(),
+        Some("error") => {
+            let error = event.get("error").cloned().unwrap_or(Value::Null);
+            return Err(format!("the search failed upstream: {error}"));
+        }
+        _ => {}
+    }
+    Ok(false)
+}
+
+/// Take the complete `data:` lines off the front of `buffer`, parsed. A line
+/// that is not JSON (a `[DONE]`, a comment) is skipped.
+fn take_events(buffer: &mut String) -> Vec<Value> {
+    let mut events = vec![];
+    while let Some(end) = buffer.find('\n') {
+        let line: String = buffer.drain(..=end).collect();
+        if let Some(data) = line.trim().strip_prefix("data:") {
+            if let Ok(event) = serde_json::from_str::<Value>(data.trim()) {
+                events.push(event);
+            }
+        }
+    }
+    events
+}
+
+/// Usage for a stream that broke after its result, before the gateway
+/// reported any. Counted as if the model went on to read the results and
+/// write its answer, at about four characters a token, so a broken stream
+/// bills at least what the full call would have.
+fn unread_usage(request: &Value, content: &[Value]) -> Value {
+    let chars = |v: &Value| v.to_string().chars().count() as f64;
+    let input = (chars(request) + content.iter().map(chars).sum::<f64>()) / 4.0;
+    json!({
+        "inputTokens": { "total": input.round() },
+        "outputTokens": { "total": UNREAD_ANSWER_TOKENS },
+    })
 }
 
 /// What to charge, in three descending tiers of confidence.
@@ -233,6 +379,37 @@ mod tests {
             cost_micros(&two, &empty_catalog(), "unknown/model"),
             UNPRICEABLE_FLOOR_MICROS
         );
+    }
+
+    #[test]
+    fn events_are_read_line_by_line_and_a_partial_line_waits() {
+        let mut buffer = "data: {\"type\":\"stream-start\"}\n\ndata: [DONE]\ndata: {\"type\":\"tool-ca".to_string();
+        let events = take_events(&mut buffer);
+        assert_eq!(events, vec![json!({"type": "stream-start"})]);
+        assert_eq!(buffer, "data: {\"type\":\"tool-ca");
+    }
+
+    #[test]
+    fn a_result_event_is_reported_as_one() {
+        let mut read = Read { content: vec![], usage: None };
+        assert!(!apply_event(&mut read, json!({"type": "tool-input-start"})).unwrap());
+        assert!(!apply_event(&mut read, json!({"type": "tool-call", "input": "{}"})).unwrap());
+        assert!(apply_event(&mut read, json!({"type": "tool-result", "result": {"results": []}})).unwrap());
+        let types: Vec<_> = read.content.iter().map(|b| b["type"].as_str().unwrap()).collect();
+        assert_eq!(types, ["tool-call", "tool-result"]);
+    }
+
+    #[test]
+    fn an_error_event_is_an_error() {
+        let mut read = Read { content: vec![], usage: None };
+        assert!(apply_event(&mut read, json!({"type": "error", "error": "rate limited"})).is_err());
+    }
+
+    #[test]
+    fn a_broken_stream_bills_the_answer_it_did_not_read() {
+        let usage = unread_usage(&json!({"prompt": "x".repeat(400)}), &[json!({"type": "tool-result"})]);
+        assert!(usage["inputTokens"]["total"].as_f64().unwrap() > 100.0);
+        assert_eq!(usage["outputTokens"]["total"].as_f64(), Some(UNREAD_ANSWER_TOKENS));
     }
 
     fn empty_catalog() -> crate::catalog::Catalog {

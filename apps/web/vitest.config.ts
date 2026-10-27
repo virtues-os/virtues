@@ -46,10 +46,14 @@ export default defineConfig({
 				resolve: {
 					conditions: ['browser'],
 					// A rune store that imports SvelteKit's navigation (the tab
-					// shell does) gets a no-op stand-in.
+					// shell does) gets a no-op stand-in, and anything that asks
+					// SvelteKit whether it is in the browser is told it is.
 					alias: {
 						'$app/navigation': fileURLToPath(
 							new URL('./src/lib/testing/app-navigation.ts', import.meta.url),
+						),
+						'$app/environment': fileURLToPath(
+							new URL('./src/lib/testing/app-environment.ts', import.meta.url),
 						),
 					},
 				},

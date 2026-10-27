@@ -78,7 +78,7 @@
 
 <Page title="Projects" {description} maxWidth="wide">
 	{#snippet actions()}
-		<Button variant="secondary" size="sm" icon="ri:add-line" onclick={newProject}>New project</Button>
+		<Button variant="secondary" size="sm" icon="ri:add-line" onclick={() => newProject()}>New project</Button>
 	{/snippet}
 
 	{#if projects.length === 0 && archived.length === 0 && !firstLoad && !projectStore.error}
@@ -89,7 +89,7 @@
 				A project keeps the chats, pages and files for one piece of work together. Every chat in
 				it follows the brief you give it.
 			</p>
-			<Button variant="secondary" size="sm" icon="ri:add-line" onclick={newProject}>New project</Button>
+			<Button variant="secondary" size="sm" icon="ri:add-line" onclick={() => newProject()}>New project</Button>
 		</div>
 	{:else}
 		<UniversalDataGrid

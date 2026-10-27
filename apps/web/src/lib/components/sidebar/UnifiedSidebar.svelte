@@ -17,6 +17,7 @@
 	import { SETTINGS_MODE, rowForRoute } from "$lib/sidebar/modes";
 	import HomePanel from "./panels/HomePanel.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
+	import { newPage, newTask } from "$lib/utils/newActions";
 	import { onSummon, setSummonShortcut, storedSummonChord } from "$lib/tauri/bridge";
 
 	// Collapsed state from shared store (also consumed by WindowTabBar)
@@ -158,16 +159,12 @@
 		windowShellStore.openTabFromRoute("/?temporary=1", { label: "Temporary Chat" });
 	}
 
-	async function handleNewPage() {
-		const { pagesStore } = await import("$lib/stores/pages.svelte");
-		const page = await pagesStore.createNewPage();
-		windowShellStore.openTabFromRoute(`/page/${page.id}`, { label: page.title });
+	function handleNewPage() {
+		void newPage((route, label) => windowShellStore.openTabFromRoute(route, { label }));
 	}
 
-	async function handleNewTask() {
-		const { tasksStore } = await import("$lib/stores/tasks.svelte");
-		tasksStore.requestAdd();
-		windowShellStore.openTabFromRoute("/tasks", { label: "Tasks", focusExisting: true });
+	function handleNewTask() {
+		void newTask((route, label) => windowShellStore.openTabFromRoute(route, { label, focusExisting: true }));
 	}
 
 	function toggleCollapse() {

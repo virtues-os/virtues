@@ -108,8 +108,8 @@ does not cost the user their wallet.
 The box never holds a Stripe key and never sees a checkout page. Linking is a
 device-authorization flow (RFC 8628 shape, `services/virtues-atlas/src/routes/link.rs`):
 
-1. Box `POST /init/start` to Atlas → `device_code` (secret, kept in
-   `box_secrets`) plus a short `user_code` and verification URL shown to the
+1. Box `POST /init/start` to Atlas → `device_code` (secret, kept as a
+   box secret in `credentials`) plus a short `user_code` and verification URL shown to the
    user.
 2. The user opens the URL and is redirected to Stripe Checkout.
 3. On Stripe success Atlas finalizes (`GET /init/done`): verifies payment,

@@ -717,9 +717,9 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
     // not compatible with SQL type JSONB", which silently broke every ingest.)
     // `secrets_ciphertext` stays TEXT (it's opaque ciphertext, not JSON).
     let row: Option<(String, String, serde_json::Value)> = sqlx::query_as(
-        r#"SELECT source_id, secrets_ciphertext, metadata
+        r#"SELECT key, secrets_ciphertext, metadata
              FROM credentials
-            WHERE id = $1 AND status = 'active'"#,
+            WHERE id = $1 AND kind = 'source' AND status = 'active'"#,
     )
     .bind(credential_id)
     .fetch_optional(db)

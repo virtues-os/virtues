@@ -13,8 +13,10 @@
 		rows: Row[];
 		/** The query had more rows than the box sent. */
 		more: boolean;
+		/** Start at ten rows, with a button for the rest. A query's own tab (QueryView) shows them all. */
+		folded?: boolean;
 	}
-	let { columns: all, rows, more }: Props = $props();
+	let { columns: all, rows, more, folded = true }: Props = $props();
 
 	// A column with nothing in it says nothing; it only narrows the others.
 	const columns = $derived(all.filter((c) => hasValues(rows, c)));
@@ -22,8 +24,13 @@
 
 	const FOLDED = 10;
 	let open = $state(false);
-	const shown = $derived(open ? rows : rows.slice(0, FOLDED));
+	const shown = $derived(open || !folded ? rows : rows.slice(0, FOLDED));
 	const numeric = $derived(new Set(columns.filter((c) => isNumericColumn(rows, c))));
+
+	// A long text cell (a page's body, an email's) shows its start, and More
+	// shows the rest in place.
+	const LONG = 240;
+	let expanded = $state<Record<string, boolean>>({});
 
 	function openRow(row: Row) {
 		const ref = rowRef(row);
@@ -41,15 +48,18 @@
 			</tr>
 		</thead>
 		<tbody>
-			{#each shown as row}
+			{#each shown as row, ri}
 				{@const ref = rowRef(row)}
 				<tr class:linked={!!ref} onclick={ref ? () => openRow(row) : undefined}>
 					{#each columns as c, ci}
+						{@const text = formatCell(row[c])}
 						<td class:num={numeric.has(c)} class:time={times.has(c)}>
 							{#if ci === 0 && ref}
-								<button type="button" class="open" onclick={(e) => { e.stopPropagation(); openRow(row); }}>{formatCell(row[c])}</button>
+								<button type="button" class="open" onclick={(e) => { e.stopPropagation(); openRow(row); }}>{text}</button>
+							{:else if text.length > LONG && !expanded[`${ri}:${c}`]}
+								{text.slice(0, LONG).trimEnd()}… <button type="button" class="more" onclick={(e) => { e.stopPropagation(); expanded[`${ri}:${c}`] = true; }}>More</button>
 							{:else}
-								{formatCell(row[c])}
+								{text}
 							{/if}
 						</td>
 					{/each}
@@ -58,14 +68,14 @@
 		</tbody>
 	</table>
 </div>
-{#if rows.length > FOLDED || more}
+{#if (folded && rows.length > FOLDED) || more}
 	<div class="foot">
-		{#if rows.length > FOLDED}
+		{#if folded && rows.length > FOLDED}
 			<button type="button" class="toggle" onclick={() => (open = !open)}>
 				{open ? "Show fewer" : `Show all ${rows.length} rows`}
 			</button>
 		{/if}
-		{#if more && (open || rows.length <= FOLDED)}
+		{#if more && (open || !folded || rows.length <= FOLDED)}
 			<span>The first {rows.length} rows</span>
 		{/if}
 	</div>
@@ -118,9 +128,15 @@
 		cursor: pointer;
 		color: var(--color-primary);
 	}
-	.open:focus-visible {
+	.open:focus-visible,
+	.more:focus-visible {
 		outline: 2px solid var(--color-border-focus);
 		outline-offset: 2px;
+	}
+	.more {
+		all: unset;
+		cursor: pointer;
+		color: var(--color-primary);
 	}
 	.foot {
 		display: flex;

@@ -395,7 +395,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
 
     let first_source: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM credentials \
-         WHERE status = 'active' AND source_id <> ALL($1)",
+         WHERE kind = 'source' AND status = 'active' AND key <> ALL($1)",
     )
     .bind(&non_source_ids)
     .fetch_one(pool)
@@ -459,7 +459,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
            SELECT 1 FROM credentials c \
            JOIN app_applets a ON a.credential_id = c.id \
            JOIN app_applet_runs r ON r.applet_id = a.id AND r.status = 'success' \
-           WHERE c.status = 'active' AND c.source_id <> ALL($1))",
+           WHERE c.kind = 'source' AND c.status = 'active' AND c.key <> ALL($1))",
     )
     .bind(&non_source_ids)
     .fetch_one(pool)
@@ -928,7 +928,7 @@ mod tests {
             ("cred_ios", "ios"),
         ] {
             sqlx::query(
-                "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+                "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) \
                  VALUES ($1, $2, $2, 'active', 'x')",
             )
             .bind(id)
@@ -945,7 +945,7 @@ mod tests {
 
         // One real cloud credential flips it — and with it onboarding_complete.
         sqlx::query(
-            "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) \
              VALUES ('cred_g', 'google', 'Google', 'active', 'x')",
         )
         .execute(&pool)

@@ -109,8 +109,15 @@ export function parseEntityRoute(route: string): string | null {
 }
 
 // `/chat/{chat}/tool/{call}`: the whole result of one tool call, the rows
-// behind a computed figure. The box attaches it to every sql_query result.
-const TOOL_REF = /^\/chat\/[^/]+\/tool\/([^/?#]+)$/;
+// behind a computed figure. The box attaches it to every sql_query and
+// show result, and it opens in a tab of its own (QueryView).
+const TOOL_REF = /^\/chat\/([^/?#]+)\/tool\/([^/?#]+)$/;
+
+/** A query ref's chat and call, or null for any other link. */
+export function parseToolRef(url: string): { chatId: string; callId: string } | null {
+	const m = TOOL_REF.exec(url);
+	return m ? { chatId: m[1], callId: m[2] } : null;
+}
 
 export type LinkTarget =
 	| { kind: 'query'; callId: string }
@@ -125,7 +132,7 @@ export type LinkTarget =
  */
 export function linkTarget(url: string | null | undefined): LinkTarget {
 	if (!url) return { kind: 'none' };
-	const callId = TOOL_REF.exec(url)?.[1];
+	const callId = parseToolRef(url)?.callId;
 	if (callId) return { kind: 'query', callId };
 	if (parseEntityRoute(url) !== null) return { kind: 'entity' };
 	if (/^https?:\/\//.test(url)) return { kind: 'external' };
@@ -146,6 +153,28 @@ export function parseRef(url: string): { kind: string; id: string } | null {
 	const kind = ROUTE_TO_TYPE[`/${m[1]}`];
 	if (!kind) return null;
 	return { kind, id: decoded(m[2]) };
+}
+
+const RECORD_ROUTE = /^\/record\/([a-z0-9_]+)\/([^?#]+)$/;
+// A table name always has an underscore (`data_calendar_event`, `app_pages`),
+// which keeps `mailto:` and other schemes out.
+const TABLE_REF = /^([a-z][a-z0-9]*_[a-z0-9_]+):(?!\/\/)(.+)$/;
+
+/**
+ * A record's ontology and id, from either way the app writes one: a route
+ * (`/record/<ontology>/<id>`, what chat answers and pages link to) or
+ * `table:id` (what a day article cites). The records API takes a table name
+ * in place of an ontology name, so either goes to `getRecord` as is. Null
+ * for anything else.
+ */
+export function parseRecordRef(ref: string): { ontology: string; id: string } | null {
+	const m = RECORD_ROUTE.exec(ref) ?? TABLE_REF.exec(ref);
+	return m ? { ontology: m[1], id: decoded(m[2]) } : null;
+}
+
+/** A link to a record, which opens the record card where it is cited. */
+export function isRecordRoute(url: string | null | undefined): boolean {
+	return !!url && RECORD_ROUTE.test(url);
 }
 
 /**

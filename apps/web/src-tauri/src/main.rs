@@ -12,6 +12,8 @@ mod browser;
 mod browser_host;
 #[cfg(target_os = "macos")]
 mod messages_send;
+#[cfg(target_os = "macos")]
+mod traffic_lights;
 use browser::{browser_login, browser_pane_agent, browser_pane_bounds, browser_pane_go, browser_pane_open};
 
 use serde::{Deserialize, Serialize};
@@ -1908,18 +1910,26 @@ fn main() {
             //
             // Windows and Linux keep `__VIRTUES_BOX_URL__` for the connect page,
             // whose fallback is the default :7117 (this matters for profiles).
-            let box_url_js = if cfg!(target_os = "macos") {
-                format!(
+            #[cfg(target_os = "macos")]
+            let box_url_js = {
+                let mtm = objc2::MainThreadMarker::new().expect("setup runs on the main thread");
+                let mut js = format!(
                     "window.__VIRTUES_BACKEND_ORIGIN__ = 'http://127.0.0.1:{}'; window.__VIRTUES_PAIRED__ = {};",
                     tauri_plugin_reach::loopback_port(),
                     is_paired()
-                )
-            } else {
-                format!(
-                    "window.__VIRTUES_BOX_URL__ = 'http://localhost:{}';",
-                    tauri_plugin_reach::loopback_port()
-                )
+                );
+                // Where the traffic lights end, so the header's controls
+                // follow them (WindowHeader).
+                if let Some(end) = traffic_lights::end(mtm) {
+                    js.push_str(&format!(" window.__VIRTUES_TRAFFIC_LIGHTS_END__ = {end};"));
+                }
+                js
             };
+            #[cfg(not(target_os = "macos"))]
+            let box_url_js = format!(
+                "window.__VIRTUES_BOX_URL__ = 'http://localhost:{}';",
+                tauri_plugin_reach::loopback_port()
+            );
 
             let mut builder = WebviewWindowBuilder::new(app, "main", url);
             // A dev profile gets its own web storage. The app's own copy is
@@ -1931,20 +1941,13 @@ fn main() {
                 builder = builder.data_store_identifier(profile_store_id(p));
             }
             // The app draws its own title bar: the page runs to the window's
-            // top edge and the traffic lights sit inside its header row, on
-            // the row's centre line, with the window's controls right after
-            // them (WindowHeader). tao makes the bar's height the button's
-            // 14pt plus `y`, so y = 20 puts the lights' centre 20pt down the
-            // 40pt header. x = 20 leaves them as much room from the window's
-            // left edge as from its top. Keep x in step with
-            // TRAFFIC_LIGHTS_END_PX in WindowHeader. The header marks itself
-            // as the drag region.
+            // top edge and the traffic lights sit inside its header row, with
+            // the window's controls right after them (WindowHeader).
+            // traffic_lights.rs places them, here and after every resize
+            // (`on_window_event`). The header marks itself as the drag region.
             #[cfg(target_os = "macos")]
             {
-                builder = builder
-                    .title_bar_style(tauri::TitleBarStyle::Overlay)
-                    .hidden_title(true)
-                    .traffic_light_position(tauri::LogicalPosition::new(20.0, 20.0));
+                builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
             }
             let window = builder
                 .title("Virtues")
@@ -1997,6 +2000,11 @@ fn main() {
                 })
                 .build()?;
 
+            #[cfg(target_os = "macos")]
+            if let Ok(ns_window) = window.ns_window() {
+                traffic_lights::place(ns_window);
+            }
+
             // Only used in debug; silence the release-build unused warning.
             #[cfg(debug_assertions)]
             window.open_devtools();
@@ -2035,6 +2043,16 @@ fn main() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let _ = window.hide();
                 api.prevent_close();
+            }
+            // AppKit puts the traffic lights back at its own spot on every
+            // resize, a zoom and leaving full screen included.
+            #[cfg(target_os = "macos")]
+            if let WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } = event {
+                if window.label() == "main" {
+                    if let Ok(ns_window) = window.ns_window() {
+                        traffic_lights::place(ns_window);
+                    }
+                }
             }
             #[cfg(not(target_os = "macos"))]
             let _ = (window, event);

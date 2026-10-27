@@ -24,6 +24,8 @@ pub fn routes() -> Router<AppState> {
         // The Timeline: one local day whole, and which days have a record
         .route("/api/timeline/days/:date", get(timeline_day_handler))
         .route("/api/timeline/recorded", get(timeline_recorded_handler))
+        // The chat sky: one local day as moments, for the empty new chat
+        .route("/api/sky/day/:date", get(sky_day_handler))
         // "Help Virtues out": the places the map can't name, and their answers
         .route("/api/timeline/places/review", get(place_review_handler))
         .route("/api/timeline/places/:id/answer", post(place_answer_handler))
@@ -1420,6 +1422,15 @@ pub async fn wiki_delete_auto_events_handler(
 pub async fn timeline_day_handler(State(state): State<AppState>, Path(date): Path<String>) -> Response {
     match date.parse::<chrono::NaiveDate>() {
         Ok(d) => api_response(crate::api::timeline::get_day(state.db.pool(), d).await),
+        Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
+    }
+}
+
+/// One local day (`YYYY-MM-DD`) as the chat sky draws it: stays, calendar,
+/// workouts and the night it woke from, with the weather when it is today.
+pub async fn sky_day_handler(State(state): State<AppState>, Path(date): Path<String>) -> Response {
+    match date.parse::<chrono::NaiveDate>() {
+        Ok(d) => api_response(crate::api::sky::get_day(state.db.pool(), d).await),
         Err(_) => error_response(Error::InvalidInput(format!("Invalid date format: {}", date))),
     }
 }

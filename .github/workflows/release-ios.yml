@@ -135,7 +135,9 @@ jobs:
           done
           if [ -z "$BEST" ] || [ "$(printf '%s\n%s\n' "$WANT" "$BEST_SDK" | sort -V | head -1)" != "$WANT" ]; then
             echo "::error::no Xcode on this runner has an iOS SDK >= $WANT (newest: ${BEST:-none}, SDK ${BEST_SDK:-none})"
-            ls -d /Applications/Xcode*.app || true
+            for x in /Applications/Xcode*.app; do
+              echo "$x: iOS SDK $(DEVELOPER_DIR="$x/Contents/Developer" xcrun --sdk iphoneos --show-sdk-version 2>/dev/null || echo none)"
+            done
             exit 1
           fi
           echo "DEVELOPER_DIR=$BEST/Contents/Developer" >> "$GITHUB_ENV"
@@ -156,11 +158,15 @@ jobs:
 
       # aarch64-apple-ios for the app; wasm32 for the page editor's markdown
       # converter, which the UI bake builds (apps/web/scripts/build-converter.mjs).
+      # llvm-tools: under Xcode 27, swift-rs exports the Swift plugins'
+      # `@_cdecl` entry points with llvm-objcopy. Without it every plugin's
+      # `init_plugin_*` symbol stays internal and the app fails to link.
       - name: Install Rust (iOS targets)
         uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de # master, 2026-09-12
         with:
           toolchain: stable
           targets: aarch64-apple-ios,wasm32-unknown-unknown
+          components: llvm-tools
 
       # A tag build can read only caches made on the default branch, never one
       # another tag made, so only the schedule (which runs there) saves. See

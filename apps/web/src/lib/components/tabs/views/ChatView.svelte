@@ -56,7 +56,7 @@
 	import Composing from "$lib/components/chat/Composing.svelte";
 	import Rail, { topOfElement } from "$lib/components/Rail.svelte";
 	import RestingMark from "$lib/components/chat/RestingMark.svelte";
-	import NewChatMark from "$lib/components/chat/NewChatMark.svelte";
+	import ChatSky from "$lib/components/chat/ChatSky.svelte";
 	// Getting started — the room after the founder's letter. Same shape as
 	// the interview: the id decides everything, the top of the room is
 	// synthetic and rebuilt from derived state, the cards do the work.
@@ -74,9 +74,7 @@
 	import GraduatedDoors from "$lib/components/chat/getting-started/GraduatedDoors.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import ChapterLifelineLive from "$lib/components/chat/interview/ChapterLifelineLive.svelte";
-	import { CitationPanel } from "$lib/components/citations";
 	import { buildCitationContextFromParts } from "$lib/citations";
-	import type { Citation, CitationContext } from "$lib/types/Citation";
 	import UserMessage from "$lib/components/UserMessage.svelte";
 	import ThinkingBlock from "$lib/components/ThinkingBlock.svelte";
 	import { toolStatus } from "$lib/components/chat/state/toolPresentation";
@@ -235,10 +233,6 @@
 		return toUiMessageWith(msg, messageMetadata);
 	}
 
-	// Citation panel state
-	let citationPanelOpen = $state(false);
-	let selectedCitation = $state<Citation | null>(null);
-
 	// The Project (room) this chat lives in — at most one. Its id is sent with
 	// each message: the agent's active-project context, and on a chat's first
 	// message the server files it there.
@@ -308,18 +302,6 @@
 			anchor: { x: rect.left, y: rect.top, width: rect.width, height: rect.height },
 			placement: "bottom-start",
 		});
-	}
-
-	// Open citation panel with selected citation
-	function openCitationPanel(citation: Citation) {
-		selectedCitation = citation;
-		citationPanelOpen = true;
-	}
-
-	// Close citation panel
-	function closeCitationPanel() {
-		citationPanelOpen = false;
-		selectedCitation = null;
 	}
 
 	/**
@@ -1779,13 +1761,6 @@
 		}
 	}
 
-	/** The rows a `show` figure was drawn from, in the citation panel. */
-	function openToolRows(context: CitationContext, ref: string) {
-		const callId = ref.match(/^\/chat\/[^/]+\/tool\/([^/?#]+)$/)?.[1];
-		const citation = callId ? context.byToolCallId.get(callId) : undefined;
-		if (citation) openCitationPanel(citation);
-	}
-
 	// Track C: drain the queue when the assistant goes idle.
 	$effect(() => {
 		if (
@@ -2053,7 +2028,6 @@
 															isStreaming={isStreaming || shown.arriving}
 															animate={isStreaming || shown.arriving || liveReplies.has(message.id)}
 															citations={citationContext}
-															onCitationClick={openCitationPanel}
 														/>
 														{#if (message.id === INTERVIEW_OPENING_ID && partIndex === 0) || (message.id === GS_INTERVIEW_OPENING_ID && reveal.plateReady)}
 															<!-- Right under the heading, wider than the column:
@@ -2171,7 +2145,7 @@
 													active={isLastMessage && !isStreaming}
 													working={isStreaming}
 													onChoose={sendChoice}
-													onOpenRows={(ref) => openToolRows(citationContext, ref)}
+													onOpenRows={(ref) => windowShellStore.openRouteBeside(ref, (part as any).output?.title || "Query")}
 												/>
 											{:else if part.type === "tool-code_interpreter"}
 												{@const toolPart = part as any}
@@ -2448,12 +2422,13 @@
 							<ThreeBody onClose={() => (threeBodyOpen = false)} />
 						{/await}
 					{:else if isEmpty && !isGhost && !isLocal && attachments.count === 0}
-						<!-- The mark and word. Positioned off the midpoint, so it sits
+						<!-- The chat sky, or the mark and word before the day has
+						     anything in it. Positioned off the midpoint, so it sits
 						     above the composer on the phone and the desktop alike. It
 						     yields to staged attachments, whose chips grow upward from
 						     the composer. -->
 						<div class="init-hero" out:fade={{ duration: 200 }}>
-							<NewChatMark />
+							<ChatSky />
 						</div>
 					{/if}
 
@@ -2565,12 +2540,6 @@
 			</div>
 		</div>
 	</div>
-
-	<CitationPanel
-		citation={selectedCitation}
-		open={citationPanelOpen}
-		onClose={closeCitationPanel}
-	/>
 {/if}
 
 <style>
@@ -2764,9 +2733,10 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	/* ── The mark on an empty chat ──
+	/* ── The sky on an empty chat ──
 	   Seated above center, so the phone's bottom-docked composer and rising
-	   keyboard never crowd it. What it draws is NewChatMark's. */
+	   keyboard never crowd it. What it draws is ChatSky's, which takes its own
+	   pointer events back for hover. */
 	.init-hero {
 		position: absolute;
 		left: 0;

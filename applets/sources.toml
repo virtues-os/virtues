@@ -106,6 +106,21 @@ auth = { kind = "api_key", fields = ["cookies"] }
 # cookie once the two that mean "logged in" exist.
 login = { url = "https://www.instagram.com/accounts/login/", cookies = ["sessionid", "csrftoken"], jar_field = "cookies" }
 
+# Session cookies, like Instagram: Grok has no API for reading your own chats,
+# so this replays the requests the grok.com web client makes for its chat list.
+# Unlike claude.ai and ChatGPT, grok.com answers a plain HTTP client without a
+# Cloudflare challenge (agents/record/ai-chat-sync-spike-2026-10-23.md).
+# TODO(2026-10-25): confirm `sso` and `sso-rw` are the login cookies with a
+# sign-in through the Mac app's login pane, and record them in that file.
+[[source]]
+id = "grok"
+display_name = "Grok"
+icon = "ri:robot-line"
+description = "Keep a copy of your Grok chats. Uses your session cookies, read-only."
+auth = { kind = "api_key", fields = ["cookies"] }
+# The login page is grok.com itself, so the handed-over jar is grok.com's.
+login = { url = "https://grok.com/", cookies = ["sso", "sso-rw"], jar_field = "cookies" }
+
 # One-time import (NOT a living/cron'd source): the user uploads an export file
 # which is parsed box-side and ingested once. Modeled as a source so it gets a
 # catalog tile + uniform dedup; its action is manual-trigger only (no cron).

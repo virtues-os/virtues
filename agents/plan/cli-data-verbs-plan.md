@@ -44,7 +44,7 @@ gets its own SQL, its own role switch or its own validation:
   (`tools/sql_query.rs`); `sql_write` to `virtues_applet_writer`
   (`tools/sql_write.rs`). The CLI runs as the `virtues` service user, whose
   pool role is a superuser, so a verb that bypassed the executor would read
-  `box_secrets` and `virtues.env`. **Running every verb through the executor
+  `credentials` and `virtues.env`. **Running every verb through the executor
   prevents that.**
 - Arguments and help text come from `virtues_registry::tools::ToolConfig`
   (`parameters`, `description`). The CLI, the MCP tool list and the chat tool

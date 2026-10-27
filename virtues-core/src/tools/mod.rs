@@ -146,9 +146,16 @@ const APPLET_RUN_ALLOWED_TOOLS: &[&str] = &[
 
 /// Tools for an autonomous **applet** run: the explicit allowlist above, and
 /// the applet tool with only its reads (`applet_management::execute` refuses
-/// the rest from a run as well).
-pub fn get_tools_for_applet() -> Vec<serde_json::Value> {
+/// the rest from a run as well). `has_chat` is whether the run has a chat id;
+/// without one, sql_query is offered without `save_as`, which the tool
+/// refuses when there is no chat to keep the file in.
+pub fn get_tools_for_applet(has_chat: bool) -> Vec<serde_json::Value> {
     let mut tools = tools_named(APPLET_RUN_ALLOWED_TOOLS);
+    if !has_chat {
+        if let Some(sql) = tools.iter_mut().find(|t| t["function"]["name"] == "sql_query") {
+            *sql = llm_definition(virtues_registry::tools::sql_query_tool(false));
+        }
+    }
     tools.push(llm_definition(virtues_registry::tools::applet_tool(
         &virtues_registry::tools::APPLET_READ_ACTIONS,
     )));
@@ -472,7 +479,8 @@ mod sudo_scope {
             mode("anything-else"),
             get_tool_definitions_for_llm(),
             get_all_tool_definitions_for_llm(),
-            get_tools_for_applet(),
+            get_tools_for_applet(true),
+            get_tools_for_applet(false),
             get_tools_for_subagent(),
         ] {
             assert!(!names(&listing).contains(&"shell".to_string()));

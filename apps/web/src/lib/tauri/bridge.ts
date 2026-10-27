@@ -370,14 +370,23 @@ export async function canBrowserLogin(): Promise<boolean> {
 	return shellSupports(BROWSER_LOGIN_SURFACE);
 }
 
+/** One cookie from a sign-in. A shell older than the full jar sends only
+ *  `name` and `value`. `expires` is Unix seconds. */
 export interface JarCookie {
 	name: string;
 	value: string;
+	domain?: string | null;
+	path?: string | null;
+	expires?: number | null;
+	secure?: boolean | null;
+	http_only?: boolean | null;
+	same_site?: string | null;
 }
 
 /**
  * Open a source's login page in a window of the app's own and resolve with the
- * site's cookies once every name in `cookies` is set. The window is incognito
+ * site's cookies once every name in `cookies` is set, including the cookies of
+ * any other `domains` the sign-in uses. The window is incognito
  * and closes itself on success. Rejects with `'closed'` when the person closes
  * it first, `'timeout'` after 15 minutes, `'already open'` on a second call.
  */
@@ -385,11 +394,12 @@ export async function browserLogin(
 	sourceId: string,
 	url: string,
 	cookies: string[],
-	title: string
+	title: string,
+	domains: string[] = []
 ): Promise<JarCookie[]> {
 	const invoke = await getInvoke();
 	if (!invoke) throw new Error('not in the app');
-	return invoke<JarCookie[]>('browser_login', { sourceId, url, cookies, title });
+	return invoke<JarCookie[]>('browser_login', { sourceId, url, cookies, title, domains });
 }
 
 /** The surface that added the Browser pane (lib.rs `COMMAND_SURFACE_VERSION`). */

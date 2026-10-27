@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Linked into the collector binary's __TEXT,__info_plist section (Package.swift).
+  macOS reads the usage strings from here when it asks for System Audio
+  Recording and Microphone. There is no CFBundleIdentifier on purpose: with
+  one, TCC keys the binary by bundle id instead of by path, and the path-keyed
+  Full Disk Access and Accessibility grants every installed collector holds
+  would stop matching. Tested on macOS 27.0.1 on 2026-10-26: with only these
+  keys, a path-keyed grant still matched and the audio prompt still appeared.
+-->
+<plist version="1.0">
+<dict>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Virtues records the other side of your calls and sends it to your box.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Virtues records your side of your calls and sends it to your box.</string>
+</dict>
+</plist>

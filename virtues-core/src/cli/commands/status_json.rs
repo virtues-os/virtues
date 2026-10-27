@@ -220,7 +220,7 @@ async fn collect_billing(pool: &PgPool) -> BillingSection {
 
     let byo: Option<(serde_json::Value,)> = sqlx::query_as(
         "SELECT metadata FROM credentials \
-         WHERE source_id = $1 AND status = 'active' LIMIT 1",
+         WHERE kind = 'source' AND key = $1 AND status = 'active' LIMIT 1",
     )
     .bind(crate::api::settings_byo::BYO_SOURCE_ID)
     .fetch_optional(pool)

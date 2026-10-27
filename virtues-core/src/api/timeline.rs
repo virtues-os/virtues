@@ -114,11 +114,9 @@ pub struct CalendarEvent {
     pub response_status: Option<String>,
 }
 
-pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
-    let zone = crate::timezone::day_timezone(pool, date).await?;
-    let (start, end) = super::day_summary::day_bounds(date, Some(&zone));
-
-    let stays = sqlx::query(
+/// Visits overlapping `start..end`, each with the place resolution meant.
+pub async fn stays_between(pool: &PgPool, start: DateTime<Utc>, end: DateTime<Utc>) -> Result<Vec<Stay>> {
+    Ok(sqlx::query(
         r#"SELECT v.id, v.started_at, v.ended_at, v.latitude, v.longitude,
                   p.id AS place_id, p.name AS place_name,
                   COALESCE(p.is_named, false) AS place_is_named
@@ -154,7 +152,48 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
             place_is_named: r.try_get("place_is_named")?,
         })
     })
-    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?)
+}
+
+/// Calendar entries overlapping `start..end`, all-day ones included.
+pub async fn calendar_between(
+    pool: &PgPool,
+    start: DateTime<Utc>,
+    end: DateTime<Utc>,
+) -> Result<Vec<CalendarEvent>> {
+    Ok(sqlx::query(
+        "SELECT id, title, started_at, ended_at, is_all_day, calendar_name, location_name, status, response_status \
+         FROM data_calendar_event \
+         WHERE started_at < $2 AND ended_at > $1 \
+           AND deleted_at_source IS NULL AND NOT is_archived \
+         ORDER BY started_at",
+    )
+    .bind(start)
+    .bind(end)
+    .fetch_all(pool)
+    .await?
+    .iter()
+    .map(|r| {
+        Ok(CalendarEvent {
+            id: r.try_get("id")?,
+            title: r.try_get("title")?,
+            started_at: r.try_get("started_at")?,
+            ended_at: r.try_get("ended_at")?,
+            is_all_day: r.try_get("is_all_day")?,
+            calendar_name: r.try_get("calendar_name")?,
+            location_name: r.try_get("location_name")?,
+            status: r.try_get("status")?,
+            response_status: r.try_get("response_status")?,
+        })
+    })
+    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?)
+}
+
+pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
+    let zone = crate::timezone::day_timezone(pool, date).await?;
+    let (start, end) = super::day_summary::day_bounds(date, Some(&zone));
+
+    let stays = stays_between(pool, start, end).await?;
 
     const POINT_COLUMNS: &str = "latitude, longitude, occurred_at, horizontal_accuracy, speed";
     let points = sqlx::query(&format!(
@@ -264,32 +303,7 @@ pub async fn get_day(pool: &PgPool, date: NaiveDate) -> Result<TimelineDay> {
     .fetch_one(pool)
     .await?;
 
-    let calendar = sqlx::query(
-        "SELECT id, title, started_at, ended_at, is_all_day, calendar_name, location_name, status, response_status \
-         FROM data_calendar_event \
-         WHERE started_at < $2 AND ended_at > $1 \
-           AND deleted_at_source IS NULL AND NOT is_archived \
-         ORDER BY started_at",
-    )
-    .bind(start)
-    .bind(end)
-    .fetch_all(pool)
-    .await?
-    .iter()
-    .map(|r| {
-        Ok(CalendarEvent {
-            id: r.try_get("id")?,
-            title: r.try_get("title")?,
-            started_at: r.try_get("started_at")?,
-            ended_at: r.try_get("ended_at")?,
-            is_all_day: r.try_get("is_all_day")?,
-            calendar_name: r.try_get("calendar_name")?,
-            location_name: r.try_get("location_name")?,
-            status: r.try_get("status")?,
-            response_status: r.try_get("response_status")?,
-        })
-    })
-    .collect::<std::result::Result<Vec<_>, sqlx::Error>>()?;
+    let calendar = calendar_between(pool, start, end).await?;
 
     let mut place_ids: Vec<String> = stays.iter().filter_map(|s| s.place_id.clone()).collect();
     place_ids.sort();

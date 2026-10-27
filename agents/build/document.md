@@ -646,7 +646,7 @@ the writers wrote them, and with what would read as markup escaped
 
 | Reader | Reads |
 |---|---|
-| the day page (`lib/wiki/dayArticle.ts`, DayInline, DayFigure, DayEvidence) | sentences and their sources; `inlineMarkdown.tokenize` reads an escape as its character, a reference as the character it names and a backslash ending a line as the hard line break the export writes it for, and a sentence never ends on, or opens a link or a veil with, an escaped character; a ref's label without its `@`, in either form; a veiled phrase is looked for as the page draws it (`veilMarks`), its escapes read |
+| the day page (`lib/wiki/dayArticle.ts`, DayInline, DayFigure, RecordCard) | sentences and their sources; `inlineMarkdown.tokenize` reads an escape as its character, a reference as the character it names and a backslash ending a line as the hard line break the export writes it for, and a sentence never ends on, or opens a link or a veil with, an escaped character; a ref's label without its `@`, in either form; a veiled phrase is looked for as the page draws it (`veilMarks`), its escapes read |
 | notes beside a sentence (`dayNotes.placeNotes`) | the sentence's plain words, by `tokenize`'s rules |
 | ledes (`lede.ts`'s `ledeSentence`), `recordWords` | escapes read |
 | prompts (`day_memory::plain`, `day_article::earlier_page`, `day_picture`'s sections, candidates and veiled places) | escapes and hard line breaks read (`wiki_editor::unescape`); definitions last and fences exact, as the writers wrote them |

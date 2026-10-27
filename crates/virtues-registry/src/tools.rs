@@ -75,7 +75,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
         update_memory_tool(),
         web_search_tool(),
         semantic_search_tool(),
-        sql_query_tool(),
+        sql_query_tool(true),
         sql_write_tool(),
         shell_tool(),
         code_interpreter_tool(),
@@ -732,15 +732,45 @@ Naming a person, place or org, or dates spanning a week or less, puts `from_your
     }
 }
 
-/// SQL Query tool (read-only data access)
-fn sql_query_tool() -> ToolConfig {
+/// SQL Query tool (read-only data access). `saves` offers `save_as`, which
+/// keeps a result as a CSV in a chat's code_interpreter workspace; a run with
+/// no chat has no workspace to keep it in, so it is offered the tool without.
+pub fn sql_query_tool(saves: bool) -> ToolConfig {
+    let save_as = if saves {
+        "; with save_as up to 10,000 rows go to a CSV in the code_interpreter workspace and you see 20"
+    } else {
+        ""
+    };
+    let mut parameters = serde_json::json!({
+        "type": "object",
+        "required": ["operation"],
+        "properties": {
+            "operation": {
+                "type": "string",
+                "enum": ["query", "list_tables", "get_schema"]
+            },
+            "sql": { "type": "string", "description": "SELECT, for query" },
+            "tables": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "For get_schema"
+            },
+            "limit": { "type": "integer", "description": "Rows if no LIMIT in sql; default 50" },
+            "save_as": { "type": "string", "description": "CSV name, e.g. 'sleep.csv' (saved chats only)" }
+        }
+    });
+    if !saves {
+        if let Some(properties) = parameters["properties"].as_object_mut() {
+            properties.remove("save_as");
+        }
+    }
     ToolConfig {
         id: "sql_query".to_string(),
         name: "Query Data".to_string(),
         description: "Query user's personal data with SQL".to_string(),
         llm_description: r#"Read-only SQL (PostgreSQL) over the user's personal data. For meaning across sources use semantic_search; then read the hit whole here by id.
 
-Operations: 'query' runs a SELECT; always LIMIT (max 200; with save_as up to 10,000 rows go to a CSV in the code_interpreter workspace and you see 20). 'get_schema' gives every column of the named tables with types and joins. 'list_tables' gives row counts.
+Operations: 'query' runs a SELECT; always LIMIT (max 200<<SAVE_AS>>). 'get_schema' gives every column of the named tables with types and joins. 'list_tables' gives row counts.
 
 Write against the column names listed, not names that sound right. Every table also has id, created_at, updated_at; data_* also carry metadata (jsonb) and source_stream_id. For any column not listed, call get_schema.
 
@@ -756,25 +786,9 @@ SELECT p.name, COUNT(*) FROM data_communication_message m
 JOIN wiki_refs r ON r.source_table = 'data_communication_message' AND r.source_id = m.id AND r.role = 'sender'
 JOIN wiki_people p ON p.id = r.entity_id
 GROUP BY p.name ORDER BY 2 DESC LIMIT 10"#
+            .replace("<<SAVE_AS>>", save_as)
             .replace("<<TABLE_CATALOG>>", &crate::sql_catalog::prompt_block()),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["operation"],
-            "properties": {
-                "operation": {
-                    "type": "string",
-                    "enum": ["query", "list_tables", "get_schema"]
-                },
-                "sql": { "type": "string", "description": "SELECT, for query" },
-                "tables": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "For get_schema"
-                },
-                "limit": { "type": "integer", "description": "Rows if no LIMIT in sql; default 50" },
-                "save_as": { "type": "string", "description": "CSV name, e.g. 'sleep.csv' (saved chats only)" }
-            }
-        }),
+        parameters,
         tool_type: ToolType::Builtin,
         category: ToolCategory::Data,
         icon: "ri:database-2-line".to_string(),
@@ -1295,6 +1309,21 @@ mod tests {
         }
         assert!(tool.parameters["properties"].get("patch").is_none());
         assert!(tool.parameters["properties"].get("schema_sql").is_none());
+    }
+
+    /// A run with no chat has no workspace for a saved CSV, so its sql_query
+    /// neither offers nor mentions save_as. Chat keeps both.
+    #[test]
+    fn sql_query_offers_save_as_only_with_a_chat() {
+        let chat = sql_query_tool(true);
+        assert!(chat.parameters["properties"].get("save_as").is_some());
+        assert!(chat.llm_description.contains("with save_as"));
+
+        let run = sql_query_tool(false);
+        assert!(run.parameters["properties"].get("save_as").is_none());
+        assert!(!run.llm_description.contains("save_as"), "{}", run.llm_description);
+        assert!(run.llm_description.contains("always LIMIT (max 200)."));
+        assert!(!run.llm_description.contains("<<"));
     }
 
     #[test]

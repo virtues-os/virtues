@@ -7,6 +7,8 @@
  *
  * - Ref.svelte (.ref-link, .ref-link--quiet)  — rendered output: chat answers, previews, the day biography,
  *                                               and a mention in a page or the chat composer (MentionNode)
+ * - Ref.svelte (.ref-link--cite)               — a link to a record, anywhere, and a cited query in a
+ *                                               chat answer. A click opens its RecordCard.
  */
 
 :root {
@@ -97,4 +99,34 @@
 .ref-link.ref-link--quiet:hover {
 	color: var(--ref-pill-color);
 	border-bottom-color: color-mix(in srgb, var(--color-primary) 60%, transparent);
+}
+
+/*
+ * Citation treatment (any link to a record) — accent name, dotted hairline, no icon
+ * and no `@`. Hover only tints the words; a click opens the card, and the open
+ * citation keeps the tint so the card's pointer has something to point at.
+ * The tint fades in fast and out slow, on the shell's hover timings.
+ */
+.ref-link.ref-link--cite {
+	border-radius: var(--radius-xs);
+	border-bottom: 1px dotted color-mix(in srgb, var(--color-primary) 55%, transparent);
+	transition:
+		background-color var(--motion-hover-out) var(--ease-premium),
+		border-color var(--motion-hover-out) var(--ease-premium);
+}
+
+.ref-link.ref-link--cite:hover {
+	background-color: color-mix(in srgb, var(--color-primary) 8%, transparent);
+	border-bottom-color: color-mix(in srgb, var(--color-primary) 85%, transparent);
+	transition-duration: var(--motion-hover-in);
+}
+
+.ref-link.ref-link--cite.is-open {
+	background-color: color-mix(in srgb, var(--color-primary) 13%, transparent);
+	border-bottom-color: var(--color-primary);
+}
+
+.ref-link.ref-link--cite:focus-visible {
+	outline: 2px solid var(--color-border-focus);
+	outline-offset: 2px;
 }

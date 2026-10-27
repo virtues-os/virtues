@@ -42,7 +42,7 @@ async fn lock_for(credential_id: &str) -> Arc<Mutex<()>> {
 
 #[derive(Debug, sqlx::FromRow)]
 struct CredRow {
-    source_id: String,
+    key: String,
     status: String,
     expires_at: Option<DateTime<Utc>>,
     secrets_ciphertext: String,
@@ -64,8 +64,8 @@ pub enum RefreshOutcome {
 /// Ensure the credential's access token is valid for the next dispatch.
 pub async fn ensure_fresh(db: &PgPool, credential_id: &str) -> Result<RefreshOutcome> {
     let row: Option<CredRow> = sqlx::query_as(
-        r#"SELECT source_id, status, expires_at, secrets_ciphertext
-             FROM credentials WHERE id = $1"#,
+        r#"SELECT key, status, expires_at, secrets_ciphertext
+             FROM credentials WHERE id = $1 AND kind = 'source'"#,
     )
     .bind(credential_id)
     .fetch_optional(db)
@@ -95,8 +95,8 @@ pub async fn ensure_fresh(db: &PgPool, credential_id: &str) -> Result<RefreshOut
 
     // Re-read under the lock — another task may have already refreshed.
     let row: CredRow = sqlx::query_as(
-        r#"SELECT source_id, status, expires_at, secrets_ciphertext
-             FROM credentials WHERE id = $1"#,
+        r#"SELECT key, status, expires_at, secrets_ciphertext
+             FROM credentials WHERE id = $1 AND kind = 'source'"#,
     )
     .bind(credential_id)
     .fetch_one(db)
@@ -127,12 +127,12 @@ pub async fn ensure_fresh(db: &PgPool, credential_id: &str) -> Result<RefreshOut
             None
         }
     };
-    match proxy_refresh(&row.source_id, &refresh_token, api_key.as_deref()).await {
+    match proxy_refresh(&row.key, &refresh_token, api_key.as_deref()).await {
         Ok(resp) => {
             update_credential_secrets(db, credential_id, &resp.secrets, resp.expires_in).await?;
             tracing::info!(
                 credential_id,
-                source_id = %row.source_id,
+                source_id = %row.key,
                 expires_in = resp.expires_in,
                 "credential refreshed just-in-time"
             );
@@ -141,7 +141,7 @@ pub async fn ensure_fresh(db: &PgPool, credential_id: &str) -> Result<RefreshOut
         Err(AuthError::Proxy(msg)) if msg.contains("upstream 4") => {
             tracing::warn!(
                 credential_id,
-                source_id = %row.source_id,
+                source_id = %row.key,
                 err = %msg,
                 "refresh rejected by provider; marking reauth_required"
             );

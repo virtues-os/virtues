@@ -16,7 +16,8 @@ struct VirtuesCollector: ParsableCommand {
             PauseCommand.self,
             ResumeCommand.self,
             StopCommand.self,
-            ResetCommand.self
+            ResetCommand.self,
+            CallAudioCommand.self
         ],
         defaultSubcommand: StatusCommand.self
     )

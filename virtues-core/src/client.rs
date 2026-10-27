@@ -31,11 +31,10 @@ impl Virtues {
         let storage_status = self.storage.health_check().await?;
 
         let active_sources = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM credentials WHERE status = 'active'"
+            "SELECT COUNT(*) FROM credentials WHERE kind = 'source' AND status = 'active'"
         )
         .fetch_one(self.database.pool())
-        .await
-        .unwrap_or(0) as usize;
+        .await? as usize;
 
         Ok(Status {
             is_healthy: db_status.is_healthy && storage_status.is_healthy,

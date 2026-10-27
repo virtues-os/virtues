@@ -425,7 +425,7 @@ page isn't available right now".
 - **The door key is the box's link identity.** Losing it ends every link the
   box ever shared, so it goes into backups and restores, and "new door key"
   is an explicit "end all my links" action. **Built 2026-10-06:** the key
-  is stored sealed in `box_secrets` and each page in `app_publications.page`
+  is stored sealed as a box secret in `credentials` and each page in `app_publications.page`
   (0044); the core rebuilds the bundle directory from the database before
   starting the door, so a restored box serves its links again. Settings has a
   Shared links page listing every link with turn-off. ("New door key" as a

@@ -82,6 +82,10 @@ pub struct SourceLogin {
     /// more of the jar than a fixed list (Instagram).
     #[serde(default)]
     pub jar_field: Option<String>,
+    /// Other domains the sign-in sets cookies on, whose cookies the jar
+    /// includes (ChatGPT signs in through openai.com).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domains: Vec<String>,
 }
 
 /// How a source authenticates. Matches the three auth kinds in the charter.
@@ -1009,7 +1013,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     // survives to resume when the credential recovers. Device revocation is
     // permanent, so the device clause still keys on revoked_at.
     const ORPHAN_PREDICATE: &str = "(credential_id IS NOT NULL \
-             AND credential_id NOT IN (SELECT id FROM credentials)) \
+             AND credential_id NOT IN (SELECT id FROM credentials WHERE kind = 'source')) \
           OR (device_id IS NOT NULL \
              AND device_id NOT IN (SELECT id FROM app_device WHERE revoked_at IS NULL))";
     let pruned = sqlx::query(&format!(
@@ -1137,7 +1141,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                 // secret the action uses to call the provider).
                 let credentials: Vec<(String, Option<String>)> = sqlx::query_as(
                     "SELECT id, name FROM credentials
-                      WHERE source_id = $1 AND status = 'active'
+                      WHERE kind = 'source' AND key = $1 AND status = 'active'
                       ORDER BY created_at",
                 )
                 .bind(source_id)
@@ -2218,7 +2222,7 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
     async fn reconcile_is_idempotent(pool: sqlx::PgPool) {
         // Seed an active iOS credential so per_credential templates fan out.
         sqlx::query(
-            "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) \
              VALUES ($1, 'ios', 'test ios', 'active', 'x')",
         )
         .bind("cred_test_ios")
@@ -2270,7 +2274,7 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
             let pool = pool.clone();
             async move {
                 sqlx::query(
-                    "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+                    "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) \
                      VALUES ($1, 'plaid', $2, 'active', 'x')",
                 )
                 .bind(id)

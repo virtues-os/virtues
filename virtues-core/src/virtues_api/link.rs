@@ -315,11 +315,7 @@ pub async fn login(
 }
 
 async fn clear_inflight(db: &PgPool) {
-    if let Err(e) = sqlx::query("DELETE FROM box_secrets WHERE key = $1")
-        .bind(INFLIGHT_KEY)
-        .execute(db)
-        .await
-    {
+    if let Err(e) = box_secrets::delete(db, INFLIGHT_KEY).await {
         tracing::warn!("failed to clear in-flight billing link: {e}");
     }
 }

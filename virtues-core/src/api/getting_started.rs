@@ -288,8 +288,8 @@ pub async fn compute(pool: &PgPool) -> Result<GettingStartedState> {
     // own ("your iPhone"), since they are most of what feeds a new record.
     let non_sources = crate::api::box_status::non_source_ids();
     let connected_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT DISTINCT source_id FROM credentials \
-          WHERE status = 'active' AND source_id <> ALL($1)",
+        "SELECT DISTINCT key FROM credentials \
+          WHERE kind = 'source' AND status = 'active' AND key <> ALL($1)",
     )
     .bind(&non_sources)
     .fetch_all(pool)
@@ -1019,7 +1019,7 @@ mod tests {
         sqlx::query(
             // `secrets_ciphertext` is NOT NULL — a credential without secrets
             // is not one. The bytes are nonsense; nothing on this path reads them.
-            "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) \
              VALUES ('cred_test_one', 'google', 'Google account', 'active', 'x')",
         )
         .execute(&pool)

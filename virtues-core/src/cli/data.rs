@@ -2,9 +2,9 @@
 //! and `applet check`, the dry run of the check chat runs before it creates.
 //!
 //! Each verb is a registry tool run through `ToolExecutor`, never SQL of its
-//! own. The CLI connects as the `virtues` service user, a database superuser;
-//! the executor is what drops to `virtues_face_reader` before a query runs, so
-//! a verb that went around it could read `box_secrets` and the env file. The
+//! own. The CLI connects as the `virtues` service user, which owns every
+//! table; the executor is what drops to `virtues_face_reader` before a query
+//! runs, so a verb that went around it could read `credentials`. The
 //! plan is agents/plan/cli-data-verbs-plan.md.
 //!
 //! Reads run their tool in this process. Writes run theirs in the server,

@@ -4,7 +4,7 @@
 	The day article's body with its margin.
 
 	Every sentence the writer tagged with evidence opens that evidence when
-	clicked: the record's own words in a card beside it (DayEvidence), with a
+	clicked: the record's own words in a card beside it (RecordCard), with a
 	way on to the record in Data, and a way to write in the margin. A table or
 	a photo opens its evidence the same way, as a whole.
 
@@ -51,7 +51,7 @@
 	import { veiled } from "$lib/actions/veil";
 	import { veil } from "$lib/stores/veil.svelte";
 	import DayInline from "./DayInline.svelte";
-	import DayEvidence, { type CardMode } from "./DayEvidence.svelte";
+	import RecordCard, { type CardMode } from "$lib/components/RecordCard.svelte";
 	import DayFigure from "./DayFigure.svelte";
 	import DayHand from "./DayHand.svelte";
 
@@ -243,24 +243,12 @@
 		const next = stops[stops.findIndex((s) => s.id === open!.stop) + by];
 		const el = next && root.querySelector<HTMLElement>(`[data-stop="${next.id}"]`);
 		if (!next || !el) return;
-		const focus = !!document.activeElement?.closest(".evidence-card");
+		const focus = !!document.activeElement?.closest(".record-card");
 		const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
 		el.scrollIntoView({ block: "center", behavior: still ? "auto" : "smooth" });
 		const trigger = el.nextElementSibling?.classList.contains("ev-trigger") ? (el.nextElementSibling as HTMLElement) : null;
 		show({ ...next.source, anchor: el, trigger, stop: next.id, focus });
 	}
-
-	$effect(() => {
-		if (!open) return;
-		const onKey = (e: KeyboardEvent) => {
-			if ((e.key !== "ArrowLeft" && e.key !== "ArrowRight") || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
-			if ((e.target as HTMLElement | null)?.closest("input, textarea, select, [contenteditable]")) return;
-			e.preventDefault();
-			step(e.key === "ArrowRight" ? 1 : -1);
-		};
-		document.addEventListener("keydown", onKey);
-		return () => document.removeEventListener("keydown", onKey);
-	});
 
 	function cite(ref: string) {
 		const at = open?.at ?? null;
@@ -585,23 +573,25 @@
 	{/each}
 
 	{#if open}
-		{#key open.anchor}
-			<DayEvidence
-				anchor={open.anchor}
-				evidence={open.evidence}
-				sentence={open.sentence}
-				label={open.label}
-				mode={open.mode}
-				place={open.place}
-				{timezone}
-				{position}
-				focus={open.focus}
-				oncite={cite}
-				onnote={onwrite && open.at ? () => open && writeBeside(open) : undefined}
-				onstep={step}
-				onclose={close}
-			/>
-		{/key}
+		<!-- One card for the page, so a step slides it to the next sentence.
+		     ← and → reach `step` through the card. -->
+		<RecordCard
+			anchor={open.anchor}
+			sources={open.evidence.map((n) => ({ ref: n.ref, label: n.label }))}
+			sentence={open.sentence}
+			label={open.label}
+			mode={open.mode}
+			place={open.place}
+			{timezone}
+			when="time"
+			{position}
+			focus={open.focus}
+			openLabel="Open in Data"
+			onopen={cite}
+			onnote={onwrite && open.at ? () => open && writeBeside(open) : undefined}
+			onstep={step}
+			onclose={close}
+		/>
 	{/if}
 </div>
 

@@ -21,7 +21,10 @@ import { pendingPrompt } from '$lib/stores/pendingPrompt.svelte';
 import { pinMenuItem } from '$lib/pins/pinAction';
 import { notifyArchived, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 
-export async function newProject(): Promise<void> {
+/** Ask for a name, make the project, and open it (in the tab you are on, unless `open` says where). */
+export async function newProject(
+	open: (route: string, label: string) => void = (route, label) => windowShellStore.openTabFromRoute(route, { label }),
+): Promise<void> {
 	const name = (
 		await promptText({
 			title: 'New project',
@@ -32,7 +35,7 @@ export async function newProject(): Promise<void> {
 	if (!name) return;
 	try {
 		const project = await projectStore.create(name);
-		windowShellStore.openTabFromRoute(`/project/${project.id}`, { label: project.name });
+		open(`/project/${project.id}`, project.name);
 	} catch (e) {
 		console.error('[projectActions] Failed to create project:', e);
 		toast.error("Your server couldn't create that project", {
