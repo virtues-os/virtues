@@ -1,4 +1,4 @@
-//! Keys and passwords in Settings: the owner's sign-ins and named keys
+//! Keys in Settings: the owner's sign-ins and named keys
 //! (agents/plan/secrets-plan.md, slice 5).
 //!
 //! The overview carries names only. A key's value leaves the box only through

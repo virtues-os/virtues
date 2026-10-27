@@ -1151,7 +1151,7 @@ async fn declared_env_secrets(db: &PgPool, applet_id: &str) -> Result<Vec<(Strin
     Ok(out)
 }
 
-/// "Add OPENAI_API_KEY in Settings, under Keys and passwords." Names joined
+/// "Add OPENAI_API_KEY in Settings, under Keys." Names joined
 /// as a person would list them.
 fn missing_secrets_sentence(missing: &[String]) -> String {
     let names = match missing {
@@ -1159,7 +1159,7 @@ fn missing_secrets_sentence(missing: &[String]) -> String {
         [one] => one.clone(),
         [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
     };
-    format!("Add {names} in Settings, under Keys and passwords.")
+    format!("Add {names} in Settings, under Keys.")
 }
 
 /// The `config` a subprocess receives: its saved state with the row's config
@@ -1597,11 +1597,11 @@ mod tests {
     #[test]
     fn a_missing_key_names_itself_and_where_to_add_it() {
         let one = ["OPENAI_API_KEY".to_string()];
-        assert_eq!(missing_secrets_sentence(&one), "Add OPENAI_API_KEY in Settings, under Keys and passwords.");
+        assert_eq!(missing_secrets_sentence(&one), "Add OPENAI_API_KEY in Settings, under Keys.");
         let three = ["A_KEY".to_string(), "B_KEY".to_string(), "C_KEY".to_string()];
         assert_eq!(
             missing_secrets_sentence(&three),
-            "Add A_KEY, B_KEY and C_KEY in Settings, under Keys and passwords."
+            "Add A_KEY, B_KEY and C_KEY in Settings, under Keys."
         );
     }
 

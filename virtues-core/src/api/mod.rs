@@ -15,6 +15,7 @@ pub mod box_status;
 pub mod devices;
 pub mod display;
 pub mod pair;
+pub mod passwords;
 pub mod settings_byo;
 pub mod setup;
 pub mod sudo;
