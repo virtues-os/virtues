@@ -63,6 +63,11 @@ pub struct Unit {
     pub binds: Vec<Bind>,
     /// The host path of this run's egress proxy socket, when it has one.
     pub egress: Option<PathBuf>,
+    /// Leave the Postgres socket reachable. Who the code logs in as is up to
+    /// the URL it is given; applet code gets the shared writer login.
+    pub postgres: bool,
+    /// More properties, such as `EnvironmentFile=` or `LoadCredential=`.
+    pub extra: Vec<String>,
 }
 
 impl Unit {
@@ -105,15 +110,11 @@ impl Unit {
         ];
         // `-` ignores a path that does not exist, so a dev machine or a box laid
         // out differently still starts the unit.
-        for path in [
-            "/var/lib/virtues",
-            "/etc/virtues",
-            "/var/lib/postgresql",
-            "/run/postgresql",
-            "/run/dbus",
-            "/run/user",
-        ] {
+        for path in ["/var/lib/virtues", "/etc/virtues", "/var/lib/postgresql", "/run/dbus", "/run/user"] {
             props.push(format!("InaccessiblePaths=-{path}"));
+        }
+        if !self.postgres {
+            props.push("InaccessiblePaths=-/run/postgresql".to_string());
         }
         // Wherever this box keeps them, which the fixed list may not name.
         for path in [
@@ -130,6 +131,7 @@ impl Unit {
         if let Some(socket) = &self.egress {
             props.push(format!("BindPaths={}:{EGRESS_SOCKET}", socket.display()));
         }
+        props.extend(self.extra.iter().cloned());
         props
     }
 
@@ -188,6 +190,8 @@ mod tests {
                 Bind { host: "/env".into(), inside: "/opt/py".into(), writable: false },
             ],
             egress: egress.map(PathBuf::from),
+            postgres: false,
+            extra: Vec::new(),
         }
     }
 
@@ -269,6 +273,18 @@ mod tests {
         let hosts: Vec<_> = proxy.requests().into_iter().map(|r| (r.host, r.refused.is_some())).collect();
         assert!(hosts.contains(&("api.example.com".to_string(), false)), "{hosts:?}");
         assert!(hosts.contains(&("elsewhere.example.com".to_string(), true)), "{hosts:?}");
+    }
+
+    /// Applet code reaches Postgres through its socket, and only through it:
+    /// the network stays private.
+    #[test]
+    fn postgres_leaves_only_the_socket_reachable() {
+        let mut u = unit(None);
+        u.postgres = true;
+        let props = u.properties();
+        assert!(!props.iter().any(|p| p == "InaccessiblePaths=-/run/postgresql"));
+        assert!(props.iter().any(|p| p == "PrivateNetwork=yes"));
+        assert!(props.iter().any(|p| p == "InaccessiblePaths=-/var/lib/postgresql"), "the data directory stays hidden");
     }
 
     /// An egress socket adds the inet families, which reach only the unit's

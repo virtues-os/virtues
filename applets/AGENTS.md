@@ -146,7 +146,7 @@ Its prompt may rely on exactly this set — nothing else exists:
 | write its own tables | `sql_write` — DML inside `applet_*` schemas only (PG-enforced) |
 | keep notes across runs | `update_applet_memory` |
 | write durable pages | `create_page` / `edit_page` / `get_page_content` (block pages: ops on the data-ids `get_page_content` returns; `append` needs no read) |
-| compute | `code_interpreter` (jailed, no network) |
+| compute | `code_interpreter` (sandboxed, no network) |
 | introspect applets | `applet` with `list` or `get` (read-only) |
 
 | **be told something** | add `message` to `triggers` — the user's text becomes the run's opening turn |

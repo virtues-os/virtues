@@ -74,6 +74,25 @@ fn secret() -> Option<String> {
     (!password.is_empty()).then_some(password)
 }
 
+/// Where a sandboxed run finds the Postgres socket. The box's own socket
+/// directory; the sandbox leaves it reachable for applet code.
+pub const SOCKET_DIR: &str = "/run/postgresql";
+
+/// A URL for `login` over the Postgres socket, for a process with no network
+/// (a sandboxed applet run). The box's `pg_hba.conf` takes a password for
+/// these logins on the socket; the `db-logins` repair adds that line.
+pub fn socket_url(login: Login) -> Option<String> {
+    let secret = secret()?;
+    let url = url::Url::parse(&std::env::var("DATABASE_URL").ok()?).ok()?;
+    let database = url.path().trim_start_matches('/');
+    let database = if database.is_empty() { "virtues" } else { database };
+    Some(format!(
+        "postgres://{}:{}@localhost/{database}?host={SOCKET_DIR}",
+        login.role(),
+        password(&secret, login)
+    ))
+}
+
 /// SQL that makes `login` a login role with its derived password. Run by
 /// whoever may alter the role: the server in dev and CI (it has CREATEROLE),
 /// `postgres` in the box's root repair. The password is hex, so quoting it is

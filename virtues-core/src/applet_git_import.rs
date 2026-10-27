@@ -173,7 +173,7 @@ fn validate_url(url: &str) -> Result<()> {
 /// check, not full SSRF protection — a hostname that *resolves* to a private
 /// address still passes, and DNS rebinding is not addressed. It stops the
 /// obvious and the accidental; the real containment for what an import can do
-/// once fetched is the jail (P4 in agents/record/sources-packages.md).
+/// once fetched is the sandbox its code runs in (`applet_runner::sandboxed`).
 fn deny_internal_host(url: &str) -> Result<()> {
     let no_scheme = url
         .split_once("://")

@@ -123,7 +123,7 @@ pub(crate) const SKILL_ONLY_TOOLS: &[&str] = &["save_skill"];
 /// table from agents/record/applets.md, enforced. What an applet's
 /// agent may do: think, read (sql_query/semantic_search/web_search), write
 /// its own applet_* tables (sql_write), keep notes (update_applet_memory),
-/// write pages, compute in the jail, and introspect applets read-only. Its
+/// write pages, compute in the sandbox, and introspect applets read-only. Its
 /// run RESULT posts to the linked chat — that's the delivery verb, not a
 /// tool. Everything else — applet management (self-modification), memory/
 /// profile/name writes, fan-out, image spend — is absent by construction.

@@ -112,6 +112,18 @@ print(json.dumps({"result": result, "config": inp["config"]}))
 
 No Cargo entry needed — a multi-element `command` runs the script directly via `PATH`. Reconcile picks it up after the folder lands.
 
+That example ships with the box, so it runs directly as the box user. Code
+that did not ship (an import, or an applet in the state root) runs in a
+sandbox with no network, as a throwaway user, and sees:
+
+| Path or variable | What it is |
+|---|---|
+| `/skill` | its folder, read-only; the working directory |
+| `/lake`, `STORAGE_PATH` | its own lake folder, writable; indexed after each run, refused while over 2 GB |
+| `/data/lake` | the whole lake, read-only, only when `allowed-tools` lists `lake` |
+| `DATABASE_URL` | the Postgres socket as `virtues_applet_writer`, which writes applet schemas only |
+| `$CREDENTIALS_DIRECTORY/credentials.json` | its credentials; `inp["credentials"]` is `None` |
+
 ### A face-only applet
 
 A face is `face/index.html`, rendered in a sandboxed iframe. There is no Svelte

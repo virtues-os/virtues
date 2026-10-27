@@ -235,7 +235,15 @@ fn sandbox_unit(timeout_secs: u32, workspace: &Path, env: Option<&Path>) -> Unit
     if let Some(env) = env {
         binds.push(Bind { host: env.to_path_buf(), inside: "/opt/py".into(), writable: false });
     }
-    Unit { timeout_secs, memory_max: MEMORY_MAX, working_directory: "/work", binds, egress: None }
+    Unit {
+        timeout_secs,
+        memory_max: MEMORY_MAX,
+        working_directory: "/work",
+        binds,
+        egress: None,
+        postgres: false,
+        extra: Vec::new(),
+    }
 }
 
 /// `sudo -n systemd-run …` running Python on stdin, or None when

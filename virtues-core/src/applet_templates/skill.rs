@@ -52,6 +52,10 @@ const BRAND_SPELLINGS: &[(&str, &str)] = &[
 /// its own notes are not permissions.
 pub(crate) const ALWAYS_ALLOWED_TOOLS: &[&str] = &["think", "update_applet_memory"];
 
+/// The `allowed-tools` entry that mounts the whole lake read-only for the
+/// applet's code (`applet_runner::sandboxed`).
+const LAKE_GRANT: &str = "lake";
+
 /// The largest per-run spend `limit` may set.
 const MAX_DOLLARS_PER_RUN: f64 = 10.0;
 
@@ -390,6 +394,11 @@ fn check_allowed_tools(list: &str, errors: &mut Vec<String>) -> Vec<String> {
             errors.push(format!(
                 "`{entry}`: an applet cannot reach the network yet. Remove the `net(…)` entry."
             ));
+        } else if entry == LAKE_GRANT {
+            // Not a tool: the whole lake, read-only, for the applet's code.
+            if !out.iter().any(|t| t == entry) {
+                out.push(entry.to_string());
+            }
         } else if ALWAYS_ALLOWED_TOOLS.contains(&entry) {
             // Always given; listing it changes nothing.
         } else if available.contains(&entry) {
@@ -927,6 +936,14 @@ mod tests {
         assert!(e.contains("`shell` is not available to an applet's run"), "{e}");
         let e = refused(&format!("{BASE}\nallowed-tools: sql_qeury"), "Do it.");
         assert!(e.contains("Did you mean `sql_query`?"), "{e}");
+        let t = ok(&format!("{BASE}\nallowed-tools: sql_query lake"), "Do it.");
+        let tools: Vec<String> = t.config.unwrap()["allowed_tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(tools, ["sql_query", "lake"], "lake is a grant, kept beside the tools");
     }
 
     #[test]
