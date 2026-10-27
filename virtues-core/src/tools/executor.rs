@@ -106,9 +106,10 @@ pub struct ToolContext {
     /// chat handler. A page's read base made in a turn serves only that
     /// turn (`page_reads::serves_turn`). `None` outside a chat turn.
     pub turn: Option<String>,
-    /// The call came through the console door (`server/api/console.rs`): the
-    /// owner at the box, running a CLI verb. Set only by that handler, never
-    /// from a tool's arguments, so the model cannot claim it.
+    /// The call came from an agent the owner runs, present in its session: a
+    /// CLI verb through the console door (`server/api/console.rs`), or a call
+    /// to `/api/mcp` (`server/api/mcp.rs`). Set only by those two handlers,
+    /// never from a tool's arguments, so the model cannot claim it.
     pub console: bool,
 }
 

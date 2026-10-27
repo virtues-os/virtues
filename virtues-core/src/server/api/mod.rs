@@ -16,6 +16,7 @@ pub mod chat;
 pub mod console;
 pub mod drive;
 pub mod library;
+pub mod mcp;
 pub mod pages;
 pub mod tasks;
 pub mod settings;

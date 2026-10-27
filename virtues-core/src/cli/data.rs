@@ -28,12 +28,6 @@ use crate::tools::{cli_reads, ToolContext, ToolExecutor};
 /// The widest a cell may print on a terminal. Piped output is never cut.
 const MAX_CELL: usize = 60;
 
-/// The daily spend limit an applet put from the CLI gets when it has a prompt
-/// and sets none, in dollars. A scheduled applet written by an outside agent
-/// runs with nobody watching; this is what stops it running up a bill
-/// overnight. The owner can raise or remove it like any limit.
-const DEFAULT_MAX_LLM_COST_PER_DAY: f64 = 1.0;
-
 /// A tool's data says it failed even when the call itself succeeded:
 /// `sql_write` returns `status: "error"`, an applet edit `"refused"`, the
 /// check `"check_failed"`.
@@ -385,13 +379,7 @@ impl Verbs {
                     table(&["field", "error", "suggestion"], &findings);
                     return Err(format!("{} finding(s); nothing was created", findings.len()));
                 }
-                let has_prompt = args.get("agent").or_else(|| args.get("instruction")).is_some();
-                if has_prompt && args["limits"].get("max_llm_cost_per_day").is_none() {
-                    if !args["limits"].is_object() {
-                        args["limits"] = json!({});
-                    }
-                    args["limits"]["max_llm_cost_per_day"] = json!(DEFAULT_MAX_LLM_COST_PER_DAY);
-                }
+                crate::tools::applet_setup::with_default_spend_cap(&mut args);
                 let console = &self.console;
                 args["action"] = json!("setup");
                 let data = console.tool("applet", args).await?;

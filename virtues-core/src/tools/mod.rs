@@ -218,6 +218,39 @@ pub(crate) fn cli_writes(tool: &str, arguments: &serde_json::Value) -> bool {
     }
 }
 
+/// The tools `/api/mcp` lists (`server/api/mcp.rs`). Its callers are agents
+/// the owner runs on their own machine, the same caller as the CLI's verbs on
+/// another transport, so these are the CLI's reads and writes and `applet`.
+/// agents/plan/mcp-plan.md.
+const MCP_TOOLS: &[&str] = &[
+    "sql_query",
+    "semantic_search",
+    "get_page_content",
+    "create_page",
+    "edit_page",
+    "sql_write",
+    "applet",
+];
+
+/// The registry rows `/api/mcp` lists, in registry order, each with whether
+/// it only reads.
+pub(crate) fn tools_for_mcp() -> Vec<(virtues_registry::tools::ToolConfig, bool)> {
+    virtues_registry::tools::default_tools()
+        .into_iter()
+        .filter(|tool| MCP_TOOLS.contains(&tool.id.as_str()))
+        .map(|tool| {
+            let reads_only = CLI_TOOLS.contains(&tool.id.as_str());
+            (tool, reads_only)
+        })
+        .collect()
+}
+
+/// Whether `/api/mcp` may make this call: a listed tool, with arguments a CLI
+/// verb could send. For `applet` that rules out edit and delete.
+pub(crate) fn mcp_allows(tool: &str, arguments: &serde_json::Value) -> bool {
+    MCP_TOOLS.contains(&tool) && (cli_reads(tool, arguments) || cli_writes(tool, arguments))
+}
+
 /// The read-only research tools a Deep Research **subagent** (worker) may use. Explicit allow-list
 /// (not a category filter) so workers get pure research capability — no memory/profile writes, and
 /// crucially no `dispatch_subagents` (recursion guard).

@@ -1,6 +1,6 @@
 # MCP: connections in, the box as a server
 
-**Written 2026-10-26. Nothing built.** Two directions over the Model Context
+**Written 2026-10-26. Slice 1 built the same day.** Two directions over the Model Context
 Protocol. Inbound, the box connects to other services' MCP servers and uses
 their tools: actions and live lookups only, with no ingest. Outbound, the box
 serves its own MCP endpoint, so agents the owner already uses (Claude Desktop,
@@ -273,9 +273,23 @@ name.
 
 ## Slices
 
-1. **`/api/mcp` and `MCP_TOOLS`.** Streamable HTTP, stateless, behind the
-   auth extractor, tier 1 allowlist. Checked with the MCP Inspector against a
-   dev box.
+1. **`/api/mcp` and `MCP_TOOLS`.** Built 2026-10-26 in
+   `virtues-core/src/server/api/mcp.rs`, on rmcp 3.8 with only its server
+   and Streamable HTTP features. rmcp has served the 2026-07-28 spec since
+   3.0 and still negotiates the older handshake, so both kinds of client
+   work. Served statelessly with JSON responses. The route is in
+   `protected_routes`, and a layer of its own puts the `AuthUser` into the
+   request so the `audit = "mcp_tool"` line names the device. `MCP_TOOLS`
+   and `mcp_allows` in `tools/mod.rs` allow the CLI's reads and writes and
+   `applet` list, get, check, setup and run. Calls run with `console: true`,
+   so an applet run is a manual run, and a setup gets the default daily spend
+   cap, now one function (`applet_setup::with_default_spend_cap`) shared with
+   `virtues applet put`. A request carrying any `Origin` is refused, which
+   keeps browser pages off the route; the Host check is off, since the iroh
+   key authenticates. Checked against a scratch core with MCP Inspector
+   2.12.0: tools/list, a query, an applet list and a page created over MCP;
+   a legacy `initialize` and a 2026-07-28 `server/discover`; `shell` and an
+   applet delete refused; an `Origin` answered 403.
 2. **The Mac bridge.** `agent` device kind, the "Connect an agent" button,
    the stdio shim in the reach client, and `virtues mcp` over `agent-key`.
    Done when Claude Code on a Mac away from home builds an applet through it,
@@ -296,8 +310,6 @@ name.
 ## Open
 
 - **Which server goes first** in slice 3.
-- **Whether `rmcp` supports the 2026-07-28 spec**, or whether the stateless
-  protocol is small enough to serve directly from axum. Decide in slice 1.
 - **Whether chat's own tool calls go through the same allowlist layer** (the
   CLI plan's open question), now that three callers share one table.
 - **What the Lite slot gets wrong on writes**, measured in slice 3.

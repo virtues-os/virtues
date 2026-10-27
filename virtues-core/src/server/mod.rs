@@ -694,6 +694,9 @@ fn protected_routes(state: &AppState) -> Router<AppState> {
     Router::new()
         .merge(api::applets::routes())
         .merge(api::console::routes())
+        // The box as an MCP server, for the owner's own agents.
+        // agents/plan/mcp-plan.md
+        .merge(api::mcp::routes(state))
         .merge(api::settings::routes())
         .merge(api::wiki::routes())
         .merge(api::chat::routes())

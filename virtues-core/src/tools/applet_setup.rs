@@ -70,6 +70,25 @@ pub(crate) fn wants_check_only(arguments: &serde_json::Value) -> bool {
     arguments.get("check_only").and_then(|v| v.as_bool()) == Some(true)
 }
 
+/// The daily spend limit, in dollars, an applet put by an outside agent (the
+/// CLI's `applet put`, or a setup through `/api/mcp`) gets when it has a prompt
+/// and sets none. A scheduled applet written by an outside agent runs with
+/// nobody watching; this is what stops it running up a bill overnight. The
+/// owner can raise or remove it like any limit.
+pub(crate) const DEFAULT_MAX_LLM_COST_PER_DAY: f64 = 1.0;
+
+/// Adds [`DEFAULT_MAX_LLM_COST_PER_DAY`] to setup arguments that carry a
+/// prompt and no daily limit of their own.
+pub(crate) fn with_default_spend_cap(arguments: &mut serde_json::Value) {
+    let has_prompt = arguments.get("agent").or_else(|| arguments.get("instruction")).is_some();
+    if has_prompt && arguments["limits"].get("max_llm_cost_per_day").is_none() {
+        if !arguments["limits"].is_object() {
+            arguments["limits"] = serde_json::json!({});
+        }
+        arguments["limits"]["max_llm_cost_per_day"] = serde_json::json!(DEFAULT_MAX_LLM_COST_PER_DAY);
+    }
+}
+
 /// The authored fields, parsed once for the check and the write.
 pub(crate) struct Draft {
     name: String,
