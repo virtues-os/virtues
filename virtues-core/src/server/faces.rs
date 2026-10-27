@@ -15,10 +15,11 @@
 //!   `Access-Control-Allow-Origin: *`, so fetches from the opaque-origin
 //!   iframe can read *these* responses and nothing else on the API.
 //! - Data access needs a **face token** (minted by the authenticated app
-//!   per iframe load, short-lived, bound to one applet) and executes as the
-//!   `virtues_face_reader` PG role — default-deny, SELECT granted only on
-//!   `data_*` / `wiki_*` tables and `applet_*` schemas — inside a READ ONLY
-//!   transaction with a statement timeout.
+//!   per iframe load, short-lived, bound to one applet) and executes logged
+//!   in as the `virtues_face_reader` PG role (`database::restricted`) —
+//!   default-deny, SELECT granted only on `data_*` / `wiki_*` tables and
+//!   `applet_*` schemas — inside a READ ONLY transaction with a statement
+//!   timeout.
 //! - Face documents get a strict CSP: no external hosts, ever.
 
 use axum::{
@@ -357,7 +358,14 @@ pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::resul
     if sql.len() > 20_000 {
         return Err("query too long".into());
     }
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
+    // The zone comes from the profile, an app_* table the reader cannot see,
+    // so it is read on the main pool before the reader's transaction.
+    let zone = crate::timezone::resolve_timezone(pool, None)
+        .await
+        .map_err(|e| e.to_string())?;
+    let mut tx = crate::database::restricted::begin(pool, crate::database::restricted::Login::Reader)
+        .await
+        .map_err(|e| e.to_string())?;
     sqlx::query("SET TRANSACTION READ ONLY")
         .execute(&mut *tx)
         .await
@@ -366,15 +374,7 @@ pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::resul
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
-    // Set the timezone BEFORE dropping to face_reader — the profile table is
-    // app_*, which face_reader can't read. Reading it after the role switch
-    // would error and poison the whole transaction ("current transaction is
-    // aborted"), failing every face query. The pool role can read it here.
-    crate::timezone::set_local_timezone(&mut *tx, None)
-        .await
-        .map_err(|e| e.to_string())?;
-    sqlx::query("SET LOCAL ROLE virtues_face_reader")
-        .execute(&mut *tx)
+    crate::timezone::apply_timezone(&mut tx, &zone)
         .await
         .map_err(|e| e.to_string())?;
 
@@ -627,5 +627,18 @@ mod tests {
         assert!(can_read("data_health_sleep").await, "the sweep still grants the rest");
         // The task tools send the model to sql_query for the list.
         assert!(can_read("app_tasks").await, "the assistant cannot read its task list");
+    }
+
+    /// A view's SQL cannot return to the server's role. Under a `SET ROLE`
+    /// drop, `set_config('role', session_user, true)` inside the query
+    /// switched back, and the rest of the query read `app_*` tables.
+    #[sqlx::test]
+    async fn view_sql_cannot_return_to_the_server_role(pool: sqlx::PgPool) {
+        ensure_applet_db_grants(&pool).await.expect("grant sweep");
+        crate::database::restricted::ensure_logins(&pool).await;
+        let escape = "SELECT set_config('role', session_user, true) AS r, \
+                      query_to_xml('select count(*) as n from app_applets', true, false, '') AS x";
+        let err = run_face_query(&pool, escape).await.expect_err("the escape must be refused");
+        assert!(err.contains("permission denied"), "{err}");
     }
 }

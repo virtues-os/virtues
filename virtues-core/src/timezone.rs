@@ -141,26 +141,45 @@ pub async fn home_timezone_or_utc(pool: &PgPool, date: NaiveDate) -> String {
 /// it does not know raises, and a raise aborts the transaction the caller's
 /// query was about to run in.
 ///
-/// Call it before any `SET LOCAL ROLE`: the profile is an `app_*` table, which
-/// the reader roles cannot see. `is_local`, so it reverts with the transaction
-/// and never reaches the next borrower of a pooled connection.
+/// The profile is an `app_*` table, which the restricted logins cannot see. A
+/// transaction on one of them resolves the zone on the main pool with
+/// [`resolve_timezone`] and sets it with [`apply_timezone`]. `is_local`, so it
+/// reverts with the transaction and never reaches the next borrower of a
+/// pooled connection.
 pub async fn set_local_timezone(
     conn: &mut sqlx::PgConnection,
+    preferred: Option<&str>,
+) -> Result<String, sqlx::Error> {
+    let zone = resolve_timezone(&mut *conn, preferred).await?;
+    apply_timezone(conn, &zone).await
+}
+
+/// The zone [`set_local_timezone`] would set, without setting it.
+pub async fn resolve_timezone<'c>(
+    conn: impl sqlx::PgExecutor<'c>,
     preferred: Option<&str>,
 ) -> Result<String, sqlx::Error> {
     // One scan of pg_timezone_names (it reads the zone files, ~15ms), not one
     // per candidate.
     sqlx::query_scalar(
-        "SELECT set_config('TimeZone', COALESCE(( \
+        "SELECT COALESCE(( \
              SELECT name FROM pg_timezone_names \
               WHERE name = $1 \
                  OR name = (SELECT home_timezone FROM app_user_profile LIMIT 1) \
               ORDER BY name = $1 DESC NULLS LAST \
-              LIMIT 1), 'UTC'), true)",
+              LIMIT 1), 'UTC')",
     )
     .bind(preferred)
     .fetch_one(conn)
     .await
+}
+
+/// Set a zone [`resolve_timezone`] returned for the rest of the transaction.
+pub async fn apply_timezone(conn: &mut sqlx::PgConnection, zone: &str) -> Result<String, sqlx::Error> {
+    sqlx::query_scalar("SELECT set_config('TimeZone', $1, true)")
+        .bind(zone)
+        .fetch_one(conn)
+        .await
 }
 
 /// `date`'s local midnight to the next local midnight, in [`day_timezone`].

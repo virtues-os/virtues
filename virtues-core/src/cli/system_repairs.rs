@@ -94,7 +94,84 @@ enum Outcome {
 const REPAIRS: &[(&str, fn(&std::path::Path) -> Outcome)] = &[
     ("state-ownership", state_ownership),
     ("dragon-watchdog", dragon_watchdog),
+    ("db-logins", db_logins),
 ];
+
+/// The two low-privilege Postgres roles can log in, with the passwords the
+/// server derives from this box's encryption key (`database::restricted`).
+/// Model- and applet-written SQL runs on those logins; without them the server
+/// falls back to `SET ROLE`, which the SQL itself can undo.
+///
+/// Root is needed because the server's role has no CREATEROLE and so cannot
+/// alter the roles itself. Checked by logging in over TCP the way the server
+/// will, so a `pg_hba.conf` that refuses the login reports as Failed instead
+/// of Converged. The installer does not set the logins yet (its bring-up runs
+/// as `virtues`), so a freshly installed box gets them on its first upgrade.
+#[cfg(target_os = "linux")]
+fn db_logins(data_dir: &std::path::Path) -> Outcome {
+    use crate::database::restricted::{alter_login_sql, password, Login};
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let Some(key) = crate::box_env::read(&data_dir.join("virtues.env"))
+        .and_then(|mut env| env.remove("VIRTUES_ENCRYPTION_KEY"))
+        .filter(|k| !k.is_empty())
+    else {
+        return Outcome::Failed("virtues.env has no VIRTUES_ENCRYPTION_KEY to derive the logins from".into());
+    };
+    // The password goes through the environment, never argv, which any user
+    // can read in `ps`.
+    let can_log_in = |login: Login| {
+        Command::new("psql")
+            .args(["-h", "127.0.0.1", "-U", login.role(), "-d", "virtues", "-w", "-tAc", "SELECT 1"])
+            .env("PGPASSWORD", password(&key, login))
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+
+    let missing: Vec<Login> = Login::ALL.into_iter().filter(|l| !can_log_in(*l)).collect();
+    if missing.is_empty() {
+        return Outcome::Converged;
+    }
+    for login in &missing {
+        // The SQL goes on stdin for the same reason.
+        let child = Command::new("runuser")
+            .args(["-u", "postgres", "--", "psql", "-v", "ON_ERROR_STOP=1", "-d", "postgres", "-q"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn();
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => return Outcome::Failed(format!("could not run psql as postgres: {e}")),
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            if let Err(e) = stdin.write_all(format!("{};\n", alter_login_sql(&key, *login)).as_bytes()) {
+                return Outcome::Failed(format!("could not write to psql: {e}"));
+            }
+        }
+        match child.wait_with_output() {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => {
+                return Outcome::Failed(format!(
+                    "ALTER ROLE {} failed: {}",
+                    login.role(),
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ))
+            }
+            Err(e) => return Outcome::Failed(format!("psql as postgres did not finish: {e}")),
+        }
+    }
+    let roles = missing.iter().map(|l| l.role()).collect::<Vec<_>>().join(", ");
+    if missing.iter().all(|l| can_log_in(*l)) {
+        Outcome::Repaired(format!("set the login for {roles}"))
+    } else {
+        Outcome::Failed(format!(
+            "set the login for {roles}, but Postgres still refuses it on 127.0.0.1 (check pg_hba.conf)"
+        ))
+    }
+}
 
 /// The systemd drop-in that arms a Dragon's hardware watchdog. The installer
 /// writes the same bytes on a fresh install (its bring-up runs as `virtues`,

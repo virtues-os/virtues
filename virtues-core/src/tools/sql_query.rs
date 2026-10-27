@@ -476,52 +476,45 @@ impl SqlQueryTool {
             format!("{} LIMIT {}", sql, limit)
         };
 
-        // The actual boundary: Postgres refuses any write in this transaction,
-        // whatever the text says. Mirrors `api::developer::execute_sql` and
-        // `server::faces::run_face_query`.
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
-
-        sqlx::query("SET TRANSACTION READ ONLY")
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
-
         // The owner's zone, so a model's `'2026-10-06'`, `::date` and
         // `to_char(…, 'HH12:MI AM')` mean their day and their clock, as the
         // prompt's clock does. Left at the server's UTC, a day's window slid
         // by the offset and a chart labelled a 6 AM point "11:00 AM". JSON
         // output is unaffected: `convert_rows_to_json` writes timestamptz as
-        // RFC 3339 UTC either way. Before the role drop, which hides the
-        // profile it falls back to.
-        crate::timezone::set_local_timezone(&mut *tx, timezone)
+        // RFC 3339 UTC either way. Read on the main pool, because the profile
+        // it falls back to is hidden from the reader.
+        let zone = crate::timezone::resolve_timezone(&*self.pool, timezone)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
 
-        // Drop to the least-privileged role for the rest of this transaction.
+        // Logged in as the least-privileged role, not the server's.
         //
-        // READ ONLY bounds writes, not reads. The pool role owns every table,
-        // so without this drop a plain `SELECT` passes every guard above and
-        // reads `credentials`: the encrypted secrets of every source and the
-        // box's own keys. The doc comment above says this tool "runs
-        // unattended, over content nobody reviewed", so the query text is
-        // steerable by an email or a saved page, and the model can hand the
-        // result to `web_search`, which is also allowlisted. On a box whose
-        // pool role is still a superuser, the same query could also read
-        // `/var/lib/virtues/virtues.env` with `pg_read_file`, and with it the
-        // key that decrypts all of them.
+        // READ ONLY bounds writes, not reads. The server's role owns every
+        // table, so a plain `SELECT` under it reads `credentials`: the
+        // encrypted secrets of every source and the box's own keys. The doc
+        // comment above says this tool "runs unattended, over content nobody
+        // reviewed", so the query text is steerable by an email or a saved
+        // page, and the model can hand the result to `web_search`, which is
+        // also allowlisted.
         //
-        // `virtues_face_reader` is the role `server/faces.rs` drops to for the
-        // same reason: default-deny, SELECT on `data_*`/`wiki_*` only. Under
-        // it both reads fail closed with "permission denied".
-        //
-        // SET LOCAL, so it reverts with the transaction and cannot leak onto a
-        // pooled connection.
-        sqlx::query("SET LOCAL ROLE virtues_face_reader")
+        // `virtues_face_reader` is default-deny, SELECT on `data_*`/`wiki_*`
+        // only, and both reads fail closed with "permission denied". It is a
+        // login of its own because a `SET ROLE` drop is undone by
+        // `set_config('role', session_user, true)` inside the query
+        // (`database::restricted`).
+        let mut tx = crate::database::restricted::begin(&self.pool, crate::database::restricted::Login::Reader)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+
+        // The actual boundary: Postgres refuses any write in this transaction,
+        // whatever the text says. Mirrors `api::developer::execute_sql` and
+        // `server::faces::run_face_query`.
+        sqlx::query("SET TRANSACTION READ ONLY")
             .execute(&mut *tx)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+
+        crate::timezone::apply_timezone(&mut tx, &zone)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
 

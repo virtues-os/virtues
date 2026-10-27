@@ -1,8 +1,9 @@
 //! `sql_write` — the scoped write path into applet-owned tables.
 //!
-//! Runs one statement as the `virtues_applet_writer` PG role, whose grants
-//! cover DML **inside `applet_*` schemas only** (migration 0054 + the boot
-//! grants in `server::faces`). Scope is enforced by Postgres, not by parsing
+//! Runs one statement logged in as the `virtues_applet_writer` PG role
+//! (`database::restricted`), whose grants cover DML **inside `applet_*`
+//! schemas only** (migration 0054 + the boot grants in `server::faces`).
+//! Scope is enforced by Postgres, not by parsing
 //! the SQL: a statement touching `data_*` / `app_*` / anything else fails
 //! with a permission error at the database.
 //!
@@ -42,12 +43,11 @@ pub async fn execute(pool: &PgPool, arguments: serde_json::Value) -> Result<Tool
         .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
         .any(|w| w == "returning");
 
-    let mut tx = match pool.begin().await {
+    let mut tx = match crate::database::restricted::begin(pool, crate::database::restricted::Login::Writer).await {
         Ok(tx) => tx,
         Err(e) => return Ok(fail(&format!("begin failed: {e}"))),
     };
     for setup in [
-        "SET LOCAL ROLE virtues_applet_writer",
         "SET LOCAL statement_timeout = '5s'",
         // Force fully-qualified names; unqualified writes can't fall through
         // to public even on PG versions where PUBLIC holds create-in-public.
