@@ -1,5 +1,32 @@
 # virtues
 
+## Who Virtues is for — read this before any product decision
+
+Every product decision is made for five people, defined in
+[`agents/build/personas.md`](agents/build/personas.md):
+
+| Tier | Persona | What they want |
+|---|---|---|
+| Primary | Narrative seeker | "I want answers about my life written with care, in words." |
+| Primary | Quantified self | "I want charts and numbers from my own data, right in the reply." |
+| Secondary | Tech prosumer | "I want to find something new and beautifully polished before anyone else, with features worth showing off and posting about." |
+| Tertiary | Recovery | "I want a chat that remembers my progress and setbacks, and helps me understand what drives them. Streaks and games don't help me." |
+| Tertiary | Data sovereign | "I want to see when work happens on my server and when it leaves it." |
+
+Before you change anything a person sees or reads (UI, copy, a reply's
+shape, a prompt, a default, an empty state, the manual), say which persona
+it serves and check it against the rest:
+
+- The two primaries set the default. A change that helps a lower tier must
+  not make the default worse for either primary.
+- Nothing may add streaks, counts, overdue alarms or game mechanics, since
+  someone in recovery sees every page.
+- Anything that sends work off the box shows that it did.
+- When you report a design or review one, name what each persona gets from
+  it, primaries first.
+
+Don't add, rename or re-tier personas without the owner.
+
 ## Branching — read this before any git command
 
 **Several agents work in this one checkout at the same time.** That is the whole
@@ -228,21 +255,6 @@ replaced:
   cannot describe a command no released box has. Prose describes shape
   (`vX.Y.Z`); concrete versions belong in code fences. Enforced by the lint.
 
-## Who Virtues is for
-
-Five personas, defined in [`agents/build/personas.md`](agents/build/personas.md).
-Read it before designing or reviewing any surface.
-
-- **Primary:** narrative seeker (answers about my life, written with care) and
-  quantified self (charts and numbers from my own data, in the reply).
-- **Secondary:** tech prosumer (new, polished, worth showing off).
-- **Tertiary:** recovery (remembers progress and setbacks; no streaks or
-  games) and data sovereign (shows when work stays on the server and when it
-  leaves).
-
-The primaries set the defaults. Don't add, rename or re-tier personas without
-the owner.
-
 ## Conventions
 
 - Authored applets (chat/AI-created) are per-box runtime state and live in the
@@ -347,6 +359,7 @@ an always-loaded file tends to get ignored:
 | `columns.md` | `*.sql`, Rust under `virtues-core/` | the rule against seven names for one thing, and the sweep a rename needs because `sqlx::query` is untyped |
 | `query-errors.md` | any `*.rs` | why `.ok()` on a `fetch_*` turns a broken query into a plausible number |
 | `migrations.md` | `virtues-core/migrations/**` | claiming a number, the pre-squash citations, and the `.sql.pending` rename that has to happen |
+| `personas.md` | `apps/*/src/**`, `docs/**`, prompts, `skills/**` | the five checks a user-facing change answers against the personas |
 
 If you are editing one of those files, assume the rule is already in front of
 you. If you are reasoning about them from elsewhere, go read it.
