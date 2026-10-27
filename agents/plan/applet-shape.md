@@ -306,6 +306,7 @@ work on any table that has those columns.
 | Run now | available unless the applet only starts from a data trigger or `webhook` |
 | What each run made | the box's record of the run (Output) |
 | Which tables unshipped code may write | its own schema, and the tables its `source` provides in the catalog |
+| Where unshipped code writes files | its own lake folder, `lake/applets/<name>/` (The lake) |
 | Its thread | every applet with a prompt has one on its page. A message there starts a run with that message as input. |
 | Memory | every applet with a prompt keeps notes, editable on its page |
 | State | the code's round-trip JSON (sync cursors), kept on the row and never in the file |
@@ -455,7 +456,7 @@ Each tool counts toward the three legs:
 
 | Leg | What counts |
 |---|---|
-| Your data | `sql_query`, `semantic_search`, `get_page_content`, `get_project_item`, `read_asset`, the Postgres socket |
+| Your data | `sql_query`, `semantic_search`, `get_page_content`, `get_project_item`, `read_asset`, `lake`, the Postgres socket |
 | Outside text | the same data tools, because your messages and email contain other people's words; `web_search`; anything fetched through `net(…)` |
 | A way out | `net(…)` entries, `browse`, `send_imessage`, `sudo` |
 
@@ -492,7 +493,26 @@ running as the box user; shipped applets' `VIRTUES_API_KEY` moves from the
 environment to a credential file, because the systemd docs say environment
 variables "are not suitable for passing secrets".
 
-Where unshipped sync code writes files to the lake is open (Open decisions).
+### The lake
+
+Decided on 2026-10-27.
+
+- **Shipped applets** keep full access: they run as the box user outside the
+  sandbox and write through `lake::archive`, as today.
+- **Every other applet** gets its own folder, `lake/applets/<name>/`,
+  writable inside its sandbox. The rest of the lake is hidden.
+- **The runner indexes that folder after each run.** A file written straight
+  to disk has no `lake_objects` row, so without this step the content-hash
+  dedupe, retention and replay would never see it.
+- **Each folder has a size limit.** Direct writes skip the low-disk guard in
+  `lake::archive`, so the sandbox enforces the limit where it can, and the
+  runner refuses the next run while a folder is over it.
+- **Reading the whole lake is a grant**, `lake` in `allowed-tools`, which
+  mounts the lake read-only. It counts as your data in the Rule of Two, so an
+  applet with it cannot also list `net(…)` unless the owner adds the host.
+- The throwaway user changes every run, so the folder uses the same shared
+  group and umask as the code workspace, and each run can write what the
+  last one left.
 
 ### Database roles
 
@@ -947,13 +967,6 @@ use:
 
 Proposed: the first 200 rows as a table, then a line with the total count. The
 prompt can query for more with `sql_query`.
-
-### Lake writes from unshipped code
-
-Shipped syncs write files to the lake as the box user. Code inside the sandbox
-has its own user and cannot. Either the lake gets a per-applet directory the
-sandbox can write, or unshipped code hands files back to the runner, which
-writes them.
 
 ### `enabled`
 
