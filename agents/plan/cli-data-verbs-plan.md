@@ -213,7 +213,8 @@ which is the boundary that matters. `agent-key` is box-only.
    needs a manifest field the verbs cannot reach.** Every field it does need
    is listed, and that list decides how big applets have to be, and whether
    data triggers and Persona are still wanted.
-5. **`virtues mcp`** over the same verbs, for agents without a shell.
+5. **`virtues mcp`** over the same verbs, for agents without a shell. Moved to
+   [mcp-plan.md](mcp-plan.md), which serves the verbs at `/api/mcp`.
 6. A manual page (`docs/`) only when slice 3 is in a released box.
 
 ## Open
