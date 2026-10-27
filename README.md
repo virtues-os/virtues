@@ -178,7 +178,7 @@ of these: it reads your private data, it reads text someone else wrote, and it
 can send something out. A hostile email can tell the model to mail your
 records to a stranger, and with all three the model can do it. Removing any one
 of the three breaks that attack. We design the assistant and applets so a run
-holds at most two. On Virtues, your messages and email are your data but were
+has at most two. On Virtues, your messages and email are your data but were
 written by other people, so anything that reads your records already has two.
 An applet that reads your records gets no way out unless you add one yourself
 on its page.
