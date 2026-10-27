@@ -92,38 +92,8 @@ pub fn default_tools() -> Vec<ToolConfig> {
     ]
     .into_iter()
     .chain(browser_tools())
-    .chain([connection_tool(), send_imessage_tool(), create_task_tool(), update_task_tool(), save_skill_tool()])
+    .chain([connection_tool(), send_imessage_tool(), create_task_tool(), update_task_tool()])
     .collect()
-}
-
-/// Save one of the person's own skills: a prompt they can pick from the
-/// composer's `/` menu (virtues-core `api/skills.rs`). Offered only inside the
-/// shipped `new-skill` skill, and gated like applet setup, because a skill
-/// is a prompt that later runs with tools.
-fn save_skill_tool() -> ToolConfig {
-    ToolConfig {
-        id: "save_skill".to_string(),
-        name: "Save Skill".to_string(),
-        description: "Save a skill the person can run from the / menu".to_string(),
-        llm_description: r#"Save one of the user's skills, which they run by typing / in the composer. Agree the name and what it does with them first. `body` is the prompt the skill's turn runs with: say what to read, what to write, and in what shape, addressed to the assistant. `tools`: only what the body needs. `model`: deep only for slow, high-stakes work. Saving an existing name of theirs replaces it."#.to_string(),
-        parameters: serde_json::json!({
-            "type": "object",
-            "required": ["name", "description", "body", "tools"],
-            "properties": {
-                "name": { "type": "string", "description": "lowercase-with-dashes" },
-                "description": { "type": "string", "description": "One line: when to use it" },
-                "icon": { "type": "string", "description": "A Remix icon id, e.g. ri:book-line" },
-                "tools": { "type": "array", "items": { "type": "string" } },
-                "body": { "type": "string" },
-                "model": { "type": "string", "enum": ["standard", "deep"] }
-            }
-        }),
-        tool_type: ToolType::Builtin,
-        category: ToolCategory::Edit,
-        icon: "ri:flashlight-line".to_string(),
-        display_order: 0,
-        is_system: false,
-    }
 }
 
 /// Add tasks to the to-do list the owner and the assistant share (virtues-core
@@ -1156,6 +1126,9 @@ pub fn applet_tool(actions: &[&str]) -> ToolConfig {
         add("schema_sql", serde_json::json!({ "type": "string" }));
         add("face_html", serde_json::json!({ "type": "string" }));
         add("delivers", serde_json::json!({ "type": "string", "enum": ["page", "chat", "dashboard"] }));
+        add("invoke", serde_json::json!({ "type": "array", "items": { "type": "string", "enum": ["chat", "assistant"] } }));
+        add("tools", serde_json::json!({ "type": "array", "items": { "type": "string" } }));
+        add("model", serde_json::json!({ "type": "string", "enum": ["standard", "deep"] }));
         add(
             "limits",
             serde_json::json!({

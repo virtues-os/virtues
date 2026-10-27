@@ -12,7 +12,7 @@ use std::time::Duration;
 
 use sqlx::PgPool;
 use virtues_registry::models::ModelSlot;
-use virtues_registry::skills::Skill;
+use crate::api::chat_applets::AppletTurn;
 
 use crate::agent::{Thinking, TurnBudget};
 use crate::api::getting_started;
@@ -21,7 +21,7 @@ use crate::api::getting_started;
 /// simple factual question at one to three, and the chat prompt asks for one
 /// parallel batch plus at most one more — and says "four" in words, which
 /// `the_chat_search_cap_is_the_one_the_prompt_states` holds it to. Deep
-/// research, sudo and skills are uncapped here; their ceilings are steps,
+/// research, sudo and applets are uncapped here; their ceilings are steps,
 /// cost and time.
 pub(crate) const CHAT_TOOL_CAPS: &[(&str, u32)] = &[
     ("web_search", 4),
@@ -52,7 +52,7 @@ fn connected_mac_tools() -> Vec<&'static str> {
 /// Chat's tools: every model-facing tool but `think`. The chat model reasons
 /// natively, so a `think` call buys nothing it would not have thought anyway
 /// and costs a whole extra step, with the prompt and history re-sent. Deep
-/// research, its workers, applets and skills keep it in their own lists.
+/// research, its workers and applets keep it in their own lists.
 fn chat_tools() -> Vec<serde_json::Value> {
     crate::tools::get_tool_definitions_for_llm()
         .into_iter()
@@ -75,8 +75,9 @@ pub enum ChatMode {
     Interview,
     /// The getting-started room: its own prompt and tools, no data.
     GettingStarted,
-    /// A skill file (`skills/*/SKILL.md`): its tools, ceilings and body.
-    Skill(Skill),
+    /// An applet `/name` starts (`api::chat_applets`): its body, tools and
+    /// ceilings shape the turn.
+    Applet(AppletTurn),
     /// A small model on the Dragon's NPU, and nowhere else. The handler hands
     /// the whole turn to `local_model` before any cloud step: no slot, no
     /// tools, no prompt from here, nothing stored. See `api::local_chat`.
@@ -102,7 +103,7 @@ impl ChatMode {
             "interview" => Self::Interview,
             "local" => Self::Local,
             getting_started::AGENT_MODE => Self::GettingStarted,
-            other => crate::api::skills::skill_named(other).map_or(Self::Chat, Self::Skill),
+            other => crate::api::chat_applets::turn_named(other).map_or(Self::Chat, Self::Applet),
         }
     }
 
@@ -137,7 +138,7 @@ impl ChatMode {
             Self::DeepResearch => "deep_research",
             Self::Interview => "interview",
             Self::GettingStarted => getting_started::AGENT_MODE,
-            Self::Skill(skill) => &skill.name,
+            Self::Applet(applet) => &applet.name,
             Self::Local => "local",
         }
     }
@@ -162,10 +163,10 @@ impl ChatMode {
             tool_caps: &[],
         };
         let (max_steps, budget, thinking) = match self {
-            // A skill's ceilings come from its file.
-            Self::Skill(skill) => (
-                skill.max_steps,
-                spend((skill.max_cost_usd * 1_000_000.0).round() as i64, skill.max_minutes),
+            // An applet's ceilings come from its folder.
+            Self::Applet(applet) => (
+                applet.max_steps,
+                spend((applet.max_cost_usd * 1_000_000.0).round() as i64, applet.max_minutes),
                 Thinking::Default,
             ),
             Self::DeepResearch => (50, spend(10_000_000, 25), Thinking::Default),
@@ -222,8 +223,8 @@ impl ChatMode {
             // introductions back. No search, no data.
             Self::GettingStarted => tools_named(getting_started::TOOLS),
             // The tools its file declares.
-            Self::Skill(skill) => {
-                tools_named(&skill.tools.iter().map(String::as_str).collect::<Vec<_>>())
+            Self::Applet(applet) => {
+                tools_named(&applet.tools.iter().map(String::as_str).collect::<Vec<_>>())
             }
             // A 0.6B model can't use tools, and a tool would reach the record.
             Self::Local => Vec::new(),
@@ -251,7 +252,7 @@ impl ChatMode {
     /// Which model tier the turn runs on.
     ///
     /// The mode decides, and nothing guesses per turn. Deep research and a
-    /// skill that declares `model: deep` are the rare, slow, high-stakes
+    /// applet that declares `model: deep` are the rare, slow, high-stakes
     /// turns the strong tier exists for; everything else is
     /// Standard. Deciding per turn instead would mean switching models inside
     /// a chat, and every switch starts a cold prompt cache — most of a chat's
@@ -259,7 +260,7 @@ impl ChatMode {
     pub fn slot(&self) -> ModelSlot {
         match self {
             Self::DeepResearch => ModelSlot::Deep,
-            Self::Skill(skill) => skill.slot,
+            Self::Applet(applet) => applet.slot,
             _ => ModelSlot::Standard,
         }
     }
@@ -277,16 +278,20 @@ pub(crate) mod tests {
             .collect()
     }
 
-    /// A skill as a file would declare it. None ship, so the Skill arm is
+    /// An applet turn as a folder would shape it, so the Applet arm is
     /// exercised through this.
-    pub(crate) fn fixture_skill() -> ChatMode {
-        ChatMode::Skill(
-            virtues_registry::skills::parse(
-                "---\nname: fixture\ndescription: d\ntools: think, semantic_search, sql_query\n\
-                 max_steps: 40\nmax_cost_usd: 5\nmax_minutes: 15\nmodel: deep\n---\n<fixture>body</fixture>",
-            )
-            .expect("fixture skill parses"),
-        )
+    pub(crate) fn fixture_applet() -> ChatMode {
+        ChatMode::Applet(AppletTurn {
+            name: "fixture".into(),
+            description: "d".into(),
+            body: "<fixture>body</fixture>".into(),
+            tools: vec!["think".into(), "semantic_search".into(), "sql_query".into()],
+            max_steps: 40,
+            max_cost_usd: 5.0,
+            max_minutes: 15,
+            slot: ModelSlot::Deep,
+            icon: None,
+        })
     }
 
     #[test]
@@ -336,20 +341,17 @@ pub(crate) mod tests {
         }
     }
 
-    /// No skill file or applet may shadow a built-in mode's name, and each
-    /// shipped one `/name` starts resolves to itself.
+    /// No applet may shadow a built-in mode's name, and each shipped one
+    /// `/name` starts resolves to itself.
     #[test]
-    fn every_skill_resolves_to_itself() {
-        let names: Vec<String> = virtues_registry::skills::default_skills()
-            .into_iter()
-            .map(|s| s.name)
-            .chain(crate::applet_templates::chat_applets().into_iter().filter(|a| a.shipped).map(|a| a.name))
-            .collect();
-        for name in ["meeting-prep", "morning-brief", "trip-planner", "weekly-review", "new-skill"] {
+    fn every_chat_applet_resolves_to_itself() {
+        let names: Vec<String> =
+            crate::applet_templates::chat_applets().into_iter().filter(|a| a.shipped).map(|a| a.name).collect();
+        for name in ["meeting-prep", "morning-brief", "trip-planner", "weekly-review", "new-applet"] {
             assert!(names.iter().any(|n| n == name), "{name} is not offered");
         }
         for name in names {
-            assert!(matches!(ChatMode::from_wire(&name), ChatMode::Skill(ref s) if s.name == name), "{name}");
+            assert!(matches!(ChatMode::from_wire(&name), ChatMode::Applet(ref a) if a.name == name), "{name}");
         }
     }
 
@@ -357,7 +359,7 @@ pub(crate) mod tests {
     /// folder: its body, its tools, its `limit`.
     #[test]
     fn weekly_review_runs_from_its_applet_folder() {
-        let ChatMode::Skill(s) = ChatMode::from_wire("weekly-review") else { panic!("not resolved") };
+        let ChatMode::Applet(s) = ChatMode::from_wire("weekly-review") else { panic!("not resolved") };
         assert!(s.body.starts_with("<weekly_review>"), "{}", &s.body[..40.min(s.body.len())]);
         assert_eq!(s.tools, ["sql_query", "semantic_search", "get_project_item", "create_page"]);
         assert_eq!((s.max_cost_usd, s.max_minutes), (3.0, 10));
@@ -390,8 +392,8 @@ pub(crate) mod tests {
         assert_eq!(l.thinking, Thinking::Default);
         assert_eq!(l.tool_timeout, Duration::from_secs(crate::tools::sudo_shell::MAX_TIMEOUT_SECS));
 
-        // A skill's file: 40 steps, $5, 15 minutes.
-        let l = fixture_skill().limits();
+        // The fixture's: 40 steps, $5, 15 minutes.
+        let l = fixture_applet().limits();
         assert_eq!((l.max_steps, l.budget.max_cost_micros, l.budget.max_wall_clock), (40, Some(5_000_000), secs(15)));
         assert!(l.budget.tool_caps.is_empty());
         assert_eq!(l.thinking, Thinking::Default);
@@ -417,7 +419,7 @@ pub(crate) mod tests {
         );
         assert_eq!(tool_names(&ChatMode::Interview), set(&["write_it_up"]));
         assert_eq!(tool_names(&ChatMode::GettingStarted), set(&["skip_step", "record_introductions"]));
-        assert_eq!(tool_names(&fixture_skill()), set(&["think", "semantic_search", "sql_query"]));
+        assert_eq!(tool_names(&fixture_applet()), set(&["think", "semantic_search", "sql_query"]));
     }
 
     /// Every model step re-sends the mode's tool definitions ahead of the
@@ -427,22 +429,22 @@ pub(crate) mod tests {
     /// the JSON exactly as `ChatMode::tools()` serializes it. Long how-to
     /// belongs behind a call (`applet {"action": "setup", "guide": true}`
     /// returns applets/AGENTS.md), not in the definition. A tool in any mode — chat,
-    /// sudo, deep research, interview, getting started, local or a skill —
-    /// must join a group here, and a new mode or skill must join `MODES`:
+    /// sudo, deep research, interview, getting started, local or an applet —
+    /// must join a group here, and a new mode or shipped chat applet must join `MODES`:
     /// unbudgeted tools and modes fail the test.
     #[test]
     fn tool_definitions_stay_inside_their_budgets() {
         // (group, tools, ceiling). A group's size is measured per mode: the
         // tools of it that mode offers.
         const GROUPS: &[(&str, &[&str], usize)] = &[
-            // One tool for every applet action, chosen by `action`.
-            ("applets", &["applet"], 2_750),
+            // One tool for every applet action, chosen by `action`. Raised 150
+            // on 2026-10-27 for setup's invoke, tools and model, which write
+            // an applet `/name` starts; how to use them is in the guide.
+            ("applets", &["applet"], 2_950),
             ("analysis", &["shell", "think", "read_asset", "generate_image"], 2_400),
             ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], 2_400),
             ("search", &["semantic_search", "web_search"], 2_000),
             ("self", &["update_memory"], 800),
-            // Only inside the shipped `new-skill` skill (`SKILL_ONLY_TOOLS`).
-            ("skills", &["save_skill"], 950),
             ("tasks", &["create_task", "update_task"], 1_500),
             ("sql_write", &["sql_write"], 600),
             // A service the owner connected over MCP (`tools/connection.rs`).
@@ -470,15 +472,15 @@ pub(crate) mod tests {
         // ceilings; the rest sit just above their 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
             ("chat", 21_900),
-            ("sudo", 22_300),
+            ("sudo", 22_500),
             ("deep_research", 13_250),
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),
-            // The shipped skills, each just above its 2026-10-22 size.
+            // The shipped chat applets, each just above its 2026-10-22 size as a skill.
             ("meeting-prep", 8_400),
             ("morning-brief", 8_700),
-            ("new-skill", 950),
+            ("new-applet", 2_950),
             ("trip-planner", 9_000),
             ("weekly-review", 8_700),
         ];
@@ -493,13 +495,12 @@ pub(crate) mod tests {
             ChatMode::GettingStarted,
             ChatMode::Local,
         ];
-        modes.extend(virtues_registry::skills::default_skills().into_iter().map(ChatMode::Skill));
         modes.extend(
             crate::applet_templates::chat_applets()
                 .into_iter()
                 .filter(|a| a.shipped)
-                .filter_map(|a| crate::api::skills::skill_named(&a.name))
-                .map(ChatMode::Skill),
+                .filter_map(|a| crate::api::chat_applets::turn_named(&a.name))
+                .map(ChatMode::Applet),
         );
 
         let mut report = String::new();
@@ -548,7 +549,7 @@ pub(crate) mod tests {
             let want = if matches!(mode, ChatMode::DeepResearch) { ModelSlot::Deep } else { ModelSlot::Standard };
             assert_eq!(mode.slot(), want, "{mode:?}");
         }
-        assert_eq!(fixture_skill().slot(), ModelSlot::Deep, "a skill's `model: deep` is honoured");
+        assert_eq!(fixture_applet().slot(), ModelSlot::Deep, "an applet's `model: deep` is honoured");
     }
 
     /// The chat id beats the wire: the interview's chat is the interviewer,

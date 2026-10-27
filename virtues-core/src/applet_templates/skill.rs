@@ -304,6 +304,56 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
     })
 }
 
+/// What a writer puts in a `SKILL.md`: the fields setup and the skills move
+/// set. [`render`] turns it into the file and [`parse`] reads it back.
+#[derive(Debug, Default)]
+pub(crate) struct SkillMd {
+    pub name: String,
+    pub description: String,
+    pub allowed_tools: Option<Vec<String>>,
+    pub invoke: Vec<String>,
+    /// `limit`'s value, as it reads in the file: `$3 per run, 10 minutes`.
+    pub limit: Option<String>,
+    pub deep: bool,
+    pub icon: Option<String>,
+    /// The prompt.
+    pub body: String,
+}
+
+/// The file a [`SkillMd`] is. The frontmatter goes through a YAML emitter, so
+/// a description with a colon or a quote in it is quoted rather than broken.
+pub(crate) fn render(md: &SkillMd) -> Result<String, String> {
+    use yaml_rust2::{yaml::Hash, YamlEmitter};
+    let s = |v: &str| Yaml::String(v.to_string());
+    let mut front = Hash::new();
+    front.insert(s("name"), s(&md.name));
+    front.insert(s("description"), s(md.description.trim()));
+    if let Some(tools) = &md.allowed_tools {
+        front.insert(s("allowed-tools"), s(&tools.join(" ")));
+    }
+    let mut meta = Hash::new();
+    if !md.invoke.is_empty() {
+        meta.insert(s("invoke"), s(&md.invoke.join(", ")));
+    }
+    if let Some(limit) = &md.limit {
+        meta.insert(s("limit"), s(limit));
+    }
+    if md.deep {
+        meta.insert(s("model"), s("deep"));
+    }
+    if let Some(icon) = &md.icon {
+        meta.insert(s("icon"), s(icon));
+    }
+    if !meta.is_empty() {
+        front.insert(s("metadata"), Yaml::Hash(meta));
+    }
+    let mut yaml = String::new();
+    YamlEmitter::new(&mut yaml)
+        .dump(&Yaml::Hash(front))
+        .map_err(|e| format!("could not write the frontmatter: {e}"))?;
+    Ok(format!("{yaml}\n---\n{}\n", md.body.trim()))
+}
+
 /// The id a folder gets. The spec's names use hyphens and ids, schemas and
 /// the applet slug use underscores, so a hyphen becomes an underscore.
 fn id_for_dir(dir: &str) -> String {
@@ -409,7 +459,7 @@ const NEVER_LISTED: &[&str] = &["browse", "send_imessage", "sudo"];
 /// run is offered only the tools on both its list and the run allowlist
 /// (`tools::get_tools_for_applet`).
 fn listable_tools() -> Vec<String> {
-    let mut out: Vec<String> = crate::api::skills::chat_tool_ids();
+    let mut out: Vec<String> = crate::api::chat_applets::chat_tool_ids();
     out.extend(crate::tools::applet_run_tool_ids().iter().map(|t| t.to_string()));
     out.retain(|t| !NEVER_LISTED.contains(&t.as_str()));
     out.sort();
@@ -1014,6 +1064,33 @@ mod tests {
             let e = refused(&format!("{BASE}\nmetadata:\n  {key}: {value}"), "Do it.");
             assert!(e.contains(expect), "{key}: {value}: {e}");
         }
+    }
+
+    /// What a writer renders, the reader takes back unchanged, quotes and
+    /// colons in the description included.
+    #[test]
+    fn a_rendered_skill_md_reads_back() {
+        let md = SkillMd {
+            name: "weekly-review".into(),
+            description: "Review: the week's \"main\" events #1".into(),
+            allowed_tools: Some(vec!["sql_query".into(), "create_page".into()]),
+            invoke: vec!["chat".into(), "assistant".into()],
+            limit: Some("$3 per run, 10 minutes".into()),
+            deep: true,
+            icon: Some("ri:calendar-line".into()),
+            body: "Write the review.".into(),
+        };
+        let text = render(&md).unwrap();
+        let f = folder();
+        let t = parse(&text, f.path(), "weekly-review", false).unwrap_or_else(|e| panic!("{e:?}\n{text}"));
+        assert_eq!(t.description.as_deref(), Some("Review: the week's \"main\" events #1"));
+        assert_eq!(t.agent.as_deref(), Some("Write the review."));
+        assert!(t.invoke_chat);
+        assert_eq!(t.triggers, ["manual", "message", "tool"]);
+        assert_eq!(t.icon.as_deref(), Some("ri:calendar-line"));
+        let cfg = t.config.unwrap();
+        assert_eq!(cfg["model_slot"].as_str(), Some("deep"));
+        assert_eq!(cfg["limits"]["max_llm_cost"].as_float(), Some(3.0));
     }
 
     #[test]

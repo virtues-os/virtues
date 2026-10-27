@@ -870,6 +870,13 @@ lists applets whose `invoke` includes `chat` and is titled "Applets"
 **Done when:** `/weekly-review` runs from its applet folder, and no code reads
 `skills/`.
 
+Built on 2026-10-27, except for what is still named "skill" where another
+change is in flight (the composer's chip in `ChatInput.svelte`) or where the
+name is internal (`SkillsPanel.svelte`, `stores/skills.svelte.ts`, the
+`/api/skills` path, kept for older clients). Skills a person saved move into
+`<state root>/user/` as applets at boot (`chat_applets::move_saved_skills`),
+behind a dated `TODO` to delete the move once every box has run it.
+
 ### 4. Convert every manifest
 
 Every `manifest.toml` becomes `SKILL.md`, prompts move out of TOML, and folders

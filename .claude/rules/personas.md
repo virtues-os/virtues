@@ -5,7 +5,7 @@ paths:
   - "docs/**"
   - "virtues-core/prompts/**"
   - "virtues-core/src/agent/**"
-  - "skills/**"
+  - "applets/**/SKILL.md"
 ---
 
 # Check the change against the five personas

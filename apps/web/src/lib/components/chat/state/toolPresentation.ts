@@ -283,7 +283,6 @@ const TOOLS: Record<string, Presentation> = {
 			return live ? now : then;
 		},
 	},
-	save_skill: { noun: "a skill", depth: 4, say: ["Saving your skill", "Saved your skill"] },
 	update_applet_memory: {
 		noun: "an applet",
 		depth: 4,
@@ -305,6 +304,8 @@ export const PRESENTED_TOOLS = Object.keys(TOOLS);
 const RETIRED: Record<string, Presentation> = {
 	// Folded into `shell` on 2026-10-27.
 	code_interpreter: TOOLS.shell,
+	// Folded into the applet tool's `setup` on 2026-10-27.
+	save_skill: { noun: "an applet", depth: 4, say: ["Saving your applet", "Saved your applet"] },
 };
 
 function presentation(name: string): Presentation | undefined {

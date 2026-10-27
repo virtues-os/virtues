@@ -164,6 +164,12 @@ async fn preflight(client: &Virtues) {
         tracing::warn!("Failed to probe search_vectors table: {}", e);
     }
 
+    // Skills saved before skills were applets become applets, before the
+    // catalog reads the state root.
+    if crate::api::chat_applets::move_saved_skills() > 0 {
+        crate::applet_templates::reload_catalog();
+    }
+
     // Reconcile action templates from per-folder manifests — creates/updates
     // system action rows. Safe to call on every startup (user-managed runtime
     // state preserved).

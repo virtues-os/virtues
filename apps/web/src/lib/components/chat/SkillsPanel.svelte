@@ -1,11 +1,11 @@
 <!--
 	SkillsPanel.svelte
 
-	The `/` menu in the chat composer's tray. As with the `@` menu, the field
-	keeps the focus and what is typed after the `/` filters the list, so Up,
-	Down, Enter and Escape are caught here before the editor sees them. The
-	skill that writes skills is pinned below the list as its create row, and
-	the arrows reach it last.
+	The `/` menu in the chat composer's tray: the applets `/name` starts. As
+	with the `@` menu, the field keeps the focus and what is typed after the
+	`/` filters the list, so Up, Down, Enter and Escape are caught here before
+	the editor sees them. The applet that writes applets (`new-applet`) is
+	pinned below the list as its create row, and the arrows reach it last.
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
@@ -98,7 +98,7 @@
 		bind:this={listEl}
 		onscroll={updateFade}
 		role="listbox"
-		aria-label="Skills"
+		aria-label="Applets"
 	>
 		{#each matches as s, i (s.name)}
 			<button
@@ -120,11 +120,11 @@
 				{#if !skills.loaded}
 					<!-- Nothing while the list is on its way. -->
 				{:else if skills.failed}
-					Skills didn't load. Check that your server is reachable, then type / again.
+					Applets didn't load. Check that your server is reachable, then type / again.
 				{:else if query}
-					No skill matches "{query}".
+					No applet matches "{query}".
 				{:else}
-					You have no skills yet.
+					You have no applets to start from chat yet.
 				{/if}
 			</p>
 		{/each}
@@ -140,7 +140,7 @@
 			onclick={() => skills.create && onSelect(skills.create)}
 		>
 			<span class="skill-tile"><Icon icon="mynaui:plus" width="15" style="color: inherit" /></span>
-			<span class="skill-name">Create new skill with Virtues</span>
+			<span class="skill-name">New applet</span>
 		</button>
 	{/if}
 </div>

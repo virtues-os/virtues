@@ -465,13 +465,13 @@ pub fn build_personalized_prompt(
     // Both modes (chat + deep_research) have tools, so always include tool-usage guidance,
     // then layer mode-specific behavioral guidance on top.
     prompt.push_str(TOOL_USAGE_PROMPT);
-    // A skill (skills/*/SKILL.md) brings its own tool list, so the page
+    // An applet `/name` starts brings its own tool list, so the page
     // guidance rides only where a page tool is actually callable rather than
-    // telling a model to reach for something it cannot call; and the skill's
+    // telling a model to reach for something it cannot call; and the applet's
     // body is NOT here — it is appended to the turn's tail by chat.rs, so the
     // cached prefix is the same whatever the chat is doing.
     let has_page_tools = match mode {
-        ChatMode::Skill(s) => s.tools.iter().any(|t| t == "edit_page"),
+        ChatMode::Applet(a) => a.tools.iter().any(|t| t == "edit_page"),
         _ => true,
     };
     if has_page_tools {
@@ -480,7 +480,7 @@ pub fn build_personalized_prompt(
     match mode {
         // A local turn's only system message is `local_model::SAFETY_PROMPT`;
         // the handler hands it off before any prompt is built.
-        ChatMode::Skill(_) | ChatMode::Local => {}
+        ChatMode::Applet(_) | ChatMode::Local => {}
         ChatMode::DeepResearch => prompt.push_str(DEEP_RESEARCH_MODE_PROMPT),
         ChatMode::Sudo => {
             prompt.push_str(&AGENT_MODE_PROMPT.replace("<mode>chat</mode>", "<mode>sudo</mode>"));
@@ -552,10 +552,10 @@ mod tests {
         assert!(!prompt.contains("<narrative_identity>"));
     }
 
-    /// A skill without page tools must not be told to reach for them.
+    /// An applet without page tools must not be told to reach for them.
     #[test]
     fn page_guidance_rides_with_the_modes_that_have_page_tools() {
-        let skill = build_personalized_prompt("Ari", "Adam", None, &crate::api::chat_mode::tests::fixture_skill(), "");
+        let skill = build_personalized_prompt("Ari", "Adam", None, &crate::api::chat_mode::tests::fixture_applet(), "");
         assert!(!skill.contains("get_page_content"));
         assert!(!skill.contains("edit_page"));
 

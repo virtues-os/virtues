@@ -2337,7 +2337,8 @@ export interface RefSearchResult {
 	created_at?: string;
 }
 
-/** A skill as the composer's `/` menu lists it (`GET /api/skills`). */
+/** An applet `/name` starts, as the composer's `/` menu lists it
+ *  (`GET /api/skills`, the path from when these were skills). */
 export interface SkillSummary {
 	name: string;
 	description: string;

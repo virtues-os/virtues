@@ -102,6 +102,27 @@ Three rules:
 Still not authorable: **Personas.** A message wake is inbound from the *user*,
 not from a third party, and there is no send-as-me channel. Draft-mode stands.
 
+## Applets the owner starts with `/name`
+
+Set `invoke` to `["chat"]` and the applet is a prompt the owner runs by typing
+`/` and its name in the composer. It runs as a turn of that chat, so its reply
+lands where they asked; it is not a headless run. Add `"assistant"` and you can
+start it with the `run` action too.
+
+- `agent` is the prompt the turn runs with: what to read, what to write, and
+  in what shape, addressed to the assistant.
+- `tools` lists what the turn may call, and nothing else: `sql_query`,
+  `semantic_search`, `web_search`, `get_project_item`, `create_page`,
+  `create_task`, `update_task`, `shell`, `applet`.
+- `model` is `deep` only for slow research that is worth the cost.
+- `limits` takes `max_llm_cost` (per run), `max_llm_cost_per_day` and
+  `timeout_s`.
+- The name becomes lowercase words joined by `-`: "Garden log" is
+  `/garden-log`. The result says it as `run_it_with`.
+
+Not with `invoke` yet: `schedule`, `schema_sql`, `face_html`, `condition`,
+`until` and `delivers`. Leave `invoke` out for a scheduled applet.
+
 ## Limits
 
 Five keys, and only these five — anything else fails the check. A limit that

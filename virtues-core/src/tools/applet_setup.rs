@@ -105,6 +105,13 @@ pub(crate) struct Draft {
     /// recorded as failed (agent::applet_runner).
     delivers: Option<String>,
     triggers: Vec<String>,
+    /// Who may start it by hand: `chat` (the `/` menu) and `assistant`. Set,
+    /// the draft is written as a `SKILL.md` ([`write_skill_md`]).
+    invoke: Vec<String>,
+    /// `allowed-tools` for a `SKILL.md` draft: what its turn may call.
+    tools: Option<Vec<String>>,
+    /// `standard` or `deep`, for a `SKILL.md` draft.
+    model: Option<String>,
 }
 
 impl Draft {
@@ -141,6 +148,9 @@ impl Draft {
             limits: arguments.get("limits").cloned().filter(|v| v.is_object()),
             delivers: opt_str(arguments, "delivers"),
             triggers,
+            invoke: str_list(arguments, "invoke").unwrap_or_default(),
+            tools: str_list(arguments, "tools"),
+            model: opt_str(arguments, "model"),
         })
     }
 }
@@ -151,6 +161,9 @@ pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value
     let Draft { name, agent, schedule, condition, until, schema_sql, face_html, limits, delivers, triggers, .. } =
         draft;
     let mut findings: Vec<serde_json::Value> = Vec::new();
+    if !draft.invoke.is_empty() {
+        findings.extend(check_skill_md_draft(draft));
+    }
 
     // An applet must DO or SHOW something: a prompt to run, or a face to view.
     if agent.is_none() && face_html.is_none() {
@@ -295,7 +308,11 @@ pub async fn execute(
         })));
     }
 
-    let Draft { name, description, agent, schedule, condition, until, schema_sql, face_html, limits, delivers, triggers } =
+    if !draft.invoke.is_empty() {
+        return write_skill_md(pool, draft).await;
+    }
+
+    let Draft { name, description, agent, schedule, condition, until, schema_sql, face_html, limits, delivers, triggers, .. } =
         draft;
     let name = name.as_str();
     let description = description.as_str();
@@ -541,6 +558,157 @@ fn opt_str(args: &serde_json::Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(String::from)
+}
+
+fn str_list(arguments: &serde_json::Value, key: &str) -> Option<Vec<String>> {
+    arguments
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect())
+}
+
+/// Names `/name` cannot take: the chat modes the same wire field carries.
+const RESERVED_CHAT_NAMES: &[&str] = &["chat", "sudo", "interview", "local"];
+
+/// The spec name a draft's name becomes: lowercase words joined by hyphens,
+/// which is also its folder. "Morning note" is `morning-note`.
+fn spec_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for ch in name.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_end_matches('-').chars().take(64).collect::<String>().trim_end_matches('-').to_string()
+}
+
+/// The findings only a draft written as a `SKILL.md` can have. Those drafts
+/// carry a prompt, its tools, its limits and its model; tables, a face,
+/// `condition`, `until`, `delivers` and a schedule still go through the
+/// `manifest.toml` form until setup writes every applet as a `SKILL.md`.
+fn check_skill_md_draft(draft: &Draft) -> Vec<serde_json::Value> {
+    let mut findings = Vec::new();
+    for i in &draft.invoke {
+        if !matches!(i.as_str(), "chat" | "assistant") {
+            findings.push(finding("invoke", &format!("invalid invoke '{i}'"), Some("chat, assistant, or both")));
+        }
+    }
+    if draft.agent.is_none() {
+        findings.push(finding("agent", "an applet someone starts by hand needs a prompt to run", None));
+    }
+    let name = spec_name(&draft.name);
+    if name.is_empty() {
+        findings.push(finding("name", "the name has no letters or digits", None));
+    } else if RESERVED_CHAT_NAMES.contains(&name.as_str()) || name == crate::api::getting_started::AGENT_MODE {
+        findings.push(finding("name", &format!("'{name}' is a chat mode's name"), Some("pick another name")));
+    } else if crate::applet_templates::chat_applet_named(&name).is_some_and(|a| a.shipped) {
+        findings.push(finding("name", &format!("'{name}' is a built-in applet's name"), Some("pick another name")));
+    }
+    let unsupported = [
+        ("schema_sql", draft.schema_sql.is_some()),
+        ("face_html", draft.face_html.is_some()),
+        ("condition", draft.condition.is_some()),
+        ("until", draft.until.is_some()),
+        ("delivers", draft.delivers.is_some()),
+        ("schedule", draft.schedule.is_some()),
+    ];
+    for (field, set) in unsupported {
+        if set {
+            findings.push(finding(
+                field,
+                &format!("an applet with `invoke` cannot have `{field}` yet"),
+                Some("leave it out, or leave out `invoke` to make a scheduled applet"),
+            ));
+        }
+    }
+    if let Some(limits) = draft.limits.as_ref().and_then(|l| l.as_object()) {
+        for key in limits.keys() {
+            if !matches!(key.as_str(), "max_llm_cost" | "max_llm_cost_per_day" | "timeout_s") {
+                findings.push(finding(
+                    "limits",
+                    &format!("`{key}` is not a limit an applet with `invoke` can set"),
+                    Some("max_llm_cost, max_llm_cost_per_day, timeout_s"),
+                ));
+            }
+        }
+    }
+    if let Some(m) = draft.model.as_deref() {
+        if !matches!(m, "standard" | "deep") {
+            findings.push(finding("model", &format!("invalid model '{m}'"), Some("standard or deep")));
+        }
+    }
+    findings
+}
+
+/// The `SKILL.md` a checked draft becomes.
+fn render_skill_md(draft: &Draft, name: &str) -> Result<String, ToolError> {
+    let limit = draft.limits.as_ref().and_then(|l| l.as_object()).map(|limits| {
+        let mut parts = Vec::new();
+        if let Some(n) = limits.get("max_llm_cost").and_then(|v| v.as_f64()) {
+            parts.push(format!("${n} per run"));
+        }
+        if let Some(n) = limits.get("max_llm_cost_per_day").and_then(|v| v.as_f64()) {
+            parts.push(format!("${n} per day"));
+        }
+        if let Some(n) = limits.get("timeout_s").and_then(|v| v.as_u64()) {
+            parts.push(format!("{n} seconds"));
+        }
+        parts.join(", ")
+    });
+    crate::applet_templates::render_skill_md(&crate::applet_templates::SkillMd {
+        name: name.to_string(),
+        description: draft.description.clone(),
+        allowed_tools: draft.tools.clone(),
+        invoke: draft.invoke.clone(),
+        limit: limit.filter(|l| !l.is_empty()),
+        deep: draft.model.as_deref() == Some("deep"),
+        icon: None,
+        body: draft.agent.clone().unwrap_or_default(),
+    })
+    .map_err(ToolError::ExecutionFailed)
+}
+
+/// Write a draft with `invoke` as `<state root>/user/<name>/SKILL.md`, where
+/// `/name` and the assistant can start it. This is what `save_skill` used to
+/// do, as an applet.
+async fn write_skill_md(pool: &PgPool, draft: Draft) -> Result<ToolResult, ToolError> {
+    let name = spec_name(&draft.name);
+    let root = crate::applet_templates::state_root();
+    let rel = format!("user/{name}");
+    let dir = root.join(&rel);
+    if dir.join("manifest.toml").exists() {
+        return Ok(ToolResult::success(serde_json::json!({
+            "status": "check_failed",
+            "findings": [finding("name", &format!("'{name}' is another applet's folder"), Some("pick another name"))],
+        })));
+    }
+    let text = render_skill_md(&draft, &name)?;
+    // What is written must load, or a later reconcile would skip it.
+    if let Err(problems) = crate::applet_templates::check_skill_md(&text, &dir, &rel) {
+        let findings: Vec<serde_json::Value> = problems.iter().map(|p| finding("skill_md", p, None)).collect();
+        return Ok(ToolResult::success(serde_json::json!({ "status": "check_failed", "findings": findings })));
+    }
+    let path = dir.join("SKILL.md");
+    let existed = path.is_file();
+    std::fs::create_dir_all(&dir).map_err(|e| ToolError::ExecutionFailed(format!("mkdir failed: {e}")))?;
+    // Written whole, then moved into place, so a reader never sees half a file.
+    let tmp = dir.join(".SKILL.md.tmp");
+    std::fs::write(&tmp, &text).map_err(|e| ToolError::ExecutionFailed(format!("write failed: {e}")))?;
+    std::fs::rename(&tmp, &path).map_err(|e| ToolError::ExecutionFailed(format!("write failed: {e}")))?;
+    crate::applet_templates::reload_and_reconcile(pool)
+        .await
+        .map_err(|e| ToolError::ExecutionFailed(format!("reconcile failed: {e}")))?;
+    let mut result = serde_json::json!({
+        "status": if existed { "updated" } else { "created" },
+        "id": format!("{}{}", crate::scheduler::applets::USER_APPLET_PREFIX, name.replace('-', "_")),
+        "name": name,
+    });
+    if draft.invoke.iter().any(|i| i == "chat") {
+        result["run_it_with"] = serde_json::json!(format!("/{name}"));
+    }
+    Ok(ToolResult::success(result))
 }
 
 fn finding(field: &str, error: &str, suggestion: Option<&str>) -> serde_json::Value {
@@ -890,6 +1058,49 @@ mod tests {
         )
         .await;
         assert!(out.is_empty(), "unexpected findings: {out:?}");
+    }
+
+    /// A draft with `invoke` is an applet `/name` starts: it writes a
+    /// `SKILL.md` that loads, and refuses what that form cannot hold yet.
+    #[test]
+    fn a_draft_with_invoke_becomes_a_skill_md_that_loads() {
+        let draft = |extra: serde_json::Value| {
+            let mut args = serde_json::json!({
+                "name": "Garden log",
+                "description": "Says what grew: this week, in a few lines",
+                "agent": "Read the garden pages and say what grew.",
+                "invoke": ["chat"],
+                "tools": ["sql_query", "get_project_item"],
+                "model": "deep",
+                "limits": { "max_llm_cost": 1.5, "timeout_s": 300 },
+            });
+            for (k, v) in extra.as_object().unwrap() {
+                args[k] = v.clone();
+            }
+            Draft::parse(&args).unwrap()
+        };
+        assert_eq!(spec_name("Garden log"), "garden-log");
+        assert_eq!(spec_name("  Weekly -- Review! "), "weekly-review");
+
+        let d = draft(serde_json::json!({}));
+        assert!(check_skill_md_draft(&d).is_empty(), "{:?}", check_skill_md_draft(&d));
+        let text = render_skill_md(&d, "garden-log").unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        crate::applet_templates::check_skill_md(&text, dir.path(), "user/garden-log")
+            .unwrap_or_else(|e| panic!("{e:?}\n{text}"));
+        assert!(text.contains("$1.5 per run, 300 seconds"), "{text}");
+
+        for (extra, field) in [
+            (serde_json::json!({ "schedule": "0 0 7 * * *" }), "schedule"),
+            (serde_json::json!({ "schema_sql": "create table x (id int)" }), "schema_sql"),
+            (serde_json::json!({ "invoke": ["everyone"] }), "invoke"),
+            (serde_json::json!({ "name": "Chat" }), "name"),
+            (serde_json::json!({ "name": "Weekly review" }), "name"),
+            (serde_json::json!({ "limits": { "max_runs_per_day": 3 } }), "limits"),
+        ] {
+            let f = check_skill_md_draft(&draft(extra.clone()));
+            assert!(f.iter().any(|x| x["field"] == field), "{extra}: {f:?}");
+        }
     }
 
     /// The scheduler only runs rows whose triggers include `cron`. A draft

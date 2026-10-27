@@ -26,7 +26,7 @@ use std::sync::{OnceLock, RwLock};
 
 mod skill;
 
-pub(crate) use skill::ALWAYS_ALLOWED_TOOLS;
+pub(crate) use skill::{render as render_skill_md, SkillMd, ALWAYS_ALLOWED_TOOLS};
 
 /// An applet folder written in the Agent Skills format. See [`skill`].
 const SKILL_FILE: &str = "SKILL.md";
@@ -722,6 +722,13 @@ fn scan_root(root: &std::path::Path, shipped: bool) -> Vec<Template> {
                 None => continue,
             };
 
+            // Skills saved before skills were applets, in the old format,
+            // until `chat_applets::move_saved_skills` has moved them.
+            // TODO(2026-10-27): delete with that move.
+            if !shipped && folder_name == crate::api::chat_applets::SAVED_SKILLS_DIR {
+                continue;
+            }
+
             // Single action at top level.
             if let Some(parsed) = read_applet_folder(&path, &folder_name, shipped) {
                 actions.extend(parsed);
@@ -891,6 +898,12 @@ fn apply_patch_to_manifest(
         }
     }
     Ok(())
+}
+
+/// The problems a `SKILL.md` would be refused for at `dir` (relative to the
+/// state root) in `folder`, so a writer can check before it writes.
+pub(crate) fn check_skill_md(text: &str, folder: &std::path::Path, dir: &str) -> std::result::Result<(), Vec<String>> {
+    skill::parse(text, folder, dir, false).map(|_| ())
 }
 
 /// An applet `/name` in chat starts: a `SKILL.md` whose `invoke` includes
