@@ -239,6 +239,11 @@ impl Grok {
             .await
             .context("grok request failed")?;
         let status = resp.status();
+        // Cloudflare answers a challenge with 403 too. That says nothing about
+        // the session, so it must not send the owner to sign in again.
+        if resp.headers().contains_key("cf-mitigated") {
+            bail!("grok.com answered with a Cloudflare challenge ({status}); trying again on the next run");
+        }
         if matches!(status.as_u16(), 401 | 403) {
             return Err(SessionEnded(status.as_u16()).into());
         }

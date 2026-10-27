@@ -36,7 +36,7 @@ use sqlx::PgPool;
 /// One `[[source]]` entry in `actions/sources.toml`. Catalog tile.
 #[derive(Debug, Deserialize, Clone)]
 pub struct Source {
-    /// Stable id used as `credentials.source_id` and as `[[action]].source.id`.
+    /// Stable id used as `credentials.key` (kind `source`) and as `[[action]].source.id`.
     pub id: String,
     pub display_name: String,
     pub icon: String,

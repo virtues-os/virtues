@@ -68,7 +68,10 @@ fn merge_keys(set: &BTreeMap<String, DateTime<Utc>>, mut declarers: BTreeMap<Str
 /// Add or replace a key's value.
 pub async fn set_key(pool: &PgPool, name: &str, value: &str) -> Result<()> {
     check_name(name)?;
-    if value.trim().is_empty() {
+    // A pasted key often carries a trailing newline, which the provider then
+    // rejects with an auth error that does not say why.
+    let value = value.trim();
+    if value.is_empty() {
         return Err(Error::InvalidInput("A key needs a value. Paste it, then save.".into()));
     }
     if value.len() > MAX_VALUE_BYTES {
