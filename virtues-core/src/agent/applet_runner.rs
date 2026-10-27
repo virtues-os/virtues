@@ -121,6 +121,13 @@ pub async fn run_agent_loop(
         None => model_for_slot(pool, model_slot.unwrap_or(ModelSlot::Lite)).await,
     };
 
+    // A `SKILL.md` applet's `allowed-tools`, which reconcile writes here.
+    let allowed_tools: Option<Vec<String>> = action
+        .config
+        .get("allowed_tools")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect());
+
     let tool_context = crate::tools::ToolContext {
         user_id: Some("system".to_string()),
         chat_id: chat_id.clone(),
@@ -140,7 +147,7 @@ pub async fn run_agent_loop(
             system_prompt: build_applet_system_prompt(pool, prompt, context, action.memory.as_deref()).await,
             chat_id: chat_id.clone(),
             message,
-            tools: crate::tools::get_tools_for_applet(chat_id.is_some()),
+            tools: crate::tools::get_tools_for_applet(chat_id.is_some(), allowed_tools.as_deref()),
             tool_context,
             max_cost_micros: limits.max_llm_cost_micros,
             feature: "applet",

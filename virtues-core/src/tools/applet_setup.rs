@@ -777,7 +777,7 @@ async fn did_you_mean(pool: &PgPool, error: &str) -> Option<String> {
         .map(|(_, n)| format!("did you mean \"{n}\"?"))
 }
 
-fn levenshtein(a: &str, b: &str) -> usize {
+pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
     let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
     let mut prev: Vec<usize> = (0..=b.len()).collect();
     let mut cur = vec![0; b.len() + 1];

@@ -146,13 +146,33 @@ const APPLET_RUN_ALLOWED_TOOLS: &[&str] = &[
     "code_interpreter",
 ];
 
+/// The tools an applet's `allowed-tools` may name.
+pub(crate) fn applet_run_tool_ids() -> &'static [&'static str] {
+    APPLET_RUN_ALLOWED_TOOLS
+}
+
 /// Tools for an autonomous **applet** run: the explicit allowlist above, and
 /// the applet tool with only its reads (`applet_management::execute` refuses
 /// the rest from a run as well). `has_chat` is whether the run has a chat id;
 /// without one, sql_query is offered without `save_as`, which the tool
 /// refuses when there is no chat to keep the file in.
-pub fn get_tools_for_applet(has_chat: bool) -> Vec<serde_json::Value> {
-    let mut tools = tools_named(APPLET_RUN_ALLOWED_TOOLS);
+///
+/// `allowed` is the applet's own list (`allowed-tools` in a `SKILL.md`), which
+/// narrows the allowlist; the tools in `ALWAYS_ALLOWED_TOOLS` stay. `None`
+/// gives the whole allowlist. This is the list the model is offered: the
+/// agent loop does not refuse a call to a tool that was not offered.
+pub fn get_tools_for_applet(has_chat: bool, allowed: Option<&[String]>) -> Vec<serde_json::Value> {
+    let ids: Vec<&str> = match allowed {
+        Some(list) => APPLET_RUN_ALLOWED_TOOLS
+            .iter()
+            .copied()
+            .filter(|id| {
+                crate::applet_templates::ALWAYS_ALLOWED_TOOLS.contains(id) || list.iter().any(|t| t == id)
+            })
+            .collect(),
+        None => APPLET_RUN_ALLOWED_TOOLS.to_vec(),
+    };
+    let mut tools = tools_named(&ids);
     if !has_chat {
         if let Some(sql) = tools.iter_mut().find(|t| t["function"]["name"] == "sql_query") {
             *sql = llm_definition(virtues_registry::tools::sql_query_tool(false));
@@ -502,6 +522,20 @@ mod sudo_scope {
             .collect()
     }
 
+    /// `allowed-tools` narrows an applet run's tools and keeps the ones
+    /// every prompt applet has.
+    #[test]
+    fn an_applets_allowed_tools_narrow_what_its_run_is_offered() {
+        let allowed = vec!["sql_query".to_string(), "shell".to_string()];
+        let listed = names(&get_tools_for_applet(true, Some(&allowed)));
+        assert!(listed.contains(&"sql_query".to_string()));
+        assert!(listed.contains(&"think".to_string()));
+        assert!(listed.contains(&"update_applet_memory".to_string()));
+        assert!(!listed.contains(&"create_page".to_string()), "not listed, not offered");
+        assert!(!listed.contains(&"shell".to_string()), "never beyond the allowlist");
+        assert!(names(&get_tools_for_applet(true, None)).contains(&"create_page".to_string()));
+    }
+
     #[test]
     fn only_sudo_mode_lists_the_shell() {
         let mode = |name| ChatMode::from_wire(name).tools();
@@ -514,8 +548,8 @@ mod sudo_scope {
             mode("anything-else"),
             get_tool_definitions_for_llm(),
             get_all_tool_definitions_for_llm(),
-            get_tools_for_applet(true),
-            get_tools_for_applet(false),
+            get_tools_for_applet(true, None),
+            get_tools_for_applet(false, None),
             get_tools_for_subagent(),
         ] {
             assert!(!names(&listing).contains(&"shell".to_string()));

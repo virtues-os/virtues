@@ -814,6 +814,11 @@ with a dated `TODO` at the `manifest.toml` reader.
 has a test that refuses it, and the spec's reference validator accepts every
 shipped `SKILL.md`.
 
+The reader refuses what has nothing behind it yet: data triggers (slice 8),
+SQL in `run` (slice 8), and `net(…)` entries (slice 2). `allowed-tools`
+narrows the tools a run is offered. Editing a `SKILL.md` applet from the app
+and forking one are refused until setup writes the format (slice 4).
+
 ### 2. The sandbox, the proxy and the boundary
 
 `shell` and `sudo` as two tools; `code_interpreter` folds into `shell`. The
@@ -825,6 +830,10 @@ check, and the owner-only host field on the applet page.
 LAN, a refused host or an unlisted host, and can reach a listed host; the
 request appears on the run; and the `applet` tool cannot add a host to an
 applet that lists `sql_query`.
+
+The agent loop also refuses a call to a tool the run was not offered. Today
+it runs whatever tool the model names, so `allowed-tools`, like the applet
+allowlist before it, only decides what is offered.
 
 ### 3. Move skills into applets
 
@@ -888,6 +897,8 @@ wrote.
 
 ### 8. Data triggers
 
+`run: sql …` and SQL files under `scripts/`, prepared in Postgres at save and
+run read-only on the applet login, with an empty result skipping the prompt.
 `trigger: new <table>` with `new_rows` for `run`, a `(created_at, id)`
 watermark per applet and table, batching, a short delay, no waking on the
 applet's own rows, one hop per pass, no waking on a source's first backfill,

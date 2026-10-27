@@ -24,6 +24,13 @@
 
 use std::sync::{OnceLock, RwLock};
 
+mod skill;
+
+pub(crate) use skill::ALWAYS_ALLOWED_TOOLS;
+
+/// An applet folder written in the Agent Skills format. See [`skill`].
+const SKILL_FILE: &str = "SKILL.md";
+
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -646,9 +653,9 @@ fn load_catalog() -> ParsedTemplates {
     // Both roots, shipped first: the state root's entries override shipped
     // ones with the same `dir`, so an authored applet shadows a system applet
     // of that name and deleting it reverts to shipped.
-    let mut actions = scan_root(&applets_dir);
+    let mut actions = scan_root(&applets_dir, true);
     let shipped_count = actions.len();
-    for t in scan_root(&state_root()) {
+    for t in scan_root(&state_root(), false) {
         match actions.iter().position(|e| e.dir == t.dir) {
             Some(i) => actions[i] = t,
             None => actions.push(t),
@@ -692,9 +699,10 @@ fn load_catalog() -> ParsedTemplates {
     }
 }
 
-/// Walk one applet root and parse every manifest under it. Same rule for both
-/// roots — see the scanner notes in `load_catalog`.
-fn scan_root(root: &std::path::Path) -> Vec<Template> {
+/// Walk one applet root and parse every applet folder under it. Same rule for
+/// both roots — see the scanner notes in `load_catalog`. `shipped` is whether
+/// this is the shipped root, which decides a `SKILL.md` applet's owner.
+fn scan_root(root: &std::path::Path, shipped: bool) -> Vec<Template> {
     let mut actions: Vec<Template> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(root) {
         for entry in entries.flatten() {
@@ -708,11 +716,8 @@ fn scan_root(root: &std::path::Path) -> Vec<Template> {
             };
 
             // Single action at top level.
-            let direct_manifest = path.join("manifest.toml");
-            if direct_manifest.exists() {
-                if let Some(t) = parse_template(&direct_manifest, &folder_name) {
-                    actions.push(t);
-                }
+            if let Some(parsed) = read_applet_folder(&path, &folder_name, shipped) {
+                actions.extend(parsed);
                 continue;
             }
 
@@ -730,19 +735,49 @@ fn scan_root(root: &std::path::Path) -> Vec<Template> {
                     Some(s) => s.to_string(),
                     None => continue,
                 };
-                let inner_manifest = inner_path.join("manifest.toml");
-                if !inner_manifest.exists() {
-                    continue;
-                }
                 let dir = format!("{folder_name}/{inner_name}");
-                if let Some(t) = parse_template(&inner_manifest, &dir) {
-                    actions.push(t);
+                if let Some(parsed) = read_applet_folder(&inner_path, &dir, shipped) {
+                    actions.extend(parsed);
                 }
             }
         }
     }
 
     actions
+}
+
+/// Read one folder's `SKILL.md`, or its `manifest.toml` when it has no
+/// `SKILL.md`. `None` when it has neither, so the caller can treat it as a
+/// namespace; `Some(None)` when the file was refused, which is logged.
+fn read_applet_folder(path: &std::path::Path, dir: &str, shipped: bool) -> Option<Option<Template>> {
+    let skill_md = path.join(SKILL_FILE);
+    if skill_md.is_file() {
+        if path.join("manifest.toml").exists() {
+            tracing::warn!(dir, "folder has both SKILL.md and manifest.toml; reading SKILL.md");
+        }
+        let text = match std::fs::read_to_string(&skill_md) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!(path = %skill_md.display(), error = %e, "skipping unreadable SKILL.md");
+                return Some(None);
+            }
+        };
+        return Some(match skill::parse(&text, path, dir, shipped) {
+            Ok(t) => Some(t),
+            Err(problems) => {
+                tracing::error!(
+                    path = %skill_md.display(),
+                    problems = %problems.join(" "),
+                    "skipping SKILL.md the box refuses"
+                );
+                None
+            }
+        });
+    }
+    // TODO(2026-10-27): migrate every manifest.toml to SKILL.md (slice 4 of
+    // agents/plan/applet-shape.md), then delete this branch and parse_template.
+    let manifest = path.join("manifest.toml");
+    manifest.exists().then(|| parse_template(&manifest, dir))
 }
 
 /// Write an edit to an ai-owned applet into its manifest.
@@ -766,7 +801,19 @@ pub fn mirror_patch_to_manifest(
     if !dir.starts_with("user/") {
         return Ok(());
     }
-    let path = resolve_applet_dir(&dir).join("manifest.toml");
+    let folder = resolve_applet_dir(&dir);
+    if folder.join(SKILL_FILE).is_file() {
+        // Memory lives in the row only, so there is nothing to write.
+        if patch.keys().all(|k| k == "memory") {
+            return Ok(());
+        }
+        // TODO(2026-10-27): write the edit into SKILL.md once setup writes
+        // that format (slice 4 of agents/plan/applet-shape.md).
+        return Err(Error::InvalidInput(format!(
+            "{dir} is written as SKILL.md, which the app cannot edit yet. Edit the file instead."
+        )));
+    }
+    let path = folder.join("manifest.toml");
     let text = std::fs::read_to_string(&path)
         .map_err(|e| Error::Other(format!("could not read {}: {e}", path.display())))?;
     let mut doc = text
@@ -861,6 +908,13 @@ pub async fn fork_applet(db: &PgPool, applet_id: &str) -> Result<String> {
     if !shipped.is_dir() {
         return Err(Error::Other(format!(
             "applet {applet_id} has no shipped folder to fork"
+        )));
+    }
+    if shipped.join(SKILL_FILE).is_file() {
+        // TODO(2026-10-27): record where a fork came from on the row (slice 10
+        // of agents/plan/applet-shape.md); the stamp below writes TOML.
+        return Err(Error::Other(format!(
+            "{dir} is written as SKILL.md, which cannot be forked yet"
         )));
     }
     if template_needs_vault_key(&dir) {
@@ -1840,9 +1894,9 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         write(state.path(), "day_summary_eod", "My Summary");
         write(state.path(), "user/garden_log", "Garden Log");
 
-        let mut merged = scan_root(shipped.path());
+        let mut merged = scan_root(shipped.path(), true);
         let shipped_count = merged.len();
-        for t in scan_root(state.path()) {
+        for t in scan_root(state.path(), false) {
             match merged.iter().position(|e| e.dir == t.dir) {
                 Some(i) => merged[i] = t,
                 None => merged.push(t),
@@ -1885,8 +1939,8 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("manifest.toml"), "name = \"W\"\nowner = \"system\"\n").unwrap();
 
-        assert_eq!(scan_root(shipped.path()).len(), 1);
-        assert!(scan_root(&shipped.path().join("nope")).is_empty());
+        assert_eq!(scan_root(shipped.path(), true).len(), 1);
+        assert!(scan_root(&shipped.path().join("nope"), true).is_empty());
     }
 
     /// Golden test: the baked templates.toml must parse cleanly with the
@@ -2507,6 +2561,55 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
                 && names.iter().any(|n| n.ends_with("— SoFi")),
             "each row should name its institution: {names:?}"
         );
+    }
+
+    /// A folder holding only `SKILL.md` is read by the catalog scan and
+    /// reconciles into a row with its wiring.
+    #[sqlx::test]
+    async fn a_folder_with_only_skill_md_reconciles_into_a_row(pool: sqlx::PgPool) {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("weekly-review");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("SKILL.md"),
+            "---\nname: weekly-review\ndescription: Looks back over your week.\n\
+             allowed-tools: sql_query create_page\nmetadata:\n  trigger: every sunday at 18:00\n  \
+             limit: $1 per run\n---\nWrite a short review of the seven days before today.\n",
+        )
+        .unwrap();
+        // A sibling the box refuses is skipped, and does not take the scan down.
+        let bad = root.path().join("broken");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::write(bad.join("SKILL.md"), "---\nname: other\n---\n").unwrap();
+
+        let found = scan_root(root.path(), false);
+        assert_eq!(found.len(), 1, "only the valid folder loads");
+        let t = &found[0];
+        upsert_row(&pool, t, t.id_prefix.as_deref().unwrap(), None, None, None)
+            .await
+            .expect("upsert");
+
+        let (name, owner, schedule, agent, triggers, config): (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            serde_json::Value,
+            serde_json::Value,
+        ) = sqlx::query_as(
+            "SELECT name, owner, schedule, agent, triggers, config FROM app_applets \
+             WHERE id = 'applet_weekly_review'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("the row exists");
+        assert_eq!(name, "Weekly review");
+        assert_eq!(owner, "user");
+        assert_eq!(schedule.as_deref(), Some("0 0 18 * * 0"));
+        assert!(agent.unwrap().starts_with("Write a short review"));
+        assert_eq!(triggers, serde_json::json!(["manual", "message", "tool", "cron"]));
+        assert_eq!(config["limits"]["max_llm_cost"], 1.0);
+        assert_eq!(config["allowed_tools"], serde_json::json!(["sql_query", "create_page"]));
     }
 
     /// A chat-made applet that is retimed keeps its new schedule through a
