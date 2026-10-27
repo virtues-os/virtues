@@ -43,6 +43,8 @@ use tracing::Instrument;
 pub mod limits;
 mod sandboxed;
 
+pub(crate) use sandboxed::{allowed_hosts, record_requests, start_proxy};
+
 use crate::error::{Error, Result};
 use crate::scheduler::applets::{self, Applet};
 use crate::server::yjs::YjsState;

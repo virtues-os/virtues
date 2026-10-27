@@ -69,7 +69,7 @@ pub(super) enum Placement {
 /// Decide where code runs. Shipped code runs directly. Elsewhere code runs
 /// in the sandbox; off Linux, or in a debug build without systemd, it runs
 /// directly because that is a developer machine. In a release build on Linux
-/// a missing `systemd-run` is a refusal, matching `code_interpreter`: the
+/// a missing `systemd-run` is a refusal, matching the `shell` tool: the
 /// moment the sandbox quietly stops applying is the moment it stops being
 /// one.
 pub(super) fn placement(shipped: bool) -> Result<Placement> {
@@ -135,7 +135,7 @@ fn prepare_lake_folder(dir: &Path) -> Result<()> {
 /// the owner cannot hand an applet a host it never asked for. This is the
 /// Rule of Two's third leg, which only the owner adds (agents/plan/
 /// applet-shape.md, "The Rule of Two, checked at save").
-pub(super) async fn allowed_hosts(db: &PgPool, applet_id: &str, config: &serde_json::Value) -> Result<Vec<String>> {
+pub(crate) async fn allowed_hosts(db: &PgPool, applet_id: &str, config: &serde_json::Value) -> Result<Vec<String>> {
     let requested: Vec<String> = config
         .get("net_hosts")
         .and_then(|v| v.as_array())
@@ -153,7 +153,7 @@ pub(super) async fn allowed_hosts(db: &PgPool, applet_id: &str, config: &serde_j
 
 /// The egress proxy for one run, with its socket in a folder only the box
 /// user can open.
-pub(super) fn start_proxy(run_id: &str, hosts: &[String]) -> Result<crate::egress::Proxy> {
+pub(crate) fn start_proxy(run_id: &str, hosts: &[String]) -> Result<crate::egress::Proxy> {
     use std::os::unix::fs::{DirBuilderExt, PermissionsExt};
     let grant = crate::egress::Grant::new(hosts.iter().map(String::as_str)).map_err(Error::Other)?;
     let dir = crate::data_disk::data_dir().join("egress");
@@ -170,7 +170,7 @@ pub(super) fn start_proxy(run_id: &str, hosts: &[String]) -> Result<crate::egres
 }
 
 /// Write what a run's proxy saw onto the run.
-pub(super) async fn record_requests(db: &PgPool, run_id: &str, requests: &[crate::egress::Request]) -> Result<()> {
+pub(crate) async fn record_requests(db: &PgPool, run_id: &str, requests: &[crate::egress::Request]) -> Result<()> {
     for r in requests {
         sqlx::query(
             "INSERT INTO app_applet_run_requests (run_id, host, method, sent_bytes, received_bytes, refused_reason)

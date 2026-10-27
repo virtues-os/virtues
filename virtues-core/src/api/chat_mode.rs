@@ -66,7 +66,7 @@ pub enum ChatMode {
     /// capped searches. Also what an unknown wire string means — a client
     /// ahead of this box gets ordinary chat.
     Chat,
-    /// The owner's bypass: everything chat has plus `shell`, run without
+    /// The owner's bypass: everything chat has plus `sudo`, run without
     /// asking; a delete asks. See `tools::sudo_gate`.
     Sudo,
     /// Read-only research tools + fan-out + `create_page` for the report.
@@ -183,9 +183,9 @@ impl ChatMode {
             ),
         };
         // Sudo: a long restore or migration through sql_* must not be cut
-        // off at 30s. The shell has its own ceiling in agent::executor.
+        // off at 30s. `sudo` has its own ceiling in agent::executor.
         let tool_timeout = if self.is_sudo() {
-            Duration::from_secs(crate::tools::shell::MAX_TIMEOUT_SECS)
+            Duration::from_secs(crate::tools::sudo_shell::MAX_TIMEOUT_SECS)
         } else {
             Duration::from_secs(30)
         };
@@ -204,7 +204,7 @@ impl ChatMode {
                 tools.extend(tools_named(&connected_mac_tools()));
                 tools
             }
-            // Everything chat has, plus `shell`; deletes ask (`sudo_gate`).
+            // Everything chat has, plus `sudo`; deletes ask (`sudo_gate`).
             Self::Sudo => {
                 let mut tools = chat_tools();
                 tools.extend(tools_named(crate::tools::SUDO_ONLY_TOOLS));
@@ -230,7 +230,7 @@ impl ChatMode {
         }
     }
 
-    /// The owner's bypass: `ToolContext.sudo` and the shell.
+    /// The owner's bypass: `ToolContext.sudo` and the `sudo` tool.
     pub fn is_sudo(&self) -> bool {
         matches!(self, Self::Sudo)
     }
@@ -368,7 +368,7 @@ pub(crate) mod tests {
         assert_eq!((l.max_steps, l.budget.max_cost_micros, l.budget.max_wall_clock), (60, Some(5_000_000), secs(30)));
         assert!(l.budget.tool_caps.is_empty());
         assert_eq!(l.thinking, Thinking::Default);
-        assert_eq!(l.tool_timeout, Duration::from_secs(crate::tools::shell::MAX_TIMEOUT_SECS));
+        assert_eq!(l.tool_timeout, Duration::from_secs(crate::tools::sudo_shell::MAX_TIMEOUT_SECS));
 
         // A skill's file: 40 steps, $5, 15 minutes.
         let l = fixture_skill().limits();
@@ -389,11 +389,11 @@ pub(crate) mod tests {
 
         assert_eq!(tool_names(&ChatMode::Chat), every);
         let mut sudo = every.clone();
-        sudo.insert("shell".into());
+        sudo.insert("sudo".into());
         assert_eq!(tool_names(&ChatMode::Sudo), sudo);
         assert_eq!(
             tool_names(&ChatMode::DeepResearch),
-            set(&["think", "web_search", "semantic_search", "sql_query", "code_interpreter", "dispatch_subagents", "create_page"])
+            set(&["think", "web_search", "semantic_search", "sql_query", "shell", "dispatch_subagents", "create_page"])
         );
         assert_eq!(tool_names(&ChatMode::Interview), set(&["write_it_up"]));
         assert_eq!(tool_names(&ChatMode::GettingStarted), set(&["skip_step", "record_introductions"]));
@@ -417,7 +417,7 @@ pub(crate) mod tests {
         const GROUPS: &[(&str, &[&str], usize)] = &[
             // One tool for every applet action, chosen by `action`.
             ("applets", &["applet"], 2_750),
-            ("analysis", &["code_interpreter", "think", "read_asset", "generate_image"], 2_400),
+            ("analysis", &["shell", "think", "read_asset", "generate_image"], 2_400),
             ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], 2_400),
             ("search", &["semantic_search", "web_search"], 2_000),
             ("self", &["update_memory"], 800),
@@ -441,7 +441,7 @@ pub(crate) mod tests {
             // read through it.
             ("sql_query", &["sql_query"], 6_650),
             // Mode-only tools, each set just above its 2026-09-29 size.
-            ("shell", &["shell"], 1_500),
+            ("sudo", &["sudo"], 1_500),
             ("dispatch", &["dispatch_subagents"], 3_300),
             ("interview", &["write_it_up"], 1_500),
             ("getting_started", &["skip_step", "record_introductions"], 2_200),

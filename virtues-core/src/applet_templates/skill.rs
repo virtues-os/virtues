@@ -964,8 +964,9 @@ mod tests {
             let e = refused(&format!("{BASE}\nallowed-tools: {entry}"), "Do it.");
             assert!(e.contains(expect), "{entry}: {e}");
         }
-        let e = refused(&format!("{BASE}\nallowed-tools: shell"), "Do it.");
-        assert!(e.contains("`shell` is not available to an applet's run"), "{e}");
+        let e = refused(&format!("{BASE}\nallowed-tools: sudo"), "Do it.");
+        assert!(e.contains("`sudo` is not available to an applet's run"), "{e}");
+        assert!(ok(&format!("{BASE}\nallowed-tools: shell"), "Do it.").config.is_some(), "the sandboxed shell is");
         let e = refused(&format!("{BASE}\nallowed-tools: sql_qeury"), "Do it.");
         assert!(e.contains("Did you mean `sql_query`?"), "{e}");
         let t = ok(&format!("{BASE}\nallowed-tools: sql_query lake"), "Do it.");

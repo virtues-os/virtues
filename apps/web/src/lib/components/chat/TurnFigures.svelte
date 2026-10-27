@@ -2,7 +2,7 @@
 	/**
 	 * TurnFigures
 	 *
-	 * The images a turn's code_interpreter runs saved to out/, shown in the
+	 * The images a turn's shell runs saved to out/, shown in the
 	 * reply rather than inside the folded "Worked on this" block. A chart is
 	 * the answer, not the working, and the model is told the owner can see it.
 	 * Only a saved chat's images carry a url; a ghost chat's have none.
@@ -10,13 +10,14 @@
 	import { backendUrl } from "$lib/config/backend";
 
 	interface Props {
-		/** The turn's parts; only finished code_interpreter calls are read. */
+		/** The turn's parts; only finished shell calls are read. */
 		parts: any[];
 	}
 
 	let { parts }: Props = $props();
 
-	const isCodeRun = (p: any) => p.type === "tool-code_interpreter";
+	// `code_interpreter` is what saved chats from before `shell` hold.
+	const isCodeRun = (p: any) => p.type === "tool-shell" || p.type === "tool-code_interpreter";
 
 	const figures = $derived(
 		parts

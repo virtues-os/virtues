@@ -60,7 +60,7 @@ pub struct ToolConfig {
 /// These are the core tools that ship with Virtues:
 /// - web_search: Search the web (Parallel)
 /// - sql_query: Read-only SQL queries against user data
-/// - code_interpreter: Execute Python code for calculations and analysis
+/// - shell: bash and Python in a sandbox, for calculations and analysis
 /// - create_page: Create a new page with content
 /// - get_page_content: Read current page content
 /// - edit_page: Edit a block page by block ops, a markdown page by find/replace
@@ -77,8 +77,8 @@ pub fn default_tools() -> Vec<ToolConfig> {
         semantic_search_tool(),
         sql_query_tool(true),
         sql_write_tool(),
+        sudo_tool(),
         shell_tool(),
-        code_interpreter_tool(),
         dispatch_subagents_tool(),
         create_page_tool(),
         get_page_content_tool(),
@@ -428,7 +428,7 @@ fn show_tool() -> ToolConfig {
         id: "show".to_string(),
         name: "Show".to_string(),
         description: "Show a chart, numbers, a table, a map or a timeline in a reply".to_string(),
-        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. It appears where you call it, so the words before it are part of your reply. Data is never typed in: give `sql`, one read-only SELECT over the tables sql_query reads. The server runs it, draws the rows, and returns them to you; say what they show without listing them again, and quote no figure that is not in them. Use it when seeing beats reading (a trend, a comparison, places, a day's shape), once or twice a reply at most. Chart rows from the record here rather than with code_interpreter. A single number belongs in a sentence."#.to_string(),
+        llm_description: r#"Put something in front of the owner inside your reply: a chart, a few numbers, a table, a map, a timeline, or buttons to reply with. It appears where you call it, so the words before it are part of your reply. Data is never typed in: give `sql`, one read-only SELECT over the tables sql_query reads. The server runs it, draws the rows, and returns them to you; say what they show without listing them again, and quote no figure that is not in them. Use it when seeing beats reading (a trend, a comparison, places, a day's shape), once or twice a reply at most. Chart rows from the record here rather than with shell. A single number belongs in a sentence."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["kind"],
@@ -762,11 +762,11 @@ Naming a person, place or org, or dates spanning a week or less, puts `from_your
 }
 
 /// SQL Query tool (read-only data access). `saves` offers `save_as`, which
-/// keeps a result as a CSV in a chat's code_interpreter workspace; a run with
+/// keeps a result as a CSV in a chat's shell workspace; a run with
 /// no chat has no workspace to keep it in, so it is offered the tool without.
 pub fn sql_query_tool(saves: bool) -> ToolConfig {
     let save_as = if saves {
-        "; with save_as up to 10,000 rows go to a CSV in the code_interpreter workspace and you see 20"
+        "; with save_as up to 10,000 rows go to a CSV in the shell workspace and you see 20"
     } else {
         ""
     };
@@ -826,22 +826,25 @@ GROUP BY p.name ORDER BY 2 DESC LIMIT 10"#
     }
 }
 
-/// Code Interpreter tool - execute Python code in a sandbox
-fn code_interpreter_tool() -> ToolConfig {
+/// Shell tool - bash in the sandbox (`virtues::sandbox`): no network, a
+/// throwaway user, the box's data hidden. Python with the pinned packages is
+/// `python3` on its PATH. An applet's run also sees its folder at /skill, and
+/// reaches the hosts its `net(host)` entries ask for that the owner allowed.
+fn shell_tool() -> ToolConfig {
     ToolConfig {
-        id: "code_interpreter".to_string(),
-        name: "Python".to_string(),
-        description: "Execute Python code for calculations and data analysis".to_string(),
-        llm_description: r#"Run Python 3 in a sandbox for anything past a couple of steps in your head: arithmetic over many numbers, statistics, date math, finance, analysis of query results. Not for a single lookup or a fact you can state.
+        id: "shell".to_string(),
+        name: "Shell".to_string(),
+        description: "Run commands and Python in a sandbox".to_string(),
+        llm_description: r#"Run a bash command in a sandbox, for anything past a couple of steps in your head: arithmetic over many numbers, statistics, date math, finance, analysis of query results. Not for a single lookup or a fact you can state.
 
-print() what you want back; only stdout and stderr return. Packages: numpy, pandas, scipy, matplotlib, numpy-financial, python-dateutil and the standard library; a result saying packages are not installed yet means standard library only for that call.
+Python is python3, with numpy, pandas, scipy, matplotlib, numpy-financial, python-dateutil and the standard library; a result saying packages are not installed yet means standard library only for that call. Write a script with a heredoc (python3 - <<'EOF' … EOF) or python3 -c. Only stdout and stderr return.
 
-The working directory is this chat's workspace and persists between calls; variables do not. A sql_query save_as file is here as a CSV. Save charts to out/ (plt.savefig('out/x.png')): each one shows with your reply, so say what it shows and never link it. No network, 1 GB memory. On a traceback, fix the code and retry."#.to_string(),
+The working directory is this chat's workspace and persists between calls; variables do not. A sql_query save_as file is here as a CSV. Save charts to out/ (plt.savefig('out/x.png')): each one shows with your reply, so say what it shows and never link it. No network, 1 GB memory. On a traceback, fix the command and retry."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
-            "required": ["code"],
+            "required": ["command"],
             "properties": {
-                "code": { "type": "string" },
+                "command": { "type": "string", "description": "Run with bash -c" },
                 "timeout": {
                     "type": "integer",
                     "description": "Seconds",
@@ -853,7 +856,7 @@ The working directory is this chat's workspace and persists between calls; varia
         }),
         tool_type: ToolType::Builtin,
         category: ToolCategory::Data,
-        icon: "ri:code-s-slash-line".to_string(),
+        icon: "ri:terminal-line".to_string(),
         display_order: 4,
         is_system: false,
     }
@@ -878,8 +881,8 @@ When to use:
 
 How to use well:
 - Dispatch the FEWEST workers that cover the independent questions — usually 2-4, never more than 5. Don't split one question into redundant workers.
-- Each worker is READ-ONLY (sql_query, semantic_search, web_search, code_interpreter, think) and cannot dispatch further workers. Give each a self-contained objective — workers do NOT see the conversation, only their objective.
-- Tell each worker to compute real statistics with code_interpreter where relevant, cite the specific records/sources it used, and return a CONCISE findings summary (not a transcript).
+- Each worker is READ-ONLY (sql_query, semantic_search, web_search, shell, think) and cannot dispatch further workers. Give each a self-contained objective — workers do NOT see the conversation, only their objective.
+- Tell each worker to compute real statistics with shell where relevant, cite the specific records/sources it used, and return a CONCISE findings summary (not a transcript).
 - Pick each worker's `model` by difficulty: "fast" for simple lookups, "balanced" (default) for normal research, "strong" for hard quantitative analysis.
 
 After they return, synthesize their findings yourself — weigh agreements, surface disagreements, and never assert causation from correlation.
@@ -887,8 +890,8 @@ After they return, synthesize their findings yourself — weigh agreements, surf
 Example:
 {
   "missions": [
-    {"title": "Spending trend", "objective": "Query data_financial_transaction for monthly spending by category over the last 6 months. Use code_interpreter to compute the trend and flag the categories that grew most. Cite the rows.", "model": "balanced"},
-    {"title": "Sleep correlation", "objective": "Pull data_health_sleep and monthly spending for the same period. Compute the correlation with code_interpreter. Report n and how weak/strong it is. Cite sources.", "model": "strong"},
+    {"title": "Spending trend", "objective": "Query data_financial_transaction for monthly spending by category over the last 6 months. Use shell to compute the trend and flag the categories that grew most. Cite the rows.", "model": "balanced"},
+    {"title": "Sleep correlation", "objective": "Pull data_health_sleep and monthly spending for the same period. Compute the correlation with shell. Report n and how weak/strong it is. Cite sources.", "model": "strong"},
     {"title": "Counter-evidence", "objective": "Argue against the idea that spending rose due to one cause. Look for confounders (seasonality, one-off purchases, income changes) in the data. Cite what you find.", "model": "balanced"}
   ]
 }"#.to_string(),
@@ -1052,13 +1055,14 @@ fn sql_write_tool() -> ToolConfig {
     }
 }
 
-/// Shell tool — a command on the server itself, as its admin account.
+/// Sudo tool — a command on the server itself, as its admin account.
 /// Sudo mode only: `ChatMode::tools` lists it for no other mode and
-/// the executor refuses it outside a sudo turn.
-fn shell_tool() -> ToolConfig {
+/// the executor refuses it outside a sudo turn. The sandboxed `shell` is the
+/// one every other mode and applet gets.
+fn sudo_tool() -> ToolConfig {
     ToolConfig {
-        id: "shell".to_string(),
-        name: "Shell".to_string(),
+        id: "sudo".to_string(),
+        name: "Sudo".to_string(),
         description: "Run a command on the server, with sudo".to_string(),
         llm_description: r#"Run a shell command on the server this assistant runs on, as its admin account, which has passwordless sudo. Anything a person could do over ssh is possible: read and change files anywhere, query or change any database, read logs, manage services, install packages. Reads run at once; changes wait for the owner to allow them.
 
@@ -1267,7 +1271,7 @@ pub fn default_enabled_tools() -> serde_json::Value {
         "web_search": true,
         "semantic_search": true,
         "sql_query": true,
-        "code_interpreter": true,
+        "shell": true,
         "create_page": true,
         "get_page_content": true,
         "edit_page": true,
@@ -1320,7 +1324,8 @@ mod tests {
         assert!(ids.contains(&"web_search"));
         assert!(ids.contains(&"semantic_search"));
         assert!(ids.contains(&"sql_query"));
-        assert!(ids.contains(&"code_interpreter"));
+        assert!(ids.contains(&"shell"));
+        assert!(ids.contains(&"sudo"));
         assert!(ids.contains(&"create_page"));
         assert!(ids.contains(&"get_page_content"));
         assert!(ids.contains(&"edit_page"));
@@ -1364,7 +1369,7 @@ mod tests {
         assert_eq!(enabled.get("web_search"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("semantic_search"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("sql_query"), Some(&serde_json::json!(true)));
-        assert_eq!(enabled.get("code_interpreter"), Some(&serde_json::json!(true)));
+        assert_eq!(enabled.get("shell"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("create_page"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("get_page_content"), Some(&serde_json::json!(true)));
         assert_eq!(enabled.get("edit_page"), Some(&serde_json::json!(true)));

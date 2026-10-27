@@ -80,7 +80,8 @@ const APPLET_SAY: Record<string, [string, string]> = {
 const TOOLS: Record<string, Presentation> = {
 	// Rendered as its own thought in the list, never as a described call.
 	think: { noun: "thinking", depth: 3, say: ["Planning", "Planned"] },
-	code_interpreter: {
+	// A command in the sandbox: usually Python working something out.
+	shell: {
 		noun: "a calculation",
 		depth: 3,
 		say: ["Working something out", "Worked something out"],
@@ -142,7 +143,7 @@ const TOOLS: Record<string, Presentation> = {
 		depth: 4,
 		say: ["Writing to your records", "Wrote to your records"],
 	},
-	shell: {
+	sudo: {
 		noun: "your server",
 		depth: 4,
 		// The command itself, not a paraphrase: in sudo mode this line is the
@@ -299,17 +300,28 @@ const TOOLS: Record<string, Presentation> = {
 /** The registry's tool ids this table covers — for the drift test. */
 export const PRESENTED_TOOLS = Object.keys(TOOLS);
 
+/** Tools the box no longer has, which saved chats still hold calls to. Not
+ *  in `PRESENTED_TOOLS`, which matches what the box registers. */
+const RETIRED: Record<string, Presentation> = {
+	// Folded into `shell` on 2026-10-27.
+	code_interpreter: TOOLS.shell,
+};
+
+function presentation(name: string): Presentation | undefined {
+	return TOOLS[name] ?? RETIRED[name];
+}
+
 /** A tool this client has no entry for: an older client on a newer box. */
 function unknownWords(name: string): string {
 	return name.replace(/_/g, " ");
 }
 
 export function toolNoun(name: string): string {
-	return TOOLS[name]?.noun ?? unknownWords(name);
+	return presentation(name)?.noun ?? unknownWords(name);
 }
 
 export function toolDepth(name: string): 3 | 4 | 5 {
-	return TOOLS[name]?.depth ?? 4;
+	return presentation(name)?.depth ?? 4;
 }
 
 /**
@@ -319,7 +331,7 @@ export function toolDepth(name: string): 3 | 4 | 5 {
  */
 export function describeTool(part: ToolPart, live: boolean, short = false): string {
 	const name = toolName(part);
-	const say = TOOLS[name]?.say;
+	const say = presentation(name)?.say;
 	if (!say) {
 		const words = unknownWords(name);
 		return words.charAt(0).toUpperCase() + words.slice(1);

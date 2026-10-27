@@ -1,14 +1,16 @@
-//! Code execution API for the AI `code_interpreter` tool.
+//! The `shell` tool: a bash command in the sandbox.
 //!
-//! This runs Python the LLM wrote at runtime, so it is the path most exposed to
-//! prompt injection: the same turn can have read a third party's email. On the
-//! appliance it runs in the sandbox ([`crate::sandbox`]): a transient systemd
-//! unit with no network, a throwaway user, the box's data hidden, and memory,
-//! CPU, process, file-size and time limits.
+//! This runs commands the model wrote at runtime, so it is the path most
+//! exposed to prompt injection: the same turn can have read a third party's
+//! email. On the appliance it runs in the sandbox ([`crate::sandbox`]): a
+//! transient systemd unit with no network, a throwaway user, the box's data
+//! hidden, and memory, CPU, process, file-size and time limits.
 //!
-//! The code is fed on stdin (`python3 -`). Its working directory is `/work`,
-//! the run's workspace bind-mounted in, and the pinned package environment is
-//! bind-mounted read-only at `/opt/py` (both in `api/code_env.rs`). Everything
+//! The command runs with `bash -c` and no stdin. Its working directory is
+//! `/work`, the run's workspace bind-mounted in, and the pinned Python
+//! environment is bind-mounted read-only at `/opt/py`, first on `PATH` (both
+//! in `api/code_env.rs`). An applet's run also gets its folder read-only at
+//! `/skill`, and an egress socket when its owner allowed hosts. Everything
 //! else of the box's stays hidden, other chats' workspaces included.
 //!
 //! ## Refusal vs. dev fallback
@@ -25,36 +27,34 @@
 //! - The package environment builds itself on first use and needs the network
 //!   once; until then a run gets the standard library and is told so.
 
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Instant;
-use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
 use crate::api::code_env::{self, Workspace};
 use crate::sandbox::{Bind, Unit};
-use crate::tools::shell::{read_capped, Captured};
+use crate::tools::sudo_shell::{read_capped, Captured};
 
-/// Request to execute Python code
-#[derive(Debug, Deserialize)]
-pub struct ExecuteCodeRequest {
-    /// Python code to execute
-    pub code: String,
-    /// Execution timeout in seconds (default: 60, max: 120)
-    #[serde(default = "default_timeout")]
+/// One `shell` call.
+#[derive(Debug, Default)]
+pub struct ShellRequest {
+    /// Run with `bash -c`.
+    pub command: String,
+    /// Seconds, clamped to 5..=120.
     pub timeout: u32,
+    /// An applet's folder, mounted read-only at `/skill`.
+    pub folder: Option<PathBuf>,
+    /// The run's egress proxy socket, when its owner allowed hosts.
+    pub egress: Option<PathBuf>,
 }
 
-fn default_timeout() -> u32 {
-    60
-}
-
-/// Response from code execution
+/// What a `shell` call returns.
 #[derive(Debug, Serialize)]
-pub struct ExecuteCodeResponse {
-    /// Whether the code ran and exited 0
+pub struct ShellResponse {
+    /// Whether the command ran and exited 0
     pub success: bool,
     /// Standard output, head and tail kept past the cap
     pub stdout: String,
@@ -84,11 +84,11 @@ const MAX_IMAGES: usize = 8;
 /// enough to leave the ML sidecars their share of the box.
 const MEMORY_MAX: &str = "1G";
 
-/// Execute Python code for the `code_interpreter` tool.
+/// Run a `shell` command.
 ///
 /// Appliance (Linux): isolated in a transient `systemd-run` unit. Dev/CI (any
 /// debug build, incl. macOS): run directly on the trusted developer machine.
-pub async fn execute_code(request: ExecuteCodeRequest, ws: &Workspace) -> ExecuteCodeResponse {
+pub async fn run_shell(request: ShellRequest, ws: &Workspace) -> ShellResponse {
     let start = Instant::now();
     let timeout_secs = request.timeout.clamp(5, 120);
     let env = code_env::ready_env();
@@ -96,34 +96,34 @@ pub async fn execute_code(request: ExecuteCodeRequest, ws: &Workspace) -> Execut
 
     let held = ws.bytes();
     if held > code_env::WORKSPACE_MAX_BYTES {
-        return ExecuteCodeResponse {
+        return ShellResponse {
             error: Some(format!(
-                "The workspace holds {} MB, over its {} MB limit. Delete files you no longer need (os.remove) in a small run first.",
+                "The workspace holds {} MB, over its {} MB limit. Delete files you no longer need (rm) in a small run first.",
                 held / 1_000_000,
                 code_env::WORKSPACE_MAX_BYTES / 1_000_000
             )),
-            ..ExecuteCodeResponse::failed(packages_ready, 0)
+            ..ShellResponse::failed(packages_ready, 0)
         };
     }
 
     let out_before = snapshot_out(ws);
     let run = if cfg!(target_os = "linux") {
-        match sandboxed_command(timeout_secs, ws, env.as_deref()) {
-            Some(cmd) => run(cmd, &request.code, timeout_secs).await,
+        match sandboxed_command(timeout_secs, ws, env.as_deref(), &request) {
+            Some(cmd) => run(cmd, timeout_secs).await,
             // systemd-run missing: refuse in release (appliance) so we never run
             // LLM code unsandboxed; allow a direct run only in debug (dev/CI).
             None if cfg!(debug_assertions) => {
                 tracing::warn!("systemd-run unavailable; running directly (debug build only)");
-                run(direct_command(ws, env.as_deref()), &request.code, timeout_secs).await
+                run(direct_command(ws, env.as_deref(), &request.command), timeout_secs).await
             }
             None => Err(
-                "code execution sandbox (systemd-run) is unavailable; refusing to run unsandboxed"
+                "the shell sandbox (systemd-run) is unavailable; refusing to run unsandboxed"
                     .to_string(),
             ),
         }
     } else {
         // No systemd off Linux — this is only ever a developer machine.
-        run(direct_command(ws, env.as_deref()), &request.code, timeout_secs).await
+        run(direct_command(ws, env.as_deref(), &request.command), timeout_secs).await
     };
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
@@ -134,12 +134,13 @@ pub async fn execute_code(request: ExecuteCodeRequest, ws: &Workspace) -> Execut
             let timed_out = r.backstop_fired
                 || (!r.success && elapsed_ms + 500 >= timeout_secs as u64 * 1000);
             let stderr = r.stderr.render();
-            // The last line of stderr is the exception — the one line of a
-            // traceback that says what went wrong. It rides in `error` so a
+            // The last line of stderr is usually what went wrong: the
+            // exception that ends a Python traceback, or a command's own
+            // complaint. It rides in `error` so a
             // reader of the failure alone (the thinking block, the guard's
             // refusal) sees it; the full traceback is in `stderr` beside it.
             let error = if timed_out {
-                Some(format!("Code execution timed out after {timeout_secs}s"))
+                Some(format!("The command timed out after {timeout_secs}s"))
             } else {
                 (!r.success).then(|| {
                     stderr
@@ -147,11 +148,14 @@ pub async fn execute_code(request: ExecuteCodeRequest, ws: &Workspace) -> Execut
                         .rev()
                         .map(str::trim)
                         .find(|l| !l.is_empty())
-                        .map(|l| format!("Code execution failed: {l}"))
-                        .unwrap_or_else(|| "Code execution failed".to_string())
+                        .map(|l| format!("The command failed: {l}"))
+                        .unwrap_or_else(|| match r.exit_code {
+                            Some(code) => format!("The command exited with status {code}"),
+                            None => "The command failed".to_string(),
+                        })
                 })
             };
-            ExecuteCodeResponse {
+            ShellResponse {
                 success: r.success && !timed_out,
                 stdout: r.stdout.render(),
                 stderr,
@@ -164,14 +168,14 @@ pub async fn execute_code(request: ExecuteCodeRequest, ws: &Workspace) -> Execut
                 execution_time_ms: elapsed_ms,
             }
         }
-        Err(e) => ExecuteCodeResponse {
+        Err(e) => ShellResponse {
             error: Some(e),
-            ..ExecuteCodeResponse::failed(packages_ready, elapsed_ms)
+            ..ShellResponse::failed(packages_ready, elapsed_ms)
         },
     }
 }
 
-impl ExecuteCodeResponse {
+impl ShellResponse {
     fn failed(packages_ready: bool, execution_time_ms: u64) -> Self {
         Self {
             success: false,
@@ -228,55 +232,62 @@ pub fn image_type(name: &str) -> Option<&'static str> {
     })
 }
 
-/// The sandboxed unit for one run: the workspace at `/work`, and the
-/// package environment read-only at `/opt/py`.
-fn sandbox_unit(timeout_secs: u32, workspace: &Path, env: Option<&Path>) -> Unit {
+/// `PATH` inside the unit: the pinned Python first, when it is ready.
+const SANDBOX_PATH: &str = "/opt/py/bin:/usr/local/bin:/usr/bin:/bin";
+const SANDBOX_PATH_WITHOUT_PACKAGES: &str = "/usr/local/bin:/usr/bin:/bin";
+
+/// The sandboxed unit for one run: the workspace at `/work`, the package
+/// environment read-only at `/opt/py`, and for an applet its folder at
+/// `/skill` and its egress socket.
+fn sandbox_unit(timeout_secs: u32, workspace: &Path, env: Option<&Path>, request: &ShellRequest) -> Unit {
     let mut binds = vec![Bind { host: workspace.to_path_buf(), inside: "/work".into(), writable: true }];
     if let Some(env) = env {
         binds.push(Bind { host: env.to_path_buf(), inside: "/opt/py".into(), writable: false });
+    }
+    if let Some(folder) = &request.folder {
+        binds.push(Bind { host: folder.clone(), inside: "/skill".into(), writable: false });
     }
     Unit {
         timeout_secs,
         memory_max: MEMORY_MAX,
         working_directory: "/work",
         binds,
-        egress: None,
+        egress: request.egress.clone(),
         postgres: false,
         extra: Vec::new(),
     }
 }
 
-/// `sudo -n systemd-run …` running Python on stdin, or None when
-/// systemd-run is not installed.
-fn sandboxed_command(timeout_secs: u32, ws: &Workspace, env: Option<&Path>) -> Option<Command> {
-    let python: &[&str] = if env.is_some() { &["/usr/bin/env", "/opt/py/bin/python3"] } else { &["python3"] };
-    let argv: Vec<String> = python
-        .iter()
-        .chain(&[
-            "-I", // isolated mode: ignore env + user site-packages
-            "-",  // read the program from stdin
-        ])
-        .map(|s| s.to_string())
-        .collect();
-    sandbox_unit(timeout_secs, &ws.dir, env).command(
+/// `sudo -n systemd-run …` running the command, or None when systemd-run is
+/// not installed.
+fn sandboxed_command(timeout_secs: u32, ws: &Workspace, env: Option<&Path>, request: &ShellRequest) -> Option<Command> {
+    let argv = ["/bin/bash".to_string(), "-c".to_string(), request.command.clone()];
+    let path = if env.is_some() { SANDBOX_PATH } else { SANDBOX_PATH_WITHOUT_PACKAGES };
+    sandbox_unit(timeout_secs, &ws.dir, env, request).command(
         &argv,
         &[
+            ("PATH", path),
             // Give libs a writable home inside the private /tmp.
             ("HOME", "/tmp"),
             ("MPLCONFIGDIR", "/tmp"),
             // No display: charts render to files.
             ("MPLBACKEND", "Agg"),
+            // The pinned packages, not whatever a home directory would add.
+            ("PYTHONNOUSERSITE", "1"),
         ],
     )
 }
 
-/// Run code directly, unsandboxed. Developer machines only.
-fn direct_command(ws: &Workspace, env: Option<&Path>) -> Command {
-    let python = env.map_or_else(|| PathBuf::from("python3"), |e| e.join("bin").join("python3"));
-    let mut cmd = Command::new(python);
-    cmd.args(["-I", "-"]);
+/// Run the command directly, unsandboxed. Developer machines only.
+fn direct_command(ws: &Workspace, env: Option<&Path>, command: &str) -> Command {
+    let mut cmd = Command::new("bash");
+    cmd.args(["-c", command]);
     cmd.current_dir(&ws.dir);
     cmd.env("MPLBACKEND", "Agg");
+    if let Some(env) = env {
+        let path = std::env::var("PATH").unwrap_or_default();
+        cmd.env("PATH", format!("{}:{path}", env.join("bin").display()));
+    }
     cmd
 }
 
@@ -288,24 +299,16 @@ struct Run {
     backstop_fired: bool,
 }
 
-/// Spawn, feed the code on stdin, and read both streams to their end with
-/// their head and tail kept — reading past the cap so a chatty program never
-/// blocks on a full pipe.
-async fn run(mut cmd: Command, code: &str, timeout_secs: u32) -> Result<Run, String> {
-    cmd.stdin(Stdio::piped());
+/// Spawn with no stdin, and read both streams to their end with their head
+/// and tail kept — reading past the cap so a chatty program never blocks on a
+/// full pipe.
+async fn run(mut cmd: Command, timeout_secs: u32) -> Result<Run, String> {
+    cmd.stdin(Stdio::null());
     cmd.stdout(Stdio::piped());
     cmd.stderr(Stdio::piped());
     cmd.kill_on_drop(true); // the backstop drops the future → kills the child
 
-    let mut child = cmd.spawn().map_err(|e| format!("failed to start code execution: {e}"))?;
-
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(code.as_bytes())
-            .await
-            .map_err(|e| format!("failed to write code to stdin: {e}"))?;
-        drop(stdin); // EOF
-    }
+    let mut child = cmd.spawn().map_err(|e| format!("failed to start the command: {e}"))?;
 
     let stdout = child.stdout.take().expect("stdout is piped");
     let stderr = child.stderr.take().expect("stderr is piped");
@@ -341,29 +344,48 @@ async fn run(mut cmd: Command, code: &str, timeout_secs: u32) -> Result<Run, Str
 mod tests {
     use super::*;
 
-    fn request(code: &str, timeout: u32) -> ExecuteCodeRequest {
-        ExecuteCodeRequest { code: code.to_string(), timeout }
+    fn request(command: &str, timeout: u32) -> ShellRequest {
+        ShellRequest { command: command.to_string(), timeout, ..Default::default() }
     }
 
-    async fn execute_code(request: ExecuteCodeRequest) -> ExecuteCodeResponse {
+    async fn run_shell(request: ShellRequest) -> ShellResponse {
         let ws = Workspace::temporary().unwrap();
-        super::execute_code(request, &ws).await
+        super::run_shell(request, &ws).await
     }
 
-    /// The boundary itself is pinned in `sandbox`; this pins what a code
+    /// The boundary itself is pinned in `sandbox`; this pins what a shell
     /// run adds to it.
     #[test]
-    fn a_code_run_mounts_its_workspace_and_packages_and_has_no_way_out() {
-        let props = sandbox_unit(30, Path::new("/ws"), Some(Path::new("/env"))).properties();
+    fn a_shell_run_mounts_its_workspace_and_packages_and_has_no_way_out() {
+        let props = sandbox_unit(30, Path::new("/ws"), Some(Path::new("/env")), &request("true", 30)).properties();
         for must in ["BindPaths=/ws:/work", "BindReadOnlyPaths=/env:/opt/py", "WorkingDirectory=/work", "MemoryMax=1G"] {
             assert!(props.iter().any(|p| p == must), "missing {must}");
         }
         assert!(props.iter().any(|p| p == "RestrictAddressFamilies=AF_UNIX"));
+        assert!(!props.iter().any(|p| p.contains("/skill")), "only an applet's run has a folder");
+    }
+
+    /// An applet's run sees its folder at /skill and, when allowed, its
+    /// egress socket.
+    #[test]
+    fn an_applets_shell_sees_its_folder_and_its_way_out() {
+        let req = ShellRequest {
+            command: "true".into(),
+            timeout: 30,
+            folder: Some("/applets/user/tides".into()),
+            egress: Some("/run/virtues/egress/r1.sock".into()),
+        };
+        let props = sandbox_unit(30, Path::new("/ws"), None, &req).properties();
+        assert!(props.iter().any(|p| p == "BindReadOnlyPaths=/applets/user/tides:/skill"));
+        assert!(props.iter().any(|p| p.ends_with(":/run/egress.sock")));
     }
 
     #[tokio::test]
-    async fn runs_code_and_returns_stdout() {
-        let r = execute_code(request("x = 2 + 2\nprint(f'Result: {x}')", 10)).await;
+    async fn runs_a_command_and_python_and_returns_stdout() {
+        let r = run_shell(request("x=$((2 + 2)); echo \"Result: $x\"", 10)).await;
+        assert!(r.success, "{r:?}");
+        assert_eq!(r.stdout, "Result: 4\n");
+        let r = run_shell(request("python3 - <<'EOF'\nx = 2 + 2\nprint(f'Result: {x}')\nEOF", 10)).await;
         assert!(r.success, "{r:?}");
         assert_eq!(r.stdout, "Result: 4\n");
         assert_eq!(r.exit_code, Some(0));
@@ -371,23 +393,18 @@ mod tests {
 
     #[tokio::test]
     async fn an_exception_is_the_error_and_the_traceback_is_kept() {
-        let r = execute_code(request("1/0", 10)).await;
+        let r = run_shell(request("python3 -c '1/0'", 10)).await;
         assert!(!r.success);
-        assert_eq!(
-            r.error.as_deref(),
-            Some("Code execution failed: ZeroDivisionError: division by zero")
-        );
+        assert_eq!(r.error.as_deref(), Some("The command failed: ZeroDivisionError: division by zero"));
         assert!(r.stderr.contains("Traceback"));
         assert!(!r.timed_out);
+        let r = run_shell(request("exit 3", 10)).await;
+        assert_eq!(r.error.as_deref(), Some("The command exited with status 3"));
     }
 
     #[tokio::test]
     async fn long_output_keeps_its_ends() {
-        let r = execute_code(request(
-            "print('first')\nfor i in range(200000): print(i)\nprint('last')",
-            30,
-        ))
-        .await;
+        let r = run_shell(request("echo first; seq 1 200000; echo last", 30)).await;
         assert!(r.success);
         assert!(r.truncated);
         assert!(r.stdout.starts_with("first\n"));
@@ -397,25 +414,22 @@ mod tests {
 
     #[tokio::test]
     async fn a_timeout_says_so() {
-        let r = execute_code(request("import time; time.sleep(30)", 5)).await;
+        let r = run_shell(request("sleep 30", 5)).await;
         assert!(!r.success);
         assert!(r.timed_out);
-        assert_eq!(r.error.as_deref(), Some("Code execution timed out after 5s"));
+        assert_eq!(r.error.as_deref(), Some("The command timed out after 5s"));
     }
 
     #[tokio::test]
     async fn the_workspace_carries_files_between_runs_and_images_come_back() {
         let ws = Workspace::temporary().unwrap();
-        let first = super::execute_code(request("open('n.txt','w').write('41')", 10), &ws).await;
+        let first = super::run_shell(request("echo 41 > n.txt", 10), &ws).await;
         assert!(first.success, "{first:?}");
-        let second = super::execute_code(
-            request("n = int(open('n.txt').read()) + 1\nopen('out/plot.svg','w').write('<svg/>')\nprint(n)", 10),
-            &ws,
-        )
-        .await;
+        let second =
+            super::run_shell(request("echo $(( $(cat n.txt) + 1 )); echo '<svg/>' > out/plot.svg", 10), &ws).await;
         assert_eq!(second.stdout, "42\n");
         assert_eq!(second.images, vec!["out/plot.svg".to_string()]);
-        let third = super::execute_code(request("print('again')", 10), &ws).await;
+        let third = super::run_shell(request("echo again", 10), &ws).await;
         assert!(third.images.is_empty(), "an earlier run's image is not this run's");
     }
 }

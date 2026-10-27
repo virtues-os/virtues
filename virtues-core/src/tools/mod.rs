@@ -31,7 +31,7 @@ pub(crate) mod connection_registry;
 pub(crate) mod sql_query;
 pub(crate) mod sql_write;
 pub(crate) mod tasks;
-pub(crate) mod shell;
+pub(crate) mod sudo_shell;
 pub(crate) mod sql_sudo;
 pub(crate) mod sudo_gate;
 mod page_editor;
@@ -112,7 +112,7 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
 /// Tools that exist only in sudo mode: the owner's admin shell. Every other
 /// tool list is built by filtering these out or by an allowlist that never
 /// names them, and the executor refuses them outside a sudo turn as well.
-pub(crate) const SUDO_ONLY_TOOLS: &[&str] = &["shell"];
+pub(crate) const SUDO_ONLY_TOOLS: &[&str] = &["sudo"];
 
 /// Tools offered only to a skill that names them: `save_skill`, which the
 /// shipped `new-skill` skill uses. In ordinary chat it would add its
@@ -123,7 +123,7 @@ pub(crate) const SKILL_ONLY_TOOLS: &[&str] = &["save_skill"];
 /// table from agents/record/applets.md, enforced. What an applet's
 /// agent may do: think, read (sql_query/semantic_search/web_search), write
 /// its own applet_* tables (sql_write), keep notes (update_applet_memory),
-/// write pages, compute in the sandbox, and introspect applets read-only. Its
+/// write pages, run commands in the sandbox (`shell`), and introspect applets read-only. Its
 /// run RESULT posts to the linked chat — that's the delivery verb, not a
 /// tool. Everything else — applet management (self-modification), memory/
 /// profile/name writes, fan-out, image spend — is absent by construction.
@@ -143,7 +143,7 @@ const APPLET_RUN_ALLOWED_TOOLS: &[&str] = &[
     // check this tool exists to enforce. The brief says which to use; the
     // allowlist is what makes it available at all.
     "revise_article",
-    "code_interpreter",
+    "shell",
 ];
 
 /// The tools an applet's `allowed-tools` may name.
@@ -197,7 +197,7 @@ const REQUEST_RUN_ALLOWED_TOOLS: &[&str] = &[
     "create_page",
     "get_page_content",
     "edit_page",
-    "code_interpreter",
+    "shell",
     "create_task",
     "update_task",
 ];
@@ -281,7 +281,7 @@ const SUBAGENT_TOOLS: &[&str] = &[
     "web_search",
     "semantic_search",
     "sql_query",
-    "code_interpreter",
+    "shell",
 ];
 
 /// Get tool definitions for a Deep Research subagent (worker).
@@ -298,7 +298,7 @@ pub(crate) const DEEP_RESEARCH_TOOLS: &[&str] = &[
     "web_search",
     "semantic_search",
     "sql_query",
-    "code_interpreter",
+    "shell",
     "dispatch_subagents",
     "create_page",
 ];
@@ -526,20 +526,20 @@ mod sudo_scope {
     /// every prompt applet has.
     #[test]
     fn an_applets_allowed_tools_narrow_what_its_run_is_offered() {
-        let allowed = vec!["sql_query".to_string(), "shell".to_string()];
+        let allowed = vec!["sql_query".to_string(), "sudo".to_string()];
         let listed = names(&get_tools_for_applet(true, Some(&allowed)));
         assert!(listed.contains(&"sql_query".to_string()));
         assert!(listed.contains(&"think".to_string()));
         assert!(listed.contains(&"update_applet_memory".to_string()));
         assert!(!listed.contains(&"create_page".to_string()), "not listed, not offered");
-        assert!(!listed.contains(&"shell".to_string()), "never beyond the allowlist");
+        assert!(!listed.contains(&"sudo".to_string()), "never beyond the allowlist");
         assert!(names(&get_tools_for_applet(true, None)).contains(&"create_page".to_string()));
     }
 
     #[test]
     fn only_sudo_mode_lists_the_shell() {
         let mode = |name| ChatMode::from_wire(name).tools();
-        assert!(names(&mode("sudo")).contains(&"shell".to_string()));
+        assert!(names(&mode("sudo")).contains(&"sudo".to_string()));
         for listing in [
             mode("chat"),
             mode("deep_research"),
@@ -552,7 +552,7 @@ mod sudo_scope {
             get_tools_for_applet(false, None),
             get_tools_for_subagent(),
         ] {
-            assert!(!names(&listing).contains(&"shell".to_string()));
+            assert!(!names(&listing).contains(&"sudo".to_string()));
         }
     }
 

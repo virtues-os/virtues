@@ -144,12 +144,12 @@ Search the web only for what is live, local, or likely to have changed: tonight'
 "#;
 
 /// Sudo mode: the owner's admin shell. Chat's guidance still applies; this
-/// adds the shell, the gate on deletes (`tools::sudo_gate`), and a map of the
+/// adds the `sudo` tool, the gate on deletes (`tools::sudo_gate`), and a map of the
 /// server so the model looks things up instead of searching the install.
 pub const SUDO_MODE_PROMPT: &str = r#"
 <sudo>
 The owner has turned on sudo mode for this chat:
-- shell: bash on the server you run on, as its admin account, with passwordless sudo.
+- sudo: bash on the server you run on, as its admin account, with passwordless sudo. The ordinary shell tool is a sandbox with none of that.
 - sql_query and sql_write: any single statement on any table, as the app's database role.
 
 Calls run as soon as you make them, reads and changes alike; the owner is not asked. One kind still waits: a call that deletes data (rm outside /tmp, DROP, TRUNCATE or DELETE in SQL, wiping a disk, dropping a database, virtues reset/uninstall/restore) ends your turn and shows the owner the exact command with an Allow button.
@@ -187,13 +187,13 @@ The loop:
 3. REFLECT. Read the workers' findings. If a gap or contradiction remains, dispatch a follow-up round.
 4. SYNTHESIZE. Weigh agreements (higher confidence) against disagreements (flag them). Discard outliers and unsupported claims.
 
-You may also use sql_query / semantic_search / web_search / code_interpreter directly for quick checks the workers didn't cover.
+You may also use sql_query / semantic_search / web_search / shell directly for quick checks the workers didn't cover.
 </deep_research>
 
 <mirror_contract>
 When the question is about the USER'S OWN LIFE (their finances, days, habits, health, people, patterns), you are a MIRROR, not an oracle. Every claim about them must show:
 1. THE DATA: the specific records, cited, so they can verify.
-2. THE MATH: real statistics (correlation, trend, n, seasonality) via code_interpreter, including how weak or strong the signal is.
+2. THE MATH: real statistics (correlation, trend, n, seasonality) via shell, including how weak or strong the signal is.
 3. THE WORLD: relevant base rates or external context from the web.
 4. THE HYPOTHESES: several stories that fit the data, ranked by plausibility, with the user as the final judge.
 

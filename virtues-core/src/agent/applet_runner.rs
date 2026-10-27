@@ -132,6 +132,7 @@ pub async fn run_agent_loop(
         user_id: Some("system".to_string()),
         chat_id: chat_id.clone(),
         applet_id: Some(applet_id.to_string()),
+        applet_run_id: Some(run_id.to_string()),
         // A run is a turn: what it reads of a page serves it, not a later run
         // that sees this one's results only as clipped replays.
         turn: Some(crate::api::chat::generate_id()),

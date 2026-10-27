@@ -10,7 +10,7 @@
 //! An authored file is checked twice: when it is saved and each time it is
 //! read, so a file edited by hand cannot reach past the checks. It may name
 //! only tools that ordinary chat offers, so it can never reach the sudo-only
-//! shell, and its ceilings are capped at deep research's.
+//! `sudo` tool, and its ceilings are capped at deep research's.
 
 use serde::Serialize;
 use virtues_registry::models::ModelSlot;
@@ -198,7 +198,7 @@ fn check(skill: Skill) -> Result<Skill> {
     Ok(skill)
 }
 
-/// The tools ordinary chat offers: never the sudo-only shell, the system
+/// The tools ordinary chat offers: never the sudo-only `sudo` tool, the system
 /// tools, or the Mac app's. `think` is in the registry's list for skills too.
 fn chat_tool_ids() -> Vec<String> {
     crate::tools::get_tool_definitions_for_llm()
@@ -230,11 +230,11 @@ mod tests {
         }
     }
 
-    /// An authored skill cannot reach the shell, take a mode's or a shipped
+    /// An authored skill cannot reach `sudo`, take a mode's or a shipped
     /// skill's name, or carry a name that is not a folder name.
     #[test]
     fn checks_refuse_what_authored_skills_may_not_do() {
-        assert!(err(new("admin", &["shell"])).contains("ordinary chat"));
+        assert!(err(new("admin", &["sudo"])).contains("ordinary chat"));
         assert!(err(new("sudo", &["sql_query"])).contains("built-in mode"));
         assert!(err(new("weekly-review", &["sql_query"])).contains("built-in skill"));
         assert!(err(new("../escape", &["sql_query"])).contains("lowercase"));

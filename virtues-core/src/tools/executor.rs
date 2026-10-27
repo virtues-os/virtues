@@ -95,9 +95,12 @@ pub struct ToolContext {
     /// Where a ghost's grants live for as long as the ghost does.
     pub ghost_permissions: Option<crate::api::chat_permissions::GhostPermissions>,
     /// The turn is in sudo mode: the owner chose it for this chat. Nothing
-    /// asks before it runs, and `shell` runs at all. Set only by the chat
+    /// asks before it runs, and `sudo` runs at all. Set only by the chat
     /// handler — applet runs and subagents build their context without it.
     pub sudo: bool,
+    /// The applet run this call is part of, so what the run's `shell` reaches
+    /// is recorded on it. `None` outside an applet run.
+    pub applet_run_id: Option<String>,
     /// The IANA zone the owner's client is in, the one the prompt's clock is
     /// written in. SQL tools read dates in it. `None` (an applet run, a
     /// worker) falls back to `home_timezone`.
@@ -134,6 +137,7 @@ impl Default for ToolContext {
             temporary: false,
             ghost_permissions: None,
             sudo: false,
+            applet_run_id: None,
             timezone: None,
             turn: None,
             console: false,
@@ -245,7 +249,7 @@ pub struct ToolExecutor {
     yjs_state: Option<YjsState>,
 }
 
-/// Start the code_interpreter packages building on a box that lacks them, so
+/// Start the shell's Python packages building on a box that lacks them, so
 /// they are ready before the first chat reaches for them. Not in a debug
 /// build: a developer machine builds them on the first code run instead of
 /// fetching 400 MB whenever the server starts.
@@ -278,7 +282,7 @@ impl ToolExecutor {
         }
     }
 
-    /// For a one-shot CLI verb: the same tools, without the code_interpreter
+    /// For a one-shot CLI verb: the same tools, without the shell's
     /// package build `new` starts. A `virtues query` that began a 400 MB fetch
     /// on a box missing them would be a surprising side effect of a read.
     pub fn without_warmup(pool: PgPool) -> Self {
@@ -518,24 +522,24 @@ impl ToolExecutor {
                 super::sql_sudo::execute(&self._pool, &sql, context.timezone.as_deref()).await
             }
             "sql_query" => {
-                // A saved chat can keep a result as a file for code_interpreter.
+                // A saved chat can keep a result as a file for shell.
                 let chat_id = context.chat_id.as_deref().filter(|_| !context.temporary);
                 self.sql_query.execute(arguments, chat_id, context.timezone.as_deref()).await
             }
             "sql_write" => super::sql_write::execute(&self._pool, arguments, context.timezone.as_deref()).await,
             // The tool lists already keep it out of every other mode; this is
             // the second lock, for a model that names a tool it was not given.
-            "shell" if context.sudo && context.applet_id.is_none() => {
+            "sudo" if context.sudo && context.applet_id.is_none() => {
                 use super::sudo_gate;
                 let command =
                     arguments.get("command").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
-                if sudo_gate::shell_destroys(&command) && !self.sudo_granted(context, "shell", &command).await {
-                    return Ok(sudo_gate::ask("shell", &command));
+                if sudo_gate::shell_destroys(&command) && !self.sudo_granted(context, "sudo", &command).await {
+                    return Ok(sudo_gate::ask("sudo", &command));
                 }
-                super::shell::execute(arguments).await
+                super::sudo_shell::execute(arguments).await
             }
-            "shell" => Err(ToolError::ExecutionFailed(
-                "shell runs only in sudo mode, which the owner turns on in the chat".into(),
+            "sudo" => Err(ToolError::ExecutionFailed(
+                "sudo runs only in sudo mode, which the owner turns on in the chat".into(),
             )),
             "read_asset" => self.execute_read_asset(arguments).await,
             "show" => super::show::execute(&self.sql_query, arguments, context.timezone.as_deref()).await,
@@ -554,7 +558,7 @@ impl ToolExecutor {
             name if crate::browser::TOOLS.contains(&name) => {
                 Ok(crate::browser::run_tool(name, arguments).await)
             }
-            "code_interpreter" => self.execute_code_interpreter(arguments, context).await,
+            "shell" => self.execute_shell(arguments, context).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
             "dispatch_subagents" => {
                 crate::agent::subagent::dispatch(self._pool.clone(), arguments, context).await
@@ -664,17 +668,19 @@ impl ToolExecutor {
         })))
     }
 
-    /// Run model-written Python in the sandbox (api/code.rs), in the chat's
-    /// workspace when it has one (api/code_env.rs).
-    async fn execute_code_interpreter(
+    /// Run a model-written command in the sandbox (api/code.rs), in the
+    /// chat's workspace when it has one (api/code_env.rs). From an applet's
+    /// run it also sees the applet's folder, and reaches the hosts its file
+    /// asks for that the owner allowed, with each request recorded on the run.
+    async fn execute_shell(
         &self,
         arguments: serde_json::Value,
         context: &ToolContext,
     ) -> Result<ToolResult, ToolError> {
-        let code = arguments
-            .get("code")
+        let command = arguments
+            .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidParameters("code is required".into()))?;
+            .ok_or_else(|| ToolError::InvalidParameters("command is required".into()))?;
 
         let timeout = arguments
             .get("timeout")
@@ -690,11 +696,35 @@ impl ToolExecutor {
         }
         .map_err(ToolError::ExecutionFailed)?;
 
-        let request = crate::api::code::ExecuteCodeRequest {
-            code: code.to_string(),
-            timeout,
-        };
-        let response = crate::api::code::execute_code(request, &ws).await;
+        let mut request = crate::api::code::ShellRequest { command: command.to_string(), timeout, ..Default::default() };
+        let mut proxy = None;
+        if let Some(applet_id) = context.applet_id.as_deref() {
+            request.folder = crate::applet_templates::dir_for_applet_id(applet_id)
+                .map(|d| crate::applet_templates::resolve_applet_dir(&d))
+                .filter(|p| p.is_dir());
+            let applet = crate::scheduler::applets::get_applet(self._pool.as_ref(), applet_id)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+            let hosts = crate::applet_runner::allowed_hosts(self._pool.as_ref(), applet_id, &applet.config)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+            if !hosts.is_empty() {
+                let run = context.applet_run_id.as_deref().unwrap_or("shell");
+                let p = crate::applet_runner::start_proxy(&format!("{run}-{}", uuid::Uuid::new_v4()), &hosts)
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                request.egress = Some(p.path().to_path_buf());
+                proxy = Some(p);
+            }
+        }
+        let response = crate::api::code::run_shell(request, &ws).await;
+        if let Some(p) = proxy {
+            let requests = p.finish(std::time::Duration::from_secs(2)).await;
+            if let Some(run_id) = context.applet_run_id.as_deref() {
+                if let Err(e) = crate::applet_runner::record_requests(self._pool.as_ref(), run_id, &requests).await {
+                    tracing::error!(run_id, error = %e, "could not record the shell's network requests");
+                }
+            }
+        }
 
         // The chat shows a saved chat's images from its workspace; the model
         // gets their paths, never bytes.
@@ -730,7 +760,7 @@ impl ToolExecutor {
         }
 
         // A failed run is a failed tool call carrying the whole result, so the
-        // model gets the traceback to fix its code from and the chat can show it.
+        // model gets the traceback to fix its command from and the chat can show it.
         Ok(ToolResult {
             success: response.success,
             data,

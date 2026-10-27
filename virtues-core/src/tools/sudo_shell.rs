@@ -1,4 +1,4 @@
-//! `shell` — a command on the machine this server runs on, for sudo mode.
+//! `sudo` — a command on the machine this server runs on, for sudo mode.
 //!
 //! This is the owner's admin shell handed to the model: the same account, the
 //! same PATH and the same passwordless sudo the web terminal (`/ws/terminal`)

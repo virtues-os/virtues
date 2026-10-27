@@ -390,18 +390,18 @@ mod tests {
 
     #[test]
     fn a_grant_is_for_one_exact_command() {
-        assert_eq!(grant_id("shell", "rm x"), grant_id("shell", "  rm x\n"));
-        assert_ne!(grant_id("shell", "rm x"), grant_id("shell", "rm y"));
-        assert_ne!(grant_id("shell", "rm x"), grant_id("sql", "rm x"));
+        assert_eq!(grant_id("sudo", "rm x"), grant_id("sudo", "  rm x\n"));
+        assert_ne!(grant_id("sudo", "rm x"), grant_id("sudo", "rm y"));
+        assert_ne!(grant_id("sudo", "rm x"), grant_id("sql", "rm x"));
     }
 
     #[test]
     fn the_ask_pauses_the_turn_and_names_the_command() {
-        let r = ask("shell", "rm x");
+        let r = ask("sudo", "rm x");
         assert_eq!(r.data["awaiting_owner"], true);
         assert_eq!(r.data["permission_needed"], true);
         assert_eq!(r.data["entity_type"], "command");
         assert_eq!(r.data["entity_title"], "rm x");
-        assert_eq!(r.data["entity_id"], grant_id("shell", "rm x"));
+        assert_eq!(r.data["entity_id"], grant_id("sudo", "rm x"));
     }
 }
