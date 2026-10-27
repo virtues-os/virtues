@@ -195,8 +195,6 @@ pub struct ReachReport {
     pub db_reachable: bool,
     /// The box's EndpointId (from its stored secret), or `None` pre-provision.
     pub endpoint_id: Option<String>,
-    /// The stored relay URL, or `None` when LAN-only (unclaimed / atlas down).
-    pub relay_url: Option<String>,
     /// How many device keys are currently on the allowlist, or `None` when the
     /// query failed. Optional like every other leg: a bare `0` here reads as
     /// "no devices paired", which is a different and much more alarming
@@ -213,18 +211,12 @@ pub async fn reach_report(db: &PgPool) -> ReachReport {
         return ReachReport {
             db_reachable: false,
             endpoint_id: None,
-            relay_url: None,
             allowlisted_devices: None,
         };
     }
     ReachReport {
         db_reachable: true,
         endpoint_id: endpoint_id_from_secret(db).await,
-        relay_url: crate::virtues_api::relay::load(db)
-            .await
-            .ok()
-            .flatten()
-            .map(|rc| rc.relay_url),
         allowlisted_devices: allowed_ids(db).await.ok().map(|ids| ids.len()),
     }
 }

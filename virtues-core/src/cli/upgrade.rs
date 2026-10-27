@@ -1281,7 +1281,7 @@ fn service_start(unit: &str) -> std::io::Result<bool> {
 /// probing the wrong port would roll back a perfectly good upgrade. If the unit
 /// is unreadable or its ExecStart has no `--port`, fall back to the same 8000
 /// the installer writes.
-fn service_port() -> u16 {
+pub(super) fn service_port() -> u16 {
     fs::read_to_string("/etc/systemd/system/virtues.service")
         .ok()
         .and_then(|u| parse_port_from_unit(&u))
