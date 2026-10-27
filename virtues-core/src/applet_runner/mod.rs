@@ -877,7 +877,7 @@ fn build_command(
     shipped: bool,
     timeout: std::time::Duration,
     env: &[(String, String)],
-) -> Result<Command> {
+) -> Result<(Command, Option<EnvFile>)> {
     // Direct spawn: env_clear plus exactly what we chose to pass.
     let direct = || {
         let mut cmd = Command::new(program);
@@ -890,20 +890,20 @@ fn build_command(
     };
 
     if shipped {
-        return Ok(direct());
+        return Ok((direct(), None));
     }
 
     if !cfg!(target_os = "linux") {
         tracing::warn!(
             "running an unshipped applet unjailed — no systemd on this platform (developer machine)"
         );
-        return Ok(direct());
+        return Ok((direct(), None));
     }
 
     if which_systemd_run().is_none() {
         if cfg!(debug_assertions) {
             tracing::warn!("systemd-run unavailable; running unjailed (debug build only)");
-            return Ok(direct());
+            return Ok((direct(), None));
         }
         return Err(Error::Other(
             "applet sandbox (systemd-run) is unavailable; refusing to run imported code unjailed"
@@ -968,23 +968,88 @@ fn build_command(
     ]);
     // The unit does NOT inherit our environment, and `cmd.env()` would set
     // systemd-run's own rather than the unit's — so every variable the applet
-    // needs has to be handed over explicitly, before the `--`.
-    for (k, v) in env {
-        // `ProtectHome=yes` mounts /home empty, so forwarding the real HOME
-        // hands the applet a path that exists in its environment and not in its
-        // namespace — anything touching ~/.cache (python, pip, git, most HTTP
-        // clients) fails on it. Point it at the private tmp instead, as code.rs
-        // does.
-        if k == "HOME" {
-            continue;
-        }
-        cmd.args(["-E", &format!("{k}={v}")]);
-    }
+    // needs goes to PID 1 in a file (`EnvFile`), never as `-E` on this command
+    // line.
+    let env_file = EnvFile::write(env)?;
+    cmd.args(["-p", &format!("EnvironmentFile={}", env_file.path.display())]);
+    cmd.args(["-p", &format!("InaccessiblePaths={}", EnvFile::dir().display())]);
+    // `ProtectHome=yes` mounts /home empty, so forwarding the real HOME hands
+    // the applet a path that exists in its environment and not in its
+    // namespace — anything touching ~/.cache (python, pip, git, most HTTP
+    // clients) fails on it. Point it at the private tmp instead, as code.rs
+    // does. `EnvFile` leaves HOME out.
     cmd.args(["-E", "HOME=/tmp"]);
     cmd.arg("--");
     cmd.arg(program);
     cmd.args(args);
-    Ok(cmd)
+    Ok((cmd, Some(env_file)))
+}
+
+/// A jailed run's environment, in a file only the box user can read.
+///
+/// `systemd-run -E KEY=VALUE` puts the value on sudo's command line, where any
+/// local user can read it in `ps` for the whole run and sudo writes it to the
+/// journal on every run. The environment carries `DATABASE_URL` and every key
+/// the applet declares (`declared_env_secrets`), so it goes to PID 1 as an
+/// `EnvironmentFile=` instead: mode 0600, in a folder the unit itself is
+/// denied (`InaccessiblePaths=`), removed when the run ends. PID 1 reads the
+/// file before it sets up the unit's namespace, so the denial does not stop it.
+struct EnvFile {
+    path: std::path::PathBuf,
+}
+
+impl EnvFile {
+    fn dir() -> std::path::PathBuf {
+        crate::data_disk::data_dir().join("applet-env")
+    }
+
+    fn write(env: &[(String, String)]) -> Result<Self> {
+        use std::io::Write;
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+
+        let dir = Self::dir();
+        let fail = |what: &str, e: std::io::Error| {
+            Error::Other(format!("could not {what} the applet's environment file in {}: {e}", dir.display()))
+        };
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)
+            .map_err(|e| fail("create a folder for", e))?;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| fail("restrict the folder of", e))?;
+        let path = dir.join(format!("{}.env", uuid::Uuid::new_v4()));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| fail("create", e))?;
+        // Owned from here, so a failed write still removes the file.
+        let env_file = Self { path };
+        file.write_all(env_file_contents(env).as_bytes())
+            .map_err(|e| fail("write", e))?;
+        Ok(env_file)
+    }
+}
+
+impl Drop for EnvFile {
+    fn drop(&mut self) {
+        if let Err(e) = std::fs::remove_file(&self.path) {
+            tracing::warn!("could not remove applet environment file {}: {e}", self.path.display());
+        }
+    }
+}
+
+/// `KEY="value"` lines for `EnvironmentFile=`. Inside double quotes systemd
+/// takes `\\` and `\"` as escapes and everything else literally, newlines
+/// and `$` included (checked against systemd 255 on a box). HOME is left out:
+/// the jail sets its own (`build_command`).
+fn env_file_contents(env: &[(String, String)]) -> String {
+    env.iter()
+        .filter(|(k, _)| k != "HOME")
+        .map(|(k, v)| format!("{k}=\"{}\"\n", v.replace('\\', "\\\\").replace('"', "\\\"")))
+        .collect()
 }
 
 /// The uid the box itself runs as, so a jailed applet lands on the same user
@@ -1159,7 +1224,8 @@ async fn run_subprocess(
     // applet's spend reaches its `max_llm_cost_per_day` (`limits.rs`).
     env.push((crate::virtues_api::client::APPLET_RUN_ENV.to_string(), run_id.to_string()));
     env.extend(declared_env_secrets(db, &action.id).await?);
-    let mut cmd = build_command(
+    // `_env_file` lives until the run ends; dropping it removes the file.
+    let (mut cmd, _env_file) = build_command(
         &program,
         &command[1..],
         shipped,
@@ -1499,6 +1565,21 @@ pub(crate) fn resolve_program(argv0: &str) -> PathBuf {
 mod tests {
     use super::ENV_PASSTHROUGH;
     use super::*;
+
+    /// Quotes and backslashes are escaped, everything else is written as it
+    /// is, and HOME is left for the jail to set.
+    #[test]
+    fn env_file_escapes_quotes_and_backslashes() {
+        let env = vec![
+            ("HOME".to_string(), "/home/virtues".to_string()),
+            ("EXAMPLE_KEY".to_string(), r#"a "b" \c $d"#.to_string()),
+            ("MULTI".to_string(), "one\ntwo".to_string()),
+        ];
+        assert_eq!(
+            env_file_contents(&env),
+            "EXAMPLE_KEY=\"a \\\"b\\\" \\\\c $d\"\nMULTI=\"one\ntwo\"\n"
+        );
+    }
 
     /// A sync gets its cursor back, and a manifest value beats a stale copy
     /// the code returned last run.
