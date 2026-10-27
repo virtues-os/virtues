@@ -292,12 +292,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ─── `virtues pair` (aliases: `login`, `link`) ──────────────────────────
     // THE human verb for connecting a device to the box (agents/build/onboarding.md). Mints a
     // CLI-origin pair token (authorized immediately because typing this
-    // command IS proof of physical access), prints the one-time URL + QR,
-    // then waits until the link is opened — the wait is also the
-    // client-isolation detector (a printed link nobody opens is the only
-    // box-side signal for a network that blocks device-to-device traffic).
-    // The URL puts the token in a `#t=` fragment, so it never hits server
-    // logs or referer headers.
+    // command IS proof of physical access), prints the six-digit code and
+    // the server's addresses, then waits until a device pairs. The wait is
+    // also the client-isolation detector: a code nobody manages to use is the
+    // only box-side signal for a network that blocks device-to-device traffic.
     if let Some(Commands::Pair { no_wait }) = &cli.command {
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
@@ -932,17 +930,19 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
     println!("    Enter the code above in it. A browser cannot pair — pairing is");
     println!("    a held key, and a browser tab has none.");
 
-    // The box's addresses, for the app's "enter its address" field when mDNS
-    // does not carry — an isolated office LAN, or a box on another subnet.
+    // The server's addresses, for the app's "Enter address and code" form when
+    // its network search comes up empty: an isolated office LAN, a server on
+    // another subnet, a VM behind shared networking. Each line carries the
+    // code too, so copying one line fills both fields of that form.
     let urls = reachable_box_origins(is_dev, &web_port);
     if !urls.is_empty() {
         println!();
-        println!("  If the app can't find this box, give it an address:");
+        println!("  If the app can't find this server, paste one of these lines into it:");
         for url in &urls {
-            println!("    {}", url.url);
+            println!("    {}   {display}", url.url);
         }
         if let Some(v6) = virtues::net_check::compute_net_status().ipv6_global {
-            println!("    http://[{v6}]:8000");
+            println!("    http://[{v6}]:8000   {display}");
         }
     }
 

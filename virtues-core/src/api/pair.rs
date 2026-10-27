@@ -795,18 +795,20 @@ pub struct ConsumeResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub box_node_id: Option<String>,
     /// The relay URL to reach the box's EndpointId through (`https://relay…`).
-    /// Paired with `box_node_id` as the reach ticket; `None` on a dev/LAN box.
+    /// Paired with `box_node_id` as the reach ticket. An unclaimed box uses the
+    /// built-in relay; `None` only when the owner turned the relay off, or in a
+    /// dev checkout.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay_url: Option<String>,
     /// The box's iroh direct socket addresses (LAN/VPN `IP:port`). A device on
     /// the same network dials these directly — no relay, no discovery, no third
-    /// party. This is how an **unclaimed** box (no relay) is still reachable.
+    /// party. This is how a box with its relay turned off is still reachable.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub box_direct_addrs: Vec<String>,
 }
 
 /// The box's iroh reach ticket. `node_id` is present once the endpoint is bound;
-/// `relay_url` is `None` on an unclaimed/LAN box; `direct_addrs` are the box's
+/// `relay_url` is `None` only when the relay is off; `direct_addrs` are the box's
 /// LAN/VPN sockets for zero-third-party direct dialing. A device prefers direct
 /// (same network) and falls back to the relay (remote). Refreshable from
 /// `GET /api/devices/self/reach`.

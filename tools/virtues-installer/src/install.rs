@@ -641,8 +641,8 @@ WantedBy=multi-user.target
 /// target distro; no `locales` package or locale-gen needed).
 ///
 /// This is an install step, not a render-time fallback, on purpose: the
-/// brand mark (`∴`), the half-block QR in the setup handoff, and the
-/// box-drawing rules are all multibyte UTF-8, and a `LANG=C` minimal image
+/// brand mark (`∴`) and the box-drawing rules in the setup handoff are
+/// multibyte UTF-8, and a `LANG=C` minimal image
 /// (or a tmux/screen started under one) renders them as diamonds/mojibake
 /// at the worst possible moment — onboarding. Provisioning the locale once
 /// keeps every render path single-path. (A terminal that still mangles
@@ -687,7 +687,7 @@ pub async fn ensure_utf8_locale() -> Result<()> {
 
     // Make THIS run consistent too: the vars survive the exec into
     // `virtues init` (sudo's default env_keep preserves LANG/LC_*), so the
-    // very first handoff/QR already renders under a UTF-8 locale. LC_ALL too:
+    // very first handoff already renders under a UTF-8 locale. LC_ALL too:
     // a forwarded-but-ungenerated LC_ALL would otherwise override LANG.
     std::env::set_var("LANG", "C.UTF-8");
     std::env::set_var("LC_ALL", "C.UTF-8");
