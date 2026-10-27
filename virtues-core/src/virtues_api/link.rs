@@ -3,7 +3,7 @@
 //! Connects this box to a paid subscription via Atlas's device-authorization
 //! flow ([RFC 8628] shape) — the box never holds a Stripe key and never sees a
 //! checkout page. `start` kicks off a link and stashes the secret `device_code`
-//! in `box_secrets`, so a later `poll` (possibly a separate HTTP request from
+//! as a box secret, so a later `poll` (possibly a separate HTTP request from
 //! the web UI) can resume. `poll` returns the status; on `ready` it stores the
 //! device `api_key` — AI works immediately (atlas funds the wallet at link).
 //!
@@ -13,13 +13,13 @@ use anyhow::{anyhow, Context, Result};
 use serde::Serialize;
 use sqlx::PgPool;
 
-use crate::box_secrets;
+use crate::secrets::{self, Kind};
 
-/// box_secrets key holding the in-flight link's secret device_code + metadata.
+/// Box secret holding the in-flight link's secret device_code + metadata.
 const INFLIGHT_KEY: &str = "billing_link_inflight";
 
 /// What the box shows the user to complete the link. The secret `device_code`
-/// is intentionally absent — it stays box-side (sealed in `box_secrets`) and is
+/// is intentionally absent — it stays box-side (sealed as a box secret) and is
 /// never exposed to the browser.
 #[derive(Debug, Clone, Serialize)]
 pub struct LinkStart {
@@ -120,7 +120,7 @@ pub async fn start(db: &PgPool, http: &reqwest::Client, atlas_url: &str) -> Resu
         "verification_uri_complete": verification_uri_complete,
         "interval": interval,
     });
-    box_secrets::put(db, INFLIGHT_KEY, &device_code, &meta).await?;
+    secrets::put(db, Kind::Box, INFLIGHT_KEY, &device_code, &meta).await?;
 
     Ok(LinkStart {
         user_code,
@@ -150,7 +150,7 @@ pub async fn inject_grant(db: &PgPool, device_code: &str) -> Result<()> {
         "interval": 3,
         "source": "app_grant",
     });
-    box_secrets::put(db, INFLIGHT_KEY, device_code, &meta).await
+    secrets::put(db, Kind::Box, INFLIGHT_KEY, device_code, &meta).await
 }
 
 /// The public bits of the in-flight link, if one exists. `user_code` is empty
@@ -164,7 +164,7 @@ pub async fn inject_grant(db: &PgPool, device_code: &str) -> Result<()> {
 /// if the link actually expired, the next poll hears `expired` from atlas and
 /// clears it, which self-corrects within one interval.
 pub async fn inflight(db: &PgPool) -> Result<Option<LinkStart>> {
-    let Some((_device_code, meta)) = box_secrets::get(db, INFLIGHT_KEY).await? else {
+    let Some((_device_code, meta)) = secrets::get(db, Kind::Box, INFLIGHT_KEY).await? else {
         return Ok(None);
     };
     Ok(Some(LinkStart {
@@ -187,7 +187,7 @@ pub async fn poll(
     http: &reqwest::Client,
     atlas_url: &str,
 ) -> Result<LinkStatus> {
-    let Some((device_code, _meta)) = box_secrets::get(db, INFLIGHT_KEY).await? else {
+    let Some((device_code, _meta)) = secrets::get(db, Kind::Box, INFLIGHT_KEY).await? else {
         return Ok(LinkStatus::None);
     };
 
@@ -278,7 +278,7 @@ pub async fn login(
     atlas_url: &str,
     email: &str,
 ) -> Result<LoginStart> {
-    let Some((device_code, _meta)) = box_secrets::get(db, INFLIGHT_KEY).await? else {
+    let Some((device_code, _meta)) = secrets::get(db, Kind::Box, INFLIGHT_KEY).await? else {
         return Err(anyhow!(
             "no in-flight link — call `link::start` first to mint a device_code"
         ));
@@ -315,7 +315,7 @@ pub async fn login(
 }
 
 async fn clear_inflight(db: &PgPool) {
-    if let Err(e) = box_secrets::delete(db, INFLIGHT_KEY).await {
+    if let Err(e) = secrets::delete(db, Kind::Box, INFLIGHT_KEY).await {
         tracing::warn!("failed to clear in-flight billing link: {e}");
     }
 }

@@ -4,7 +4,7 @@
 //!
 //! All writes target the `kind = 'source'` rows of the `credentials` table,
 //! one per connected source, with the source id in `key`. The box's own keys
-//! are the `kind = 'box'` rows, handled by core's `box_secrets`.
+//! are the `kind = 'box'` rows, handled by core's `secrets` module.
 //! `secrets_ciphertext` holds AES-256-GCM JSON; `metadata` is JSONB non-secret
 //! context.
 

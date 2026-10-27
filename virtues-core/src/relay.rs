@@ -27,7 +27,7 @@ use virtues_iroh::{
     StaticAllow, Watcher,
 };
 
-/// `box_secrets` key holding this box's persistent iroh secret key (hex of the
+/// Box secret holding this box's persistent iroh secret key (hex of the
 /// 32-byte seed) — so the box keeps a stable `EndpointId` across restarts.
 const BOX_IROH_SECRET: &str = "iroh_secret_key";
 
@@ -177,7 +177,7 @@ fn refresh_direct_addrs(endpoint: &Endpoint) {
 /// binds, so it can't use the in-memory getters above. `None` before first boot
 /// provisions the secret.
 async fn endpoint_id_from_secret(db: &PgPool) -> Option<String> {
-    let (hex_seed, _) = crate::box_secrets::get(db, BOX_IROH_SECRET).await.ok()??;
+    let (hex_seed, _) = crate::secrets::get(db, crate::secrets::Kind::Box, BOX_IROH_SECRET).await.ok()??;
     let bytes = hex::decode(hex_seed.trim()).ok()?;
     let arr: [u8; 32] = bytes.as_slice().try_into().ok()?;
     Some(SecretKey::from_bytes(&arr).public().to_string())
@@ -522,10 +522,10 @@ async fn ensure_relay_config(db: &PgPool) {
     }
 }
 
-/// Load the box's persistent iroh secret key from `box_secrets`, generating and
+/// Load the box's persistent iroh secret key from its secrets, generating and
 /// persisting a fresh one on first boot so the `EndpointId` is stable.
 async fn load_or_create_secret(db: &PgPool) -> Result<SecretKey> {
-    if let Some((hex_seed, _meta)) = crate::box_secrets::get(db, BOX_IROH_SECRET).await? {
+    if let Some((hex_seed, _meta)) = crate::secrets::get(db, crate::secrets::Kind::Box, BOX_IROH_SECRET).await? {
         let bytes = hex::decode(hex_seed.trim()).context("decode stored iroh secret")?;
         let arr: [u8; 32] = bytes.as_slice().try_into().context("iroh secret is not 32 bytes")?;
         return Ok(SecretKey::from_bytes(&arr));
@@ -536,7 +536,7 @@ async fn load_or_create_secret(db: &PgPool) -> Result<SecretKey> {
         rand::rng().fill_bytes(&mut seed);
     }
     let secret = SecretKey::from_bytes(&seed);
-    crate::box_secrets::put(db, BOX_IROH_SECRET, &hex::encode(seed), &serde_json::json!({}))
+    crate::secrets::put(db, crate::secrets::Kind::Box, BOX_IROH_SECRET, &hex::encode(seed), &serde_json::json!({}))
         .await
         .context("persist iroh secret key")?;
     tracing::info!("iroh: generated + persisted new box secret key");

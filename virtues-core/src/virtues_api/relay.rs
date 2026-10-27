@@ -1,16 +1,16 @@
 //! Relay reachability config, provisioned by atlas.
 //!
 //! At claim/link atlas returns `{ relay_url }` (the iroh relay this box homes
-//! on). The box persists it in `box_secrets` and the iroh reach subsystem
+//! on). The box persists it as a box secret and the iroh reach subsystem
 //! ([`crate::relay`]) reads it to build its endpoint's relay map. `relay_url` is
 //! public (not a secret); it's stored in the secret slot purely for reuse of the
-//! `box_secrets` key/value store.
+//! box's key/value secrets (`crate::secrets`).
 
 use anyhow::{anyhow, Context, Result};
 use serde::Deserialize;
 use sqlx::PgPool;
 
-/// `box_secrets` key for the provisioned relay config.
+/// Box secret holding the provisioned relay config.
 pub const BOX_SECRET_KEY: &str = "relay_config";
 
 /// Relay reachability config for this box.
@@ -51,12 +51,12 @@ pub async fn fetch_and_store(
 
 /// Persist the relay config.
 pub async fn store(db: &PgPool, cfg: &RelayConfig) -> Result<()> {
-    crate::box_secrets::put(db, BOX_SECRET_KEY, &cfg.relay_url, &serde_json::json!({})).await
+    crate::secrets::put(db, crate::secrets::Kind::Box, BOX_SECRET_KEY, &cfg.relay_url, &serde_json::json!({})).await
 }
 
-/// Load the provisioned relay config from `box_secrets`, if present.
+/// Load the provisioned relay config from the box's secrets, if present.
 pub async fn load(db: &PgPool) -> Result<Option<RelayConfig>> {
-    let Some((relay_url, _metadata)) = crate::box_secrets::get(db, BOX_SECRET_KEY).await? else {
+    let Some((relay_url, _metadata)) = crate::secrets::get(db, crate::secrets::Kind::Box, BOX_SECRET_KEY).await? else {
         return Ok(None);
     };
     if relay_url.is_empty() {

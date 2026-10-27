@@ -17,12 +17,13 @@
 //! rather than run it unsandboxed. A debug build (a dev machine, macOS) runs
 //! it as a plain child with an empty environment.
 //!
-//! The door's key belongs to the core: it lives in `box_secrets`, so it
-//! travels with database backups (`api::publications::door_key`). Before
-//! each start the supervisor writes it to a file only the server's user can
-//! read, which systemd hands to the door as a credential, and rebuilds the
-//! bundle directory from the database (`api::publications::materialize`). A
-//! restore therefore brings every live link back as it was.
+//! The door's key belongs to the core: it is a box secret
+//! (`crate::secrets`), so it travels with database backups
+//! (`api::publications::door_key`). Before each start the supervisor writes
+//! it to a file only the server's user can read, which systemd hands to the
+//! door as a credential, and rebuilds the bundle directory from the database
+//! (`api::publications::materialize`). A restore therefore brings every live
+//! link back as it was.
 //!
 //! The core listens on a Unix socket for the door's two requests (a live
 //! page's approved query, and "a page was opened"), answered by
@@ -283,7 +284,7 @@ fn sandbox_properties(bundles: &Path) -> Vec<String> {
         // A throwaway uid: the unit is created through sudo, and a system
         // unit with no user runs as root.
         "DynamicUser=yes",
-        // The key is the core's (box_secrets). systemd reads the file the
+        // The key is the core's (a box secret). systemd reads the file the
         // core writes and hands it to this unit alone, under
         // $CREDENTIALS_DIRECTORY, so the throwaway uid never needs access to
         // the server's files.
@@ -385,7 +386,7 @@ mod tests {
         assert!(!props.iter().any(|p| p.starts_with("User=")), "a named user replaces the throwaway uid");
         assert!(
             props.iter().any(|p| p.starts_with("LoadCredential=door.key:")),
-            "the key arrives as a credential from the core's box_secrets copy"
+            "the key arrives as a credential from the core's stored copy"
         );
         assert!(!props.iter().any(|p| p.starts_with("StateDirectory=")), "the door keeps no key of its own");
         let writable: Vec<_> = props.iter().filter(|p| p.starts_with("BindPaths=")).collect();

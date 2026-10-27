@@ -99,9 +99,9 @@ pub fn door_dir() -> PathBuf {
     state_dir().join("door")
 }
 
-/// Where the door key lives in `box_secrets`, sealed with the vault key, so
-/// it travels with database backups. Losing it ends every link the box has
-/// shared.
+/// The door key's name among the box's secrets (`crate::secrets`). It is
+/// sealed with the vault key and travels with database backups. Losing it
+/// ends every link the box has shared.
 const DOOR_KEY_SECRET: &str = "door_key";
 
 fn door_id_cache() -> &'static std::sync::RwLock<Option<String>> {
@@ -114,14 +114,14 @@ fn door_id() -> Option<String> {
     door_id_cache().read().ok()?.clone()
 }
 
-/// The door's secret key: from `box_secrets`, else adopted from a key file a
+/// The door's secret key: from the box's secrets, else adopted from a key file a
 /// door made for itself before the key moved here (so its links keep
 /// working), else new. Also caches the door's EndpointId for links.
 pub async fn door_key(pool: &PgPool) -> Result<[u8; 32]> {
     let decode = |hex_key: &str| -> Option<[u8; 32]> {
         hex::decode(hex_key.trim()).ok()?.try_into().ok()
     };
-    let stored = crate::box_secrets::get(pool, DOOR_KEY_SECRET)
+    let stored = crate::secrets::get(pool, crate::secrets::Kind::Box, DOOR_KEY_SECRET)
         .await
         .map_err(|e| Error::Other(format!("read the door key: {e:#}")))?;
     let seed = match stored.and_then(|(secret, _)| decode(&secret)) {
@@ -142,8 +142,9 @@ pub async fn door_key(pool: &PgPool) -> Result<[u8; 32]> {
                 }
             };
             let id = virtues_iroh::SecretKey::from_bytes(&seed).public().to_string();
-            crate::box_secrets::put_if_absent(
+            crate::secrets::put_if_absent(
                 pool,
+                crate::secrets::Kind::Box,
                 DOOR_KEY_SECRET,
                 &hex::encode(seed),
                 &serde_json::json!({ "endpoint_id": id }),
@@ -151,11 +152,11 @@ pub async fn door_key(pool: &PgPool) -> Result<[u8; 32]> {
             .await
             .map_err(|e| Error::Other(format!("store the door key: {e:#}")))?;
             // Another caller may have stored one first; theirs wins.
-            let (secret, _) = crate::box_secrets::get(pool, DOOR_KEY_SECRET)
+            let (secret, _) = crate::secrets::get(pool, crate::secrets::Kind::Box, DOOR_KEY_SECRET)
                 .await
                 .map_err(|e| Error::Other(format!("read the door key: {e:#}")))?
                 .ok_or_else(|| Error::Other("the door key vanished after storing it".into()))?;
-            decode(&secret).ok_or_else(|| Error::Other("the door key in box_secrets is not 32 bytes of hex".into()))?
+            decode(&secret).ok_or_else(|| Error::Other("the stored door key is not 32 bytes of hex".into()))?
         }
     };
     let id = virtues_iroh::SecretKey::from_bytes(&seed).public().to_string();

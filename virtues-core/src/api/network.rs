@@ -146,7 +146,7 @@ pub async fn relay_toggle_handler(
     Json(body): Json<RelayToggleBody>,
 ) -> impl IntoResponse {
     let res = if body.enabled {
-        crate::box_secrets::delete(state.db.pool(), crate::virtues_api::relay::BOX_SECRET_KEY).await
+        crate::secrets::delete(state.db.pool(), crate::secrets::Kind::Box, crate::virtues_api::relay::BOX_SECRET_KEY).await
     } else {
         crate::virtues_api::relay::store(
             state.db.pool(),
