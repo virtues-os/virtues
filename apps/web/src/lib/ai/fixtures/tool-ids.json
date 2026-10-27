@@ -10,6 +10,7 @@
   "browser_snapshot",
   "browser_type",
   "code_interpreter",
+  "connection",
   "create_page",
   "create_task",
   "dispatch_subagents",

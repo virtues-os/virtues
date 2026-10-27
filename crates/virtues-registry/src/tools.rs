@@ -92,7 +92,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
     ]
     .into_iter()
     .chain(browser_tools())
-    .chain([send_imessage_tool(), create_task_tool(), update_task_tool(), save_skill_tool()])
+    .chain([connection_tool(), send_imessage_tool(), create_task_tool(), update_task_tool(), save_skill_tool()])
     .collect()
 }
 
@@ -190,6 +190,35 @@ fn update_task_tool() -> ToolConfig {
         tool_type: ToolType::Builtin,
         category: ToolCategory::Edit,
         icon: "ri:checkbox-circle-line".to_string(),
+        display_order: 47,
+        is_system: false,
+    }
+}
+
+/// A service the owner connected over MCP, such as Linear (virtues-core
+/// `tools/connection.rs`). The chat hands it a whole task, and a worker with
+/// only that service's tools does it, so the chat's tool list stays the same
+/// whatever is connected. A tool that declares itself destructive is not
+/// offered to the worker until the owner agrees and the chat calls again
+/// with `confirmed`.
+fn connection_tool() -> ToolConfig {
+    ToolConfig {
+        id: "connection".to_string(),
+        name: "Use a connected service".to_string(),
+        description: "Do a task in a service you connected, such as Linear".to_string(),
+        llm_description: "Hand a task to a service the owner connected over MCP, such as Linear. A worker with only that service's tools does it and sees only `task`, so write it in full: what to find or change, every value it needs, and how far to go. Deleting or overwriting needs the owner's OK: the worker stops and says what it would change. Ask, and if they agree, call again with `confirmed: true`. Returns `answer`, with identifiers and links.".to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["name", "task"],
+            "properties": {
+                "name": { "type": "string", "description": "The service, such as linear" },
+                "task": { "type": "string" },
+                "confirmed": { "type": "boolean", "description": "The owner agreed to the change the worker described" }
+            }
+        }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Edit,
+        icon: "ri:plug-line".to_string(),
         display_order: 47,
         is_system: false,
     }

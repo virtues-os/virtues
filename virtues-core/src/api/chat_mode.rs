@@ -425,6 +425,10 @@ pub(crate) mod tests {
             ("skills", &["save_skill"], 950),
             ("tasks", &["create_task", "update_task"], 1_500),
             ("sql_write", &["sql_write"], 600),
+            // A service the owner connected over MCP (`tools/connection.rs`).
+            // One tool whatever is connected; the services' own tools go to
+            // its worker, never into this list.
+            ("connections", &["connection"], 900),
             // Drawn inside the reply. The kinds and their column contracts are
             // the description; trimming it means dropping a kind.
             ("show", &["show"], 1_900),
@@ -445,8 +449,8 @@ pub(crate) mod tests {
         // (mode's wire name, total ceiling). Chat's is the sum of its group
         // ceilings; the rest sit just above their 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 21_000),
-            ("sudo", 21_400),
+            ("chat", 21_900),
+            ("sudo", 22_300),
             ("deep_research", 13_250),
             ("interview", 1_500),
             ("getting_started", 2_200),

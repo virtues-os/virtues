@@ -2415,6 +2415,7 @@ fn create_agent_stream(
             timezone: request.timezone.clone(),
             turn: Some(turn_key),
             console: false,
+            owner_confirmed: false,
         };
 
         let tools = mode.tools();

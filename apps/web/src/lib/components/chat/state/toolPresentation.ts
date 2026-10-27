@@ -154,6 +154,17 @@ const TOOLS: Record<string, Presentation> = {
 		},
 	},
 	read_asset: { noun: "a file", depth: 4, say: ["Opening a file", "Opened a file"] },
+	// A service the owner connected over MCP, such as Linear. The chat hands
+	// it a whole task; a worker with only that service's tools does it.
+	connection: {
+		noun: "a connected service",
+		depth: 4,
+		say: (input, live) => {
+			const name = String(input.name ?? "").trim();
+			const service = name ? name.charAt(0).toUpperCase() + name.slice(1) : "a connected service";
+			return `${live ? "Using" : "Used"} ${service}`;
+		},
+	},
 	// The owner's browser, a window in the Mac app. The chat hands it a whole
 	// task; the steps are the browsing agent's, and show in the Browser's
 	// Activity row. The browser_* entries below are chats from before that.

@@ -111,6 +111,11 @@ pub struct ToolContext {
     /// to `/api/mcp` (`server/api/mcp.rs`). Set only by those two handlers,
     /// never from a tool's arguments, so the model cannot claim it.
     pub console: bool,
+    /// The owner agreed in chat to a change that deletes or overwrites
+    /// something in a connected service: the chat's `connection` call carried
+    /// `confirmed`, and this is its worker. A connection tool that declares
+    /// itself destructive runs only with it (`tools/connection.rs`).
+    pub owner_confirmed: bool,
 }
 
 impl Default for ToolContext {
@@ -132,6 +137,7 @@ impl Default for ToolContext {
             timezone: None,
             turn: None,
             console: false,
+            owner_confirmed: false,
         }
     }
 }
@@ -532,6 +538,12 @@ impl ToolExecutor {
             // back through this executor as the `browser_*` calls below.
             crate::browse::TOOL => Ok(crate::browse::run_tool(&self._pool, &arguments, context).await),
             super::send_imessage::TOOL => Ok(super::send_imessage::run(&self._pool, &arguments, context).await),
+            // A connected service, through a worker with only its tools; and
+            // those tools, which only that worker calls.
+            super::connection::TOOL => Ok(super::connection::run_tool(&self._pool, &arguments, context).await),
+            name if super::connection::split(name).is_some() => {
+                Ok(super::connection::call_tool(&self._pool, name, arguments, context).await)
+            }
             super::tasks::CREATE_TOOL => Ok(super::tasks::create(&self._pool, &arguments, context).await),
             super::tasks::UPDATE_TOOL => Ok(super::tasks::update(&self._pool, &arguments, context).await),
             name if crate::browser::TOOLS.contains(&name) => {

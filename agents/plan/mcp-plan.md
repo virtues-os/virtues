@@ -1,6 +1,6 @@
 # MCP: connections in, the box as a server
 
-**Written 2026-10-26. Slices 1 and 2 built the same day.** Two directions over the Model Context
+**Written 2026-10-26. Slices 1 and 2 built the same day; slice 3 started, with Linear.** Two directions over the Model Context
 Protocol. Inbound, the box connects to other services' MCP servers and uses
 their tools: actions and live lookups only, with no ingest. Outbound, the box
 serves its own MCP endpoint, so agents the owner already uses (Claude Desktop,
@@ -326,11 +326,33 @@ name.
      the sheet inside a built Mac app, and Claude Code building an applet
      through the bridge away from home, the test the CLI plan set for its
      verbs.
-3. **One MCP connection.** `mcp_oauth` with a hosted Client ID Metadata
-   Document and the code-only redirect, tool rows with `<connection>__`
-   names, the executor branch, the `connection` worker, receipts and the
-   `destructiveHint` ask. One official server, picked by the owner. Done when
+3. **One MCP connection: Linear** (the owner's pick, 2026-10-26). Done when
    a chat files an issue on it and a delete asks.
+   - Built: `tools/connection.rs` and `server/api/connections.rs`, on rmcp's
+     client and `auth` features over the reqwest 0.13 iroh already links.
+     Sign-in is OAuth 2.1 with PKCE as a public client registered by dynamic
+     client registration; the redirect is `/api/connections/callback` at the
+     origin the owner's app sends, so no proxy holds the code. Tokens are a
+     sealed `credentials` row (`mcp:linear`, kind `source`), which rmcp loads
+     and refreshes. Chat gets one `connection(name, task, confirmed)` tool
+     (its own 900-character budget group); a Lite-slot worker gets the
+     service's tools as `<connection>__<tool>` definitions, built from
+     `tools/list`, never registry rows. A tool whose annotations say
+     `destructiveHint: true` is left out of the worker's list and refused by
+     the executor branch unless the chat called with `confirmed`, which sets
+     `ToolContext::owner_confirmed`.
+   - Checked against Linear: discovery, dynamic registration and the sign-in
+     URL (PKCE S256, `resource`, scopes `read write`).
+   - Left: a sign-in and a chat run against a real Linear account; a
+     Connect button (there is none yet; the routes are `GET
+     /api/connections`, `POST /api/connections/:id/connect {origin}`,
+     `DELETE /api/connections/:id`); receipts in the chat for writes. Two
+     changes from the design above, each waiting on something outside this
+     slice: the catalog is a constant in `tools/connection.rs` until
+     `applet_templates` can take an `mcp_oauth` kind (a dated TODO marks
+     it), and the client registers dynamically until a Client ID Metadata
+     Document is hosted on virtues.com, which rmcp prefers once it is
+     passed in.
 4. **Connections in applets.** `allowed-tools` entries for connection tools,
    the Rule of Two legs, owner-only adding. Then owner-added URLs from
    Settings.
