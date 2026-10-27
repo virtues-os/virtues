@@ -112,14 +112,21 @@
 	const pins = $derived(pinsStore.pins);
 	const projects = $derived(projectStore.projects);
 
-	// The tree under the Projects door: the first few in your order, and the
-	// open one wherever it sits, so the line always has a row to reach.
-	const TREE_CAP = 5;
-	const treeProjects = $derived.by(() => {
-		const shown = projects.slice(0, TREE_CAP);
-		const open = projects.find((p) => activeRoute === `/project/${p.id}`);
-		return open && !shown.includes(open) ? [...shown, open] : shown;
+	// The tree under the Projects door: every project, in your order. It
+	// folds like a group, and opens by itself when you open a project from
+	// anywhere else, so the line to it is on screen.
+	const openProjectIndex = $derived(projects.findIndex((p) => activeRoute === `/project/${p.id}`));
+	const openProjectId = $derived(openProjectIndex >= 0 ? projects[openProjectIndex].id : null);
+	$effect(() => {
+		if (openProjectId && untrack(() => folded('projects'))) sidebarZones.toggle(zoneId('projects'));
 	});
+
+	function toggleProjectTree(e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		const door = (e.currentTarget as HTMLElement).closest('.panel-door') as HTMLElement | null;
+		if (door) toggleGroup('projects', door);
+	}
 
 	function openProject(p: ProjectSummary) {
 		windowShellStore.openTabFromRoute(`/project/${p.id}`, { label: p.name, focusExisting: true });
@@ -1061,7 +1068,30 @@
 			oncontextmenu={(e) => showMenu(e, doorMenu(door.id, index))}
 		>
 			<AtlasIcon name={door.glyph} size={SHELL_GLYPH_PX} bare />
-			<span class="panel-row-text">{door.label}</span>
+			{#if door.id === 'projects' && projects.length}
+				{@const shut = folded('projects')}
+				<span class="panel-row-text door-label">
+					{door.label}
+					<button
+						type="button"
+						class="door-chev"
+						class:shut
+						aria-expanded={!shut}
+						aria-label={shut ? 'Show projects' : 'Hide projects'}
+						data-tip={shut ? 'Show projects' : 'Hide projects'}
+						onclick={toggleProjectTree}
+					>
+						<svg class="chev" width="9" height="6" viewBox="0 0 10 6" fill="none" aria-hidden="true">
+							<path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+						</svg>
+					</button>
+				</span>
+				{#if !shut}
+					<span class="tree-stem" class:lit={openProjectId !== null} aria-hidden="true"></span>
+				{/if}
+			{:else}
+				<span class="panel-row-text">{door.label}</span>
+			{/if}
 			{#if act.add}
 				{@const add = act.add}
 				<span class="row-actions">
@@ -1071,19 +1101,25 @@
 				</span>
 			{/if}
 		</div>
-		{#if door.id === 'projects' && treeProjects.length}
-			{@render projectTree()}
+		{#if door.id === 'projects' && projects.length}
+			<div class="sidebar-expandable fold" class:expanded={!folded('projects')} style={foldStyle(projects.length)}>
+				<div class="sidebar-expandable-inner">
+					{@render projectTree()}
+				</div>
+			</div>
 		{/if}
 		</div>
 	{/each}
 </div>
 
-<!-- Projects as a tree under their door. The rows start at the door's word,
-     and a curved line runs from the door's glyph to the project that is
-     open. With none open there is no line: the indent says whose they are. -->
+<!-- Projects as a tree under their door. The rows start at the door's word.
+     A faint line runs from the door's glyph down the tree, and the stretch
+     of it that leads to the open project is drawn in ink and curves into
+     that row. -->
 {#snippet projectTree()}
 	<div class="project-tree" role="group" aria-label="Projects">
-		{#each treeProjects as p, i (p.id)}
+		<span class="tree-guide" aria-hidden="true"></span>
+		{#each projects as p, i (p.id)}
 			{@const url = `/project/${p.id}`}
 			<div
 				class="panel-row tree-row"
@@ -1492,70 +1528,83 @@
 	   old --ease-premium over 150ms put 88% of the travel in the first 75ms,
 	   so the move strobed in a few big jumps and then crept for another 75ms. */
 	.group-head,
+	.door-chev,
 	.fold {
 		--fold-open: var(--fold-ms, 200ms);
 		--fold-close: calc(var(--fold-ms, 200ms) * 0.85);
 		--fold-ease: cubic-bezier(0.3, 0.1, 0.2, 1);
 	}
 
-	.chev {
+	/* At rest the chevron takes no room, so the rule starts right after the
+	   label. Pointing at the head opens its slot, and the rule shortens to
+	   make way for it. The negative margin cancels the label's gap. */
+	.group-head .chev {
+		width: 0;
+		margin-left: -6px;
 		opacity: 0;
 		transform: rotate(0deg);
 		transition:
+			width 180ms var(--fold-ease),
+			margin-left 180ms var(--fold-ease),
 			opacity 150ms ease,
 			transform var(--fold-open) var(--fold-ease);
 	}
 
 	.group-head.folded .chev {
 		transition:
+			width 180ms var(--fold-ease),
+			margin-left 180ms var(--fold-ease),
 			opacity 150ms ease,
 			transform var(--fold-close) var(--fold-ease);
 	}
 
 	.group-head:hover .chev,
-	.group-toggle:focus-visible .chev {
+	.group-toggle:focus-visible .chev,
+	.group-head.folded .chev {
+		width: 9px;
+		margin-left: 0;
 		opacity: 0.8;
 	}
 
 	/* Shut: the chevron stays put, pointing at the group it would reopen. */
 	.group-head.folded .chev {
-		opacity: 0.8;
 		transform: rotate(-90deg);
 	}
 
-	/* The rule runs from the label to the row's end and steps aside for the
-	   chevron and the head's actions when you point at the head. It stays out
-	   of the hit area: the label is the toggle, the rule is only ink. */
+	/* The rule fills the room between the label and the head's actions, so
+	   it shortens at both ends as the chevron and the actions open their
+	   slots. It stays out of the hit area: the label is the toggle, the rule
+	   is only ink. */
 	.group-rule {
 		flex: 1;
 		min-width: 0;
 		height: 4px;
-		margin: 0 4px;
+		margin: 0 8px;
 		fill: none;
 		stroke: var(--color-foreground-subtle);
 		stroke-width: 1;
 		stroke-linecap: round;
 		opacity: 0.45;
 		pointer-events: none;
-		transition: opacity 150ms ease;
 	}
 
-	.group-head:hover .group-rule,
-	.group-head:focus-within .group-rule {
-		opacity: 0;
-	}
-
+	/* The head's actions open their slot the same way, from the right. */
 	.group-actions {
 		margin-left: auto;
 		display: flex;
 		align-items: center;
+		max-width: 0;
+		overflow: hidden;
 		opacity: 0;
-		transition: opacity 150ms ease;
+		transition:
+			max-width 180ms var(--fold-ease),
+			opacity 150ms ease;
 	}
 
 	.group-head:hover .group-actions,
 	.group-actions:focus-within,
 	.group-actions.shown {
+		max-width: 28px;
 		opacity: 1;
 	}
 
@@ -1610,25 +1659,103 @@
 		flex-direction: column;
 	}
 
-	/* A project in the tree starts where its door's word does. */
-	.panel-row.tree-row {
-		padding-left: calc(12px + var(--sidebar-interactive-icon-size) + var(--sidebar-interactive-gap));
+	/* The Projects door's word carries its fold. The chevron shows when you
+	   point at the door, and turns to say which way the tree is. */
+	.door-label {
+		display: flex;
+		align-items: center;
+		gap: 4px;
 	}
 
-	/* From the door's glyph down to the open project's middle, then round
-	   into its word. It starts 8px under the glyph's centre, at the foot of
-	   the door row, and drops a row for each project above the open one. */
+	.door-chev {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 20px;
+		height: 20px;
+		padding: 0;
+		border: none;
+		border-radius: var(--radius-sm);
+		background: none;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		opacity: 0;
+		transition: opacity 150ms ease;
+	}
+
+	.panel-door:not(.stale-hover):hover .door-chev,
+	.door-chev:focus-visible {
+		opacity: 0.8;
+	}
+
+	.door-chev:hover {
+		background: var(--hover-bg);
+	}
+
+	.door-chev .chev {
+		transition: transform var(--fold-open) var(--fold-ease);
+	}
+
+	.door-chev.shut .chev {
+		transform: rotate(-90deg);
+		transition-duration: var(--fold-close);
+	}
+
+	/* The tree's lines run down the centre of the door's glyph. The stem is
+	   the stretch inside the door row, from under the glyph to the row's
+	   foot; the tree's own box clips while it folds, so the stem lives here. */
+	.tree-stem,
+	.tree-guide,
 	.tree-branch {
 		position: absolute;
 		left: calc(12px + var(--sidebar-interactive-icon-size) / 2);
-		top: calc(-1 * (var(--tree-i) * var(--sidebar-interactive-height) + 8px));
+		border-left: 1px solid var(--color-border);
+		pointer-events: none;
+	}
+
+	.tree-stem {
+		top: calc(50% + var(--sidebar-interactive-icon-size) / 2);
+		bottom: 0;
+	}
+
+	/* Ink from the glyph to the open project, faint everywhere else. */
+	.tree-stem.lit {
+		border-left-color: var(--color-foreground-muted);
+	}
+
+	.project-tree {
+		position: relative;
+	}
+
+	/* Down the whole tree, to the middle of the last row. */
+	.tree-guide {
+		top: 0;
+		bottom: calc(var(--sidebar-interactive-height) / 2);
+	}
+
+	/* From the top of the tree to the open project's middle, then round into
+	   its word: a row's height for each project above it. */
+	.tree-branch {
+		top: calc(-1 * var(--tree-i) * var(--sidebar-interactive-height));
 		bottom: 50%;
 		width: calc(var(--sidebar-interactive-icon-size) / 2 + var(--sidebar-interactive-gap) - 4px);
-		border-left: 1px solid var(--color-foreground-subtle);
-		border-bottom: 1px solid var(--color-foreground-subtle);
+		border-left-color: var(--color-foreground-muted);
+		border-bottom: 1px solid var(--color-foreground-muted);
 		border-bottom-left-radius: var(--radius-md);
-		opacity: 0.6;
-		pointer-events: none;
+	}
+
+	/* A project in the tree starts where its door's word does, in a quieter
+	   ink than the doors. The open one is ink on the selected wash. */
+	.panel-row.tree-row {
+		padding-left: calc(12px + var(--sidebar-interactive-icon-size) + var(--sidebar-interactive-gap));
+		color: var(--color-foreground-muted);
+	}
+
+	.panel-row.tree-row.active,
+	.panel-row.tree-row.active:hover {
+		background: var(--active-bg);
+		box-shadow: none;
+		color: var(--color-foreground);
 	}
 
 	.panel-door {
