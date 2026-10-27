@@ -14,6 +14,7 @@
 	  Assistant    /virtues/assistant      — name, style, rules, memory, models (+ /models: the catalog)
 	  Billing      /virtues/billing        — subscription, balance, routing, and
 	                                         the AI calls that draw it down
+	  Keys         /virtues/keys           — sign-ins and the named keys applets use
 	  System       /virtues/system         — the machine, measured (read-only)
 	  Search       /virtues/search         — where search runs, and what it covers
 	  Network      /virtues/network        — which network the box is on
@@ -62,6 +63,7 @@
 	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
+	import KeysView from '$lib/components/tabs/views/KeysView.svelte';
 	import ManageApplets from '$lib/components/applets/ManageApplets.svelte';
 	import ConnectionsView from '$lib/components/tabs/views/ConnectionsView.svelte';
 	import SearchSettingsView from '$lib/components/tabs/views/SearchSettingsView.svelte';
@@ -176,6 +178,7 @@
 		| 'you'
 		| 'assistant'
 		| 'billing'
+		| 'keys'
 		| 'system'
 		| 'search'
 		| 'devices'
@@ -188,6 +191,7 @@
 	const SECTIONS = [
 		'assistant',
 		'billing',
+		'keys',
 		'system',
 		'search',
 		'devices',
@@ -234,6 +238,8 @@
 			{/if}
 		{:else if section === 'billing'}
 			<BillingView {tab} {active} />
+		{:else if section === 'keys'}
+			<KeysView />
 		{:else if section === 'system'}
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'search'}

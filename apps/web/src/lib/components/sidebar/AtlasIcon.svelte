@@ -59,6 +59,7 @@
 		streams: 'mynaui:waves',
 		media: 'mynaui:image',
 		trash: 'mynaui:trash',
+		passwords: 'mynaui:lock-password',
 
 		// The wiki's own rows.
 		day: 'mynaui:sunrise',

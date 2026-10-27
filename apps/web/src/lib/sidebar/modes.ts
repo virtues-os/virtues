@@ -90,11 +90,11 @@ export const SETTINGS_MODE: SidebarMode = {
 		// "Profile", not "You": the wiki has the other "You", the narrative
 		// identity, and two rows with one label in two rooms is a question the
 		// user has to answer by clicking both.
-		{ id: 'you', label: 'Profile', icon: 'ri:user-line', glyph: 'profile', href: '/virtues/you', group: 'Account' },
+		{ id: 'you', label: 'Profile', icon: 'mynaui:user', glyph: 'profile', href: '/virtues/you', group: 'Account' },
 		{
 			id: 'assistant',
 			label: 'Assistant',
-			icon: 'ri:sparkling-line',
+			icon: 'mynaui:sparkles',
 			glyph: 'assistant',
 			href: '/virtues/assistant',
 			group: 'Account',
@@ -104,22 +104,32 @@ export const SETTINGS_MODE: SidebarMode = {
 		{
 			id: 'billing',
 			label: 'Billing',
-			icon: 'ri:bank-card-line',
+			icon: 'mynaui:credit-card',
 			glyph: 'billing',
 			href: '/virtues/billing',
 			group: 'Account',
 		},
+		// The secrets the server keeps: sources' sign-ins and the named keys
+		// applets use. Values show only when asked for.
+		{
+			id: 'keys',
+			label: 'Keys',
+			icon: 'mynaui:key',
+			glyph: 'keys',
+			href: '/virtues/keys',
+			group: 'Account',
+		},
 		// The machine itself and what is physically attached to it: its readings,
 		// its network (/virtues/system/network).
-		{ id: 'system', label: 'System', icon: 'ri:server-line', glyph: 'system', href: '/virtues/system', group: 'Server' },
+		{ id: 'system', label: 'System', icon: 'mynaui:servers', glyph: 'system', href: '/virtues/system', group: 'Server' },
 		// Where search runs (NPU, CPU, or the owner's server) and what it covers.
-		{ id: 'search', label: 'Search', icon: 'ri:search-line', glyph: 'search', href: '/virtues/search', group: 'Server' },
+		{ id: 'search', label: 'Search', icon: 'mynaui:search', glyph: 'search', href: '/virtues/search', group: 'Server' },
 		// Every participant, the server first: the release it runs is a fact
 		// about a device.
 		{
 			id: 'devices',
 			label: 'Devices',
-			icon: 'ri:device-line',
+			icon: 'mynaui:mobile',
 			glyph: 'devices',
 			href: '/virtues/devices',
 			group: 'Server',
@@ -128,7 +138,7 @@ export const SETTINGS_MODE: SidebarMode = {
 		{
 			id: 'shared',
 			label: 'Shared links',
-			icon: 'ri:share-forward-line',
+			icon: 'mynaui:share',
 			glyph: 'shared',
 			href: '/virtues/shared',
 			group: 'Server',
@@ -158,18 +168,18 @@ export const SETTINGS_MODE: SidebarMode = {
 		{
 			id: 'display',
 			label: 'Display',
-			icon: 'ri:tv-2-line',
+			icon: 'mynaui:tv',
 			glyph: 'display',
 			href: '/virtues/display',
 			group: 'Server',
 		},
 		// In the order the questions get asked: is anything broken right now,
 		// what can I plug in, and what has actually been running.
-		{ id: 'sources', label: 'Overview', icon: 'ri:dashboard-line', glyph: 'overview', href: '/sources', group: 'Sources' },
+		{ id: 'sources', label: 'Overview', icon: 'mynaui:layout-dashboard', glyph: 'overview', href: '/sources', group: 'Sources' },
 		{
 			id: 'catalog',
 			label: 'Catalog',
-			icon: 'ri:apps-line',
+			icon: 'mynaui:grid',
 			glyph: 'catalog',
 			href: '/sources/catalog',
 			group: 'Sources',
@@ -177,7 +187,7 @@ export const SETTINGS_MODE: SidebarMode = {
 		{
 			id: 'activity',
 			label: 'Activity',
-			icon: 'ri:history-line',
+			icon: 'mynaui:clock-circle',
 			glyph: 'history',
 			href: '/sources/activity',
 			group: 'Sources',
@@ -186,7 +196,7 @@ export const SETTINGS_MODE: SidebarMode = {
 		{
 			id: 'streams',
 			label: 'Streams',
-			icon: 'ri:database-2-line',
+			icon: 'mynaui:database',
 			glyph: 'streams',
 			href: '/storage/streams',
 			group: 'Sources',
@@ -194,7 +204,7 @@ export const SETTINGS_MODE: SidebarMode = {
 		{
 			id: 'sql',
 			label: 'SQL',
-			icon: 'ri:terminal-box-line',
+			icon: 'mynaui:terminal',
 			glyph: 'sql',
 			href: '/virtues/developer/sql',
 			group: 'Developer',
@@ -202,7 +212,7 @@ export const SETTINGS_MODE: SidebarMode = {
 		{
 			id: 'terminal',
 			label: 'Terminal',
-			icon: 'ri:terminal-line',
+			icon: 'mynaui:terminal',
 			glyph: 'terminal',
 			href: '/virtues/developer/terminal',
 			group: 'Developer',
@@ -228,11 +238,11 @@ export const SETTINGS_MODE: SidebarMode = {
  *     identity is a subject of this wiki like any other, and because the
  *     owner is the subject every other one is oriented around.
  *
- * DRIVE sits under them: the files, media and bookmarks you kept, and
- * Recently deleted. It had its own rail door until 2026-10-21. Recently
- * deleted is last because it is the one section you walk to on purpose:
- * everything deleted anywhere in the app (chats, pages, projects, files)
- * waits there 30 days.
+ * DRIVE sits under them: the files, media, bookmarks and passwords you
+ * kept, and Recently deleted. It had its own rail door until 2026-10-21.
+ * Recently deleted is last because it is the one section you walk to on
+ * purpose: everything deleted anywhere in the app (chats, pages, projects,
+ * files) waits there 30 days.
  *
  * WHAT ALSO LEFT: "History", the log of every edit the record made to its own
  * prose (`/wiki/history`, still there, still linked from an article). It sat
@@ -264,7 +274,7 @@ export const WIKI_MODE: SidebarMode = {
 		{
 			id: 'today',
 			label: 'Today',
-			icon: 'ri:sun-line',
+			icon: 'mynaui:sun',
 			glyph: 'day',
 			// Not `/day/<date>`: `/day` resolves to the current day on its own,
 			// and a date baked in here would be stale by morning.
@@ -277,12 +287,12 @@ export const WIKI_MODE: SidebarMode = {
 		},
 		// The day on the box's own map. It was a rail room of its own; with the
 		// rail gone it is the Time group's live view, beside the days it draws.
-		{ id: 'timeline', label: 'Timeline', icon: 'ri:route-line', glyph: 'timeline', href: '/timeline', group: 'Time' },
-		{ id: 'days', label: 'Days', icon: 'ri:calendar-line', glyph: 'calendar', href: '/wiki/days', group: 'Time' },
+		{ id: 'timeline', label: 'Timeline', icon: 'mynaui:path', glyph: 'timeline', href: '/timeline', group: 'Time' },
+		{ id: 'days', label: 'Days', icon: 'mynaui:calendar', glyph: 'calendar', href: '/wiki/days', group: 'Time' },
 		{
 			id: 'years',
 			label: 'Years',
-			icon: 'ri:calendar-2-line',
+			icon: 'mynaui:calendar',
 			glyph: 'years',
 			href: '/wiki/years',
 			group: 'Time',
@@ -293,7 +303,7 @@ export const WIKI_MODE: SidebarMode = {
 		{
 			id: 'chapters',
 			label: 'Chapters',
-			icon: 'ri:contacts-book-2-line',
+			icon: 'mynaui:book-user',
 			glyph: 'chapters',
 			href: '/wiki/chapters',
 			group: 'Time',
@@ -303,7 +313,7 @@ export const WIKI_MODE: SidebarMode = {
 			// "You", not "Narrative Identity": that is the name of the artifact,
 			// not the name of the subject, and the room is the owner's own page.
 			label: 'You',
-			icon: 'ri:user-star-line',
+			icon: 'mynaui:user-circle',
 			glyph: 'identity',
 			href: '/wiki/identity',
 			group: 'Subjects',
@@ -311,7 +321,7 @@ export const WIKI_MODE: SidebarMode = {
 		{
 			id: 'people',
 			label: 'People',
-			icon: 'ri:user-line',
+			icon: 'mynaui:user',
 			glyph: 'people',
 			href: '/wiki/people',
 			group: 'Subjects',
@@ -319,7 +329,7 @@ export const WIKI_MODE: SidebarMode = {
 		{
 			id: 'places',
 			label: 'Places',
-			icon: 'ri:map-pin-line',
+			icon: 'mynaui:map-pin',
 			glyph: 'places',
 			href: '/wiki/places',
 			group: 'Subjects',
@@ -329,7 +339,7 @@ export const WIKI_MODE: SidebarMode = {
 			// the only abbreviation in a product that writes in sentences.
 			id: 'orgs',
 			label: 'Organizations',
-			icon: 'ri:building-line',
+			icon: 'mynaui:building',
 			glyph: 'organizations',
 			href: '/wiki/orgs',
 			group: 'Subjects',
@@ -342,7 +352,7 @@ export const WIKI_MODE: SidebarMode = {
 		{
 			id: 'stories',
 			label: 'Stories',
-			icon: 'ri:book-2-line',
+			icon: 'mynaui:book',
 			glyph: 'stories',
 			href: '/wiki/stories',
 			group: 'Subjects',
@@ -350,7 +360,7 @@ export const WIKI_MODE: SidebarMode = {
 		{
 			id: 'files',
 			label: 'Files',
-			icon: 'ri:hard-drive-2-line',
+			icon: 'mynaui:hard-drive',
 			glyph: 'files',
 			href: '/storage',
 			// Every Storage section sits under `/storage`, Streams included, which
@@ -359,19 +369,29 @@ export const WIKI_MODE: SidebarMode = {
 			activeWhen: (route) => route === '/storage' || route.startsWith('/storage/drive'),
 			group: 'Drive',
 		},
-		{ id: 'media', label: 'App Media', icon: 'ri:image-2-line', glyph: 'media', href: '/storage/media', group: 'Drive' },
+		{ id: 'media', label: 'App Media', icon: 'mynaui:image', glyph: 'media', href: '/storage/media', group: 'Drive' },
 		{
 			id: 'bookmarks',
 			label: 'Bookmarks',
-			icon: 'ri:bookmark-line',
+			icon: 'mynaui:bookmark',
 			glyph: 'bookmarks',
 			href: '/bookmarks',
+			group: 'Drive',
+		},
+		// Saved logins. Kept on the box and never read by the assistant
+		// (api/passwords.rs); API keys stay in Settings → Keys.
+		{
+			id: 'passwords',
+			label: 'Passwords',
+			icon: 'mynaui:lock-password',
+			glyph: 'passwords',
+			href: '/passwords',
 			group: 'Drive',
 		},
 		{
 			id: 'trash',
 			label: 'Recently deleted',
-			icon: 'ri:delete-bin-line',
+			icon: 'mynaui:trash',
 			glyph: 'trash',
 			href: '/storage/trash',
 			group: 'Drive',

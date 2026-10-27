@@ -20,6 +20,7 @@ export type TabType =
 	| 'project' // Projects (rooms a chat lives in): /projects, /project/{id}
 	| 'bookmarks' // Saved web content (browser bookmarks, stars, saved links): /bookmarks
 	| 'bookmark' // One saved thing, and the note on it: /bookmark/{id}
+	| 'passwords' // Saved logins, in Drive: /passwords
 	| 'day' // Wiki days: /day, /day/day_{date}
 	| 'year' // Wiki years: /year, /year/{year}
 	| 'narrative-identity' // Wiki narrative identity: /narrative-identity

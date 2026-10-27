@@ -43,6 +43,7 @@ const AssetView: ViewLoader = () => import('$lib/components/tabs/views/AssetView
 const PagesView: ViewLoader = () => import('$lib/components/tabs/views/PagesView.svelte');
 const PageDetailView: ViewLoader = () => import('$lib/components/tabs/views/PageDetailView.svelte');
 const BookmarksView: ViewLoader = () => import('$lib/components/tabs/views/BookmarksView.svelte');
+const PasswordsView: ViewLoader = () => import('$lib/components/tabs/views/PasswordsView.svelte');
 const BookmarkDetailView: ViewLoader = () => import('$lib/components/tabs/views/BookmarkDetailView.svelte');
 const ProjectsListView: ViewLoader = () => import('$lib/components/tabs/views/ProjectsListView.svelte');
 const ProjectDetailView: ViewLoader = () => import('$lib/components/tabs/views/ProjectDetailView.svelte');
@@ -358,6 +359,24 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		icon: 'mynaui:bookmark',
 		defaultLabel: 'Bookmarks',
 		component: BookmarksView,
+	},
+
+	// PASSWORDS: /passwords — the logins saved on the box, in Drive beside
+	// Bookmarks. Its own namespace, not under /storage, because nothing here
+	// is a file and Storage's search and indexing must never reach it.
+	passwords: {
+		match: (path) => path === '/passwords',
+		parse: () => ({
+			type: 'passwords',
+			label: 'Passwords',
+			icon: 'mynaui:lock-password',
+			normalizedRoute: '/passwords',
+		}),
+		serialize: () => 'passwords',
+		deserialize: () => '/passwords',
+		icon: 'mynaui:lock-password',
+		defaultLabel: 'Passwords',
+		component: PasswordsView,
 	},
 
 	// BOOKMARK DETAIL: /bookmark/{id} — singular, matching /project/{id}.
@@ -974,6 +993,7 @@ export function parseRoute(route: string): ParsedRoute {
 		// unreachable — this array is what routing actually walks.
 		'bookmark',
 		'bookmarks',
+		'passwords',
 		'day',
 		'year',
 		'narrative-identity',
