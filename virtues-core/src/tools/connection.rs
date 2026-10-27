@@ -142,7 +142,7 @@ const PROMPT: &str = "You act in one service the owner connected, using only its
 
 Read before you change anything: find the exact item the task names. If two items could match, stop and say which ones.
 
-Deleting, archiving or overwriting something needs the owner's OK. If the task needs it and those tools are not offered to you, stop and say exactly what you would change.
+Tools the service labels as deleting or overwriting are held back until the owner agrees, and the task lists them. If the task needs one, stop, name the tool, and say exactly what you would change with it.
 
 When you finish, answer in a few sentences: what you did or found, with each item's identifier and link as the service returned them.";
 
@@ -406,11 +406,62 @@ fn tool_definitions(tools: &[Tool], connection: &Connection, confirmed: bool) ->
                 "function": {
                     "name": prefixed(connection, &t.name),
                     "description": t.description.as_deref().unwrap_or(""),
-                    "parameters": Value::Object((*t.input_schema).clone()),
+                    "parameters": Value::Object(optional_nullable(&t.input_schema)),
                 }
             })
         })
         .collect()
+}
+
+/// `schema` with each optional top-level property also taking `null`. Some
+/// models fill every property they are shown; given `null` they leave an
+/// unused one empty instead of inventing a value, and [`without_unset`]
+/// drops it before the service sees it.
+fn optional_nullable(schema: &serde_json::Map<String, Value>) -> serde_json::Map<String, Value> {
+    let mut schema = schema.clone();
+    let required: Vec<String> = schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|r| r.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        .unwrap_or_default();
+    let Some(Value::Object(properties)) = schema.get_mut("properties") else { return schema };
+    for (name, property) in properties.iter_mut() {
+        if required.contains(name) {
+            continue;
+        }
+        let Value::Object(property) = property else { continue };
+        match property.get("type").cloned() {
+            Some(Value::String(t)) if t != "null" => {
+                property.insert("type".into(), json!([t, "null"]));
+            }
+            Some(Value::Array(mut types)) if !types.contains(&json!("null")) => {
+                types.push(json!("null"));
+                property.insert("type".into(), Value::Array(types));
+            }
+            _ => {}
+        }
+        if let Some(Value::Array(values)) = property.get_mut("enum") {
+            if !values.contains(&Value::Null) {
+                values.push(Value::Null);
+            }
+        }
+    }
+    schema
+}
+
+/// `arguments` without the optional properties the worker left unset: `null`,
+/// or an empty string where the schema does not require the property.
+fn without_unset(tool: &Tool, mut arguments: serde_json::Map<String, Value>) -> serde_json::Map<String, Value> {
+    let required: Vec<&str> = tool
+        .input_schema
+        .get("required")
+        .and_then(Value::as_array)
+        .map(|r| r.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default();
+    arguments.retain(|name, value| {
+        required.contains(&name.as_str()) || !(value.is_null() || value.as_str() == Some(""))
+    });
+    arguments
 }
 
 /// A write the worker made in a connected service, for the chat's receipt.
@@ -450,24 +501,36 @@ fn as_sentence(name: &str) -> String {
     chars.next().map(|c| c.to_uppercase().chain(chars).collect()).unwrap_or_default()
 }
 
-/// The item a service's answer names, and its link: the answer's own fields,
-/// then those of an object one level in (a comment's issue, say).
+/// The item a service's answer names, and its link. Only the answer itself
+/// and the objects in it that carry their own `identifier` (a comment's issue,
+/// say) count; a nested author's name is not the item. With no identifier or
+/// title anywhere, the item is what was written: the answer's `body`.
 fn item_and_link(body: &Value) -> (Option<String>, Option<String>) {
     let Some(top) = body.as_object() else { return (None, None) };
-    let objects: Vec<&serde_json::Map<String, Value>> =
-        std::iter::once(top).chain(top.values().filter_map(Value::as_object)).collect();
     let text = |o: &serde_json::Map<String, Value>, key: &str| {
         o.get(key).and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string)
     };
+    let objects: Vec<&serde_json::Map<String, Value>> = std::iter::once(top)
+        .chain(top.values().filter_map(Value::as_object).filter(|o| text(o, "identifier").is_some()))
+        .collect();
     let link = objects.iter().find_map(|o| text(o, "url").filter(|u| u.starts_with("https://")));
-    let item = objects.iter().find_map(|o| {
+    let named = objects.iter().find_map(|o| {
         let name = text(o, "title").or_else(|| text(o, "name"));
         match (text(o, "identifier"), name) {
             (Some(id), Some(name)) => Some(format!("{id} {name}")),
             (id, name) => id.or(name),
         }
     });
+    let item = named.or_else(|| text(top, "body").map(|b| clip(&b, 280)));
     (item, link)
+}
+
+fn clip(text: &str, max: usize) -> String {
+    if text.chars().count() <= max {
+        return text.to_string();
+    }
+    let cut: String = text.chars().take(max).collect();
+    format!("{}…", cut.trim_end())
 }
 
 /// Runs one of a connection's tools, for the worker. A destructive tool runs
@@ -486,12 +549,15 @@ pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, context: &To
         Ok(client) => client,
         Err(e) => return ToolResult::error(format!("{e:#}")),
     };
+    let listed = match tools(&client, connection).await {
+        Ok(listed) => listed,
+        Err(e) => return ToolResult::error(format!("{e:#}")),
+    };
+    let Some(described) = listed.iter().find(|t| t.name == tool) else {
+        return ToolResult::error(format!("{} has no tool called {tool}.", connection.name));
+    };
     if !context.owner_confirmed {
-        let listed = match tools(&client, connection).await {
-            Ok(listed) => listed,
-            Err(e) => return ToolResult::error(format!("{e:#}")),
-        };
-        if listed.iter().any(|t| t.name == tool && destructive(t)) {
+        if destructive(described) {
             return ToolResult::error(format!(
                 "{tool} deletes or overwrites something in {}. Stop and say what it would change; the owner has to agree first.",
                 connection.name
@@ -499,7 +565,7 @@ pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, context: &To
         }
     }
     let arguments = match arguments {
-        Value::Object(map) => Some(map),
+        Value::Object(map) => Some(without_unset(described, map)),
         Value::Null => None,
         other => return ToolResult::error(format!("{tool} takes an object of arguments, not {other}")),
     };
@@ -575,9 +641,21 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
         Err(e) => return ToolResult::error(format!("{e:#}")),
     };
     let definitions = tool_definitions(&listed, connection, confirmed);
+    // Named to the worker and the chat, so a held-back tool reads as waiting
+    // for the owner, not as missing.
+    let held_back: Vec<String> = if confirmed {
+        Vec::new()
+    } else {
+        listed.iter().filter(|t| destructive(t)).map(|t| t.name.to_string()).collect()
+    };
 
     let mut messages = build_context_for_llm(&[], None, 0, Some(PROMPT), None, None);
-    messages.push(json!({ "role": "user", "content": format!("Service: {}\n\nTask: {task}", connection.name) }));
+    let held = if held_back.is_empty() {
+        String::new()
+    } else {
+        format!("\n\nHeld back until the owner agrees: {}.", held_back.join(", "))
+    };
+    messages.push(json!({ "role": "user", "content": format!("Service: {}\n\nTask: {task}{held}", connection.name) }));
     let agent = AgentLoop::new(pool.clone())
         .with_config(AgentConfig { max_steps: MAX_STEPS, thinking: Thinking::Low, ..Default::default() })
         .with_budget(TurnBudget {
@@ -643,6 +721,7 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
         "answer": answer.trim(),
         "tools_used": used,
         "receipts": receipts,
+        "held_back": held_back,
         "usage": [usage],
     }))
 }
@@ -729,9 +808,39 @@ mod tests {
         assert_eq!(r.link.as_deref(), Some("https://linear.app/x/issue/VIR-1#comment-c1"));
         assert_eq!(r.service, "Linear");
 
+        // A comment answers with itself: the author's name is not the item,
+        // and with no issue named, what was written is.
+        let comment = json!({ "id": "c2", "body": "Looks good to ship.", "author": { "id": "u1", "name": "Nick" } });
+        let r = receipt(&linear(), &save, &json!({ "content": comment.to_string(), "structured": null }));
+        assert_eq!((r.item.as_deref(), r.link), (Some("Looks good to ship."), None));
+
         let titled = Tool::new("create_page", "", schema).with_title("Create a page");
         let plain = receipt(&linear(), &titled, &json!({ "content": "Done.", "structured": null }));
         assert_eq!((plain.action.as_str(), plain.item, plain.link), ("Create a page", None, None));
+    }
+
+    #[test]
+    fn unused_optional_arguments_are_dropped_before_the_service_sees_them() {
+        let schema: serde_json::Map<String, Value> = serde_json::from_value(json!({
+            "type": "object",
+            "required": ["body"],
+            "properties": {
+                "body": { "type": "string" },
+                "issueId": { "type": "string" },
+                "kind": { "type": "string", "enum": ["project", "initiative"] }
+            }
+        }))
+        .unwrap();
+        let shown = optional_nullable(&schema);
+        assert_eq!(shown["properties"]["body"]["type"], json!("string"));
+        assert_eq!(shown["properties"]["issueId"]["type"], json!(["string", "null"]));
+        assert_eq!(shown["properties"]["kind"]["enum"], json!(["project", "initiative", null]));
+
+        let tool = Tool::new("save_comment", "", Arc::new(schema));
+        let sent: serde_json::Map<String, Value> =
+            serde_json::from_value(json!({ "body": "", "issueId": "i1", "kind": null, "projectId": "" })).unwrap();
+        let kept = without_unset(&tool, sent);
+        assert_eq!(Value::Object(kept), json!({ "body": "", "issueId": "i1" }));
     }
 
     /// A connection is listed as one and never as a data source, which

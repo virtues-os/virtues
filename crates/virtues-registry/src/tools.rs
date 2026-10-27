@@ -206,7 +206,7 @@ fn connection_tool() -> ToolConfig {
         id: "connection".to_string(),
         name: "Use a connected service".to_string(),
         description: "Do a task in a service you connected, such as Linear".to_string(),
-        llm_description: "Hand a task to a service the owner connected over MCP, such as Linear. A worker with only that service's tools does it and sees only `task`, so write it in full: what to find or change, every value it needs, and how far to go. Deleting or overwriting needs the owner's OK: the worker stops and says what it would change. Ask, and if they agree, call again with `confirmed: true`. Returns `answer`, with identifiers and links.".to_string(),
+        llm_description: "Hand a task to a service the owner connected over MCP, such as Linear. A worker with only that service's tools does it and sees only `task`, so write it in full: what to find or change, every value it needs, and how far to go. Tools the service labels as deleting or overwriting are held back and listed in `held_back`; when the worker needs one it says what it would change. Ask the owner, and if they agree, call again with `confirmed: true`. Returns `answer`, with identifiers and links.".to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["name", "task"],

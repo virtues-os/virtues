@@ -378,8 +378,23 @@ name.
      per session and shared by the definitions, the destructive check and
      the receipts. Checked live: Linear labels `get_issue` read-only, and a
      read question made no receipt.
-   - Left: a write run against a real account; servers that take an API key
-     in a header.
+   - Write run, 2026-10-27, against a real Linear workspace with the
+     owner's OK for one test comment. Three findings, each fixed:
+     - Linear labels 29 tools `destructiveHint`, every `save_*` among them,
+       because each one creates or updates. So every Linear write waits for
+       the owner. The worker and the chat now get the held-back tools by
+       name (`held_back`), so the chat asks instead of reporting the
+       connection as read-only.
+     - The Lite worker filled every optional field of `save_comment` (empty
+       strings, and an enum value Linear rejects). Optional top-level
+       properties are now shown to the worker as also taking `null`, and
+       the box drops optional ones left `null` or empty before the call.
+       The comment then posted on the next try.
+     - A comment's answer is the comment: no link, no issue, and an author
+       object, whose name the receipt took as the item. The item now comes
+       only from the answer itself or a nested object with its own
+       `identifier`, else the written `body`.
+   - Left: servers that take an API key in a header.
 4. **Connections in applets.** `allowed-tools` entries for connection tools,
    the Rule of Two legs, owner-only adding. Then owner-added URLs from
    Settings.
