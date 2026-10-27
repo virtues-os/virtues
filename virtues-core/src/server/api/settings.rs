@@ -25,6 +25,12 @@ pub fn routes() -> Router<AppState> {
         .route("/api/settings/byo-key",   get(crate::api::settings_byo::status_handler)
                                           .post(crate::api::settings_byo::save_handler)
                                           .delete(crate::api::settings_byo::delete_handler))
+        // ─── Keys and passwords ───────────────────────────────────────
+        // Names only, except `value`, which Settings calls when the owner
+        // asks to see one. No tool calls these (api/keys.rs).
+        .route("/api/keys", get(keys_overview_handler))
+        .route("/api/keys/:name", put(set_key_handler).delete(delete_key_handler))
+        .route("/api/keys/:name/value", get(reveal_key_handler))
         // ─── Web bundle (the box IS the update server) ────────────────
         // What UI build this box serves, and the build itself. A client can
         // be AHEAD of its box: an app update bakes newer UI, and the client
@@ -163,6 +169,44 @@ pub fn routes() -> Router<AppState> {
 /// Get user profile
 pub async fn get_profile_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::profile::get_profile(state.db.pool()).await)
+}
+
+/// GET /api/keys — sign-ins and named keys, by name.
+pub async fn keys_overview_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::keys::overview(state.db.pool()).await)
+}
+
+#[derive(Deserialize)]
+pub struct SetKeyBody {
+    value: String,
+}
+
+/// PUT /api/keys/:name — add or replace a key's value.
+pub async fn set_key_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<SetKeyBody>,
+) -> Response {
+    match crate::api::keys::set_key(state.db.pool(), &name, &body.value).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// DELETE /api/keys/:name
+pub async fn delete_key_handler(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    match crate::api::keys::delete_key(state.db.pool(), &name).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/keys/:name/value — the value, when the owner asks to see it.
+pub async fn reveal_key_handler(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    match crate::api::keys::reveal_key(state.db.pool(), &name).await {
+        Ok(value) => Json(serde_json::json!({ "value": value })).into_response(),
+        Err(e) => error_response(e),
+    }
 }
 
 /// Update user profile

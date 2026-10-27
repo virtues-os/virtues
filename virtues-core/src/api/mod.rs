@@ -29,6 +29,7 @@ pub mod code;
 pub mod code_env;
 pub mod compaction;
 pub mod credentials;
+pub mod keys;
 pub mod image_gen;
 pub mod day_article;
 pub mod day_memory;

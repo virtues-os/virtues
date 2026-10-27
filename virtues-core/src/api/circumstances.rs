@@ -139,6 +139,7 @@ pub(crate) const SECTIONS: &[&str] = &[
     "sleep",
     "recent_days",
     "sources",
+    "keys",
 ];
 
 /// Build the block. `now_quantized` is the quarter-hour-floored instant the
@@ -505,6 +506,22 @@ async fn build_section(
             let names: Vec<String> = rows.iter().map(|r| clip(&r.0, 32)).collect();
             Ok((!names.is_empty())
                 .then(|| format!("Connected sources: {}.", names.join(", "))))
+        }
+        "keys" => {
+            // Which named keys they have set, so you can say one exists or
+            // ask them to add one. Names only: no tool can read a value.
+            let rows = sqlx::query_as::<_, (String,)>(
+                "SELECT key FROM credentials WHERE kind = 'env' ORDER BY key LIMIT 20",
+            )
+            .fetch_all(pool)
+            .await?;
+            let names: Vec<String> = rows.iter().map(|r| clip(&r.0, 64)).collect();
+            Ok((!names.is_empty()).then(|| {
+                format!(
+                    "Keys they have set in Settings (names only, you cannot read values): {}.",
+                    names.join(", ")
+                )
+            }))
         }
         other => {
             tracing::warn!("[chat] unknown circumstances section: {other}");
