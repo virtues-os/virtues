@@ -94,8 +94,17 @@ codegen-units = 1
 panic = "abort"
 strip = true
 
+# Debug info is half or more of every dev artifact (60% of iroh's rlib, a third
+# of plaid's), and the shared target keeps one copy per feature set, so full
+# debug info is most of its size. Line tables keep file:line in panics and
+# backtraces for our crates; dependencies keep only symbol names. `test`
+# inherits both.
 [profile.dev]
 opt-level = 0
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
 
 [profile.test]
 opt-level = 0
