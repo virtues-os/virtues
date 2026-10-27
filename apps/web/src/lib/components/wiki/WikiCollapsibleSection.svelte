@@ -46,7 +46,7 @@
 			{/if}
 		</h4>
 		<Icon
-			icon={isOpen ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"}
+			icon={isOpen ? "mynaui:chevron-up" : "mynaui:chevron-down"}
 			width="16"
 			height="16"
 			class="text-foreground-subtle opacity-50 transition-opacity duration-150 group-hover:opacity-100"

@@ -268,7 +268,7 @@
 	>
 		<header class="topbar" class:edge={scrolledUnderBar}>
 			<button class="bar-btn" onclick={() => mobileLayout.openDrawer()} aria-label="Menu">
-				<Icon icon="ri:menu-line" width={22} />
+				<Icon icon="mynaui:menu" width={22} />
 			</button>
 			{#if chrome?.project}
 				<!-- The title slot: the project this chat is in, where a phone
@@ -294,11 +294,11 @@
 						? "Temporary chat — won't be saved"
 						: "Start a temporary chat"}
 				>
-					<Icon icon="ri:ghost-line" width={22} />
+					<Icon icon="mynaui:incognito" width={22} />
 				</button>
 			{:else}
 				<button class="bar-btn" onclick={newChat} aria-label="New chat">
-					<Icon icon="ri:chat-new-line" width={22} />
+					<Icon icon="mynaui:chat-plus" width={22} />
 				</button>
 			{/if}
 		</header>

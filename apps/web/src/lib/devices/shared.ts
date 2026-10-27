@@ -94,15 +94,15 @@ export function kindLabel(k: DeviceKind): string {
 export function kindIcon(k: DeviceKind): string {
 	switch (k) {
 		case 'mobile_app':
-			return 'ri:smartphone-line';
+			return 'mynaui:mobile';
 		case 'desktop_app':
-			return 'ri:macbook-line';
+			return 'mynaui:desktop';
 		case 'sensor':
-			return 'ri:cpu-line';
+			return 'mynaui:chip';
 		case 'cli':
-			return 'ri:terminal-line';
+			return 'mynaui:terminal';
 		case 'agent':
-			return 'ri:robot-2-line';
+			return 'mynaui:chip';
 	}
 }
 

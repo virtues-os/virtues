@@ -46,13 +46,13 @@
 			submenu: i.submenu?.filter((s) => s.id !== 'remove-from-project')
 		}));
 		contextMenu.show({ x: e.clientX, y: e.clientY }, [
-			{ id: 'open', label: 'Open', icon: 'ri:chat-3-line', action: () => open(chat) },
+			{ id: 'open', label: 'Open', icon: 'mynaui:message', action: () => open(chat) },
 			...openMenuItems(url, chat.title),
 			...elsewhere,
 			{
 				id: 'remove',
 				label: 'Remove from project',
-				icon: 'ri:close-line',
+				icon: 'mynaui:x',
 				dividerBefore: true,
 				variant: 'destructive',
 				action: () => onremove(url)
@@ -81,7 +81,7 @@
 				</button>
 				<span class="chat-actions">
 					<IconButton
-						icon="ri:more-line"
+						icon="mynaui:dots"
 						label={`Actions for ${chat.title || 'this chat'}`}
 						size="sm"
 						haspopup="menu"

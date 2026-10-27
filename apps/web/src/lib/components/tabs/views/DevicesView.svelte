@@ -212,7 +212,7 @@
 	}
 
 	function rowIcon(row: Row): string {
-		return row.is_server ? "ri:server-line" : kindIcon(row.device!.kind);
+		return row.is_server ? "mynaui:servers" : kindIcon(row.device!.kind);
 	}
 
 	function rowHref(row: Row): string {
@@ -272,7 +272,7 @@
 		{
 			key: "label",
 			label: "Machine",
-			icon: "ri:device-line",
+			icon: "mynaui:mobile",
 			width: "38%",
 			minWidth: "220px",
 		},
@@ -287,21 +287,21 @@
 		{
 			key: "version",
 			label: "Version",
-			icon: "ri:git-commit-line",
+			icon: "mynaui:git-commit",
 			width: "24%",
 			minWidth: "150px",
 		},
 		{
 			key: "last_seen_at",
 			label: "Last seen",
-			icon: "ri:time-line",
+			icon: "mynaui:clock-circle",
 			width: "20%",
 			minWidth: "140px",
 		},
 		{
 			key: "paired_at",
 			label: "Paired",
-			icon: "ri:link",
+			icon: "mynaui:link",
 			width: "18%",
 			minWidth: "120px",
 			hideOnMobile: true,
@@ -323,7 +323,7 @@
 >
 	{#snippet actions()}
 		<Button variant="primary" onclick={startAdd}>
-			<Icon icon="ri:add-line" />
+			<Icon icon="mynaui:plus" />
 			Add device
 		</Button>
 	{/snippet}
@@ -343,7 +343,7 @@
 		loading={res.loading}
 		error={res.error}
 		onRetry={reloadAll}
-		emptyIcon="ri:device-line"
+		emptyIcon="mynaui:mobile"
 		emptyMessage="No paired devices. Run `virtues pair` on your server to pair this browser, or click Add device above."
 		loadingMessage="Loading devices..."
 		searchPlaceholder="Search by name, kind, version..."
@@ -359,7 +359,7 @@
 					{#if device?.installed_by}
 						<!-- Folded under the app that installed it (see the sort). -->
 						<Icon
-							icon="ri:corner-down-right-line"
+							icon="mynaui:corner-down-right"
 							class="text-foreground-muted flex-shrink-0"
 							width="14"
 						/>
@@ -391,7 +391,7 @@
 						     table: out of date reads the same on every row, and the
 						     reason is one hover away. -->
 						<span class="text-error flex-none inline-flex" title={row.behind}>
-							<Icon icon="ri:arrow-up-circle-fill" width="15" />
+							<Icon icon="mynaui:arrow-up-circle-solid" width="15" />
 						</span>
 					{/if}
 					{#if row.version}
@@ -448,7 +448,7 @@
 					<span class="text-xs font-mono text-foreground inline-flex items-center gap-1">
 						{#if row.behind}
 							<span class="text-error inline-flex" title={row.behind}>
-								<Icon icon="ri:arrow-up-circle-fill" width="13" />
+								<Icon icon="mynaui:arrow-up-circle-solid" width="13" />
 							</span>
 						{/if}
 						{row.version}
@@ -465,7 +465,7 @@
 				</span>
 				{#if device && deniedMacPermissions(device).length > 0}
 					<span class="text-xs text-warning flex items-center gap-1">
-						<Icon icon="ri:lock-line" width="12" />
+						<Icon icon="mynaui:lock" width="12" />
 						{deniedMacPermissions(device).length}
 						{deniedMacPermissions(device).length === 1 ? "permission" : "permissions"} off
 					</span>
@@ -476,13 +476,13 @@
 		{#snippet rowActions(row: Row)}
 			{#if row.device}
 				<Button variant="ghost" onclick={() => revoke(row.device!)}>
-					<Icon icon="ri:close-circle-line" />
+					<Icon icon="mynaui:x-circle" />
 					Revoke
 				</Button>
 			{:else}
 				<!-- The server cannot be revoked; its verb is an upgrade. -->
 				<Button variant="ghost" onclick={() => openRow(row)}>
-					<Icon icon="ri:download-cloud-2-line" />
+					<Icon icon="mynaui:cloud-download" />
 					Updates
 				</Button>
 			{/if}
@@ -500,16 +500,16 @@
 <Modal open={addOpen} onClose={() => (addOpen = false)} title="Add a device" width="sm">
 	<div class="add-choices">
 		<button type="button" class="add-choice" onclick={() => choose("ios")}>
-			<Icon icon="ri:smartphone-line" width="22" />
+			<Icon icon="mynaui:mobile" width="22" />
 			<span>An iPhone</span>
 		</button>
 		<button type="button" class="add-choice" onclick={() => choose("mac")}>
-			<Icon icon="ri:macbook-line" width="22" />
+			<Icon icon="mynaui:desktop" width="22" />
 			<span>A computer</span>
 		</button>
 		{#if isMacOS}
 			<button type="button" class="add-choice" onclick={() => choose("agent")}>
-				<Icon icon="ri:robot-2-line" width="22" />
+				<Icon icon="mynaui:chip" width="22" />
 				<span>An AI agent on this Mac</span>
 			</button>
 		{/if}

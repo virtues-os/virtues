@@ -477,8 +477,8 @@
 		const p = proposalAt(view.state, at.pos);
 		if (!p) return false;
 		contextMenu.show({ x: at.x, y: at.y }, [
-			{ id: "accept", label: "Accept", icon: "ri:check-line", action: () => void acceptProposal(e, p.id) },
-			{ id: "reject", label: "Reject", icon: "ri:close-line", action: () => void rejectProposal(e, p.id) },
+			{ id: "accept", label: "Accept", icon: "mynaui:check", action: () => void acceptProposal(e, p.id) },
+			{ id: "reject", label: "Reject", icon: "mynaui:x", action: () => void rejectProposal(e, p.id) },
 		]);
 		return true;
 	};

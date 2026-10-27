@@ -85,7 +85,7 @@
 
 		<div class="film" role="img" aria-label="A short film from the founder">
 			<div class="film-inner">
-				<Icon icon="ri:play-circle-line" width="30" />
+				<Icon icon="mynaui:play-circle" width="30" />
 				<span>A word from the founder</span>
 			</div>
 		</div>
@@ -239,15 +239,15 @@
 				     it. The icon registry pre-imports everything, so these cost no
 				     network at all. -->
 				<a class="pill" href="mailto:{EMAIL}">
-					<Icon icon="ri:mail-line" width="15" />
+					<Icon icon="mynaui:envelope" width="15" />
 					{EMAIL}
 				</a>
 				<a class="pill" href={X_URL} target="_blank" rel="noreferrer">
-					<Icon icon="ri:twitter-x-fill" width="14" />
+					<Icon icon="mynaui:brand-x-solid" width="14" />
 					adamjaces
 				</a>
 				<a class="pill" href={INSTAGRAM_URL} target="_blank" rel="noreferrer">
-					<Icon icon="ri:instagram-line" width="15" />
+					<Icon icon="mynaui:brand-instagram" width="15" />
 					aajaces
 				</a>
 			</div>
@@ -259,7 +259,7 @@
 		<div class="exit">
 			<button class="ob-btn" onclick={onbegin}>
 				{beginLabel}
-				<Icon icon="ri:arrow-right-line" width="16" />
+				<Icon icon="mynaui:arrow-right" width="16" />
 			</button>
 		</div>
 	</div>

@@ -484,7 +484,7 @@ class WindowShellStore {
 
 	private openDefaultTab(): void {
 		// Fresh sessions land on a new chat: home and chat are one place.
-		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'ri:chat-1-line' });
+		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'mynaui:chat' });
 	}
 
 	/**
@@ -1518,7 +1518,7 @@ class WindowShellStore {
 			type: 'chat',
 			label: 'Context',
 			route: `/chat/${entityId}?view=context`,
-			icon: 'ri:information-line'
+			icon: 'mynaui:info-circle'
 		});
 	}
 

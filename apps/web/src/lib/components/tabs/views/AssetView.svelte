@@ -142,7 +142,7 @@
 			<span class="asset-meta">{formatBytes(file.size_bytes)}</span>
 		{/if}
 		<div class="asset-spacer"></div>
-		<Button variant="secondary" size="sm" icon="ri:download-line" loading={downloading} onclick={download}
+		<Button variant="secondary" size="sm" icon="mynaui:download" loading={downloading} onclick={download}
 			>Download</Button
 		>
 	</header>
@@ -153,17 +153,17 @@
 		class:flush={kind === "csv" || kind === "pdf" || isText}
 	>
 		{#if loading}
-			<div class="asset-status"><Icon icon="ri:loader-4-line" width="22" class="spin" /></div>
+			<div class="asset-status"><Icon icon="mynaui:spinner" width="22" class="spin" /></div>
 		{:else if error}
 			<div class="asset-status error">
-				<Icon icon="ri:error-warning-line" width="22" />
+				<Icon icon="mynaui:danger-circle" width="22" />
 				<span>{error}</span>
 			</div>
 		{:else if kind === "image"}
 			<img class="asset-image" src={viewUrl} alt={file?.filename} />
 		{:else if kind === "audio"}
 			<div class="asset-audio">
-				<Icon icon="ri:music-2-line" width="40" />
+				<Icon icon="mynaui:music" width="40" />
 				<!-- Scrubber via native controls. Waveform + timestamped notes: deferred. -->
 				<audio controls src={viewUrl}></audio>
 			</div>
@@ -195,7 +195,7 @@
 				<Button
 					variant="secondary"
 					size="sm"
-					icon="ri:download-line"
+					icon="mynaui:download"
 					loading={downloading} onclick={download}>Download</Button
 				>
 			</div>

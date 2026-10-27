@@ -1,402 +1,25 @@
 /**
  * Icon Registry - Pre-imports all icons used in the app for instant rendering
- * 
+ *
  * This eliminates the Cumulative Layout Shift (CLS) caused by Iconify's default
  * behavior of fetching icons from the API after page load.
  */
 
-import { addIcon } from '@iconify/svelte';
+import { addCollection, addIcon } from '@iconify/svelte';
 import { GLYPHS as ATLAS_GLYPHS } from '$lib/components/sidebar/AtlasIcon.svelte';
+import { LEGACY_ICONS } from '$lib/legacyIcons';
+import myna from '$lib/myna-icons.json';
 
-// Remix Icons (ri:)
-import riAddCircleLine from '@iconify-icons/ri/add-circle-line';
-import riAddLine from '@iconify-icons/ri/add-line';
-import riAlertLine from '@iconify-icons/ri/alert-line';
-import riAppleFill from '@iconify-icons/ri/apple-fill';
-import riAppsLine from '@iconify-icons/ri/apps-line';
-import riAtLine from '@iconify-icons/ri/at-line';
-import riArrowDownSLine from '@iconify-icons/ri/arrow-down-s-line';
-import riArrowGoBackLine from '@iconify-icons/ri/arrow-go-back-line';
-import riArrowLeftLine from '@iconify-icons/ri/arrow-left-line';
-import riArrowRightDoubleLine from '@iconify-icons/ri/arrow-right-double-line';
-import riArchiveLine from '@iconify-icons/ri/archive-line';
-import riInboxUnarchiveLine from '@iconify-icons/ri/inbox-unarchive-line';
-import riStackLine from '@iconify-icons/ri/stack-line';
-import riArrowLeftSLine from '@iconify-icons/ri/arrow-left-s-line';
-import riArrowRightSLine from '@iconify-icons/ri/arrow-right-s-line';
-import riArrowUpDownLine from '@iconify-icons/ri/arrow-up-down-line';
-import riArrowUpCircleFill from '@iconify-icons/ri/arrow-up-circle-fill';
-import riDownloadCloud2Line from '@iconify-icons/ri/download-cloud-2-line';
-import riArrowUpLine from '@iconify-icons/ri/arrow-up-line';
-import riArrowUpSLine from '@iconify-icons/ri/arrow-up-s-line';
-import riBankCardLine from '@iconify-icons/ri/bank-card-line';
-import riBankLine from '@iconify-icons/ri/bank-line';
-import riBarChartLine from '@iconify-icons/ri/bar-chart-line';
-import riBook2Line from '@iconify-icons/ri/book-2-line';
-import riBookLine from '@iconify-icons/ri/book-line';
-import riBookOpenLine from '@iconify-icons/ri/book-open-line';
-import riBookmarkFill from '@iconify-icons/ri/bookmark-fill';
-import riBookmarkLine from '@iconify-icons/ri/bookmark-line';
-import riBox3Line from '@iconify-icons/ri/box-3-line';
-import riBugLine from '@iconify-icons/ri/bug-line';
-import riBuilding2Line from '@iconify-icons/ri/building-2-line';
-import riBuildingLine from '@iconify-icons/ri/building-line';
-import riCalendar2Line from '@iconify-icons/ri/calendar-2-line';
-import riCalendarCheckLine from '@iconify-icons/ri/calendar-check-line';
-import riCalendarEventLine from '@iconify-icons/ri/calendar-event-line';
-import riCalendarLine from '@iconify-icons/ri/calendar-line';
-import riChat1Line from '@iconify-icons/ri/chat-1-line';
-import riChat3Line from '@iconify-icons/ri/chat-3-line';
-import riChatNewLine from '@iconify-icons/ri/chat-new-line';
-import riChatSmile2Line from '@iconify-icons/ri/chat-smile-2-line';
-import riCheckboxBlankLine from '@iconify-icons/ri/checkbox-blank-line';
-import riCheckboxCircleLine from '@iconify-icons/ri/checkbox-circle-line';
-import riCheckDoubleLine from '@iconify-icons/ri/check-double-line';
-import riCheckLine from '@iconify-icons/ri/check-line';
-import riCloseCircleLine from '@iconify-icons/ri/close-circle-line';
-import riCloseLine from '@iconify-icons/ri/close-line';
-import riCloudLine from '@iconify-icons/ri/cloud-line';
-import riCompass3Line from '@iconify-icons/ri/compass-3-line';
-import riCompassLine from '@iconify-icons/ri/compass-line';
-import riComputerLine from '@iconify-icons/ri/computer-line';
-import riCpuLine from '@iconify-icons/ri/cpu-line';
-import riCursorLine from '@iconify-icons/ri/cursor-line';
-import riDashboardLine from '@iconify-icons/ri/dashboard-line';
-import riDatabase2Fill from '@iconify-icons/ri/database-2-fill';
-import riDatabase2Line from '@iconify-icons/ri/database-2-line';
-import riDeleteBin7Line from '@iconify-icons/ri/delete-bin-7-line';
-import riCornerDownLeftLine from '@iconify-icons/ri/corner-down-left-line';
-import riDeleteBinLine from '@iconify-icons/ri/delete-bin-line';
-import riDeviceLine from '@iconify-icons/ri/device-line';
-import riDoubleQuotesL from '@iconify-icons/ri/double-quotes-l';
-import riFileCopyLine from '@iconify-icons/ri/file-copy-line';
-import riEditLine from '@iconify-icons/ri/edit-line';
-import riEyeLine from '@iconify-icons/ri/eye-line';
-import riErrorWarningLine from '@iconify-icons/ri/error-warning-line';
-import riExternalLinkLine from '@iconify-icons/ri/external-link-line';
-import riFeedbackLine from '@iconify-icons/ri/feedback-line';
-import riFileCodeFill from '@iconify-icons/ri/file-code-fill';
-import riFileExcelFill from '@iconify-icons/ri/file-excel-fill';
-import riFileFill from '@iconify-icons/ri/file-fill';
-import riFileInfoLine from '@iconify-icons/ri/file-info-line';
-import riFileLine from '@iconify-icons/ri/file-line';
-import riFileList3Line from '@iconify-icons/ri/file-list-3-line';
-import riFilePdfFill from '@iconify-icons/ri/file-pdf-fill';
-import riFilePdfLine from '@iconify-icons/ri/file-pdf-line';
-import riFilePptFill from '@iconify-icons/ri/file-ppt-fill';
-import riFileTextFill from '@iconify-icons/ri/file-text-fill';
-import riFileTextLine from '@iconify-icons/ri/file-text-line';
-import riFileUnknowLine from '@iconify-icons/ri/file-unknow-line';
-import riFileWordFill from '@iconify-icons/ri/file-word-fill';
-import riFileZipFill from '@iconify-icons/ri/file-zip-fill';
-import riFilter3Line from '@iconify-icons/ri/filter-3-line';
-import riFilterLine from '@iconify-icons/ri/filter-line';
-import riFolder3Line from '@iconify-icons/ri/folder-3-line';
-import riFolderAddLine from '@iconify-icons/ri/folder-add-line';
-import riFolderChartFill from '@iconify-icons/ri/folder-chart-fill';
-import riFolderFill from '@iconify-icons/ri/folder-fill';
-import riFolderLine from '@iconify-icons/ri/folder-line';
-import riFolderOpenLine from '@iconify-icons/ri/folder-open-line';
-import riFootprintLine from '@iconify-icons/ri/footprint-line';
-import riGhostLine from '@iconify-icons/ri/ghost-line';
-import riScissorsCutLine from '@iconify-icons/ri/scissors-cut-line';
-import riFlashlightLine from '@iconify-icons/ri/flashlight-line';
-import riGlobalLine from '@iconify-icons/ri/global-line';
-import riGoogleLine from '@iconify-icons/ri/google-line';
-import riHardDrive2Line from '@iconify-icons/ri/hard-drive-2-line';
-import riHeartLine from '@iconify-icons/ri/heart-line';
-import riHeartPulseLine from '@iconify-icons/ri/heart-pulse-line';
-import riHistoryLine from '@iconify-icons/ri/history-line';
-import riImageAddLine from '@iconify-icons/ri/image-add-line';
-import riImageFill from '@iconify-icons/ri/image-fill';
-import riImageLine from '@iconify-icons/ri/image-line';
-import riInformationLine from '@iconify-icons/ri/information-line';
-import riLayoutColumnLine from '@iconify-icons/ri/layout-column-line';
-import riLayoutRightLine from '@iconify-icons/ri/layout-right-line';
-import riLightbulbFlashLine from '@iconify-icons/ri/lightbulb-flash-line';
-import riLightbulbLine from '@iconify-icons/ri/lightbulb-line';
-import riLineChartLine from '@iconify-icons/ri/line-chart-line';
-import riLink from '@iconify-icons/ri/link';
-import riLinksLine from '@iconify-icons/ri/links-line';
-import riListCheck from '@iconify-icons/ri/list-check';
-import riListUnordered from '@iconify-icons/ri/list-unordered';
-import riLoader4Line from '@iconify-icons/ri/loader-4-line';
-import riLockLine from '@iconify-icons/ri/lock-line';
-import riLockUnlockLine from '@iconify-icons/ri/lock-unlock-line';
-import riAttachment2 from '@iconify-icons/ri/attachment-2';
-import riPlaneLine from '@iconify-icons/ri/plane-line';
-import riTeamLine from '@iconify-icons/ri/team-line';
-import riLogoutBoxRLine from '@iconify-icons/ri/logout-box-r-line';
-// Mobile bottom-tab bar: line + fill pairs (rendered offline on the phone,
-// so they must live in this registry — the network Iconify API is unavailable).
-import riSunLine from '@iconify-icons/ri/sun-line';
-import riSunFill from '@iconify-icons/ri/sun-fill';
-import riUser3Fill from '@iconify-icons/ri/user-3-fill';
-import riSettings3Fill from '@iconify-icons/ri/settings-3-fill';
-import riSmartphoneLine from '@iconify-icons/ri/smartphone-line';
-import riPulseLine from '@iconify-icons/ri/pulse-line';
-import riMore2Line from '@iconify-icons/ri/more-2-line';
-import riContactsBookLine from '@iconify-icons/ri/contacts-book-line';
-import riMagicLine from '@iconify-icons/ri/magic-line';
-import riMusic2Line from '@iconify-icons/ri/music-2-line';
-import riMailCheckLine from '@iconify-icons/ri/mail-check-line';
-import riInstagramLine from '@iconify-icons/ri/instagram-line';
-import riMailLine from '@iconify-icons/ri/mail-line';
-import riMap2Line from '@iconify-icons/ri/map-2-line';
-import riMapPin2Line from '@iconify-icons/ri/map-pin-2-line';
-import riMapPinAddLine from '@iconify-icons/ri/map-pin-add-line';
-import riMapPinLine from '@iconify-icons/ri/map-pin-line';
-import riMenuLine from '@iconify-icons/ri/menu-line';
-import riMessage3Line from '@iconify-icons/ri/message-3-line';
-import riMicLine from '@iconify-icons/ri/mic-line';
-import riMickeyLine from '@iconify-icons/ri/mickey-line';
-import riMoneyDollarCircleLine from '@iconify-icons/ri/money-dollar-circle-line';
-import riMore2Fill from '@iconify-icons/ri/more-2-fill';
-import riMoonFill from '@iconify-icons/ri/moon-fill';
-import riMoonLine from '@iconify-icons/ri/moon-line';
-import riMovieFill from '@iconify-icons/ri/movie-fill';
-import riMovieLine from '@iconify-icons/ri/movie-line';
-import riMusicFill from '@iconify-icons/ri/music-fill';
-import riNodeTree from '@iconify-icons/ri/node-tree';
-import riPaletteLine from '@iconify-icons/ri/palette-line';
-import riPauseLine from '@iconify-icons/ri/pause-line';
-import riPlayFill from '@iconify-icons/ri/play-fill';
-import riPlayLine from '@iconify-icons/ri/play-line';
-import riPlugLine from '@iconify-icons/ri/plug-line';
-import riPriceTag3Line from '@iconify-icons/ri/price-tag-3-line';
-import riPushpinLine from '@iconify-icons/ri/pushpin-line';
-import riQuestionLine from '@iconify-icons/ri/question-line';
-import riQuillPenLine from '@iconify-icons/ri/quill-pen-line';
-import riRefreshLine from '@iconify-icons/ri/refresh-line';
-import riRobotFill from '@iconify-icons/ri/robot-fill';
-import riRobotLine from '@iconify-icons/ri/robot-line';
-import riRunLine from '@iconify-icons/ri/run-line';
-import riSearchEyeLine from '@iconify-icons/ri/search-eye-line';
-import riSearchLine from '@iconify-icons/ri/search-line';
-import riSeedlingLine from '@iconify-icons/ri/seedling-line';
-import riSendPlaneFill from '@iconify-icons/ri/send-plane-fill';
-import riSideBarLine from '@iconify-icons/ri/side-bar-line';
-import riSendPlaneLine from '@iconify-icons/ri/send-plane-line';
-import riSettings3Line from '@iconify-icons/ri/settings-3-line';
-import riSettings4Line from '@iconify-icons/ri/settings-4-line';
-import riShuffleLine from '@iconify-icons/ri/shuffle-line';
-import riSpeedLine from '@iconify-icons/ri/speed-line';
-import riSubtractLine from '@iconify-icons/ri/subtract-line';
-import riSwapLine from '@iconify-icons/ri/swap-line';
-import riTableLine from '@iconify-icons/ri/table-line';
-import riTerminalBoxLine from '@iconify-icons/ri/terminal-box-line';
-import riTimeLine from '@iconify-icons/ri/time-line';
-import riToolsLine from '@iconify-icons/ri/tools-line';
-import riTranslate2 from '@iconify-icons/ri/translate-2';
-import riTwitterXFill from '@iconify-icons/ri/twitter-x-fill';
-import riUnpinLine from '@iconify-icons/ri/unpin-line';
-import riUpload2Line from '@iconify-icons/ri/upload-2-line';
-import riUser3Line from '@iconify-icons/ri/user-3-line';
-import riUserAddLine from '@iconify-icons/ri/user-add-line';
-import riUserLine from '@iconify-icons/ri/user-line';
-import riUserSettingsLine from '@iconify-icons/ri/user-settings-line';
-import riUserStarLine from '@iconify-icons/ri/user-star-line';
-import riWalletLine from '@iconify-icons/ri/wallet-line';
-import riWifiLine from '@iconify-icons/ri/wifi-line';
-import riZzzLine from '@iconify-icons/ri/zzz-line';
+// Myna (mynaui:), the app's icon set. Only the icons the source names are in
+// the bundle; scripts/myna-icons.mjs writes the file.
+addCollection(myna);
 
 // Simple Icons
 import siNotion from '@iconify-icons/simple-icons/notion';
+import siUnsplash from '@iconify-icons/simple-icons/unsplash';
 
-// Register all icons
-// Remix Icons
-addIcon('ri:add-circle-line', riAddCircleLine);
-addIcon('ri:add-line', riAddLine);
-addIcon('ri:alert-line', riAlertLine);
-addIcon('ri:apple-fill', riAppleFill);
-addIcon('ri:apps-line', riAppsLine);
-addIcon('ri:at-line', riAtLine);
-addIcon('ri:arrow-down-s-line', riArrowDownSLine);
-addIcon('ri:arrow-go-back-line', riArrowGoBackLine);
-addIcon('ri:arrow-left-line', riArrowLeftLine);
-addIcon('ri:arrow-right-double-line', riArrowRightDoubleLine);
-addIcon('ri:archive-line', riArchiveLine);
-addIcon('ri:inbox-unarchive-line', riInboxUnarchiveLine);
-addIcon('ri:stack-line', riStackLine);
-addIcon('ri:arrow-left-s-line', riArrowLeftSLine);
-addIcon('ri:arrow-right-s-line', riArrowRightSLine);
-addIcon('ri:arrow-up-down-line', riArrowUpDownLine);
-addIcon('ri:arrow-up-circle-fill', riArrowUpCircleFill);
-addIcon('ri:download-cloud-2-line', riDownloadCloud2Line);
-addIcon('ri:arrow-up-line', riArrowUpLine);
-addIcon('ri:arrow-up-s-line', riArrowUpSLine);
-addIcon('ri:bank-card-line', riBankCardLine);
-addIcon('ri:bank-line', riBankLine);
-addIcon('ri:bar-chart-line', riBarChartLine);
-addIcon('ri:book-2-line', riBook2Line);
-addIcon('ri:book-line', riBookLine);
-addIcon('ri:book-open-line', riBookOpenLine);
-addIcon('ri:bookmark-fill', riBookmarkFill);
-addIcon('ri:bookmark-line', riBookmarkLine);
-addIcon('ri:box-3-line', riBox3Line);
-addIcon('ri:bug-line', riBugLine);
-addIcon('ri:building-2-line', riBuilding2Line);
-addIcon('ri:building-line', riBuildingLine);
-addIcon('ri:calendar-2-line', riCalendar2Line);
-addIcon('ri:calendar-check-line', riCalendarCheckLine);
-addIcon('ri:calendar-event-line', riCalendarEventLine);
-addIcon('ri:calendar-line', riCalendarLine);
-addIcon('ri:chat-1-line', riChat1Line);
-addIcon('ri:chat-3-line', riChat3Line);
-addIcon('ri:chat-new-line', riChatNewLine);
-addIcon('ri:chat-smile-2-line', riChatSmile2Line);
-addIcon('ri:checkbox-blank-line', riCheckboxBlankLine);
-addIcon('ri:checkbox-circle-line', riCheckboxCircleLine);
-addIcon('ri:check-double-line', riCheckDoubleLine);
-addIcon('ri:check-line', riCheckLine);
-addIcon('ri:close-circle-line', riCloseCircleLine);
-addIcon('ri:close-line', riCloseLine);
-addIcon('ri:cloud-line', riCloudLine);
-addIcon('ri:compass-3-line', riCompass3Line);
-addIcon('ri:compass-line', riCompassLine);
-addIcon('ri:computer-line', riComputerLine);
-addIcon('ri:cpu-line', riCpuLine);
-addIcon('ri:cursor-line', riCursorLine);
-addIcon('ri:dashboard-line', riDashboardLine);
-addIcon('ri:database-2-fill', riDatabase2Fill);
-addIcon('ri:database-2-line', riDatabase2Line);
-addIcon('ri:delete-bin-7-line', riDeleteBin7Line);
-addIcon('ri:delete-bin-line', riDeleteBinLine);
-addIcon('ri:device-line', riDeviceLine);
-addIcon('ri:double-quotes-l', riDoubleQuotesL);
-addIcon('ri:corner-down-left-line', riCornerDownLeftLine);
-addIcon('ri:file-copy-line', riFileCopyLine);
-addIcon('ri:edit-line', riEditLine);
-addIcon('ri:eye-line', riEyeLine);
-addIcon('ri:error-warning-line', riErrorWarningLine);
-addIcon('ri:external-link-line', riExternalLinkLine);
-addIcon('ri:feedback-line', riFeedbackLine);
-addIcon('ri:file-code-fill', riFileCodeFill);
-addIcon('ri:file-excel-fill', riFileExcelFill);
-addIcon('ri:file-fill', riFileFill);
-addIcon('ri:file-info-line', riFileInfoLine);
-addIcon('ri:file-line', riFileLine);
-addIcon('ri:file-list-3-line', riFileList3Line);
-addIcon('ri:file-pdf-line', riFilePdfLine);
-addIcon('ri:file-pdf-fill', riFilePdfFill);
-addIcon('ri:file-ppt-fill', riFilePptFill);
-addIcon('ri:file-text-fill', riFileTextFill);
-addIcon('ri:file-text-line', riFileTextLine);
-addIcon('ri:file-unknow-line', riFileUnknowLine);
-addIcon('ri:file-word-fill', riFileWordFill);
-addIcon('ri:file-zip-fill', riFileZipFill);
-addIcon('ri:filter-3-line', riFilter3Line);
-addIcon('ri:filter-line', riFilterLine);
-addIcon('ri:folder-3-line', riFolder3Line);
-addIcon('ri:folder-add-line', riFolderAddLine);
-addIcon('ri:folder-chart-fill', riFolderChartFill);
-addIcon('ri:folder-fill', riFolderFill);
-addIcon('ri:folder-line', riFolderLine);
-addIcon('ri:folder-open-line', riFolderOpenLine);
-addIcon('ri:footprint-line', riFootprintLine);
-addIcon('ri:global-line', riGlobalLine);
-addIcon('ri:google-line', riGoogleLine);
-addIcon('ri:hard-drive-2-line', riHardDrive2Line);
-addIcon('ri:heart-line', riHeartLine);
-addIcon('ri:heart-pulse-line', riHeartPulseLine);
-addIcon('ri:history-line', riHistoryLine);
-addIcon('ri:image-add-line', riImageAddLine);
-addIcon('ri:image-fill', riImageFill);
-addIcon('ri:image-line', riImageLine);
-addIcon('ri:information-line', riInformationLine);
-addIcon('ri:layout-column-line', riLayoutColumnLine);
-addIcon('ri:layout-right-line', riLayoutRightLine);
-addIcon('ri:lightbulb-flash-line', riLightbulbFlashLine);
-addIcon('ri:lightbulb-line', riLightbulbLine);
-addIcon('ri:line-chart-line', riLineChartLine);
-addIcon('ri:link', riLink);
-addIcon('ri:links-line', riLinksLine);
-addIcon('ri:list-check', riListCheck);
-addIcon('ri:list-unordered', riListUnordered);
-addIcon('ri:loader-4-line', riLoader4Line);
-addIcon('ri:lock-line', riLockLine);
-addIcon('ri:lock-unlock-line', riLockUnlockLine);
-addIcon('ri:attachment-2', riAttachment2);
-addIcon('ri:plane-line', riPlaneLine);
-addIcon('ri:team-line', riTeamLine);
-addIcon('ri:logout-box-r-line', riLogoutBoxRLine);
-// Mobile bottom-tab bar icons (line + fill pairs).
-addIcon('ri:sun-line', riSunLine);
-addIcon('ri:sun-fill', riSunFill);
-addIcon('ri:user-3-fill', riUser3Fill);
-addIcon('ri:settings-3-fill', riSettings3Fill);
-addIcon('ri:smartphone-line', riSmartphoneLine);
-addIcon('ri:pulse-line', riPulseLine);
-addIcon('ri:more-2-line', riMore2Line);
-addIcon('ri:contacts-book-line', riContactsBookLine);
-addIcon('ri:magic-line', riMagicLine);
-addIcon('ri:music-2-line', riMusic2Line);
-addIcon('ri:mail-check-line', riMailCheckLine);
-addIcon('ri:instagram-line', riInstagramLine);
-addIcon('ri:mail-line', riMailLine);
-addIcon('ri:ghost-line', riGhostLine);
-addIcon('ri:scissors-cut-line', riScissorsCutLine);
-addIcon('ri:flashlight-line', riFlashlightLine);
-addIcon('ri:menu-line', riMenuLine);
-addIcon('ri:map-2-line', riMap2Line);
-addIcon('ri:map-pin-2-line', riMapPin2Line);
-addIcon('ri:map-pin-add-line', riMapPinAddLine);
-addIcon('ri:map-pin-line', riMapPinLine);
-addIcon('ri:message-3-line', riMessage3Line);
-addIcon('ri:mic-line', riMicLine);
-addIcon('ri:mickey-line', riMickeyLine);
-addIcon('ri:money-dollar-circle-line', riMoneyDollarCircleLine);
-addIcon('ri:more-2-fill', riMore2Fill);
-addIcon('ri:moon-fill', riMoonFill);
-addIcon('ri:moon-line', riMoonLine);
-addIcon('ri:movie-fill', riMovieFill);
-addIcon('ri:movie-line', riMovieLine);
-addIcon('ri:music-fill', riMusicFill);
-addIcon('ri:node-tree', riNodeTree);
-addIcon('ri:palette-line', riPaletteLine);
-addIcon('ri:pause-line', riPauseLine);
-addIcon('ri:play-fill', riPlayFill);
-addIcon('ri:play-line', riPlayLine);
-addIcon('ri:plug-line', riPlugLine);
-addIcon('ri:price-tag-3-line', riPriceTag3Line);
-addIcon('ri:pushpin-line', riPushpinLine);
-addIcon('ri:question-line', riQuestionLine);
-addIcon('ri:quill-pen-line', riQuillPenLine);
-addIcon('ri:refresh-line', riRefreshLine);
-addIcon('ri:robot-fill', riRobotFill);
-addIcon('ri:robot-line', riRobotLine);
-addIcon('ri:run-line', riRunLine);
-addIcon('ri:search-eye-line', riSearchEyeLine);
-addIcon('ri:search-line', riSearchLine);
-addIcon('ri:seedling-line', riSeedlingLine);
-addIcon('ri:send-plane-fill', riSendPlaneFill);
-addIcon('ri:side-bar-line', riSideBarLine);
-addIcon('ri:send-plane-line', riSendPlaneLine);
-addIcon('ri:settings-3-line', riSettings3Line);
-addIcon('ri:settings-4-line', riSettings4Line);
-addIcon('ri:shuffle-line', riShuffleLine);
-addIcon('ri:speed-line', riSpeedLine);
-addIcon('ri:subtract-line', riSubtractLine);
-addIcon('ri:swap-line', riSwapLine);
-addIcon('ri:table-line', riTableLine);
-addIcon('ri:terminal-box-line', riTerminalBoxLine);
-addIcon('ri:time-line', riTimeLine);
-addIcon('ri:tools-line', riToolsLine);
-addIcon('ri:translate-2', riTranslate2);
-addIcon('ri:twitter-x-fill', riTwitterXFill);
-addIcon('ri:unpin-line', riUnpinLine);
-addIcon('ri:upload-2-line', riUpload2Line);
-addIcon('ri:user-3-line', riUser3Line);
-addIcon('ri:user-add-line', riUserAddLine);
-addIcon('ri:user-line', riUserLine);
-addIcon('ri:user-settings-line', riUserSettingsLine);
-addIcon('ri:user-star-line', riUserStarLine);
-addIcon('ri:wallet-line', riWalletLine);
-addIcon('ri:wifi-line', riWifiLine);
-addIcon('ri:zzz-line', riZzzLine);
-
-// Simple Icons
 addIcon('simple-icons:notion', siNotion);
+addIcon('simple-icons:unsplash', siUnsplash);
 
 // Custom Icons — Virtues ∴ triangle logo (three dots)
 // Sized to look good at 16px: centered in 24x24 viewBox with adequate dot radius
@@ -406,16 +29,12 @@ addIcon('virtues:logo', {
 	height: 24,
 });
 
-// Atlas — the shell's drawn set (AtlasIcon.svelte), for surfaces that take an
-// icon by name. Same 16-unit grid and round caps; the stroke is a touch heavier
-// than the sidebar's 1.1 because these sit beside Remix glyphs, which are drawn
-// heavier, in tabs, menus and ⌘K.
-for (const [name, body] of Object.entries(ATLAS_GLYPHS)) {
-	addIcon(`atlas:${name}`, {
-		body: `<g fill="none" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" stroke-linejoin="round">${body}</g>`,
-		width: 16,
-		height: 16,
-	});
+// Atlas — the shell's names for its own things (AtlasIcon.svelte), for
+// surfaces that take an icon by name: tabs, menus, ⌘K, a pin's stored icon.
+// Each draws the Myna icon its row in the table names.
+for (const [name, icon] of Object.entries(ATLAS_GLYPHS)) {
+	const data = myna.icons[icon.slice('mynaui:'.length) as keyof typeof myna.icons];
+	if (data) addIcon(`atlas:${name}`, { ...data, width: 24, height: 24 });
 }
 
 // The dot: what a pin, page or chat wears when no icon has been chosen, in
@@ -426,6 +45,15 @@ addIcon('shape:circle', {
 	width: 16,
 	height: 16,
 });
+
+/**
+ * The name to draw for an icon name from anywhere: the Myna name for a
+ * Remix or Phosphor name stored or sent before the switch, else the name
+ * itself.
+ */
+export function resolveIcon(icon: string): string {
+	return LEGACY_ICONS[icon] ?? icon;
+}
 
 // Export flag to indicate icons are registered
 export const iconsRegistered = true;

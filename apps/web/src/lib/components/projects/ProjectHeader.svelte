@@ -149,13 +149,13 @@
 		</div>
 
 		<div class="head-actions">
-			<Button variant="secondary" size="sm" icon="ri:chat-new-line" onclick={() => newChatInProject(project)}
+			<Button variant="secondary" size="sm" icon="mynaui:chat-plus" onclick={() => newChatInProject(project)}
 				>New chat</Button
 			>
 			<Popover bind:open={overflowOpen} placement="bottom-end">
 				{#snippet trigger({ toggle }: { toggle: () => void })}
 					<IconButton
-						icon="ri:more-line"
+						icon="mynaui:dots"
 						label="More project actions"
 						expanded={overflowOpen}
 						haspopup="menu"
@@ -165,7 +165,7 @@
 				{#snippet children({ close }: { close: () => void })}
 					<div class="menu">
 						<MenuItem
-							icon={project.archived_at ? 'ri:inbox-unarchive-line' : 'ri:archive-line'}
+							icon={project.archived_at ? 'mynaui:inbox-up' : 'mynaui:archive'}
 							label={project.archived_at ? 'Unarchive project' : 'Archive project'}
 							onclick={() => {
 								close();
@@ -173,7 +173,7 @@
 							}}
 						/>
 						<MenuItem
-							icon="ri:delete-bin-line"
+							icon="mynaui:trash"
 							label="Delete project"
 							destructive
 							onclick={() => {
@@ -192,7 +192,7 @@
 	<!-- Archived is a state of the whole page, so it is said once, above
 	     the content, with the way back beside it. -->
 	<div class="archived-note">
-		<Icon icon="ri:archive-line" width="15" />
+		<Icon icon="mynaui:archive" width="15" />
 		<span>
 			You archived this project on {new Date(project.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}.
 			Its chats and items are all here. Unarchive it to add more.

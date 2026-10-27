@@ -29,12 +29,12 @@
 			onclick={() => void goto("/reconnect")}
 			title="Find out why and fix it"
 		>
-			<Icon icon="ri:wifi-off-line" width="13" />
+			<Icon icon="mynaui:wifi-off" width="13" />
 			<span>Can't reach server</span>
 		</button>
 	{:else}
 		<div class="offline-pill" role="status">
-			<Icon icon="ri:wifi-off-line" width="13" />
+			<Icon icon="mynaui:wifi-off" width="13" />
 			<span>Can't reach server</span>
 		</div>
 	{/if}

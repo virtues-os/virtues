@@ -472,7 +472,7 @@
 					{#if !doorOrigin && !handoffQr}
 						<div class="door mb-5">
 							{#if isInitiating}
-								<Icon icon="ri:loader-4-line" width="20" class="animate-spin text-neutral-400" />
+								<Icon icon="mynaui:spinner" width="20" class="animate-spin text-neutral-400" />
 							{:else if pairingData}
 								<div class="door-row">
 									<span class="door-label">Address</span>

@@ -49,12 +49,12 @@
 
 	const columns: Column<ProjectSummary>[] = [
 		{ key: 'name', label: 'Name', icon: PROJECT_ICON, width: '52%', minWidth: '200px' },
-		{ key: 'chat_count', label: 'Chats', icon: 'ri:chat-3-line', width: '14%', minWidth: '70px', format: 'number' },
-		{ key: 'item_count', label: 'Items', icon: 'ri:stack-line', width: '14%', minWidth: '70px', format: 'number', hideOnMobile: true },
+		{ key: 'chat_count', label: 'Chats', icon: 'mynaui:message', width: '14%', minWidth: '70px', format: 'number' },
+		{ key: 'item_count', label: 'Items', icon: 'mynaui:layers-three', width: '14%', minWidth: '70px', format: 'number', hideOnMobile: true },
 		{
 			key: 'updated_at',
 			label: 'Updated',
-			icon: 'ri:time-line',
+			icon: 'mynaui:clock-circle',
 			width: '20%',
 			minWidth: '110px',
 			hideOnMobile: true,
@@ -78,7 +78,7 @@
 
 <Page title="Projects" {description} maxWidth="wide">
 	{#snippet actions()}
-		<Button variant="secondary" size="sm" icon="ri:add-line" onclick={() => newProject()}>New project</Button>
+		<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New project</Button>
 	{/snippet}
 
 	{#if projects.length === 0 && archived.length === 0 && !firstLoad && !projectStore.error}
@@ -89,7 +89,7 @@
 				A project keeps the chats, pages and files for one piece of work together. Every chat in
 				it follows the brief you give it.
 			</p>
-			<Button variant="secondary" size="sm" icon="ri:add-line" onclick={() => newProject()}>New project</Button>
+			<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New project</Button>
 		</div>
 	{:else}
 		<UniversalDataGrid
@@ -122,7 +122,7 @@
 
 			{#snippet rowActions(p: ProjectSummary)}
 				<IconButton
-					icon="ri:more-line"
+					icon="mynaui:dots"
 					label={`Actions for ${p.name}`}
 					size="sm"
 					haspopup="menu"
@@ -148,7 +148,7 @@
 				aria-expanded={archivedOpen}
 				onclick={() => (archivedOpen = !archivedOpen)}
 			>
-				<Icon icon={archivedOpen ? 'ri:arrow-down-s-line' : 'ri:arrow-right-s-line'} width="14" />
+				<Icon icon={archivedOpen ? 'mynaui:chevron-down' : 'mynaui:chevron-right'} width="14" />
 				<span>Archived</span>
 				<span class="archived-count">{archived.length}</span>
 			</button>

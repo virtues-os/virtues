@@ -79,9 +79,9 @@
 	}
 
 	function icon(p: MacPermission) {
-		if (p.granted === true) return "ri:checkbox-circle-line";
-		if (p.granted === false) return p.required ? "ri:error-warning-line" : "ri:information-line";
-		return "ri:question-line";
+		if (p.granted === true) return "mynaui:check-circle";
+		if (p.granted === false) return p.required ? "mynaui:danger-circle" : "mynaui:info-circle";
+		return "mynaui:question-circle";
 	}
 </script>
 

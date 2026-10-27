@@ -114,7 +114,7 @@
 		{
 			key: 'title',
 			label: 'Title',
-			icon: 'ri:bookmark-line',
+			icon: 'mynaui:bookmark',
 			// Enrichment fills titles later; until then a saved URL has none,
 			// and its host is the most honest stand-in.
 			getValue: (item) => item.title || hostOf(item.url),
@@ -123,7 +123,7 @@
 		{
 			key: 'url',
 			label: 'Link',
-			icon: 'ri:links-line',
+			icon: 'mynaui:link',
 			width: '14rem',
 			getValue: (item) => hostOf(item.url),
 			sortable: false,
@@ -131,7 +131,7 @@
 		{
 			key: 'source_platform',
 			label: 'Source',
-			icon: 'ri:import-line',
+			icon: 'mynaui:inbox-down',
 			width: '8rem',
 			hideOnMobile: true,
 			getValue: (item) => item.source_platform ?? '—',
@@ -140,7 +140,7 @@
 		{
 			key: 'tags',
 			label: 'Tags',
-			icon: 'ri:price-tag-3-line',
+			icon: 'mynaui:tag',
 			width: '12rem',
 			hideOnMobile: true,
 			getValue: (item) => (item.tags?.length ? item.tags.join(', ') : '—'),
@@ -149,7 +149,7 @@
 		{
 			key: 'note',
 			label: 'Note',
-			icon: 'ri:quill-pen-line',
+			icon: 'mynaui:pen',
 			width: '12rem',
 			hideOnMobile: true,
 			getValue: (item) => item.note ?? '—',
@@ -158,7 +158,7 @@
 		{
 			key: 'timestamp',
 			label: 'Saved',
-			icon: 'ri:time-line',
+			icon: 'mynaui:clock-circle',
 			width: '7.5rem',
 			getValue: (item) => formatWhen(item.timestamp),
 		},
@@ -304,7 +304,7 @@
 				variant="secondary"
 				size="sm"
 				type="submit"
-				icon="ri:add-line"
+				icon="mynaui:plus"
 				loading={saving}
 				disabled={!url.trim()}>Save</Button
 			>
@@ -326,7 +326,7 @@
 		pageSize={25}
 		onItemClick={open}
 		rowHref={detailRoute}
-		emptyIcon="ri:bookmark-line"
+		emptyIcon="mynaui:bookmark"
 		emptyMessage="Nothing saved yet - paste a link above, or connect a browser."
 		loadingMessage="Reading the shelf..."
 		searchPlaceholder="Search bookmarks..."

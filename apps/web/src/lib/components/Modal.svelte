@@ -73,7 +73,7 @@
 				<div class="modal-header">
 					<h2 class="modal-title">{title}</h2>
 					<button class="close-btn" onclick={onClose} aria-label="Close">
-						<Icon icon="ri:close-line" width="18" />
+						<Icon icon="mynaui:x" width="18" />
 					</button>
 				</div>
 			{/if}

@@ -27,7 +27,7 @@
 </script>
 
 <StateBlock
-	icon="ri:error-warning-line"
+	icon="mynaui:danger-circle"
 	tone="error"
 	{title}
 	{message}
@@ -37,7 +37,7 @@
 
 {#snippet retry()}
 	<Button variant="secondary" size="sm" onclick={onRetry}>
-		<Icon icon="ri:refresh-line" width="14" />
+		<Icon icon="mynaui:refresh" width="14" />
 		Retry
 	</Button>
 {/snippet}

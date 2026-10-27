@@ -208,11 +208,11 @@
 <div class="wiki-content">
 	{#if loading}
 		<div class="flex items-center justify-center h-full">
-			<Icon icon="ri:loader-4-line" width="20" class="spin" />
+			<Icon icon="mynaui:spinner" width="20" class="spin" />
 		</div>
 	{:else if error}
 		<div class="error">
-			<Icon icon="ri:error-warning-line" />
+			<Icon icon="mynaui:danger-circle" />
 			<h1>Page not found</h1>
 			<p>{error}</p>
 		</div>
@@ -230,7 +230,7 @@
 		{/if}
 	{:else}
 		<div class="error">
-			<Icon icon="ri:file-unknow-line" />
+			<Icon icon="mynaui:file" />
 			<h1>Page not found</h1>
 			<p>The page "{entityId}" doesn't exist yet.</p>
 		</div>

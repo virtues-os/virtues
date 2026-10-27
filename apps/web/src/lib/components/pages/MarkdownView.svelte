@@ -85,7 +85,7 @@
 		<Button
 			variant="secondary"
 			size="sm"
-			icon={copied ? "ri:check-line" : "ri:file-copy-line"}
+			icon={copied ? "mynaui:check" : "mynaui:copy"}
 			disabled={markdown === null}
 			onclick={copy}
 		>

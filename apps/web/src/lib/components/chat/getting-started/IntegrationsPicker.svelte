@@ -118,7 +118,7 @@
 				{@const on = connected(s)}
 				<li class="row" class:on>
 					<span class="mark" aria-hidden="true">
-						{#if on}<Icon icon="ri:check-line" width="14" />{:else if s.icon}<Icon icon={s.icon} width="16" />{/if}
+						{#if on}<Icon icon="mynaui:check" width="14" />{:else if s.icon}<Icon icon={s.icon} width="16" />{/if}
 					</span>
 					<span class="what">
 						<span class="name">{s.name}</span>

@@ -295,6 +295,13 @@ body {
 	background-color: var(--color-background);
 }
 
+/* Grayscale antialiasing for all text. On macOS, WebKit's default thickens
+   each glyph's strokes, which makes Avenir look heavy at the chrome's 14px. */
+html {
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+}
+
 /* Native phone shell (class set by hooks.client.ts): suppress the iOS
    long-press callout — the app synthesizes its own context menus on
    long-press (ContextMenuProvider), and the system bubble fights them.

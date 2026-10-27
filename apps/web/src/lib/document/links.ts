@@ -286,24 +286,24 @@ export function linkMenu(editor: Editor, link: LinkAt, at: { x: number; y: numbe
 		else linkChanged('menu');
 	};
 	const reading: ContextMenuItem[] = [
-		{ id: 'open', label: 'Open', icon: 'ri:arrow-right-up-line', action: () => openLink(link.href, label) },
+		{ id: 'open', label: 'Open', icon: 'mynaui:arrow-up-right', action: () => openLink(link.href, label) },
 		...(isRef(link.href) ? openMenuItems(link.href, label) : defaultBrowserItem(link.href)),
 		{
 			id: 'copy-link',
 			label: 'Copy link',
-			icon: 'ri:file-copy-line',
+			icon: 'mynaui:copy',
 			action: () => void navigator.clipboard?.writeText(shareableHref(link.href)),
 		},
 	];
 	if (!editor.isEditable) return reading;
 	return [
 		...reading,
-		{ id: 'edit', label: 'Edit', icon: 'ri:edit-line', dividerBefore: true, action: change((now) => editLink(editor, now, at)) },
-		{ id: 'embed', label: 'Turn into embed', icon: 'ri:image-line', action: change((now) => void turnIntoEmbed(editor, now)) },
+		{ id: 'edit', label: 'Edit', icon: 'mynaui:edit', dividerBefore: true, action: change((now) => editLink(editor, now, at)) },
+		{ id: 'embed', label: 'Turn into embed', icon: 'mynaui:image', action: change((now) => void turnIntoEmbed(editor, now)) },
 		{
 			id: 'remove',
 			label: 'Remove link',
-			icon: 'ri:link-unlink',
+			icon: 'mynaui:unlink',
 			variant: 'destructive',
 			action: change((now) => editor.view.dispatch(editor.state.tr.removeMark(now.from, now.to, now.mark.type))),
 		},

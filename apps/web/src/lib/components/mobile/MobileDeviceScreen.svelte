@@ -645,7 +645,7 @@
 		{
 			key: "location",
 			title: "Location",
-			icon: "ri:map-pin-line",
+			icon: "mynaui:map-pin",
 			what: "Where you are, through the day",
 			description:
 				"Fixes from the phone's location services, including while the app is in the background. They become the visits and movements in your record, and they keep the app alive for the other streams.",
@@ -653,14 +653,14 @@
 		{
 			key: "health",
 			title: "Health",
-			icon: "ri:heart-pulse-line",
+			icon: "mynaui:heart-waves",
 			what: "Steps, sleep, heart rate",
 			description: "What the Health app already keeps - steps, sleep, heart rate, workouts - copied to your server as it lands.",
 		},
 		{
 			key: "cycle",
 			title: "Cycle",
-			icon: "ri:drop-line",
+			icon: "mynaui:droplet",
 			what: "Periods, symptoms, wrist temperature",
 			description:
 				"Your periods, spotting, ovulation tests, symptoms and your watch's nightly wrist temperature, copied from the Health app to your server. Your assistant can't read any of it.",
@@ -669,28 +669,28 @@
 		{
 			key: "calendar",
 			title: "Calendar",
-			icon: "ri:calendar-line",
+			icon: "mynaui:calendar",
 			what: "Events & invitations",
 			description: "Your calendars' events and invitations. Your server compares these plans with what actually happened.",
 		},
 		{
 			key: "contacts",
 			title: "Contacts",
-			icon: "ri:contacts-book-line",
+			icon: "mynaui:book-user",
 			what: "Names for the people in your data",
 			description: "Your address book, so your server knows the people in messages, calls and calendars by name.",
 		},
 		{
 			key: "finance",
 			title: "Finance",
-			icon: "ri:bank-card-line",
+			icon: "mynaui:credit-card",
 			what: "Accounts & transactions",
 			description: "Accounts and transactions from Apple Wallet and Apple Card, through the phone's Finance framework.",
 		},
 		{
 			key: "audio",
 			title: "Audio",
-			icon: "ri:mic-line",
+			icon: "mynaui:microphone",
 			what: "Ambient sound & transcripts",
 			description:
 				"Records the sound of your day while your phone is with you. Your server has the recordings transcribed.",
@@ -818,7 +818,7 @@
 	<div class="card">
 		<div class="stream">
 			<div class="s-icon" class:on={conn.tone === "on"}>
-				<Icon icon="ri:links-line" width={18} />
+				<Icon icon="mynaui:link" width={18} />
 			</div>
 			<div class="s-body">
 				<div class="s-title">{conn.label}</div>
@@ -829,7 +829,7 @@
 		{#if notif}
 			<div class="stream">
 				<div class="s-icon" class:on={notif.tone === "on"}>
-					<Icon icon="ri:notification-3-line" width={18} />
+					<Icon icon="mynaui:bell" width={18} />
 				</div>
 				<div class="s-body">
 					<div class="s-title">{notif.label}</div>
@@ -863,7 +863,7 @@
 				{#if on}
 					<span class="dot on" class:hollow={s.key === "audio" && !!audio?.mutedBy}></span>
 				{/if}
-				<Icon icon="ri:arrow-right-s-line" width={18} class="chev" />
+				<Icon icon="mynaui:chevron-right" width={18} class="chev" />
 			</button>
 		{/each}
 	</div>
@@ -872,7 +872,7 @@
 	<div class="card">
 		<div class="stream">
 			<div class="s-icon" class:on={!!sync && sync.queued === 0}>
-				<Icon icon="ri:refresh-line" width={18} />
+				<Icon icon="mynaui:refresh" width={18} />
 			</div>
 			<div class="s-body">
 				<div class="s-title">
@@ -891,13 +891,13 @@
 		     being kept, and when was the last of it. -->
 		<button class="stream link" type="button" onclick={() => (activityOpen = true)}>
 			<div class="s-icon" class:on={enabled}>
-				<Icon icon="ri:history-line" width={18} />
+				<Icon icon="mynaui:clock-circle" width={18} />
 			</div>
 			<div class="s-body">
 				<div class="s-title">Recent activity</div>
 				<div class="s-sub">{loading ? "Loading…" : activityLine}</div>
 			</div>
-			<Icon icon="ri:arrow-right-s-line" width={18} class="chev" />
+			<Icon icon="mynaui:chevron-right" width={18} class="chev" />
 		</button>
 	</div>
 
@@ -912,13 +912,13 @@
 			onclick={() => windowShellStore.openTabFromRoute("/virtues/you", { label: "Profile" })}
 		>
 			<div class="s-icon">
-				<Icon icon="ri:user-line" width={18} />
+				<Icon icon="mynaui:user" width={18} />
 			</div>
 			<div class="s-body">
 				<div class="s-title">Profile</div>
 				<div class="s-sub">Your name, and how the app looks</div>
 			</div>
-			<Icon icon="ri:arrow-right-s-line" width={18} class="chev" />
+			<Icon icon="mynaui:chevron-right" width={18} class="chev" />
 		</button>
 	</div>
 
@@ -1009,7 +1009,7 @@
 	     a phone that sat on a desk all afternoon is one line, not forty. -->
 	<MobileStreamPage
 		title="Recent activity"
-		icon="ri:history-line"
+		icon="mynaui:clock-circle"
 		status={activityLine}
 		on={enabled}
 		description="Location fixes this phone has recorded, newest first. This list collapses fixes at the same spot into one run with a count; a filled dot means the app was in the background when it recorded."
@@ -1023,7 +1023,7 @@
 		<div class="card share">
 			<button class="stream link" type="button" onclick={shareLog} disabled={sharing}>
 				<div class="s-icon">
-					<Icon icon="ri:file-text-line" width={18} />
+					<Icon icon="mynaui:file-text" width={18} />
 				</div>
 				<div class="s-body">
 					<div class="s-title">{sharing ? "Preparing…" : "Share the log"}</div>

@@ -111,7 +111,7 @@
 				onmousemove={() => (selected = i)}
 				onclick={() => onSelect(s)}
 			>
-				<span class="skill-tile"><Icon icon={s.icon ?? "ri:flashlight-line"} width="15" style="color: inherit" /></span>
+				<span class="skill-tile"><Icon icon={s.icon ?? "mynaui:zap"} width="15" style="color: inherit" /></span>
 				<span class="skill-name">{s.name}</span>
 				<span class="skill-description">{s.description}</span>
 			</button>
@@ -139,7 +139,7 @@
 			onmousemove={() => (selected = i)}
 			onclick={() => skills.create && onSelect(skills.create)}
 		>
-			<span class="skill-tile"><Icon icon="ri:add-line" width="15" style="color: inherit" /></span>
+			<span class="skill-tile"><Icon icon="mynaui:plus" width="15" style="color: inherit" /></span>
 			<span class="skill-name">Create new skill with Virtues</span>
 		</button>
 	{/if}

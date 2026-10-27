@@ -58,7 +58,7 @@
 	{#snippet actions()}
 		<button type="button" class="setup-go" onclick={onnext}>
 			Continue
-			<Icon icon="ri:arrow-right-line" width="16" />
+			<Icon icon="mynaui:arrow-right" width="16" />
 		</button>
 	{/snippet}
 </StepFrame>

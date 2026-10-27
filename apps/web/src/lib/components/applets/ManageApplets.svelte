@@ -79,13 +79,13 @@
 		return 'ran';
 	}
 	const OUTCOME_ICON: Record<Outcome, string> = {
-		failed: 'ri:close-circle-line',
-		stopped: 'ri:error-warning-line',
-		ran: 'ri:checkbox-circle-line',
-		running: 'ri:loader-4-line',
-		off: 'ri:subtract-line',
-		finished: 'ri:flag-line',
-		never: 'ri:subtract-line'
+		failed: 'mynaui:x-circle',
+		stopped: 'mynaui:danger-circle',
+		ran: 'mynaui:check-circle',
+		running: 'mynaui:spinner',
+		off: 'mynaui:minus',
+		finished: 'mynaui:flag',
+		never: 'mynaui:minus'
 	};
 	// Problems sort first, then everything that ran, then the quiet rest.
 	const OUTCOME_RANK: Record<Outcome, number> = {
@@ -185,12 +185,12 @@
 		e.preventDefault();
 		const items: ContextMenuItem[] = [];
 		if (chatOf(a)) {
-			items.push({ id: 'chat', label: 'Open conversation', icon: 'ri:chat-3-line', action: () => openConversation(a) });
+			items.push({ id: 'chat', label: 'Open conversation', icon: 'mynaui:message', action: () => openConversation(a) });
 		}
 		items.push({ id: 'home', label: 'Open applet', icon: 'atlas:applets', action: () => openHome(a) });
-		items.push({ id: 'history', label: 'Run history', icon: 'ri:history-line', action: () => openHistory(a) });
+		items.push({ id: 'history', label: 'Run history', icon: 'mynaui:clock-circle', action: () => openHistory(a) });
 		if (a.enabled && !a.archived_at) {
-			items.push({ id: 'run', label: 'Run now', icon: 'ri:play-line', action: () => void retry(a) });
+			items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void retry(a) });
 		}
 		items.push(pinMenuItem({ url: `/applet/${a.id}`, label: a.name, icon: 'atlas:applets' }));
 		contextMenu.show({ x: e.clientX, y: e.clientY }, items);
@@ -308,7 +308,7 @@
 <section class="applets-panel">
 	{#if fromList}
 		<button type="button" class="backlink" onclick={back}>
-			<Icon icon="ri:arrow-left-line" width="14" />
+			<Icon icon="mynaui:arrow-left" width="14" />
 			Back to Applets
 		</button>
 	{/if}
@@ -328,7 +328,7 @@
 			<Popover bind:open={moreMenuOpen} placement="bottom-end" offset={4}>
 				{#snippet trigger({ toggle })}
 					<IconButton
-						icon="ri:more-2-fill"
+						icon="mynaui:dots-vertical"
 						label="More"
 						size="md"
 						variant="secondary"
@@ -340,7 +340,7 @@
 				{#snippet children()}
 					<div class="new-menu" role="menu">
 						<MenuItem
-							icon="ri:refresh-line"
+							icon="mynaui:refresh"
 							label="Re-read from disk"
 							description="Pick up applet folders that changed outside the app"
 							loading={reconciling}

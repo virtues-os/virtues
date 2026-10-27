@@ -569,11 +569,11 @@
 		adjust: 'Adjustment',
 	};
 	const kindIcon: Record<string, string> = {
-		grant: 'ri:refresh-line',
-		topup: 'ri:add-circle-line',
-		charge: 'ri:sparkling-2-line',
-		refund: 'ri:arrow-go-back-line',
-		adjust: 'ri:equalizer-line',
+		grant: 'mynaui:refresh',
+		topup: 'mynaui:plus-circle',
+		charge: 'mynaui:sparkles',
+		refund: 'mynaui:undo',
+		adjust: 'mynaui:fine-tune',
 	};
 
 	// Human "renews" date from expiry.
@@ -976,7 +976,7 @@
 					{:else if byoStatus?.configured}
 						<div class="panel">
 							<div class="panel-head">
-								<div class="panel-mark"><Icon icon="ri:key-line" /></div>
+								<div class="panel-mark"><Icon icon="mynaui:key" /></div>
 								<div class="panel-body">
 									<div class="panel-title">AI calls go to your endpoint</div>
 									<div class="panel-facts">
@@ -996,7 +996,7 @@
 									</p>
 								</div>
 								<Button variant="ghost" onclick={startByoDelete}>
-									<Icon icon="ri:close-circle-line" />
+									<Icon icon="mynaui:x-circle" />
 									Remove
 								</Button>
 							</div>

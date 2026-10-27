@@ -655,7 +655,7 @@
 <Page padding="none" scrollable={false}>
 	{#if loading}
 		<div class="flex items-center justify-center h-full">
-			<Icon icon="ri:loader-4-line" width="20" class="spin" />
+			<Icon icon="mynaui:spinner" width="20" class="spin" />
 		</div>
 	{:else if error}
 		<div class="max-w-2xl mx-auto p-4">
@@ -830,7 +830,7 @@
 						{#if !opened || stillLoading(opened, isSynced, refusedReason) || (treeDoc && isSynced && !$converterSettled)}
 							<div class="editor-loading" data-print="hide">
 								<Icon
-									icon="ri:loader-4-line"
+									icon="mynaui:spinner"
 									width="16"
 									class="spin"
 								/>

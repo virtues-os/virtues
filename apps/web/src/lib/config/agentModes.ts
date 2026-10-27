@@ -30,25 +30,25 @@ export const AGENT_MODES: AgentMode[] = [
 		id: 'chat',
 		name: 'Chat',
 		description: 'Asks before changing anything',
-		icon: 'ri:chat-3-line'
+		icon: 'mynaui:message'
 	},
 	{
 		id: 'deep_research',
 		name: 'Deep research',
 		description: 'Investigates your records and the web',
-		icon: 'ri:search-eye-line'
+		icon: 'mynaui:search'
 	},
 	{
 		id: 'sudo',
 		name: 'Sudo',
 		description: 'Full access to the server, asks before deleting anything',
-		icon: 'ri:terminal-box-line'
+		icon: 'mynaui:terminal'
 	},
 	{
 		id: 'local',
 		name: 'Local',
 		description: "A small model on your server's NPU",
-		icon: 'ri:cpu-line'
+		icon: 'mynaui:chip'
 	}
 ];
 

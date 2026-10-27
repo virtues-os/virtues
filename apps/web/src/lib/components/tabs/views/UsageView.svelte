@@ -48,7 +48,7 @@
 		{
 			key: "created_at",
 			label: "When",
-			icon: "ri:time-line",
+			icon: "mynaui:clock-circle",
 			width: "20%",
 			minWidth: "150px",
 			sortable: true,
@@ -59,25 +59,25 @@
 		{
 			key: "feature",
 			label: "What for",
-			icon: "ri:price-tag-3-line",
+			icon: "mynaui:tag",
 			width: "20%",
 			minWidth: "120px",
 			getValue: (c) => (c.feature ? featureLabel(c.feature) : "—"),
 		},
-		{ key: "model", label: "Model", icon: "ri:cpu-line", width: "30%", minWidth: "170px" },
+		{ key: "model", label: "Model", icon: "mynaui:chip", width: "30%", minWidth: "170px" },
 		{
 			// Prompt + completion + reasoning: three columns of small numbers
 			// nobody reads separately. `getValue` keeps the column keyed on a
 			// real field while displaying the sum.
 			key: "prompt_tokens",
 			label: "Tokens",
-			icon: "ri:hashtag",
+			icon: "mynaui:hash",
 			width: "15%",
 			minWidth: "100px",
 			hideOnMobile: true,
 			getValue: (c) => tokens(c),
 		},
-		{ key: "cost_micros", label: "Cost", icon: "ri:coin-line", width: "15%", minWidth: "100px" },
+		{ key: "cost_micros", label: "Cost", icon: "mynaui:dollar-circle", width: "15%", minWidth: "100px" },
 	];
 
 	function tokens(c: AiCallRow): number {
@@ -137,7 +137,7 @@
 		entityType="ai-call"
 		server={fetchCalls}
 		pageSize={25}
-		emptyIcon="ri:sparkling-line"
+		emptyIcon="mynaui:sparkles"
 		emptyMessage="No AI calls yet"
 		loadingMessage="Reading the call log…"
 		searchPlaceholder="Search by purpose or model…"

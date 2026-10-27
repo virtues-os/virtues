@@ -192,35 +192,35 @@
 			{
 				id: "open",
 				label: "Open",
-				icon: "ri:arrow-right-up-line",
+				icon: "mynaui:arrow-up-right",
 				action: () => void window.open(href, "_blank", "noopener"),
 			},
 			{
 				id: "copy-link",
 				label: "Copy link",
-				icon: "ri:file-copy-line",
+				icon: "mynaui:copy",
 				action: () => void navigator.clipboard?.writeText(shareableHref(src)),
 			},
 		];
 		if (!view.editable) return items;
 		items.push(
-			{ id: "edit", label: "Edit", icon: "ri:edit-line", dividerBefore: true, action: () => edit(x, y) },
-			{ id: "turn-into-link", label: "Turn into link", icon: "ri:link", action: turnIntoLink },
+			{ id: "edit", label: "Edit", icon: "mynaui:edit", dividerBefore: true, action: () => edit(x, y) },
+			{ id: "turn-into-link", label: "Turn into link", icon: "mynaui:link", action: turnIntoLink },
 		);
 		if (isImage) {
 			items.push(
 				{
 					id: "width-small",
 					label: "Small (320px)",
-					icon: "ri:contract-left-right-line",
+					icon: "mynaui:move-horizontal",
 					dividerBefore: true,
 					action: () => view.setAttrs({ width: 320 }),
 				},
-				{ id: "width-medium", label: "Medium (600px)", icon: "ri:pause-line", action: () => view.setAttrs({ width: 600 }) },
+				{ id: "width-medium", label: "Medium (600px)", icon: "mynaui:pause", action: () => view.setAttrs({ width: 600 }) },
 				{
 					id: "width-original",
 					label: "Original size",
-					icon: "ri:expand-left-right-line",
+					icon: "mynaui:move-horizontal",
 					action: () => view.setAttrs({ width: null }),
 				},
 			);
@@ -228,7 +228,7 @@
 		items.push({
 			id: "remove",
 			label: "Remove",
-			icon: "ri:delete-bin-line",
+			icon: "mynaui:trash",
 			variant: "destructive",
 			dividerBefore: true,
 			action: () => view.remove(),
@@ -253,7 +253,7 @@
 
 {#snippet uploading(o: { here: boolean; percent: number | null })}
 	<div class="doc-file-card doc-upload" role="status">
-		<Icon icon="ri:loader-4-line" width="20" class="doc-upload-spinner" />
+		<Icon icon="mynaui:spinner" width="20" class="doc-upload-spinner" />
 		<span class="doc-file-info">
 			<span class="doc-file-name">{o.here ? `Uploading ${name}…` : `${name} is uploading on another device…`}</span>
 			{#if o.percent !== null}<span class="doc-file-ext">{o.percent}%</span>{/if}
@@ -263,7 +263,7 @@
 
 {#snippet notUploaded(o: { here: boolean; reason: string; mayRecover: boolean; refused: boolean })}
 	<div class="doc-file-card doc-upload doc-upload-failed" role="alert">
-		<Icon icon="ri:error-warning-line" width="20" />
+		<Icon icon="mynaui:danger-circle" width="20" />
 		<span class="doc-file-info">
 			<span class="doc-file-name">
 				{o.here
@@ -326,7 +326,7 @@
 	{:else if view.type === "audio"}
 		<div class="doc-audio">
 			<div class="doc-audio-head">
-				<Icon icon="ri:music-2-line" width="16" />
+				<Icon icon="mynaui:music" width="16" />
 				<span class="doc-file-name">{name}</span>
 			</div>
 			<audio controls preload="metadata" src={href} onerror={didNotLoad}></audio>

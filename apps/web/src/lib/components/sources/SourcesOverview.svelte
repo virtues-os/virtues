@@ -208,13 +208,13 @@
 			     no edge), and Catalog is the row's one real action, so the two
 			     are not two bordered boxes of different heights arguing. -->
 			<IconButton
-				icon="ri:refresh-line"
+				icon="mynaui:refresh"
 				label="Refresh"
 				size="md"
 				disabled={refreshing}
 				onclick={() => void loadStreams()}
 			/>
-			<Button variant="secondary" size="sm" icon="ri:apps-line" onclick={openCatalog}>
+			<Button variant="secondary" size="sm" icon="mynaui:grid" onclick={openCatalog}>
 				Catalog
 			</Button>
 		</div>
@@ -225,10 +225,10 @@
 
 	{#if notice}
 		<div class="notice" class:ok={notice.good}>
-			<Icon icon={notice.good ? 'ri:check-line' : 'ri:information-line'} width="16" />
+			<Icon icon={notice.good ? 'mynaui:check' : 'mynaui:info-circle'} width="16" />
 			<span>{notice.text}</span>
 			<IconButton
-				icon="ri:close-line"
+				icon="mynaui:x"
 				label="Dismiss"
 				size="xs"
 				onclick={() => (noticeDismissed = true)}

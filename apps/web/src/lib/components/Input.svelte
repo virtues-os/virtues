@@ -239,7 +239,7 @@
 						aria-label="Clear input"
 					>
 						<Icon
-							icon="ri:close-circle-line"
+							icon="mynaui:x-circle"
 							width="14"
 							height="14"
 						/>
@@ -299,7 +299,7 @@
 						!hasError &&
 						!isSaving}
 				>
-					<Icon icon="ri:alert-line" width="14" height="14"
+					<Icon icon="mynaui:danger-triangle" width="14" height="14"
 					/>
 				</div>
 
@@ -309,7 +309,7 @@
 					class:visible={isSaving || loading}
 				>
 					<Icon
-						icon="ri:loader-4-line"
+						icon="mynaui:spinner"
 						width="14"
 						height="14"
 						class="spinner"
@@ -326,7 +326,7 @@
 						!loading &&
 						!warning}
 				>
-					<Icon icon="ri:check-line" width="14" height="14"
+					<Icon icon="mynaui:check" width="14" height="14"
 					/>
 				</div>
 
@@ -335,7 +335,7 @@
 					class="icon icon-error"
 					class:visible={hasError && !isFocused}
 				>
-					<Icon icon="ri:close-line" width="14" height="14"
+					<Icon icon="mynaui:x" width="14" height="14"
 					/>
 				</div>
 			</div>

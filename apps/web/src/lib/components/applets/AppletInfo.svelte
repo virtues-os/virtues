@@ -47,7 +47,7 @@
 				{:else}
 					<span class="history-body"><RecentDots {action} {index} /></span>
 				{/if}
-				<Icon icon={historyOpen ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'} width="16" />
+				<Icon icon={historyOpen ? 'mynaui:chevron-up' : 'mynaui:chevron-down'} width="16" />
 			</button>
 			{#if historyOpen}
 				<div class="opened">{@render history()}</div>
@@ -63,7 +63,7 @@
 			onclick={() => (technicalOpen = !technicalOpen)}
 		>
 			<span class="row-label">Technical details</span>
-			<Icon icon={technicalOpen ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'} width="16" />
+			<Icon icon={technicalOpen ? 'mynaui:chevron-up' : 'mynaui:chevron-down'} width="16" />
 		</button>
 		{#if technicalOpen}
 			<div class="opened">{@render technical()}</div>

@@ -22,18 +22,12 @@ importers:
       '@floating-ui/dom':
         specifier: ^1.8.0
         version: 1.8.0
-      '@iconify-icons/ri':
-        specifier: ^1.2.11
-        version: 1.2.11
       '@iconify-icons/simple-icons':
         specifier: ^1.2.75
         version: 1.2.75
       '@iconify-json/lucide':
         specifier: ^1.2.147
         version: 1.2.147
-      '@iconify-json/ri':
-        specifier: ^1.2.10
-        version: 1.2.10
       '@iconify/svelte':
         specifier: ^5.2.2
         version: 5.2.2(svelte@5.57.0)
@@ -188,6 +182,9 @@ importers:
         specifier: ^13.6.32
         version: 13.6.32
     devDependencies:
+      '@iconify-json/mynaui':
+        specifier: 1.2.19
+        version: 1.2.19
       '@sveltejs/adapter-static':
         specifier: ^3.0.10
         version: 3.0.10(@sveltejs/kit@2.70.3(@opentelemetry/api@1.9.0)(@sveltejs/vite-plugin-svelte@7.3.0(svelte@5.57.0)(vite@8.2.2(@types/node@26.0.0)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)))(svelte@5.57.0)(typescript@6.0.3)(vite@8.2.2(@types/node@26.0.0)(esbuild@0.27.7)(jiti@2.7.0)(tsx@4.21.0)))
@@ -429,17 +426,14 @@ packages:
   '@floating-ui/utils@0.2.12':
     resolution: {integrity: sha512-HpCo8tmWzLVad5s2d19EhAz5zqrrQ6s69qd6moPMQvkOuSwDT1YgRfWSVuc4ennqrgv3OHppiOGMQ7oC13yIww==}
 
-  '@iconify-icons/ri@1.2.11':
-    resolution: {integrity: sha512-fgwo9R5oItnQuslMdfLldrMp4LpdF83+SDzcMDV799yzCGyvuo4ldzOC36k4FC6XkCdxViiaF00toYHJDDPMTA==}
-
   '@iconify-icons/simple-icons@1.2.75':
     resolution: {integrity: sha512-+gHOuUxGGYVSyyLtdGfaLqc76HMCsevHnOEFuZkYdL+cCxxJlQiWa2STjINui9lxO7A2wFEVA+IREVbP/3R4MA==}
 
   '@iconify-json/lucide@1.2.147':
     resolution: {integrity: sha512-7Qqa/joSBeUxihWsQJx5nKcqMWtV3YrH90Jldxcx4J9ciTLavRUlpexQwRTcx9dcb7CJpISfjZTj42zD/30sqA==}
 
-  '@iconify-json/ri@1.2.10':
-    resolution: {integrity: sha512-WWMhoncVVM+Xmu9T5fgu2lhYRrKTEWhKk3Com0KiM111EeEsRLiASjpsFKnC/SrB6covhUp95r2mH8tGxhgd5Q==}
+  '@iconify-json/mynaui@1.2.19':
+    resolution: {integrity: sha512-Nsoo0jaZLM7Ws45TDiSxBDGgWdbpwhLfgRil/5tQeDJykdtmS5ILZsJ6fkCS1iNXURghhAiLipb15A1d7IQcEQ==}
 
   '@iconify/svelte@5.2.2':
     resolution: {integrity: sha512-XMXxD3nzH7yB68C3K4sNwzrJ1TBscODR0ZqCeNf0KGuEMCTSuCo0jHNDZ0o0iRXTylO41NSz/DWam/4atLG1yw==}
@@ -2500,10 +2494,6 @@ snapshots:
 
   '@floating-ui/utils@0.2.12': {}
 
-  '@iconify-icons/ri@1.2.11':
-    dependencies:
-      '@iconify/types': 2.0.0
-
   '@iconify-icons/simple-icons@1.2.75':
     dependencies:
       '@iconify/types': 2.0.0
@@ -2512,7 +2502,7 @@ snapshots:
     dependencies:
       '@iconify/types': 2.0.0
 
-  '@iconify-json/ri@1.2.10':
+  '@iconify-json/mynaui@1.2.19':
     dependencies:
       '@iconify/types': 2.0.0
 

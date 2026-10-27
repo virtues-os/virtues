@@ -36,7 +36,7 @@
 				onclick={onChangeCover}
 			>
 				<Icon
-					icon="ri:image-edit-line"
+					icon="mynaui:image"
 					width="14"
 				/>
 				Change cover
@@ -45,7 +45,7 @@
 				class="cover-overlay-btn cover-overlay-btn-danger"
 				onclick={onRemoveCover}
 			>
-				<Icon icon="ri:close-line" width="14" />
+				<Icon icon="mynaui:x" width="14" />
 				Remove
 			</button>
 		</div>

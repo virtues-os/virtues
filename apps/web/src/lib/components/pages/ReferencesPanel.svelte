@@ -30,18 +30,18 @@
 				<span class="references-count">{backlinks.length}</span>
 			{/if}
 		</span>
-		<IconButton icon="ri:close-line" label="Close references" size="sm" onclick={onClose} />
+		<IconButton icon="mynaui:x" label="Close references" size="sm" onclick={onClose} />
 	</header>
 
 	<div class="references-body">
 		{#if loading}
 			<div class="references-state">
-				<Icon icon="ri:loader-4-line" width="15" class="spin" />
+				<Icon icon="mynaui:spinner" width="15" class="spin" />
 				<span>Finding references…</span>
 			</div>
 		{:else if backlinks.length === 0}
 			<div class="references-empty">
-				<Icon icon="ri:links-line" width="18" />
+				<Icon icon="mynaui:link" width="18" />
 				<p>No references yet.</p>
 				<span
 					>When another page links here with <span class="mono">@</span>, it
@@ -58,7 +58,7 @@
 						>
 							<span class="reference-item-head">
 								<Icon
-									icon={ref.icon || "ri:file-text-line"}
+									icon={ref.icon || "mynaui:file-text"}
 									width="14"
 									class="reference-icon"
 								/>

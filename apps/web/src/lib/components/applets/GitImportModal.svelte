@@ -69,7 +69,7 @@
 	{#if result}
 		<div class="result">
 			<div class="result-row">
-				<Icon icon="ri:check-line" width="16" />
+				<Icon icon="mynaui:check" width="16" />
 				<span>Imported from <code>{url}</code></span>
 			</div>
 			<dl class="counts">
@@ -106,7 +106,7 @@
 			<!-- This caveat lived only in a source comment. The one screen where
 			     someone decides to run a stranger's code is where it belongs. -->
 			<div class="warn">
-				<Icon icon="ri:alert-line" width="16" />
+				<Icon icon="mynaui:danger-triangle" width="16" />
 				<div>
 					<strong>This runs someone else's code on your server.</strong>
 					Imported applets are sandboxed and cannot gain root or read your

@@ -80,11 +80,11 @@
 
 	<div class="ref-preview-actions">
 		<button class="ref-preview-open" onclick={onOpen}>
-			<Icon icon="ri:arrow-right-up-line" width="13" /> Open
+			<Icon icon="mynaui:arrow-up-right" width="13" /> Open
 		</button>
 		{#if onTurnInto}
 			<button class="ref-preview-turn" title="Turn into…" onclick={() => onTurnInto?.("full")}>
-				<Icon icon="ri:layout-line" width="13" /> Turn into…
+				<Icon icon="mynaui:layout" width="13" /> Turn into…
 			</button>
 		{/if}
 	</div>

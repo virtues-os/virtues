@@ -52,7 +52,7 @@
 				{
 					id: "copy-link",
 					label: "Copy link",
-					icon: "ri:file-copy-line",
+					icon: "mynaui:copy",
 					action: () => void navigator.clipboard?.writeText(shareableHref(to)),
 				},
 				...(view.editable
@@ -60,14 +60,14 @@
 							{
 								id: "edit",
 								label: "Edit",
-								icon: "ri:edit-line",
+								icon: "mynaui:edit",
 								dividerBefore: true,
 								action: () => edit(x, y),
 							},
 							{
 								id: "remove",
 								label: "Remove",
-								icon: "ri:delete-bin-line",
+								icon: "mynaui:trash",
 								variant: "destructive" as const,
 								action: () => view.remove(),
 							},

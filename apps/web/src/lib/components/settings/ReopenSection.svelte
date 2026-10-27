@@ -60,7 +60,7 @@
 
 	{#if error}
 		<p class="err">
-			<Icon icon="ri:error-warning-line" width="14" />
+			<Icon icon="mynaui:danger-circle" width="14" />
 			{error}
 		</p>
 	{/if}

@@ -169,7 +169,7 @@
 				     not a stack trace: name the condition and the fix, and
 				     keep the OS's sentence beneath it as evidence. -->
 				{#if why}
-					<p class="run-text"><Icon icon="ri:lock-line" width="12" /> {why.title}. {why.remedy}</p>
+					<p class="run-text"><Icon icon="mynaui:lock" width="12" /> {why.title}. {why.remedy}</p>
 					{#if canFix && why.open}
 						<Button variant="secondary" size="sm" onclick={() => why.open?.()}>
 							Open {why.label} on this computer

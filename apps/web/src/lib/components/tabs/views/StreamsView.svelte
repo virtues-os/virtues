@@ -101,7 +101,7 @@
 			<div
 				class="mb-6 flex items-start gap-2.5 rounded-md border border-border bg-surface px-3.5 py-2.5"
 			>
-				<Icon icon="ri:lock-2-line" class="mt-0.5 flex-none text-foreground-muted" />
+				<Icon icon="mynaui:lock" class="mt-0.5 flex-none text-foreground-muted" />
 				<p class="text-xs leading-relaxed text-foreground-muted">
 					<span class="text-foreground">Read-only.</span> This is the raw data your devices
 					sent, and your server builds everything else from it. Your server can rebuild derived data

@@ -4,8 +4,8 @@
 	"version": "0.0.1",
 	"type": "module",
 	"scripts": {
-		"dev": "node scripts/build-converter.mjs && vite dev --host",
-		"build": "node scripts/build-converter.mjs && vite build && node scripts/index-html.mjs && node scripts/precompress.mjs && node scripts/write-bundle-manifest.mjs",
+		"dev": "node scripts/build-converter.mjs && node scripts/myna-icons.mjs && vite dev --host",
+		"build": "node scripts/build-converter.mjs && node scripts/myna-icons.mjs && vite build && node scripts/index-html.mjs && node scripts/precompress.mjs && node scripts/write-bundle-manifest.mjs",
 		"converter": "node scripts/build-converter.mjs",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
@@ -17,6 +17,7 @@
 		"tauri:build": "tauri build"
 	},
 	"devDependencies": {
+		"@iconify-json/mynaui": "1.2.19",
 		"@sveltejs/adapter-static": "^3.0.10",
 		"@sveltejs/kit": "^2.70.3",
 		"@sveltejs/vite-plugin-svelte": "^7.3.0",
@@ -35,10 +36,8 @@
 	"dependencies": {
 		"@ai-sdk/svelte": "5.0.16",
 		"@floating-ui/dom": "^1.8.0",
-		"@iconify-icons/ri": "^1.2.11",
 		"@iconify-icons/simple-icons": "^1.2.75",
 		"@iconify-json/lucide": "^1.2.147",
-		"@iconify-json/ri": "^1.2.10",
 		"@iconify/svelte": "^5.2.2",
 		"@maplibre/maplibre-gl-leaflet": "^0.1.4",
 		"@protomaps/basemaps": "5.7.2",

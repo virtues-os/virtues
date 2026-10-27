@@ -415,7 +415,7 @@
     <!-- Header -->
     <div class="terminal-header">
         <div class="header-left">
-            <Icon icon="ri:terminal-box-line"/>
+            <Icon icon="mynaui:terminal"/>
             <span class="terminal-title">Terminal</span>
             <!-- The wheel now scrolls tmux's history, which means the mouse
                  belongs to the terminal and click-drag no longer selects text.
@@ -425,12 +425,12 @@
         <div class="header-right">
             {#if uploadError}
                 <span class="connection-badge error" title={uploadError}>
-                    <Icon icon="ri:error-warning-line"/>
+                    <Icon icon="mynaui:danger-circle"/>
                     Upload failed
                 </span>
             {:else if uploading}
                 <span class="connection-badge">
-                    <Icon icon="ri:loader-4-line" class="animate-spin"/>
+                    <Icon icon="mynaui:spinner" class="animate-spin"/>
                     Uploading
                 </span>
             {/if}
@@ -440,16 +440,16 @@
                 class:error={connectionStatus === "disconnected"}
             >
                 {#if connectionStatus === "connected"}
-                    <Icon icon="ri:wifi-line"/>
+                    <Icon icon="mynaui:wifi"/>
                     Connected
                 {:else if connectionStatus === "connecting"}
-                    <Icon icon="ri:loader-4-line" class="animate-spin"/>
+                    <Icon icon="mynaui:spinner" class="animate-spin"/>
                     Connecting
                 {:else if connectionStatus === "reconnecting"}
-                    <Icon icon="ri:loader-4-line" class="animate-spin"/>
+                    <Icon icon="mynaui:spinner" class="animate-spin"/>
                     Reconnecting
                 {:else}
-                    <Icon icon="ri:wifi-off-line"/>
+                    <Icon icon="mynaui:wifi-off"/>
                     Disconnected
                 {/if}
             </span>

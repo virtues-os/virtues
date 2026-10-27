@@ -81,7 +81,7 @@
 
 <div class="proposal" class:live={enabled}>
 	<div class="head">
-		<Icon icon={enabled ? 'ri:check-line' : 'ri:flashlight-line'} width="15" />
+		<Icon icon={enabled ? 'mynaui:check' : 'mynaui:zap'} width="15" />
 		<div class="titles">
 			<TextAction onclick={open}>{name}</TextAction>
 			{#if description}

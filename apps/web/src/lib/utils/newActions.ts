@@ -70,7 +70,7 @@ export function newTabMenuItems(paneId: 'left' | 'right' | undefined, opts: { br
 		{
 			id: 'new-temporary-chat',
 			label: 'New temporary chat',
-			icon: 'ri:ghost-line',
+			icon: 'mynaui:incognito',
 			shortcut: shortcuts.format('mod+shift+i'),
 			action: () => open('/?temporary=1', 'Temporary Chat'),
 		},
@@ -101,7 +101,7 @@ export function newTabMenuItems(paneId: 'left' | 'right' | undefined, opts: { br
 		items.push({
 			id: 'browser',
 			label: 'Browser',
-			icon: 'ri:global-line',
+			icon: 'mynaui:globe',
 			// One browser, shared with the assistant: an open one comes to the front.
 			action: () => {
 				const browser = windowShellStore.findTab((t) => t.type === 'browser');
@@ -122,7 +122,7 @@ export function newTabMenuItems(paneId: 'left' | 'right' | undefined, opts: { br
 		{
 			id: 'go-to',
 			label: 'Go to',
-			icon: 'ri:compass-3-line',
+			icon: 'mynaui:compass',
 			submenu: sidebarDoors.all.flatMap((door) => {
 				const route = DOOR_ROUTES[door.id];
 				return route

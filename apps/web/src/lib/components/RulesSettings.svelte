@@ -280,13 +280,13 @@
 								<span class="text">{row.rule}</span>
 								<span class="actions">
 									<IconButton
-										icon="ri:edit-line"
+										icon="mynaui:edit"
 										label="Edit rule"
 										size="sm"
 										onclick={() => startEdit(row)}
 									/>
 									<IconButton
-										icon="ri:close-line"
+										icon="mynaui:x"
 										label="Remove rule"
 										size="sm"
 										onclick={() => remove(row)}

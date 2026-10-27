@@ -101,7 +101,7 @@
 	use:portal
 >
 	<button class="lightbox-close" onclick={close} aria-label="Close">
-		<Icon icon="ri:close-line" width="20" />
+		<Icon icon="mynaui:x" width="20" />
 	</button>
 	<img
 		bind:this={imgEl}

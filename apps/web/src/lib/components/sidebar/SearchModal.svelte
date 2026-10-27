@@ -100,14 +100,14 @@
 		{
 			id: "new-chat",
 			label: "New Chat",
-			icon: "ri:add-line",
+			icon: "mynaui:plus",
 			shortcut: shortcuts.format("mod+n"),
 			action: () => windowShellStore.newChat(),
 		},
 		{
 			id: "new-temp-chat",
 			label: "New Temporary Chat",
-			icon: "ri:ghost-line",
+			icon: "mynaui:incognito",
 			shortcut: shortcuts.format("mod+shift+i"),
 			action: () =>
 				windowShellStore.openTabFromRoute("/?temporary=1", {
@@ -117,7 +117,7 @@
 		{
 			id: "new-page",
 			label: "New Page",
-			icon: "ri:file-text-line",
+			icon: "mynaui:file-text",
 			shortcut: shortcuts.format("mod+shift+n"),
 			action: createNewPage,
 		},
@@ -136,27 +136,27 @@
 		{
 			id: "wiki",
 			label: "Go to Wiki",
-			icon: "ri:book-2-line",
+			icon: "mynaui:book",
 			shortcut: shortcuts.format("mod+w"),
 			action: () => windowShellStore.openTabFromRoute("/wiki"),
 		},
 		{
 			id: "sources",
 			label: "Go to Sources",
-			icon: "ri:device-line",
+			icon: "mynaui:mobile",
 			action: () => windowShellStore.openTabFromRoute("/sources"),
 		},
 		{
 			id: "change-theme",
 			label: "Change Theme",
-			icon: "ri:palette-line",
+			icon: "mynaui:swatches",
 			action: enterThemeMode,
 			keepOpen: true,
 		},
 		{
 			id: "settings",
 			label: "Open Settings",
-			icon: "ri:settings-4-line",
+			icon: "mynaui:cog",
 			action: () => windowShellStore.openTabFromRoute("/virtues/you"),
 		},
 	];
@@ -524,7 +524,7 @@
 				<!-- Theme Selection Header -->
 				<div class="search-input-container">
 					<button class="back-button" onclick={exitThemeMode}>
-						<Icon icon="ri:arrow-left-line" width="18" />
+						<Icon icon="mynaui:arrow-left" width="18" />
 					</button>
 					<span class="mode-title">Select Theme</span>
 					<kbd class="escape-hint">Esc</kbd>
@@ -569,7 +569,7 @@
 				<!-- Search Input -->
 				<div class="search-input-container">
 					<Icon
-						icon="ri:search-line"
+						icon="mynaui:search"
 						width="18"
 						class="search-icon"
 					/>
@@ -599,7 +599,7 @@
 						}}
 						onmouseenter={() => (selectedIndex = 0)}
 					>
-						<Icon icon="ri:sparkling-2-line" width="16" class="result-icon" />
+						<Icon icon="mynaui:sparkles" width="16" class="result-icon" />
 						<span class="result-label">Ask Virtues — <span class="ask-q">"{effectiveQuery.trim()}"</span></span>
 						<kbd class="result-shortcut">⏎</kbd>
 					</button>
@@ -658,7 +658,7 @@
 								onmouseenter={() => (selectedIndex = index)}
 							>
 								<Icon
-									icon="ri:message-3-line"
+									icon="mynaui:message"
 									width="16"
 									class="result-icon"
 								/>
@@ -688,7 +688,7 @@
 								onmouseenter={() => (selectedIndex = index)}
 							>
 								<Icon
-									icon="ri:file-text-line"
+									icon="mynaui:file-text"
 									width="16"
 									class="result-icon"
 								/>
@@ -753,7 +753,7 @@
 								}}
 								onmouseenter={() => (selectedIndex = index)}
 							>
-								<Icon icon="ri:file-text-line" width="16" class="result-icon" />
+								<Icon icon="mynaui:file-text" width="16" class="result-icon" />
 								<span class="content-text">
 									<span class="result-label">{hit.title || "Untitled"}</span>
 									{#if hit.preview}

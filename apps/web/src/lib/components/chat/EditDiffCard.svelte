@@ -65,17 +65,17 @@
 	const statusConfig = $derived(
 		{
 			applied: {
-				icon: "ri:check-line",
+				icon: "mynaui:check",
 				label: "Edit applied",
 				color: "success",
 			},
 			failed: {
-				icon: "ri:error-warning-line",
+				icon: "mynaui:danger-circle",
 				label: "Edit failed",
 				color: "error",
 			},
 		}[status] ?? {
-			icon: "ri:question-line",
+			icon: "mynaui:question-circle",
 			label: "Unknown",
 			color: "muted",
 		},
@@ -103,14 +103,14 @@
 		<div class="header-right">
 			{#if onViewPage}
 				<IconButton
-					icon="ri:external-link-line"
+					icon="mynaui:external-link"
 					label="Open page"
 					size="sm"
 					onclick={handleViewPage}
 				/>
 			{/if}
 			<Icon
-				icon={expanded ? "ri:arrow-up-s-line" : "ri:arrow-down-s-line"}
+				icon={expanded ? "mynaui:chevron-up" : "mynaui:chevron-down"}
 				width="18"
 			/>
 		</div>

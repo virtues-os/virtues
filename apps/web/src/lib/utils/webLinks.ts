@@ -101,7 +101,7 @@ export function defaultBrowserItem(url: string): ContextMenuItem[] {
 		{
 			id: 'open-default-browser',
 			label: 'Open in default browser',
-			icon: 'ri:external-link-line',
+			icon: 'mynaui:external-link',
 			action: () => void openExternal(url),
 		},
 	];
@@ -110,12 +110,12 @@ export function defaultBrowserItem(url: string): ContextMenuItem[] {
 /** The menu on a link to the web: Open, Open in default browser, Copy link. */
 export function webLinkMenu(url: string): ContextMenuItem[] {
 	return [
-		{ id: 'open', label: 'Open', icon: 'ri:arrow-right-up-line', action: () => void openWebLink(url) },
+		{ id: 'open', label: 'Open', icon: 'mynaui:arrow-up-right', action: () => void openWebLink(url) },
 		...defaultBrowserItem(url),
 		{
 			id: 'copy-link',
 			label: 'Copy link',
-			icon: 'ri:file-copy-line',
+			icon: 'mynaui:copy',
 			action: () => void navigator.clipboard?.writeText(url),
 		},
 	];

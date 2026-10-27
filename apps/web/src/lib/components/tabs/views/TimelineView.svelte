@@ -1628,13 +1628,13 @@
 	<div class="date" bind:this={dateWrap}>
 		<div class="date-card tile" bind:offsetWidth={cardW} bind:offsetHeight={cardH}>
 			<div class="date-row">
-				<IconButton icon="ri:arrow-left-s-line" label="Previous day" size="sm" onclick={() => (date = stepDay(date, -1))} />
+				<IconButton icon="mynaui:chevron-left" label="Previous day" size="sm" onclick={() => (date = stepDay(date, -1))} />
 				<!-- Calendar's ‹ Today ›: a button between the arrows, there on
 				     every day and greyed out on today, so it never reads as the
 				     date's label and the › never moves. -->
 				<span class="date-today"><Pill disabled={date === today} onclick={() => (date = today)}>Today</Pill></span>
-				<IconButton icon="ri:arrow-right-s-line" label="Next day" size="sm" disabled={date >= today} onclick={() => (date = stepDay(date, 1))} />
-				<IconButton icon="ri:calendar-line" label="Show the month" size="sm" pressed={monthOpen} onclick={() => (monthOpen = !monthOpen)} />
+				<IconButton icon="mynaui:chevron-right" label="Next day" size="sm" disabled={date >= today} onclick={() => (date = stepDay(date, 1))} />
+				<IconButton icon="mynaui:calendar" label="Show the month" size="sm" pressed={monthOpen} onclick={() => (monthOpen = !monthOpen)} />
 			</div>
 			<button class="date-title" type="button" title="Back to the whole day" onclick={resetView}>{title}</button>
 		</div>
@@ -1667,7 +1667,7 @@
 		<!-- Pointing to Home or Work: its own mode, top centre, in the accent. -->
 		<div class="pointing" role="dialog" aria-label={pointing === 'home' ? 'Tap your home' : 'Tap where you work'}>
 			<p class="pointing-text">
-				<Icon icon={pointing === 'home' ? 'ri:home-5-line' : 'ri:briefcase-4-line'} width="18" />
+				<Icon icon={pointing === 'home' ? 'mynaui:home' : 'mynaui:briefcase'} width="18" />
 				{pointing === 'home' ? 'Tap your home on the map' : 'Tap where you work on the map'}
 			</p>
 			<p class="pointing-sub">{tapped ? 'Tap again to move the pin.' : 'Zoom or move the map to find it.'}</p>

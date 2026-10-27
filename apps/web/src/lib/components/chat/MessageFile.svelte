@@ -36,7 +36,7 @@
 	<audio src={part.url} controls class="msg-audio"></audio>
 {:else}
 	<a class="msg-file" href={part.url} download={part.filename || "file"}>
-		<Icon icon={mt === "application/pdf" ? "ri:file-pdf-fill" : "ri:file-text-line"} width="16" />
+		<Icon icon={mt === "application/pdf" ? "mynaui:file-text-solid" : "mynaui:file-text"} width="16" />
 		<span>{part.filename || "Document"}</span>
 	</a>
 {/if}

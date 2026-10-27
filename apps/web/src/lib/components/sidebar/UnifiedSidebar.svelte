@@ -388,7 +388,7 @@
 		<nav class="workspace-nav">
 			{#if !storeReady}
 				<div class="loading-state">
-					<Icon icon="ri:loader-4-line" width="16" class="spinner" />
+					<Icon icon="mynaui:spinner" width="16" class="spinner" />
 					<span>Loading...</span>
 				</div>
 			{:else}

@@ -241,8 +241,8 @@
 				id: "compact",
 				label: tab.pinned ? "Expand" : "Compact",
 				icon: tab.pinned
-					? "ri:expand-left-right-line"
-					: "ri:contract-left-right-line",
+					? "mynaui:move-horizontal"
+					: "mynaui:move-horizontal",
 				action: () => windowShellStore.togglePin(tabId),
 			},
 		);
@@ -250,7 +250,7 @@
 			items.push({
 				id: "rename",
 				label: "Rename",
-				icon: "ri:edit-line",
+				icon: "mynaui:edit",
 				action: () => {
 					renamingTabId = tabId;
 					renameValue = look.title;
@@ -280,7 +280,7 @@
 			items.push({
 				id: "change-icon",
 				label: "Change icon",
-				icon: "ri:emotion-line",
+				icon: "mynaui:smile",
 				action: () => {
 					iconPickerStore.show(
 						look.icon,
@@ -317,7 +317,7 @@
 			items.push({
 				id: "move-across",
 				label: toRight ? "Move to right side" : "Move to left side",
-				icon: toRight ? "ri:layout-right-line" : "ri:layout-left-line",
+				icon: toRight ? "mynaui:panel-right" : "mynaui:panel-left",
 				action: () => windowShellStore.moveTabAcross(tabId),
 			});
 		}
@@ -659,27 +659,27 @@
 	function getDefaultIcon(type: string): string {
 		switch (type) {
 			case "chat":
-				return "ri:chat-1-line";
+				return "mynaui:chat";
 			case "history":
-				return "ri:history-line";
+				return "mynaui:clock-circle";
 			case "wiki":
-				return "ri:book-2-line";
+				return "mynaui:book";
 			case "wiki-list":
-				return "ri:list-check";
+				return "mynaui:list-check";
 			case "data-sources":
-				return "ri:database-2-line";
+				return "mynaui:database";
 			case "data-sources-add":
-				return "ri:add-circle-line";
+				return "mynaui:plus-circle";
 			case "data-jobs":
-				return "ri:refresh-line";
+				return "mynaui:refresh";
 			case "storage":
-				return "ri:hard-drive-2-line";
+				return "mynaui:hard-drive";
 			case "usage":
-				return "ri:bar-chart-line";
+				return "mynaui:chart-bar";
 			case "profile":
-				return "ri:user-settings-line";
+				return "mynaui:user-settings";
 			default:
-				return "ri:file-line";
+				return "mynaui:file";
 		}
 	}
 </script>
@@ -867,7 +867,7 @@
 					aria-label="More actions"
 					data-tip="More actions"
 				>
-					<Icon icon="ri:more-line" />
+					<Icon icon="mynaui:dots" />
 				</button>
 			{/if}
 		</div>
