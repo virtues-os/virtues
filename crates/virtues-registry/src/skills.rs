@@ -54,13 +54,12 @@ pub struct Skill {
 }
 
 /// The shipped skill files, as `(name, include_str!("../../../skills/<name>/SKILL.md"))`.
-const SHIPPED: &[(&str, &str)] = &[
-    ("meeting-prep", include_str!("../../../skills/meeting-prep/SKILL.md")),
-    ("morning-brief", include_str!("../../../skills/morning-brief/SKILL.md")),
-    ("new-skill", include_str!("../../../skills/new-skill/SKILL.md")),
-    ("trip-planner", include_str!("../../../skills/trip-planner/SKILL.md")),
-    ("weekly-review", include_str!("../../../skills/weekly-review/SKILL.md")),
-];
+///
+/// Only `new-skill` is left: the others are applet folders under `applets/`
+/// that `/name` starts (agents/plan/applet-shape.md, slice 3).
+// TODO(2026-10-27): migrate new-skill and save_skill into the applet tool,
+// then delete this module.
+const SHIPPED: &[(&str, &str)] = &[("new-skill", include_str!("../../../skills/new-skill/SKILL.md"))];
 
 /// Every shipped skill. Parsed on each call, like `default_tools()`; the
 /// sources are compiled in, so a parse failure is a build-time mistake

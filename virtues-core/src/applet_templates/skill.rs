@@ -297,6 +297,8 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         needs_vault_key: false,
         secrets: Vec::new(),
         forked_from: None,
+        invoke_chat: invoke.contains(&Invoke::Chat),
+        icon: meta("icon").map(|i| i.trim().to_string()),
         dir: dir.to_string(),
         unknown: Default::default(),
     })
@@ -398,10 +400,27 @@ fn check_name(name: &str) -> Result<(), String> {
     }
 }
 
-/// The tool ids an applet asked for, checked against what an applet's run
-/// can be given, and the hosts its `net(host)` entries ask for.
+/// Tools no applet may list: they leave the box (`browse`, `send_imessage`)
+/// or run as root (`sudo`).
+const NEVER_LISTED: &[&str] = &["browse", "send_imessage", "sudo"];
+
+/// The tool ids an applet may list: what ordinary chat offers, for a turn
+/// `/name` starts, and what an unattended run can be given. An unattended
+/// run is offered only the tools on both its list and the run allowlist
+/// (`tools::get_tools_for_applet`).
+fn listable_tools() -> Vec<String> {
+    let mut out: Vec<String> = crate::api::skills::chat_tool_ids();
+    out.extend(crate::tools::applet_run_tool_ids().iter().map(|t| t.to_string()));
+    out.retain(|t| !NEVER_LISTED.contains(&t.as_str()));
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The tool ids an applet asked for, checked against [`listable_tools`],
+/// and the hosts its `net(host)` entries ask for.
 fn check_allowed_tools(list: &str, errors: &mut Vec<String>) -> (Vec<String>, Vec<String>) {
-    let available = crate::tools::applet_run_tool_ids();
+    let available = listable_tools();
     let known: Vec<String> = virtues_registry::tools::default_tools().into_iter().map(|t| t.id).collect();
     let mut out = Vec::new();
     let mut hosts: Vec<String> = Vec::new();
@@ -423,14 +442,14 @@ fn check_allowed_tools(list: &str, errors: &mut Vec<String>) -> (Vec<String>, Ve
             }
         } else if ALWAYS_ALLOWED_TOOLS.contains(&entry) {
             // Always given; listing it changes nothing.
-        } else if available.contains(&entry) {
+        } else if available.iter().any(|t| t == entry) {
             if !out.iter().any(|t| t == entry) {
                 out.push(entry.to_string());
             }
         } else if known.iter().any(|k| k == entry) {
-            errors.push(format!("`{entry}` is not available to an applet's run."));
+            errors.push(format!("`{entry}` is not available to an applet."));
         } else {
-            let names: Vec<&str> = available.to_vec();
+            let names: Vec<&str> = available.iter().map(String::as_str).collect();
             errors.push(unknown_key(entry, "a tool an applet can use", &names));
         }
     }
@@ -965,7 +984,8 @@ mod tests {
             assert!(e.contains(expect), "{entry}: {e}");
         }
         let e = refused(&format!("{BASE}\nallowed-tools: sudo"), "Do it.");
-        assert!(e.contains("`sudo` is not available to an applet's run"), "{e}");
+        assert!(e.contains("`sudo` is not available to an applet"), "{e}");
+        assert!(ok(&format!("{BASE}\nallowed-tools: get_project_item"), "Do it.").config.is_some(), "a chat tool is listable");
         assert!(ok(&format!("{BASE}\nallowed-tools: shell"), "Do it.").config.is_some(), "the sandboxed shell is");
         let e = refused(&format!("{BASE}\nallowed-tools: sql_qeury"), "Do it.");
         assert!(e.contains("Did you mean `sql_query`?"), "{e}");

@@ -61,7 +61,8 @@ pub fn authored_root() -> std::path::PathBuf {
     crate::applet_templates::state_root().join("skills")
 }
 
-/// Every skill, shipped first, each group by name.
+/// Every skill and every applet `/name` starts, shipped first, each group by
+/// name.
 pub fn list() -> SkillList {
     let summary = |s: Skill, source| SkillSummary {
         name: s.name,
@@ -72,14 +73,52 @@ pub fn list() -> SkillList {
     let mut shipped = registry::default_skills();
     shipped.sort_by(|a, b| a.name.cmp(&b.name));
     let (create, shipped): (Vec<_>, Vec<_>) = shipped.into_iter().partition(|s| s.name == CREATE_SKILL);
-    let mut skills: Vec<_> = shipped.into_iter().map(|s| summary(s, "shipped")).collect();
+    let applets = crate::applet_templates::chat_applets();
+    let (shipped_applets, own_applets): (Vec<_>, Vec<_>) = applets.into_iter().partition(|a| a.shipped);
+    let mut skills: Vec<_> = shipped_applets.into_iter().map(|a| summary(skill_from_applet(a), "shipped")).collect();
+    skills.extend(shipped.into_iter().map(|s| summary(s, "shipped")));
+    skills.sort_by(|a, b| a.name.cmp(&b.name));
+    skills.extend(own_applets.into_iter().map(|a| summary(skill_from_applet(a), "authored")));
     skills.extend(authored().into_iter().map(|s| summary(s, "authored")));
     SkillList { skills, create: create.into_iter().next().map(|s| summary(s, "shipped")) }
 }
 
-/// The skill a turn asked for by name: shipped first, then the person's own.
+/// What a turn asked for by name: an applet `/name` starts, then a shipped
+/// skill, then the person's own.
 pub fn skill_named(name: &str) -> Option<Skill> {
-    registry::skill_named(name).or_else(|| authored().into_iter().find(|s| s.name == name))
+    crate::applet_templates::chat_applet_named(name)
+        .map(skill_from_applet)
+        .or_else(|| registry::skill_named(name))
+        .or_else(|| authored().into_iter().find(|s| s.name == name))
+}
+
+/// The step ceiling for a turn an applet starts. The format has no key for
+/// it (agents/plan/applet-shape.md keeps steps internal); thirty is what the
+/// longest shipped skills had.
+const APPLET_MAX_STEPS: u32 = 30;
+
+/// A chat turn's shape from an applet `/name` starts: its body as the
+/// prompt, its tools, and its `limit` and `model`. Without `allowed-tools`
+/// it gets what ordinary chat offers, less what leaves the box. Without a
+/// `limit` it gets $3 and ten minutes, the shipped skills' usual ceilings.
+fn skill_from_applet(a: crate::applet_templates::ChatApplet) -> Skill {
+    let tools = a.tools.unwrap_or_else(|| {
+        chat_tool_ids()
+            .into_iter()
+            .filter(|t| t != crate::browse::TOOL && t != crate::tools::send_imessage::TOOL)
+            .collect()
+    });
+    Skill {
+        name: a.name,
+        description: a.description,
+        body: a.body,
+        tools,
+        max_steps: APPLET_MAX_STEPS,
+        max_cost_usd: a.max_cost_usd.unwrap_or(3.0),
+        max_minutes: a.max_minutes.unwrap_or(10),
+        slot: if a.deep { ModelSlot::Deep } else { ModelSlot::Standard },
+        icon: a.icon,
+    }
 }
 
 /// The person's own skills, by name. A file that fails a check is skipped
@@ -174,6 +213,9 @@ fn check(skill: Skill) -> Result<Skill> {
     if registry::skill_named(name).is_some() {
         return bad(format!("{name:?} is a built-in skill's name"));
     }
+    if crate::applet_templates::chat_applet_named(name).is_some() {
+        return bad(format!("{name:?} is an applet's name"));
+    }
     if skill.description.is_empty() || skill.description.chars().count() > MAX_DESCRIPTION_CHARS {
         return bad(format!("description must be 1 to {MAX_DESCRIPTION_CHARS} characters"));
     }
@@ -200,7 +242,7 @@ fn check(skill: Skill) -> Result<Skill> {
 
 /// The tools ordinary chat offers: never the sudo-only `sudo` tool, the system
 /// tools, or the Mac app's. `think` is in the registry's list for skills too.
-fn chat_tool_ids() -> Vec<String> {
+pub(crate) fn chat_tool_ids() -> Vec<String> {
     crate::tools::get_tool_definitions_for_llm()
         .iter()
         .filter_map(|t| t["function"]["name"].as_str().map(str::to_string))
@@ -236,7 +278,8 @@ mod tests {
     fn checks_refuse_what_authored_skills_may_not_do() {
         assert!(err(new("admin", &["sudo"])).contains("ordinary chat"));
         assert!(err(new("sudo", &["sql_query"])).contains("built-in mode"));
-        assert!(err(new("weekly-review", &["sql_query"])).contains("built-in skill"));
+        assert!(err(new("new-skill", &["sql_query"])).contains("built-in skill"));
+        assert!(err(new("weekly-review", &["sql_query"])).contains("an applet's name"));
         assert!(err(new("../escape", &["sql_query"])).contains("lowercase"));
         assert!(err(new("Weekly", &["sql_query"])).contains("lowercase"));
         assert!(err(new("nothing", &[])).contains("at least one tool"));

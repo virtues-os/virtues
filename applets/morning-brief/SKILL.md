@@ -1,11 +1,11 @@
 ---
 name: morning-brief
 description: What today holds, what is due, and what is waiting on you
-icon: ri:sun-line
-tools: sql_query, semantic_search, web_search
-max_steps: 20
-max_cost_usd: 2.5
-max_minutes: 8
+allowed-tools: sql_query semantic_search web_search
+metadata:
+  invoke: chat
+  limit: $2.5 per run, 8 minutes
+  icon: ri:sun-line
 ---
 <morning_brief>
 Brief the person on the day ahead, as of now.

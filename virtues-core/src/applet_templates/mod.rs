@@ -226,6 +226,13 @@ struct Template {
     /// time the question "what did this diverge from" is unanswerable later.
     #[serde(default)]
     forked_from: Option<String>,
+    /// `/name` in chat starts it: a `SKILL.md` whose `invoke` includes
+    /// `chat`. A `manifest.toml` has no way to say so.
+    #[serde(skip)]
+    invoke_chat: bool,
+    /// A `SKILL.md`'s `icon`, an `ri:` id, for the `/` menu.
+    #[serde(skip)]
+    icon: Option<String>,
     /// Manifest folder relative to the actions root. Populated by the loader
     /// from the on-disk path, never read from TOML — a file can't know its own
     /// location. Examples: `morning_brief`, `team-pack/actions/foo`.
@@ -884,6 +891,69 @@ fn apply_patch_to_manifest(
         }
     }
     Ok(())
+}
+
+/// An applet `/name` in chat starts: a `SKILL.md` whose `invoke` includes
+/// `chat`. The chat runs it as a turn with the applet's body as the prompt
+/// (`api::skills`), not as a headless run.
+#[derive(Debug, Clone)]
+pub struct ChatApplet {
+    /// The spec's `name`, which is its folder's: what follows the `/`.
+    pub name: String,
+    pub applet_id: String,
+    pub description: String,
+    pub body: String,
+    /// Its `allowed-tools` tool ids, or `None` for the default set.
+    pub tools: Option<Vec<String>>,
+    /// `limit`'s `$N per run`, in dollars.
+    pub max_cost_usd: Option<f64>,
+    /// `limit`'s duration, in minutes, rounded up.
+    pub max_minutes: Option<u64>,
+    /// `model: deep`.
+    pub deep: bool,
+    pub icon: Option<String>,
+    /// It ships with the box.
+    pub shipped: bool,
+}
+
+/// Every applet `/name` in chat can start, shipped ones first, each group by
+/// name.
+pub fn chat_applets() -> Vec<ChatApplet> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    let mut out: Vec<ChatApplet> = guard
+        .action
+        .iter()
+        .filter(|t| t.invoke_chat)
+        .filter_map(|t| {
+            let config = t.config.as_ref();
+            let get = |k: &str| config.and_then(|c| c.get(k));
+            let limits = get("limits");
+            Some(ChatApplet {
+                name: t.dir.rsplit('/').next()?.to_string(),
+                applet_id: t.id_prefix.clone()?,
+                description: t.description.clone().unwrap_or_default(),
+                body: t.agent.clone()?,
+                tools: get("allowed_tools").and_then(|v| v.as_array()).map(|a| {
+                    a.iter().filter_map(|v| v.as_str().map(String::from)).collect()
+                }),
+                max_cost_usd: limits.and_then(|l| l.get("max_llm_cost")).and_then(|v| v.as_float()),
+                max_minutes: limits
+                    .and_then(|l| l.get("timeout_s"))
+                    .and_then(|v| v.as_integer())
+                    .map(|s| (s.max(0) as u64).div_ceil(60)),
+                deep: get("model_slot").and_then(|v| v.as_str()) == Some("deep"),
+                icon: t.icon.clone(),
+                shipped: t.owner == "system",
+            })
+        })
+        .collect();
+    out.sort_by(|a, b| (!a.shipped, &a.name).cmp(&(!b.shipped, &b.name)));
+    out
+}
+
+/// The applet `/name` starts, shipped first.
+pub fn chat_applet_named(name: &str) -> Option<ChatApplet> {
+    chat_applets().into_iter().find(|a| a.name == name)
 }
 
 /// Copy a shipped applet into the state root so the owner can change it.

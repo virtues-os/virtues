@@ -1,11 +1,11 @@
 ---
 name: weekly-review
 description: Look back over the past seven days and what the next seven hold
-icon: ri:calendar-check-line
-tools: sql_query, semantic_search, get_project_item, create_page
-max_steps: 30
-max_cost_usd: 3
-max_minutes: 10
+allowed-tools: sql_query semantic_search get_project_item create_page
+metadata:
+  invoke: chat
+  limit: $3 per run, 10 minutes
+  icon: ri:calendar-check-line
 ---
 <weekly_review>
 Write the person a review of the seven days before today, and a look at the seven after.

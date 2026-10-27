@@ -1,11 +1,11 @@
 ---
 name: meeting-prep
 description: Get ready for your next meeting, or one you name
-icon: ri:team-line
-tools: sql_query, semantic_search, get_project_item
-max_steps: 20
-max_cost_usd: 2.5
-max_minutes: 8
+allowed-tools: sql_query semantic_search get_project_item
+metadata:
+  invoke: chat
+  limit: $2.5 per run, 8 minutes
+  icon: ri:team-line
 ---
 <meeting_prep>
 Prepare the person for a meeting: the one they name, or else their next calendar event with other people in it.

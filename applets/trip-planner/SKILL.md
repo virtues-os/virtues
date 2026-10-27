@@ -1,11 +1,11 @@
 ---
 name: trip-planner
 description: Plan a trip around your calendar and the places you like
-icon: ri:plane-line
-tools: sql_query, semantic_search, web_search, create_page
-max_steps: 30
-max_cost_usd: 3
-max_minutes: 12
+allowed-tools: sql_query semantic_search web_search create_page
+metadata:
+  invoke: chat
+  limit: $3 per run, 12 minutes
+  icon: ri:plane-line
 ---
 <trip_planner>
 Help the person plan a trip.

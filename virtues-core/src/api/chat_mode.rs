@@ -336,12 +336,32 @@ pub(crate) mod tests {
         }
     }
 
-    /// No skill file may shadow a built-in mode's name.
+    /// No skill file or applet may shadow a built-in mode's name, and each
+    /// shipped one `/name` starts resolves to itself.
     #[test]
     fn every_skill_resolves_to_itself() {
-        for skill in virtues_registry::skills::default_skills() {
-            assert!(matches!(ChatMode::from_wire(&skill.name), ChatMode::Skill(ref s) if s.name == skill.name));
+        let names: Vec<String> = virtues_registry::skills::default_skills()
+            .into_iter()
+            .map(|s| s.name)
+            .chain(crate::applet_templates::chat_applets().into_iter().filter(|a| a.shipped).map(|a| a.name))
+            .collect();
+        for name in ["meeting-prep", "morning-brief", "trip-planner", "weekly-review", "new-skill"] {
+            assert!(names.iter().any(|n| n == name), "{name} is not offered");
         }
+        for name in names {
+            assert!(matches!(ChatMode::from_wire(&name), ChatMode::Skill(ref s) if s.name == name), "{name}");
+        }
+    }
+
+    /// A shipped applet `/weekly-review` starts runs as a turn shaped by its
+    /// folder: its body, its tools, its `limit`.
+    #[test]
+    fn weekly_review_runs_from_its_applet_folder() {
+        let ChatMode::Skill(s) = ChatMode::from_wire("weekly-review") else { panic!("not resolved") };
+        assert!(s.body.starts_with("<weekly_review>"), "{}", &s.body[..40.min(s.body.len())]);
+        assert_eq!(s.tools, ["sql_query", "semantic_search", "get_project_item", "create_page"]);
+        assert_eq!((s.max_cost_usd, s.max_minutes), (3.0, 10));
+        assert_eq!(s.icon.as_deref(), Some("ri:calendar-check-line"));
     }
 
     #[test]
@@ -474,6 +494,13 @@ pub(crate) mod tests {
             ChatMode::Local,
         ];
         modes.extend(virtues_registry::skills::default_skills().into_iter().map(ChatMode::Skill));
+        modes.extend(
+            crate::applet_templates::chat_applets()
+                .into_iter()
+                .filter(|a| a.shipped)
+                .filter_map(|a| crate::api::skills::skill_named(&a.name))
+                .map(ChatMode::Skill),
+        );
 
         let mut report = String::new();
         let mut failures = Vec::new();
