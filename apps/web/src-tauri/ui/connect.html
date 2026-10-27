@@ -200,6 +200,9 @@
               font-size: 14px; padding: 0; margin: 0 0 16px;
               transition: color .15s var(--ease); }
       .back:hover { color: var(--ink); }
+      .msg .details { appearance: none; background: none; border: 0; padding: 0; margin-left: 4px;
+                      font: inherit; color: var(--ink-subtle); text-decoration: underline;
+                      text-underline-offset: 2px; cursor: pointer; }
       /* Top-of-screen back NAVIGATION is a bare arrow, not a worded link: a
          "← Back" row above the kicker added a third text register to a screen
          that already has kicker + headline, and read as part of the copy.
@@ -326,7 +329,8 @@
       // signal, which is the box's job and which it does not delegate.
       const onSetupSubnet = (origin) => /\/\/10\.42\.0\./.test(origin);
 
-      const state = { origin: '', networks: [], chosen: null };
+      // `fromSetup`: opened by Setup (`#address`, `#pair?…`), so back goes back there.
+      const state = { origin: '', networks: [], chosen: null, fromSetup: false };
 
       // ── platform ──────────────────────────────────────────────────────────
       //
@@ -435,6 +439,11 @@
           // to the join: the QR scan on a phone, the code on a computer.
           // Setup's first half only sets up new servers (2026-09-28).
           if (hash === '#existing') return 'existing';
+          // `#address` and `#pair?origin=…`: Setup sends someone who chose to
+          // type an address, or a server its network search found, straight
+          // to the code `virtues pair` printed.
+          if (hash === '#address') return 'address';
+          if (hash.startsWith('#pair?')) return 'code';
           // The injected flag is a FAST PATH, never the truth: it is evaluated
           // once when the window is built, so after an in-session unpair it
           // still says true. Confirmed against the plugin by `pairedProbe`.
@@ -567,6 +576,66 @@
         boxLabel({ identity, fallback }) {
           if (identity && identity.name) return identity.label || fallback;
           return fallback;
+        },
+
+        /** `#pair?origin=…&name=…&claimed=…` from Setup: the server to ask a
+         *  code for, or null when the hash names none. */
+        pairTarget(hash) {
+          if (!String(hash || '').startsWith('#pair?')) return null;
+          const q = new URLSearchParams(hash.slice('#pair?'.length));
+          const origin = q.get('origin');
+          if (!origin) return null;
+          const c = q.get('claimed');
+          return { origin, name: q.get('name') || '', claimed: c === 'true' ? true : c === 'false' ? false : undefined };
+        },
+
+        /**
+         * One line copied from `virtues pair` ("http://192.168.1.20:8000   123 456")
+         * into its address and code. Null when the text is not that shape, so
+         * whatever was typed stays as it is.
+         */
+        splitPasted(text) {
+          const m = String(text || '').trim().match(/^(\S+)\s+(\d{3})\s?(\d{3})$/);
+          return m ? { address: m[1], code: m[2] + m[3] } : null;
+        },
+
+        /**
+         * A pairing failure in words, from what the plugin threw: reqwest's
+         * error chain, the server's JSON error, or an OS error. Pairing by
+         * address is the DIRECT connection, this device to the server with no
+         * relay, so a failure before the server answers says "directly".
+         * `paired` is true when the server took the code and only this
+         * device's own side failed afterwards.
+         */
+        pairError(raw, { address, device }) {
+          const s = String(raw || '');
+          const at = String(address || 'that address').replace(/^https?:\/\//, '').replace(/\/+$/, '');
+          const Device = device[0].toUpperCase() + device.slice(1);
+          if (/bind 127\.0\.0\.1:\d+/.test(s) && /in use|os error (48|98)\b/i.test(s)) {
+            return { paired: true, text: `Paired. Another copy of Virtues on ${device} is using the port it needs. Quit the other copy, then open Virtues again.` };
+          }
+          if (/invalid_or_expired_token|\b401\b/.test(s)) {
+            return { paired: false, text: "That code didn't work. Each code works once and lasts about 15 minutes. Run virtues pair for a fresh one." };
+          }
+          if (/too_many_attempts|\b429\b/.test(s)) {
+            return { paired: false, text: 'Too many wrong codes. Wait 30 minutes, then try a fresh code from virtues pair.' };
+          }
+          if (/relative URL|invalid (url|uri)|builder error|empty host|invalid port/i.test(s)) {
+            return { paired: false, text: `That isn't an address ${device} can use. Type it the way virtues pair prints it, like http://192.168.1.20:8000.` };
+          }
+          if (/dns error|failed to lookup|nodename nor servname|name or service not known|no such host/i.test(s)) {
+            return { paired: false, text: `${Device} couldn't find ${at} on this network. Try the numbered address virtues pair printed. Some networks don't carry .local names.` };
+          }
+          if (/connection refused|os error (61|111)\b/i.test(s)) {
+            return { paired: false, text: `${at} is reachable, but Virtues isn't serving on that port. Check the port, usually 8000, and that the server is running.` };
+          }
+          if (/timed out|timeout|no route to host|network is unreachable|host is down|os error (51|60|64|65|110|113)\b/i.test(s)) {
+            return { paired: false, text: `${Device} couldn't reach ${at} directly. Make sure both are on the same network. Some networks and virtual machines keep devices apart.` };
+          }
+          if (/\b404\b/.test(s)) {
+            return { paired: false, text: `Something answered at ${at}, but it isn't a Virtues server. Check the address and port.` };
+          }
+          return { paired: false, text: "Pairing didn't finish. Try again with a fresh code from virtues pair." };
         },
         };
       })();
@@ -830,7 +899,8 @@
         try {
           await invoke('install_helpers', { server: state.origin || BOX_URL });
         } catch (e) {
-          if (say) say('Connected, but starting the local link failed: ' + e, 'err');
+          const said = Router.pairError(e, { device: THIS_DEVICE });
+          if (say) say(said.paired ? said.text : `Paired, but ${THIS_DEVICE} couldn't start its connection to the server. Quit Virtues and open it again.`, 'err');
           return;
         }
         // OWN SCREEN from here — pairing succeeded, so the pairing screen's
@@ -874,9 +944,9 @@
         app.innerHTML = `
           <p class="kicker">Paired</p>
           <h1>Paired, but can't reach it yet</h1>
-          <p class="sub">The pairing worked and your server saved it. This computer just can't
-            open a connection to your server right now. Its network may still be
-            settling after setup.</p>
+          <p class="sub">The pairing worked and your server saved it. This computer can't
+            reach it yet, either directly on this network or through the relay.
+            Its network may still be settling after setup.</p>
           <button class="primary" id="retry">Keep trying</button>
           <button class="secondary" id="anyway">Open anyway</button>
           <p class="hint">Quitting and reopening the app later works too. It
@@ -2410,8 +2480,8 @@ its devices apart — type its address.",
           <button class="backnav" id="back" aria-label="Back to servers">←</button>
           <p class="kicker">${esc(server.name)}${server.claimed === false ? ' · ready to set up' : ''}</p>
           <h1>Enter its code</h1>
-          <p class="sub">Run <b>virtues pair</b> in ${esc(server.name)}'s terminal —
-            it prints the six digits.</p>
+          <p class="sub">Run <b>virtues pair</b> on ${esc(server.name)}. It prints
+            the six digits.</p>
           <form id="form">
             <input id="code" inputmode="numeric" maxlength="7" placeholder="123 456" autofocus />
             <button class="primary" id="go" type="submit">Pair</button>
@@ -2421,7 +2491,7 @@ its devices apart — type its address.",
             ? 'The install printed one too, when it finished. Codes rotate - a fresh one always works.'
             : 'Each code works once and lasts about 15 minutes.'}</p>
           ${server.bleId ? '<button class="back" id="blewifi">Set up its Wi-Fi instead</button>' : ''}`;
-        document.getElementById('back').addEventListener('click', start);
+        document.getElementById('back').addEventListener('click', () => (state.fromSetup ? history.back() : start()));
         // The escape hatch for a stale "already online" advertisement: if the
         // user is here but the box actually needs wifi, the picker is a tap
         // away instead of a dead end.
@@ -2444,21 +2514,47 @@ its devices apart — type its address.",
         app.innerHTML = `
           <button class="backnav" id="back" aria-label="Back to servers">←</button>
           <h1>Connect by address</h1>
-          ${note ? `<p class="sub">${esc(note)}</p>` : ''}
+          <p class="sub">${note ? esc(note) + ' ' : ''}Run <b>virtues pair</b> on your server. It
+            prints the address and a six-digit code. Paste a whole line to fill both.</p>
           <form id="form">
             <label for="server">Server address</label>
             <input id="server" inputmode="url" autocapitalize="off" autocorrect="off"
-                   placeholder="virtues.local   or   192.168.1.x" />
+                   placeholder="http://192.168.1.20:8000" />
             <label for="code">Pairing code</label>
             <input id="code" inputmode="numeric" maxlength="7" placeholder="123 456" />
             <button class="primary" id="go" type="submit">Pair</button>
           </form>
           <div class="msg" id="msg"></div>`;
-        document.getElementById('back').addEventListener('click', () => renderEntry());
+        document.getElementById('back').addEventListener('click', () => (state.fromSetup ? history.back() : renderEntry()));
+        // A line pasted from `virtues pair` carries both: split it here.
+        const addr = document.getElementById('server');
+        addr.addEventListener('input', () => {
+          const both = Router.splitPasted(addr.value);
+          if (!both) return;
+          addr.value = both.address;
+          document.getElementById('code').value = both.code.slice(0, 3) + ' ' + both.code.slice(3);
+          document.getElementById('go').focus();
+        });
+        addr.focus();
         document.getElementById('form').addEventListener('submit', (e) => {
           e.preventDefault();
           submitPair(document.getElementById('server').value.trim());
         });
+      }
+
+      // A pairing failure, in words (Router.pairError), with the raw text one
+      // tap away for whoever is helping. Returns what pairError said.
+      function sayPairError(raw, address) {
+        const e = Router.pairError(raw, { address, device: THIS_DEVICE });
+        const msg = document.getElementById('msg');
+        if (!msg) return e;
+        msg.className = 'msg err';
+        msg.innerHTML = `${esc(e.text)} <button class="details" type="button">Copy details</button>`;
+        const btn = msg.querySelector('.details');
+        btn.addEventListener('click', () => {
+          navigator.clipboard.writeText(String(raw)).then(() => { btn.textContent = 'Copied'; }, () => {});
+        });
+        return e;
       }
 
       // `server` is the chosen box's origin (chip flow) or whatever the manual
@@ -2487,8 +2583,8 @@ its devices apart — type its address.",
           if (go) go.disabled = false;
           return false;
         } catch (err) {
-          say(String(err), 'err');
-          if (go) go.disabled = false;
+          const e = sayPairError(err, server);
+          if (go) go.disabled = e.paired;
           return false;
         }
       }
@@ -2530,8 +2626,8 @@ its devices apart — type its address.",
           say(why, 'err');
           return { ok: false, error: why };
         } catch (err) {
-          say(String(err), 'err');
-          return { ok: false, error: String(err) };
+          const e = sayPairError(err, server.name);
+          return { ok: false, error: e.text };
         }
       }
 
@@ -2556,6 +2652,14 @@ its devices apart — type its address.",
         case 'unreachable':  renderBoxUnreachable(); break;
         case 'probe-paired': bootPaired(); break;
         case 'existing':     IS_MOBILE ? renderScan() : startExisting(); break;
+        case 'address':      state.fromSetup = true; renderManualPair(); break;
+        case 'code': {
+          state.fromSetup = true;
+          const t = Router.pairTarget(location.hash);
+          if (t) renderCodeEntry({ ...t, name: prettyBoxName(t.name) });
+          else renderManualPair();
+          break;
+        }
         default:             renderEntry(); break;
       }
     </script>

@@ -217,3 +217,48 @@ test('a box keeps its discovered name when it reports none', () => {
     Router.boxLabel({ identity: { name: 'x', label: 'Quaint Tern' }, fallback: 'Mossy Godwit' }),
     'Quaint Tern');
 });
+
+// ── entries from Setup, and what a failed pairing says ──────────────────────
+
+test('Setup opens the address form or one server\'s code screen', () => {
+  assert.equal(Router.bootDestination({ hash: '#address', injectedPaired: false }), 'address');
+  assert.equal(
+    Router.bootDestination({ hash: '#pair?origin=http%3A%2F%2F192.168.1.20%3A8000&name=virtues', injectedPaired: false }),
+    'code',
+  );
+  assert.deepEqual(
+    Router.pairTarget('#pair?origin=http%3A%2F%2F192.168.1.20%3A8000&name=virtues&claimed=false'),
+    { origin: 'http://192.168.1.20:8000', name: 'virtues', claimed: false },
+  );
+  assert.equal(Router.pairTarget('#pair?name=virtues'), null);
+});
+
+test('a line pasted from `virtues pair` fills both fields', () => {
+  assert.deepEqual(Router.splitPasted('  http://192.168.1.20:8000   123 456 '), {
+    address: 'http://192.168.1.20:8000',
+    code: '123456',
+  });
+  assert.deepEqual(Router.splitPasted('http://[fd00::5]:8000 123456'), {
+    address: 'http://[fd00::5]:8000',
+    code: '123456',
+  });
+  // An address alone is left as typed.
+  assert.equal(Router.splitPasted('http://192.168.1.20:8000'), null);
+});
+
+test('a pairing failure says which part failed, never the raw error', () => {
+  const say = (raw) => Router.pairError(raw, { address: 'http://192.168.1.20:8000', device: 'this computer' });
+  const dns = say('POST http://virtues.local:8000/api/pair/consume: error sending request: client error (Connect): dns error: failed to lookup address information: nodename nor servname provided, or not known');
+  assert.match(dns.text, /couldn't find 192\.168\.1\.20:8000/);
+  assert.doesNotMatch(dns.text, /dns error/);
+  assert.match(say('client error (Connect): tcp connect error: Operation timed out (os error 60)').text, /directly/);
+  assert.match(say('tcp connect error: Connection refused (os error 61)').text, /isn't serving on that port/);
+  assert.match(say('pair failed: 401 Unauthorized — {"error":"invalid_or_expired_token"}').text, /fresh one/);
+  assert.match(say('pair failed: 429 Too Many Requests — {"error":"too_many_attempts"}').text, /30 minutes/);
+  // The server took the code; only this Mac's loopback is taken.
+  const port = say('bind 127.0.0.1:7117: Address already in use (os error 48)');
+  assert.equal(port.paired, true);
+  assert.match(port.text, /Another copy of Virtues/);
+  // Anything else still reads as a sentence.
+  assert.match(say('something new').text, /^Pairing didn't finish\./);
+});

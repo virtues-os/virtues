@@ -603,15 +603,35 @@ function fakeRequested(): boolean {
 	}
 }
 
+/**
+ * What the fake has nearby: `&nearby=none` (nothing anywhere), `&nearby=diy`
+ * (nothing over Bluetooth, one server on the network) or the default, Virtues
+ * hardware over Bluetooth. Kept for the tab, like `?radio=fake`.
+ */
+export function fakeNearby(): 'hardware' | 'diy' | 'none' {
+	if (typeof window === 'undefined') return 'hardware';
+	try {
+		const q = new URLSearchParams(window.location.search).get('nearby');
+		if (q === 'none' || q === 'diy' || q === 'hardware') sessionStorage.setItem('virtues-fake-nearby', q);
+		const kept = sessionStorage.getItem('virtues-fake-nearby');
+		return kept === 'none' || kept === 'diy' ? kept : 'hardware';
+	} catch {
+		return 'hardware';
+	}
+}
+
 function pick(): BoxRadio {
 	if (tauriRadio.available) return tauriRadio;
 	if (import.meta.env.DEV && fakeRequested()) {
 		// A server that moved, too, so the owner path can be walked in a browser.
 		return fakeBoxRadio({
-			boxes: [
-				{ id: 'fake-1', name: 'Virtues-4812', label: 'Virtues 4812', rssi: -52, state: 'needs-wifi' },
-				{ id: 'fake-2', name: 'Virtues-0371', label: 'Virtues 0371', rssi: -60, state: 'needs-owner' }
-			]
+			boxes:
+				fakeNearby() === 'hardware'
+					? [
+							{ id: 'fake-1', name: 'Virtues-4812', label: 'Virtues 4812', rssi: -52, state: 'needs-wifi' },
+							{ id: 'fake-2', name: 'Virtues-0371', label: 'Virtues 0371', rssi: -60, state: 'needs-owner' }
+						]
+					: []
 		});
 	}
 	return unavailable;

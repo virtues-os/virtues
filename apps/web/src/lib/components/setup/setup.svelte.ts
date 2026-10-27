@@ -73,8 +73,11 @@ export interface SetupStep {
 export const ORDER: SetupStepId[] = [
 	'welcome',
 	'letter',
-	'account',
+	// The search before the account: a server found on the network pairs on
+	// the connect page without one, and hardware asks for it after its four
+	// words, before its grant has to cross Bluetooth (prepair.svelte.ts).
 	'server',
+	'account',
 	'wifi',
 	// Names before Subscription: the person meets the assistant before being
 	// asked to pay for how it thinks, so that step can say its name.

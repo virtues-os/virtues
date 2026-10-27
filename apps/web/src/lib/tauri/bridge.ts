@@ -14,6 +14,33 @@ async function getInvoke() {
 	return invoke;
 }
 
+// ─── Servers on this network ────────────────────────────────────────────────
+
+/** A Virtues server the network search found. `claimed` is null from a server
+ *  too old to say. */
+export interface NetworkServer {
+	name: string;
+	origin: string;
+	claimed: boolean | null;
+}
+
+/**
+ * Virtues servers on this device's network, found by a subnet scan rather
+ * than mDNS (`plugin:reach|discover`). Empty in a browser and when the scan
+ * fails. Empty never means there is no server: some networks keep devices
+ * apart, and a virtual machine's shared networking hides it from the scan.
+ */
+export async function serversOnNetwork(): Promise<NetworkServer[]> {
+	const invoke = await getInvoke();
+	if (!invoke) return [];
+	try {
+		const r = await invoke<{ servers?: NetworkServer[] }>('plugin:reach|discover');
+		return r.servers ?? [];
+	} catch {
+		return [];
+	}
+}
+
 // ─── Command-surface negotiation ────────────────────────────────────────────
 //
 // This file is served by the BOX but calls into the APP — two artifacts with

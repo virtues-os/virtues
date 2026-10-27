@@ -1,15 +1,22 @@
 <!--
-	Setup, before the server: find it, and open it with its four words.
+	Setup, before the server: find it, and open Virtues hardware with its four
+	words.
 
-	Over the app's radio bridge only ($lib/tauri/boxRadio.ts), never the reach
-	plugin directly. The beats:
+	Two searches at once: Bluetooth for Virtues hardware, over the app's radio
+	bridge ($lib/tauri/boxRadio.ts), and the network for a server someone
+	installed themselves (`prePair.serversOnNetwork`). A server on the network
+	pairs on the connect page with the code `virtues pair` prints, and one
+	found alone goes there straight away. The beats:
 
-	  looking   the radio looks for servers nearby
-	  choose    "Which server?", by the number its screen shows (`label`,
-	            "Virtues 4812");
-	            one that already has an owner is listed but not offered,
+	  looking   both searches run
+	  choose    "Which server?": hardware by the number its screen shows
+	            (`label`, "Virtues 4812"), then servers on the network;
+	            hardware that already has an owner is listed but not offered,
 	            because opening a claimed server is its owner's recovery
-	            path, not first setup
+	            path, not first setup.
+	            Nothing found: the main action is the address and code,
+	            because some networks block the search while the server is
+	            right there. The search keeps running underneath.
 	  waking    the old firmware probe, once, before any words are asked
 	            for (`tryOpenWithoutWords`): a server that predates the
 	            four words opens here, and there is nothing to save
@@ -25,7 +32,8 @@
 	import StepFrame from "../StepFrame.svelte";
 	import { rise } from "../motion";
 	import { prePair } from "../prepair.svelte";
-	import { boxRadio, BoxRadioError, type NearbyBox } from "$lib/tauri/boxRadio";
+	import { boxRadio, BoxRadioError, boxLabel, type NearbyBox } from "$lib/tauri/boxRadio";
+	import type { NetworkServer } from "$lib/tauri/bridge";
 	import { isIOS, isMacOS } from "$lib/utils/platform";
 
 	let { onnext }: { onnext: () => void } = $props();
@@ -35,6 +43,7 @@
 	type Phase = "looking" | "choose" | "waking" | "words" | "checking" | "keep";
 	let phase = $state<Phase>(prePair.link ? "keep" : "looking");
 	let found = $state<NearbyBox[]>([]);
+	let network = $state<NetworkServer[]>([]);
 	let chosen = $state<NearbyBox | null>(prePair.box);
 	let words = $state("");
 	let error = $state<string | null>(null);
@@ -43,6 +52,9 @@
 	let wordsEl = $state<HTMLInputElement | null>(null);
 
 	const open = $derived(found.filter((b) => b.state !== "needs-owner"));
+	/** Network servers that aren't hardware already listed over Bluetooth. */
+	const elsewhere = $derived(network.filter((s) => !found.some((b) => b.label === boxLabel(s.name))));
+	const nothing = $derived(open.length === 0 && elsewhere.length === 0);
 	/** "mango burly skull dough", "Mango-Burly-Skull-Dough": one shape. */
 	const canonical = $derived(
 		words
@@ -56,19 +68,51 @@
 	const said = (e: unknown) =>
 		e instanceof BoxRadioError ? e.message : "Something went wrong talking to your server. Try again.";
 
+	/** One round of both searches. A failed Bluetooth scan is said only when
+	 *  the network search found nothing either. */
+	async function search(): Promise<void> {
+		const [ble, lan] = await Promise.all([
+			boxRadio.discover().then(
+				(boxes) => ({ boxes, error: null }),
+				(e: unknown) => ({ boxes: [] as NearbyBox[], error: said(e) }),
+			),
+			prePair.serversOnNetwork(),
+		]);
+		found = ble.boxes;
+		network = lan;
+		error = ble.error && lan.length === 0 ? ble.error : null;
+	}
+
+	/** Bumped by anything that ends a search, so a stale round can't redraw. */
+	let gen = 0;
+
 	async function look() {
+		const my = ++gen;
 		phase = "looking";
-		error = null;
-		try {
-			found = await boxRadio.discover();
-		} catch (e) {
-			found = [];
-			error = said(e);
-		}
+		await search();
+		if (my !== gen) return;
 		phase = "choose";
+		// One server on the network and no hardware: straight to its code,
+		// once. Coming back from the code screen means they want to choose.
+		if (found.length === 0 && network.length === 1 && prePair.forwardOnce(network[0].origin)) {
+			prePair.toCodeEntry(network[0]);
+			return;
+		}
+		void keepLooking(my);
+	}
+
+	/** While nothing is found, search again every few seconds, so a server
+	 *  that comes up appears here without anyone asking. */
+	async function keepLooking(my: number) {
+		while (my === gen && phase === "choose" && nothing) {
+			await new Promise((r) => setTimeout(r, 4000));
+			if (my !== gen || phase !== "choose" || !nothing) return;
+			await search();
+		}
 	}
 
 	async function choose(box: NearbyBox) {
+		gen++;
 		chosen = box;
 		error = null;
 		phase = "waking";
@@ -131,6 +175,7 @@
 
 	onMount(() => {
 		if (!prePair.link) void look();
+		return () => gen++;
 	});
 
 	const title = $derived(
@@ -140,19 +185,21 @@
 				? "Save your recovery phrase"
 				: phase === "waking"
 					? `Opening ${chosen?.label ?? "your server"}`
-					: open.length > 1
+					: open.length + elsewhere.length > 1
 						? "Which server is yours?"
 						: "Find your server",
 	);
 	const subtitle = $derived(
 		phase === "looking"
-			? `Looking nearby. Keep ${here} within a few steps of it.`
+			? `Looking over Bluetooth and on this network. If ${here} asks, allow both so Virtues can find your server.`
 			: phase === "choose"
-				? open.length === 0
-					? `${here[0].toUpperCase()}${here.slice(1)} can't find a new server nearby. Make sure yours has power and sits close by, then look again.`
-					: open.length === 1
-						? "Is this the number on your server's screen?"
-						: "Choose the one whose number is on its screen."
+				? nothing
+					? "Ran virtues pair on your server? Enter the address and code it printed."
+					: open.length === 0
+						? "Found on this network. Choose it, then enter the code virtues pair printed."
+						: open.length === 1 && elsewhere.length === 0
+							? "Is this the number on your server's screen?"
+							: "Choose the one whose number is on its screen."
 				: phase === "waking"
 					? "One moment."
 					: phase === "keep"
@@ -170,6 +217,10 @@
 				<circle cx="12" cy="5" r="2.85" />
 			</svg>
 		</div>
+	{:else if phase === "choose" && nothing}
+		<p class="hardware" in:rise>
+			Setting up Virtues hardware? Make sure it has power and sits close by. It shows up here on its own.
+		</p>
 	{:else if phase === "choose"}
 		<ul class="servers" in:rise>
 			{#each found as b (b.id)}
@@ -187,6 +238,16 @@
 								: b.state === "online"
 									? "Online, ready to set up"
 									: "Ready to set up"}
+						</span>
+					</button>
+				</li>
+			{/each}
+			{#each elsewhere as s (s.origin)}
+				<li>
+					<button type="button" class="server" onclick={() => prePair.toCodeEntry(s)}>
+						<span class="name">{boxLabel(s.name)}</span>
+						<span class="state">
+							{s.claimed === true ? "Already set up, " : ""}{s.origin.replace(/^https?:\/\//, "")}
 						</span>
 					</button>
 				</li>
@@ -222,21 +283,29 @@
 		</div>
 	{/if}
 	<p class="note" class:error role={error ? "alert" : undefined}>{error ?? " "}</p>
-	{#if phase === "choose" && prePair.canJoinExisting}
-		<!-- A server with an owner is listed but not offered: joining one is
-		     the connect page's (prepair.joinExisting). -->
+	{#if phase === "choose" && isIOS && prePair.canJoinExisting}
+		<!-- The phone's other way in: the code a paired computer shows, on the
+		     connect page (prepair.joinExisting). A computer joins by address
+		     and code, which the main action already offers. -->
 		<p class="join">
 			Adding {here} to a server you already use?
-			<button type="button" class="setup-past" onclick={() => prePair.joinExisting()}>Join it instead</button>
+			<button type="button" class="setup-past" onclick={() => prePair.joinExisting()}>Scan its code</button>
 		</p>
 	{/if}
 
 	{#snippet actions()}
 		{#if phase === "choose"}
-			{#if open.length === 1}
+			{#if open.length === 1 && elsewhere.length === 0}
 				<button type="button" class="setup-go" onclick={() => choose(open[0])}>Set up {open[0].label}</button>
 			{/if}
-			<button type="button" class={open.length === 0 ? "setup-go" : "setup-past"} onclick={look}>Look again</button>
+			<button
+				type="button"
+				class={nothing ? "setup-go" : "setup-past"}
+				onclick={() => {
+					gen++;
+					prePair.toAddressEntry();
+				}}>Enter address and code</button
+			>
 		{:else if phase === "words" || phase === "checking"}
 			<button type="button" class="setup-go" onclick={openWithWords} disabled={!fourWords || phase === "checking"}>
 				{phase === "checking" ? "Checking…" : "Continue"}
@@ -366,6 +435,13 @@
 		accent-color: var(--color-primary);
 	}
 
+	.hardware {
+		max-width: 24rem;
+		margin: 0 auto;
+		text-align: center;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
 	.join {
 		margin: 4px 0 0;
 		text-align: center;
