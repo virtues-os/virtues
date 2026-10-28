@@ -3,7 +3,8 @@
 //!
 //! A sign-in starts here. The service sends the owner's browser back to the
 //! OAuth proxy, and the box collects the code from there
-//! (`tools/connection.rs`).
+//! (`tools/connection.rs`). Signing in again to a connection that needs it
+//! is the same connect call.
 
 use axum::{
     extract::{Path, Query, State},
@@ -118,9 +119,11 @@ async fn connect_handler(State(pool): State<PgPool>, Json(ask): Json<Connect>) -
     }
 }
 
+/// Answers with what happened to the service's grant: `revoked`,
+/// `not_offered` or `not_revoked`, or `null` when nothing was connected.
 async fn disconnect_handler(State(pool): State<PgPool>, Path(id): Path<String>) -> Response {
     match connection::disconnect(&pool, &id).await {
-        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Ok(grant) => Json(json!({ "grant": grant })).into_response(),
         Err(e) => refuse(StatusCode::SERVICE_UNAVAILABLE, &format!("Could not forget the sign-in: {e}")),
     }
 }

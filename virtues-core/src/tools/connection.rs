@@ -16,6 +16,13 @@
 //! `connection`, key the connection's short name), with the server's address
 //! in the row's metadata, and rmcp refreshes them through the same row.
 //!
+//! When the service stops accepting the sign-in, the row's status becomes
+//! `reauth_required`. The connection stays listed, the Sources catalog and the
+//! attention list ask the owner to sign in again, and signing in again
+//! replaces the tokens in the same row. Disconnecting revokes the grant at the
+//! service when it publishes a revocation endpoint (RFC 7009), then deletes
+//! the row.
+//!
 //! The chat reaches a connection through one tool, `connection`, which runs a
 //! worker loop with only that service's tools on the Lite slot, the way
 //! `browse` does. The chat's own tool list stays the same whatever is
@@ -30,8 +37,8 @@ use futures::StreamExt;
 use rmcp::model::{CallToolRequestParams, ClientConfig, Tool};
 use rmcp::service::RunningService;
 use rmcp::transport::auth::{
-    AuthClient, AuthError, AuthorizationManager, AuthorizationRequest, CredentialStore, OAuthState,
-    StoredCredentials,
+    AuthClient, AuthError, AuthorizationManager, AuthorizationMetadata, AuthorizationRequest, CredentialStore,
+    OAuthState, StoredCredentials,
 };
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
@@ -78,6 +85,9 @@ pub struct Connection {
     /// Its registry name, when it came from the registry.
     pub registry: Option<String>,
     pub icon: Option<String>,
+    /// The service stopped accepting the sign-in, so the assistant cannot use
+    /// it until the owner signs in again.
+    pub needs_sign_in: bool,
 }
 
 impl Connection {
@@ -91,6 +101,7 @@ impl Connection {
             url: listing.url,
             registry: Some(listing.registry),
             icon: listing.icon,
+            needs_sign_in: false,
         }
     }
 
@@ -112,6 +123,7 @@ impl Connection {
             url,
             registry: None,
             icon: None,
+            needs_sign_in: false,
         })
     }
 }
@@ -222,28 +234,37 @@ impl CredentialStore for Stored {
         Ok(())
     }
 
+    /// rmcp clears the tokens when the service's authorization server changes.
+    /// The owner has to sign in again with the new one.
     async fn clear(&self) -> Result<(), AuthError> {
-        disconnect(&self.pool, &self.connection.id).await.map_err(store_error)
+        mark_signed_out(&self.pool, &self.connection.id).await.map_err(store_error)
+    }
+
+    /// The service answered `invalid_grant` to a refresh.
+    async fn on_refresh_token_rejected(&self, _credentials: &StoredCredentials) -> Result<(), AuthError> {
+        mark_signed_out(&self.pool, &self.connection.id).await.map_err(store_error)
     }
 }
 
-/// Every connection with a live sign-in, by name.
+/// Every connection, by name, including those that need a fresh sign-in.
 pub async fn connected(pool: &PgPool) -> Result<Vec<Connection>, sqlx::Error> {
-    let rows: Vec<(String, String, Value)> = sqlx::query_as(
-        "SELECT key, name, metadata FROM credentials WHERE kind = $1 AND status = 'active' ORDER BY name",
+    let rows: Vec<(String, String, Value, String)> = sqlx::query_as(
+        "SELECT key, name, metadata, status FROM credentials
+         WHERE kind = $1 AND status IN ('active', 'reauth_required') ORDER BY name",
     )
     .bind(KIND)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .filter_map(|(id, name, metadata)| {
+        .filter_map(|(id, name, metadata, status)| {
             let text = |key: &str| metadata.get(key).and_then(Value::as_str).map(str::to_string);
             Some(Connection {
                 url: text("url")?,
                 about: text("about").unwrap_or_default(),
                 registry: text("registry"),
                 icon: text("icon"),
+                needs_sign_in: status == "reauth_required",
                 id,
                 name,
             })
@@ -256,16 +277,135 @@ async fn load(pool: &PgPool, id: &str) -> Result<Option<Connection>> {
     Ok(connected(pool).await?.into_iter().find(|c| c.id == id))
 }
 
-/// Forgets the sign-in. The service keeps its own record of the grant until
-/// the owner removes it there.
-pub async fn disconnect(pool: &PgPool, id: &str) -> Result<()> {
+/// Marks a connection as needing a fresh sign-in. The tokens stay, so a
+/// disconnect can still revoke them, and signing in again replaces them.
+async fn mark_signed_out(pool: &PgPool, id: &str) -> Result<(), sqlx::Error> {
+    let marked = sqlx::query(
+        "UPDATE credentials SET status = 'reauth_required', updated_at = now()
+         WHERE kind = $1 AND key = $2 AND status = 'active'",
+    )
+    .bind(KIND)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    if marked.rows_affected() > 0 {
+        tracing::warn!(connection = %id, "connection needs a fresh sign-in");
+    }
+    forget_session(id).await;
+    Ok(())
+}
+
+/// What happened to the service's own grant when the owner disconnected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Grant {
+    /// The service confirmed it revoked the tokens.
+    Revoked,
+    /// The service publishes no revocation endpoint, so the grant stays
+    /// until the owner removes it in the service's settings.
+    NotOffered,
+    /// The service could not be reached or refused the revocation.
+    NotRevoked,
+}
+
+/// Revokes the grant at the service where it can, then deletes the sign-in.
+/// The row is deleted whatever the service answers. `None` when nothing was
+/// connected under this name.
+pub async fn disconnect(pool: &PgPool, id: &str) -> Result<Option<Grant>> {
+    let row: Option<(String, Value)> =
+        sqlx::query_as("SELECT secrets_ciphertext, metadata FROM credentials WHERE kind = $1 AND key = $2")
+            .bind(KIND)
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    let Some((sealed, metadata)) = row else { return Ok(None) };
+    // absent-ok: a row with no address has no service to revoke at; `revoke` answers NotRevoked.
+    let url = metadata.get("url").and_then(Value::as_str).unwrap_or_default();
+    let grant = revoke(&sealed, url).await;
     sqlx::query("DELETE FROM credentials WHERE kind = $1 AND key = $2")
         .bind(KIND)
         .bind(id)
         .execute(pool)
         .await?;
     forget_session(id).await;
-    Ok(())
+    tracing::info!(audit = "connection_disconnect", connection = %id, grant = ?grant, "connection disconnected");
+    Ok(Some(grant))
+}
+
+/// Revokes the stored tokens at the revocation endpoint the service's
+/// authorization server publishes. The refresh token goes first: revoking it
+/// ends the grant (RFC 7009 section 2.1).
+async fn revoke(sealed: &str, url: &str) -> Grant {
+    let stored = match unseal(sealed) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "connection disconnect: the sign-in could not be read");
+            return Grant::NotRevoked;
+        }
+    };
+    let metadata = match AuthorizationManager::new(url).await {
+        Ok(manager) => manager.resolve_metadata().await.map(|r| r.metadata),
+        Err(e) => Err(e),
+    };
+    let metadata = match metadata {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(error = %e, "connection disconnect: the service's sign-in details could not be read");
+            return Grant::NotRevoked;
+        }
+    };
+    let Some(endpoint) = revocation_endpoint(&metadata) else { return Grant::NotOffered };
+    let requests = revocations(&stored);
+    if requests.is_empty() {
+        return Grant::Revoked;
+    }
+    for form in requests {
+        match http().post(&endpoint).form(&form).send().await {
+            Ok(r) if r.status().is_success() => {}
+            Ok(r) => {
+                tracing::warn!(status = %r.status(), "connection disconnect: the service refused the revocation");
+                return Grant::NotRevoked;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "connection disconnect: the service could not be reached");
+                return Grant::NotRevoked;
+            }
+        }
+    }
+    Grant::Revoked
+}
+
+fn unseal(sealed: &str) -> Result<Value> {
+    let json = TokenEncryptor::from_env()?.decrypt(sealed)?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+/// The service's revocation endpoint, when it publishes one over https.
+fn revocation_endpoint(metadata: &AuthorizationMetadata) -> Option<String> {
+    metadata
+        .additional_fields
+        .get("revocation_endpoint")
+        .and_then(Value::as_str)
+        .filter(|e| e.starts_with("https://"))
+        .map(str::to_string)
+}
+
+/// One revocation request per stored token, refresh token first. The box is
+/// a public client, so each request names the client and carries no secret.
+fn revocations(stored: &Value) -> Vec<Vec<(&'static str, String)>> {
+    let client_id = stored.get("client_id").and_then(Value::as_str).unwrap_or_default();
+    let tokens = stored.get("token_response");
+    ["refresh_token", "access_token"]
+        .into_iter()
+        .filter_map(|hint| {
+            let token = tokens?.get(hint)?.as_str()?;
+            Some(vec![
+                ("token", token.to_string()),
+                ("token_type_hint", hint.to_string()),
+                ("client_id", client_id.to_string()),
+            ])
+        })
+        .collect()
 }
 
 // ── Signing in ──────────────────────────────────────────────────────────────
@@ -426,8 +566,20 @@ async fn tools(client: &Client, connection: &Connection) -> Result<Arc<Vec<Tool>
     Ok(tools)
 }
 
+/// What the chat and the worker are told when a connection needs the owner
+/// to sign in again.
+fn signed_out(connection: &Connection) -> String {
+    format!(
+        "{} stopped accepting the owner's sign-in. The owner can sign in again in Sources, then ask again.",
+        connection.name
+    )
+}
+
 /// A live MCP session with `connection`, signed in from its stored tokens.
 async fn client(pool: &PgPool, connection: &Connection) -> Result<Arc<Client>> {
+    if connection.needs_sign_in {
+        bail!(signed_out(connection));
+    }
     if let Some(client) = clients().lock().await.get(&connection.id) {
         if !client.is_transport_closed() {
             return Ok(client.clone());
@@ -437,20 +589,54 @@ async fn client(pool: &PgPool, connection: &Connection) -> Result<Arc<Client>> {
     let mut manager = AuthorizationManager::new(&connection.url).await.context("reach the service")?;
     manager.set_credential_store(Stored { pool: pool.clone(), connection: connection.clone() });
     if !manager.initialize_from_store().await.context("read the sign-in")? {
-        bail!("{} is not connected. Connect it in Settings, then try again.", connection.name);
+        mark_signed_out(pool, &connection.id).await?;
+        bail!(signed_out(connection));
     }
     let transport = StreamableHttpClientTransport::with_client(
         AuthClient::new(reqwest_rmcp::Client::default(), manager),
         StreamableHttpClientTransportConfig::with_uri(connection.url.clone()),
     );
-    let client = Arc::new(
-        ClientConfig::default()
-            .serve(transport)
-            .await
-            .with_context(|| format!("open a session with {}", connection.name))?,
-    );
+    let client = match ClientConfig::default().serve(transport).await {
+        Ok(client) => Arc::new(client),
+        Err(e) => {
+            if refuses_sign_in(pool, connection).await {
+                mark_signed_out(pool, &connection.id).await?;
+                bail!(signed_out(connection));
+            }
+            return Err(anyhow!(e).context(format!("open a session with {}", connection.name)));
+        }
+    };
     clients().lock().await.insert(connection.id.clone(), client.clone());
     Ok(client)
+}
+
+/// After a failed request, asks whether the service still accepts the
+/// stored sign-in. It does not when no token can be had or refreshed, or when
+/// its MCP server answers a ping carrying the token with 401, which is how an
+/// MCP server refuses a token (MCP authorization spec). rmcp's session errors
+/// do not carry the status through, so the box asks again directly. A service
+/// it cannot reach counts as accepting: that failure is not the owner's to fix.
+async fn refuses_sign_in(pool: &PgPool, connection: &Connection) -> bool {
+    let Ok(mut manager) = AuthorizationManager::new(&connection.url).await else { return false };
+    manager.set_credential_store(Stored { pool: pool.clone(), connection: connection.clone() });
+    match manager.initialize_from_store().await {
+        Ok(true) => {}
+        Ok(false) => return true,
+        Err(_) => return false,
+    }
+    let token = match manager.get_access_token().await {
+        Ok(token) => token,
+        Err(AuthError::AuthorizationRequired | AuthError::TokenRefreshRejected(_)) => return true,
+        Err(_) => return false,
+    };
+    let ping = http()
+        .post(&connection.url)
+        .bearer_auth(token)
+        .header(reqwest::header::ACCEPT, "application/json, text/event-stream")
+        .json(&json!({ "jsonrpc": "2.0", "id": 0, "method": "ping" }))
+        .send()
+        .await;
+    matches!(ping, Ok(r) if r.status() == reqwest::StatusCode::UNAUTHORIZED)
 }
 
 /// The tool name the worker sees for one of a connection's tools.
@@ -681,6 +867,12 @@ pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, context: &To
         Err(e) => {
             // A dead session is dropped so the next call opens a fresh one.
             forget_session(&connection.id).await;
+            if refuses_sign_in(pool, connection).await {
+                return match mark_signed_out(pool, &connection.id).await {
+                    Ok(()) => ToolResult::error(signed_out(connection)),
+                    Err(e) => ToolResult::error(format!("Could not record that {} needs a sign-in: {e}", connection.name)),
+                };
+            }
             ToolResult::error(format!("{} did not answer: {e}", connection.name))
         }
     }
@@ -709,6 +901,9 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
             format!("`{name}` is not connected. Connected: {}.", list.join(", "))
         });
     };
+    if connection.needs_sign_in {
+        return ToolResult::error(signed_out(connection));
+    }
 
     let model = match crate::virtues_api::completion::background_model_for_slot(
         pool,
@@ -950,8 +1145,82 @@ mod tests {
         let sources = crate::api::credentials::list_credentials(&pool).await.unwrap();
         assert!(sources.iter().all(|c| c.id != "connection:notion"));
 
-        disconnect(&pool, "notion").await.unwrap();
+        // The sealed value is not a real sign-in, so nothing can be revoked,
+        // and the row goes anyway.
+        assert_eq!(disconnect(&pool, "notion").await.unwrap(), Some(Grant::NotRevoked));
         assert!(connected(&pool).await.unwrap().is_empty());
+        assert_eq!(disconnect(&pool, "notion").await.unwrap(), None);
+    }
+
+    /// A refused sign-in keeps the connection listed, marked, and the chat is
+    /// told to have the owner sign in again.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_refused_sign_in_stays_listed_until_the_owner_signs_in_again(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO credentials (id, kind, key, name, status, secrets_ciphertext, metadata)
+             VALUES ('connection:linear', 'connection', 'linear', 'Linear', 'active', 'sealed', $1)",
+        )
+        .bind(json!({ "url": "https://mcp.linear.app/mcp", "registry": "app.linear/linear" }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let linear = connected(&pool).await.unwrap().remove(0);
+        assert!(!linear.needs_sign_in);
+
+        // rmcp clears the store when the authorization server changes.
+        Stored { pool: pool.clone(), connection: linear.clone() }.clear().await.unwrap();
+        let listed = connected(&pool).await.unwrap();
+        assert_eq!(listed.len(), 1, "the connection stays listed");
+        assert!(listed[0].needs_sign_in);
+        assert!(
+            Stored { pool: pool.clone(), connection: linear.clone() }.load().await.unwrap().is_none(),
+            "rmcp is not handed tokens the service refused"
+        );
+
+        let result = run_tool(&pool, &json!({ "name": "linear", "task": "list my issues" }), &ToolContext::default()).await;
+        assert!(result.error.unwrap().contains("sign in again in Sources"));
+
+        // Signing in again stores fresh tokens in the same row.
+        crate::credentials::ensure_test_key();
+        let fresh = serde_json::from_value::<StoredCredentials>(json!({ "client_id": "c1", "token_response": null })).unwrap();
+        Stored { pool: pool.clone(), connection: linear }.save(fresh).await.unwrap();
+        let listed = connected(&pool).await.unwrap();
+        assert_eq!((listed.len(), listed[0].needs_sign_in), (1, false));
+    }
+
+    #[test]
+    fn disconnect_revokes_the_refresh_token_first_as_a_public_client() {
+        let stored = json!({
+            "client_id": "client-1",
+            "token_response": { "access_token": "at", "refresh_token": "rt", "token_type": "bearer" }
+        });
+        let forms = revocations(&stored);
+        assert_eq!(forms.len(), 2);
+        assert_eq!(forms[0], vec![
+            ("token", "rt".to_string()),
+            ("token_type_hint", "refresh_token".to_string()),
+            ("client_id", "client-1".to_string()),
+        ]);
+        assert_eq!(forms[1][0], ("token", "at".to_string()));
+        assert!(revocations(&json!({ "client_id": "c", "token_response": null })).is_empty());
+    }
+
+    #[test]
+    fn only_an_https_revocation_endpoint_is_used() {
+        let metadata = |endpoint: Value| -> AuthorizationMetadata {
+            serde_json::from_value(json!({
+                "authorization_endpoint": "https://mcp.example.com/authorize",
+                "token_endpoint": "https://mcp.example.com/token",
+                "revocation_endpoint": endpoint,
+            }))
+            .unwrap()
+        };
+        assert_eq!(
+            revocation_endpoint(&metadata(json!("https://mcp.example.com/token"))).as_deref(),
+            Some("https://mcp.example.com/token")
+        );
+        assert_eq!(revocation_endpoint(&metadata(json!("http://mcp.example.com/revoke"))), None);
+        assert_eq!(revocation_endpoint(&metadata(Value::Null)), None);
     }
 
     /// The chat is told which services are connected when it names another.

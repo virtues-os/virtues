@@ -28,8 +28,8 @@ const LOW_DISK_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 pub struct AttentionItem {
     /// Stable while the condition holds; a new key is a new problem.
     pub key: String,
-    /// `key` | `update` | `disk` | `backup` | `source` | `stream`, most
-    /// urgent first.
+    /// `key` | `update` | `disk` | `backup` | `source` | `connection` |
+    /// `stream`, most urgent first.
     pub kind: &'static str,
     pub title: String,
     pub body: String,
@@ -52,6 +52,11 @@ pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
     match broken_sources(db).await {
         Ok(rows) => source_items(&mut items, rows),
         Err(e) => tracing::warn!("attention: credentials unreadable: {e}"),
+    }
+
+    match signed_out_connections(db).await {
+        Ok(rows) => connection_items(&mut items, rows),
+        Err(e) => tracing::warn!("attention: connections unreadable: {e}"),
     }
 
     match expiring_sources(db).await {
@@ -189,6 +194,30 @@ fn source_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String, Strin
             title,
             body,
             route: "/sources",
+        });
+    }
+}
+
+/// `(short name, name)` for every connected service that stopped accepting
+/// the owner's sign-in (`tools/connection.rs`).
+async fn signed_out_connections(db: &Database) -> Result<Vec<(String, String)>> {
+    Ok(sqlx::query_as(
+        "SELECT key, name FROM credentials \
+         WHERE kind = 'connection' AND status = 'reauth_required' \
+         ORDER BY name",
+    )
+    .fetch_all(db.pool())
+    .await?)
+}
+
+fn connection_items(items: &mut Vec<AttentionItem>, rows: Vec<(String, String)>) {
+    for (key, name) in rows {
+        items.push(AttentionItem {
+            key: format!("connection:{key}:reauth_required"),
+            kind: "connection",
+            title: format!("{name} needs you to sign in again"),
+            body: "The assistant can't use it until you do. Open Sources to sign in.".to_string(),
+            route: "/sources/catalog",
         });
     }
 }
@@ -428,6 +457,14 @@ mod tests {
         );
         assert_eq!(items[0].title, "Google Calendar needs you to sign in again");
         assert_eq!(items[0].key, "source:cred_1:reauth_required");
+    }
+
+    #[test]
+    fn a_connection_needing_sign_in_is_named() {
+        let mut items = vec![];
+        connection_items(&mut items, vec![("linear".into(), "Linear".into())]);
+        assert_eq!(items[0].title, "Linear needs you to sign in again");
+        assert_eq!((items[0].key.as_str(), items[0].route), ("connection:linear:reauth_required", "/sources/catalog"));
     }
 
     fn stream(name: &str, source: &str, status: &str, days_ago: i64) -> crate::api::stream_health::StreamHealth {

@@ -75,8 +75,18 @@
 			: []
 	);
 
-	/** A service the assistant can act in, as `/api/connections` returns it. */
-	type Connected = { id: string; name: string; about: string; url: string; registry: string | null };
+	/** A service the assistant can act in, as `/api/connections` returns it.
+	 *  `needs_sign_in` is absent from an older server. */
+	type Connected = {
+		id: string;
+		name: string;
+		about: string;
+		url: string;
+		registry: string | null;
+		needs_sign_in?: boolean;
+	};
+	/** What happened to the service's own grant on disconnect. */
+	type Grant = 'revoked' | 'not_offered' | 'not_revoked' | null;
 	type Listing = { registry: string; title: string; about: string; url: string; is_connected: boolean };
 
 	const SYNCS = 'Syncs your data';
@@ -86,6 +96,8 @@
 	let featured = $state<Listing[]>([]);
 	let registryError = $state<string | null>(null);
 	let connectionsError = $state<string | null>(null);
+	/** What the last disconnect did at the service. */
+	let disconnected = $state<string | null>(null);
 	/** The key of the connect or disconnect in flight, so its button spins. */
 	let busy = $state<string | null>(null);
 	let results = $state<Listing[] | null>(null);
@@ -131,7 +143,15 @@
 		source: SourceCatalogItem | null;
 		/** Set on a service the assistant acts in. `id` is null until it is
 		 *  connected. */
-		service: { id: string | null; registry: string | null } | null;
+		service: Service | null;
+	};
+
+	type Service = {
+		id: string | null;
+		registry: string | null;
+		/** Set when connected; signing in again to a pasted server uses it. */
+		url: string | null;
+		needsSignIn: boolean;
 	};
 
 	const AUTH_LABEL: Record<string, string> = {
@@ -205,12 +225,7 @@
 		})
 	);
 
-	function serviceRow(
-		id: string,
-		name: string,
-		about: string,
-		service: { id: string | null; registry: string | null }
-	): Row {
+	function serviceRow(id: string, name: string, about: string, service: Service): Row {
 		const on = service.id !== null;
 		return {
 			id,
@@ -220,7 +235,7 @@
 			kind: AUTH_LABEL.via_proxy,
 			connections: [],
 			connected: on ? 1 : 0,
-			state: on ? 'connected' : 'not connected',
+			state: service.needsSignIn ? 'needs attention' : on ? 'connected' : 'not connected',
 			last_activity: '—',
 			applets: 0,
 			provides: '—',
@@ -233,12 +248,24 @@
 	// What you have connected, then the featured services you haven't.
 	const serviceRows = $derived.by<Row[]>(() => {
 		const out = connected.map((c) =>
-			serviceRow(c.id, c.name, c.about, { id: c.id, registry: c.registry })
+			serviceRow(c.id, c.name, c.about, {
+				id: c.id,
+				registry: c.registry,
+				url: c.url,
+				needsSignIn: c.needs_sign_in === true
+			})
 		);
 		const have = new Set(connected.map((c) => c.registry));
 		for (const l of featured) {
 			if (have.has(l.registry)) continue;
-			out.push(serviceRow(`registry:${l.registry}`, l.title, l.about, { id: null, registry: l.registry }));
+			out.push(
+				serviceRow(`registry:${l.registry}`, l.title, l.about, {
+					id: null,
+					registry: l.registry,
+					url: null,
+					needsSignIn: false
+				})
+			);
 		}
 		return out;
 	});
@@ -393,14 +420,16 @@
 	 * After a sign-in the service sends the browser to the OAuth proxy, and
 	 * your server collects the code from there a few seconds later
 	 * (`tools/connection.rs`). So coming back to the app reloads the list
-	 * until the new connection shows, for up to half a minute.
+	 * until the new connection shows, or a connection that needed a fresh
+	 * sign-in no longer does, for up to half a minute.
 	 */
 	function reloadUntilConnected() {
-		const before = connected.length;
+		const shape = () => connected.map((c) => `${c.id}:${c.needs_sign_in === true}`).join();
+		const before = shape();
 		let tries = 0;
 		const again = async () => {
 			await loadConnections();
-			if (connected.length === before && ++tries < 15) setTimeout(again, 2000);
+			if (shape() === before && ++tries < 15) setTimeout(again, 2000);
 		};
 		reloadOnReturn(again);
 	}
@@ -409,6 +438,7 @@
 	async function connectService(target: { registry: string } | { url: string }, key: string) {
 		busy = key;
 		connectionsError = null;
+		disconnected = null;
 		try {
 			// `sheet` asks the proxy to close the iOS sign-in sheet once the
 			// sign-in lands there.
@@ -426,11 +456,39 @@
 		}
 	}
 
+	/** What disconnecting did at the service, in a sentence. */
+	function grantNote(name: string, grant: Grant): string | null {
+		switch (grant) {
+			case 'revoked':
+				return `Disconnected ${name}. ${name} confirmed your server's access has ended.`;
+			case 'not_offered':
+				return `Disconnected ${name}. ${name} gives your server no way to end its access, so remove Virtues in ${name}'s settings to end it there.`;
+			case 'not_revoked':
+				return `Disconnected ${name}, but ${name} did not confirm your server's access has ended. Remove Virtues in ${name}'s settings to be sure.`;
+			default:
+				return null;
+		}
+	}
+
+	/** Signs in again to the same server, which keeps the connection's name. */
+	function signInAgain(service: Service) {
+		const key = service.id ?? '';
+		if (service.registry) return connectService({ registry: service.registry }, key);
+		if (service.url) return connectService({ url: service.url }, key);
+	}
+
 	async function disconnectService(id: string) {
-		busy = id;
+		busy = `out:${id}`;
 		connectionsError = null;
+		disconnected = null;
+		const name = connected.find((c) => c.id === id)?.name ?? id;
 		try {
-			await apiSend('DELETE', `/connections/${encodeURIComponent(id)}`);
+			// An older server answers 204 with no body.
+			const answer = await apiSend<{ grant?: Grant } | undefined>(
+				'DELETE',
+				`/connections/${encodeURIComponent(id)}`
+			);
+			disconnected = grantNote(name, answer?.grant ?? null);
 			await loadConnections();
 		} catch (e) {
 			connectionsError = message(e);
@@ -453,6 +511,9 @@
 	{/if}
 	{#if connectionsError}
 		<div class="error">{connectionsError}</div>
+	{/if}
+	{#if disconnected}
+		<p class="quiet">{disconnected}</p>
 	{/if}
 
 	<UniversalDataGrid
@@ -477,7 +538,23 @@
 				</Button>
 			{:else if row.service?.id}
 				{@const id = row.service.id}
-				<TextAction loading={busy === id} disabled={busy !== null} onclick={() => void disconnectService(id)}>
+				{@const service = row.service}
+				{#if service.needsSignIn}
+					<Button
+						variant="secondary"
+						size="sm"
+						loading={busy === id}
+						disabled={busy !== null}
+						onclick={() => void signInAgain(service)}
+					>
+						Sign in again
+					</Button>
+				{/if}
+				<TextAction
+					loading={busy === `out:${id}`}
+					disabled={busy !== null}
+					onclick={() => void disconnectService(id)}
+				>
 					Disconnect
 				</TextAction>
 			{:else if row.service?.registry}
