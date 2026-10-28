@@ -342,6 +342,9 @@ pub async fn applet_data_tables(db: &PgPool, applet_id: &str) -> Result<Vec<Stri
 /// silently clobber what the user just changed.
 pub const SYSTEM_EDITABLE_FIELDS: &[&str] = &["enabled", "schedule", "config", "memory"];
 
+/// Config keys only the applet's file sets: what its runs may use.
+const FILE_ONLY_CONFIG: &[&str] = &["allowed_tools", "net_hosts"];
+
 /// Create a new user-owned action. Used by chat tools + the HTTP POST
 /// endpoint. `id` is generated from the name if not provided.
 #[allow(clippy::too_many_arguments)]
@@ -474,6 +477,21 @@ pub async fn update_applet(
             return Err(Error::InvalidInput(format!(
                 "field '{key}' is system-managed; only {SYSTEM_EDITABLE_FIELDS:?} are editable on system actions"
             )));
+        }
+    }
+
+    // What the applet may use comes from its file's `allowed-tools`, which
+    // the reader checks (no `sudo`, `lake` and `net(…)` only as written
+    // there). A patch that rewrote the row's copy would skip that check, and
+    // for your own applets reconcile keeps the row's copy over the file's.
+    // Leaving the key out only drops it, which reconcile restores.
+    if let Some(cfg) = obj.get("config").and_then(|v| v.as_object()) {
+        for key in FILE_ONLY_CONFIG {
+            if cfg.get(*key).is_some_and(|v| Some(v) != current.config.get(*key)) {
+                return Err(Error::InvalidInput(format!(
+                    "config.{key} comes from the applet's SKILL.md (`allowed-tools`); change it there"
+                )));
+            }
         }
     }
 
@@ -1360,6 +1378,28 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// What an applet may use is its file's. A patch may resend the same
+    /// list, or drop it, but not change it.
+    #[sqlx::test]
+    async fn a_patch_cannot_change_what_the_file_allows(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, config) \
+             VALUES ('applet_tides', 'Tides', 'user', '{\"allowed_tools\": [\"shell\"], \"net_hosts\": [\"api.weather.gov\"]}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        for config in [
+            serde_json::json!({ "allowed_tools": ["shell", "lake"], "net_hosts": ["api.weather.gov"] }),
+            serde_json::json!({ "allowed_tools": ["shell"], "net_hosts": ["api.weather.gov", "api.other.example.com"] }),
+        ] {
+            let err = update_applet(&pool, "applet_tides", &serde_json::json!({ "config": config })).await.unwrap_err();
+            assert!(err.to_string().contains("SKILL.md"), "{err}");
+        }
+        let same = serde_json::json!({ "allowed_tools": ["shell"], "net_hosts": ["api.weather.gov"], "chat_id": "chat_a" });
+        update_applet(&pool, "applet_tides", &serde_json::json!({ "config": same })).await.unwrap();
+    }
 
     /// Only the owner's route sets hosts, each through the egress policy, and
     /// a run's requests show per host on the run.

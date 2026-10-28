@@ -55,6 +55,11 @@
 	// Editability follows `owner`, because that is genuinely what the server
 	// enforces: reconcile owns those rows and would overwrite an edit anyway.
 	const isSystem = $derived(action.owner === 'system');
+	// `lake` in its file mounts every file in the lake for its code to read,
+	// so a host allowed below could receive any of them.
+	const readsLake = $derived(
+		Array.isArray(action.config?.allowed_tools) && action.config.allowed_tools.includes('lake')
+	);
 	const isAgent = $derived(Boolean(action.agent && action.agent.trim().length > 0));
 
 	// What the user is told, though, follows `origin` — the distinction the
@@ -221,7 +226,9 @@
 		appletId={action.id}
 		label="Hosts it can reach"
 		what="hosts"
-		hint="Its code asks to reach these hosts. Nothing goes out until you allow a host here. A host you allow can receive what the applet reads, including your records."
+		hint={readsLake
+			? 'Its code asks to reach these hosts. Nothing goes out until you allow a host here. It can read every file in your lake, so a host you allow can receive any of them, and your records.'
+			: 'Its code asks to reach these hosts. Nothing goes out until you allow a host here. A host you allow can receive what the applet reads, including your records.'}
 		load={getAppletHosts}
 		save={putAppletHosts}
 	/>
