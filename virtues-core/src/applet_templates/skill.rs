@@ -395,6 +395,123 @@ pub(crate) fn render(md: &SkillMd) -> Result<String, String> {
     Ok(format!("{yaml}\n---\n{}\n", md.body.trim()))
 }
 
+/// `limit`'s value for a `limits` object as the runner reads it
+/// (`applet_runner::limits`), or `None` when it sets nothing `limit` says.
+pub(crate) fn limit_from_config(limits: &serde_json::Map<String, serde_json::Value>) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(n) = limits.get("max_llm_cost").and_then(|v| v.as_f64()) {
+        parts.push(format!("${n} per run"));
+    }
+    if let Some(n) = limits.get("max_llm_cost_per_day").and_then(|v| v.as_f64()) {
+        parts.push(format!("${n} per day"));
+    }
+    if let Some(n) = limits.get("max_runs_per_day").or_else(|| limits.get("max_runs")).and_then(|v| v.as_u64()) {
+        parts.push(format!("{n} runs per day"));
+    }
+    if let Some(n) = limits.get("max_runs_per_hour").and_then(|v| v.as_u64()) {
+        parts.push(format!("{n} runs per hour"));
+    }
+    if let Some(n) = limits.get("timeout_s").and_then(|v| v.as_u64()) {
+        parts.push(format!("{n} seconds"));
+    }
+    (!parts.is_empty()).then(|| parts.join(", "))
+}
+
+/// A `SKILL.md` with an edit applied: the fields the PATCH path sends
+/// (`scheduler::applets::update_applet`), written into the frontmatter and
+/// the body, so reconcile reads the edit back instead of reverting it.
+///
+/// - `agent` is the body; null empties it.
+/// - `schedule` replaces `trigger`'s time entry with `cron <expr>`; null
+///   removes it. A `webhook` entry stays.
+/// - `enabled` is `metadata.enabled`.
+/// - `triggers`: `tool` is `invoke`'s `assistant`; `manual` and `message`
+///   need no key; `cron` follows `schedule`; `webhook` is kept as it is.
+/// - `config`: `limits` and `model_slot` become `limit` and `model`. Its
+///   other keys live in the row only.
+/// - `memory` lives in the row only.
+///
+/// `name` is the folder's and cannot change here; `condition` is now SQL in
+/// `run`. Both are refused with a sentence.
+pub(crate) fn apply_patch(text: &str, patch: &serde_json::Map<String, serde_json::Value>) -> Result<String, String> {
+    use yaml_rust2::YamlEmitter;
+    let (front, body) = split_frontmatter(text)?;
+    let doc = YamlLoader::load_from_str(front)
+        .map_err(|e| format!("its frontmatter is not valid YAML: {e}"))?
+        .into_iter()
+        .next()
+        .ok_or("its frontmatter is empty")?;
+    let Yaml::Hash(mut top) = doc else { return Err("its frontmatter is not a map".into()) };
+    let key = |k: &str| Yaml::String(k.to_string());
+    let mut meta = match top.remove(&key("metadata")) {
+        Some(Yaml::Hash(h)) => h,
+        _ => Default::default(),
+    };
+    let text_of = |h: &yaml_rust2::yaml::Hash, k: &str| h.get(&key(k)).and_then(scalar).unwrap_or_default();
+    let mut body = body.trim().to_string();
+
+    for (field, value) in patch {
+        match field.as_str() {
+            "name" => return Err("An applet written as SKILL.md is named by its folder, so its name cannot change here.".into()),
+            "condition" if !value.is_null() => {
+                return Err("A condition is now SQL in `run`: set `run: sql select 1 where (…)` in its SKILL.md.".into())
+            }
+            "condition" | "memory" => {}
+            "agent" => body = value.as_str().unwrap_or_default().trim().to_string(),
+            "schedule" => {
+                let mut kept: Vec<String> = list(&text_of(&meta, "trigger")).into_iter().filter(|t| t == "webhook").collect();
+                if let Some(cron) = value.as_str().filter(|c| !c.trim().is_empty()) {
+                    kept.insert(0, format!("cron {}", cron.trim()));
+                }
+                if kept.is_empty() {
+                    meta.remove(&key("trigger"));
+                } else {
+                    meta.insert(key("trigger"), Yaml::String(kept.join(", ")));
+                }
+            }
+            "enabled" => {
+                if let Some(b) = value.as_bool() {
+                    meta.insert(key("enabled"), Yaml::String(b.to_string()));
+                }
+            }
+            "triggers" => {
+                let wanted: Vec<&str> = value.as_array().map(|a| a.iter().filter_map(|t| t.as_str()).collect()).unwrap_or_default();
+                let mut invoke: Vec<String> = list(&text_of(&meta, "invoke")).into_iter().filter(|i| i == "chat").collect();
+                if wanted.contains(&"tool") {
+                    invoke.push("assistant".into());
+                }
+                meta.insert(key("invoke"), Yaml::String(if invoke.is_empty() { "none".into() } else { invoke.join(", ") }));
+            }
+            "config" => {
+                if let Some(limits) = value.get("limits").and_then(|l| l.as_object()) {
+                    match limit_from_config(limits) {
+                        Some(l) => meta.insert(key("limit"), Yaml::String(l)),
+                        None => meta.remove(&key("limit")),
+                    };
+                }
+                match value.get("model_slot").and_then(|m| m.as_str()) {
+                    Some("deep") => {
+                        meta.insert(key("model"), Yaml::String("deep".into()));
+                    }
+                    Some(_) => {
+                        meta.remove(&key("model"));
+                    }
+                    None => {}
+                }
+            }
+            other => return Err(format!("`{other}` cannot be edited in a SKILL.md.")),
+        }
+    }
+    if !meta.is_empty() {
+        top.insert(key("metadata"), Yaml::Hash(meta));
+    }
+    let mut yaml = String::new();
+    YamlEmitter::new(&mut yaml)
+        .dump(&Yaml::Hash(top))
+        .map_err(|e| format!("could not write the frontmatter: {e}"))?;
+    Ok(format!("{yaml}\n---\n{body}\n"))
+}
+
 /// A comma-separated `metadata` value as its entries.
 fn list(value: &str) -> Vec<String> {
     let mut out: Vec<String> = Vec::new();
@@ -822,12 +939,15 @@ fn parse_run(value: &str, folder: &Path, shipped: bool, errors: &mut Vec<String>
 
 /// `limit`: `$N per run`, `$N per day` and a duration, comma-separated.
 fn parse_limit(value: &str, limits: &mut toml::value::Table, errors: &mut Vec<String>) {
-    let help = "Use `$N per run`, `$N per day` or a duration such as `10 minutes`, separated by commas.";
+    let help = "Use `$N per run`, `$N per day`, `N runs per day`, `N runs per hour` or a duration such as \
+                `10 minutes`, separated by commas.";
     for part in value.split(',').map(str::trim).filter(|p| !p.is_empty()) {
         let words: Vec<&str> = part.split_whitespace().collect();
         let (key, number) = match words.as_slice() {
             [amount, "per", "run"] if amount.starts_with('$') => ("max_llm_cost", dollars(amount)),
             [amount, "per", "day"] if amount.starts_with('$') => ("max_llm_cost_per_day", dollars(amount)),
+            [n, "runs" | "run", "per", "day"] => ("max_runs_per_day", n.parse::<f64>().ok().filter(|n| *n >= 1.0)),
+            [n, "runs" | "run", "per", "hour"] => ("max_runs_per_hour", n.parse::<f64>().ok().filter(|n| *n >= 1.0)),
             [n, unit] => match seconds_per(unit) {
                 Some(per) => ("timeout_s", n.parse::<f64>().ok().filter(|n| *n > 0.0).map(|n| n * per)),
                 None => {
@@ -852,7 +972,7 @@ fn parse_limit(value: &str, limits: &mut toml::value::Table, errors: &mut Vec<St
             errors.push(format!("\"{part}\" repeats a limit `limit` already sets."));
             continue;
         }
-        let value = if key == "timeout_s" {
+        let value = if matches!(key, "timeout_s" | "max_runs_per_day" | "max_runs_per_hour") {
             toml::Value::Integer(number.ceil() as i64)
         } else {
             toml::Value::Float(number)
@@ -1222,6 +1342,42 @@ mod tests {
         let t = parse(&text, f.path(), "high", false).unwrap();
         assert_eq!(t.run_sql.as_deref(), Some("select bpm from data_health_heart_rate where bpm > 100"));
         assert!(t.triggers.contains(&"cron".to_string()));
+    }
+
+    /// An edit lands in the file: a retimed applet keeps its schedule
+    /// through a reconcile because reconcile reads it from here.
+    #[test]
+    fn an_edit_is_written_into_the_skill_md() {
+        let f = folder();
+        let text = skill(
+            &format!("{BASE}\nallowed-tools: sql_query\nmetadata:\n  trigger: every day at 07:00, webhook\n  source: example_source\n  invoke: chat"),
+            "Old prompt.",
+        );
+        let patch = serde_json::json!({
+            "schedule": "0 30 9 * * *",
+            "agent": "New prompt.",
+            "enabled": false,
+            "triggers": ["cron", "manual", "tool"],
+            "config": { "limits": { "max_llm_cost": 2, "max_runs_per_day": 4 }, "model_slot": "deep", "chat_id": "chat_a" },
+            "memory": "row only",
+        });
+        let edited = apply_patch(&text, patch.as_object().unwrap()).unwrap();
+        let t = parse(&edited, f.path(), "weekly-review", false).unwrap_or_else(|e| panic!("{e:?}\n{edited}"));
+        assert_eq!(t.schedule.as_deref(), Some("0 30 9 * * *"));
+        assert_eq!(t.agent.as_deref(), Some("New prompt."));
+        assert!(!t.default_enabled);
+        assert!(t.triggers.contains(&"webhook".to_string()), "a webhook entry stays");
+        assert!(t.triggers.contains(&"tool".to_string()), "tool became invoke: assistant");
+        assert!(t.invoke_chat, "chat stays");
+        let cfg = t.config.unwrap();
+        assert_eq!(cfg["model_slot"].as_str(), Some("deep"));
+        assert_eq!(cfg["limits"]["max_runs_per_day"].as_integer(), Some(4));
+        assert!(cfg.get("chat_id").is_none(), "row-only config stays out of the file");
+
+        let cleared = apply_patch(&edited, serde_json::json!({ "schedule": null }).as_object().unwrap()).unwrap();
+        assert!(parse(&cleared, f.path(), "weekly-review", false).unwrap().schedule.is_none());
+        assert!(apply_patch(&text, serde_json::json!({ "name": "x" }).as_object().unwrap()).is_err());
+        assert!(apply_patch(&text, serde_json::json!({ "condition": "true" }).as_object().unwrap()).is_err());
     }
 
     #[test]

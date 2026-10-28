@@ -623,17 +623,6 @@ fn check_skill_md_draft(draft: &Draft) -> Vec<serde_json::Value> {
             ));
         }
     }
-    if let Some(limits) = draft.limits.as_ref().and_then(|l| l.as_object()) {
-        for key in limits.keys() {
-            if !matches!(key.as_str(), "max_llm_cost" | "max_llm_cost_per_day" | "timeout_s") {
-                findings.push(finding(
-                    "limits",
-                    &format!("`{key}` is not a limit an applet with `invoke` can set"),
-                    Some("max_llm_cost, max_llm_cost_per_day, timeout_s"),
-                ));
-            }
-        }
-    }
     if let Some(m) = draft.model.as_deref() {
         if !matches!(m, "standard" | "deep") {
             findings.push(finding("model", &format!("invalid model '{m}'"), Some("standard or deep")));
@@ -644,25 +633,13 @@ fn check_skill_md_draft(draft: &Draft) -> Vec<serde_json::Value> {
 
 /// The `SKILL.md` a checked draft becomes.
 fn render_skill_md(draft: &Draft, name: &str) -> Result<String, ToolError> {
-    let limit = draft.limits.as_ref().and_then(|l| l.as_object()).map(|limits| {
-        let mut parts = Vec::new();
-        if let Some(n) = limits.get("max_llm_cost").and_then(|v| v.as_f64()) {
-            parts.push(format!("${n} per run"));
-        }
-        if let Some(n) = limits.get("max_llm_cost_per_day").and_then(|v| v.as_f64()) {
-            parts.push(format!("${n} per day"));
-        }
-        if let Some(n) = limits.get("timeout_s").and_then(|v| v.as_u64()) {
-            parts.push(format!("{n} seconds"));
-        }
-        parts.join(", ")
-    });
+    let limit = draft.limits.as_ref().and_then(|l| l.as_object()).and_then(crate::applet_templates::limit_from_config);
     crate::applet_templates::render_skill_md(&crate::applet_templates::SkillMd {
         name: name.to_string(),
         description: draft.description.clone(),
         allowed_tools: draft.tools.clone(),
         invoke: draft.invoke.clone(),
-        limit: limit.filter(|l| !l.is_empty()),
+        limit,
         deep: draft.model.as_deref() == Some("deep"),
         icon: None,
         body: draft.agent.clone().unwrap_or_default(),
@@ -1096,7 +1073,6 @@ mod tests {
             (serde_json::json!({ "invoke": ["everyone"] }), "invoke"),
             (serde_json::json!({ "name": "Chat" }), "name"),
             (serde_json::json!({ "name": "Weekly review" }), "name"),
-            (serde_json::json!({ "limits": { "max_runs_per_day": 3 } }), "limits"),
         ] {
             let f = check_skill_md_draft(&draft(extra.clone()));
             assert!(f.iter().any(|x| x["field"] == field), "{extra}: {f:?}");

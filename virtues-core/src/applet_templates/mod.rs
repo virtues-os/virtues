@@ -26,7 +26,7 @@ use std::sync::{OnceLock, RwLock};
 
 mod skill;
 
-pub(crate) use skill::{render as render_skill_md, SkillMd, ALWAYS_ALLOWED_TOOLS};
+pub(crate) use skill::{limit_from_config, render as render_skill_md, SkillMd, ALWAYS_ALLOWED_TOOLS};
 
 /// An applet folder written in the Agent Skills format. See [`skill`].
 const SKILL_FILE: &str = "SKILL.md";
@@ -820,16 +820,21 @@ pub fn mirror_patch_to_manifest(
         return Ok(());
     }
     let folder = resolve_applet_dir(&dir);
-    if folder.join(SKILL_FILE).is_file() {
+    let skill_md = folder.join(SKILL_FILE);
+    if skill_md.is_file() {
         // Memory lives in the row only, so there is nothing to write.
         if patch.keys().all(|k| k == "memory") {
             return Ok(());
         }
-        // TODO(2026-10-27): write the edit into SKILL.md once setup writes
-        // that format (slice 4 of agents/plan/applet-shape.md).
-        return Err(Error::InvalidInput(format!(
-            "{dir} is written as SKILL.md, which the app cannot edit yet. Edit the file instead."
-        )));
+        let text = std::fs::read_to_string(&skill_md)
+            .map_err(|e| Error::Other(format!("could not read {}: {e}", skill_md.display())))?;
+        let edited = skill::apply_patch(&text, patch).map_err(Error::InvalidInput)?;
+        // What is written must load, or the next reconcile would skip it.
+        skill::parse(&edited, &folder, &dir, false).map_err(|problems| Error::InvalidInput(problems.join(" ")))?;
+        let tmp = folder.join(".SKILL.md.tmp");
+        std::fs::write(&tmp, edited).map_err(|e| Error::Other(format!("could not write {}: {e}", tmp.display())))?;
+        return std::fs::rename(&tmp, &skill_md)
+            .map_err(|e| Error::Other(format!("could not write {}: {e}", skill_md.display())));
     }
     let path = folder.join("manifest.toml");
     let text = std::fs::read_to_string(&path)
