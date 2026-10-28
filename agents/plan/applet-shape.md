@@ -937,6 +937,24 @@ stage.
 **Done when:** a chat that mentions drinking water calls `water` without `/`,
 and an applet's prompt can read a file from its `references/`.
 
+Built on 2026-10-27 except the live check: no model has yet been shown a
+`water` applet in a running chat. Decided on the way:
+- One tool, `use_applet`, does both stages. With a name it returns the
+  prompt and its files; with `file` it returns one of them.
+- A loaded prompt runs with the calling chat's tools and limits. Its own
+  `allowed-tools`, `limit` and `model` apply only to turns and runs it
+  starts itself.
+- Only a prompt alone is loaded. An applet with a `run` stage still starts
+  through the `applet` tool's `run`, which runs all of it.
+- Chat lists at most 25 applets at 160 characters each, with no files;
+  loading one lists its files.
+- An applet's own `/name` turn and its runs get a files-only tool when its
+  folder has `references/` or `assets/`.
+- No shipped applet is offered. Whether the shipped chat applets (weekly
+  review, meeting prep, morning brief, trip planner) should also be
+  `assistant` is the owner's call, since it changes the shape of answers
+  to ordinary questions.
+
 ### 7. Output, threads and the Inbox
 
 Runs start clean, every run lands in its applet's thread, nothing posts into a
