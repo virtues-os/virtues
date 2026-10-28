@@ -176,6 +176,7 @@ fn move_one(old: &std::path::Path, name: &str) -> Result<(), String> {
         deep: saved.deep,
         icon: saved.icon,
         body: saved.body,
+        ..Default::default()
     };
     let text = crate::applet_templates::render_skill_md(&md)?;
     crate::applet_templates::check_skill_md(&text, &dir, &rel).map_err(|problems| problems.join(" "))?;
@@ -290,6 +291,7 @@ mod tests {
             deep: saved.deep,
             icon: saved.icon,
             body: saved.body,
+            ..Default::default()
         };
         let text = crate::applet_templates::render_skill_md(&md).unwrap();
         let dir = tempfile::tempdir().unwrap();

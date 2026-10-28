@@ -24,6 +24,7 @@
 
 use std::sync::{OnceLock, RwLock};
 
+mod convert;
 mod skill;
 
 pub(crate) use skill::{limit_from_config, render as render_skill_md, SkillMd, ALWAYS_ALLOWED_TOOLS};

@@ -45,6 +45,11 @@ const METADATA_KEYS: &[&str] = &[
 /// the file, so no folder can ask for it.
 const VAULT_KEY_APPLETS: &[&str] = &["credential-refresh"];
 
+/// Shipped applets that are the owner's to change once installed, as a
+/// starting point: a prompt edit of theirs is kept, and a shipped fix reaches
+/// them only while they have not edited it (reconcile's `user` branch).
+const SHIPPED_STARTERS: &[&str] = &["daily-readings", "dot-cloud", "morning-examen"];
+
 /// The most a `view.html` may weigh.
 const VIEW_MAX_BYTES: u64 = 48 * 1024;
 
@@ -188,8 +193,8 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         None if has_prompt => vec![Invoke::Chat, Invoke::Assistant],
         None => Vec::new(),
     };
-    if !invoke.is_empty() && !has_prompt {
-        errors.push("`invoke` lets someone start it, but there is no prompt below the frontmatter. Add one, or set `invoke: none`.".into());
+    if invoke.contains(&Invoke::Chat) && !has_prompt {
+        errors.push("`invoke: chat` starts it as a chat turn, but there is no prompt below the frontmatter. Add one, or leave `chat` out.".into());
     }
 
     let triggers = meta("trigger").map(|v| parse_triggers(v, &mut errors)).unwrap_or_default();
@@ -205,6 +210,9 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         }
     }
 
+    if invoke.contains(&Invoke::Assistant) && !has_prompt && command.is_none() && run_sql.is_none() {
+        errors.push("`invoke: assistant` lets the assistant start it, but it has no prompt and no `run`, so a run would do nothing.".into());
+    }
     let starts_alone = triggers.schedule.is_some() || triggers.webhook;
     if starts_alone && !has_prompt && command.is_none() && run_sql.is_none() {
         errors.push("`trigger` starts it, but it has no prompt and no `run`, so a run would do nothing.".into());
@@ -217,9 +225,12 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
     if let Some(v) = meta("limit") {
         parse_limit(v, &mut limits, &mut errors);
     }
+    // `lite` is the background model unattended applets ran on before this
+    // format, kept so a converted applet does not change what it costs.
     let model = match meta("model").map(str::trim) {
         None | Some("standard") => "standard",
         Some("deep") => "deep",
+        Some("lite") => "lite",
         Some(other) => {
             errors.push(format!("`model` is \"{other}\". Use `standard` or `deep`."));
             "standard"
@@ -347,18 +358,52 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
 
 /// What a writer puts in a `SKILL.md`: the fields setup and the skills move
 /// set. [`render`] turns it into the file and [`parse`] reads it back.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct SkillMd {
     pub name: String,
     pub description: String,
     pub allowed_tools: Option<Vec<String>>,
+    /// Empty writes no `invoke`, which defaults by whether there is a prompt.
     pub invoke: Vec<String>,
+    /// `trigger`'s value: `cron 0 0 7 * * *, webhook`.
+    pub trigger: Option<String>,
+    /// `run`'s value: a binary, `scripts/…`, or `sql …`.
+    pub run: Option<String>,
+    pub source: Option<String>,
     /// `limit`'s value, as it reads in the file: `$3 per run, 10 minutes`.
     pub limit: Option<String>,
     pub deep: bool,
+    /// `model: lite`, which converted unattended applets keep.
+    pub lite: bool,
+    /// `enabled: false` when false.
+    pub enabled: bool,
+    pub writes: Vec<String>,
+    pub secrets: Vec<String>,
     pub icon: Option<String>,
     /// The prompt.
     pub body: String,
+}
+
+impl Default for SkillMd {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            description: String::new(),
+            allowed_tools: None,
+            invoke: Vec::new(),
+            trigger: None,
+            run: None,
+            source: None,
+            limit: None,
+            deep: false,
+            lite: false,
+            enabled: true,
+            writes: Vec::new(),
+            secrets: Vec::new(),
+            icon: None,
+            body: String::new(),
+        }
+    }
 }
 
 /// The file a [`SkillMd`] is. The frontmatter goes through a YAML emitter, so
@@ -376,11 +421,24 @@ pub(crate) fn render(md: &SkillMd) -> Result<String, String> {
     if !md.invoke.is_empty() {
         meta.insert(s("invoke"), s(&md.invoke.join(", ")));
     }
-    if let Some(limit) = &md.limit {
-        meta.insert(s("limit"), s(limit));
+    for (key, value) in [("trigger", &md.trigger), ("run", &md.run), ("source", &md.source), ("limit", &md.limit)] {
+        if let Some(v) = value {
+            meta.insert(s(key), s(v));
+        }
     }
     if md.deep {
         meta.insert(s("model"), s("deep"));
+    } else if md.lite {
+        meta.insert(s("model"), s("lite"));
+    }
+    if !md.enabled {
+        meta.insert(s("enabled"), s("false"));
+    }
+    if !md.writes.is_empty() {
+        meta.insert(s("writes"), s(&md.writes.join(", ")));
+    }
+    if !md.secrets.is_empty() {
+        meta.insert(s("secrets"), s(&md.secrets.join(", ")));
     }
     if let Some(icon) = &md.icon {
         meta.insert(s("icon"), s(icon));
@@ -459,7 +517,8 @@ pub(crate) fn apply_patch(text: &str, patch: &serde_json::Map<String, serde_json
             "condition" | "memory" => {}
             "agent" => body = value.as_str().unwrap_or_default().trim().to_string(),
             "schedule" => {
-                let mut kept: Vec<String> = list(&text_of(&meta, "trigger")).into_iter().filter(|t| t == "webhook").collect();
+                let mut kept: Vec<String> =
+                    trigger_entries(&text_of(&meta, "trigger")).into_iter().filter(|t| t == "webhook").collect();
                 if let Some(cron) = value.as_str().filter(|c| !c.trim().is_empty()) {
                     kept.insert(0, format!("cron {}", cron.trim()));
                 }
@@ -532,7 +591,9 @@ fn id_for_dir(dir: &str) -> String {
 /// Who the row belongs to, from where the folder is. A manifest's own
 /// `owner` is not used: anyone who can write the folder could set it.
 fn owner_for(dir: &str, shipped: bool) -> &'static str {
-    if shipped {
+    if shipped && SHIPPED_STARTERS.contains(&dir) {
+        "user"
+    } else if shipped {
         "system"
     } else if dir.starts_with("user/") {
         "ai"
@@ -707,9 +768,34 @@ struct Triggers {
     webhook: bool,
 }
 
+/// `trigger`'s entries. A comma separates two entries, except inside a
+/// `cron` entry, whose fields may hold lists (`0 0 10,22 * * 1,3`): a piece
+/// joins the `cron` entry before it while that entry lacks its six fields,
+/// or when the piece is a bare continuation of its last field. Every other
+/// entry has a space in it, or is `webhook`.
+fn trigger_entries(value: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for piece in value.split(',') {
+        if let Some(last) = out.last_mut() {
+            let cron = last.starts_with("cron ");
+            let bare = !piece.trim().is_empty() && !piece.trim().contains(char::is_whitespace) && piece.trim() != "webhook";
+            if cron && (last.split_whitespace().count() < 7 || bare) {
+                last.push(',');
+                last.push_str(piece.trim());
+                continue;
+            }
+        }
+        let piece = piece.trim();
+        if !piece.is_empty() {
+            out.push(piece.to_string());
+        }
+    }
+    out
+}
+
 fn parse_triggers(value: &str, errors: &mut Vec<String>) -> Triggers {
     let mut out = Triggers::default();
-    for part in value.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+    for part in trigger_entries(value).iter().map(String::as_str) {
         if part == "webhook" {
             out.webhook = true;
             continue;
@@ -1073,6 +1159,7 @@ mod tests {
             ("every 15 minutes", "0 */15 * * * *", None),
             ("every 2 hours", "0 0 */2 * * *", None),
             ("cron 0 0 7 * * *", "0 0 7 * * *", None),
+            ("cron 0 0 10,22 * * 1,3", "0 0 10,22 * * 1,3", None),
             ("on 2026-11-02 at 09:00", "0 0 9 2 11 *", Some("once")),
             (
                 "every day at 07:00 until 2026-12-01",
@@ -1285,6 +1372,7 @@ mod tests {
             deep: true,
             icon: Some("ri:calendar-line".into()),
             body: "Write the review.".into(),
+            ..Default::default()
         };
         let text = render(&md).unwrap();
         let f = folder();

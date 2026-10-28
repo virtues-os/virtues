@@ -643,6 +643,7 @@ fn render_skill_md(draft: &Draft, name: &str) -> Result<String, ToolError> {
         deep: draft.model.as_deref() == Some("deep"),
         icon: None,
         body: draft.agent.clone().unwrap_or_default(),
+        ..Default::default()
     })
     .map_err(ToolError::ExecutionFailed)
 }
