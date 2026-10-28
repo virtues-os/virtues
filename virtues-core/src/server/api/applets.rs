@@ -234,7 +234,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
     let rows = sqlx::query(
         r#"SELECT
             t.id, t.owner, t.name, t.description, t.agent, t.schedule,
-            t.enabled, t.config, t.condition, t.triggers,
+            t.enabled, t.config, t.triggers,
             t.memory, t.credential_id, t.device_id,
             t.command,
             t.until, t.archived_at,
@@ -310,7 +310,6 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                     // so every action came back with empty config/triggers).
                     let config: serde_json::Value =
                         r.try_get("config").unwrap_or_else(|_| serde_json::json!({}));
-                    let condition: Option<String> = r.try_get("condition").unwrap_or(None);
                     let triggers_val: serde_json::Value =
                         r.try_get("triggers").unwrap_or_else(|_| serde_json::json!([]));
                     let triggers: Vec<String> =
@@ -388,7 +387,6 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "schedule": cron,
                         "enabled": enabled,
                         "config": config,
-                        "condition": condition,
                         "triggers": triggers,
                         "memory": memory,
                         "credential_id": credential_id,
@@ -573,7 +571,6 @@ pub async fn get_applet_handler(
                     "schedule": action.schedule,
                     "enabled": action.enabled,
                     "config": action.config,
-                    "condition": action.condition,
                     "triggers": action.triggers,
                     "memory": action.memory,
                     "command": action.command,
@@ -585,6 +582,7 @@ pub async fn get_applet_handler(
                     "next_due_at": action.next_due_at,
                     "last_slot_at": action.last_slot_at,
                     "has_face": crate::server::faces::face_for(&action.id).is_some(),
+                    "has_override": action.has_override,
                     "secrets": secrets,
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,

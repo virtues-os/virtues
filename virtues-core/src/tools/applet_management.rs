@@ -178,44 +178,6 @@ pub async fn edit_applet(
         .cloned()
         .ok_or_else(|| ToolError::InvalidParameters("patch is required".into()))?;
 
-    // The gate invariant: no path from model output to an enabled, scheduled
-    // ai-owned row without a user-surface action. Two vectors are closed here:
-    //   (1) enabling directly (enabled:true), and
-    //   (2) adding a boundary (a schedule or a webhook trigger) to an applet
-    //       that is ALREADY enabled — which would silently create the
-    //       forbidden enabled∧scheduled state without touching `enabled`.
-    let mut patch = patch;
-    if let Some(obj) = patch.as_object() {
-        let sets_enabled_true = obj.get("enabled").and_then(|v| v.as_bool()) == Some(true);
-        let adds_schedule = obj
-            .get("schedule")
-            .is_some_and(|v| v.as_str().is_some_and(|s| !s.trim().is_empty()));
-        let adds_remote_trigger = obj
-            .get("triggers")
-            .and_then(|v| v.as_array())
-            .is_some_and(|arr| {
-                arr.iter().any(|t| t.as_str() == Some("webhook"))
-            });
-        if sets_enabled_true || adds_schedule || adds_remote_trigger {
-            let current = applets::get_applet(pool, id).await.map_err(map_err)?;
-            if current.owner == "ai" {
-                if sets_enabled_true {
-                    return Ok(ToolResult::success(serde_json::json!({
-                        "status": "refused",
-                        "error": "enabling an AI-authored applet is a user action — ask the user to enable it on the applet page",
-                    })));
-                }
-                // Boundary added: force-disable so the user must re-enable
-                // (re-gate). Never leave an ai row enabled∧scheduled via a tool.
-                if current.enabled {
-                    if let Some(o) = patch.as_object_mut() {
-                        o.insert("enabled".into(), serde_json::Value::Bool(false));
-                    }
-                }
-            }
-        }
-    }
-
     let updated = applets::update_applet(pool, id, &patch)
         .await
         .map_err(map_err)?;

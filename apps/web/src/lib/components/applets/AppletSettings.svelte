@@ -32,19 +32,8 @@
 	let saving = $state(false);
 	let err = $state<string | null>(null);
 
-	/**
-	 * Their prompt differs from the one we ship.
-	 *
-	 * Either they edited it, or they are on a box that predates us recording
-	 * what we shipped. This deliberately does not guess which: both mean "what
-	 * you are running is not what we would give you now", and the honest
-	 * affordance for both is the same one.
-	 */
-	const customized = $derived(
-		Boolean(
-			action.agent_shipped && action.agent && action.agent.trim() !== action.agent_shipped.trim()
-		)
-	);
+	/** A shipped applet whose prompt or schedule you changed. */
+	const customized = $derived(Boolean(action.has_override));
 
 	function fields(a: Applet) {
 		return { name: a.name, agent: a.agent ?? '', schedule: a.schedule ?? '', memory: a.memory ?? '' };
@@ -52,8 +41,9 @@
 	let edit = $state(fields(action));
 	let isDirty = $state(false);
 
-	// Editability follows `owner`, because that is genuinely what the server
-	// enforces: reconcile owns those rows and would overwrite an edit anyway.
+	// A shipped applet's name and code are its file's. Its prompt and
+	// schedule can change: your server keeps those changes beside the shipped
+	// file, so a shipped fix still reaches the rest.
 	const isSystem = $derived(action.owner === 'system');
 	// `lake` in its file mounts every file in the lake for its code to read,
 	// so a host allowed below could receive any of them.
@@ -90,17 +80,20 @@
 		isDirty = true;
 	}
 
-	/**
-	 * Take the shipped prompt back.
-	 *
-	 * Loads it into the editor rather than saving it, so the change is visible
-	 * and reversible before it is committed — replacing prose someone wrote
-	 * should not happen on one click with nothing shown.
-	 */
-	function useShippedPrompt() {
-		if (!action.agent_shipped) return;
-		edit.agent = action.agent_shipped;
-		markDirty();
+	/** Drop your changes and run the shipped applet as it ships. */
+	async function useShipped() {
+		saving = true;
+		err = null;
+		try {
+			const updated = await patchApplet(action.id, { reset: true });
+			action = updated;
+			edit = fields(updated);
+			isDirty = false;
+		} catch (e) {
+			err = e instanceof Error ? e.message : String(e);
+		} finally {
+			saving = false;
+		}
 	}
 
 	async function save() {
@@ -109,7 +102,7 @@
 		try {
 			const patch: PatchAppletBody = {};
 			if (!isSystem && edit.name !== action.name) patch.name = edit.name;
-			if (!isSystem && edit.agent !== (action.agent ?? '')) {
+			if ((isAgent || !isSystem) && edit.agent !== (action.agent ?? '')) {
 				patch.agent = edit.agent.trim() ? edit.agent : null;
 			}
 			if (edit.schedule !== (action.schedule ?? '')) {
@@ -161,7 +154,6 @@
 				<textarea
 					rows="10"
 					bind:value={edit.agent}
-					disabled={isSystem}
 					oninput={markDirty}
 					placeholder="What should this applet do each run?"
 				></textarea>
@@ -175,21 +167,15 @@
 					</span>
 				</div>
 			{/if}
-			{#if isSystem && isAgent}
-				<span class="hint">
-					<Icon icon="mynaui:lock" width="12" /> Read-only. This prompt ships with the applet
-				</span>
-			{:else if customized}
-				<!-- The only channel an edited applet has. A prompt you
-				     wrote is never overwritten on upgrade, which is right
-				     and also means a fix we ship cannot reach you — so
-				     this line is how you find out one exists. -->
+			{#if customized}
+				<!-- Your prompt or schedule stays yours across upgrades, so a
+				     fix we ship to either does not reach you. This line is
+				     how you get back to what ships. -->
 				<div class="prompt-drift">
 					<span>
-						You've edited this. The version that ships with the applet has changed since -
-						improvements and fixes land there, not here.
+						You've changed this built-in applet. Fixes to what you changed don't reach you.
 					</span>
-					<TextAction inline onclick={useShippedPrompt}>Use the version that ships</TextAction>
+					<TextAction inline onclick={useShipped}>Use the version that ships</TextAction>
 				</div>
 			{/if}
 		</label>
@@ -258,17 +244,6 @@
 			{/if}
 		</div>
 	</div>
-
-	{#if action.condition}
-		<div class="field">
-			<span class="label">Only when</span>
-			<code class="readonly-value mono">{action.condition}</code>
-			<span class="hint">
-				Checked before each run. When it's false your server skips the run rather than failing
-				it.
-			</span>
-		</div>
-	{/if}
 
 	<div class="field">
 		<span class="label">Lifecycle</span>

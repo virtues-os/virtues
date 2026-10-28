@@ -1078,7 +1078,7 @@ const APPLET_ACTIONS: [(&str, &str); 6] = [
     ("list", "applets and their last run. Filter with owner (ai = made in a chat), enabled, trigger, include_archived."),
     ("get", "one applet's full config and last 10 runs, by id. Read it before editing or debugging one."),
     ("setup", "create or update one: a scheduled task, reminder, monitor, tracker or dashboard. First call with guide=true and follow the guide it returns. The same name updates that applet. name and description are required except for the guide. On check_failed, fix the findings and retry; nothing was created. check_only runs the check alone."),
-    ("edit", "change one by id: only the fields to change go in `patch`; null clears. `config` replaces the whole object. `schedule`: 6-field cron, local time. System applets take only enabled, schedule, memory."),
+    ("edit", "change one by id: only the fields to change go in `patch`; null clears. `config` replaces the whole object. `schedule`: 6-field cron, local time. A shipped applet takes only enabled, schedule, agent and memory; its prompt and schedule are kept as your changes to it."),
     ("run", "run one by id now; it needs the `tool` trigger. `payload` is context for the run; `date` (YYYY-MM-DD) is for a date-scoped applet."),
     ("delete", "delete a user-owned one by id; system ones refuse, so offer to disable. Confirm unless the ask was explicit."),
 ];
@@ -1154,7 +1154,6 @@ pub fn applet_tool(actions: &[&str]) -> ToolConfig {
                     "schedule": { "type": ["string", "null"] },
                     "enabled": { "type": "boolean" },
                     "config": { "type": "object" },
-                    "condition": { "type": ["string", "null"] },
                     "triggers": { "type": "array", "items": { "type": "string" } },
                     "memory": { "type": ["string", "null"] }
                 }

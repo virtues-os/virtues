@@ -8,16 +8,16 @@
 //!
 //! 1. Fetch action. Not found / disabled → return `NotFound`.
 //! 2. Validate `trigger` is in `action.triggers`. Otherwise → `Forbidden`.
-//! 3. Evaluate `condition` SQL expression if set. Falsy → record `skipped` run.
-//! 4. Concurrency gate (skip if previous run still active, unless parallel).
-//! 5. Create `running` run row.
-//! 6. Resolve credentials from the `credentials` Vault and decrypt secrets
+//! 3. Concurrency gate (skip if previous run still active, unless parallel).
+//! 4. Create `running` run row; `run_sql`, if set, runs next, and no rows
+//!    records the run as skipped.
+//! 5. Resolve credentials from the `credentials` Vault and decrypt secrets
 //!    (if `credential_id` set). Subprocess receives plaintext JSON.
-//! 7. **Subprocess phase**: if `command` set, resolve argv[0] + spawn, pipe stdin
+//! 6. **Subprocess phase**: if `command` set, resolve argv[0] + spawn, pipe stdin
 //!    JSON, read stdout JSON, save returned config to `app_applets.state`.
-//! 8. **Agent phase**: if `agent` (instruction) set, run LLM agent loop with the
+//! 7. **Agent phase**: if `agent` (instruction) set, run LLM agent loop with the
 //!    subprocess result as context.
-//! 9. Complete run row with final status + result summary.
+//! 8. Complete run row with final status + result summary.
 //!
 //! ## Subprocess contract
 //!
@@ -238,54 +238,6 @@ async fn prepare_run(
         return Ok(PrepareOutcome::Early(AppletRunResult::forbidden(
             "webhook trigger requires a device_id or credential_id".to_string(),
         )));
-    }
-
-    // 3. Condition (SQL gate). Evaluate before creating a run row.
-    //
-    // Only `message` is exempt, and the line is narrower than "a person did
-    // it deliberately" — `manual` is deliberate too and is still gated.
-    //
-    // The difference is what the condition is FOR. A condition guards whether
-    // the applet's scheduled work should happen, and AGENTS.md tells authors
-    // to write exactly that: `NOT EXISTS (a successful run today)` is the
-    // recommended cooldown idiom. "Run now" means "do your scheduled thing
-    // now", so bypassing that guard would let a button press double-write the
-    // day's entry — the condition is an idempotency check, not a preference.
-    //
-    // A message is not the scheduled work. It is new input that did not exist
-    // when the gate was written, there is nothing to duplicate, and a clock
-    // gate would silently swallow what someone typed (a falsy condition
-    // records no run at all). So the message goes through and `manual` does
-    // not.
-    let gated = trigger != "message";
-    if let Some(condition) = &action.condition {
-        if gated && !condition.trim().is_empty() {
-            match eval_condition(&deps.db, condition).await {
-                Ok(false) => {
-                    tracing::debug!(applet_id, "condition falsy, skipping silently");
-                    return Ok(PrepareOutcome::Early(AppletRunResult {
-                        run_id: None,
-                        status: AppletRunStatus::Skipped,
-                        summary: "condition evaluated false".to_string(),
-                        error: None,
-                    }));
-                }
-                Ok(true) => {}
-                Err(e) => {
-                    tracing::error!(applet_id, error = %e, "condition evaluation failed");
-                    let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
-                    let msg = format!("condition evaluation error: {e}");
-                    applets::complete_run(&deps.db, &run.id, "error", 0, Some(&msg), None)
-                        .await?;
-                    return Ok(PrepareOutcome::Early(AppletRunResult {
-                        run_id: Some(run.id),
-                        status: AppletRunStatus::Failed,
-                        summary: String::new(),
-                        error: Some(msg),
-                    }));
-                }
-            }
-        }
     }
 
     // 4. Concurrency gate — every applet is a singleton. Unlike a falsy
@@ -667,7 +619,7 @@ fn agent_outcome(
 /// Post-success lifecycle check. `until` semantics: NULL/empty = forever;
 /// the literal `once` = archive after this (first) success; anything else =
 /// a SQL boolean, archive when it evaluates true. Evaluation reuses the
-/// hardened `eval_condition` path (read-only tx, timeout, local timezone).
+/// hardened `eval_until` path (read-only tx, timeout, local timezone).
 /// Failures are logged, never fatal — a broken `until` must not fail a run
 /// that already succeeded.
 async fn maybe_archive_on_until(db: &PgPool, action: &Applet) {
@@ -680,7 +632,7 @@ async fn maybe_archive_on_until(db: &PgPool, action: &Applet) {
     let done = if until.eq_ignore_ascii_case("once") {
         true
     } else {
-        match eval_condition(db, until).await {
+        match eval_until(db, until).await {
             Ok(v) => v,
             Err(e) => {
                 tracing::warn!(applet_id = %action.id, error = %e, "until evaluation failed; not archiving");
@@ -700,8 +652,8 @@ async fn maybe_archive_on_until(db: &PgPool, action: &Applet) {
 // Condition evaluation
 // ============================================================================
 
-/// Evaluate a SQL condition expression. Returns true if the expression is
-/// truthy, false otherwise (NULL is false).
+/// Evaluate an `until` SQL expression (`every … until <date>` writes one).
+/// Returns true if the expression is truthy, false otherwise (NULL is false).
 ///
 /// The expression is LLM/user-authored, so it runs hardened: inside a
 /// READ ONLY transaction (rolled back regardless), under a short
@@ -710,7 +662,7 @@ async fn maybe_archive_on_until(db: &PgPool, action: &Applet) {
 /// `extract(hour from now()) < 6` mean the user's local time, not UTC.
 /// The result is cast to boolean, so both boolean and integer expressions
 /// evaluate correctly.
-async fn eval_condition(db: &PgPool, condition: &str) -> Result<bool> {
+async fn eval_until(db: &PgPool, condition: &str) -> Result<bool> {
     let mut tx = db
         .begin()
         .await
@@ -1621,10 +1573,12 @@ mod tests {
     }
     use crate::server::yjs::YjsState;
 
-    async fn applet_with_falsy_condition(pool: &sqlx::PgPool, id: &str, triggers: &str) {
+    /// An applet whose `run` SQL never finds a row, so every run but a
+    /// message is skipped.
+    async fn applet_that_finds_nothing(pool: &sqlx::PgPool, id: &str, triggers: &str) {
         sqlx::query(
-            "INSERT INTO app_applets (id, name, owner, command, condition, triggers, enabled) \
-             VALUES ($1, $1, 'user', '[\"echo\"]', 'FALSE', $2::jsonb, TRUE)",
+            "INSERT INTO app_applets (id, name, owner, agent, run_sql, triggers, enabled) \
+             VALUES ($1, $1, 'user', 'Say hello.', 'select 1 where false', $2::jsonb, TRUE)",
         )
         .bind(id)
         .bind(triggers)
@@ -1677,31 +1631,29 @@ mod tests {
         assert_eq!(count.summary, "3 rows.");
     }
 
-    /// A condition gates POLLS. Someone who just pressed send is not a poll, and
-    /// a clock gate like `extract(hour from now()) < 8` would otherwise swallow
-    /// what they typed — silently, since a falsy condition records nothing.
-    /// Same shape as the catch-up × time-of-day trap, same answer as rate caps
-    /// exempting "Run now".
+    /// `run` SQL gates polls. Someone who just pressed send is not a poll, and
+    /// a clock gate like `extract(hour from now()) < 8` would otherwise skip
+    /// what they typed. Same shape as the catch-up × time-of-day trap, same
+    /// answer as rate caps exempting "Run now".
     #[sqlx::test]
-    async fn a_condition_does_not_swallow_a_message(pool: sqlx::PgPool) {
+    async fn run_sql_does_not_swallow_a_message(pool: sqlx::PgPool) {
         let deps = RunnerDeps {
             db: pool.clone(),
             yjs: YjsState::new(pool.clone()),
         };
-        applet_with_falsy_condition(&pool, "applet_m", r#"["cron","manual","message"]"#).await;
+        applet_that_finds_nothing(&pool, "applet_m", r#"["cron","manual","message"]"#).await;
 
-        // The cron wake is gated, and silently: no run row at all.
+        // The cron wake is skipped.
         let cron = run_applet(&deps, "applet_m", "cron", None).await.unwrap();
         assert_eq!(cron.status, AppletRunStatus::Skipped);
-        assert_eq!(run_count(&pool, "applet_m").await, 0, "a poll is gated silently");
 
-        // And so is "Run now". The condition guards whether the scheduled work
+        // And so is "Run now". The SQL guards whether the scheduled work
         // should happen — AGENTS.md's own cooldown idiom is
         // `NOT EXISTS (a successful run today)` — so a button press that
         // bypassed it would double-write the day's entry.
         let manual = run_applet(&deps, "applet_m", "manual", None).await.unwrap();
         assert_eq!(manual.status, AppletRunStatus::Skipped, "manual is not exempt");
-        assert_eq!(run_count(&pool, "applet_m").await, 0);
+        let before = run_count(&pool, "applet_m").await;
 
         // The message is not.
         let payload = serde_json::json!({ "message": "I had eggs" });
@@ -1709,10 +1661,10 @@ mod tests {
             .await
             .unwrap();
         assert_ne!(msg.status, AppletRunStatus::Skipped, "the person was heard");
-        assert_eq!(run_count(&pool, "applet_m").await, 1);
+        assert_eq!(run_count(&pool, "applet_m").await, before + 1);
 
         let said: Option<String> =
-            sqlx::query_scalar("SELECT message FROM app_applet_runs WHERE applet_id = 'applet_m'")
+            sqlx::query_scalar("SELECT message FROM app_applet_runs WHERE applet_id = 'applet_m' AND trigger = 'message'")
                 .fetch_one(&pool)
                 .await
                 .unwrap();
@@ -1793,7 +1745,7 @@ mod tests {
             db: pool.clone(),
             yjs: YjsState::new(pool.clone()),
         };
-        applet_with_falsy_condition(&pool, "applet_n", r#"["cron"]"#).await;
+        applet_that_finds_nothing(&pool, "applet_n", r#"["cron"]"#).await;
         let payload = serde_json::json!({ "message": "hello" });
         let r = run_applet(&deps, "applet_n", "message", Some(&payload))
             .await

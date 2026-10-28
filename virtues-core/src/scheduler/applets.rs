@@ -61,15 +61,9 @@ pub struct Applet {
     /// in the user's terms. Reconcile's to own, like `name`.
     pub description: Option<String>,
     pub agent: Option<String>,
-    /// The prompt we last SHIPPED for this applet, which is a different
-    /// question from the one it is running. They differ when the person has
-    /// written their own — the only way a page can offer them a diff instead
-    /// of a surprise, or offer a way back to the default at all.
-    pub agent_shipped: Option<String>,
     pub schedule: Option<String>,
     pub enabled: bool,
     pub config: serde_json::Value,
-    pub condition: Option<String>,
     pub triggers: Vec<String>,
     pub memory: Option<String>,
     /// Outbound OAuth/API-key actions anchor here (the secret they call with).
@@ -96,6 +90,10 @@ pub struct Applet {
     pub next_due_at: Option<crate::types::Timestamp>,
     pub created_at: crate::types::Timestamp,
     pub updated_at: crate::types::Timestamp,
+    /// A shipped applet the owner changed: its override file holds what they
+    /// changed, and `reset` returns it to what ships.
+    #[serde(default)]
+    pub has_override: bool,
 }
 
 /// One execution of an action.
@@ -309,21 +307,23 @@ pub async fn applet_data_tables(db: &PgPool, applet_id: &str) -> Result<Vec<Stri
     Ok(tables)
 }
 
-/// Fields the user can tune on a `system`-owned action row. Must match the
-/// set of fields that template reconcile preserves (see
-/// `applet_templates::upsert_row`) — otherwise the next reconcile would
-/// silently clobber what the user just changed. `config` is not one: the
-/// system branch rewrites it from the shipped file.
-pub const SYSTEM_EDITABLE_FIELDS: &[&str] = &["enabled", "schedule", "memory"];
+/// Fields that can change on a shipped applet. Its prompt and schedule go
+/// into its override file; `enabled` and `memory` are the box's own state.
+/// `reset` removes the override, returning it to exactly what ships.
+pub const SYSTEM_EDITABLE_FIELDS: &[&str] = &["enabled", "schedule", "agent", "memory", "reset"];
 
-/// Config keys only the applet's file sets: what its runs may use.
-const FILE_ONLY_CONFIG: &[&str] = &["allowed_tools", "net_hosts"];
+/// What the box keeps beside the file, written to the row. Every other field
+/// is what the applet is, written to its file (`applet_templates::write_edit`).
+const ROW_FIELDS: &[&str] = &["enabled", "memory"];
 
-/// Partial update for an action. Applies a JSON patch, enforcing the
-/// system-owner guard: `system` rows accept only `SYSTEM_EDITABLE_FIELDS`.
+/// Partial update for an applet. `enabled` and `memory` are written to the
+/// row. Everything else describes the applet, so it is written to its file,
+/// and the row is rebuilt from the file by a reconcile: the file is the only
+/// source of truth for what an applet is. Shipped applets take only
+/// [`SYSTEM_EDITABLE_FIELDS`].
 ///
-/// Unknown field names are rejected (400). Null values are allowed for
-/// nullable columns (`agent`, `schedule`, `condition`, `memory`).
+/// Unknown field names are rejected (400). `null` clears `agent`, `schedule`
+/// and `memory`.
 pub async fn update_applet(
     db: &PgPool,
     applet_id: &str,
@@ -341,17 +341,13 @@ pub async fn update_applet(
 
     // Validate every field name up front so we either apply the whole patch
     // or reject it cleanly.
-    const ALLOWED: &[&str] = &[
-        "name",
-        "agent",
-        "schedule",
-        "enabled",
-        "config",
-        "condition",
-        "triggers",
-        "memory",
-    ];
+    const ALLOWED: &[&str] = &["name", "agent", "schedule", "enabled", "config", "triggers", "memory", "reset"];
     for key in obj.keys() {
+        if key == "condition" {
+            return Err(Error::InvalidInput(
+                "a condition is SQL in the applet's `run` now: set `run: sql select 1 where (…)` in its SKILL.md".into(),
+            ));
+        }
         if !ALLOWED.contains(&key.as_str()) {
             return Err(Error::InvalidInput(format!(
                 "unknown field '{key}'; allowed: {ALLOWED:?}"
@@ -359,23 +355,16 @@ pub async fn update_applet(
         }
         if is_system && !SYSTEM_EDITABLE_FIELDS.contains(&key.as_str()) {
             return Err(Error::InvalidInput(format!(
-                "field '{key}' is system-managed; only {SYSTEM_EDITABLE_FIELDS:?} are editable on system actions"
+                "field '{key}' is the shipped applet's; only {SYSTEM_EDITABLE_FIELDS:?} change on a shipped applet. Fork it to change the rest."
             )));
         }
     }
-
-    // What the applet may use comes from its file's `allowed-tools`, which
-    // the reader checks (no `sudo`, `lake` and `net(…)` only as written
-    // there). A patch that rewrote the row's copy would skip that check, and
-    // for your own applets reconcile keeps the row's copy over the file's.
-    // Leaving the key out only drops it, which reconcile restores.
-    if let Some(cfg) = obj.get("config").and_then(|v| v.as_object()) {
-        for key in FILE_ONLY_CONFIG {
-            if cfg.get(*key).is_some_and(|v| Some(v) != current.config.get(*key)) {
-                return Err(Error::InvalidInput(format!(
-                    "config.{key} comes from the applet's SKILL.md (`allowed-tools`); change it there"
-                )));
-            }
+    if let Some(s) = obj.get("schedule").and_then(|v| v.as_str()) {
+        validate_cron(s)?;
+    }
+    if let Some(v) = obj.get("enabled") {
+        if !v.is_boolean() {
+            return Err(Error::InvalidInput("enabled must be a bool".into()));
         }
     }
 
@@ -397,172 +386,57 @@ pub async fn update_applet(
         }
     }
 
-    // Build the UPDATE statement. SQL has no "set only these keys" shortcut;
-    // we use conditional per-field binds. The SET-clause loop and the bind
-    // loop walk the fields in the same fixed order so the `$N` placeholders
-    // line up 1-to-1 with the bind values. `config`/`triggers` are JSONB
-    // columns, so their placeholders are cast (`::jsonb`); the string we bind
-    // is a JSON document, mirroring the template upsert in `applet_templates`.
-    let mut sets: Vec<String> = Vec::new();
-    let mut bind_idx = 0u32;
-    let mut next = || {
-        bind_idx += 1;
-        bind_idx
-    };
+    // What the applet is: into its file, then the row is rebuilt from it.
+    // The reconcile lock keeps a reconcile from reading the catalog between
+    // the write and the reload.
+    let reset = obj.get("reset").and_then(|v| v.as_bool()) == Some(true);
+    let file_patch: serde_json::Map<String, serde_json::Value> = obj
+        .iter()
+        .filter(|(k, _)| !ROW_FIELDS.contains(&k.as_str()) && k.as_str() != "reset")
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect();
+    if reset || !file_patch.is_empty() {
+        {
+            let _reconcile = crate::applet_templates::reconcile_lock().lock().await;
+            if reset {
+                crate::applet_templates::reset_to_shipped(applet_id)?;
+            }
+            if !file_patch.is_empty() {
+                crate::applet_templates::write_edit(applet_id, &file_patch)?;
+            }
+        }
+        crate::applet_templates::reload_and_reconcile(db).await?;
+    }
 
-    if obj.contains_key("name") {
-        sets.push(format!("name = ${}", next()));
-    }
-    if obj.contains_key("agent") {
-        sets.push(format!("agent = ${}", next()));
-    }
-    if obj.contains_key("schedule") {
-        sets.push(format!("schedule = ${}", next()));
-    }
-    if obj.contains_key("enabled") {
-        sets.push(format!("enabled = ${}", next()));
+    // What the box keeps beside the file.
+    if let Some(enabled) = obj.get("enabled").and_then(|v| v.as_bool()) {
         // Turning a finished applet back on un-finishes it. There is no
         // coherent "enabled AND archived" state — archiving sets enabled =
         // FALSE precisely so the scheduler skips it, and leaving archived_at
         // behind would show a running applet as finished on its own page.
-        // Takes no bind: it is a consequence of the flag, not a field a
-        // caller may set.
-        if obj.get("enabled").and_then(|v| v.as_bool()) == Some(true) {
-            sets.push("archived_at = NULL".to_string());
+        let res = sqlx::query(
+            "UPDATE app_applets SET enabled = $1, \
+             archived_at = CASE WHEN $1 THEN NULL ELSE archived_at END, updated_at = now() WHERE id = $2",
+        )
+        .bind(enabled)
+        .bind(applet_id)
+        .execute(db)
+        .await?;
+        if res.rows_affected() == 0 {
+            return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
         }
-    }
-    if obj.contains_key("config") {
-        sets.push(format!("config = ${}::jsonb", next()));
-    }
-    if obj.contains_key("condition") {
-        sets.push(format!("condition = ${}", next()));
-    }
-    if obj.contains_key("triggers") {
-        sets.push(format!("triggers = ${}::jsonb", next()));
-    }
-    if obj.contains_key("memory") {
-        sets.push(format!("memory = ${}", next()));
-    }
-
-    sets.push("updated_at = now()".to_string());
-    let id_param = next();
-    let query = format!(
-        "UPDATE app_applets SET {} WHERE id = ${}",
-        sets.join(", "),
-        id_param
-    );
-
-    // Now bind in the same order.
-    let mut q = sqlx::query(&query);
-    if let Some(v) = obj.get("name") {
-        let s = v
-            .as_str()
-            .ok_or_else(|| Error::InvalidInput("name must be a string".into()))?;
-        q = q.bind(s.to_string());
-    }
-    if let Some(v) = obj.get("agent") {
-        if v.is_null() {
-            q = q.bind(Option::<String>::None);
-        } else {
-            let s = v
-                .as_str()
-                .ok_or_else(|| Error::InvalidInput("agent must be a string or null".into()))?;
-            q = q.bind(Some(s.to_string()));
-        }
-    }
-    if let Some(v) = obj.get("schedule") {
-        if v.is_null() {
-            q = q.bind(Option::<String>::None);
-        } else {
-            let s = v.as_str().ok_or_else(|| {
-                Error::InvalidInput("schedule must be a string or null".into())
-            })?;
-            validate_cron(s)?;
-            q = q.bind(Some(s.to_string()));
-        }
-    }
-    if let Some(v) = obj.get("enabled") {
-        let b = v
-            .as_bool()
-            .ok_or_else(|| Error::InvalidInput("enabled must be a bool".into()))?;
-        q = q.bind(b);
-    }
-    if let Some(v) = obj.get("config") {
-        if !v.is_object() {
-            return Err(Error::InvalidInput("config must be an object".into()));
-        }
-        q = q.bind(v.to_string());
-    }
-    if let Some(v) = obj.get("condition") {
-        if v.is_null() {
-            q = q.bind(Option::<String>::None);
-        } else {
-            let s = v.as_str().ok_or_else(|| {
-                Error::InvalidInput("condition must be a string or null".into())
-            })?;
-            q = q.bind(Some(s.to_string()));
-        }
-    }
-    if let Some(v) = obj.get("triggers") {
-        let arr = v
-            .as_array()
-            .ok_or_else(|| Error::InvalidInput("triggers must be an array".into()))?;
-        let triggers: Vec<String> = arr
-            .iter()
-            .map(|t| {
-                t.as_str()
-                    .map(String::from)
-                    .ok_or_else(|| Error::InvalidInput("each trigger must be a string".into()))
-            })
-            .collect::<Result<_>>()?;
-        for t in &triggers {
-            if !matches!(t.as_str(), "cron" | "manual" | "tool" | "webhook" | "message") {
-                return Err(Error::InvalidInput(format!(
-                    "invalid trigger '{t}': must be one of cron, manual, tool, webhook, message"
-                )));
-            }
-        }
-        q = q.bind(serde_json::to_string(&triggers).map_err(|e| {
-            Error::Other(format!("failed to serialize triggers: {e}"))
-        })?);
     }
     if let Some(v) = obj.get("memory") {
-        if v.is_null() {
-            q = q.bind(Option::<String>::None);
-        } else {
-            let s = v
-                .as_str()
-                .ok_or_else(|| Error::InvalidInput("memory must be a string or null".into()))?;
-            q = q.bind(Some(s.to_string()));
-        }
-    }
-    q = q.bind(applet_id);
-
-    // A chat-authored applet's SKILL.md is what reconcile restores it from,
-    // so the edit is written there too, inside the row's transaction: a
-    // file that cannot be written rolls the row back instead of leaving
-    // an edit the next reconcile undoes. The reconcile lock keeps a reconcile
-    // from reading the old catalog between the write and the reload.
-    let is_ai = current.owner == "ai";
-    let _reconcile = if is_ai {
-        Some(crate::applet_templates::reconcile_lock().lock().await)
-    } else {
-        None
-    };
-    let mut tx = db.begin().await?;
-    let res = q
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| Error::Database(format!("failed to update action: {e}")))?;
-    if res.rows_affected() == 0 {
-        return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
-    }
-    if is_ai {
-        crate::applet_templates::mirror_patch_to_file(applet_id, obj)?;
-    }
-    tx.commit().await?;
-    if is_ai {
-        crate::applet_templates::reload_catalog();
+        let memory = match v {
+            serde_json::Value::Null => None,
+            serde_json::Value::String(s) => Some(s.clone()),
+            _ => return Err(Error::InvalidInput("memory must be a string or null".into())),
+        };
+        sqlx::query("UPDATE app_applets SET memory = $1, updated_at = now() WHERE id = $2")
+            .bind(memory)
+            .bind(applet_id)
+            .execute(db)
+            .await?;
     }
 
     get_applet(db, applet_id).await
@@ -1134,17 +1008,18 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         .as_deref()
         .and_then(|s| serde_json::from_str(s).ok());
 
+    let id: String = row.try_get("id")?;
+    let owner: String = row.try_get("owner")?;
+    let has_override = owner == "system" && crate::applet_templates::has_override(&id);
     Ok(Applet {
-        id: row.try_get("id")?,
-        owner: row.try_get("owner")?,
+        id,
+        owner,
         name: row.try_get("name")?,
         description: row.try_get("description").ok().flatten(),
         agent: row.try_get("agent")?,
-        agent_shipped: row.try_get("agent_shipped").ok().flatten(),
         schedule: row.try_get("schedule")?,
         enabled: row.try_get::<bool, _>("enabled")?,
         config,
-        condition: row.try_get("condition")?,
         triggers,
         memory: row.try_get("memory")?,
         credential_id: row.try_get("credential_id")?,
@@ -1158,6 +1033,7 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         next_due_at: row.try_get("next_due_at").ok().flatten(),
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
+        has_override,
     })
 }
 
@@ -1238,28 +1114,6 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// What an applet may use is its file's. A patch may resend the same
-    /// list, or drop it, but not change it.
-    #[sqlx::test]
-    async fn a_patch_cannot_change_what_the_file_allows(pool: PgPool) {
-        sqlx::query(
-            "INSERT INTO app_applets (id, name, owner, config) \
-             VALUES ('applet_tides', 'Tides', 'user', '{\"allowed_tools\": [\"shell\"], \"net_hosts\": [\"api.weather.gov\"]}')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        for config in [
-            serde_json::json!({ "allowed_tools": ["shell", "lake"], "net_hosts": ["api.weather.gov"] }),
-            serde_json::json!({ "allowed_tools": ["shell"], "net_hosts": ["api.weather.gov", "api.other.example.com"] }),
-        ] {
-            let err = update_applet(&pool, "applet_tides", &serde_json::json!({ "config": config })).await.unwrap_err();
-            assert!(err.to_string().contains("SKILL.md"), "{err}");
-        }
-        let same = serde_json::json!({ "allowed_tools": ["shell"], "net_hosts": ["api.weather.gov"], "chat_id": "chat_a" });
-        update_applet(&pool, "applet_tides", &serde_json::json!({ "config": same })).await.unwrap();
-    }
 
     /// Only the owner's route sets hosts, each through the egress policy, and
     /// a run's requests show per host on the run.

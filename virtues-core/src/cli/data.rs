@@ -354,7 +354,7 @@ impl Verbs {
                 let a = &data["action"];
                 for key in [
                     "id", "name", "owner", "enabled", "description", "schedule", "triggers",
-                    "condition", "until", "archived_at",
+                    "until", "archived_at",
                 ] {
                     let v = cell(&a[key]);
                     if !v.is_empty() {
@@ -379,7 +379,6 @@ impl Verbs {
                     table(&["field", "error", "suggestion"], &findings);
                     return Err(format!("{} finding(s); nothing was created", findings.len()));
                 }
-                crate::tools::applet_setup::with_default_spend_cap(&mut args);
                 let console = &self.console;
                 args["action"] = json!("setup");
                 let data = console.tool("applet", args).await?;

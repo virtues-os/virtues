@@ -22,7 +22,7 @@
 
 use std::path::Path;
 
-use yaml_rust2::{Yaml, YamlLoader};
+use yaml_rust2::{yaml::Hash, Yaml, YamlLoader};
 
 use super::{SourceRef, Template};
 
@@ -47,10 +47,11 @@ const METADATA_KEYS: &[&str] = &[
 /// the file, so no folder can ask for it.
 const VAULT_KEY_APPLETS: &[&str] = &["credential-refresh"];
 
-/// Shipped applets that are the owner's to change once installed, as a
-/// starting point: a prompt edit of theirs is kept, and a shipped fix reaches
-/// them only while they have not edited it (reconcile's `user` branch).
-const SHIPPED_STARTERS: &[&str] = &["daily-readings", "dot-cloud", "morning-examen"];
+/// What an override file may change in a shipped applet: when it runs, what
+/// it may spend, its model, who may start it by hand, its description and its
+/// prompt. What it runs and what it may use stay the shipped file's; changing
+/// those is a fork.
+const OVERRIDE_METADATA: &[&str] = &["trigger", "limit", "model", "invoke"];
 
 /// The most a `view.html` may weigh.
 const VIEW_MAX_BYTES: u64 = 48 * 1024;
@@ -567,21 +568,9 @@ pub(crate) fn limit_from_config(limits: &serde_json::Map<String, serde_json::Val
 /// `name` is the folder's and cannot change here; `condition` is now SQL in
 /// `run`. Both are refused with a sentence.
 pub(crate) fn apply_patch(text: &str, patch: &serde_json::Map<String, serde_json::Value>) -> Result<String, String> {
-    use yaml_rust2::YamlEmitter;
-    let (front, body) = split_frontmatter(text)?;
-    let doc = YamlLoader::load_from_str(front)
-        .map_err(|e| format!("its frontmatter is not valid YAML: {e}"))?
-        .into_iter()
-        .next()
-        .ok_or("its frontmatter is empty")?;
-    let Yaml::Hash(mut top) = doc else { return Err("its frontmatter is not a map".into()) };
+    let (top, mut meta, mut body) = parts(text)?;
     let key = |k: &str| Yaml::String(k.to_string());
-    let mut meta = match top.remove(&key("metadata")) {
-        Some(Yaml::Hash(h)) => h,
-        _ => Default::default(),
-    };
-    let text_of = |h: &yaml_rust2::yaml::Hash, k: &str| h.get(&key(k)).and_then(scalar).unwrap_or_default();
-    let mut body = body.trim().to_string();
+    let text_of = |h: &Hash, k: &str| h.get(&key(k)).and_then(scalar).unwrap_or_default();
 
     for (field, value) in patch {
         match field.as_str() {
@@ -589,7 +578,7 @@ pub(crate) fn apply_patch(text: &str, patch: &serde_json::Map<String, serde_json
             "condition" if !value.is_null() => {
                 return Err("A condition is now SQL in `run`: set `run: sql select 1 where (…)` in its SKILL.md.".into())
             }
-            "condition" | "memory" => {}
+            "condition" => {}
             "agent" => body = value.as_str().unwrap_or_default().trim().to_string(),
             "schedule" => {
                 let mut kept: Vec<String> =
@@ -603,11 +592,6 @@ pub(crate) fn apply_patch(text: &str, patch: &serde_json::Map<String, serde_json
                     meta.insert(key("trigger"), Yaml::String(kept.join(", ")));
                 }
             }
-            "enabled" => {
-                if let Some(b) = value.as_bool() {
-                    meta.insert(key("enabled"), Yaml::String(b.to_string()));
-                }
-            }
             "triggers" => {
                 let wanted: Vec<&str> = value.as_array().map(|a| a.iter().filter_map(|t| t.as_str()).collect()).unwrap_or_default();
                 let mut invoke: Vec<String> = list(&text_of(&meta, "invoke")).into_iter().filter(|i| i == "chat").collect();
@@ -617,6 +601,12 @@ pub(crate) fn apply_patch(text: &str, patch: &serde_json::Map<String, serde_json
                 meta.insert(key("invoke"), Yaml::String(if invoke.is_empty() { "none".into() } else { invoke.join(", ") }));
             }
             "config" => {
+                // What the file says about spending and the model. The rest of
+                // a row's config is the box's, and what an applet may use is
+                // `allowed-tools`, changed in the file itself.
+                if let Some(other) = value.as_object().and_then(|c| c.keys().find(|k| !["limits", "model_slot"].contains(&k.as_str()))) {
+                    return Err(format!("`config.{other}` cannot be edited; only `limits` and `model_slot` can."));
+                }
                 if let Some(limits) = value.get("limits").and_then(|l| l.as_object()) {
                     match limit_from_config(limits) {
                         Some(l) => meta.insert(key("limit"), Yaml::String(l)),
@@ -624,8 +614,8 @@ pub(crate) fn apply_patch(text: &str, patch: &serde_json::Map<String, serde_json
                     };
                 }
                 match value.get("model_slot").and_then(|m| m.as_str()) {
-                    Some("deep") => {
-                        meta.insert(key("model"), Yaml::String("deep".into()));
+                    Some(slot @ ("deep" | "lite")) => {
+                        meta.insert(key("model"), Yaml::String(slot.into()));
                     }
                     Some(_) => {
                         meta.remove(&key("model"));
@@ -636,20 +626,11 @@ pub(crate) fn apply_patch(text: &str, patch: &serde_json::Map<String, serde_json
             other => return Err(format!("`{other}` cannot be edited in a SKILL.md.")),
         }
     }
-    if !meta.is_empty() {
-        top.insert(key("metadata"), Yaml::Hash(meta));
-    }
-    let mut yaml = String::new();
-    YamlEmitter::new(&mut yaml)
-        .dump(&Yaml::Hash(top))
-        .map_err(|e| format!("could not write the frontmatter: {e}"))?;
-    Ok(format!("{yaml}\n---\n{body}\n"))
+    render_parts(top, meta, &body)
 }
 
-/// A `SKILL.md` with `metadata.<key>` set to `value`, everything else as it
-/// was. A fork stamps where it came from this way.
-pub(crate) fn with_metadata(text: &str, key: &str, value: &str) -> Result<String, String> {
-    use yaml_rust2::YamlEmitter;
+/// A file's frontmatter without `metadata`, its `metadata`, and its body.
+fn parts(text: &str) -> Result<(Hash, Hash, String), String> {
     let (front, body) = split_frontmatter(text)?;
     let doc = YamlLoader::load_from_str(front)
         .map_err(|e| format!("its frontmatter is not valid YAML: {e}"))?
@@ -657,18 +638,107 @@ pub(crate) fn with_metadata(text: &str, key: &str, value: &str) -> Result<String
         .next()
         .ok_or("its frontmatter is empty")?;
     let Yaml::Hash(mut top) = doc else { return Err("its frontmatter is not a map".into()) };
-    let k = |k: &str| Yaml::String(k.to_string());
-    let mut meta = match top.remove(&k("metadata")) {
+    let meta = match top.remove(&Yaml::String("metadata".into())) {
         Some(Yaml::Hash(h)) => h,
         _ => Default::default(),
     };
-    meta.insert(k(key), Yaml::String(value.to_string()));
-    top.insert(k("metadata"), Yaml::Hash(meta));
+    Ok((top, meta, body.trim().to_string()))
+}
+
+/// The file [`parts`] came from.
+fn render_parts(mut top: Hash, meta: Hash, body: &str) -> Result<String, String> {
+    use yaml_rust2::YamlEmitter;
+    if !meta.is_empty() {
+        top.insert(Yaml::String("metadata".into()), Yaml::Hash(meta));
+    }
     let mut yaml = String::new();
     YamlEmitter::new(&mut yaml)
         .dump(&Yaml::Hash(top))
         .map_err(|e| format!("could not write the frontmatter: {e}"))?;
     Ok(format!("{yaml}\n---\n{}\n", body.trim()))
+}
+
+/// A shipped applet's file with its override laid on top: the override's
+/// `description`, its [`OVERRIDE_METADATA`] keys (an empty value removes the
+/// key) and its prompt, when it has one, replace the shipped ones. Any other
+/// key in an override is refused, so an override cannot change what a
+/// shipped applet runs or may use.
+pub(crate) fn overlay(shipped: &str, over: &str) -> Result<String, String> {
+    let (mut top, mut meta, mut body) = parts(shipped)?;
+    let (o_top, o_meta, o_body) = parts(over)?;
+    for (k, v) in o_top {
+        match k.as_str() {
+            Some("description") => {
+                top.insert(k, v);
+            }
+            other => return Err(format!("an override cannot change `{}`", other.unwrap_or("?"))),
+        }
+    }
+    for (k, v) in o_meta {
+        let name = k.as_str().unwrap_or("?").to_string();
+        if !OVERRIDE_METADATA.contains(&name.as_str()) {
+            return Err(format!("an override cannot change `metadata.{name}`; fork the applet to change it"));
+        }
+        if scalar(&v).is_some_and(|s| s.trim().is_empty()) {
+            meta.remove(&k);
+        } else {
+            meta.insert(k, v);
+        }
+    }
+    if !o_body.is_empty() {
+        body = o_body;
+    }
+    render_parts(top, meta, &body)
+}
+
+/// Whether two `trigger` values start an applet at the same times: an edit
+/// writes `cron …` where the file may say `every day at 07:00`.
+fn same_trigger(a: Option<&Yaml>, b: Option<&Yaml>) -> bool {
+    let read = |v: Option<&Yaml>| parse_triggers(&v.and_then(scalar).unwrap_or_default(), &mut Vec::new());
+    read(a) == read(b)
+}
+
+/// The override that turns `shipped` into `edited`, holding only what
+/// differs, or `None` when they do not differ. A difference an override
+/// cannot hold is refused with what to do instead.
+pub(crate) fn override_between(shipped: &str, edited: &str) -> Result<Option<String>, String> {
+    let (top, meta, body) = parts(shipped)?;
+    let (e_top, e_meta, e_body) = parts(edited)?;
+    let description = Yaml::String("description".into());
+    let mut o_top = Hash::new();
+    for (k, v) in &e_top {
+        if top.get(k) != Some(v) {
+            if *k != description {
+                return Err(format!("`{}` of a shipped applet cannot change; fork it to change that", k.as_str().unwrap_or("?")));
+            }
+            o_top.insert(k.clone(), v.clone());
+        }
+    }
+    let mut o_meta = Hash::new();
+    for k in meta.keys().chain(e_meta.keys()) {
+        let (was, now) = (meta.get(k), e_meta.get(k));
+        if was == now || o_meta.contains_key(k) || (k.as_str() == Some("trigger") && same_trigger(was, now)) {
+            continue;
+        }
+        let name = k.as_str().unwrap_or("?");
+        if !OVERRIDE_METADATA.contains(&name) {
+            return Err(format!("`metadata.{name}` of a shipped applet cannot change; fork it to change that"));
+        }
+        o_meta.insert(k.clone(), now.cloned().unwrap_or_else(|| Yaml::String(String::new())));
+    }
+    let o_body = if e_body != body { e_body } else { String::new() };
+    if o_top.is_empty() && o_meta.is_empty() && o_body.is_empty() {
+        return Ok(None);
+    }
+    render_parts(o_top, o_meta, &o_body).map(Some)
+}
+
+/// A `SKILL.md` with `metadata.<key>` set to `value`, everything else as it
+/// was. A fork stamps where it came from this way.
+pub(crate) fn with_metadata(text: &str, key: &str, value: &str) -> Result<String, String> {
+    let (top, mut meta, body) = parts(text)?;
+    meta.insert(Yaml::String(key.to_string()), Yaml::String(value.to_string()));
+    render_parts(top, meta, &body)
 }
 
 /// A comma-separated `metadata` value as its entries.
@@ -710,9 +780,7 @@ fn pinned_id(pin: Option<&str>, dir: &str, errors: &mut Vec<String>) -> String {
 /// Who the row belongs to, from where the folder is. A manifest's own
 /// `owner` is not used: anyone who can write the folder could set it.
 fn owner_for(dir: &str, shipped: bool) -> &'static str {
-    if shipped && SHIPPED_STARTERS.contains(&dir) {
-        "user"
-    } else if shipped {
+    if shipped {
         "system"
     } else if dir.starts_with("user/") {
         "ai"
@@ -905,6 +973,7 @@ fn parse_invoke(value: &str, errors: &mut Vec<String>) -> Vec<Invoke> {
 }
 
 #[derive(Debug, Default)]
+#[derive(PartialEq)]
 struct Triggers {
     /// A six-field cron in the box's timezone.
     schedule: Option<String>,
@@ -1629,16 +1698,13 @@ mod tests {
         let patch = serde_json::json!({
             "schedule": "0 30 9 * * *",
             "agent": "New prompt.",
-            "enabled": false,
             "triggers": ["cron", "manual", "tool"],
-            "config": { "limits": { "max_llm_cost": 2, "max_runs_per_day": 4 }, "model_slot": "deep", "chat_id": "chat_a" },
-            "memory": "row only",
+            "config": { "limits": { "max_llm_cost": 2, "max_runs_per_day": 4 }, "model_slot": "deep" },
         });
         let edited = apply_patch(&text, patch.as_object().unwrap()).unwrap();
         let t = parse(&edited, f.path(), "weekly-review", true).unwrap_or_else(|e| panic!("{e:?}\n{edited}"));
         assert_eq!(t.schedule.as_deref(), Some("0 30 9 * * *"));
         assert_eq!(t.agent.as_deref(), Some("New prompt."));
-        assert!(!t.default_enabled);
         assert!(t.triggers.contains(&"webhook".to_string()), "a webhook entry stays");
         assert!(t.triggers.contains(&"tool".to_string()), "tool became invoke: assistant");
         assert!(t.invoke_chat, "chat stays");
@@ -1646,6 +1712,10 @@ mod tests {
         assert_eq!(cfg["model_slot"].as_str(), Some("deep"));
         assert_eq!(cfg["limits"]["max_runs_per_day"].as_integer(), Some(4));
         assert!(cfg.get("chat_id").is_none(), "row-only config stays out of the file");
+        // On/off and the box's own config keys are the row's, not the file's.
+        for row_only in [serde_json::json!({ "enabled": false }), serde_json::json!({ "config": { "chat_id": "chat_a" } })] {
+            assert!(apply_patch(&text, row_only.as_object().unwrap()).is_err(), "{row_only}");
+        }
 
         let cleared = apply_patch(&edited, serde_json::json!({ "schedule": null }).as_object().unwrap()).unwrap();
         assert!(parse(&cleared, f.path(), "weekly-review", true).unwrap().schedule.is_none());
@@ -1707,5 +1777,21 @@ mod tests {
         assert!(e.iter().any(|e| e.contains("built-in chat mode")), "{e:?}");
         let assistant_only = text.replace("invoke: chat", "invoke: assistant");
         assert!(parse(&assistant_only, f.path(), "pack/sudo", false).is_ok());
+    }
+
+    /// An override holds only what differs from the shipped file, an empty
+    /// value removes a key, and keys an override may not hold are refused.
+    #[test]
+    fn an_override_is_the_difference_from_the_shipped_file() {
+        let shipped = "---\nname: x\ndescription: Does x. Use when asked.\nmetadata:\n  trigger: every day at 07:00\n  limit: $1 per run\n---\nDo x.\n";
+        assert_eq!(override_between(shipped, shipped).unwrap(), None);
+        let cleared = overlay(shipped, "---\nmetadata:\n  trigger: ''\n---\n").unwrap();
+        assert!(!cleared.contains("trigger") && cleared.contains("Do x."), "{cleared}");
+        let edited = overlay(shipped, "---\nmetadata:\n  limit: $2 per run\n---\nDo y.").unwrap();
+        let over = override_between(shipped, &edited).unwrap().unwrap();
+        assert!(over.contains("$2 per run") && over.contains("Do y.") && !over.contains("07:00"), "{over}");
+        assert!(overlay(shipped, "---\nmetadata:\n  run: sql select 1\n---\n").is_err());
+        let tools = shipped.replace("metadata:", "allowed-tools: sudo\nmetadata:");
+        assert!(override_between(shipped, &tools).is_err(), "what it may use is not an override's");
     }
 }

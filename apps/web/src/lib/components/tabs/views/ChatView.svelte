@@ -2112,10 +2112,8 @@
 											{:else if (part.type === "tool-applet" && (part as any).input?.action === "setup" || part.type === "tool-setup_applet") && (part as any).state === "output-available"}
 											{@const out = (part as any).output}
 											{#if out?.applet_id && out?.status !== "check_failed"}
-												<!-- The gate, in the conversation. An applet that crosses a
-												     boundary is created disabled and the model cannot enable
-												     it; that invariant stands. What changes is that approving
-												     no longer means walking to another page to find a toggle. -->
+												<!-- The receipt for an applet the assistant made or
+												     changed, with a way to turn it off. -->
 												<AppletProposalCard
 													appletId={out.applet_id}
 													name={out.name}
@@ -2123,7 +2121,7 @@
 													schedule={out.schedule}
 													capabilities={out.capabilities ?? []}
 													estimatedCostPerDay={out.estimated_cost_per_day}
-													gated={out.gated}
+													enabled={out.enabled !== false}
 													lifecycle={out.lifecycle}
 													updated={out.status === "updated"}
 												/>

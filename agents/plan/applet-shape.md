@@ -461,6 +461,24 @@ moves `condition` into `run_sql` and drops the column (claim the number with
 survives a restart, removing the override returns the shipped schedule, and
 no code path writes a behavior field to a row.
 
+Built on 2026-10-28 except on a box. Decided on the way:
+- An override lives at `<state root>/overrides/<name>.md` and may change
+  `description`, `trigger`, `limit`, `model`, `invoke` and the prompt. An
+  empty value removes a key. Anything else is refused, which is what keeps an
+  override from changing what a shipped applet runs or may use.
+- PATCH writes `enabled` and `memory` to the row and everything else through
+  the file, then reconciles. `reset` removes an override. A shipped applet
+  takes `agent` now, so the settings screen edits any shipped prompt.
+- The three shipped starters' edited prompts become overrides once, at boot,
+  from `agent` and `agent_shipped`. A retimed shipped schedule is not carried
+  over, because the row cannot tell it from one an older release shipped.
+  `agent_shipped` stays until every box has run that step.
+- Migration 0072 moves a row's `condition` into `run_sql` and empties the
+  column, which stays so `virtues rollback` still works. A later migration
+  drops both columns.
+- The chat card is a receipt with Turn off, and `applets/AGENTS.md` says an
+  applet starts on.
+
 ### 8. Setup takes the file's keys
 
 The setup parameters above, the instruction in the tool's description,

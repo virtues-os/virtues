@@ -35,7 +35,7 @@ use sqlx::PgPool;
 use crate::middleware::auth::AuthUser;
 use crate::server::yjs::YjsState;
 use crate::server::AppState;
-use crate::tools::{applet_management, applet_setup, mcp_allows, tools_for_mcp, ToolContext, ToolExecutor};
+use crate::tools::{mcp_allows, tools_for_mcp, ToolContext, ToolExecutor};
 
 pub const PATH: &str = "/api/mcp";
 
@@ -142,15 +142,12 @@ async fn call(
     pool: &PgPool,
     yjs: &YjsState,
     tool: &str,
-    mut arguments: serde_json::Value,
+    arguments: serde_json::Value,
     device: &str,
     agent_key: &str,
 ) -> Result<CallToolResult, McpError> {
     if !mcp_allows(tool, &arguments) {
         return Err(McpError::invalid_params(format!("{tool} is not offered over MCP"), None));
-    }
-    if tool == "applet" && applet_management::action(&arguments) == Some("setup") {
-        applet_setup::with_default_spend_cap(&mut arguments);
     }
     let args_sha = super::console::args_sha(&arguments);
     let exec = ToolExecutor::new_with_yjs(pool.clone(), yjs.clone());

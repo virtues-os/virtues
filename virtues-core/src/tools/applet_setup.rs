@@ -7,11 +7,10 @@
 //! reconciles under the global mutex. The DB row is derived from disk like
 //! every other applet: one door.
 //!
-//! Core invariant served here: **no path from model output to an enabled,
-//! scheduled row without a user action** — any applet that crosses a boundary
-//! (schedule/trigger, credential, recurring spend) is written with
-//! `enabled: false`; enabling is a user-surface action the tool
-//! layer refuses (see the `edit` action in `applet_management`).
+//! An applet the assistant makes starts on, with no step for the owner to
+//! approve (decided 2026-10-06). What keeps an unattended one from running up
+//! a bill is its limit: one with a prompt and no daily limit gets
+//! [`DEFAULT_MAX_LLM_COST_PER_DAY`], shown on its card.
 
 use sqlx::PgPool;
 
@@ -49,24 +48,12 @@ pub(crate) fn wants_check_only(arguments: &serde_json::Value) -> bool {
     arguments.get("check_only").and_then(|v| v.as_bool()) == Some(true)
 }
 
-/// The daily spend limit, in dollars, an applet put by an outside agent (the
-/// CLI's `applet put`, or a setup through `/api/mcp`) gets when it has a prompt
-/// and sets none. A scheduled applet written by an outside agent runs with
-/// nobody watching; this is what stops it running up a bill overnight. The
-/// owner can raise or remove it like any limit.
+/// The daily spend limit, in dollars, an applet set up with a prompt and no
+/// daily limit of its own gets, from chat, the CLI's `applet put` or
+/// `/api/mcp` alike. It starts on and may run with nobody watching; this is
+/// what stops it running up a bill overnight. The owner can raise or remove
+/// it like any limit.
 pub(crate) const DEFAULT_MAX_LLM_COST_PER_DAY: f64 = 1.0;
-
-/// Adds [`DEFAULT_MAX_LLM_COST_PER_DAY`] to setup arguments that carry a
-/// prompt and no daily limit of their own.
-pub(crate) fn with_default_spend_cap(arguments: &mut serde_json::Value) {
-    let has_prompt = arguments.get("agent").or_else(|| arguments.get("instruction")).is_some();
-    if has_prompt && arguments["limits"].get("max_llm_cost_per_day").is_none() {
-        if !arguments["limits"].is_object() {
-            arguments["limits"] = serde_json::json!({});
-        }
-        arguments["limits"]["max_llm_cost_per_day"] = serde_json::json!(DEFAULT_MAX_LLM_COST_PER_DAY);
-    }
-}
 
 /// The authored fields, parsed once for the check and the write.
 pub(crate) struct Draft {
@@ -100,6 +87,7 @@ impl Draft {
         // DO something each run (write a page, post to chat, compute) carry
         // an agent.
         let agent = opt_str(arguments, "agent").or_else(|| opt_str(arguments, "instruction"));
+        let has_prompt = agent.is_some();
         let schedule = opt_str(arguments, "schedule");
         let triggers: Vec<String> = arguments
             .get("triggers")
@@ -121,7 +109,14 @@ impl Draft {
             until: opt_str(arguments, "until"),
             schema_sql: opt_str(arguments, "schema_sql"),
             face_html: opt_str(arguments, "face_html"),
-            limits: arguments.get("limits").cloned().filter(|v| v.is_object()),
+            limits: {
+                let mut limits = arguments.get("limits").cloned().filter(|v| v.is_object());
+                if has_prompt && limits.as_ref().and_then(|l| l.get("max_llm_cost_per_day")).is_none() {
+                    let l = limits.get_or_insert_with(|| serde_json::json!({}));
+                    l["max_llm_cost_per_day"] = serde_json::json!(DEFAULT_MAX_LLM_COST_PER_DAY);
+                }
+                limits
+            },
             triggers,
             invoke: str_list(arguments, "invoke").unwrap_or_default(),
             tools: str_list(arguments, "tools"),
@@ -298,30 +293,13 @@ pub async fn execute(
     let existed = dir.join("SKILL.md").is_file();
     let applet_id = format!("{}{slug}", crate::scheduler::applets::USER_APPLET_PREFIX);
 
-    // Boundary predicate: a schedule = unattended.
-    let crosses_boundary = schedule.is_some();
-
-    // Re-gate logic: read the current row (if any) so an update can preserve
-    // the user's enable choice AND force-disable when a boundary is newly
-    // added to an already-enabled applet (the gate invariant).
-    let (was_boundary, was_enabled) = if existed {
-        match applets::get_applet(pool, &applet_id).await {
-            Ok(a) => (a.schedule.is_some(), a.enabled),
-            Err(_) => (false, false),
-        }
+    // An applet the assistant makes starts on, under its limit (the owner's
+    // 2026-10-06 decision). Whether it is on is the box's to keep, so an
+    // update leaves it as the owner last set it.
+    let enabled = if existed {
+        applets::get_applet(pool, &applet_id).await.map(|a| a.enabled).unwrap_or(true)
     } else {
-        (false, false)
-    };
-    let re_gate = existed && crosses_boundary && !was_boundary;
-
-    // Fresh → gate on boundary; re-gate → off; otherwise preserve the user's
-    // last choice (restore fidelity).
-    let default_enabled = if !existed {
-        !crosses_boundary
-    } else if re_gate {
-        false
-    } else {
-        was_enabled
+        true
     };
 
     // ---- 4. The SKILL.md ---------------------------------------------------
@@ -358,7 +336,6 @@ pub async fn execute(
         deep: model.as_deref() == Some("deep"),
         // Unattended prompts run on the background model unless they ask.
         lite: agent.is_some() && model.is_none() && !chat_started,
-        enabled: default_enabled,
         body: agent.clone().unwrap_or_default(),
         ..Default::default()
     };
@@ -465,18 +442,6 @@ pub async fn execute(
         let _ = applets::unarchive_applet(pool, &applet_id).await;
     }
 
-    // Re-gate: reconcile deliberately preserves `enabled`, so an applet that
-    // just gained a boundary while enabled is still enabled — flip it off so
-    // the user must re-enable (the gate invariant holds on updates too).
-    if re_gate {
-        let _ = applets::update_applet(
-            pool,
-            &applet_id,
-            &serde_json::json!({ "enabled": false }),
-        )
-        .await;
-    }
-
     // ---- 5. Proposal ------------------------------------------------------
     let mut capabilities = vec!["reads your data (read-only SQL)".to_string()];
     if schema_sql.is_some() {
@@ -505,17 +470,10 @@ pub async fn execute(
         "name": name,
         "slug": slug,
         "folder": rel,
-        "enabled": default_enabled,
-        // The card renders from these; the string below is for the model, so
-        // it says the same thing in its own reply.
+        "enabled": enabled,
+        // The card renders from these.
         "description": description,
         "schedule": schedule,
-        "gated": !default_enabled,
-        "gate": if !default_enabled {
-            "DISABLED — an Enable card is shown to the user in this chat. Say what it does and that it is waiting for them; do NOT tell them to go to the applet page."
-        } else {
-            "no boundary crossed: enabled already, nothing for the user to approve"
-        },
         "lifecycle": until.as_deref().map(|u| {
             if u.eq_ignore_ascii_case("once") { "once" } else { "until" }
         }).unwrap_or("forever"),
@@ -813,7 +771,7 @@ mod tests {
             "## The fields",
             "is a migration, not a schema",
             "## What the applet can do at runtime",
-            "created **disabled**",
+            "**It starts on.**",
             "## Limits",
             "6-field cron",
             "virtues.query",

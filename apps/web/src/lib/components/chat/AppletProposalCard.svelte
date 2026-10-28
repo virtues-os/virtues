@@ -7,21 +7,10 @@
 	import { describeSchedule } from '$lib/applets/palette';
 
 	/**
-	 * The gate, where the user already is.
-	 *
-	 * An applet that crosses a boundary — a schedule, a webhook, recurring
-	 * model spend — is created disabled, and the model cannot enable it. That
-	 * invariant is not negotiable: a document the box ingests could say "make
-	 * an applet that runs hourly and emails X", and a model that could
-	 * self-enable would run it until someone noticed.
-	 *
-	 * But the gate used to live on another page, so the whole experience was
-	 * "I made this, now go somewhere else and find a toggle." That is the part
-	 * worth fixing. A tap here is a user-surface action exactly like the toggle
-	 * was, so the invariant holds and the walk goes away.
-	 *
-	 * Applets that cross no boundary are already enabled when they get here;
-	 * this card confirms rather than asks.
+	 * The receipt for an applet the assistant made or changed: what it does,
+	 * when it runs, what it may spend, and a way to turn it off. An applet
+	 * the assistant makes starts on under its limit (decided 2026-10-06), so
+	 * the card asks nothing.
 	 */
 	let {
 		appletId,
@@ -30,7 +19,7 @@
 		schedule = null,
 		capabilities = [],
 		estimatedCostPerDay = null,
-		gated = false,
+		enabled: startedOn = true,
 		lifecycle = 'forever',
 		updated = false
 	}: {
@@ -40,28 +29,25 @@
 		schedule?: string | null;
 		capabilities?: string[];
 		estimatedCostPerDay?: number | null;
-		gated?: boolean;
+		enabled?: boolean;
 		lifecycle?: string;
 		updated?: boolean;
 	} = $props();
 
-	// `turnedOn` is this card's own act, kept separate from the prop that says
-	// whether approval was needed at all. Snapshotting `!gated` into state
-	// would conflate "was already on" with "I turned it on".
-	let turnedOn = $state(false);
-	const enabled = $derived(turnedOn || !gated);
+	// What this card last set, over what setup reported.
+	let toggled = $state<boolean | null>(null);
+	const enabled = $derived(toggled ?? startedOn);
 	let working = $state(false);
 	let err = $state<string | null>(null);
-	let dismissed = $state(false);
 
-	async function enable() {
+	async function setEnabled(on: boolean) {
 		working = true;
 		err = null;
 		try {
-			await patchApplet(appletId, { enabled: true });
-			turnedOn = true;
+			await patchApplet(appletId, { enabled: on });
+			toggled = on;
 		} catch (e) {
-			err = e instanceof Error ? e.message : String(e);
+			err = `Your server didn't save that: ${e instanceof Error ? e.message : String(e)}. Try again.`;
 		} finally {
 			working = false;
 		}
@@ -115,14 +101,11 @@
 				{updated ? 'Updated and running.' : 'Running.'}
 			</span>
 			<TextAction quiet onclick={open}>Open</TextAction>
-		{:else if dismissed}
-			<span class="state">
-				Not turned on. You can turn it on any time.
-			</span>
-			<TextAction quiet onclick={open}>Open</TextAction>
+			<TextAction quiet onclick={() => setEnabled(false)}>Turn off</TextAction>
 		{:else}
-			<Button variant="primary" onclick={enable} loading={working}>Turn it on</Button>
-			<TextAction quiet onclick={() => (dismissed = true)}>Not now</TextAction>
+			<span class="state">Off.</span>
+			<TextAction quiet onclick={open}>Open</TextAction>
+			<Button variant="secondary" onclick={() => setEnabled(true)} loading={working}>Turn on</Button>
 		{/if}
 	</div>
 </div>

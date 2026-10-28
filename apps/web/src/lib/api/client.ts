@@ -311,20 +311,14 @@ export interface Applet {
 	id: string;
 	owner: 'system' | 'user' | 'ai';
 	name: string;
-	/** The applet's one-sentence intent, from its manifest — what it is for,
+	/** The applet's one-sentence intent, from its SKILL.md — what it is for,
 	 *  in the user's terms. The list row's plain-English line and the detail
-	 *  headline. Null only for a row whose manifest omits it. */
+	 *  headline. */
 	description: string | null;
 	agent: string | null;
-	/** The prompt we last SHIPPED, which is a different question from the one
-	 *  the applet is running. They differ once the person has written their
-	 *  own — and knowing that is what lets this page offer a diff and a way
-	 *  back to the default, rather than silently keeping either. */
-	agent_shipped: string | null;
 	schedule: string | null;
 	enabled: boolean;
 	config: Record<string, unknown>;
-	condition: string | null;
 	triggers: AppletTrigger[];
 	memory: string | null;
 	/** Set when the applet is one source connection's fan-out (OAuth/API-key). */
@@ -336,6 +330,10 @@ export interface Applet {
 	 *  binary by `function_name`. Null when the action uses the function_name
 	 *  shortcut. */
 	command: string[] | null;
+	/** A shipped applet you changed: its prompt or schedule is yours, kept
+	 *  apart from the shipped file so a shipped fix still reaches the rest.
+	 *  `reset` in a patch returns it to what ships. */
+	has_override?: boolean;
 	/** Lifecycle: null = forever · "once" = archive after first success ·
 	 *  anything else = SQL boolean checked after each success. */
 	until: string | null;
@@ -514,7 +512,7 @@ export interface ReopenOnboardingResponse {
  * This device is revoked too — the caller loses its own session, by design.
  */
 export function reopenOnboarding(): Promise<ReopenOnboardingResponse> {
-	return apiSend<ReopenOnboardingResponse>('POST', '/pair/reopen-onboarding');
+	return apiSendProven<ReopenOnboardingResponse>('POST', '/pair/reopen-onboarding');
 }
 
 export interface ApplyUpdateResponse {
@@ -704,9 +702,10 @@ export interface PatchAppletBody {
 	schedule?: string | null;
 	enabled?: boolean;
 	config?: Record<string, unknown>;
-	condition?: string | null;
 	triggers?: AppletTrigger[];
 	memory?: string | null;
+	/** Remove your changes to a shipped applet. */
+	reset?: boolean;
 }
 
 export function patchApplet(id: string, patch: PatchAppletBody): Promise<Applet> {
