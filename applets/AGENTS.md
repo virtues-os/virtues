@@ -6,7 +6,8 @@ thing that runs for the user: a scheduled task, a one-off reminder, a
 self-ending monitor, a tracker with its own tables, a dashboard face.
 
 Chat-authored applets are created with the `applet` tool's `setup` action
-(never by writing SQL rows). It validates first, materializes `applets/user/<slug>/`,
+(never by writing SQL rows). It validates first, writes `user/<name>/SKILL.md` (with
+`view.html` and `tables/` when it has them),
 and reconciles — a `check_failed` result lists findings; fix them and call
 again, nothing was created. Re-calling with the same name **updates** that
 applet: that is the edit path. So check `applet` with `list` before creating one —
@@ -16,17 +17,16 @@ a name already in use overwrites that applet instead of adding a new one.
 
 | Field | Language | Notes |
 |---|---|---|
-| `name` (req) | text | slug = lowercased name with `_` ("Calorie Tracker" → `calorie_tracker`); tables live in schema `applet_<slug>` |
+| `name` (req) | text | becomes the folder, lowercase words joined by `-` ("Calorie tracker" → `calorie-tracker`); the same name is the same applet. Tables live in schema `applet_<slug>`, the name with `_` (`applet_calorie_tracker`) |
 | `description` (req) | one sentence | **the user reads this.** It is the line under the applet's name in the list and the headline on its page — what the applet does FOR them, in their words, not how it works. "Keeps your bank balances current", not "Sync accounts via Plaid cursor" |
 | `agent` | prompt | **optional** — only for applets that DO something each run. Runs self-contained: no chat history, opens with the kickoff turn "Run your action instruction now." Omit it entirely for a face-only dashboard |
 | `schedule` | 6-field cron | seconds first, **box-local timezone**. `0 0 6 * * *` = daily 6am |
-| `triggers` | list | `cron` `manual` `tool` `api` `webhook` `message`; defaults follow `schedule`. Add `message` to let the user talk to it |
-| `condition` | SQL boolean | run gate — local data only, never network |
-| `until` | lifecycle | omit = forever · `"once"` = archive after first success · SQL boolean = archive when true after a success |
+| `triggers` | list | `cron` `manual` `tool` `message`. `tool` lets you start it with `run`; Run now and `message` are always there for an applet with a prompt |
+| `condition` | SQL boolean | checked before each run, on local data only. False records a skipped run and calls no model |
+| `until` | lifecycle | omit = forever · `"once"` = runs at the schedule's next time, then finishes |
 | `schema_sql` | **one migration** | **only** schema `applet_<slug>`. First call creates; later calls submit *only what changed* — see below |
 | `face_html` | complete index.html | sandboxed iframe; include `<link rel="stylesheet" href="virtues.css">` + `<script src="virtues.js"></script>`; read data with `await virtues.query(sql)` (read-only); 48KB max. A face meant to be published is the exception: see below |
 | `limits` | object | protective ceilings — see below. Only enforced keys are accepted |
-| `delivers` | `page` · `chat` · `dashboard` | what each run makes. Set `page` when every run writes one: a run that ends without writing a page is then recorded as failed, not as a success. A face-only dashboard is `dashboard` |
 
 ## A dashboard has no agent
 
@@ -44,7 +44,7 @@ face-only applet with no `agent` is a complete, valid applet.
 
 Each `setup` call's `schema_sql` is **one numbered, append-only
 migration**, applied once and never re-run. They accumulate at
-`applets/<slug>/schema/NNNN_*.sql`, and a fresh box replays them in order.
+`user/<name>/tables/NNNN_*.sql`, and a fresh box replays them in order.
 
 - **Creating**: `CREATE SCHEMA IF NOT EXISTS applet_<slug>;` then your
   `CREATE TABLE`s. This is version 1.
@@ -120,8 +120,8 @@ start it with the `run` action too.
 - The name becomes lowercase words joined by `-`: "Garden log" is
   `/garden-log`. The result says it as `run_it_with`.
 
-Not with `invoke` yet: `schedule`, `schema_sql`, `face_html`, `condition`,
-`until` and `delivers`. Leave `invoke` out for a scheduled applet.
+`invoke` goes with any other field: an applet can run on a schedule and be
+started with `/name` too.
 
 ## Limits
 
@@ -144,7 +144,7 @@ Notes that change what you should write:
   caps exist to bound automation; refusing the person who just pressed the
   button is a limit behaving as a lock. Spend ceilings bind everyone — the
   wallet does not care who pressed it.
-- **Skipped runs don't count** toward `max_runs_*`. A falsy `condition` on a
+- **Skipped runs don't count** toward `max_runs_*`. A false `condition` on a
   two-minute poll would otherwise exhaust a daily cap before lunch.
 - **`budget_exceeded` is not an error.** It means a ceiling the owner set was
   reached, so it stays out of the needs-attention strip and never counts as
@@ -191,7 +191,7 @@ real alternative. Never write a prompt that pretends a tool exists.**
   manual tracker (`schema_sql` + `message` so the user can log into it).
   Feed/URL watching → needs a fetch verb that doesn't exist yet: decline, or
   offer a `web_search` approximation labeled as such.
-- **The gate.** Applets with a `schedule` or `api`/`webhook` trigger are
+- **The gate.** Applets with a `schedule` are
   created **disabled**, and you cannot enable them — do not try. An **Enable
   card appears in the chat** right after your tool call, showing what it does,
   when it runs, what it may touch and roughly what it costs; one tap turns it
@@ -202,9 +202,9 @@ real alternative. Never write a prompt that pretends a tool exists.**
 - **Ensure-semantics** for data-product applets (summaries, digests,
   rollups): phrase the prompt as "make sure today's X exists — check first,
   create if missing." Idempotency absorbs missed slots, retries, and races.
-- **Date-anchored one-offs** ("remind me on the 25th"): nearest future
-  occurrence, 6-field cron, and `until = "once"` — mandatory, or it fires
-  yearly forever.
+- **Date-anchored one-offs** ("remind me on the 25th"): a 6-field cron for
+  that day and time, and `until: "once"`, which pins it to the next time the
+  cron fires and finishes the applet after it runs.
 - **Catch-up is automatic, and only for daily-or-slower schedules.** A box
   asleep at 7am runs the 7am applet once when it wakes, provided it is still
   the same day; a 15-minute sync that missed a tick just waits for the next
@@ -215,13 +215,13 @@ real alternative. Never write a prompt that pretends a tool exists.**
   and this is the trap: a schedule of `0 0 7 * * *` with
   `condition = "extract(hour from now()) < 8"` looks careful and is not. The
   box wakes at 9:30, the catch-up fires, the gate says no, and the applet is
-  silently skipped on exactly the day it mattered. **Widen the window rather
+  skipped on exactly the day it mattered. **Widen the window rather
   than tightening the cron** — gate on the day, not the hour
   (`NOT EXISTS (a successful run today)` beats `hour < 8`).
 - **Repeat-fire / cooldown.** A threshold condition ("no workout in 3 days")
   stays true for the whole lapse and fires daily. Until a cooldown field
   exists, gate on your own runs:
-  `... AND NOT EXISTS (SELECT 1 FROM app_applet_runs r WHERE r.action_id = '<id>' AND r.status = 'success' AND r.started_at > now() - interval '1 day')`
+  `... AND NOT EXISTS (SELECT 1 FROM app_applet_runs r WHERE r.applet_id = '<id>' AND r.status = 'success' AND r.started_at > now() - interval '1 day')`
 - **Two cadences = two applets** (an archiver that runs half-hourly and a
   Sunday digest are siblings, `<name>_archiver` / `<name>_digest`), each
   restating its shared definitions in its own prompt.
@@ -231,13 +231,13 @@ real alternative. Never write a prompt that pretends a tool exists.**
 
 ## Exemplars (real folders, kept current)
 
-- `applets/morning_examen/` — the canonical Reflect: schedule, agent and a
+- `applets/morning-examen/` — the canonical Reflect: schedule, agent and a
   spend ceiling, nothing else.
-- `applets/dot_cloud/` — a face-only applet (`face/index.html`): WebGL
+- `applets/dot-cloud/` — a face-only applet (`view.html`): WebGL
   canvas, `virtues.query` over the `data_*` ontology, graceful degradation
   (renders its star field even with zero rows). The screen's default face.
 
 ## For builtin (Rust) applet development
 
-See [AUTHORING.md](./AUTHORING.md) — the subprocess contract, manifest
-reference for `command` applets, and the reconcile field-ownership rules.
+See [AUTHORING.md](./AUTHORING.md) — the subprocess contract, the `SKILL.md`
+reference for applets that run code, and the reconcile field-ownership rules.

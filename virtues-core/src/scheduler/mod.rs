@@ -432,7 +432,7 @@ fn utc_offset_seconds(tz: Tz, at: chrono::DateTime<chrono::Utc>) -> i32 {
 
 /// Resolve the timezone cron schedules are interpreted in: the box owner's
 /// profile timezone, falling back to UTC if unset or unrecognized.
-async fn resolve_schedule_tz(db: &PgPool) -> Tz {
+pub(crate) async fn resolve_schedule_tz(db: &PgPool) -> Tz {
     match crate::api::profile::get_timezone(db).await {
         Ok(Some(name)) => match name.parse::<Tz>() {
             Ok(tz) => tz,

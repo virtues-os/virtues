@@ -38,6 +38,7 @@ const SPEC_KEYS: &[&str] = &[
 /// The Virtues keys under `metadata`.
 const METADATA_KEYS: &[&str] = &[
     "invoke", "trigger", "run", "source", "limit", "model", "enabled", "icon", "color", "writes", "secrets",
+    "forked-from",
 ];
 
 /// Shipped applets that re-encrypt stored secrets and so are given the
@@ -348,7 +349,8 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         writes,
         needs_vault_key: shipped && VAULT_KEY_APPLETS.contains(&name.as_str()),
         secrets,
-        forked_from: None,
+        // Where a fork came from, `virtues@<version>`, for the source pane.
+        forked_from: meta("forked-from").map(|f| f.trim().to_string()),
         invoke_chat: invoke.contains(&Invoke::Chat),
         icon: meta("icon").map(|i| i.trim().to_string()),
         dir: dir.to_string(),
@@ -379,6 +381,7 @@ pub(crate) struct SkillMd {
     pub enabled: bool,
     pub writes: Vec<String>,
     pub secrets: Vec<String>,
+    pub forked_from: Option<String>,
     pub icon: Option<String>,
     /// The prompt.
     pub body: String,
@@ -400,6 +403,7 @@ impl Default for SkillMd {
             enabled: true,
             writes: Vec::new(),
             secrets: Vec::new(),
+            forked_from: None,
             icon: None,
             body: String::new(),
         }
@@ -439,6 +443,9 @@ pub(crate) fn render(md: &SkillMd) -> Result<String, String> {
     }
     if !md.secrets.is_empty() {
         meta.insert(s("secrets"), s(&md.secrets.join(", ")));
+    }
+    if let Some(f) = &md.forked_from {
+        meta.insert(s("forked-from"), s(f));
     }
     if let Some(icon) = &md.icon {
         meta.insert(s("icon"), s(icon));
@@ -569,6 +576,31 @@ pub(crate) fn apply_patch(text: &str, patch: &serde_json::Map<String, serde_json
         .dump(&Yaml::Hash(top))
         .map_err(|e| format!("could not write the frontmatter: {e}"))?;
     Ok(format!("{yaml}\n---\n{body}\n"))
+}
+
+/// A `SKILL.md` with `metadata.<key>` set to `value`, everything else as it
+/// was. A fork stamps where it came from this way.
+pub(crate) fn with_metadata(text: &str, key: &str, value: &str) -> Result<String, String> {
+    use yaml_rust2::YamlEmitter;
+    let (front, body) = split_frontmatter(text)?;
+    let doc = YamlLoader::load_from_str(front)
+        .map_err(|e| format!("its frontmatter is not valid YAML: {e}"))?
+        .into_iter()
+        .next()
+        .ok_or("its frontmatter is empty")?;
+    let Yaml::Hash(mut top) = doc else { return Err("its frontmatter is not a map".into()) };
+    let k = |k: &str| Yaml::String(k.to_string());
+    let mut meta = match top.remove(&k("metadata")) {
+        Some(Yaml::Hash(h)) => h,
+        _ => Default::default(),
+    };
+    meta.insert(k(key), Yaml::String(value.to_string()));
+    top.insert(k("metadata"), Yaml::Hash(meta));
+    let mut yaml = String::new();
+    YamlEmitter::new(&mut yaml)
+        .dump(&Yaml::Hash(top))
+        .map_err(|e| format!("could not write the frontmatter: {e}"))?;
+    Ok(format!("{yaml}\n---\n{}\n", body.trim()))
 }
 
 /// A comma-separated `metadata` value as its entries.
@@ -1466,6 +1498,16 @@ mod tests {
         assert!(parse(&cleared, f.path(), "weekly-review", false).unwrap().schedule.is_none());
         assert!(apply_patch(&text, serde_json::json!({ "name": "x" }).as_object().unwrap()).is_err());
         assert!(apply_patch(&text, serde_json::json!({ "condition": "true" }).as_object().unwrap()).is_err());
+    }
+
+    /// A fork stamps where it came from; stamping again replaces it.
+    #[test]
+    fn a_fork_stamp_is_read_back_and_replaced() {
+        let text = skill(BASE, "Do it.");
+        let once = with_metadata(&text, "forked-from", "virtues@v0.3.0").unwrap();
+        let twice = with_metadata(&once, "forked-from", "virtues@v0.4.0").unwrap();
+        assert_eq!(twice.matches("forked-from").count(), 1, "replaced, not appended");
+        assert_eq!(ok(twice.split_once("---\n").unwrap().1.split_once("\n---\n").unwrap().0, "Do it.").forked_from.as_deref(), Some("virtues@v0.4.0"));
     }
 
     #[test]

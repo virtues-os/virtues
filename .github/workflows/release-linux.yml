@@ -394,7 +394,7 @@ jobs:
           find staging/applets -name '*.rs' -delete
           rm -rf staging/applets/src staging/applets/examples \
                  staging/applets/Cargo.toml staging/applets/AGENTS.md \
-                 staging/applets/AUTHORING.md staging/applets/MANIFEST_SCHEMA.json
+                 staging/applets/AUTHORING.md
           # An applet with no view and no tables is still a valid applet, but
           # zero SKILL.md files means the box has no applets at all — catch that
           # here rather than on a customer's first boot.

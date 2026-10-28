@@ -724,59 +724,36 @@ fn array_of(v: &Value) -> &[Value] {
     v.as_array().map(Vec::as_slice).unwrap_or(&[])
 }
 
-/// The manifest keys an authored applet can set: what applet setup writes.
-/// Anything else in a folder's manifest (`command`, `credential`, …) belongs
-/// to shipped or trusted applets, and would not survive being put.
-const AUTHORED_KEYS: &[&str] = &[
-    "name", "description", "owner", "agent", "instruction", "schedule", "triggers",
-    "condition", "until", "default_enabled", "enabled", "config",
-];
-
 /// An applet folder as applet setup arguments, plus the findings only the
-/// folder can have (an unreadable or unauthorable manifest).
+/// folder can have (a `SKILL.md` that does not load, or says something
+/// `setup` cannot write).
 ///
-/// Schema: the versions on disk this box has not applied yet, joined in
+/// Tables: the versions on disk this box has not applied yet, joined in
 /// order, so the dry-run sees an `ALTER` after the `CREATE` it depends on.
 /// None pending means none submitted, which is what a re-put would send.
 async fn folder_args(pool: &PgPool, dir: &std::path::Path) -> Result<(Value, Vec<Value>), String> {
-    let manifest_path = dir.join("manifest.toml");
-    let text = std::fs::read_to_string(&manifest_path)
-        .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
-    let manifest: toml::Table = text
-        .parse()
-        .map_err(|e| format!("{}: {e}", manifest_path.display()))?;
-    let mut args = serde_json::to_value(&manifest).map_err(|e| e.to_string())?;
     let mut findings = Vec::new();
-
-    for key in manifest.keys() {
-        if !AUTHORED_KEYS.contains(&key.as_str()) {
-            findings.push(json!({
-                "field": key,
-                "error": "not a field an authored applet can set",
-                "suggestion": "agent, schedule, triggers, condition, until, config.limits",
-            }));
+    let mut args = match crate::applet_templates::skill_md_as_setup_args(dir) {
+        Ok(args) => args,
+        Err(why) => {
+            findings.push(json!({ "field": "SKILL.md", "error": why }));
+            json!({ "name": dir.file_name().and_then(|n| n.to_str()).unwrap_or_default() })
         }
-    }
-    if let Some(limits) = manifest.get("config").and_then(|c| c.get("limits")) {
-        args["limits"] = serde_json::to_value(limits).map_err(|e| e.to_string())?;
-    }
+    };
 
-    // A SKILL.md folder's view.html, or a manifest folder's face/index.html.
-    let face = Some(dir.join("view.html"))
-        .filter(|v| v.is_file())
-        .unwrap_or_else(|| dir.join("face").join("index.html"));
-    if face.is_file() {
-        let html = std::fs::read_to_string(&face).map_err(|e| format!("{}: {e}", face.display()))?;
+    let view = dir.join("view.html");
+    if view.is_file() {
+        let html = std::fs::read_to_string(&view).map_err(|e| format!("{}: {e}", view.display()))?;
         args["face_html"] = json!(html);
     }
 
     let versions = crate::tools::applet_schema::versions_on_disk(dir);
     if !versions.is_empty() {
-        let name = manifest.get("name").and_then(|v| v.as_str()).unwrap_or_default();
+        let name = args["name"].as_str().unwrap_or_default();
         let applet_id = format!(
             "{}{}",
             crate::scheduler::applets::USER_APPLET_PREFIX,
-            crate::tools::applet_setup::slugify(name)
+            name.replace('-', "_")
         );
         let latest = crate::tools::applet_schema::applied(pool, &applet_id)
             .await?

@@ -166,7 +166,10 @@ async fn preflight(client: &Virtues) {
 
     // Skills saved before skills were applets become applets, before the
     // catalog reads the state root.
-    if crate::api::chat_applets::move_saved_skills() > 0 {
+    // And any applet still written as a manifest.toml becomes a SKILL.md,
+    // which is the only form the catalog loads.
+    let converted = crate::applet_templates::convert_state_root(pool).await;
+    if crate::api::chat_applets::move_saved_skills() + converted > 0 {
         crate::applet_templates::reload_catalog();
     }
 

@@ -20,11 +20,13 @@
 //!   and `source` keep their meaning.
 //! - `schema/` becomes `tables/`; a `face/` holding only `index.html`
 //!   becomes `view.html`. A face with more files stays `face/`.
-//! - Dropped, with a note: `[config.delivers]`, other `[config]` keys,
-//!   `forked_from`, `needs_vault_key` (a kernel list now) and `owner`
+//! - `forked_from` becomes `metadata.forked-from`.
+//! - Dropped, with a note: `[config.delivers]` and other `[config]` keys.
+//!   Dropped silently: `needs_vault_key` (a kernel list now) and `owner`
 //!   (derived from where the folder is).
 //!
-//! The design is slice 4 of agents/plan/applet-shape.md.
+//! The design is slice 4 of agents/plan/applet-shape.md. The catalog reads
+//! only `SKILL.md`; this module is the one reader of `manifest.toml` left.
 
 use std::path::Path;
 
@@ -139,9 +141,6 @@ pub(crate) fn skill_md_for(
             notes.push(format!("`[config.{key}]` was dropped."));
         }
     }
-    if t.forked_from.is_some() {
-        notes.push("`forked_from` was dropped.".into());
-    }
 
     let md = SkillMd {
         name: name.to_string(),
@@ -156,6 +155,7 @@ pub(crate) fn skill_md_for(
         enabled: t.default_enabled,
         writes: t.writes.clone(),
         secrets: t.secrets.clone(),
+        forked_from: t.forked_from.clone(),
         body,
         ..Default::default()
     };
@@ -214,6 +214,58 @@ pub(crate) fn convert_folder(
     std::fs::remove_dir_all(&old).map_err(|e| io("remove the old folder", e))?;
     std::fs::rename(&staging, &new).map_err(|e| io("move the converted folder into place", e))?;
     Ok(Converted { dir: new_dir, notes })
+}
+
+/// `until = "once"` on a schedule as the `on` trigger: the next time the
+/// schedule fires after `now`, in the box's timezone, to the minute.
+pub(crate) fn next_once(cron: &str, tz: chrono_tz::Tz, now: chrono::DateTime<chrono::Utc>) -> Option<String> {
+    let parsed = crate::scheduler::slots::parse(cron)?;
+    let at = crate::scheduler::slots::next_after(&parsed, tz, now)?.with_timezone(&tz);
+    Some(at.format("on %Y-%m-%d at %H:%M").to_string())
+}
+
+/// Convert every `manifest.toml` folder in the state root: the person's own
+/// applets, imports, and anything an older box wrote. Run before the catalog
+/// reads the root, at boot and on each reload, so a folder that arrives as a
+/// manifest (an import, a restored backup) is a `SKILL.md` by the time it
+/// loads. A folder that cannot convert is logged and left as it was, and
+/// the catalog does not load it. Returns how many converted.
+pub async fn convert_state_root(pool: &sqlx::PgPool) -> usize {
+    let root = super::state_root();
+    let mut dirs: Vec<String> = Vec::new();
+    let Ok(entries) = std::fs::read_dir(&root) else { return 0 };
+    for entry in entries.flatten() {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if name.starts_with('.') || name == crate::api::chat_applets::SAVED_SKILLS_DIR || !entry.path().is_dir() {
+            continue;
+        }
+        if entry.path().join("manifest.toml").is_file() {
+            dirs.push(name);
+            continue;
+        }
+        for inner in std::fs::read_dir(entry.path()).into_iter().flatten().flatten() {
+            if inner.path().join("manifest.toml").is_file() {
+                dirs.push(format!("{name}/{}", inner.file_name().to_string_lossy()));
+            }
+        }
+    }
+    if dirs.is_empty() {
+        return 0;
+    }
+    let tz = crate::scheduler::resolve_schedule_tz(pool).await;
+    let now = chrono::Utc::now();
+    let next = |cron: &str| next_once(cron, tz, now);
+    let mut converted = 0;
+    for dir in dirs {
+        match convert_folder(&root, &dir, false, &next) {
+            Ok(c) => {
+                tracing::info!(from = %dir, to = %c.dir, notes = %c.notes.join(" "), "converted an applet to SKILL.md");
+                converted += 1;
+            }
+            Err(why) => tracing::error!(dir = %dir, why = %why, "an applet's manifest.toml could not convert to SKILL.md; it is not loaded"),
+        }
+    }
+    converted
 }
 
 #[cfg(test)]
@@ -276,6 +328,14 @@ mod tests {
         assert_eq!(t.run_sql.as_deref(), Some("select 1 where (extract(dow from now()) <> 0)"));
         assert!(t.triggers.contains(&"tool".to_string()));
         assert!(!t.default_enabled);
+    }
+
+    #[test]
+    fn a_one_off_runs_at_the_schedules_next_time() {
+        let now = chrono::DateTime::parse_from_rfc3339("2031-03-03T18:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let ny: chrono_tz::Tz = "America/New_York".parse().unwrap();
+        assert_eq!(next_once("0 0 9 * * *", ny, now).as_deref(), Some("on 2031-03-04 at 09:00"));
+        assert_eq!(next_once("not a cron", ny, now), None);
     }
 
     /// A folder that cannot convert is left exactly as it was.

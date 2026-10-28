@@ -636,9 +636,9 @@ pub async fn update_applet(
     }
     q = q.bind(applet_id);
 
-    // A chat-authored applet's manifest is what reconcile restores it from,
+    // A chat-authored applet's SKILL.md is what reconcile restores it from,
     // so the edit is written there too, inside the row's transaction: a
-    // manifest that cannot be written rolls the row back instead of leaving
+    // file that cannot be written rolls the row back instead of leaving
     // an edit the next reconcile undoes. The reconcile lock keeps a reconcile
     // from reading the old catalog between the write and the reload.
     let is_ai = current.owner == "ai";
@@ -656,7 +656,7 @@ pub async fn update_applet(
         return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
     }
     if is_ai {
-        crate::applet_templates::mirror_patch_to_manifest(applet_id, obj)?;
+        crate::applet_templates::mirror_patch_to_file(applet_id, obj)?;
     }
     tx.commit().await?;
     if is_ai {
