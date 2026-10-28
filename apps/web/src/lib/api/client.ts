@@ -138,9 +138,8 @@ export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Pr
  * A few routes need a fresh signature from the Virtues app itself, because any
  * process on a paired Mac reaches the box as that Mac through the app's
  * loopback port, and only the app holds the device's key: revealing a password
- * or a key, adding a device or minting a pair code, changing the AI key,
- * importing an applet package, the terminal, and an admin turn with the Allow
- * on its commands. {@link apiSendProven} and {@link requestProven} call the
+ * or a key, adding a device or minting a pair code, changing the AI key, the
+ * terminal, and an admin turn with the Allow on its commands. {@link apiSendProven} and {@link requestProven} call the
  * ordinary routes; the terminal socket and the chat stream take
  * {@link ownerProof} and {@link ownerProofHeaders} directly.
  *
