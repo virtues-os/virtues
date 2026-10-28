@@ -36,6 +36,7 @@
 //!     alike — the owner's own writing, which would otherwise be cloned onto
 //!     every unit built from this master
 //!   * every per-box file in `crate::box_files`: the backup recipient, the
+//!     backup staging folder with any plaintext a backup or restore left, the
 //!     shared pages with the door's key, and leftover applet run files
 //!   * the journal
 //!
@@ -71,6 +72,7 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     println!("     • machine-id, SSH host keys, saved wifi networks");
     println!("     • chat-authored applets (their code AND their data)");
     println!("     • the backup recipient, shared pages, the door key, applet run files");
+    println!("     • plaintext a backup or restore left in the staging folder");
     println!("   KEEPS: the binary, systemd units, models, QAIRT libs.");
     println!();
     // When the network actually drops depends on where the profile lived, and
@@ -247,10 +249,12 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
 
     // ── 3a3. Per-box files outside the database ─────────────────────────────
     // `reset` above removed the ones that copy rows it dropped. This removes
-    // all of them, which adds the backup recipient. Left in place, it makes
-    // the next owner's backups encrypt to this owner's recovery key without
-    // an error, and the next owner is never asked to make a key of their own.
-    // This runs as root, so a file root wrote goes too.
+    // all of them, which adds the backup recipient and the staging folder.
+    // A recipient left in place makes the next owner's backups encrypt to
+    // this owner's recovery key without an error, and the next owner is never
+    // asked to make a key of their own. The staging folder can hold a
+    // plaintext dump and the box key from a run that did not finish. This
+    // runs as root, so a file root wrote goes too.
     crate::box_files::remove_each(&crate::box_files::all())
         .map_err(|e| crate::Error::Other(format!("{e}. Not safe to image.")))?;
 
@@ -692,15 +696,16 @@ fn netplan_wifi_files_in(dir: &str) -> Vec<std::path::PathBuf> {
 ///
 /// On a box that is `sudo -u virtues`; run as `virtues` already, or on a dev
 /// machine with no box-install marker, it is this process's own reset. The
-/// marker is the same one `maybe_reexec_as_service_user` keys on, so the two
-/// agree about what "a box" means.
+/// marker is the installed env file (`box_env::installed_path`), the same one
+/// `maybe_reexec_as_service_user` keys on, so the two agree about what "a box"
+/// means, on a box that moved its data dir too.
 ///
 /// The exit status is checked. Deprovision's whole contract is that after it
 /// returns, nothing per-unit is left — a database wipe that silently failed
 /// would leave the iroh secret and every credential in an image about to be
 /// cloned, which is precisely the catastrophe the command exists to prevent.
 async fn wipe_database_as_service_user(force: bool) -> Result<(), crate::Error> {
-    let on_box = Path::new("/var/lib/virtues/virtues.env").exists();
+    let on_box = crate::box_env::installed_path().exists();
     let me = Command::new("id")
         .arg("-un")
         .output()

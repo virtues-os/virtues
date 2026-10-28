@@ -1,7 +1,7 @@
 //! `virtues restore` — destructively restore the box state from a backup
 //! tarball produced by `virtues backup`.
 //!
-//! Three checks gate the actual restore:
+//! These checks gate the actual restore:
 //!
 //!   1. The `virtues` systemd service must be inactive (unless `--force`).
 //!   2. The manifest's schema migration version must NOT be newer than the
@@ -9,10 +9,14 @@
 //!      unfixable data loss surface. The user should `virtues upgrade` to
 //!      the matching binary first. (Not `--force`-able.)
 //!   3. Every artifact's sha256 must match the manifest. (Not `--force`-able.)
+//!   4. The database answers, and this box's disk has room to unpack the
+//!      archives and to load the database.
 //!
 //! Archives are decrypted into a private folder on this box's own disk
-//! (`backup::Stage`), never beside the archive, and after the database loads
-//! restore checks that the restored key opens the restored secrets.
+//! (`backup::Stage`), never beside the archive. After the database loads,
+//! restore runs the system repairs, which set the restricted Postgres logins
+//! from the key now in the env file, and then checks that the key opens the
+//! restored secrets.
 
 use std::fs::{self, File};
 use std::io::{Read, Seek};
@@ -163,12 +167,35 @@ pub async fn run(
         }
     }
     super::backup::end_changes();
-    // The plaintext goes before the key check, which may fail the command.
+    // The plaintext goes before the repairs, which hand everything under the
+    // data dir to the service user, and before the key check, which may fail
+    // the command.
     drop(stage);
 
+    repair_after_restore();
     check_restored_key(&targets)?;
     print_next_steps();
     Ok(())
+}
+
+/// Run the system repairs, so the box matches the env file restore just
+/// wrote.
+///
+/// The restricted Postgres logins that chat and applet SQL use have passwords
+/// derived from `VIRTUES_ENCRYPTION_KEY` (`database::restricted`). Postgres
+/// keeps roles for the whole cluster, so loading a dump never changes them.
+/// Restoring onto a reinstalled or new box brings back the archive's key while
+/// the logins still match the key the installer made, and the server cannot
+/// reset them itself. Every model and applet query would then fail until the
+/// next upgrade or `sudo virtues migrate`. The `db-logins` repair reads the
+/// key from `<data dir>/virtues.env` on disk, the file `apply` wrote, so it
+/// follows the restored key.
+///
+/// Called before the key check, so the logins match whatever key the env file
+/// holds even when that check fails. Root only, and a no-op off Linux: the
+/// repairs check both themselves.
+fn repair_after_restore() {
+    super::system_repairs::run();
 }
 
 /// A stage for decrypting an archive, on this box's own disk.
@@ -204,6 +231,11 @@ fn sweep_stages_near(archive: &Path) {
 /// room here for what it unpacks, while Postgres is still writing to the same
 /// disk. The archives' compressed size is a lower bound on what they unpack
 /// to. A box short of it would fail partway through unpacking.
+///
+/// The current lake does not count as free. Restore unpacks and checks every
+/// archive before it removes anything, so the old lake is still on the disk
+/// when the unpack peaks. Restoring over a box that holds about as much as the
+/// archive therefore needs room for both, and the message says so.
 fn ensure_room_to_unpack(archives: &[PathBuf]) -> Result<(), crate::Error> {
     let root = super::backup::staging_root();
     let Some(free) = super::backup::free_bytes_under(&root) else {
@@ -219,9 +251,11 @@ fn ensure_room_to_unpack(archives: &[PathBuf]) -> Result<(), crate::Error> {
         return Err(crate::Error::Other(format!(
             "not enough room on this server to unpack the backup. {} MB is free \
              where restore unpacks it ({}). The archives alone are {} MB, and \
-             restore leaves {} MB free so the database can keep working. Restore \
-             unpacks on this server, never on the backup drive. Free some space, \
-             then run it again. Nothing has been changed.",
+             restore leaves {} MB free so the database can keep working. This \
+             server's current data stays on the disk until the backup is unpacked \
+             and checked, so the disk needs room for both at once. Restore unpacks \
+             on this server, never on the backup drive. Free some space, then run \
+             it again. Nothing has been changed.",
             free / (1024 * 1024),
             root.display(),
             need / (1024 * 1024),
@@ -321,7 +355,8 @@ pub(crate) fn check_restored_key(targets: &Targets) -> Result<(), crate::Error> 
                 crate::Error::Other(format!(
                     "the {} in {source} is not a valid key ({e}), so none of the {total} \
                      restored secrets can be opened. Put the virtues.env from the server \
-                     this backup came from at {env}, then start the service.",
+                     this backup came from at {env}, run `sudo virtues migrate`, then \
+                     start the service.",
                     crate::box_env::ENCRYPTION_KEY
                 ))
             })?,
@@ -348,8 +383,9 @@ pub(crate) fn check_restored_key(targets: &Targets) -> Result<(), crate::Error> 
              {tried}, and none opened. Every saved password, sign-in and key \
              is unreadable until that is fixed.\n\n    \
              Put the virtues.env from the server this backup came from at {env}, \
-             then start the service. Until then, do not enter passwords or keys \
-             again: anything saved now is sealed with the wrong key."
+             run `sudo virtues migrate` so the database logins match its key, then \
+             start the service. Until then, do not enter passwords or keys again: \
+             anything saved now is sealed with the wrong key."
         )));
     }
     if check.failed() > 0 {
@@ -648,6 +684,12 @@ fn pg_restore(dump: &Path, database_url: &str) -> Result<(), crate::Error> {
     //
     // The staged dump was written by root, so hand it over first or the
     // service user cannot read what it is being asked to load.
+    //
+    // `-h` changes a link itself, never what it points to. The staging folder
+    // belongs to the service user, so that user can rename this stage and put
+    // a folder of its own at the same path. A plain chown would then follow a
+    // link planted at one of these paths and give the service user any file
+    // root owns.
     for path in [
         dump.parent().and_then(|p| p.parent()),
         dump.parent(),
@@ -657,7 +699,7 @@ fn pg_restore(dump: &Path, database_url: &str) -> Result<(), crate::Error> {
     .flatten()
     {
         let _ = Command::new("chown")
-            .arg("virtues:virtues")
+            .args(["-h", "virtues:virtues"])
             .arg(path)
             .status();
     }
@@ -1094,6 +1136,9 @@ mod drill {
         write(&env_file, &format!("VIRTUES_ENCRYPTION_KEY={}\n", key(8)));
         let err = check_restored_key(&targets).expect_err("a wrong key passed the check");
         assert!(format!("{err}").contains("the one saved secret"), "{err}");
+        // Putting the right file back changes the key again, so the logins
+        // derived from it have to be reset with it.
+        assert!(format!("{err}").contains("sudo virtues migrate"), "{err}");
         write(&env_file, "DATABASE_URL=postgres:///virtues\n");
         let err = check_restored_key(&targets).expect_err("a missing key passed the check");
         assert!(format!("{err}").contains("has no VIRTUES_ENCRYPTION_KEY"), "{err}");
@@ -1350,6 +1395,8 @@ async fn run_from_volume(
         }
     }
     super::backup::end_changes();
+    // `apply_from_volume` dropped its stages when it returned.
+    repair_after_restore();
     check_restored_key(&targets)?;
     print_next_steps();
     Ok(())

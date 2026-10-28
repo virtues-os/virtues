@@ -54,24 +54,29 @@ nothing on every real box.
 | Data lake (recordings, drive files) | `/var/lib/virtues/lake` |
 | Models | `/var/lib/virtues/models` |
 | Backups | `/var/lib/virtues/backups` |
+| Backup and restore staging (plaintext while one runs) | `/var/lib/virtues/staging` |
 | Backup recipient (**public** half only) | `/var/lib/virtues/backup-recipient` |
 | Release channel | `/var/lib/virtues/channel` |
 | Release slots | `/var/lib/virtues/releases/<slot>/` |
 | The binary | `/usr/local/bin/virtues` → symlink into the live slot |
 
-The installer writes `<data_dir>/virtues.env` and points the unit's
-`EnvironmentFile=` there (`tools/virtues-installer/src/install.rs:1816`,
-`:3293`).
+The installer writes `<data_dir>/virtues.env` (`env_file_path` in
+`tools/virtues-installer/src/config.rs:136`) and points the server unit's
+`EnvironmentFile=` there (`tools/virtues-installer/src/install.rs:2246`). The
+display unit reads the same file (`:1832`).
 
-`cli/backup.rs` probes **both** paths — `ENV_CANDIDATES = ["/etc/virtues/env",
-"/var/lib/virtues/virtues.env"]` — preferring the FHS one so a box that ever
-migrates wins. That fallback is why backups work; it is not a claim that
-`/etc/virtues/env` exists. **Two doc comments in the tree still say
-`/etc/virtues/env` as if it were the only path** (`middleware/auth.rs:41`,
-`api/pair.rs:1310`). They describe an intended layout that no real box has.
+`box_env::path` (`virtues-core/src/box_env.rs`) is the one resolver for that
+file. It reads the data dir from the install manifest, so an install that
+moved `DATA_DIR` is found without any setting, and backup, restore and the
+CLI's own env load all go through it. `VIRTUES_ENV_FILE` still overrides it,
+but it is a test override, not an operator setting. The applet runtime
+(`applets/src/lib.rs`) and `relay.rs` still read the literal
+`/var/lib/virtues/virtues.env`; a dated TODO in `box_env.rs` tracks moving
+them.
 
-`VIRTUES_ENV_FILE` overrides both candidates, for installs that moved
-`DATA_DIR`.
+**Two doc comments in the tree still say `/etc/virtues/env`**
+(`middleware/auth.rs:68`, `api/pair.rs:1349`). They describe a layout no real
+box has.
 
 ---
 
@@ -93,7 +98,7 @@ What actually reaches the box:
   relay. No inbound port is opened at home.
 - **The desktop helper binds `127.0.0.1:7117`** and splices whatever connects
   to it over that iroh stream (`crates/virtues-reach-client/src/proxy.rs`,
-  `server/mod.rs:1183`). That is the loopback origin the paired web UI is
+  `server/mod.rs:480`). That is the loopback origin the paired web UI is
   served from on a laptop — **not** `localhost:8000`.
 - **A plain browser cannot pair and is not a client.** It has no iroh key, so
   a browser pointed at `http://<box-ip>:8000` from another machine is refused
@@ -139,7 +144,7 @@ from taking over the box. See `virtues-core/src/maintenance/reset_button.rs`.
 
 ## Reset the BYO key
 
-The key is one `credentials` row: `kind = 'source'`, `key = '__byo_ai_key__'`
+The key is the active `credentials` row with `kind = 'source'`, `key = '__byo_ai_key__'`
 (`BYO_SOURCE_ID` in `virtues-core/src/api/settings_byo.rs`). Every AI call
 reads the active row, so a change applies on the next call.
 
@@ -147,7 +152,8 @@ From the UI: `Settings → Billing → Bring your own AI → Manage`. Remove cle
 the key (`delete_handler`). Saving a new one revokes the old row and inserts
 a new one (`save_handler`), so you do not need to remove first. Both need the
 app's owner proof (`virtues-core/src/api/owner_proof.rs`), which the app signs
-on its own, so neither asks the owner anything.
+on its own, so neither needs a command on the box. Remove asks for
+confirmation in the app first.
 
 When no paired device can reach the UI, run the same Remove from a shell on
 the box. The server treats a request to `localhost:8000` with no
@@ -306,6 +312,21 @@ no recipient **fails**; the previous version of this doc said the first backup
 mints one, which would have left owners believing they had been shown a secret
 they never saw.
 
+On a terminal the banner goes on the alternate screen and leaves it on Enter,
+on Ctrl-C, or after ten minutes (`show_recovery_key` in `cli/backup.rs`). The
+app's Terminal is one tmux session on the box that every paired device
+attaches to, with a long history, and tmux keeps the alternate screen out of
+it, so the key does not stay on the box for a later reader. Piped output, or
+input that is not a terminal, gets the plain banner.
+
+The alternate screen keeps no history either, so the key is the last line
+above the prompt: a phone or a short pane wraps and scrolls the screen, and
+the key is the last line to go. The screen also says to hold Shift while
+dragging to select the key. The app's Terminal turns on tmux's mouse mode
+(`api/terminal.rs`), so a plain drag copies the selection into a tmux paste
+buffer on the box, where it stays until tmux stops, and `tmux -L virtues
+show-buffer` prints it.
+
 The archive is `tar → gzip → age`, written to
 `/var/lib/virtues/backups/virtues-<utc-iso>.tar.gz.age`. It carries the Postgres
 dump, the lake, the applet state, the env file (i.e. the encryption key), and a
@@ -343,14 +364,51 @@ archive, then every increment in order. It takes a **path** (the mount point),
 not a registered volume id — the registry lives in the database being restored,
 so on replacement hardware there is nothing to look up.
 
-Three checks run before anything is touched: the service is stopped (`--force`
-overrides), the archive's schema version is not newer than this binary
-(never bypassable — upgrade first), and every sha256 matches the manifest
-(never bypassable).
+These checks run before anything is touched: the service is stopped
+(`--force` overrides), the archive's schema version is not newer than this
+binary (never bypassable — upgrade first), every sha256 matches the manifest
+(never bypassable), the database answers, and the box's disk has room to
+unpack the archives and to load the database. The unpack check counts the
+current lake as used, because it is still on the disk until every archive is
+unpacked and checked, so restoring over a box that holds about as much as the
+archive needs room for both.
 
-It then drops and recreates the database, replaces the lake and applet state,
-and writes the env file **to whichever candidate path already exists on this
-box**, falling back to `ENV_CANDIDATES[0]` (`cli/restore.rs:29`).
+It then replaces the lake and applet state, writes the archive's env file to
+`box_env::path`, and drops and reloads the database. The env file is skipped
+in one case: when the archive's env file has no `VIRTUES_ENCRYPTION_KEY` and
+the box's has one, the box keeps its own (`apply` in `cli/restore.rs`).
+
+After the load, restore runs the system repairs (`cli/system_repairs.rs`).
+The `db-logins` repair sets the passwords of `virtues_face_reader` and
+`virtues_applet_writer`, which are HMACs of the key
+(`database/restricted.rs`). Roles belong to the cluster, so `pg_restore`
+never touches them, and on a reinstalled or new box the restored key differs
+from the one the installer set them from. Without the repair, every chat SQL
+call, applet face and sandboxed applet write fails until the next upgrade. Last,
+`check_restored_key` tries the key against the restored `credentials` and
+fails the command if it opens none of them. The repairs run before that
+check, so the logins follow whatever key the env file holds even when the
+check fails. The fix it prints is to put back the right `virtues.env`, run
+`sudo virtues migrate` (which runs the repairs again), then start the
+service.
+
+A restore unpacks into a stage under `<data_dir>/staging`. The stage is
+root's, 0700, until `pg_restore` hands the stage folder, its `db` folder and
+the dump to the service user; the `env` folder stays root's after that. A
+power cut or a kill at any point, or a signal after it starts replacing
+data, leaves the stage, with the plaintext dump and the backup's env file,
+with its key, in it. The next restore sweeps it as root. A backup runs as the
+service user and cannot remove root's part, so it warns and names the
+folder. The `state-ownership` repair that every upgrade and `sudo virtues
+migrate` runs hands everything under the data dir to the service user, and a
+backup after that removes it. `deprovision` removes the whole staging
+folder, and `image-check` reports it (`box_files.rs`).
+
+The staging folder itself, like the data dir, belongs to the service user,
+so that user can rename a stage while a restore works in it and put a folder
+of its own in its place. A root-owned stage only stops changes inside it.
+`pg_restore`'s hand-over uses `chown -h`, so a link at one of those paths is
+changed itself and never what it points to.
 
 Owner-facing version: [`docs/operate/backup-and-restore.md`](../../docs/operate/backup-and-restore.md).
 
@@ -373,6 +431,11 @@ virtues pair
 ```
 
 Then revoke the old box's devices from the new box (`virtues device rm`).
+
+The installer made a new key on the new box and set the database logins from
+it. The restore brings back the old box's key and resets the logins to match
+(see [Restoring](#restoring)), so no separate `sudo virtues migrate` is
+needed unless the key check fails.
 
 Note that a restore brings the old box's **identity** with it — the database
 stores the iroh secret. If you are imaging hardware rather than migrating one

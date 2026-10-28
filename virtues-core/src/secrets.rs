@@ -230,7 +230,8 @@ pub async fn check_key_at_start(db: &PgPool) {
             env_file = %crate::box_env::path().display(),
             "the encryption key this server started with opens none of the saved secrets it tried, \
              so every saved password, sign-in and key is unreadable. Put back the virtues.env they \
-             were saved with, then restart the server"
+             were saved with, run `sudo virtues migrate` so the database logins match its key, then \
+             restart the server"
         );
     }
     let _ = KEY_AT_START.set(check);

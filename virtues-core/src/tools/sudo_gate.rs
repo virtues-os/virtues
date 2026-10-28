@@ -107,7 +107,7 @@ pub fn ask(kind: &str, command: &str) -> ToolResult {
         },
         "note": if shows_key {
             "Not run. This prints a new backup recovery key into your tool result, so the owner has to allow it. \
-             Stop here, and offer them the command to run in Terminal, where the key stays with them. \
+             Stop here, and offer them the command to run in Terminal, so the key does not come into this chat. \
              If they allow it here instead, run exactly the same command again."
         } else {
             "Not run. This deletes data, so the owner has to allow it. \
@@ -525,7 +525,8 @@ mod tests {
     fn the_ask_says_why() {
         let key = ask("sudo", "virtues backup --init-key");
         assert!(key.data["message"].as_str().unwrap().contains("recovery key"));
-        assert!(key.data["note"].as_str().unwrap().contains("recovery key"));
+        let note = key.data["note"].as_str().unwrap();
+        assert!(note.contains("recovery key") && note.contains("Terminal"), "{note}");
         let delete = ask("sudo", "rm notes.txt");
         assert_eq!(delete.data["message"], "Run this command on the server?");
         assert!(delete.data["note"].as_str().unwrap().contains("deletes data"));

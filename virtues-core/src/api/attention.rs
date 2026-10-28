@@ -82,7 +82,9 @@ pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
 /// First in the list, because every sign-in, password and key is unreadable
 /// until it is fixed, and anything saved meanwhile is sealed with the wrong
 /// key. The check runs once per start, so the item stays until a restart
-/// with the right key, which is also the only fix.
+/// with the right key. Putting the key back also changes what the restricted
+/// database logins have to be, and only root can reset those, so the fix runs
+/// `sudo virtues migrate` before the restart.
 fn key_items(items: &mut Vec<AttentionItem>, check: Option<crate::secrets::KeyCheck>) {
     if !check.is_some_and(|c| c.opens_nothing()) {
         return;
@@ -92,7 +94,7 @@ fn key_items(items: &mut Vec<AttentionItem>, check: Option<crate::secrets::KeyCh
         kind: "key",
         title: "Your server can't open its saved sign-ins and keys".into(),
         body: "The encryption key it started with isn't the one they were saved with. \
-               Put back the virtues.env from your backup, then restart your server."
+               Put back the virtues.env from your backup, run sudo virtues migrate, then restart your server."
             .into(),
         route: "/virtues/system",
     });
@@ -417,6 +419,8 @@ mod tests {
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].key, "key:wrong");
         assert_eq!(items[0].kind, "key");
+        // A restart alone leaves the database logins on the old key.
+        assert!(items[0].body.contains("sudo virtues migrate"), "{}", items[0].body);
     }
 
     #[test]

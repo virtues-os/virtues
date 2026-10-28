@@ -453,23 +453,143 @@ pub(crate) fn load_recipient(mint: bool) -> Result<age::x25519::Recipient, crate
     }
 
     use age::secrecy::ExposeSecret;
-    println!();
-    println!("┌─ SAVE THIS — it is shown once and cannot be recovered ─────────────");
-    println!("│");
-    println!("│  Backup recovery key:");
-    println!("│");
-    println!("│    {}", identity.to_string().expose_secret());
-    println!("│");
-    println!("│  This box keeps only the public half, so it CANNOT decrypt its own");
-    println!("│  backups. If the box is lost, this key is the only way to read them.");
-    println!("│");
-    println!("│  Put it somewhere that is not this box — a password manager, or");
-    println!("│  printed and filed. Restore with:");
-    println!("│    virtues restore --key-file <file> <archive>");
-    println!("└────────────────────────────────────────────────────────────────────");
-    println!();
+    show_recovery_key(identity.to_string().expose_secret(), &path);
 
     Ok(recipient)
+}
+
+/// The banner that shows a new recovery key, the one time it is shown, when
+/// the output is not a terminal. A terminal gets [`on_alternate_screen`].
+fn recovery_key_banner(key: &str) -> String {
+    format!(
+        "\n\
+         ┌─ SAVE THIS. It is shown once and cannot be recovered ──────────────\n\
+         │\n\
+         │  Backup recovery key:\n\
+         │\n\
+         │    {key}\n\
+         │\n\
+         │  This box keeps only the public half, so it CANNOT decrypt its own\n\
+         │  backups. If the box is lost, this key is the only way to read them.\n\
+         │\n\
+         │  Put it somewhere that is not this box. Use a password manager, or\n\
+         │  print it and file it. Restore with:\n\
+         │    virtues restore --key-file <file> <archive>\n\
+         └────────────────────────────────────────────────────────────────────\n\
+         \n"
+    )
+}
+
+/// How long the key stays on the screen with nobody pressing Enter.
+const KEY_SCREEN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+/// Show a new recovery key without leaving it in a terminal's history.
+///
+/// The box must never hold this key, and the app's Terminal is one tmux
+/// session on the box that every paired device attaches to, with a long
+/// history. A key printed there plainly stays on the box for anyone who opens
+/// Terminal later to scroll back to. So on a terminal the banner goes on the
+/// alternate screen, which tmux keeps out of a pane's history by default, as
+/// most terminals do, and leaves it on Enter, on Ctrl-C, or after
+/// [`KEY_SCREEN_TIMEOUT`], so a Terminal closed without Enter does not keep
+/// the key on its screen.
+///
+/// Output that is not a terminal gets the plain banner, because whoever
+/// captured it chose where it goes. Input that is not a terminal does too,
+/// since a wait for Enter there could end before anyone read the key.
+fn show_recovery_key(key: &str, recipient_file: &Path) {
+    use std::io::IsTerminal;
+    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+        print!("{}", recovery_key_banner(key));
+        return;
+    }
+    let (enter, leave) = on_alternate_screen(key);
+    write_now(&enter);
+    discard_typed_ahead();
+
+    let (left, wait) = std::sync::mpsc::channel::<()>();
+    let pressed = left.clone();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let _ = std::io::stdin().read_line(&mut line);
+        let _ = pressed.send(());
+    });
+    // Ctrl-C would otherwise end the process with the key still on the
+    // screen. Tests skip it for the reason `clean_up_on_interrupt` gives.
+    if !cfg!(test) {
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            let interrupted = left.clone();
+            runtime.spawn(async move {
+                if tokio::signal::ctrl_c().await.is_ok() {
+                    let _ = interrupted.send(());
+                }
+            });
+        }
+    }
+    let answered = wait.recv_timeout(KEY_SCREEN_TIMEOUT).is_ok();
+    write_now(leave);
+
+    if !answered {
+        println!("→ the recovery key left the screen after ten minutes with no Enter.");
+    }
+    println!(
+        "→ backup key created. This box keeps only the public half, in {}.",
+        recipient_file.display()
+    );
+    println!(
+        "  If you did not save the recovery key, remove {} and run this command \
+         again, before the first backup.",
+        recipient_file.display()
+    );
+}
+
+/// What to write before the wait, and after it. `ESC[?1049h` saves the screen
+/// and switches to the alternate one; `ESC[?1049l` switches back, and what was
+/// on the alternate screen goes with it.
+///
+/// The alternate screen keeps no history, so a line that scrolls off its top
+/// is gone. A narrow or short pane wraps and scrolls this text, as the app's
+/// Terminal does when a phone attaches, so the key goes last, just above the
+/// prompt, where it is the last line to scroll away.
+///
+/// The app's Terminal turns on tmux's mouse mode, and a plain drag there
+/// copies the selection into a tmux buffer on the box, where it stays until
+/// tmux stops. Shift makes the drag a selection on the owner's own device.
+fn on_alternate_screen(key: &str) -> (String, &'static str) {
+    (
+        format!(
+            "\x1b[?1049h\x1b[H\
+             Your backup recovery key is below. It is shown once and cannot be recovered.\n\
+             \n\
+             This box keeps only the public half, so it cannot decrypt its own backups.\n\
+             If the box is lost, this key is the only way to read them. Put it somewhere\n\
+             that is not this box, such as a password manager. Restore with:\n\
+             \x20 virtues restore --key-file <file> <archive>\n\
+             \n\
+             In the app's Terminal, hold Shift while you drag to select the key, so the\n\
+             copy stays on your device.\n\
+             \n\
+             \x20 {key}\n\
+             \n\
+             Press Enter once you have saved it, and the key leaves this screen.\n"
+        ),
+        "\x1b[?1049l",
+    )
+}
+
+fn write_now(text: &str) {
+    let mut out = std::io::stdout();
+    let _ = out.write_all(text.as_bytes());
+    let _ = out.flush();
+}
+
+/// Drop keys pressed before the banner appeared. A second Enter typed after
+/// the command would otherwise dismiss the key before anyone read it.
+fn discard_typed_ahead() {
+    // SAFETY: tcflush only reads its arguments; on a descriptor that is not a
+    // terminal it fails and changes nothing.
+    #[cfg(target_os = "linux")]
+    let _ = unsafe { libc::tcflush(libc::STDIN_FILENO, libc::TCIFLUSH) };
 }
 
 /// Walk `root`, recording every file as `(absolute, archive-relative)`.
@@ -942,13 +1062,23 @@ pub(crate) fn sweep_legacy_stages(dir: &Path) {
     }
 }
 
+/// Remove a stage a run left behind, or say how to.
+///
+/// A backup runs as the service user, and a restore runs as root. A restore's
+/// stage is root's until `pg_restore` hands the stage folder and its `db`
+/// folder to the service user, and its `env` folder stays root's after that.
+/// So a backup that finds one cannot remove it. The next restore can, and so
+/// can a backup after the next upgrade or `sudo virtues migrate`, whose
+/// repairs hand everything under the data dir to the service user.
 fn remove_left_stage(path: &Path) {
     match fs::remove_dir_all(path) {
         Ok(()) => println!("→ removed {}, left by a run that did not finish", path.display()),
         Err(e) => eprintln!(
-            "warning: could not remove {} ({e}). A run that did not finish left it, \
-             and it can hold a plaintext copy of the database and the box key. \
-             Remove it by hand.",
+            "warning: could not remove {} ({e}). A backup or restore that did not \
+             finish left it, and it can hold a plaintext copy of the database and \
+             the box key. Part of what a restore leaves belongs to root, so remove \
+             it with `sudo rm -r {}`.",
+            path.display(),
             path.display()
         ),
     }
@@ -1042,10 +1172,12 @@ fn clean_up_on_interrupt() {
             if may_remove_stages(&RUN_STATE) {
                 remove_active_stages();
             } else {
+                // Only a restore gets here. Part of its stage belongs to
+                // root, so a backup cannot remove it, and the next restore
+                // does.
                 eprintln!(
                     "\ninterrupted while replacing this server's data, so the restore \
-                     is not complete. Run it again. The next backup or restore removes \
-                     what this one left in {}.",
+                     is not complete. Run it again. It removes what this one left in {}.",
                     staging_root().display()
                 );
             }
@@ -1075,7 +1207,7 @@ fn remove_active_stages() {
         }
         if path.exists() {
             eprintln!(
-                "could not remove {}; the next backup or restore removes it.",
+                "could not remove {}; running this command again removes it.",
                 path.display()
             );
         }
@@ -1256,6 +1388,43 @@ mod tests {
         begin_changes_in(&state).unwrap();
         begin_changes_in(&state).expect("a second step of the same restore was refused");
         assert!(!may_remove_stages(&state));
+    }
+
+    /// On a terminal the key goes on the alternate screen, and what comes
+    /// after the wait switches back without it.
+    #[test]
+    fn the_recovery_key_is_shown_on_a_screen_that_is_left_after() {
+        let key = "AGE-SECRET-KEY-1INVENTEDEXAMPLEONLY";
+        let banner = recovery_key_banner(key);
+        assert!(banner.contains(key), "{banner}");
+        assert!(banner.contains("virtues restore --key-file"), "{banner}");
+
+        let (enter, leave) = on_alternate_screen(key);
+        assert!(enter.starts_with("\x1b[?1049h"), "{enter:?}");
+        assert!(enter.contains("virtues restore --key-file"), "{enter}");
+        assert!(enter.contains("hold Shift"), "{enter}");
+        assert_eq!(leave, "\x1b[?1049l");
+    }
+
+    /// A line that scrolls off the alternate screen cannot be scrolled back
+    /// to, so the key comes after every explanation, with only the prompt
+    /// below it.
+    #[test]
+    fn the_key_is_the_last_line_before_the_prompt() {
+        let key = "AGE-SECRET-KEY-1INVENTEDEXAMPLEONLY";
+        let (enter, _) = on_alternate_screen(key);
+        let key_at = enter.find(key).expect("key on the screen");
+        for text in ["public half", "virtues restore --key-file", "hold Shift"] {
+            let at = enter.find(text).expect(text);
+            assert!(at < key_at, "{text} comes after the key");
+        }
+        let below: Vec<&str> = enter[key_at..]
+            .lines()
+            .skip(1)
+            .filter(|l| !l.trim().is_empty())
+            .collect();
+        assert_eq!(below.len(), 1, "{below:?}");
+        assert!(below[0].starts_with("Press Enter"), "{below:?}");
     }
 
     #[test]

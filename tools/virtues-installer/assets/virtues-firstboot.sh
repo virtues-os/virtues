@@ -246,7 +246,7 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
                 CP_ERR="$(cp -a "$SEEDSRC/." /run/virtues-seed/ 2>&1)" || \
                     logger -t virtues-firstboot "seed copy reported errors - the sentinel gate below decides: $CP_ERR"
                 umount /run/virtues-cardseed 2>/dev/null || true
-                rm -rf /run/virtues-seed/postgresql /run/virtues-seed/secrets /run/virtues-seed/backups
+                rm -rf /run/virtues-seed/postgresql /run/virtues-seed/secrets /run/virtues-seed/backups /run/virtues-seed/staging
                 mkdir -p /run/virtues-seed/journal /run/virtues-seed/lake
                 chown root:systemd-journal /run/virtues-seed/journal 2>/dev/null || true
                 chmod 2755 /run/virtues-seed/journal 2>/dev/null || true
@@ -336,7 +336,7 @@ if ! mountpoint -q "$DATA_DIR" 2>/dev/null; then
                 # one (they exist) would hand every clone the SAME database and
                 # box identity. The cluster is per-disk by doctrine — 1c below
                 # builds it fresh — so whatever came over in the copy, goes.
-                rm -rf /run/virtues-seed/postgresql /run/virtues-seed/secrets /run/virtues-seed/backups
+                rm -rf /run/virtues-seed/postgresql /run/virtues-seed/secrets /run/virtues-seed/backups /run/virtues-seed/staging
                 mkdir -p /run/virtues-seed/journal /run/virtues-seed/lake
                 # journald refuses a persistent directory it does not own:
                 # root:root 755 here means no journal ever lands, silently.

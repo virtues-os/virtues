@@ -20,7 +20,9 @@ pub enum OnReset {
     Remove,
     /// Kept, the way reset keeps `VIRTUES_ENCRYPTION_KEY`. A reset is the same
     /// owner starting over, and this file belongs to the owner rather than to
-    /// the database.
+    /// the database. Also for a folder that can hold root's files, which reset
+    /// cannot remove because it runs as the service user; `deprovision` runs as
+    /// root and removes it.
     Keep,
 }
 
@@ -54,6 +56,14 @@ pub fn all() -> Vec<BoxFile> {
             why: "decrypted keys and source tokens from an applet run the server did not finish",
             path: crate::applet_runner::RunFile::dir(),
             on_reset: OnReset::Remove,
+        },
+        // Kept by reset: a restore's stage belongs to root, and a failed
+        // removal there would stop reset after it has dropped the database.
+        BoxFile {
+            what: "backup staging folder",
+            why: "a plaintext dump of the database, and after a restore the box key, from a backup or restore that did not finish",
+            path: crate::cli::backup::staging_root(),
+            on_reset: OnReset::Keep,
         },
     ]
 }
@@ -152,10 +162,19 @@ mod tests {
     }
 
     /// The same owner keeps the recipient through a reset, and the copies of
-    /// dropped rows go.
+    /// dropped rows go. Reset also leaves the staging folder, which can hold
+    /// root's files, to `deprovision`.
     #[test]
-    fn reset_keeps_only_what_belongs_to_the_owner() {
+    fn reset_keeps_only_what_belongs_to_the_owner_or_to_root() {
         let kept: Vec<_> = all().into_iter().filter(|f| f.on_reset == OnReset::Keep).map(|f| f.what).collect();
-        assert_eq!(kept, ["backup recipient"]);
+        assert_eq!(kept, ["backup recipient", "backup staging folder"]);
+    }
+
+    /// Backup and restore stage plaintext where `staging_root` says, so that is
+    /// the folder `deprovision` removes and `image-check` looks in.
+    #[test]
+    fn the_staging_folder_is_listed_where_backup_stages() {
+        let staging = all().into_iter().find(|f| f.what == "backup staging folder").expect("not listed");
+        assert_eq!(staging.path, crate::cli::backup::staging_root());
     }
 }
