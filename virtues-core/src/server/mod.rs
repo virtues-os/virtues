@@ -1175,7 +1175,7 @@ fn is_face_path(path: &str) -> bool {
 /// an origin the operator serves the UI from (`listed`, [`public_origins`]),
 /// and the opaque origin `null` only on the face routes. `request_host` is
 /// the request's `Host` header — a loopback origin must be that authority.
-fn face_origin_allowed(origin: &str, path: &str, request_host: Option<&str>, listed: &[String]) -> bool {
+pub(crate) fn face_origin_allowed(origin: &str, path: &str, request_host: Option<&str>, listed: &[String]) -> bool {
     origin_is_ours(origin, request_host)
         || origin_is_listed(origin, listed)
         || (origin == "null" && is_face_path(path))

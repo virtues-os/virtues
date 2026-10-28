@@ -1,28 +1,29 @@
 //! The box's HTTP security layer.
 //!
 //! `headers_layer` (applied as `axum::middleware::from_fn` around both
-//! routers) does three things:
+//! routers) does four things:
 //!
 //!   1. It refuses a request the box takes as the owner by how it arrived
 //!      when its `Host` names something the box does not serve
 //!      ([`ServedNames`]). That is the defense against DNS rebinding.
-//!   2. It sets `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
+//!   2. It refuses a write the box takes as the owner by how it arrived
+//!      when its `Origin` is one the CORS layer would refuse
+//!      ([`refuse_cross_site_write`]).
+//!   3. It sets `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`,
 //!      a conservative `Content-Security-Policy` and
 //!      `Referrer-Policy: same-origin` on every response.
-//!   3. It stamps `Cache-Control: no-store` on every response that carries a
+//!   4. It stamps `Cache-Control: no-store` on every response that carries a
 //!      secret or a pair code ([`never_stored`]).
 //!
 //! There is no CSRF token. Authority comes from how a request arrives, not
 //! from a cookie, and on a paired Mac that includes any connection to the
-//! app's `127.0.0.1:7117` splice. A page on another site can therefore send
-//! a request there as the owner. CORS keeps it from reading the reply, and
-//! nothing here stops a write. agents/plan/secrets-plan.md ("Who can read
-//! what") records that gap and the routes that will need a fresh owner
-//! proof.
+//! app's `127.0.0.1:7117` splice. A page on another site can send a request
+//! there as the owner. CORS keeps it from reading the reply, and the
+//! `Origin` check in step 2 stops its writes.
 
 use axum::{
     extract::Request,
-    http::{header, HeaderValue, StatusCode},
+    http::{header, HeaderValue, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     Json,
@@ -31,7 +32,11 @@ use axum::{
 // ─── Security headers ───────────────────────────────────────────────────────
 
 pub async fn headers_layer(req: Request, next: Next) -> Response {
-    if let Some(refused) = refuse_foreign_host(&req, crate::middleware::auth::is_dev(), ServedNames::get()) {
+    let dev = crate::middleware::auth::is_dev();
+    if let Some(refused) = refuse_foreign_host(&req, dev, ServedNames::get()) {
+        return refused;
+    }
+    if let Some(refused) = refuse_cross_site_write(&req, dev, crate::server::public_origins()) {
         return refused;
     }
 
@@ -133,6 +138,51 @@ fn refuse_foreign_host(req: &Request, dev: bool, names: &ServedNames) -> Option<
             Json(serde_json::json!({
                 "error": "Your server does not serve the host this request named. \
                           Open it at localhost, at its IP address, or by its own name.",
+            })),
+        )
+            .into_response(),
+    )
+}
+
+// ─── Cross-site writes ──────────────────────────────────────────────────────
+
+/// The answer to a write from another site's page, or `None` to let it
+/// through.
+///
+/// A page on any site, open in a browser on a paired Mac, can send
+/// `127.0.0.1:7117` a form post or a plain `fetch` with no CORS preflight,
+/// and the box takes it as the owner's. CORS hides the reply but not the
+/// write. The browser names the page's site in `Origin` and the page cannot
+/// change it, so a write whose `Origin` the CORS layer would refuse
+/// (`server::face_origin_allowed`) is refused here. `listed` is
+/// [`crate::server::public_origins`].
+///
+/// Only requests the box takes as the owner by how they arrived, and only
+/// methods that change something. A request with no `Origin` is no page's
+/// (the CLI, the app's native code, a test) and passes.
+fn refuse_cross_site_write(req: &Request, dev: bool, listed: &[String]) -> Option<Response> {
+    if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
+        return None;
+    }
+    if !crate::middleware::auth::owner_by_transport(req.extensions(), req.headers(), dev) {
+        return None;
+    }
+    let origin = req.headers().get(header::ORIGIN)?;
+    let host = req.headers().get(header::HOST).and_then(|v| v.to_str().ok());
+    let path = req.uri().path();
+    if origin
+        .to_str()
+        .is_ok_and(|o| crate::server::face_origin_allowed(o, path, host, listed))
+    {
+        return None;
+    }
+    let shown: String = origin.to_str().unwrap_or("(not text)").chars().take(100).collect();
+    tracing::warn!(origin = %shown, method = %req.method(), path, "request refused: a write from another site");
+    Some(
+        (
+            StatusCode::FORBIDDEN,
+            Json(serde_json::json!({
+                "error": "Your server refused a change sent from another website. Make it in the Virtues app.",
             })),
         )
             .into_response(),
@@ -574,7 +624,7 @@ mod tests {
         let mut app = axum::Router::new()
             .route(
                 "/*rest",
-                axum::routing::get(|| async {
+                axum::routing::any(|| async {
                     (
                         [
                             (header::CACHE_CONTROL, "max-age=60"),
@@ -633,6 +683,55 @@ mod tests {
         // so any name passes here.
         let lan = request("/api/box/identity", Some("rebound.example:8000")).extension(peer("192.168.1.20:50000"));
         assert_eq!(call(lan.body(empty()).unwrap()).await.status(), StatusCode::OK);
+    }
+
+    /// A page on another site, open in a browser on the paired Mac, cannot
+    /// write through the splice. The app's own pages, a request with no
+    /// `Origin`, a read, a face's query and someone on the box's network
+    /// still pass.
+    #[tokio::test]
+    async fn a_write_from_another_site_is_refused_where_authority_comes_with_it() {
+        let send = |method: &str, path: &str, origin: Option<&str>| {
+            let mut b = request(path, Some("127.0.0.1:7117")).method(method).extension(proven());
+            if let Some(o) = origin {
+                b = b.header(header::ORIGIN, o);
+            }
+            b.body(axum::body::Body::empty()).unwrap()
+        };
+        for (method, path, origin) in [
+            ("POST", "/api/pair/reopen-onboarding", "https://evil.example"),
+            ("DELETE", "/api/keys/TEST_KEY", "http://localhost:3000"),
+            ("PUT", "/api/chat", "null"),
+        ] {
+            let res = call(send(method, path, Some(origin))).await;
+            assert_eq!(res.status(), StatusCode::FORBIDDEN, "{method} {path} from {origin}");
+        }
+        for (method, path, origin) in [
+            ("POST", "/api/chat", Some("tauri://localhost")),
+            ("POST", "/api/chat", Some("virtues://localhost")),
+            ("POST", "/api/chat", Some("http://127.0.0.1:7117")),
+            ("POST", "/api/chat", None),
+            ("GET", "/api/chat", Some("https://evil.example")),
+            ("POST", "/api/face/query", Some("null")),
+        ] {
+            let res = call(send(method, path, origin)).await;
+            assert_eq!(res.status(), StatusCode::OK, "{method} {path} from {origin:?}");
+        }
+        let lan = request("/api/box/identity", Some("192.168.1.5:8000"))
+            .method("POST")
+            .header(header::ORIGIN, "https://evil.example")
+            .extension(peer("192.168.1.20:50000"));
+        assert_eq!(call(lan.body(axum::body::Body::empty()).unwrap()).await.status(), StatusCode::OK);
+
+        // The page `make dev` serves on another port is listed.
+        let dev_page = request("/api/chat", Some("localhost:8000"))
+            .method("POST")
+            .header(header::ORIGIN, "http://localhost:5173")
+            .extension(proven())
+            .body(axum::body::Body::empty())
+            .unwrap();
+        assert!(refuse_cross_site_write(&dev_page, true, &["http://localhost:5173".to_string()]).is_none());
+        assert!(refuse_cross_site_write(&dev_page, true, &[]).is_some());
     }
 
     /// Caddy in front of the review demo box connects from loopback and adds

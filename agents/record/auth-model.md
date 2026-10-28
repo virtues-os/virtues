@@ -135,9 +135,11 @@ opens the port is that device for every route the owner proof does not
 cover. This is the gap the owner accepted on 2026-10-27
 ([plan/secrets-plan.md](../plan/secrets-plan.md), "Who can read what").
 
-Because there is no CSRF token, a page on another site open in a browser on
-that computer can also send a request to the port. CORS keeps it from reading
-the reply; nothing on the box stops a write that needs no preflight.
+There is no CSRF token. A page on another site, open in a browser on that
+computer, can also send a request to the port. CORS keeps it from reading the
+reply, and the box refuses its writes: a POST, PUT, PATCH or DELETE that
+arrives as the owner with an `Origin` the CORS layer would refuse gets a 403
+(`refuse_cross_site_write`, `middleware/security.rs`).
 
 ## Tables
 
@@ -279,7 +281,7 @@ Each reveal, enrollment, pair code and AI key change also writes a row to
 | Stolen device | It has full access until revoked from another device or with `virtues device rm`. The auth-event log has no page, so noticing an unfamiliar device depends on the Devices list. |
 | DNS rebinding onto a trusted transport | The `Host` check refuses names the box does not serve (`middleware/security.rs`). |
 | Another process on a paired computer | The owner proof on reveal, enroll, pair mint, the AI key, package import, Start over, the web terminal and an admin applet chat turn, so a direct request to those routes through the app's loopback port is refused. Everything else stays open to a local process there, an accepted gap. |
-| A web page in a browser on a paired computer | It can send a request to `127.0.0.1:7117` that needs no CORS preflight, and nothing stops the write. CORS keeps it from reading the reply. |
+| A web page in a browser on a paired computer | CORS keeps it from reading a reply from `127.0.0.1:7117`, and a write whose `Origin` CORS would refuse is refused with 403. A request with no `Origin` is no page's and passes. |
 | Clickjacking | `X-Frame-Options: DENY` and CSP `frame-ancestors 'none'` on every response except applet faces, which the app frames. |
 | MIME sniffing | `X-Content-Type-Options: nosniff` on every response. Message attachments that are not raster images, audio or video download as `application/octet-stream` with a sandbox CSP. |
 

@@ -175,8 +175,11 @@ change for it, because `kind` already says which rows it would cover.
   the proof too (decided 2026-10-28).
 
   Every other route stays open to any connection on a paired computer's
-  `127.0.0.1:7117`, which is the accepted gap. Two parts of it are still
-  open questions; see Open.
+  `127.0.0.1:7117`, which is the accepted gap. A web page in a browser
+  there is not part of it: the box refuses a write that arrives as the
+  owner when its `Origin` is one the CORS layer would refuse
+  (`refuse_cross_site_write` in `middleware/security.rs`, decided
+  2026-10-28). A request with no `Origin` is no page's and passes.
 - **The pool role is not a superuser** (since 2026-08-18; first boot runs
   `ALTER ROLE virtues NOSUPERUSER …`). Not yet checked on the live box.
 
@@ -334,11 +337,6 @@ each item to its commit and says which are still open.
   connected the way `database::restricted` connects (never `SET ROLE`), with
   `EXECUTE` on functions in those schemas revoked from `PUBLIC`. That is
   slice 9 of [plan/applet-shape.md](applet-shape.md).
-- **Writes from a web page on a paired computer.** There is no CSRF token,
-  so a page on any site, open in a browser on a computer where the desktop
-  app is paired, can send `127.0.0.1:7117` a request that needs no CORS
-  preflight. CORS hides the reply, and nothing stops the write
-  (`middleware/security.rs`).
 - **Per-applet key allows** (decision 3) are not built. Any applet's
   `SKILL.md` can still name any key.
 - **Drive downloads with `?disposition=inline`** still serve the stored type
