@@ -1,5 +1,5 @@
 ---
-title: Faster search on a GPU or NPU
+title: GPU and NPU acceleration
 description: Search runs on your server's CPU by default. If the machine has a GPU or NPU, run the embedding model there with llama.cpp and point Virtues at it - the steps for NVIDIA, AMD, Intel, other GPUs, and NPUs.
 updated: 2026-10-20
 ---
@@ -10,10 +10,10 @@ minutes of work a day for a typical record.
 
 A GPU or NPU can make two things faster: every search, and the first index
 of your history, which on a CPU can take hours. How much faster depends on the
-hardware. The installer tells you when it finds one and links here. Setting it up takes about ten minutes, and you can
+hardware. If the installer finds one, it prints a link to this page. Setting it up takes about ten minutes, and you can
 do it any time after installing.
 
-## How it works
+## Set up acceleration
 
 You run the embedding model on the accelerator with
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`, then point
@@ -41,8 +41,7 @@ curl -fLO https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd2987
 ```
 
 **3. Start the server on the accelerator.** `-ngl 99` puts the whole model on
-it. Some GPU paths compute this model wrong, because its math overflows
-16-bit arithmetic; step 4 catches that and stops before anything changes.
+it.
 
 ```bash
 ./llama-b11507/llama-server --embedding --pooling mean \
@@ -56,7 +55,7 @@ systemd unit.
 **4. Point Virtues at it**, then restart:
 
 ```bash
-sudo -u virtues virtues configure-inference --embed-url http://127.0.0.1:8080
+virtues configure-inference --embed-url http://127.0.0.1:8080
 sudo systemctl restart virtues
 ```
 
