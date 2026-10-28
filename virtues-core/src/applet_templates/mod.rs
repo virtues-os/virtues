@@ -1,26 +1,18 @@
-//! Applet template loader, source catalog, and reconciler.
+//! Applet catalog, source catalog, and reconciler.
 //!
 //! Two on-disk inputs:
 //!
-//! 1. `actions/sources.toml` — the source catalog. Holds only `[[source]]`
-//!    entries (one tile per provider on the Sources UI). Read once on first
-//!    access; baked into the binary at compile time as a fallback for the
-//!    case where the file is missing at runtime.
+//! 1. `applets/sources.toml`: the source catalog, `[[source]]` entries, one
+//!    tile per provider on the Sources UI. Baked into the binary as a
+//!    fallback for when the file is missing at runtime.
+//! 2. Applet folders, each with a `SKILL.md` ([`skill`]): the shipped tree
+//!    ([`shipped_root`]) and the state root ([`state_root`]: your own
+//!    applets under `user/`, imports under their slug). A `manifest.toml`
+//!    folder in the state root converts to `SKILL.md` first ([`convert`]).
 //!
-//! 2. `actions/<name>/manifest.toml` — one per action. Each is a flat TOML
-//!    document with the action's declarative metadata (name, runtime,
-//!    command, triggers, schedule, etc.). Globbed at parse time;
-//!    folder name becomes the action's `id_prefix` if not explicitly set.
-//!
-//! On startup, `reconcile_templates`:
-//!   - Loads sources from sources.toml into a static catalog (lookup by `id`).
-//!   - Globs `actions/*/manifest.toml`, parses each, and upserts into
-//!     `app_applets`. Manifest-managed fields (name, owner, agent, runtime,
-//!     command, triggers, condition, source) are overwritten
-//!     on every system reconcile. User-managed runtime state (enabled,
-//!     schedule, config, memory) is preserved.
-//!   - Per-credential manifests fan out one row per matching `credentials`
-//!     row, exactly as before.
+//! `reconcile_templates` upserts one `app_applets` row per folder, or one
+//! per matching credential for an applet with a `source`. How much of the
+//! row follows the file depends on who owns it; `upsert_row` says.
 
 use std::sync::{OnceLock, RwLock};
 
@@ -124,9 +116,9 @@ impl SourceAuth {
     }
 }
 
-/// One per-action `manifest.toml` (or a `[[action]]` row if we ever resurrect
-/// a central registry). `id_prefix` is optional in the manifest — derived
-/// from the folder name as `action_<folder>` when absent.
+/// One applet as the catalog holds it, filled by the SKILL.md reader
+/// ([`skill::parse`]). It still derives `Deserialize` because the converter
+/// reads an old `manifest.toml` into it.
 #[derive(Debug, Deserialize, Clone)]
 struct Template {
     /// Stable id prefix. For non-per-credential entries this becomes the
@@ -188,9 +180,8 @@ struct Template {
     /// `applet_runner::limits`). The old `[config.view]` key is gone with the
     /// Svelte view registry it addressed — faces are sandboxed iframes now.
     ///
-    /// For system-owned actions, reconcile **overwrites** this field on every
-    /// startup (the manifest is canonical). For user-owned actions, it's only
-    /// seeded once via `ON CONFLICT DO NOTHING`; subsequent edits via the UI win.
+    /// For shipped applets, reconcile overwrites the row's copy on every
+    /// start. For your own and imported ones it merges (`upsert_row`).
     #[serde(default)]
     config: Option<toml::Value>,
     /// Ontologies this applet writes, by registry name (`health_sleep`, not
@@ -329,9 +320,10 @@ const SOURCES_TOML: &str = include_str!("../../../applets/sources.toml");
 /// 3. The in-tree `actions/` relative to this crate, via `CARGO_MANIFEST_DIR`,
 ///    so `cargo run`/tests work regardless of the user's CWD.
 ///
-/// Importers (`/api/admin/actions/import-git`) clone into whichever directory
-/// this resolves to, so the standard scanner picks the new folder up — there
-/// is no separate "imported actions" location.
+/// Only the installer writes here. Imports clone into the state root
+/// ([`state_root`]), and a folder there with a shipped folder's name is read
+/// as unshipped, which is what keeps `sudo` and the other shipped-only
+/// grants out of an import's reach.
 pub fn shipped_root() -> std::path::PathBuf {
     for var in ["VIRTUES_APPLETS_DIR", "VIRTUES_ACTIONS_DIR"] {
         if let Ok(dir) = std::env::var(var) {
@@ -475,20 +467,12 @@ pub fn reload_catalog() {
     *guard = fresh;
 }
 
-/// Read and parse a single `manifest.toml`. Returns None on read errors (which
-/// we log) and panics on parse errors (which are author bugs that must surface
-/// loudly).
+/// Read and parse a single `manifest.toml`, for the converter. Returns None,
+/// logged, when the file cannot be read or parsed.
 ///
-/// `dir` is the manifest's folder relative to the actions root and is the
-/// **identity** of the action — `id_prefix` is derived from it as
-/// `action_<dir>` with `/` rewritten to `__`. This is what keeps built-ins
-/// from colliding with imports: built-ins have flat dirs (`morning_brief`),
-/// imports always live under a slug (`team-pack/morning_brief`), and
-/// from-chat user actions live under `user/` — so their derived ids never
-/// clash unless a user explicitly hand-edits a built-in's path.
-///
-/// A manifest may still set `id_prefix` explicitly (legacy escape hatch); we
-/// honor it, but the dir-derived form is the new default.
+/// `dir` is the folder relative to its root and is the applet's identity:
+/// the id is `applet_<dir>` with `/` as `__`, which is what the converter
+/// pins when the SKILL.md reader would derive another.
 fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template> {
     let text = match std::fs::read_to_string(manifest_path) {
         Ok(t) => t,
@@ -917,7 +901,7 @@ pub(crate) fn skill_md_as_setup_args(folder: &std::path::Path) -> std::result::R
 
 /// An applet `/name` in chat starts: a `SKILL.md` whose `invoke` includes
 /// `chat`. The chat runs it as a turn with the applet's body as the prompt
-/// (`api::skills`), not as a headless run.
+/// (`api::chat_applets`), not as a headless run.
 #[derive(Debug, Clone)]
 pub struct ChatApplet {
     /// The spec's `name`, which is its folder's: what follows the `/`.
@@ -1657,26 +1641,24 @@ async fn upsert_row(
 
     // Owner determines reconcile semantics:
     //
-    //   system: UPSERT with overwrite of template-managed fields (name, owner,
-    //           agent, config, condition, triggers, credential_id, runtime,
-    //           command). Preserves user-managed runtime state (schedule,
-    //           enabled, memory) and the code's own `state`, which no branch
-    //           here writes.
+    //   system: UPSERT with overwrite of what the file says (name, owner,
+    //           agent, config, condition, triggers, credential_id, command,
+    //           run_sql). Preserves the owner's own state (schedule, enabled,
+    //           memory) and the code's `state`, which no branch here writes.
     //
     //   user:   Factory defaults are seeded the first time the template is
     //           added; after that the row is the user's, except for what
     //           runs (command, run_sql, condition), which follows the file,
     //           and the prompt and config rules below.
     //
-    //   ai:     the third branch (authoring plan §E). The folder is written by
-    //           the applet tool's setup, so COMPILED fields (name, agent, condition,
-    //           until, triggers, schedule) overwrite on reconcile, so every
-    //           edit goes to the manifest: re-setup writes the folder, and the
-    //           PATCH path writes it through `mirror_patch_to_file`.
-    //           OPERATIONAL state is never touched: `enabled` (the gate lives
-    //           there; the toggle mirrors into the manifest for restore),
-    //           `memory`, and non-manifest config keys — manifest config
-    //           merges OVER existing config so runtime keys survive.
+    //   ai:     applets the assistant made, under `user/`. Setup writes the
+    //           folder, so what the file says (name, agent, condition, until,
+    //           triggers, schedule) overwrites on reconcile, and every edit
+    //           goes to the file: re-setup writes it, and the PATCH path
+    //           writes it through `mirror_patch_to_file`. Never touched:
+    //           `enabled` (the toggle mirrors into the file for restore),
+    //           `memory`, and config keys the file does not have; the file's
+    //           config merges over the row's.
     let sql = if template.owner == "user" {
         // `agent` is COALESCEd rather than left alone, and it is the one
         // exception to "the row is the user's after the first seed".
@@ -1720,10 +1702,11 @@ async fn upsert_row(
                 ELSE app_applets.agent
             END,
             agent_shipped  = EXCLUDED.agent,
-            -- The same rule for config: a key the manifest adds that the row
+            -- The same rule for config: a key the file adds that the row
             -- has never had arrives (what the applet makes, a new ceiling);
-            -- every key the row already holds stays as it is.
-            config         = EXCLUDED.config || app_applets.config,
+            -- every key the row already holds stays as it is, except what
+            -- the applet may use, which is always the file's.
+            config         = EXCLUDED.config || (app_applets.config - 'allowed_tools' - 'net_hosts'),
             device_id      = EXCLUDED.device_id,
             -- What runs comes from the file alone, which no edit here writes:
             -- a converted folder moves its script under scripts/ and its
@@ -1747,7 +1730,7 @@ async fn upsert_row(
             agent          = EXCLUDED.agent,
             agent_shipped  = EXCLUDED.agent,
             schedule  = EXCLUDED.schedule,
-            config         = app_applets.config || EXCLUDED.config,
+            config         = (app_applets.config - 'allowed_tools' - 'net_hosts') || EXCLUDED.config,
             condition      = EXCLUDED.condition,
             triggers       = EXCLUDED.triggers,
             until          = EXCLUDED.until,
@@ -2179,83 +2162,6 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
                     "{} references unknown source '{}'",
                     id,
                     src.id
-                );
-            }
-        }
-    }
-
-    #[test]
-    /// No SHIPPED manifest carries a key this build does not understand.
-    ///
-    /// The sibling test above proves unknown keys are captured; this one proves
-    /// the tree has none. It is the guard that would have caught `runtime =
-    /// "function"` in `bookmark_enrichment`, which sat in a shipped manifest
-    /// doing nothing — serde dropped it on every load and there was no signal
-    /// anywhere, because a key that means nothing behaves exactly like a key
-    /// that was never written.
-    ///
-    /// Scoped to the shipped tree on purpose. Authored applets live in the
-    /// state root and are written by people through chat; they get the runtime
-    /// warning, not a failing build.
-    #[test]
-    fn no_shipped_manifest_has_unknown_keys() {
-        let core = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let applets_dir = core.join(ACTIONS_DIR_FROM_CORE);
-        let Ok(entries) = std::fs::read_dir(&applets_dir) else {
-            return; // not a source checkout
-        };
-        let mut offenders: Vec<String> = Vec::new();
-        for entry in entries.flatten() {
-            let manifest = entry.path().join("manifest.toml");
-            if !manifest.exists() {
-                continue;
-            }
-            let folder = entry.file_name().to_string_lossy().to_string();
-            if let Some(t) = super::parse_template(&manifest, &folder) {
-                for k in t.unknown.keys() {
-                    offenders.push(format!("{folder}/manifest.toml: {k}"));
-                }
-            }
-        }
-        assert!(
-            offenders.is_empty(),
-            "shipped manifests carry keys nothing reads, so they do nothing \
-             silently:\n  {}",
-            offenders.join("\n  ")
-        );
-    }
-
-    #[test]
-    fn no_manifest_uses_legacy_connector_field() {
-        // The legacy `connector = { id = "..." }` field is not in the Template
-        // struct anymore. If a manifest still uses it, deserialization with
-        // serde's default `deny_unknown_fields = false` will silently ignore
-        // it and `per_credential` validation will fail. This test scans every
-        // per-folder manifest + sources.toml for the offending substring.
-        let core_manifest = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-        let applets_dir = core_manifest.join(ACTIONS_DIR_FROM_CORE);
-
-        // Sources file
-        if let Ok(text) = std::fs::read_to_string(applets_dir.join("sources.toml")) {
-            assert!(
-                !text.contains("connector = {"),
-                "sources.toml still references legacy `connector = {{ id = ... }}` field"
-            );
-        }
-
-        // Per-action manifests
-        if let Ok(entries) = std::fs::read_dir(&applets_dir) {
-            for entry in entries.flatten() {
-                let path = entry.path();
-                let manifest = path.join("manifest.toml");
-                if !manifest.exists() {
-                    continue;
-                }
-                let text = std::fs::read_to_string(&manifest).unwrap_or_default();
-                assert!(
-                    !text.contains("connector = {"),
-                    "{} still references legacy `connector = {{ id = ... }}` field",
-                    manifest.display()
                 );
             }
         }

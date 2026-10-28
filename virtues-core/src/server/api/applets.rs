@@ -40,7 +40,7 @@ pub fn routes() -> Router<AppState> {
         // Actions API
         .route(
             "/api/applets",
-            get(list_applets_handler).post(create_applet_handler),
+            get(list_applets_handler),
         )
         .route(
             "/api/applets/:id",
@@ -598,45 +598,6 @@ pub async fn get_applet_handler(
             Json(serde_json::json!({ "error": e.to_string() })),
         )
             .into_response(),
-    }
-}
-
-/// POST /api/applets — create a user-owned applet.
-#[derive(Debug, Deserialize)]
-pub struct CreateAppletBody {
-    pub name: String,
-    pub agent: Option<String>,
-    pub schedule: Option<String>,
-    #[serde(default)]
-    pub triggers: Option<Vec<String>>,
-    pub config: Option<serde_json::Value>,
-}
-
-pub async fn create_applet_handler(
-    State(state): State<AppState>,
-    Json(body): Json<CreateAppletBody>,
-) -> Response {
-    let triggers = body.triggers.unwrap_or_else(|| {
-        if body.schedule.is_some() {
-            vec!["cron".into(), "manual".into(), "tool".into()]
-        } else {
-            vec!["manual".into(), "tool".into()]
-        }
-    });
-
-    match crate::scheduler::applets::create_user_applet(
-        state.db.pool(),
-        None,
-        &body.name,
-        body.agent.as_deref(),
-        body.schedule.as_deref(),
-        &triggers,
-        body.config.as_ref(),
-    )
-    .await
-    {
-        Ok(action) => (StatusCode::CREATED, Json(action)).into_response(),
-        Err(e) => error_response(e),
     }
 }
 

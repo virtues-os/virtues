@@ -4,12 +4,13 @@
 //! state. An `AppletRun` is one execution of an action with full history.
 //!
 //! Behavior is inferred from which fields are populated on the row:
-//! - `command` set  → spawn it (subprocess for `function`, daemon for `service`)
-//! - `agent` set    → LLM agent loop (runs after subprocess if both set)
-//! - neither set    → invalid (runner rejects)
+//! - `run_sql` set  → read-only SQL first; no rows skips the run
+//! - `command` set  → spawn it as a subprocess
+//! - `agent` set    → LLM agent loop (runs after the others if set)
+//! - none set       → nothing to run (a view-only applet)
 //!
-//! `triggers` is a JSON array of trigger names controlling who can invoke the
-//! action. Enum: `cron | manual | tool | api | webhook`.
+//! `triggers` is a JSON array of what may start the applet:
+//! `cron | manual | tool | webhook | message`.
 
 use crate::error::{Error, Result};
 use crate::ids::generate_id;
@@ -47,10 +48,6 @@ fn truncate_utf8_bytes(s: &str, max: usize) -> String {
 
 /// A scheduled action — pure configuration, no runtime state.
 ///
-/// `runtime` declares how the action executes:
-///   - `function` — fork-per-trigger CLI (today's pattern)
-///   - `view`     — pure Svelte component, never invoked server-side
-///
 /// `command` is the argv to spawn (JSON array in SQL). A bare `command[0]`
 /// (no path separator) resolves to a Cargo-built action binary under
 /// `target/{debug,release}`; anything else (`./x`, `python3`, `node`) runs via
@@ -60,7 +57,7 @@ pub struct Applet {
     pub id: String,
     pub owner: String,
     pub name: String,
-    /// The one-sentence intent the manifest carries — what this applet is for,
+    /// The one-sentence intent the SKILL.md carries — what this applet is for,
     /// in the user's terms. Reconcile's to own, like `name`.
     pub description: Option<String>,
     pub agent: Option<String>,
@@ -139,15 +136,6 @@ pub struct AppletRun {
 // Applet CRUD
 // ============================================================================
 
-/// Get all enabled actions.
-pub async fn get_enabled_applets(db: &PgPool) -> Result<Vec<Applet>> {
-    let rows = sqlx::query("SELECT * FROM app_applets WHERE enabled = TRUE ORDER BY name")
-        .fetch_all(db)
-        .await?;
-
-    rows.iter().map(applet_from_row).collect()
-}
-
 /// Get all actions (for API listing).
 pub async fn get_all_applets(db: &PgPool) -> Result<Vec<Applet>> {
     let rows = sqlx::query("SELECT * FROM app_applets ORDER BY name")
@@ -166,21 +154,6 @@ pub async fn get_applet(db: &PgPool, applet_id: &str) -> Result<Applet> {
         .ok_or_else(|| Error::NotFound(format!("Applet not found: {}", applet_id)))?;
 
     applet_from_row(&row)
-}
-
-/// Toggle an action's enabled state.
-pub async fn toggle_applet(db: &PgPool, applet_id: &str, enabled: bool) -> Result<()> {
-    let affected = sqlx::query("UPDATE app_applets SET enabled = $1 WHERE id = $2")
-        .bind(enabled)
-        .bind(applet_id)
-        .execute(db)
-        .await?
-        .rows_affected();
-
-    if affected == 0 {
-        return Err(Error::NotFound(format!("Applet not found: {}", applet_id)));
-    }
-    Ok(())
 }
 
 /// Update an action's persistent memory (markdown scratchpad across runs).
@@ -339,101 +312,12 @@ pub async fn applet_data_tables(db: &PgPool, applet_id: &str) -> Result<Vec<Stri
 /// Fields the user can tune on a `system`-owned action row. Must match the
 /// set of fields that template reconcile preserves (see
 /// `applet_templates::upsert_row`) — otherwise the next reconcile would
-/// silently clobber what the user just changed.
-pub const SYSTEM_EDITABLE_FIELDS: &[&str] = &["enabled", "schedule", "config", "memory"];
+/// silently clobber what the user just changed. `config` is not one: the
+/// system branch rewrites it from the shipped file.
+pub const SYSTEM_EDITABLE_FIELDS: &[&str] = &["enabled", "schedule", "memory"];
 
 /// Config keys only the applet's file sets: what its runs may use.
 const FILE_ONLY_CONFIG: &[&str] = &["allowed_tools", "net_hosts"];
-
-/// Create a new user-owned action. Used by chat tools + the HTTP POST
-/// endpoint. `id` is generated from the name if not provided.
-#[allow(clippy::too_many_arguments)]
-pub async fn create_user_applet(
-    db: &PgPool,
-    id: Option<&str>,
-    name: &str,
-    agent: Option<&str>,
-    schedule: Option<&str>,
-    triggers: &[String],
-    config: Option<&serde_json::Value>,
-) -> Result<Applet> {
-    if name.trim().is_empty() {
-        return Err(Error::InvalidInput("name cannot be empty".into()));
-    }
-    if triggers.is_empty() {
-        return Err(Error::InvalidInput("triggers cannot be empty".into()));
-    }
-    for t in triggers {
-        if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook" | "message") {
-            return Err(Error::InvalidInput(format!(
-                "invalid trigger '{t}': must be one of cron, manual, tool, api, webhook"
-            )));
-        }
-    }
-    if triggers.iter().any(|t| t == "webhook") {
-        return Err(Error::InvalidInput(
-            "webhook trigger requires a credential_id, which user-created actions can't set; use a pairing flow instead".into()
-        ));
-    }
-
-    let base_id = match id {
-        Some(s) => s.to_string(),
-        None => format!("{USER_APPLET_PREFIX}{}", slugify(name)),
-    };
-    let triggers_json = serde_json::to_string(triggers)
-        .map_err(|e| Error::Other(format!("failed to serialize triggers: {e}")))?;
-    let config_json = config
-        .map(|v| v.to_string())
-        .unwrap_or_else(|| "{}".to_string());
-
-    // Retry with a numeric suffix on UNIQUE collision so two actions with
-    // the same slug don't fail with an opaque "UNIQUE constraint failed".
-    // Capped at 100 attempts; if the user has 100 actions with identical
-    // slugs something weirder is going on and they can pass an explicit id.
-    const MAX_ATTEMPTS: u32 = 100;
-    let mut applet_id = base_id.clone();
-    for attempt in 1u32..=MAX_ATTEMPTS {
-        let result = sqlx::query(
-            r#"INSERT INTO app_applets (id, name, owner, agent, schedule, enabled, config, triggers)
-               VALUES ($1, $2, 'user', $3, $4, TRUE, $5::jsonb, $6::jsonb)"#,
-        )
-        .bind(&applet_id)
-        .bind(name)
-        .bind(agent)
-        .bind(schedule)
-        .bind(&config_json)
-        .bind(&triggers_json)
-        .execute(db)
-        .await;
-
-        match result {
-            Ok(_) => return get_applet(db, &applet_id).await,
-            Err(sqlx::Error::Database(dbe)) if is_unique_violation(&*dbe) => {
-                if id.is_some() {
-                    // Caller supplied an explicit id — don't silently rename.
-                    return Err(Error::InvalidInput(format!(
-                        "action id '{applet_id}' already exists"
-                    )));
-                }
-                applet_id = format!("{base_id}_{}", attempt + 1);
-                continue;
-            }
-            Err(e) => {
-                return Err(Error::Database(format!("failed to create action: {e}")));
-            }
-        }
-    }
-
-    Err(Error::Database(format!(
-        "failed to create action: exhausted {MAX_ATTEMPTS} id variations"
-    )))
-}
-
-/// Detect a Postgres UNIQUE constraint violation from a `DatabaseError`.
-fn is_unique_violation(dbe: &dyn sqlx::error::DatabaseError) -> bool {
-    // sqlx maps Postgres SQLSTATE 23505 (unique_violation) here.
-    dbe.is_unique_violation()
-}
 
 /// Partial update for an action. Applies a JSON patch, enforcing the
 /// system-owner guard: `system` rows accept only `SYSTEM_EDITABLE_FIELDS`.
@@ -632,9 +516,9 @@ pub async fn update_applet(
             })
             .collect::<Result<_>>()?;
         for t in &triggers {
-            if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook" | "message") {
+            if !matches!(t.as_str(), "cron" | "manual" | "tool" | "webhook" | "message") {
                 return Err(Error::InvalidInput(format!(
-                    "invalid trigger '{t}': must be one of cron, manual, tool, api, webhook"
+                    "invalid trigger '{t}': must be one of cron, manual, tool, webhook, message"
                 )));
             }
         }
@@ -787,36 +671,12 @@ pub async fn set_applet_connections(db: &PgPool, applet_id: &str, names: &[Strin
     applet_connections(db, applet_id).await
 }
 
-/// Slugify a name into a lowercase `a-z0-9_` identifier suitable for use as
-/// an action id suffix.
-fn slugify(name: &str) -> String {
-    let mut out = String::with_capacity(name.len());
-    let mut last_underscore = false;
-    for ch in name.chars() {
-        if ch.is_ascii_alphanumeric() {
-            out.push(ch.to_ascii_lowercase());
-            last_underscore = false;
-        } else if !last_underscore && !out.is_empty() {
-            out.push('_');
-            last_underscore = true;
-        }
-    }
-    // Trim trailing underscore
-    while out.ends_with('_') {
-        out.pop();
-    }
-    if out.is_empty() {
-        out.push_str("unnamed");
-    }
-    out
-}
-
-/// Validate a cron expression's shape (5 or 6 space-separated fields).
+/// Validate a cron expression the way the scheduler and the SKILL.md reader
+/// read it: six fields, seconds first.
 fn validate_cron(cron: &str) -> Result<()> {
-    let fields: Vec<&str> = cron.split_whitespace().collect();
-    if fields.len() < 5 || fields.len() > 6 {
+    if crate::scheduler::slots::parse(cron).is_none() {
         return Err(Error::InvalidInput(format!(
-            "Invalid cron expression '{cron}': expected 5 or 6 fields"
+            "Invalid cron expression '{cron}': expected 6 fields, seconds first, such as '0 0 7 * * *' for 07:00 daily"
         )));
     }
     Ok(())
@@ -1657,7 +1517,7 @@ mod tests {
 
     /// The regression this file earned the hard way.
     ///
-    /// `applet_setup` and `create_user_applet` both mint user-applet ids, and
+    /// `applet_setup` mints user-applet ids, and
     /// `applet_schema_name` parses them back. They used to hold three separate
     /// string literals and two of them disagreed about how many underscores
     /// `applet_user__` has — so an applet created through the API parsed as
@@ -1668,8 +1528,8 @@ mod tests {
     /// the two doors. This asserts the round trip both writers depend on.
     #[test]
     fn minted_user_applet_ids_parse_back_to_a_schema() {
-        // Exactly what create_user_applet builds for an unnamed id.
-        let minted = format!("{USER_APPLET_PREFIX}{}", slugify("Heart Rate Explorer"));
+        // Exactly what applet_setup builds for "Heart rate explorer".
+        let minted = format!("{USER_APPLET_PREFIX}{}", "heart-rate-explorer".replace('-', "_"));
         assert_eq!(minted, "applet_user__heart_rate_explorer");
         assert_eq!(
             applet_schema_name(&minted).as_deref(),

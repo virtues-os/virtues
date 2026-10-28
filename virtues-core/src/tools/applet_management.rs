@@ -81,7 +81,7 @@ fn map_err(e: crate::error::Error) -> ToolError {
 /// Optional filters:
 /// - `owner`: `"system"` or `"user"`
 /// - `enabled`: bool
-/// - `trigger`: one of `cron|manual|tool|api|webhook`
+/// - `trigger`: one of `cron|manual|tool|webhook|message`
 pub async fn list_applets(
     pool: &PgPool,
     arguments: serde_json::Value,
@@ -181,7 +181,7 @@ pub async fn edit_applet(
     // The gate invariant: no path from model output to an enabled, scheduled
     // ai-owned row without a user-surface action. Two vectors are closed here:
     //   (1) enabling directly (enabled:true), and
-    //   (2) adding a boundary (schedule / api|webhook trigger) to an applet
+    //   (2) adding a boundary (a schedule or a webhook trigger) to an applet
     //       that is ALREADY enabled — which would silently create the
     //       forbidden enabled∧scheduled state without touching `enabled`.
     let mut patch = patch;
@@ -194,7 +194,7 @@ pub async fn edit_applet(
             .get("triggers")
             .and_then(|v| v.as_array())
             .is_some_and(|arr| {
-                arr.iter().any(|t| matches!(t.as_str(), Some("api") | Some("webhook")))
+                arr.iter().any(|t| t.as_str() == Some("webhook"))
             });
         if sets_enabled_true || adds_schedule || adds_remote_trigger {
             let current = applets::get_applet(pool, id).await.map_err(map_err)?;

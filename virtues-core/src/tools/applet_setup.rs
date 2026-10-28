@@ -9,8 +9,8 @@
 //!
 //! Core invariant served here: **no path from model output to an enabled,
 //! scheduled row without a user action** — any applet that crosses a boundary
-//! (schedule/trigger, credential, recurring spend) materializes with
-//! `default_enabled = false`; enabling is a user-surface action the tool
+//! (schedule/trigger, credential, recurring spend) is written with
+//! `enabled: false`; enabling is a user-surface action the tool
 //! layer refuses (see the `edit` action in `applet_management`).
 
 use sqlx::PgPool;
@@ -142,7 +142,8 @@ pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value
         findings.push(finding("agent", "an applet needs either an `agent` prompt (to run) or a `face_html` (to show) — a dashboard is face-only, a reminder is agent-only", None));
     }
 
-    let slug = slugify(name);
+    // The slug the folder and schema will have, the same as `apply` derives.
+    let slug = spec_name(name).replace('-', "_");
     if slug.is_empty() {
         findings.push(finding("name", "name produces an empty slug", None));
     }
@@ -178,11 +179,10 @@ pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value
     }
 
     if let Some(cron) = schedule.as_deref() {
-        let fields = cron.split_whitespace().count();
-        if !(5..=6).contains(&fields) {
+        if crate::scheduler::slots::parse(cron).is_none() {
             findings.push(finding(
                 "schedule",
-                &format!("cron '{cron}' has {fields} fields"),
+                &format!("cron '{cron}' does not parse"),
                 Some("6 fields (seconds first), box-local timezone — e.g. '0 0 6 * * *' = daily 6am"),
             ));
         }
@@ -713,19 +713,6 @@ fn check_limits(limits: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
     out
 }
 
-
-pub(crate) fn slugify(name: &str) -> String {
-    let mut slug = String::new();
-    for c in name.to_lowercase().chars() {
-        if c.is_ascii_alphanumeric() {
-            slug.push(c);
-        } else if !slug.ends_with('_') && !slug.is_empty() {
-            slug.push('_');
-        }
-    }
-    let slug = slug.trim_end_matches('_');
-    slug[..slug.len().min(48)].to_string()
-}
 
 /// EXPLAIN a boolean SQL expression under the hardened read-only path.
 /// Plan the condition as the reader login, which is what runs it: setup

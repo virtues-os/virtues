@@ -3,9 +3,9 @@
 //! The frontmatter holds the spec's keys (`name`, `description`, `license`,
 //! `compatibility`, `allowed-tools`, `metadata`); the Virtues wiring lives
 //! under `metadata`, where every value is a string. The body is the prompt.
-//! [`parse`] reads one into the same [`Template`] a `manifest.toml` produces,
-//! so reconcile, the runner and the scheduler treat both alike. The format
-//! and every key are described in agents/plan/applet-shape.md.
+//! [`parse`] reads one into the catalog's [`Template`], which reconcile, the
+//! runner and the scheduler use. The format and every key are described in
+//! agents/plan/applet-shape.md.
 //!
 //! Every problem is returned as a sentence, and the loader refuses the folder
 //! when there is any.
@@ -250,7 +250,7 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         Some("deep") => "deep",
         Some("lite") => "lite",
         Some(other) => {
-            errors.push(format!("`model` is \"{other}\". Use `standard` or `deep`."));
+            errors.push(format!("`model` is \"{other}\". Use `standard`, `deep` or `lite`."));
             "standard"
         }
     };
@@ -303,6 +303,8 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         }
     }
 
+    let id = pinned_id(meta("id"), dir, &mut errors);
+
     if !errors.is_empty() {
         return Err(errors);
     }
@@ -346,8 +348,6 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
             toml::Value::Array(net_hosts.into_iter().map(toml::Value::String).collect()),
         );
     }
-
-    let id = pinned_id(meta("id"), dir, &mut errors);
 
     Ok(Template {
         id_prefix: Some(id),
@@ -1534,7 +1534,7 @@ mod tests {
             ("limit", "$1 per week", "in `limit`"),
             ("limit", "$0 per run", "needs a positive number"),
             ("limit", "$1 per run, $2 per run", "repeats a limit"),
-            ("model", "smart", "Use `standard` or `deep`"),
+            ("model", "smart", "Use `standard`, `deep` or `lite`"),
             ("enabled", "yes", "Use `true` or `false`"),
             ("icon", "calendar", "Remix icon id"),
             ("color", "\"#ff0000\"", "Use one of: gray"),
@@ -1680,6 +1680,10 @@ mod tests {
         assert!(errors.is_empty());
         assert_eq!(pinned_id(Some("applet_day_summary_eod"), "pack-a/b-c", &mut errors), "applet_pack_a__b_c");
         assert!(errors[0].contains("not this folder's"), "{errors:?}");
+        let f = tempfile::tempdir().unwrap();
+        let text = "---\nname: b-c\ndescription: Does a thing. Use when asked.\nmetadata:\n  id: applet_day_summary_eod\n---\nDo it.";
+        let e = parse(text, f.path(), "pack-a/b-c", false).unwrap_err();
+        assert!(e.iter().any(|e| e.contains("not this folder's")), "a wrong pin loads: {e:?}");
     }
 
     /// A source's runs get the account's decrypted tokens, so only shipped

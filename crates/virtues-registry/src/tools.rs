@@ -1078,7 +1078,7 @@ const APPLET_ACTIONS: [(&str, &str); 6] = [
     ("list", "applets and their last run. Filter with owner (ai = made in a chat), enabled, trigger, include_archived."),
     ("get", "one applet's full config and last 10 runs, by id. Read it before editing or debugging one."),
     ("setup", "create or update one: a scheduled task, reminder, monitor, tracker or dashboard. First call with guide=true and follow the guide it returns. The same name updates that applet. name and description are required except for the guide. On check_failed, fix the findings and retry; nothing was created. check_only runs the check alone."),
-    ("edit", "change one by id: only the fields to change go in `patch`; null clears. `config` replaces the whole object. `schedule`: 6-field cron, local time. System applets take only enabled, schedule, config, memory."),
+    ("edit", "change one by id: only the fields to change go in `patch`; null clears. `config` replaces the whole object. `schedule`: 6-field cron, local time. System applets take only enabled, schedule, memory."),
     ("run", "run one by id now; it needs the `tool` trigger. `payload` is context for the run; `date` (YYYY-MM-DD) is for a date-scoped applet."),
     ("delete", "delete a user-owned one by id; system ones refuse, so offer to disable. Confirm unless the ask was explicit."),
 ];
@@ -1089,7 +1089,7 @@ pub const APPLET_ALL_ACTIONS: [&str; 6] = ["list", "get", "setup", "edit", "run"
 /// The applet actions that change nothing.
 pub const APPLET_READ_ACTIONS: [&str; 2] = ["list", "get"];
 
-const APPLET_TRIGGERS: [&str; 6] = ["cron", "manual", "tool", "api", "webhook", "message"];
+const APPLET_TRIGGERS: [&str; 5] = ["cron", "manual", "tool", "webhook", "message"];
 
 /// The applet tool, offering `actions`. One tool for everything chat does with
 /// applets, so their schema is sent once per step rather than six times.
