@@ -39,7 +39,7 @@ const SPEC_KEYS: &[&str] = &[
 /// The Virtues keys under `metadata`.
 const METADATA_KEYS: &[&str] = &[
     "invoke", "trigger", "run", "source", "limit", "model", "enabled", "icon", "color", "writes", "secrets",
-    "forked-from",
+    "forked-from", "id",
 ];
 
 /// Shipped applets that re-encrypt stored secrets and so are given the
@@ -210,6 +210,14 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
     if let Some(s) = &source {
         if s.is_empty() || !s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
             errors.push(format!("`source` \"{s}\" is not a source id, such as `plaid`."));
+        } else if !shipped {
+            // A source's runs are handed the account's decrypted tokens, so
+            // code the box did not ship would hold them. The plan has the
+            // owner approve that per applet, as with `net(host)`.
+            // TODO(2026-10-28): build that approval, then allow it here.
+            errors.push(format!(
+                "`source: {s}` gives each run your {s} account's sign-in, and only applets that ship with the box may ask for that for now."
+            ));
         }
     }
 
@@ -332,8 +340,10 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         );
     }
 
+    let id = pinned_id(meta("id"), dir, &mut errors);
+
     Ok(Template {
-        id_prefix: Some(id_for_dir(dir)),
+        id_prefix: Some(id),
         name: display_name(&name),
         description: description.map(|d| d.trim().to_string()),
         owner: owner_for(dir, shipped).into(),
@@ -423,6 +433,8 @@ pub(crate) struct SkillMd {
     pub writes: Vec<String>,
     pub secrets: Vec<String>,
     pub forked_from: Option<String>,
+    /// `metadata.id`, when the folder's own id is not the applet's.
+    pub id: Option<String>,
     pub icon: Option<String>,
     /// The prompt.
     pub body: String,
@@ -445,6 +457,7 @@ impl Default for SkillMd {
             writes: Vec::new(),
             secrets: Vec::new(),
             forked_from: None,
+            id: None,
             icon: None,
             body: String::new(),
         }
@@ -487,6 +500,9 @@ pub(crate) fn render(md: &SkillMd) -> Result<String, String> {
     }
     if let Some(f) = &md.forked_from {
         meta.insert(s("forked-from"), s(f));
+    }
+    if let Some(id) = &md.id {
+        meta.insert(s("id"), s(id));
     }
     if let Some(icon) = &md.icon {
         meta.insert(s("icon"), s(icon));
@@ -657,8 +673,27 @@ fn list(value: &str) -> Vec<String> {
 
 /// The id a folder gets. The spec's names use hyphens and ids, schemas and
 /// the applet slug use underscores, so a hyphen becomes an underscore.
-fn id_for_dir(dir: &str) -> String {
+pub(super) fn id_for_dir(dir: &str) -> String {
     format!("applet_{}", dir.replace('/', "__").replace('-', "_"))
+}
+
+/// The id `metadata.id` pins, or the folder's own. An applet converted from
+/// a `manifest.toml` folder keeps the id the old reader gave it, which kept
+/// hyphens (an import's folder, `github-com-…`), so its row, runs, state and
+/// tables stay its own. A pin may differ from the folder's id only in
+/// hyphens and underscores, so no folder can take another applet's id.
+fn pinned_id(pin: Option<&str>, dir: &str, errors: &mut Vec<String>) -> String {
+    let own = id_for_dir(dir);
+    match pin.map(str::trim) {
+        None => own,
+        Some(pin) if pin.replace('-', "_") == own => pin.to_string(),
+        Some(pin) => {
+            errors.push(format!(
+                "`metadata.id` \"{pin}\" is not this folder's. It may differ from {own} only in hyphens and underscores."
+            ));
+            own
+        }
+    }
 }
 
 /// Who the row belongs to, from where the folder is. A manifest's own
@@ -1307,7 +1342,7 @@ mod tests {
             "name: tides\ndescription: Fetches tide times.\nmetadata:\n  run: scripts/fetch.py\n  trigger: webhook\n  source: example_source",
             "",
         );
-        let t = parse(&text, f.path(), "tides", false).unwrap();
+        let t = parse(&text, f.path(), "tides", true).unwrap();
         let cmd = t.command.unwrap();
         assert_eq!(cmd[0], "python3");
         assert!(cmd[1].ends_with("scripts/fetch.py") && Path::new(&cmd[1]).is_absolute());
@@ -1589,7 +1624,7 @@ mod tests {
             "memory": "row only",
         });
         let edited = apply_patch(&text, patch.as_object().unwrap()).unwrap();
-        let t = parse(&edited, f.path(), "weekly-review", false).unwrap_or_else(|e| panic!("{e:?}\n{edited}"));
+        let t = parse(&edited, f.path(), "weekly-review", true).unwrap_or_else(|e| panic!("{e:?}\n{edited}"));
         assert_eq!(t.schedule.as_deref(), Some("0 30 9 * * *"));
         assert_eq!(t.agent.as_deref(), Some("New prompt."));
         assert!(!t.default_enabled);
@@ -1602,7 +1637,7 @@ mod tests {
         assert!(cfg.get("chat_id").is_none(), "row-only config stays out of the file");
 
         let cleared = apply_patch(&edited, serde_json::json!({ "schedule": null }).as_object().unwrap()).unwrap();
-        assert!(parse(&cleared, f.path(), "weekly-review", false).unwrap().schedule.is_none());
+        assert!(parse(&cleared, f.path(), "weekly-review", true).unwrap().schedule.is_none());
         assert!(apply_patch(&text, serde_json::json!({ "name": "x" }).as_object().unwrap()).is_err());
         assert!(apply_patch(&text, serde_json::json!({ "condition": "true" }).as_object().unwrap()).is_err());
     }
@@ -1622,5 +1657,28 @@ mod tests {
         assert_eq!(display_name("weekly-review"), "Weekly review");
         assert_eq!(display_name("ios-battery-check"), "iOS battery check");
         assert_eq!(display_name("sync-github-stars"), "Sync GitHub stars");
+    }
+
+    /// `metadata.id` keeps an id that differs from the folder's only in
+    /// hyphens and underscores, and refuses any other.
+    #[test]
+    fn a_pinned_id_must_be_the_folders() {
+        let mut errors = Vec::new();
+        assert_eq!(pinned_id(None, "pack-a/b-c", &mut errors), "applet_pack_a__b_c");
+        assert_eq!(pinned_id(Some("applet_pack-a__b_c"), "pack-a/b-c", &mut errors), "applet_pack-a__b_c");
+        assert!(errors.is_empty());
+        assert_eq!(pinned_id(Some("applet_day_summary_eod"), "pack-a/b-c", &mut errors), "applet_pack_a__b_c");
+        assert!(errors[0].contains("not this folder's"), "{errors:?}");
+    }
+
+    /// A source's runs get the account's decrypted tokens, so only shipped
+    /// applets may name one until the owner can approve it per applet.
+    #[test]
+    fn only_a_shipped_applet_names_a_source() {
+        let f = tempfile::tempdir().unwrap();
+        let text = "---\nname: mine\ndescription: Syncs things. Use when asked.\nmetadata:\n  source: google\n  run: sql select 1\n---\n";
+        let e = parse(text, f.path(), "user/mine", false).unwrap_err();
+        assert!(e.iter().any(|e| e.contains("only applets that ship")), "{e:?}");
+        assert_eq!(parse(text, f.path(), "mine", true).unwrap().source.map(|s| s.id).as_deref(), Some("google"));
     }
 }

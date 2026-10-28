@@ -193,6 +193,8 @@ metadata:
 
 Reconcile materializes one `app_applets` row per active credential of that source. Each row gets `credential_id` set; runtime auto-injects the matching credential into `AppletInput.credentials` when the applet fires.
 
+Only an applet that ships with the box may name a `source`, because its runs hold the account's decrypted sign-in. An applet in the state root that names one does not load.
+
 A `webhook` trigger **requires** a `source`, so the post resolves to an identity.
 
 ---

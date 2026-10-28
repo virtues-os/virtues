@@ -1636,9 +1636,10 @@ async fn upsert_row(
     //           enabled, memory) and the code's own `state`, which no branch
     //           here writes.
     //
-    //   user:   ON CONFLICT DO NOTHING. Factory defaults are seeded the first time
-    //           the template is added; after that the row is fully owned by
-    //           the user and reconcile is a no-op.
+    //   user:   Factory defaults are seeded the first time the template is
+    //           added; after that the row is the user's, except for what
+    //           runs (command, run_sql, condition), which follows the file,
+    //           and the prompt and config rules below.
     //
     //   ai:     the third branch (authoring plan §E). The folder is written by
     //           the applet tool's setup, so COMPILED fields (name, agent, condition,
@@ -1697,6 +1698,13 @@ async fn upsert_row(
             -- every key the row already holds stays as it is.
             config         = EXCLUDED.config || app_applets.config,
             device_id      = EXCLUDED.device_id,
+            -- What runs comes from the file alone, which no edit here writes:
+            -- a converted folder moves its script under scripts/ and its
+            -- condition into run_sql, and the row must follow or every run
+            -- fails.
+            command        = EXCLUDED.command,
+            run_sql        = EXCLUDED.run_sql,
+            condition      = EXCLUDED.condition,
             updated_at     = now()
         "#
     } else if template.owner == "ai" {
