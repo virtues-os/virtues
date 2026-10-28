@@ -1034,11 +1034,11 @@ fn sudo_tool() -> ToolConfig {
         id: "sudo".to_string(),
         name: "Sudo".to_string(),
         description: "Run a command on the server, with sudo".to_string(),
-        llm_description: r#"Run a shell command on the server this assistant runs on, as its admin account, which has passwordless sudo. Anything a person could do over ssh is possible: read and change files anywhere, query or change any database, read logs, manage services, install packages. Reads run at once; changes wait for the owner to allow them.
+        llm_description: r#"Run a shell command on the server this assistant runs on, as its admin account, which has passwordless sudo. Anything a person could do over ssh is possible: read and change files anywhere, query or change any database, read logs, manage services, install packages, and read every secret on the server, saved passwords and the box key included. Calls run at once. Two kinds wait for the owner to allow them: a command that deletes data, and virtues backup --init-key, which prints a new backup recovery key.
 
-The command runs through bash -c with no terminal and no stdin, so anything that prompts reads nothing: pass -y / --yes / --no-pager, and never open an editor or a pager. Returns exit_code, stdout and stderr; long output keeps its beginning and its end.
+The command runs through bash -c with no terminal and no stdin, so anything that prompts reads nothing: pass -y / --yes / --no-pager, and never open an editor or a pager. It starts from a clean environment, not the server's. Returns exit_code, stdout and stderr; long output keeps its beginning and its end. All of it comes into this chat.
 
-- Database: psql "$DATABASE_URL" -c '…', as the app's role.
+- Database: psql -c '…' with no connection arguments, as the app's role.
 - Logs: journalctl -u virtues --no-pager -n 200 (add -p warning, --since "1 hour ago").
 - Long jobs: raise timeout_seconds (default 120, max 600), or run them in the background with output to a file (nohup … >/tmp/job.log 2>&1 &) and check the file later.
 

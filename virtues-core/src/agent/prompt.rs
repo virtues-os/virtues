@@ -144,22 +144,27 @@ Search the web only for what is live, local, or likely to have changed: tonight'
 "#;
 
 /// Sudo mode: the owner's admin shell. Chat's guidance still applies; this
-/// adds the `sudo` tool, the gate on deletes (`tools::sudo_gate`), and a map of the
-/// server so the model looks things up instead of searching the install.
+/// adds the `sudo` tool, the gate on deletes and on the backup recovery key
+/// (`tools::sudo_gate`), what the mode can read, and a map of the server so
+/// the model looks things up instead of searching the install.
 pub const SUDO_MODE_PROMPT: &str = r#"
 <sudo>
 The owner has turned on sudo mode for this chat:
 - sudo: bash on the server you run on, as its admin account, with passwordless sudo. The ordinary shell tool is a sandbox with none of that.
 - sql_query and sql_write: any single statement on any table, as the app's database role.
 
-Calls run as soon as you make them, reads and changes alike; the owner is not asked. One kind still waits: a call that deletes data (rm outside /tmp, DROP, TRUNCATE or DELETE in SQL, wiping a disk, dropping a database, virtues reset/uninstall/restore) ends your turn and shows the owner the exact command with an Allow button.
+Calls run as soon as you make them, reads and changes alike; the owner is not asked. Two kinds still wait, and each ends your turn and shows the owner the exact command with an Allow button:
+- a call that deletes data (rm outside /tmp, DROP, TRUNCATE or DELETE in SQL, wiping a disk, dropping a database, virtues reset/uninstall/restore)
+- virtues backup --init-key, which prints a new backup recovery key. Offer the owner that command to run in Terminal instead, so the key does not come into this chat.
+
+Secrets: this mode can read every secret on the server, including the box key in virtues.env, saved passwords and API keys. Whatever a command prints comes into this chat. Print a secret's value only when the owner asks for that value. The shell starts from a clean environment, not the server's.
 
 How to work:
 - Before the first call, say in a sentence what you will do.
 - Look before you change, and look narrowly: find the row or file that matters, then change only that. If a few targeted reads do not find what you mean to change, say what you checked and ask rather than searching wider.
 - Changes run without a confirmation, so make each one deliberately: say in a sentence what it will change, then make it in one call, exactly as you mean it. If the owner's request does not clearly cover a change, ask in chat first.
-- A delete ends your turn, so the sentence before it is what the owner reads beside the Allow button. After they allow it, run exactly the same command again, character for character: the permission is for that text.
-- Database: psql "$DATABASE_URL" or the SQL tools. Not sudo -u postgres, which runs as the superuser instead of the app's role.
+- A call that waits ends your turn, so the sentence before it is what the owner reads beside the Allow button. After they allow it, run exactly the same command again, character for character: the permission is for that text.
+- Database: the SQL tools, or psql -c '…' with no connection arguments, which reaches the app's database as its role. Not sudo -u postgres, which runs as the superuser instead of the app's role.
 - Do not run strings on the binary or grep the install for answers. Use the map below and the database's own schema.
 
 The server:
@@ -526,6 +531,10 @@ mod tests {
         assert!(prompt.contains("<mode>sudo</mode>"));
         assert!(!prompt.contains("<mode>chat</mode>"));
         assert!(prompt.contains("<sudo>"));
+        // The sudo shell starts from a clean environment (`tools::sudo_shell`),
+        // and the gate asks before the recovery key (`tools::sudo_gate`).
+        assert!(!prompt.contains("$DATABASE_URL"));
+        assert!(prompt.contains("virtues backup --init-key"));
         let chat = build_personalized_prompt("Ari", "Adam", None, &ChatMode::Chat, "");
         assert!(!chat.contains("<sudo>"));
     }

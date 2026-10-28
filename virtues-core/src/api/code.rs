@@ -36,7 +36,7 @@ use tokio::time::{timeout, Duration};
 
 use crate::api::code_env::{self, Workspace};
 use crate::sandbox::{Bind, Unit};
-use crate::tools::sudo_shell::{read_capped, Captured};
+use crate::tools::sudo_shell::{keep_only_basics, read_capped, Captured};
 
 /// One `shell` call.
 #[derive(Debug, Default)]
@@ -278,16 +278,20 @@ fn sandboxed_command(timeout_secs: u32, ws: &Workspace, env: Option<&Path>, requ
     )
 }
 
-/// Run the command directly, unsandboxed. Developer machines only.
+/// Run the command directly, unsandboxed. Developer machines only. It keeps
+/// only the basics of the server's environment (`sudo_shell::KEPT_ENV`), so
+/// the box key and the database URL stay behind, as they do in the sandbox.
 fn direct_command(ws: &Workspace, env: Option<&Path>, command: &str) -> Command {
     let mut cmd = Command::new("bash");
     cmd.args(["-c", command]);
     cmd.current_dir(&ws.dir);
+    keep_only_basics(&mut cmd, &|name| std::env::var_os(name));
     cmd.env("MPLBACKEND", "Agg");
-    if let Some(env) = env {
-        let path = std::env::var("PATH").unwrap_or_default();
-        cmd.env("PATH", format!("{}:{path}", env.join("bin").display()));
-    }
+    let path = std::env::var("PATH").unwrap_or_default();
+    match env {
+        Some(env) => cmd.env("PATH", format!("{}:{path}", env.join("bin").display())),
+        None => cmd.env("PATH", path),
+    };
     cmd
 }
 
@@ -378,6 +382,26 @@ mod tests {
         let props = sandbox_unit(30, Path::new("/ws"), None, &req).properties();
         assert!(props.iter().any(|p| p == "BindReadOnlyPaths=/applets/user/tides:/skill"));
         assert!(props.iter().any(|p| p.ends_with(":/run/egress.sock")));
+    }
+
+    /// A direct run, as on a developer machine, keeps only the basics of the
+    /// server's environment. The test process's own variables (cargo's among
+    /// them) stand in for the server's.
+    #[tokio::test]
+    async fn a_direct_run_leaves_the_server_environment_behind() {
+        let ws = Workspace::temporary().unwrap();
+        let r = run(direct_command(&ws, None, "compgen -e"), 10).await.unwrap();
+        assert!(r.success);
+        // bash exports these itself.
+        let from_bash = ["PWD", "OLDPWD", "SHLVL", "_"];
+        for name in r.stdout.render().lines() {
+            assert!(
+                crate::tools::sudo_shell::KEPT_ENV.contains(&name)
+                    || ["PATH", "MPLBACKEND"].contains(&name)
+                    || from_bash.contains(&name),
+                "{name} came through from the server"
+            );
+        }
     }
 
     #[tokio::test]
