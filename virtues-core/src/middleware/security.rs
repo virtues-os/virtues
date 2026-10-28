@@ -31,7 +31,7 @@ use axum::{
 // ─── Security headers ───────────────────────────────────────────────────────
 
 pub async fn headers_layer(req: Request, next: Next) -> Response {
-    if let Some(refused) = refuse_foreign_host(&req) {
+    if let Some(refused) = refuse_foreign_host(&req, crate::middleware::auth::is_dev(), ServedNames::get()) {
         return refused;
     }
 
@@ -99,24 +99,21 @@ pub async fn headers_layer(req: Request, next: Next) -> Response {
 ///
 /// **Which requests.** Only those the box takes as the owner by how they
 /// arrived ([`owner_by_transport`]: a proven iroh peer, a direct loopback
-/// connection, any loopback connection on a developer's stack). Any other
+/// connection, and when `dev` is set any loopback connection). Any other
 /// request gets only what the box gives a stranger on its network, which a
 /// page could ask for at the box's own address anyway, and its `Host` is
 /// whatever name the owner typed to pair (`virtues.local`, a router's name, a
-/// Tailscale name, the review demo's hostname behind Caddy), which the box
-/// cannot list.
+/// Tailscale name), which the box cannot list.
 ///
 /// The SPA's static files and the JSON 404 for an unknown API path are routed
 /// outside this layer (`server::build_app`). Both are the same for every
 /// caller.
 ///
 /// [`owner_by_transport`]: crate::middleware::auth::owner_by_transport
-fn refuse_foreign_host(req: &Request) -> Option<Response> {
-    let dev = crate::middleware::auth::is_dev();
+fn refuse_foreign_host(req: &Request, dev: bool, names: &ServedNames) -> Option<Response> {
     if !crate::middleware::auth::owner_by_transport(req.extensions(), req.headers(), dev) {
         return None;
     }
-    let names = ServedNames::get();
     // Every authority the request names: each `Host` header, and the target's
     // own when it is in absolute form, which HTTP/1.1 says wins over `Host`.
     // A request that names none is no browser's, and a rebinding page is
@@ -127,7 +124,7 @@ fn refuse_foreign_host(req: &Request) -> Option<Response> {
         .iter()
         .map(|v| v.to_str().ok())
         .chain(req.uri().authority().map(|a| Some(a.as_str())))
-        .find(|named| !named.is_some_and(|n| names.serves(n)))?;
+        .find(|named| !named.is_some_and(|n| names.serves(n, dev)))?;
     let shown: String = foreign.unwrap_or("(not text)").chars().take(100).collect();
     tracing::warn!(host = %shown, "request refused: the box does not serve this host");
     Some(
@@ -166,19 +163,33 @@ fn refuse_foreign_host(req: &Request) -> Option<Response> {
 ///   and a collector may have been paired by it. A page that rebinds one of
 ///   them reaches the splice only on the splice's port, which is neither 80
 ///   nor the box's.
-///
-/// Not the names in `VIRTUES_PUBLIC_ORIGINS`. The proxy in front of such a box
-/// adds a forwarding header, so its requests never carry this authority, and a
-/// proxy that added none would hand the owner's authority to whoever reached
-/// it.
+/// - **On a developer's stack (`ENVIRONMENT=dev`) only, the names an operator
+///   serves the UI from** through a proxy of their own
+///   (`VIRTUES_PUBLIC_ORIGINS`, [`public_origins`]), with no port or with the
+///   port the origin names. The review demo box runs this way behind Caddy:
+///   a request the proxy forwards from loopback carries the owner's authority
+///   there, and its `Host` is one of these names. Only the operator decides
+///   where such a name points, so no page can rebind one, and a page that
+///   named one on the splice's port would be refused anyway. On any other box
+///   a request the proxy forwards does not carry the owner's authority, so
+///   one that reaches this check came through a proxy that added no
+///   forwarding header. Refusing these names there keeps such a proxy from
+///   handing the owner's authority to whoever reaches it.
 ///
 /// Matched case-insensitively and otherwise exactly: `localhost.evil.example`,
 /// `localhost.` and `127.0.0.1.evil.example` are names, and refused.
+///
+/// [`public_origins`]: crate::server::public_origins
 struct ServedNames {
     /// This machine's hostname, lowercased, without `.local`.
     hostname: Option<String>,
     /// The port `virtues server` listens on (its `--port`).
     port: u16,
+    /// The host and port of each [`public_origins`] entry
+    /// ([`origin_authority`]), served only on a developer's stack.
+    ///
+    /// [`public_origins`]: crate::server::public_origins
+    proxied: Vec<(String, u16)>,
 }
 
 /// The port `virtues server` listens on, recorded by [`set_listen_port`].
@@ -192,9 +203,9 @@ pub fn set_listen_port(port: u16) {
 }
 
 impl ServedNames {
-    /// Read once: the hostname and the port do not move while the server
-    /// runs. A process that serves the app without `server::run`, such as a
-    /// test, gets the default port.
+    /// Read once: the hostname, the port and the operator's origins do not
+    /// move while the server runs. A process that serves the app without
+    /// `server::run`, such as a test, gets the default port.
     fn get() -> &'static ServedNames {
         static NAMES: std::sync::OnceLock<ServedNames> = std::sync::OnceLock::new();
         NAMES.get_or_init(|| {
@@ -206,11 +217,18 @@ impl ServedNames {
                     .get()
                     .copied()
                     .unwrap_or_else(crate::cli::types::default_port),
+                proxied: crate::server::public_origins()
+                    .iter()
+                    .filter_map(|o| origin_authority(o))
+                    .collect(),
             }
         })
     }
 
-    fn serves(&self, authority: &str) -> bool {
+    /// Whether the box answers `authority` on an owner's request. `dev` is
+    /// whether this is a developer's stack, the only place the operator's
+    /// proxied names are served.
+    fn serves(&self, authority: &str, dev: bool) -> bool {
         let authority = authority.to_ascii_lowercase();
         let (host, port) = split_authority(&authority);
         if is_ip_literal(host) || host == "localhost" {
@@ -220,11 +238,39 @@ impl ServedNames {
             .hostname
             .as_deref()
             .is_some_and(|h| host == h || host.strip_suffix(".local") == Some(h));
+        let proxied = |port: Option<u16>| {
+            dev && self
+                .proxied
+                .iter()
+                .any(|(h, p)| h == host && port.is_none_or(|port| port == *p))
+        };
         match port {
-            None => own || host == "box" || host == "virtues",
-            Some(port) => own && port.parse::<u16>().ok() == Some(self.port),
+            None => own || host == "box" || host == "virtues" || proxied(None),
+            Some(port) => {
+                let Ok(port) = port.parse::<u16>() else { return false };
+                (own && port == self.port) || proxied(Some(port))
+            }
         }
     }
+}
+
+/// The host and port a browser names when it opens `origin`, an entry of
+/// [`public_origins`]: the port the origin names, or its scheme's default.
+/// `None` for an entry with no usable host or port, which then serves nothing.
+///
+/// [`public_origins`]: crate::server::public_origins
+fn origin_authority(origin: &str) -> Option<(String, u16)> {
+    let (rest, default_port) = match origin.strip_prefix("https://") {
+        Some(rest) => (rest, 443),
+        None => (origin.strip_prefix("http://")?, 80),
+    };
+    let (host, port) = split_authority(rest);
+    let port = match port {
+        Some(port) => port.parse::<u16>().ok()?,
+        None => default_port,
+    };
+    let bracketed = host.starts_with('[') && host.ends_with(']');
+    (!host.is_empty() && (bracketed || !host.contains(':'))).then(|| (host.to_ascii_lowercase(), port))
 }
 
 /// `host[:port]` into the host and the port, if it has one. An IPv6 literal
@@ -381,15 +427,24 @@ mod tests {
     }
 
     fn names() -> ServedNames {
-        ServedNames { hostname: Some("virtues".into()), port: 8000 }
+        ServedNames { hostname: Some("virtues".into()), port: 8000, proxied: vec![] }
+    }
+
+    /// [`names`] on a box whose operator lists `origins`, written as
+    /// `server::listed_origins` leaves them.
+    fn listed(origins: &[&str]) -> ServedNames {
+        ServedNames {
+            proxied: origins.iter().filter_map(|o| origin_authority(o)).collect(),
+            ..names()
+        }
     }
 
     /// Every `Host` a real client sends on a request that carries the
-    /// owner's authority.
+    /// owner's authority, with or without an operator's list, on a box and
+    /// on a developer's stack.
     #[test]
     fn the_hosts_real_clients_send_are_served() {
-        let names = names();
-        for host in [
+        let hosts = [
             // The Mac and iOS webviews and the Mac app through the splice,
             // on the default port, a dev profile's and an override's.
             "127.0.0.1:7117",
@@ -412,8 +467,13 @@ mod tests {
             "virtues.local:8000",
             "virtues:8000",
             "virtues.local",
-        ] {
-            assert!(names.serves(host), "must serve {host}");
+        ];
+        for names in [names(), listed(&["https://demo.example.com", "http://localhost:5173"])] {
+            for dev in [false, true] {
+                for host in hosts {
+                    assert!(names.serves(host, dev), "must serve {host} (dev={dev})");
+                }
+            }
         }
     }
 
@@ -437,8 +497,7 @@ mod tests {
             "x.virtues:7117",
             "box.virtues",
             "virtues.local.evil.example",
-            // A name an operator serves the UI from through a proxy, whose
-            // requests never carry the owner's authority.
+            // A proxied name the operator did not list.
             "demo.example.com",
             // Address spellings a browser would have rewritten.
             "2130706433:7117",
@@ -446,11 +505,68 @@ mod tests {
             "[::1",
             "",
         ] {
-            assert!(!names.serves(host), "must refuse {host:?}");
+            for dev in [false, true] {
+                assert!(!names.serves(host, dev), "must refuse {host:?} (dev={dev})");
+            }
         }
         let unnamed = ServedNames { hostname: None, ..names };
-        assert!(!unnamed.serves("virtues.local:8000"));
-        assert!(unnamed.serves("virtues"), "the native name needs no hostname");
+        assert!(!unnamed.serves("virtues.local:8000", false));
+        assert!(unnamed.serves("virtues", false), "the native name needs no hostname");
+    }
+
+    /// On a developer's stack, a name in `VIRTUES_PUBLIC_ORIGINS` is served
+    /// bare and on the port its origin names, and on no other port: a page
+    /// that rebound it onto the Mac's splice would name `:7117`. On any other
+    /// box it is not served at all.
+    #[test]
+    fn a_listed_public_origin_is_served_on_its_own_port_alone() {
+        let names = listed(&["https://demo.example.com", "https://demo-x1.example.net:8443", "http://proxy.example.org"]);
+        for host in [
+            "demo.example.com",
+            "DEMO.example.com",
+            "demo.example.com:443",
+            "demo-x1.example.net",
+            "demo-x1.example.net:8443",
+            "proxy.example.org:80",
+        ] {
+            assert!(names.serves(host, true), "must serve {host} on a dev stack");
+            assert!(!names.serves(host, false), "must refuse {host} off a dev stack");
+        }
+        for host in [
+            "demo.example.com:7117",
+            "demo.example.com:80",
+            "demo.example.com:8000",
+            "demo-x1.example.net:443",
+            "proxy.example.org:443",
+            "x.demo.example.com",
+            "demo.example.com.evil.example",
+            "example.com",
+            "demo.example.com:",
+            "demo.example.com:99999",
+        ] {
+            for dev in [false, true] {
+                assert!(!names.serves(host, dev), "must refuse {host:?} (dev={dev})");
+            }
+        }
+    }
+
+    #[test]
+    fn an_origin_names_its_host_and_port() {
+        for (origin, authority) in [
+            ("https://demo.example.com", Some(("demo.example.com", 443))),
+            ("http://demo.example.com", Some(("demo.example.com", 80))),
+            ("https://demo.example.com:8443", Some(("demo.example.com", 8443))),
+            ("http://[::1]:5173", Some(("[::1]", 5173))),
+            ("https://demo.example.com:", None),
+            ("https://demo.example.com:http", None),
+            ("https://demo.example.com:99999", None),
+            ("https://", None),
+            ("ws://demo.example.com", None),
+            ("demo.example.com", None),
+        ] {
+            let got = origin_authority(origin);
+            assert_eq!(got.as_ref().map(|(h, p)| (h.as_str(), *p)), authority, "{origin}");
+        }
     }
 
     async fn call(req: axum::http::Request<axum::body::Body>) -> Response {
@@ -513,16 +629,42 @@ mod tests {
             let ok = request("/api/passwords", host).extension(proven());
             assert_eq!(call(ok.body(empty()).unwrap()).await.status(), StatusCode::OK, "{host:?}");
         }
-        // Someone on the box's network, and Caddy in front of the demo box:
-        // neither is the owner by how it arrived, so any name passes here.
+        // Someone on the box's network is not the owner by how it arrived,
+        // so any name passes here.
         let lan = request("/api/box/identity", Some("rebound.example:8000")).extension(peer("192.168.1.20:50000"));
         assert_eq!(call(lan.body(empty()).unwrap()).await.status(), StatusCode::OK);
-        if !crate::middleware::auth::is_dev() {
-            let proxied = request("/api/pair/consume", Some("demo-review.example.com"))
-                .header("x-forwarded-for", "203.0.113.9")
-                .extension(peer("127.0.0.1:50000"));
-            assert_eq!(call(proxied.body(empty()).unwrap()).await.status(), StatusCode::OK);
+    }
+
+    /// Caddy in front of the review demo box connects from loopback and adds
+    /// a forwarding header. That box runs as a developer's stack, where such
+    /// a request is the owner's, so its `Host` must be a name the operator
+    /// listed. On any other box it is not the owner's, and any name passes.
+    /// There, a listed name arrives as the owner's only through a proxy that
+    /// added no forwarding header, and it is refused.
+    #[test]
+    fn a_proxied_request_on_a_dev_box_names_a_listed_origin() {
+        let names = listed(&["https://demo-review.example.com"]);
+        let from_loopback = |host: &str, forwarded: bool| {
+            let mut b = request("/api/pair/consume", Some(host)).extension(peer("127.0.0.1:50000"));
+            if forwarded {
+                b = b.header("x-forwarded-for", "203.0.113.9");
+            }
+            b.body(axum::body::Body::empty()).unwrap()
+        };
+        let proxied = |host: &str| from_loopback(host, true);
+        let dev = true;
+        assert!(refuse_foreign_host(&proxied("demo-review.example.com"), dev, &names).is_none());
+        for host in ["unlisted.example.com", "demo-review.example.com:7117"] {
+            let refused = refuse_foreign_host(&proxied(host), dev, &names).expect(host);
+            assert_eq!(refused.status(), StatusCode::MISDIRECTED_REQUEST, "{host}");
         }
+
+        let dev = false;
+        assert!(refuse_foreign_host(&proxied("unlisted.example.com"), dev, &names).is_none());
+        assert!(refuse_foreign_host(&proxied("demo-review.example.com"), dev, &names).is_none());
+        let unforwarded = from_loopback("demo-review.example.com", false);
+        let refused = refuse_foreign_host(&unforwarded, dev, &names).expect("a listed name with no forwarding header");
+        assert_eq!(refused.status(), StatusCode::MISDIRECTED_REQUEST);
     }
 
     #[test]
