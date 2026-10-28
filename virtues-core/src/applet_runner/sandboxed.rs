@@ -67,20 +67,15 @@ pub(super) enum Placement {
 }
 
 /// Decide where code runs. Shipped code runs directly. Elsewhere code runs
-/// in the sandbox; off Linux, or in a debug build without systemd, it runs
-/// directly because that is a developer machine. In a release build on Linux
-/// a missing `systemd-run` is a refusal, matching the `shell` tool: the
-/// moment the sandbox quietly stops applying is the moment it stops being
-/// one.
+/// in the sandbox. Only a debug build, which is a developer machine, runs it
+/// directly when there is no systemd. A release build without the sandbox
+/// refuses, on any platform, matching the `shell` tool: the moment the
+/// sandbox quietly stops applying is the moment it stops being one.
 pub(super) fn placement(shipped: bool) -> Result<Placement> {
     if shipped {
         return Ok(Placement::Direct);
     }
-    if !cfg!(target_os = "linux") {
-        tracing::warn!("running an unshipped applet unsandboxed: no systemd on this platform (developer machine)");
-        return Ok(Placement::Direct);
-    }
-    if super::which_systemd_run().is_none() {
+    if !cfg!(target_os = "linux") || super::which_systemd_run().is_none() {
         if cfg!(debug_assertions) {
             tracing::warn!("systemd-run unavailable; running unsandboxed (debug build only)");
             return Ok(Placement::Direct);
@@ -267,15 +262,15 @@ fn inside_path(arg: &str, folder: Option<&Path>) -> String {
 
 /// A sentence refusing the run while the applet's lake folder is over its
 /// limit, or `None`.
-pub(super) async fn over_lake_limit(db: &PgPool, applet_id: &str) -> Result<Option<String>> {
-    let (_, prefix) = lake_folder(applet_id);
-    let used: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(SUM(size_bytes), 0)::bigint FROM lake_objects \
-         WHERE kind = 'applet' AND storage_key LIKE $1 || '%'",
-    )
-    .bind(&prefix)
-    .fetch_one(db)
-    .await?;
+///
+/// Measured on disk, every file and folder, not from the index: the index
+/// reads at most [`MAX_INDEXED_FILES`] and is only as current as its last
+/// pass.
+pub(super) async fn over_lake_limit(applet_id: &str) -> Result<Option<String>> {
+    let (dir, prefix) = lake_folder(applet_id);
+    let used = tokio::task::spawn_blocking(move || folder_bytes(&dir))
+        .await
+        .map_err(|e| Error::Other(format!("lake size task failed: {e}")))? as i64;
     Ok((used > LAKE_FOLDER_LIMIT_BYTES).then(|| {
         format!(
             "This applet's lake folder holds {} MB, over its {} MB limit. Delete files from lake/{prefix} to run it again.",
@@ -297,9 +292,10 @@ pub(super) async fn index_lake_folder(db: &PgPool, applet_id: &str) -> Result<us
         .map_err(|e| Error::Other(format!("lake index task failed: {e}")))?;
 
     let known: Vec<(String, i64, serde_json::Value)> = sqlx::query_as(
-        "SELECT storage_key, size_bytes, metadata FROM lake_objects WHERE kind = 'applet' AND storage_key LIKE $1 || '%'",
+        "SELECT storage_key, size_bytes, metadata FROM lake_objects \
+         WHERE kind = 'applet' AND storage_key LIKE $1 || '%' ESCAPE '\\'",
     )
-    .bind(&prefix)
+    .bind(like_escaped(&prefix))
     .fetch_all(db)
     .await?;
     let known: std::collections::HashMap<String, (i64, Option<i64>)> = known
@@ -316,10 +312,18 @@ pub(super) async fn index_lake_folder(db: &PgPool, applet_id: &str) -> Result<us
             continue;
         }
         let path = f.path.clone();
-        let sha256 = tokio::task::spawn_blocking(move || sha256_of(&path))
+        let sha256 = match tokio::task::spawn_blocking(move || sha256_of(&path))
             .await
             .map_err(|e| Error::Other(format!("lake index task failed: {e}")))?
-            .map_err(|e| Error::Other(format!("could not read {}: {e}", f.path.display())))?;
+        {
+            Ok(h) => h,
+            // One file the server cannot read (the run left it 0000) must not
+            // stop the rest being indexed. Its old row, if any, stays.
+            Err(e) => {
+                tracing::warn!(applet_id, file = %f.path.display(), error = %e, "could not read a lake file to index it");
+                continue;
+            }
+        };
         sqlx::query(
             "INSERT INTO lake_objects (id, kind, storage_key, provider, stream_name, size_bytes, sha256, metadata)
              VALUES ($1, 'applet', $2, 'applet', $3, $4, $5, $6)
@@ -338,13 +342,38 @@ pub(super) async fn index_lake_folder(db: &PgPool, applet_id: &str) -> Result<us
         changed += 1;
     }
     sqlx::query(
-        "DELETE FROM lake_objects WHERE kind = 'applet' AND storage_key LIKE $1 || '%' AND storage_key <> ALL($2)",
+        "DELETE FROM lake_objects WHERE kind = 'applet' AND storage_key LIKE $1 || '%' ESCAPE '\\' \
+         AND storage_key <> ALL($2)",
     )
-    .bind(&prefix)
+    .bind(like_escaped(&prefix))
     .bind(&keys)
     .execute(db)
     .await?;
     Ok(changed)
+}
+
+/// `prefix` as a LIKE pattern that matches only itself: `_` and `%` are
+/// wildcards, and applet names are full of underscores, so `applets/daily_2/`
+/// would match another applet's `applets/daily22/`.
+fn like_escaped(prefix: &str) -> String {
+    prefix.replace('\\', "\\\\").replace('_', "\\_").replace('%', "\\%")
+}
+
+/// Bytes under `dir`: every file and folder, links not followed.
+fn folder_bytes(dir: &Path) -> u64 {
+    let mut total = 0;
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        for entry in entries.flatten() {
+            let Ok(meta) = entry.path().symlink_metadata() else { continue };
+            total += meta.len();
+            if meta.is_dir() {
+                stack.push(entry.path());
+            }
+        }
+    }
+    total
 }
 
 struct LakeFile {
@@ -469,7 +498,30 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(rows, vec![(format!("{prefix}notes.txt"), id.clone(), 14)]);
-        assert!(over_lake_limit(&pool, &id).await.unwrap().is_none());
+        assert!(over_lake_limit(&id).await.unwrap().is_none());
+
+        // `_` in the prefix matches only itself: indexing this applet leaves
+        // a neighbor whose name differs in that one character alone.
+        sqlx::query(
+            "INSERT INTO lake_objects (id, kind, storage_key, provider, stream_name, size_bytes, sha256, metadata) \
+             VALUES ('obj_n', 'applet', $1, 'applet', 'n', 1, 'x', '{}')",
+        )
+        .bind(prefix.replacen("lake_probe_", "lakeXprobe_", 1) + "keep.txt")
+        .execute(&pool)
+        .await
+        .unwrap();
+        index_lake_folder(&pool, &id).await.unwrap();
+        let left: i64 = sqlx::query_scalar("SELECT count(*) FROM lake_objects WHERE id = 'obj_n'").fetch_one(&pool).await.unwrap();
+        assert_eq!(left, 1, "indexing one applet deleted another's row");
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn the_lake_limit_counts_every_file_on_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("a/b")).unwrap();
+        std::fs::write(dir.path().join("a/b/c.bin"), [0u8; 3000]).unwrap();
+        std::fs::write(dir.path().join("d.bin"), [0u8; 500]).unwrap();
+        assert!(folder_bytes(dir.path()) >= 3500);
     }
 }

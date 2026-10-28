@@ -1155,7 +1155,7 @@ async fn run_subprocess(
     let shipped = is_shipped_applet(&action.id);
     let sandbox = sandboxed::placement(shipped)? == sandboxed::Placement::Sandbox;
     if sandbox {
-        if let Some(why) = sandboxed::over_lake_limit(db, &action.id).await? {
+        if let Some(why) = sandboxed::over_lake_limit(&action.id).await? {
             return Err(Error::Other(why));
         }
     }

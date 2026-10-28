@@ -5,8 +5,10 @@
 //!
 //! - `PrivateNetwork=yes`: no network. Only `AF_UNIX` is left as an address
 //!   family, because asyncio and multiprocessing build socketpairs; the
-//!   filesystem sockets the code could otherwise reach (Postgres, D-Bus) are
-//!   hidden below. A unit with an egress socket also gets `AF_INET` and
+//!   filesystem sockets the code could otherwise reach are hidden below:
+//!   `/run` is an empty tmpfs, so D-Bus, avahi and the resolver's socket are
+//!   gone, and only the Postgres socket (when allowed) and the run's egress
+//!   socket are bound back in. A unit with an egress socket also gets `AF_INET` and
 //!   `AF_INET6`, which reach only its own loopback, where [`bridge`] listens.
 //! - `InaccessiblePaths` over the box's data: the lake, the state root,
 //!   secrets, backups, and those sockets. `ProtectSystem=strict` alone makes
@@ -20,6 +22,8 @@
 //!   root: the unit is created through `sudo`, and a system unit with no user
 //!   runs as uid 0. `properties_pin_the_boundary` holds it in place.
 //! - `NoNewPrivileges`, `RestrictNamespaces`, `SystemCallFilter`: seccomp.
+//! - No capabilities, no set-uid files, and the kernel's tunables, logs,
+//!   modules, clock, cgroups and IPC out of reach.
 //!
 //! Folders the code needs are bind-mounted in from the host side, so the
 //! hidden paths above do not hide them.
@@ -106,21 +110,35 @@ impl Unit {
             // The throwaway uid changes every run; files it leaves must stay
             // usable by the next one and deletable by the server.
             "UMask=0000".to_string(),
+            "CapabilityBoundingSet=".to_string(),
+            "RestrictSUIDSGID=yes".to_string(),
+            "ProtectKernelTunables=yes".to_string(),
+            "ProtectKernelModules=yes".to_string(),
+            "ProtectKernelLogs=yes".to_string(),
+            "ProtectControlGroups=yes".to_string(),
+            "ProtectClock=yes".to_string(),
+            "ProtectHostname=yes".to_string(),
+            "PrivateIPC=yes".to_string(),
+            // Every host socket lives under /run. A read-only mount does not
+            // stop a connect, so the whole tree is replaced and the two the
+            // run may use are bound back below.
+            "TemporaryFileSystem=/run:ro".to_string(),
             format!("WorkingDirectory={}", self.working_directory),
         ];
+        if self.postgres {
+            props.push("BindReadOnlyPaths=-/run/postgresql".to_string());
+        }
         // `-` ignores a path that does not exist, so a dev machine or a box laid
         // out differently still starts the unit.
-        for path in ["/var/lib/virtues", "/etc/virtues", "/var/lib/postgresql", "/run/dbus", "/run/user"] {
+        for path in ["/var/lib/virtues", "/etc/virtues", "/var/lib/postgresql"] {
             props.push(format!("InaccessiblePaths=-{path}"));
-        }
-        if !self.postgres {
-            props.push("InaccessiblePaths=-/run/postgresql".to_string());
         }
         // Wherever this box keeps them, which the fixed list may not name.
         for path in [
             crate::applet_templates::state_root(),
             crate::storage::lake::lake_root(),
             crate::api::code_env::code_root(),
+            crate::data_disk::data_dir(),
         ] {
             props.push(format!("InaccessiblePaths=-{}", path.display()));
         }
@@ -208,7 +226,8 @@ mod tests {
             "MemoryMax=1G",
             "RuntimeMaxSec=30",
             "InaccessiblePaths=-/var/lib/virtues",
-            "InaccessiblePaths=-/run/postgresql",
+            "TemporaryFileSystem=/run:ro",
+            "CapabilityBoundingSet=",
             "UMask=0000",
             "BindPaths=/ws:/work",
             "BindReadOnlyPaths=/env:/opt/py",
@@ -220,6 +239,7 @@ mod tests {
             "a named user would replace the throwaway uid"
         );
         assert!(!props.iter().any(|p| p.contains(EGRESS_SOCKET)), "no way out unless granted");
+        assert!(!props.iter().any(|p| p.contains("/run/postgresql")), "no database socket unless granted");
     }
 
     /// The path a client in the unit takes: an ordinary HTTP client with a

@@ -121,9 +121,11 @@ pub async fn run_shell(request: ShellRequest, ws: &Workspace) -> ShellResponse {
                     .to_string(),
             ),
         }
-    } else {
-        // No systemd off Linux — this is only ever a developer machine.
+    } else if cfg!(debug_assertions) {
+        // No systemd off Linux: a debug build here is a developer machine.
         run(direct_command(ws, env.as_deref(), &request.command), timeout_secs).await
+    } else {
+        Err("the shell sandbox needs systemd, which this platform does not have; refusing to run unsandboxed".to_string())
     };
 
     let elapsed_ms = start.elapsed().as_millis() as u64;
