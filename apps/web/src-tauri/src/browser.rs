@@ -204,14 +204,14 @@ pub async fn browser_login(
 const NO_PANE: &str = "The in-app browser is on the Mac for now.";
 
 /// Show `url` in the Browser pane (the tab is already open; nothing announced).
+/// The pane refuses local addresses for the owner's own address bar as well:
+/// the assistant reads whatever the pane shows. A link the pane refuses opens
+/// in the default browser instead (`openWebLink`).
 #[tauri::command]
 pub async fn browser_pane_open(app: AppHandle, url: String) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
-        let page: tauri::Url = url.parse().map_err(|_| format!("`{url}` is not a URL"))?;
-        if !matches!(page.scheme(), "https" | "http") {
-            return Err("Only http and https pages can be opened.".into());
-        }
+        let page = crate::browser_host::checked_page(&url).await?;
         return crate::browser_host::show(&app, &page, false).await.map(|_| ());
     }
     #[cfg(not(target_os = "macos"))]
