@@ -8,6 +8,7 @@
 #
 #   1. claim a blank NVMe   — guarded on "the disk is blank"
 #   2. mint an encryption key — guarded on the deprovision marker
+#   3. set the restricted Postgres logins — guarded on their own marker
 #
 # They are separate because the risks are opposite. Formatting must never key
 # off "this is a fresh unit" (a marker can outlive the state it described, and
@@ -28,6 +29,7 @@ trap sync EXIT
 DATA_DIR=__DATA_DIR__
 ENV_FILE="$DATA_DIR/virtues.env"
 MARKER="$DATA_DIR/.needs-firstboot"
+LOGINS_MARKER="$DATA_DIR/.needs-db-logins"
 
 # Requeue the service chain. THE CLUSTER INSTANCE by name, not just the
 # umbrella: postgresql.service is a oneshot wrapper that reports active while
@@ -625,6 +627,8 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && [ -L "$PG_LINK" ] && [ -n "$PG_VER" 
                 # Unconditional: a cluster may carry the role without the grant.
                 su -s /bin/sh postgres -c "psql -c \"GRANT $sep_role TO virtues WITH ADMIN OPTION\"" >/dev/null 2>&1
             done
+            # Both roles are NOLOGIN here. §3 gives them their logins.
+            touch "$LOGINS_MARKER"
             su -s /bin/sh postgres -c "psql -tAc \"SELECT 1 FROM pg_database WHERE datname='virtues'\"" \
                 2>/dev/null | grep -q 1 || \
                 su -s /bin/sh postgres -c "createdb -O virtues virtues" >/dev/null 2>&1
@@ -679,25 +683,73 @@ if mountpoint -q "$DATA_DIR" 2>/dev/null && ! grep -q '^DATABASE_URL=' "$ENV_FIL
 fi
 
 # ── 2. Mint this unit's encryption key ──────────────────────────────────────
-[ -e "$MARKER" ] || exit 0
+if [ -e "$MARKER" ]; then
+    if grep -q '^VIRTUES_ENCRYPTION_KEY=' "$ENV_FILE" 2>/dev/null; then
+        # Marker present but a key already exists: do NOT rotate it — that would
+        # strand whatever is already encrypted. Just disarm and carry on.
+        rm -f "$MARKER"
+        logger -t virtues-firstboot "marker present but key already set - disarming, not rotating"
+    else
+        # The logins' passwords derive from the key, so a new key needs §3.
+        # Marked before the mint, so a power cut after it still leaves §3 to do.
+        touch "$LOGINS_MARKER"
+        umask 077
+        KEY="$(openssl rand -base64 32)"
+        printf 'VIRTUES_ENCRYPTION_KEY=%s\n' "$KEY" >> "$ENV_FILE"
+        chown virtues:virtues "$ENV_FILE" 2>/dev/null || true
+        chmod 600 "$ENV_FILE"
 
-if grep -q '^VIRTUES_ENCRYPTION_KEY=' "$ENV_FILE" 2>/dev/null; then
-    # Marker present but a key already exists: do NOT rotate it — that would
-    # strand whatever is already encrypted. Just disarm and carry on.
-    rm -f "$MARKER"
-    logger -t virtues-firstboot "marker present but key already set - disarming, not rotating"
-    exit 0
+        # The key must be ON DISK before the marker leaves: the reverse order with a
+        # power cut between them is a box with no key and no licence to mint one —
+        # and everything encrypted so far is garbage with nothing in the logs to say why.
+        sync
+        rm -f "$MARKER"
+        logger -t virtues-firstboot "minted per-unit encryption key"
+    fi
 fi
 
-umask 077
-KEY="$(openssl rand -base64 32)"
-printf 'VIRTUES_ENCRYPTION_KEY=%s\n' "$KEY" >> "$ENV_FILE"
-chown virtues:virtues "$ENV_FILE" 2>/dev/null || true
-chmod 600 "$ENV_FILE"
-
-# The key must be ON DISK before the marker leaves: the reverse order with a
-# power cut between them is a box with no key and no licence to mint one —
-# and everything encrypted so far is garbage with nothing in the logs to say why.
-sync
-rm -f "$MARKER"
-logger -t virtues-firstboot "minted per-unit encryption key"
+# ── 3. Give the restricted Postgres roles their logins ──────────────────────
+# SQL that chat or an applet writes logs in as virtues_face_reader or
+# virtues_applet_writer, with passwords derived from this unit's key, and the
+# server refuses to run that SQL without those logins. §1c creates both roles
+# NOLOGIN and §2 mints the key after it, so neither has a password yet. The
+# server's own role cannot set one, so this does it, as root, before
+# virtues.service first starts.
+#
+# The code is the binary's `db-logins` system repair, the one every upgrade
+# runs. `virtues migrate` started as root runs the system repairs before it
+# drops to the service user, and `--check` applies no migration, so
+# migrations stay with `virtues server` as §1c says.
+#
+# Postgres is not up yet: this unit is ordered before it. So a temporary
+# server is started with pg_ctl, as §1c does and for the same reason. §1c and
+# §2 set the marker, and only this step clears it. It clears it when the
+# repair reported no failure and both roles have the LOGIN attribute. The
+# repair itself logs in over TCP with each password before it reports
+# success, so a password or pg_hba.conf it could not fix shows up as its
+# "could not finish" line, and the marker stays. A power cut or a failure
+# here is retried on the next boot.
+if [ -e "$LOGINS_MARKER" ] && grep -q '^VIRTUES_ENCRYPTION_KEY=' "$ENV_FILE" 2>/dev/null; then
+    PG_CTL="/usr/lib/postgresql/$PG_VER/bin/pg_ctl"
+    PG_MAIN="$PG_LINK/$PG_VER/main"
+    PG_STARTED=""
+    if ! pg_isready -q -h /var/run/postgresql 2>/dev/null && [ -n "$PG_VER" ] && \
+       su -s /bin/sh postgres -c "$PG_CTL -D $PG_MAIN -o '-c config_file=/etc/postgresql/$PG_VER/main/postgresql.conf' -w -t 60 start" >/dev/null 2>&1; then
+        PG_STARTED=1
+    fi
+    REPAIR_OUT="$(__BIN__ migrate --check 2>&1)" || true
+    printf '%s\n' "$REPAIR_OUT" | logger -t virtues-firstboot || true
+    # The backticks are literal: they are part of the repair's line.
+    # shellcheck disable=SC2016
+    if ! printf '%s\n' "$REPAIR_OUT" | grep -qF '`db-logins` could not finish' && \
+       su -s /bin/sh postgres -c "psql -tAc \"SELECT 1 FROM pg_roles WHERE rolname IN ('virtues_face_reader', 'virtues_applet_writer') AND rolcanlogin HAVING count(*) = 2\"" \
+           2>/dev/null | grep -q 1; then
+        rm -f "$LOGINS_MARKER"
+        logger -t virtues-firstboot "set the restricted Postgres logins"
+    else
+        logger -t virtues-firstboot "could not set the restricted Postgres logins, so chat and applets cannot run SQL; retrying next boot (or run: sudo virtues migrate)"
+    fi
+    if [ -n "$PG_STARTED" ]; then
+        su -s /bin/sh postgres -c "$PG_CTL -D $PG_MAIN -w -t 60 stop" >/dev/null 2>&1 || true
+    fi
+fi
