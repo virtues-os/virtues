@@ -284,12 +284,16 @@ pub async fn oauth_callback_handler(
             None
         }
     };
-    let resp = match proxy_exchange(&claims.source_id, &exchange_token, api_key.as_deref()).await {
+    let mut resp = match proxy_exchange(&claims.source_id, &exchange_token, api_key.as_deref()).await {
         Ok(r) => r,
         Err(e) => return auth_error_response(e),
     };
 
-    // 3. Seal the grant: into the row being reconnected, or a new one.
+    // 3. Ask the provider which account the grant is for, when the grant
+    //    does not say, so the next step can tell accounts apart.
+    name_the_account(&claims.source_id, &mut resp).await;
+
+    // 4. Seal the grant: into the row being reconnected, or a new one.
     if let Err(e) = store_grant(
         pool,
         &claims.source_id,
@@ -301,14 +305,14 @@ pub async fn oauth_callback_handler(
         return auth_error_response(e);
     }
 
-    // 4. Reconcile so per-credential fan-out picks up.
+    // 5. Reconcile so per-credential fan-out picks up.
     if let Err(e) = reconcile_templates(pool).await {
         tracing::error!(error = %e, "reconcile after oauth_callback failed");
         // Don't fail the user's redirect — the credential is active; the next
         // reconcile (startup or another callback) will catch up.
     }
 
-    // 5. Hand the browser back. A native (Tauri) connect ran OAuth in the system
+    // 6. Hand the browser back. A native (Tauri) connect ran OAuth in the system
     //    browser, so a 302 into `/sources` would leave the user staring at a second
     //    copy of the app in a browser tab with no way back. Render a terminal
     //    success page instead; the app's own focus handler refreshes the source
@@ -368,10 +372,10 @@ async fn store_grant(
         }
     }
 
-    // Default name = whatever the provider gave us that identifies this
-    // particular connection: the account's email, or the proxy's
-    // `display_name` (Plaid puts the bank's name there — "Plaid account"
-    // tells the user nothing once they've connected three of them).
+    // Default name = whatever identifies this particular connection: the
+    // account's email ([`name_the_account`]), or the proxy's `display_name`
+    // (Plaid puts the bank's name there, because "Plaid account" tells the
+    // user nothing once they've connected three of them).
     // Both keys are generic on purpose; core stays provider-agnostic.
     let default_name = grant
         .metadata
@@ -390,10 +394,11 @@ async fn store_grant(
     Ok(id)
 }
 
-/// The provider account a grant was made for, where the proxy reports one:
-/// a Strava athlete, a Plaid item, a Notion workspace, or the account's
-/// `email` (the proxy adds it to a Google grant when it can look it up).
-/// Rows stored before the proxy sent `email` name no account.
+/// The provider account a grant was made for, where it names one: a Strava
+/// athlete, a Plaid item or a Notion workspace from the proxy, or the
+/// account's `email`, which the box looks up for a Google grant
+/// ([`name_the_account`]). A Google row stored without an address, before
+/// the box looked addresses up or after a lookup failed, names no account.
 fn grant_account(secrets: &serde_json::Value, metadata: &serde_json::Value) -> Option<String> {
     [
         metadata.pointer("/athlete/id"),
@@ -452,7 +457,7 @@ async fn same_account(
 
 /// The metadata a reconnect stores in the row it repairs. A grant replaces
 /// the row's metadata, but a grant that names no account keeps the `email`
-/// the row had. A Google grant names none when the proxy could not look its
+/// the row had. A Google grant names none when the box could not look its
 /// address up. Without the address the row would name no account from then
 /// on, and every later reconnect would repair it, whichever account the owner
 /// signed in to.
@@ -476,6 +481,185 @@ async fn repair_metadata(
         fields.insert("email".to_string(), email);
     }
     Ok(metadata)
+}
+
+/// Name the account of a grant that arrives naming none, for a source that
+/// has a way to ask. The proxy hands a Google grant over with its tokens and
+/// scopes only, so the box asks Google for the account's address with the
+/// grant's own access token. The address goes into the metadata as `email`,
+/// where [`grant_account`] finds it: a reconnect to another account then
+/// adds a row of its own, and a new row is named by the address. When every
+/// lookup fails, the grant is stored as it arrived, naming no account, and a
+/// reconnect repairs the row it was started from.
+async fn name_the_account(source_id: &str, grant: &mut ProxyExchangeResponse) {
+    let lookups = account_lookup::lookups_for(source_id);
+    if lookups.is_empty() {
+        return;
+    }
+    if let Some(client) = account_lookup::client() {
+        name_the_account_with(client, lookups, grant).await;
+    }
+}
+
+/// [`name_the_account`] with the client and lookups given.
+async fn name_the_account_with(
+    client: &reqwest::Client,
+    lookups: &[account_lookup::Lookup<'_>],
+    grant: &mut ProxyExchangeResponse,
+) {
+    if grant_account(&grant.secrets, &grant.metadata).is_some() {
+        return;
+    }
+    let Some(access_token) = grant.secrets.get("access_token").and_then(|v| v.as_str()) else {
+        return;
+    };
+    let Some(email) = account_lookup::account_email(client, lookups, access_token).await else {
+        return;
+    };
+    if grant.metadata.is_null() {
+        grant.metadata = serde_json::json!({});
+    }
+    if let Some(fields) = grant.metadata.as_object_mut() {
+        fields.insert("email".to_string(), serde_json::Value::String(email));
+    }
+}
+
+/// Asking a provider which account a grant was made for, when the grant does
+/// not say. The proxy hands a Google grant to the box with its tokens and
+/// scopes only, so the box asks Google for the account's address itself, with
+/// the grant's own access token, and the read of the owner's mail profile,
+/// calendar or Drive runs on the box.
+mod account_lookup {
+    use std::sync::OnceLock;
+    use std::time::Duration;
+
+    /// One place a provider answers with the account's address: a URL to GET
+    /// with the grant's access token, and a JSON pointer to the address in
+    /// the answer.
+    #[derive(Debug, Clone, Copy)]
+    pub(super) struct Lookup<'a> {
+        pub url: &'a str,
+        pub pointer: &'a str,
+    }
+
+    /// Google's lookups, in order, one under each scope the grant asks for:
+    /// Gmail's profile under `gmail.readonly`, the primary calendar, whose id
+    /// is the account's address, under `calendar.readonly`, and Drive's
+    /// signed-in user under `drive.readonly`. The owner can untick any of
+    /// them on the consent screen, and whichever scope they keep names the
+    /// account.
+    // TODO(2026-10-28): migrate these into the google [[source]] entry in
+    // applets/sources.toml, so core reads them from the catalog and holds no
+    // provider's URLs (tools/arch-lint.sh, lint 1).
+    const GOOGLE: &[Lookup<'static>] = &[
+        Lookup {
+            url: "https://gmail.googleapis.com/gmail/v1/users/me/profile",
+            pointer: "/emailAddress",
+        },
+        Lookup {
+            url: "https://www.googleapis.com/calendar/v3/calendars/primary",
+            pointer: "/id",
+        },
+        Lookup {
+            url: "https://www.googleapis.com/drive/v3/about?fields=user(emailAddress)",
+            pointer: "/user/emailAddress",
+        },
+    ];
+
+    /// The lookups for a source whose grants arrive naming no account. Empty
+    /// for every other source.
+    pub(super) fn lookups_for(source_id: &str) -> &'static [Lookup<'static>] {
+        match source_id {
+            "google" => GOOGLE,
+            _ => &[],
+        }
+    }
+
+    /// How long each lookup may take. The owner is waiting on the sign-in
+    /// redirect while it runs, and the grant works without the address.
+    const LOOKUP_TIMEOUT: Duration = Duration::from_secs(5);
+
+    /// The client the lookups use, built once from the box's rooted builder,
+    /// which every outbound HTTPS client starts from. `None` when it cannot
+    /// be built, which skips the lookups.
+    pub(super) fn client() -> Option<&'static reqwest::Client> {
+        static CLIENT: OnceLock<Option<reqwest::Client>> = OnceLock::new();
+        CLIENT
+            .get_or_init(|| {
+                match crate::http_client::base_builder()
+                    .connect_timeout(LOOKUP_TIMEOUT)
+                    .timeout(LOOKUP_TIMEOUT)
+                    .build()
+                {
+                    Ok(client) => Some(client),
+                    Err(e) => {
+                        tracing::warn!(error = %e, "could not build the account lookup client");
+                        None
+                    }
+                }
+            })
+            .as_ref()
+    }
+
+    /// Why one lookup named no account.
+    enum Failure {
+        /// The provider answered without an address, usually by refusing a
+        /// scope the owner unticked. The next lookup may still name it.
+        NoAddress(String),
+        /// The request got no answer: no connection, or the timeout ran out.
+        /// The next lookup would wait on the same network.
+        NoAnswer(String),
+    }
+
+    /// The address of the account `access_token` was granted for, in
+    /// lowercase, from the first lookup that answers with one. It is
+    /// lowercased because providers ignore case in an address and the box
+    /// compares it as a plain string. A lookup that gets no answer stops the
+    /// rest, so the owner waits on the redirect for one timeout at most.
+    /// `None` leaves the grant naming no account. The log line names each
+    /// lookup and its reason, never the token or the answer.
+    pub(super) async fn account_email(
+        client: &reqwest::Client,
+        lookups: &[Lookup<'_>],
+        access_token: &str,
+    ) -> Option<String> {
+        let mut failures = Vec::new();
+        for lookup in lookups {
+            match ask(client, lookup, access_token).await {
+                Ok(email) => return Some(email),
+                Err(Failure::NoAddress(reason)) => failures.push(format!("{}: {reason}", lookup.url)),
+                Err(Failure::NoAnswer(reason)) => {
+                    failures.push(format!("{}: {reason}", lookup.url));
+                    break;
+                }
+            }
+        }
+        tracing::warn!(?failures, "no lookup named the grant's account; it is stored without an address");
+        None
+    }
+
+    async fn ask(client: &reqwest::Client, lookup: &Lookup<'_>, access_token: &str) -> Result<String, Failure> {
+        let resp = client
+            .get(lookup.url)
+            .bearer_auth(access_token)
+            .send()
+            .await
+            .map_err(|e| Failure::NoAnswer(e.to_string()))?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(Failure::NoAddress(format!("status {status}")));
+        }
+        let answer: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|_| Failure::NoAddress("the answer was not JSON".to_string()))?;
+        answer
+            .pointer(lookup.pointer)
+            .and_then(|v| v.as_str())
+            .filter(|s| s.contains('@'))
+            .map(str::to_lowercase)
+            .ok_or_else(|| Failure::NoAddress("the answer had no address".to_string()))
+    }
 }
 
 /// Sending the iOS app's sign-in sheet here closes it. Only the sheet
@@ -708,7 +892,7 @@ mod tests {
         }
     }
 
-    /// A Google grant with the account address the proxy looked up, or none
+    /// A Google grant with the account address the box looked up, or none
     /// when its lookup failed.
     fn email_grant(access_token: &str, email: Option<&str>) -> ProxyExchangeResponse {
         let mut grant = grant(access_token, Some(3600));
@@ -922,12 +1106,7 @@ mod tests {
         let nick = store_grant(&pool, "google", None, &email_grant("at-first", Some("nick@example.com")))
             .await
             .unwrap();
-        let name: String = sqlx::query_scalar("SELECT name FROM credentials WHERE id = $1")
-            .bind(&nick)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(name, "nick@example.com", "the address names the sign-in");
+        assert_eq!(name(&pool, &nick).await, "nick@example.com", "the address names the sign-in");
         mark_credential_status(&pool, &nick, CredentialStatus::ReauthRequired, None)
             .await
             .unwrap();
@@ -960,8 +1139,8 @@ mod tests {
             .unwrap();
         assert_ne!(after, nick, "the kept address still tells the accounts apart");
 
-        // A row stored before the proxy sent `email` is repaired as before,
-        // and keeps the address from then on.
+        // A row stored without an address is repaired, and keeps the address
+        // from then on.
         let older = store_grant(&pool, "google", None, &grant("at-old", Some(3600))).await.unwrap();
         let repaired = store_grant(&pool, "google", Some(&older), &email_grant("at-new", Some("david@example.com")))
             .await
@@ -976,6 +1155,252 @@ mod tests {
             .fetch_one(pool)
             .await
             .unwrap()
+    }
+
+    async fn name(pool: &PgPool, id: &str) -> String {
+        sqlx::query_scalar("SELECT name FROM credentials WHERE id = $1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    fn http() -> reqwest::Client {
+        crate::http_client::ensure_crypto_provider();
+        reqwest::Client::builder().no_proxy().build().unwrap()
+    }
+
+    fn answers(body: serde_json::Value) -> (StatusCode, serde_json::Value) {
+        (StatusCode::OK, body)
+    }
+
+    /// Google's answer to a lookup under a scope the owner unticked.
+    fn refused() -> (StatusCode, serde_json::Value) {
+        (StatusCode::FORBIDDEN, serde_json::json!({ "error": { "code": 403 } }))
+    }
+
+    /// A stand-in for Google's three account lookups on a local port.
+    /// `/gmail`, `/calendar` and `/drive` answer with the status and JSON
+    /// given, and every request is recorded as "<path> <authorization header>".
+    struct Google {
+        gmail: String,
+        calendar: String,
+        drive: String,
+        seen: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl Google {
+        async fn answering(
+            gmail: (StatusCode, serde_json::Value),
+            calendar: (StatusCode, serde_json::Value),
+            drive: (StatusCode, serde_json::Value),
+        ) -> Self {
+            let seen = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+            let app = axum::Router::new()
+                .route("/gmail", Self::route("/gmail", gmail, seen.clone()))
+                .route("/calendar", Self::route("/calendar", calendar, seen.clone()))
+                .route("/drive", Self::route("/drive", drive, seen.clone()));
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+            Self {
+                gmail: format!("http://{addr}/gmail"),
+                calendar: format!("http://{addr}/calendar"),
+                drive: format!("http://{addr}/drive"),
+                seen,
+            }
+        }
+
+        fn route(
+            path: &'static str,
+            (status, body): (StatusCode, serde_json::Value),
+            seen: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        ) -> axum::routing::MethodRouter {
+            axum::routing::get(move |headers: HeaderMap| {
+                let authorization = headers
+                    .get(axum::http::header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or_default()
+                    .to_string();
+                seen.lock().unwrap().push(format!("{path} {authorization}"));
+                let body = body.clone();
+                async move { (status, Json(body)) }
+            })
+        }
+
+        /// The box's Google lookups, in their order and with their pointers,
+        /// with the URLs pointed here.
+        fn lookups(&self) -> Vec<account_lookup::Lookup<'_>> {
+            let here = [&self.gmail, &self.calendar, &self.drive];
+            let google = account_lookup::lookups_for("google");
+            assert_eq!(google.len(), here.len(), "a stand-in for each of Google's lookups");
+            google
+                .iter()
+                .zip(here)
+                .map(|(lookup, url)| account_lookup::Lookup { url, pointer: lookup.pointer })
+                .collect()
+        }
+
+        fn seen(&self) -> Vec<String> {
+            self.seen.lock().unwrap().clone()
+        }
+    }
+
+    #[test]
+    fn only_google_grants_are_looked_up() {
+        assert_eq!(account_lookup::lookups_for("google").len(), 3);
+        for source in ["strava", "notion", "plaid", "example_source"] {
+            assert!(account_lookup::lookups_for(source).is_empty(), "{source}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_grant_that_names_its_account_is_not_looked_up() {
+        let google = Google::answering(
+            answers(serde_json::json!({ "emailAddress": "david@example.com" })),
+            answers(serde_json::json!({ "id": "david@example.com" })),
+            answers(serde_json::json!({ "user": { "emailAddress": "david@example.com" } })),
+        )
+        .await;
+        let mut named = email_grant("at-first", Some("nick@example.com"));
+        name_the_account_with(&http(), &google.lookups(), &mut named).await;
+        assert_eq!(named.metadata["email"], "nick@example.com");
+        assert!(google.seen().is_empty(), "{:?}", google.seen());
+    }
+
+    #[tokio::test]
+    async fn whichever_scope_the_owner_kept_names_the_account() {
+        let gmail = answers(serde_json::json!({ "emailAddress": "nick@example.com", "messagesTotal": 3 }));
+        let calendar = answers(serde_json::json!({ "id": "nick@example.com", "summary": "Nick" }));
+        let drive = answers(serde_json::json!({ "user": { "emailAddress": "nick@example.com" } }));
+        let kept = [
+            ("/gmail", Google::answering(gmail, refused(), refused()).await),
+            ("/calendar", Google::answering(refused(), calendar, refused()).await),
+            ("/drive", Google::answering(refused(), refused(), drive).await),
+        ];
+        for (scope, google) in kept {
+            let mut grant = grant("at-first", Some(3600));
+            name_the_account_with(&http(), &google.lookups(), &mut grant).await;
+            assert_eq!(grant.metadata["email"], "nick@example.com", "{scope}");
+            let seen = google.seen();
+            assert_eq!(seen.last().map(String::as_str), Some(format!("{scope} Bearer at-first").as_str()));
+        }
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_looked_up_address_names_the_row_and_keeps_accounts_apart(pool: PgPool) {
+        ensure_test_key();
+        let google = Google::answering(
+            answers(serde_json::json!({ "emailAddress": "Nick@Example.com", "messagesTotal": 3 })),
+            answers(serde_json::json!({ "id": "nick@example.com" })),
+            answers(serde_json::json!({ "user": { "emailAddress": "nick@example.com" } })),
+        )
+        .await;
+        let mut first = grant("at-first", Some(3600));
+        name_the_account_with(&http(), &google.lookups(), &mut first).await;
+        assert_eq!(first.metadata["email"], "nick@example.com", "the address is lowercased");
+        assert_eq!(
+            google.seen(),
+            ["/gmail Bearer at-first"],
+            "the grant's own token, and no other lookup once Gmail answers"
+        );
+        let nick = store_grant(&pool, "google", None, &first).await.unwrap();
+        assert_eq!(name(&pool, &nick).await, "nick@example.com", "the address names the sign-in");
+        mark_credential_status(&pool, &nick, CredentialStatus::ReauthRequired, None)
+            .await
+            .unwrap();
+
+        // The owner reconnects the row but signs in to another account.
+        let other_account = Google::answering(
+            answers(serde_json::json!({ "emailAddress": "david@example.com" })),
+            answers(serde_json::json!({ "id": "david@example.com" })),
+            answers(serde_json::json!({ "user": { "emailAddress": "david@example.com" } })),
+        )
+        .await;
+        let mut other = grant("at-other", Some(3600));
+        name_the_account_with(&http(), &other_account.lookups(), &mut other).await;
+        let added = store_grant(&pool, "google", Some(&nick), &other).await.unwrap();
+        assert_ne!(added, nick, "another Google account is a sign-in of its own");
+        assert_eq!(name(&pool, &added).await, "david@example.com");
+        assert_eq!(row(&pool, &nick).await.0, "reauth_required");
+        let secrets = read_credential_secrets(&pool, &nick).await.unwrap();
+        assert_eq!(secrets["access_token"], "at-first", "the old row keeps its own grant");
+
+        // An owner who unticked Gmail is named by the primary calendar, and
+        // the same account repairs the row.
+        let calendar_only = Google::answering(
+            refused(),
+            answers(serde_json::json!({ "id": "nick@example.com", "summary": "Nick" })),
+            refused(),
+        )
+        .await;
+        let mut again = grant("at-second", Some(3600));
+        name_the_account_with(&http(), &calendar_only.lookups(), &mut again).await;
+        assert_eq!(calendar_only.seen(), ["/gmail Bearer at-second", "/calendar Bearer at-second"]);
+        let repaired = store_grant(&pool, "google", Some(&nick), &again).await.unwrap();
+        assert_eq!(repaired, nick, "the same account repairs the row");
+        assert_eq!(row(&pool, &nick).await.0, "active");
+        let secrets = read_credential_secrets(&pool, &nick).await.unwrap();
+        assert_eq!(secrets["access_token"], "at-second");
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_failed_lookup_leaves_the_email_out_and_repairs_the_row(pool: PgPool) {
+        ensure_test_key();
+        let nick = store_grant(&pool, "google", None, &email_grant("at-first", Some("nick@example.com")))
+            .await
+            .unwrap();
+        mark_credential_status(&pool, &nick, CredentialStatus::ReauthRequired, None)
+            .await
+            .unwrap();
+
+        // Gmail and Drive refuse, and the calendar answers without an address.
+        let google = Google::answering(
+            refused(),
+            answers(serde_json::json!({ "id": "primary-calendar" })),
+            refused(),
+        )
+        .await;
+        let mut regrant = grant("at-second", Some(3600));
+        name_the_account_with(&http(), &google.lookups(), &mut regrant).await;
+        assert_eq!(google.seen().len(), 3, "every lookup was asked");
+        assert_eq!(
+            regrant.metadata,
+            grant("at-second", Some(3600)).metadata,
+            "no `email` key, not even a null"
+        );
+
+        let repaired = store_grant(&pool, "google", Some(&nick), &regrant).await.unwrap();
+        assert_eq!(repaired, nick, "a grant naming no account repairs the row it was started from");
+        assert_eq!(row(&pool, &nick).await.0, "active");
+        let secrets = read_credential_secrets(&pool, &nick).await.unwrap();
+        assert_eq!(secrets["access_token"], "at-second");
+        assert_eq!(metadata(&pool, &nick).await["email"], "nick@example.com", "the row keeps its address");
+
+        // A fresh connect whose first lookup gets no answer asks no other,
+        // and keeps the default name.
+        let closed = {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            format!("http://{}/gmail", listener.local_addr().unwrap())
+        };
+        let next = Google::answering(
+            answers(serde_json::json!({ "emailAddress": "david@example.com" })),
+            refused(),
+            refused(),
+        )
+        .await;
+        let lookups = [
+            account_lookup::Lookup { url: &closed, pointer: "/emailAddress" },
+            next.lookups()[0],
+        ];
+        let mut fresh = grant("at-fresh", Some(3600));
+        name_the_account_with(&http(), &lookups, &mut fresh).await;
+        assert!(fresh.metadata.get("email").is_none(), "{}", fresh.metadata);
+        assert!(next.seen().is_empty(), "{:?}", next.seen());
+        let added = store_grant(&pool, "google", None, &fresh).await.unwrap();
+        let added_name = name(&pool, &added).await;
+        assert!(added_name.ends_with(" account"), "{added_name}");
+        assert!(metadata(&pool, &added).await.get("email").is_none());
     }
 
     #[sqlx::test(migrations = "./migrations")]

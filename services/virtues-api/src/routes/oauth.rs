@@ -847,10 +847,9 @@ async fn exchange_oauth_code(
     match provider {
         "google" => {
             let scope = v.get("scope").and_then(|x| x.as_str()).map(String::from);
-            let email = google_account_email(&state.http_client, &GOOGLE_ACCOUNT_LOOKUPS, &access).await;
             Ok(Normalized {
                 secrets: json!({ "access_token": access, "refresh_token": v.get("refresh_token") }),
-                metadata: google_metadata(scope.as_deref(), email.as_deref()),
+                metadata: json!({ "granted_scopes": scope }),
                 expires_in: v.get("expires_in").and_then(|x| x.as_i64()),
                 scopes: scope.map(|s| s.split(' ').map(String::from).collect()),
             })
@@ -881,63 +880,6 @@ async fn exchange_oauth_code(
         }),
         _ => Err("unknown provider".into()),
     }
-}
-
-/// Where the proxy reads a Google grant's account address, in order, with the
-/// field that holds it. Each works under one of the scopes the grant asks
-/// for: Gmail's profile under `gmail.readonly`, and the primary calendar,
-/// whose id is the account's address, under `calendar.readonly`. The second
-/// covers an owner who unticked Gmail on the consent screen.
-const GOOGLE_ACCOUNT_LOOKUPS: [(&str, &str); 2] = [
-    ("https://gmail.googleapis.com/gmail/v1/users/me/profile", "emailAddress"),
-    ("https://www.googleapis.com/calendar/v3/calendars/primary", "id"),
-];
-
-/// How long the callback waits for each lookup. The owner is looking at the
-/// redirect while they run, and the grant works without the address.
-const LOOKUP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
-
-/// The address of the Google account a grant was made for, in lowercase. A
-/// box compares it when the owner reconnects, so signing in to a different
-/// Google account adds a sign-in instead of moving the old one to the new
-/// account. It is lowercased because Google ignores case in an address and
-/// the box compares it as a plain string. `None` when every lookup fails; the
-/// box then treats the grant as naming no account.
-async fn google_account_email(
-    client: &reqwest::Client,
-    lookups: &[(&str, &str)],
-    access_token: &str,
-) -> Option<String> {
-    for (url, field) in lookups {
-        let resp = client
-            .get(*url)
-            .bearer_auth(access_token)
-            .timeout(LOOKUP_TIMEOUT)
-            .send()
-            .await;
-        match json_ok(resp).await {
-            Ok(v) => {
-                if let Some(email) = v.get(*field).and_then(|x| x.as_str()).filter(|s| s.contains('@')) {
-                    return Some(email.to_lowercase());
-                }
-                tracing::warn!(lookup = *url, "google account lookup answered without an address");
-            }
-            // UpstreamError carries a status and an OAuth code, never the body
-            // or the token.
-            Err(e) => tracing::warn!(lookup = *url, error = %e, "google account lookup failed"),
-        }
-    }
-    None
-}
-
-/// The metadata a Google grant hands the box. `email` is left out when every
-/// lookup failed, so the box falls back to its own default name.
-fn google_metadata(scope: Option<&str>, email: Option<&str>) -> Value {
-    let mut metadata = json!({ "granted_scopes": scope });
-    if let Some(email) = email {
-        metadata["email"] = json!(email);
-    }
-    metadata
 }
 
 /// The Hosted Link return leg. Reached with an empty query string, so the whole
@@ -1863,87 +1805,6 @@ mod tests {
         // The message released boxes log keeps its old form, plus the code.
         assert_eq!(body["error"], json!("refresh failed: upstream status 400 (invalid_grant)"));
         assert!(!body.to_string().contains("upstream 4"), "{body}");
-    }
-
-    /// A client like the server's: reqwest here has no rustls provider of its
-    /// own, and `main` installs ring before it builds one.
-    fn test_client() -> reqwest::Client {
-        let _ = rustls::crypto::ring::default_provider().install_default();
-        reqwest::Client::new()
-    }
-
-    /// Answers one HTTP request on a local port with `status` and `body`,
-    /// and hands back the request it read.
-    async fn answer_once(status: &str, body: &str) -> (String, tokio::task::JoinHandle<String>) {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/lookup", listener.local_addr().unwrap());
-        let response = format!(
-            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
-            body.len()
-        );
-        let served = tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut buf = vec![0u8; 4096];
-            let n = socket.read(&mut buf).await.unwrap();
-            socket.write_all(response.as_bytes()).await.unwrap();
-            String::from_utf8_lossy(&buf[..n]).into_owned()
-        });
-        (url, served)
-    }
-
-    #[tokio::test]
-    async fn a_google_grant_names_its_account() {
-        let client = test_client();
-        let (url, served) =
-            answer_once("200 OK", r#"{"emailAddress": "Nick@Example.com", "messagesTotal": 3}"#).await;
-        // The first lookup answers, so the second is never asked.
-        let lookups = [(url.as_str(), "emailAddress"), ("http://127.0.0.1:9/unused", "id")];
-        let email = google_account_email(&client, &lookups, "at-example").await;
-        assert_eq!(email.as_deref(), Some("nick@example.com"));
-        let request = served.await.unwrap().to_ascii_lowercase();
-        assert!(request.contains("authorization: bearer at-example"), "{request}");
-
-        assert_eq!(
-            google_metadata(Some("gmail.readonly calendar.readonly"), email.as_deref()),
-            json!({ "granted_scopes": "gmail.readonly calendar.readonly", "email": "nick@example.com" })
-        );
-    }
-
-    #[tokio::test]
-    async fn a_grant_without_gmail_is_named_by_its_calendar() {
-        let client = test_client();
-        // The owner unticked Gmail on the consent screen.
-        let (gmail, gmail_served) = answer_once("403 Forbidden", r#"{"error": {"code": 403}}"#).await;
-        let (calendar, calendar_served) =
-            answer_once("200 OK", r#"{"id": "nick@example.com", "summary": "Nick"}"#).await;
-        let lookups = [(gmail.as_str(), "emailAddress"), (calendar.as_str(), "id")];
-        let email = google_account_email(&client, &lookups, "at-example").await;
-        assert_eq!(email.as_deref(), Some("nick@example.com"));
-        gmail_served.await.unwrap();
-        let request = calendar_served.await.unwrap().to_ascii_lowercase();
-        assert!(request.contains("authorization: bearer at-example"), "{request}");
-    }
-
-    #[tokio::test]
-    async fn a_failed_account_lookup_leaves_the_email_out() {
-        let client = test_client();
-        let (gmail, gmail_served) = answer_once("403 Forbidden", r#"{"error": {"code": 403}}"#).await;
-        let (calendar, calendar_served) = answer_once("200 OK", r#"{"id": "primary-calendar"}"#).await;
-        let lookups = [(gmail.as_str(), "emailAddress"), (calendar.as_str(), "id")];
-        assert_eq!(google_account_email(&client, &lookups, "at-example").await, None);
-        gmail_served.await.unwrap();
-        calendar_served.await.unwrap();
-
-        let (url, served) = answer_once("200 OK", r#"{"emailAddress": ""}"#).await;
-        assert_eq!(google_account_email(&client, &[(url.as_str(), "emailAddress")], "at-example").await, None);
-        served.await.unwrap();
-
-        // No `email` key at all, so the box's default name does not stop at a null.
-        assert_eq!(
-            google_metadata(Some("calendar.readonly"), None),
-            json!({ "granted_scopes": "calendar.readonly" })
-        );
     }
 
     #[test]
