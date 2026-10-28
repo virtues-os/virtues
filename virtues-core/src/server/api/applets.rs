@@ -54,6 +54,12 @@ pub fn routes() -> Router<AppState> {
             "/api/applets/:id/hosts",
             get(get_applet_hosts_handler).put(put_applet_hosts_handler),
         )
+        // The connections an applet may use, set here only for the same
+        // reason (scheduler::applets::set_applet_connections).
+        .route(
+            "/api/applets/:id/connections",
+            get(get_applet_connections_handler).put(put_applet_connections_handler),
+        )
         .route("/api/applets/:id/run", post(trigger_applet_handler))
         .route("/api/applets/:id/message", post(message_applet_handler))
         .route("/api/applets/:id/data", get(get_applet_data_handler))
@@ -655,6 +661,31 @@ pub async fn put_applet_hosts_handler(
     Json(body): Json<PutHostsBody>,
 ) -> Result<Json<crate::scheduler::applets::NetHosts>, Error> {
     Ok(Json(crate::scheduler::applets::set_net_hosts(state.db.pool(), &applet_id, &body.hosts).await?))
+}
+
+/// GET /api/applets/:id/connections — the connections the applet's file asks
+/// for and the ones the owner allowed.
+pub async fn get_applet_connections_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+) -> Result<Json<crate::scheduler::applets::AppletConnections>, Error> {
+    Ok(Json(crate::scheduler::applets::applet_connections(state.db.pool(), &applet_id).await?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PutConnectionsBody {
+    pub connections: Vec<String>,
+}
+
+/// PUT /api/applets/:id/connections — set the connections the owner allows.
+pub async fn put_applet_connections_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+    Json(body): Json<PutConnectionsBody>,
+) -> Result<Json<crate::scheduler::applets::AppletConnections>, Error> {
+    Ok(Json(
+        crate::scheduler::applets::set_applet_connections(state.db.pool(), &applet_id, &body.connections).await?,
+    ))
 }
 
 /// PATCH /api/applets/:id — partial update. Enforces system-owner guard.

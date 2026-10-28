@@ -152,6 +152,8 @@ pub async fn run_agent_loop(
                 let mut tools = crate::tools::get_tools_for_applet(chat_id.is_some(), allowed_tools.as_deref());
                 // Its `references/` and `assets/`, when it has any.
                 tools.extend(crate::tools::use_applet::own_files_definition_for_id(applet_id));
+                // The connection tools its file lists and the owner allowed.
+                tools.extend(crate::tools::connection::applet_tool_definitions(pool, applet_id).await);
                 tools
             },
             tool_context,

@@ -155,7 +155,12 @@ An applet names a connection's tools in `allowed-tools`, by tool or by
 connection (`linear__*`). For the Rule of Two in applet-shape.md, a
 connection counts as both outside text (its results) and a way out (its
 writes). As with `net(…)` hosts, only the owner can add a connection to an
-applet that did not ship; the assistant's `applet` tool cannot.
+applet; the assistant's `applet` tool cannot. The owner allows it on the
+applet's page (`app_applets.connections`, set only by
+`PUT /api/applets/:id/connections`), and a run gets the tools only when the
+file and the owner both name the connection. This applies to shipped
+applets too, the same as hosts. A tool its server labels destructive is never
+offered to a run.
 
 Chat already holds all three legs through `browse` and `send_imessage`, and a
 connection adds another. Applet-shape.md leaves chat's leak paths out of
@@ -411,9 +416,16 @@ name.
      sending it to `virtues-signin://done` when the sign-in carries
      `sheet=1`. Not yet run on a phone: whether a source's return to
      `:7117` loads inside the sheet is the open question.
-4. **Connections in applets.** `allowed-tools` entries for connection tools,
-   the Rule of Two legs, owner-only adding. Then owner-added URLs from
-   Settings.
+4. **Connections in applets.** Built on wave: `allowed-tools` takes
+   `linear__*` and `linear__save_comment`; the owner allows a connection on
+   the applet's page (migration 0071), the same switch list as hosts
+   (`AppletAllowList.svelte`); an unattended run is offered the named,
+   non-destructive tools of the connections on both lists; and `call_tool`
+   refuses an applet run's call to anything outside that, before reaching
+   the service, since the agent loop runs a call to a tool it did not offer.
+   Not yet run against a real service from an applet. A turn `/name` starts
+   does not get connection tools; it has the chat's `connection` tool if
+   the applet lists it. Owner-added URLs from Settings remain.
 5. **Tier 2.** The SNI router (shared with publishing wave 3), the box as an
    authorization server, the approve-in-the-app flow, the token class, the
    tier 2 allowlist and the terms flag. Tier 3's setting follows from it.

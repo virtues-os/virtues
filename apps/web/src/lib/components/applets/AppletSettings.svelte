@@ -1,10 +1,18 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
 	import AppletSource from '$lib/components/applets/AppletSource.svelte';
-	import AppletHosts from '$lib/components/applets/AppletHosts.svelte';
+	import AppletAllowList from '$lib/components/applets/AppletAllowList.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
-	import { patchApplet, type Applet, type PatchAppletBody } from '$lib/api/client';
+	import {
+		getAppletConnections,
+		getAppletHosts,
+		patchApplet,
+		putAppletConnections,
+		putAppletHosts,
+		type Applet,
+		type PatchAppletBody
+	} from '$lib/api/client';
 	import { describeSchedule } from '$lib/applets/palette';
 
 	/**
@@ -209,7 +217,25 @@
 		</div>
 	{/if}
 
-	<AppletHosts appletId={action.id} />
+	<AppletAllowList
+		appletId={action.id}
+		label="Hosts it can reach"
+		what="hosts"
+		hint="Its code asks to reach these hosts. Nothing goes out until you allow a host here. A host you allow can receive what the applet reads, including your records."
+		load={getAppletHosts}
+		save={putAppletHosts}
+	/>
+
+	<AppletAllowList
+		appletId={action.id}
+		label="Services it can use"
+		what="connections"
+		hint="It asks to use these connected services. It can't until you allow one here. A service you allow can receive what the applet reads, including your records. Tools a service marks as deleting something are never offered to it."
+		load={getAppletConnections}
+		save={putAppletConnections}
+		unavailable={(name, grant) =>
+			grant.connected?.includes(name) ? null : 'Not connected. Connect it in Sources first.'}
+	/>
 
 	<!-- Three facts the page never showed, and the reason a person
 	     could not tell why an applet had or hadn't run: what wakes

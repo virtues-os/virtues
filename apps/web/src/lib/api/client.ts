@@ -703,6 +703,24 @@ export function putAppletHosts(id: string, hosts: string[]): Promise<AppletHosts
 	return apiSend<AppletHosts>('PUT', `/applets/${encodeURIComponent(id)}/hosts`, { hosts });
 }
 
+/** The connections an applet's file asks for (`linear__*`), the ones you
+ *  allowed, and the asked-for ones your server holds a sign-in for. */
+export interface AppletConnections {
+	requested: string[];
+	allowed: string[];
+	connected: string[];
+}
+
+export function getAppletConnections(id: string): Promise<AppletConnections> {
+	return apiGet<AppletConnections>(`/applets/${encodeURIComponent(id)}/connections`);
+}
+
+export function putAppletConnections(id: string, connections: string[]): Promise<AppletConnections> {
+	return apiSend<AppletConnections>('PUT', `/applets/${encodeURIComponent(id)}/connections`, {
+		connections,
+	});
+}
+
 export async function deleteApplet(id: string, dropData = false): Promise<void> {
 	await request(`/applets/${encodeURIComponent(id)}`, {
 		method: 'DELETE',

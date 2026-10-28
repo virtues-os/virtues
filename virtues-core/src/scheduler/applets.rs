@@ -712,6 +712,63 @@ pub async fn set_net_hosts(db: &PgPool, applet_id: &str, hosts: &[String]) -> Re
     net_hosts(db, applet_id).await
 }
 
+/// The connections an applet's file asks for (`linear__*` in
+/// `allowed-tools`) and the ones the owner allowed, by short name. A run gets
+/// the tools of the connections on both lists (`tools::connection`).
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+pub struct AppletConnections {
+    pub requested: Vec<String>,
+    pub allowed: Vec<String>,
+    /// The requested ones the box holds a sign-in for. The others cannot be
+    /// allowed until the owner connects them in Sources.
+    pub connected: Vec<String>,
+}
+
+pub async fn applet_connections(db: &PgPool, applet_id: &str) -> Result<AppletConnections> {
+    let applet = get_applet(db, applet_id).await?;
+    let entries: Vec<String> = applet
+        .config
+        .get("allowed_tools")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let allowed: Vec<String> = sqlx::query_scalar("SELECT connections FROM app_applets WHERE id = $1")
+        .bind(applet_id)
+        .fetch_one(db)
+        .await?;
+    let requested = crate::tools::connection::requested(&entries);
+    let held = crate::tools::connection::connected(db).await?;
+    let connected = requested.iter().filter(|r| held.iter().any(|c| &&c.id == r)).cloned().collect();
+    Ok(AppletConnections { requested, allowed, connected })
+}
+
+/// Set the connections the owner allows. Only the owner's own API route
+/// calls this, for the same reason as [`set_net_hosts`]: a connection's
+/// writes are a way out. Each name must be a connection the box holds.
+pub async fn set_applet_connections(db: &PgPool, applet_id: &str, names: &[String]) -> Result<AppletConnections> {
+    let held = crate::tools::connection::connected(db).await?;
+    let mut checked: Vec<String> = Vec::new();
+    for name in names {
+        if !held.iter().any(|c| &c.id == name) {
+            return Err(Error::InvalidInput(format!(
+                "{name} is not a connected service. Connect it in Sources first."
+            )));
+        }
+        if !checked.contains(name) {
+            checked.push(name.clone());
+        }
+    }
+    let res = sqlx::query("UPDATE app_applets SET connections = $1, updated_at = now() WHERE id = $2")
+        .bind(&checked)
+        .bind(applet_id)
+        .execute(db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
+    }
+    applet_connections(db, applet_id).await
+}
+
 /// Slugify a name into a lowercase `a-z0-9_` identifier suitable for use as
 /// an action id suffix.
 fn slugify(name: &str) -> String {

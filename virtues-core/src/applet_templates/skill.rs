@@ -17,7 +17,8 @@
 //! A `net(host)` entry asks for a host. It is kept in `config.net_hosts`,
 //! and a run reaches it only when the owner has also allowed it on the
 //! applet's page (`app_applets.net_hosts`), so nothing written in the file
-//! opens a way out on its own.
+//! opens a way out on its own. A connection entry (`linear__*`) works the
+//! same way against `app_applets.connections` (`tools/connection.rs`).
 
 use std::path::Path;
 
@@ -802,6 +803,17 @@ fn check_allowed_tools(list: &str, shipped: bool, errors: &mut Vec<String>) -> (
             if !out.iter().any(|t| t == entry) {
                 out.push(entry.to_string());
             }
+        } else if crate::tools::connection::split(entry).is_some() {
+            // A connection's tools, `linear__*` or `linear__save_comment`.
+            // Kept in the list as written; a run gets them only once the
+            // owner also allows the connection on the applet's page.
+            if crate::tools::connection::applet_entry(entry).is_none() {
+                errors.push(format!(
+                    "`{entry}` must name a connection's tool, such as `linear__save_comment`, or all of them, such as `linear__*`."
+                ));
+            } else if !out.iter().any(|t| t == entry) {
+                out.push(entry.to_string());
+            }
         } else if entry == "think" {
             // A run always has it; listed, a turn `/name` starts gets it too.
             if !out.iter().any(|t| t == entry) {
@@ -1455,6 +1467,18 @@ mod tests {
             .map(|v| v.as_str().unwrap().to_string())
             .collect();
         assert_eq!(tools, ["sql_query", "lake"], "lake is a grant, kept beside the tools");
+    }
+
+    /// A connection's tools are listed as written, for the runner to match
+    /// against the connections the owner allowed.
+    #[test]
+    fn allowed_tools_may_name_a_connections_tools() {
+        let t = ok(&format!("{BASE}\nallowed-tools: sql_query linear__* notion__search linear__*"), "Do it.");
+        let cfg = t.config.unwrap();
+        let tools: Vec<&str> = cfg["allowed_tools"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
+        assert_eq!(tools, ["sql_query", "linear__*", "notion__search"]);
+        let e = refused(&format!("{BASE}\nallowed-tools: linear__x(y)"), "Do it.");
+        assert!(e.contains("must name a connection's tool"), "{e}");
     }
 
     #[test]

@@ -27,6 +27,15 @@
 //! worker loop with only that service's tools on the Lite slot, the way
 //! `browse` does. The chat's own tool list stays the same whatever is
 //! connected, so its cached prompt does too.
+//!
+//! An applet run calls a connection's tools directly. Its file asks for them
+//! in `allowed-tools` (`linear__*`, or `linear__save_comment`), and the owner
+//! allows the connection on the applet's page (`app_applets.connections`). A
+//! run gets the tools only when both name the connection, as with `net(host)`:
+//! a connection's results are outside text and its writes are a way out, so
+//! it is the Rule of Two's third leg, which only the owner adds
+//! (agents/plan/applet-shape.md). A tool the service labels destructive is
+//! never offered to a run, because no one is there to confirm it.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -819,6 +828,20 @@ pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, context: &To
         Err(e) => return ToolResult::error(format!("{e:#}")),
     };
     let connection = &connection;
+    // The agent loop runs a call to a tool it did not offer, so a run's grant
+    // is checked here too, before the service is reached.
+    if let Some(applet_id) = context.applet_id.as_deref() {
+        match applet_may_call(pool, applet_id, &connection.id, tool).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return ToolResult::error(format!(
+                    "This applet may not use {tool} in {}. Its file has to list it in allowed-tools, and the owner has to allow {} on the applet's page.",
+                    connection.name, connection.name
+                ))
+            }
+            Err(e) => return ToolResult::error(format!("Could not read this applet's connections: {e}")),
+        }
+    }
     let client = match client(pool, connection).await {
         Ok(client) => client,
         Err(e) => return ToolResult::error(format!("{e:#}")),
@@ -876,6 +899,106 @@ pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, context: &To
             ToolResult::error(format!("{} did not answer: {e}", connection.name))
         }
     }
+}
+
+// ── Applets ─────────────────────────────────────────────────────────────────
+
+/// A connection entry in an applet's `allowed-tools`: `linear__*` for every
+/// tool the connection has, or `linear__save_comment` for one.
+pub fn applet_entry(entry: &str) -> Option<(&str, &str)> {
+    let (id, tool) = split(entry)?;
+    let named = tool.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    (tool == "*" || named).then_some((id, tool))
+}
+
+/// Whether an applet's `allowed-tools` names this tool of this connection.
+fn entries_name(entries: &[String], id: &str, tool: &str) -> bool {
+    entries
+        .iter()
+        .filter_map(|e| applet_entry(e))
+        .any(|(c, t)| c == id && (t == "*" || t == tool))
+}
+
+/// The applet's `allowed-tools` and the connections the owner allowed it.
+async fn applet_grant(pool: &PgPool, applet_id: &str) -> Result<(Vec<String>, Vec<String>), sqlx::Error> {
+    let (listed, allowed): (Option<Value>, Vec<String>) =
+        sqlx::query_as("SELECT config->'allowed_tools', connections FROM app_applets WHERE id = $1")
+            .bind(applet_id)
+            .fetch_one(pool)
+            .await?;
+    let entries = listed
+        .as_ref()
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        // absent-ok: an applet with no `allowed-tools` names no connections.
+        .unwrap_or_default();
+    Ok((entries, allowed))
+}
+
+async fn applet_may_call(pool: &PgPool, applet_id: &str, id: &str, tool: &str) -> Result<bool, sqlx::Error> {
+    let (entries, allowed) = applet_grant(pool, applet_id).await?;
+    Ok(allowed.iter().any(|a| a == id) && entries_name(&entries, id, tool))
+}
+
+/// The tool definitions an applet run is offered from its connections: each
+/// connection its file asks for and the owner allowed, and of those only the
+/// tools its file names, without the destructive ones. A connection that
+/// needs a fresh sign-in or does not answer is left out, and the run goes on
+/// with the rest; the attention list already asks the owner to sign in.
+pub async fn applet_tool_definitions(pool: &PgPool, applet_id: &str) -> Vec<Value> {
+    let (entries, allowed) = match applet_grant(pool, applet_id).await {
+        Ok(grant) => grant,
+        Err(e) => {
+            tracing::warn!(applet_id, error = %e, "applet run: could not read its connections");
+            return Vec::new();
+        }
+    };
+    if allowed.is_empty() || !entries.iter().any(|e| applet_entry(e).is_some()) {
+        return Vec::new();
+    }
+    let connections = match connected(pool).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(applet_id, error = %e, "applet run: could not read the connections");
+            return Vec::new();
+        }
+    };
+    let mut out = Vec::new();
+    for connection in connections.iter().filter(|c| allowed.contains(&c.id)) {
+        if !entries.iter().filter_map(|e| applet_entry(e)).any(|(id, _)| id == connection.id) {
+            continue;
+        }
+        let tools = match client(pool, connection).await {
+            Ok(client) => tools(&client, connection).await,
+            Err(e) => Err(e),
+        };
+        match tools {
+            Ok(tools) => {
+                let named: Vec<Tool> =
+                    tools.iter().filter(|t| entries_name(&entries, &connection.id, &t.name)).cloned().collect();
+                out.extend(tool_definitions(&named, connection, false));
+            }
+            Err(e) => tracing::warn!(
+                applet_id,
+                connection = %connection.id,
+                error = %format!("{e:#}"),
+                "applet run: connection left out"
+            ),
+        }
+    }
+    out
+}
+
+/// The connections an applet's file asks for, by short name, from its
+/// `allowed-tools`.
+pub fn requested(entries: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (id, _) in entries.iter().filter_map(|e| applet_entry(e)) {
+        if !out.iter().any(|o| o == id) {
+            out.push(id.to_string());
+        }
+    }
+    out
 }
 
 // ── The chat's tool ─────────────────────────────────────────────────────────
@@ -1186,6 +1309,70 @@ mod tests {
         Stored { pool: pool.clone(), connection: linear }.save(fresh).await.unwrap();
         let listed = connected(&pool).await.unwrap();
         assert_eq!((listed.len(), listed[0].needs_sign_in), (1, false));
+    }
+
+    #[test]
+    fn an_applet_names_a_connections_tools_one_by_one_or_all() {
+        let entries: Vec<String> =
+            ["sql_query", "linear__*", "notion__search", "notion__search"].iter().map(|s| s.to_string()).collect();
+        assert!(entries_name(&entries, "linear", "save_comment"));
+        assert!(entries_name(&entries, "notion", "search"));
+        assert!(!entries_name(&entries, "notion", "update_page"));
+        assert!(!entries_name(&entries, "github", "search"));
+        assert_eq!(requested(&entries), ["linear", "notion"]);
+        assert_eq!(applet_entry("linear__*"), Some(("linear", "*")));
+        assert_eq!(applet_entry("linear__x(y)"), None);
+    }
+
+    /// A run may call a connection's tool only when its file lists the tool
+    /// and the owner allowed the connection, and only the owner's route sets
+    /// that.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_applet_uses_a_connection_only_when_its_file_and_the_owner_both_name_it(pool: PgPool) {
+        use crate::scheduler::applets::{set_applet_connections, update_applet, AppletConnections};
+        sqlx::query(
+            "INSERT INTO credentials (id, kind, key, name, status, secrets_ciphertext, metadata)
+             VALUES ('connection:linear', 'connection', 'linear', 'Linear', 'active', 'sealed', $1)",
+        )
+        .bind(json!({ "url": "https://mcp.linear.app/mcp" }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, config) \
+             VALUES ('applet_triage', 'Triage', 'ai', '{\"allowed_tools\": [\"sql_query\", \"linear__save_comment\"]}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(!applet_may_call(&pool, "applet_triage", "linear", "save_comment").await.unwrap(), "the file alone opens nothing");
+        let err = update_applet(&pool, "applet_triage", &json!({ "connections": ["linear"] })).await.unwrap_err();
+        assert!(err.to_string().contains("unknown field"), "PATCH cannot allow a connection: {err}");
+        let err = set_applet_connections(&pool, "applet_triage", &["github".into()]).await.unwrap_err();
+        assert!(err.to_string().contains("not a connected service"), "{err}");
+
+        let set = set_applet_connections(&pool, "applet_triage", &["linear".into(), "linear".into()]).await.unwrap();
+        assert_eq!(
+            set,
+            AppletConnections {
+                requested: vec!["linear".into()],
+                allowed: vec!["linear".into()],
+                connected: vec!["linear".into()]
+            }
+        );
+        assert!(applet_may_call(&pool, "applet_triage", "linear", "save_comment").await.unwrap());
+        assert!(!applet_may_call(&pool, "applet_triage", "linear", "delete_issue").await.unwrap(), "only the tools it lists");
+
+        // A call it was not given is refused before the service is reached,
+        // even when the model names the tool.
+        let run = ToolContext { applet_id: Some("applet_triage".into()), ..Default::default() };
+        let refused = call_tool(&pool, "linear__delete_issue", json!({}), &run).await;
+        assert!(refused.error.unwrap().contains("This applet may not use delete_issue in Linear"));
+        sqlx::query("UPDATE app_applets SET connections = '{}' WHERE id = 'applet_triage'").execute(&pool).await.unwrap();
+        let refused = call_tool(&pool, "linear__save_comment", json!({}), &run).await;
+        assert!(refused.error.unwrap().contains("may not use save_comment"));
+        assert!(applet_tool_definitions(&pool, "applet_triage").await.is_empty());
     }
 
     #[test]
