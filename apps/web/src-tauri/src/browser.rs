@@ -57,14 +57,66 @@ pub(crate) fn jar_for(all: Vec<tauri::webview::Cookie<'static>>, page: &tauri::U
         .collect()
 }
 
+/// The cookies of a site's sign-in: those for the login page, and for each of
+/// `domains` (a site that signs in through a second domain, as ChatGPT does
+/// through openai.com). A cookie seen from two of them is kept once.
+pub(crate) fn site_jar(
+    all: Vec<tauri::webview::Cookie<'static>>,
+    page: &tauri::Url,
+    domains: &[String],
+) -> Vec<tauri::webview::Cookie<'static>> {
+    let mut pages = vec![page.clone()];
+    pages.extend(domains.iter().filter_map(|d| format!("https://{d}/").parse().ok()));
+    let mut out: Vec<tauri::webview::Cookie<'static>> = Vec::new();
+    for p in &pages {
+        for c in jar_for(all.clone(), p) {
+            let seen = out
+                .iter()
+                .any(|o| o.name() == c.name() && o.domain() == c.domain() && o.path() == c.path());
+            if !seen {
+                out.push(c);
+            }
+        }
+    }
+    out
+}
+
+/// One cookie as the box stores it: every field Chrome's DevTools
+/// `Network.setCookies` takes, so a browser on the box can load the session
+/// as it is. `expires` is Unix seconds, absent for a cookie that ends with
+/// the browser session. `domain` has no leading dot: the cookie store does not
+/// keep whether a cookie was host-only, so a browser loading the jar treats a
+/// `__Host-` cookie as host-only and the rest as domain cookies.
 #[derive(Serialize)]
 pub struct JarCookie {
     name: String,
     value: String,
+    domain: Option<String>,
+    path: Option<String>,
+    expires: Option<i64>,
+    secure: Option<bool>,
+    http_only: Option<bool>,
+    same_site: Option<String>,
+}
+
+impl From<&tauri::webview::Cookie<'static>> for JarCookie {
+    fn from(c: &tauri::webview::Cookie<'static>) -> Self {
+        JarCookie {
+            name: c.name().to_string(),
+            value: c.value().to_string(),
+            domain: c.domain().map(String::from),
+            path: c.path().map(String::from),
+            expires: c.expires_datetime().map(|t| t.unix_timestamp()),
+            secure: c.secure(),
+            http_only: c.http_only(),
+            same_site: c.same_site().map(|s| s.to_string()),
+        }
+    }
 }
 
 /// Open `url` in a login window and resolve with the site's cookies once every
-/// name in `cookies` is set. Errors with `"closed"` if the owner closes the
+/// name in `cookies` is set. `domains` adds the cookies of other domains the
+/// sign-in uses; older pages do not send it. Errors with `"closed"` if the owner closes the
 /// window first, and `"timeout"` after [`LOGIN_TIMEOUT`].
 #[tauri::command]
 pub async fn browser_login(
@@ -73,7 +125,9 @@ pub async fn browser_login(
     url: String,
     cookies: Vec<String>,
     title: String,
+    domains: Option<Vec<String>>,
 ) -> Result<Vec<JarCookie>, String> {
+    let domains = domains.unwrap_or_default();
     let page: tauri::Url = url.parse().map_err(|e| format!("bad login url: {e}"))?;
     if page.scheme() != "https" {
         return Err("a login page must be https".into());
@@ -83,8 +137,8 @@ pub async fn browser_login(
     #[cfg(target_os = "macos")]
     {
         let _ = (&source_id, &title);
-        let jar = crate::browser_host::login(&app, &url, &cookies, LOGIN_TIMEOUT).await?;
-        return Ok(jar.into_iter().map(|(name, value)| JarCookie { name, value }).collect());
+        let jar = crate::browser_host::login(&app, &url, &cookies, &domains, LOGIN_TIMEOUT).await?;
+        return Ok(jar.iter().map(JarCookie::from).collect());
     }
     // Other desktops: a login window of its own.
     #[cfg(not(target_os = "macos"))]
@@ -127,15 +181,12 @@ pub async fn browser_login(
             // Read on this async task, never a sync command: WebView2 deadlocks
             // otherwise (tauri docs for `cookies`).
             let jar = match win.cookies() {
-                Ok(all) => jar_for(all, &page),
+                Ok(all) => site_jar(all, &page, &domains),
                 Err(_) => continue,
             };
             let has = |name: &str| jar.iter().any(|c| c.name() == name && !c.value().is_empty());
             if cookies.iter().all(|n| has(n)) {
-                let out = jar
-                    .iter()
-                    .map(|c| JarCookie { name: c.name().to_string(), value: c.value().to_string() })
-                    .collect();
+                let out = jar.iter().map(JarCookie::from).collect();
                 let _ = window.close();
                 return Ok(out);
             }
@@ -216,7 +267,7 @@ pub async fn browser_pane_go(app: AppHandle, action: String) -> Result<(), Strin
 
 #[cfg(test)]
 mod tests {
-    use super::jar_for;
+    use super::{jar_for, site_jar, JarCookie};
     use tauri::webview::Cookie;
 
     fn cookie(name: &str, domain: &str, secure: bool) -> Cookie<'static> {
@@ -245,5 +296,39 @@ mod tests {
             .map(|c| c.name().to_string())
             .collect();
         assert_eq!(names, ["lang"]);
+    }
+
+    #[test]
+    fn a_sign_in_domain_adds_its_cookies_once() {
+        let page: tauri::Url = "https://chatgpt.com/".parse().unwrap();
+        let all = vec![
+            cookie("session-token", ".chatgpt.com", true),
+            cookie("auth-session", "auth.openai.com", true),
+            cookie("shared", ".openai.com", true),
+            cookie("other", ".example.com", true),
+        ];
+        let names: Vec<String> = site_jar(all, &page, &["auth.openai.com".into(), "openai.com".into()])
+            .iter()
+            .map(|c| c.name().to_string())
+            .collect();
+        assert_eq!(names, ["session-token", "auth-session", "shared"]);
+    }
+
+    #[test]
+    fn a_jar_cookie_keeps_every_field() {
+        let c = Cookie::build(("sessionKey".to_string(), "v".to_string()))
+            .domain(".example.com")
+            .path("/")
+            .secure(true)
+            .http_only(true)
+            .same_site(tauri::webview::cookie::SameSite::Lax)
+            .expires(tauri::webview::cookie::time::OffsetDateTime::from_unix_timestamp(1_900_000_000).unwrap())
+            .build();
+        let v = serde_json::to_value(JarCookie::from(&c)).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"name": "sessionKey", "value": "v", "domain": "example.com", "path": "/",
+                "expires": 1_900_000_000i64, "secure": true, "http_only": true, "same_site": "Lax"})
+        );
     }
 }

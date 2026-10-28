@@ -55,7 +55,8 @@ struct Stats {
 async fn sweep_expiring(pool: &PgPool) -> Result<Stats> {
     let ids: Vec<(String,)> = sqlx::query_as(
         r#"SELECT id FROM credentials
-           WHERE status = 'active'
+           WHERE kind = 'source'
+             AND status = 'active'
              AND next_refresh_at IS NOT NULL
              AND next_refresh_at < now()"#,
     )

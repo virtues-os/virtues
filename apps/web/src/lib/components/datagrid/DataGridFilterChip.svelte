@@ -131,7 +131,7 @@
 			<div class="popover" role="menu">
 				{#if def.kind === 'async' && def.searchable}
 					<div class="popover-search">
-						<Icon icon="ri:search-line" width="14" />
+						<Icon icon="mynaui:search" width="14" />
 						<input
 							type="text"
 							bind:value={asyncQuery}
@@ -184,7 +184,7 @@
 		{/snippet}
 	</Popover>
 	{#if active && removable}
-		<IconButton icon="ri:close-line" label="Remove filter" size="xs" onclick={onClear} />
+		<IconButton icon="mynaui:x" label="Remove filter" size="xs" onclick={onClear} />
 	{/if}
 </span>
 

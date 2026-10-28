@@ -12,6 +12,8 @@ mod browser;
 mod browser_host;
 #[cfg(target_os = "macos")]
 mod messages_send;
+#[cfg(target_os = "macos")]
+mod traffic_lights;
 use browser::{browser_login, browser_pane_agent, browser_pane_bounds, browser_pane_go, browser_pane_open};
 
 use serde::{Deserialize, Serialize};
@@ -601,6 +603,58 @@ fn deny_collector_in_profile() -> Result<(), String> {
             "dev profile '{p}': the collector belongs to the machine's real \
              pairing; this instance never touches it"
         )),
+    }
+}
+
+/// How an agent's MCP settings launch the bridge for one connected agent.
+#[derive(serde::Serialize)]
+struct AgentConnection {
+    name: String,
+    command: String,
+    args: Vec<String>,
+    /// Set only for a dev profile, whose pairing lives in its own directory.
+    env: std::collections::BTreeMap<String, String>,
+}
+
+/// Pair a new agent with a token minted for kind `agent`, and say how to
+/// launch it. The bridge is this binary run as `mcp --name <name>` (see
+/// [`mcp_main`]); it is its own device on the box, with its own key, and can
+/// reach only the MCP endpoint. agents/plan/mcp-plan.md, tier 1.
+#[tauri::command]
+async fn connect_agent(token: String, name: String) -> Result<AgentConnection, String> {
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        return Err("Give the agent a name, such as Claude Code.".into());
+    }
+    let origin = format!("http://localhost:{}", tauri_plugin_reach::loopback_port());
+    virtues_reach_client::mcp::pair(&tauri_plugin_reach::virtues_dir(), &origin, &token, &name)
+        .await
+        .map_err(|e| format!("{e:#}"))?;
+    let command = std::env::current_exe().map_err(|e| e.to_string())?.to_string_lossy().into_owned();
+    let mut env = std::collections::BTreeMap::new();
+    if let Some(profile) = tauri_plugin_reach::profile() {
+        env.insert("VIRTUES_PROFILE".to_string(), profile.to_string());
+    }
+    Ok(AgentConnection { args: vec!["mcp".into(), "--name".into(), name.clone()], name, command, env })
+}
+
+/// `virtues mcp [--name <name>]`: the MCP bridge an agent launches as a
+/// stdio server. It runs before any part of the app starts, so it opens no
+/// window and binds no port, and it writes nothing but JSON-RPC to stdout.
+fn mcp_main(args: &[String]) -> ! {
+    let name = args
+        .windows(2)
+        .find(|pair| pair[0] == "--name")
+        .map(|pair| pair[1].clone())
+        .unwrap_or_else(|| "agent".to_string());
+    virtues_reach_client::install_crypto_provider();
+    let store = virtues_reach_client::mcp::AgentStore::new(&tauri_plugin_reach::virtues_dir(), &name);
+    match tauri::async_runtime::block_on(virtues_reach_client::mcp::serve_stdio(&store)) {
+        Ok(()) => std::process::exit(0),
+        Err(e) => {
+            eprintln!("virtues mcp: {e:#}");
+            std::process::exit(1)
+        }
     }
 }
 
@@ -1661,6 +1715,11 @@ const ZOOM_HOTKEYS_JS: &str = r#"
 "#;
 
 fn main() {
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("mcp") {
+        mcp_main(&args);
+    }
+
     let builder = tauri::Builder::default();
 
     // The app's own copy of the UI, on the phone's scheme and through the
@@ -1728,6 +1787,7 @@ fn main() {
             get_collector_status,
             install_collector,
             uninstall_collector,
+            connect_agent,
             pause_collector,
             resume_collector,
             stop_collector,
@@ -1807,18 +1867,18 @@ fn main() {
             app.manage(std::sync::Mutex::new(UpdateState::default()));
 
             // The Mac's own copy of the UI (`virtues://`), kept current like
-            // the phone's: drop an overlay a newer app build has overtaken
-            // (pointers only, before any page exists), then look for a newer
-            // bundle on the box off the launch path. A staged bundle applies at
-            // the next page load. See agents/record/local-ui.md.
+            // the phone's: on a dev build, stop serving any overlay (pointers
+            // only, before any page exists), then fetch the box's bundle off
+            // the launch path. A staged bundle applies at the next page load.
+            // See agents/record/local-ui.md.
             #[cfg(target_os = "macos")]
             {
                 if let Some(dir) = virtues_lib::ui_data_dir(app.handle()) {
                     let baked = virtues_lib::baked_bundle_version(app.handle());
                     if let Some(dropped) =
-                        virtues_lib::web_bundle::drop_stale_overlay(&dir, baked.as_deref())
+                        virtues_lib::web_bundle::drop_overlay_for_dev_build(&dir, baked.as_deref())
                     {
-                        eprintln!("[ota] overlay {dropped} is older than this app's own UI; back to the build it shipped with");
+                        eprintln!("[ota] dev build: stopped serving overlay {dropped}");
                     }
                 }
                 if app.reach().is_paired() {
@@ -1908,18 +1968,26 @@ fn main() {
             //
             // Windows and Linux keep `__VIRTUES_BOX_URL__` for the connect page,
             // whose fallback is the default :7117 (this matters for profiles).
-            let box_url_js = if cfg!(target_os = "macos") {
-                format!(
+            #[cfg(target_os = "macos")]
+            let box_url_js = {
+                let mtm = objc2::MainThreadMarker::new().expect("setup runs on the main thread");
+                let mut js = format!(
                     "window.__VIRTUES_BACKEND_ORIGIN__ = 'http://127.0.0.1:{}'; window.__VIRTUES_PAIRED__ = {};",
                     tauri_plugin_reach::loopback_port(),
                     is_paired()
-                )
-            } else {
-                format!(
-                    "window.__VIRTUES_BOX_URL__ = 'http://localhost:{}';",
-                    tauri_plugin_reach::loopback_port()
-                )
+                );
+                // Where the traffic lights end, so the header's controls
+                // follow them (WindowHeader).
+                if let Some(end) = traffic_lights::end(mtm) {
+                    js.push_str(&format!(" window.__VIRTUES_TRAFFIC_LIGHTS_END__ = {end};"));
+                }
+                js
             };
+            #[cfg(not(target_os = "macos"))]
+            let box_url_js = format!(
+                "window.__VIRTUES_BOX_URL__ = 'http://localhost:{}';",
+                tauri_plugin_reach::loopback_port()
+            );
 
             let mut builder = WebviewWindowBuilder::new(app, "main", url);
             // A dev profile gets its own web storage. The app's own copy is
@@ -1931,17 +1999,13 @@ fn main() {
                 builder = builder.data_store_identifier(profile_store_id(p));
             }
             // The app draws its own title bar: the page runs to the window's
-            // top edge and the traffic lights sit inside its header row, on
-            // the row's centre line, with the window's controls right after
-            // them (WindowHeader). tao makes the bar's height the button's
-            // 14pt plus `y`, so y = 20 puts the lights' centre 20pt down the
-            // 40pt header. The header marks itself as the drag region.
+            // top edge and the traffic lights sit inside its header row, with
+            // the window's controls right after them (WindowHeader).
+            // traffic_lights.rs places them, here and after every resize
+            // (`on_window_event`). The header marks itself as the drag region.
             #[cfg(target_os = "macos")]
             {
-                builder = builder
-                    .title_bar_style(tauri::TitleBarStyle::Overlay)
-                    .hidden_title(true)
-                    .traffic_light_position(tauri::LogicalPosition::new(16.0, 20.0));
+                builder = builder.title_bar_style(tauri::TitleBarStyle::Overlay).hidden_title(true);
             }
             let window = builder
                 .title("Virtues")
@@ -1994,6 +2058,11 @@ fn main() {
                 })
                 .build()?;
 
+            #[cfg(target_os = "macos")]
+            if let Ok(ns_window) = window.ns_window() {
+                traffic_lights::place(ns_window);
+            }
+
             // Only used in debug; silence the release-build unused warning.
             #[cfg(debug_assertions)]
             window.open_devtools();
@@ -2032,6 +2101,16 @@ fn main() {
             if let WindowEvent::CloseRequested { api, .. } = event {
                 let _ = window.hide();
                 api.prevent_close();
+            }
+            // AppKit puts the traffic lights back at its own spot on every
+            // resize, a zoom and leaving full screen included.
+            #[cfg(target_os = "macos")]
+            if let WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } = event {
+                if window.label() == "main" {
+                    if let Ok(ns_window) = window.ns_window() {
+                        traffic_lights::place(ns_window);
+                    }
+                }
             }
             #[cfg(not(target_os = "macos"))]
             let _ = (window, event);

@@ -14,12 +14,14 @@ import { isTauri } from '$lib/utils/platform';
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import { toast } from 'svelte-sonner';
 
-export type DeviceKind = 'mobile_app' | 'desktop_app' | 'sensor' | 'cli';
+export type DeviceKind = 'mobile_app' | 'desktop_app' | 'sensor' | 'cli' | 'agent';
 
 export type DevicePermissions = {
 	full_disk_access?: boolean;
 	safari_library?: boolean;
 	accessibility?: boolean;
+	system_audio?: boolean;
+	microphone?: boolean;
 	denied?: string[];
 	checked_at?: string;
 	stale?: boolean;
@@ -84,19 +86,23 @@ export function kindLabel(k: DeviceKind): string {
 			return 'Sensor';
 		case 'cli':
 			return 'CLI';
+		case 'agent':
+			return 'Agent';
 	}
 }
 
 export function kindIcon(k: DeviceKind): string {
 	switch (k) {
 		case 'mobile_app':
-			return 'ri:smartphone-line';
+			return 'mynaui:mobile';
 		case 'desktop_app':
-			return 'ri:macbook-line';
+			return 'mynaui:desktop';
 		case 'sensor':
-			return 'ri:cpu-line';
+			return 'mynaui:chip';
 		case 'cli':
-			return 'ri:terminal-line';
+			return 'mynaui:terminal';
+		case 'agent':
+			return 'mynaui:chip';
 	}
 }
 
@@ -156,6 +162,20 @@ export const PERMISSION_COPY: Record<string, PermissionCopy> = {
 		fix: `Turn on ${COLLECTOR_LIST_NAME} in the list.`,
 		pane: 'Accessibility',
 		open: openAccessibilitySettings
+	},
+	// Call recording. No button yet: these panes need their own bridge
+	// commands, which come with the call-recording settings.
+	system_audio: {
+		label: 'System Audio Recording',
+		costs: "your Mac records only your side of calls",
+		fix: `Turn on ${COLLECTOR_LIST_NAME} under Screen & System Audio Recording.`,
+		pane: 'Screen & System Audio Recording'
+	},
+	microphone: {
+		label: 'Microphone',
+		costs: "your Mac records only the other side of calls",
+		fix: `Turn on ${COLLECTOR_LIST_NAME} under Microphone.`,
+		pane: 'Microphone'
 	}
 };
 

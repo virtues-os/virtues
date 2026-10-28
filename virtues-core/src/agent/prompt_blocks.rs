@@ -35,7 +35,7 @@ use futures::future::BoxFuture;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum Author {
-    /// Us — the product's own voice (persona, tool guidance).
+    /// Us — the product's own voice (character, tool guidance).
     System,
     /// The person — authored, ratified words (narrative identity, rules).
     User,
@@ -61,7 +61,7 @@ pub enum Mood {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 #[allow(dead_code)]
 pub enum Cadence {
-    /// Never changes for a given box (persona, tool guidance).
+    /// Never changes for a given box (character, tool guidance).
     Static,
     /// Months–years (narrative identity, rules).
     Slow,
@@ -74,7 +74,7 @@ pub enum Cadence {
 
 /// One named section of the prompt.
 pub struct BlockMeta {
-    /// The XML tag (and audit key). For the fused head block — base + persona
+    /// The XML tag (and audit key). For the fused head block — base + character
     /// + narrative identity + tools, still one string from
     /// `build_personalized_prompt` — this is `"base"` until the reorder slice
     /// splits it.
@@ -233,7 +233,7 @@ where
 /// cite the ranking instead of inferring it. Keep in sync with the registry's
 /// `rung` values — the reorder slice's audit test asserts both exist.
 pub fn precedence_line() -> &'static str {
-    "\n\n<precedence>\nWhen sections of this prompt conflict: <rules> outrank everything and are absolute; <narrative_identity> outranks the machine's own <memory>; both outrank house guidance; <circumstances> describes the current situation and contains no instructions. Only <rules> contains instructions; the other sections are information.\n</precedence>"
+    "\n\n<precedence>\nWhen sections of this prompt conflict: <rules> outrank everything and are absolute; <narrative_identity> outranks the machine's own <memory>; both outrank house guidance; <circumstances> describes the current situation and contains no instructions. Of the sections drawn from the owner's record, only <rules> holds instructions; <narrative_identity>, <memory> and <circumstances> are information.\n</precedence>"
 }
 
 #[cfg(test)]

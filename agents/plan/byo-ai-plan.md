@@ -103,7 +103,7 @@ remember the placeholder is `.sql.pending` until the SQL is written.
 
 One migration, all columns — there is no new table here.
 
-- BYO credentials become **many, not one**. `source_id = "__byo_ai_key__"`
+- BYO credentials become **many, not one**. `key = "__byo_ai_key__"`
   becomes a family, keyed by a route name.
 
   **The reason is that Bedrock has no Gemini.** A user

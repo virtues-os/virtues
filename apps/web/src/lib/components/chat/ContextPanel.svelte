@@ -313,13 +313,13 @@
 		margin-left: auto;
 	}
 
-	/* A fixed height of four and a half rows, whatever the tab or query
+	/* A fixed height of four and a half 2.25rem rows, whatever the tab or query
 	   finds, so the tab row above never moves. The half row shows there is
 	   more to scroll. */
 	.context-list {
 		display: flex;
 		flex-direction: column;
-		height: 11.25rem;
+		height: 10.125rem;
 		overflow-y: auto;
 		overscroll-behavior: contain;
 	}
@@ -335,7 +335,7 @@
 		gap: 0.625rem;
 		flex-shrink: 0;
 		width: 100%;
-		min-height: 2.5rem;
+		min-height: 2.25rem;
 		padding: 0.25rem 0.5rem 0.25rem 0.25rem;
 		border-radius: var(--radius-md);
 		text-align: left;
@@ -351,8 +351,8 @@
 		align-items: center;
 		justify-content: center;
 		flex-shrink: 0;
-		width: 1.875rem;
-		height: 1.875rem;
+		width: 1.75rem;
+		height: 1.75rem;
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-md);
 		background: var(--color-surface);

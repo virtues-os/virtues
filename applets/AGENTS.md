@@ -5,11 +5,11 @@ working in this repo — that creates or edits applets. An applet is a small
 thing that runs for the user: a scheduled task, a one-off reminder, a
 self-ending monitor, a tracker with its own tables, a dashboard face.
 
-Chat-authored applets are created with the `setup_applet` tool (never by
-writing SQL rows). It validates first, materializes `applets/user/<slug>/`,
+Chat-authored applets are created with the `applet` tool's `setup` action
+(never by writing SQL rows). It validates first, materializes `applets/user/<slug>/`,
 and reconciles — a `check_failed` result lists findings; fix them and call
 again, nothing was created. Re-calling with the same name **updates** that
-applet: that is the edit path. So check `list_applets` before creating one —
+applet: that is the edit path. So check `applet` with `list` before creating one —
 a name already in use overwrites that applet instead of adding a new one.
 
 ## The fields
@@ -42,7 +42,7 @@ face-only applet with no `agent` is a complete, valid applet.
 
 ## Tables: `schema_sql` is a migration, not a schema
 
-Each `setup_applet` call's `schema_sql` is **one numbered, append-only
+Each `setup` call's `schema_sql` is **one numbered, append-only
 migration**, applied once and never re-run. They accumulate at
 `applets/<slug>/schema/NNNN_*.sql`, and a fresh box replays them in order.
 
@@ -97,7 +97,7 @@ Three rules:
 - **The composer is for input, not edits.** "I had eggs" goes to the applet;
   "make it weekly" is an edit and belongs in chat with you. Do not write a
   prompt that tries to reconfigure the applet from its own messages — it
-  cannot, and `edit_applet` refuses it.
+  cannot, and the `edit` action refuses it.
 
 Still not authorable: **Personas.** A message wake is inbound from the *user*,
 not from a third party, and there is no send-as-me channel. Draft-mode stands.
@@ -146,8 +146,8 @@ Its prompt may rely on exactly this set — nothing else exists:
 | write its own tables | `sql_write` — DML inside `applet_*` schemas only (PG-enforced) |
 | keep notes across runs | `update_applet_memory` |
 | write durable pages | `create_page` / `edit_page` / `get_page_content` (block pages: ops on the data-ids `get_page_content` returns; `append` needs no read) |
-| compute | `code_interpreter` (jailed, no network) |
-| introspect applets | `list_applets` / `get_applet` (read-only) |
+| compute | `code_interpreter` (sandboxed, no network) |
+| introspect applets | `applet` with `list` or `get` (read-only) |
 
 | **be told something** | add `message` to `triggers` — the user's text becomes the run's opening turn |
 
@@ -204,14 +204,14 @@ real alternative. Never write a prompt that pretends a tool exists.**
 - **Two cadences = two applets** (an archiver that runs half-hourly and a
   Sunday digest are siblings, `<name>_archiver` / `<name>_digest`), each
   restating its shared definitions in its own prompt.
-- **Personas** ("reply to Mom as me") are **not yet authorable** — no inbound
-  message wake, no send-as-me channel. Decline and offer draft-mode: a
-  scheduled applet that drafts replies as pages for the user to send.
+- **Personas** ("reply to Mom as me") are **not yet authorable**, for the
+  reasons above. Decline and offer draft-mode: a scheduled applet that drafts
+  replies as pages for the user to send.
 
 ## Exemplars (real folders, kept current)
 
-- `applets/morning_examen/` — the canonical Reflect: schedule + agent, four
-  flat fields, nothing else.
+- `applets/morning_examen/` — the canonical Reflect: schedule, agent and a
+  spend ceiling, nothing else.
 - `applets/dot_cloud/` — a face-only applet (`face/index.html`): WebGL
   canvas, `virtues.query` over the `data_*` ontology, graceful degradation
   (renders its star field even with zero rows). The screen's default face.

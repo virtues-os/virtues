@@ -176,7 +176,7 @@
 				<div
 					class="flex-shrink-0 w-10 h-10 rounded-lg bg-surface-alt border border-border flex items-center justify-center"
 				>
-					<Icon icon="ri:shield-keyhole-line" class="text-foreground-muted" />
+					<Icon icon="mynaui:shield" class="text-foreground-muted" />
 				</div>
 				<div>
 					<h2 class="text-lg font-semibold leading-tight">{title}</h2>
@@ -203,7 +203,7 @@
 						</code>
 					</div>
 					<div class="flex items-center gap-2 text-xs text-foreground-muted">
-						<Icon icon="ri:loader-4-line" class="animate-spin" />
+						<Icon icon="mynaui:spinner" class="animate-spin" />
 						<span>Waiting for confirmation… ({fmt(remainingSec)})</span>
 					</div>
 				</div>
@@ -212,7 +212,7 @@
 				</div>
 			{:else if phase === "approved"}
 				<div class="rounded-lg bg-surface-alt border border-border p-4 text-sm flex items-start gap-3">
-					<Icon icon="ri:check-line" class="text-success mt-0.5" />
+					<Icon icon="mynaui:check" class="text-success mt-0.5" />
 					<div>
 						<div class="font-medium">Confirmed</div>
 						<div class="text-foreground-muted text-xs">Running the action…</div>

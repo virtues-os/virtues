@@ -50,7 +50,7 @@
 	onfocus={(e) => hover.enter(e.currentTarget)}
 	onblur={() => hover.leave()}
 	>{#if variant !== "quiet"}<Icon
-			icon="ri:global-line"
+			icon="mynaui:globe"
 			width="11"
 			class="ref-pill-icon"
 		/>{/if}{label}</a

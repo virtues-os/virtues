@@ -72,6 +72,8 @@ pub mod web_bundle;
 /// |   | the Mac `browser_login` opens there instead of a window of its own |
 /// | 12 | `start_dictation` (desktop; the Mac implements it): the composer's
 /// |   | mic button starts the system's dictation in the focused field |
+/// | 13 | `connect_agent` (desktop): pair an AI agent's MCP bridge as a device
+/// |   | of its own; the bridge is this binary run as `mcp --name <name>` |
 ///
 /// `bundle-contract.json` requires 9. No shell below it has ever run a box
 /// bundle (they all boot white), so requiring it strands no client: they keep
@@ -79,7 +81,7 @@ pub mod web_bundle;
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 12;
+pub const COMMAND_SURFACE_VERSION: u32 = 13;
 
 /// What the native shell knows about itself.
 ///
@@ -276,18 +278,9 @@ pub fn ota_check<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
           "[ota] box bundle needs shell surface {needs}, this app has {have} — \
            staying on the bundled build until the app is updated"
         ),
-        web_bundle::Outcome::BoxBehind { box_version, have } => eprintln!(
-          "[ota] box serves UI {box_version}, this app already runs {have} — \
-           staying put (upgrade the box with `sudo virtues upgrade`)"
-        ),
-        // Loud, because this one refuses every bundle until it is fixed: it
-        // means a build went out without its version stamped (see
-        // tools/ios-release.sh) and OTA is inert on that binary.
-        web_bundle::Outcome::VersionUnreadable { box_version, have } => eprintln!(
-          "[ota] cannot order box UI {box_version} against this app's {} — \
-           refusing rather than risk a downgrade",
-          have.as_deref().unwrap_or("(unstamped)")
-        ),
+        web_bundle::Outcome::DevBuild => {
+          eprintln!("[ota] this app's UI is a dev build; not taking the box's")
+        }
         _ => {}
       }
       web_bundle::record_outcome(&dir, &outcome);
@@ -312,7 +305,6 @@ pub fn ota_check<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 /// that no component asserts a fact it did not observe.
 ///
 /// `None` when the manifest is missing — a build whose SPA was never stamped.
-/// The gate treats that as ambiguous and refuses, which is the safe direction.
 pub fn baked_bundle_version<R: tauri::Runtime>(app: &tauri::AppHandle<R>) -> Option<String> {
   let asset = app.asset_resolver().get(".virtues-bundle.json".into())?;
   web_bundle::Manifest::parse(&String::from_utf8_lossy(&asset.bytes)).map(|m| m.version)
@@ -564,17 +556,12 @@ pub fn run() {
       // OTA rollback is settled per page load now, in `serve_ui` (web_bundle.rs,
       // "The bundle a page load serves from"), not once here.
       if let Some(dir) = ui_data_dir(app.handle()) {
-        // Drop an overlay the App Store has overtaken. An app update keeps
-        // the container, so a bundle applied weeks ago outlives the binary that
-        // fetched it and goes on shadowing the newer build THIS binary ships
-        // with. Before the window, because this moves the pointer a live page
-        // would be serving from.
+        // A dev build shows its own UI, not an overlay a release build left in
+        // the container. Before the window, because this moves the pointer a
+        // live page would be serving from.
         let baked = baked_bundle_version(app.handle());
-        if let Some(dropped) = web_bundle::drop_stale_overlay(&dir, baked.as_deref()) {
-          eprintln!(
-            "[ota] overlay {dropped} is older than this app's own UI — \
-             back to the build it shipped with"
-          );
+        if let Some(dropped) = web_bundle::drop_overlay_for_dev_build(&dir, baked.as_deref()) {
+          eprintln!("[ota] dev build: stopped serving overlay {dropped}");
         }
       }
 

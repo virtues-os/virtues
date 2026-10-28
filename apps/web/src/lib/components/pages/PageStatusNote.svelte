@@ -25,24 +25,24 @@
 
 {#if aiSession.active}
 	<button class="page-status-note ai" onclick={() => treeAiDriver.abort()} title="Stop">
-		<Icon icon="ri:sparkling-2-line" width="13" class="ai-spark" />
+		<Icon icon="mynaui:sparkles" width="13" class="ai-spark" />
 		<span>Virtues is writing…</span>
-		<Icon icon="ri:stop-circle-line" width="14" />
+		<Icon icon="mynaui:stop-circle" width="14" />
 	</button>
 {:else if aiSession.status === "error"}
 	<button class="page-status-note error" onclick={() => aiSession.reset()} title={aiSession.error ?? "AI error"}>
-		<Icon icon="ri:error-warning-line" width="13" />
+		<Icon icon="mynaui:danger-circle" width="13" />
 		<span>AI couldn’t finish</span>
-		<Icon icon="ri:close-line" width="14" />
+		<Icon icon="mynaui:x" width="14" />
 	</button>
 {:else if offline}
 	<div class="page-status-note offline" role="status">
-		<Icon icon="ri:wifi-off-line" width="13" />
+		<Icon icon="mynaui:wifi-off" width="13" />
 		<span>Offline</span>
 	</div>
 {:else if saveError}
 	<div class="page-status-note error" role="status">
-		<Icon icon="ri:error-warning-line" width="13" />
+		<Icon icon="mynaui:danger-circle" width="13" />
 		<span>Couldn’t save</span>
 	</div>
 {/if}

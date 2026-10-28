@@ -1,28 +1,17 @@
 /**
- * Citation system exports
- * Provides inline source citations like NotebookLM/Perplexity
+ * What a chat answer cites: the records, queries and web pages its turn's
+ * tools returned.
  */
 
-// Types
-export type { Citation, CitationContext, DisplayInfo, SourceType } from '$lib/types/Citation';
+export type { CitationContext, QueryResult, RecordSource, WebSource } from '$lib/types/Citation';
 
-// Mapping utilities
-export {
-	ONTOLOGY_DISPLAY,
-	TOOL_DISPLAY,
-	DEFAULT_DISPLAY,
-	getDisplayInfo,
-	inferSourceType,
-	extractOntologyFromQuery
-} from './mapping';
-
-// Builder utilities
 export {
 	buildCitationContext,
 	buildCitationContextFromParts,
-	extractToolCallParts,
 	isToolCallPart,
-	hasCitations,
-	getCitationByMarker,
+	queryResult,
+	webKey,
 	type ToolCallPart
 } from './builder';
+
+export { citingSentences, findToolCall, type FoundCall, type Piece, type StoredTurn } from './query';

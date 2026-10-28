@@ -18,11 +18,6 @@ use thiserror::Error;
 
 const NONCE_LENGTH: usize = 12;
 
-/// Domain separator for deriving the credential-lookup HMAC pepper. Bumping
-/// the version invalidates all existing `secret_lookup_hash` values, so
-/// don't bump it casually.
-const LOOKUP_PEPPER_DOMAIN: &[u8] = b"credentials.lookup.v1";
-
 /// Domain separator for deriving the OAuth-state signing pepper. Bumping the
 /// version invalidates any in-flight OAuth state tokens (10-min window) but
 /// is otherwise harmless.
@@ -126,21 +121,6 @@ impl TokenEncryptor {
             .map_err(|_| CryptoError::Hmac("HMAC key length error".to_string()))?;
         mac.update(domain);
         Ok(mac.finalize().into_bytes().into())
-    }
-
-    /// Compute a stable HMAC-SHA256 hash over a plaintext bearer token, used
-    /// for O(1) lookup of `secret_lookup_hash` rows in the `credentials`
-    /// table. The pepper is derived from the master key, so rotating the
-    /// master key invalidates all existing lookup hashes (currently out of
-    /// scope per the charter).
-    ///
-    /// Returns hex-encoded for stable column representation.
-    pub fn lookup_hash(&self, plaintext: &str) -> Result<String> {
-        let pepper = self.derive_pepper(LOOKUP_PEPPER_DOMAIN)?;
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&pepper)
-            .map_err(|_| CryptoError::Hmac("HMAC pepper length error".to_string()))?;
-        mac.update(plaintext.as_bytes());
-        Ok(hex::encode(mac.finalize().into_bytes()))
     }
 
     /// Sign an OAuth state payload, producing a self-contained CSRF state
@@ -753,16 +733,5 @@ mod tests {
     fn aes_256_gcm_wrong_key_fails() {
         let sealed = seal_aes_256_gcm(&[1u8; 32], b"secret").unwrap();
         assert!(open_aes_256_gcm(&[2u8; 32], &sealed).is_err());
-    }
-
-    #[test]
-    fn lookup_hash_is_stable() {
-        let enc = test_encryptor();
-        let h1 = enc.lookup_hash("device-token-abc").unwrap();
-        let h2 = enc.lookup_hash("device-token-abc").unwrap();
-        let h3 = enc.lookup_hash("different-token").unwrap();
-        assert_eq!(h1, h2);
-        assert_ne!(h1, h3);
-        assert_eq!(h1.len(), 64);
     }
 }

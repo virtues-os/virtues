@@ -18,8 +18,8 @@ changed**, where the material shows a change.
 ## A person is a relationship with a shape in time
 
 For a person, the article's spine is the arc of the relationship, and the
-first sentence says when it was. Use the span you are given: the first and
-last dates on record, the rhythm by month, the longest silence. A person last on
+first sentence says when it was. Use the span: the first and last dates on
+record, the rhythm by month, the longest silence. A person last on
 record a year and a half ago is not "a constant presence", whatever the last
 messages sound like.
 
@@ -40,11 +40,13 @@ record shows and no more.
 
 ## What you are given
 
-The entity's structured facts, its span (first and last dates, rhythm, the
-longest silence), records that reference it sampled from the beginning,
-the middle and the latest (messages, emails, calendar events, visits,
-transactions), and the narrated days it appears in, each with that day's
-opening line.
+On a first write: the entity's structured facts, its span (first and last
+dates, rhythm, the longest silence), records that reference it sampled from
+the beginning, the middle and the latest (messages, emails, calendar events,
+visits, transactions), and the narrated days it appears in, each with that
+day's opening line. On a revision: the article as it stands and word that new
+records reference the entity. Search for them, and check the span with
+`sql_query` when a sentence depends on it.
 
 Those records are printed on the page directly beneath the article. So write
 about the ENTITY, never about the evidence: a sentence about the messages, the
@@ -69,5 +71,3 @@ falling-out or a change of heart. If a pattern stopped, say when it stopped,
 and say what the record says about it, in its own words, if anything. An
 ending someone named ("we're done", "I'm moving out") is a fact; one you
 deduced from silence is not.
-
-No flattery, and no line that would be true of anyone.

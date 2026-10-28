@@ -253,6 +253,11 @@ fn apply_byo_model(body: &Value, byo: &crate::api::settings_byo::ByoCredential) 
     body
 }
 
+/// The applet run a subprocess's calls belong to. The runner sets it for
+/// each command applet (`applet_runner::run_subprocess`); the box's own
+/// process never has it.
+pub const APPLET_RUN_ENV: &str = "VIRTUES_APPLET_RUN_ID";
+
 /// The sentence for a metered 402, with its code — prose for the owner, code
 /// for the support conversation, in one string because every caller here
 /// surfaces a single `Error::ExternalApi(String)`.
@@ -702,7 +707,8 @@ impl BearerClient {
             cost_micros,
             route,
             chat_id: None,
-            applet_run_id: None,
+            // absent-ok: only an applet subprocess has a run; the server has none.
+            applet_run_id: std::env::var(APPLET_RUN_ENV).ok().filter(|v| !v.is_empty()),
         };
         if let Err(e) = crate::api::ai_calls::record_ai_call(&self.pool, &call).await {
             tracing::warn!(error = %e, "failed to record ai_call (post_json)");

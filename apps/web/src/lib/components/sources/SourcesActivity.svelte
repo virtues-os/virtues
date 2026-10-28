@@ -128,11 +128,11 @@
 	);
 
 	const columns: Column<Row>[] = [
-		{ key: 'applet', label: 'Applet', icon: 'ri:flashlight-line', width: '22%', minWidth: '160px' },
+		{ key: 'applet', label: 'Applet', icon: 'mynaui:zap', width: '22%', minWidth: '160px' },
 		{
 			key: 'source',
 			label: 'Source',
-			icon: 'ri:plug-line',
+			icon: 'mynaui:power',
 			width: '12%',
 			minWidth: '110px',
 			groupable: true
@@ -140,7 +140,7 @@
 		{
 			key: 'status',
 			label: 'Status',
-			icon: 'ri:circle-line',
+			icon: 'mynaui:circle',
 			width: '10%',
 			minWidth: '100px',
 			format: 'badge',
@@ -159,7 +159,7 @@
 			// display it nowhere.
 			key: 'problem',
 			label: 'Problem',
-			icon: 'ri:error-warning-line',
+			icon: 'mynaui:danger-circle',
 			width: '20%',
 			minWidth: '140px',
 			hideOnMobile: true
@@ -167,7 +167,7 @@
 		{
 			key: 'trigger',
 			label: 'Trigger',
-			icon: 'ri:play-line',
+			icon: 'mynaui:play',
 			width: '8%',
 			minWidth: '90px',
 			groupable: true,
@@ -176,7 +176,7 @@
 		{
 			key: 'records',
 			label: 'Records',
-			icon: 'ri:database-2-line',
+			icon: 'mynaui:database',
 			width: '8%',
 			minWidth: '90px',
 			format: 'number',
@@ -185,7 +185,7 @@
 		{
 			key: 'duration',
 			label: 'Took',
-			icon: 'ri:timer-line',
+			icon: 'mynaui:alarm-clock',
 			width: '8%',
 			minWidth: '80px',
 			hideOnMobile: true
@@ -193,7 +193,7 @@
 		{
 			key: 'started',
 			label: 'Started',
-			icon: 'ri:time-line',
+			icon: 'mynaui:clock-circle',
 			width: '12%',
 			minWidth: '110px',
 			// Sort on the timestamp, not on "3 minutes ago".
@@ -249,7 +249,7 @@
 		entityType="applet-run"
 		{loading}
 		error={null}
-		emptyIcon="ri:history-line"
+		emptyIcon="mynaui:clock-circle"
 		emptyMessage="No runs recorded yet"
 		loadingMessage="Loading runs…"
 		searchPlaceholder="Search runs…"

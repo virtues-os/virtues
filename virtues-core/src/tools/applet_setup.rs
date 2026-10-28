@@ -1,4 +1,5 @@
-//! `setup_applet` tool — materialize a chat-authored applet as a folder.
+//! The `applet` tool's `setup` action — materialize a chat-authored applet
+//! as a folder.
 //!
 //! The chat authoring loop (agents/record/applets.md). The model fills
 //! flat params; this executor — trusted Rust — validates them (the "check"),
@@ -10,7 +11,7 @@
 //! scheduled row without a user action** — any applet that crosses a boundary
 //! (schedule/trigger, credential, recurring spend) materializes with
 //! `default_enabled = false`; enabling is a user-surface action the tool
-//! layer refuses (see `edit_applet`).
+//! layer refuses (see the `edit` action in `applet_management`).
 
 use serde::Serialize;
 use sqlx::PgPool;
@@ -23,7 +24,7 @@ const SCHEMA_SQL_MAX: usize = 16 * 1024;
 const AGENT_MAX: usize = 24 * 1024;
 
 /// The authoring contract, one source: applets/AGENTS.md is what an agent in
-/// the repo reads and what `setup_applet {"guide": true}` hands the in-box
+/// the repo reads and what `applet {"action": "setup", "guide": true}` hands the in-box
 /// assistant. The tool definition stays short because every chat step
 /// re-sends it; the guide is fetched once, by the chat that is authoring.
 const AGENTS_MD: &str = include_str!("../../../applets/AGENTS.md");
@@ -67,6 +68,25 @@ struct ManifestOut {
 /// "I allow" in chat.
 pub(crate) fn wants_check_only(arguments: &serde_json::Value) -> bool {
     arguments.get("check_only").and_then(|v| v.as_bool()) == Some(true)
+}
+
+/// The daily spend limit, in dollars, an applet put by an outside agent (the
+/// CLI's `applet put`, or a setup through `/api/mcp`) gets when it has a prompt
+/// and sets none. A scheduled applet written by an outside agent runs with
+/// nobody watching; this is what stops it running up a bill overnight. The
+/// owner can raise or remove it like any limit.
+pub(crate) const DEFAULT_MAX_LLM_COST_PER_DAY: f64 = 1.0;
+
+/// Adds [`DEFAULT_MAX_LLM_COST_PER_DAY`] to setup arguments that carry a
+/// prompt and no daily limit of their own.
+pub(crate) fn with_default_spend_cap(arguments: &mut serde_json::Value) {
+    let has_prompt = arguments.get("agent").or_else(|| arguments.get("instruction")).is_some();
+    if has_prompt && arguments["limits"].get("max_llm_cost_per_day").is_none() {
+        if !arguments["limits"].is_object() {
+            arguments["limits"] = serde_json::json!({});
+        }
+        arguments["limits"]["max_llm_cost_per_day"] = serde_json::json!(DEFAULT_MAX_LLM_COST_PER_DAY);
+    }
 }
 
 /// The authored fields, parsed once for the check and the write.
@@ -161,6 +181,15 @@ pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value
                 Some("6 fields (seconds first), box-local timezone — e.g. '0 0 6 * * *' = daily 6am"),
             ));
         }
+        // The scheduler only picks up rows whose triggers include `cron`, so
+        // a schedule without it is saved, shown, and never fires.
+        if !triggers.iter().any(|t| t == "cron") {
+            findings.push(finding(
+                "triggers",
+                "a schedule is set but `triggers` has no `cron`, so it would never run on that schedule",
+                Some("add \"cron\" to triggers, or remove the schedule"),
+            ));
+        }
     }
 
     if agent.as_deref().is_some_and(|a| a.len() > AGENT_MAX) {
@@ -234,7 +263,7 @@ pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value
     findings
 }
 
-/// Execute the setup_applet tool.
+/// Execute the applet tool's setup action.
 pub async fn execute(
     pool: &PgPool,
     arguments: serde_json::Value,
@@ -262,7 +291,7 @@ pub async fn execute(
         return Ok(ToolResult::success(serde_json::json!({
             "status": "check_failed",
             "findings": findings,
-            "hint": "fix the findings and call setup_applet again — nothing was created",
+            "hint": "fix the findings and call setup again; nothing was created",
         })));
     }
 
@@ -748,7 +777,7 @@ async fn did_you_mean(pool: &PgPool, error: &str) -> Option<String> {
         .map(|(_, n)| format!("did you mean \"{n}\"?"))
 }
 
-fn levenshtein(a: &str, b: &str) -> usize {
+pub(crate) fn levenshtein(a: &str, b: &str) -> usize {
     let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
     let mut prev: Vec<usize> = (0..=b.len()).collect();
     let mut cur = vec![0; b.len() + 1];
@@ -861,5 +890,31 @@ mod tests {
         )
         .await;
         assert!(out.is_empty(), "unexpected findings: {out:?}");
+    }
+
+    /// The scheduler only runs rows whose triggers include `cron`. A draft
+    /// that sets a schedule and lists its own triggers without it was saved
+    /// and shown as scheduled, and never ran.
+    #[sqlx::test]
+    async fn a_schedule_without_a_cron_trigger_is_a_finding(pool: PgPool) {
+        let draft = |triggers: serde_json::Value| {
+            Draft::parse(&serde_json::json!({
+                "name": "Morning note",
+                "description": "Writes a short note each morning.",
+                "agent": "Write one sentence about the weather.",
+                "schedule": "0 0 7 * * *",
+                "triggers": triggers,
+            }))
+            .unwrap()
+        };
+        let on_triggers = |out: &[serde_json::Value]| {
+            out.iter().filter(|f| f["field"] == "triggers").count()
+        };
+
+        let out = check(&pool, &draft(serde_json::json!(["manual", "tool"]))).await;
+        assert_eq!(on_triggers(&out), 1, "a schedule with no cron must be refused: {out:?}");
+
+        let out = check(&pool, &draft(serde_json::json!(["cron", "manual"]))).await;
+        assert_eq!(on_triggers(&out), 0, "unexpected findings: {out:?}");
     }
 }

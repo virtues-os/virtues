@@ -349,7 +349,7 @@
 	function rowMenu(row: MemberRow, e: MouseEvent) {
 		e.preventDefault();
 		const items = [
-			{ id: 'open', label: 'Open', icon: 'ri:external-link-line', action: () => openUrl(row.url) }
+			{ id: 'open', label: 'Open', icon: 'mynaui:external-link', action: () => openUrl(row.url) }
 		];
 		// Your own writing is kept out of retrieval, so the assistant never
 		// cites your draft back to you as if it were a source.
@@ -361,7 +361,7 @@
 				description: draft
 					? 'The assistant can draw on it again'
 					: "The assistant won't cite it back to you",
-				icon: draft ? 'ri:book-open-line' : 'ri:quill-pen-line',
+				icon: draft ? 'mynaui:book-open' : 'mynaui:pen',
 				dividerBefore: true,
 				action: () => setRole(row.url, draft ? 'library' : 'manuscript')
 			} as (typeof items)[number]);
@@ -371,14 +371,14 @@
 				{
 					id: 'top',
 					label: 'Move to top',
-					icon: 'ri:skip-up-line',
+					icon: 'mynaui:chevrons-up',
 					dividerBefore: true,
 					action: () => moveTo(row.url, 'top')
 				} as (typeof items)[number],
 				{
 					id: 'bottom',
 					label: 'Move to bottom',
-					icon: 'ri:skip-down-line',
+					icon: 'mynaui:chevrons-down',
 					action: () => moveTo(row.url, 'bottom')
 				} as (typeof items)[number]
 			);
@@ -394,7 +394,7 @@
 		items.push({
 			id: 'remove',
 			label: 'Remove from project',
-			icon: 'ri:close-line',
+			icon: 'mynaui:x',
 			dividerBefore: true,
 			variant: 'destructive',
 			action: () => removeMember(row.url)
@@ -501,7 +501,7 @@
 
 <div class="project-detail">
 	{#if loading && !detail}
-		<div class="state"><Icon icon="ri:loader-4-line" width="18" class="spin" /> Loading…</div>
+		<div class="state"><Icon icon="mynaui:spinner" width="18" class="spin" /> Loading…</div>
 	{:else if error}
 		<div class="state error">{error}</div>
 	{:else if detail}
@@ -536,7 +536,7 @@
 				     never reflows on the first keystroke. -->
 				<span class="ask-send" class:idle={!askDraft.trim()}>
 					<IconButton
-						icon="ri:arrow-up-line"
+						icon="mynaui:arrow-up"
 						label="Ask, grounded in this project"
 						size="sm"
 						type="submit"
@@ -557,7 +557,7 @@
 				{#if memberRows.length === 0}
 					{#if !archived}
 						<button class="add-row" onclick={openPicker}>
-							<Icon icon="ri:add-line" width="15" /> Add pages, people, places, or links, or drop files here
+							<Icon icon="mynaui:plus" width="15" /> Add pages, people, places, or links, or drop files here
 						</button>
 					{/if}
 				{:else}
@@ -565,7 +565,7 @@
 						items={memberRows}
 						{columns}
 						entityType="project-item"
-						emptyIcon="ri:filter-line"
+						emptyIcon="mynaui:filter"
 						emptyMessage="Nothing here matches that filter"
 						searchPlaceholder="Search files and pages…"
 						selectable
@@ -584,7 +584,7 @@
 
 						{#snippet rowActions(row: MemberRow)}
 							<IconButton
-								icon="ri:more-line"
+								icon="mynaui:dots"
 								label={`Actions for ${row.name}`}
 								size="sm"
 								haspopup="menu"
@@ -595,7 +595,7 @@
 						{#snippet toolbarActions()}
 							{#if !archived}
 								<IconButton
-									icon="ri:add-line"
+									icon="mynaui:plus"
 									label="Add a page, person, place, file, or link"
 									variant="secondary"
 									onclick={openPicker}

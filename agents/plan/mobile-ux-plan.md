@@ -25,7 +25,7 @@ table (`UniversalDataGrid`), Return as newline on phone
     drag).
 - **Overlay clamps, unverified on phone:** ContextMenu max-height,
   Modal/SearchModal bottom inset, SelectionPopover and RefPreview viewport
-  clamping. `CitationPanel` already pads both safe areas.
+  clamping.
 - **Pages editor posture on phone** (design decision, then build): reading and
   light edits, not full authoring. Collapse the topbar popovers behind one
   overflow; the references rail becomes a bottom sheet; the slash menu and

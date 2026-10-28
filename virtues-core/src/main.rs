@@ -6,6 +6,13 @@ use virtues::VirtuesBuilder;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    // Inside a sandboxed unit, before any startup: there is no box
+    // environment to read and no service user to become.
+    let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("sandbox-bridge") {
+        std::process::exit(virtues::sandbox::bridge::main(&args[2..]));
+    }
+
     // Trivial subcommands (--version, --help) skip the heavy startup path:
     // no tracing init, no observability, no .env loading, no rustls provider.
     // Without this, `virtues --version` prints two lines of OTel/observability
@@ -285,12 +292,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // ─── `virtues pair` (aliases: `login`, `link`) ──────────────────────────
     // THE human verb for connecting a device to the box (agents/build/onboarding.md). Mints a
     // CLI-origin pair token (authorized immediately because typing this
-    // command IS proof of physical access), prints the one-time URL + QR,
-    // then waits until the link is opened — the wait is also the
-    // client-isolation detector (a printed link nobody opens is the only
-    // box-side signal for a network that blocks device-to-device traffic).
-    // The URL puts the token in a `#t=` fragment, so it never hits server
-    // logs or referer headers.
+    // command IS proof of physical access), prints the six-digit code and
+    // the server's addresses, then waits until a device pairs. The wait is
+    // also the client-isolation detector: a code nobody manages to use is the
+    // only box-side signal for a network that blocks device-to-device traffic.
     if let Some(Commands::Pair { no_wait }) = &cli.command {
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
@@ -734,13 +739,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     }
 
-    // ─── `virtues agent-key` / `agent-exec` ─────────────────────────────────
-    // Neither opens the database. An agent key's file is a file, and the
-    // agent user it serves has no database role: its verbs go to the server.
-    if matches!(cli.command, Some(Commands::AgentKey { .. } | Commands::AgentExec { .. })) {
+    // ─── `virtues agent-key` / `agent-exec` / `mcp` ─────────────────────────
+    // None opens the database. An agent key's file is a file, and the agent
+    // user it serves has no database role: its verbs go to the server, and
+    // `mcp` only relays to it.
+    if matches!(cli.command, Some(Commands::AgentKey { .. } | Commands::AgentExec { .. } | Commands::Mcp)) {
         let outcome = match cli.command {
             Some(Commands::AgentKey { cmd }) => virtues::cli::agent_key::manage(cmd).await,
             Some(Commands::AgentExec { key }) => virtues::cli::agent_key::exec(key).await,
+            Some(Commands::Mcp) => virtues::cli::mcp::serve(None).await,
             _ => unreachable!(),
         };
         if let Err(e) = outcome {
@@ -923,17 +930,19 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
     println!("    Enter the code above in it. A browser cannot pair — pairing is");
     println!("    a held key, and a browser tab has none.");
 
-    // The box's addresses, for the app's "enter its address" field when mDNS
-    // does not carry — an isolated office LAN, or a box on another subnet.
+    // The server's addresses, for the app's "Enter address and code" form when
+    // its network search comes up empty: an isolated office LAN, a server on
+    // another subnet, a VM behind shared networking. Each line carries the
+    // code too, so copying one line fills both fields of that form.
     let urls = reachable_box_origins(is_dev, &web_port);
     if !urls.is_empty() {
         println!();
-        println!("  If the app can't find this box, give it an address:");
+        println!("  If the app can't find this server, paste one of these lines into it:");
         for url in &urls {
-            println!("    {}", url.url);
+            println!("    {}   {display}", url.url);
         }
         if let Some(v6) = virtues::net_check::compute_net_status().ipv6_global {
-            println!("    http://[{v6}]:8000");
+            println!("    http://[{v6}]:8000   {display}");
         }
     }
 

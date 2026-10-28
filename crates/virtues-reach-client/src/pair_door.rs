@@ -79,7 +79,8 @@ const READ_TIMEOUT: Duration = Duration::from_secs(10);
 const MAX_ATTEMPTS: u32 = 10;
 
 /// How an admitted request reaches the box. Concrete callers pass the warm
-/// iroh client's `request`; tests pass a stub, which is what lets the refusal
+/// iroh client's `request` (the MCP bridge in `mcp.rs` also passes a loopback
+/// connection); tests pass a stub, which is what lets the refusal
 /// rules below be verified over a real socket without a box on the other end.
 pub trait Forwarder: Send + Sync + 'static {
     fn forward(

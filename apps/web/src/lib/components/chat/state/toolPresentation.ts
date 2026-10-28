@@ -66,6 +66,17 @@ interface Presentation {
 	say: [string, string] | Describe;
 }
 
+/** The applet tool's line for each `action`, `[live, done]`. */
+const APPLET_SAY: Record<string, [string, string]> = {
+	list: ["Checking what's set up", "Checked what's set up"],
+	get: ["Checking what's set up", "Checked what's set up"],
+	guide: ["Reading how applets work", "Read how applets work"],
+	setup: ["Setting up an applet", "Set up an applet"],
+	edit: ["Changing an applet", "Changed an applet"],
+	run: ["Running an applet", "Ran an applet"],
+	delete: ["Removing an applet", "Removed an applet"],
+};
+
 const TOOLS: Record<string, Presentation> = {
 	// Rendered as its own thought in the list, never as a described call.
 	think: { noun: "thinking", depth: 3, say: ["Planning", "Planned"] },
@@ -143,6 +154,17 @@ const TOOLS: Record<string, Presentation> = {
 		},
 	},
 	read_asset: { noun: "a file", depth: 4, say: ["Opening a file", "Opened a file"] },
+	// A service the owner connected over MCP, such as Linear. The chat hands
+	// it a whole task; a worker with only that service's tools does it.
+	connection: {
+		noun: "a connected service",
+		depth: 4,
+		say: (input, live) => {
+			const name = String(input.name ?? "").trim();
+			const service = name ? name.charAt(0).toUpperCase() + name.slice(1) : "a connected service";
+			return `${live ? "Using" : "Used"} ${service}`;
+		},
+	},
 	// The owner's browser, a window in the Mac app. The chat hands it a whole
 	// task; the steps are the browsing agent's, and show in the Browser's
 	// Activity row. The browser_* entries below are chats from before that.
@@ -250,24 +272,16 @@ const TOOLS: Record<string, Presentation> = {
 		say: ["Writing the introductions", "Wrote the introductions"],
 	},
 	skip_step: { noun: "setup", depth: 4, say: ["Skipping a setup step", "Skipped a setup step"] },
-	list_applets: { noun: "applets", depth: 4, say: ["Checking what's set up", "Checked what's set up"] },
-	get_applet: { noun: "an applet", depth: 4, say: ["Checking what's set up", "Checked what's set up"] },
-	setup_applet: {
+	applet: {
 		noun: "an applet",
 		depth: 4,
-		// `{guide: true}` only reads the authoring guide; it sets nothing up.
-		say: (input, live) =>
-			input.guide === true
-				? live
-					? "Reading how applets work"
-					: "Read how applets work"
-				: live
-					? "Setting up an applet"
-					: "Set up an applet",
+		say: (input, live) => {
+			// Setup with `{guide: true}` only reads the authoring guide; it sets nothing up.
+			const key = input.action === "setup" && input.guide === true ? "guide" : String(input.action ?? "");
+			const [now, then] = APPLET_SAY[key] ?? ["Working on an applet", "Worked on an applet"];
+			return live ? now : then;
+		},
 	},
-	edit_applet: { noun: "an applet", depth: 4, say: ["Changing an applet", "Changed an applet"] },
-	delete_applet: { noun: "an applet", depth: 4, say: ["Removing an applet", "Removed an applet"] },
-	run_applet: { noun: "an applet", depth: 4, say: ["Running an applet", "Ran an applet"] },
 	save_skill: { noun: "a skill", depth: 4, say: ["Saving your skill", "Saved your skill"] },
 	update_applet_memory: {
 		noun: "an applet",

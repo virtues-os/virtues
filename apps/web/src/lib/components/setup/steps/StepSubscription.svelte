@@ -221,7 +221,7 @@
 			</p>
 			<button class="setup-go wide" onclick={onnext}>
 				{intoLabel(setup.upNext("subscription"))}
-				<Icon icon="ri:arrow-right-line" width="16" />
+				<Icon icon="mynaui:arrow-right" width="16" />
 			</button>
 		</div>
 	{:else}
@@ -229,10 +229,10 @@
 			<p class="kind">Virtues subscription</p>
 			<p class="price"><span class="amount">$20</span> a month</p>
 			<ul class="covers">
-				<li><Icon icon="ri:check-line" width="16" /> {name}, on the best models there are</li>
-				<li><Icon icon="ri:check-line" width="16" /> Web search</li>
-				<li><Icon icon="ri:check-line" width="16" /> Place search</li>
-				<li><Icon icon="ri:check-line" width="16" /> Bank connections</li>
+				<li><Icon icon="mynaui:check" width="16" /> {name}, on the best models there are</li>
+				<li><Icon icon="mynaui:check" width="16" /> Web search</li>
+				<li><Icon icon="mynaui:check" width="16" /> Place search</li>
+				<li><Icon icon="mynaui:check" width="16" /> Bank connections</li>
 			</ul>
 			{#if mode === "checkout"}
 				<div class="waiting" in:fly={IN}>
@@ -251,7 +251,7 @@
 			{:else}
 				<button class="setup-go wide" onclick={subscribe}>
 					Set up your subscription
-					<Icon icon="ri:arrow-right-line" width="16" />
+					<Icon icon="mynaui:arrow-right" width="16" />
 				</button>
 				<p class="fine">You'll confirm in your browser.</p>
 			{/if}
@@ -359,7 +359,7 @@
 
 		{#if error}
 			<p class="err" role="alert">
-				<Icon icon="ri:error-warning-line" width="15" />
+				<Icon icon="mynaui:danger-circle" width="15" />
 				{error}
 			</p>
 		{/if}

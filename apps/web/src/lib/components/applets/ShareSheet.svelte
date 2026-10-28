@@ -206,7 +206,7 @@
 	<div class="sheet">
 		{#if imagesComing}
 			<div class="warn">
-				<Icon icon="ri:error-warning-line" width="16" />
+				<Icon icon="mynaui:danger-circle" width="16" />
 				<div>
 					<p class="warn-title">You can't share this page yet</p>
 					<p>{STILL_UPLOADING}</p>
@@ -216,7 +216,7 @@
 			<p class="hint">Getting the page ready…</p>
 		{:else if preview?.problem}
 			<div class="warn">
-				<Icon icon="ri:error-warning-line" width="16" />
+				<Icon icon="mynaui:danger-circle" width="16" />
 				<div>
 					<p class="warn-title">You can't share this page yet</p>
 					<p>{preview.problem}</p>
@@ -331,7 +331,7 @@
 				{/if}
 				{#if preview.looks_private.length}
 					<div class="warn">
-						<Icon icon="ri:eye-line" width="16" />
+						<Icon icon="mynaui:eye" width="16" />
 						<div>
 							<p class="warn-title">This looks like contact details</p>
 							<p class="private">{preview.looks_private.join(' · ')}</p>
@@ -360,7 +360,7 @@
 							</div>
 							<div class="link-actions">
 								{#if l.link}
-									<Button size="sm" variant="secondary" icon="ri:file-copy-line" onclick={() => copy(l.link!)}>
+									<Button size="sm" variant="secondary" icon="mynaui:copy" onclick={() => copy(l.link!)}>
 										{copied === l.link ? 'Copied' : 'Copy link'}
 									</Button>
 								{/if}
@@ -388,7 +388,7 @@
 						{/each}
 					</select>
 				</label>
-				<Button variant="primary" icon="ri:link" disabled={busy} onclick={create}>
+				<Button variant="primary" icon="mynaui:link" disabled={busy} onclick={create}>
 					{links.length ? 'Create another link' : 'Create link'}
 				</Button>
 			</section>

@@ -13,16 +13,11 @@
 //! midnight, no error, unfindable from the UI. A bundle carrying that call can
 //! only be served by a box that also has the handler.
 //!
-//! **This no longer kills that class by construction**, and the comment here
-//! claimed it did until 2026-09-14. The claim rested on a client never being
-//! able to get ahead of its box, which stopped being true when the client
-//! learned to refuse a downgrade: a phone updates on Apple's cadence and a box
-//! when its owner runs `virtues upgrade`, so a shell carrying UI newer than the
-//! box's is ordinary, and it now keeps that UI instead of taking the box's
-//! older one. See the "Forward only" section in
-//! `apps/web/src-tauri/src/web_bundle.rs` for the trade and what would close
-//! the class properly (a bundle declaring a minimum BOX, mirroring
-//! `minShellVersion`). Nothing on this side enforces it today.
+//! A client runs whatever bundle this box serves whenever its shell can run
+//! it, so the UI it shows is the one built against this box's API. The
+//! exception is a box that serves no bundle, where the client keeps the build
+//! baked into its app. See "The box's bundle wins" in
+//! `apps/web/src-tauri/src/web_bundle.rs`.
 //!
 //! **What is NOT here.** Applying a bundle — unpack, atomic flip, rollback —
 //! is the client's job, and the `minShellVersion` in the manifest is what stops

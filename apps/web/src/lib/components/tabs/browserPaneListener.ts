@@ -40,5 +40,5 @@ export function showBrowserTab(url: string): void {
 		windowShellStore.setActiveTabInPane(open.tab.id, open.paneId as 'left' | 'right');
 		return;
 	}
-	windowShellStore.openAside({ type: 'browser', route, label, icon: 'ri:global-line' });
+	windowShellStore.openAside({ type: 'browser', route, label, icon: 'mynaui:globe' });
 }

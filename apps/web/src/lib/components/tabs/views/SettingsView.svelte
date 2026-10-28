@@ -14,6 +14,7 @@
 	  Assistant    /virtues/assistant      — name, style, rules, memory, models (+ /models: the catalog)
 	  Billing      /virtues/billing        — subscription, balance, routing, and
 	                                         the AI calls that draw it down
+	  Keys         /virtues/keys           — sign-ins and the named keys applets use
 	  System       /virtues/system         — the machine, measured (read-only)
 	  Search       /virtues/search         — where search runs, and what it covers
 	  Network      /virtues/network        — which network the box is on
@@ -23,6 +24,7 @@
 	               /virtues/devices/:id    — another device, as the box knows it
 	  Shared links /virtues/shared         — every link shared through the door
 	  Applets      /virtues/applets        — every applet, built-in ones included
+	  Connections  /virtues/connections    — other services' tools the assistant can use
 	  Display      /virtues/display        — the screen on the box, and what it shows
 	  Developer    /virtues/developer      — SQL · Terminal
 
@@ -61,7 +63,9 @@
 	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
 	import DeveloperTerminalView from '$lib/components/tabs/views/DeveloperTerminalView.svelte';
 	import SharedLinksView from '$lib/components/tabs/views/SharedLinksView.svelte';
+	import KeysView from '$lib/components/tabs/views/KeysView.svelte';
 	import ManageApplets from '$lib/components/applets/ManageApplets.svelte';
+	import ConnectionsView from '$lib/components/tabs/views/ConnectionsView.svelte';
 	import SearchSettingsView from '$lib/components/tabs/views/SearchSettingsView.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -140,7 +144,6 @@
 	// only `navigate` re-resolves that through the registry.
 	const SOURCES_ALIASES = [
 		'/virtues/sources',
-		'/virtues/connections',
 		'/virtues/connections/sources',
 		'/virtues/connections/tools',
 		'/virtues/tools',
@@ -175,22 +178,26 @@
 		| 'you'
 		| 'assistant'
 		| 'billing'
+		| 'keys'
 		| 'system'
 		| 'search'
 		| 'devices'
 		| 'shared'
 		| 'applets'
+		| 'connections'
 		| 'display'
 		| 'developer';
 
 	const SECTIONS = [
 		'assistant',
 		'billing',
+		'keys',
 		'system',
 		'search',
 		'devices',
 		'shared',
 		'applets',
+		'connections',
 		'display',
 		'developer',
 	];
@@ -231,6 +238,8 @@
 			{/if}
 		{:else if section === 'billing'}
 			<BillingView {tab} {active} />
+		{:else if section === 'keys'}
+			<KeysView />
 		{:else if section === 'system'}
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'search'}
@@ -247,6 +256,8 @@
 					<ManageApplets {tab} />
 				</div>
 			</div>
+		{:else if section === 'connections'}
+			<ConnectionsView />
 		{:else if section === 'devices'}
 			{#if !sub}
 				<DevicesView {tab} {active} />

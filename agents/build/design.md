@@ -33,8 +33,9 @@ header row and the sidebar sit on it and paint nothing of their own. **The
 cards** are the work, raised off it in the page's color (`--page`): one per
 pane, a desk gap (8px, `--pane-inset`) from the window's edges and from each
 other. In split view the gap between the two cards is the resize handle.
-Every card keeps all four rounded corners, and nothing joins: opening the
-sidebar or a split only moves cards. There is no rail.
+Every card keeps its rounded corners, and the one thing that joins a card
+is its active tab, which is the top of the card (see the active tab below).
+Opening the sidebar or a split only moves cards. There is no rail.
 
 The sidebar is one list, and it never changes: the doors (Setup while it
 is not done, New chat, Pages, Tasks, Projects, Applets, Wiki), Pinned and
@@ -118,14 +119,14 @@ are written as prohibitions.
 2. **Separation goes whitespace → 3–5% lightness → elevation, and you stop at
    the first one that works.** Do not reach for a 1px rule. There are no
    hairline separators in the sidebar.
-3. **Nothing in the chrome recedes.** A recessed tab strip was tried, on the
-   reasoning that the browser tab model needs one — and it does, which is why
-   the browser tab model was abandoned rather than the rule bent. Recessing the
-   sidebar (200px wide, full height, lower half empty) turned the emptiness
-   into a visible object; *the empty space was not noticeable while the sidebar
-   matched the page*. Recessing only the strip left a dark band beside a light panel for no
-   gain once tabs became pills. The sidebar sits on `--surface-elevated`, a 4%
-   step, and that is the only shift in the shell.
+3. **Nothing in the chrome recedes.** Recessing the sidebar (200px wide,
+   full height, lower half empty) turned the emptiness into a visible object;
+   *the empty space was not noticeable while the sidebar matched the page*.
+   Recessing only the tab strip left a dark band beside a light panel. The
+   tabs are browser tabs and still need no strip of their own: they stand on
+   the desk, which is already the tone step between the chrome and a card.
+   The sidebar sits on `--surface-elevated`, a 4% step, and that is the only
+   shift in the shell.
 4. **Sizes come from [the scale](#the-scale).** No value between its steps:
    no `12.5px`, `13.5px`, `26px`, `30px`, `34px`. A value that is one or two
    pixels off a neighbour reads as a mistake even when nobody can say why.
@@ -196,8 +197,13 @@ behind it, so it reads in all sixteen themes. Four steps, no others:
 | Press | `--press-bg` | 16% | held down, only for the duration of the press |
 
 **The active tab is marked by fill and ink**: the page's color (`--page`)
-on the desk, the same step that separates a card, and full ink. It sits
-above its card, not joined to it.
+on the desk, the same step that separates a card, and full ink. It is the
+top of its card, as in a browser: it takes the card's edge on three sides,
+paints over the card's top edge, and its bottom corners flare out into that
+edge. A first tab on the card's left edge squares off the card's corner
+instead. Tabs you are not on have no fill until you point at them. In split
+view each pane's active tab joins its own card, and the unfocused one dims
+its ink.
 
 ### Tone, not lines
 
@@ -243,8 +249,8 @@ Seven tokens in `themes.css`, always on `--ease-premium`:
 | `--motion-press` | 60ms | sinking on press |
 | `--motion-release` | 180ms | springing back |
 | `--motion-state` | 150ms | a selection changing, a group folding |
-| `--motion-enter` | 180ms | a popover, a menu or a new tab appearing |
-| `--motion-layout` | 300ms | the sidebar opening, a pane resizing, the sidebar glyph's tint |
+| `--motion-enter` | 180ms | a popover or a menu appearing |
+| `--motion-layout` | 300ms | the sidebar opening, a pane resizing, the sidebar glyph's tint, a tab opening or closing |
 
 Square controls sink to 94% while pressed. Rows and tabs take the press fill
 only, because a wide row that shrank would read as a wobble. The ∴ dot's
@@ -281,10 +287,12 @@ Every drag in the app uses the same few marks, from tokens in `themes.css`:
 
 **Each group in the window header starts at the column below it.** The ∴'s
 glyph starts on the sidebar's icon line, level with the rows' icons, and the
-window's controls follow it. In the Mac app the title bar is an overlay: the
-traffic lights sit in the header row on its centre line, and the ∴ and the
-controls follow them after 12pt, as in a native Mac app. The row's empty
-space moves the window. Each pane's tabs start at that pane's edge.
+window's controls follow it, 4px apart, so every glyph has 16px of air on
+each side. In the Mac app the title bar is an overlay: the traffic lights sit
+in the header row on its centre line, the close button as far in from the
+left edge as it is down from the top, and the ∴ follows the zoom button with
+the same 16px of air. In full screen macOS hides the lights and the ∴ moves
+back to the sidebar's icon line. The row's empty space moves the window. Each pane's tabs start at that pane's edge.
 With the sidebar closed the controls keep their place, and the left pane's
 tabs start just after them. 
 
@@ -319,7 +327,7 @@ This bug shipped twice: dead hovers across 39 rules, and an active tab rendered
 | Role | Face | Size | Weight |
 |---|---|---|---|
 | Tab, group heading, meta | Avenir | 12px | 400 (headings muted) |
-| Row (every panel) | Avenir | 13px | 400 |
+| Row, menu item, picker row and field, project chip (`--chrome-label-font-size`) | Avenir | 14px | 400 |
 | Writing in the sidebar (a page, a project, a pin of either) | EB Garamond | 14px | 400 |
 | Panel title | EB Garamond | 16px | 400 |
 | Body / prose | EB Garamond | — | the page, not the chrome |
@@ -346,14 +354,34 @@ should do the work, as they do in a table of contents.
 
 ## Interaction
 
-- **Tabs are pills above the card.** Sized to their labels, so the gaps
-  between them are even, with the + one gap after the last. The first tab
-  starts on the card's left edge. The active tab takes the page's fill (see
-  [Grays](#grays)); the others have none until hovered. In split view the
-  active tab of the pane you are not working in has muted ink. Tabs joined
-  to their card (a browser's model) were tried and taken out: on cards that
-  float on a desk they made each card half a floating sheet and half the
-  foot of a tab.
+- **Tabs are browser tabs on their card.** Sized to their labels, one
+  card radius apart, so the active tab's flared corner fills the gap and
+  never reaches a neighbour's hover pill. The + sits the same distance
+  after the last tab. The first tab starts on the card's left edge. The
+  active tab is the top of its card (see [Grays](#grays)); the others have
+  no fill and light as a pill when hovered or pressed. In split view the
+  active tab of the pane you are not working in has muted ink. Joined tabs
+  without flares made a card look half floating sheet and half tab foot.
+  The flared corners are what make the tab and the card read as one
+  surface.
+- **Switching tabs is instant.** The fill, edge, corners and ink change in
+  one frame. Only the hover pill fades.
+- **Opening and closing a tab is one motion run both ways**, on
+  `--motion-layout`, in two beats that overlap a little. Opening: the space
+  opens and the tabs to its right and the + glide aside, then the tab rises
+  one radius out of the card and fades in. Closing: the tab sinks toward
+  the card and fades, then the space closes and its neighbours glide in.
+  Nothing is squeezed while it can be seen. Tabs already open when the
+  window loads do not animate.
+- **A crowded strip compacts, then scrolls.** The tabs you are not on drop
+  to their icons. The tab you are on keeps its full width. Past that the
+  strip scrolls, and an edge fades over 32px while there are tabs past it.
+  Switching to a tab scrolls it into view clear of the fades.
+- **A tab carries the sidebar's marks.** A chat that is replying shows the
+  working ∴ in place of its icon. A reply that landed while the tab was in
+  the background puts the unread dot on the icon's corner. A title that
+  does not fit fades out over its last 24px instead of ending in an
+  ellipsis.
 - **A view's actions sit at the end of its tab strip** (`paneActions`), the
   chat's ⋮ included, not in a corner of the page. The phone has no strip, so
   there the chat keeps its corner button.

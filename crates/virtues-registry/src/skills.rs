@@ -15,8 +15,8 @@
 //! sends the skill's name as `agent_mode` for now; that is the one seam the
 //! old shape still owns.
 //!
-//! Compiled in with `include_str!` for the same reason tools and personas
-//! are Rust constants: the shipped set needs no installer step and cannot
+//! Compiled in with `include_str!` for the same reason tools are Rust
+//! constants: the shipped set needs no installer step and cannot
 //! be missing on a box. Authored skills, the person's own, are files in the
 //! same format under the box's state root; `virtues-core`'s `api::skills`
 //! reads and writes them with [`parse`] and [`render`].
@@ -85,6 +85,16 @@ pub fn skill_named(name: &str) -> Option<Skill> {
     default_skills().into_iter().find(|s| s.name == name)
 }
 
+/// A tool id as it is named now. A skill saved before the applet tools became
+/// one `applet` tool names them separately, and without this it would lose
+/// applet access without a word.
+fn current_tool_id(id: &str) -> &str {
+    match id {
+        "setup_applet" | "list_applets" | "get_applet" | "edit_applet" | "delete_applet" | "run_applet" => "applet",
+        other => other,
+    }
+}
+
 /// Parse `---` frontmatter of `key: value` lines, then the body. No YAML
 /// library: the fields are flat scalars and a comma list, and a format this
 /// small is better read by ten lines that say exactly what they accept.
@@ -113,11 +123,11 @@ pub fn parse(src: &str) -> Result<Skill, String> {
             "name" => name = Some(value.to_string()),
             "description" => description = Some(value.to_string()),
             "tools" => {
-                tools = value
-                    .split(',')
-                    .map(|t| t.trim().to_string())
-                    .filter(|t| !t.is_empty())
-                    .collect()
+                for t in value.split(',').map(|t| current_tool_id(t.trim())).filter(|t| !t.is_empty()) {
+                    if !tools.iter().any(|known| known == t) {
+                        tools.push(t.to_string());
+                    }
+                }
             }
             "max_steps" => max_steps = Some(value.parse().map_err(|e| format!("max_steps: {e}"))?),
             "max_cost_usd" => {
@@ -220,6 +230,13 @@ mod tests {
         assert!(parse("---\nname: x\n---\nbody").unwrap_err().contains("description"));
         assert!(parse("---\nname: x\nmodel: image\n---\nbody").unwrap_err().contains("standard or deep"));
         assert!(parse("---\nname: x\nicon: <svg>\n---\nbody").unwrap_err().contains("ri: icon"));
+    }
+
+    /// A skill saved when the applet tools were separate keeps applet access.
+    #[test]
+    fn old_applet_tool_ids_read_as_the_applet_tool() {
+        let s = parse("---\nname: x\ndescription: d\ntools: sql_query, list_applets, run_applet\nmax_steps: 1\nmax_cost_usd: 1\nmax_minutes: 1\n---\nbody").unwrap();
+        assert_eq!(s.tools, ["sql_query", "applet"]);
     }
 
     /// What `render` writes, `parse` reads back unchanged, so an authored

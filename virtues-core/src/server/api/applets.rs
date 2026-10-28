@@ -48,6 +48,12 @@ pub fn routes() -> Router<AppState> {
                 .patch(patch_applet_handler)
                 .delete(delete_applet_handler),
         )
+        // The hosts an applet's code may reach. Here only: PATCH and the
+        // applet tool cannot set them (scheduler::applets::set_net_hosts).
+        .route(
+            "/api/applets/:id/hosts",
+            get(get_applet_hosts_handler).put(put_applet_hosts_handler),
+        )
         .route("/api/applets/:id/run", post(trigger_applet_handler))
         .route("/api/applets/:id/message", post(message_applet_handler))
         .route("/api/applets/:id/data", get(get_applet_data_handler))
@@ -507,6 +513,27 @@ pub async fn message_applet_handler(
     }
 }
 
+/// The keys an applet declares (`secrets = [...]` in its manifest), each with
+/// whether the owner has set it. Names only: a value never leaves the box here.
+async fn declared_secrets_status(pool: &sqlx::PgPool, applet_id: &str) -> anyhow::Result<Vec<serde_json::Value>> {
+    let declared = crate::applet_templates::declared_secrets(applet_id);
+    if declared.is_empty() {
+        return Ok(Vec::new());
+    }
+    let set: std::collections::HashSet<String> = crate::secrets::list(pool, crate::secrets::Kind::Env)
+        .await?
+        .into_iter()
+        .map(|n| n.key)
+        .collect();
+    Ok(declared
+        .into_iter()
+        .map(|name| {
+            let is_set = set.contains(&name);
+            serde_json::json!({ "name": name, "is_set": is_set })
+        })
+        .collect())
+}
+
 /// GET /api/applets/:id — single applet with its last run inlined.
 pub async fn get_applet_handler(
     State(state): State<AppState>,
@@ -519,6 +546,16 @@ pub async fn get_applet_handler(
                 .await
                 .ok()
                 .flatten();
+            let secrets = match declared_secrets_status(pool, &action.id).await {
+                Ok(s) => s,
+                Err(e) => {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({ "error": format!("{e:#}") })),
+                    )
+                        .into_response()
+                }
+            };
             (
                 StatusCode::OK,
                 Json(serde_json::json!({
@@ -542,6 +579,7 @@ pub async fn get_applet_handler(
                     "next_due_at": action.next_due_at,
                     "last_slot_at": action.last_slot_at,
                     "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
+                    "secrets": secrets,
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,
                     "last_run": last_run,
@@ -594,6 +632,29 @@ pub async fn create_applet_handler(
         Ok(action) => (StatusCode::CREATED, Json(action)).into_response(),
         Err(e) => error_response(e),
     }
+}
+
+/// GET /api/applets/:id/hosts — the hosts the applet's file asks for and the
+/// ones the owner allowed.
+pub async fn get_applet_hosts_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+) -> Result<Json<crate::scheduler::applets::NetHosts>, Error> {
+    Ok(Json(crate::scheduler::applets::net_hosts(state.db.pool(), &applet_id).await?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PutHostsBody {
+    pub hosts: Vec<String>,
+}
+
+/// PUT /api/applets/:id/hosts — set the hosts the owner allows.
+pub async fn put_applet_hosts_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+    Json(body): Json<PutHostsBody>,
+) -> Result<Json<crate::scheduler::applets::NetHosts>, Error> {
+    Ok(Json(crate::scheduler::applets::set_net_hosts(state.db.pool(), &applet_id, &body.hosts).await?))
 }
 
 /// PATCH /api/applets/:id — partial update. Enforces system-owner guard.
@@ -766,7 +827,7 @@ pub async fn list_sources_handler(State(state): State<AppState>) -> Response {
     // of entries even at scale.
     for s in sources {
         let credential_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM credentials WHERE source_id = $1 AND status = 'active'",
+            "SELECT COUNT(*) FROM credentials WHERE kind = 'source' AND key = $1 AND status = 'active'",
         )
         .bind(&s.id)
         .fetch_one(pool)
@@ -864,8 +925,8 @@ pub async fn patch_credential_handler(
 /// - `pending`  → hard-delete the row (used when the user cancels mid-pair
 ///   modal; the row never had a token or fan-out actions, so nothing to
 ///   preserve).
-/// - `active`   → revoke (clear `secret_lookup_hash`, drop fan-out actions,
-///   keep history with `applet_id = NULL`).
+/// - `active`   → revoke (drop fan-out actions, keep history with
+///   `applet_id = NULL`).
 /// - `revoked`  → already revoked, idempotent 204.
 pub async fn delete_credential_handler(
     State(state): State<AppState>,
@@ -874,7 +935,7 @@ pub async fn delete_credential_handler(
     let pool = state.db.pool();
 
     let status: Option<(String,)> =
-        match sqlx::query_as("SELECT status FROM credentials WHERE id = $1")
+        match sqlx::query_as("SELECT status FROM credentials WHERE id = $1 AND kind = 'source'")
             .bind(&credential_id)
             .fetch_optional(pool)
             .await

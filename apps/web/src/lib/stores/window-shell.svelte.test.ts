@@ -114,3 +114,22 @@ describe('opening things', () => {
 		expect(strip()).toEqual(['/page/page_2']);
 	});
 });
+
+describe("the browser's Back and Forward", () => {
+	it('fold a split opened beside, with the tab the address names in front', () => {
+		shell.openRouteBeside('/page/page_1');
+		expect(active()).toBe('/page/page_1');
+		shell.handleDeepLink('/chat/chat_a', null);
+		expect(shell.isSplit).toBe(false);
+		expect(active()).toBe('/chat/chat_a');
+	});
+
+	it('put the tab that was beside back in the right pane', () => {
+		shell.openRouteBeside('/page/page_1');
+		shell.handleDeepLink('/chat/chat_a', null);
+		shell.handleDeepLink('/chat/chat_a', '/page/page_1');
+		expect(strip('left')).toEqual(['/chat/chat_a']);
+		expect(strip('right')).toEqual(['/page/page_1']);
+		expect(active()).toBe('/page/page_1');
+	});
+});

@@ -551,7 +551,7 @@
 		["Markdown", "a render engine, not a primitive — it needs a document and the shiki theme; belongs in its own fixture"],
 		["ThinkingBlock", "chat-coupled; needs a streaming turn to be meaningful"],
 		["SudoModal", "asks for a real password; deliberately not instantiated on a public route"],
-		["citations (InlineCitation, CitationTooltip, CitationPanel, SourcesFooter)", "need live refs and a resolver"],
+		["citations (RecordCard, RecordCardBody)", "need live refs and a resolver"],
 		["ChatInput, RefPicker, UniversalPicker, DataGrid, ThemePicker, …", "composites, not primitives — they belong in a second gallery once the primitive set is settled"],
 	];
 
@@ -1077,14 +1077,14 @@
 						<div class="spec-items">
 							{#each ["xs", "sm", "md", "touch"] as s (s)}
 								<IconButton
-									icon="ri:close-line"
+									icon="mynaui:x"
 									label="Close ({v} {s})"
 									variant={v as "ghost" | "secondary" | "danger"}
 									size={s as "xs" | "sm" | "md" | "touch"}
 								/>
 							{/each}
 							<IconButton
-								icon="ri:delete-bin-line"
+								icon="mynaui:trash"
 								label="Disabled"
 								variant={v as "ghost" | "secondary" | "danger"}
 								disabled
@@ -1097,32 +1097,32 @@
 					<div class="spec-items">
 						{#each ["xs", "sm", "md", "touch"] as s (s)}
 							<IconButton
-								icon="ri:bold"
+								icon="mynaui:type-bold"
 								label="Bold ({s})"
 								size={s as "xs" | "sm" | "md" | "touch"}
 								pressed
 							/>
 						{/each}
-						<IconButton icon="ri:bold" label="Bold, off" pressed={false} />
-						<IconButton icon="ri:bold" label="Bold, pressed and disabled" pressed disabled />
+						<IconButton icon="mynaui:type-bold" label="Bold, off" pressed={false} />
+						<IconButton icon="mynaui:type-bold" label="Bold, pressed and disabled" pressed disabled />
 					</div>
 				</div>
 				<div class="spec-row">
 					<span class="spec-label">popover trigger</span>
 					<div class="spec-items">
-						<IconButton icon="ri:filter-3-line" label="Add filter" haspopup="menu" expanded={false} />
-						<IconButton icon="ri:more-line" label="More actions" haspopup="menu" expanded={true} />
-						<IconButton icon="ri:calendar-line" label="Pick a day" variant="secondary" haspopup="dialog" expanded={false} />
+						<IconButton icon="mynaui:filter" label="Add filter" haspopup="menu" expanded={false} />
+						<IconButton icon="mynaui:dots" label="More actions" haspopup="menu" expanded={true} />
+						<IconButton icon="mynaui:calendar" label="Pick a day" variant="secondary" haspopup="dialog" expanded={false} />
 					</div>
 				</div>
 				<div class="spec-row">
 					<span class="spec-label">in a dense row (the real case)</span>
 					<div class="spec-items">
 						<span class="ib-row">
-							<IconButton icon="ri:arrow-left-s-line" label="Back" size="xs" />
-							<IconButton icon="ri:arrow-right-s-line" label="Forward" size="xs" disabled />
+							<IconButton icon="mynaui:chevron-left" label="Back" size="xs" />
+							<IconButton icon="mynaui:chevron-right" label="Forward" size="xs" disabled />
 							<span class="ib-rowlabel">September 2026</span>
-							<IconButton icon="ri:close-line" label="Close this tab" size="xs" />
+							<IconButton icon="mynaui:x" label="Close this tab" size="xs" />
 						</span>
 					</div>
 				</div>
@@ -1470,7 +1470,7 @@
 				<div>
 					<span class="spec-label">EmptyState — icon + actions</span>
 					<Card padding="none">
-						<EmptyState icon="ri:calendar-line" title="No calendar connected" message="Connect one and your server can read your days.">
+						<EmptyState icon="mynaui:calendar" title="No calendar connected" message="Connect one and your server can read your days.">
 							{#snippet actions()}
 								<Button size="sm">Open sources</Button>
 							{/snippet}
@@ -1479,7 +1479,7 @@
 				</div>
 				<div>
 					<span class="spec-label">EmptyState — icon only</span>
-					<Card padding="none"><EmptyState icon="ri:inbox-archive-line" /></Card>
+					<Card padding="none"><EmptyState icon="mynaui:inbox-archive" /></Card>
 				</div>
 				<div>
 					<span class="spec-label">LoadingState — with message</span>
@@ -1520,14 +1520,14 @@
 					<span class="spec-label">sizes</span>
 					<div class="spec-items icons">
 						{#each [14, 16, 18, 20, 24, 32, 40] as w (w)}
-							<span class="icon-cell"><Icon icon="ri:book-2-line" width={w} /><em>{w}</em></span>
+							<span class="icon-cell"><Icon icon="mynaui:book" width={w} /><em>{w}</em></span>
 						{/each}
 					</div>
 				</div>
 				<div class="spec-row">
 					<span class="spec-label">the ones the shell uses</span>
 					<div class="spec-items icons">
-						{#each ["ri:inbox-line", "ri:error-warning-line", "ri:loader-4-line", "ri:close-line", "ri:refresh-line", "ri:calendar-line", "ri:search-line", "ri:settings-3-line", "ri:check-line", "ri:more-2-line"] as name (name)}
+						{#each ["mynaui:inbox", "mynaui:danger-circle", "mynaui:spinner", "mynaui:x", "mynaui:refresh", "mynaui:calendar", "mynaui:search", "mynaui:cog", "mynaui:check", "mynaui:dots-vertical"] as name (name)}
 							<span class="icon-cell"><Icon icon={name} width={20} /><em>{name.replace("ri:", "")}</em></span>
 						{/each}
 					</div>
@@ -1598,7 +1598,7 @@
 				<span class="spec-label">custom item snippet</span>
 				<SubNav tabId="gallery-not-a-real-tab" route={subNavRoute} base="/gallery" default="first" items={SUBNAV_ITEMS} insetX="0">
 					{#snippet item(it, isActive)}
-						<Icon icon={isActive ? "ri:checkbox-blank-circle-fill" : "ri:checkbox-blank-circle-line"} width={8} />
+						<Icon icon={isActive ? "mynaui:circle-solid" : "mynaui:circle"} width={8} />
 						{it.label}
 					{/snippet}
 				</SubNav>

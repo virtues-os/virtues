@@ -1,11 +1,11 @@
-//! Chat tools for listing, fetching, editing, deleting, and manually running
-//! actions. These exist in addition to `setup_action` (which creates an
-//! action from the current chat) and wrap the same core helpers the HTTP
-//! layer uses in `crate::scheduler::applets` + `crate::applet_runner`.
+//! The `applet` tool: list, get, setup, edit, run and delete, chosen by its
+//! `action`. Setup lives in `applet_setup`; the rest wrap the same core
+//! helpers the HTTP layer uses in `crate::scheduler::applets` +
+//! `crate::applet_runner`.
 //!
 //! System-row edit/delete protection is enforced inside the core helpers, so
-//! these tools can just forward user input. The tool layer's job is
-//! parameter validation and shaping the JSON response the LLM will see.
+//! these can just forward user input. The tool layer's job is parameter
+//! validation and shaping the JSON response the LLM will see.
 
 use sqlx::PgPool;
 
@@ -13,6 +13,58 @@ use super::executor::{ToolContext, ToolError, ToolResult};
 use crate::applet_runner::{AppletRunStatus, RunnerDeps};
 use crate::scheduler::applets;
 use crate::server::yjs::YjsState;
+use virtues_registry::tools::APPLET_READ_ACTIONS;
+
+/// The `applet` tool's `action`.
+pub fn action(arguments: &serde_json::Value) -> Option<&str> {
+    arguments.get("action").and_then(|v| v.as_str())
+}
+
+/// Whether the call only reads (list or get).
+pub fn is_read(arguments: &serde_json::Value) -> bool {
+    action(arguments).is_some_and(|a| APPLET_READ_ACTIONS.contains(&a))
+}
+
+/// Run one `applet` call. A running applet may only read: it runs ungated,
+/// with nobody present to approve a change, so its own tool list offers list
+/// and get and this refuses anything else whatever the list says.
+pub async fn execute(
+    pool: &PgPool,
+    yjs: Option<&YjsState>,
+    arguments: serde_json::Value,
+    context: &ToolContext,
+) -> Result<ToolResult, ToolError> {
+    let Some(action) = action(&arguments).map(str::to_string) else {
+        return Err(ToolError::InvalidParameters(
+            "action is required: list, get, setup, edit, run or delete".into(),
+        ));
+    };
+    if context.applet_id.is_some() && !APPLET_READ_ACTIONS.contains(&action.as_str()) {
+        return Err(ToolError::InvalidParameters(format!(
+            "a running applet may list and get applets, not {action} them"
+        )));
+    }
+    let mut arguments = arguments;
+    if let Some(args) = arguments.as_object_mut() {
+        args.remove("action");
+    }
+    match action.as_str() {
+        "list" => list_applets(pool, arguments).await,
+        "get" => get_applet(pool, arguments).await,
+        "setup" => super::applet_setup::execute(pool, arguments, context).await,
+        "edit" => edit_applet(pool, arguments).await,
+        "delete" => delete_applet(pool, arguments).await,
+        "run" => {
+            let yjs = yjs.ok_or_else(|| {
+                ToolError::ExecutionFailed("running an applet needs YjsState; this executor was built without it".into())
+            })?;
+            run_applet(pool, yjs, arguments, context).await
+        }
+        other => Err(ToolError::InvalidParameters(format!(
+            "unknown action {other:?}: use list, get, setup, edit, run or delete"
+        ))),
+    }
+}
 
 fn map_err(e: crate::error::Error) -> ToolError {
     match e {
@@ -24,7 +76,7 @@ fn map_err(e: crate::error::Error) -> ToolError {
     }
 }
 
-/// `list_applets` — return a lightweight array of actions with their last run.
+/// list: a lightweight array of actions with their last run.
 ///
 /// Optional filters:
 /// - `owner`: `"system"` or `"user"`
@@ -90,7 +142,7 @@ pub async fn list_applets(
     })))
 }
 
-/// `get_applet` — fetch a single action with its last 10 runs inlined.
+/// get: a single action with its last 10 runs inlined.
 pub async fn get_applet(
     pool: &PgPool,
     arguments: serde_json::Value,
@@ -111,7 +163,7 @@ pub async fn get_applet(
     })))
 }
 
-/// `edit_applet` — partial update. System rows accept only `enabled`,
+/// edit: a partial update. System rows accept only `enabled`,
 /// `schedule`, `config`, `memory`; user rows accept all fields.
 pub async fn edit_applet(
     pool: &PgPool,
@@ -172,7 +224,7 @@ pub async fn edit_applet(
     })))
 }
 
-/// `delete_applet` — remove a user-owned action. System rows are refused.
+/// delete: remove a user-owned action. System rows are refused.
 pub async fn delete_applet(
     pool: &PgPool,
     arguments: serde_json::Value,
@@ -195,7 +247,7 @@ pub async fn delete_applet(
     })))
 }
 
-/// The trigger a `run_applet` call runs under. The owner typing
+/// The trigger a run action runs under. The owner typing
 /// `virtues applet run` is a manual run, the same as the app's Run button;
 /// the model calling the tool from chat is `tool`, which an applet has to
 /// opt into (sync applets allow only `cron` and `manual`).
@@ -207,7 +259,7 @@ fn run_trigger(context: &ToolContext) -> &'static str {
     }
 }
 
-/// `run_applet` — dispatch an action now, under [`run_trigger`].
+/// run: dispatch an action now, under [`run_trigger`].
 /// Optional `payload` is forwarded to the runner; optional `date` is merged
 /// into the action's `config.date` for actions that accept a date override
 /// (e.g. `day_summary_eod`).

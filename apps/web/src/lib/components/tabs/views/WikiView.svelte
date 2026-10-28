@@ -195,9 +195,9 @@
 	}
 
 	const typeConfig = {
-		person: { icon: 'ri:user-line', label: 'Person', plural: 'People', legacy: 'people' },
-		place: { icon: 'ri:map-pin-line', label: 'Place', plural: 'Places', legacy: 'places' },
-		org: { icon: 'ri:building-line', label: 'Organization', plural: 'Organizations', legacy: 'orgs' },
+		person: { icon: 'mynaui:user', label: 'Person', plural: 'People', legacy: 'people' },
+		place: { icon: 'mynaui:map-pin', label: 'Place', plural: 'Places', legacy: 'places' },
+		org: { icon: 'mynaui:building', label: 'Organization', plural: 'Organizations', legacy: 'orgs' },
 	} as const;
 
 	let allEntities = $state<UnifiedEntity[]>([]);
@@ -276,14 +276,14 @@
 		{
 			key: 'name',
 			label: 'Name',
-			icon: 'ri:group-line',
+			icon: 'mynaui:users-group',
 			width: '45%',
 			minWidth: '200px',
 		},
 		{
 			key: 'entityType',
 			label: 'Type',
-			icon: 'ri:price-tag-3-line',
+			icon: 'mynaui:tag',
 			width: '20%',
 			minWidth: '120px',
 			getValue: (item) =>
@@ -292,7 +292,7 @@
 		{
 			key: 'subtitle',
 			label: 'Details',
-			icon: 'ri:information-line',
+			icon: 'mynaui:info-circle',
 			width: '25%',
 			minWidth: '140px',
 			hideOnMobile: true,
@@ -300,7 +300,7 @@
 		{
 			key: 'refCount',
 			label: 'Mentions',
-			icon: 'ri:link',
+			icon: 'mynaui:link',
 			width: '10%',
 			minWidth: '90px',
 			hideOnMobile: true,
@@ -338,7 +338,7 @@
 			items.push({
 				id: 'reclassify-org',
 				label: 'This is an organization',
-				icon: 'ri:building-line',
+				icon: 'mynaui:building',
 				dividerBefore: true,
 				action: () => void reclassifyEntity(entity),
 			});
@@ -349,7 +349,7 @@
 			items.push({
 				id: 'delete-entity',
 				label: 'Delete',
-				icon: 'ri:delete-bin-line',
+				icon: 'mynaui:trash',
 				dividerBefore: entity.entityType !== 'person',
 				action: () => void removeEntity(entity),
 			});
@@ -916,7 +916,7 @@
 						{loading}
 						{error}
 						filters={entityFilters}
-						emptyIcon="ri:group-line"
+						emptyIcon="mynaui:users-group"
 						emptyMessage="No people, places, or organizations yet"
 						loadingMessage="Loading…"
 						searchPlaceholder="Search people, places, organizations…"
@@ -931,7 +931,7 @@
 							<Button
 								variant="ghost"
 								size="sm"
-								icon="ri:user-add-line"
+								icon="mynaui:user-plus"
 								onclick={addPerson}>New person</Button
 							>
 						{/snippet}

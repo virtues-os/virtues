@@ -1,6 +1,7 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
 	import AppletSource from '$lib/components/applets/AppletSource.svelte';
+	import AppletHosts from '$lib/components/applets/AppletHosts.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import { patchApplet, type Applet, type PatchAppletBody } from '$lib/api/client';
@@ -127,7 +128,7 @@
 		<input type="text" bind:value={edit.name} disabled={isSystem} oninput={markDirty} />
 		{#if managedNote}
 			<span class="hint">
-				<Icon icon="ri:lock-line" width="12" />
+				<Icon icon="mynaui:lock" width="12" />
 				{managedNote}
 			</span>
 		{/if}
@@ -153,7 +154,7 @@
 				></textarea>
 			{:else}
 				<div class="pipeline-note">
-					<Icon icon="ri:terminal-line" width="14" />
+					<Icon icon="mynaui:terminal" width="14" />
 					<span>
 						Compiled program, run fresh each time it fires - <code
 							>{action.command?.join(' ') ?? 'built in'}</code
@@ -163,7 +164,7 @@
 			{/if}
 			{#if isSystem && isAgent}
 				<span class="hint">
-					<Icon icon="ri:lock-line" width="12" /> Read-only. This prompt ships with the applet
+					<Icon icon="mynaui:lock" width="12" /> Read-only. This prompt ships with the applet
 				</span>
 			{:else if customized}
 				<!-- The only channel an edited applet has. A prompt you
@@ -191,6 +192,24 @@
 		/>
 		<span class="hint">{describeSchedule(edit.schedule || null)}</span>
 	</label>
+
+	{#if action.secrets?.length}
+		<div class="field">
+			<span class="label">Keys it needs</span>
+			<ul class="keys">
+				{#each action.secrets as key (key.name)}
+					<li>
+						<code>{key.name}</code>
+						<span class="hint">
+							{key.is_set ? 'Set' : 'Not set. Add it in Settings, under Keys.'}
+						</span>
+					</li>
+				{/each}
+			</ul>
+		</div>
+	{/if}
+
+	<AppletHosts appletId={action.id} />
 
 	<!-- Three facts the page never showed, and the reason a person
 	     could not tell why an applet had or hadn't run: what wakes
@@ -294,6 +313,19 @@
 	.field textarea:disabled {
 		opacity: 0.7;
 		cursor: not-allowed;
+	}
+	.keys {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+	}
+	.keys li {
+		display: flex;
+		align-items: baseline;
+		gap: 8px;
 	}
 	.hint {
 		font-size: 12px;

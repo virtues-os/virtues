@@ -169,31 +169,31 @@ export function tableActions(editor: Editor): TableAction[] {
 	const first = rowIsHeader(at.map, at.table, 0) ? 1 : 0;
 	const moves: TableAction[] = [
 		...(at.row > first
-			? [{ id: 'move-row-up', label: 'Move row up', icon: 'ri:arrow-up-line', run: () => void moveRow(editor, -1) }]
+			? [{ id: 'move-row-up', label: 'Move row up', icon: 'mynaui:arrow-up', run: () => void moveRow(editor, -1) }]
 			: []),
 		...(at.row >= first && at.row < at.map.height - 1
-			? [{ id: 'move-row-down', label: 'Move row down', icon: 'ri:arrow-down-line', run: () => void moveRow(editor, 1) }]
+			? [{ id: 'move-row-down', label: 'Move row down', icon: 'mynaui:arrow-down', run: () => void moveRow(editor, 1) }]
 			: []),
 		...(at.col > 0
-			? [{ id: 'move-col-left', label: 'Move column left', icon: 'ri:arrow-left-line', run: () => void moveColumn(editor, -1) }]
+			? [{ id: 'move-col-left', label: 'Move column left', icon: 'mynaui:arrow-left', run: () => void moveColumn(editor, -1) }]
 			: []),
 		...(at.col < at.map.width - 1
-			? [{ id: 'move-col-right', label: 'Move column right', icon: 'ri:arrow-right-line', run: () => void moveColumn(editor, 1) }]
+			? [{ id: 'move-col-right', label: 'Move column right', icon: 'mynaui:arrow-right', run: () => void moveColumn(editor, 1) }]
 			: []),
 	].map((a, i) => ({ ...a, more: true, groupStart: i === 0 }));
 	return [
-		{ id: 'row-above', label: 'Row above', icon: 'ri:insert-row-top', run: () => chain().addRowBefore().run() },
-		{ id: 'row-below', label: 'Row below', icon: 'ri:insert-row-bottom', run: () => chain().addRowAfter().run() },
-		{ id: 'col-left', label: 'Column left', icon: 'ri:insert-column-left', run: () => chain().addColumnBefore().run() },
-		{ id: 'col-right', label: 'Column right', icon: 'ri:insert-column-right', run: () => chain().addColumnAfter().run() },
-		{ id: 'align-left', label: 'Align left', icon: 'ri:align-left', groupStart: true, checked: align === 'left', run: alignTo('left') },
-		{ id: 'align-center', label: 'Align center', icon: 'ri:align-center', checked: align === 'center', run: alignTo('center') },
-		{ id: 'align-right', label: 'Align right', icon: 'ri:align-right', checked: align === 'right', run: alignTo('right') },
-		{ id: 'header-row', label: 'Header row', icon: 'ri:layout-top-line', groupStart: true, run: () => chain().toggleHeaderRow().run() },
+		{ id: 'row-above', label: 'Row above', icon: 'mynaui:rows', run: () => chain().addRowBefore().run() },
+		{ id: 'row-below', label: 'Row below', icon: 'mynaui:rows', run: () => chain().addRowAfter().run() },
+		{ id: 'col-left', label: 'Column left', icon: 'mynaui:columns', run: () => chain().addColumnBefore().run() },
+		{ id: 'col-right', label: 'Column right', icon: 'mynaui:columns', run: () => chain().addColumnAfter().run() },
+		{ id: 'align-left', label: 'Align left', icon: 'mynaui:text-align-left', groupStart: true, checked: align === 'left', run: alignTo('left') },
+		{ id: 'align-center', label: 'Align center', icon: 'mynaui:text-align-center', checked: align === 'center', run: alignTo('center') },
+		{ id: 'align-right', label: 'Align right', icon: 'mynaui:text-align-right', checked: align === 'right', run: alignTo('right') },
+		{ id: 'header-row', label: 'Header row', icon: 'mynaui:panel-top', groupStart: true, run: () => chain().toggleHeaderRow().run() },
 		...moves,
-		{ id: 'delete-row', label: 'Delete row', icon: 'ri:delete-row', destructive: true, groupStart: true, run: () => chain().deleteRow().run() },
-		{ id: 'delete-col', label: 'Delete column', icon: 'ri:delete-column', destructive: true, run: () => chain().deleteColumn().run() },
-		{ id: 'delete-table', label: 'Delete table', icon: 'ri:delete-bin-line', destructive: true, run: () => chain().deleteTable().run() },
+		{ id: 'delete-row', label: 'Delete row', icon: 'mynaui:trash', destructive: true, groupStart: true, run: () => chain().deleteRow().run() },
+		{ id: 'delete-col', label: 'Delete column', icon: 'mynaui:trash', destructive: true, run: () => chain().deleteColumn().run() },
+		{ id: 'delete-table', label: 'Delete table', icon: 'mynaui:trash', destructive: true, run: () => chain().deleteTable().run() },
 	];
 }
 

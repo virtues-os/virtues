@@ -51,9 +51,6 @@ pub struct UpdateAssistantProfileRequest {
     pub image_model_id: Option<Option<String>>,
     pub enabled_tools: Option<serde_json::Value>,
     pub ui_preferences: Option<serde_json::Value>,
-    /// Retired: the prompt no longer reads it (migration 0035). Still accepted
-    /// so an older client's save does not fail.
-    pub persona: Option<String>,
     /// The owner's notes on how to be spoken to. An empty or all-whitespace
     /// value clears them (stored as NULL); see `normalize_style_notes`.
     pub style_notes: Option<String>,
@@ -133,7 +130,6 @@ pub async fn update_assistant_profile(
     add_field!(request.image_model_id, "image_model_id");
     add_field!(request.enabled_tools, "enabled_tools");
     add_field!(request.ui_preferences, "ui_preferences");
-    add_field!(request.persona, "persona");
     add_field!(request.style_notes, "style_notes");
     add_field!(request.request_run_limit_micros, "request_run_limit_micros");
     add_field!(request.request_day_limit_micros, "request_day_limit_micros");
@@ -177,9 +173,6 @@ pub async fn update_assistant_profile(
         q = q.bind(v);
     }
     if let Some(v) = &request.ui_preferences {
-        q = q.bind(v);
-    }
-    if let Some(v) = &request.persona {
         q = q.bind(v);
     }
     if let Some(v) = &request.style_notes {
@@ -261,18 +254,6 @@ pub async fn get_image_model(db: &PgPool) -> Result<String> {
         )))
 }
 
-/// Helper to get the AI persona for system prompts
-///
-/// Returns persona if set, otherwise "capable_warm" (default)
-/// Valid values: capable_warm, professional, casual, adaptive
-pub async fn get_persona(db: &PgPool) -> Result<String> {
-    let profile = get_assistant_profile(db).await?;
-
-    Ok(profile
-        .persona
-        .unwrap_or_else(|| "capable_warm".to_string()))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -294,6 +275,7 @@ mod tests {
     /// mention.
     #[test]
     fn slot_distinguishes_absent_from_null_from_value() {
+        // An older client still sends the retired `persona`; it is ignored.
         let absent: UpdateAssistantProfileRequest =
             serde_json::from_str(r#"{"persona":"casual"}"#).unwrap();
         assert_eq!(absent.standard_model_id, None, "absent = leave the column alone");

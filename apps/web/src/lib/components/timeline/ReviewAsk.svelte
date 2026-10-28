@@ -166,7 +166,7 @@
 
 	/** Yes and No carry a check and a cross. */
 	const iconOf = (a: Answer) =>
-		a.kind === 'home' || a.kind === 'work' ? 'ri:check-line' : a.kind === 'not_home' || a.kind === 'not_work' ? 'ri:close-line' : null;
+		a.kind === 'home' || a.kind === 'work' ? 'mynaui:check' : a.kind === 'not_home' || a.kind === 'not_work' ? 'mynaui:x' : null;
 	const placeholder = $derived(
 		kind?.then === 'person' ? 'Search or type their name' : kind?.then === 'hotel' ? 'Search or type a hotel' : 'Search or type a name',
 	);
@@ -178,7 +178,7 @@
 	     is the first row, to save as it is (the owner's call, 2026-10-13: a
 	     typing row inside the list read as one more place). -->
 	<label class="search">
-		<Icon icon="ri:search-line" width="16" />
+		<Icon icon="mynaui:search" width="16" />
 		<input
 			bind:this={input}
 			bind:value={text}
@@ -194,7 +194,7 @@
 			{#if newName}
 				<li>
 					<button type="button" class="save-row" disabled={review.saving} onclick={() => saveName(typed)}>
-						<Icon icon="ri:add-line" width="16" />
+						<Icon icon="mynaui:plus" width="16" />
 						<span>Save “{typed}”</span>
 					</button>
 				</li>
@@ -204,15 +204,15 @@
 				     own icon like its neighbours', the name and a check at the end
 				     in the accent. Any other row changes it. -->
 				<li class="current" aria-current="true">
-					<Icon icon="ri:map-pin-line" width="16" />
+					<Icon icon="mynaui:map-pin" width="16" />
 					<span class="grow">{current}</span>
-					<Icon icon="ri:check-line" width="18" />
+					<Icon icon="mynaui:check" width="18" />
 				</li>
 			{/if}
 			{#each items as o (o.name)}
 				<li>
 					<button type="button" disabled={review.saving} onclick={() => saveName(o.name, o.category)}>
-						<Icon icon={kind?.then === 'person' ? 'ri:user-line' : placeIcon(o.kind, o.category)} width="16" />
+						<Icon icon={kind?.then === 'person' ? 'mynaui:user' : placeIcon(o.kind, o.category)} width="16" />
 						<span class="grow">{o.name}</span>
 						{#if o.meters !== undefined}<span class="far">{distance(o.meters)}</span>{/if}
 					</button>
@@ -223,9 +223,9 @@
 				     away, with Settings' chevron for a row that leads on. -->
 				<li>
 					<button type="button" onclick={() => (kindsOpen = true)}>
-						<Icon icon="ri:shapes-line" width="16" />
+						<Icon icon="mynaui:components" width="16" />
 						<span class="grow">Choose a kind of place</span>
-						<Icon icon="ri:arrow-right-s-line" width="16" />
+						<Icon icon="mynaui:chevron-right" width="16" />
 					</button>
 				</li>
 			{/if}
@@ -234,7 +234,7 @@
 				     card's foot beside Close (the owner's call, 2026-10-13). -->
 				<li>
 					<button type="button" disabled={review.saving} onclick={() => answer({ kind: 'passing' })}>
-						<Icon icon="ri:walk-line" width="16" />
+						<Icon icon="mynaui:activity" width="16" />
 						<span>Just passing through</span>
 					</button>
 				</li>
@@ -282,7 +282,7 @@
 				{#each ask.picks as c (c.name)}
 					<li>
 						<button type="button" role="checkbox" aria-checked={picked.includes(c.name)} disabled={review.saving} onclick={() => togglePick(c.name)}>
-							<span class="check" aria-hidden="true">{#if picked.includes(c.name)}<Icon icon="ri:check-line" width="16" />{/if}</span>
+							<span class="check" aria-hidden="true">{#if picked.includes(c.name)}<Icon icon="mynaui:check" width="16" />{/if}</span>
 							<span class="pick-name">{c.name}</span>
 						</button>
 					</li>
@@ -317,7 +317,7 @@
 					{#each ask.more as name (name)}
 						<li>
 							<button type="button" role="checkbox" aria-checked={picked.includes(name)} disabled={review.saving} onclick={() => togglePick(name)}>
-								<span class="check" aria-hidden="true">{#if picked.includes(name)}<Icon icon="ri:check-line" width="16" />{/if}</span>
+								<span class="check" aria-hidden="true">{#if picked.includes(name)}<Icon icon="mynaui:check" width="16" />{/if}</span>
 								<span class="pick-name">{name}</span>
 							</button>
 						</li>

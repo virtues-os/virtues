@@ -121,6 +121,13 @@ pub async fn run_agent_loop(
         None => model_for_slot(pool, model_slot.unwrap_or(ModelSlot::Lite)).await,
     };
 
+    // A `SKILL.md` applet's `allowed-tools`, which reconcile writes here.
+    let allowed_tools: Option<Vec<String>> = action
+        .config
+        .get("allowed_tools")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect());
+
     let tool_context = crate::tools::ToolContext {
         user_id: Some("system".to_string()),
         chat_id: chat_id.clone(),
@@ -140,7 +147,7 @@ pub async fn run_agent_loop(
             system_prompt: build_applet_system_prompt(pool, prompt, context, action.memory.as_deref()).await,
             chat_id: chat_id.clone(),
             message,
-            tools: crate::tools::get_tools_for_applet(),
+            tools: crate::tools::get_tools_for_applet(chat_id.is_some(), allowed_tools.as_deref()),
             tool_context,
             max_cost_micros: limits.max_llm_cost_micros,
             feature: "applet",
@@ -229,12 +236,14 @@ async fn build_applet_system_prompt(
 
     let datetime = crate::api::profile::local_datetime_line(pool).await;
 
+    // Only what the applet cannot know for itself. Its instruction says what
+    // it is and what to reply with; a role or a reply format stated here
+    // contradicted every applet that defines its own.
     let mut prompt = format!(
-        "You are {assistant_name}, {user_name}'s personal AI assistant, running autonomously.\n\n\
+        "You are {assistant_name}, running on {user_name}'s server as one of their applets, with nobody watching.\n\n\
          Current date/time: {datetime}\n\n\
          <action_instruction>\n{instruction}\n</action_instruction>\n\n\
-         You are running as an action. Use your tools to accomplish your mission. \
-         Log your findings as your response. Be concise and actionable.",
+         Follow the instruction above. If it does not say what to reply with, reply with a short account of what you did and found.",
     );
 
     if let Some(mem) = memory {

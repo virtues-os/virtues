@@ -314,7 +314,18 @@ class WindowShellStore {
 		this._skipUrlSync = true;
 
 		try {
-			if (path && path !== '/') {
+			const namesLeft = !!path && path !== '/';
+
+			// An address without ?right= names one pane, as Back from "Open
+			// beside" does. Fold the split first, with the left pane's tab in
+			// front, so the tab you see is the one the address names. Folded
+			// after, the right pane's tab stayed in front under the left's URL.
+			if (!rightRoute && this.isSplit) {
+				if (namesLeft) this.activePaneId = 'left';
+				this.disableSplit();
+			}
+
+			if (namesLeft) {
 				// Walk per-tab history when the URL is an adjacent entry (OS back/forward
 				// mirrors the in-app buttons); otherwise focus-existing / restore.
 				this.reconcilePaneToRoute('left', path);
@@ -328,10 +339,16 @@ class WindowShellStore {
 			} else if (rightRoute) {
 				if (!this.isSplit) {
 					this.enableSplit();
+					// Forward after that Back: the tab that was beside now sits in
+					// the one pane. It moves back to the right, where finding it
+					// would otherwise light it up on the left and leave the right
+					// pane empty.
+					const { effectiveRoute } = this.identityFromRoute(rightRoute);
+					const left = this.panes[0];
+					const beside = left.tabs.find((t) => t.route === effectiveRoute && t.id !== left.activeTabId);
+					if (beside) this.moveTabToPane(beside.id, 'right');
 				}
 				this.reconcilePaneToRoute('right', rightRoute);
-			} else if (this.isSplit) {
-				this.disableSplit();
 			}
 		} finally {
 			this._skipUrlSync = false;
@@ -467,7 +484,7 @@ class WindowShellStore {
 
 	private openDefaultTab(): void {
 		// Fresh sessions land on a new chat: home and chat are one place.
-		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'ri:chat-1-line' });
+		this.openTab({ type: 'chat', label: 'New chat', route: '/', icon: 'mynaui:chat' });
 	}
 
 	/**
@@ -673,16 +690,21 @@ class WindowShellStore {
 		return paneId ?? this.activePaneId;
 	}
 
+	/** The new chat in a pane that has no message yet, if there is one. */
+	emptyChatIn(paneId?: 'left' | 'right'): Tab | undefined {
+		const pane = this.panes.find(p => p.id === (paneId ?? this.activePaneId));
+		return pane?.tabs.find(t => this.isNewChatRoute(t.route));
+	}
+
 	/**
-	 * Start a new chat in a pane (the header's ✎, a strip's +, ⌘N and the Home
+	 * Start a new chat in a pane (the header's ✎, the strip's +, ⌘N and the Home
 	 * panel's New chat). It gets a new tab next to the one you were on, since
 	 * asking for something new means you meant to come back to that one. An
 	 * empty new chat already in the pane is reused rather than doubled.
 	 */
 	newChat(paneId?: 'left' | 'right'): string {
 		const targetPaneId = paneId ?? this.activePaneId;
-		const pane = this.panes.find(p => p.id === targetPaneId);
-		const empty = pane?.tabs.find(t => this.isNewChatRoute(t.route));
+		const empty = this.emptyChatIn(targetPaneId as 'left' | 'right');
 		if (empty) {
 			this.setActiveTab(empty.id);
 			return empty.id;
@@ -1496,7 +1518,7 @@ class WindowShellStore {
 			type: 'chat',
 			label: 'Context',
 			route: `/chat/${entityId}?view=context`,
-			icon: 'ri:information-line'
+			icon: 'mynaui:info-circle'
 		});
 	}
 

@@ -21,7 +21,10 @@ import { pendingPrompt } from '$lib/stores/pendingPrompt.svelte';
 import { pinMenuItem } from '$lib/pins/pinAction';
 import { notifyArchived, notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 
-export async function newProject(): Promise<void> {
+/** Ask for a name, make the project, and open it (in the tab you are on, unless `open` says where). */
+export async function newProject(
+	open: (route: string, label: string) => void = (route, label) => windowShellStore.openTabFromRoute(route, { label }),
+): Promise<void> {
 	const name = (
 		await promptText({
 			title: 'New project',
@@ -32,7 +35,7 @@ export async function newProject(): Promise<void> {
 	if (!name) return;
 	try {
 		const project = await projectStore.create(name);
-		windowShellStore.openTabFromRoute(`/project/${project.id}`, { label: project.name });
+		open(`/project/${project.id}`, project.name);
 	} catch (e) {
 		console.error('[projectActions] Failed to create project:', e);
 		toast.error("Your server couldn't create that project", {
@@ -266,6 +269,45 @@ export function startRefDrag(e: DragEvent, url: string, label: string): void {
 	e.dataTransfer.setData(REF_DRAG_TYPE, url);
 	e.dataTransfer.setData('text/plain', label);
 	e.dataTransfer.effectAllowed = 'link';
+}
+
+/**
+ * A row that names one thing also drags as this, as JSON `{url, label}`, so
+ * the chat composer can mention it. Projects carry it too, which
+ * REF_DRAG_TYPE leaves out because that type means "can be filed into a
+ * project".
+ */
+export const MENTION_DRAG_TYPE = 'application/x-virtues-mention';
+
+/** The url a row can be mentioned by: one thing, a project included, or a link out. */
+export function mentionableUrl(route: string): string | null {
+	if (/^https?:\/\//.test(route)) return route;
+	const path = route.split(/[?#]/)[0];
+	if (path.startsWith('/chat/') && RESERVED_CHATS.has(path.slice('/chat/'.length))) return null;
+	return /^\/[a-z-]+\/[^/]+$/.test(path) ? path : null;
+}
+
+export function setMentionDrag(e: DragEvent, url: string, label: string): void {
+	const mention = mentionableUrl(url);
+	if (!mention || !e.dataTransfer) return;
+	e.dataTransfer.setData(MENTION_DRAG_TYPE, JSON.stringify({ url: mention, label }));
+}
+
+/** Whether a drag in progress can be mentioned, readable during dragover. */
+export function isMentionDrag(e: DragEvent): boolean {
+	return !!e.dataTransfer?.types.includes(MENTION_DRAG_TYPE);
+}
+
+/** What a dropped row names, or null for anything else. */
+export function droppedMention(e: DragEvent): { url: string; label: string } | null {
+	const raw = e.dataTransfer?.getData(MENTION_DRAG_TYPE);
+	if (!raw) return null;
+	try {
+		const { url, label } = JSON.parse(raw);
+		return typeof url === 'string' && typeof label === 'string' ? { url, label } : null;
+	} catch {
+		return null;
+	}
 }
 
 /** Whether a drag in progress carries a row, readable during dragover. */

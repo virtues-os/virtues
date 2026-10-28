@@ -21,19 +21,19 @@
 
 	const config = $derived({
 		page_created: {
-			icon: 'ri:file-add-line',
+			icon: 'mynaui:file-plus',
 			label: 'Created page',
 			colorClass: 'result-created',
 			showOpenButton: true
 		},
 		edit_applied: {
-			icon: 'ri:check-line',
+			icon: 'mynaui:check',
 			label: 'Edit applied',
 			colorClass: 'result-success',
 			showOpenButton: false
 		},
 		edit_failed: {
-			icon: 'ri:error-warning-line',
+			icon: 'mynaui:danger-circle',
 			label: 'Edit failed',
 			colorClass: 'result-error',
 			showOpenButton: false
@@ -68,7 +68,7 @@
 			<Button
 				variant="ghost"
 				size="sm"
-				icon="ri:external-link-line"
+				icon="mynaui:external-link"
 				onclick={handleOpenPage}
 			>
 				Open

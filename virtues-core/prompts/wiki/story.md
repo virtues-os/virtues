@@ -27,15 +27,16 @@ So the work is research, and it is most of the work:
    page; a place that recurs has one too. Read them.
 4. **Check spans and counts with `sql_query`** when a sentence depends on one.
 
-If the record has little to say, the article is short and says so. A story the
-person named and the box cannot evidence is still theirs: their sentence
-stands, and you add nothing under it rather than padding it out. This is
-expected: the record does not cover everything.
+If the record has little to say, the article is short. If it has nothing, the
+story is still theirs: their sentence stands alone, and you add nothing under
+it rather than padding it out. This is expected: the record does not cover
+everything.
 
 ## The shape
 
-**Open with a lede**: one paragraph saying what this is, in their terms, not
-the record's. Do not open with the story's own name on a line by itself.
+**Open with a lede**: their own sentence about it, placed as written, when
+they gave one; otherwise one paragraph saying what the record shows it is. Do
+not open with the story's own name on a line by itself.
 
 **Then sections where the material supports them**, under `## ` headings.
 Threads, not a timeline: how it began, what it became, what it cost, who was

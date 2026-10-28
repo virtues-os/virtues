@@ -219,7 +219,7 @@
 				class:active={activeTab === 'upload'}
 				onclick={() => activeTab = 'upload'}
 			>
-				<Icon icon="ri:upload-cloud-line" width="14" />
+				<Icon icon="mynaui:cloud-upload" width="14" />
 				Upload
 			</button>
 			<button
@@ -227,7 +227,7 @@
 				class:active={activeTab === 'library'}
 				onclick={() => activeTab = 'library'}
 			>
-				<Icon icon="ri:image-2-line" width="14" />
+				<Icon icon="mynaui:image" width="14" />
 				Library
 			</button>
 			<button
@@ -235,7 +235,7 @@
 				class:active={activeTab === 'unsplash'}
 				onclick={() => activeTab = 'unsplash'}
 			>
-				<Icon icon="ri:unsplash-fill" width="14" />
+				<Icon icon="simple-icons:unsplash" width="14" />
 				Unsplash
 			</button>
 		</div>
@@ -258,13 +258,13 @@
 					onkeydown={(e) => e.key === 'Enter' && fileInputEl?.click()}
 				>
 					{#if uploading}
-						<Icon icon="ri:loader-4-line" width="24" />
+						<Icon icon="mynaui:spinner" width="24" />
 						<span class="upload-text">Uploading... {uploadProgress}%</span>
 						<div class="progress-bar">
 							<div class="progress-fill" style="width: {uploadProgress}%"></div>
 						</div>
 					{:else}
-						<Icon icon="ri:upload-cloud-line" width="24" />
+						<Icon icon="mynaui:cloud-upload" width="24" />
 						<span class="upload-text">Drop an image here or click to browse</span>
 						<span class="upload-hint">PNG, JPG, GIF, WebP</span>
 					{/if}
@@ -278,7 +278,7 @@
 				/>
 				{#if uploadError}
 					<div class="upload-error">
-						<Icon icon="ri:error-warning-line" width="14" />
+						<Icon icon="mynaui:danger-circle" width="14" />
 						{uploadError}
 					</div>
 				{/if}
@@ -287,12 +287,12 @@
 				<div class="library-tab">
 					{#if libraryLoading}
 						<div class="library-status">
-							<Icon icon="ri:loader-4-line" width="20" />
+							<Icon icon="mynaui:spinner" width="20" />
 							<span>Loading images...</span>
 						</div>
 					{:else if libraryError}
 						<div class="library-status error">
-							<Icon icon="ri:error-warning-line" width="16" />
+							<Icon icon="mynaui:danger-circle" width="16" />
 							<span>{libraryError}</span>
 						</div>
 					{:else if libraryImages.length > 0}
@@ -336,12 +336,12 @@
 
 					{#if unsplashLoading}
 						<div class="unsplash-status">
-							<Icon icon="ri:loader-4-line" width="20" />
+							<Icon icon="mynaui:spinner" width="20" />
 							<span>Searching...</span>
 						</div>
 					{:else if unsplashError}
 						<div class="unsplash-status error">
-							<Icon icon="ri:error-warning-line" width="16" />
+							<Icon icon="mynaui:danger-circle" width="16" />
 							<span>{unsplashError}</span>
 						</div>
 					{:else if unsplashResults.length > 0}
@@ -388,7 +388,7 @@
 	{#if value}
 		<div class="picker-footer">
 			<MenuItem
-				icon="ri:delete-bin-line"
+				icon="mynaui:trash"
 				label="Remove cover"
 				destructive
 				onclick={handleRemove}

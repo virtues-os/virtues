@@ -86,7 +86,7 @@
 				<span>Last revised {updatedLabel}</span>
 			{/if}
 			<button class="btn" onclick={editDocument} disabled={!pageId}>
-				<Icon icon="ri:quill-pen-line" width="13" />
+				<Icon icon="mynaui:pen" width="13" />
 				Edit the page
 			</button>
 		</footer>

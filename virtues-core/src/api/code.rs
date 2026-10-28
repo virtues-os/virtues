@@ -2,25 +2,9 @@
 //!
 //! This runs Python the LLM wrote at runtime, so it is the path most exposed to
 //! prompt injection: the same turn can have read a third party's email. On the
-//! appliance we isolate it with **systemd-run** — a transient unit per
-//! execution, which gives us, declaratively:
-//!
-//! - `PrivateNetwork=yes` — no network, the exfil channel. Only `AF_UNIX` is
-//!   left as an address family, because asyncio and multiprocessing build
-//!   socketpairs; the filesystem sockets it could otherwise reach (Postgres,
-//!   D-Bus) are hidden below.
-//! - `InaccessiblePaths` over the box's data — the lake, the state root,
-//!   secrets, backups — and those sockets. `ProtectSystem=strict` alone makes
-//!   them read-only, not unreadable: world-readable lake files were readable.
-//! - `ProtectProc=invisible` + `ProcSubset=pid` — no other process's command
-//!   line.
-//! - `MemoryMax` / `MemorySwapMax=0`, `TasksMax`, `CPUQuota`, `LimitFSIZE` —
-//!   cgroup- and rlimit-enforced; a runaway kills the exec, not the box.
-//! - `RuntimeMaxSec` — hard timeout enforced by systemd.
-//! - `DynamicUser=yes` — a throwaway uid. This is what keeps the code off
-//!   root: the unit is created through `sudo`, and a system unit with no user
-//!   runs as uid 0. `sandbox_properties_pin_the_boundary` holds it in place.
-//! - `NoNewPrivileges`, `RestrictNamespaces`, `SystemCallFilter` — seccomp.
+//! appliance it runs in the sandbox ([`crate::sandbox`]): a transient systemd
+//! unit with no network, a throwaway user, the box's data hidden, and memory,
+//! CPU, process, file-size and time limits.
 //!
 //! The code is fed on stdin (`python3 -`). Its working directory is `/work`,
 //! the run's workspace bind-mounted in, and the pinned package environment is
@@ -50,6 +34,7 @@ use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
 use crate::api::code_env::{self, Workspace};
+use crate::sandbox::{Bind, Unit};
 use crate::tools::shell::{read_capped, Captured};
 
 /// Request to execute Python code
@@ -243,111 +228,46 @@ pub fn image_type(name: &str) -> Option<&'static str> {
     })
 }
 
-/// The unit properties. A function of its own so the test can hold the
-/// boundary in place: dropping `DynamicUser` here would run model-written code
-/// as root.
-fn sandbox_properties(timeout_secs: u32, workspace: &Path, env: Option<&Path>) -> Vec<String> {
-    let mut props = vec![
-        "PrivateNetwork=yes".to_string(),
-        "RestrictAddressFamilies=AF_UNIX".to_string(),
-        format!("MemoryMax={MEMORY_MAX}"),
-        "MemorySwapMax=0".to_string(),
-        "TasksMax=64".to_string(),
-        "CPUQuota=200%".to_string(),
-        "LimitFSIZE=256M".to_string(),
-        format!("RuntimeMaxSec={timeout_secs}"),
-        "DynamicUser=yes".to_string(),
-        "ProtectSystem=strict".to_string(),
-        "ProtectHome=yes".to_string(),
-        "PrivateTmp=yes".to_string(),
-        "PrivateDevices=yes".to_string(),
-        "ProtectProc=invisible".to_string(),
-        "ProcSubset=pid".to_string(),
-        "NoNewPrivileges=yes".to_string(),
-        "RestrictNamespaces=yes".to_string(),
-        "RestrictRealtime=yes".to_string(),
-        "LockPersonality=yes".to_string(),
-        "SystemCallArchitectures=native".to_string(),
-        "SystemCallFilter=@system-service".to_string(),
-        "SystemCallErrorNumber=EPERM".to_string(),
-        // The throwaway uid changes every run; files it leaves must stay
-        // usable by the next one and deletable by the server.
-        "UMask=0000".to_string(),
-        "WorkingDirectory=/work".to_string(),
-    ];
-    // `-` ignores a path that does not exist, so a dev machine or a box laid
-    // out differently still starts the unit.
-    for path in [
-        "/var/lib/virtues",
-        "/etc/virtues",
-        "/var/lib/postgresql",
-        "/run/postgresql",
-        "/run/dbus",
-        "/run/user",
-    ] {
-        props.push(format!("InaccessiblePaths=-{path}"));
-    }
-    // Wherever this box keeps them, which the fixed list may not name.
-    for path in [
-        crate::applet_templates::state_root(),
-        crate::storage::lake::lake_root(),
-        code_env::code_root(),
-    ] {
-        props.push(format!("InaccessiblePaths=-{}", path.display()));
-    }
-    // Mounted from the host side, so the hidden paths above do not hide them.
-    props.push(format!("BindPaths={}:/work", workspace.display()));
+/// The sandboxed unit for one run: the workspace at `/work`, and the
+/// package environment read-only at `/opt/py`.
+fn sandbox_unit(timeout_secs: u32, workspace: &Path, env: Option<&Path>) -> Unit {
+    let mut binds = vec![Bind { host: workspace.to_path_buf(), inside: "/work".into(), writable: true }];
     if let Some(env) = env {
-        props.push(format!("BindReadOnlyPaths={}:/opt/py", env.display()));
+        binds.push(Bind { host: env.to_path_buf(), inside: "/opt/py".into(), writable: false });
     }
-    props
+    Unit {
+        timeout_secs,
+        memory_max: MEMORY_MAX,
+        working_directory: "/work",
+        binds,
+        egress: None,
+        postgres: false,
+        extra: Vec::new(),
+    }
 }
 
-/// `sudo -n systemd-run …`, or None when systemd-run is not installed.
-///
-/// `sudo`, matching applet_runner and api/updates.rs: the box runs as
-/// `User=virtues`, and a non-root user creating a system transient unit goes
-/// through polkit, which on a headless box denies with "Interactive
-/// authentication required". Root here does not reach the code —
-/// `DynamicUser=yes` runs it as a throwaway uid.
+/// `sudo -n systemd-run …` running Python on stdin, or None when
+/// systemd-run is not installed.
 fn sandboxed_command(timeout_secs: u32, ws: &Workspace, env: Option<&Path>) -> Option<Command> {
-    // Behind sudo, systemd-run's absence is a plain non-zero exit, so check
-    // for it first to keep the release-build refusal meaningful.
-    crate::applet_runner::which_systemd_run()?;
-    let mut cmd = Command::new("sudo");
-    cmd.args(["-n", "systemd-run"]);
-    cmd.args([
-        "--pipe",    // wire the unit's stdio to ours
-        "--wait",    // block and propagate the exit status
-        "--collect", // garbage-collect the transient unit when done
-        "--quiet",   // keep systemd-run's own chatter off our stderr
-    ]);
-    for p in sandbox_properties(timeout_secs, &ws.dir, env) {
-        cmd.args(["-p", &p]);
-    }
-    cmd.args([
-        // Give libs a writable home inside the private /tmp.
-        "-E",
-        "HOME=/tmp",
-        "-E",
-        "MPLCONFIGDIR=/tmp",
-        // No display: charts render to files.
-        "-E",
-        "MPLBACKEND=Agg",
-        "--",
-    ]);
-    if env.is_some() {
-        // systemd-run resolves the program on the host, before the unit's
-        // mounts exist, so /opt/py is reached through env inside the unit.
-        cmd.args(["/usr/bin/env", "/opt/py/bin/python3"]);
-    } else {
-        cmd.arg("python3");
-    }
-    cmd.args([
-        "-I", // isolated mode: ignore env + user site-packages
-        "-",  // read the program from stdin
-    ]);
-    Some(cmd)
+    let python: &[&str] = if env.is_some() { &["/usr/bin/env", "/opt/py/bin/python3"] } else { &["python3"] };
+    let argv: Vec<String> = python
+        .iter()
+        .chain(&[
+            "-I", // isolated mode: ignore env + user site-packages
+            "-",  // read the program from stdin
+        ])
+        .map(|s| s.to_string())
+        .collect();
+    sandbox_unit(timeout_secs, &ws.dir, env).command(
+        &argv,
+        &[
+            // Give libs a writable home inside the private /tmp.
+            ("HOME", "/tmp"),
+            ("MPLCONFIGDIR", "/tmp"),
+            // No display: charts render to files.
+            ("MPLBACKEND", "Agg"),
+        ],
+    )
 }
 
 /// Run code directly, unsandboxed. Developer machines only.
@@ -430,30 +350,15 @@ mod tests {
         super::execute_code(request, &ws).await
     }
 
+    /// The boundary itself is pinned in `sandbox`; this pins what a code
+    /// run adds to it.
     #[test]
-    fn sandbox_properties_pin_the_boundary() {
-        let props = sandbox_properties(30, Path::new("/ws"), Some(Path::new("/env")));
-        for must in [
-            "DynamicUser=yes",
-            "PrivateNetwork=yes",
-            "RestrictAddressFamilies=AF_UNIX",
-            "NoNewPrivileges=yes",
-            "ProtectSystem=strict",
-            "ProtectProc=invisible",
-            "MemoryMax=1G",
-            "RuntimeMaxSec=30",
-            "InaccessiblePaths=-/var/lib/virtues",
-            "InaccessiblePaths=-/run/postgresql",
-            "UMask=0000",
-            "BindPaths=/ws:/work",
-            "BindReadOnlyPaths=/env:/opt/py",
-        ] {
+    fn a_code_run_mounts_its_workspace_and_packages_and_has_no_way_out() {
+        let props = sandbox_unit(30, Path::new("/ws"), Some(Path::new("/env"))).properties();
+        for must in ["BindPaths=/ws:/work", "BindReadOnlyPaths=/env:/opt/py", "WorkingDirectory=/work", "MemoryMax=1G"] {
             assert!(props.iter().any(|p| p == must), "missing {must}");
         }
-        assert!(
-            !props.iter().any(|p| p.starts_with("User=")),
-            "a named user would replace the throwaway uid"
-        );
+        assert!(props.iter().any(|p| p == "RestrictAddressFamilies=AF_UNIX"));
     }
 
     #[tokio::test]

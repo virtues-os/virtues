@@ -48,6 +48,7 @@
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import { openWebLink } from "$lib/utils/webLinks";
 	import { newProject } from "$lib/utils/projectActions";
+	import { newPage as makePage, newTask as makeTask } from "$lib/utils/newActions";
 	import type { Pin } from "$lib/api/client";
 	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
 	import { search } from "$lib/stores/search.svelte";
@@ -95,16 +96,12 @@
 	}
 
 	/** A page is written the way a chat is started, so its door stands under New chat. */
-	async function newPage() {
-		const { pagesStore } = await import("$lib/stores/pages.svelte");
-		const page = await pagesStore.createNewPage();
-		go(`/page/${page.id}`, page.title);
+	function newPage() {
+		void makePage(go);
 	}
 
-	async function newTask() {
-		const { tasksStore } = await import("$lib/stores/tasks.svelte");
-		tasksStore.requestAdd();
-		go("/tasks", "Tasks");
+	function newTask() {
+		void makeTask(go);
 	}
 
 	function addProject() {
@@ -187,7 +184,7 @@
 		     "return", not "dismiss". It also matches the closing swipe's
 		     direction, so the button and the gesture tell one story. -->
 		<button class="close-btn" onclick={() => mobileLayout.closeDrawer()} aria-label="Back to chat">
-			<Icon icon="ri:arrow-right-double-line" width={22} />
+			<Icon icon="mynaui:chevrons-right" width={22} />
 		</button>
 	</header>
 
@@ -226,7 +223,7 @@
 						<span class="row-text">{door.label}</span>
 					</button>
 					<button class="row-plus" onclick={add.run} aria-label={add.label}>
-						<Icon icon="ri:add-line" width={20} />
+						<Icon icon="mynaui:plus" width={20} />
 					</button>
 				</div>
 			{:else}
@@ -277,7 +274,7 @@
 						</span>
 						<span class="title-text">{look.title}</span>
 						{#if pinChat && chatActivity.running(pinChat)}
-							<Icon icon="ri:loader-4-line" width="14" class="spin state-mark" />
+							<Icon icon="mynaui:spinner" width="14" class="spin state-mark" />
 						{:else if pinChat && chatActivity.unread(pinChat)}
 							<span class="row-unread" role="img" aria-label="New reply"></span>
 						{/if}
@@ -300,7 +297,7 @@
 				<span class="chat-title with-glyph">
 					<span class="title-text">{s.title || untitled("chat")}</span>
 					{#if chatActivity.running(s.conversation_id)}
-						<Icon icon="ri:loader-4-line" width="14" class="spin state-mark" />
+						<Icon icon="mynaui:spinner" width="14" class="spin state-mark" />
 					{:else if chatActivity.unread(s.conversation_id)}
 						<span class="row-unread" role="img" aria-label="New reply"></span>
 					{/if}

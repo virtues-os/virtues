@@ -31,14 +31,14 @@
 		{
 			key: 'name',
 			label: 'Name',
-			icon: 'ri:building-2-line',
+			icon: 'mynaui:building-one',
 			width: '50%',
 			minWidth: '200px',
 		},
 		{
 			key: 'organization_type',
 			label: 'Type',
-			icon: 'ri:price-tag-3-line',
+			icon: 'mynaui:tag',
 			width: '25%',
 			minWidth: '120px',
 			format: 'badge',
@@ -47,7 +47,7 @@
 		{
 			key: 'relationship_type',
 			label: 'Relationship',
-			icon: 'ri:links-line',
+			icon: 'mynaui:link',
 			width: '25%',
 			minWidth: '120px',
 			hideOnMobile: true,
@@ -88,7 +88,7 @@
 	entityType="org"
 	{loading}
 	{error}
-	emptyIcon="ri:building-2-line"
+	emptyIcon="mynaui:building-one"
 	emptyMessage="No organizations yet"
 	loadingMessage="Loading organizations..."
 	searchPlaceholder="Search organizations..."
@@ -99,7 +99,7 @@
 	{#snippet card(org: WikiOrganizationListItem)}
 		<div class="card-content">
 			<div class="org-icon">
-				<Icon icon="ri:building-2-line" width="24" />
+				<Icon icon="mynaui:building-one" width="24" />
 			</div>
 			<span class="card-name">{org.name}</span>
 			{#if org.organization_type}

@@ -26,22 +26,22 @@ const ROUTE_TO_TYPE: Record<string, string> = {
 
 // Entity type → iconify icon name (for typed pills). All registered in icons.ts.
 const TYPE_TO_ICON: Record<string, string> = {
-	person: 'ri:user-line',
-	place: 'ri:map-pin-line',
-	org: 'ri:building-line',
-	page: 'ri:file-text-line',
-	chat: 'ri:chat-3-line',
+	person: 'mynaui:user',
+	place: 'mynaui:map-pin',
+	org: 'mynaui:building',
+	page: 'mynaui:file-text',
+	chat: 'mynaui:message',
 	project: PROJECT_ICON,
-	file: 'ri:file-line',
-	day: 'ri:calendar-line',
-	year: 'ri:calendar-line',
-	source: 'ri:at-line',
-	record: 'ri:database-2-line',
+	file: 'mynaui:file',
+	day: 'mynaui:calendar',
+	year: 'mynaui:calendar',
+	source: 'mynaui:at',
+	record: 'mynaui:database',
 };
 
 /** Icon name for an entity type (falls back to the generic @ icon). */
 export function entityTypeIcon(type: string | null | undefined): string {
-	return (type && TYPE_TO_ICON[type]) || 'ri:at-line';
+	return (type && TYPE_TO_ICON[type]) || 'mynaui:at';
 }
 
 // File sub-type icons, resolved from mime type first, then the filename, read
@@ -49,17 +49,17 @@ export function entityTypeIcon(type: string | null | undefined): string {
 // (image / pdf / audio / video) instead of the generic file icon — even inline,
 // where only the filename is known.
 const MIME_ICON: Array<[RegExp, string]> = [
-	[/^image\//, 'ri:image-line'],
-	[/^audio\//, 'ri:music-2-line'],
-	[/^video\//, 'ri:movie-line'],
-	[/^application\/pdf$/, 'ri:file-pdf-line'],
+	[/^image\//, 'mynaui:image'],
+	[/^audio\//, 'mynaui:music'],
+	[/^video\//, 'mynaui:film'],
+	[/^application\/pdf$/, 'mynaui:file-text'],
 ];
 
 const KIND_ICON: Record<MediaKind, string> = {
-	image: 'ri:image-line',
-	audio: 'ri:music-2-line',
-	video: 'ri:movie-line',
-	file: 'ri:file-line',
+	image: 'mynaui:image',
+	audio: 'mynaui:music',
+	video: 'mynaui:film',
+	file: 'mynaui:file',
 };
 
 export type RefIconHint = { mimeType?: string | null; filename?: string | null };
@@ -73,7 +73,7 @@ export function fileIcon(hint?: RefIconHint): string {
 	const name = hint?.filename;
 	if (!name) return KIND_ICON.file;
 	const kind = kindOfLink('', name);
-	if (kind === 'file' && name.toLowerCase().endsWith('.pdf')) return 'ri:file-pdf-line';
+	if (kind === 'file' && name.toLowerCase().endsWith('.pdf')) return 'mynaui:file-text';
 	return KIND_ICON[kind];
 }
 
@@ -109,8 +109,15 @@ export function parseEntityRoute(route: string): string | null {
 }
 
 // `/chat/{chat}/tool/{call}`: the whole result of one tool call, the rows
-// behind a computed figure. The box attaches it to every sql_query result.
-const TOOL_REF = /^\/chat\/[^/]+\/tool\/([^/?#]+)$/;
+// behind a computed figure. The box attaches it to every sql_query and
+// show result, and it opens in a tab of its own (QueryView).
+const TOOL_REF = /^\/chat\/([^/?#]+)\/tool\/([^/?#]+)$/;
+
+/** A query ref's chat and call, or null for any other link. */
+export function parseToolRef(url: string): { chatId: string; callId: string } | null {
+	const m = TOOL_REF.exec(url);
+	return m ? { chatId: m[1], callId: m[2] } : null;
+}
 
 export type LinkTarget =
 	| { kind: 'query'; callId: string }
@@ -125,7 +132,7 @@ export type LinkTarget =
  */
 export function linkTarget(url: string | null | undefined): LinkTarget {
 	if (!url) return { kind: 'none' };
-	const callId = TOOL_REF.exec(url)?.[1];
+	const callId = parseToolRef(url)?.callId;
 	if (callId) return { kind: 'query', callId };
 	if (parseEntityRoute(url) !== null) return { kind: 'entity' };
 	if (/^https?:\/\//.test(url)) return { kind: 'external' };
@@ -146,6 +153,28 @@ export function parseRef(url: string): { kind: string; id: string } | null {
 	const kind = ROUTE_TO_TYPE[`/${m[1]}`];
 	if (!kind) return null;
 	return { kind, id: decoded(m[2]) };
+}
+
+const RECORD_ROUTE = /^\/record\/([a-z0-9_]+)\/([^?#]+)$/;
+// A table name always has an underscore (`data_calendar_event`, `app_pages`),
+// which keeps `mailto:` and other schemes out.
+const TABLE_REF = /^([a-z][a-z0-9]*_[a-z0-9_]+):(?!\/\/)(.+)$/;
+
+/**
+ * A record's ontology and id, from either way the app writes one: a route
+ * (`/record/<ontology>/<id>`, what chat answers and pages link to) or
+ * `table:id` (what a day article cites). The records API takes a table name
+ * in place of an ontology name, so either goes to `getRecord` as is. Null
+ * for anything else.
+ */
+export function parseRecordRef(ref: string): { ontology: string; id: string } | null {
+	const m = RECORD_ROUTE.exec(ref) ?? TABLE_REF.exec(ref);
+	return m ? { ontology: m[1], id: decoded(m[2]) } : null;
+}
+
+/** A link to a record, which opens the record card where it is cited. */
+export function isRecordRoute(url: string | null | undefined): boolean {
+	return !!url && RECORD_ROUTE.test(url);
 }
 
 /**

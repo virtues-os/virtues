@@ -89,7 +89,7 @@
         <div class="h-[calc(100%-53px)] overflow-y-auto p-2">
             {#if loadingTables}
                 <div class="flex items-center justify-center p-4">
-                    <Icon icon="ri:loader-4-line" width="16" class="spin" />
+                    <Icon icon="mynaui:spinner" width="16" class="spin" />
                 </div>
             {:else if error && tables.length === 0}
                 <div class="p-2 text-xs text-destructive">{error}</div>
@@ -106,7 +106,7 @@
                             class:active={selectedTable === table}
                         >
                             <Icon
-                                icon="ri:table-line"
+                                icon="mynaui:table"
                                 class="shrink-0 text-xs"
                             />
                             {table}
@@ -129,8 +129,8 @@
             >
                 <Icon
                     icon={queryExpanded
-                        ? "ri:arrow-down-s-line"
-                        : "ri:arrow-right-s-line"}
+                        ? "mynaui:chevron-down"
+                        : "mynaui:chevron-right"}
                     class="text-lg"
                 />
                 <span>Query</span>
@@ -146,7 +146,7 @@
                 <span class="text-xs text-warning">Read-only</span>
                 <div class="info-wrapper">
                     <IconButton
-                        icon="ri:information-line"
+                        icon="mynaui:info-circle"
                         label="Why read-only?"
                         size="sm"
                     />
@@ -185,7 +185,7 @@
                         <Button
                             variant="ghost"
                             size="sm"
-                            icon="ri:play-fill"
+                            icon="mynaui:play-solid"
                             {loading}
                             onclick={runQuery}>Run</Button
                         >
@@ -201,7 +201,7 @@
                     class="m-8 rounded-md border border-destructive/20 bg-destructive/10 p-4 text-destructive"
                 >
                     <div class="flex items-center gap-2 font-medium">
-                        <Icon icon="ri:error-warning-line" />
+                        <Icon icon="mynaui:danger-circle" />
                         Query Failed
                     </div>
                     <pre class="mt-2 whitespace-pre-wrap text-xs">{error}</pre>
@@ -221,7 +221,7 @@
                                                 class="flex items-center gap-1"
                                             >
                                                 <Icon
-                                                    icon="ri:table-line"
+                                                    icon="mynaui:table"
                                                     class="opacity-50"
                                                 />
                                                 {header}
@@ -267,7 +267,7 @@
                 <div
                     class="flex h-full flex-col items-center justify-center text-foreground-muted opacity-50"
                 >
-                    <Icon icon="ri:database-2-line" class="text-4xl" />
+                    <Icon icon="mynaui:database" class="text-4xl" />
                     <p class="mt-2 text-sm">Select a table to execute query</p>
                 </div>
             {/if}

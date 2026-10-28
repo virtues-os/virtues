@@ -137,10 +137,10 @@
 	}
 
 	const CAPS: { key: keyof CatalogModel; label: string; icon: string }[] = [
-		{ key: "supports_tools", label: "Tools", icon: "ri:tools-line" },
-		{ key: "supports_vision", label: "Images", icon: "ri:eye-line" },
-		{ key: "supports_pdf", label: "PDFs", icon: "ri:file-text-line" },
-		{ key: "supports_audio", label: "Audio", icon: "ri:mic-line" },
+		{ key: "supports_tools", label: "Tools", icon: "mynaui:tool" },
+		{ key: "supports_vision", label: "Images", icon: "mynaui:eye" },
+		{ key: "supports_pdf", label: "PDFs", icon: "mynaui:file-text" },
+		{ key: "supports_audio", label: "Audio", icon: "mynaui:microphone" },
 	];
 	function capList(m: ModelRow): typeof CAPS {
 		return CAPS.filter((c) => m[c.key]);

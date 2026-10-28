@@ -55,7 +55,7 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { sidebarZones } from '$lib/stores/sidebarZones.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
-	import { deleteChat, type PageSummary, type Pin } from '$lib/api/client';
+	import { deleteChat, type PageSummary, type Pin, type ProjectSummary } from '$lib/api/client';
 	import { pinIdentity, renameRef, ownedRef, untitled, isUntitled } from '$lib/refs/identity.svelte';
 	import {
 		loadRecentSources,
@@ -67,6 +67,7 @@
 	import ThinkingMark from '$lib/components/ThinkingMark.svelte';
 	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin, canPin, pinAtGap } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
+	import { newPage as makePage, newTask as makeTask } from '$lib/utils/newActions';
 	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
 	import { clothFor } from '$lib/sidebar/pin-colors';
@@ -81,6 +82,7 @@
 		projectMemberUrl,
 		REF_DRAG_TYPE,
 		startRefDrag,
+		setMentionDrag,
 	} from '$lib/utils/projectActions';
 	import { dndManager, PIN_DROP_ATTR, PROJECT_DROP_ATTR, pinGapAt } from '$lib/stores/dndManager.svelte';
 	import Icon from '$lib/components/Icon.svelte';
@@ -109,6 +111,26 @@
 
 	const pins = $derived(pinsStore.pins);
 	const projects = $derived(projectStore.projects);
+
+	// The tree under the Projects door: every project, in your order. It
+	// folds like a group, and opens by itself when you open a project from
+	// anywhere else, so the line to it is on screen.
+	const openProjectIndex = $derived(projects.findIndex((p) => activeRoute === `/project/${p.id}`));
+	const openProjectId = $derived(openProjectIndex >= 0 ? projects[openProjectIndex].id : null);
+	$effect(() => {
+		if (openProjectId && untrack(() => folded('projects'))) sidebarZones.toggle(zoneId('projects'));
+	});
+
+	function toggleProjectTree(e: MouseEvent) {
+		e.preventDefault();
+		e.stopPropagation();
+		const door = (e.currentTarget as HTMLElement).closest('.panel-door') as HTMLElement | null;
+		if (door) toggleGroup('projects', door);
+	}
+
+	function openProject(p: ProjectSummary) {
+		windowShellStore.openTabFromRoute(`/project/${p.id}`, { label: p.name, focusExisting: true });
+	}
 	// The pinned project a dragged sidebar row is over. A dragged TAB is
 	// tracked by dndManager instead (it is not an HTML drag); either lights
 	// the row.
@@ -465,9 +487,7 @@
 	async function newPage(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
-		const { pagesStore } = await import('$lib/stores/pages.svelte');
-		const page = await pagesStore.createNewPage();
-		windowShellStore.openTabFromRoute(`/page/${page.id}`, { label: page.title });
+		await makePage((route, label) => windowShellStore.openTabFromRoute(route, { label }));
 	}
 
 	function openTasks() {
@@ -477,9 +497,7 @@
 	async function newTask(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
-		const { tasksStore } = await import('$lib/stores/tasks.svelte');
-		tasksStore.requestAdd();
-		openTasks();
+		await makeTask(openTasks);
 	}
 
 	async function addProject(e: MouseEvent) {
@@ -515,6 +533,20 @@
 
 	const doors = $derived(sidebarDoors.visible);
 	onMount(() => void sidebarDoors.load());
+	// The hand-drawn rule after a group's label. Three strokes, each a little
+	// off level in its own way, picked by the group's id so a group always
+	// draws the same one and neighbours rarely match.
+	const RULE_STROKES = [
+		'M0 2.3C14 1.6 27 2.7 41 2.2S71 1.5 85 2.1S96 2.4 100 1.9',
+		'M0 1.8C11 2.5 26 1.7 44 2.3S69 2.6 83 1.9S95 1.6 100 2.2',
+		'M0 2.1C17 1.5 31 2.4 50 2S78 1.6 91 2.4S98 2.1 100 2',
+	];
+	function ruleStroke(id: string): string {
+		let sum = 0;
+		for (const ch of id) sum += ch.charCodeAt(0);
+		return RULE_STROKES[sum % RULE_STROKES.length];
+	}
+
 	// A door being dragged, and the gap it would land in among the doors.
 	let draggingDoorId = $state<DoorId | null>(null);
 	let doorGap = $state<number | null>(null);
@@ -545,7 +577,7 @@
 		return {
 			id: 'customize-sidebar',
 			label: 'Customize sidebar',
-			icon: 'ri:layout-left-line',
+			icon: 'mynaui:panel-left',
 			dividerBefore: divider,
 			submenu: [
 				...sidebarDoors.all.map((d): ContextMenuItem => {
@@ -575,15 +607,15 @@
 	function doorMenu(id: DoorId, index: number): ContextMenuItem[] {
 		const items: ContextMenuItem[] = [];
 		if (index > 0) {
-			items.push({ id: 'door-up', label: 'Move up', icon: 'ri:arrow-up-line', shortcut: '⌥↑', action: () => moveDoor(index, index - 1) });
+			items.push({ id: 'door-up', label: 'Move up', icon: 'mynaui:arrow-up', shortcut: '⌥↑', action: () => moveDoor(index, index - 1) });
 		}
 		if (index < doors.length - 1) {
-			items.push({ id: 'door-down', label: 'Move down', icon: 'ri:arrow-down-line', shortcut: '⌥↓', action: () => moveDoor(index, index + 1) });
+			items.push({ id: 'door-down', label: 'Move down', icon: 'mynaui:arrow-down', shortcut: '⌥↓', action: () => moveDoor(index, index + 1) });
 		}
 		items.push({
 			id: 'door-hide',
 			label: 'Hide',
-			icon: 'ri:eye-off-line',
+			icon: 'mynaui:eye-off',
 			dividerBefore: items.length > 0,
 			disabled: doors.length === 1,
 			action: () => setDoorHidden(id, true),
@@ -773,13 +805,13 @@
 		const label = titleOf(s);
 		return [
 			...openMenuItems(url, label),
-			{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renameChat(s) },
+			{ id: 'rename', label: 'Rename', icon: 'mynaui:edit', action: () => renameChat(s) },
 			...getProjectMenuItems(url, label),
 			pinMenuItem({ url, label, icon: s.icon }),
 			{
 				id: 'delete',
 				label: 'Delete',
-				icon: 'ri:delete-bin-line',
+				icon: 'mynaui:trash',
 				variant: 'destructive',
 				dividerBefore: true,
 				action: () => removeChat(s),
@@ -792,13 +824,13 @@
 		const label = pageTitle(p);
 		return [
 			...openMenuItems(url, label),
-			{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renamePage(p) },
+			{ id: 'rename', label: 'Rename', icon: 'mynaui:edit', action: () => renamePage(p) },
 			...getProjectMenuItems(url, label),
 			pinMenuItem({ url, label, icon: p.icon }),
 			{
 				id: 'delete',
 				label: 'Delete',
-				icon: 'ri:delete-bin-line',
+				icon: 'mynaui:trash',
 				variant: 'destructive',
 				dividerBefore: true,
 				action: () => removePage(p),
@@ -819,10 +851,10 @@
 		const index = pins.findIndex((p) => p.id === pin.id);
 		const moves: ContextMenuItem[] = [];
 		if (index > 0) {
-			moves.push({ id: 'pin-up', label: 'Move up', icon: 'ri:arrow-up-line', shortcut: '⌥↑', action: () => movePin(index, index - 1) });
+			moves.push({ id: 'pin-up', label: 'Move up', icon: 'mynaui:arrow-up', shortcut: '⌥↑', action: () => movePin(index, index - 1) });
 		}
 		if (index >= 0 && index < pins.length - 1) {
-			moves.push({ id: 'pin-down', label: 'Move down', icon: 'ri:arrow-down-line', shortcut: '⌥↓', action: () => movePin(index, index + 1) });
+			moves.push({ id: 'pin-down', label: 'Move down', icon: 'mynaui:arrow-down', shortcut: '⌥↓', action: () => movePin(index, index + 1) });
 		}
 		if (moves.length) moves[0] = { ...moves[0], dividerBefore: true };
 		return [...items, ...moves];
@@ -874,7 +906,7 @@
 				base.push({
 					id: 'unpin',
 					label: 'Unpin',
-					icon: 'ri:unpin-line',
+					icon: 'mynaui:pin',
 					dividerBefore: true,
 					action: () => void pinsStore.remove(pin.id),
 				});
@@ -890,7 +922,7 @@
 			items.push({
 				id: 'rename',
 				label: 'Rename',
-				icon: 'ri:edit-line',
+				icon: 'mynaui:edit',
 				action: () => startRename(pin.url, look.title),
 			});
 		}
@@ -899,7 +931,7 @@
 		items.push({
 			id: 'unpin',
 			label: 'Unpin',
-			icon: 'ri:unpin-line',
+			icon: 'mynaui:pin',
 			dividerBefore: items.length > 0,
 			action: () => {
 				void pinsStore.remove(pin.id);
@@ -977,9 +1009,11 @@
 	{/if}
 	{#each doors as door, index (door.id)}
 		{@const act = doorActions[door.id]}
+		<!-- The slot moves as one when doors are reordered, so the Projects
+		     door carries its tree with it. -->
+		<div class="door-slot" animate:rowFlip>
 		<!-- A div, not a button, so a door's + can be a real button inside it. -->
 		<div
-			animate:rowFlip
 			class="panel-row panel-door drop-slot"
 			class:panel-row-has-actions={!!act.add}
 			class:drop-before={doorLine === index}
@@ -1015,7 +1049,8 @@
 			}}
 			onclick={act.open}
 			onkeydown={(e) => {
-				if (e.key === 'Enter' || e.key === ' ') {
+				// The row's own keys only: Enter on its + presses the +.
+				if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
 					e.preventDefault();
 					act.open();
 					return;
@@ -1033,7 +1068,30 @@
 			oncontextmenu={(e) => showMenu(e, doorMenu(door.id, index))}
 		>
 			<AtlasIcon name={door.glyph} size={SHELL_GLYPH_PX} bare />
-			<span class="panel-row-text">{door.label}</span>
+			{#if door.id === 'projects' && projects.length}
+				{@const shut = folded('projects')}
+				<span class="panel-row-text door-label">
+					{door.label}
+					<button
+						type="button"
+						class="door-chev"
+						class:shut
+						aria-expanded={!shut}
+						aria-label={shut ? 'Show projects' : 'Hide projects'}
+						data-tip={shut ? 'Show projects' : 'Hide projects'}
+						onclick={toggleProjectTree}
+					>
+						<svg class="chev" width="9" height="6" viewBox="0 0 10 6" fill="none" aria-hidden="true">
+							<path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
+						</svg>
+					</button>
+				</span>
+				{#if !shut}
+					<span class="tree-stem" class:lit={openProjectId !== null} aria-hidden="true"></span>
+				{/if}
+			{:else}
+				<span class="panel-row-text">{door.label}</span>
+			{/if}
 			{#if act.add}
 				{@const add = act.add}
 				<span class="row-actions">
@@ -1043,8 +1101,50 @@
 				</span>
 			{/if}
 		</div>
+		{#if door.id === 'projects' && projects.length}
+			<div class="sidebar-expandable fold" class:expanded={!folded('projects')} style={foldStyle(projects.length)}>
+				<div class="sidebar-expandable-inner">
+					{@render projectTree()}
+				</div>
+			</div>
+		{/if}
+		</div>
 	{/each}
 </div>
+
+<!-- Projects as a tree under their door. The rows start at the door's word.
+     A faint line runs from the door's glyph down the tree, and the stretch
+     of it that leads to the open project is drawn in ink and curves into
+     that row. -->
+{#snippet projectTree()}
+	<div class="project-tree" role="group" aria-label="Projects">
+		<span class="tree-guide" aria-hidden="true"></span>
+		{#each projects as p, i (p.id)}
+			{@const url = `/project/${p.id}`}
+			<div
+				class="panel-row tree-row"
+				class:active={activeRoute === url}
+				class:stale-hover={staleHover}
+				role="link"
+				tabindex="0"
+				data-tip={p.name}
+				onclick={() => openProject(p)}
+				onkeydown={(e) => {
+					if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
+						e.preventDefault();
+						openProject(p);
+					}
+				}}
+				oncontextmenu={(e) => showMenu(e, projectRowMenuItems(p))}
+			>
+				{#if activeRoute === url}
+					<span class="tree-branch" style="--tree-i: {i}" aria-hidden="true"></span>
+				{/if}
+				<span class="panel-row-text">{p.name}</span>
+			</div>
+		{/each}
+	</div>
+{/snippet}
 
 <!-- A group's head: the label folds the group; the chevron says so on
      approach and stays while the group is shut, because a folded group has
@@ -1067,6 +1167,9 @@
 				<path d="M1 1l4 4 4-4" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round" />
 			</svg>
 		</button>
+		<svg class="group-rule" viewBox="0 0 100 4" preserveAspectRatio="none" aria-hidden="true">
+			<path d={ruleStroke(id)} vector-effect="non-scaling-stroke" />
+		</svg>
 		{#if action}
 			<span class="group-actions" class:shown={actionShown}>{@render action()}</span>
 		{/if}
@@ -1110,12 +1213,14 @@
 			draggingRecent = row.url;
 			if (projectMemberUrl(row.url)) startRefDrag(e, row.url, row.title);
 			else e.dataTransfer?.setData('text/plain', row.title);
+			setMentionDrag(e, row.url, row.title);
 		}}
 		ondragend={endDrag}
 		onclick={(e) => openFromRow(e, row.url, row.title, () => openRecent(row))}
 		ondblclick={(e) => renameFromRow(e, row.url, row.title, row.kind)}
 		onkeydown={(e) => {
-			if (e.key === 'Enter' || e.key === ' ') {
+			// The row's own keys only: Enter on Pin or More presses that button.
+			if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
 				e.preventDefault();
 				openRecent(row);
 			} else if (e.key === 'F2') {
@@ -1254,6 +1359,7 @@
 						// still be dropped on a project or into a page.
 						if (projectMemberUrl(pin.url)) startRefDrag(e, pin.url, look.title);
 						else e.dataTransfer?.setData('text/plain', look.title);
+						setMentionDrag(e, pin.url, look.title);
 						if (e.dataTransfer) e.dataTransfer.effectAllowed = 'linkMove';
 					}}
 					ondragend={endDrag}
@@ -1272,7 +1378,8 @@
 					onclick={(e) => openFromRow(e, pin.url, look.title, () => openPin(pin))}
 					ondblclick={(e) => renameFromRow(e, pin.url, look.title, look.kind)}
 					onkeydown={(e) => {
-						if (e.key === 'Enter' || e.key === ' ') {
+						// The row's own keys only: Enter on Unpin or More presses that button.
+						if ((e.key === 'Enter' || e.key === ' ') && e.target === e.currentTarget) {
 							e.preventDefault();
 							openPin(pin);
 							return;
@@ -1375,10 +1482,10 @@
 <div bind:this={spacerEl} class="fold-spacer" style="height: {foldSpacer}px" aria-hidden="true"></div>
 
 <style>
-	/* Sentence case, no tracking, no rule — design.md forbids uppercase with
-	   wide tracking as something that "signals considered while doing no work",
-	   and there are no hairline separators in the sidebar. A group is told
-	   from its rows by being SMALLER and quieter, and by the air above it. */
+	/* Sentence case, no tracking — design.md forbids uppercase with wide
+	   tracking as something that "signals considered while doing no work". A
+	   group is told from its rows by being SMALLER and quieter, by the air
+	   above it, and by the hand-drawn rule that runs on from its label. */
 	.group-head {
 		display: flex;
 		align-items: center;
@@ -1421,48 +1528,83 @@
 	   old --ease-premium over 150ms put 88% of the travel in the first 75ms,
 	   so the move strobed in a few big jumps and then crept for another 75ms. */
 	.group-head,
+	.door-chev,
 	.fold {
 		--fold-open: var(--fold-ms, 200ms);
 		--fold-close: calc(var(--fold-ms, 200ms) * 0.85);
 		--fold-ease: cubic-bezier(0.3, 0.1, 0.2, 1);
 	}
 
-	.chev {
+	/* At rest the chevron takes no room, so the rule starts right after the
+	   label. Pointing at the head opens its slot, and the rule shortens to
+	   make way for it. The negative margin cancels the label's gap. */
+	.group-head .chev {
+		width: 0;
+		margin-left: -6px;
 		opacity: 0;
 		transform: rotate(0deg);
 		transition:
+			width 180ms var(--fold-ease),
+			margin-left 180ms var(--fold-ease),
 			opacity 150ms ease,
 			transform var(--fold-open) var(--fold-ease);
 	}
 
 	.group-head.folded .chev {
 		transition:
+			width 180ms var(--fold-ease),
+			margin-left 180ms var(--fold-ease),
 			opacity 150ms ease,
 			transform var(--fold-close) var(--fold-ease);
 	}
 
 	.group-head:hover .chev,
-	.group-toggle:focus-visible .chev {
+	.group-toggle:focus-visible .chev,
+	.group-head.folded .chev {
+		width: 9px;
+		margin-left: 0;
 		opacity: 0.8;
 	}
 
 	/* Shut: the chevron stays put, pointing at the group it would reopen. */
 	.group-head.folded .chev {
-		opacity: 0.8;
 		transform: rotate(-90deg);
 	}
 
+	/* The rule fills the room between the label and the head's actions, so
+	   it shortens at both ends as the chevron and the actions open their
+	   slots. It stays out of the hit area: the label is the toggle, the rule
+	   is only ink. */
+	.group-rule {
+		flex: 1;
+		min-width: 0;
+		height: 4px;
+		margin: 0 8px;
+		fill: none;
+		stroke: var(--color-foreground-subtle);
+		stroke-width: 1;
+		stroke-linecap: round;
+		opacity: 0.45;
+		pointer-events: none;
+	}
+
+	/* The head's actions open their slot the same way, from the right. */
 	.group-actions {
 		margin-left: auto;
 		display: flex;
 		align-items: center;
+		max-width: 0;
+		overflow: hidden;
 		opacity: 0;
-		transition: opacity 150ms ease;
+		transition:
+			max-width 180ms var(--fold-ease),
+			opacity 150ms ease;
 	}
 
 	.group-head:hover .group-actions,
 	.group-actions:focus-within,
 	.group-actions.shown {
+		max-width: 28px;
 		opacity: 1;
 	}
 
@@ -1517,8 +1659,107 @@
 		flex-direction: column;
 	}
 
+	/* The Projects door's word carries its fold. The chevron shows when you
+	   point at the door, and turns to say which way the tree is. */
+	.door-label {
+		display: flex;
+		align-items: center;
+		gap: 4px;
+	}
+
+	.door-chev {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 20px;
+		height: 20px;
+		padding: 0;
+		border: none;
+		border-radius: var(--radius-sm);
+		background: none;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		opacity: 0;
+		transition: opacity 150ms ease;
+	}
+
+	.panel-door:not(.stale-hover):hover .door-chev,
+	.door-chev:focus-visible {
+		opacity: 0.8;
+	}
+
+	.door-chev:hover {
+		background: var(--hover-bg);
+	}
+
+	.door-chev .chev {
+		transition: transform var(--fold-open) var(--fold-ease);
+	}
+
+	.door-chev.shut .chev {
+		transform: rotate(-90deg);
+		transition-duration: var(--fold-close);
+	}
+
+	/* The tree's lines run down the centre of the door's glyph. The stem is
+	   the stretch inside the door row, from under the glyph to the row's
+	   foot; the tree's own box clips while it folds, so the stem lives here. */
+	.tree-stem,
+	.tree-guide,
+	.tree-branch {
+		position: absolute;
+		left: calc(12px + var(--sidebar-interactive-icon-size) / 2);
+		border-left: 1px solid var(--color-border);
+		pointer-events: none;
+	}
+
+	.tree-stem {
+		top: calc(50% + var(--sidebar-interactive-icon-size) / 2);
+		bottom: 0;
+	}
+
+	/* Ink from the glyph to the open project, faint everywhere else. */
+	.tree-stem.lit {
+		border-left-color: var(--color-foreground-muted);
+	}
+
+	.project-tree {
+		position: relative;
+	}
+
+	/* Down the whole tree, to the middle of the last row. */
+	.tree-guide {
+		top: 0;
+		bottom: calc(var(--sidebar-interactive-height) / 2);
+	}
+
+	/* From the top of the tree to the open project's middle, then round into
+	   its word: a row's height for each project above it. */
+	.tree-branch {
+		top: calc(-1 * var(--tree-i) * var(--sidebar-interactive-height));
+		bottom: 50%;
+		width: calc(var(--sidebar-interactive-icon-size) / 2 + var(--sidebar-interactive-gap) - 4px);
+		border-left-color: var(--color-foreground-muted);
+		border-bottom: 1px solid var(--color-foreground-muted);
+		border-bottom-left-radius: var(--radius-md);
+	}
+
+	/* A project in the tree starts where its door's word does, in a quieter
+	   ink than the doors. The open one is ink on the selected wash. */
+	.panel-row.tree-row {
+		padding-left: calc(12px + var(--sidebar-interactive-icon-size) + var(--sidebar-interactive-gap));
+		color: var(--color-foreground-muted);
+	}
+
+	.panel-row.tree-row.active,
+	.panel-row.tree-row.active:hover {
+		background: var(--active-bg);
+		box-shadow: none;
+		color: var(--color-foreground);
+	}
+
 	.panel-door {
-		gap: 8px;
+		gap: var(--sidebar-interactive-gap);
 		color: var(--color-foreground);
 	}
 
@@ -1538,7 +1779,7 @@
 		position: relative;
 		display: flex;
 		align-items: center;
-		gap: 8px;
+		gap: var(--sidebar-interactive-gap);
 		width: 100%;
 		height: var(--sidebar-interactive-height);
 		padding: 0 12px;
@@ -1547,7 +1788,7 @@
 		background: none;
 		cursor: pointer;
 		text-align: left;
-		font-size: var(--sidebar-interactive-font-size);
+		font-size: var(--chrome-label-font-size);
 		color: var(--color-foreground);
 		/* A drag starts from a row, so a press-and-move must not select its
 		   text instead, which WebKit tries first. */
@@ -1841,7 +2082,7 @@
 		background: none;
 	}
 
-	/* Avenir's regular is thin at 13px on a 1x display; its medium holds up. */
+	/* Avenir's regular is thin at row size on a 1x display; its medium holds up. */
 	@media (max-resolution: 1.5dppx) {
 		.panel-row {
 			font-weight: 500;

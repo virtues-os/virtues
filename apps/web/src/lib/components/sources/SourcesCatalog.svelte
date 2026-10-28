@@ -105,7 +105,7 @@
 				name: sourceId,
 				description:
 					'This connection’s source is no longer installed. Nothing will run for it; disconnect it if you no longer need it.',
-				icon: 'ri:question-line',
+				icon: 'mynaui:question-circle',
 				kind: 'unknown',
 				connections,
 				connected: connections.length,
@@ -130,7 +130,7 @@
 				id: source.id,
 				name: source.name,
 				description: source.description ?? '',
-				icon: source.icon ?? 'ri:plug-line',
+				icon: source.icon ?? 'mynaui:power',
 				kind: AUTH_LABEL[source.auth_kind] ?? source.auth_kind,
 				connections,
 				connected: connections.length,
@@ -159,18 +159,18 @@
 	});
 
 	const columns: Column<Row>[] = [
-		{ key: 'name', label: 'Source', icon: 'ri:plug-line', width: '20%', minWidth: '140px' },
+		{ key: 'name', label: 'Source', icon: 'mynaui:power', width: '20%', minWidth: '140px' },
 		{
 			key: 'provides',
 			label: 'Provides',
-			icon: 'ri:stack-line',
+			icon: 'mynaui:layers-three',
 			width: '22%',
 			minWidth: '150px'
 		},
 		{
 			key: 'kind',
 			label: 'Connects by',
-			icon: 'ri:key-2-line',
+			icon: 'mynaui:key',
 			width: '12%',
 			minWidth: '100px',
 			groupable: true,
@@ -179,7 +179,7 @@
 		{
 			key: 'state',
 			label: 'Status',
-			icon: 'ri:circle-line',
+			icon: 'mynaui:circle',
 			width: '18%',
 			minWidth: '120px',
 			format: 'badge',
@@ -192,7 +192,7 @@
 		{
 			key: 'connected',
 			label: 'Connections',
-			icon: 'ri:links-line',
+			icon: 'mynaui:link',
 			width: '14%',
 			minWidth: '110px',
 			format: 'number'
@@ -200,7 +200,7 @@
 		{
 			key: 'last_activity',
 			label: 'Last activity',
-			icon: 'ri:time-line',
+			icon: 'mynaui:clock-circle',
 			width: '16%',
 			minWidth: '120px',
 			hideOnMobile: true
@@ -208,7 +208,7 @@
 		{
 			key: 'applets',
 			label: 'Applets',
-			icon: 'ri:flashlight-line',
+			icon: 'mynaui:zap',
 			width: '12%',
 			minWidth: '90px',
 			format: 'number',
@@ -272,7 +272,7 @@
 		entityType="source"
 		loading={store.loading}
 		error={null}
-		emptyIcon="ri:plug-line"
+		emptyIcon="mynaui:power"
 		emptyMessage="No sources in the catalog"
 		loadingMessage="Loading sources…"
 		searchPlaceholder="Search sources…"

@@ -26,6 +26,8 @@
 mod executor;
 mod web_search;
 pub(crate) mod send_imessage;
+pub(crate) mod connection;
+pub(crate) mod connection_registry;
 pub(crate) mod sql_query;
 pub(crate) mod sql_write;
 pub(crate) mod tasks;
@@ -121,7 +123,7 @@ pub(crate) const SKILL_ONLY_TOOLS: &[&str] = &["save_skill"];
 /// table from agents/record/applets.md, enforced. What an applet's
 /// agent may do: think, read (sql_query/semantic_search/web_search), write
 /// its own applet_* tables (sql_write), keep notes (update_applet_memory),
-/// write pages, compute in the jail, and introspect applets read-only. Its
+/// write pages, compute in the sandbox, and introspect applets read-only. Its
 /// run RESULT posts to the linked chat — that's the delivery verb, not a
 /// tool. Everything else — applet management (self-modification), memory/
 /// profile/name writes, fan-out, image spend — is absent by construction.
@@ -142,13 +144,44 @@ const APPLET_RUN_ALLOWED_TOOLS: &[&str] = &[
     // allowlist is what makes it available at all.
     "revise_article",
     "code_interpreter",
-    "list_applets",
-    "get_applet",
 ];
 
-/// Tools for an autonomous **applet** run: the explicit allowlist above.
-pub fn get_tools_for_applet() -> Vec<serde_json::Value> {
-    tools_named(APPLET_RUN_ALLOWED_TOOLS)
+/// The tools an applet's `allowed-tools` may name.
+pub(crate) fn applet_run_tool_ids() -> &'static [&'static str] {
+    APPLET_RUN_ALLOWED_TOOLS
+}
+
+/// Tools for an autonomous **applet** run: the explicit allowlist above, and
+/// the applet tool with only its reads (`applet_management::execute` refuses
+/// the rest from a run as well). `has_chat` is whether the run has a chat id;
+/// without one, sql_query is offered without `save_as`, which the tool
+/// refuses when there is no chat to keep the file in.
+///
+/// `allowed` is the applet's own list (`allowed-tools` in a `SKILL.md`), which
+/// narrows the allowlist; the tools in `ALWAYS_ALLOWED_TOOLS` stay. `None`
+/// gives the whole allowlist. This is the list the model is offered: the
+/// agent loop does not refuse a call to a tool that was not offered.
+pub fn get_tools_for_applet(has_chat: bool, allowed: Option<&[String]>) -> Vec<serde_json::Value> {
+    let ids: Vec<&str> = match allowed {
+        Some(list) => APPLET_RUN_ALLOWED_TOOLS
+            .iter()
+            .copied()
+            .filter(|id| {
+                crate::applet_templates::ALWAYS_ALLOWED_TOOLS.contains(id) || list.iter().any(|t| t == id)
+            })
+            .collect(),
+        None => APPLET_RUN_ALLOWED_TOOLS.to_vec(),
+    };
+    let mut tools = tools_named(&ids);
+    if !has_chat {
+        if let Some(sql) = tools.iter_mut().find(|t| t["function"]["name"] == "sql_query") {
+            *sql = llm_definition(virtues_registry::tools::sql_query_tool(false));
+        }
+    }
+    tools.push(llm_definition(virtues_registry::tools::applet_tool(
+        &virtues_registry::tools::APPLET_READ_ACTIONS,
+    )));
+    tools
 }
 
 /// The allowlist for a request's background run (`crate::task_runner`):
@@ -177,27 +210,68 @@ pub fn get_tools_for_request() -> Vec<serde_json::Value> {
 /// The tools behind the CLI's data verbs (`virtues query`, `search`,
 /// `schema`, `applet`, `page`). Each verb is one of these run through the
 /// executor, so it gets the same role drop, timeout and arguments as chat;
-/// `cli::data` refuses anything not named here.
-pub(crate) const CLI_TOOLS: &[&str] = &[
-    "sql_query",
-    "semantic_search",
-    "list_applets",
-    "get_applet",
-    "get_page_content",
-    // `virtues applet check` only, which always sends `check_only`.
-    "setup_applet",
-];
+/// `cli::data` refuses anything [`cli_reads`] does not allow.
+const CLI_TOOLS: &[&str] = &["sql_query", "semantic_search", "get_page_content"];
 
 /// The tools behind the CLI's write verbs. These run in the server, not the
 /// CLI process (`server/api/console.rs` says why), and that door refuses
-/// anything not named here.
-pub(crate) const CLI_WRITE_TOOLS: &[&str] = &[
+/// anything [`cli_reads`] or [`cli_writes`] does not allow.
+const CLI_WRITE_TOOLS: &[&str] = &["create_page", "edit_page", "sql_write"];
+
+/// Whether a CLI read verb may make this call. For `applet` that is
+/// `virtues applet ls` and `get`, and `check`, which always sends
+/// `check_only` and so creates nothing.
+pub(crate) fn cli_reads(tool: &str, arguments: &serde_json::Value) -> bool {
+    match tool {
+        "applet" => {
+            applet_management::is_read(arguments)
+                || (applet_management::action(arguments) == Some("setup") && applet_setup::wants_check_only(arguments))
+        }
+        _ => CLI_TOOLS.contains(&tool),
+    }
+}
+
+/// Whether a CLI write verb may make this call. For `applet` that is
+/// `virtues applet put` (setup) and `run`; edit and delete have no verb.
+pub(crate) fn cli_writes(tool: &str, arguments: &serde_json::Value) -> bool {
+    match tool {
+        "applet" => matches!(applet_management::action(arguments), Some("setup" | "run")),
+        _ => CLI_WRITE_TOOLS.contains(&tool),
+    }
+}
+
+/// The tools `/api/mcp` lists (`server/api/mcp.rs`). Its callers are agents
+/// the owner runs on their own machine, the same caller as the CLI's verbs on
+/// another transport, so these are the CLI's reads and writes and `applet`.
+/// agents/plan/mcp-plan.md.
+const MCP_TOOLS: &[&str] = &[
+    "sql_query",
+    "semantic_search",
+    "get_page_content",
     "create_page",
     "edit_page",
-    "setup_applet",
-    "run_applet",
     "sql_write",
+    "applet",
 ];
+
+/// The registry rows `/api/mcp` lists, in registry order, each with whether
+/// it only reads.
+pub(crate) fn tools_for_mcp() -> Vec<(virtues_registry::tools::ToolConfig, bool)> {
+    virtues_registry::tools::default_tools()
+        .into_iter()
+        .filter(|tool| MCP_TOOLS.contains(&tool.id.as_str()))
+        .map(|tool| {
+            let reads_only = CLI_TOOLS.contains(&tool.id.as_str());
+            (tool, reads_only)
+        })
+        .collect()
+}
+
+/// Whether `/api/mcp` may make this call: a listed tool, with arguments a CLI
+/// verb could send. For `applet` that rules out edit and delete.
+pub(crate) fn mcp_allows(tool: &str, arguments: &serde_json::Value) -> bool {
+    MCP_TOOLS.contains(&tool) && (cli_reads(tool, arguments) || cli_writes(tool, arguments))
+}
 
 /// The read-only research tools a Deep Research **subagent** (worker) may use. Explicit allow-list
 /// (not a category filter) so workers get pure research capability — no memory/profile writes, and
@@ -448,6 +522,20 @@ mod sudo_scope {
             .collect()
     }
 
+    /// `allowed-tools` narrows an applet run's tools and keeps the ones
+    /// every prompt applet has.
+    #[test]
+    fn an_applets_allowed_tools_narrow_what_its_run_is_offered() {
+        let allowed = vec!["sql_query".to_string(), "shell".to_string()];
+        let listed = names(&get_tools_for_applet(true, Some(&allowed)));
+        assert!(listed.contains(&"sql_query".to_string()));
+        assert!(listed.contains(&"think".to_string()));
+        assert!(listed.contains(&"update_applet_memory".to_string()));
+        assert!(!listed.contains(&"create_page".to_string()), "not listed, not offered");
+        assert!(!listed.contains(&"shell".to_string()), "never beyond the allowlist");
+        assert!(names(&get_tools_for_applet(true, None)).contains(&"create_page".to_string()));
+    }
+
     #[test]
     fn only_sudo_mode_lists_the_shell() {
         let mode = |name| ChatMode::from_wire(name).tools();
@@ -460,7 +548,8 @@ mod sudo_scope {
             mode("anything-else"),
             get_tool_definitions_for_llm(),
             get_all_tool_definitions_for_llm(),
-            get_tools_for_applet(),
+            get_tools_for_applet(true, None),
+            get_tools_for_applet(false, None),
             get_tools_for_subagent(),
         ] {
             assert!(!names(&listing).contains(&"shell".to_string()));

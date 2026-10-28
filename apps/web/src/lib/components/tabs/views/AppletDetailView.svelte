@@ -410,13 +410,13 @@
 		const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 		const items: ContextMenuItem[] = [];
 		if (canRunNow) {
-			items.push({ id: 'run', label: 'Run now', icon: 'ri:play-line', action: () => void runNow() });
+			items.push({ id: 'run', label: 'Run now', icon: 'mynaui:play', action: () => void runNow() });
 		}
 		if (a.has_face) {
 			items.push({
 				id: 'share',
 				label: 'Share',
-				icon: 'ri:share-forward-line',
+				icon: 'mynaui:share',
 				action: () => {
 					sharing = true;
 				}
@@ -424,7 +424,7 @@
 			items.push({
 				id: 'full',
 				label: 'Open full page',
-				icon: 'ri:external-link-line',
+				icon: 'mynaui:external-link',
 				action: () => {
 					windowShellStore.openTabFromRoute(`/applet/${a.id}/view`);
 				}
@@ -437,7 +437,7 @@
 			items.push({
 				id: 'delete',
 				label: 'Delete applet',
-				icon: 'ri:delete-bin-line',
+				icon: 'mynaui:trash',
 				variant: 'destructive',
 				dividerBefore: true,
 				action: () => {
@@ -492,10 +492,10 @@
 				<div class="insp-row"><span>Next run</span><span class="insp-value">{nextRunText}</span></div>
 				<div class="insp-row"><span>Cost</span><span class="insp-value">{costText}</span></div>
 				<button type="button" class="insp-row link" onclick={() => openInfo('history')}>
-					<span>Run history</span><Icon icon="ri:arrow-right-s-line" width="16" />
+					<span>Run history</span><Icon icon="mynaui:chevron-right" width="16" />
 				</button>
 				<button type="button" class="insp-row link" onclick={() => openInfo('details')}>
-					<span>Technical details</span><Icon icon="ri:arrow-right-s-line" width="16" />
+					<span>Technical details</span><Icon icon="mynaui:chevron-right" width="16" />
 				</button>
 			</Card>
 		</aside>
@@ -513,7 +513,7 @@
 				<div class="narrow">
 					<header class="head sub">
 						<button type="button" class="backlink" onclick={() => showInfo(false)}>
-							<Icon icon="ri:arrow-left-line" width="14" />
+							<Icon icon="mynaui:arrow-left" width="14" />
 							{action.name}
 						</button>
 						<h1 class="title">Info</h1>
@@ -545,15 +545,15 @@
 						{#if chatId}
 							<!-- A word with the icon: a speech bubble alone didn't say you
 							     can tell it things or change it there. -->
-							<Button variant="ghost" size="sm" icon="ri:chat-3-line" onclick={openConversation}>Chat</Button>
+							<Button variant="ghost" size="sm" icon="mynaui:message" onclick={openConversation}>Chat</Button>
 						{/if}
 						<IconButton
-							icon="ri:information-line"
+							icon="mynaui:info-circle"
 							label="Info"
 							pressed={insp}
 							onclick={() => (insp = !insp)}
 						/>
-						<IconButton icon="ri:more-line" label="More" haspopup="menu" onclick={openMore} />
+						<IconButton icon="mynaui:dots" label="More" haspopup="menu" onclick={openMore} />
 						{#if action.archived_at}
 							<Button variant="secondary" size="sm" onclick={() => setEnabled(true)} disabled={saving}>
 								Turn back on

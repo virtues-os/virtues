@@ -15,14 +15,15 @@
  * are new lines, Tab indents and Shift+Tab takes the indent back; Enter on a
  * line of three backticks opens one. Elsewhere Tab nests a list item and
  * otherwise moves focus, and Shift+Tab cycles the chat's mode (outdenting a
- * nested item first). `@` opens the ref picker. There are no slash commands.
+ * nested item first). `@` opens the ref picker, and `/` at the very start
+ * of the message opens the skills menu.
  */
 
 import { Editor, Extension } from '@tiptap/core';
 import { ListKeymap } from '@tiptap/extension-list';
 import { Placeholder, UndoRedo } from '@tiptap/extensions';
 import { Fragment, Slice, type Node as PmNode, type Schema } from '@tiptap/pm/model';
-import { Plugin, TextSelection, type EditorState } from '@tiptap/pm/state';
+import { Plugin, Selection, TextSelection, type EditorState } from '@tiptap/pm/state';
 import { findWrapping } from '@tiptap/pm/transform';
 import MentionNode from '$lib/components/pages/nodes/MentionNode.svelte';
 import { convertNow, loadConverter } from './converter';
@@ -76,6 +77,12 @@ export interface ComposerOptions {
 	onMentionQuery?: (query: string) => void;
 	/** The `@` closed: a space, a move away, Escape, or a ref picked. */
 	onMentionClose?: () => void;
+	/** `/` typed at the very start of the message: open the skills menu with what follows it. */
+	onSlashOpen?: (query: string) => void;
+	/** The text typed after the `/` changed. */
+	onSlashQuery?: (query: string) => void;
+	/** The `/` closed. */
+	onSlashClose?: () => void;
 }
 
 export interface Composer {
@@ -86,13 +93,26 @@ export interface Composer {
 	setMarkdown(markdown: string): void;
 	setDisabled(disabled: boolean): void;
 	/** Swap the empty-state hint: the chat's mode can change after creation. */
-	setPlaceholder(text: string): void;
+	/** The placeholder drawn in the empty field, and what assistive tech
+	 *  reads as it (`aria-placeholder`), which defaults to the same text. */
+	setPlaceholder(text: string, spoken?: string): void;
 	focus(): void;
 	/** Put what the ref picker chose where the `@` was. */
 	insertRef(label: string, url: string): void;
+	/** Put a ref where a row or tab was dropped: under the pointer when it
+	 *  is over the text, otherwise at the end of the message. */
+	insertRefHere(label: string, url: string, at?: { x: number; y: number }): void;
+	/** Replace the message with `text`, as written (not read as markdown),
+	 *  and mentions of `refs` after it, caret at the end, in one step that
+	 *  one undo takes back: an accepted suggested question. */
+	fill(text: string, refs: { url: string; label: string }[]): void;
 	/** The `@` menu closed with nothing picked; what was typed after the `@` stays.
 	 *  `refocus: false` when it closed because the focus went elsewhere. */
 	closeRef(opts?: { refocus?: boolean }): void;
+	/** A skill was picked: the `/` and what was typed after it leave the message. */
+	takeSlash(): void;
+	/** The `/` menu closed with nothing picked; the text stays. */
+	closeSlash(opts?: { refocus?: boolean }): void;
 	destroy(): void;
 }
 
@@ -372,6 +392,10 @@ export function composerAttributes(mobile: boolean, label = 'Message'): Record<s
 export function createComposer(o: ComposerOptions): Composer {
 	let hint = o.placeholder ?? 'Ask Virtues';
 	let mentionFrom = 0;
+	let slashFrom = 0;
+	// Whether the open `/` is at the start of the message, the only place it
+	// means a skill; anywhere else it is a slash in a sentence.
+	let slashAtStart = false;
 	// How the message on screen was read, and whether it has been edited
 	// since: one read as text for want of a converter is read again once
 	// the converter loads, unless the person has changed it by then.
@@ -458,6 +482,21 @@ export function createComposer(o: ComposerOptions): Composer {
 				onQuery: (q) => o.onMentionQuery?.(q),
 				onClose: () => o.onMentionClose?.(),
 			},
+			{
+				char: '/',
+				onOpen: (_coords, from) => {
+					slashFrom = from;
+					slashAtStart = from <= 1;
+					if (slashAtStart) o.onSlashOpen?.(triggerState(editor.state, '/').query);
+				},
+				onQuery: (q) => {
+					if (slashAtStart) o.onSlashQuery?.(q);
+				},
+				onClose: () => {
+					if (slashAtStart) o.onSlashClose?.();
+					slashAtStart = false;
+				},
+			},
 		]),
 		messagePaste(o.onAttach),
 		LineSigns,
@@ -498,6 +537,22 @@ export function createComposer(o: ComposerOptions): Composer {
 		}
 	}
 
+	/** A mention (or a link, for an address out) at the caret, then a space. */
+	/** A mention for a route, or a link for an address elsewhere. */
+	function refNode(label: string, url: string): PmNode {
+		const { schema } = editor.state;
+		return isRoute(url)
+			? schema.nodes.mention.create({ to: url, label })
+			: schema.text(label, [schema.marks.link.create({ href: url })]);
+	}
+
+	function refAtCaret(label: string, url: string) {
+		const tr = editor.state.tr.replaceSelectionWith(refNode(label, url), false);
+		tr.insertText(' ');
+		editor.view.dispatch(tr.scrollIntoView());
+		editor.commands.focus();
+	}
+
 	function setMarkdown(markdown: string) {
 		if (markdown === messageText(editor.state.doc)) return;
 		const next = readMessage(editor.schema, markdown);
@@ -527,7 +582,8 @@ export function createComposer(o: ComposerOptions): Composer {
 		setDisabled(disabled) {
 			if (editor.isEditable === disabled) editor.setEditable(!disabled, false);
 		},
-		setPlaceholder(text) {
+		setPlaceholder(text, spoken = text) {
+			editor.view.dom.setAttribute('aria-placeholder', spoken);
 			if (text === hint) return;
 			hint = text;
 			// Placeholder draws on the next transaction.
@@ -559,8 +615,35 @@ export function createComposer(o: ComposerOptions): Composer {
 			editor.view.dispatch(tr.scrollIntoView());
 			editor.commands.focus();
 		},
+		insertRefHere(label, url, at) {
+			const { state, view } = editor;
+			const hit = at ? view.posAtCoords({ left: at.x, top: at.y }) : null;
+			const pos = hit ? hit.pos : state.doc.content.size;
+			view.dispatch(state.tr.setSelection(Selection.near(state.doc.resolve(pos))));
+			refAtCaret(label, url);
+		},
+		fill(text, refs) {
+			const { schema, doc } = editor.state;
+			const inline: PmNode[] = [schema.text(text)];
+			for (const r of refs) inline.push(schema.text(' '), refNode(r.label, r.url));
+			if (refs.length > 0) inline.push(schema.text(' '));
+			const tr = editor.state.tr.replaceWith(0, doc.content.size, schema.nodes.paragraph.create(null, inline));
+			tr.setSelection(Selection.atEnd(tr.doc));
+			editor.view.dispatch(tr.scrollIntoView());
+			editor.commands.focus();
+		},
 		closeRef({ refocus = true } = {}) {
 			closeTrigger(editor.view, '@');
+			if (refocus) editor.commands.focus();
+		},
+		takeSlash() {
+			const range = pickedRange(editor.state, '/', { from: slashFrom, to: slashFrom + 1 });
+			closeTrigger(editor.view, '/');
+			editor.view.dispatch(editor.state.tr.delete(range.from, range.to));
+			editor.commands.focus();
+		},
+		closeSlash({ refocus = true } = {}) {
+			closeTrigger(editor.view, '/');
 			if (refocus) editor.commands.focus();
 		},
 		destroy() {

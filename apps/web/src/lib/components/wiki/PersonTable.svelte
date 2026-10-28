@@ -33,14 +33,14 @@
 		{
 			key: 'name',
 			label: 'Name',
-			icon: 'ri:user-line',
+			icon: 'mynaui:user',
 			width: '50%',
 			minWidth: '200px',
 		},
 		{
 			key: 'relationship_category',
 			label: 'Relationship',
-			icon: 'ri:heart-line',
+			icon: 'mynaui:heart',
 			width: '25%',
 			minWidth: '120px',
 			format: 'badge',
@@ -101,7 +101,7 @@
 	entityType="person"
 	{loading}
 	{error}
-	emptyIcon="ri:user-add-line"
+	emptyIcon="mynaui:user-plus"
 	emptyMessage="No people yet"
 	loadingMessage="Loading people..."
 	searchPlaceholder="Search people..."

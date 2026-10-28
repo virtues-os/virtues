@@ -376,7 +376,39 @@ fn endpoint(key: &str, from_process_env: String) -> String {
         .unwrap_or(from_process_env)
 }
 
-/// The Reach ledger: local network facts, then the iroh legs read from the DB.
+/// The relay as the running server resolved it, from its public health
+/// reading.
+async fn running_relay() -> Result<RunningRelay, Unread> {
+    #[derive(serde::Deserialize)]
+    struct Health {
+        reach: Option<RunningRelay>,
+    }
+    let client = crate::http_client::base_builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()
+        .map_err(|_| Unread::NoAnswer)?;
+    let url = format!("http://127.0.0.1:{}/api/box/health", super::upgrade::service_port());
+    let res = client.get(&url).send().await.map_err(|_| Unread::NoAnswer)?;
+    let health: Health = res.json().await.map_err(|_| Unread::NoAnswer)?;
+    health.reach.ok_or(Unread::OlderServer)
+}
+
+/// Why doctor has no relay reading.
+enum Unread {
+    NoAnswer,
+    /// It answered without the `reach` field: a server binary older than this
+    /// command, still running after an install.
+    OlderServer,
+}
+
+#[derive(serde::Deserialize)]
+struct RunningRelay {
+    relay_url: Option<String>,
+    connected: bool,
+}
+
+/// The Reach ledger: local network facts, the relay the running server
+/// resolved, then the iroh legs read from the DB.
 async fn print_reach(issues: &mut ui::Issues) {
     let net = crate::net_check::compute_net_status();
     ui::subsection("Reach");
@@ -409,7 +441,6 @@ async fn print_reach(issues: &mut ui::Issues) {
         None => crate::relay::ReachReport {
             db_reachable: false,
             endpoint_id: None,
-            relay_url: None,
             allowlisted_devices: None,
         },
     };
@@ -444,13 +475,34 @@ async fn print_reach(issues: &mut ui::Issues) {
             );
         }
     }
-    match &report.relay_url {
-        Some(u) => ui::kv("relay", u),
-        None => {
-            ui::kv("relay", "LAN-only");
+    // The relay comes from the running server, not the database: the stored
+    // config is empty on an unclaimed box, which still uses the built-in
+    // relay, so reading the database reported a working box as LAN-only.
+    let relay = running_relay().await;
+    match &relay {
+        Ok(r) => match (&r.relay_url, r.connected) {
+            (Some(u), true) => ui::kv("relay", &format!("{u}  {}", style("✓ connected").green())),
+            (Some(u), false) => {
+                ui::kv("relay", &format!("{u}  {}", style("⚠ not connected").yellow()));
+                issues.warn(
+                    "the server isn't connected to its relay, so devices away from this network can't reach it",
+                    Some("check the internet connection; journalctl -u virtues -g iroh"),
+                );
+            }
+            (None, _) => ui::kv("relay", "off — devices reach this server on its own network only"),
+        },
+        Err(Unread::NoAnswer) => {
+            ui::kv("relay", "unknown");
             issues.warn(
-                "no relay configured — the box is reachable on this network only (unclaimed, or atlas unreachable)",
-                Some("claim the box: virtues pair"),
+                "the server didn't answer on this machine, so its relay state is unknown",
+                Some("systemctl status virtues"),
+            );
+        }
+        Err(Unread::OlderServer) => {
+            ui::kv("relay", "unknown — the running server predates this reading");
+            issues.warn(
+                "the running server is older than this command",
+                Some("restart it: sudo systemctl restart virtues"),
             );
         }
     }
@@ -467,9 +519,9 @@ async fn print_reach(issues: &mut ui::Issues) {
             );
         }
     }
-    // 0 devices while unclaimed shares a root cause with the relay warning
-    // above, so it only becomes its own finding once the relay leg is fine.
-    if report.allowlisted_devices == Some(0) && report.relay_url.is_some() {
+    // 0 devices while the relay is down shares a root cause with the relay
+    // warning above, so it only becomes its own finding once that leg is fine.
+    if report.allowlisted_devices == Some(0) && relay.as_ref().is_ok_and(|r| r.connected) {
         issues.warn(
             "no devices on the allowlist",
             Some("pair one: virtues device add"),

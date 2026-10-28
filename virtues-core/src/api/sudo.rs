@@ -49,7 +49,7 @@ const GATED_ACTIONS: &[&str] = &[
     // Installing a third party's package runs their code on this box. It was
     // the only route in the app that did that, and it was gated by nothing
     // while changing an API key was gated by this — an asymmetry worth
-    // correcting even now that imported code runs jailed.
+    // correcting even now that imported code runs in the sandbox.
     "import_applet_package",
 ];
 

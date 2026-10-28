@@ -106,10 +106,16 @@ pub struct ToolContext {
     /// chat handler. A page's read base made in a turn serves only that
     /// turn (`page_reads::serves_turn`). `None` outside a chat turn.
     pub turn: Option<String>,
-    /// The call came through the console door (`server/api/console.rs`): the
-    /// owner at the box, running a CLI verb. Set only by that handler, never
-    /// from a tool's arguments, so the model cannot claim it.
+    /// The call came from an agent the owner runs, present in its session: a
+    /// CLI verb through the console door (`server/api/console.rs`), or a call
+    /// to `/api/mcp` (`server/api/mcp.rs`). Set only by those two handlers,
+    /// never from a tool's arguments, so the model cannot claim it.
     pub console: bool,
+    /// The owner agreed in chat to a change that deletes or overwrites
+    /// something in a connected service: the chat's `connection` call carried
+    /// `confirmed`, and this is its worker. A connection tool that declares
+    /// itself destructive runs only with it (`tools/connection.rs`).
+    pub owner_confirmed: bool,
 }
 
 impl Default for ToolContext {
@@ -131,6 +137,7 @@ impl Default for ToolContext {
             timezone: None,
             turn: None,
             console: false,
+            owner_confirmed: false,
         }
     }
 }
@@ -257,7 +264,7 @@ impl ToolExecutor {
     }
 
     /// Create a new tool executor with YjsState for real-time page editing
-    /// and action dispatch (required by the `run_applet` tool).
+    /// and action dispatch (required by the applet tool's run action).
     pub fn new_with_yjs(pool: PgPool, yjs_state: YjsState) -> Self {
         warm_code_env();
         let pool = Arc::new(pool);
@@ -295,17 +302,14 @@ impl ToolExecutor {
     /// destroy something or take a real-world / outbound action. Everything else runs freely
     /// (reversible, local). The free/gated split is the whole permission model.
     const PERMISSION_REQUIRED: &'static [&'static str] = &[
-        // Runs, or stops running, something on a schedule of its own.
-        "run_applet",
-        "delete_applet",
-        // Writes an applet to disk and runs its schema DDL; and rewrites one
-        // that already exists — including its prompt and its schedule. Gating
-        // `run_applet` and not these meant the model could not run the daily
-        // digest without being asked, but could rewrite what the digest says
-        // and set it to fire hourly, silently. `edit_applet`'s own guard only
-        // ever covered applets it had authored itself.
-        "setup_applet",
-        "edit_applet",
+        // Every applet action but the reads (list, get): run and delete run,
+        // or stop running, something on a schedule of its own; setup writes
+        // an applet to disk and runs its schema DDL; edit rewrites one that
+        // exists, including its prompt and its schedule. Gating run and not
+        // these meant the model could not run the daily digest without being
+        // asked, but could rewrite what the digest says and set it to fire
+        // hourly, silently.
+        "applet",
         // Writes a prompt that later runs with tools, as an applet's does.
         "save_skill",
         // Deletes rows, in the person's own record.
@@ -326,13 +330,19 @@ impl ToolExecutor {
         if !Self::PERMISSION_REQUIRED.contains(&tool_name) {
             return Ok(None);
         }
-        // Reading the authoring guide writes nothing; asking "I allow" for it
-        // would put a prompt in front of the step the definition requires.
-        if tool_name == "setup_applet" && super::applet_setup::wants_guide(arguments) {
+        let applet_action = (tool_name == "applet")
+            .then(|| super::applet_management::action(arguments))
+            .flatten();
+        // Listing and reading applets change nothing.
+        if tool_name == "applet" && super::applet_management::is_read(arguments) {
             return Ok(None);
         }
+        // Reading the authoring guide writes nothing; asking "I allow" for it
+        // would put a prompt in front of the step the definition requires.
         // Nor does a dry run: `check_only` validates and creates nothing.
-        if tool_name == "setup_applet" && super::applet_setup::wants_check_only(arguments) {
+        if applet_action == Some("setup")
+            && (super::applet_setup::wants_guide(arguments) || super::applet_setup::wants_check_only(arguments))
+        {
             return Ok(None);
         }
         // Sudo is the owner's bypass: these run, and a delete in SQL or the
@@ -340,7 +350,8 @@ impl ToolExecutor {
         // spending money still ask.
         if context.sudo
             && context.applet_id.is_none()
-            && !matches!(tool_name, "delete_applet" | "generate_image")
+            && applet_action != Some("delete")
+            && tool_name != "generate_image"
         {
             return Ok(None);
         }
@@ -355,7 +366,7 @@ impl ToolExecutor {
         };
         // What is being asked for. Some gated tools name an existing applet in
         // `id`; the rest act with no target of their own — `sql_write` deletes
-        // rows, `generate_image` spends money, `setup_applet` writes a new one
+        // rows, `generate_image` spends money, applet setup writes a new one
         // to disk — and for those the tool itself is what the person grants.
         // Keying only on `id` meant a tool without one returned "not gated",
         // which is the quiet way a gate stops being a gate.
@@ -366,9 +377,9 @@ impl ToolExecutor {
                         .await
                         .map(|a| a.name)
                         .unwrap_or_else(|_| "this action".to_string());
-                    let verb = match tool_name {
-                        "delete_applet" => "delete",
-                        "edit_applet" => "change",
+                    let verb = match applet_action {
+                        Some("delete") => "delete",
+                        Some("edit") => "change",
                         _ => "run",
                     };
                     (applet_id.to_string(), "action", title, verb)
@@ -377,7 +388,7 @@ impl ToolExecutor {
                     let (title, verb) = match tool_name {
                         "sql_write" => ("your records".to_string(), "write to"),
                         "generate_image" => ("an image".to_string(), "generate"),
-                        "setup_applet" => ("a new action".to_string(), "create"),
+                        "applet" => ("a new action".to_string(), "create"),
                         "save_skill" => (
                             arguments
                                 .get("name")
@@ -484,7 +495,12 @@ impl ToolExecutor {
             "web_search" => self.web_search.execute(arguments).await,
             "semantic_search" => {
                 self.semantic_search
-                    .execute(arguments, context.project_id.as_deref(), context.scope_mode)
+                    .execute(
+                        arguments,
+                        context.project_id.as_deref(),
+                        context.scope_mode,
+                        context.timezone.as_deref(),
+                    )
                     .await
             }
             // Sudo: the database tools run any statement on any table, as the
@@ -506,7 +522,7 @@ impl ToolExecutor {
                 let chat_id = context.chat_id.as_deref().filter(|_| !context.temporary);
                 self.sql_query.execute(arguments, chat_id, context.timezone.as_deref()).await
             }
-            "sql_write" => super::sql_write::execute(&self._pool, arguments).await,
+            "sql_write" => super::sql_write::execute(&self._pool, arguments, context.timezone.as_deref()).await,
             // The tool lists already keep it out of every other mode; this is
             // the second lock, for a model that names a tool it was not given.
             "shell" if context.sudo && context.applet_id.is_none() => {
@@ -527,6 +543,12 @@ impl ToolExecutor {
             // back through this executor as the `browser_*` calls below.
             crate::browse::TOOL => Ok(crate::browse::run_tool(&self._pool, &arguments, context).await),
             super::send_imessage::TOOL => Ok(super::send_imessage::run(&self._pool, &arguments, context).await),
+            // A connected service, through a worker with only its tools; and
+            // those tools, which only that worker calls.
+            super::connection::TOOL => Ok(super::connection::run_tool(&self._pool, &arguments, context).await),
+            name if super::connection::split(name).is_some() => {
+                Ok(super::connection::call_tool(&self._pool, name, arguments, context).await)
+            }
             super::tasks::CREATE_TOOL => Ok(super::tasks::create(&self._pool, &arguments, context).await),
             super::tasks::UPDATE_TOOL => Ok(super::tasks::update(&self._pool, &arguments, context).await),
             name if crate::browser::TOOLS.contains(&name) => {
@@ -597,23 +619,12 @@ impl ToolExecutor {
                     }))),
                 }
             }
-            // Applet setup
-            "setup_applet" => super::applet_setup::execute(&self._pool, arguments, context).await,
+            // Applets: list / get / setup / edit / run / delete, by `action`
+            "applet" => {
+                super::applet_management::execute(&self._pool, self.yjs_state.as_ref(), arguments, context).await
+            }
             // Applet memory (persistent scratchpad for actions across runs)
             "update_applet_memory" => self.execute_update_applet_memory(arguments, context).await,
-            // Applet management — list / get / edit / delete / run
-            "list_applets" => super::applet_management::list_applets(&self._pool, arguments).await,
-            "get_applet" => super::applet_management::get_applet(&self._pool, arguments).await,
-            "edit_applet" => super::applet_management::edit_applet(&self._pool, arguments).await,
-            "delete_applet" => super::applet_management::delete_applet(&self._pool, arguments).await,
-            "run_applet" => {
-                let yjs = self.yjs_state.as_ref().ok_or_else(|| {
-                    ToolError::ExecutionFailed(
-                        "run_applet tool requires YjsState — executor constructed without it".into(),
-                    )
-                })?;
-                super::applet_management::run_applet(&self._pool, yjs, arguments, context).await
-            }
             // Dayline event CRUD (used by hourly/EOD actions)
             // Project item fetch (for attached project context lens)
             "get_project_item" => self.execute_get_project_item(arguments).await,

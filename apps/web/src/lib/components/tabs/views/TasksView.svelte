@@ -524,7 +524,7 @@
 					void add(false);
 				}}
 			>
-				<span class="add-mark" aria-hidden="true"><Icon icon="ri:add-line" width="16" /></span>
+				<span class="add-mark" aria-hidden="true"><Icon icon="mynaui:plus" width="16" /></span>
 				<input
 					bind:this={addInput}
 					bind:value={draft}
@@ -633,7 +633,7 @@
 
 			<section class="section done-section">
 				<button type="button" class="section-label fold" aria-expanded={doneOpen} onclick={toggleDoneFold}>
-					<Icon icon={doneOpen ? "ri:arrow-down-s-line" : "ri:arrow-right-s-line"} width="14" />
+					<Icon icon={doneOpen ? "mynaui:chevron-down" : "mynaui:chevron-right"} width="14" />
 					Done
 				</button>
 				{#if doneOpen}
@@ -711,7 +711,7 @@
 		</button>
 		{#if !isClosed(t)}
 			<button type="button" class="dismiss" aria-label={`Dismiss ${t.title}`} title="Dismiss" onclick={() => dismiss(t)}>
-				<Icon icon="ri:close-line" width="16" />
+				<Icon icon="mynaui:x" width="16" />
 			</button>
 		{/if}
 	</div>

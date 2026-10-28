@@ -60,7 +60,7 @@ export function getTabMenuItems(options: {
 		items.push({
 			id: 'close-tab',
 			label: 'Close',
-			icon: 'ri:close-line',
+			icon: 'mynaui:x',
 			shortcut: '⌘W',
 			action: options.onClose
 		});
@@ -86,7 +86,7 @@ export function getTabMenuItems(options: {
 		items.push({
 			id: 'pin-tab',
 			label: options.isPinned ? 'Unpin' : 'Pin',
-			icon: options.isPinned ? 'ri:pushpin-fill' : 'ri:pushpin-line',
+			icon: options.isPinned ? 'mynaui:pin-solid' : 'mynaui:pin',
 			dividerBefore: true,
 			action: options.onPin
 		});
@@ -96,7 +96,7 @@ export function getTabMenuItems(options: {
 		items.push({
 			id: 'duplicate-tab',
 			label: 'Duplicate',
-			icon: 'ri:file-copy-line',
+			icon: 'mynaui:copy',
 			action: options.onDuplicate
 		});
 	}
@@ -105,7 +105,7 @@ export function getTabMenuItems(options: {
 		items.push({
 			id: 'open-in-split',
 			label: 'Open in Split Pane',
-			icon: 'ri:layout-column-line',
+			icon: 'mynaui:columns',
 			action: options.onOpenInSplit
 		});
 	}
@@ -128,7 +128,7 @@ export function getLinkMenuItems(options: {
 		items.push({
 			id: 'open-new-tab',
 			label: 'Open in New Tab',
-			icon: 'ri:external-link-line',
+			icon: 'mynaui:external-link',
 			action: options.onOpenInNewTab
 		});
 	}
@@ -137,7 +137,7 @@ export function getLinkMenuItems(options: {
 		items.push({
 			id: 'open-in-split',
 			label: 'Open in Split Pane',
-			icon: 'ri:layout-column-line',
+			icon: 'mynaui:columns',
 			action: options.onOpenInSplit
 		});
 	}
@@ -146,7 +146,7 @@ export function getLinkMenuItems(options: {
 		items.push({
 			id: 'copy-link',
 			label: 'Copy Link',
-			icon: 'ri:link',
+			icon: 'mynaui:link',
 			dividerBefore: true,
 			action: options.onCopyLink
 		});
@@ -170,7 +170,7 @@ export function getDestructiveMenuItems(options: {
 		items.push({
 			id: 'remove',
 			label: options.removeLabel || 'Remove',
-			icon: 'ri:close-line',
+			icon: 'mynaui:x',
 			variant: 'destructive',
 			dividerBefore: true,
 			action: options.onRemove
@@ -181,7 +181,7 @@ export function getDestructiveMenuItems(options: {
 		items.push({
 			id: 'delete',
 			label: options.deleteLabel || 'Delete',
-			icon: 'ri:delete-bin-line',
+			icon: 'mynaui:trash',
 			variant: 'destructive',
 			dividerBefore: !options.onRemove,
 			action: options.onDelete

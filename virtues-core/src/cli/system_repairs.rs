@@ -94,7 +94,189 @@ enum Outcome {
 const REPAIRS: &[(&str, fn(&std::path::Path) -> Outcome)] = &[
     ("state-ownership", state_ownership),
     ("dragon-watchdog", dragon_watchdog),
+    ("db-logins", db_logins),
 ];
+
+/// The two low-privilege Postgres roles can log in, with the passwords the
+/// server derives from this box's encryption key (`database::restricted`).
+/// Model- and applet-written SQL runs on those logins; without them the server
+/// falls back to `SET ROLE`, which the SQL itself can undo.
+///
+/// Root is needed because the server's role has no CREATEROLE and so cannot
+/// alter the roles itself. Checked by logging in over TCP the way the server
+/// will, so a `pg_hba.conf` that refuses the login reports as Failed instead
+/// of Converged. The installer does not set the logins yet (its bring-up runs
+/// as `virtues`), so a freshly installed box gets them on its first upgrade.
+///
+/// Sandboxed applet code has no network, so it logs in as the writer on the
+/// Postgres socket instead. A box's `pg_hba.conf` maps socket logins to OS
+/// users (`peer`), and the sandbox's throwaway user is no Postgres role, so
+/// the repair adds a password line for the writer ahead of that rule
+/// ([`with_writer_socket_line`]) and checks the login works.
+#[cfg(target_os = "linux")]
+fn db_logins(data_dir: &std::path::Path) -> Outcome {
+    use crate::database::restricted::{alter_login_sql, password, Login};
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let Some(key) = crate::box_env::read(&data_dir.join("virtues.env"))
+        .and_then(|mut env| env.remove("VIRTUES_ENCRYPTION_KEY"))
+        .filter(|k| !k.is_empty())
+    else {
+        return Outcome::Failed("virtues.env has no VIRTUES_ENCRYPTION_KEY to derive the logins from".into());
+    };
+    // The password goes through the environment, never argv, which any user
+    // can read in `ps`.
+    let can_log_in = |login: Login| {
+        Command::new("psql")
+            .args(["-h", "127.0.0.1", "-U", login.role(), "-d", "virtues", "-w", "-tAc", "SELECT 1"])
+            .env("PGPASSWORD", password(&key, login))
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+
+    let mut done = Vec::new();
+    let missing: Vec<Login> = Login::ALL.into_iter().filter(|l| !can_log_in(*l)).collect();
+    for login in &missing {
+        // The SQL goes on stdin for the same reason.
+        let child = Command::new("runuser")
+            .args(["-u", "postgres", "--", "psql", "-v", "ON_ERROR_STOP=1", "-d", "postgres", "-q"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn();
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => return Outcome::Failed(format!("could not run psql as postgres: {e}")),
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            if let Err(e) = stdin.write_all(format!("{};\n", alter_login_sql(&key, *login)).as_bytes()) {
+                return Outcome::Failed(format!("could not write to psql: {e}"));
+            }
+        }
+        match child.wait_with_output() {
+            Ok(o) if o.status.success() => {}
+            Ok(o) => {
+                return Outcome::Failed(format!(
+                    "ALTER ROLE {} failed: {}",
+                    login.role(),
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ))
+            }
+            Err(e) => return Outcome::Failed(format!("psql as postgres did not finish: {e}")),
+        }
+    }
+    if !missing.is_empty() {
+        let roles = missing.iter().map(|l| l.role()).collect::<Vec<_>>().join(", ");
+        if !missing.iter().all(|l| can_log_in(*l)) {
+            return Outcome::Failed(format!(
+                "set the login for {roles}, but Postgres still refuses it on 127.0.0.1 (check pg_hba.conf)"
+            ));
+        }
+        done.push(format!("set the login for {roles}"));
+    }
+
+    let writer_on_socket = || {
+        Command::new("psql")
+            .arg(format!(
+                "host={} user={} dbname=virtues",
+                crate::database::restricted::SOCKET_DIR,
+                Login::Writer.role()
+            ))
+            .args(["-w", "-tAc", "SELECT 1"])
+            .env("PGPASSWORD", password(&key, Login::Writer))
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    };
+    if !writer_on_socket() {
+        let as_postgres = |sql: &str| {
+            Command::new("runuser")
+                .args(["-u", "postgres", "--", "psql", "-d", "postgres", "-tAc", sql])
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        };
+        let Some(hba) = as_postgres("SHOW hba_file").filter(|p| !p.is_empty()) else {
+            return Outcome::Failed("could not ask Postgres where pg_hba.conf is".into());
+        };
+        let hba = std::path::Path::new(&hba);
+        let text = match std::fs::read_to_string(hba) {
+            Ok(t) => t,
+            Err(e) => return Outcome::Failed(format!("could not read {}: {e}", hba.display())),
+        };
+        if let Some(updated) = with_writer_socket_line(&text) {
+            if let Err(e) = replace_keeping_owner(hba, &updated) {
+                return Outcome::Failed(format!("could not write {}: {e}", hba.display()));
+            }
+            if as_postgres("SELECT pg_reload_conf()").is_none() {
+                return Outcome::Failed("added the applet writer's socket line but could not reload Postgres".into());
+            }
+            done.push(format!("let the applet writer log in on the socket ({})", hba.display()));
+        }
+        if !writer_on_socket() {
+            return Outcome::Failed(format!(
+                "Postgres refuses the applet writer on the socket (check {})",
+                hba.display()
+            ));
+        }
+    }
+
+    if done.is_empty() {
+        Outcome::Converged
+    } else {
+        Outcome::Repaired(done.join("; "))
+    }
+}
+
+/// The `pg_hba.conf` line that lets sandboxed applet code log in as the
+/// writer on the socket with its password.
+#[cfg(any(target_os = "linux", test))]
+const WRITER_SOCKET_LINE: &str = "local virtues virtues_applet_writer scram-sha-256";
+
+/// `hba` with [`WRITER_SOCKET_LINE`] ahead of its first rule, or `None` when
+/// it already has it. Postgres takes the first rule that matches, so the line
+/// has to come before the `local all all peer` a box ships with.
+#[cfg(any(target_os = "linux", test))]
+fn with_writer_socket_line(hba: &str) -> Option<String> {
+    let has = hba.lines().any(|l| l.split_whitespace().collect::<Vec<_>>().join(" ") == WRITER_SOCKET_LINE);
+    if has {
+        return None;
+    }
+    let block = format!("# Virtues: sandboxed applet code logs in as the writer with its password.\n{WRITER_SOCKET_LINE}\n");
+    let mut out = String::with_capacity(hba.len() + block.len());
+    let mut placed = false;
+    for line in hba.split_inclusive('\n') {
+        let t = line.trim();
+        if !placed && !t.is_empty() && !t.starts_with('#') {
+            out.push_str(&block);
+            placed = true;
+        }
+        out.push_str(line);
+    }
+    if !placed {
+        if !out.is_empty() && !out.ends_with('\n') {
+            out.push('\n');
+        }
+        out.push_str(&block);
+    }
+    Some(out)
+}
+
+/// Write `path` through a file beside it and a rename, with the original's
+/// owner and mode, so a failed write cannot leave Postgres a half file.
+#[cfg(target_os = "linux")]
+fn replace_keeping_owner(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let meta = std::fs::metadata(path)?;
+    let tmp = path.with_extension("virtues-new");
+    std::fs::write(&tmp, contents)?;
+    std::os::unix::fs::chown(&tmp, Some(meta.uid()), Some(meta.gid()))?;
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(meta.mode() & 0o7777))?;
+    std::fs::rename(&tmp, path)
+}
 
 /// The systemd drop-in that arms a Dragon's hardware watchdog. The installer
 /// writes the same bytes on a fresh install (its bring-up runs as `virtues`,
@@ -243,5 +425,23 @@ fn state_ownership(data_dir: &std::path::Path) -> Outcome {
             String::from_utf8_lossy(&o.stderr).trim()
         )),
         Err(e) => Outcome::Failed(format!("could not run chown sweep: {e}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_writer_socket_line_goes_ahead_of_the_first_rule_once() {
+        let hba = "# comment\n\nlocal   all   postgres   peer\nlocal all all peer\nhost all all 127.0.0.1/32 scram-sha-256\n";
+        let updated = with_writer_socket_line(hba).unwrap();
+        let rules: Vec<&str> = updated.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).collect();
+        assert_eq!(rules[0], WRITER_SOCKET_LINE);
+        assert_eq!(rules[1], "local   all   postgres   peer");
+        assert!(updated.starts_with("# comment\n"), "comments above the rules stay first");
+        assert!(with_writer_socket_line(&updated).is_none(), "added once");
+        let spaced = updated.replace(WRITER_SOCKET_LINE, "local  virtues  virtues_applet_writer  scram-sha-256");
+        assert!(with_writer_socket_line(&spaced).is_none(), "spacing does not matter");
     }
 }

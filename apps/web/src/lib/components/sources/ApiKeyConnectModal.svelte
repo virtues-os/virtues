@@ -71,15 +71,17 @@
 		}
 	});
 
-	/** The api_key fields a login fills, from the site's cookie jar. */
-	function fieldsFromJar(jar: JarCookie[]): Record<string, string> {
+	/** The api_key fields a login fills, from the site's cookie jar, plus the
+	 *  whole jar as `jar` with every cookie field, which a browser on the box
+	 *  loads as it is. The named fields stay for boxes that read only them. */
+	function fieldsFromJar(jar: JarCookie[]): Record<string, unknown> {
 		const login = source!.login!;
-		if (login.jar_field) {
-			return { [login.jar_field]: jar.map((c) => `${c.name}=${c.value}`).join('; ') };
-		}
-		return Object.fromEntries(
-			login.cookies.map((n) => [n, jar.find((c) => c.name === n)?.value ?? ''])
-		);
+		const named: Record<string, string> = login.jar_field
+			? { [login.jar_field]: jar.map((c) => `${c.name}=${c.value}`).join('; ') }
+			: Object.fromEntries(
+					login.cookies.map((n) => [n, jar.find((c) => c.name === n)?.value ?? ''])
+				);
+		return { ...named, jar };
 	}
 
 	async function logIn() {
@@ -91,7 +93,8 @@
 				source.id,
 				source.login.url,
 				source.login.cookies,
-				`Log in to ${source.name}`
+				`Log in to ${source.name}`,
+				source.login.domains ?? []
 			);
 			waitingForLogin = false;
 			submitting = true;

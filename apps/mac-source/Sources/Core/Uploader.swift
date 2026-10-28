@@ -565,6 +565,13 @@ class Uploader {
         if let safari = health.safariLibrary {
             payload["safari_library"] = safari
         }
+        // Same rule for the call-audio grants: not asked yet is not a denial.
+        if let systemAudio = health.systemAudio {
+            payload["system_audio"] = systemAudio
+        }
+        if let microphone = health.microphone {
+            payload["microphone"] = microphone
+        }
         return payload
     }
 }

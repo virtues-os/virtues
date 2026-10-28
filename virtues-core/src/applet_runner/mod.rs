@@ -14,7 +14,7 @@
 //! 6. Resolve credentials from the `credentials` Vault and decrypt secrets
 //!    (if `credential_id` set). Subprocess receives plaintext JSON.
 //! 7. **Subprocess phase**: if `command` set, resolve argv[0] + spawn, pipe stdin
-//!    JSON, read stdout JSON, save returned config back to `app_applets.config`.
+//!    JSON, read stdout JSON, save returned config to `app_applets.state`.
 //! 8. **Agent phase**: if `agent` (instruction) set, run LLM agent loop with the
 //!    subprocess result as context.
 //! 9. Complete run row with final status + result summary.
@@ -41,6 +41,7 @@ use tokio::process::Command;
 use tracing::Instrument;
 
 pub mod limits;
+mod sandboxed;
 
 use crate::error::{Error, Result};
 use crate::scheduler::applets::{self, Applet};
@@ -457,6 +458,8 @@ async fn execute_prepared_inner(
             &command,
             credentials.clone(),
             payload.as_ref(),
+            &trigger,
+            &run_id,
         )
         .await
         {
@@ -715,9 +718,9 @@ async fn load_credentials(db: &PgPool, credential_id: &str) -> Result<serde_json
     // not compatible with SQL type JSONB", which silently broke every ingest.)
     // `secrets_ciphertext` stays TEXT (it's opaque ciphertext, not JSON).
     let row: Option<(String, String, serde_json::Value)> = sqlx::query_as(
-        r#"SELECT source_id, secrets_ciphertext, metadata
+        r#"SELECT key, secrets_ciphertext, metadata
              FROM credentials
-            WHERE id = $1 AND status = 'active'"#,
+            WHERE id = $1 AND kind = 'source' AND status = 'active'"#,
     )
     .bind(credential_id)
     .fetch_optional(db)
@@ -781,6 +784,13 @@ struct SubprocessOutcome {
 /// Environment every applet gets. Deliberately short: an applet receives its
 /// config, its payload and its already-decrypted credentials on **stdin**, so
 /// the environment is for reaching the box's own services, not for secrets.
+/// Whether the box sets `name` in an applet's environment itself, so an
+/// applet may not declare it as one of its `secrets`: the passthrough list,
+/// the box key, and anything under the `VIRTUES_` prefix.
+pub fn reserved_env_name(name: &str) -> bool {
+    ENV_PASSTHROUGH.contains(&name) || name.starts_with("VIRTUES_")
+}
+
 const ENV_PASSTHROUGH: &[&str] = &[
     // Process basics. Without PATH a bare `python3` argv0 cannot resolve.
     "PATH",
@@ -817,173 +827,77 @@ const ENV_PASSTHROUGH: &[&str] = &[
     "ENVIRONMENT",
 ];
 
-/// Memory ceiling for a jailed applet. Generous — some shipped syncs are
-/// memory-hungry — but bounded, so a runaway import cannot take the box out.
-const JAILED_MEMORY_MAX: &str = "1G";
-
-/// Build the spawn command, jailing it when the code did not ship with the box.
-///
-/// **What the jail is, and is not.** It limits blast radius: no route to root
-/// through the box user's passwordless sudo, a read-only filesystem outside
-/// the applet's own paths, memory and time ceilings. It is NOT an authority
-/// boundary. An applet reaches Postgres with the box's own pool role and can
-/// dial the API on loopback, which `middleware/auth.rs` treats as the owner —
-/// so a running applet can do what the owner can do. That is the position,
-/// not an oversight: the trust decision is made ONCE, at import, behind the
-/// sudo gate (`api/sudo.rs`), and a chat-authored applet is the owner's own
-/// instruction. Separating applets from the owner would take a second uid, a
-/// scoped database login, and Postgres over a unix socket, rolled out to
-/// fielded boxes that do not auto-update — machinery this appliance has
-/// chosen not to carry. If that position ever changes, this paragraph is the
-/// first thing to delete.
-///
-/// The routing, not a ban, is the policy: a package may run native code, it
-/// just does not get to run it as a user with passwordless sudo. `systemd-run`
-/// is the same mechanism `code_interpreter` already uses (api/code.rs), which
-/// is the strongest precedent in this codebase for containing code we did not
-/// write.
-///
-/// The properties are looser than `code_interpreter`'s in one deliberate way:
-/// **no `PrivateNetwork`**, because an applet's whole job is to reach Postgres
-/// and usually an upstream API. What it does buy:
-///
-/// - `NoNewPrivileges=yes` — the single most valuable line here. The box user
-///   has `NOPASSWD: ALL` (installer, by design), so without this any imported
-///   applet is one `sudo -n` from root.
-/// - `ProtectSystem=strict` + `ProtectHome=yes` — the filesystem is read-only
-///   apart from the paths an applet legitimately writes.
-/// - `PrivateTmp`, `PrivateDevices`, memory and runtime ceilings, and a
-///   syscall filter.
-///
-/// Not `DynamicUser`: an applet writes to the lake and its own state directory
-/// as the box user, and a dynamic uid cannot.
-///
-/// Off Linux, or in a debug build without systemd, we run direct — that is a
-/// developer machine. In a release build on Linux a missing `systemd-run` is a
-/// hard refusal rather than a silent downgrade, matching `code.rs`: the moment
-/// the sandbox quietly stops applying is the moment it stops being one.
-fn build_command(
-    program: &std::path::Path,
-    args: &[String],
-    shipped: bool,
-    timeout: std::time::Duration,
-    env: &[(String, String)],
-) -> Result<Command> {
-    // Direct spawn: env_clear plus exactly what we chose to pass.
-    let direct = || {
-        let mut cmd = Command::new(program);
-        cmd.args(args);
-        cmd.env_clear();
-        for (k, v) in env {
-            cmd.env(k, v);
-        }
-        cmd
-    };
-
-    if shipped {
-        return Ok(direct());
-    }
-
-    if !cfg!(target_os = "linux") {
-        tracing::warn!(
-            "running an unshipped applet unjailed — no systemd on this platform (developer machine)"
-        );
-        return Ok(direct());
-    }
-
-    if which_systemd_run().is_none() {
-        if cfg!(debug_assertions) {
-            tracing::warn!("systemd-run unavailable; running unjailed (debug build only)");
-            return Ok(direct());
-        }
-        return Err(Error::Other(
-            "applet sandbox (systemd-run) is unavailable; refusing to run imported code unjailed"
-                .to_string(),
-        ));
-    }
-
-    let state = crate::applet_templates::state_root();
-
-    // `sudo -n`, matching api/updates.rs. The box runs as `User=virtues`
-    // (installer), and a non-root user creating a *system* transient unit goes
-    // through polkit, which on a headless box with no agent denies outright. A
-    // bare `systemd-run` therefore does not fail loudly — it exits non-zero and
-    // the run is recorded as a generic subprocess failure, so the sandbox
-    // reports itself present while every unshipped applet silently dies.
-    let mut cmd = Command::new("sudo");
-    cmd.args(["-n", "systemd-run"]);
-    // And drop back to the box user. A transient SYSTEM unit with no `User=`
-    // runs as ROOT — `code.rs` only avoids that because it sets
-    // `DynamicUser=yes`, which this cannot use (an applet writes to the lake as
-    // the box user). Without this line, adding the sudo above would have
-    // escalated every imported applet from `virtues` to uid 0, i.e. strictly
-    // worse than no jail at all. `NoNewPrivileges` does not help you if you
-    // start at root.
-    cmd.args(["-p", &format!("User={}", box_uid())]);
-    cmd.args([
-        "--pipe",
-        "--wait",
-        "--collect",
-        "--quiet",
-        "-p",
-        "NoNewPrivileges=yes",
-        "-p",
-        "ProtectSystem=strict",
-        "-p",
-        "ProtectHome=yes",
-        "-p",
-        "PrivateTmp=yes",
-        "-p",
-        "PrivateDevices=yes",
-        "-p",
-        "SystemCallFilter=@system-service",
-        "-p",
-        "SystemCallErrorNumber=EPERM",
-        "-p",
-        "MemorySwapMax=0",
-    ]);
-    cmd.args(["-p", &format!("MemoryMax={JAILED_MEMORY_MAX}")]);
-    cmd.args(["-p", &format!("RuntimeMaxSec={}", timeout.as_secs())]);
-    // The applet's own folder and the lake are the only writable paths it gets.
-    // The lake path comes from the resolver itself, not an env var: this used
-    // to read VIRTUES_LAKE_DIR — which nothing ever set — so the jail granted
-    // NO lake write path at all, and a jailed applet's `lake::archive` would
-    // have hit EPERM even after the env passthrough above was fixed.
-    cmd.args(["-p", &format!("ReadWritePaths={}", state.display())]);
-    cmd.args([
-        "-p",
-        &format!(
-            "ReadWritePaths={}",
-            crate::storage::lake::lake_root().display()
-        ),
-    ]);
-    // The unit does NOT inherit our environment, and `cmd.env()` would set
-    // systemd-run's own rather than the unit's — so every variable the applet
-    // needs has to be handed over explicitly, before the `--`.
-    for (k, v) in env {
-        // `ProtectHome=yes` mounts /home empty, so forwarding the real HOME
-        // hands the applet a path that exists in its environment and not in its
-        // namespace — anything touching ~/.cache (python, pip, git, most HTTP
-        // clients) fails on it. Point it at the private tmp instead, as code.rs
-        // does.
-        if k == "HOME" {
-            continue;
-        }
-        cmd.args(["-E", &format!("{k}={v}")]);
-    }
-    cmd.args(["-E", "HOME=/tmp"]);
-    cmd.arg("--");
-    cmd.arg(program);
+/// Spawn shipped code, or unshipped code on a developer machine, directly:
+/// `env_clear` plus exactly what we chose to pass. Code that did not ship
+/// runs in the sandbox instead (`sandboxed`).
+fn direct_command(program: &std::path::Path, args: &[String], env: &[(String, String)]) -> Command {
+    let mut cmd = Command::new(program);
     cmd.args(args);
-    Ok(cmd)
+    cmd.env_clear();
+    for (k, v) in env {
+        cmd.env(k, v);
+    }
+    cmd
 }
 
-/// The uid the box itself runs as, so a jailed applet lands on the same user
-/// rather than root. Read from `/proc/self` to avoid a libc dependency; the
-/// jail is Linux-only, which is exactly where this path exists.
-fn box_uid() -> u32 {
-    use std::os::unix::fs::MetadataExt;
-    std::fs::metadata("/proc/self").map(|m| m.uid()).unwrap_or(0)
+/// A file a sandboxed run needs until it ends, such as its environment or its
+/// credentials: mode 0600, in a folder only the box user can open and the
+/// unit itself is denied, and removed when dropped.
+struct RunFile {
+    path: std::path::PathBuf,
+}
+
+impl RunFile {
+    fn dir() -> std::path::PathBuf {
+        crate::data_disk::data_dir().join("applet-env")
+    }
+
+    fn write(extension: &str, contents: &[u8]) -> Result<Self> {
+        use std::io::Write;
+        use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+
+        let dir = Self::dir();
+        let fail = |what: &str, e: std::io::Error| {
+            Error::Other(format!("could not {what} a file for the applet's run in {}: {e}", dir.display()))
+        };
+        std::fs::DirBuilder::new()
+            .recursive(true)
+            .mode(0o700)
+            .create(&dir)
+            .map_err(|e| fail("create a folder for", e))?;
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(|e| fail("restrict the folder of", e))?;
+        let path = dir.join(format!("{}.{extension}", uuid::Uuid::new_v4()));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| fail("create", e))?;
+        // Owned from here, so a failed write still removes the file.
+        let run_file = Self { path };
+        file.write_all(contents).map_err(|e| fail("write", e))?;
+        Ok(run_file)
+    }
+}
+
+impl Drop for RunFile {
+    fn drop(&mut self) {
+        if let Err(e) = std::fs::remove_file(&self.path) {
+            tracing::warn!("could not remove applet run file {}: {e}", self.path.display());
+        }
+    }
+}
+
+/// `KEY="value"` lines for `EnvironmentFile=`. Inside double quotes systemd
+/// takes `\\` and `\"` as escapes and everything else literally, newlines
+/// and `$` included (checked against systemd 255 on a box). HOME is left out:
+/// the sandbox sets its own.
+fn env_file_contents(env: &[(String, String)]) -> String {
+    env.iter()
+        .filter(|(k, _)| k != "HOME")
+        .map(|(k, v)| format!("{k}=\"{}\"\n", v.replace('\\', "\\\\").replace('"', "\\\"")))
+        .collect()
 }
 
 pub(crate) fn which_systemd_run() -> Option<std::path::PathBuf> {
@@ -1055,12 +969,72 @@ fn env_pairs(applet_id: &str, shipped: bool) -> Vec<(String, String)> {
     out
 }
 
+/// The owner's `env` secrets this applet declares, as environment variables.
+/// A declared key that is not set fails the run before it starts, with the
+/// sentence the run's status shows: the applet would otherwise start and fail
+/// somewhere less clear.
+async fn declared_env_secrets(db: &PgPool, applet_id: &str) -> Result<Vec<(String, String)>> {
+    let mut out = Vec::new();
+    let mut missing = Vec::new();
+    for name in crate::applet_templates::declared_secrets(applet_id) {
+        match crate::secrets::get(db, crate::secrets::Kind::Env, &name)
+            .await
+            .map_err(|e| Error::Other(format!("reading {name}: {e:#}")))?
+        {
+            Some((value, _)) => out.push((name, value)),
+            None => missing.push(name),
+        }
+    }
+    if !missing.is_empty() {
+        return Err(Error::Other(missing_secrets_sentence(&missing)));
+    }
+    Ok(out)
+}
+
+/// "Add OPENAI_API_KEY in Settings, under Keys." Names joined
+/// as a person would list them.
+fn missing_secrets_sentence(missing: &[String]) -> String {
+    let names = match missing {
+        [] => String::new(),
+        [one] => one.clone(),
+        [rest @ .., last] => format!("{} and {last}", rest.join(", ")),
+    };
+    format!("Add {names} in Settings, under Keys.")
+}
+
+/// The `config` a subprocess receives: its saved state with the row's config
+/// laid over it, so a sync gets its cursor back and a manifest change (a new
+/// limit) still wins over a stale copy the code returned.
+async fn input_config(db: &PgPool, action: &Applet) -> Result<serde_json::Value> {
+    let state: serde_json::Value = sqlx::query_scalar("SELECT state FROM app_applets WHERE id = $1")
+        .bind(&action.id)
+        .fetch_one(db)
+        .await
+        .map_err(|e| Error::Database(format!("failed to read applet state: {e}")))?;
+    Ok(merge_config(state, &action.config))
+}
+
+fn merge_config(state: serde_json::Value, config: &serde_json::Value) -> serde_json::Value {
+    let mut merged = match state {
+        serde_json::Value::Object(m) => m,
+        _ => serde_json::Map::new(),
+    };
+    if let serde_json::Value::Object(cfg) = config {
+        for (k, v) in cfg {
+            merged.insert(k.clone(), v.clone());
+        }
+    }
+    serde_json::Value::Object(merged)
+}
+
 async fn run_subprocess(
     db: &PgPool,
     action: &Applet,
     command: &[String],
     credentials: Option<serde_json::Value>,
     payload: Option<&serde_json::Value>,
+    trigger: &str,
+    run_id: &str,
 ) -> Result<SubprocessOutcome> {
     let argv0 = command
         .first()
@@ -1075,23 +1049,60 @@ async fn run_subprocess(
         )));
     }
 
+    let shipped = is_shipped_applet(&action.id);
+    let sandbox = sandboxed::placement(shipped)? == sandboxed::Placement::Sandbox;
+    if sandbox {
+        if let Some(why) = sandboxed::over_lake_limit(db, &action.id).await? {
+            return Err(Error::Other(why));
+        }
+    }
+
+    // A sandboxed run reads its credentials from a file only it can open,
+    // so stdin carries none.
     let input = AppletInput {
-        config: action.config.clone(),
-        credentials,
+        config: input_config(db, action).await?,
+        credentials: if sandbox { None } else { credentials.clone() },
         payload: payload.cloned(),
+        trigger: Some(trigger.to_string()),
     };
     let stdin_bytes = serde_json::to_vec(&input)
         .map_err(|e| Error::Other(format!("failed to serialize action input: {e}")))?;
 
-    let shipped = is_shipped_applet(&action.id);
-    let env = env_pairs(&action.id, shipped);
-    let mut cmd = build_command(
-        &program,
-        &command[1..],
-        shipped,
-        subprocess_timeout(action),
-        &env,
-    )?;
+    let declared = declared_env_secrets(db, &action.id).await?;
+    // The run's way out, when its file asks for hosts the owner allowed.
+    // Dropping it stops the proxy and removes the socket.
+    let proxy = if sandbox {
+        let hosts = sandboxed::allowed_hosts(db, &action.id, &action.config).await?;
+        if hosts.is_empty() { None } else { Some(sandboxed::start_proxy(run_id, &hosts)?) }
+    } else {
+        None
+    };
+    // `_run_files` live until the run ends; dropping them removes the files.
+    let (mut cmd, _run_files) = if sandbox {
+        let env = sandboxed::env(run_id, declared);
+        let whole_lake = action
+            .config
+            .get("allowed_tools")
+            .and_then(|v| v.as_array())
+            .is_some_and(|tools| tools.iter().any(|t| t == "lake"));
+        sandboxed::command(
+            &action.id,
+            &program,
+            &command[1..],
+            subprocess_timeout(action),
+            &env,
+            credentials.as_ref(),
+            whole_lake,
+            proxy.as_ref().map(|p| p.path()),
+        )?
+    } else {
+        let mut env = env_pairs(&action.id, shipped);
+        // The run the subprocess's AI calls are recorded against, so this
+        // applet's spend reaches its `max_llm_cost_per_day` (`limits.rs`).
+        env.push((crate::virtues_api::client::APPLET_RUN_ENV.to_string(), run_id.to_string()));
+        env.extend(declared);
+        (direct_command(&program, &command[1..], &env), Vec::new())
+    };
 
     let mut child = cmd
         .stdin(Stdio::piped())
@@ -1112,13 +1123,13 @@ async fn run_subprocess(
     // block every future webhook for this action) indefinitely. On timeout the
     // wait future is dropped; `kill_on_drop` then SIGKILLs the child, and the
     // caller records the run as `error`, freeing the lock.
-    // When jailed, RuntimeMaxSec is the real enforcer and this is only a
+    // When sandboxed, RuntimeMaxSec is the real enforcer and this is only a
     // backstop — equal values mean the tokio clock (which starts before
     // systemd-run has finished setting the unit up) always wins, and dropping
     // the future SIGKILLs the systemd-run *client*, not the unit, which PID 1
     // owns. The applet would keep running with its pipes closed while the
     // per-applet lock was already released. Same grace `code.rs` uses.
-    let ceiling = if shipped {
+    let ceiling = if !sandbox {
         subprocess_timeout(action)
     } else {
         subprocess_timeout(action) + std::time::Duration::from_secs(10)
@@ -1137,6 +1148,20 @@ async fn run_subprocess(
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+
+    // Whatever the run left in its lake folder, it is indexed, failed run or
+    // not. An index that fails is logged and does not fail the run.
+    if sandbox {
+        if let Err(e) = sandboxed::index_lake_folder(db, &action.id).await {
+            tracing::error!(applet_id = %action.id, error = %e, "could not index the applet's lake folder");
+        }
+    }
+    if let Some(proxy) = proxy {
+        let requests = proxy.finish(std::time::Duration::from_secs(2)).await;
+        if let Err(e) = sandboxed::record_requests(db, run_id, &requests).await {
+            tracing::error!(applet_id = %action.id, error = %e, "could not record the run's network requests");
+        }
+    }
 
     if !output.status.success() {
         // Emit before returning. The error string goes to the run row, which
@@ -1160,13 +1185,15 @@ async fn run_subprocess(
         ))
     })?;
 
-    // Persist returned config back to the action row (JSONB column)
-    sqlx::query("UPDATE app_applets SET config = $1, updated_at = now() WHERE id = $2")
+    // What the code hands back is its state for the next run. It goes in
+    // `state`, never `config`: reconcile replaces a shipped applet's config
+    // with the manifest's, and a cursor kept there was wiped on every boot.
+    sqlx::query("UPDATE app_applets SET state = $1, updated_at = now() WHERE id = $2")
         .bind(&applet_output.config)
         .bind(&action.id)
         .execute(db)
         .await
-        .map_err(|e| Error::Database(format!("failed to save action config: {e}")))?;
+        .map_err(|e| Error::Database(format!("failed to save applet state: {e}")))?;
 
     // Surface stderr even on a clean exit. An action can succeed (exit 0, valid
     // JSON) while warning on stderr — that channel used to be swallowed, which
@@ -1423,6 +1450,53 @@ pub(crate) fn resolve_program(argv0: &str) -> PathBuf {
 mod tests {
     use super::ENV_PASSTHROUGH;
     use super::*;
+
+    /// Quotes and backslashes are escaped, everything else is written as it
+    /// is, and HOME is left for the sandbox to set.
+    #[test]
+    fn env_file_escapes_quotes_and_backslashes() {
+        let env = vec![
+            ("HOME".to_string(), "/home/virtues".to_string()),
+            ("EXAMPLE_KEY".to_string(), r#"a "b" \c $d"#.to_string()),
+            ("MULTI".to_string(), "one\ntwo".to_string()),
+        ];
+        assert_eq!(
+            env_file_contents(&env),
+            "EXAMPLE_KEY=\"a \\\"b\\\" \\\\c $d\"\nMULTI=\"one\ntwo\"\n"
+        );
+    }
+
+    /// A sync gets its cursor back, and a manifest value beats a stale copy
+    /// the code returned last run.
+    #[test]
+    fn the_input_is_state_with_config_laid_over_it() {
+        let state = serde_json::json!({ "cursor": "c-41", "limits": { "timeout_s": 60 } });
+        let config = serde_json::json!({ "limits": { "timeout_s": 600 } });
+        assert_eq!(
+            merge_config(state, &config),
+            serde_json::json!({ "cursor": "c-41", "limits": { "timeout_s": 600 } })
+        );
+        assert_eq!(merge_config(serde_json::Value::Null, &config), config);
+    }
+
+    #[test]
+    fn a_missing_key_names_itself_and_where_to_add_it() {
+        let one = ["OPENAI_API_KEY".to_string()];
+        assert_eq!(missing_secrets_sentence(&one), "Add OPENAI_API_KEY in Settings, under Keys.");
+        let three = ["A_KEY".to_string(), "B_KEY".to_string(), "C_KEY".to_string()];
+        assert_eq!(
+            missing_secrets_sentence(&three),
+            "Add A_KEY, B_KEY and C_KEY in Settings, under Keys."
+        );
+    }
+
+    #[test]
+    fn the_box_names_are_reserved() {
+        for name in ["PATH", "DATABASE_URL", "VIRTUES_ENCRYPTION_KEY", "VIRTUES_API_KEY", "VIRTUES_APPLET_RUN_ID"] {
+            assert!(reserved_env_name(name), "{name} must be reserved");
+        }
+        assert!(!reserved_env_name("OPENAI_API_KEY"));
+    }
     use crate::server::yjs::YjsState;
 
     async fn applet_with_falsy_condition(pool: &sqlx::PgPool, id: &str, triggers: &str) {
@@ -1485,6 +1559,73 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(said.as_deref(), Some("I had eggs"), "the words are on the run");
+    }
+
+    /// A shipped applet's code state survives reconcile. Reconcile replaces a
+    /// shipped applet's config with the manifest's, and while syncs kept
+    /// their cursors in config, every boot reset every cursor.
+    #[sqlx::test]
+    async fn a_shipped_applets_state_survives_a_reconcile(pool: sqlx::PgPool) {
+        crate::applet_templates::reconcile_templates(&pool).await.expect("reconcile");
+        let set = sqlx::query(
+            "UPDATE app_applets SET state = '{\"cursor\": \"c-41\"}'::jsonb \
+             WHERE id = 'applet_embedding_index' AND owner = 'system'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(set.rows_affected(), 1, "the test needs a shipped code applet");
+
+        crate::applet_templates::reconcile_templates(&pool).await.expect("reconcile");
+        let (state, config): (serde_json::Value, serde_json::Value) =
+            sqlx::query_as("SELECT state, config FROM app_applets WHERE id = 'applet_embedding_index'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(state, serde_json::json!({ "cursor": "c-41" }));
+        assert!(config.get("limits").is_some(), "config is still the manifest's: {config}");
+    }
+
+    /// The code's state comes back on the next run even after its config is
+    /// replaced, which is what reconcile does to a shipped applet on boot.
+    #[sqlx::test]
+    async fn a_cursor_survives_its_config_being_replaced(pool: sqlx::PgPool) {
+        let deps = RunnerDeps {
+            db: pool.clone(),
+            yjs: YjsState::new(pool.clone()),
+        };
+        let script = "import json,sys; c=json.load(sys.stdin)['config']; \
+                      c['cursor']=c.get('cursor',0)+1; print(json.dumps({'result':'ok','config':c}))";
+        // A shipped row, so the command runs directly on every platform
+        // rather than in the Linux sandbox, which needs systemd.
+        crate::applet_templates::reconcile_templates(&pool).await.expect("reconcile");
+        let id = "applet_embedding_index";
+        let set = sqlx::query(
+            "UPDATE app_applets SET command = $1::jsonb, triggers = '[\"manual\"]', \
+             condition = NULL, enabled = TRUE WHERE id = $2",
+        )
+        .bind(serde_json::json!(["/usr/bin/python3", "-c", script]))
+        .bind(id)
+        .execute(&pool)
+        .await
+        .expect("update");
+        assert_eq!(set.rows_affected(), 1);
+
+        for _ in 0..2 {
+            let run = run_applet(&deps, id, "manual", None).await.unwrap();
+            assert_eq!(run.status, AppletRunStatus::Success, "{run:?}");
+            sqlx::query("UPDATE app_applets SET config = '{\"limits\": {}}' WHERE id = $1")
+                .bind(id)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+        let state: serde_json::Value =
+            sqlx::query_scalar("SELECT state FROM app_applets WHERE id = 'applet_embedding_index'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(state["cursor"], 2, "{state}");
     }
 
     /// `message` still has to be granted like any other trigger.

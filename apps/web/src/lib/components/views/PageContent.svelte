@@ -597,17 +597,16 @@
 		if (!pageData) return;
 
 		try {
-			// Use store method - handles tab closing, API call, cache invalidation, sidebar refresh
+			// The store closes every tab showing the page, so there is nowhere
+			// left to navigate: the tab beside it comes to the front, as on close.
 			await pagesStore.removePage(pageData.id);
-			// Navigate to pages list
-			onNavigate?.("/pages");
 		} catch (err) {
 			console.error("Failed to delete page:", err);
 		}
 	}
 
 	function handleBackClick() {
-		onNavigate?.("/pages");
+		onNavigate?.("/page");
 	}
 
 	function handleTitleKeydown(e: KeyboardEvent) {
@@ -656,7 +655,7 @@
 <Page padding="none" scrollable={false}>
 	{#if loading}
 		<div class="flex items-center justify-center h-full">
-			<Icon icon="ri:loader-4-line" width="20" class="spin" />
+			<Icon icon="mynaui:spinner" width="20" class="spin" />
 		</div>
 	{:else if error}
 		<div class="max-w-2xl mx-auto p-4">
@@ -831,7 +830,7 @@
 						{#if !opened || stillLoading(opened, isSynced, refusedReason) || (treeDoc && isSynced && !$converterSettled)}
 							<div class="editor-loading" data-print="hide">
 								<Icon
-									icon="ri:loader-4-line"
+									icon="mynaui:spinner"
 									width="16"
 									class="spin"
 								/>

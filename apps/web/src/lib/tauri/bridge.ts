@@ -14,6 +14,33 @@ async function getInvoke() {
 	return invoke;
 }
 
+// ─── Servers on this network ────────────────────────────────────────────────
+
+/** A Virtues server the network search found. `claimed` is null from a server
+ *  too old to say. */
+export interface NetworkServer {
+	name: string;
+	origin: string;
+	claimed: boolean | null;
+}
+
+/**
+ * Virtues servers on this device's network, found by a subnet scan rather
+ * than mDNS (`plugin:reach|discover`). Empty in a browser and when the scan
+ * fails. Empty never means there is no server: some networks keep devices
+ * apart, and a virtual machine's shared networking hides it from the scan.
+ */
+export async function serversOnNetwork(): Promise<NetworkServer[]> {
+	const invoke = await getInvoke();
+	if (!invoke) return [];
+	try {
+		const r = await invoke<{ servers?: NetworkServer[] }>('plugin:reach|discover');
+		return r.servers ?? [];
+	} catch {
+		return [];
+	}
+}
+
 // ─── Command-surface negotiation ────────────────────────────────────────────
 //
 // This file is served by the BOX but calls into the APP — two artifacts with
@@ -162,13 +189,12 @@ export type OtaCheck = { at?: number } & (
 	/** The box answered 404: it serves no bundle. */
 	| { state: 'no_bundle_on_box' }
 	| { state: 'box_unavailable'; status: number | null }
-	| { state: 'same_version'; version: string }
+	/** This app's own UI is a local `dev` build, so it takes no box bundle. */
+	| { state: 'dev_build' }
 	| { state: 'unusable'; contentHash: string }
 	| { state: 'refused_before'; contentHash: string }
 	| { state: 'check_failed'; error: string }
 	| { state: 'rolled_back'; contentHash: string }
-	| { state: 'box_behind'; boxVersion: string; have: string }
-	| { state: 'version_unreadable'; boxVersion: string; have: string | null }
 );
 
 /**
@@ -215,19 +241,13 @@ export function describeOtaCheck(s: ShellIdentity): string | null {
 			// The device is deliberately refusing the box's bundle after a
 			// failed boot, which otherwise looks like OTA silently not working.
 			return "A newer interface didn't start on this device, so the app set it aside. Your next server update clears it.";
-		case 'box_behind':
-			// The app updates on Apple's cadence, the box when its owner
-			// upgrades it. Silence here would read as OTA being broken.
-			return `This app already has a newer interface than your server (server ${c.boxVersion}, app ${c.have}). It keeps its own until you run \`sudo virtues upgrade\`.`;
-		case 'version_unreadable':
-			return "This app can't tell whether your server's interface is newer than its own, so it's staying on the one it shipped with.";
 		case 'box_unavailable':
 		case 'check_failed':
 			// A missed check is retried on the next foreground and launch; it
 			// is news only when it is the last word on why nothing changed.
 			return "This app couldn't check your server for a newer interface. It tries again the next time you open it.";
 		case 'up_to_date':
-		case 'same_version':
+		case 'dev_build':
 		case 'no_bundle_on_box':
 		default:
 			return null;
@@ -370,14 +390,23 @@ export async function canBrowserLogin(): Promise<boolean> {
 	return shellSupports(BROWSER_LOGIN_SURFACE);
 }
 
+/** One cookie from a sign-in. A shell older than the full jar sends only
+ *  `name` and `value`. `expires` is Unix seconds. */
 export interface JarCookie {
 	name: string;
 	value: string;
+	domain?: string | null;
+	path?: string | null;
+	expires?: number | null;
+	secure?: boolean | null;
+	http_only?: boolean | null;
+	same_site?: string | null;
 }
 
 /**
  * Open a source's login page in a window of the app's own and resolve with the
- * site's cookies once every name in `cookies` is set. The window is incognito
+ * site's cookies once every name in `cookies` is set, including the cookies of
+ * any other `domains` the sign-in uses. The window is incognito
  * and closes itself on success. Rejects with `'closed'` when the person closes
  * it first, `'timeout'` after 15 minutes, `'already open'` on a second call.
  */
@@ -385,11 +414,12 @@ export async function browserLogin(
 	sourceId: string,
 	url: string,
 	cookies: string[],
-	title: string
+	title: string,
+	domains: string[] = []
 ): Promise<JarCookie[]> {
 	const invoke = await getInvoke();
 	if (!invoke) throw new Error('not in the app');
-	return invoke<JarCookie[]>('browser_login', { sourceId, url, cookies, title });
+	return invoke<JarCookie[]>('browser_login', { sourceId, url, cookies, title, domains });
 }
 
 /** The surface that added the Browser pane (lib.rs `COMMAND_SURFACE_VERSION`). */
@@ -620,6 +650,30 @@ export async function probeCollectorStatus(): Promise<CollectorProbe> {
 export async function getCollectorStatus(): Promise<CollectorStatus | null> {
 	const probe = await probeCollectorStatus();
 	return probe.kind === 'ok' ? probe.status : null;
+}
+
+/** How an agent's MCP settings launch the bridge for one connected agent
+ *  (`connect_agent` in main.rs). `env` is set only for a dev profile. */
+export interface AgentConnection {
+	name: string;
+	command: string;
+	args: string[];
+	env: Record<string, string>;
+}
+
+/** The command surface that has `connect_agent`. */
+export const CONNECT_AGENT_SURFACE = 13;
+
+/**
+ * Pair an AI agent's MCP bridge as a device of its own, with a token minted
+ * for kind `agent`, and return how to launch it. Mac only.
+ */
+export async function connectAgent(token: string, name: string): Promise<AgentConnection> {
+	const invoke = await getInvoke();
+	if (!invoke) {
+		throw new Error('Open this in the Virtues app on your Mac to connect an agent.');
+	}
+	return (await invoke('connect_agent', { token, name })) as AgentConnection;
 }
 
 /**

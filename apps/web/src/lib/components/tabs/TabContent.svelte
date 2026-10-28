@@ -89,7 +89,7 @@
 		{/if}
 	{:else if loadFailed}
 		<div class="placeholder" role="alert">
-			<Icon icon="ri:refresh-line" />
+			<Icon icon="mynaui:refresh" />
 			<span class="title">This view didn't load</span>
 			<span class="subtitle">Your server may have just updated. Reload the app to get its latest version.</span>
 			<div class="actions">
@@ -100,7 +100,7 @@
 	{:else if !tabRegistry[tab.type]}
 		<!-- Placeholder for unknown tab types -->
 		<div class="placeholder">
-			<Icon icon="ri:file-line" />
+			<Icon icon="mynaui:file" />
 			<span class="title">Unknown View</span>
 			<span class="subtitle">Tab type: {tab.type}</span>
 		</div>

@@ -157,13 +157,13 @@ pub async fn execute(
     let mut note = String::from(
         "shown to the owner as drawn from these rows; describe what they show, and quote no figure that is not in them",
     );
-    // A model that sees `+00:00` concludes the figure is in the wrong zone
-    // and draws it again, so the reply carries both. The client puts every
-    // time on the owner's own clock; the zone only matters to the prose.
+    // A model that sees an offset may conclude the figure is in the wrong
+    // zone and draw it again. The rows already carry the owner's offset and
+    // the client draws every time on their clock, so neither needs it.
     if shaped["rows"].as_array().is_some_and(|rows| rows.iter().any(has_offset_time)) {
         note.push_str(
-            ". Times with an offset are drawn on the owner's own clock, so the figure is right as it is: \
-             do not draw it again to convert them. Convert them only in what you write",
+            ". Times are already on the owner's own clock, and so is the figure: \
+             do not draw it again or convert them. Quote the clock times as given",
         );
     }
     shaped.insert("note".into(), json!(note));

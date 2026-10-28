@@ -113,7 +113,7 @@
 					onclick={handleNone}
 					title="None"
 				>
-					<Icon icon="ri:close-line" width="14" />
+					<Icon icon="mynaui:x" width="14" />
 				</button>
 				{#each themeColors as color}
 					<button
@@ -124,7 +124,7 @@
 						title={color.name}
 					>
 						{#if isThemeSelected(color)}
-							<span class="check"><Icon icon="ri:check-line" width="14" /></span>
+							<span class="check"><Icon icon="mynaui:check" width="14" /></span>
 						{/if}
 					</button>
 				{/each}
@@ -144,7 +144,7 @@
 						title={color.name}
 					>
 						{#if isSelected(color.hex)}
-							<span class="check"><Icon icon="ri:check-line" width="14" /></span>
+							<span class="check"><Icon icon="mynaui:check" width="14" /></span>
 						{/if}
 					</button>
 				{/each}

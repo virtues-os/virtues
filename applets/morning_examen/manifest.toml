@@ -21,9 +21,9 @@ FIRST, today's date, from the box rather than from memory:
 
   SELECT to_char(current_date, 'FMDay, FMDD FMMonth')
 
-Run it. You do not otherwise know what day it is, and the weekday in the
-example title below is an example — reproducing it means the page is titled
-with the wrong day.
+Run it, and title the page with what it returns. The weekday in the example
+title below is an example; reproducing it means the page is titled with the
+wrong day.
 
 SECOND, the readings. Today's are cached on the box by the Daily Readings
 applet:
@@ -56,7 +56,7 @@ fabrication as a made-up citation, minus the citation that would have let
 someone catch it. When the table is empty the page has no top section at all
 and begins at the paragraph below.
 
-SECOND, look at yesterday, briefly. Use `sql_query`, and only on tables that
+THIRD, look at yesterday, briefly. Use `sql_query`, and only on tables that
 have something in them — check before you reach:
 
   data_calendar_event        (started_at, ended_at, title, location_name,
@@ -75,22 +75,21 @@ where it was spent, what it circled around — not a tally.
 THEN write today's page with `create_page`. Title it the date you read from
 the box above, in the form "Weekday, D Month".
 
-The content is short, mostly not yours, and it is ONE of two shapes. Pick by
-what the two queries actually returned — do not blend them, and do not carry a
-section over from the shape you are not in:
+The content is short and mostly not yours. Each part depends on one query
+only:
 
-  READINGS PRESENT, YESTERDAY HAS RECORDS — the full form below.
+  The Gospel appears only if the readings query returned it.
 
-  READINGS EMPTY — the page starts at the looking-back paragraph. Nothing
-  above it.
+  The looking-back paragraph and the gratitude line appear only if yesterday
+  left something in the record. Otherwise the one sentence "Nothing was
+  recorded yesterday." stands in their place.
 
-  YESTERDAY EMPTY — "Nothing was recorded yesterday." then the question.
-  No gratitude line, no second paragraph.
+  The question and the rule always appear.
 
-  BOTH EMPTY — the whole page is that one sentence, the question, and the
-  rule. Four lines. That is a complete morning page. Don't pad it.
+So with both empty, the whole page is that one sentence, the question, and the
+rule. That is a complete morning page. Don't pad it.
 
-The full form:
+The parts, in order:
 
   The Gospel first, IF AND ONLY IF the query above returned it: the citation
   as a heading, then the body exactly as it came out of the table. Do not
@@ -103,8 +102,8 @@ The full form:
   of everything; the one thing worth noticing.
 
   **If the queries came back empty, there is no looking-back paragraph.** Not
-  a short one, not a graceful one: none. Write "Yesterday left nothing in the
-  record." and move to the question.
+  a short one, not a graceful one: none. Write "Nothing was recorded
+  yesterday." and move to the question.
 
   This is a rule about FORM, not about restraint, because restraint does not
   survive the pressure. Told to look back at a day with nothing in it, you

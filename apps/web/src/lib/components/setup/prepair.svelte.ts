@@ -1,6 +1,7 @@
 /**
- * Setup's first half, before this device has a server: the account, finding
- * the server and opening it with its four words, its Wi-Fi, and pairing.
+ * Setup's first half, before this device has a server: finding the server,
+ * then for Virtues hardware opening it with its four words, the account, its
+ * Wi-Fi, and pairing.
  * (agents/build/onboarding.md, "Setup".)
  *
  * WHERE IT RUNS. Only where the app itself carries this code and has a
@@ -14,18 +15,24 @@
  * In dev, `?radio=fake` walks it in a browser against a scripted server and
  * a scripted account, and the real dev server takes over after "pairing".
  *
- * SIGN-IN COMES FIRST (2026-09-27). The account grant has to cross the
- * Bluetooth session BEFORE pairing, so the account is settled before the
- * server is even looked for. Signing in is identity, not billing: atlas
- * makes the account for any email (`ensure_account`, "linking is identity,
- * not billing"), and paying is the Subscription step, after pairing, which
- * passes itself over when the account already pays.
+ * THE SEARCH COMES FIRST, THEN THE ACCOUNT FOR HARDWARE ONLY. The search
+ * looks over Bluetooth for Virtues hardware and on the network for a server
+ * someone installed themselves. A server found on the network, or one typed
+ * in by address, pairs with the code `virtues pair` prints, on the connect
+ * page (`toCodeEntry`, `toAddressEntry`), and never sees an account here.
+ * Hardware asks for the account after its four words and before pairing,
+ * because the account's grant has to cross the Bluetooth session before
+ * pairing ends it. Signing in is identity, not billing: atlas makes the
+ * account for any email (`ensure_account`), and paying is the Subscription
+ * step, after pairing, which passes itself over when the account already
+ * pays.
  *
  * NOTHING HERE OUTLIVES THE TAB except the account session, which is kept
  * for this tab only: a reload mid-way drops the Bluetooth link anyway, and
  * the session is a bearer token.
  */
-import { boxRadio, BoxRadioError, type NearbyBox, type SetupLink } from '$lib/tauri/boxRadio';
+import { boxRadio, BoxRadioError, fakeNearby, type NearbyBox, type SetupLink } from '$lib/tauri/boxRadio';
+import { serversOnNetwork, type NetworkServer } from '$lib/tauri/bridge';
 import { markInApp } from './inApp';
 
 const ATLAS = 'https://atlas.virtues.com';
@@ -39,6 +46,8 @@ const JUST_PAIRED_KEY = 'virtues-just-paired';
  *  without this the flow would go looking for a server that is no longer
  *  there. Per launch: the next one bakes the truth. */
 const FORGOT_KEY = 'virtues-forgot-server';
+/** The network server this tab was last sent to the code screen for. */
+const FORWARDED_KEY = 'virtues-setup-forwarded';
 
 type Shell = { __VIRTUES_MOBILE__?: boolean; __VIRTUES_PAIRED__?: boolean; __VIRTUES_BOX_URL__?: string };
 
@@ -233,11 +242,11 @@ class PrePair {
 	}
 
 	/**
-	 * A device joining a server someone already set up. Setup's first half
-	 * only sets up NEW servers; joining (the QR from the other device on a
-	 * phone, a code on a computer) is still the connect page's, which the
-	 * app ships beside this copy; `#existing` opens it on the join itself.
-	 * Not in the dev fake, which has no connect page.
+	 * A phone joining a server someone already set up, by scanning the code
+	 * a paired computer shows. That is the connect page's, which the app
+	 * ships beside this copy; `#existing` opens it on the scan. A computer
+	 * joins by address and code instead (`toAddressEntry`). Not in the dev
+	 * fake, which has no connect page.
 	 */
 	get canJoinExisting(): boolean {
 		return this.active && !isFake();
@@ -248,6 +257,49 @@ class PrePair {
 
 	goWithout(): void {
 		this.withoutAccount = true;
+	}
+
+	/** Servers on this device's network. The dev fake has one with `&nearby=diy`. */
+	async serversOnNetwork(): Promise<NetworkServer[]> {
+		if (!isFake()) return serversOnNetwork();
+		await new Promise((r) => setTimeout(r, 1200));
+		return fakeNearby() === 'diy' ? [{ name: 'virtues', origin: 'http://192.168.1.20:8000', claimed: false }] : [];
+	}
+
+	/**
+	 * Pair with a server found on the network: the connect page asks for the
+	 * code `virtues pair` printed. Its back arrow returns here. Not in the dev
+	 * fake, which has no connect page.
+	 */
+	toCodeEntry(server: NetworkServer): void {
+		const q = new URLSearchParams({ origin: server.origin, name: server.name });
+		if (server.claimed !== null) q.set('claimed', String(server.claimed));
+		this.leaveFor(`/connect.html#pair?${q}`);
+	}
+
+	/** True the first time this tab is sent on to `origin`'s code screen, so
+	 *  the back arrow from there lands on the list rather than bouncing. */
+	forwardOnce(origin: string): boolean {
+		try {
+			if (sessionStorage.getItem(FORWARDED_KEY) === origin) return false;
+			sessionStorage.setItem(FORWARDED_KEY, origin);
+		} catch {
+			/* without storage, forwarding every time beats never */
+		}
+		return true;
+	}
+
+	/** The address and the code, typed or pasted from `virtues pair`. */
+	toAddressEntry(): void {
+		this.leaveFor('/connect.html#address');
+	}
+
+	private leaveFor(href: string): void {
+		if (isFake()) {
+			console.info('[setup] the dev fake has no connect page:', href);
+			return;
+		}
+		window.location.href = href;
 	}
 
 	/**

@@ -140,6 +140,13 @@ jobs:
       - name: Airlock router tests
         run: node --test "apps/web/src-tauri/ui/*.test.mjs"
 
+      # src/lib/myna-icons.json holds the Myna icons the source names. `pnpm
+      # dev` and `pnpm build` rewrite it, so a stale copy only reaches a commit
+      # when someone named a new icon and committed without running either.
+      - name: Bundled icons match the source
+        working-directory: apps/web
+        run: node scripts/myna-icons.mjs --check
+
       # Errors fail; warnings do not. There are ~113 warnings today (mostly
       # `@reference` at-rules and a11y advisories) and gating on them would mean
       # this job is red on arrival and therefore ignored. Errors are the signal.

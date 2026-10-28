@@ -154,7 +154,20 @@ export interface AppletRun {
 	 *  gateway's authoritative per-call figures. Zero for runs that called no
 	 *  model, and for every run recorded before spend was attributed. */
 	cost_micros: number;
+	/** What the run reached through its egress proxy, one entry per host.
+	 *  Empty for a run with no network. */
+	requests: HostRequests[];
 	created_at: string;
+}
+
+/** Requests to one host through an applet run's egress proxy. */
+export interface HostRequests {
+	host: string;
+	requests: number;
+	/** How many the proxy refused. */
+	refused: number;
+	sent_bytes: number;
+	received_bytes: number;
 }
 
 export interface AppletLastRun {
@@ -220,6 +233,10 @@ export interface Applet {
 	last_slot_at: string | null;
 	/** True when the applet folder ships a face/ (sandboxed-iframe HTML UI). */
 	has_face: boolean;
+	/** The named keys the applet declares (`secrets` in its manifest), each
+	 *  with whether the owner has set it. Names only. On the single-applet
+	 *  response; absent from list rows and from boxes older than the field. */
+	secrets?: { name: string; is_set: boolean }[];
 	/** The last 10 run statuses, newest first — the card's pulse. Comes with
 	 *  the row so the list does not fetch it per applet. */
 	pulse: AppletRun['status'][];
@@ -579,6 +596,21 @@ export function patchApplet(id: string, patch: PatchAppletBody): Promise<Applet>
 	return apiSend<Applet>('PATCH', `/applets/${encodeURIComponent(id)}`, patch);
 }
 
+/** The hosts an applet's code asks to reach (`net(host)` in its
+ *  `allowed-tools`) and the ones you allowed. It reaches the hosts on both. */
+export interface AppletHosts {
+	requested: string[];
+	allowed: string[];
+}
+
+export function getAppletHosts(id: string): Promise<AppletHosts> {
+	return apiGet<AppletHosts>(`/applets/${encodeURIComponent(id)}/hosts`);
+}
+
+export function putAppletHosts(id: string, hosts: string[]): Promise<AppletHosts> {
+	return apiSend<AppletHosts>('PUT', `/applets/${encodeURIComponent(id)}/hosts`, { hosts });
+}
+
 export async function deleteApplet(id: string, dropData = false): Promise<void> {
 	await request(`/applets/${encodeURIComponent(id)}`, {
 		method: 'DELETE',
@@ -602,6 +634,8 @@ export interface AppletLogEntry {
 	first_at: string | null;
 	last_at: string | null;
 	cost_micros: number;
+	/** Summed per host across the runs this line stands for. */
+	requests: HostRequests[];
 }
 
 /** A page an applet's runs wrote, with the last time one of them did. */
@@ -793,6 +827,85 @@ export async function revokeCredential(id: string): Promise<void> {
 	await apiSend('DELETE', `/credentials/${encodeURIComponent(id)}`);
 }
 
+// Keys (api/keys.rs)
+
+/** A named key an applet can be given (`OPENAI_API_KEY`). Names only. */
+export interface KeyItem {
+	name: string;
+	is_set: boolean;
+	/** When the value last changed; null for a declared key not yet set. */
+	updated_at: string | null;
+	/** The applets that declare it, by name. */
+	used_by: string[];
+}
+
+export interface KeysOverview {
+	sign_ins: Credential[];
+	keys: KeyItem[];
+}
+
+export function getKeys(): Promise<KeysOverview> {
+	return apiGet<KeysOverview>('/keys');
+}
+
+export async function setKey(name: string, value: string): Promise<void> {
+	await apiSend('PUT', `/keys/${encodeURIComponent(name)}`, { value });
+}
+
+export async function deleteKey(name: string): Promise<void> {
+	await apiSend('DELETE', `/keys/${encodeURIComponent(name)}`);
+}
+
+/** A key's value, fetched only when the owner asks to see it. */
+export async function revealKey(name: string): Promise<string> {
+	const { value } = await apiGet<{ value: string }>(`/keys/${encodeURIComponent(name)}/value`);
+	return value;
+}
+
+// Passwords (api/passwords.rs)
+//
+// Saved logins in Drive. The list carries no passwords; `revealLogin` fetches
+// one when the owner opens a login.
+
+export interface LoginItem {
+	id: string;
+	/** The site's origin, `https://example.com`. */
+	site: string;
+	name: string;
+	username: string;
+	updated_at: string;
+}
+
+/** A new login, or an edit. On an edit, an empty `password` keeps the saved
+ *  one and a missing `notes` keeps the saved notes. */
+export interface LoginInput {
+	site: string;
+	name?: string;
+	username: string;
+	password?: string;
+	notes?: string;
+}
+
+export function getLogins(): Promise<LoginItem[]> {
+	return apiGet<LoginItem[]>('/passwords');
+}
+
+export function createLogin(input: LoginInput): Promise<LoginItem> {
+	return apiSend<LoginItem>('POST', '/passwords', input);
+}
+
+export function updateLogin(id: string, input: LoginInput): Promise<LoginItem> {
+	return apiSend<LoginItem>('PUT', `/passwords/${encodeURIComponent(id)}`, input);
+}
+
+export async function deleteLogin(id: string): Promise<void> {
+	await apiSend('DELETE', `/passwords/${encodeURIComponent(id)}`);
+}
+
+export function revealLogin(id: string): Promise<{ password: string; notes: string }> {
+	return apiGet(`/passwords/${encodeURIComponent(id)}/secret`);
+}
+
 // Source catalog
 //
 // One tile per [[source]] in actions/templates.toml. Drives the Sources tab grid.
@@ -831,6 +944,8 @@ export interface SourceLogin {
 	url: string;
 	cookies: string[];
 	jar_field?: string | null;
+	/** Other domains the sign-in sets cookies on (ChatGPT's openai.com). */
+	domains?: string[];
 }
 
 /**
@@ -1040,7 +1155,7 @@ export interface ApiKeyCompleteResponse {
 export function apikeyComplete(
 	source_id: string,
 	name: string,
-	fields: Record<string, string>,
+	fields: Record<string, unknown>,
 	credentialId?: string
 ): Promise<ApiKeyCompleteResponse> {
 	return apiSend<ApiKeyCompleteResponse>(
@@ -2222,6 +2337,141 @@ export interface RefSearchResult {
 	created_at?: string;
 }
 
+/** A skill as the composer's `/` menu lists it (`GET /api/skills`). */
+export interface SkillSummary {
+	name: string;
+	description: string;
+	icon?: string | null;
+	source: "shipped" | "authored";
+}
+
+export interface SkillList {
+	skills: SkillSummary[];
+	/** The skill that writes skills: the menu's pinned create row. */
+	create?: SkillSummary | null;
+}
+
+/** The skills the `/` menu offers: shipped first, then the person's own. */
+export function listSkills(): Promise<SkillList> {
+	return apiGet<SkillList>("/skills");
+}
+
+/** The question an empty new chat offers (`GET /api/suggestions/current`). */
+export interface SuggestedQuestion {
+	id: string;
+	kind: string;
+	question: string;
+	/** What it is about, attached as mentions when it is used. */
+	refs: { url: string; label: string }[];
+}
+
+export function getSuggestedQuestion(): Promise<{ suggestion: SuggestedQuestion | null }> {
+	return apiGet<{ suggestion: SuggestedQuestion | null }>("/suggestions/current");
+}
+
+/** One part of a day in the chat sky (`api::sky::Moment`). Hours count from
+ *  the day's local midnight in its own zone; last night starts below zero. */
+export interface SkyMoment {
+	id: string;
+	kind: "stay" | "event" | "workout" | "sleep";
+	start_hour: number;
+	end_hour: number;
+	label: string;
+	place_id: string | null;
+	/** A calendar item that has not started yet. */
+	planned: boolean;
+	/** The record the moment is mentioned by, when it has one row. */
+	url: string | null;
+	/** What clicking the dot offers to mention. */
+	links: SkyLink[];
+	/** How unusual its place is for its hour and weekday, 0 (always there
+	 *  then) to 1 (never), or null when there is nothing to compare yet. */
+	novelty: number | null;
+}
+
+/** A place, a person or a purchase a moment opens to (`api::sky::SkyLink`). */
+export interface SkyLink {
+	url: string;
+	label: string;
+	kind: "place" | "person" | "purchase";
+}
+
+export interface SkyDay {
+	date: string;
+	zone: string;
+	/** Hours since local midnight, when the day is today. */
+	now_hour: number | null;
+	moments: SkyMoment[];
+	weather: { temperature_c: number | null; condition: string } | null;
+}
+
+/** A local day (`YYYY-MM-DD`) as the chat sky draws it. */
+export function getSkyDay(date: string): Promise<SkyDay> {
+	return apiGet<SkyDay>(`/sky/day/${encodeURIComponent(date)}`);
+}
+
+/** The Monday-to-Sunday week holding a day (`api::sky::SkyWeek`). */
+export interface SkyWeek {
+	/** The Monday, `YYYY-MM-DD`. */
+	start: string;
+	days: SkyDay[];
+	/** What the week's moments belong to, each moment as `date|id`. */
+	threads: SkyThread[];
+}
+
+export function getSkyWeek(date: string): Promise<SkyWeek> {
+	return apiGet<SkyWeek>(`/sky/week/${encodeURIComponent(date)}`);
+}
+
+/** One thing inside a moment, at its hour on the moment's band (`api::sky::Piece`). */
+export interface SkyPiece {
+	id: string;
+	kind: "arrive" | "leave" | "message" | "voice" | "purchase";
+	hour: number;
+	label: string;
+	detail: string | null;
+	url: string | null;
+}
+
+export interface SkyMomentDetail {
+	date: string;
+	now_hour: number | null;
+	moment: SkyMoment;
+	pieces: SkyPiece[];
+}
+
+/** A moment of a day (its id in `SkyDay`) and what happened inside it. */
+export function getSkyMoment(date: string, id: string): Promise<SkyMomentDetail> {
+	return apiGet<SkyMomentDetail>(`/sky/moment/${encodeURIComponent(date)}?id=${encodeURIComponent(id)}`);
+}
+
+/** A project, page or chat a day's moments belong to (`api::sky::Thread`). */
+export interface SkyThread {
+	url: string;
+	label: string;
+	kind: "project" | "page" | "chat";
+	/** The ids of the moments it links to. */
+	moments: string[];
+}
+
+export interface SkyContext {
+	date: string;
+	threads: SkyThread[];
+}
+
+export function getSkyContext(date: string): Promise<SkyContext> {
+	return apiGet<SkyContext>(`/sky/context/${encodeURIComponent(date)}`);
+}
+
+
+/** The suggestion was drawn, sent or put away; the box keeps a ledger. */
+export function recordSuggestionOutcome(
+	id: string,
+	outcome: "shown" | "used" | "dismissed",
+): Promise<{ ok: boolean }> {
+	return apiSend<{ ok: boolean }>("POST", `/suggestions/${encodeURIComponent(id)}/outcome`, { outcome });
+}
+
 export interface RefSearchResponse {
 	results: RefSearchResult[];
 }
@@ -2588,15 +2838,6 @@ export function resolveRefs(urls: string[]): Promise<{ refs: RefIdentity[] }> {
 	return apiSend('POST', '/refs/resolve', { urls });
 }
 
-/** What the box says first on an empty new chat; nulls when nothing stands out. */
-export interface ChatOpening {
-	id: string | null;
-	text: string | null;
-	event_id: string | null;
-}
-export function getChatOpening(): Promise<ChatOpening> {
-	return apiGet('/chat/opening');
-}
 
 /** The chats with a turn running on the box right now, from any device. */
 export function listLiveChats(): Promise<{ running: string[] }> {

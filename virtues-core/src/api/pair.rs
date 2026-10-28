@@ -88,6 +88,9 @@ fn random_pair_code() -> String {
 
 /// How many devices the owner has actually paired.
 ///
+/// **Excludes agents.** An MCP bridge is paired from a device the owner
+/// already has, and is not one a person carries.
+///
 /// **Excludes `local-console`.** Every box mints that row at first boot —
 /// `middleware::auth::ensure_console_device` creates it so a browser running on
 /// the box itself is authenticated — so a bare `count(*) FROM app_device` is
@@ -109,9 +112,10 @@ pub async fn paired_device_count(pool: &PgPool) -> i64 {
 
 pub(crate) async fn try_paired_device_count(pool: &PgPool) -> Result<i64, sqlx::Error> {
     sqlx::query_scalar(
-        "SELECT count(*) FROM app_device WHERE revoked_at IS NULL AND id <> $1",
+        "SELECT count(*) FROM app_device WHERE revoked_at IS NULL AND id <> $1 AND kind <> $2",
     )
     .bind(crate::middleware::auth::CONSOLE_DEVICE_ID)
+    .bind(crate::middleware::auth::AGENT_KIND)
     .fetch_one(pool)
     .await
 }
@@ -791,18 +795,20 @@ pub struct ConsumeResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub box_node_id: Option<String>,
     /// The relay URL to reach the box's EndpointId through (`https://relay…`).
-    /// Paired with `box_node_id` as the reach ticket; `None` on a dev/LAN box.
+    /// Paired with `box_node_id` as the reach ticket. An unclaimed box uses the
+    /// built-in relay; `None` only when the owner turned the relay off, or in a
+    /// dev checkout.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relay_url: Option<String>,
     /// The box's iroh direct socket addresses (LAN/VPN `IP:port`). A device on
     /// the same network dials these directly — no relay, no discovery, no third
-    /// party. This is how an **unclaimed** box (no relay) is still reachable.
+    /// party. This is how a box with its relay turned off is still reachable.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub box_direct_addrs: Vec<String>,
 }
 
 /// The box's iroh reach ticket. `node_id` is present once the endpoint is bound;
-/// `relay_url` is `None` on an unclaimed/LAN box; `direct_addrs` are the box's
+/// `relay_url` is `None` only when the relay is off; `direct_addrs` are the box's
 /// LAN/VPN sockets for zero-third-party direct dialing. A device prefers direct
 /// (same network) and falls back to the relay (remote). Refreshable from
 /// `GET /api/devices/self/reach`.
@@ -895,7 +901,7 @@ pub async fn consume_handler(
     }
 
     let kind = match body.kind.as_str() {
-        "mobile_app" | "desktop_app" | "sensor" | "cli" => body.kind.as_str(),
+        "mobile_app" | "desktop_app" | "sensor" | "cli" | "agent" => body.kind.as_str(),
         _ => {
             return (StatusCode::BAD_REQUEST, Json(json!({"error": "invalid_kind"})))
                 .into_response()
@@ -1005,7 +1011,9 @@ pub async fn consume_handler(
     let is_collector_daemon = kind == "desktop_app"
         && source_id != "__device__"
         && device_info.get("client").and_then(|v| v.as_str()) == Some("virtues-collector");
-    if is_collector_daemon {
+    // An agent is set up from the Mac app's "Connect an agent" button, so it
+    // belongs under that Mac the same way.
+    if is_collector_daemon || kind == crate::middleware::auth::AGENT_KIND {
         match sqlx::query_as::<_, (Option<String>,)>(
             "SELECT minted_by_device FROM app_pair_token WHERE id = $1",
         )
@@ -1368,6 +1376,7 @@ fn default_label_for(kind: &str, ua: Option<&str>, info: &Option<Value>) -> Stri
         "mobile_app" => "Mobile app".to_string(),
         "desktop_app" => "Desktop app".to_string(),
         "sensor" => "Sensor".to_string(),
+        "agent" => "AI agent".to_string(),
         _ => "Device".to_string(),
     }
 }

@@ -89,36 +89,36 @@ export interface ConfirmedPlace {
 /** A place's icon in the question's list, as Maps marks its places: by
  *  its kind where the map's kind is plain to see, else by its category. */
 const KIND_ICON: Record<string, string> = {
-	cafe: "ri:cup-line",
-	bar: "ri:goblet-line",
-	pub: "ri:goblet-line",
-	biergarten: "ri:goblet-line",
-	nightclub: "ri:goblet-line",
-	bakery: "ri:cake-3-line",
-	ice_cream: "ri:cake-line",
-	books: "ri:book-open-line",
-	gallery: "ri:gallery-line",
-	art: "ri:gallery-line",
-	museum: "ri:gallery-line",
-	aerodrome: "ri:plane-line",
-	airport: "ri:plane-line",
+	cafe: "mynaui:coffee",
+	bar: "mynaui:wine",
+	pub: "mynaui:wine",
+	biergarten: "mynaui:wine",
+	nightclub: "mynaui:wine",
+	bakery: "mynaui:cake",
+	ice_cream: "mynaui:cake",
+	books: "mynaui:book-open",
+	gallery: "mynaui:image-rectangle",
+	art: "mynaui:image-rectangle",
+	museum: "mynaui:image-rectangle",
+	aerodrome: "mynaui:plane",
+	airport: "mynaui:plane",
 };
 const CATEGORY_ICON: Record<string, string> = {
-	dining: "ri:restaurant-line",
-	shopping: "ri:shopping-bag-line",
-	grocery: "ri:shopping-cart-line",
-	lodging: "ri:hotel-bed-line",
-	office: "ri:briefcase-line",
-	outdoors: "ri:tree-line",
-	fitness: "ri:run-line",
-	entertainment: "ri:film-line",
-	health: "ri:hospital-line",
-	education: "ri:school-line",
-	worship: "ri:building-2-line",
-	transit: "ri:bus-line",
+	dining: "mynaui:bowl",
+	shopping: "mynaui:shopping-bag",
+	grocery: "mynaui:cart",
+	lodging: "mynaui:hotel",
+	office: "mynaui:briefcase",
+	outdoors: "mynaui:tree",
+	fitness: "mynaui:activity",
+	entertainment: "mynaui:film",
+	health: "mynaui:hospital",
+	education: "mynaui:graduation-cap",
+	worship: "mynaui:building-one",
+	transit: "mynaui:train",
 };
 export function placeIcon(kind: string | undefined, category: string | null): string {
-	return (kind && KIND_ICON[kind]) || (category && CATEGORY_ICON[category]) || "ri:map-pin-line";
+	return (kind && KIND_ICON[kind]) || (category && CATEGORY_ICON[category]) || "mynaui:map-pin";
 }
 
 /** How far a place is from where the person stayed: "40 m", "1.2 km". */
@@ -235,17 +235,17 @@ export interface Ask {
  *  nearest named place was usually a neighbour (a car dealership beside a
  *  stay, a hotel beside the one the person slept at). */
 const GUESS_M = 60;
-const HOTEL: Kind = { label: "A hotel", category: "lodging", icon: "ri:hotel-bed-line", then: "hotel" };
-const SOMEONES_HOME: Kind = { label: "Someone’s home", category: null, icon: "ri:home-4-line", then: "person" };
+const HOTEL: Kind = { label: "A hotel", category: "lodging", icon: "mynaui:hotel", then: "hotel" };
+const SOMEONES_HOME: Kind = { label: "Someone’s home", category: null, icon: "mynaui:home", then: "person" };
 /** A day's kinds of place; the label is the name saved when the person
  *  skips naming it. Work files the place under the person's Work. */
 const DAY_KINDS: Kind[] = [
-	{ label: "Restaurant", category: "dining", icon: "ri:restaurant-line", then: "name" },
-	{ label: "Café", category: "dining", icon: "ri:cup-line", then: "name" },
-	{ label: "Bar", category: "dining", icon: "ri:goblet-line", then: "name" },
-	{ label: "Shop", category: "shopping", icon: "ri:shopping-bag-line", then: "name" },
-	{ label: "Park", category: "outdoors", icon: "ri:tree-line", then: "name" },
-	{ label: "Work", category: "office", icon: "ri:briefcase-line", then: "work" },
+	{ label: "Restaurant", category: "dining", icon: "mynaui:bowl", then: "name" },
+	{ label: "Café", category: "dining", icon: "mynaui:coffee", then: "name" },
+	{ label: "Bar", category: "dining", icon: "mynaui:wine", then: "name" },
+	{ label: "Shop", category: "shopping", icon: "mynaui:shopping-bag", then: "name" },
+	{ label: "Park", category: "outdoors", icon: "mynaui:tree", then: "name" },
+	{ label: "Work", category: "office", icon: "mynaui:briefcase", then: "work" },
 	SOMEONES_HOME,
 ];
 const NIGHT_KINDS: Kind[] = [HOTEL, SOMEONES_HOME];

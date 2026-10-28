@@ -265,14 +265,14 @@
 						!saveError &&
 						!isSaving}
 				>
-					<Icon icon="ri:alert-line" width="14" height="14"
+					<Icon icon="mynaui:danger-triangle" width="14" height="14"
 					/>
 				</div>
 
 				<!-- Saving spinner -->
 				<div class="icon icon-saving" class:visible={isSaving}>
 					<Icon
-						icon="ri:loader-4-line"
+						icon="mynaui:spinner"
 						width="14"
 						height="14"
 						class="spinner"
@@ -289,7 +289,7 @@
 						!isSaving &&
 						!warning}
 				>
-					<Icon icon="ri:check-line" width="14" height="14"
+					<Icon icon="mynaui:check" width="14" height="14"
 					/>
 				</div>
 
@@ -298,7 +298,7 @@
 					class="icon icon-error"
 					class:visible={saveError && !isFocused}
 				>
-					<Icon icon="ri:close-line" width="14" height="14"
+					<Icon icon="mynaui:x" width="14" height="14"
 					/>
 				</div>
 			</div>

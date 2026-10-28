@@ -30,11 +30,11 @@
 >
 	<div class="suggestion-bar" role="toolbar" aria-label="Suggested edit" tabindex="-1" data-print="hide" onmousedown={(e) => e.preventDefault()}>
 		<button type="button" class="sb-btn accept" onclick={onAccept}>
-			<Icon icon="ri:check-line" width="14" />
+			<Icon icon="mynaui:check" width="14" />
 			<span>Accept</span>
 		</button>
 		<button type="button" class="sb-btn" onclick={onReject}>
-			<Icon icon="ri:close-line" width="14" />
+			<Icon icon="mynaui:x" width="14" />
 			<span>Reject</span>
 		</button>
 		{#if count > 1}

@@ -2,6 +2,7 @@
 	import type { Tab } from "$lib/tabs/types";
 	import Icon from "$lib/components/Icon.svelte";
 	import { getRecord, type OntologyRecord } from "$lib/api/client";
+	import { formatRecordDate, recordFields, recordTitle, renderValue } from "$lib/utils/recordFields";
 
 	let { tab }: { tab: Tab } = $props();
 
@@ -38,107 +39,17 @@
 			});
 	});
 
-	// Columns we never want to show a reader: search plumbing and opaque blobs.
-	const HIDDEN = /embedding|vector|tsv|_hash$|bm25|search_/i;
-	// Candidate keys for the record's human title, in priority order.
-	const TITLE_KEYS = [
-		"title",
-		"subject",
-		"name",
-		"name",
-		"merchant",
-		"summary",
-		"headline",
-		"label",
-		"description",
-	];
-
 	const row = $derived(record?.row ?? {});
 
-	const title = $derived.by(() => {
-		for (const k of TITLE_KEYS) {
-			const v = row[k];
-			if (typeof v === "string" && v.trim()) return v.trim();
-		}
-		return record?.display_name ?? "Record";
-	});
+	const title = $derived(recordTitle(row, record?.display_name ?? "Record"));
 
 	// The lead timestamp (from the ontology's declared timestamp column).
 	const timestamp = $derived.by(() => {
 		const v = record ? row[record.timestamp_column] : undefined;
-		return typeof v === "string" || typeof v === "number" ? formatDate(v) : null;
+		return typeof v === "string" || typeof v === "number" ? formatRecordDate(v) : null;
 	});
 
-	// Field rows: everything meaningful, timestamp column first, id last, minus
-	// the hidden plumbing and the value we already used as the title.
-	const fields = $derived.by(() => {
-		const rec = record;
-		if (!rec) return [] as Array<{ key: string; label: string; value: unknown }>;
-		const tsCol = rec.timestamp_column;
-		const usedTitleKey = TITLE_KEYS.find(
-			(k) => typeof row[k] === "string" && (row[k] as string).trim() === title
-		);
-		const entries = Object.entries(row).filter(
-			([k, v]) =>
-				!HIDDEN.test(k) &&
-				k !== "id" &&
-				k !== usedTitleKey &&
-				v !== null &&
-				v !== "" &&
-				!(Array.isArray(v) && v.length === 0)
-		);
-		entries.sort(([a], [b]) => {
-			if (a === tsCol) return -1;
-			if (b === tsCol) return 1;
-			return 0;
-		});
-		return entries.map(([key, value]) => ({ key, label: humanize(key), value }));
-	});
-
-	function humanize(key: string): string {
-		return key
-			.replace(/_/g, " ")
-			.replace(/\b\w/g, (c) => c.toUpperCase());
-	}
-
-	function looksLikeDate(s: string): boolean {
-		return /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s);
-	}
-
-	function formatDate(v: string | number): string {
-		const d = new Date(v);
-		if (Number.isNaN(d.getTime())) return String(v);
-		return d.toLocaleString(undefined, {
-			weekday: "short",
-			year: "numeric",
-			month: "short",
-			day: "numeric",
-			hour: "numeric",
-			minute: "2-digit",
-		});
-	}
-
-	type Rendered = {
-		kind: "text" | "date" | "bool" | "num" | "json" | "link";
-		text: string;
-	};
-
-	function render(value: unknown): Rendered {
-		if (typeof value === "boolean") return { kind: "bool", text: value ? "Yes" : "No" };
-		if (typeof value === "number")
-			return { kind: "num", text: value.toLocaleString() };
-		if (typeof value === "string") {
-			if (looksLikeDate(value)) return { kind: "date", text: formatDate(value) };
-			// A record whose whole point is an address — a bookmark, an asset —
-			// is useless if the address is only selectable text. Linkifying is
-			// generic on purpose: any ontology with a url field benefits.
-			if (/^https?:\/\//i.test(value)) return { kind: "link", text: value };
-			return { kind: "text", text: value };
-		}
-		if (value && typeof value === "object")
-			return { kind: "json", text: JSON.stringify(value, null, 2) };
-		return { kind: "text", text: String(value) };
-	}
+	const fields = $derived(record ? recordFields(record, title) : []);
 </script>
 
 <div class="data-view">
@@ -147,13 +58,13 @@
 			<div class="state">Loading record…</div>
 		{:else if error}
 			<div class="state error">
-				<Icon icon="ri:error-warning-line" width="16" />
+				<Icon icon="mynaui:danger-circle" width="16" />
 				<span>{error}</span>
 			</div>
 		{:else if record}
 			<header class="head">
 				<div class="eyebrow">
-					<Icon icon="ri:database-2-line" width="12" />
+					<Icon icon="mynaui:database" width="12" />
 					<span>{record.display_name}</span>
 				</div>
 				<h1 class="title">{title}</h1>
@@ -164,7 +75,7 @@
 
 			<dl class="fields">
 				{#each fields as f (f.key)}
-					{@const r = render(f.value)}
+					{@const r = renderValue(f.value)}
 					<div class="field">
 						<dt>{f.label}</dt>
 						<dd class:mono={r.kind === "json"} class:muted={r.kind === "date"}>
@@ -173,7 +84,7 @@
 							{:else if r.kind === "link"}
 								<a href={r.text} target="_blank" rel="noopener noreferrer">
 									{r.text}
-									<Icon icon="ri:external-link-line" width="12" />
+									<Icon icon="mynaui:external-link" width="12" />
 								</a>
 							{:else}
 								{r.text}

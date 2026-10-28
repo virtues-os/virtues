@@ -1,8 +1,9 @@
 //! `sql_write` — the scoped write path into applet-owned tables.
 //!
-//! Runs one statement as the `virtues_applet_writer` PG role, whose grants
-//! cover DML **inside `applet_*` schemas only** (migration 0054 + the boot
-//! grants in `server::faces`). Scope is enforced by Postgres, not by parsing
+//! Runs one statement logged in as the `virtues_applet_writer` PG role
+//! (`database::restricted`), whose grants cover DML **inside `applet_*`
+//! schemas only** (migration 0054 + the boot grants in `server::faces`).
+//! Scope is enforced by Postgres, not by parsing
 //! the SQL: a statement touching `data_*` / `app_*` / anything else fails
 //! with a permission error at the database.
 //!
@@ -16,7 +17,12 @@ use super::executor::{ToolError, ToolResult};
 const SQL_MAX: usize = 16 * 1024;
 const RETURN_ROWS_MAX: usize = 500;
 
-pub async fn execute(pool: &PgPool, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
+/// `timezone` is the owner's; it only puts returned times on their clock.
+pub async fn execute(
+    pool: &PgPool,
+    arguments: serde_json::Value,
+    timezone: Option<&str>,
+) -> Result<ToolResult, ToolError> {
     let sql = arguments
         .get("sql")
         .and_then(|v| v.as_str())
@@ -42,12 +48,11 @@ pub async fn execute(pool: &PgPool, arguments: serde_json::Value) -> Result<Tool
         .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
         .any(|w| w == "returning");
 
-    let mut tx = match pool.begin().await {
+    let mut tx = match crate::database::restricted::begin(pool, crate::database::restricted::Login::Writer).await {
         Ok(tx) => tx,
         Err(e) => return Ok(fail(&format!("begin failed: {e}"))),
     };
     for setup in [
-        "SET LOCAL ROLE virtues_applet_writer",
         "SET LOCAL statement_timeout = '5s'",
         // Force fully-qualified names; unqualified writes can't fall through
         // to public even on PG versions where PUBLIC holds create-in-public.
@@ -65,7 +70,13 @@ pub async fn execute(pool: &PgPool, arguments: serde_json::Value) -> Result<Tool
                     return Ok(fail(&format!("commit failed: {e}")));
                 }
                 let capped = rows.len().min(RETURN_ROWS_MAX);
-                let json_rows = super::sql_query::convert_rows_to_json(&rows[..capped]);
+                // The write has committed; a failed zone lookup only leaves the
+                // returned times in UTC, marked `+00:00`.
+                let zone = crate::timezone::resolve_timezone(pool, timezone)
+                    .await
+                    .inspect_err(|e| tracing::warn!(error = %e, "sql_write: zone lookup failed; times stay UTC"))
+                    .ok();
+                let json_rows = super::sql_query::convert_rows_to_json(&rows[..capped], zone.as_deref());
                 Ok(ToolResult::success(serde_json::json!({
                     "rows": json_rows,
                     "row_count": rows.len(),
@@ -98,6 +109,6 @@ fn fail(msg: &str) -> ToolResult {
     ToolResult::success(serde_json::json!({
         "status": "error",
         "error": msg,
-        "hint": "sql_write can only touch tables in applet_* schemas (create them via setup_applet's schema_sql)",
+        "hint": "sql_write can only touch tables in applet_* schemas (create them with the applet tool's setup action, schema_sql)",
     }))
 }

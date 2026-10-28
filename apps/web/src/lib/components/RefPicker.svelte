@@ -161,7 +161,7 @@
 			id: `url:${normalizeUrl(trimmed)}`,
 			name: trimmed,
 			entity_type: 'url',
-			icon: 'ri:link',
+			icon: 'mynaui:link',
 			url: normalizeUrl(trimmed),
 		};
 	});
@@ -262,7 +262,7 @@
 {#snippet pickerContent()}
 	<!-- Search input -->
 	<div class="search-row">
-		<Icon icon="ri:search-line" width="14" />
+		<Icon icon="mynaui:search" width="14" />
 		<input
 			bind:this={inputEl}
 			bind:value={query}
@@ -277,7 +277,7 @@
 			aria-activedescendant={flatResults.length ? optionId(selectedIndex) : undefined}
 		/>
 		{#if isLoading}
-			<Icon icon="ri:loader-4-line" width="14" />
+			<Icon icon="mynaui:spinner" width="14" />
 		{/if}
 	</div>
 
@@ -315,7 +315,7 @@
 							{#if mode === 'multi'}
 								<div class="checkbox" class:checked={isSelected(item)}>
 									{#if isSelected(item)}
-										<Icon icon="ri:check-line" width="12" />
+										<Icon icon="mynaui:check" width="12" />
 									{/if}
 								</div>
 							{/if}
@@ -420,7 +420,7 @@
 		border: none;
 		background: none;
 		outline: none;
-		font-size: 13px;
+		font-size: var(--chrome-label-font-size);
 		color: var(--color-foreground);
 	}
 
@@ -468,7 +468,7 @@
 		text-align: left;
 		cursor: pointer;
 		color: var(--color-foreground);
-		font-size: 13px;
+		font-size: var(--chrome-label-font-size);
 		transition: background-color 0.1s;
 	}
 

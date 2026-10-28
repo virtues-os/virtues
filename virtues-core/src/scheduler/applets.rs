@@ -122,6 +122,12 @@ pub struct AppletRun {
     /// and for every run before spend was attributed at all.
     #[serde(default)]
     pub cost_micros: i64,
+    /// What the run reached through its egress proxy, one entry per host:
+    /// `{host, requests, refused, sent_bytes, received_bytes}`. Empty for a
+    /// run that had no network, which is every run but a sandboxed one whose
+    /// owner allowed hosts.
+    #[serde(default)]
+    pub requests: serde_json::Value,
     pub created_at: crate::types::Timestamp,
 }
 
@@ -195,7 +201,7 @@ pub async fn update_memory(db: &PgPool, applet_id: &str, memory: &str) -> Result
 /// private `applet_<slug>` schema it owns. System rows are refused.
 ///
 /// Folder + schema teardown live here so BOTH the HTTP delete and the chat
-/// `delete_applet` tool tear down identically (one door). `drop_data` defaults
+/// applet tool's delete tear down identically (one door). `drop_data` defaults
 /// to keeping data: an applet's tables outlive it unless the user opts in.
 pub async fn delete_applet(db: &PgPool, applet_id: &str, drop_data: bool) -> Result<()> {
     let owner: Option<String> = sqlx::query_scalar("SELECT owner FROM app_applets WHERE id = $1")
@@ -626,24 +632,80 @@ pub async fn update_applet(
     }
     q = q.bind(applet_id);
 
+    // A chat-authored applet's manifest is what reconcile restores it from,
+    // so the edit is written there too, inside the row's transaction: a
+    // manifest that cannot be written rolls the row back instead of leaving
+    // an edit the next reconcile undoes. The reconcile lock keeps a reconcile
+    // from reading the old catalog between the write and the reload.
+    let is_ai = current.owner == "ai";
+    let _reconcile = if is_ai {
+        Some(crate::applet_templates::reconcile_lock().lock().await)
+    } else {
+        None
+    };
+    let mut tx = db.begin().await?;
     let res = q
-        .execute(db)
+        .execute(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("failed to update action: {e}")))?;
     if res.rows_affected() == 0 {
         return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
     }
-
-    // Restore fidelity for chat-authored applets: the user's enable/disable
-    // choice mirrors into the manifest's default_enabled, so a DB rebuilt
-    // from disk comes back in the last chosen state (authoring plan §E).
-    if current.owner == "ai" {
-        if let Some(enabled) = obj.get("enabled").and_then(|v| v.as_bool()) {
-            crate::applet_templates::mirror_enabled_to_manifest(applet_id, enabled);
-        }
+    if is_ai {
+        crate::applet_templates::mirror_patch_to_manifest(applet_id, obj)?;
+    }
+    tx.commit().await?;
+    if is_ai {
+        crate::applet_templates::reload_catalog();
     }
 
     get_applet(db, applet_id).await
+}
+
+/// The hosts an applet's file asks for (`net(host)` in `allowed-tools`) and
+/// the ones the owner allowed. A run reaches the hosts on both lists.
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+pub struct NetHosts {
+    pub requested: Vec<String>,
+    pub allowed: Vec<String>,
+}
+
+pub async fn net_hosts(db: &PgPool, applet_id: &str) -> Result<NetHosts> {
+    let applet = get_applet(db, applet_id).await?;
+    let requested = applet
+        .config
+        .get("net_hosts")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|h| h.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let allowed: Vec<String> = sqlx::query_scalar("SELECT net_hosts FROM app_applets WHERE id = $1")
+        .bind(applet_id)
+        .fetch_one(db)
+        .await?;
+    Ok(NetHosts { requested, allowed })
+}
+
+/// Set the hosts the owner allows. Only the owner's own API route calls
+/// this: not `update_applet`, not the applet tool, not reconcile, so neither
+/// the assistant nor an applet's file can give an applet a way out. Each host
+/// passes the egress policy first.
+pub async fn set_net_hosts(db: &PgPool, applet_id: &str, hosts: &[String]) -> Result<NetHosts> {
+    let mut checked: Vec<String> = Vec::new();
+    for h in hosts {
+        let h = crate::egress::policy::check_host(h).map_err(Error::InvalidInput)?;
+        if !checked.contains(&h) {
+            checked.push(h);
+        }
+    }
+    let res = sqlx::query("UPDATE app_applets SET net_hosts = $1, updated_at = now() WHERE id = $2")
+        .bind(&checked)
+        .bind(applet_id)
+        .execute(db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
+    }
+    net_hosts(db, applet_id).await
 }
 
 /// Slugify a name into a lowercase `a-z0-9_` identifier suitable for use as
@@ -822,13 +884,26 @@ pub async fn last_run(db: &PgPool, applet_id: &str) -> Result<Option<AppletRun>>
 }
 
 /// Query runs with filters.
+/// What runs reached through the egress proxy, one JSON object per host:
+/// `{host, requests, refused, sent_bytes, received_bytes}`, `[]` for none.
+/// `runs` is the SQL condition on `q.run_id` that picks the runs.
+fn requests_by_host(runs: &str) -> String {
+    format!(
+        "COALESCE((SELECT json_agg(h ORDER BY h.host) FROM ( \
+           SELECT q.host, count(*) AS requests, count(q.refused_reason) AS refused, \
+                  sum(q.sent_bytes)::bigint AS sent_bytes, \
+                  sum(q.received_bytes)::bigint AS received_bytes \
+             FROM app_applet_run_requests q WHERE {runs} GROUP BY q.host) h), '[]'::json)"
+    )
+}
+
 pub async fn query_runs(
     db: &PgPool,
     applet_id: Option<&str>,
     status: Option<&str>,
     limit: i64,
 ) -> Result<Vec<AppletRun>> {
-    let rows = sqlx::query(
+    let sql = format!(
         // The cost of a run is not on the run — it is the sum of the model
         // calls it made, which live in `app_ai_calls`. Carried here so the
         // detail page can answer "what did this cost" beside "what did it do",
@@ -837,13 +912,16 @@ pub async fn query_runs(
         r#"SELECT r.*, COALESCE((
                  SELECT SUM(c.cost_micros) FROM app_ai_calls c
                   WHERE c.applet_run_id = r.id
-               ), 0)::bigint AS cost_micros
+               ), 0)::bigint AS cost_micros,
+               {} AS requests
              FROM app_applet_runs r
             WHERE ($1 IS NULL OR r.applet_id = $2)
               AND ($3 IS NULL OR r.status = $4)
             ORDER BY r.created_at DESC
             LIMIT $5"#,
-    )
+        requests_by_host("q.run_id = r.id")
+    );
+    let rows = sqlx::query(&sql)
     .bind(applet_id)
     .bind(applet_id)
     .bind(status)
@@ -868,6 +946,9 @@ pub struct LogEntry {
     pub first_at: Option<crate::types::Timestamp>,
     pub last_at: Option<crate::types::Timestamp>,
     pub cost_micros: i64,
+    /// What these runs reached through the egress proxy, summed per host
+    /// across the runs the line stands for, like `cost_micros`.
+    pub requests: serde_json::Value,
 }
 
 /// The run log with identical consecutive outcomes collapsed into one row.
@@ -886,7 +967,7 @@ pub struct LogEntry {
 pub async fn collapsed_log(db: &PgPool, applet_id: &str, limit: i64) -> Result<Vec<LogEntry>> {
     // Gaps-and-islands: a global row_number minus a per-outcome row_number is
     // constant exactly while the outcome repeats, so it names each run.
-    let rows = sqlx::query(
+    let sql = format!(
         r#"WITH ordered AS (
                SELECT r.id, r.status, r.trigger, r.started_at, r.error,
                       coalesce(r.result_summary, '') AS summary,
@@ -901,20 +982,28 @@ pub async fn collapsed_log(db: &PgPool, applet_id: &str, limit: i64) -> Result<V
                           ORDER BY r.started_at DESC) AS grp
                  FROM app_applet_runs r
                 WHERE r.applet_id = $1
+           ),
+           grouped AS (
+               SELECT status, summary, message,
+                      count(*)                 AS occurrences,
+                      min(started_at)          AS first_at,
+                      max(started_at)          AS last_at,
+                      sum(cost_micros)::bigint AS cost_micros,
+                      array_agg(id) AS ids,
+                      (array_agg(id      ORDER BY started_at DESC))[1] AS latest_run_id,
+                      (array_agg(trigger ORDER BY started_at DESC))[1] AS trigger,
+                      (array_agg(error   ORDER BY started_at DESC))[1] AS error
+                 FROM ordered
+                GROUP BY grp, status, summary, message
+                ORDER BY max(started_at) DESC
+                LIMIT $2
            )
-           SELECT status, summary, message,
-                  count(*)                 AS occurrences,
-                  min(started_at)          AS first_at,
-                  max(started_at)          AS last_at,
-                  sum(cost_micros)::bigint AS cost_micros,
-                  (array_agg(id      ORDER BY started_at DESC))[1] AS latest_run_id,
-                  (array_agg(trigger ORDER BY started_at DESC))[1] AS trigger,
-                  (array_agg(error   ORDER BY started_at DESC))[1] AS error
-             FROM ordered
-            GROUP BY grp, status, summary, message
-            ORDER BY max(started_at) DESC
-            LIMIT $2"#,
-    )
+           SELECT g.*, {} AS requests
+             FROM grouped g
+            ORDER BY g.last_at DESC"#,
+        requests_by_host("q.run_id = ANY(g.ids)")
+    );
+    let rows = sqlx::query(&sql)
     .bind(applet_id)
     .bind(limit)
     .fetch_all(db)
@@ -934,6 +1023,7 @@ pub async fn collapsed_log(db: &PgPool, applet_id: &str, limit: i64) -> Result<V
                 first_at: r.try_get("first_at")?,
                 last_at: r.try_get("last_at")?,
                 cost_micros: r.try_get("cost_micros")?,
+                requests: r.try_get("requests")?,
             })
         })
         .collect()
@@ -1198,6 +1288,8 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
         // table alone) — those callers do not show cost, so 0 is right.
         message: row.try_get("message").ok().flatten(),
         cost_micros: row.try_get("cost_micros").unwrap_or(0),
+        // absent-ok: a query that does not join the request log has none to show.
+        requests: row.try_get("requests").unwrap_or_else(|_| serde_json::json!([])),
         created_at: row.try_get("created_at")?,
     })
 }
@@ -1205,6 +1297,44 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Only the owner's route sets hosts, each through the egress policy, and
+    /// a run's requests show per host on the run.
+    #[sqlx::test]
+    async fn owner_hosts_are_checked_and_a_runs_requests_are_summed_per_host(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, config) \
+             VALUES ('applet_tides', 'Tides', 'user', '{\"net_hosts\": [\"api.weather.gov\"]}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let err = set_net_hosts(&pool, "applet_tides", &["api.openai.com".into()]).await.unwrap_err();
+        assert!(err.to_string().contains("refused even when listed"), "{err}");
+        let hosts = set_net_hosts(&pool, "applet_tides", &["API.weather.gov".into(), "api.weather.gov".into()])
+            .await
+            .unwrap();
+        assert_eq!(hosts, NetHosts { requested: vec!["api.weather.gov".into()], allowed: vec!["api.weather.gov".into()] });
+        let err = update_applet(&pool, "applet_tides", &serde_json::json!({ "net_hosts": [] })).await.unwrap_err();
+        assert!(err.to_string().contains("unknown field"), "PATCH cannot set hosts: {err}");
+
+        seed_run(&pool, "applet_tides", "success", "ok", 10).await;
+        let run_id: String = sqlx::query_scalar("SELECT id FROM app_applet_runs LIMIT 1").fetch_one(&pool).await.unwrap();
+        for (host, refused, sent) in [("api.weather.gov", None, 100i64), ("api.weather.gov", None, 50), ("elsewhere.example.com", Some("not listed"), 0)] {
+            sqlx::query("INSERT INTO app_applet_run_requests (run_id, host, method, sent_bytes, refused_reason) VALUES ($1, $2, 'CONNECT', $3, $4)")
+                .bind(&run_id).bind(host).bind(sent).bind(refused).execute(&pool).await.unwrap();
+        }
+        let runs = query_runs(&pool, Some("applet_tides"), None, 5).await.unwrap();
+        let log = collapsed_log(&pool, "applet_tides", 5).await.unwrap();
+        assert_eq!(log[0].requests, runs[0].requests, "the log line carries the same summary");
+        assert_eq!(
+            runs[0].requests,
+            serde_json::json!([
+                { "host": "api.weather.gov", "requests": 2, "refused": 0, "sent_bytes": 150, "received_bytes": 0 },
+                { "host": "elsewhere.example.com", "requests": 1, "refused": 1, "sent_bytes": 0, "received_bytes": 0 },
+            ])
+        );
+    }
 
     async fn seed_run(pool: &PgPool, applet: &str, status: &str, summary: &str, secs: i64) {
         sqlx::query(

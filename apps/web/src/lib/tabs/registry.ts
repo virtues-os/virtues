@@ -43,11 +43,13 @@ const AssetView: ViewLoader = () => import('$lib/components/tabs/views/AssetView
 const PagesView: ViewLoader = () => import('$lib/components/tabs/views/PagesView.svelte');
 const PageDetailView: ViewLoader = () => import('$lib/components/tabs/views/PageDetailView.svelte');
 const BookmarksView: ViewLoader = () => import('$lib/components/tabs/views/BookmarksView.svelte');
+const PasswordsView: ViewLoader = () => import('$lib/components/tabs/views/PasswordsView.svelte');
 const BookmarkDetailView: ViewLoader = () => import('$lib/components/tabs/views/BookmarkDetailView.svelte');
 const ProjectsListView: ViewLoader = () => import('$lib/components/tabs/views/ProjectsListView.svelte');
 const ProjectDetailView: ViewLoader = () => import('$lib/components/tabs/views/ProjectDetailView.svelte');
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
 const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
+const QueryView: ViewLoader = () => import('$lib/components/tabs/views/QueryView.svelte');
 const SetupView: ViewLoader = () => import('$lib/components/tabs/views/SetupView.svelte');
 const TimelineView: ViewLoader = () => import('$lib/components/tabs/views/TimelineView.svelte');
 
@@ -113,7 +115,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'chat',
 					label: temporary ? 'Temporary Chat' : 'New Chat',
-					icon: temporary ? 'ri:ghost-line' : 'ri:chat-1-line',
+					icon: temporary ? 'mynaui:incognito' : 'mynaui:chat',
 					normalizedRoute: temporary ? '/chat?temporary=1' : '/chat',
 				};
 			}
@@ -122,7 +124,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'chat',
 				label: 'Chat',
-				icon: 'ri:chat-1-line',
+				icon: 'mynaui:chat',
 				entityId: match?.[1],
 			};
 		},
@@ -133,7 +135,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/chat';
 		},
-		icon: 'ri:chat-1-line',
+		icon: 'mynaui:chat',
 		defaultLabel: 'Chats',
 		component: ChatView,
 		detailComponent: ChatView,
@@ -148,11 +150,11 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: (_path, params) => ({
 			type: 'browser',
 			label: browserLabel(params.get('url')),
-			icon: 'ri:global-line',
+			icon: 'mynaui:globe',
 		}),
 		serialize: () => 'browser',
 		deserialize: () => '/browser',
-		icon: 'ri:global-line',
+		icon: 'mynaui:globe',
 		defaultLabel: 'Browser',
 		component: BrowserView,
 	},
@@ -162,11 +164,11 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: () => ({
 			type: 'chat-history',
 			label: 'All Chats',
-			icon: 'ri:chat-history-line',
+			icon: 'mynaui:chat-messages',
 		}),
 		serialize: () => 'chat-history',
 		deserialize: () => '/chat-history',
-		icon: 'ri:chat-history-line',
+		icon: 'mynaui:chat-messages',
 		defaultLabel: 'All Chats',
 		component: HistoryView,
 	},
@@ -182,7 +184,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'page',
 					label: 'Pages',
-					icon: 'ri:file-list-3-line',
+					icon: 'mynaui:file-text',
 				};
 			}
 			// Detail view
@@ -190,7 +192,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'page',
 				label: 'Page',
-				icon: 'ri:file-text-line',
+				icon: 'mynaui:file-text',
 				entityId: match?.[1],
 			};
 		},
@@ -201,7 +203,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/page';
 		},
-		icon: 'ri:file-list-3-line',
+		icon: 'mynaui:file-text',
 		defaultLabel: 'Pages',
 		component: PagesView,
 		detailComponent: PageDetailView,
@@ -221,11 +223,11 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: () => ({
 			type: 'wiki',
 			label: 'Wiki',
-			icon: 'ri:book-2-line',
+			icon: 'mynaui:book',
 		}),
 		serialize: () => 'wiki',
 		deserialize: () => '/wiki',
-		icon: 'ri:book-2-line',
+		icon: 'mynaui:book',
 		defaultLabel: 'Wiki',
 		component: WikiView,
 	},
@@ -240,14 +242,14 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'person',
 					label: 'People',
-					icon: 'ri:user-line',
+					icon: 'mynaui:user',
 				};
 			}
 			const match = path.match(/^\/person\/([^/]+)$/);
 			return {
 				type: 'person',
 				label: 'Person',
-				icon: 'ri:user-line',
+				icon: 'mynaui:user',
 				entityId: match?.[1],
 			};
 		},
@@ -258,7 +260,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/person';
 		},
-		icon: 'ri:user-line',
+		icon: 'mynaui:user',
 		defaultLabel: 'People',
 		component: WikiListView,
 		detailComponent: WikiDetailView,
@@ -274,14 +276,14 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'place',
 					label: 'Places',
-					icon: 'ri:map-pin-line',
+					icon: 'mynaui:map-pin',
 				};
 			}
 			const match = path.match(/^\/place\/([^/]+)$/);
 			return {
 				type: 'place',
 				label: 'Place',
-				icon: 'ri:map-pin-line',
+				icon: 'mynaui:map-pin',
 				entityId: match?.[1],
 			};
 		},
@@ -292,7 +294,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/place';
 		},
-		icon: 'ri:map-pin-line',
+		icon: 'mynaui:map-pin',
 		defaultLabel: 'Places',
 		component: WikiListView,
 		detailComponent: WikiDetailView,
@@ -308,14 +310,14 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'org',
 					label: 'Organizations',
-					icon: 'ri:building-line',
+					icon: 'mynaui:building',
 				};
 			}
 			const match = path.match(/^\/org\/([^/]+)$/);
 			return {
 				type: 'org',
 				label: 'Organization',
-				icon: 'ri:building-line',
+				icon: 'mynaui:building',
 				entityId: match?.[1],
 			};
 		},
@@ -326,7 +328,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/org';
 		},
-		icon: 'ri:building-line',
+		icon: 'mynaui:building',
 		defaultLabel: 'Organizations',
 		component: WikiListView,
 		detailComponent: WikiDetailView,
@@ -349,14 +351,32 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: () => ({
 			type: 'bookmarks',
 			label: 'Bookmarks',
-			icon: 'ri:bookmark-line',
+			icon: 'mynaui:bookmark',
 			normalizedRoute: '/bookmarks',
 		}),
 		serialize: () => 'bookmarks',
 		deserialize: () => '/bookmarks',
-		icon: 'ri:bookmark-line',
+		icon: 'mynaui:bookmark',
 		defaultLabel: 'Bookmarks',
 		component: BookmarksView,
+	},
+
+	// PASSWORDS: /passwords — the logins saved on the box, in Drive beside
+	// Bookmarks. Its own namespace, not under /storage, because nothing here
+	// is a file and Storage's search and indexing must never reach it.
+	passwords: {
+		match: (path) => path === '/passwords',
+		parse: () => ({
+			type: 'passwords',
+			label: 'Passwords',
+			icon: 'mynaui:lock-password',
+			normalizedRoute: '/passwords',
+		}),
+		serialize: () => 'passwords',
+		deserialize: () => '/passwords',
+		icon: 'mynaui:lock-password',
+		defaultLabel: 'Passwords',
+		component: PasswordsView,
 	},
 
 	// BOOKMARK DETAIL: /bookmark/{id} — singular, matching /project/{id}.
@@ -365,13 +385,13 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: (path) => ({
 			type: 'bookmark',
 			label: 'Bookmark',
-			icon: 'ri:bookmark-line',
+			icon: 'mynaui:bookmark',
 			entityId: path.match(/^\/bookmark\/(.+)$/)?.[1],
 		}),
 		serialize: (id) => (id ? `bookmark_${id}` : 'bookmark'),
 		deserialize: (serialized) =>
 			serialized.startsWith('bookmark_') ? `/bookmark/${serialized.slice(9)}` : '/bookmarks',
-		icon: 'ri:bookmark-line',
+		icon: 'mynaui:bookmark',
 		defaultLabel: 'Bookmark',
 		component: BookmarkDetailView,
 		detailComponent: BookmarkDetailView,
@@ -439,7 +459,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'day',
 					label: 'Today',
-					icon: 'ri:calendar-line',
+					icon: 'mynaui:calendar',
 					entityId: `day_${today}`,
 					normalizedRoute: `/day/day_${today}`,
 				};
@@ -449,7 +469,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'day',
 				label: dateStr,
-				icon: 'ri:calendar-line',
+				icon: 'mynaui:calendar',
 				entityId: match?.[1],
 			};
 		},
@@ -460,7 +480,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/day';
 		},
-		icon: 'ri:calendar-line',
+		icon: 'mynaui:calendar',
 		defaultLabel: 'Today',
 		component: WikiDetailView,
 		detailComponent: WikiDetailView,
@@ -478,7 +498,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'year',
 					label: String(currentYear),
-					icon: 'ri:calendar-line',
+					icon: 'mynaui:calendar',
 					entityId: `year_${currentYear}`,
 					normalizedRoute: `/year/year_${currentYear}`,
 				};
@@ -488,7 +508,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'year',
 				label: yearStr,
-				icon: 'ri:calendar-line',
+				icon: 'mynaui:calendar',
 				entityId: match?.[1],
 			};
 		},
@@ -499,7 +519,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/year';
 		},
-		icon: 'ri:calendar-line',
+		icon: 'mynaui:calendar',
 		defaultLabel: 'Year',
 		component: WikiDetailView,
 		detailComponent: WikiDetailView,
@@ -515,12 +535,12 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: (path) => ({
 			type: 'setup',
 			label: 'Setup',
-			icon: 'ri:list-check',
+			icon: 'mynaui:list-check',
 			normalizedRoute: path,
 		}),
 		serialize: (id) => (id ? `setup_${id}` : 'setup'),
 		deserialize: (serialized) => (serialized.startsWith('setup_') ? `/setup/${serialized.slice(6)}` : '/setup'),
-		icon: 'ri:list-check',
+		icon: 'mynaui:list-check',
 		defaultLabel: 'Setup',
 		component: SetupView,
 	},
@@ -535,11 +555,11 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: () => ({
 			type: 'narrative-identity',
 			label: 'Narrative Identity',
-			icon: 'ri:quill-pen-line',
+			icon: 'mynaui:pen',
 		}),
 		serialize: () => 'narrative-identity',
 		deserialize: () => '/narrative-identity',
-		icon: 'ri:quill-pen-line',
+		icon: 'mynaui:pen',
 		defaultLabel: 'Narrative Identity',
 		component: NarrativeIdentityView,
 	},
@@ -563,7 +583,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'source',
 					label: 'Sources',
-					icon: 'ri:database-2-line',
+					icon: 'mynaui:database',
 					normalizedRoute: '/sources',
 				};
 			}
@@ -573,19 +593,19 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				return {
 					type: 'source',
 					label: `Sources · ${seg[0].toUpperCase()}${seg.slice(1)}`,
-					icon: 'ri:database-2-line',
+					icon: 'mynaui:database',
 				};
 			}
 			return {
 				type: 'source',
 				label: 'Source',
-				icon: 'ri:database-2-line',
+				icon: 'mynaui:database',
 				entityId: seg,
 			};
 		},
 		serialize: (id) => (id ? id : 'sources'),
 		deserialize: (serialized) => (serialized === 'sources' ? '/sources' : `/sources/${serialized}`),
-		icon: 'ri:database-2-line',
+		icon: 'mynaui:database',
 		defaultLabel: 'Sources',
 		// No `detailComponent`. TabContent decides list-vs-detail with a generic
 		// `/^\/[a-z]+\/([^/]+)$/` on the route, which cannot tell `/sources/catalog`
@@ -645,7 +665,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'applet-view',
 				label: 'Applet',
-				icon: 'ri:layout-2-line',
+				icon: 'mynaui:layout',
 				entityId: match?.[1],
 			};
 		},
@@ -655,7 +675,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (id.startsWith('applet_')) return `/applet/${id}/view`;
 			return '/applets';
 		},
-		icon: 'ri:layout-2-line',
+		icon: 'mynaui:layout',
 		defaultLabel: 'Applet',
 		component: AppletView,
 	},
@@ -697,7 +717,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'record',
 				label: label || 'Record',
-				icon: 'ri:database-2-line',
+				icon: 'mynaui:database',
 				// entityId carries both segments so this reads as a detail view;
 				// DataView re-parses the full route anyway.
 				entityId: recordId ? `${ontology}/${recordId}` : undefined,
@@ -706,10 +726,30 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		serialize: (id) => (id ? `record_${id}` : 'record'),
 		deserialize: (serialized) =>
 			serialized.startsWith('record_') ? `/record/${serialized.slice(7)}` : '/record',
-		icon: 'ri:database-2-line',
+		icon: 'mynaui:database',
 		defaultLabel: 'Record',
 		component: DataView,
 		detailComponent: DataView,
+	},
+
+	query: {
+		// /chat/<chat>/tool/<call> — the rows one query returned, which a chat
+		// answer's figure links to. Matched before `chat`, whose own routes
+		// stop at the chat id.
+		match: (path) => /^\/chat\/[^/]+\/tool\/[^/]+$/.test(path),
+		parse: (path) => ({
+			type: 'query',
+			label: 'Query',
+			icon: 'mynaui:table',
+			entityId: path.slice('/chat/'.length),
+		}),
+		serialize: (id) => (id ? `query_${id}` : 'query'),
+		deserialize: (serialized) =>
+			serialized.startsWith('query_') ? `/chat/${serialized.slice(6)}` : '/chat',
+		icon: 'mynaui:table',
+		defaultLabel: 'Query',
+		component: QueryView,
+		detailComponent: QueryView,
 	},
 
 	// ========================================================================
@@ -724,7 +764,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'asset',
 				label: 'File',
-				icon: 'ri:file-line',
+				icon: 'mynaui:file',
 				entityId: match?.[1],
 			};
 		},
@@ -735,7 +775,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			const fileId = serialized.startsWith('asset_') ? serialized.slice(6) : serialized;
 			return fileId.startsWith('file_') ? `/drive/${fileId}` : '/drive';
 		},
-		icon: 'ri:file-line',
+		icon: 'mynaui:file',
 		defaultLabel: 'File',
 		component: AssetView,
 		detailComponent: AssetView,
@@ -764,23 +804,23 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: (path) => {
 			const sub = path.match(/^\/storage\/(streams|media|trash)$/)?.[1];
 			if (sub === 'streams') {
-				return { type: 'storage', label: 'Streams', icon: 'ri:database-2-line' };
+				return { type: 'storage', label: 'Streams', icon: 'mynaui:database' };
 			}
 			if (sub === 'media') {
-				return { type: 'storage', label: 'App Media', icon: 'ri:image-2-line' };
+				return { type: 'storage', label: 'App Media', icon: 'mynaui:image' };
 			}
 			if (sub === 'trash') {
-				return { type: 'storage', label: 'Recently deleted', icon: 'ri:delete-bin-line' };
+				return { type: 'storage', label: 'Recently deleted', icon: 'mynaui:trash' };
 			}
 			// Drive, possibly deep inside a folder: /storage/drive/Documents/2026
 			const storagePath = path.replace(/^\/storage\/drive\/?/, '');
 			if (!storagePath) {
-				return { type: 'storage', label: 'Drive', icon: 'ri:hard-drive-2-line' };
+				return { type: 'storage', label: 'Drive', icon: 'mynaui:hard-drive' };
 			}
 			return {
 				type: 'storage',
 				label: storagePath.split('/').pop() || 'File',
-				icon: 'ri:file-line',
+				icon: 'mynaui:file',
 				storagePath,
 			};
 		},
@@ -791,7 +831,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/storage';
 		},
-		icon: 'ri:hard-drive-2-line',
+		icon: 'mynaui:hard-drive',
 		defaultLabel: 'Drive',
 		component: StorageView,
 	},
@@ -805,12 +845,12 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: (path) => {
 			const storagePath = path.replace(/^\/drive\/?/, '');
 			if (!storagePath) {
-				return { type: 'drive', label: 'Drive', icon: 'ri:hard-drive-2-line' };
+				return { type: 'drive', label: 'Drive', icon: 'mynaui:hard-drive' };
 			}
 			return {
 				type: 'drive',
 				label: storagePath.split('/').pop() || 'File',
-				icon: 'ri:file-line',
+				icon: 'mynaui:file',
 				storagePath,
 			};
 		},
@@ -821,7 +861,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/storage';
 		},
-		icon: 'ri:hard-drive-2-line',
+		icon: 'mynaui:hard-drive',
 		defaultLabel: 'Drive',
 		component: StorageView,
 	},
@@ -831,11 +871,11 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: () => ({
 			type: 'trash',
 			label: 'Recently deleted',
-			icon: 'ri:delete-bin-line',
+			icon: 'mynaui:trash',
 		}),
 		serialize: () => 'trash',
 		deserialize: () => '/storage/trash',
-		icon: 'ri:delete-bin-line',
+		icon: 'mynaui:trash',
 		defaultLabel: 'Recently deleted',
 		component: StorageView,
 	},
@@ -851,11 +891,11 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		parse: () => ({
 			type: 'timeline',
 			label: 'Timeline',
-			icon: 'ri:route-line',
+			icon: 'mynaui:path',
 		}),
 		serialize: () => 'timeline',
 		deserialize: () => '/timeline',
-		icon: 'ri:route-line',
+		icon: 'mynaui:path',
 		defaultLabel: 'Timeline',
 		component: TimelineView,
 	},
@@ -874,7 +914,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			return {
 				type: 'virtues',
 				label: 'Settings',
-				icon: 'ri:settings-4-line',
+				icon: 'mynaui:cog',
 				virtuesPage: page,
 			};
 		},
@@ -885,7 +925,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			}
 			return '/virtues/you';
 		},
-		icon: 'ri:settings-4-line',
+		icon: 'mynaui:cog',
 		defaultLabel: 'Settings',
 		component: SettingsView,
 	},
@@ -931,6 +971,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'applet-view', // Applet full-page face (must come before 'applet')
 		'applet', // Applet detail page
 		'record', // /record/<ontology>/<id> — single raw record
+		'query', // /chat/<chat>/tool/<call> — must precede 'chat'
 		'virtues', // Has /virtues/* pattern
 		'storage', // /storage — Drive surface (unified bytes view)
 		'asset', // /drive/file_{id} — must precede 'drive' (which matches all /drive/*)
@@ -952,6 +993,7 @@ export function parseRoute(route: string): ParsedRoute {
 		// unreachable — this array is what routing actually walks.
 		'bookmark',
 		'bookmarks',
+		'passwords',
 		'day',
 		'year',
 		'narrative-identity',
@@ -969,7 +1011,7 @@ export function parseRoute(route: string): ParsedRoute {
 	return {
 		type: 'chat',
 		label: 'New Chat',
-		icon: 'ri:chat-1-line',
+		icon: 'mynaui:chat',
 	};
 }
 

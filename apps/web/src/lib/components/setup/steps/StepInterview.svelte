@@ -449,12 +449,12 @@
 			{#if chapters.length === 0 && ondraw}
 				<button type="button" class="setup-go" onclick={ondraw}>
 					Draw your chapters
-					<Icon icon="ri:arrow-right-line" width="16" />
+					<Icon icon="mynaui:arrow-right" width="16" />
 				</button>
 			{:else}
 				<button type="button" class="setup-go" onclick={begin}>
 					Begin the interview
-					<Icon icon="ri:arrow-right-line" width="16" />
+					<Icon icon="mynaui:arrow-right" width="16" />
 				</button>
 			{/if}
 			{#if onskip}
@@ -512,7 +512,7 @@
 		{#snippet actions()}
 			<button type="button" class="setup-go" onclick={onnext}>
 				{excerpt ? "Read “In your own words”" : "Finish setup"}
-				<Icon icon="ri:arrow-right-line" width="16" />
+				<Icon icon="mynaui:arrow-right" width="16" />
 			</button>
 		{/snippet}
 	</StepFrame>
@@ -563,7 +563,7 @@
 				<div class="row">
 					<button type="submit" class="setup-go" disabled={!answer.trim()}>
 						Answer
-						<Icon icon="ri:arrow-right-line" width="16" />
+						<Icon icon="mynaui:arrow-right" width="16" />
 					</button>
 					<button type="button" class="setup-past" onclick={() => send("I'd rather skip this one.")}>
 						Skip this question

@@ -629,7 +629,7 @@ Begin with the Abstract: the day's one event, said the way they would tell a fri
 
 Then the body: two to four sections, each one moment, in the order the moments happened. A section's `## ` heading is three to six words naming its place or its moment ("Upstairs at the Foxglove"). Everything in a section belongs to that moment; nothing from earlier or later in the day is folded in.
 
-Write each moment as a scene: where they were, who was there, what was said and done, and how it went. Give it room: a full day runs 400 to 700 words, and a moment worth keeping is worth a full paragraph or two. A text message belongs only where it carries something the moment turned on, told as part of the scene, not as a transcript of the exchange.
+Write each moment as a scene: where they were, who was there, what was said and done, and how it went as the passages show it. Give it room: a full day runs 400 to 700 words, and a moment worth keeping is worth a full paragraph or two. A text message belongs only where it carries something the moment turned on, told as part of the scene, not as a transcript of the exchange.
 
 Use what was already going on only where it changes what a moment means (a death that had been coming for days, a relationship days old), in a clause inside the scene. Most of it never appears; it is there so you understand the day.
 
@@ -648,7 +648,7 @@ End every sentence with the time of the passage it rests on in square brackets: 
 - A plan is not an event. Never join two things as cause and effect unless the passages do.
 
 HARD CONVERSATIONS
-Include them, briefly: enough to remind the person of the moment, without its contents. Say in a word or two what it was about and how it went. No body parts, procedures, ages, or third parties named inside it. Feelings someone said aloud are evidence; others are not yours to assign. Paraphrase other people; never quote them, and never take the figure from one.
+Include them, briefly: enough to remind the person of the moment, without its contents. Say in a word or two what it was about and how it went, as the passages show it. No body parts, procedures, ages, or third parties named inside it. Feelings someone said aloud are evidence; others are not yours to assign. In a hard conversation, paraphrase other people; never quote them, and never take the figure from one.
 
 Other people's private lives stay off the page unless they were the moment: someone's family, health, money, marriage or past, and drugs or drinking beyond a plain mention of a night out. The page is about this person's day, and it will be read with others nearby.
 
@@ -656,7 +656,7 @@ THE VEIL
 Wrap every name of a person or a place, and every phrase that names a hard or intimate matter, in ⟦ ⟧: "you drove ⟦Nick⟧ to ⟦the clinic⟧". Inside a link, wrap the link text: [⟦Nick⟧](href).
 
 VOICE
-Second person, past tense. Plain and warm, a friend who was there and paying attention. No verdicts on the day, no inner states nobody voiced. No dashes as punctuation. Link a person's first mention as [Name](href) from <people>; never invent a link.
+Second person, past tense. Plain and warm, a friend who was there and paying attention. No verdicts of your own on the day: how something went comes only from the passages. No inner states nobody voiced. No dashes as punctuation. Link a person's first mention as [Name](href) from <people>; never invent a link.
 
 <identity> is their own account of who they are. It shapes your judgment and never appears on the page.
 
@@ -1281,7 +1281,7 @@ fn section_for(at: &str, sections: &[(usize, (String, String))]) -> Option<usize
 
 const CHECK_PROMPT: &str = r#"You check one diary page, sentence by sentence, against the evidence each sentence cites. For each numbered item, answer whether its evidence supports it.
 
-- "supported": everything the sentence claims is in its cited evidence or in the rest of that same conversation (paraphrase is fine; the owner is "you"; people are listed below).
+- "supported": everything the sentence claims is in its cited evidence or in the rest of that same conversation (paraphrase is fine when it adds no description the evidence lacks; the owner is "you"; people are listed below).
   A sentence that puts a named person somewhere ("with Nick", "Nick came over") needs the evidence to show them taking part; a name only read aloud or mentioned in passing does not put them there. This applies to that claim alone, not to everything else the sentence says.
 - "unsupported": the sentence claims something its evidence does not contain (an invented detail, a descriptive word the evidence lacks, a relationship, a cause, a place, a person being present).
 - "wrong_person": the sentence says who said or did something, and the evidence does not show it was them. Transcripts mark every change of voice as [Speaker] with no name, so a sentence may say who spoke only when the evidence names them or they answer someone by name. A sentence that keeps it shared ("between you", "one of you") is not wrong_person. A sentence that names the owner as someone else (they are always "you") is wrong_person.

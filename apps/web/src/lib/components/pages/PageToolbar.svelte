@@ -107,7 +107,7 @@
 							<span class="toolbar-emoji">{icon}</span>
 						{/if}
 					{:else}
-						<Icon icon="ri:emotion-line" width="16" />
+						<Icon icon="mynaui:smile" width="16" />
 					{/if}
 				</button>
 			{/snippet}
@@ -126,7 +126,7 @@
 		<Popover bind:open={showCoverPicker} placement="bottom-start">
 			{#snippet trigger({ toggle })}
 				<IconButton
-					icon={coverUrl ? "ri:image-edit-line" : "ri:image-line"}
+					icon={coverUrl ? "mynaui:image" : "mynaui:image"}
 					label={coverUrl ? "Change cover" : "Add cover"}
 					expanded={showCoverPicker}
 					haspopup="dialog"
@@ -176,7 +176,7 @@
 	<div class="toolbar-group">
 		{#if onToggleReferences}
 			<IconButton
-				icon="ri:links-line"
+				icon="mynaui:link"
 				label="References"
 				pressed={referencesActive}
 				onclick={onToggleReferences}
@@ -184,7 +184,7 @@
 		{/if}
 		<Popover bind:open={showVersionHistory} placement="bottom-end">
 			{#snippet trigger({ toggle })}
-				<IconButton icon="ri:history-line" label="Version history" expanded={showVersionHistory} haspopup="dialog" onclick={toggle} />
+				<IconButton icon="mynaui:clock-circle" label="Version history" expanded={showVersionHistory} haspopup="dialog" onclick={toggle} />
 			{/snippet}
 			{#snippet children({ close })}
 				<VersionHistoryPanel {close} {pageId} {format} />
@@ -197,14 +197,14 @@
 			     IS carried — by the icon, which becomes a link once one exists, and
 			     by the label, which changes with it. -->
 			<IconButton
-				icon={isShared ? "ri:link" : "ri:share-line"}
+				icon={isShared ? "mynaui:link" : "mynaui:share"}
 				label={isShared ? "Manage share link" : "Share page"}
 				onclick={onShare}
 			/>
 		{/if}
 		<Popover bind:open={showOverflow} placement="bottom-end">
 			{#snippet trigger({ toggle })}
-				<IconButton icon="ri:more-2-fill" label="More" expanded={showOverflow} haspopup="menu" onclick={toggle} />
+				<IconButton icon="mynaui:dots-vertical" label="More" expanded={showOverflow} haspopup="menu" onclick={toggle} />
 			{/snippet}
 			{#snippet children({ close })}
 				<div class="overflow-menu">
@@ -212,7 +212,7 @@
 						<!-- As Add to project: the headings open as their own menu
 						     where this row was. -->
 						<MenuItem
-							icon="ri:list-unordered"
+							icon="mynaui:list"
 							label="Contents…"
 							onclick={(e: MouseEvent) => {
 								const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -227,7 +227,7 @@
 						<div class="overflow-divider"></div>
 					{/if}
 					<MenuItem
-						icon={copied ? "ri:check-line" : "ri:file-copy-line"}
+						icon={copied ? "mynaui:check" : "mynaui:copy"}
 						label={copied ? "Copied!" : "Copy as Markdown"}
 						onclick={() => {
 							onCopyMarkdown();
@@ -236,7 +236,7 @@
 					/>
 					{#if onPrint}
 						<MenuItem
-							icon="ri:printer-line"
+							icon="mynaui:printer"
 							label="Print"
 							onclick={() => {
 								close();
@@ -247,7 +247,7 @@
 					<!-- This popover has no submenus, so the choice opens as the
 					     shared project menu where this row was. -->
 					<MenuItem
-						icon="ri:folder-add-line"
+						icon="mynaui:folder-plus"
 						label="Add to project…"
 						onclick={(e: MouseEvent) => {
 							const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -285,7 +285,7 @@
 						</div>
 					{:else}
 						<MenuItem
-							icon="ri:delete-bin-line"
+							icon="mynaui:trash"
 							label="Delete page"
 							destructive
 							onclick={() => (showDeleteConfirm = true)}

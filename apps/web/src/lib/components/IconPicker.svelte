@@ -240,7 +240,7 @@
 				aria-label="No color"
 			>
 				{#if !activeColor}
-					<Icon icon="ri:check-line" width="14" />
+					<Icon icon="mynaui:check" width="14" />
 				{/if}
 			</button>
 			{#each PIN_COLORS as { key, label: colorLabel } (key)}
@@ -256,7 +256,7 @@
 					aria-label={colorLabel}
 				>
 					{#if activeColor === key}
-						<Icon icon="ri:check-line" width="14" />
+						<Icon icon="mynaui:check" width="14" />
 					{/if}
 				</button>
 			{/each}
@@ -276,7 +276,7 @@
 					value={isCustom ? (activeColor ?? '#6366f1') : '#6366f1'}
 					oninput={(e) => pickColor(e.currentTarget.value)}
 				/>
-				<Icon icon={isCustom ? 'ri:check-line' : 'ri:add-line'} width="14" />
+				<Icon icon={isCustom ? 'mynaui:check' : 'mynaui:plus'} width="14" />
 			</label>
 		</div>
 	{/if}
@@ -365,7 +365,7 @@
 
 	{#if showRemove && value}
 		<div class="picker-footer">
-			<MenuItem icon="ri:delete-bin-line" label="Remove icon" destructive onclick={handleRemove} />
+			<MenuItem icon="mynaui:trash" label="Remove icon" destructive onclick={handleRemove} />
 		</div>
 	{/if}
 </div>
@@ -498,7 +498,7 @@
 		background: none;
 		border: none;
 		outline: none;
-		font-size: 13px;
+		font-size: var(--chrome-label-font-size);
 		color: var(--color-foreground);
 	}
 

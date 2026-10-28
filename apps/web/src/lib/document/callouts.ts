@@ -5,9 +5,9 @@
  */
 
 export const CALLOUT_TONES = [
-	{ tone: 'note', label: 'Note', icon: 'ri:information-line' },
-	{ tone: 'tip', label: 'Tip', icon: 'ri:lightbulb-line' },
-	{ tone: 'warning', label: 'Warning', icon: 'ri:alert-line' },
+	{ tone: 'note', label: 'Note', icon: 'mynaui:info-circle' },
+	{ tone: 'tip', label: 'Tip', icon: 'mynaui:lamp' },
+	{ tone: 'warning', label: 'Warning', icon: 'mynaui:danger-triangle' },
 ] as const;
 
 export type CalloutTone = (typeof CALLOUT_TONES)[number];

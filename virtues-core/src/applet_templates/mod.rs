@@ -24,6 +24,13 @@
 
 use std::sync::{OnceLock, RwLock};
 
+mod skill;
+
+pub(crate) use skill::ALWAYS_ALLOWED_TOOLS;
+
+/// An applet folder written in the Agent Skills format. See [`skill`].
+const SKILL_FILE: &str = "SKILL.md";
+
 use crate::error::{Error, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
@@ -36,7 +43,7 @@ use sqlx::PgPool;
 /// One `[[source]]` entry in `actions/sources.toml`. Catalog tile.
 #[derive(Debug, Deserialize, Clone)]
 pub struct Source {
-    /// Stable id used as `credentials.source_id` and as `[[action]].source.id`.
+    /// Stable id used as `credentials.key` (kind `source`) and as `[[action]].source.id`.
     pub id: String,
     pub display_name: String,
     pub icon: String,
@@ -82,6 +89,10 @@ pub struct SourceLogin {
     /// more of the jar than a fixed list (Instagram).
     #[serde(default)]
     pub jar_field: Option<String>,
+    /// Other domains the sign-in sets cookies on, whose cookies the jar
+    /// includes (ChatGPT signs in through openai.com).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub domains: Vec<String>,
 }
 
 /// How a source authenticates. Matches the three auth kinds in the charter.
@@ -198,6 +209,13 @@ struct Template {
     /// `reauth_required`.
     #[serde(default)]
     needs_vault_key: bool,
+    /// Named keys this applet needs, such as `OPENAI_API_KEY`. The runner
+    /// sets each as an environment variable for the applet's runs, from the
+    /// owner's `env` secrets (`crate::secrets`), and fails a run whose key is
+    /// not set. An undeclared key is never passed. Names the box uses itself
+    /// are refused when the manifest loads (`reserved_env_name`).
+    #[serde(default)]
+    secrets: Vec<String>,
     /// Where this folder came from, when it is a copy of something else:
     /// `<origin>@<version>` — e.g. `virtues@v0.3.0` for a forked built-in, or
     /// `https://host/owner/repo@<sha>` for an edited import.
@@ -490,6 +508,19 @@ fn parse_template(manifest_path: &std::path::Path, dir: &str) -> Option<Template
         );
     }
 
+    let (kept, refused): (Vec<String>, Vec<String>) =
+        std::mem::take(&mut tmpl.secrets).into_iter().partition(|n| valid_secret_name(n));
+    if !refused.is_empty() {
+        tracing::warn!(
+            path = %manifest_path.display(),
+            names = %refused.join(", "),
+            "manifest.toml declares secrets with names an applet cannot have: they \
+             are being ignored. A name is CAPITALS_AND_UNDERSCORES and not one the \
+             box sets itself."
+        );
+    }
+    tmpl.secrets = kept;
+
     if tmpl.id_prefix.is_none() {
         // Migration 0077 rewrote the stored ids to this prefix. `manifest.toml`
         // may still pin an explicit `id_prefix`; none currently does, and one
@@ -622,9 +653,9 @@ fn load_catalog() -> ParsedTemplates {
     // Both roots, shipped first: the state root's entries override shipped
     // ones with the same `dir`, so an authored applet shadows a system applet
     // of that name and deleting it reverts to shipped.
-    let mut actions = scan_root(&applets_dir);
+    let mut actions = scan_root(&applets_dir, true);
     let shipped_count = actions.len();
-    for t in scan_root(&state_root()) {
+    for t in scan_root(&state_root(), false) {
         match actions.iter().position(|e| e.dir == t.dir) {
             Some(i) => actions[i] = t,
             None => actions.push(t),
@@ -668,9 +699,10 @@ fn load_catalog() -> ParsedTemplates {
     }
 }
 
-/// Walk one applet root and parse every manifest under it. Same rule for both
-/// roots — see the scanner notes in `load_catalog`.
-fn scan_root(root: &std::path::Path) -> Vec<Template> {
+/// Walk one applet root and parse every applet folder under it. Same rule for
+/// both roots — see the scanner notes in `load_catalog`. `shipped` is whether
+/// this is the shipped root, which decides a `SKILL.md` applet's owner.
+fn scan_root(root: &std::path::Path, shipped: bool) -> Vec<Template> {
     let mut actions: Vec<Template> = Vec::new();
     if let Ok(entries) = std::fs::read_dir(root) {
         for entry in entries.flatten() {
@@ -684,11 +716,8 @@ fn scan_root(root: &std::path::Path) -> Vec<Template> {
             };
 
             // Single action at top level.
-            let direct_manifest = path.join("manifest.toml");
-            if direct_manifest.exists() {
-                if let Some(t) = parse_template(&direct_manifest, &folder_name) {
-                    actions.push(t);
-                }
+            if let Some(parsed) = read_applet_folder(&path, &folder_name, shipped) {
+                actions.extend(parsed);
                 continue;
             }
 
@@ -706,13 +735,9 @@ fn scan_root(root: &std::path::Path) -> Vec<Template> {
                     Some(s) => s.to_string(),
                     None => continue,
                 };
-                let inner_manifest = inner_path.join("manifest.toml");
-                if !inner_manifest.exists() {
-                    continue;
-                }
                 let dir = format!("{folder_name}/{inner_name}");
-                if let Some(t) = parse_template(&inner_manifest, &dir) {
-                    actions.push(t);
+                if let Some(parsed) = read_applet_folder(&inner_path, &dir, shipped) {
+                    actions.extend(parsed);
                 }
             }
         }
@@ -721,35 +746,144 @@ fn scan_root(root: &std::path::Path) -> Vec<Template> {
     actions
 }
 
-/// Mirror an ai-owned applet's enabled flag into its manifest
-/// (`default_enabled`) so a DB rebuilt from disk restores the user's last
-/// choice. Best-effort — only chat-authored folders (`user/` namespace) are
-/// ever touched, and failures just log.
-pub fn mirror_enabled_to_manifest(applet_id: &str, enabled: bool) {
+/// Read one folder's `SKILL.md`, or its `manifest.toml` when it has no
+/// `SKILL.md`. `None` when it has neither, so the caller can treat it as a
+/// namespace; `Some(None)` when the file was refused, which is logged.
+fn read_applet_folder(path: &std::path::Path, dir: &str, shipped: bool) -> Option<Option<Template>> {
+    let skill_md = path.join(SKILL_FILE);
+    if skill_md.is_file() {
+        if path.join("manifest.toml").exists() {
+            tracing::warn!(dir, "folder has both SKILL.md and manifest.toml; reading SKILL.md");
+        }
+        let text = match std::fs::read_to_string(&skill_md) {
+            Ok(t) => t,
+            Err(e) => {
+                tracing::error!(path = %skill_md.display(), error = %e, "skipping unreadable SKILL.md");
+                return Some(None);
+            }
+        };
+        return Some(match skill::parse(&text, path, dir, shipped) {
+            Ok(t) => Some(t),
+            Err(problems) => {
+                tracing::error!(
+                    path = %skill_md.display(),
+                    problems = %problems.join(" "),
+                    "skipping SKILL.md the box refuses"
+                );
+                None
+            }
+        });
+    }
+    // TODO(2026-10-27): migrate every manifest.toml to SKILL.md (slice 4 of
+    // agents/plan/applet-shape.md), then delete this branch and parse_template.
+    let manifest = path.join("manifest.toml");
+    manifest.exists().then(|| parse_template(&manifest, dir))
+}
+
+/// Write an edit to an ai-owned applet into its manifest.
+///
+/// Reconcile's `ai` branch overwrites name, agent, schedule, condition,
+/// triggers and the manifest's config keys from the manifest, so an edit
+/// that only reached the row was undone by the next reconcile. The manifest
+/// is where the edit has to land. `enabled` goes to `default_enabled`, so a
+/// database rebuilt from disk comes back in the owner's last choice.
+///
+/// Only chat-authored folders (`user/`) are written. An id with no folder in
+/// the catalog has nothing for reconcile to revert from, so it is a no-op.
+/// The caller reloads the catalog once the row is committed.
+pub fn mirror_patch_to_manifest(
+    applet_id: &str,
+    patch: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
     let Some(dir) = dir_for_applet_id(applet_id) else {
-        return;
+        return Ok(());
     };
     if !dir.starts_with("user/") {
-        return;
+        return Ok(());
     }
-    let path = resolve_applet_dir(&dir).join("manifest.toml");
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return;
+    let folder = resolve_applet_dir(&dir);
+    if folder.join(SKILL_FILE).is_file() {
+        // Memory lives in the row only, so there is nothing to write.
+        if patch.keys().all(|k| k == "memory") {
+            return Ok(());
+        }
+        // TODO(2026-10-27): write the edit into SKILL.md once setup writes
+        // that format (slice 4 of agents/plan/applet-shape.md).
+        return Err(Error::InvalidInput(format!(
+            "{dir} is written as SKILL.md, which the app cannot edit yet. Edit the file instead."
+        )));
+    }
+    let path = folder.join("manifest.toml");
+    let text = std::fs::read_to_string(&path)
+        .map_err(|e| Error::Other(format!("could not read {}: {e}", path.display())))?;
+    let mut doc = text
+        .parse::<toml::Value>()
+        .map_err(|e| Error::Other(format!("could not parse {}: {e}", path.display())))?;
+    apply_patch_to_manifest(&mut doc, patch)?;
+    let out = toml::to_string_pretty(&doc)
+        .map_err(|e| Error::Other(format!("could not serialize {}: {e}", path.display())))?;
+    std::fs::write(&path, out)
+        .map_err(|e| Error::Other(format!("could not write {}: {e}", path.display())))
+}
+
+/// The manifest half of [`mirror_patch_to_manifest`], without the disk.
+///
+/// A null clears the key. `config` replaces only the keys the manifest
+/// already declares: a key the patch leaves out is dropped so reconcile does
+/// not put it back, and a key the manifest never had stays in the row only,
+/// where runtime keys such as `date` belong. `memory` is not here because
+/// reconcile never writes it.
+fn apply_patch_to_manifest(
+    doc: &mut toml::Value,
+    patch: &serde_json::Map<String, serde_json::Value>,
+) -> Result<()> {
+    let table = doc
+        .as_table_mut()
+        .ok_or_else(|| Error::Other("manifest is not a table".into()))?;
+    let to_toml = |key: &str, v: &serde_json::Value| {
+        toml::Value::try_from(v)
+            .map_err(|e| Error::InvalidInput(format!("{key} cannot be written to the manifest: {e}")))
     };
-    let Ok(mut doc) = text.parse::<toml::Value>() else {
-        return;
-    };
-    if let Some(table) = doc.as_table_mut() {
-        table.insert("default_enabled".into(), toml::Value::Boolean(enabled));
-        match toml::to_string_pretty(&doc) {
-            Ok(out) => {
-                if let Err(e) = std::fs::write(&path, out) {
-                    tracing::warn!(applet_id, error = %e, "enabled mirror write failed");
+    for (key, value) in patch {
+        match key.as_str() {
+            "name" | "agent" | "schedule" | "condition" | "triggers" => {
+                if key == "schedule" {
+                    // The old spelling; leaving it beside `schedule` is a
+                    // duplicate-field error on the next load.
+                    table.remove("default_cron");
+                }
+                if value.is_null() {
+                    table.remove(key);
+                } else {
+                    table.insert(key.clone(), to_toml(key, value)?);
                 }
             }
-            Err(e) => tracing::warn!(applet_id, error = %e, "enabled mirror serialize failed"),
+            "enabled" => {
+                if let Some(b) = value.as_bool() {
+                    table.insert("default_enabled".into(), toml::Value::Boolean(b));
+                }
+            }
+            "config" => {
+                let Some(new) = value.as_object() else { continue };
+                let Some(declared) = table.get_mut("config").and_then(|c| c.as_table_mut()) else {
+                    continue;
+                };
+                let keys: Vec<String> = declared.keys().cloned().collect();
+                for k in keys {
+                    match new.get(&k) {
+                        Some(v) if !v.is_null() => {
+                            declared.insert(k.clone(), to_toml(&k, v)?);
+                        }
+                        _ => {
+                            declared.remove(&k);
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
+    Ok(())
 }
 
 /// Copy a shipped applet into the state root so the owner can change it.
@@ -774,6 +908,13 @@ pub async fn fork_applet(db: &PgPool, applet_id: &str) -> Result<String> {
     if !shipped.is_dir() {
         return Err(Error::Other(format!(
             "applet {applet_id} has no shipped folder to fork"
+        )));
+    }
+    if shipped.join(SKILL_FILE).is_file() {
+        // TODO(2026-10-27): record where a fork came from on the row (slice 10
+        // of agents/plan/applet-shape.md); the stamp below writes TOML.
+        return Err(Error::Other(format!(
+            "{dir} is written as SKILL.md, which cannot be forked yet"
         )));
     }
     if template_needs_vault_key(&dir) {
@@ -809,6 +950,49 @@ pub fn declares_vault_key_need(applet_id: &str) -> bool {
         Some(dir) => template_needs_vault_key(&dir),
         None => false,
     }
+}
+
+/// The named keys the applet behind this id declares (`secrets = [...]`),
+/// already checked by [`valid_secret_name`]. Resolves fan-out ids too.
+pub fn declared_secrets(applet_id: &str) -> Vec<String> {
+    let Some(dir) = dir_for_applet_id(applet_id) else {
+        return Vec::new();
+    };
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    guard
+        .action
+        .iter()
+        .find(|t| t.dir == dir)
+        .map(|t| t.secrets.clone())
+        .unwrap_or_default()
+}
+
+/// Every declared key name, with the names of the applets that declare it,
+/// sorted. What Settings shows as a key's "used by".
+pub fn secret_declarers() -> std::collections::BTreeMap<String, Vec<String>> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    let mut out: std::collections::BTreeMap<String, Vec<String>> = std::collections::BTreeMap::new();
+    for t in &guard.action {
+        for name in &t.secrets {
+            out.entry(name.clone()).or_default().push(t.name.clone());
+        }
+    }
+    for names in out.values_mut() {
+        names.sort();
+        names.dedup();
+    }
+    out
+}
+
+/// A name an applet may declare: an environment variable name in capitals
+/// (`OPENAI_API_KEY`) that the box does not set itself. A declared
+/// `DATABASE_URL` or `PATH` would otherwise replace the box's own.
+pub fn valid_secret_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    let starts = chars.next().is_some_and(|c| c.is_ascii_uppercase());
+    starts
+        && chars.all(|c| c.is_ascii_uppercase() || c.is_ascii_digit() || c == '_')
+        && !crate::applet_runner::reserved_env_name(name)
 }
 
 /// What the folder at `dir` was forked from, if its manifest records it —
@@ -880,28 +1064,41 @@ fn stamp_forked_from(manifest: &std::path::Path, origin: &str) -> Result<()> {
         .map_err(|e| Error::Other(format!("write {}: {e}", manifest.display())))
 }
 
+/// The template that produced an applet id: the one whose `id_prefix` is the
+/// id, or one that fans out per credential or device and whose
+/// `<id_prefix>_<anchor>` it is. An exact id wins, then the longest prefix.
+///
+/// Matching the first prefix in catalog order, which is unsorted, let
+/// `applet_daily_2` resolve to `applet_daily`'s folder, so deleting one
+/// applet could remove another's folder. A template that does not fan out
+/// never claims a suffixed id, so an id whose own folder is gone resolves to
+/// nothing instead of to a neighbor.
+fn template_for_applet_id<'a>(templates: &'a [Template], applet_id: &str) -> Option<&'a Template> {
+    if let Some(exact) = templates.iter().find(|t| t.id_prefix.as_deref() == Some(applet_id)) {
+        return Some(exact);
+    }
+    templates
+        .iter()
+        .filter(|t| t.per_credential)
+        .filter_map(|t| {
+            let p = t.id_prefix.as_deref()?;
+            applet_id.strip_prefix(p)?.starts_with('_').then_some((p.len(), t))
+        })
+        .max_by_key(|(len, _)| *len)
+        .map(|(_, t)| t)
+}
+
 /// Resolve the manifest folder (relative to an applet root) that produced
-/// an action id. Matches the base id (`id_prefix`) and per-credential /
-/// per-device fan-out ids (`<id_prefix>_<anchor>`). Used by the face server
-/// to root static serving at the applet's folder.
+/// an action id, by [`template_for_applet_id`]. Used by the face server to
+/// root static serving at the applet's folder.
 pub fn dir_for_applet_id(applet_id: &str) -> Option<String> {
     let guard = catalog_lock().read().expect("catalog rwlock poisoned");
-    guard
-        .action
-        .iter()
-        .find(|t| {
-            t.id_prefix.as_deref().is_some_and(|p| {
-                applet_id == p || applet_id.strip_prefix(p).is_some_and(|r| r.starts_with('_'))
-            })
-        })
-        .map(|t| t.dir.clone())
+    template_for_applet_id(&guard.action, applet_id).map(|t| t.dir.clone())
 }
 
 /// Which ontologies a live applet instance writes, resolved from its id.
 ///
-/// The instance-id → template match is the same rule [`dir_for_applet_id`]
-/// uses: the base `id_prefix`, plus the per-credential / per-device fan-out
-/// form `<id_prefix>_<anchor>`.
+/// The instance-id → template match is [`template_for_applet_id`].
 ///
 /// This is the join that lets a stream say *why* it is empty. Freshness alone
 /// cannot: a stream whose writing applet has failed on every run for three days
@@ -909,14 +1106,7 @@ pub fn dir_for_applet_id(applet_id: &str) -> Option<String> {
 /// therefore reported as `idle`.
 pub fn ontologies_written_by_applet_id(applet_id: &str) -> Vec<String> {
     let guard = catalog_lock().read().expect("catalog rwlock poisoned");
-    guard
-        .action
-        .iter()
-        .find(|t| {
-            t.id_prefix.as_deref().is_some_and(|p| {
-                applet_id == p || applet_id.strip_prefix(p).is_some_and(|r| r.starts_with('_'))
-            })
-        })
+    template_for_applet_id(&guard.action, applet_id)
         .map(|t| t.writes.clone())
         .unwrap_or_default()
 }
@@ -1009,7 +1199,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
     // survives to resume when the credential recovers. Device revocation is
     // permanent, so the device clause still keys on revoked_at.
     const ORPHAN_PREDICATE: &str = "(credential_id IS NOT NULL \
-             AND credential_id NOT IN (SELECT id FROM credentials)) \
+             AND credential_id NOT IN (SELECT id FROM credentials WHERE kind = 'source')) \
           OR (device_id IS NOT NULL \
              AND device_id NOT IN (SELECT id FROM app_device WHERE revoked_at IS NULL))";
     let pruned = sqlx::query(&format!(
@@ -1137,7 +1327,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
                 // secret the action uses to call the provider).
                 let credentials: Vec<(String, Option<String>)> = sqlx::query_as(
                     "SELECT id, name FROM credentials
-                      WHERE source_id = $1 AND status = 'active'
+                      WHERE kind = 'source' AND key = $1 AND status = 'active'
                       ORDER BY created_at",
                 )
                 .bind(source_id)
@@ -1305,20 +1495,22 @@ async fn upsert_row(
     // Owner determines reconcile semantics:
     //
     //   system: UPSERT with overwrite of template-managed fields (name, owner,
-    //           agent, condition, triggers, credential_id, runtime, command).
-    //           Preserves user-managed runtime state
-    //           (schedule, enabled, config, memory).
+    //           agent, config, condition, triggers, credential_id, runtime,
+    //           command). Preserves user-managed runtime state (schedule,
+    //           enabled, memory) and the code's own `state`, which no branch
+    //           here writes.
     //
     //   user:   ON CONFLICT DO NOTHING. Factory defaults are seeded the first time
     //           the template is added; after that the row is fully owned by
     //           the user and reconcile is a no-op.
     //
     //   ai:     the third branch (authoring plan §E). The folder is written by
-    //           setup_applet, so COMPILED fields (name, agent, condition,
-    //           until, triggers, schedule) overwrite on reconcile — re-setup
-    //           IS the edit path and must propagate. OPERATIONAL state is
-    //           never touched: `enabled` (the gate lives there; the user
-    //           toggle mirrors back into the manifest for restore fidelity),
+    //           the applet tool's setup, so COMPILED fields (name, agent, condition,
+    //           until, triggers, schedule) overwrite on reconcile, so every
+    //           edit goes to the manifest: re-setup writes the folder, and the
+    //           PATCH path writes it through `mirror_patch_to_manifest`.
+    //           OPERATIONAL state is never touched: `enabled` (the gate lives
+    //           there; the toggle mirrors into the manifest for restore),
     //           `memory`, and non-manifest config keys — manifest config
     //           merges OVER existing config so runtime keys survive.
     let sql = if template.owner == "user" {
@@ -1468,6 +1660,24 @@ mod tests {
             vec!["not_a_key", "runtime"],
             "unknown keys must be captured so the loader can name them"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A declared key the box sets itself would replace the box's own value
+    /// in the applet's environment, so the loader drops it, and keeps the rest.
+    #[test]
+    fn declared_secrets_keep_only_names_an_applet_may_have() {
+        let dir = std::env::temp_dir().join(format!("tmpl-secrets-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("manifest.toml");
+        std::fs::write(
+            &path,
+            "name = \"Keys\"\nowner = \"user\"\nsecrets = [\"OPENAI_API_KEY\", \"DATABASE_URL\", \"VIRTUES_ENCRYPTION_KEY\", \"lower_case\", \"GITHUB_TOKEN\", \"9LIVES\"]\n",
+        )
+        .unwrap();
+
+        let t = super::parse_template(&path, "keys").expect("manifest should still load");
+        assert_eq!(t.secrets, ["OPENAI_API_KEY", "GITHUB_TOKEN"]);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1684,9 +1894,9 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         write(state.path(), "day_summary_eod", "My Summary");
         write(state.path(), "user/garden_log", "Garden Log");
 
-        let mut merged = scan_root(shipped.path());
+        let mut merged = scan_root(shipped.path(), true);
         let shipped_count = merged.len();
-        for t in scan_root(state.path()) {
+        for t in scan_root(state.path(), false) {
             match merged.iter().position(|e| e.dir == t.dir) {
                 Some(i) => merged[i] = t,
                 None => merged.push(t),
@@ -1729,8 +1939,8 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         std::fs::create_dir_all(&d).unwrap();
         std::fs::write(d.join("manifest.toml"), "name = \"W\"\nowner = \"system\"\n").unwrap();
 
-        assert_eq!(scan_root(shipped.path()).len(), 1);
-        assert!(scan_root(&shipped.path().join("nope")).is_empty());
+        assert_eq!(scan_root(shipped.path(), true).len(), 1);
+        assert!(scan_root(&shipped.path().join("nope"), true).is_empty());
     }
 
     /// Golden test: the baked templates.toml must parse cleanly with the
@@ -2075,6 +2285,42 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         );
     }
 
+    fn template(id_prefix: &str, dir: &str, per_credential: bool) -> Template {
+        let mut t: Template = toml::from_str(&format!(
+            "id_prefix = \"{id_prefix}\"\nname = \"{dir}\"\nowner = \"ai\"\nper_credential = {per_credential}"
+        ))
+        .expect("template toml");
+        t.dir = dir.to_string();
+        t
+    }
+
+    /// An applet's own folder wins over a neighbor whose id is a prefix of
+    /// its id, in either catalog order. Before, the first prefix in an
+    /// unsorted catalog won, so deleting `daily_2` could remove `daily`.
+    #[test]
+    fn an_id_resolves_to_its_own_folder_and_never_a_prefix_neighbors() {
+        let daily = template("applet_daily", "user/daily", false);
+        let daily_2 = template("applet_daily_2", "user/daily_2", false);
+        for catalog in [vec![daily.clone(), daily_2.clone()], vec![daily_2.clone(), daily.clone()]] {
+            let found = template_for_applet_id(&catalog, "applet_daily_2").map(|t| t.dir.as_str());
+            assert_eq!(found, Some("user/daily_2"));
+        }
+        // Its folder gone, the id resolves to nothing, not to `daily`.
+        assert!(template_for_applet_id(&[daily], "applet_daily_2").is_none());
+    }
+
+    /// A fan-out id still finds its template, and the longest prefix wins.
+    #[test]
+    fn a_fan_out_id_finds_the_longest_matching_template() {
+        let sync = template("applet_mail", "mail", true);
+        let sync_work = template("applet_mail_work", "mail_work", true);
+        let catalog = [sync, sync_work];
+        let dir = |id: &str| template_for_applet_id(&catalog, id).map(|t| t.dir.clone());
+        assert_eq!(dir("applet_mail_cred_1").as_deref(), Some("mail"));
+        assert_eq!(dir("applet_mail_work_cred_1").as_deref(), Some("mail_work"));
+        assert_eq!(dir("applet_mailbox"), None);
+    }
+
     /// A key the manifest adds reaches a box that seeded before it existed,
     /// and a key the row already holds is never touched.
     #[sqlx::test]
@@ -2218,7 +2464,7 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
     async fn reconcile_is_idempotent(pool: sqlx::PgPool) {
         // Seed an active iOS credential so per_credential templates fan out.
         sqlx::query(
-            "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) \
              VALUES ($1, 'ios', 'test ios', 'active', 'x')",
         )
         .bind("cred_test_ios")
@@ -2270,7 +2516,7 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
             let pool = pool.clone();
             async move {
                 sqlx::query(
-                    "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+                    "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) \
                      VALUES ($1, 'plaid', $2, 'active', 'x')",
                 )
                 .bind(id)
@@ -2314,6 +2560,121 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
             names.iter().any(|n| n.ends_with("— Brex"))
                 && names.iter().any(|n| n.ends_with("— SoFi")),
             "each row should name its institution: {names:?}"
+        );
+    }
+
+    /// A folder holding only `SKILL.md` is read by the catalog scan and
+    /// reconciles into a row with its wiring.
+    #[sqlx::test]
+    async fn a_folder_with_only_skill_md_reconciles_into_a_row(pool: sqlx::PgPool) {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("weekly-review");
+        std::fs::create_dir_all(&folder).unwrap();
+        std::fs::write(
+            folder.join("SKILL.md"),
+            "---\nname: weekly-review\ndescription: Looks back over your week.\n\
+             allowed-tools: sql_query create_page\nmetadata:\n  trigger: every sunday at 18:00\n  \
+             limit: $1 per run\n---\nWrite a short review of the seven days before today.\n",
+        )
+        .unwrap();
+        // A sibling the box refuses is skipped, and does not take the scan down.
+        let bad = root.path().join("broken");
+        std::fs::create_dir_all(&bad).unwrap();
+        std::fs::write(bad.join("SKILL.md"), "---\nname: other\n---\n").unwrap();
+
+        let found = scan_root(root.path(), false);
+        assert_eq!(found.len(), 1, "only the valid folder loads");
+        let t = &found[0];
+        upsert_row(&pool, t, t.id_prefix.as_deref().unwrap(), None, None, None)
+            .await
+            .expect("upsert");
+
+        let (name, owner, schedule, agent, triggers, config): (
+            String,
+            String,
+            Option<String>,
+            Option<String>,
+            serde_json::Value,
+            serde_json::Value,
+        ) = sqlx::query_as(
+            "SELECT name, owner, schedule, agent, triggers, config FROM app_applets \
+             WHERE id = 'applet_weekly_review'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("the row exists");
+        assert_eq!(name, "Weekly review");
+        assert_eq!(owner, "user");
+        assert_eq!(schedule.as_deref(), Some("0 0 18 * * 0"));
+        assert!(agent.unwrap().starts_with("Write a short review"));
+        assert_eq!(triggers, serde_json::json!(["manual", "message", "tool", "cron"]));
+        assert_eq!(config["limits"]["max_llm_cost"], 1.0);
+        assert_eq!(config["allowed_tools"], serde_json::json!(["sql_query", "create_page"]));
+    }
+
+    /// A chat-made applet that is retimed keeps its new schedule through a
+    /// reconcile, and so does the rest of the edit.
+    ///
+    /// Reconcile's `ai` branch rewrites name, agent, schedule, condition,
+    /// triggers and the manifest's config keys from the manifest. The edit
+    /// path wrote only the row, so the next boot or Reconcile put the old
+    /// values back without a word.
+    ///
+    /// Drives the row through `update_applet` and the folder through
+    /// `apply_patch_to_manifest` on a temp copy, because the catalog that
+    /// resolves an id to its folder is global to the test process.
+    #[sqlx::test]
+    async fn a_retimed_applet_survives_a_reconcile(pool: sqlx::PgPool) {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("manifest.toml");
+        std::fs::write(
+            &path,
+            "name = \"Retime probe\"\nowner = \"ai\"\ntriggers = [\"cron\", \"manual\"]\n\
+             default_cron = \"0 0 7 * * *\"\nagent = \"Say good morning.\"\n\
+             [config]\nchat_id = \"chat_a\"\nnote = \"keep\"\n",
+        )
+        .unwrap();
+        let id = "applet_user__retime_probe";
+        let reconcile = |pool: sqlx::PgPool| {
+            let path = path.clone();
+            async move {
+                let t = parse_template(&path, "user/retime_probe").expect("manifest loads");
+                upsert_row(&pool, &t, id, None, None, None).await.expect("upsert");
+            }
+        };
+        reconcile(pool.clone()).await;
+
+        let patch = serde_json::json!({
+            "schedule": "0 30 9 * * *",
+            "agent": "Say good evening.",
+            "config": { "chat_id": "chat_b", "date": "2026-01-02" },
+        });
+        crate::scheduler::applets::update_applet(&pool, id, &patch)
+            .await
+            .expect("update");
+        let mut doc: toml::Value = std::fs::read_to_string(&path).unwrap().parse().unwrap();
+        apply_patch_to_manifest(&mut doc, patch.as_object().unwrap()).unwrap();
+        std::fs::write(&path, toml::to_string_pretty(&doc).unwrap()).unwrap();
+
+        reconcile(pool.clone()).await;
+
+        let (schedule, agent, config): (Option<String>, Option<String>, serde_json::Value) =
+            sqlx::query_as("SELECT schedule, agent, config FROM app_applets WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(schedule.as_deref(), Some("0 30 9 * * *"), "the new schedule must survive");
+        assert_eq!(agent.as_deref(), Some("Say good evening."));
+        assert_eq!(config["chat_id"], "chat_b", "a manifest config key takes the edit");
+        assert!(config.get("note").is_none(), "a manifest key the edit dropped stays dropped");
+        assert_eq!(config["date"], "2026-01-02", "a runtime key stays in the row");
+
+        let reparsed = parse_template(&path, "user/retime_probe").unwrap();
+        assert_eq!(reparsed.schedule.as_deref(), Some("0 30 9 * * *"));
+        assert!(
+            !std::fs::read_to_string(&path).unwrap().contains("default_cron"),
+            "the old spelling must go, or the manifest has the field twice"
         );
     }
 }

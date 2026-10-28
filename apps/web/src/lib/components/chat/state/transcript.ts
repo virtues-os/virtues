@@ -76,12 +76,6 @@ export interface SplitTurn {
 	reasoning: string;
 	/** Text runs that came before the reply: the model saying what it was about to do. */
 	narration: string[];
-	/**
-	 * The newest narration run, if the call right after it is the newest
-	 * call — the line that introduced what is in flight. Empty when the
-	 * model has since made a call without saying anything.
-	 */
-	intent: string;
 	/** Index of the first part that belongs in the body; text before it is narration. */
 	bodyFromIndex: number;
 	/** Whether the thinking block has anything to show. */
@@ -94,8 +88,8 @@ export interface SplitTurn {
  * A turn is several runs of text with tool calls between them. A run with a
  * tool call AFTER it was the model saying what it was about to do; the run
  * with nothing after it is the reply. Only the reply belongs in the
- * transcript — the rest is working-out and goes to the thinking block,
- * which is where its status label comes from. "Has a tool after it" rather
+ * transcript — the rest is working-out and goes to the thinking block's
+ * fold. "Has a tool after it" rather
  * than "is not the last one" because it has to hold mid-turn too: the line
  * the model just wrote is its answer until a tool starts, and at that moment
  * it becomes narration and moves. A message stored before `parts` carried
@@ -107,7 +101,7 @@ export interface SplitTurn {
  * blank message with the words hidden in a collapsed block. So once the turn
  * is over, the last thing it said stands as the reply. While it is still
  * streaming it does not: there is no reply yet, and the line the model wrote
- * is already showing as the status label.
+ * is working-out until the turn ends.
  *
  * A `show` call is not working-out: it is part of the reply, drawn where it
  * was called, so the words before it are the reply's opening and it never
@@ -134,14 +128,10 @@ export function splitTurn(parts: any[], isStreaming: boolean): SplitTurn {
 		.map((p, i) => i)
 		.filter((i) => isText(parts[i]) && i < bodyFromIndex);
 	const narration = narrationAt.map((i) => parts[i].text.trim());
-	const lastSaid = narrationAt.at(-1) ?? -1;
-	const callsSince = parts.filter((p, i) => i > lastSaid && isWork(p)).length;
-	const intent = lastSaid >= 0 && callsSince === 1 ? narration[narration.length - 1] : "";
 	return {
 		toolParts,
 		reasoning,
 		narration,
-		intent,
 		bodyFromIndex,
 		hasThinkingContent: !!reasoning || toolParts.length > 0 || narration.length > 0,
 	};

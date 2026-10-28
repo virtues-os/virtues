@@ -252,7 +252,7 @@
 {#snippet computerCard()}
 	<article class="card" class:paired={macOn} class:here={here === "mac" || here === "computer"}>
 		<div class="card-head">
-			<span class="glyph" aria-hidden="true"><Icon icon="ri:macbook-line" width="22" /></span>
+			<span class="glyph" aria-hidden="true"><Icon icon="mynaui:desktop" width="22" /></span>
 			<div class="card-title">
 				<h2>{here === "mac" ? "This Mac" : here === "computer" ? thisComputerLabel[0].toUpperCase() + thisComputerLabel.slice(1) : "Mac"}</h2>
 				{#if here !== "computer"}<p>Messages, the apps you use, and the pages you read.</p>{/if}
@@ -270,7 +270,7 @@
 					</button>
 					<p class="hint">Then Full Disk Access, which Messages and Safari history need, and Accessibility, which is optional.</p>
 				{:else if macReady(mac)}
-					<p class="done-line"><Icon icon="ri:check-line" width="15" /> On</p>
+					<p class="done-line"><Icon icon="mynaui:check" width="15" /> On</p>
 				{/if}
 			</div>
 		{:else if here === "computer"}
@@ -282,7 +282,7 @@
 			{/if}
 			<div class="card-act">
 				{#if setup.mac}
-					<p class="done-line"><Icon icon="ri:check-line" width="15" /> Paired</p>
+					<p class="done-line"><Icon icon="mynaui:check" width="15" /> Paired</p>
 				{:else}
 					<button
 						type="button"
@@ -301,7 +301,7 @@
 {#snippet phoneCard()}
 	<article class="card" class:paired={phoneOn} class:here={phoneFirst}>
 		<div class="card-head">
-			<span class="glyph" aria-hidden="true"><Icon icon="ri:smartphone-line" width="22" /></span>
+			<span class="glyph" aria-hidden="true"><Icon icon="mynaui:mobile" width="22" /></span>
 			<div class="card-title">
 				<h2>{here === "iphone" ? `This ${phoneName}` : here === "phone" ? "This phone" : "iPhone"}</h2>
 				<p>Where you go, how you sleep, and what the microphone hears.</p>
@@ -346,7 +346,7 @@
 							Turn on the microphone
 						</button>
 					{:else if !refused.length}
-						<p class="done-line"><Icon icon="ri:check-line" width="15" /> On</p>
+						<p class="done-line"><Icon icon="mynaui:check" width="15" /> On</p>
 					{/if}
 					{#if health === "requested" && !healthArriving}
 						<p class="hint">Health readings arrive within a few minutes. If none do, allow them in the Health app, under Apps.</p>
@@ -364,7 +364,7 @@
 			{#if setup.iphone}{@render badges(setup.phone)}{@render payoff(setup.arrived("phone"))}{/if}
 			<div class="card-act">
 				{#if setup.iphone}
-					<p class="done-line"><Icon icon="ri:check-line" width="15" /> Paired</p>
+					<p class="done-line"><Icon icon="mynaui:check" width="15" /> Paired</p>
 					{#if phoneSilent}
 						<p class="hint">Nothing has arrived yet. Open Virtues on your iPhone and turn on Location and Health there.</p>
 					{/if}
@@ -407,7 +407,7 @@
 		{#if anything}
 			<button type="button" class="setup-go" disabled={busy} onclick={moveOn}>
 				{intoLabel(setup.upNext("connections"))}
-				<Icon icon="ri:arrow-right-line" width="16" />
+				<Icon icon="mynaui:arrow-right" width="16" />
 			</button>
 		{:else if macHalfway}
 			<button type="button" class="setup-past" disabled={busy} onclick={moveOn}>Go on without Messages and Safari history</button>

@@ -16,6 +16,3 @@ export { default as ErrorState } from "./components/ErrorState.svelte"
 export { default as SudoModal } from "./components/SudoModal.svelte"
 export { default as IconButton } from "./components/IconButton.svelte"
 export { default as TextAction } from "./components/TextAction.svelte"
-
-// Citation components
-export { InlineCitation, CitationTooltip, CitationPanel, SourcesFooter } from "./components/citations"

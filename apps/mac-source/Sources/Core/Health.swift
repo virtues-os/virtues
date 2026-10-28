@@ -37,6 +37,13 @@ struct CollectorHealth: Codable {
     var safariLibrary: Bool?
     /// Can the daemon observe window/focus state?
     var accessibility: Bool
+    /// Can the daemon record the other side of a call (System Audio
+    /// Recording)? nil when not asked yet or not knowable, and from a
+    /// collector older than this field.
+    var systemAudio: Bool?
+    /// Can the daemon record the owner's side of a call? nil when not asked
+    /// yet, and from a collector older than this field.
+    var microphone: Bool?
     /// When the daemon last evaluated the above.
     var updatedAt: Date
 
@@ -60,6 +67,8 @@ struct CollectorHealth: Codable {
         if !fullDiskAccess { denied.append("full_disk_access") }
         if safariLibrary == false { denied.append("safari_library") }
         if !accessibility { denied.append("accessibility") }
+        if systemAudio == false { denied.append("system_audio") }
+        if microphone == false { denied.append("microphone") }
         return denied
     }
 
@@ -72,6 +81,8 @@ struct CollectorHealth: Codable {
             fullDiskAccess: MessageMonitor.canReadMessagesDB(),
             safariLibrary: canReadSafariLibrary(),
             accessibility: AXIsProcessTrusted(),
+            systemAudio: CallAudioPermission.systemAudio,
+            microphone: CallAudioPermission.microphone,
             updatedAt: Date()
         )
     }

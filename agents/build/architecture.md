@@ -78,12 +78,24 @@ reaches the heavy phase:
 running core binary in dev), else it is left for `PATH`. Input
 (`config`, decrypted `credentials`, `payload`) goes on stdin; the environment
 is cleared and rebuilt from `ENV_PASSTHROUGH`, which carries service
-endpoints and paths, never secrets. An applet whose folder does not resolve
-under the shipped root runs jailed under `systemd-run` (`NoNewPrivileges`,
-read-only system, memory and time ceilings); in a Linux release build a
-missing `systemd-run` refuses the run rather than running it unjailed. The
-jail limits blast radius but is not an authority boundary; the comment on
-`build_command` explains why.
+endpoints and paths, never secrets. That is for shipped code, which runs
+directly as the box user.
+
+An applet whose folder does not resolve under the shipped root runs in the
+sandbox (`sandbox`, `applet_runner/sandboxed.rs`): a transient `systemd-run`
+unit with a throwaway user, no network and the box's data hidden. It sees
+its folder read-only at `/skill` (its working directory), its own lake
+folder at `/lake` (indexed into `lake_objects` after each run, and refused
+while over 2 GB), the whole lake read-only at `/data/lake` only when
+`allowed-tools` lists `lake`, and the Postgres socket with `DATABASE_URL`
+logged in as `virtues_applet_writer`. Its credentials are a file,
+`$CREDENTIALS_DIRECTORY/credentials.json`, and stdin carries `"credentials":
+null`. It has no network unless its `allowed-tools` asks for hosts with
+`net(host)` and the owner allowed them on the applet's page
+(`app_applets.net_hosts`); then the run gets an egress proxy (`egress`) that
+reaches only those hosts, and each request is recorded in
+`app_applet_run_requests`. In a Linux release build a missing `systemd-run`
+refuses the run rather than running it unsandboxed.
 
 **Faces** are served by `server/faces.rs` into a `sandbox="allow-scripts"`
 iframe with an opaque origin, and every file carries a CSP `sandbox
@@ -107,6 +119,6 @@ dies with core.
 |---|---|
 | Manifest schema | [`applets/MANIFEST_SCHEMA.json`](../../applets/MANIFEST_SCHEMA.json) |
 | Catalog, roots, reconcile | [`virtues-core/src/applet_templates/mod.rs`](../../virtues-core/src/applet_templates/mod.rs) |
-| Runner, jail, env | [`virtues-core/src/applet_runner/mod.rs`](../../virtues-core/src/applet_runner/mod.rs) |
+| Runner, sandbox, env | [`virtues-core/src/applet_runner/mod.rs`](../../virtues-core/src/applet_runner/mod.rs) |
 | Faces | [`virtues-core/src/server/faces.rs`](../../virtues-core/src/server/faces.rs) |
 | Applets UI | [`apps/web/src/lib/components/applets/`](../../apps/web/src/lib/components/applets/) |

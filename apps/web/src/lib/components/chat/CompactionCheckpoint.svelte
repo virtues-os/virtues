@@ -50,7 +50,7 @@
 <div class="checkpoint-card">
 	<button class="checkpoint-header" onclick={toggleExpanded} type="button">
 		<div class="header-left">
-			<Icon icon="ri:bookmark-3-line" width="16" />
+			<Icon icon="mynaui:bookmark" width="16" />
 			<span class="checkpoint-title">Conversation checkpoint</span>
 			<span class="checkpoint-meta">v{version}</span>
 		</div>
@@ -63,7 +63,7 @@
 				{/if}
 			</span>
 			<Icon
-				icon={expanded ? 'ri:arrow-up-s-line' : 'ri:arrow-down-s-line'}
+				icon={expanded ? 'mynaui:chevron-up' : 'mynaui:chevron-down'}
 				width="18"
 			/>
 		</div>

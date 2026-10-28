@@ -44,6 +44,11 @@ pub struct AppletInput {
     /// LLM tool args for `tool`, `None` for `cron`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub payload: Option<serde_json::Value>,
+
+    /// What started this run: `cron`, `manual`, `tool`, `webhook`. A runner
+    /// older than this field sends none, which reads as a scheduled run.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trigger: Option<String>,
 }
 
 impl AppletInput {
@@ -52,6 +57,7 @@ impl AppletInput {
             config,
             credentials: None,
             payload: None,
+            trigger: None,
         }
     }
 

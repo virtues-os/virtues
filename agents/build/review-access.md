@@ -235,7 +235,7 @@ run locally, CPU-only, and slowness is acceptable.
   review-code row live on its disk, and its fixed address keeps DNS valid.
 - **Moving it** to another machine: install the same version, then carry the
   database dump and `/var/lib/virtues/virtues.env` unchanged. The box's iroh
-  identity is a row in `box_secrets` sealed with `VIRTUES_ENCRYPTION_KEY`, so
+  identity is a `kind = 'box'` row in `credentials` sealed with `VIRTUES_ENCRYPTION_KEY`, so
   the two together keep the reviewer's pairing; the `virtues-NNNN` name on
   `/api/box/identity` comes from `/etc/machine-id` and changes with the
   machine, which nothing pairs against. Copy Caddy's certificate directory

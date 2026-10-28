@@ -80,7 +80,7 @@
 <div class="csv-pane">
 	{#if capNotes.length > 0}
 		<div class="csv-banner">
-			<Icon icon="ri:scissors-cut-line" width="13" />
+			<Icon icon="mynaui:scissors" width="13" />
 			Large file — showing the {capNotes.join(", ")}. Download for the full contents.
 		</div>
 	{/if}
@@ -91,7 +91,7 @@
 			entityType="csv-file"
 			{loading}
 			{error}
-			emptyIcon="ri:table-line"
+			emptyIcon="mynaui:table"
 			emptyMessage="No rows"
 			searchPlaceholder="Filter rows..."
 			pageSize={50}

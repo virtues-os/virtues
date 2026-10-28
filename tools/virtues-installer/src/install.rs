@@ -641,8 +641,8 @@ WantedBy=multi-user.target
 /// target distro; no `locales` package or locale-gen needed).
 ///
 /// This is an install step, not a render-time fallback, on purpose: the
-/// brand mark (`∴`), the half-block QR in the setup handoff, and the
-/// box-drawing rules are all multibyte UTF-8, and a `LANG=C` minimal image
+/// brand mark (`∴`) and the box-drawing rules in the setup handoff are
+/// multibyte UTF-8, and a `LANG=C` minimal image
 /// (or a tmux/screen started under one) renders them as diamonds/mojibake
 /// at the worst possible moment — onboarding. Provisioning the locale once
 /// keeps every render path single-path. (A terminal that still mangles
@@ -687,7 +687,7 @@ pub async fn ensure_utf8_locale() -> Result<()> {
 
     // Make THIS run consistent too: the vars survive the exec into
     // `virtues init` (sudo's default env_keep preserves LANG/LC_*), so the
-    // very first handoff/QR already renders under a UTF-8 locale. LC_ALL too:
+    // very first handoff already renders under a UTF-8 locale. LC_ALL too:
     // a forwarded-but-ungenerated LC_ALL would otherwise override LANG.
     std::env::set_var("LANG", "C.UTF-8");
     std::env::set_var("LC_ALL", "C.UTF-8");
@@ -810,7 +810,7 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
     // `create_dir_all` under it as `virtues`, and when nothing created it the
     // failure was a bare `mkdir failed: Permission denied` with no indication
     // of which directory or why.
-    for sub in &["lake", "models", "secrets", "applets"] {
+    for sub in &["lake", "models", "applets"] {
         fs::create_dir_all(cfg.data_dir.join(sub))
             .with_context(|| format!("creating {}/{sub}", cfg.data_dir.display()))?;
     }
@@ -831,7 +831,7 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
     // confusing error about a role.
     //
     // `-prune` rather than a chown of each sibling: subdirectories here are not
-    // a fixed list (lake, models, secrets, applets, journal, backups, upgrade
+    // a fixed list (lake, models, applets, journal, backups, upgrade
     // staging, and whatever comes next), and enumerating them means the next
     // one added is silently left with root ownership.
     let mut cmd = Command::new("find");
@@ -849,9 +849,6 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
     ]);
     run_step("chown data dir (not the Postgres cluster)", cmd).await?;
 
-    let secrets = cfg.data_dir.join("secrets");
-    fs::set_permissions(&secrets, fs::Permissions::from_mode(0o700))
-        .with_context(|| format!("chmod 0700 {}", secrets.display()))?;
     ui::ok(&format!("Data dir ready ({})", cfg.data_dir.display()));
 
     // Passwordless sudo for the owner's admin shell. `virtues` is a system

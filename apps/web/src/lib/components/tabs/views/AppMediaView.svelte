@@ -50,7 +50,7 @@
 		/>
 	{:else if files.length === 0}
 		<EmptyState
-			icon="ri:image-2-line"
+			icon="mynaui:image"
 			title="No app media yet"
 			message="Your server keeps the images the app generates, and the ones you paste into pages and chats."
 			class="h-full"
@@ -64,7 +64,7 @@
 				<span class="text-xs text-foreground-muted">{formatBytes(totalBytes)}</span>
 			</div>
 			<div class="flex items-center gap-1.5 text-xs text-foreground-muted">
-				<Icon icon="ri:lock-2-line" />
+				<Icon icon="mynaui:lock" />
 				Read-only - used by the app
 			</div>
 		</div>
@@ -81,7 +81,7 @@
 								class="h-full w-full object-cover"
 							/>
 						{:else}
-							<Icon icon="ri:file-line" width="22" class="text-foreground-muted" />
+							<Icon icon="mynaui:file" width="22" class="text-foreground-muted" />
 						{/if}
 					</div>
 					<div class="px-2.5 py-2">

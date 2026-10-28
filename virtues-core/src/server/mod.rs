@@ -145,6 +145,9 @@ async fn preflight(client: &Virtues) {
     if let Err(e) = faces::ensure_applet_db_grants(pool).await {
         tracing::warn!("face reader grants failed: {e}");
     }
+    // Their logins, where this process may set them (dev, CI). On a box the
+    // root repair `db-logins` does it on upgrade.
+    crate::database::restricted::ensure_logins(pool).await;
 
     // Eager identity bringup: ensure the loopback console device exists so the
     // box's own browser is authenticated. (The box's TLS identity is its own
@@ -693,7 +696,11 @@ fn public_routes() -> Router<AppState> {
 fn protected_routes(state: &AppState) -> Router<AppState> {
     Router::new()
         .merge(api::applets::routes())
+        .merge(api::connections::routes())
         .merge(api::console::routes())
+        // The box as an MCP server, for the owner's own agents.
+        // agents/plan/mcp-plan.md
+        .merge(api::mcp::routes(state))
         .merge(api::settings::routes())
         .merge(api::wiki::routes())
         .merge(api::chat::routes())

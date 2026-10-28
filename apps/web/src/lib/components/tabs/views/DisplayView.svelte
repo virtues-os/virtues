@@ -252,7 +252,7 @@
 				     but it says so rather than implying hardware that isn't
 				     there. -->
 				<p class="notice">
-					<Icon icon="ri:information-line" width="14" />
+					<Icon icon="mynaui:info-circle" width="14" />
 					No screen is attached to this server. These settings keep; a screen
 					uses them when one arrives.
 				</p>
@@ -265,7 +265,7 @@
 						<Button
 							variant="secondary"
 							size="sm"
-							icon="ri:restart-line"
+							icon="mynaui:refresh-alt"
 							loading={restarting}
 							onclick={restart}>Restart the screen</Button
 						>

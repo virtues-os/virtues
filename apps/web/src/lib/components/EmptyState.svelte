@@ -4,7 +4,7 @@
 
 	/** A pane with nothing in it yet. The shell is [StateBlock](StateBlock.svelte). */
 	let {
-		icon = "ri:inbox-line",
+		icon = "mynaui:inbox",
 		title,
 		message,
 		class: className = "",

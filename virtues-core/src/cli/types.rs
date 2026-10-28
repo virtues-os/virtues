@@ -67,6 +67,8 @@ pub const DATA_VERBS: &[&str] = &[
     "pages",
     "agent-key",
     "agent-exec",
+    // Its stdout is the MCP stream; the floor keeps stderr quiet too.
+    "mcp",
 ];
 
 #[derive(Parser)]
@@ -152,7 +154,7 @@ pub enum AppletCmd {
     /// daily spend limit gets `max_llm_cost_per_day = 1.00`. Needs the virtues
     /// server running on this machine.
     Put {
-        /// The applet folder, or `-` for `setup_applet`'s JSON on stdin.
+        /// The applet folder, or `-` for applet setup's JSON on stdin.
         path: String,
         /// Leave it turned off.
         #[arg(long)]
@@ -186,7 +188,7 @@ pub enum AppletCmd {
     /// The same check chat runs before it creates an applet: cron shape, SQL
     /// conditions EXPLAINed, schema DDL dry-run and drift, table names in the
     /// prompt, limit keys. Takes an applet folder (`manifest.toml`,
-    /// `face/index.html`, `schema/NNNN_*.sql`) or `-` for `setup_applet`'s
+    /// `face/index.html`, `schema/NNNN_*.sql`) or `-` for applet setup's
     /// JSON arguments on stdin. Exits 1 when there are findings.
     Check {
         /// The applet folder, or `-` for JSON on stdin.
@@ -789,6 +791,14 @@ pub enum Commands {
         #[command(subcommand)]
         cmd: AgentKeyCmd,
     },
+
+    /// Serve this box's MCP tools on stdio, for an AI agent.
+    ///
+    /// Each message is relayed to the server's `/api/mcp` on this machine.
+    /// An agent elsewhere reaches it over SSH with an agent key, for example
+    /// `ssh virtues-agent@<box> mcp` as its MCP command. Needs the virtues
+    /// server running here.
+    Mcp,
 
     /// The forced command behind an agent key. sshd runs it; never by hand.
     #[command(hide = true)]

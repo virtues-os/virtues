@@ -117,17 +117,17 @@
 	});
 
 	const GLYPHS: Record<string, string> = {
-		open: 'ri:global-line',
-		snapshot: 'ri:file-text-line',
-		click: 'ri:cursor-line',
-		type: 'ri:keyboard-line',
-		press: 'ri:corner-down-left-line',
-		scroll: 'ri:arrow-up-down-line',
-		screenshot: 'ri:eye-line',
-		handoff: 'ri:hand'
+		open: 'mynaui:globe',
+		snapshot: 'mynaui:file-text',
+		click: 'mynaui:mouse-pointer',
+		type: 'mynaui:keyboard',
+		press: 'mynaui:corner-down-left',
+		scroll: 'mynaui:arrow-up-down',
+		screenshot: 'mynaui:eye',
+		handoff: 'mynaui:hand'
 	};
 	function glyph(op: string | undefined) {
-		return GLYPHS[op ?? ''] ?? 'ri:checkbox-blank-circle-line';
+		return GLYPHS[op ?? ''] ?? 'mynaui:circle';
 	}
 
 	// Minutes tick over without a new step.
@@ -247,14 +247,14 @@
 	<div class="toolbar">
 		<div class="nav">
 			<button class="tool" title="Back" aria-label="Back" onclick={() => void browserPaneGo('back')} disabled={!available}>
-				<Icon icon="ri:arrow-left-line" width="16" />
+				<Icon icon="mynaui:arrow-left" width="16" />
 			</button>
 			<button class="tool" title="Forward" aria-label="Forward" onclick={() => void browserPaneGo('forward')} disabled={!available}>
-				<Icon icon="ri:arrow-right-line" width="16" />
+				<Icon icon="mynaui:arrow-right" width="16" />
 			</button>
 			<span class="divider" aria-hidden="true"></span>
 			<button class="tool" title="Reload" aria-label="Reload" onclick={() => void browserPaneGo('reload')} disabled={!available}>
-				<Icon icon="ri:refresh-line" width="16" />
+				<Icon icon="mynaui:refresh" width="16" />
 			</button>
 		</div>
 		<input
@@ -288,7 +288,7 @@
 			onclick={() => void openExternal(pageUrl)}
 			disabled={!available || !pageUrl}
 		>
-			<Icon icon="ri:external-link-line" width="16" />
+			<Icon icon="mynaui:external-link" width="16" />
 		</button>
 		{#if browserAgent.steps.length > 0}
 			<button
@@ -299,21 +299,21 @@
 				aria-pressed={showSteps}
 				onclick={toggleSteps}
 			>
-				<Icon icon="ri:history-line" width="16" />
+				<Icon icon="mynaui:clock-circle" width="16" />
 			</button>
 		{/if}
 	</div>
 
 	{#if browserAgent.handoff}
 		<div class="agent-bar handoff" role="status">
-			<Icon icon="ri:hand" width="16" />
+			<Icon icon="mynaui:hand" width="16" />
 			<span class="say"><strong>Your turn.</strong> {browserAgent.handoff}</span>
 			<button class="bar-btn" onclick={() => void browserPaneAgent('decline')}>I can't</button>
 			<button class="bar-btn primary" onclick={() => void browserPaneAgent('done')}>Done</button>
 		</div>
 	{:else if browserAgent.paused}
 		<div class="agent-bar paused" role="status">
-			<Icon icon="ri:user-line" width="16" />
+			<Icon icon="mynaui:user" width="16" />
 			<span class="say">You have control, so your assistant stopped.</span>
 			<button class="bar-btn primary" onclick={() => void browserPaneAgent('resume')}>Hand back</button>
 		</div>
@@ -356,7 +356,7 @@
 						{#if step.ok && step.thumb}
 							<img src={step.thumb} alt="" />
 						{:else}
-							<span class="glyph"><Icon icon={step.ok ? glyph(step.op) : 'ri:error-warning-line'} width="13" /></span>
+							<span class="glyph"><Icon icon={step.ok ? glyph(step.op) : 'mynaui:danger-circle'} width="13" /></span>
 						{/if}
 						<span class="what">{step.what}</span>
 						{#if times > 1}<span class="times">×{times}</span>{/if}

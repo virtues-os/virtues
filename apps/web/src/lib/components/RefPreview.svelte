@@ -4,7 +4,8 @@
 	// of any ref pill. The body is the shared RefCard (per-type content); this
 	// component owns only the floating shell, positioning, and actions. Portalled
 	// to <body> and fixed-positioned off the anchor rect so it escapes overflow /
-	// clipping in chat + editor alike.
+	// clipping in chat + editor alike. A link to a record has no hover card: a
+	// click opens its RecordCard.
 	import Icon from "$lib/components/Icon.svelte";
 	import RefCard from "$lib/components/RefCard.svelte";
 
@@ -54,9 +55,13 @@
 		pos = { left, top: Math.max(8, Math.min(top, vh - c.height - 8)), placement: above ? "above" : "below" };
 	}
 
+	// Placed when it opens, and again when its body changes size (a summary
+	// that arrives after the card opens).
 	$effect(() => {
-		// Re-run once the card (and any async summary) changes measurable size.
-		reposition();
+		if (!card) return;
+		const ro = new ResizeObserver(() => reposition());
+		ro.observe(card);
+		return () => ro.disconnect();
 	});
 </script>
 
@@ -75,11 +80,11 @@
 
 	<div class="ref-preview-actions">
 		<button class="ref-preview-open" onclick={onOpen}>
-			<Icon icon="ri:arrow-right-up-line" width="13" /> Open
+			<Icon icon="mynaui:arrow-up-right" width="13" /> Open
 		</button>
 		{#if onTurnInto}
 			<button class="ref-preview-turn" title="Turn into…" onclick={() => onTurnInto?.("full")}>
-				<Icon icon="ri:layout-line" width="13" /> Turn into…
+				<Icon icon="mynaui:layout" width="13" /> Turn into…
 			</button>
 		{/if}
 	</div>
@@ -99,7 +104,7 @@
 			0 4px 6px -1px rgba(0, 0, 0, 0.1),
 			0 10px 20px -5px rgba(0, 0, 0, 0.15);
 		overflow: hidden;
-		animation: ref-preview-in 0.12s ease-out;
+		animation: ref-preview-in var(--motion-enter) var(--ease-premium);
 	}
 
 	/* RefCard is boxless (padding normally supplied by the embed shell); the
@@ -116,6 +121,12 @@
 		to {
 			opacity: 1;
 			transform: translateY(0);
+		}
+	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.ref-preview {
+			animation: none;
 		}
 	}
 

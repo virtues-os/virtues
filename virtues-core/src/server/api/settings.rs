@@ -1,5 +1,6 @@
 //! Owner and box settings: profile, assistant profile, models, streams,
-//! billing, updates, and the places and Unsplash proxies.
+//! billing, keys, saved passwords, updates, and the places and Unsplash
+//! proxies.
 
 use axum::{
     extract::{Path, Query, State},
@@ -25,6 +26,19 @@ pub fn routes() -> Router<AppState> {
         .route("/api/settings/byo-key",   get(crate::api::settings_byo::status_handler)
                                           .post(crate::api::settings_byo::save_handler)
                                           .delete(crate::api::settings_byo::delete_handler))
+        // ─── Keys ─────────────────────────────────────────────────────
+        // Names only, except `value`, which Settings calls when the owner
+        // asks to see one. No tool calls these (api/keys.rs).
+        .route("/api/keys", get(keys_overview_handler))
+        .route("/api/keys/:name", put(set_key_handler).delete(delete_key_handler))
+        .route("/api/keys/:name/value", get(reveal_key_handler))
+        // ─── Passwords (Drive) ────────────────────────────────────────
+        // Saved logins. The list carries no passwords; `secret` is what the
+        // page calls when the owner opens one. No tool calls these
+        // (api/passwords.rs).
+        .route("/api/passwords", get(list_passwords_handler).post(create_password_handler))
+        .route("/api/passwords/:id", put(update_password_handler).delete(delete_password_handler))
+        .route("/api/passwords/:id/secret", get(reveal_password_handler))
         // ─── Web bundle (the box IS the update server) ────────────────
         // What UI build this box serves, and the build itself. A client can
         // be AHEAD of its box: an app update bakes newer UI, and the client
@@ -163,6 +177,80 @@ pub fn routes() -> Router<AppState> {
 /// Get user profile
 pub async fn get_profile_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::profile::get_profile(state.db.pool()).await)
+}
+
+/// GET /api/keys — sign-ins and named keys, by name.
+pub async fn keys_overview_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::keys::overview(state.db.pool()).await)
+}
+
+#[derive(Deserialize)]
+pub struct SetKeyBody {
+    value: String,
+}
+
+/// PUT /api/keys/:name — add or replace a key's value.
+pub async fn set_key_handler(
+    State(state): State<AppState>,
+    Path(name): Path<String>,
+    Json(body): Json<SetKeyBody>,
+) -> Response {
+    match crate::api::keys::set_key(state.db.pool(), &name, &body.value).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// DELETE /api/keys/:name
+pub async fn delete_key_handler(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    match crate::api::keys::delete_key(state.db.pool(), &name).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/keys/:name/value — the value, when the owner asks to see it.
+pub async fn reveal_key_handler(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    match crate::api::keys::reveal_key(state.db.pool(), &name).await {
+        Ok(value) => Json(serde_json::json!({ "value": value })).into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/passwords — saved logins, without passwords.
+pub async fn list_passwords_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::passwords::list(state.db.pool()).await)
+}
+
+/// POST /api/passwords — save a login.
+pub async fn create_password_handler(
+    State(state): State<AppState>,
+    Json(body): Json<crate::api::passwords::LoginInput>,
+) -> Response {
+    api_response(crate::api::passwords::create(state.db.pool(), body).await)
+}
+
+/// PUT /api/passwords/:id — edit a login.
+pub async fn update_password_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<crate::api::passwords::LoginInput>,
+) -> Response {
+    api_response(crate::api::passwords::update(state.db.pool(), &id, body).await)
+}
+
+/// DELETE /api/passwords/:id
+pub async fn delete_password_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    match crate::api::passwords::delete(state.db.pool(), &id).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => error_response(e),
+    }
+}
+
+/// GET /api/passwords/:id/secret — the password and notes, when the owner
+/// opens a login.
+pub async fn reveal_password_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    api_response(crate::api::passwords::reveal(state.db.pool(), &id).await)
 }
 
 /// Update user profile

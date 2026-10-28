@@ -118,7 +118,7 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
     )> = sqlx::query_as(
         r#"SELECT
               c.id,
-              c.source_id,
+              c.key,
               c.name,
               c.status,
               c.status_reason,
@@ -131,7 +131,7 @@ pub async fn list_credentials(db: &PgPool) -> Result<Vec<CredentialListItem>> {
               (SELECT COUNT(*) FROM app_applet_runs r JOIN app_applets a ON a.id = r.applet_id
                  WHERE a.credential_id = c.id AND r.status = 'success') AS success_runs
            FROM credentials c
-          WHERE c.source_id <> ALL($1)
+          WHERE c.kind = 'source' AND c.key <> ALL($1)
            ORDER BY c.created_at DESC"#,
     )
     .bind(&INTERNAL_SOURCE_IDS[..])
@@ -195,7 +195,7 @@ pub async fn rename_credential(db: &PgPool, credential_id: &str, new_name: &str)
     if new_name.trim().is_empty() {
         return Err(Error::InvalidInput("name cannot be empty".into()));
     }
-    let affected = sqlx::query("UPDATE credentials SET name = $1 WHERE id = $2")
+    let affected = sqlx::query("UPDATE credentials SET name = $1 WHERE id = $2 AND kind = 'source'")
         .bind(new_name)
         .bind(credential_id)
         .execute(db)
@@ -225,7 +225,7 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
         r#"UPDATE credentials
               SET status = 'revoked',
                   status_reason = 'user_revoked'
-            WHERE id = $1"#,
+            WHERE id = $1 AND kind = 'source'"#,
     )
     .bind(credential_id)
     .execute(db)
@@ -254,12 +254,12 @@ pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
 }
 
 /// Hard-delete a credential row. Only safe for `pending` rows that never
-/// completed pairing (no `secret_lookup_hash`, no fan-out actions yet).
+/// completed pairing (no secrets, no fan-out actions yet).
 /// For active or revoked rows, callers should use `revoke_credential`
 /// instead so run history is preserved.
 pub async fn delete_pending_credential(db: &PgPool, credential_id: &str) -> Result<()> {
     let affected = sqlx::query(
-        "DELETE FROM credentials WHERE id = $1 AND status = 'pending'",
+        "DELETE FROM credentials WHERE id = $1 AND kind = 'source' AND status = 'pending'",
     )
     .bind(credential_id)
     .execute(db)
@@ -284,7 +284,7 @@ pub async fn check_pairing_status(
     credential_id: String,
 ) -> Result<PairingStatus> {
     let row: Option<(String, String)> =
-        sqlx::query_as("SELECT status, metadata::text FROM credentials WHERE id = $1")
+        sqlx::query_as("SELECT status, metadata::text FROM credentials WHERE id = $1 AND kind = 'source'")
             .bind(&credential_id)
             .fetch_optional(db)
             .await?;
@@ -314,8 +314,8 @@ pub struct PendingPairing {
 /// List pending pairings — used by the legacy management UI.
 pub async fn list_pending_pairings(db: &PgPool) -> Result<Vec<PendingPairing>> {
     let rows: Vec<(String, String, String, String)> = sqlx::query_as(
-        r#"SELECT id, name, source_id, created_at
-           FROM credentials WHERE status = 'pending'
+        r#"SELECT id, name, key, created_at
+           FROM credentials WHERE kind = 'source' AND status = 'pending'
            ORDER BY created_at DESC"#,
     )
     .fetch_all(db)

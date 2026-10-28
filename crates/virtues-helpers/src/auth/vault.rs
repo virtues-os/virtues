@@ -1,11 +1,12 @@
 //! Vault writes — credential row mint, finalize, status transitions, fan-out lookup.
 //!
-//! Encryption flows through `crate::crypto`. Schema details live in
-//! `virtues-core/migrations/0004_credentials_and_actions.sql`.
+//! Encryption flows through `crate::crypto`.
 //!
-//! All writes target the `credentials` table. `secrets_ciphertext` holds
-//! AES-256-GCM JSON; `secret_lookup_hash` holds an HMAC of the plaintext
-//! (self-issued-bearer flows only); `metadata` is JSONB non-secret context.
+//! All writes target the `kind = 'source'` rows of the `credentials` table,
+//! one per connected source, with the source id in `key`. The box's own keys
+//! are the `kind = 'box'` rows, handled by core's `secrets` module.
+//! `secrets_ciphertext` holds AES-256-GCM JSON; `metadata` is JSONB non-secret
+//! context.
 
 use std::collections::HashMap;
 
@@ -55,7 +56,7 @@ pub async fn mint_pending_credential(
 
     sqlx::query(
         r#"INSERT INTO credentials
-              (id, source_id, name, status, secrets_ciphertext, metadata)
+              (id, key, name, status, secrets_ciphertext, metadata)
            VALUES ($1, $2, $3, 'pending', $4, '{}'::jsonb)"#,
     )
     .bind(&id)
@@ -103,7 +104,7 @@ pub async fn finalize_credential(
                   expires_at = $3,
                   next_refresh_at = $4,
                   last_seen_at = now()
-            WHERE id = $5 AND status = 'pending'"#,
+            WHERE id = $5 AND kind = 'source' AND status = 'pending'"#,
     )
     .bind(&secrets_ct)
     .bind(&metadata_json)
@@ -115,7 +116,7 @@ pub async fn finalize_credential(
 
     if result.rows_affected() == 0 {
         let current: Option<(String,)> =
-            sqlx::query_as("SELECT status FROM credentials WHERE id = $1")
+            sqlx::query_as("SELECT status FROM credentials WHERE id = $1 AND kind = 'source'")
                 .bind(credential_id)
                 .fetch_optional(db)
                 .await?;
@@ -158,7 +159,7 @@ pub async fn finalize_apikey_credential(
 
     sqlx::query(
         r#"INSERT INTO credentials
-              (id, source_id, name, status, secrets_ciphertext, metadata)
+              (id, key, name, status, secrets_ciphertext, metadata)
            VALUES ($1, $2, $3, 'active', $4, '{}'::jsonb)"#,
     )
     .bind(&id)
@@ -200,7 +201,7 @@ pub async fn update_credential_secrets(
                   status = 'active',
                   status_reason = NULL,
                   updated_at = now()
-            WHERE id = $4"#,
+            WHERE id = $4 AND kind = 'source'"#,
     )
     .bind(&secrets_ct)
     .bind(expires_at)
@@ -215,13 +216,36 @@ pub async fn update_credential_secrets(
     Ok(())
 }
 
+/// Record when a session credential stops working, from its login cookies.
+///
+/// Leaves `next_refresh_at` alone: nothing can renew a browser session, so
+/// the refresh sweep must not pick it up. `None` clears a date a previous
+/// sign-in set. Attention reads `expires_at` to warn the owner beforehand.
+pub async fn set_credential_expiry(
+    db: &PgPool,
+    credential_id: &str,
+    expires_at: Option<DateTime<Utc>>,
+) -> Result<()> {
+    let result = sqlx::query(
+        "UPDATE credentials SET expires_at = $1 WHERE id = $2 AND kind = 'source'",
+    )
+    .bind(expires_at)
+    .bind(credential_id)
+    .execute(db)
+    .await?;
+    if result.rows_affected() == 0 {
+        return Err(AuthError::NotFound(credential_id.to_string()));
+    }
+    Ok(())
+}
+
 /// Decrypt the secrets payload of a credential row.
 pub async fn read_credential_secrets(
     db: &PgPool,
     credential_id: &str,
 ) -> Result<serde_json::Value> {
     let row: Option<(String,)> =
-        sqlx::query_as("SELECT secrets_ciphertext FROM credentials WHERE id = $1")
+        sqlx::query_as("SELECT secrets_ciphertext FROM credentials WHERE id = $1 AND kind = 'source'")
             .bind(credential_id)
             .fetch_optional(db)
             .await?;
@@ -234,7 +258,7 @@ pub async fn read_credential_secrets(
     // best-effort: a failed bump must never fail the read.
     let _ = sqlx::query(
         "UPDATE credentials SET last_seen_at = now() \
-         WHERE id = $1 AND (last_seen_at IS NULL \
+         WHERE id = $1 AND kind = 'source' AND (last_seen_at IS NULL \
             OR last_seen_at < now() - interval '60 seconds')",
     )
     .bind(credential_id)
@@ -247,14 +271,14 @@ pub async fn read_credential_secrets(
 }
 
 /// The box's own Virtues api_key, if linked — the credential stored under
-/// `source_id = 'virtues_api'` by core's `virtues_api::renew`. Lives here
+/// `key = 'virtues_api'` by core's `virtues_api::renew`. Lives here
 /// rather than in core because the credential-refresh cron (this crate) needs
 /// it to identify itself to the OAuth proxy, and helpers cannot depend on
 /// core. `Ok(None)` is an unlinked box, an ordinary state; `Err` is a vault
 /// that could not be read, which is not.
 pub async fn read_box_api_key(db: &PgPool) -> Result<Option<String>> {
     let row: Option<(String,)> =
-        sqlx::query_as("SELECT id FROM credentials WHERE source_id = 'virtues_api' LIMIT 1")
+        sqlx::query_as("SELECT id FROM credentials WHERE kind = 'source' AND key = 'virtues_api' LIMIT 1")
             .fetch_optional(db)
             .await?;
     let Some((id,)) = row else { return Ok(None) };
@@ -277,7 +301,7 @@ pub async fn mark_credential_status(
               SET status = $1,
                   status_reason = $2,
                   updated_at = now()
-            WHERE id = $3"#,
+            WHERE id = $3 AND kind = 'source'"#,
     )
     .bind(status.as_str())
     .bind(reason)

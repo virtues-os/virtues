@@ -44,7 +44,7 @@ gets its own SQL, its own role switch or its own validation:
   (`tools/sql_query.rs`); `sql_write` to `virtues_applet_writer`
   (`tools/sql_write.rs`). The CLI runs as the `virtues` service user, whose
   pool role is a superuser, so a verb that bypassed the executor would read
-  `box_secrets` and `virtues.env`. **Running every verb through the executor
+  `credentials` and `virtues.env`. **Running every verb through the executor
   prevents that.**
 - Arguments and help text come from `virtues_registry::tools::ToolConfig`
   (`parameters`, `description`). The CLI, the MCP tool list and the chat tool
@@ -59,11 +59,11 @@ gets its own SQL, its own role switch or its own validation:
 | `virtues query <sql>` | `sql_query` | |
 | `virtues search <text>` | `semantic_search` | `--entities`, `--from/--to` pass through |
 | `virtues page new/get/edit` | `create_page`, `get_page_content`, `edit_page` | `edit` reads the body from stdin |
-| `virtues applet ls/get` | `list_applets`, `get_applet` | |
-| `virtues applet check <dir>` | `setup_applet` with `check_only` | the LSP, standalone: no disk write, no row; `-` reads JSON arguments |
-| `virtues applet put <dir>` | `setup_applet` | |
+| `virtues applet ls/get` | `applet` with `list`, `get` | |
+| `virtues applet check <dir>` | `applet` `setup` with `check_only` | the LSP, standalone: no disk write, no row; `-` reads JSON arguments |
+| `virtues applet put <dir>` | `applet` `setup` | |
 | `virtues applet on/off <id>` | the app's switch, `PATCH /api/applets/:id` | |
-| `virtues applet run <id>` | `run_applet` | "Run now": exempt from count caps, not spend |
+| `virtues applet run <id>` | `applet` `run` | "Run now": exempt from count caps, not spend |
 | `virtues write <sql>` | `sql_write` | `applet_*` schemas only |
 | `virtues schema [table]` | the `sql_catalog` description `sql_query` already generates | what an outside agent needs first |
 
@@ -164,7 +164,7 @@ which is the boundary that matters. `agent-key` is box-only.
    `page get` reads the saved page, not live Yjs state, so it can trail an
    open editor by the last save.
 2. **`applet check`.** Built 2026-10-05. The check is one function,
-   `applet_setup::check` over a parsed `Draft`, and `setup_applet` takes
+   `applet_setup::check` over a parsed `Draft`, and applet `setup` takes
    `check_only` to run it and create nothing (no "I allow" in chat, since it
    writes nothing). `virtues applet check <dir>` maps a folder to the tool's
    arguments: `manifest.toml`, `face/index.html`, and the schema versions this
@@ -177,8 +177,8 @@ which is the boundary that matters. `agent-key` is box-only.
    explains itself; fixed.
 3. **Write verbs.** Built 2026-10-05: `page new/edit`, `applet put/on/off/run`,
    `write`. They do not run in the CLI process. A page edit has to go through
-   the live Yjs document the server holds, `setup_applet` reloads the
-   server's applet catalog, and `run_applet` dispatches through the server's
+   the live Yjs document the server holds, applet `setup` reloads the
+   server's applet catalog, and an applet `run` dispatches through the server's
    runner; a write from another process lands in the database behind all
    three, and an open page's next save puts the old text back. So the CLI
    posts the tool to `POST /api/console/tool/:tool` (`server/api/console.rs`),
@@ -213,7 +213,8 @@ which is the boundary that matters. `agent-key` is box-only.
    needs a manifest field the verbs cannot reach.** Every field it does need
    is listed, and that list decides how big applets have to be, and whether
    data triggers and Persona are still wanted.
-5. **`virtues mcp`** over the same verbs, for agents without a shell.
+5. **`virtues mcp`** over the same verbs, for agents without a shell. Moved to
+   [mcp-plan.md](mcp-plan.md), which serves the verbs at `/api/mcp`.
 6. A manual page (`docs/`) only when slice 3 is in a released box.
 
 ## Open

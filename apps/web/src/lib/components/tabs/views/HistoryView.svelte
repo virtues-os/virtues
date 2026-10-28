@@ -80,14 +80,14 @@
 		{
 			key: "title",
 			label: "Title",
-			icon: "ri:chat-3-line",
+			icon: "mynaui:message",
 			width: "70%",
 			minWidth: "200px",
 		},
 		{
 			key: "updated_at",
 			label: "Updated",
-			icon: "ri:time-line",
+			icon: "mynaui:clock-circle",
 			width: "30%",
 			minWidth: "140px",
 			format: "relative-date",
@@ -114,7 +114,7 @@
 	maxWidth="wide"
 >
 	{#snippet actions()}
-		<Button variant="secondary" size="sm" icon="ri:add-line" onclick={handleNewChat}
+		<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={handleNewChat}
 			>New Chat</Button
 		>
 	{/snippet}
@@ -126,7 +126,7 @@
 		entityType="chat-history"
 		{loading}
 		{error}
-		emptyIcon="ri:chat-history-line"
+		emptyIcon="mynaui:chat-messages"
 		emptyMessage="No conversations yet"
 		loadingMessage="Loading conversations..."
 		searchPlaceholder="Search chats..."

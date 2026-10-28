@@ -104,7 +104,7 @@
 		<span class="chip">
 			{alias}
 			<IconButton
-				icon="ri:close-line"
+				icon="mynaui:x"
 				label="Remove alias {alias}"
 				size="xs"
 				disabled={saving}

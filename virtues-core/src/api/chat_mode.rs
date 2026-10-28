@@ -405,8 +405,8 @@ pub(crate) mod tests {
     /// and the model visibly deliberated over them, so every tool belongs to
     /// a group with a ceiling, and every mode has a total, in characters of
     /// the JSON exactly as `ChatMode::tools()` serializes it. Long how-to
-    /// belongs behind a call (`setup_applet {"guide": true}` returns
-    /// applets/AGENTS.md), not in the definition. A tool in any mode — chat,
+    /// belongs behind a call (`applet {"action": "setup", "guide": true}`
+    /// returns applets/AGENTS.md), not in the definition. A tool in any mode — chat,
     /// sudo, deep research, interview, getting started, local or a skill —
     /// must join a group here, and a new mode or skill must join `MODES`:
     /// unbudgeted tools and modes fail the test.
@@ -415,18 +415,8 @@ pub(crate) mod tests {
         // (group, tools, ceiling). A group's size is measured per mode: the
         // tools of it that mode offers.
         const GROUPS: &[(&str, &[&str], usize)] = &[
-            (
-                "applets",
-                &[
-                    "setup_applet",
-                    "edit_applet",
-                    "list_applets",
-                    "run_applet",
-                    "get_applet",
-                    "delete_applet",
-                ],
-                3_300,
-            ),
+            // One tool for every applet action, chosen by `action`.
+            ("applets", &["applet"], 2_750),
             ("analysis", &["code_interpreter", "think", "read_asset", "generate_image"], 2_400),
             ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], 2_400),
             ("search", &["semantic_search", "web_search"], 2_000),
@@ -435,6 +425,10 @@ pub(crate) mod tests {
             ("skills", &["save_skill"], 950),
             ("tasks", &["create_task", "update_task"], 1_500),
             ("sql_write", &["sql_write"], 600),
+            // A service the owner connected over MCP (`tools/connection.rs`).
+            // One tool whatever is connected; the services' own tools go to
+            // its worker, never into this list.
+            ("connections", &["connection"], 900),
             // Drawn inside the reply. The kinds and their column contracts are
             // the description; trimming it means dropping a kind.
             ("show", &["show"], 1_900),
@@ -455,8 +449,8 @@ pub(crate) mod tests {
         // (mode's wire name, total ceiling). Chat's is the sum of its group
         // ceilings; the rest sit just above their 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 21_550),
-            ("sudo", 21_750),
+            ("chat", 21_900),
+            ("sudo", 22_300),
             ("deep_research", 13_250),
             ("interview", 1_500),
             ("getting_started", 2_200),

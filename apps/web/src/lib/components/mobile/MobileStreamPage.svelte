@@ -65,7 +65,7 @@
 <div class="page">
 	<div class="head">
 		<button class="back" type="button" onclick={onBack}>
-			<Icon icon="ri:arrow-left-s-line" width={22} />
+			<Icon icon="mynaui:chevron-left" width={22} />
 			<span>{backLabel}</span>
 		</button>
 	</div>

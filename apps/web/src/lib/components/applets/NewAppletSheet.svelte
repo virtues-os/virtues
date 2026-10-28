@@ -78,7 +78,7 @@
 				aria-label="What the applet should do"
 			/>
 			<IconButton
-				icon="ri:arrow-up-line"
+				icon="mynaui:arrow-up"
 				label="Start the chat"
 				variant="secondary"
 				class="send"

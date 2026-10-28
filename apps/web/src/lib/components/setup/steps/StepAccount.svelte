@@ -1,9 +1,10 @@
 <!--
-	Setup, before the server: your Virtues account.
+	Setup, for Virtues hardware: your Virtues account.
 
-	Sign-in first (2026-09-27): the account's grant has to reach the server
-	over Bluetooth before pairing, so the account is settled before the server
-	is looked for (prepair.svelte.ts). An email, then the six-digit code
+	After the server step has opened the hardware with its four words, and
+	before pairing: the account's grant has to reach the server over
+	Bluetooth before pairing ends the session (prepair.svelte.ts). A server
+	found on the network never comes here. An email, then the six-digit code
 	emailed to it; atlas makes the account for a new email. Paying is not
 	here: the Subscription step, after pairing, passes itself over when the
 	account already pays.
@@ -122,13 +123,6 @@
 		{/if}
 	</p>
 
-	{#if phase === "email" && prePair.canJoinExisting}
-		<p class="join">
-			Already have a server?
-			<button type="button" class="setup-past" onclick={() => prePair.joinExisting()}>Add this device to it</button>
-		</p>
-	{/if}
-
 	{#snippet actions()}
 		{#if phase === "email"}
 			<button type="button" class="setup-go" onclick={send} disabled={!emailOk || busy}>
@@ -167,12 +161,6 @@
 	.one {
 		display: flex;
 		justify-content: center;
-	}
-	.join {
-		margin: 8px 0 0;
-		text-align: center;
-		font-size: 14px;
-		color: var(--color-foreground-muted);
 	}
 	.code {
 		letter-spacing: 0.3em;

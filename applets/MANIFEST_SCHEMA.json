@@ -24,7 +24,7 @@
         "user",
         "ai"
       ],
-      "description": "system: shipped with Virtues; reconcile overwrites declarative fields. user: authored by hand; INSERT-OR-IGNORE, preserved after first seed. ai: written by setup_applet; reconcile overwrites compiled fields but never operational state (enabled, memory)."
+      "description": "system: shipped with Virtues; reconcile overwrites declarative fields. user: authored by hand; INSERT-OR-IGNORE, preserved after first seed. ai: written by the applet tool's setup action; reconcile overwrites compiled fields but never operational state (enabled, memory)."
     },
     "triggers": {
       "type": "array",

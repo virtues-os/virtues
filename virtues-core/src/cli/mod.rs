@@ -16,6 +16,7 @@ pub mod doctor;
 pub mod lake_adopt;
 pub mod model_set;
 pub mod link;
+pub mod mcp;
 pub mod page_convert;
 pub mod reindex;
 pub mod report_crash;
@@ -102,9 +103,9 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             }
         }
 
-        Commands::AgentKey { .. } | Commands::AgentExec { .. } => {
-            // Handled in main.rs: neither opens the database.
-            unreachable!("agent-key and agent-exec are handled in main.rs");
+        Commands::AgentKey { .. } | Commands::AgentExec { .. } | Commands::Mcp => {
+            // Handled in main.rs: none of them opens the database.
+            unreachable!("agent-key, agent-exec and mcp are handled in main.rs");
         }
 
         Commands::Volumes { cmd } => {
@@ -299,8 +300,8 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
 
         Commands::Subscribe => {
             // Idempotent — sqlx::migrate skips applied steps. Without this,
-            // a fresh box hits "relation \"box_secrets\" does not exist"
-            // mid-subscribe because no other startup path has been run yet.
+            // a fresh box fails mid-subscribe on a missing `credentials`
+            // table because no other startup path has been run yet.
             virtues.database.initialize().await?;
             commands::deploy::handle_subscribe(&virtues)
                 .await

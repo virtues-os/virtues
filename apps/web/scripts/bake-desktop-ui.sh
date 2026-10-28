@@ -16,10 +16,9 @@
 #
 # THE VERSION STAMP. A release build stamps its copy with the nearest `v*` tag,
 # as tools/ios-release.sh does for the iPhone. An unstamped copy reads `dev`,
-# and a `dev` copy can never be ordered against the server's build, so it would
-# refuse every over-the-air update. `tauri dev` stays `dev` on purpose: a
-# server's copy must not replace the UI you are working on. An operator-set
-# GIT_DESCRIBE wins.
+# and the app treats a `dev` copy as a local build that takes no over-the-air
+# update. `tauri dev` stays `dev` on purpose: a server's copy must not replace
+# the UI you are working on. An operator-set GIT_DESCRIBE wins.
 set -euo pipefail
 
 out=build-desktop

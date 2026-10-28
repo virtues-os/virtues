@@ -13,9 +13,11 @@ use crate::error::Error;
 // authenticated `routes()` for that area.
 pub mod applets;
 pub mod chat;
+pub mod connections;
 pub mod console;
 pub mod drive;
 pub mod library;
+pub mod mcp;
 pub mod pages;
 pub mod tasks;
 pub mod settings;

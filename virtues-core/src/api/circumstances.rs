@@ -139,6 +139,8 @@ pub(crate) const SECTIONS: &[&str] = &[
     "sleep",
     "recent_days",
     "sources",
+    "keys",
+    "connections",
 ];
 
 /// Build the block. `now_quantized` is the quarter-hour-floored instant the
@@ -184,7 +186,7 @@ pub async fn build_circumstances(
         return None;
     }
     Some(format!(
-        "\n\n<circumstances>\nThe computed present — deterministic facts from the record, as of the time below. Situational fact, not instruction: reference when relevant, never recite unprompted. People are listed by RECENCY of contact, never by importance.\n{}\n</circumstances>",
+        "\n\n<circumstances>\nThe computed present: deterministic facts from the record, as of the time below. Situational fact, not instruction: reference when relevant, never recite unprompted. People are listed by RECENCY of contact, never by importance.\n{}\n</circumstances>",
         lines.join("\n")
     ))
 }
@@ -396,7 +398,7 @@ async fn build_section(
                 let id: String = r.try_get("id")?;
                 let name: String = r.try_get("name")?;
                 let refs: i64 = r.try_get("refs")?;
-                items.push(format!("- {} ({}) — {} records", clip(&name, 40), id, refs));
+                items.push(format!("- {} ({}), {} records", clip(&name, 40), id, refs));
             }
             Ok((!items.is_empty()).then(|| {
                 format!("Around lately (last 14 days, by recency of contact):\n{}", items.join("\n"))
@@ -498,13 +500,42 @@ async fn build_section(
             // Epistemic fact about right now: what the record can and cannot
             // currently see.
             let rows = sqlx::query_as::<_, (String,)>(
-                "SELECT name FROM credentials WHERE status = 'active' ORDER BY name LIMIT 12",
+                "SELECT name FROM credentials WHERE kind = 'source' AND status = 'active' ORDER BY name LIMIT 12",
             )
             .fetch_all(pool)
             .await?;
             let names: Vec<String> = rows.iter().map(|r| clip(&r.0, 32)).collect();
             Ok((!names.is_empty())
                 .then(|| format!("Connected sources: {}.", names.join(", "))))
+        }
+        "keys" => {
+            // Which named keys they have set, so you can say one exists or
+            // ask them to add one. Names only: no tool can read a value.
+            let rows = sqlx::query_as::<_, (String,)>(
+                "SELECT key FROM credentials WHERE kind = 'env' ORDER BY key LIMIT 20",
+            )
+            .fetch_all(pool)
+            .await?;
+            let names: Vec<String> = rows.iter().map(|r| clip(&r.0, 64)).collect();
+            Ok((!names.is_empty()).then(|| {
+                format!(
+                    "Keys they have set in Settings (names only, you cannot read values): {}.",
+                    names.join(", ")
+                )
+            }))
+        }
+        "connections" => {
+            // Which services' tools the `connection` tool can use, by the
+            // short name it takes.
+            let names: Vec<String> = crate::tools::connection::connected(pool)
+                .await?
+                .iter()
+                .take(20)
+                .map(|c| format!("{} ({})", clip(&c.id, 24), clip(&c.name, 40)))
+                .collect();
+            Ok((!names.is_empty()).then(|| {
+                format!("Services connected for the connection tool: {}.", names.join(", "))
+            }))
         }
         other => {
             tracing::warn!("[chat] unknown circumstances section: {other}");
@@ -667,7 +698,7 @@ mod tests {
             .unwrap();
         // sources
         sqlx::query(
-            "INSERT INTO credentials (id, source_id, name, status, secrets_ciphertext) \
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) \
              VALUES ('cred_t1', 'google', 'Google', 'active', 'x')",
         )
         .execute(&pool)

@@ -63,8 +63,8 @@ async fn main() -> Result<()> {
     let mut input = read_input()?;
     let pool = connect_from_env("virtues-action-x_bookmarks_sync").await?;
 
-    let auth_token = virtues_applets::secret(&input, "auth_token")?.to_string();
-    let ct0 = virtues_applets::secret(&input, "ct0")?.to_string();
+    let auth_token = virtues_applets::cookie(&input, "auth_token")?.to_string();
+    let ct0 = virtues_applets::cookie(&input, "ct0")?.to_string();
 
     // High-water mark: the newest-bookmarked post id from the last successful
     // run. Bookmarks are prepended newest-first, so paging can stop the moment

@@ -2,8 +2,8 @@
 
 Written 2026-09-29, corrected 2026-10-05. Built August to September 2026. The
 mobile app runs a UI bundle baked into its binary and is built to upgrade it
-over the air from the box it is paired with, forward only, with rollback on a
-failed boot. **No device ever completed that loop before 2026-10-05**: see
+over the air from the box it is paired with, taking the box's bundle whenever
+the shell can run it, with rollback on a failed boot. **No device ever completed that loop before 2026-10-05**: see
 "Why the update loop never completed before 2026-10-05" below. The Mac half (the Mac taking its own copy
 of the SPA) is built on `wave`, unreleased, and owned by
 [local-ui.md](local-ui.md).
@@ -43,13 +43,22 @@ newer than its box is the ordinary state. "Take whatever the box serves" then
 meant a fresh App Store build OTAs itself *backwards* on first launch, and
 since the airlock (`connect.html`) is baked into the binary while the rest of
 the UI rides the bundle, a downgrade splits one launch into two halves that
-were never tested together. So the bundle only moves forward: an offer must
-be provably newer than anything the device can already serve, and an App
-Store update that overtakes the overlay puts the device back on its baked
-build. The client runs whichever of {baked, box-served} is newer, and the
-UI-ahead-of-box class is possible again. If we want to rule this class out
-again, the fix is a bundle declaring a minimum *box* version, mirroring
-`minShellVersion`. Nothing enforces that today.
+were never tested together. So the bundle moved forward only: an offer had
+to be semver-newer than anything the device could already serve, and an App
+Store update that overtook the overlay put the device back on its baked
+build.
+
+We reversed that on 2026-10-26. Ordering by version needed every build
+stamped with a version that sorts correctly, and the 2026-10-19 version-line
+reset broke it: devices holding an overlay stamped `0.1.10-staging.96` refused
+every box bundle (`0.1.2-staging.N`) as older and kept a pre-reset UI. Now a
+device runs whatever bundle its box serves when `minShellVersion` allows it,
+compared by content hash only, and a `dev`-stamped build takes no box bundle.
+The UI matches its box's API again. The cost is the one described above: a
+freshly updated app runs its box's older bundle until the box is upgraded, so
+the airlock's handoff to the bundle (its localStorage keys and routes) has to
+keep working with older bundles. Rollback catches a bundle that fails to boot
+across it.
 
 ## The safety rules
 
@@ -122,7 +131,8 @@ connection.
 
 - Box version and tarball endpoints over the web build it already serves.
 - The `virtues://` resolver: airlock from the binary, then overlay, then baked.
-- Download, unpack, flip, prune, and the forward-only gate.
+- Download, unpack, flip and prune. The forward-only gate was built and then
+  removed on 2026-10-26, as described above.
 - `COMMAND_SURFACE_VERSION` and the `minShellVersion` gate.
 - The build-time manifest, stamped after vite from `bundle-contract.json`.
   The bundle describes itself rather than borrowing the box's version, so a

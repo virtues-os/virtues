@@ -120,9 +120,8 @@ Output your summary in this EXACT XML structure:
 </errors>
 
 RULES:
-- Keep total summary under 800 tokens
-- Be factual and specific with concrete details (names, paths, values)
-- Include ALL relevant technical details - this is a handoff document
+- Keep total summary under 800 tokens. It is a handoff document: keep the technical details the next turn needs (names, paths, values, decisions) and leave out the rest
+- Be factual and specific
 - Omit empty sections (e.g., if no errors, omit <errors>)
 - Do NOT include pleasantries, meta-commentary, or step-by-step recreation
 - This summary will be injected as prior context for a new conversation instance"#;
