@@ -48,7 +48,6 @@
 		display: 'mynaui:monitor',
 		keys: 'mynaui:key',
 		shared: 'mynaui:share',
-		connections: 'mynaui:link',
 
 		// Developer's, Sources' and Drive's own rows.
 		sql: 'mynaui:table',

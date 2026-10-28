@@ -147,6 +147,9 @@
 		 * is the default, not an override.
 		 */
 		rowHref?: (item: T) => string | null | undefined;
+		/** The search field's text, for a consumer that also searches
+		 *  somewhere else with what the reader typed. */
+		searchQuery?: string;
 	}
 
 	let {
@@ -182,7 +185,8 @@
 		bulkActions,
 		rowActions,
 		rowIcon,
-		rowHref
+		rowHref,
+		searchQuery = $bindable('')
 	}: Props = $props();
 
 	/**
@@ -305,7 +309,6 @@
 	// ────────────────────────────────────────────────────────────────────────
 	// Search
 	// ────────────────────────────────────────────────────────────────────────
-	let searchQuery = $state('');
 	let searchInputEl = $state<HTMLInputElement | null>(null);
 
 	/** Put the caret in the search field — for a door that means "search". */

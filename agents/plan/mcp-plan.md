@@ -352,9 +352,11 @@ name.
      the executor branch unless the chat called with `confirmed`, which sets
      `ToolContext::owner_confirmed`.
    - Built after: any registry server or pasted address, not one constant
-     (`tools/connection_registry.rs`); Settings → Connections with the
-     featured list, a registry search and an address field
-     (`ConnectionsView.svelte`); routes `GET /api/connections`, `GET
+     (`tools/connection_registry.rs`); the featured services as rows in
+     the Sources catalog, labeled "The assistant can act here" beside
+     sources' "Syncs your data", with the table's search also searching the
+     registry and an address field under it (`SourcesCatalog.svelte`);
+     routes `GET /api/connections`, `GET
      /api/connections/search?q=`, `POST /api/connections/connect {origin,
      registry | url}`, `DELETE /api/connections/:id`; the connected services'
      short names in the chat's context.
