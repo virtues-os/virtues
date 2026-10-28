@@ -2,8 +2,8 @@
 //!
 //! One primitive — a short-lived 24-byte random token in `app_pair_token` —
 //! grants the right to enroll a device. The token never carries any
-//! long-lived secret; the redeeming device generates its own keypair (for
-//! WG-capable devices) and submits the pubkey when consuming.
+//! long-lived secret; the redeeming device generates its own iroh key and
+//! submits its EndpointId (`device_node_id`) when consuming.
 //!
 //! Mint paths — one model: an authenticated mint is `authorized`.
 //!   - CLI (`virtues pair`): minted on the box itself; trusted by physical
@@ -144,9 +144,11 @@ pub(crate) fn hash_token(token: &str) -> String {
 
 // ─── Public mint (used by CLI `virtues link` and by web "+ Add Device") ────
 
-/// Mint a pair token. `minted_by_device` is `None` for CLI mints (status
-/// starts `authorized`) and `Some(device_id)` for web mints (status starts
-/// `pending`, awaits confirm from the minting device).
+/// Mint a pair token. Every mint starts `authorized`, so the code can be
+/// redeemed at once. `minted_by_device` is `None` for a CLI mint, which can be
+/// redeemed for `CLI_REDEEM_TTL_MIN` minutes, and `Some(device_id)` for a web
+/// mint by the owner's device, which can be redeemed for
+/// `AUTHORIZED_REDEEM_TTL_MIN` minutes.
 ///
 /// Returns the raw token string — the caller is responsible for delivering it
 /// to the user (CLI prints the URL; web returns it in the modal payload).
@@ -746,8 +748,9 @@ pub async fn deny_handler(
 /// - Absent + `kind = "mobile_app"`: `"ios"` (mobile is unambiguously iOS today,
 ///   so collectors needn't change).
 /// - Otherwise: `"__device__"` — a sentinel that matches no template, so NO
-///   action fan-out. Correct for the WG desktop daemon (`kind=desktop_app`, no
-///   source — NOT a collector) and for `sensor` (no source defined yet).
+///   action fan-out. Correct for the desktop app (`kind=desktop_app`, no
+///   source — a viewer, NOT a collector) and for `sensor` (no source defined
+///   yet).
 ///
 /// This is the fix for the `__device__`-matches-nothing bug: a collector that
 /// declares its real source now gets `reconcile_templates` to create its
@@ -1346,7 +1349,7 @@ fn format_pair_url(token: &str, fpr: Option<&str>) -> String {
             // LAN-IP-preferring helper the `virtues pair` CLI QR uses (it falls
             // back to the mDNS name only when no address is discoverable). If
             // your network reaches the box at a different hostname, set
-            // VIRTUES_PUBLIC_URL in /etc/virtues/env.
+            // VIRTUES_PUBLIC_URL in /var/lib/virtues/virtues.env.
             format!(
                 "http://{}:{}",
                 crate::cli::link::forward_host(),
@@ -1481,8 +1484,8 @@ mod source_resolution_tests {
 
     #[test]
     fn desktop_app_without_source_is_sentinel_no_fanout() {
-        // The WG desktop daemon pairs as desktop_app with NO source — it must
-        // get "__device__" so mac_ingest never fans out to it.
+        // The desktop app pairs as desktop_app with NO source — it must get
+        // "__device__" so mac_ingest never fans out to it.
         assert_eq!(resolve_source_id("desktop_app", None).unwrap(), "__device__");
     }
 

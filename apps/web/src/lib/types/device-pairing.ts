@@ -1,7 +1,7 @@
 /**
- * Device Pairing Types
- *
- * Type definitions for device pairing flow matching Rust backend API
+ * Device pairing types for the "+ Add Device" sheet (DevicePairModal), as
+ * `initiatePairing` and `getPairingStatus` in `$lib/api/client` shape them
+ * from `/api/pair/mint` and `/api/pair/status/:id`.
  */
 
 // Device information structure
@@ -19,27 +19,17 @@ export interface DeviceInfo {
 
 // Response when initiating device pairing. Backed by the unified
 // `/api/pair/mint` flow: `source_id` carries the pair-token id (polled via
-// `/api/pair/status/:id`), and the QR/token fields are the redemption payload
-// the new device scans or types (`/pair#t=<token>`).
+// `/api/pair/status/:id`), and `token` is the code the new device types.
 export interface PairingInitResponse {
 	source_id: string;
-	/** Raw pair token (6-char display for Mac code entry). */
+	/** Raw pair token, the code the person types into the new device. */
 	token?: string;
-	/** Server-rendered QR SVG encoding the `/pair#t=<token>` URL (iOS scan). */
-	qr_svg?: string;
-	/** The `/pair#t=<token>` URL the QR encodes. */
+	/** The server's `/pair#t=<token>` URL. The sheet shows only its origin,
+	 *  as the address to type when this computer has no pairing door. */
 	pair_url?: string;
 }
 
-// Response when completing device pairing
-export interface PairingCompleteResponse {
-	source_id: string;
-	device_token: string; // Base64 encoded token
-}
-
 // Pairing status variants
-export type PairingStatusType = 'pending' | 'active' | 'revoked';
-
 export interface PairingStatusPending {
 	status: 'pending';
 }
@@ -54,22 +44,3 @@ export interface PairingStatusRevoked {
 }
 
 export type PairingStatus = PairingStatusPending | PairingStatusActive | PairingStatusRevoked;
-
-// Pending pairing information
-export interface PendingPairing {
-	source_id: string;
-	name: string;
-	device_type: string;
-	created_at: string; // ISO 8601 timestamp
-}
-
-// Request types
-export interface InitiatePairingRequest {
-	device_type: string; // e.g., "ios", "mac"
-	name: string; // Device name
-}
-
-export interface CompletePairingRequest {
-	code: string;
-	device_info: DeviceInfo;
-}

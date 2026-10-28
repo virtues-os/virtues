@@ -16,7 +16,8 @@
 //!      present (a reverse proxy also connects from loopback — see below).
 //!   3. **Dev fallback** — `ENVIRONMENT=dev` only, and only for a peer on
 //!      loopback: a loopback request that carries a forwarding header, which
-//!      the console refuses. Inert on a real appliance.
+//!      the console refuses. Inert on an installed box unless its operator
+//!      sets `ENVIRONMENT=dev`, as the review demo box does.
 //!
 //! The first two, and the third on a developer's stack, are authority that
 //! comes from how a request arrived. [`owner_by_transport`] names exactly
@@ -65,9 +66,10 @@ use std::net::SocketAddr;
 /// header is present, bypassing the iroh-key requirement.
 ///
 /// Safe because the threat model is "physical access = you" — a process on
-/// the box can already read `/var/lib/virtues/lake/` and `/etc/virtues/env`,
-/// so trusting a loopback-only HTTP request adds no attack surface. LAN
-/// peers are NOT trusted (`is_loopback()` is strict, not RFC1918).
+/// the box can already read `/var/lib/virtues/lake/` and
+/// `/var/lib/virtues/virtues.env`, so trusting a loopback-only HTTP request
+/// adds no attack surface. LAN peers are NOT trusted (`is_loopback()` is
+/// strict, not RFC1918).
 ///
 /// CRITICAL: a reverse proxy (Caddy/an HTTPS sidecar) terminating an external
 /// connection ALSO forwards to the box from loopback — so a naive
@@ -183,10 +185,11 @@ async fn authenticate(parts: &mut Parts, pool: &PgPool, dev: bool) -> Result<Aut
         return Ok(console_owner());
     }
 
-    // 3. Dev fallback — `ENVIRONMENT=dev`, a developer's local stack, and a
-    //    peer on loopback. `make dev` binds every interface, and the loopback
-    //    rule keeps the rest of the developer's network from reaching core
-    //    directly as the owner. The dev server's proxy
+    // 3. Dev fallback — `ENVIRONMENT=dev` (a developer's stack, or an
+    //    installed box whose operator set it) and a peer on loopback.
+    //    `make dev` binds every interface, and the loopback rule keeps the
+    //    rest of the developer's network from reaching core directly as the
+    //    owner. The dev server's proxy
     //    (`apps/web/vite.config.ts`) connects from loopback and sets no
     //    forwarding header, so its requests are the console above and log in
     //    there. That includes a client elsewhere on the network that opens
@@ -195,8 +198,13 @@ async fn authenticate(parts: &mut Parts, pool: &PgPool, dev: bool) -> Result<Aut
     //    loopback request that carries a forwarding header: a proxy the
     //    developer runs in front of the stack. The Host check
     //    (`middleware::security`) still refuses a name the box does not
-    //    serve, such as a tunnel's public hostname. A real box NEVER sets
-    //    ENVIRONMENT=dev, so this is inert in production.
+    //    serve, such as a tunnel's public hostname. On a dev stack it serves
+    //    each hostname listed in VIRTUES_PUBLIC_ORIGINS, so a proxy that
+    //    serves the UI under a listed name reaches here as the owner. The
+    //    installer writes ENVIRONMENT=production, so an installed box takes
+    //    this branch only when its operator changes that. The review demo
+    //    box does (agents/build/review-access.md): every request its proxy
+    //    forwards is the owner's there.
     if dev && is_loopback {
         return Ok(console_owner());
     }
@@ -245,8 +253,9 @@ pub(crate) fn owner_by_transport(
         || (peer_is_loopback(extensions) && (dev || !is_forwarded(headers)))
 }
 
-/// True only on a developer's local stack (`ENVIRONMENT=dev`). Gates the dev
-/// auto-login + skip-pairing conveniences; never set on a real appliance.
+/// True when `ENVIRONMENT=dev`: a developer's stack, or an installed box whose
+/// operator set it, as the review demo box does. Gates the dev auto-login +
+/// skip-pairing conveniences. The installer writes `ENVIRONMENT=production`.
 pub fn is_dev() -> bool {
     std::env::var("ENVIRONMENT").map(|v| v == "dev").unwrap_or(false)
 }

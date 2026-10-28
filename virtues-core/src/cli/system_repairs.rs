@@ -25,9 +25,13 @@
 //!      carries a repair;
 //!   2. upgrade.rs, after migrate succeeds — the orchestrator's own pass,
 //!      which keeps firing on future upgrades once this release is the old
-//!      half.
+//!      half;
+//!   3. restore.rs, after the backup's database loads and before its key
+//!      check, in both `run` and `run_from_volume`. Restore runs as root and
+//!      writes the backup's env file, whose key the database logins have to
+//!      follow (`db_logins`).
 //!
-//!   (The Migrate arm's call stays as a third site: inert today because of
+//!   (The Migrate arm's call stays as one more site: inert today because of
 //!   the demotion, live again if the re-exec ever stops covering `migrate`.
 //!   The server can't ever do this work: `virtues.service` runs as
 //!   `User=virtues`, which cannot chown a root-owned directory to itself.)
@@ -116,7 +120,10 @@ const REPAIRS: &[(&str, fn(&std::path::Path) -> Outcome)] = &[
 /// will, so a `pg_hba.conf` that refuses the login reports as Failed instead
 /// of Converged. The installer and first boot run this after the key exists
 /// and before the server first starts (see the module doc), and every upgrade
-/// runs it again before the new server starts.
+/// runs it again before the new server starts. Restore runs it after loading
+/// a backup, because the backup's env file can bring back a different key
+/// than the one the logins were set from, and loading a dump never changes a
+/// role.
 ///
 /// Debian's `pg_hba.conf` takes a password on 127.0.0.1. Fedora's uses
 /// `ident` there, which these roles cannot pass because they have no OS user,

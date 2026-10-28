@@ -108,12 +108,10 @@ pub mod wiki_streams;
 pub mod wiki_editor;
 pub mod wiki_notes;
 
-// Flat names still used outside this module (lib.rs, tools/executor.rs,
-// extraction, bookmarks). Everything else is addressed by its module path.
+// Flat names still used outside this module (tools/executor.rs, extraction,
+// outbox, bookmarks, and the document_extraction and ios_ingest applets).
+// Everything else is addressed by its module path.
 pub use chats::get_chat;
-pub use credentials::{
-    check_pairing_status, list_pending_pairings, DeviceInfo, PairingStatus, PendingPairing,
-};
 pub use drive::DriveConfig;
 pub use pages::get_page;
 pub use wiki::{get_organization, get_person, get_wiki_place};

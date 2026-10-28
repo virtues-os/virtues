@@ -7,14 +7,17 @@
 //! — with **no public inbound port**. The plain-HTTP `:8000` listener stays for
 //! LAN/loopback and the desktop `:7117` helper.
 //!
-//! Security is layered: iroh enforces an [`AllowPolicy`](virtues_iroh::AllowPolicy)
-//! over paired-device EndpointIds at the transport; the app-layer bearer/cookie
-//! remains the authorization keystone on top.
+//! The key is the credential. iroh enforces an
+//! [`AllowPolicy`](virtues_iroh::AllowPolicy) over paired-device EndpointIds at
+//! the transport, and [`reconcile`] keeps that allowlist equal to the endpoint
+//! ids of the devices that are not revoked. There is no bearer or cookie on
+//! top: `middleware::auth` maps the proven EndpointId to its `app_device` row,
+//! and refuses a revoked row, on every request.
 //!
-//! Config (env for now; atlas `/relay/config` → relay_url and DB-backed allowlist
-//! land in Steps 4/5):
-//! - `VIRTUES_RELAY_URL`   — our relay, e.g. `https://relay.virtues.ch`. Unset =
-//!   dev mode (n0 relays + discovery).
+//! The relay comes from the stored config (atlas `/relay/config`, or the off
+//! word Settings writes), then `VIRTUES_RELAY_URL`, then [`DEFAULT_RELAY_URL`]
+//! on an installed box (`resolve_relay_url`). With none of them, as in a dev
+//! checkout, the endpoint binds with its relay disabled.
 
 use anyhow::{Context, Result};
 use sqlx::PgPool;
@@ -337,9 +340,10 @@ pub fn maybe_spawn(db: PgPool, app: axum::Router) {
             // rebind (dropping it aborts the accept loop).
             let router = serve(endpoint, app.clone(), allow);
             // Periodic reconcile catches drift the event-driven path (after_pairing_change)
-            // can't: atlas restarting and losing our registration, a device that paired
-            // while atlas was unreachable, or relay config that only became available
-            // after we bound. Idempotent + best-effort.
+            // can't: a revoke from the `virtues device rm` CLI, which runs in another
+            // process and cannot reach this allowlist, an allowlist query that failed,
+            // or relay config that only became available after we bound.
+            // Idempotent + best-effort.
             let mut tick =
                 tokio::time::interval(std::time::Duration::from_secs(RECONCILE_INTERVAL_SECS));
             tick.tick().await; // consume the immediate first tick — startup already reconciled above
@@ -414,12 +418,12 @@ fn relay_disabled_by_env(raw: &str) -> bool {
 ///
 /// **Stored beats env, and that order is deliberate** — Settings writes the
 /// off word into the stored slot so the owner's choice survives an upgrade
-/// that rewrites `/etc/virtues/env`. The consequence to know before debugging
-/// it: on a box that has ever been linked (so a stored config exists),
-/// `VIRTUES_RELAY_URL` is never consulted, and setting it there — including
-/// setting it to `off` — does nothing at all, silently. The env var is the
-/// override for a box with no stored config; the switch for every other box is
-/// `PUT /api/network/relay`.
+/// that rewrites `/var/lib/virtues/virtues.env`. The consequence to know
+/// before debugging it: on a box that has ever been linked (so a stored config
+/// exists), `VIRTUES_RELAY_URL` is never consulted, and setting it there —
+/// including setting it to `off` — does nothing at all, silently. The env var
+/// is the override for a box with no stored config; the switch for every other
+/// box is `PUT /api/network/relay`.
 ///
 /// The default is gated on the box-install marker: a dev checkout on a
 /// laptop must not home on the production relay just because someone ran
@@ -600,7 +604,9 @@ async fn load_allowlist(db: &PgPool) -> Arc<dyn AllowPolicy> {
 }
 
 /// Fire-and-forget reconcile after a pairing or revocation. Non-blocking so the
-/// pairing handlers don't wait on the atlas round-trip.
+/// pairing handlers don't wait on it, since a box with no stored relay config
+/// fetches one from atlas first. It swaps the allowlist only in the server
+/// process, the one that set `ALLOW`.
 pub fn after_pairing_change(db: PgPool) {
     tokio::spawn(async move {
         reconcile(&db).await;

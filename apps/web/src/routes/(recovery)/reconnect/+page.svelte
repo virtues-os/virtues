@@ -59,17 +59,19 @@
 				? "Reconnecting"
 				: phase === "stuck"
 					? "Your server isn't answering yet"
-					: r.verdict === "checking"
-						? "Looking for your server"
-						: r.verdict === "back"
-							? "Opening your server"
-							: r.verdict === "rejected"
-								? `Your server doesn't recognize ${device}`
-								: r.verdict === "asking"
-									? "A server nearby has no network"
-									: r.verdict === "offline"
-										? `${Device} is offline`
-										: "Can't reach your server",
+					: r.problem
+						? `${Device} can't use its pairing`
+						: r.verdict === "checking"
+							? "Looking for your server"
+							: r.verdict === "back"
+								? "Opening your server"
+								: r.verdict === "rejected"
+									? `Your server doesn't recognize ${device}`
+									: r.verdict === "asking"
+										? "A server nearby has no network"
+										: r.verdict === "offline"
+											? `${Device} is offline`
+											: "Can't reach your server",
 	);
 	const subtitle = $derived(
 		phase === "opening"
@@ -78,18 +80,27 @@
 				? "Your server is joining the network. This can take a minute."
 				: phase === "stuck"
 					? `It joined the network but hasn't answered yet. On a different network, ${device} can only reach it through the internet.`
-					: r.verdict === "checking"
-						? r.canUseRadio
-							? "Checking the connection, and listening nearby over Bluetooth."
-							: "Checking the connection."
-						: r.verdict === "rejected"
-							? "It answered but refused this device. Someone may have reset it, or removed this device from its list."
-							: r.verdict === "asking"
-								? `If it's yours and you moved it, choose its Wi-Fi from ${device}.`
-								: r.verdict === "offline"
-									? "Connect it to Wi-Fi or a cellular network, then try again."
-									: `It may be off or restarting, or on a network ${device} can't reach.`,
+					: r.problem
+						? r.problem.message
+						: r.verdict === "checking"
+							? r.canUseRadio
+								? "Checking the connection, and listening nearby over Bluetooth."
+								: "Checking the connection."
+							: r.verdict === "rejected"
+								? "It answered but refused this device. Someone may have reset it, or removed this device from its list."
+								: r.verdict === "asking"
+									? `If it's yours and you moved it, choose its Wi-Fi from ${device}.`
+									: r.verdict === "offline"
+										? "Connect it to Wi-Fi or a cellular network, then try again."
+										: `It may be off or restarting, or on a network ${device} can't reach.`,
 	);
+	/** The error line above the actions. A pairing problem's sentence is
+	 *  already the subtitle, so it is not repeated here. */
+	const note = $derived(r.problem && r.error === r.problem.message ? null : r.error);
+	/** The re-check button. A pairing problem's sentence tells you to quit and
+	 *  reopen Virtues to try again, which this button does not do, so under a
+	 *  problem it says what it does. */
+	const recheck = $derived(r.problem ? "Check again" : "Try again");
 </script>
 
 <svelte:head>
@@ -116,31 +127,31 @@
 							<circle cx="12" cy="5" r="2.85" />
 						</svg>
 					</div>
-				{:else if phase === "diagnosis" && r.verdict === "silent" && r.canUseRadio}
+				{:else if phase === "diagnosis" && (r.verdict === "rejected" || r.problem?.pairAgain)}
+					<p class="hint">Pairing again forgets the old connection on {device} only. Nothing on your server changes.</p>
+				{:else if phase === "diagnosis" && r.verdict === "silent" && r.canUseRadio && !r.problem}
 					<p class="hint">
 						If you moved it, keep {device} near it. A few minutes after it starts up without its Wi-Fi, it
 						shows up here so you can choose a new network.
 					</p>
-				{:else if phase === "diagnosis" && r.verdict === "rejected"}
-					<p class="hint">Pairing again forgets the old connection on {device} only. Nothing on your server changes.</p>
 				{/if}
 
-				{#if r.radioNote && phase === "diagnosis" && r.verdict !== "rejected"}
+				{#if r.radioNote && phase === "diagnosis" && r.verdict !== "rejected" && !r.problem}
 					<p class="hint">{r.radioNote}</p>
 				{/if}
-				<p class="note" class:error={!!r.error} role={r.error ? "alert" : undefined}>{r.error ?? " "}</p>
+				<p class="note" class:error={!!note} role={note ? "alert" : undefined}>{note ?? " "}</p>
 
 				{#snippet actions()}
 					{#if phase === "stuck"}
 						<button type="button" class="setup-go" onclick={() => r.retry()}>Try again</button>
-					{:else if phase === "diagnosis" && r.verdict === "rejected"}
+					{:else if phase === "diagnosis" && (r.verdict === "rejected" || r.problem?.pairAgain)}
 						<button type="button" class="setup-go" onclick={() => void r.pairAgain(true)}>Pair again</button>
 					{:else if phase === "diagnosis" && r.verdict === "asking"}
 						<button type="button" class="setup-go" onclick={() => void r.openOwner()}>Choose its Wi-Fi</button>
 						<button type="button" class="setup-past" onclick={() => void r.check()} disabled={r.busy}>Look again</button>
 					{:else if phase === "diagnosis" && (r.verdict === "silent" || r.verdict === "offline")}
 						<button type="button" class="setup-go" onclick={() => void r.check()} disabled={r.busy}>
-							{r.busy ? "Looking…" : "Try again"}
+							{r.busy ? "Looking…" : recheck}
 						</button>
 						{#if r.canOpenAnyway}
 							<button type="button" class="setup-past" onclick={() => r.openApp()}>Open the app anyway</button>

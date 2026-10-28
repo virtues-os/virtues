@@ -70,16 +70,6 @@ pub use scheduler::Scheduler;
 // Re-export tools
 pub use tools::{get_tool_definitions_for_llm, ToolContext, ToolError, ToolExecutor, ToolResult};
 
-// Re-export library API functions
-pub use api::{
-    // Credential management (post-Phase-6: pair flows live in source_auth.rs)
-    check_pairing_status,
-    list_pending_pairings,
-    DeviceInfo,
-    PairingStatus,
-    PendingPairing,
-};
-
 // Version information
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 

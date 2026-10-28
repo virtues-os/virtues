@@ -1,20 +1,17 @@
-//! Credential lifecycle helpers — webhook auth, list/rename/revoke.
+//! Credential lifecycle helpers: list, rename, revoke.
 //!
-//! New home (Phase 6) for the small set of `device_pairing.rs` functions
-//! that survived the cutover. The pair-flow functions themselves are gone;
-//! their logic now lives in `virtues_helpers::auth::*` and is wired by the
-//! HTTP handlers in `core/src/api/source_auth.rs`.
+//! Connecting a source lives in `virtues_helpers::auth::*`, wired by the HTTP
+//! handlers in `api/source_auth.rs`. Pairing a device is `api/pair.rs`.
 //!
 //! Functions here:
-//!   - `list_credentials` / `rename_credential` / `revoke_credential` —
-//!     management API
+//!   - `list_credentials` / `rename_credential` / `revoke_credential` /
+//!     `delete_pending_credential` — management API
 //!   - `DeviceInfo` / `CredentialListItem` — response shapes
 //!   - `device_info_from_metadata` — parse `metadata` JSON into a typed shape
 //!
 //! Credentials are OUTBOUND secrets (OAuth / API keys). Inbound auth is the
 //! proven, allowlisted iroh key — there is no device bearer to validate here.
 
-use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 
 use crate::error::{Error, Result};
@@ -40,14 +37,6 @@ pub struct DeviceInfo {
 /// `{email, ...}` instead).
 pub fn device_info_from_metadata(raw: Option<&str>) -> Option<DeviceInfo> {
     raw.and_then(|s| serde_json::from_str::<DeviceInfo>(s).ok())
-}
-
-/// Pairing status snapshot — used by legacy management endpoints.
-#[derive(Debug, Clone)]
-pub enum PairingStatus {
-    Pending,
-    Active(DeviceInfo),
-    Revoked,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -291,69 +280,11 @@ pub async fn delete_pending_credential(db: &PgPool, credential_id: &str) -> Resu
     Ok(())
 }
 
-/// Look up the pairing status of a credential. Used by the legacy poll endpoint
-/// (web UI checks if QR scan completed). Phase 6+: superseded by SSE/WebSocket
-/// or by `pair_complete` returning the final state synchronously.
-pub async fn check_pairing_status(
-    db: &PgPool,
-    credential_id: String,
-) -> Result<PairingStatus> {
-    let row: Option<(String, String)> =
-        sqlx::query_as("SELECT status, metadata::text FROM credentials WHERE id = $1 AND kind = 'source'")
-            .bind(&credential_id)
-            .fetch_optional(db)
-            .await?;
-    let (status, metadata) =
-        row.ok_or_else(|| Error::NotFound(format!("credential not found: {credential_id}")))?;
-    Ok(match status.as_str() {
-        "active" => PairingStatus::Active(
-            device_info_from_metadata(Some(&metadata))
-                .ok_or_else(|| Error::Other("active credential has no device_info".into()))?,
-        ),
-        "revoked" => PairingStatus::Revoked,
-        _ => PairingStatus::Pending,
-    })
-}
-
-/// Pending pairing list item — used by the management API.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct PendingPairing {
-    pub source_id: String,
-    pub name: String,
-    pub device_type: String,
-    pub code: String,
-    pub expires_at: DateTime<Utc>,
-    pub created_at: DateTime<Utc>,
-}
-
-/// List pending pairings — used by the legacy management UI.
-pub async fn list_pending_pairings(db: &PgPool) -> Result<Vec<PendingPairing>> {
-    let rows: Vec<(String, String, String, String)> = sqlx::query_as(
-        r#"SELECT id, name, key, created_at
-           FROM credentials WHERE kind = 'source' AND status = 'pending'
-           ORDER BY created_at DESC"#,
-    )
-    .fetch_all(db)
-    .await?;
-    Ok(rows
-        .into_iter()
-        .map(|(id, name, source_id, created_at)| PendingPairing {
-            source_id: id,
-            name,
-            device_type: source_id,
-            code: String::new(),
-            expires_at: chrono::Utc::now() + chrono::Duration::minutes(10),
-            created_at: chrono::DateTime::parse_from_rfc3339(&created_at)
-                .map(|dt| dt.with_timezone(&chrono::Utc))
-                .unwrap_or_else(|_| chrono::Utc::now()),
-        })
-        .collect())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::credentials::ensure_test_key;
+    use chrono::{DateTime, Utc};
 
     /// Revoking forgets the value. The row stays for run history, but a
     /// backup taken afterwards must not carry the tokens the owner removed.

@@ -1171,8 +1171,10 @@ export async function getAttention(): Promise<AttentionItem[]> {
 
 // ─── Unified pairing (`/api/pair/*`) ─────────────────────────────────────────
 // One token mechanism for every device: the owner's authenticated session mints
-// a token, the new device redeems it at `/api/pair/consume`. The phone scans the
-// QR (`/pair#t=<token>`); the Mac app / collector takes the token directly.
+// a token, the new device redeems it at `/api/pair/consume`. In the apps the
+// person types the server's address and the token; a collector takes the token
+// directly. The response's `qr_svg` is the server's QR of `pair_url`, which
+// nothing here renders.
 
 export interface PairMintResponse {
 	id: string;
@@ -1295,18 +1297,14 @@ export function apikeyComplete(
 }
 
 // Device Pairing
-import type {
-	PairingInitResponse,
-	PairingStatus,
-	PendingPairing
-} from '$lib/types/device-pairing';
+import type { PairingInitResponse, PairingStatus } from '$lib/types/device-pairing';
 
 /**
  * Initiate device pairing via the unified `/api/pair/mint` flow.
  *
  * Returns a `PairingInitResponse` whose `source_id` is the pair-token id (polled
- * via {@link getPairingStatus}), plus the QR/token redemption payload the new
- * device scans (`qr_svg` encodes `/pair#t=<token>`) or types (`token`).
+ * via {@link getPairingStatus}), the `token` the new device types, and the
+ * `pair_url` the sheet takes the server's address from.
  *
  * @param deviceType - "ios" → `mobile_app`, otherwise `desktop_app`.
  * @param _name - Display name (the device labels itself at consume time).
@@ -1320,7 +1318,6 @@ export async function initiatePairing(
 	return {
 		source_id: minted.id,
 		token: minted.token,
-		qr_svg: minted.qr_svg,
 		pair_url: minted.pair_url
 	};
 }

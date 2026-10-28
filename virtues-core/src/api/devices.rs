@@ -4,11 +4,13 @@
 //! revocation. A device's only credential is its allowlisted iroh key, so revoke
 //! is simply:
 //!
-//!   1. Mark `app_device.revoked_at = now()` — the reconciler drops the device's
-//!      iroh key from the allowlist, so its next dial is refused at the QUIC
-//!      handshake (existing connections aren't force-evicted; iroh has no
-//!      per-conn revoke — next dial is the boundary). The same reconcile GCs the
-//!      device's device-anchored ingest actions.
+//!   1. Mark `app_device.revoked_at = now()`. The auth extractor
+//!      (`middleware::auth`) refuses the device's key from its next request,
+//!      including one on a connection that is already open, and
+//!      `relay::reconcile` drops the key from the iroh allowlist, so its next
+//!      dial is refused at the QUIC handshake. The next
+//!      `applet_templates::reconcile_templates` pass deletes the device's
+//!      ingest applets.
 //!   2. Append an `app_auth_event` row tagged `revoked`.
 //!
 //! The allowlist refresh + event log are best-effort and logged on failure but
@@ -137,12 +139,12 @@ pub async fn list_devices_cli(
 }
 
 /// Bare-pool device revoke for the `virtues device rm` CLI. Mirrors the HTTP
-/// revoke's core in one transaction — mark the device revoked, which is the
-/// whole of it, since a device's only credential is its allowlisted iroh key
-/// (this line used to claim it also revoked the device's credential rows; the
-/// body below says the opposite, and the body is right) — then kicks
-/// `after_pairing_change` so the de-allowlist + atlas re-report happen
-/// immediately. `Ok(false)` if no such active device.
+/// revoke's core in one transaction: mark the device revoked, which is the
+/// whole of it, since a device's only credential is its allowlisted iroh key.
+/// The server's auth extractor refuses the key from its next request. This
+/// runs in the CLI process, which cannot reach the server's live allowlist, so
+/// the server drops the key from it at its next periodic reconcile
+/// (`relay::RECONCILE_INTERVAL_SECS`). `Ok(false)` if no such active device.
 pub async fn revoke_device_cli(pool: &PgPool, device_id: &str) -> Result<bool, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let affected = sqlx::query(
@@ -157,8 +159,9 @@ pub async fn revoke_device_cli(pool: &PgPool, device_id: &str) -> Result<bool, s
         return Ok(false);
     }
     tx.commit().await?;
-    // De-allowlist the device's iroh key (+ GC its device-anchored ingest actions
-    // on the next reconcile). Devices hold no credential row to revoke.
+    // This does not touch the server's allowlist: `relay::ALLOW` is set only
+    // in the server process, and the spawned reconcile is dropped when the
+    // command exits. Devices hold no credential row to revoke.
     crate::relay::after_pairing_change(pool.clone());
     Ok(true)
 }
@@ -181,10 +184,10 @@ pub async fn revoke_handler(
     //      the query itself for why `COUNT(*) … FOR UPDATE` made this handler
     //      return 500 on every call.
     //   3. If we'd be revoking the only active device → bail with 409.
-    //   4. Capture the WG pubkey from credentials before the credential row's
-    //      lookup_hash gets cleared.
-    //   5. Update device, revoke credentials, delete sessions.
-    //   6. Commit. Eviction + audit log happen after commit (best-effort).
+    //   4. Set `revoked_at` and clear the push address. A device's only
+    //      credential is its iroh key, so this is the whole revoke.
+    //   5. Commit. The allowlist refresh and the audit row happen after
+    //      commit (best-effort).
     let mut tx = match pool.begin().await {
         Ok(t) => t,
         Err(e) => {
@@ -283,10 +286,11 @@ pub async fn revoke_handler(
             .into_response();
     }
 
-    // The device's iroh key is de-allowlisted by the `app_device.revoked_at`
-    // update above (the reconciler drops it from the allowlist), so the next dial
-    // is refused at the handshake. Devices hold no credential row to revoke, and
-    // their device-anchored ingest actions are GC'd by the next reconcile.
+    // The `revoked_at` update above is the whole revoke: devices hold no
+    // credential row. The auth extractor refuses the key from the next
+    // request, the reconcile after commit drops it from the iroh allowlist,
+    // and the next `applet_templates::reconcile_templates` pass deletes the
+    // device's ingest applets.
     if let Err(e) = tx.commit().await {
         tracing::warn!("devices revoke: tx commit failed: {e:#}");
         return (
@@ -297,7 +301,7 @@ pub async fn revoke_handler(
     }
 
     // Drop the revoked device's EndpointId from the iroh transport allowlist
-    // (and re-report the shrunk set to atlas) so it can no longer reach the box.
+    // so it can no longer dial the box.
     crate::relay::after_pairing_change(pool.clone());
 
     crate::api::audit::record(
@@ -517,9 +521,10 @@ impl EnrollError {
 }
 
 /// Peer enrollment for `enroll_peer`: insert `app_device{endpoint_id=peer,
-/// source_id}`, allowlist + register the EndpointId with atlas, then fan out
-/// the device's ingest actions. No bearer changes hands — the peer's proven key
-/// is its credential. `vouched_by` is the device that asked, which the
+/// source_id}`, add the EndpointId to the iroh allowlist
+/// (`relay::after_pairing_change`), then fan out the device's ingest actions.
+/// No bearer changes hands — the peer's proven key is its credential.
+/// `vouched_by` is the device that asked, which the
 /// `peer_enrolled` audit row names, so the owner can see where a device came
 /// from.
 pub(crate) async fn enroll_peer_core(
@@ -590,8 +595,8 @@ pub(crate) async fn enroll_peer_core(
     )
     .await;
 
-    // Allowlist the EndpointId + register it with atlas so the relay admits it,
-    // THEN fan out the device's ingest actions (anchored on device_id).
+    // Add the EndpointId to the iroh allowlist so the box admits its dial,
+    // then fan out the device's ingest actions (anchored on device_id).
     crate::relay::after_pairing_change(pool.clone());
     let applet_ids = crate::api::pair::assemble_applet_fanout(pool, &device_id)
         .await
@@ -602,12 +607,6 @@ pub(crate) async fn enroll_peer_core(
         applet_ids,
     })
 }
-
-// WG peer eviction is no longer done inline here. Kernel `wg0` state has a
-// single writer — the `virtues-wireguard` daemon — which reconciles from the
-// active peer set (see virtues_wg::reconcile + signal). Revoke marks the row
-// and fires `NOTIFY wg_reconcile`; the daemon drops the peer. This removes the
-// previous dual-writer (a direct `remove_peer` here racing the daemon's poll).
 
 #[cfg(test)]
 mod tests {

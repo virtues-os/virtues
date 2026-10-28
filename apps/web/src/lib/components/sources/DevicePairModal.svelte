@@ -5,8 +5,11 @@
 	const DOWNLOADS_URL = "https://virtues.com/downloads";
 	/**
 	 * DevicePairModal - Handles device pairing for iOS and Mac.
-	 * iOS: Shows QR code (primary) + manual device ID entry (fallback)
-	 * Mac: Shows pairing code for entry in the Mac app
+	 * iOS: a handoff QR when this computer's app can make one, and an address
+	 * and pair code to type.
+	 * Mac: a pair code to type into the app on that computer.
+	 * Both mint at `/api/pair/mint`, poll `/api/pair/status/:id` until the new
+	 * device redeems the code, and cancel at `/api/pair/deny/:id`.
 	 */
 	import { onDestroy } from "svelte";
 	import Modal from "$lib/components/Modal.svelte";
@@ -30,28 +33,27 @@
 	// Shared state
 	let error = $state<string | null>(null);
 
-	// iOS QR pairing: the phone scans a QR of the box's `/pair#t=<token>` URL
-	// while on the same network and consumes it over the LAN — the same
-	// mint→consume flow as the Mac code, just rendered as a QR instead of digits.
-	// The QR carries no secrets (only the pair URL), so cancelling simply denies
-	// the pending token — nothing to revoke.
+	// iOS pairing: the phone types an address and the pair code, the same
+	// mint→consume flow as the Mac code, and cancelling denies the token. The
+	// handoff QR below enrolls the phone directly instead, so cancelling also
+	// revokes that device.
 	let qrSourceId = $state<string>("");
-	// Shared polling state (used by both iOS QR and Mac flows)
+	// Shared polling state (used by both the iOS and Mac flows)
 	let pairingData = $state<PairingInitResponse | null>(null);
 	let isInitiating = $state(false);
 	let isPolling = $state(false);
 	let hasTimedOut = $state(false);
 	let timeRemaining = $state(600);
-	/** True once the credential has been finalized as `active` server-side.
-	 *  Distinguishes "modal closing because we paired" from "modal closing
-	 *  because the user cancelled mid-flow". The latter triggers a hard-delete
-	 *  of the still-pending credential row. */
+	/** True once the new device has paired: the token was redeemed, or the
+	 *  handoff device dialed the box. Distinguishes "modal closing because we
+	 *  paired" from "modal closing because the user cancelled mid-flow". The
+	 *  latter denies the token and revokes a handoff device (`cleanupPending`). */
 	let pairingSucceeded = $state(false);
 	let timerInterval: ReturnType<typeof setInterval> | null = null;
 	let pollInterval: ReturnType<typeof setInterval> | null = null;
 
 
-	// Start iOS QR pairing or Mac pairing when modal opens
+	// Start iOS or Mac pairing when the modal opens
 	$effect(() => {
 		if (open && deviceType === "ios" && !pairingData && !isInitiating && !qrSourceId) {
 			initiateQRPairing();
@@ -61,17 +63,17 @@
 		}
 	});
 
-	// --- iOS QR Flow ---
+	// --- iOS Flow ---
 
 	/**
 	 * The pairing door's address, when this computer could open one.
 	 *
-	 * The QR encodes the BOX's LAN address, so scanning it only works when the
-	 * phone is on the box's network. When the phone is somewhere else — a café,
-	 * an office, anywhere the box isn't — this machine holds a door open on its
-	 * own LAN address and the phone types that instead. Null in a browser, on a
-	 * phone, or when this machine can't reach the box; the QR stands alone then,
-	 * exactly as before.
+	 * Pairing is plain HTTP to the server, so a phone that is not on the
+	 * server's network cannot reach it. This computer holds a door open on its
+	 * own LAN address for the length of this window, and the phone types that
+	 * address and the code instead (`openPairDoor`). Null in a browser, on a
+	 * phone, or when this machine can't reach the box; the sheet then shows the
+	 * server's own address and the code from the mint.
 	 */
 	let doorOrigin = $state<string | null>(null);
 
@@ -95,10 +97,10 @@
 	 *
 	 * Null means "no explanation is owed" — a browser or the phone, where the
 	 * option was never on offer. Anything else must be SAID. A released Mac app
-	 * older than 1.0.26 has no `pair_handoff_create` at all, and this used to
-	 * read as the feature simply not existing: the person who most needed it —
-	 * on a network that forbids the two devices seeing each other — was handed
-	 * the LAN QR and no reason why the other one was missing.
+	 * older than 1.0.26 has no `pair_handoff_create` at all. Without a reason,
+	 * the person who most needs the scan code, on a network that keeps the two
+	 * devices apart, reads its absence as the feature not existing and is left
+	 * with an address their phone cannot reach.
 	 */
 	let handoffUnavailable = $state<Exclude<HandoffOutcome, { kind: "ok" | "no-shell" }> | null>(
 		null
@@ -208,7 +210,8 @@
 					return;
 				}
 			}
-			// Both iOS (QR) and Mac (code) ride the same token → consume lifecycle.
+			// Both the iOS and Mac flows ride the same token → consume lifecycle.
+			// The handoff above enrolls directly and leaves the token alone.
 			const sourceId = pairingData?.source_id || qrSourceId;
 			if (!sourceId) return;
 			const status = await api.getPairingStatus(sourceId);
@@ -346,7 +349,8 @@
      user can reach it. -->
 <Modal open={open} onClose={handleClose} title={deviceType === "mac" ? "Add your computer" : `Add your ${displayName || "iPhone"}`} width="md">
 	{#if deviceType === "ios"}
-		<!-- iOS Flow: QR Code Primary + Manual Fallback -->
+		<!-- iOS flow: the handoff QR when this computer can make one, and the
+		     address and code to type -->
 		<div class="space-y-5">
 
 			{#if hasTimedOut}
@@ -363,7 +367,7 @@
 				</div>
 
 			{:else}
-				<!-- QR Code pairing -->
+				<!-- Pairing -->
 				<div class="flex flex-col items-center text-center">
 					{@render getTheApp('iPhone')}
 					<div class="mb-5">
@@ -400,9 +404,9 @@
 
 					{#if handoffUnavailable}
 						<!-- The scan-anywhere option is missing and the person is entitled
-						     to know why. Silence here reads as "no such feature", which is
-						     what sends someone on a client-isolating network round in circles with
-						     the one QR that cannot work there. -->
+						     to know why. Silence here reads as "no such feature", and leaves
+						     someone on a client-isolating network with only an address their
+						     phone cannot reach. -->
 						<div class="notice mb-5">
 							{#if handoffUnavailable.kind === "too-old"}
 								<p class="notice-title">Scanning needs a newer app on this Mac</p>
@@ -463,12 +467,10 @@
 					{/if}
 
 					<!-- THE ADDRESS AND CODE, when there is neither a scan code nor a
-					     door: a plain browser, or an app too old to make either. This
-					     used to be a QR of `/pair#t=<token>` on the server's own
-					     address, under a line telling the person to type an address
-					     it never showed. Nothing can scan that QR (the app's scanner
-					     reads handoff codes only), so the sheet now shows what the
-					     person actually types. (Setup review, 2026-09-25.) -->
+					     door: a plain browser, or an app too old to make either. The
+					     app's scanner reads handoff codes only, so the sheet shows what
+					     the person types: the server's origin, taken from the mint's
+					     `pair_url`, and the code. -->
 					{#if !doorOrigin && !handoffQr}
 						<div class="door mb-5">
 							{#if isInitiating}

@@ -81,10 +81,17 @@ boot for exactly this reason.
 > cannot stop Caddy appending the real peer last. After the fix, the same twelve
 > requests give ten 401s and then 429.
 
-Residual risks on the demo box, all bounded and accepted: the rate limit is
-per-IP, so a distributed sweep is slowed rather than stopped; a successful guess
-earns a permanent iroh allowlist entry, could burn inference credits via
-`virtues-api`, and would see anything the reviewer's device synced.
+Both conditions assume the pair code is the only way in, which holds only when
+core runs with `ENVIRONMENT=production`. Under `ENVIRONMENT=dev`, which step 6b
+says the demo box runs, core gives the owner's authority to every request Caddy
+forwards (`owner_by_transport` in `virtues-core/src/middleware/auth.rs`). Whoever
+reaches either hostname is then the owner on every route without a code, and
+neither the rate limit nor the risks below bound what they can do.
+
+Residual risks with `ENVIRONMENT=production`, all bounded and accepted: the
+rate limit is per-IP, so a distributed sweep is slowed rather than stopped; a
+successful guess earns a permanent iroh allowlist entry, could burn inference
+credits via `virtues-api`, and would see anything the reviewer's device synced.
 
 **Rotate the code whenever the box's address becomes known outside App Review**
 — publishing the two together is what turns a slow, bounded guess into a targeted
@@ -112,13 +119,13 @@ the billing service.
 | Monitoring | `virtues-health` every ten minutes with the demo check file (kept with the demo tooling, which is off this repo: box, sidecars, the placement and reset timers, today being a full day, and the public doors: review identity 200, both hostnames 401 without credentials); the placement and reset units email on failure; the cloud server also probes the review hostname, because a dead box cannot report itself |
 
 An obscure hostname is not a security control — it only keeps opportunistic
-scanners away, and it does even that only while it stays unpublished. The real
-controls are the per-IP rate limit on `/api/pair/consume` (10 attempts per
-30-minute window, keyed on the proxy-appended XFF entry — but ONLY with
-`VIRTUES_TRUSTED_PROXY=1`; see the box above and `consume_handler` in
-`virtues-core/src/api/pair.rs`), the synthetic seed data, and the box's
-disposability. Verify the limit rather than assuming it: eleven bad codes in a
-row must produce a 429.
+scanners away, and it does even that only while it stays unpublished. With
+`ENVIRONMENT=production`, the real controls are the per-IP rate limit on
+`/api/pair/consume` (10 attempts per 30-minute window, keyed on the
+proxy-appended XFF entry — but ONLY with `VIRTUES_TRUSTED_PROXY=1`; see the
+box above and `consume_handler` in `virtues-core/src/api/pair.rs`), the
+synthetic seed data, and the box's disposability. Verify the limit rather
+than assuming it: eleven bad codes in a row must produce a 429.
 
 ## Provisioning
 
@@ -170,10 +177,20 @@ row must produce a 429.
    in the same file: the origins a browser opens the box's UI from through
    Caddy. A page's socket takes the app's own origins and these, nothing else
    (`server::public_origins`), so without them every page there waits on
-   Loading and nothing typed in one is saved. They pass CORS and open the
-   page socket only: the terminal and the owner's browser socket still take
-   the app's own origins alone. Each must be the exact `https://host`, with
-   no path or wildcard; an entry that is not is left out.
+   Loading and nothing typed in one is saved. Each must be the exact
+   `https://host`, with no path or wildcard; an entry that is not is left
+   out.
+
+   The demo box runs with `ENVIRONMENT=dev` in this file, where the installer
+   writes `production`. On a dev stack every request Caddy forwards from
+   loopback carries the owner's authority, so the Host check
+   (`middleware::security::ServedNames`) looks at it, and the names in this
+   list are the only proxied hosts it serves. List both public origins.
+   Under a name left out, the page itself still loads, because the SPA's
+   files are served outside the check, but every API and socket request
+   through Caddy gets 421, pairing at `/api/pair/consume` included. Beyond
+   that, the list passes CORS and opens the page socket: the terminal and the
+   owner's browser socket still take the app's own origins alone.
 7. **Install the demo life.** The demo data and its tooling (the generator, the
    install, placement and reset scripts) are not in this repo: they were taken
    out on 2026-10-19 until a demo is built from pure invention and reviewed. The
