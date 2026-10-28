@@ -45,11 +45,6 @@
 	let actionError = $state<string | null>(null);
 	let busy = $state(false);
 
-	const setCount = $derived(keys.filter((k) => k.is_set).length);
-	const description = $derived(
-		setCount === 1 ? '1 key set' : `${setCount} keys set`
-	);
-
 	async function load() {
 		error = null;
 		try {
@@ -165,7 +160,7 @@
 	];
 </script>
 
-<Page title="Keys" {description} maxWidth="wide">
+<Page title="Keys" description="Sign-ins and keys saved on your server." maxWidth="wide">
 	<section class="block">
 		<h2 class="block-title">Sign-ins</h2>
 		<p class="block-body">
