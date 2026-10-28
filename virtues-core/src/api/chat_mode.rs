@@ -363,7 +363,16 @@ pub(crate) mod tests {
     fn every_chat_applet_resolves_to_itself() {
         let names: Vec<String> =
             crate::applet_templates::chat_applets().into_iter().filter(|a| a.shipped).map(|a| a.name).collect();
-        for name in ["admin", "deep-research", "meeting-prep", "morning-brief", "trip-planner", "weekly-review", "new-applet"] {
+        for name in [
+            "admin",
+            "clarity-review",
+            "deep-research",
+            "meeting-prep",
+            "morning-brief",
+            "trip-planner",
+            "weekly-review",
+            "new-applet",
+        ] {
             assert!(names.iter().any(|n| n == name), "{name} is not offered");
         }
         for name in names {
@@ -502,8 +511,10 @@ pub(crate) mod tests {
             ("local", 0),
             // The shipped chat applets, each just above its 2026-10-22 size as a
             // skill; admin and deep research just above their size as modes,
-            // less what admin no longer lists.
+            // less what admin no longer lists. Clarity review just above its
+            // size when it shipped on 2026-10-28.
             ("admin", 9_000),
+            ("clarity-review", 7_000),
             ("deep-research", 13_250),
             ("meeting-prep", 8_400),
             ("morning-brief", 8_700),

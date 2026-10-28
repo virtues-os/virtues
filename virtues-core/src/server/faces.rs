@@ -446,7 +446,9 @@ pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::resul
 ///   `applet_*` schema (the faces' read-only bridge), except the ontologies
 ///   marked `ModelAccess::OwnerOptIn`, which it revokes; and on the columns of
 ///   `app_applet_runs` that say when each applet ran, which an applet's
-///   `run: sql` reads to wait between runs.
+///   `run: sql` reads to wait between runs; and on the columns of
+///   `app_chats` and `app_chat_messages` that say who wrote what, in which
+///   chat and when.
 /// - `virtues_applet_writer`: DML strictly inside `applet_*` schemas (the
 ///   `sql_write` tool) — the write scope is PG grants, not SQL parsing.
 pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Result<()> {
@@ -556,6 +558,20 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
     .execute(&mut *tx)
     .await
     .map_err(|e| crate::error::Error::Database(format!("grant on app_applet_runs failed: {e}")))?;
+    // Chats with Virtues, readable as chats with other AI apps already are in
+    // `data_content_conversation`, so an applet can read a day of both
+    // (`clarity-review`). Only who wrote what, in which chat and when: tool
+    // calls, their results and reasoning stay the server's.
+    for grant in [
+        "GRANT SELECT (id, title, created_at, updated_at, deleted_at) ON public.app_chats TO virtues_face_reader",
+        "GRANT SELECT (id, chat_id, role, content, subject, sequence_num, created_at) \
+         ON public.app_chat_messages TO virtues_face_reader",
+    ] {
+        sqlx::query(grant)
+            .execute(&mut *tx)
+            .await
+            .map_err(|e| crate::error::Error::Database(format!("grant on chats failed: {e}")))?;
+    }
     tx.commit()
         .await
         .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
@@ -688,20 +704,24 @@ mod tests {
         assert!(can_read("data_health_sleep").await, "the sweep still grants the rest");
         // The task tools send the model to sql_query for the list.
         assert!(can_read("app_tasks").await, "the assistant cannot read its task list");
-        let can_read_column = |column: &'static str| {
+        let can_read_column = |table: &'static str, column: &'static str| {
             let pool = pool.clone();
             async move {
                 sqlx::query_scalar::<_, bool>(
-                    "SELECT has_column_privilege('virtues_face_reader', 'public.app_applet_runs', $1, 'SELECT')",
+                    "SELECT has_column_privilege('virtues_face_reader', $1, $2, 'SELECT')",
                 )
+                .bind(format!("public.{table}"))
                 .bind(column)
                 .fetch_one(&pool)
                 .await
                 .unwrap()
             }
         };
-        assert!(can_read_column("started_at").await, "a run's SQL cannot see when the applet last ran");
-        assert!(!can_read_column("error").await, "a run's error text is readable");
+        assert!(can_read_column("app_applet_runs", "started_at").await, "a run's SQL cannot see when the applet last ran");
+        assert!(!can_read_column("app_applet_runs", "error").await, "a run's error text is readable");
+        assert!(can_read_column("app_chat_messages", "content").await, "an applet cannot read a chat");
+        assert!(!can_read_column("app_chat_messages", "tool_calls").await, "a chat's tool results are readable");
+        assert!(!can_read_column("app_chat_messages", "reasoning").await, "a chat's reasoning is readable");
     }
 
     /// A view's SQL cannot return to the server's role. Under a `SET ROLE`

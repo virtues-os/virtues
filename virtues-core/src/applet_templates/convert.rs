@@ -407,7 +407,7 @@ mod tests {
             let t = super::super::skill::parse(&text, &entry.path(), &dir, true)
                 .unwrap_or_else(|e| panic!("{dir}: {e:?}"));
             let chat =
-                ["admin", "deep-research", "meeting-prep", "morning-brief", "trip-planner", "weekly-review", "new-applet"];
+                ["admin", "clarity-review", "deep-research", "meeting-prep", "morning-brief", "trip-planner", "weekly-review", "new-applet"];
             assert_eq!(t.invoke_chat, chat.contains(&dir.as_str()), "{dir}");
             loaded += 1;
         }
