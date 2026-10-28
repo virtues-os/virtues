@@ -732,3 +732,28 @@ pub(crate) async fn pair_handoff_accept<R: Runtime>(
 ) -> Result<ReachStatus> {
   app.reach().accept_handoff(&payload).await
 }
+
+// ─── The owner proof ─────────────────────────────────────────────────────────
+
+/// Sign one HTTP request for the box with this device's key: `method` and
+/// `path` exactly as the request carries them, and the `nonce` the box issued
+/// at `POST /api/owner-proof/nonce`. Returns the value for the
+/// `X-Virtues-Owner-Proof` header.
+///
+/// The box asks for this on the routes a process on this machine must not
+/// reach just by connecting to the app's loopback port: revealing a password
+/// or a key, adding a device, changing the AI key, importing an applet
+/// package. Only the app holds the key, so only the app can answer. The same
+/// signing works on the Mac and on iOS; the seed never leaves Rust.
+#[command]
+pub(crate) async fn owner_proof_sign<R: Runtime>(
+  app: AppHandle<R>,
+  method: String,
+  path: String,
+  nonce: String,
+) -> Result<String> {
+  app
+    .reach()
+    .sign_http_owner_proof(&method, &path, &nonce)
+    .map_err(|e| crate::Error::Reach(format!("{e:#}")))
+}

@@ -8,12 +8,6 @@
 //!     promises (a user whose network died mid-consume retries with the
 //!     same token; the row is still around for that retry).
 //!
-//!   - `app_sudo_request` rows past `expires_at`, in any non-pending
-//!     terminal state (`consumed`, `denied`, `expired`), get deleted. The
-//!     `pending` state is kept past TTL until a separate pass flips it to
-//!     `expired` — handled inline by `verify_and_consume` when the gated
-//!     handler attempts to use it.
-//!
 //!   - `app_auth_event` rows older than 90 days are deleted. The archive
 //!     table that used to receive them had no reader anywhere — full auth
 //!     history with no query path is retention risk, not history — and was
@@ -68,12 +62,11 @@ pub fn spawn(pool: PgPool) {
         loop {
             tick.tick().await;
             match run_once(&pool).await {
-                Ok(Counts { pair_tokens: 0, sudo_requests: 0, archived: 0, telemetry: 0, trash: 0, visits: 0 }) => {
+                Ok(Counts { pair_tokens: 0, archived: 0, telemetry: 0, trash: 0, visits: 0 }) => {
                     // quiet
                 }
                 Ok(c) => tracing::info!(
                     pair_tokens = c.pair_tokens,
-                    sudo_requests = c.sudo_requests,
                     archived = c.archived,
                     telemetry = c.telemetry,
                     trash = c.trash,
@@ -89,7 +82,6 @@ pub fn spawn(pool: PgPool) {
 #[derive(Debug, Default)]
 struct Counts {
     pair_tokens: u64,
-    sudo_requests: u64,
     archived: u64,
     telemetry: u64,
     trash: u64,
@@ -101,14 +93,6 @@ async fn run_once(pool: &PgPool) -> Result<Counts, sqlx::Error> {
         "DELETE FROM app_pair_token \
          WHERE expires_at < now() - interval '{PAIR_TOKEN_GRACE}'"
     ))
-    .execute(pool)
-    .await?
-    .rows_affected();
-
-    let sudo_requests = sqlx::query(
-        "DELETE FROM app_sudo_request \
-         WHERE expires_at < now() AND status <> 'pending'",
-    )
     .execute(pool)
     .await?
     .rows_affected();
@@ -166,7 +150,6 @@ async fn run_once(pool: &PgPool) -> Result<Counts, sqlx::Error> {
 
     Ok(Counts {
         pair_tokens,
-        sudo_requests,
         archived,
         telemetry,
         trash,

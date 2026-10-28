@@ -84,7 +84,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 | Some("reset")
                 | Some("configure-inference")
                 | Some("reindex")
-                | Some("sudo")
                 | Some("warm-models")
         );
         let data_verb = std::env::args()
@@ -213,79 +212,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
 
-        return Ok(());
-    }
-
-    // ─── `virtues sudo` ─────────────────────────────────────────────────────
-    // Confirmation gate for high-sensitivity actions. Lists open sudo
-    // requests; on approval, the corresponding web action unlocks. The
-    // person running this command IS the second factor (proves physical
-    // access to the box).
-    if let Some(Commands::Sudo { id, deny }) = &cli.command {
-        let database_url = virtues::database::normalize_database_url()?;
-        let db = virtues::database::Database::new(&database_url)?;
-        let pool = db.pool();
-
-        // If a specific id was provided, fast-path it.
-        if let Some(id) = id {
-            let res = if *deny {
-                virtues::api::sudo::deny_from_cli(pool, id).await
-            } else {
-                virtues::api::sudo::approve_from_cli(pool, id).await
-            };
-            match res {
-                Ok(()) => {
-                    println!("✓ {}", if *deny { "denied" } else { "approved" });
-                    return Ok(());
-                }
-                Err(e) => {
-                    eprintln!("error: {e}");
-                    std::process::exit(1);
-                }
-            }
-        }
-
-        // Interactive: list open requests, prompt for each.
-        let pending = virtues::api::sudo::list_pending(pool).await?;
-        if pending.is_empty() {
-            println!();
-            println!("  No pending sudo requests.");
-            println!();
-            return Ok(());
-        }
-        for req in pending {
-            let remaining = (req.expires_at - chrono::Utc::now()).num_seconds().max(0);
-            println!();
-            println!("─────────────────────────────────────────────────────────");
-            println!("  Pending action:  {}", req.action);
-            println!("  Requested by:    {}", req.requesting_device_label);
-            if let Some(ip) = req.requested_ip.as_deref() {
-                println!("  From IP:         {ip}");
-            }
-            println!("  Requested at:    {}", req.created_at.to_rfc3339());
-            println!("  Expires in:      {remaining}s");
-            println!("─────────────────────────────────────────────────────────");
-
-            let approve = dialoguer::Confirm::with_theme(&dialoguer::theme::ColorfulTheme::default())
-                .with_prompt("Approve?")
-                .default(false)
-                .interact()
-                .unwrap_or(false);
-
-            if approve {
-                if let Err(e) = virtues::api::sudo::approve_from_cli(pool, &req.id).await {
-                    eprintln!("  ⚠  {e}");
-                } else {
-                    println!("  ✓ approved. Action will complete in the requesting browser.");
-                }
-            } else {
-                if let Err(e) = virtues::api::sudo::deny_from_cli(pool, &req.id).await {
-                    eprintln!("  ⚠  {e}");
-                } else {
-                    println!("  ✗ denied.");
-                }
-            }
-        }
         return Ok(());
     }
 

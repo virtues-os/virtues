@@ -96,18 +96,34 @@ change for it, because `kind` already says which rows it would cover.
   starts from a clean environment, so the server's variables are not
   inherited, and `virtues backup --init-key` asks first, the way deletes do.
   Reads never ask. Not built yet.
-- **Six routes need the app's own signature** (decided 2026-10-27).
+- **Six actions need the app's own signature** (decided 2026-10-27).
   Revealing a password, revealing a key, enrolling a device, minting a pair
-  code, changing the AI key and importing an applet package each need a
-  fresh owner proof. The last two replace the `virtues sudo` confirmation,
-  which is removed. The box hands out a one-time
-  nonce, and the app signs it with the device key, the same signing
-  `crates/virtues-reach-client/src/owner.rs` does for an offline box. Every
-  other route stays open to any connection on the Mac's `127.0.0.1:7117`,
-  which is the accepted gap. The box's own console on its loopback is exempt.
-  With it: the box refuses unknown `Host` names, the Browser pane refuses
-  loopback, private and `.local` hosts, and the Mac keeps its device seed in
-  the Keychain. Not built yet.
+  code (the collector's code too, since it redeems into a device), changing
+  the AI key and importing an applet package each need a fresh owner proof.
+  The box hands out a one-time nonce (`POST /api/owner-proof/nonce`), and the
+  app signs it with the device key, the same signing
+  `crates/virtues-reach-client/src/owner.rs` does for an offline box, over a
+  message with its own prefix (`api::owner_proof`). The box's own console on
+  its loopback is exempt. Each reveal, enrollment and pair code also writes an
+  `app_auth_event` row. With it: the box refuses unknown `Host` names, the
+  Browser pane refuses loopback, private and `.local` hosts, and the Mac
+  keeps its device seed in the Keychain. Built on `wave`; not yet run on a
+  box or a device.
+
+  The last two actions replace the `virtues sudo` confirmation, which is
+  removed. Migration 0070 empties its table and keeps it for one release,
+  because the previous binary's sweeper fails without it after
+  `virtues rollback`. A later migration drops `app_sudo_request`.
+
+  Every other route stays open to any connection on the Mac's
+  `127.0.0.1:7117`, which is the accepted gap. Two routes in that gap reach
+  past the proof: `/ws/terminal` opens a shell on the box, and a chat request
+  can ask for sudo mode. From either, a process on the Mac reaches the
+  box's console and `virtues.env`. So the six actions are closed to a direct
+  request through 7117 and still open through those two, until the terminal
+  socket and a sudo-mode chat need the proof too. Not built yet. A browser
+  socket cannot set a header, so the terminal would carry the proof in its
+  URL.
 - **A password is filled by row id.** The Mac browser host decrypts the row
   and types the password into the page itself, so the value never appears in
   a tool result or a prompt. The shell's refusal to let the model type into

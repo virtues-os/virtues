@@ -355,9 +355,9 @@ export function returnToPairing(): void {
  * both offer it and the 409 below is the part worth never getting wrong.
  *
  * 409 is the box refusing to strand you: revoking your last active device
- * leaves nothing that can reach it, and the only way back in is physical. It
- * needs `virtues sudo` ON the box, so the message names that rather than
- * pretending the click merely failed.
+ * leaves nothing that can reach it, and the only way back in is physical. The
+ * message says how to get past it rather than pretending the click merely
+ * failed.
  *
  * Returns true when a device other than the current one was revoked, so the
  * caller can refresh or navigate. Revoking the current device never returns —
@@ -377,9 +377,8 @@ export async function revokeDeviceFlow(device: Device): Promise<boolean> {
 	try {
 		const resp = await fetch(`/api/devices/${device.id}`, { method: 'DELETE' });
 		if (resp.status === 409) {
-			toast.error('Cannot revoke the only active device', {
-				description:
-					'Run `virtues sudo` on your server to confirm before deleting your last paired device.'
+			toast.error("You can't revoke your only paired device", {
+				description: 'Pair another device first, then revoke this one.'
 			});
 			return false;
 		}

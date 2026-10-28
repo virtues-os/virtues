@@ -227,7 +227,8 @@ pub async fn rename_credential(db: &PgPool, credential_id: &str, new_name: &str)
 ///
 /// The box's own keys ([`INTERNAL_SOURCE_IDS`]) are not found here, as in
 /// the list. Billing is the only place that removes them: removing the BYO
-/// key needs the owner's approval, and this route asks for none.
+/// key needs the app's owner proof (`api::owner_proof`), and this route asks
+/// for none.
 pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
     let emptied = crate::credentials::emptied_secrets()?;
     let affected = sqlx::query(

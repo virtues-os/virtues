@@ -164,8 +164,8 @@ pub async fn revoke_device_cli(pool: &PgPool, device_id: &str) -> Result<bool, s
 }
 
 /// `DELETE /api/devices/:id` — revoke a paired device. Refuses if it's the
-/// last active device (would lock the user out). To delete the last device,
-/// use `virtues sudo` from the box CLI.
+/// last active device (would lock the user out). To start over with no
+/// devices, Devices has "Start over" (`/api/pair/reopen-onboarding`).
 pub async fn revoke_handler(
     State(pool): State<PgPool>,
     user: AuthUser,
@@ -261,7 +261,7 @@ pub async fn revoke_handler(
             StatusCode::CONFLICT,
             Json(json!({
                 "error": "last_device",
-                "message": "Refusing to revoke the only active device. Run `virtues sudo` to confirm."
+                "message": "This is your only paired device, so revoking it would lock you out. Pair another device first."
             })),
         )
             .into_response();
@@ -300,15 +300,14 @@ pub async fn revoke_handler(
     // (and re-report the shrunk set to atlas) so it can no longer reach the box.
     crate::relay::after_pairing_change(pool.clone());
 
-    // Event log.
-    let _ = sqlx::query(
-        "INSERT INTO app_auth_event (user_id, device_id, event_type, detail) \
-         VALUES ($1, $2, 'revoked', $3)",
+    crate::api::audit::record(
+        &pool,
+        Some(&device_id),
+        "revoked",
+        json!({"revoked_by_device": &user.device_id}),
+        None,
+        None,
     )
-    .bind(&user.id)
-    .bind(&device_id)
-    .bind(json!({"revoked_by_device": &user.device_id}))
-    .execute(&pool)
     .await;
 
     (StatusCode::OK, Json(json!({"ok": true}))).into_response()
@@ -442,21 +441,22 @@ pub struct EnrollPeerRequest {
 }
 
 /// `POST /api/devices/enroll-peer` — peer-vouched enrollment. An **already-paired**
-/// device (authed by its own bearer) vouches for a NEW device by its EndpointId:
-/// the box mints the new device's credential + allowlists its EndpointId, so the
-/// new device can reach the box over the relay *once it's registered* (no relay
-/// grace-pass, no chicken-egg). The returned bearer is relayed back to the new
-/// device by the vouching device over a trusted out-of-band channel.
+/// device vouches for a NEW device by its EndpointId: the box allowlists that
+/// EndpointId, so the new device can reach the box over the relay *once it's
+/// registered* (no relay grace-pass, no chicken-egg). The vouching device hands
+/// the answer to the new one itself (the pairing handoff QR).
 ///
-/// This is the iroh-native replacement for the off-LAN "provision" QR: the new
-/// device generates its own key first, so its EndpointId is known at enrollment.
+/// The new device is a full owner device, so the request needs the app's owner
+/// proof (`api::owner_proof`): a process on a paired Mac that can only open the
+/// app's loopback port cannot enroll a device of its own.
 pub async fn enroll_peer(
     State(pool): State<PgPool>,
-    _user: AuthUser,
+    crate::api::owner_proof::OwnerProven(user): crate::api::owner_proof::OwnerProven,
     Json(body): Json<EnrollPeerRequest>,
 ) -> impl IntoResponse {
     match enroll_peer_core(
         &pool,
+        &user.device_id,
         &body.peer_node_id,
         &body.kind,
         body.label.as_deref(),
@@ -516,12 +516,15 @@ impl EnrollError {
     }
 }
 
-/// Core peer enrollment shared by `enroll_peer` (HTTP) and the link-a-device
-/// approve step: insert `app_device{endpoint_id=peer, source_id}`, allowlist +
-/// register the EndpointId with atlas, then fan out the device's ingest actions.
-/// No bearer changes hands — the peer's proven key is its credential.
+/// Peer enrollment for `enroll_peer`: insert `app_device{endpoint_id=peer,
+/// source_id}`, allowlist + register the EndpointId with atlas, then fan out
+/// the device's ingest actions. No bearer changes hands — the peer's proven key
+/// is its credential. `vouched_by` is the device that asked, which the
+/// `peer_enrolled` audit row names, so the owner can see where a device came
+/// from.
 pub(crate) async fn enroll_peer_core(
     pool: &PgPool,
+    vouched_by: &str,
     peer_node_id: &str,
     kind: &str,
     label: Option<&str>,
@@ -576,6 +579,16 @@ pub(crate) async fn enroll_peer_core(
         tracing::warn!(error = %e, "enroll_peer_core: commit failed");
         EnrollError::Internal
     })?;
+
+    crate::api::audit::record(
+        pool,
+        Some(&device_id),
+        "peer_enrolled",
+        json!({ "kind": kind, "label": &label, "vouched_by_device": vouched_by }),
+        None,
+        None,
+    )
+    .await;
 
     // Allowlist the EndpointId + register it with atlas so the relay admits it,
     // THEN fan out the device's ingest actions (anchored on device_id).

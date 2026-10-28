@@ -550,7 +550,6 @@
 		["StateBlock", "landing in the working tree as this page was written — the shared shell under EmptyState / LoadingState / ErrorState. Those three are shown below and exercise it; give StateBlock its own row here the moment it is committed, per the rule at the top of this file"],
 		["Markdown", "a render engine, not a primitive — it needs a document and the shiki theme; belongs in its own fixture"],
 		["ThinkingBlock", "chat-coupled; needs a streaming turn to be meaningful"],
-		["SudoModal", "asks for a real password; deliberately not instantiated on a public route"],
 		["citations (RecordCard, RecordCardBody)", "need live refs and a resolver"],
 		["ChatInput, RefPicker, UniversalPicker, DataGrid, ThemePicker, …", "composites, not primitives — they belong in a second gallery once the primitive set is settled"],
 	];

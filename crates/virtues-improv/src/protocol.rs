@@ -178,9 +178,9 @@ pub enum Command {
     OwnerProve { endpoint_id: String, signature: String },
 }
 
-/// Domain separation for the owner proof. A device's iroh key signs nothing
-/// else in this codebase today; the prefix guarantees that if it ever does,
-/// neither signature can stand in for the other.
+/// Domain separation for the owner proof. A device's iroh key signs this and
+/// [`http_owner_proof_message`], and each starts with its own context, so a
+/// signature made for one can never stand in for the other.
 pub const OWNER_PROOF_CONTEXT: &[u8] = b"virtues/improv/owner-proof/v1\n";
 
 /// The exact bytes a device signs for `0x89`: the context, then the raw nonce.
@@ -191,6 +191,58 @@ pub fn owner_proof_message(nonce: &[u8]) -> Vec<u8> {
     m.extend_from_slice(OWNER_PROOF_CONTEXT);
     m.extend_from_slice(nonce);
     m
+}
+
+// ─── The same proof over HTTP ───────────────────────────────────────────────
+//
+// Not Improv, but the same key and the same idea, and both the box and the
+// apps' signer already depend on this crate. A few box routes (revealing a
+// password or a key, adding a device, changing the AI key, importing an
+// applet package) need a fresh signature from the app itself, because any
+// process on a paired Mac can reach the box as that Mac through the app's
+// loopback port, while only the app holds the device's key. The box issues a
+// one-time nonce, the app signs it with this message, and the request carries
+// the result in [`HTTP_OWNER_PROOF_HEADER`].
+
+/// Domain separation for the HTTP owner proof. Different from
+/// [`OWNER_PROOF_CONTEXT`], so a Bluetooth proof cannot be replayed over HTTP
+/// or the other way round.
+pub const HTTP_OWNER_PROOF_CONTEXT: &[u8] = b"virtues/http/owner-proof/v1\n";
+
+/// The request header that carries an HTTP owner proof, as
+/// [`http_owner_proof_header`] formats it.
+pub const HTTP_OWNER_PROOF_HEADER: &str = "x-virtues-owner-proof";
+
+/// The exact bytes a device signs to prove one HTTP request: the context, the
+/// method, the path, and the nonce the box issued, one per line. The method
+/// and path bind the signature to the one request it was made for, so a proof
+/// for revealing one password cannot open another.
+///
+/// `path` is the request path as sent, without the query string.
+pub fn http_owner_proof_message(method: &str, path: &str, nonce: &str) -> Vec<u8> {
+    let mut m = Vec::with_capacity(
+        HTTP_OWNER_PROOF_CONTEXT.len() + method.len() + path.len() + nonce.len() + 2,
+    );
+    m.extend_from_slice(HTTP_OWNER_PROOF_CONTEXT);
+    m.extend_from_slice(method.to_ascii_uppercase().as_bytes());
+    m.push(b'\n');
+    m.extend_from_slice(path.as_bytes());
+    m.push(b'\n');
+    m.extend_from_slice(nonce.as_bytes());
+    m
+}
+
+/// The header value for a proof: the nonce and the signature, both hex,
+/// joined by a dot.
+pub fn http_owner_proof_header(nonce: &str, signature_hex: &str) -> String {
+    format!("{nonce}.{signature_hex}")
+}
+
+/// Split a header value into `(nonce, signature_hex)`. `None` when either half
+/// is missing.
+pub fn parse_http_owner_proof_header(value: &str) -> Option<(&str, &str)> {
+    let (nonce, signature) = value.trim().split_once('.')?;
+    (!nonce.is_empty() && !signature.is_empty()).then_some((nonce, signature))
 }
 
 // 0x84 (LinkCode) and 0x85 (PairCode) were DELETED 2026-08-24 (one-wire-plan).
@@ -690,6 +742,29 @@ mod tests {
         let m = owner_proof_message(&[1, 2, 3]);
         assert!(m.starts_with(b"virtues/improv/owner-proof/v1\n"));
         assert_eq!(&m[m.len() - 3..], &[1, 2, 3]);
+    }
+
+    #[test]
+    fn the_http_proof_never_signs_the_bluetooth_bytes() {
+        // Same key, two purposes. If the two messages could ever be equal, a
+        // proof made for one could be replayed as the other.
+        let nonce = "0a0b0c";
+        let http = http_owner_proof_message("GET", "/api/keys/X/value", nonce);
+        assert!(http.starts_with(b"virtues/http/owner-proof/v1\n"));
+        assert_ne!(http, owner_proof_message(nonce.as_bytes()));
+        assert!(!http.starts_with(OWNER_PROOF_CONTEXT));
+        assert_eq!(http, b"virtues/http/owner-proof/v1\nGET\n/api/keys/X/value\n0a0b0c");
+        // The method is compared as the box sees it, whatever case the app used.
+        assert_eq!(http, http_owner_proof_message("get", "/api/keys/X/value", nonce));
+    }
+
+    #[test]
+    fn the_http_proof_header_round_trips() {
+        let h = http_owner_proof_header("ab12", "cd34");
+        assert_eq!(parse_http_owner_proof_header(&h), Some(("ab12", "cd34")));
+        assert_eq!(parse_http_owner_proof_header("ab12"), None);
+        assert_eq!(parse_http_owner_proof_header(".cd34"), None);
+        assert_eq!(parse_http_owner_proof_header("ab12."), None);
     }
 
     #[test]

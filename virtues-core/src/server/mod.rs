@@ -207,8 +207,8 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
     // one at a time. See `crate::task_runner`.
     crate::task_runner::spawn(pool.clone(), yjs_state.clone());
 
-    // Auth-table sweeper: deletes expired pair tokens + sudo requests every
-    // 10 minutes, archives `app_auth_event` rows older than 90 days. See
+    // Auth-table sweeper: deletes expired pair tokens every 10 minutes and
+    // `app_auth_event` rows older than 90 days. See
     // `crate::maintenance::sweeper`.
     crate::maintenance::sweeper::spawn(pool.clone());
 
@@ -709,8 +709,8 @@ fn public_routes() -> Router<AppState> {
 
 /// Everything that requires a resolved `AuthUser` (proven iroh key /
 /// loopback console / dev fallback): each area's `routes()`, plus the
-/// devices, pairing, sudo, audit, maps and terminal routes that belong to no
-/// area.
+/// devices, pairing, owner proof, audit, maps and terminal routes that belong
+/// to no area.
 fn protected_routes(state: &AppState) -> Router<AppState> {
     Router::new()
         .merge(api::applets::routes())
@@ -749,9 +749,9 @@ fn protected_routes(state: &AppState) -> Router<AppState> {
         .route("/api/devices/self/reach",   get(crate::api::devices::get_self_reach))
         .route("/api/devices/enroll-peer",  post(crate::api::devices::enroll_peer))
         .route("/api/devices/:id",        axum::routing::delete(crate::api::devices::revoke_handler))
-        // ─── Sudo: gate for high-sensitivity actions ──────────────────
-        .route("/api/sudo/request",       post(crate::api::sudo::request_handler))
-        .route("/api/sudo/status/:id",    get(crate::api::sudo::status_handler))
+        // ─── Owner proof: the app's signature for the routes that take
+        //     one (api/owner_proof.rs) ─────────────────────────────────
+        .route("/api/owner-proof/nonce",  post(crate::api::owner_proof::nonce_handler))
         // ─── Audit log ────────────────────────────────────────────────
         // No UI calls this; it is the one way to read app_auth_event, which
         // agents/record/auth-model.md relies on. Not dead code.
@@ -1602,5 +1602,133 @@ mod route_syntax_tests {
              registers a literal route and 404s every real id:\n  {}",
             offenders.join("\n  ")
         );
+    }
+}
+
+/// The routes that take the owner proof (`api::owner_proof`), through the
+/// whole app the box serves. A handler that took `AuthUser` in place of
+/// `OwnerProven` would pass every test in that module, so this one sends each
+/// gated request as a paired Mac with no proof and expects the refusal.
+#[cfg(test)]
+mod owner_proof_route_tests {
+    use super::*;
+    use axum::body::Body;
+    use axum::http::{Method, Request, StatusCode};
+    use tower::Service;
+
+    const GATED: &[(&str, &str)] = &[
+        ("GET", "/api/passwords/login_test/secret"),
+        ("GET", "/api/keys/TEST_KEY/value"),
+        ("POST", "/api/devices/enroll-peer"),
+        ("POST", "/api/pair/mint"),
+        ("POST", "/api/pair/mint-collector"),
+        ("POST", "/api/settings/byo-key"),
+        ("DELETE", "/api/settings/byo-key"),
+        ("POST", "/api/admin/applets/import-git"),
+    ];
+
+    fn mac_key() -> virtues_iroh::SecretKey {
+        virtues_iroh::SecretKey::from_bytes(&[41; 32])
+    }
+
+    fn app(pool: &sqlx::PgPool) -> Router {
+        let dir = std::env::temp_dir().join(format!("virtues-owner-proof-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let storage = Arc::new(crate::storage::Storage::file(dir.to_string_lossy().into_owned()).unwrap());
+        build_app(AppState {
+            db: Arc::new(crate::database::Database::from_pool(pool.clone())),
+            storage: storage.clone(),
+            drive_config: crate::api::drive::DriveConfig::new(storage),
+            tool_executor: None,
+            yjs_state: yjs::YjsState::new(pool.clone()),
+            chat_cancel_state: crate::api::chat::ChatCancellationState::new(),
+            ghost_permissions: crate::api::chat_permissions::GhostPermissions::new(),
+            live_turns: crate::api::live_turn::LiveTurns::new(),
+            day_rewrites: crate::api::day_rewrites::DayRewrites::new(),
+        })
+    }
+
+    /// A request as the paired Mac sends it through its loopback splice.
+    fn from_mac(method: &str, path: &str, proof: Option<&str>) -> Request<Body> {
+        let method = Method::from_bytes(method.as_bytes()).unwrap();
+        let has_body = method == Method::POST;
+        let mut req = Request::builder()
+            .method(method)
+            .uri(path)
+            .header("host", "127.0.0.1:7117");
+        if has_body {
+            req = req.header("content-type", "application/json");
+        }
+        if let Some(proof) = proof {
+            req = req.header(virtues_improv::protocol::HTTP_OWNER_PROOF_HEADER, proof);
+        }
+        let mut req = req.body(if has_body { Body::from("{}") } else { Body::empty() }).unwrap();
+        req.extensions_mut().insert(virtues_iroh::ProvenPeer(mac_key().public()));
+        req
+    }
+
+    async fn code(res: axum::response::Response) -> (StatusCode, Option<String>) {
+        let status = res.status();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let code = serde_json::from_slice::<serde_json::Value>(&body)
+            .ok()
+            .and_then(|v| v.get("code").and_then(|c| c.as_str()).map(str::to_string));
+        (status, code)
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_gated_routes_need_the_proof_and_a_reveal_is_logged(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label, endpoint_id) \
+             VALUES ('dev_route_mac', $1, 'desktop_app', 'Mac', $2)",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .bind(mac_key().public().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut app = app(&pool);
+
+        for (method, path) in GATED {
+            let res = app.call(from_mac(method, path, None)).await.unwrap();
+            let (status, code) = code(res).await;
+            assert_eq!(status, StatusCode::FORBIDDEN, "{method} {path}");
+            assert_eq!(code.as_deref(), Some("owner_proof_required"), "{method} {path}");
+        }
+
+        // With a nonce from the box's own route and the Mac's signature, the
+        // same request gets past the check: the path the app signs is the
+        // path the handler sees. The reveal is written to the auth log.
+        if std::env::var("VIRTUES_ENCRYPTION_KEY").is_err() {
+            use base64::Engine;
+            std::env::set_var(
+                "VIRTUES_ENCRYPTION_KEY",
+                base64::engine::general_purpose::STANDARD.encode([0u8; 32]),
+            );
+        }
+        crate::api::keys::set_key(&pool, "TEST_KEY", "test-value").await.unwrap();
+        let res = app.call(from_mac("POST", "/api/owner-proof/nonce", None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let nonce = serde_json::from_slice::<serde_json::Value>(&body).unwrap()["nonce"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let path = "/api/keys/TEST_KEY/value";
+        let sig = mac_key().sign(&virtues_improv::protocol::http_owner_proof_message("GET", path, &nonce));
+        let proof = virtues_improv::protocol::http_owner_proof_header(&nonce, &hex::encode(sig.to_bytes()));
+        let res = app.call(from_mac("GET", path, Some(&proof))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let logged: Vec<(Option<String>, serde_json::Value)> = sqlx::query_as(
+            "SELECT device_id, detail FROM app_auth_event WHERE event_type = 'key_revealed'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(logged, [(Some("dev_route_mac".to_string()), serde_json::json!({ "name": "TEST_KEY" }))]);
+
+        // The same proof again is a replay.
+        let res = app.call(from_mac("GET", path, Some(&proof))).await.unwrap();
+        assert_eq!(code(res).await, (StatusCode::FORBIDDEN, Some("owner_proof_required".to_string())));
     }
 }

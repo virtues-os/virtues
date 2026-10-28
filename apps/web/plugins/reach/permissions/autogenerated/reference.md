@@ -28,6 +28,7 @@ Default permissions for the reach plugin
 - `allow-pair-door-status`
 - `allow-pair-handoff-create`
 - `allow-pair-handoff-accept`
+- `allow-owner-proof-sign`
 
 ## Permission Table
 
@@ -346,6 +347,32 @@ Enables the outbox_stats command without any pre-configured scope.
 <td>
 
 Denies the outbox_stats command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:allow-owner-proof-sign`
+
+</td>
+<td>
+
+Enables the owner_proof_sign command without any pre-configured scope.
+
+</td>
+</tr>
+
+<tr>
+<td>
+
+`reach:deny-owner-proof-sign`
+
+</td>
+<td>
+
+Denies the owner_proof_sign command without any pre-configured scope.
 
 </td>
 </tr>

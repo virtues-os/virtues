@@ -7,7 +7,7 @@
 //! its own endpoints. The UI assembles the full Billing view from both.
 //!
 //! Also exposes `POST /api/billing/auto-topup` for the user to flip auto-
-//! top-up on/off (not sudo-gated; it's a normal preference toggle). Enabling
+//! top-up on/off (no owner proof; it's a normal preference toggle). Enabling
 //! also clears the breaker counter — by re-enabling, the user is saying
 //! "I've fixed whatever was wrong with my card."
 

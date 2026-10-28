@@ -8,7 +8,7 @@
 1. To get in for the first time, run `virtues link` on the box and open the printed URL.
 2. To add another device, open `Settings → Devices → Add device` from an already-paired session and scan/open the URL on the new device.
 3. To revoke access, delete the device from the same page. The credential is invalidated and (if applicable) the WireGuard peer is evicted in the same transaction.
-4. Sensitive actions (export-all, BYO-key swap, wipe, last-device revoke) require an additional `virtues sudo` confirmation from the box CLI.
+4. A few routes (revealing a password or a key, adding a device, minting a pair code, changing the AI key, importing an applet package) also need a fresh owner proof: a signature by the Virtues app with the device's own key. The `virtues sudo` confirmation that used to guard two of them was removed on 2026-10-27 (`api/owner_proof.rs`).
 
 There is no login form, no password to brute-force, no email to phish, no
 magic-link URL to leak. The only way into the box is to (a) prove physical
@@ -88,8 +88,7 @@ Three tables support the auth machinery:
 | Table | What it holds |
 |---|---|
 | `app_pair_token` | RFC-8628-shape bootstrap tokens. SHA-256 hash persisted, raw token only exists in the response/QR. State machine: `pending → authorized → consumed | expired | denied`. |
-| `app_sudo_request` | Pending confirmations for the four gated actions. 5-min TTL. State: `pending → approved → consumed | expired | denied`. Approved by `virtues sudo` (v1) or push-confirm (v1.1). `consumed` is the terminal "approval was actually used" state — distinguished from `expired` so the audit log can tell them apart. |
-| `app_auth_event` | Append-only audit log of pair/revoke/session/sudo events with IP + UA. Written on every event and served by `GET /api/audit/auth`; **no UI surfaces it** since the Activity page was removed. |
+| `app_auth_event` | Append-only audit log of pair/revoke/session/key events with IP + UA. Written on every event and served by `GET /api/audit/auth`; **no UI surfaces it** since the Activity page was removed. |
 
 ## Flows
 
@@ -142,32 +141,32 @@ DELETE /api/devices/:id
   → append `revoked` to app_auth_event
 
   Guard: refuses if this would leave zero active devices (lockout
-  prevention). User must `virtues sudo` to confirm the last-device revoke.
+  prevention). Pair another device first, or start over from Devices.
 ```
 
-### Sudo (4 gated actions)
+### Owner proof
 
 ```
-[browser]
-1. Click "Export all data" (or BYO-key swap / wipe / last-device revoke).
-2. Frontend POSTs /api/sudo/request {action: "export_data"}.
-   Server inserts app_sudo_request row (status 'pending', 5-min TTL).
-3. Modal: "Run `virtues sudo` on the box to confirm."
-4. Frontend polls /api/sudo/status/:id.
+[app, on a paired device]
+1. POST /api/owner-proof/nonce → a random nonce, single use, 60 s.
+2. The reach plugin signs "virtues/http/owner-proof/v1\n" + method + "\n" +
+   path + "\n" + nonce with the device's iroh key, in Rust.
+3. The request carries X-Virtues-Owner-Proof: <nonce>.<signature>.
 
 [box]
-5. $ sudo -u virtues virtues sudo
-   → prints pending request (action, requesting device label, IP, expiry)
-   → prompts y/N. On 'y': status → 'approved', approved_by = 'cli'.
-
-[browser]
-6. Polling sees 'approved'. Frontend reissues the gated action with the
-   request id in the body or header. Server `verify_and_consume`s it
-   (single-use) and proceeds. Request row flips to 'expired' (consumed).
+4. The route's extractor (`OwnerProven`) takes the nonce, checks it was
+   issued to this device, and verifies the signature against the device's
+   stored endpoint id. Console requests are exempt; agent devices never pass.
 ```
 
-v1 uses CLI as the proof mechanism. v1.1 will add a push-confirm channel to
-the iOS app; the rest of the state machine doesn't change.
+It exists because a paired Mac's loopback port reaches the box as that Mac
+for any local process, and only the app holds the key
+([secrets-audit-2026-10-27.md](secrets-audit-2026-10-27.md), section 2).
+The web terminal and sudo-mode chat do not ask for it yet; see the Defenses
+table below.
+
+Each reveal, enrollment, pair code and AI key change also writes a row to
+`app_auth_event` (`api::audit::record`), readable at `GET /api/audit/auth`.
 
 ## Idle timeout
 
@@ -189,7 +188,7 @@ bump the timestamp, so a polling check doesn't keep an idle session alive.
 | Shoulder-surfing the QR | Web-minted tokens start `pending` and require the minting device to explicitly confirm before they become `authorized`. |
 | Network died mid-consume | The consume path uses a single transaction; partial failure leaves the token unconsumed and retryable until TTL. |
 | Stolen device — read access | Unavoidable for any logged-in device. Mitigated by: 8h idle timeout, easy revoke from any other device (Settings → Devices). The auth-event log is recorded and readable at `GET /api/audit/auth`, but has no UI — so noticing an unfamiliar pairing depends on the Devices list, not on a log anyone reads. |
-| Stolen device — irreversible actions | Sudo gate on `export_data`, `change_byo_key`, `wipe_box`, `revoke_last_device`. A thief without physical access to the box can't approve. |
+| Another process on a paired Mac | The owner proof on reveal, enroll, pair mint, the AI key and package import, so a direct request to those routes through the app's loopback port is refused. Everything else stays open to a local process there, an accepted gap. That gap includes `/ws/terminal`, which opens a shell on the box, and a chat request in sudo mode. From either, a local process reaches the box's own console, which the proof exempts, so it can still do the six actions and read `virtues.env` until those two need the proof as well. |
 | Clickjacking the Add-Device modal | `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` on every response. |
 | CSRF on state-changing requests | Double-submit cookie: `virtues.csrf-token` (NOT HttpOnly) + `X-CSRF-Token` header. Client-side `hooks.client.ts` wraps `fetch` to auto-attach. Exempt: `/api/pair/consume` (anonymous, body-token = capability), `/auth/signout` (idempotent, kills only own session), `/webhook/*`, `/internal/*`, `/oauth/callback`. |
 | MIME sniffing | `X-Content-Type-Options: nosniff` on every response. |
@@ -207,7 +206,6 @@ bump the timestamp, so a polling check doesn't keep an idle session alive.
 
 ## v1.1+ roadmap
 
-- **Push-confirm sudo** via the iOS app (replaces CLI as the default proof).
 <!-- iOS migration shipped in v1; see "Shipped in v1 (already done)" below. -->
 - **Per-device scopes** (a sensor that should only write health data; a
   dev browser that shouldn't be able to wipe). Stored on `app_device` and
@@ -221,9 +219,6 @@ bump the timestamp, so a polling check doesn't keep an idle session alive.
   in-process via the `qrcode` crate. The pair URL never leaves the box's
   process boundary on its way to the user's browser. (Previous implementations
   routed through `api.qrserver.com`; that dependency was removed.)
-- **Sudo `consumed` terminal state** — `verify_and_consume` flips an approved
-  sudo request to `consumed` (not `expired`) so the audit log distinguishes
-  "approval was used to perform the action" from "approval timed out."
 - **iOS unified pair-only auth** — the legacy `/api/pairing/initiate` and
   `/api/pairing/complete/:id` endpoints were removed. iOS now pairs via
   `/api/pair/consume` with `kind = "mobile_app"`, gets a server-issued

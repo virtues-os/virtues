@@ -182,3 +182,15 @@ export async function reachRehome(url: string): Promise<ReachStatus> {
 export async function improvDisconnect(): Promise<void> {
   await invoke('plugin:reach|improv_disconnect')
 }
+
+/**
+ * Sign one HTTP request for the server with this device's paired key: the
+ * owner proof the server asks for before revealing a password or a key,
+ * adding a device, changing the AI key or importing an applet package.
+ * `method` and `path` are exactly what the request carries; `nonce` comes from
+ * `POST /api/owner-proof/nonce`. Returns the `X-Virtues-Owner-Proof` header
+ * value. The key stays in Rust.
+ */
+export async function ownerProofSign(method: string, path: string, nonce: string): Promise<string> {
+  return await invoke('plugin:reach|owner_proof_sign', { method, path, nonce })
+}

@@ -787,6 +787,14 @@ impl ReachState {
     virtues_reach_client::owner::sign_owner_proof(self.store.as_ref(), nonce)
   }
 
+  /// Sign one HTTP request for the box with this device's paired key: the
+  /// owner proof the box asks for before revealing a secret, adding a device,
+  /// changing the AI key or importing an applet package. Returns the header
+  /// value; the key never leaves the store.
+  pub fn sign_http_owner_proof(&self, method: &str, path: &str, nonce: &str) -> anyhow::Result<String> {
+    virtues_reach_client::owner::sign_http_owner_proof(self.store.as_ref(), method, path, nonce)
+  }
+
   /// LAPTOP SIDE of the pairing handoff: mint an identity for a phone that
   /// cannot reach the box, enroll its public half, and return the QR that
   /// carries the result. See `virtues_reach_client::handoff` for the shape and
@@ -798,11 +806,31 @@ impl ReachState {
     self.ensure_serving().await?;
     let client = warm_client().ok_or_else(|| Error::Reach("not connected to your box".into()))?;
 
+    // The box enrolls a device only with a fresh owner proof from this app.
+    // A server too old to issue a nonce does not ask for one.
+    let nonce_resp = client
+      .request(&virtues_reach_client::owner::nonce_request())
+      .await
+      .map_err(|e| Error::Reach(format!("enroll failed: {e:#}")))?;
+    let (nonce_status, nonce_body) =
+      virtues_reach_client::handoff::split_response(&nonce_resp).map_err(|e| Error::Reach(e.to_string()))?;
+    let proof = match virtues_reach_client::owner::parse_nonce_response(nonce_status, &nonce_body)
+      .map_err(|e| Error::Reach(format!("{e:#}")))?
+    {
+      Some(nonce) => Some(
+        self
+          .sign_http_owner_proof("POST", virtues_reach_client::handoff::ENROLL_PATH, &nonce)
+          .map_err(|e| Error::Reach(format!("{e:#}")))?,
+      ),
+      None => None,
+    };
+
     let identity = virtues_reach_client::pair::mint_identity();
     let raw = virtues_reach_client::handoff::enroll_request(
       &identity.node_id,
       "mobile_app",
       label.as_deref(),
+      proof.as_deref(),
     )
     .map_err(|e| Error::Reach(e.to_string()))?;
 
@@ -1070,7 +1098,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::pair_door_close,
       commands::pair_door_status,
       commands::pair_handoff_create,
-      commands::pair_handoff_accept
+      commands::pair_handoff_accept,
+      commands::owner_proof_sign
     ])
     .setup(|app, _api| {
       #[cfg(target_os = "ios")]

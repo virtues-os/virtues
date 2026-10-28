@@ -145,64 +145,50 @@ reads the active row, so a change applies on the next call.
 
 From the UI: `Settings → Billing → Bring your own AI → Manage`. Remove clears
 the key (`delete_handler`). Saving a new one revokes the old row and inserts
-a new one (`save_handler`), so you do not need to remove first. Both ask for
-the `change_byo_key` approval; approve at the box with `sudo -u virtues
-virtues sudo`.
+a new one (`save_handler`), so you do not need to remove first. Both need the
+app's owner proof (`virtues-core/src/api/owner_proof.rs`), which the app signs
+on its own, so neither asks the owner anything.
 
 When no paired device can reach the UI, run the same Remove from a shell on
 the box. The server treats a request to `localhost:8000` with no
-forwarding header as the box's local console (`virtues-core/src/middleware/auth.rs`), so `curl`
-can ask for the approval and then call `delete_handler`:
+forwarding header as the box's local console (`virtues-core/src/middleware/auth.rs`),
+and the console needs no owner proof, so `curl` can call `delete_handler`
+directly:
 
 ```bash
-# 1. Ask for the approval. Copy the "id" from the answer.
-curl -s -X POST http://localhost:8000/api/sudo/request \
-  -H 'content-type: application/json' -d '{"action":"change_byo_key"}'
-
-# 2. Approve it within five minutes.
-sudo -u virtues virtues sudo --id REQ
-
-# 3. Remove the key. A working remove answers {"ok":true}.
-curl -s -X DELETE http://localhost:8000/api/settings/byo-key \
-  -H 'content-type: application/json' -d '{"sudo_request_id":"REQ"}'
+# A working remove answers {"ok":true}.
+curl -s -X DELETE http://localhost:8000/api/settings/byo-key
 ```
 
-Step 3 runs the same handler as Remove, so it changes the row and writes the
+This runs the same handler as Remove, so it changes the row and writes the
 `byo_key_cleared` audit row exactly as Remove does. If the server is not
 running, nothing is calling the provider; get it running first
 ([Service won't start](#service-wont-start)).
 
 Do not revoke the row by hand with `psql`. An `UPDATE` that only sets
 `status` leaves the old key sealed in the revoked row, and nothing removes it
-later, because Remove and a new save only touch the active row. Do not
-delete the row either: `first_key_during_setup` counts revoked rows, so
-deleting it lets the first paired device save a key without the approval
-while setup is still open.
+later, because Remove and a new save only touch the active row.
 
 With no active row, AI calls go to the Virtues subscription.
 
-### The sudo gate
+### Routes that need the owner proof
 
-Two actions need an approval from `virtues sudo`, listed in `GATED_ACTIONS`
-(`virtues-core/src/api/sudo.rs`): `change_byo_key` and `import_applet_package`.
-A request lasts five minutes and can be used once.
+Revealing a password (`GET /api/passwords/:id/secret`) or a key
+(`GET /api/keys/:name/value`), enrolling a device
+(`POST /api/devices/enroll-peer`), minting a pair code (`POST /api/pair/mint`,
+`POST /api/pair/mint-collector`), changing or clearing the AI key, and
+importing an applet package (`POST /api/admin/applets/import-git`) need an
+`X-Virtues-Owner-Proof` header. The app fetches a one-time nonce from
+`POST /api/owner-proof/nonce`, which lasts a minute, and signs it with the
+device's iroh key (`virtues_reach_client::owner::sign_http_owner_proof`). The
+box checks the signature against the key the requesting device paired with.
 
-The approval shows that someone ran a command as the `virtues` user on the
-box. The comments in `api/sudo.rs` call that physical access, but the web
-terminal of any paired device also runs as that user, so a paired device can
-approve its own request
-([record/secrets-audit-2026-10-27.md](../record/secrets-audit-2026-10-27.md),
-section 7). The owner decided to replace this gate with the owner proof
-([plan/secrets-plan.md](../plan/secrets-plan.md), "Who can read what"). Until
-that ships, it works as below.
-
-```bash
-sudo -u virtues virtues sudo          # list open requests, prompt for each
-sudo -u virtues virtues sudo --id REQ # approve one
-```
-
-Answering no at the prompt denies a request. `--deny` has no effect today:
-clap refuses it beside `--id`, and the interactive list ignores it.
+A request without one gets a 403 that says to use the Virtues app or update
+it. Requests from the box's own console are exempt, and an agent device is
+always refused. Nonces live in the server's memory, so a restart drops the
+outstanding ones and the app's next try fetches a new one. The design and the
+gap it accepts are in [plan/secrets-plan.md](../plan/secrets-plan.md), under
+"Who can read what".
 
 ---
 
@@ -522,10 +508,9 @@ work, case-insensitively. Default is on.
 virtues status --json
 ```
 
-Emits `{schema_version, virtues_version, diag_enabled, box_id, auth, sudo,
-pair, billing, actions, network, recent_events}` — device count, pending and
-consumed sudo requests, pair-token counts, auto-top-up and BYO state, applet
-health, and the last 10 auth events. Excluded by design: secrets of any kind,
+Emits `{schema_version, virtues_version, diag_enabled, box_id, auth, pair,
+billing, actions, network, recent_events}` — device count, pair-token counts,
+auto-top-up and BYO state, applet health, and the last 10 auth events. Excluded by design: secrets of any kind,
 user content, and paired-device IPs — so it is safe to paste.
 
 If the daemon won't start far enough to run it:

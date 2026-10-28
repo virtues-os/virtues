@@ -10,7 +10,10 @@
 //! The list carries site, label and username. The password and notes leave
 //! the box only through [`reveal`], which the Passwords page calls when the
 //! owner opens a login. No tool calls any of this, and the chat's SQL role has
-//! no grant on `credentials`, so a model never sees a password.
+//! no grant on `credentials`, so a model never sees a password. The reveal
+//! route also needs the app's owner proof (`api::owner_proof`), so a direct
+//! request from another process on the owner's Mac, through the app's loopback
+//! port, cannot read a password.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};

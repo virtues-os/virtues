@@ -404,10 +404,10 @@ onboarding path.
 in prod.
 
 **Entitlement is one step with three exits** (`StepSubscription.svelte`):
-subscribe, sign in to an account that already pays, or bring your own AI. The
-first BYO key saved during setup from the pairing device needs no command-line
-approval (`settings_byo.rs`, `first_key_during_setup`) — an appliance owner has
-no command line.
+subscribe, sign in to an account that already pays, or bring your own AI.
+Saving a BYO key, during setup or later, needs the app's owner proof
+(`api/owner_proof.rs`), which the app signs on its own, so an appliance owner
+never needs a command line for it.
 
 ### Four rules for the setup flow
 
@@ -458,7 +458,7 @@ Three human verbs:
 Everything else is plumbing or admin: `init` (auto-run by the installer:
 migrations + handoff), `migrate`, `backup`/`restore`, `volumes`, `upgrade`,
 `prepare`/`activate`, `rollback`, `channel`, `reindex`, `configure-inference`,
-`uninstall`, `sudo`, `server`. `subscribe` and `account-login` survive as hidden
+`uninstall`, `server`. `subscribe` and `account-login` survive as hidden
 power-user commands. See [recovery.md](recovery.md) for the operator runbook.
 
 **Wrong-user self-correction:** on a box install, DB-touching commands re-exec

@@ -2,7 +2,6 @@
 	import Modal from '$lib/components/Modal.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import Icon from '$lib/components/Icon.svelte';
-	import SudoModal from '$lib/components/SudoModal.svelte';
 	import { importActionsFromGit } from '$lib/api/client';
 
 	type Props = {
@@ -34,27 +33,19 @@
 		onClose();
 	}
 
-	// Importing runs a stranger's code on the box, so it is sudo-gated the same
-	// way changing an API key is: approval happens at the box itself, not in a
-	// browser someone could have talked you into.
-	let showSudo = $state(false);
-
-	function submit(e?: Event) {
+	// Importing runs a stranger's code on the box, so the client sends the
+	// app's owner proof with it (`importActionsFromGit`), the same as changing
+	// the AI key. The app signs it, so there is no extra step here.
+	async function submit(e?: Event) {
 		e?.preventDefault();
 		if (!url.trim()) return;
-		error = null;
-		result = null;
-		showSudo = true;
-	}
-
-	async function runImport(sudoRequestId: string) {
 		importing = true;
 		error = null;
+		result = null;
 		try {
 			result = await importActionsFromGit({
 				url: url.trim(),
-				ref: ref.trim() || 'main',
-				sudo_request_id: sudoRequestId
+				ref: ref.trim() || 'main'
 			});
 			onImported?.();
 		} catch (e) {
@@ -147,15 +138,6 @@
 		{/if}
 	{/snippet}
 </Modal>
-
-<SudoModal
-	action="import_applet_package"
-	title="Install a package from Git"
-	description="Installing runs code you did not write on this server. Approve at the server itself by running `virtues sudo`, the same confirmation used for changing an API key."
-	actionPayload={{ url: url.trim(), ref: ref.trim() || 'main' }}
-	bind:show={showSudo}
-	onApproved={(id) => runImport(id)}
-/>
 
 <style>
 	.form {

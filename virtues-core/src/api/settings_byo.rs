@@ -48,12 +48,11 @@
 //! encrypted at rest via the same `TokenEncryptor` that protects every other
 //! secret. It never lives in the chat request body or in the URL.
 //!
-//! Both endpoints are sudo-gated (`change_byo_key` is one of the four locked
-//! sudo actions). The handler verifies a sudo request id before doing
-//! anything destructive — with ONE exception, the first key saved during
-//! setup (`first_key_during_setup`): an appliance owner has no command line
-//! to approve at, and Setup's "Use my own AI" was a form they could fill in
-//! and never finish.
+//! Saving and clearing the key both need the app's owner proof
+//! (`api::owner_proof`). Whoever sets this key receives every message the
+//! assistant sends out, so a process on the owner's Mac must not be able to
+//! point it elsewhere through the app's loopback port. The app signs the proof
+//! natively, so the owner sees no extra step, during setup or after.
 
 use axum::{
     extract::State,
@@ -65,19 +64,17 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
 
+use crate::api::owner_proof::OwnerProven;
 use crate::middleware::auth::AuthUser;
 
 /// BYO credential's `source_id`. Stable string so the agent + the
 /// settings handlers agree on the row to look up.
 pub const BYO_SOURCE_ID: &str = "__byo_ai_key__";
 
+/// The save body. Released apps also send a `sudo_request_id`, which serde
+/// ignores as an unknown field; keep it that way (no `deny_unknown_fields`).
 #[derive(Debug, Deserialize)]
 pub struct SaveRequest {
-    /// Sudo request id obtained from `/api/sudo/request`. Required, except
-    /// for the first key saved during setup (`first_key_during_setup`),
-    /// where it may be absent.
-    #[serde(default)]
-    pub sudo_request_id: String,
     /// The endpoint to POST to. **This is the field that matters** — any URL
     /// speaking OpenAI-style `/chat/completions` with a Bearer token.
     #[serde(default)]
@@ -109,11 +106,6 @@ pub struct SaveRequest {
     pub context_window: Option<i64>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct DeleteRequest {
-    pub sudo_request_id: String,
-}
-
 #[derive(Debug, Serialize)]
 pub struct ByoStatus {
     pub configured: bool,
@@ -125,7 +117,7 @@ pub struct ByoStatus {
     pub created_at: Option<String>,
 }
 
-/// `GET /api/settings/byo-key` — non-sudo'd status read. Returns the
+/// `GET /api/settings/byo-key` — status read, no proof needed. Returns the
 /// provider + model + endpoint metadata so the UI can render "BYO active
 /// (Anthropic)" or "Using Virtues subscription"; never returns the key
 /// itself.
@@ -195,14 +187,13 @@ pub async fn status_handler(State(pool): State<PgPool>, _user: AuthUser) -> impl
     }
 }
 
-/// `POST /api/settings/byo-key` — save a BYO provider key. Requires sudo.
+/// `POST /api/settings/byo-key` — save a BYO provider key. Needs the app's
+/// owner proof.
 pub async fn save_handler(
     State(pool): State<PgPool>,
-    user: AuthUser,
+    OwnerProven(user): OwnerProven,
     Json(req): Json<SaveRequest>,
 ) -> impl IntoResponse {
-    // Resolve + validate the endpoint before we even check sudo, so a simple
-    // input error doesn't burn the sudo approval.
     let endpoint_url = match resolve_endpoint(req.endpoint_url.as_deref(), req.provider.as_deref())
     {
         Ok(url) => url,
@@ -247,8 +238,6 @@ pub async fn save_handler(
      * watching. It stopped being true when a step in a setup walk started
      * reading this row as an answer.
      *
-     * Runs BEFORE the sudo gate, for the same reason the URL check does: a
-     * typo should not burn an approval the person then has to grant again.
      * It is one request to a host they just named, under the scheme rules
      * `validate_endpoint` already enforced.
      */
@@ -265,32 +254,6 @@ pub async fn save_handler(
     let host = endpoint_host(&endpoint_url).unwrap_or_else(|| "that endpoint".to_string());
     if let Some(refusal) = probe_refusal(probe, &host) {
         return (StatusCode::BAD_REQUEST, Json(json!({ "error": refusal }))).into_response();
-    }
-
-    // Sudo gate. The id must be approved + matched to the requesting device,
-    // unless this is the first key, saved during setup, by the device that
-    // set the server up.
-    let exempt = match first_key_during_setup(&pool, &user.device_id).await {
-        Ok(v) => v,
-        Err(e) => {
-            // Fails closed: an unreadable state means the approval is asked for.
-            tracing::warn!("BYO key save: setup exemption unreadable, requiring sudo: {e}");
-            false
-        }
-    };
-    if exempt {
-        tracing::info!("BYO key save: first key during setup, from the first device; no sudo asked");
-    } else if let Err(resp) =
-        crate::api::sudo::verify_and_consume(&pool, &req.sudo_request_id, "change_byo_key", &user.device_id)
-            .await
-            .map(|_| ())
-    {
-        tracing::warn!("BYO key save: sudo verify failed: {resp}");
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "sudo_not_approved" })),
-        )
-            .into_response();
     }
 
     // Encrypt the key + assemble the credential row.
@@ -342,8 +305,8 @@ pub async fn save_handler(
     // Replace any existing BYO credential in one transaction, so old and new
     // are never live at the same time. The owner expects "I pasted a new key,
     // the old one is gone", so the old row's sealed key is replaced with an
-    // empty payload as it is revoked. The row itself stays, because
-    // `first_key_during_setup` counts it.
+    // empty payload as it is revoked. The row itself stays as the record that
+    // a key was set.
     let emptied = match crate::credentials::emptied_secrets() {
         Ok(c) => c,
         Err(e) => {
@@ -408,21 +371,16 @@ pub async fn save_handler(
             .into_response();
     }
 
-    // Audit log — `app_auth_event`, readable at GET /api/audit/auth. The key
-    // is already saved, so a failed audit row is logged rather than turned
-    // into a failed save.
-    if let Err(e) = sqlx::query(
-        "INSERT INTO app_auth_event (user_id, device_id, event_type, detail) \
-         VALUES ($1, $2, 'byo_key_set', $3)",
+    // Audit log, readable at GET /api/audit/auth.
+    crate::api::audit::record(
+        &pool,
+        Some(&user.device_id),
+        "byo_key_set",
+        json!({ "provider": req.provider }),
+        None,
+        None,
     )
-    .bind(&user.id)
-    .bind(&user.device_id)
-    .bind(json!({ "provider": req.provider }))
-    .execute(&pool)
-    .await
-    {
-        tracing::warn!("BYO key save: audit row not written: {e:#}");
-    }
+    .await;
 
     /* A non-2xx that is not an auth rejection is REPORTED, never blocking.
      * A 404 is a wrong path or a model id this gateway spells differently —
@@ -440,38 +398,9 @@ pub async fn save_handler(
     (StatusCode::OK, Json(ok)).into_response()
 }
 
-/// Whether this save may skip the sudo approval: the FIRST key the server
-/// has ever held, saved while setup is still open, by the first device paired
-/// to it.
-///
-/// The approval exists because whoever sets this key receives every message
-/// the assistant sends out, so a stolen device could quietly point it
-/// elsewhere. None of that applies here: there has never been a key to
-/// redirect, and the only device asking is the one that claimed the server
-/// minutes ago (a phone added later can never be first; a Mac's collector
-/// pairs after the Mac app does). Every later save, every delete, and any
-/// save once setup is finished still asks.
-///
-/// "Ever held" counts revoked rows too: a key someone removed means the
-/// server is past its first one.
-async fn first_key_during_setup(pool: &PgPool, device_id: &str) -> Result<bool, sqlx::Error> {
-    let (status, had_key, first): (Option<String>, bool, Option<String>) = sqlx::query_as(
-        "SELECT \
-            (SELECT onboarding_status FROM app_user_profile LIMIT 1), \
-            EXISTS (SELECT 1 FROM credentials WHERE kind = 'source' AND key = $1), \
-            (SELECT id FROM app_device WHERE revoked_at IS NULL AND id <> $2 \
-               ORDER BY paired_at ASC, id ASC LIMIT 1)",
-    )
-    .bind(BYO_SOURCE_ID)
-    .bind(crate::middleware::auth::CONSOLE_DEVICE_ID)
-    .fetch_one(pool)
-    .await?;
-    Ok(status.as_deref() != Some("active") && !had_key && first.as_deref() == Some(device_id))
-}
-
 /// Revoke the active BYO row and replace its sealed key with `emptied` (a
 /// sealed `{}`) in the same statement, so a revoked row never keeps a key the
-/// owner removed or replaced. The row stays for `first_key_during_setup`.
+/// owner removed or replaced.
 async fn revoke_active_key<'e>(
     db: impl sqlx::PgExecutor<'e>,
     reason: &str,
@@ -491,14 +420,13 @@ async fn revoke_active_key<'e>(
     .map(|_| ())
 }
 
-/// `DELETE /api/settings/byo-key` — clear the BYO key. Requires sudo.
+/// `DELETE /api/settings/byo-key` — clear the BYO key. Needs the app's owner
+/// proof. Released apps send a JSON body with a `sudo_request_id`; nothing
+/// reads the body.
 pub async fn delete_handler(
     State(pool): State<PgPool>,
-    user: AuthUser,
-    Json(req): Json<DeleteRequest>,
+    OwnerProven(user): OwnerProven,
 ) -> impl IntoResponse {
-    // Sealed before the approval is checked, so a server that cannot seal
-    // refuses without spending the approval.
     let emptied = match crate::credentials::emptied_secrets() {
         Ok(c) => c,
         Err(e) => {
@@ -511,21 +439,6 @@ pub async fn delete_handler(
         }
     };
 
-    if let Err(_) = crate::api::sudo::verify_and_consume(
-        &pool,
-        &req.sudo_request_id,
-        "change_byo_key",
-        &user.device_id,
-    )
-    .await
-    {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(json!({ "error": "sudo_not_approved" })),
-        )
-            .into_response();
-    }
-
     // A failed write is reported. Answering ok would show "Key removed" while
     // every AI call kept going to the owner's endpoint.
     if let Err(e) = revoke_active_key(&pool, "user_deleted", &emptied).await {
@@ -537,17 +450,7 @@ pub async fn delete_handler(
             .into_response();
     }
 
-    if let Err(e) = sqlx::query(
-        "INSERT INTO app_auth_event (user_id, device_id, event_type, detail) \
-         VALUES ($1, $2, 'byo_key_cleared', '{}'::jsonb)",
-    )
-    .bind(&user.id)
-    .bind(&user.device_id)
-    .execute(&pool)
-    .await
-    {
-        tracing::warn!("BYO key delete: audit row not written: {e:#}");
-    }
+    crate::api::audit::record(&pool, Some(&user.device_id), "byo_key_cleared", json!({}), None, None).await;
 
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
@@ -1048,51 +951,10 @@ mod tests {
         assert_eq!(endpoint_host("not-a-url").as_deref(), None);
     }
 
-    /// The one save that skips the approval: the first key, during setup,
-    /// from the first device. Each condition alone must close it again.
-    #[sqlx::test(migrations = "./migrations")]
-    async fn only_the_first_device_skips_approval_for_the_first_key(pool: PgPool) {
-        // The migrations seed the one profile row; setup is open on it.
-        sqlx::query("UPDATE app_user_profile SET onboarding_status = 'onboarding'").execute(&pool).await.unwrap();
-        for (id, at) in [("dev_first", "2026-01-01T00:00:00Z"), ("dev_later", "2026-01-02T00:00:00Z")] {
-            sqlx::query(
-                "INSERT INTO app_device (id, user_id, kind, label, paired_at) \
-                 VALUES ($1, $2, 'mobile_app', 'test', $3::timestamptz)",
-            )
-            .bind(id)
-            .bind(crate::middleware::http::OWNER_USER_ID)
-            .bind(at)
-            .execute(&pool)
-            .await
-            .unwrap();
-        }
-
-        assert!(first_key_during_setup(&pool, "dev_first").await.unwrap());
-        // A device paired later never qualifies.
-        assert!(!first_key_during_setup(&pool, "dev_later").await.unwrap());
-
-        // Setup finished: the approval is asked for again.
-        sqlx::query("UPDATE app_user_profile SET onboarding_status = 'active'").execute(&pool).await.unwrap();
-        assert!(!first_key_during_setup(&pool, "dev_first").await.unwrap());
-        sqlx::query("UPDATE app_user_profile SET onboarding_status = 'onboarding'").execute(&pool).await.unwrap();
-
-        // Any key the server has held, even one since removed, ends the exemption.
-        sqlx::query(
-            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext, metadata) \
-             VALUES ('cred_old', $1, 'BYO old', 'revoked', 'x', '{}'::jsonb)",
-        )
-        .bind(BYO_SOURCE_ID)
-        .execute(&pool)
-        .await
-        .unwrap();
-        assert!(!first_key_during_setup(&pool, "dev_first").await.unwrap());
-    }
-
     /// Removing or replacing the key revokes the row and wipes the sealed key
-    /// in one statement. The revoked row still counts as "ever had a key",
-    /// so the setup exemption stays closed.
+    /// in one statement. The revoked row stays.
     #[sqlx::test(migrations = "./migrations")]
-    async fn a_removed_key_is_wiped_and_still_ends_the_setup_exemption(pool: PgPool) {
+    async fn a_removed_key_is_wiped(pool: PgPool) {
         ensure_test_key();
         let enc = crate::crypto::TokenEncryptor::from_env().unwrap();
         let sealed = enc.encrypt(r#"{"api_key":"sk-example"}"#).unwrap();
@@ -1134,6 +996,6 @@ mod tests {
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert!(had_key, "the revoked row stays, so first_key_during_setup sees it");
+        assert!(had_key, "the revoked row stays");
     }
 }

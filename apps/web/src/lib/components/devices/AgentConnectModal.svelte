@@ -7,7 +7,7 @@
 	import { Button, Input } from "$lib";
 	import Modal from "$lib/components/Modal.svelte";
 	import MarkdownCodeBlock from "$lib/components/MarkdownCodeBlock.svelte";
-	import { apiSend } from "$lib/api/client";
+	import { apiSendProven } from "$lib/api/client";
 	import {
 		connectAgent,
 		shellSupports,
@@ -37,7 +37,9 @@
 		connecting = true;
 		error = null;
 		try {
-			const minted = await apiSend<{ token: string }>("POST", "/pair/mint", {
+			// Minting a pair code needs the app's owner proof, for an agent as
+			// for any other device.
+			const minted = await apiSendProven<{ token: string }>("POST", "/pair/mint", {
 				intended_kind: "agent",
 			});
 			connection = await connectAgent(minted.token, name);

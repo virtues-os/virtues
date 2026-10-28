@@ -9,6 +9,7 @@ import { sanitizeUrl } from '$lib/utils/urlUtils';
 
 import { noteRequestId } from '$lib/log';
 import { backendUrl } from '$lib/config/backend';
+import { isTauri } from '$lib/utils/platform';
 
 const API_BASE = '/api';
 
@@ -126,6 +127,98 @@ export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Pr
 		headers: jsonBody !== undefined ? { 'Content-Type': 'application/json' } : undefined,
 		body: jsonBody !== undefined ? JSON.stringify(jsonBody) : undefined,
 	});
+}
+
+// ============================================================================
+// Owner proof (virtues-core/src/api/owner_proof.rs)
+// ============================================================================
+
+/**
+ * A few routes need a fresh signature from the Virtues app itself, because any
+ * process on a paired Mac reaches the box as that Mac through the app's
+ * loopback port, and only the app holds the device's key: revealing a password
+ * or a key, adding a device or minting a pair code, changing the AI key, and
+ * importing an applet package. {@link apiSendProven} is the one way to call
+ * them.
+ *
+ * The box issues a one-time nonce, and the app signs it with the method and
+ * path (`plugin:reach|owner_proof_sign`); the key never reaches this page.
+ * Outside the app, in a browser on `make dev`, nothing can sign and no header
+ * goes out, and the box's console needs none. An app too old to sign sends
+ * none either, and the box's refusal tells the owner to update it. A server
+ * too old to issue a nonce answers 404 and does not ask for a proof.
+ */
+async function ownerProofHeaders(method: string, path: string): Promise<Record<string, string>> {
+	if (!isTauri) return {};
+	let nonce: string;
+	try {
+		({ nonce } = await apiSend<{ nonce: string }>('POST', '/owner-proof/nonce'));
+	} catch (e) {
+		if (e instanceof ApiError && e.status === 404) return {};
+		throw e;
+	}
+	const { invoke } = await import('@tauri-apps/api/core');
+	try {
+		const proof = await invoke<string>('plugin:reach|owner_proof_sign', {
+			method,
+			path: `${API_BASE}${path}`,
+			nonce,
+		});
+		return { 'X-Virtues-Owner-Proof': proof };
+	} catch (e) {
+		const message = e instanceof Error ? e.message : String(e);
+		// An app that predates the command. The box's refusal says what to do.
+		if (/not found|not allowed/i.test(message)) return {};
+		throw new Error(message);
+	}
+}
+
+/**
+ * A server from before the owner proof still asks for a `virtues sudo`
+ * approval on the AI key and on imports, and this app no longer sends one.
+ * The owner sees what to do; the server's own words stay on `body` with the
+ * request id, for support.
+ */
+function explainOldServer(e: unknown): unknown {
+	if (!(e instanceof ApiError) || !/sudo/i.test(e.message)) return e;
+	return new ApiError(
+		e.status,
+		'Your server is older than this app and still asks for an approval at its command line. Update your server, then try again.',
+		e.body,
+		e.requestId,
+	);
+}
+
+/** {@link apiSend} for a route that needs the app's owner proof. */
+export async function apiSendProven<T>(method: string, path: string, jsonBody?: unknown): Promise<T> {
+	const send = async (): Promise<{ result: T } | { error: unknown; proved: boolean }> => {
+		const headers = await ownerProofHeaders(method, path);
+		if (jsonBody !== undefined) headers['Content-Type'] = 'application/json';
+		try {
+			const result = await request<T>(path, {
+				method,
+				headers,
+				body: jsonBody !== undefined ? JSON.stringify(jsonBody) : undefined,
+			});
+			return { result };
+		} catch (error) {
+			return { error, proved: 'X-Virtues-Owner-Proof' in headers };
+		}
+	};
+	let sent = await send();
+	// A signed proof refused once is most often a nonce the server lost when
+	// it restarted. One fresh try settles it; a real refusal repeats.
+	if ('error' in sent && sent.proved && isOwnerProofRefusal(sent.error)) sent = await send();
+	if ('error' in sent) throw explainOldServer(sent.error);
+	return sent.result;
+}
+
+function isOwnerProofRefusal(e: unknown): boolean {
+	return (
+		e instanceof ApiError &&
+		e.status === 403 &&
+		(e.body as { code?: string } | undefined)?.code === 'owner_proof_required'
+	);
 }
 
 // ============================================================================
@@ -564,8 +657,6 @@ export function adminReconcile(): Promise<{ upserted: number }> {
 export function importActionsFromGit(body: {
 	url: string;
 	ref?: string;
-	/** From `/api/sudo/request` — importing runs someone else's code. */
-	sudo_request_id: string;
 }): Promise<{
 	/** Folder the package landed in — host + owner + repo, so two remotes with
 	 *  the same repo name can't claim each other's. */
@@ -578,7 +669,8 @@ export function importActionsFromGit(body: {
 	updated: string[];
 	removed: string[];
 }> {
-	return apiSend('POST', '/admin/applets/import-git', body);
+	// Importing runs someone else's code, so it carries the owner proof.
+	return apiSendProven('POST', '/admin/applets/import-git', body);
 }
 
 export interface PatchAppletBody {
@@ -856,9 +948,13 @@ export async function deleteKey(name: string): Promise<void> {
 	await apiSend('DELETE', `/keys/${encodeURIComponent(name)}`);
 }
 
-/** A key's value, fetched only when the owner asks to see it. */
+/** A key's value, fetched only when the owner asks to see it, with the
+ *  owner proof. */
 export async function revealKey(name: string): Promise<string> {
-	const { value } = await apiGet<{ value: string }>(`/keys/${encodeURIComponent(name)}/value`);
+	const { value } = await apiSendProven<{ value: string }>(
+		'GET',
+		`/keys/${encodeURIComponent(name)}/value`,
+	);
 	return value;
 }
 
@@ -906,8 +1002,9 @@ export async function deleteLogin(id: string): Promise<void> {
 	await apiSend('DELETE', `/passwords/${encodeURIComponent(id)}`);
 }
 
+/** A login's password and notes, with the owner proof. */
 export function revealLogin(id: string): Promise<{ password: string; notes: string }> {
-	return apiGet(`/passwords/${encodeURIComponent(id)}/secret`);
+	return apiSendProven('GET', `/passwords/${encodeURIComponent(id)}/secret`);
 }
 
 // Source catalog
@@ -1058,9 +1155,10 @@ export interface PairMintResponse {
 	expires_at: string;
 }
 
-/** POST /api/pair/mint — auth'd. Mint a `pending` token to add a device. */
+/** POST /api/pair/mint — auth'd, with the owner proof. Mint a token to add a
+ *  device. */
 function pairMint(intendedKind?: string): Promise<PairMintResponse> {
-	return apiSend<PairMintResponse>('POST', '/pair/mint', { intended_kind: intendedKind ?? null });
+	return apiSendProven<PairMintResponse>('POST', '/pair/mint', { intended_kind: intendedKind ?? null });
 }
 
 /** DELETE /api/devices/:id — best-effort, no confirmation.
@@ -1130,12 +1228,12 @@ export interface MintCollectorResponse {
 }
 
 /**
- * POST /api/pair/mint-collector — auth'd. Mint + self-authorize a token for
- * installing the local collector on THIS machine (handed to
+ * POST /api/pair/mint-collector — auth'd, with the owner proof. Mint a token
+ * for installing the local collector on THIS machine (handed to
  * `installCollector(token)` via the Tauri bridge).
  */
 export function mintCollectorToken(): Promise<MintCollectorResponse> {
-	return apiSend<MintCollectorResponse>('POST', '/pair/mint-collector');
+	return apiSendProven<MintCollectorResponse>('POST', '/pair/mint-collector');
 }
 
 export interface OauthStartResponse {
@@ -2775,11 +2873,15 @@ export function getBillingUsage<T = unknown>(): Promise<T> {
 export function getByoKey<T = unknown>(): Promise<T> {
 	return apiGet<T>('/settings/byo-key');
 }
+/** Save the AI key, with the owner proof. */
 export function setByoKey<T = unknown>(body: Record<string, unknown>): Promise<T> {
-	return apiSend<T>('POST', '/settings/byo-key', body);
+	return apiSendProven<T>('POST', '/settings/byo-key', body);
 }
-export function deleteByoKey<T = unknown>(sudoRequestId?: string): Promise<T> {
-	return apiSend<T>('DELETE', '/settings/byo-key', { sudo_request_id: sudoRequestId });
+/** Remove the AI key, with the owner proof. The box reads no body. The empty
+ *  object makes a server that still asks for `virtues sudo` answer about that,
+ *  rather than about a missing body. */
+export function deleteByoKey<T = unknown>(): Promise<T> {
+	return apiSendProven<T>('DELETE', '/settings/byo-key', {});
 }
 
 // ── Chats (extras beyond createChat/updateChat/deleteChat above) ──────────────
@@ -2984,14 +3086,6 @@ export function setupSubscribeStart<T = unknown>(): Promise<T> {
 }
 export function setupLoginStart<T = unknown>(email: string): Promise<T> {
 	return apiSend<T>('POST', '/setup/login/start', { email });
-}
-
-// ── Sudo (privilege elevation) ───────────────────────────────────────────────
-export function requestSudo<T = unknown>(action: string, actionPayload?: unknown): Promise<T> {
-	return apiSend<T>('POST', '/sudo/request', { action, action_payload: actionPayload });
-}
-export function getSudoStatus<T = unknown>(id: string): Promise<T> {
-	return apiGet<T>(`/sudo/status/${encodeURIComponent(id)}`);
 }
 
 // ── Data lake ────────────────────────────────────────────────────────────────

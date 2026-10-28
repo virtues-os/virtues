@@ -4,6 +4,9 @@
 //! The overview carries names only. A key's value leaves the box only through
 //! [`reveal_key`], which Settings calls when the owner asks to see it; no
 //! tool calls it, so a model learns that a key exists and never its value.
+//! Its route also needs the app's owner proof (`api::owner_proof`), so a
+//! direct request from another process on the owner's Mac, through the app's
+//! loopback port, cannot read a value.
 //! Named keys are the `env` secrets (`crate::secrets`) that applets declare.
 
 use std::collections::BTreeMap;

@@ -11,7 +11,8 @@
 //!   laptop (paired, anywhere)                        box (at home)
 //!     1. mint a fresh iroh identity FOR the phone
 //!     2. POST /api/devices/enroll-peer ──over relay──► allowlist the pubkey
-//!        (authenticated as the laptop)               ◄── reach info back
+//!        (authenticated as the laptop, with an        ◄── reach info back
+//!         owner proof signed by its key)
 //!     3. display ONE QR: seed + that reach info
 //!   phone
 //!     4. scan it, write the record, dial the box over the relay ✓
@@ -105,12 +106,25 @@ pub struct EnrollPeerRequest<'a> {
     pub device_info: Option<serde_json::Value>,
 }
 
+/// The path [`enroll_request`] posts to, which an owner proof for it signs.
+pub const ENROLL_PATH: &str = "/api/devices/enroll-peer";
+
 /// Build the raw HTTP request that enrolls `node_id` with the box.
+///
+/// `owner_proof` is the header value from
+/// [`crate::owner::sign_http_owner_proof`] for `POST` [`ENROLL_PATH`]; the box
+/// refuses an enrollment without one. `None` is for a server too old to issue
+/// a nonce, which does not ask for it.
 ///
 /// Raw bytes rather than a client call because the only route to the box from
 /// here is the warm iroh client's `request`, which speaks HTTP/1 over a
 /// bi-stream. Split out so it can be unit-tested without a box.
-pub fn enroll_request(node_id: &str, kind: &str, label: Option<&str>) -> Result<Vec<u8>> {
+pub fn enroll_request(
+    node_id: &str,
+    kind: &str,
+    label: Option<&str>,
+    owner_proof: Option<&str>,
+) -> Result<Vec<u8>> {
     let body = serde_json::to_vec(&EnrollPeerRequest {
         peer_node_id: node_id,
         kind,
@@ -119,10 +133,14 @@ pub fn enroll_request(node_id: &str, kind: &str, label: Option<&str>) -> Result<
     })
     .context("encode enroll-peer body")?;
 
-    let mut raw = Vec::with_capacity(body.len() + 160);
-    raw.extend_from_slice(b"POST /api/devices/enroll-peer HTTP/1.1\r\n");
+    let mut raw = Vec::with_capacity(body.len() + 320);
+    raw.extend_from_slice(format!("POST {ENROLL_PATH} HTTP/1.1\r\n").as_bytes());
     raw.extend_from_slice(b"Host: virtues\r\n");
     raw.extend_from_slice(b"Content-Type: application/json\r\n");
+    if let Some(proof) = owner_proof {
+        let header = virtues_improv::protocol::HTTP_OWNER_PROOF_HEADER;
+        raw.extend_from_slice(format!("{header}: {proof}\r\n").as_bytes());
+    }
     raw.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());
     raw.extend_from_slice(b"Connection: close\r\n\r\n");
     raw.extend_from_slice(&body);
@@ -190,11 +208,14 @@ mod tests {
 
     #[test]
     fn enroll_request_is_well_formed_and_carries_the_key() {
-        let raw = enroll_request("abc123", "mobile_app", Some("Adam's iPhone")).unwrap();
+        let raw = enroll_request("abc123", "mobile_app", Some("Nick's iPhone"), Some("ab12.cd34")).unwrap();
         let s = String::from_utf8_lossy(&raw);
         assert!(s.starts_with("POST /api/devices/enroll-peer HTTP/1.1\r\n"));
         assert!(s.contains("abc123"));
         assert!(s.contains("mobile_app"));
+        assert!(s.contains("\r\nx-virtues-owner-proof: ab12.cd34\r\n"));
+        let without = enroll_request("abc123", "mobile_app", None, None).unwrap();
+        assert!(!String::from_utf8_lossy(&without).contains("owner-proof"));
         let len: usize = s
             .lines()
             .find_map(|l| l.strip_prefix("Content-Length: ")?.trim().parse().ok())

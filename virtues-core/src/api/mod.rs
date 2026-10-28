@@ -18,7 +18,7 @@ pub mod pair;
 pub mod passwords;
 pub mod settings_byo;
 pub mod setup;
-pub mod sudo;
+pub mod owner_proof;
 pub mod web_bundle;
 pub mod chat;
 pub mod chat_mode;

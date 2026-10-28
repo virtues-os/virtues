@@ -8,12 +8,13 @@
 //! Mint paths — one model: an authenticated mint is `authorized`.
 //!   - CLI (`virtues pair`): minted on the box itself; trusted by physical
 //!     access. Used for first-pair and recovery.
-//!   - Web ("+ Add Device" from a paired browser): minted by the
-//!     already-authenticated owner, so it's authorized in the same call (same
-//!     justification as the collector). The old `pending` → `/confirm`
-//!     round-trip was friction with no security gain for a QR the owner scans
-//!     on their own screen, so it was removed. Cancel an outstanding token via
-//!     `POST /api/pair/deny/:id` (the modal fires it on close).
+//!   - App ("+ Add Device", and the Mac's collector): minted by the
+//!     already-authenticated owner with the app's owner proof
+//!     (`api::owner_proof`), so it's authorized in the same call. The old
+//!     `pending` → `/confirm` round-trip was friction with no security gain
+//!     for a QR the owner scans on their own screen, so it was removed. Cancel
+//!     an outstanding token via `POST /api/pair/deny/:id` (the modal fires it
+//!     on close).
 //!
 //! Consume path (`POST /api/pair/consume`)
 //!   - Accepts `{token, kind, label, device_info, device_node_id?}`.
@@ -47,6 +48,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
+use crate::api::owner_proof::OwnerProven;
 use crate::middleware::auth::AuthUser;
 use crate::middleware::{client_ip, is_secure_environment, rate_limit_ip, OWNER_USER_ID};
 
@@ -460,10 +462,6 @@ pub struct MintResponse {
     pub expires_at: String,
 }
 
-/// `POST /api/pair/mint` — auth'd. Paired user creates a token to add a new
-/// device. The token is minted `authorized` (the caller is the authenticated
-/// owner), so the QR is immediately redeemable; closing the modal cancels it
-/// via `/api/pair/deny/:id`.
 /// `POST /api/pair/reopen-onboarding` — revoke every paired device, keep
 /// everything else. The `virtues reset --keep-data` path, reachable from the
 /// app.
@@ -554,9 +552,16 @@ pub async fn revoke_all_devices(pool: &PgPool) -> Result<(u64, u64), sqlx::Error
     Ok((devices, creds))
 }
 
+/// `POST /api/pair/mint` — auth'd. Paired user creates a token to add a new
+/// device. The token is minted `authorized`, so the QR is immediately
+/// redeemable; closing the modal cancels it via `/api/pair/deny/:id`.
+///
+/// A redeemed token is a full owner device, so minting one needs the app's
+/// owner proof (`api::owner_proof`): a process on a paired Mac that can only
+/// open the app's loopback port cannot mint a code for a device of its own.
 pub async fn mint_handler(
     State(pool): State<PgPool>,
-    user: AuthUser,
+    OwnerProven(user): OwnerProven,
     Json(req): Json<MintRequest>,
 ) -> impl IntoResponse {
     let kind = req.intended_kind.as_deref();
@@ -572,7 +577,7 @@ pub async fn mint_handler(
         }
     };
 
-    let _ = log_event(
+    crate::api::audit::record(
         &pool,
         Some(&user.device_id),
         "pair_token_minted",
@@ -607,17 +612,18 @@ pub struct MintCollectorResponse {
 }
 
 /// `POST /api/pair/mint-collector` — auth'd. Mints a one-time pair token for
-/// installing the local data collector (`virtues-collector`) and authorizes it
-/// in the SAME call. Unlike `/api/pair/mint` (which starts `pending` and needs
-/// a separate `/confirm` from a second device), the collector runs on the same
-/// machine as the already-authenticated owner session, so the confirm
-/// round-trip is friction with no security gain — the caller IS the owner on
-/// this host. The raw token is handed straight to `installCollector(token)` via
-/// the Tauri bridge; the collector redeems it at `/api/pair/consume` declaring
-/// `source="mac"` to receive its `mac_ingest` action fan-out.
+/// installing the local data collector (`virtues-collector`), authorized like
+/// every app mint. The raw token is handed straight to
+/// `installCollector(token)` via the Tauri bridge; the collector redeems it at
+/// `/api/pair/consume` declaring `source="mac"` to receive its `mac_ingest`
+/// action fan-out.
+///
+/// Needs the app's owner proof, as `/api/pair/mint` does: the token redeems
+/// into a device like any other, so leaving this open would let a local
+/// process on the Mac add a device through it.
 pub async fn mint_collector_handler(
     State(pool): State<PgPool>,
-    user: AuthUser,
+    OwnerProven(user): OwnerProven,
 ) -> impl IntoResponse {
     // `mint_pair_token` now mints authenticated tokens as `authorized` directly
     // (one model — see its body), so the collector token is immediately
@@ -633,7 +639,7 @@ pub async fn mint_collector_handler(
                 .into_response();
         }
     };
-    let _ = log_event(
+    crate::api::audit::record(
         &pool,
         Some(&user.device_id),
         "collector_token_minted",
@@ -718,7 +724,7 @@ pub async fn deny_handler(
     .execute(&pool)
     .await;
 
-    let _ = log_event(
+    crate::api::audit::record(
         &pool,
         Some(&user.device_id),
         "pair_token_denied",
@@ -1123,7 +1129,7 @@ pub async fn consume_handler(
 
     // Post-commit: log the pairing event (best-effort) and assemble the bearer
     // response.
-    let _ = log_event(
+    crate::api::audit::record(
         &pool,
         Some(&device_id),
         "paired",
@@ -1379,30 +1385,6 @@ fn default_label_for(kind: &str, ua: Option<&str>, info: &Option<Value>) -> Stri
         "agent" => "AI agent".to_string(),
         _ => "Device".to_string(),
     }
-}
-
-async fn log_event(
-    pool: &PgPool,
-    device_id: Option<&str>,
-    event_type: &str,
-    detail: Value,
-    ip: Option<String>,
-    user_agent: Option<String>,
-) -> Result<(), sqlx::Error> {
-    sqlx::query(
-        "INSERT INTO app_auth_event \
-         (user_id, device_id, event_type, detail, ip, user_agent) \
-         VALUES ($1, $2, $3, $4, $5, $6)",
-    )
-    .bind(OWNER_USER_ID)
-    .bind(device_id)
-    .bind(event_type)
-    .bind(&detail)
-    .bind(ip)
-    .bind(user_agent)
-    .execute(pool)
-    .await
-    .map(|_| ())
 }
 
 #[cfg(test)]
