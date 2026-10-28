@@ -14,6 +14,13 @@ use crate::model::PairedBox;
 /// Host-provided persistence for the paired-box record.
 pub trait BoxStore: Send + Sync {
     /// Load the record, or `None` if this device isn't paired.
+    ///
+    /// An error means a record may exist but could not be read, for example
+    /// a Keychain read the owner denied. Don't take it for "not paired": an
+    /// owner sent to pair again adds a second device to the box's list while
+    /// the first key still works. The app's reach plugin reports it as a
+    /// paired device with a problem (`read_pairing` in
+    /// `apps/web/plugins/reach/src/lib.rs`).
     fn load(&self) -> Result<Option<PairedBox>>;
     /// Persist (overwrite) the record.
     fn save(&self, rec: &PairedBox) -> Result<()>;

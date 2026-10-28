@@ -4,6 +4,11 @@ export interface ReachStatus {
   paired: boolean
   session: 'authed' | 'rejected' | 'unknown' | 'unpaired'
   loopbackUrl: string
+  /** Why this device cannot use the pairing it has, in words for the owner.
+   *  `paired` stays true while it is set. Absent before surface 15. */
+  problem?: string | null
+  /** The device key is gone, so pairing again is the only fix. */
+  keyMissing?: boolean
 }
 
 /** Pair with a box by LAN address + 6-digit code. */

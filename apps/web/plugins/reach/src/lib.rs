@@ -509,8 +509,10 @@ impl ReachState {
     })
   }
 
+  /// Whether this device has a pairing record, usable or not. See
+  /// [`read_pairing`] for why a record that fails to load still counts.
   pub fn is_paired(&self) -> bool {
-    matches!(self.store.load(), Ok(Some(_)))
+    read_pairing(self.store.load()).0
   }
 
   pub fn loopback_url(&self) -> String {
@@ -671,11 +673,12 @@ impl ReachState {
   }
 
   pub async fn status(&self) -> ReachStatus {
-    let paired = self.is_paired();
+    let (paired, unusable) = read_pairing(self.store.load());
     // A launch that couldn't bring the loopback up (no network yet, no relay)
     // has no warm client, so every probe below would say "unknown" forever.
     // `/reconnect` asks for status on a timer, which makes this the retry.
-    if paired && !self.serving.load(Ordering::SeqCst) {
+    // A record that cannot be used would fail the same way on every retry.
+    if paired && unusable.is_none() && !self.serving.load(Ordering::SeqCst) {
       if let Err(e) = self.ensure_serving().await {
         tracing::debug!(error = %e, "reach: loopback still can't start");
       }
@@ -707,12 +710,18 @@ impl ReachState {
     } else {
       "offline".into()
     };
+    let (problem, key_missing) = match unusable {
+      Some(u) => (Some(u.message), u.key_missing),
+      None => (None, false),
+    };
     ReachStatus {
       paired,
       session: session.into(),
       loopback_url: self.loopback_url(),
       reachable,
       path,
+      problem,
+      key_missing,
     }
   }
 
@@ -963,6 +972,132 @@ impl ReachState {
     self.serving.store(false, Ordering::SeqCst);
     self.store.delete()?;
     Ok(())
+  }
+}
+
+/// A pairing record this device has but cannot use.
+#[derive(Debug, PartialEq)]
+struct Unusable {
+  /// For the owner: the reconnect screen shows it as it is.
+  message: String,
+  /// The device key is gone, so pairing again is the only fix. See
+  /// `ReachStatus::key_missing`.
+  key_missing: bool,
+}
+
+/// What the owner reads when the record has no device key. On the Mac, the
+/// Keychain item that holds the key is gone. Elsewhere it is a pairing from
+/// before devices had their own keys.
+#[cfg(target_os = "macos")]
+const KEY_MISSING: &str = "This Mac's device key is missing. Pair this Mac again to reach your server.";
+#[cfg(not(target_os = "macos"))]
+const KEY_MISSING: &str = "This device's key is missing. Pair this device again to reach your server.";
+
+/// Whether one load of the pairing record is a pairing, and what keeps it
+/// from working when something does.
+///
+/// A record that exists but fails to load is still a pairing. Read as
+/// unpaired, it sends the owner to pair again when quitting and reopening
+/// Virtues may be enough, and pairing again adds a second device to the
+/// server's list while the first key still works.
+fn read_pairing(loaded: anyhow::Result<Option<PairedBox>>) -> (bool, Option<Unusable>) {
+  match loaded {
+    Ok(None) => (false, None),
+    Ok(Some(rec)) if rec.device_secret_hex.is_none() => (
+      true,
+      Some(Unusable { message: KEY_MISSING.into(), key_missing: true }),
+    ),
+    Ok(Some(_)) => (true, None),
+    Err(e) => (true, Some(Unusable { message: for_the_owner(&e), key_missing: false })),
+  }
+}
+
+/// A store load error as the sentence the reconnect screen shows.
+///
+/// On the Mac, an error that did not come from reading `box.json` is the
+/// Keychain's, and the store already words it for the owner: a read the owner
+/// denied, or a locked Keychain, says to quit and reopen Virtues. Reading or
+/// parsing `box.json`, and every iOS store error, give only the system's text,
+/// so it goes in parentheses inside a sentence that says what to do.
+fn for_the_owner(e: &anyhow::Error) -> String {
+  let from_the_file = e.downcast_ref::<std::io::Error>().is_some() || e.downcast_ref::<serde_json::Error>().is_some();
+  if cfg!(target_os = "macos") && !from_the_file {
+    return format!("{e:#}");
+  }
+  let device = if cfg!(target_os = "macos") { "this Mac" } else { "this device" };
+  format!(
+    "Virtues could not read {device}'s pairing ({e:#}). Quit and reopen Virtues to try again. \
+     If that does not help, forget this server on {device} and pair again."
+  )
+}
+
+#[cfg(test)]
+mod pairing_tests {
+  use super::{read_pairing, Unusable, KEY_MISSING};
+  use virtues_reach_client::PairedBox;
+
+  fn record(seed: Option<&str>) -> PairedBox {
+    PairedBox {
+      box_url: "http://192.168.1.20:8000".into(),
+      device_id: Some("dev_example".into()),
+      box_node_id: Some("ab".repeat(32)),
+      relay_url: Some("https://relay.example.com/".into()),
+      box_direct_addrs: vec!["192.168.1.20:7300".into()],
+      device_secret_hex: seed.map(str::to_string),
+      applet_ids: Default::default(),
+    }
+  }
+
+  #[test]
+  fn no_record_is_not_paired() {
+    assert_eq!(read_pairing(Ok(None)), (false, None));
+  }
+
+  #[test]
+  fn a_record_with_its_key_is_paired_and_usable() {
+    assert_eq!(read_pairing(Ok(Some(record(Some(&"01".repeat(32)))))), (true, None));
+  }
+
+  #[test]
+  fn a_record_that_fails_to_load_is_still_paired_and_says_why() {
+    let said = "Virtues could not read this Mac's device key from the Keychain (User interaction is not allowed.). \
+                Quit and reopen Virtues to try again.";
+    let (paired, unusable) = read_pairing(Err(anyhow::anyhow!("{said}")));
+    assert!(paired, "a Keychain read that failed is not an unpairing");
+    let unusable = unusable.expect("the reason it can't be used");
+    assert!(!unusable.key_missing);
+    if cfg!(target_os = "macos") {
+      // The Mac store already words a Keychain error for the owner.
+      assert_eq!(unusable.message, said);
+    } else {
+      assert!(unusable.message.contains(said), "{}", unusable.message);
+      assert!(unusable.message.starts_with("Virtues could not read this device's pairing ("));
+    }
+  }
+
+  #[test]
+  fn a_pairing_file_that_cannot_be_read_says_what_to_do() {
+    let unparsable = serde_json::from_str::<PairedBox>("{").unwrap_err();
+    let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+    for e in [anyhow::Error::from(unparsable), anyhow::Error::from(denied)] {
+      let raw = format!("{e:#}");
+      let (paired, unusable) = read_pairing(Err(e));
+      assert!(paired);
+      let unusable = unusable.expect("the reason it can't be used");
+      assert!(!unusable.key_missing);
+      let m = &unusable.message;
+      assert!(m.starts_with("Virtues could not read this "), "{m}");
+      assert!(m.contains(&format!("({raw})")), "{m}");
+      assert!(m.contains("Quit and reopen Virtues to try again."), "{m}");
+      assert!(m.ends_with("and pair again."), "{m}");
+    }
+  }
+
+  #[test]
+  fn a_record_without_its_key_is_paired_and_needs_pairing_again() {
+    let (paired, unusable) = read_pairing(Ok(Some(record(None))));
+    assert!(paired);
+    assert_eq!(unusable, Some(Unusable { message: KEY_MISSING.into(), key_missing: true }));
   }
 }
 

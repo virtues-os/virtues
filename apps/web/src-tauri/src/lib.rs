@@ -76,6 +76,10 @@ pub mod web_bundle;
 /// |   | of its own; the bridge is this binary run as `mcp --name <name>` |
 /// | 14 | `location-probe|sign_in` (iOS): a service's sign-in opens in Apple's
 /// |   | sign-in sheet over the app instead of in Safari (`SignInSheet.swift`) |
+/// | 15 | `reach|owner_proof_sign` (every shell): signs the owner proof for the
+/// |   | reveal, pair, AI key and import routes (`ownerProofHeaders` in
+/// |   | `$lib/api/client.ts`); `reach|reach_status` gains `problem` and
+/// |   | `keyMissing` for a pairing this device has but cannot use |
 ///
 /// `bundle-contract.json` requires 9. No shell below it has ever run a box
 /// bundle (they all boot white), so requiring it strands no client: they keep
@@ -83,7 +87,7 @@ pub mod web_bundle;
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 14;
+pub const COMMAND_SURFACE_VERSION: u32 = 15;
 
 /// What the native shell knows about itself.
 ///

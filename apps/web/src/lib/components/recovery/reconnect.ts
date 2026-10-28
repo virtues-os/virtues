@@ -31,6 +31,28 @@ export interface ReachStatus {
 	session: 'authed' | 'rejected' | 'unknown' | 'unpaired';
 	reachable?: boolean;
 	path?: string;
+	/** Why this device cannot use the pairing it has, in words for the
+	 *  owner. Absent from an app older than surface 15. */
+	problem?: string | null;
+	/** The device key is gone, so pairing again is the only fix. */
+	keyMissing?: boolean;
+}
+
+/** A pairing this device has but cannot use. */
+export interface PairingProblem {
+	/** The plugin's sentence, shown as it is. */
+	message: string;
+	/** Pairing again fixes it. Only when the device key is gone. After any
+	 *  other problem the key may still be on this device, and quitting and
+	 *  reopening Virtues can bring it back. Pairing again would add a second
+	 *  device to the server's list while the first key still works. */
+	pairAgain: boolean;
+}
+
+/** What is wrong with this device's own pairing, if anything. */
+export function pairingProblem(status: ReachStatus | null): PairingProblem | null {
+	if (!status?.paired || !status.problem) return null;
+	return { message: status.problem, pairAgain: status.keyMissing === true };
 }
 
 /** What the screen needs from the native side; a fake stands in for tests and `?radio=fake`. */

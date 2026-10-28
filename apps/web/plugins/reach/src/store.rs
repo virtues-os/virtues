@@ -17,12 +17,18 @@
 //! On Unix `box.json` is created with mode 0600; on Windows it gets the
 //! permissions of the directory it is in. It exists whenever the device is
 //! paired, on every desktop. The shell's launch check (`is_paired` in the
-//! app's main.rs) relies on that.
+//! app's main.rs) relies on that, and so does the plugin's `is_paired`, which
+//! counts a record that fails to load as paired.
 //!
-//! The move into the macOS Keychain goes one way. A build that cannot read the
-//! Keychain, an older release included, finds a migrated `box.json` with no
-//! seed and asks the owner to pair the Mac again. Never remove the Keychain
-//! read without first writing the seed back into the file.
+//! The move into the macOS Keychain goes one way. When this build cannot read
+//! the seed, `reach_status` stays paired and carries the reason as `problem`:
+//! the Keychain's own sentence when the read failed, or that the key is
+//! missing when the Keychain has no item. The reconnect screen shows it. A
+//! release from before the move cannot read the Keychain at all. It finds a
+//! migrated `box.json` with no seed, cannot connect, and shows the server as
+//! unreachable until the owner forgets the server on the Mac and pairs again.
+//! Never remove the Keychain read without first writing the seed back into
+//! the file.
 
 use std::path::PathBuf;
 

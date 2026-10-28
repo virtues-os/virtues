@@ -19,6 +19,16 @@
  *   silent     none of the above: off, unplugged, restarting, or somewhere
  *              this device can't reach. Say so, and keep listening.
  *
+ * Before any of those, this device's own pairing can be the trouble: it has
+ * one but cannot use it (`problem`). On the Mac the Keychain refused to give
+ * the device key back, or no longer has it; on any device the pairing file
+ * can fail to read. The plugin's sentence is shown as it is, and no check of
+ * the server can help. Only a missing key is fixed by pairing again
+ * (`problem.pairAgain`). After any other problem the key may still be on
+ * this device, and quitting and reopening Virtues can bring it back. Pairing
+ * again would add a second device to the server's list while the first key
+ * still works.
+ *
  * THE MOVED SERVER, end to end:
  *   1. `boxRadio.openOwner()` proves over Bluetooth that this device is one
  *      of the server's own (a signature with its pairing key), which opens a
@@ -39,7 +49,17 @@
 
 import { boxRadio, BoxRadioError, type NearbyBox } from '$lib/tauri/boxRadio';
 import { prePair } from '$lib/components/setup/prepair.svelte';
-import { COMEBACK_MS, judge, pickReach, shell, type Phase, type ReachPort, type Verdict } from './reconnect';
+import {
+	COMEBACK_MS,
+	judge,
+	pairingProblem,
+	pickReach,
+	shell,
+	type PairingProblem,
+	type Phase,
+	type ReachPort,
+	type Verdict
+} from './reconnect';
 
 export { LISTEN_EVERY_MS, thisDevice } from './reconnect';
 
@@ -52,6 +72,9 @@ export class Reconnect {
 	error = $state<string | null>(null);
 	/** A check is running. */
 	busy = $state(false);
+	/** A pairing this device has but cannot use. While set, `error` holds
+	 *  its sentence and `verdict` is `silent`. */
+	problem = $state<PairingProblem | null>(null);
 
 	/** Servers nearby asking for their owner, closest first. */
 	private asking: NearbyBox[] = [];
@@ -95,6 +118,19 @@ export class Reconnect {
 			// Nothing to reach: this device was unpaired somewhere else.
 			this.pairAgain(false);
 			return;
+		}
+		const problem = pairingProblem(status);
+		if (problem) {
+			// This device's own record is the trouble. A server nearby asking
+			// for its owner can't be opened either: that needs the same key.
+			this.problem = problem;
+			this.verdict = 'silent';
+			this.error = problem.message;
+			return;
+		}
+		if (this.problem) {
+			this.problem = null;
+			this.error = null;
 		}
 		this.verdict = judge(status, asking, this.reach.online());
 		if (this.verdict !== 'asking' && this.verdict !== 'silent') this.error = null;

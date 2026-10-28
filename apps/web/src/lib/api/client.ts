@@ -10,6 +10,7 @@ import { sanitizeUrl } from '$lib/utils/urlUtils';
 import { noteRequestId } from '$lib/log';
 import { backendUrl } from '$lib/config/backend';
 import { isTauri } from '$lib/utils/platform';
+import { shellSupports } from '$lib/tauri/bridge';
 
 const API_BASE = '/api';
 
@@ -144,9 +145,11 @@ export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Pr
  * The box issues a one-time nonce, and the app signs it with the method and
  * path (`plugin:reach|owner_proof_sign`); the key never reaches this page.
  * Outside the app, in a browser on `make dev`, nothing can sign and no header
- * goes out, and the box's console needs none. An app too old to sign sends
- * none either, and the box's refusal tells the owner to update it. A server
- * too old to issue a nonce answers 404 and does not ask for a proof.
+ * goes out, and the box's console needs none. A server too old to issue a
+ * nonce answers 404 and does not ask for a proof.
+ *
+ * An app too old to sign gets an error saying to update it, and nothing goes
+ * to the box. Sent unsigned, the request would only come back refused.
  */
 async function ownerProofHeaders(method: string, path: string): Promise<Record<string, string>> {
 	if (!isTauri) return {};
@@ -166,12 +169,18 @@ async function ownerProofHeaders(method: string, path: string): Promise<Record<s
 		});
 		return { 'X-Virtues-Owner-Proof': proof };
 	} catch (e) {
-		const message = e instanceof Error ? e.message : String(e);
-		// An app that predates the command. The box's refusal says what to do.
-		if (/not found|not allowed/i.test(message)) return {};
-		throw new Error(message);
+		// The surface is asked only after the signing failed, so an app that
+		// signs is never told to update. That includes a shell that cannot
+		// report its surface (Android's capabilities don't allow the command).
+		if (!(await shellSupports(OWNER_PROOF_SURFACE))) {
+			throw new ApiError(403, "Update the Virtues app to do this. This version can't sign the check your server asks for.");
+		}
+		throw new Error(e instanceof Error ? e.message : String(e));
 	}
 }
+
+/** The surface that added `owner_proof_sign` (lib.rs `COMMAND_SURFACE_VERSION`). */
+const OWNER_PROOF_SURFACE = 15;
 
 /**
  * A server from before the owner proof still asks for a `virtues sudo`
