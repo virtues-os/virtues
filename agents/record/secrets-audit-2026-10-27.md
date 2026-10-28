@@ -60,8 +60,8 @@ box or a device. The findings below are left as they were found.
 | A test pins the grants on `credentials` | `5b5c5f4b6` | |
 | Rewrite the secrets plan | 2026-10-28, with this section | |
 | Rewrite the runbook | `95eb83553`, `0f5feff2b`, `f6e541881` | |
-| Rewrite stale comments | in part | `relay.rs`'s module doc still names a bearer and cookie layer, `pair.rs`'s `mint_pair_token` doc says app mints start pending, and the revoke steps in `api/devices.rs` still name a WireGuard key and sessions. |
-| Delete the dead credential code | `78aba6abc` (`credentials/types.rs`), `95eb83553` (`SetupConfig`) | `check_pairing_status`, `list_pending_pairings`, `PairingStatus` and `PendingPairing` in `api/credentials.rs` still have no caller outside their re-exports. |
+| Rewrite stale comments | `9ebd715ef` (`relay.rs`, `pair.rs`, `api/devices.rs`, `middleware/auth.rs`) | |
+| Delete the dead credential code | `78aba6abc` (`credentials/types.rs`), `95eb83553` (`SetupConfig`), `9ebd715ef` (the pairing-status helpers) | |
 | Drop the Keys count | `95eb83553` | |
 
 ## 1. Summary

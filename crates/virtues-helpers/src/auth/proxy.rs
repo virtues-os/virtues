@@ -66,7 +66,8 @@ pub struct ProxyExchangeResponse {
     /// - via_proxy (Plaid): `{ access_token }` (no expiry, no refresh)
     pub secrets: serde_json::Value,
 
-    /// Plaintext non-secret context (e.g. Plaid `item_id`, OAuth `email`).
+    /// Plaintext non-secret context (e.g. Plaid `item_id`, Strava `athlete`).
+    /// The box adds a Google grant's `email` itself (`api::source_auth`).
     #[serde(default)]
     pub metadata: serde_json::Value,
 

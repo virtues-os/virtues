@@ -308,7 +308,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             DeviceCommands::Rm { id } => match virtues::api::devices::revoke_device_cli(pool, id).await {
                 Ok(true) => {
                     virtues::cli::ui::ok(&format!(
-                        "revoked {id} — its key is de-allowlisted; the next dial is refused"
+                        "revoked {id}. Your server refuses its requests from now on and drops its key at its next allowlist check."
                     ));
                     return Ok(());
                 }

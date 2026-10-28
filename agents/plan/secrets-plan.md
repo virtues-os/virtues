@@ -280,13 +280,16 @@ each item to its commit and says which are still open.
   is Ready only once the key is stored (`78aba6abc`, `955df8b38`).
 - Refused grants become `reauth_required`, refreshes lock across
   processes, and Reconnect repairs the row it was pressed on
-  (`a96faee9d`, `955df8b38`, `55bbefa72`).
+  (`a96faee9d`, `955df8b38`, `55bbefa72`). The box looks up a Google
+  grant's account address itself, so a reconnect to another Google account
+  adds a row; the proxy reads no Gmail or Calendar data (`fdd037f4a`).
 - Applet `schema_sql` limited to table and index statements
   (`2d24fd854`). This narrows the hole and does not close it; see Open.
 - The runbook (`95eb83553`, `f6e541881`), the Keys page count
-  (`95eb83553`), and part of the dead credential code: `credentials/types.rs`
-  (`78aba6abc`) and the unused `SetupConfig` fields (`95eb83553`). The rest
-  is under Open.
+  (`95eb83553`), and the dead credential code: `credentials/types.rs`
+  (`78aba6abc`), the unused `SetupConfig` fields (`95eb83553`), and the
+  pairing-status helpers and the web client's unused pairing types
+  (`9ebd715ef`).
 
 ## Slices
 
@@ -338,17 +341,14 @@ each item to its commit and says which are still open.
 - **The Keychain move goes one way.** An older Mac build, for example after
   going from the prerelease channel back to stable, finds no seed in
   `box.json`, cannot connect, and shows the server as unreachable until the
-  owner forgets it on the Mac and pairs again. The reconnect page shows the
-  plugin's `problem` sentence, but it does not yet offer Pair again when the
-  key is missing (`problem.pairAgain`).
+  owner forgets it on the Mac and pairs again. On a current build the
+  reconnect page shows the plugin's `problem` sentence and offers Pair again
+  when the key is missing (`9ebd715ef`).
 - **The seed outside a keychain.** Windows and Linux keep the seed in
   `box.json`, so a program running as the same user can read it and sign the
   owner proof (dated TODO in `apps/web/plugins/reach/src/store.rs`). On a Mac
   whose Keychain refused the move, the seed also stays in `box.json`.
   Android keeps it in the app's private storage.
-- **Dead credential code.** `check_pairing_status`, `list_pending_pairings`,
-  `PairingStatus` and `PendingPairing` in `api/credentials.rs` have no caller
-  outside their re-exports in `api/mod.rs` and `lib.rs`.
 - **A restore can still follow a link in a swapped stage**: `move_tree` and
   the env copy in `cli/restore.rs` need a root-owned parent for the stage.
 - **The start-time key check only reports.** It logs and shows attention

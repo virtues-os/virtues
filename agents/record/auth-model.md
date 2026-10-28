@@ -105,7 +105,10 @@ use different roots of trust by design.
    nothing. A request that carries `X-Forwarded-For` or `Forwarded` is
    refused here, because a reverse proxy also connects from loopback.
 3. **The dev fallback.** With `ENVIRONMENT=dev`, a loopback request that
-   carries a forwarding header is the owner too. A box never sets it.
+   carries a forwarding header is the owner too. An installed box does not
+   set it unless its operator does. The review demo box runs this way behind
+   Caddy, so whatever Caddy forwards to it acts as the owner
+   ([build/review-access.md](../build/review-access.md)).
 
 The plain HTTP listener on port 8000 never carries a proven key, so a
 request there from another machine reaches only the routes that need no
