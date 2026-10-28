@@ -498,6 +498,15 @@ host and keeps its log, and the run's page shows the hosts reached.
 **Done when:** a hand-written script applet reaches a public host with no
 approval, cannot reach the box or the LAN, and its run shows the host.
 
+Two checks stay when the connection approval goes (from the MCP work): the
+check in `call_tool` that a run may call a connection's tool only when its
+file's `allowed-tools` names it (the owner half goes, and its test is
+rewritten around the file alone), and the filter that never offers an
+unattended run a tool its server marks destructive. Dropping
+`app_applets.connections` needs a new migration, because boxes may have
+applied 0071, and agents/plan/mcp-plan.md ("Applets and connections" and
+slice 4) changes with it.
+
 ### 10. Output, threads and the Inbox
 
 Every run lands in its applet's thread; nothing posts into a chat it was not
