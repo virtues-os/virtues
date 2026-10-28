@@ -146,8 +146,8 @@ const TOOLS: Record<string, Presentation> = {
 	sudo: {
 		noun: "your server",
 		depth: 4,
-		// The command itself, not a paraphrase: in sudo mode this line is the
-		// owner's record of what ran on their server.
+		// The command itself, not a paraphrase: in the admin applet this line
+		// is how the owner sees what ran on their server.
 		say: (input, live, short) => {
 			const command = ((input.command as string) || "").trim().split("\n")[0];
 			if (!command) return live ? "Running a command" : "Ran a command";

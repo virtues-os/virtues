@@ -76,6 +76,9 @@ pub enum ChatMode {
     /// A small model on the Dragon's NPU, and nowhere else. The handler hands
     /// the whole turn to `local_model` before any cloud step: no slot, no
     /// tools, no prompt from here, nothing stored. See `api::local_chat`.
+    // TODO(2026-10-27): the app no longer offers Local. Delete this mode,
+    // `api::local_chat` and `/api/local-model`, or reach them from a model
+    // picker; the owner has not decided which.
     Local,
 }
 

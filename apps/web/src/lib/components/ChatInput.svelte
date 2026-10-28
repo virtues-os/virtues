@@ -12,16 +12,6 @@
 	import { outgoingMessage } from "$lib/document/message";
 	import { ATTACH_ACCEPT } from "$lib/components/chat/state/attachments.svelte";
 	import { COMPOSER_OVERLAY_ATTR } from "$lib/components/chat/state/composerReserve";
-	import {
-		AGENT_MODES,
-		DEPTH_NAMES,
-		depthModes,
-		getModeById,
-		nextMode,
-		type AgentMode,
-		type AgentModeId,
-	} from "$lib/config/agentModes";
-	import { Popover } from "$lib/floating";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { canDictate, startDictation } from "$lib/tauri/bridge";
 	import { inComposition } from "$lib/utils/ime";
@@ -40,9 +30,6 @@
 		onAttach = undefined as ((files: File[]) => void) | undefined,
 		onSubmit = undefined as ((content: string) => void) | undefined,
 		onStop = undefined as (() => void) | undefined,
-		agentMode = undefined as AgentModeId | undefined,
-		onModeChange = undefined as ((mode: AgentModeId) => void) | undefined,
-		modes = AGENT_MODES,
 		skill = $bindable(null),
 		suggestion = null,
 		onSuggestion = undefined,
@@ -59,14 +46,8 @@
 		onAttach?: (files: File[]) => void;
 		onSubmit?: (content: string) => void;
 		onStop?: () => void;
-		/** The chat's mode, shown as the depth and access chips. */
-		agentMode?: AgentModeId;
-		/** Chosen from the depth or access chip, or cycled with Shift+Tab. */
-		onModeChange?: (mode: AgentModeId) => void;
-		/** The modes this chat may switch between (see `availableModes`). */
-		modes?: AgentMode[];
-		/** The skill the next message runs as, shown as a chip before the
-		 *  text. It stays after a send, so a skill that asks questions gets
+		/** The applet the next message runs as, shown as a chip before the
+		 *  text. It stays after a send, so an applet that asks questions gets
 		 *  the answers, until the person takes it off. */
 		skill?: SkillSummary | null;
 		/** A question to offer in the empty field, in the placeholder's place. */
@@ -78,18 +59,6 @@
 		 *  the moments it matches. */
 		mentionQuery?: string | null;
 	} = $props();
-
-	// The one mode, shown as two chips (see DEPTH_ORDER). Full access runs at
-	// the balanced depth, so that is where the depth chip sits while it is on.
-	const depths = $derived(depthModes(modes));
-	const depthId = $derived<AgentModeId>(
-		agentMode && depths.some((m) => m.id === agentMode) ? agentMode : "chat",
-	);
-	const depthIndex = $derived(Math.max(0, depths.findIndex((m) => m.id === depthId)));
-	const depthMode = $derived(getModeById(depthId));
-	const hasAccess = $derived(modes.some((m) => m.id === "sudo"));
-	const fullAccess = $derived(agentMode === "sudo");
-	let depthOpen = $state(false);
 
 	let fileInputEl: HTMLInputElement | null = $state(null);
 	let photoInputEl: HTMLInputElement | null = $state(null);
@@ -109,38 +78,6 @@
 		focusWithin = false;
 		if (mention !== null && !contextMenu.visible) closeContext({ refocus: false });
 		if (slash !== null) closeSkills({ refocus: false });
-	}
-
-	function cycleMode() {
-		if (agentMode && onModeChange) onModeChange(nextMode(agentMode, modes));
-	}
-
-	function setDepth(i: number) {
-		const m = depths[Math.min(Math.max(i, 0), depths.length - 1)];
-		if (m && m.id !== agentMode) onModeChange?.(m.id);
-	}
-
-	function onDepthKey(e: KeyboardEvent) {
-		const step: Record<string, number> = {
-			ArrowRight: depthIndex + 1,
-			ArrowUp: depthIndex + 1,
-			ArrowLeft: depthIndex - 1,
-			ArrowDown: depthIndex - 1,
-			Home: 0,
-			End: depths.length - 1,
-		};
-		if (!(e.key in step)) return;
-		e.preventDefault();
-		setDepth(step[e.key]);
-	}
-
-	// The track snaps to the nearest stop, on press and while dragging.
-	function onTrackPointer(e: PointerEvent) {
-		const el = e.currentTarget as HTMLElement;
-		if (e.type === "pointerdown") el.setPointerCapture(e.pointerId);
-		else if (!el.hasPointerCapture(e.pointerId)) return;
-		const r = el.getBoundingClientRect();
-		setDepth(Math.round(((e.clientX - r.left) / r.width) * (depths.length - 1)));
 	}
 
 	// (+) turns into a close mark while its menu is open.
@@ -174,10 +111,6 @@
 			},
 		);
 		attachOpen = true;
-	}
-
-	function toggleAccess() {
-		onModeChange?.(fullAccess ? "chat" : "sudo");
 	}
 
 	function onFilesPicked(e: Event) {
@@ -450,9 +383,8 @@
 	}
 
 	// Tab takes the suggested question, Escape puts it away: only from the
-	// text itself, so Tab still moves between the composer's buttons and
-	// Escape still closes the depth popover. Caught before the editor,
-	// whose Tab moves focus and whose Escape blurs.
+	// text itself, so Tab still moves between the composer's buttons. Caught
+	// before the editor, whose Tab moves focus and whose Escape blurs.
 	function onShellKeydownCapture(e: KeyboardEvent) {
 		if (!ghost || e.shiftKey || e.altKey || e.metaKey || e.ctrlKey || inComposition(e)) return;
 		if (!inputEl?.contains(e.target as Node)) return;
@@ -509,9 +441,7 @@
 
 	function handleWrapperClick(e: MouseEvent) {
 		const target = e.target as HTMLElement;
-		// The depth popover renders inside the card, and a press on its
-		// slider must not hand the focus back to the field.
-		if (target.closest("button, .popover-content")) {
+		if (target.closest("button")) {
 			return;
 		}
 		editor?.focus();
@@ -539,7 +469,6 @@
 			},
 			onHeight: setHeight,
 			onAttach,
-			onShiftTab: cycleMode,
 			onMentionOpen: (q) => (mention = q),
 			onMentionQuery: (q) => {
 				if (mention !== null) mention = q;
@@ -570,7 +499,7 @@
 		class="chat-input-wrapper border border-border-strong cursor-text"
 		class:focused={isFocused}
 		class:tray-open={trayOpen}
-		class:sudo={fullAccess}
+		class:sudo={skill?.name === "admin"}
 		class:mention-over={mentionOver}
 		bind:this={shellEl}
 		{...{ [MENTION_DROP_ATTR]: "" }}
@@ -716,79 +645,6 @@
 						title="Add files or photos"
 					>
 						<span class="plus-mark"><Icon icon="mynaui:plus" width="18" /></span>
-					</button>
-				{/if}
-
-				{#if onModeChange && depths.length > 1 && depthMode}
-					<Popover bind:open={depthOpen} placement="top-start" offset={6}>
-						{#snippet trigger({ toggle }: { toggle: () => void })}
-							<button
-								type="button"
-								class="chip"
-								class:open={depthOpen}
-								onclick={(e) => {
-									e.stopPropagation();
-									toggle();
-								}}
-								aria-haspopup="dialog"
-								aria-expanded={depthOpen}
-								title="Depth (Shift+Tab to switch)"
-							>
-								<Icon icon={depthMode.icon} width="14" style="color: inherit" />
-								<span>{DEPTH_NAMES[depthMode.id] ?? depthMode.name}</span>
-							</button>
-						{/snippet}
-						{#snippet children()}
-							<div class="depth-panel">
-								<div class="depth-head">
-									<span class="depth-label">Depth</span>
-									<span class="depth-current">
-										<Icon icon={depthMode.icon} width="14" style="color: inherit" />
-										{DEPTH_NAMES[depthMode.id] ?? depthMode.name}
-									</span>
-								</div>
-								<div
-									class="depth-track"
-									role="slider"
-									tabindex="0"
-									aria-label="Depth"
-									aria-valuemin={0}
-									aria-valuemax={depths.length - 1}
-									aria-valuenow={depthIndex}
-									aria-valuetext={DEPTH_NAMES[depthMode.id] ?? depthMode.name}
-									style:--stops={depths.length - 1}
-									style:--at={depthIndex}
-									onkeydown={onDepthKey}
-									onpointerdown={onTrackPointer}
-									onpointermove={onTrackPointer}
-								>
-									{#each depths as m, i (m.id)}
-										<span class="depth-dot" style:--i={i} title={DEPTH_NAMES[m.id] ?? m.name}></span>
-									{/each}
-									<span class="depth-thumb"></span>
-								</div>
-							</div>
-						{/snippet}
-					</Popover>
-				{/if}
-
-				{#if onModeChange && hasAccess}
-					<span class="chip-sep" aria-hidden="true">&middot;</span>
-					<button
-						type="button"
-						class="chip"
-						class:danger={fullAccess}
-						onclick={(e) => {
-							e.stopPropagation();
-							toggleAccess();
-						}}
-						aria-pressed={fullAccess}
-						title={fullAccess
-							? "Full access: runs commands on your server and asks before deleting anything. Click to ask first."
-							: "Ask first: asks before changing anything. Click for full access."}
-					>
-						<Icon icon={fullAccess ? "mynaui:lock-open" : "mynaui:lock"} width="14" style="color: inherit" />
-						<span>{fullAccess ? "Full access" : "Ask first"}</span>
 					</button>
 				{/if}
 
@@ -942,8 +798,8 @@
 		border-color: color-mix(in srgb, var(--color-foreground) 28%, var(--color-border-strong));
 	}
 
-	/* Sudo mode holds the border in the error color, focused or not: the
-	   state has to be impossible to miss while typing into it. */
+	/* The admin applet holds the border in the error color, focused or not:
+	   a shell with sudo has to be impossible to miss while typing into it. */
 	.chat-input-wrapper.sudo,
 	.chat-input-wrapper.sudo.focused {
 		border-color: var(--color-error) !important;
@@ -1092,127 +948,6 @@
 		flex: 1;
 	}
 
-	.chip {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3125rem;
-		height: 1.875rem;
-		padding: 0 0.5rem;
-		border-radius: var(--radius-md);
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		white-space: nowrap;
-		cursor: pointer;
-		transition:
-			background-color 0.15s ease,
-			color 0.15s ease;
-	}
-
-	.chip:hover,
-	.chip.open {
-		background: var(--hover-bg);
-		color: var(--color-foreground);
-	}
-
-	.chip.danger {
-		color: var(--color-error);
-	}
-
-	.chip-sep {
-		color: var(--color-foreground-subtle);
-		font-size: 0.75rem;
-		user-select: none;
-	}
-
-	.depth-panel {
-		display: flex;
-		flex-direction: column;
-		gap: 0.625rem;
-		width: 14rem;
-		padding: 0.625rem 0.75rem 0.75rem;
-	}
-
-	.depth-head {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		font-size: 0.8125rem;
-	}
-
-	.depth-label {
-		color: var(--color-foreground-muted);
-	}
-
-	.depth-current {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.3125rem;
-		color: var(--color-foreground);
-	}
-
-	/* Stops sit at the centers of equal slots, so the thumb, the dots and
-	   the pointer math in onTrackPointer agree. */
-	.depth-track {
-		--pad: 0.1875rem;
-		--thumb: 1.375rem;
-		--span: calc(100% - 2 * var(--pad) - var(--thumb));
-		position: relative;
-		height: 1.625rem;
-		border-radius: var(--radius-md);
-		background: color-mix(in srgb, var(--color-foreground) 8%, transparent);
-		cursor: pointer;
-		touch-action: none;
-		outline: none;
-	}
-
-	.depth-track:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 1px;
-	}
-
-	.depth-dot,
-	.depth-thumb {
-		position: absolute;
-		top: 50%;
-		left: calc(var(--pad) + var(--span) * var(--pos) / max(var(--stops), 1));
-	}
-
-	.depth-dot {
-		--pos: var(--i);
-		width: var(--thumb);
-		height: 0.25rem;
-		margin-top: -0.125rem;
-		display: flex;
-		justify-content: center;
-	}
-
-	.depth-dot::before {
-		content: "";
-		width: 0.25rem;
-		height: 0.25rem;
-		border-radius: var(--radius-full);
-		background: var(--color-foreground-subtle);
-	}
-
-	.depth-thumb {
-		--pos: var(--at);
-		width: var(--thumb);
-		height: calc(100% - 2 * var(--pad));
-		transform: translateY(-50%);
-		border-radius: var(--radius-sm);
-		background: var(--color-surface);
-		/* design-ok: the thumb is a physical knob on the track. */
-		box-shadow:
-			0 0 0 1px color-mix(in srgb, var(--color-foreground) 10%, transparent),
-			0 1px 3px color-mix(in srgb, var(--color-foreground) 15%, transparent);
-		transition: left 0.22s var(--ease-premium);
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.depth-thumb {
-			transition: none;
-		}
-	}
 
 
 	/* The field around the message as typed. The text itself is prose.css's

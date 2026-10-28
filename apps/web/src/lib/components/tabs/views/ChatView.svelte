@@ -131,7 +131,6 @@
 	import MessageFile from "$lib/components/chat/MessageFile.svelte";
 	import ComposerTray from "$lib/components/chat/ComposerTray.svelte";
 	import { ChatError } from "$lib/components/chat";
-	import { availableModes, type AgentModeId } from "$lib/config/agentModes";
 	import { skills } from "$lib/stores/skills.svelte";
 	import {
 		getSuggestedQuestion,
@@ -139,9 +138,6 @@
 		type SkillSummary,
 		type SuggestedQuestion,
 	} from "$lib/api/client";
-	import LocalModelCard from "$lib/components/chat/local/LocalModelCard.svelte";
-	import LocalStatsLine from "$lib/components/chat/local/LocalStatsLine.svelte";
-	import { localModel } from "$lib/stores/localModel.svelte";
 	import { chatUsage } from "$lib/stores/chatUsage.svelte";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { dropZone, hasFiles } from "$lib/actions/dropZone";
@@ -623,9 +619,8 @@
 			// Release old instance if we had one
 			if (currentChatConversationId) {
 				chatInstances.release(currentChatConversationId);
-				// A mode belongs to the chat it was chosen in. Sudo above all
-				// must not follow the view into the next conversation.
-				selectedAgentMode = 'chat';
+				// An applet belongs to the chat it was picked in. Admin above
+				// all must not follow the view into the next conversation.
 				composerSkill = null;
 				turnSkill = null;
 				suggestion = null;
@@ -639,10 +634,9 @@
 				// context block and the server keeps the binding fresh.
 				getProjectId: () => chatProjectId,
 				getActivePageContext: activePageContext,
-				getAgentMode: () => turnSkill ?? selectedAgentMode,
+				getAgentMode: () => turnSkill ?? 'chat',
 				getChatMode: () => chatMode,
 				getTemporary: () => isGhost,
-				getThink: () => localThink,
 			});
 			// The draft this conversation left behind, if the composer is empty.
 			if (!isGhost && !input) {
@@ -849,8 +843,6 @@
 
 	// Load conversation data on mount
 	onMount(() => {
-		// Whether this box offers local mode, asked once per session.
-		void localModel.load();
 		// (The project list used to be fetched here for the breadcrumb's name
 		// and accent. The app layout already loads it, and nothing in this view
 		// renders a project's name any more.)
@@ -1076,22 +1068,12 @@
 	let titleDone = $state(false);
 	let refreshDataTimeout: ReturnType<typeof setTimeout> | null = null;
 
-	// Agent mode selection, used for tool filtering on the backend.
-	let selectedAgentMode = $state<AgentModeId>('chat');
-	// Local mode's "Think first" switch, sent with each local turn.
-	let localThink = $state(false);
-	const isLocal = $derived(selectedAgentMode === 'local');
-
-	function changeMode(mode: AgentModeId) {
-		selectedAgentMode = mode;
-	}
-
-	// The skill chip in the composer, and the skill the last sent message ran
-	// as. A message that starts with `/name` for a known skill runs that turn
-	// as the skill; approving a tool or regenerating answers the same turn, so
-	// they keep it, and the next message sets it again.
+	// The applet chip in the composer, and the applet the last sent message
+	// ran as. The chip stays until it is taken off, and each message it rides
+	// starts with its `/name`, which runs that turn as the applet. Approving a
+	// tool or regenerating answers the same turn, so they keep it.
 	let composerSkill = $state<SkillSummary | null>(null);
-	let turnSkill: string | null = null;
+	let turnSkill = $state<string | null>(null);
 
 	async function skillOf(text: string): Promise<string | null> {
 		const m = /^\/([a-z][a-z0-9-]{1,39})(?=\s|$)/.exec(text);
@@ -1119,10 +1101,10 @@
 	let isEmpty = $derived(uniqueMessages.length === 0 && !isLoading);
 
 	// Asked once per empty chat, and kept only if the chat it was asked for
-	// is still the one on screen. A temporary chat, local mode and the
-	// getting-started room show none: each is somewhere a question drawn
-	// from the record does not belong.
-	const suggestionAllowed = $derived(isEmpty && !isGhost && !isLocal && !inRoom);
+	// is still the one on screen. A temporary chat and the getting-started
+	// room show none: each is somewhere a question drawn from the record does
+	// not belong.
+	const suggestionAllowed = $derived(isEmpty && !isGhost && !inRoom);
 	$effect(() => {
 		const askedFor = conversationId;
 		if (!suggestionAllowed || suggestionAskedFor === askedFor) return;
@@ -1929,9 +1911,6 @@
 								     stacked. -->
 								<RoomCover />
 							{/if}
-							{#if isLocal && uniqueMessages.length > 0}
-								<LocalModelCard bind:think={localThink} />
-							{/if}
 							{#each uniqueMessages as message, messageIndex (message.id)}
 								{@const isUserMessage = message.role === "user"}
 								{@const exchangeIndex = isUserMessage
@@ -2017,7 +1996,7 @@
 														0}
 													land={!stopReason(messageMetadata.get(message.id)) &&
 														!chat.error}
-													agentMode={selectedAgentMode}
+													agentMode={turnSkill ?? 'chat'}
 												/>
 											{/if}
 											<TurnFigures parts={message.parts} />
@@ -2271,9 +2250,6 @@
 											{#if stop}
 												<StoppedNotice reason={stop} />
 											{/if}
-											{#if chatInstances.getLocalStats(conversationId, message.id)}
-												<LocalStatsLine stats={chatInstances.getLocalStats(conversationId, message.id)!} />
-											{/if}
 
 											<!-- What to do with an answer once it exists.
 											     `chat.regenerate()` was reachable ONLY through the
@@ -2381,7 +2357,7 @@
 											startedAt={turnPhase.startedAt}
 											stalled={turnPhase.stalled}
 											toolCalls={[]}
-											agentMode={selectedAgentMode}
+											agentMode={turnSkill ?? 'chat'}
 										/>
 									</div>
 								</div>
@@ -2437,7 +2413,7 @@
 						{#await import("$lib/components/chat/ThreeBody.svelte") then { default: ThreeBody }}
 							<ThreeBody onClose={() => (threeBodyOpen = false)} />
 						{/await}
-					{:else if isEmpty && !isGhost && !isLocal && attachments.count === 0}
+					{:else if isEmpty && !isGhost && attachments.count === 0}
 						<!-- The chat sky, or the mark and word before the day has
 						     anything in it. Positioned off the midpoint, so it sits
 						     above the composer on the phone and the desktop alike. It
@@ -2448,11 +2424,7 @@
 						</div>
 					{/if}
 
-					{#if isEmpty && isLocal}
-						<div class="local-hero" in:fade={{ duration: 300 }}>
-							<LocalModelCard bind:think={localThink} />
-						</div>
-					{:else if isEmpty && isGhost}
+					{#if isEmpty && isGhost}
 						<div
 							class="ghost-hero"
 							in:fade={{ duration: 300 }}
@@ -2536,15 +2508,12 @@
 							bind:value={input}
 							bind:focused={inputFocused}
 							disabled={false}
-							sendDisabled={turnPhase.working || (isLocal && !localModel.status.ready)}
+							sendDisabled={turnPhase.working}
 							isStreaming={turnPhase.working}
 							maxWidth="max-w-full"
-							placeholder={isLocal ? "Ask the local model" : isGhost ? "Ask anything. This chat isn't saved" : undefined}
+							placeholder={isGhost ? "Ask anything. This chat isn't saved" : undefined}
 							onSubmit={(text) => handleChatSubmit(text)}
 							onStop={() => handleChatStop()}
-							agentMode={selectedAgentMode}
-							onModeChange={changeMode}
-							modes={availableModes({ localSupported: localModel.status.supported })}
 							bind:skill={composerSkill}
 							bind:mentionQuery
 							suggestion={suggestionAllowed ? suggestion : null}
@@ -2711,26 +2680,6 @@
 		text-align: center;
 		padding: 0 1.5rem;
 		pointer-events: none;
-	}
-
-	/* The local card sits where the ghost title does, above the centered
-	   composer, at the measure of the words. It holds a button and a switch,
-	   so it takes clicks, and it scrolls within itself on a short pane. */
-	.local-hero {
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: calc(50% + 52px);
-		z-index: 2;
-		display: flex;
-		justify-content: center;
-		padding: 0 16px;
-		max-height: calc(50% - 64px);
-		overflow-y: auto;
-	}
-	.local-hero > :global(*) {
-		width: 100%;
-		max-width: 40em;
 	}
 
 	.ghost-hero-title {
