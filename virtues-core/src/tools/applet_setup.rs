@@ -731,17 +731,13 @@ pub(crate) fn slugify(name: &str) -> String {
 }
 
 /// EXPLAIN a boolean SQL expression under the hardened read-only path.
+/// Plan the condition as the reader login, which is what runs it: setup
+/// writes it as `run: sql`, so a table the reader cannot see fails here
+/// rather than on every run.
 async fn explain_bool_expr(pool: &PgPool, expr: &str) -> Result<(), String> {
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    sqlx::query("SET TRANSACTION READ ONLY")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    sqlx::query("SET LOCAL statement_timeout = '5s'")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    let sql = format!("EXPLAIN SELECT (({expr}))::boolean");
+    let (mut tx, _zone) =
+        crate::server::faces::reader_transaction(pool, "5s").await?;
+    let sql = format!("EXPLAIN SELECT 1 WHERE ({expr})");
     let res = sqlx::query(&sql).fetch_all(&mut *tx).await;
     tx.rollback().await.ok();
     res.map(|_| ()).map_err(|e| e.to_string())

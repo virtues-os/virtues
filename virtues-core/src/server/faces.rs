@@ -444,7 +444,9 @@ pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::resul
 ///
 /// - `virtues_face_reader`: SELECT on `data_*` / `wiki_*` tables and every
 ///   `applet_*` schema (the faces' read-only bridge), except the ontologies
-///   marked `ModelAccess::OwnerOptIn`, which it revokes.
+///   marked `ModelAccess::OwnerOptIn`, which it revokes; and on the columns of
+///   `app_applet_runs` that say when each applet ran, which an applet's
+///   `run: sql` reads to wait between runs.
 /// - `virtues_applet_writer`: DML strictly inside `applet_*` schemas (the
 ///   `sql_write` tool) — the write scope is PG grants, not SQL parsing.
 pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Result<()> {
@@ -544,6 +546,16 @@ pub async fn ensure_applet_db_grants(pool: &sqlx::PgPool) -> crate::error::Resul
             .await
             .map_err(|e| crate::error::Error::Database(format!("revoke on {table} failed: {e}")))?;
     }
+    // A run's `run: sql` runs as the reader, and the cooldown that
+    // applets/AGENTS.md recommends asks when this applet last succeeded. Only
+    // those columns: a run's error and summary text stay the server's.
+    sqlx::query(
+        "GRANT SELECT (id, applet_id, status, trigger, started_at, completed_at) \
+         ON public.app_applet_runs TO virtues_face_reader",
+    )
+    .execute(&mut *tx)
+    .await
+    .map_err(|e| crate::error::Error::Database(format!("grant on app_applet_runs failed: {e}")))?;
     tx.commit()
         .await
         .map_err(|e| crate::error::Error::Database(format!("applet db grants failed: {e}")))?;
@@ -676,6 +688,20 @@ mod tests {
         assert!(can_read("data_health_sleep").await, "the sweep still grants the rest");
         // The task tools send the model to sql_query for the list.
         assert!(can_read("app_tasks").await, "the assistant cannot read its task list");
+        let can_read_column = |column: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, bool>(
+                    "SELECT has_column_privilege('virtues_face_reader', 'public.app_applet_runs', $1, 'SELECT')",
+                )
+                .bind(column)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        assert!(can_read_column("started_at").await, "a run's SQL cannot see when the applet last ran");
+        assert!(!can_read_column("error").await, "a run's error text is readable");
     }
 
     /// A view's SQL cannot return to the server's role. Under a `SET ROLE`
