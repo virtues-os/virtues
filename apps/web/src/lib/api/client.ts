@@ -138,9 +138,11 @@ export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Pr
  * A few routes need a fresh signature from the Virtues app itself, because any
  * process on a paired Mac reaches the box as that Mac through the app's
  * loopback port, and only the app holds the device's key: revealing a password
- * or a key, adding a device or minting a pair code, changing the AI key, and
- * importing an applet package. {@link apiSendProven} is the one way to call
- * them.
+ * or a key, adding a device or minting a pair code, changing the AI key,
+ * importing an applet package, the terminal, and an admin turn with the Allow
+ * on its commands. {@link apiSendProven} and {@link requestProven} call the
+ * ordinary routes; the terminal socket and the chat stream take
+ * {@link ownerProof} and {@link ownerProofHeaders} directly.
  *
  * The box issues a one-time nonce, and the app signs it with the method and
  * path (`plugin:reach|owner_proof_sign`); the key never reaches this page.
@@ -150,24 +152,22 @@ export function apiSend<T>(method: string, path: string, jsonBody?: unknown): Pr
  *
  * An app too old to sign gets an error saying to update it, and nothing goes
  * to the box. Sent unsigned, the request would only come back refused.
+ *
+ * `path` is the whole path the box sees, such as `/ws/terminal`. The result is
+ * the proof's value, or null when no proof goes out.
  */
-async function ownerProofHeaders(method: string, path: string): Promise<Record<string, string>> {
-	if (!isTauri) return {};
+export async function ownerProof(method: string, path: string): Promise<string | null> {
+	if (!isTauri) return null;
 	let nonce: string;
 	try {
 		({ nonce } = await apiSend<{ nonce: string }>('POST', '/owner-proof/nonce'));
 	} catch (e) {
-		if (e instanceof ApiError && e.status === 404) return {};
+		if (e instanceof ApiError && e.status === 404) return null;
 		throw e;
 	}
 	const { invoke } = await import('@tauri-apps/api/core');
 	try {
-		const proof = await invoke<string>('plugin:reach|owner_proof_sign', {
-			method,
-			path: `${API_BASE}${path}`,
-			nonce,
-		});
-		return { 'X-Virtues-Owner-Proof': proof };
+		return await invoke<string>('plugin:reach|owner_proof_sign', { method, path, nonce });
 	} catch (e) {
 		// The surface is asked only after the signing failed, so an app that
 		// signs is never told to update. That includes a shell that cannot
@@ -177,6 +177,15 @@ async function ownerProofHeaders(method: string, path: string): Promise<Record<s
 		}
 		throw new Error(e instanceof Error ? e.message : String(e));
 	}
+}
+
+/**
+ * The owner proof header for `method` on `path` under `/api`, or none where
+ * {@link ownerProof} returns none.
+ */
+export async function ownerProofHeaders(method: string, path: string): Promise<Record<string, string>> {
+	const proof = await ownerProof(method, `${API_BASE}${path}`);
+	return proof ? { 'X-Virtues-Owner-Proof': proof } : {};
 }
 
 /** The surface that added `owner_proof_sign` (lib.rs `COMMAND_SURFACE_VERSION`). */
@@ -199,16 +208,23 @@ function explainOldServer(e: unknown): unknown {
 }
 
 /** {@link apiSend} for a route that needs the app's owner proof. */
-export async function apiSendProven<T>(method: string, path: string, jsonBody?: unknown): Promise<T> {
+export function apiSendProven<T>(method: string, path: string, jsonBody?: unknown): Promise<T> {
+	return requestProven<T>(method, path, {
+		headers: jsonBody !== undefined ? { 'Content-Type': 'application/json' } : {},
+		body: jsonBody !== undefined ? JSON.stringify(jsonBody) : undefined,
+	});
+}
+
+/** {@link request} for a route that needs the app's owner proof, with any body. */
+export async function requestProven<T>(
+	method: string,
+	path: string,
+	init: { headers?: Record<string, string>; body?: BodyInit } = {},
+): Promise<T> {
 	const send = async (): Promise<{ result: T } | { error: unknown; proved: boolean }> => {
-		const headers = await ownerProofHeaders(method, path);
-		if (jsonBody !== undefined) headers['Content-Type'] = 'application/json';
+		const headers = { ...init.headers, ...(await ownerProofHeaders(method, path)) };
 		try {
-			const result = await request<T>(path, {
-				method,
-				headers,
-				body: jsonBody !== undefined ? JSON.stringify(jsonBody) : undefined,
-			});
+			const result = await request<T>(path, { method, headers, body: init.body });
 			return { result };
 		} catch (error) {
 			return { error, proved: 'X-Virtues-Owner-Proof' in headers };
@@ -2990,8 +3006,10 @@ export function compactChat<T = unknown>(id: string, force = true): Promise<T> {
 export function getChatPermissions<T = unknown>(id: string): Promise<T> {
 	return apiGet<T>(`/chats/${encodeURIComponent(id)}/permissions`);
 }
-export function addChatPermission<T = unknown>(id: string, body: Record<string, unknown>): Promise<T> {
-	return apiSend<T>('POST', `/chats/${encodeURIComponent(id)}/permissions`, body);
+/** Allowing an admin command (a `sudo:` grant) takes the owner proof. */
+export function addChatPermission<T = unknown>(id: string, body: { entity_id: string } & Record<string, unknown>): Promise<T> {
+	const send = body.entity_id.startsWith('sudo:') ? apiSendProven : apiSend;
+	return send<T>('POST', `/chats/${encodeURIComponent(id)}/permissions`, body);
 }
 export function removeChatPermission<T = unknown>(id: string, entityId: string): Promise<T> {
 	return apiSend<T>(

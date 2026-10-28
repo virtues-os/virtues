@@ -10,7 +10,7 @@ vi.mock('$lib/utils/platform', () => ({ isTauri: true }));
 vi.mock('$lib/tauri/bridge', () => ({ shellSupports: vi.fn(async () => true) }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
-const { apiSendProven, ApiError } = await import('./client');
+const { apiSendProven, addChatPermission, ownerProof, ApiError } = await import('./client');
 const { shellSupports } = await import('$lib/tauri/bridge');
 const { invoke } = await import('@tauri-apps/api/core');
 
@@ -96,5 +96,39 @@ describe('apiSendProven in the app', () => {
 
 		await expect(apiSendProven('GET', ROUTE)).resolves.toEqual({ secret: 'correct horse' });
 		expect(vi.mocked(shellSupports)).not.toHaveBeenCalled();
+	});
+});
+
+describe('the admin routes', () => {
+	it('signs an Allow on an admin command and not an ordinary grant', async () => {
+		const fetch = box('nonce-1');
+		vi.mocked(invoke).mockResolvedValue('nonce-1.sig');
+		const sent = (path: string) =>
+			fetch.mock.calls.filter(([url]) => url === path).map(([, init]) => (init?.headers ?? {}) as Record<string, string>);
+
+		await addChatPermission('chat_example', { entity_id: 'sudo:shell:0123abcd', entity_type: 'command' });
+		expect(vi.mocked(invoke)).toHaveBeenCalledWith('plugin:reach|owner_proof_sign', {
+			method: 'POST',
+			path: '/api/chats/chat_example/permissions',
+			nonce: 'nonce-1',
+		});
+		expect(sent('/api/chats/chat_example/permissions')[0]['X-Virtues-Owner-Proof']).toBe('nonce-1.sig');
+
+		vi.mocked(invoke).mockClear();
+		await addChatPermission('chat_other', { entity_id: 'page_example', entity_type: 'page' });
+		expect(vi.mocked(invoke)).not.toHaveBeenCalled();
+		expect(sent('/api/chats/chat_other/permissions')[0]).not.toHaveProperty('X-Virtues-Owner-Proof');
+	});
+
+	it('signs the terminal socket over its own path', async () => {
+		box('nonce-2');
+		vi.mocked(invoke).mockResolvedValue('nonce-2.sig');
+
+		await expect(ownerProof('GET', '/ws/terminal')).resolves.toBe('nonce-2.sig');
+		expect(vi.mocked(invoke)).toHaveBeenCalledWith('plugin:reach|owner_proof_sign', {
+			method: 'GET',
+			path: '/ws/terminal',
+			nonce: 'nonce-2',
+		});
 	});
 });

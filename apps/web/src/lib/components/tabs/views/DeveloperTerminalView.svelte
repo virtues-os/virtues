@@ -4,6 +4,7 @@
     import { onMount, onDestroy } from "svelte";
     import { browser } from "$app/environment";
     import { getWsUrl } from "$lib/config/backend";
+    import { ApiError, ownerProof, requestProven } from "$lib/api/client";
     import { toast } from "svelte-sonner";
     import { dropZone, hasFiles } from "$lib/actions/dropZone";
 
@@ -177,7 +178,7 @@
 
             // Connect to WebSocket. Only now that fit() has run do we know the
             // real size to open the PTY at.
-            connectWebSocket();
+            void connectWebSocket();
 
             // Handle terminal input. onData is already the encoded byte stream —
             // control chars, escape sequences, bracketed paste and mouse reports
@@ -256,14 +257,38 @@
         terminal?.dispose();
     });
 
-    function connectWebSocket() {
+    async function connectWebSocket() {
         if (disposed || !terminal) return;
         connectionStatus = reconnectAttempts > 0 ? "reconnecting" : "connecting";
+
+        // The shell runs with sudo on the box, so the box asks for the app's
+        // owner proof on every connect. A WebSocket cannot carry a header, so
+        // it goes in the URL.
+        let proof: string | null;
+        try {
+            proof = await ownerProof("GET", "/ws/terminal");
+        } catch (err) {
+            // An app too old to sign: retrying cannot help.
+            if (err instanceof ApiError && err.status === 403) {
+                connectionStatus = "disconnected";
+                terminal?.writeln(`\r\n\x1b[90m[${err.message}]\x1b[0m`);
+                return;
+            }
+            console.error("[terminal] owner proof failed", err);
+            scheduleReconnect();
+            return;
+        }
+        if (disposed || !terminal) return;
 
         // Open the PTY at the size we're actually showing. A TUI reads the
         // winsize once at startup, so a PTY born at 80x24 and resized a beat
         // later paints its first frame into the wrong box.
-        const url = `${WS_URL}?cols=${terminal.cols}&rows=${terminal.rows}`;
+        const params = new URLSearchParams({
+            cols: String(terminal.cols),
+            rows: String(terminal.rows),
+        });
+        if (proof) params.set("owner_proof", proof);
+        const url = `${WS_URL}?${params}`;
 
         try {
             webSocket = new WebSocket(url);
@@ -321,17 +346,10 @@
     }
 
     async function uploadFile(file: File): Promise<string | null> {
-        const resp = await fetch("/api/terminal/paste", {
-            method: "POST",
-            headers: {
-                "Content-Type": file.type || "application/octet-stream",
-            },
+        const { path } = await requestProven<{ path?: string }>("POST", "/terminal/paste", {
+            headers: { "Content-Type": file.type || "application/octet-stream" },
             body: file,
         });
-        if (!resp.ok) {
-            throw new Error(`${resp.status} ${await resp.text()}`);
-        }
-        const { path } = await resp.json();
         return path ?? null;
     }
 
@@ -406,7 +424,7 @@
 
         reconnectTimer = setTimeout(() => {
             reconnectTimer = null;
-            connectWebSocket();
+            void connectWebSocket();
         }, delay);
     }
 </script>

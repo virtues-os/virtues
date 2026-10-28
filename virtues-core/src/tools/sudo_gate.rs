@@ -82,10 +82,14 @@ fn prints_recovery_key(line: &str) -> bool {
     words.contains(&"--init-key") && words.iter().any(|w| w.rsplit('/').next() == Some("virtues"))
 }
 
+/// What every admin grant id starts with. Granting one takes the owner proof
+/// (`server::api::chat::add_chat_permission_handler`).
+pub const GRANT_PREFIX: &str = "sudo:";
+
 /// The permission id for one exact command in one kind of tool.
 pub fn grant_id(kind: &str, command: &str) -> String {
     let digest = Sha256::digest(format!("{kind}\0{}", command.trim()).as_bytes());
-    format!("sudo:{kind}:{}", &hex::encode(digest)[..24])
+    format!("{GRANT_PREFIX}{kind}:{}", &hex::encode(digest)[..24])
 }
 
 /// The result that stops the turn and puts an Allow card in the chat.

@@ -277,6 +277,7 @@ pub async fn generate_chat_title_handler(
 pub async fn chat_handler(
     State(state): State<AppState>,
     user: crate::middleware::auth::AuthUser,
+    headers: axum::http::HeaderMap,
     Json(request): Json<crate::api::chat::ChatRequest>,
 ) -> Response {
     crate::api::chat::chat_handler(
@@ -286,6 +287,7 @@ pub async fn chat_handler(
         axum::extract::State(state.live_turns.clone()),
         axum::extract::State(state.ghost_permissions.clone()),
         user,
+        headers,
         Json(request),
     )
     .await
@@ -345,12 +347,25 @@ pub async fn list_chat_permissions_handler(
     api_response(crate::api::chat_permissions::list_permissions(state.db.pool(), &chat_id).await)
 }
 
-/// POST /api/chats/:id/permissions - Add an edit permission
+/// POST /api/chats/:id/permissions - Add an edit permission. Allowing one of
+/// the admin applet's commands (a `sudo:` grant, `tools::sudo_gate`) lets a
+/// root command run, so that grant needs the app's owner proof, as the admin
+/// turn itself does.
 pub async fn add_chat_permission_handler(
     State(state): State<AppState>,
+    user: crate::middleware::auth::AuthUser,
+    axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
+    headers: axum::http::HeaderMap,
     Path(chat_id): Path<String>,
     Json(request): Json<crate::api::chat_permissions::AddPermissionRequest>,
 ) -> Response {
+    if request.entity_id.starts_with(crate::tools::sudo_gate::GRANT_PREFIX) {
+        if let Err(refused) =
+            crate::api::owner_proof::check(state.db.pool(), &user, "POST", uri.path(), &headers).await
+        {
+            return refused;
+        }
+    }
     api_response(
         crate::api::chat_permissions::add_permission(
             state.db.pool(),

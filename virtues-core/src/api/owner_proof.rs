@@ -17,21 +17,28 @@
 //!   receives every message the assistant sends out.
 //! - `POST /api/admin/applets/import-git`, which runs someone else's code on
 //!   the box.
+//! - `GET /ws/terminal` and `POST /api/terminal/paste`, a shell on the box as
+//!   the service user, who has passwordless sudo.
+//! - `POST /api/chat` when the turn resolves to the admin applet
+//!   (`ChatMode::is_sudo`), and the Allow on one of its commands
+//!   (`POST /api/chats/:id/permissions` with a `sudo:` grant). An admin turn
+//!   runs root commands. Those two check with [`proven`] and [`check`] in
+//!   their handlers, since only some of their requests need the proof.
 //!
 //! On each, the request carries an `X-Virtues-Owner-Proof` header: a nonce
 //! from `POST /api/owner-proof/nonce` and the device key's signature over
 //! `virtues_improv::protocol::http_owner_proof_message` of the method, the
-//! path and that nonce. Only the app holds the key, and it signs natively
+//! path and that nonce. A browser cannot set a header on a WebSocket, so the
+//! terminal socket alone may carry the same value in its `owner_proof` query
+//! parameter instead, signed over `GET /ws/terminal`. Only the app holds the
+//! key, and it signs natively
 //! (`virtues_reach_client::owner::sign_http_owner_proof`), so a process that
 //! can only open the loopback port cannot answer. The message has its own
 //! prefix, so a Bluetooth owner proof cannot be replayed here.
 //!
 //! The box's own console (a process on the box's loopback, and the dev
 //! fallback) is exempt: it can already read `virtues.env`. An agent device is
-//! never accepted. The web terminal (`/ws/terminal`) and a chat turn of the
-//! admin applet (agentMode `admin`, or `sudo` from an older app) do not ask
-//! for the proof yet, and both reach that console, so a process on the Mac
-//! can still get to these actions through them.
+//! never accepted.
 //!
 //! Nonces live in memory. The server is one process, a nonce lasts a minute,
 //! and a restart only costs the app one retry.
@@ -67,9 +74,15 @@ const NONCE_TTL: Duration = Duration::from_secs(60);
 /// bounded by the number of paired devices.
 const MAX_PER_DEVICE: usize = 8;
 
+/// The one route that may carry the proof in a query parameter, and the
+/// parameter's name. See the module comment.
+const TERMINAL_SOCKET_PATH: &str = "/ws/terminal";
+const QUERY_PARAM: &str = "owner_proof";
+
 /// What a refused request is told. Every refusal gets the same words, so the
-/// answer says nothing about which part of a proof was wrong.
-const REFUSED: &str = "Only the Virtues app on one of your paired devices can do this. Use the app, or update it if you already are.";
+/// answer says nothing about which part of a proof was wrong. A handler that
+/// sends its own response shape uses these words too.
+pub const REFUSED: &str = "Only the Virtues app on one of your paired devices can do this. Use the app, or update it if you already are.";
 
 /// The nonces issued and not yet used.
 #[derive(Default)]
@@ -159,8 +172,8 @@ fn accepts(
     .is_ok()
 }
 
-/// Check the owner proof on a request from `user`. `Err` is the response to
-/// send instead of doing the action.
+/// Check the owner proof in `headers` on a request from `user`. `Err` is the
+/// response to send instead of doing the action.
 pub async fn check(
     pool: &PgPool,
     user: &AuthUser,
@@ -168,6 +181,34 @@ pub async fn check(
     path: &str,
     headers: &HeaderMap,
 ) -> Result<(), Response> {
+    if proven(pool, user, method, path, headers).await? {
+        Ok(())
+    } else {
+        Err(refused())
+    }
+}
+
+/// Whether `headers` carry a valid owner proof for this request from `user`,
+/// for a handler that words its own refusal. `Err` is a response for a
+/// failed device lookup.
+pub async fn proven(
+    pool: &PgPool,
+    user: &AuthUser,
+    method: &str,
+    path: &str,
+    headers: &HeaderMap,
+) -> Result<bool, Response> {
+    let proof = headers.get(HTTP_OWNER_PROOF_HEADER).and_then(|v| v.to_str().ok());
+    verify(pool, user, method, path, proof).await
+}
+
+async fn verify(
+    pool: &PgPool,
+    user: &AuthUser,
+    method: &str,
+    path: &str,
+    proof: Option<&str>,
+) -> Result<bool, Response> {
     let console = user.device_id == CONSOLE_DEVICE_ID;
     let device: Option<(Option<String>, String)> = if console {
         None
@@ -191,19 +232,16 @@ pub async fn check(
         Requester::Device { id: &user.device_id, endpoint_id: endpoint_id.as_deref(), kind }
     } else {
         // Revoked between authentication and here.
-        return Err(refused());
+        return Ok(false);
     };
-    let header = headers.get(HTTP_OWNER_PROOF_HEADER).and_then(|v| v.to_str().ok());
     let ok = {
         let mut nonces = nonces().lock().expect("owner proof nonces lock poisoned");
-        accepts(&mut nonces, Instant::now(), who, method, path, header)
+        accepts(&mut nonces, Instant::now(), who, method, path, proof)
     };
-    if ok {
-        Ok(())
-    } else {
-        tracing::warn!(device = %user.device_id, method, path, has_proof = header.is_some(), "owner proof refused");
-        Err(refused())
+    if !ok {
+        tracing::warn!(device = %user.device_id, method, path, has_proof = proof.is_some(), "owner proof refused");
     }
+    Ok(ok)
 }
 
 fn refused() -> Response {
@@ -237,8 +275,25 @@ where
             .get::<OriginalUri>()
             .map(|u| u.0.path().to_string())
             .unwrap_or_else(|| parts.uri.path().to_string());
-        check(&PgPool::from_ref(state), &user, parts.method.as_str(), &path, &parts.headers).await?;
-        Ok(OwnerProven(user))
+        let mut proof = parts
+            .headers
+            .get(HTTP_OWNER_PROOF_HEADER)
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        // A browser's WebSocket cannot send the header.
+        if proof.is_none() && path == TERMINAL_SOCKET_PATH {
+            proof = parts.uri.query().and_then(|q| {
+                url::form_urlencoded::parse(q.as_bytes())
+                    .find(|(k, _)| k == QUERY_PARAM)
+                    .map(|(_, v)| v.into_owned())
+            });
+        }
+        let method = parts.method.as_str();
+        if verify(&PgPool::from_ref(state), &user, method, &path, proof.as_deref()).await? {
+            Ok(OwnerProven(user))
+        } else {
+            Err(refused())
+        }
     }
 }
 

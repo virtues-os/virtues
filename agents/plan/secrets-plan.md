@@ -161,16 +161,20 @@ change for it, because `kind` already says which rows it would cover.
   because the previous binary's sweeper fails without it after
   `virtues rollback`. A later migration drops `app_sudo_request`.
 
+  The two ways to act as the box's admin need the proof too, since from
+  either a process reaches the box's console, which the proof exempts, and
+  `virtues.env`. `GET /ws/terminal` opens a shell as the service user, which
+  has passwordless sudo. A browser socket cannot set a header, so the
+  terminal alone may carry the proof in its `owner_proof` query parameter,
+  signed over `GET /ws/terminal`; `POST /api/terminal/paste` takes the
+  header. `POST /api/chat` takes the header when the turn resolves to the
+  admin applet (`ChatMode::is_sudo`), and so does the Allow on one of its
+  commands (`POST /api/chats/:id/permissions` with a `sudo:` grant). An app
+  that still asks for `sudo` mode is told to update.
+
   Every other route stays open to any connection on a paired computer's
-  `127.0.0.1:7117`, which is the accepted gap. Two routes in that gap reach
-  past the proof: `/ws/terminal` opens a shell on the box as the service
-  user, which has passwordless sudo, and a chat turn of the admin applet runs
-  commands as the box's admin. From either, a process on that computer
-  reaches the box's console, which the proof exempts, and `virtues.env`. So
-  the six actions are closed to a direct request through 7117 and still open
-  through those two, until the terminal socket and an admin chat turn need
-  the proof too. A browser socket cannot set a header, so the terminal would
-  carry the proof in its URL.
+  `127.0.0.1:7117`, which is the accepted gap. Two parts of it are still
+  open questions; see Open.
 - **The pool role is not a superuser** (since 2026-08-18; first boot runs
   `ALTER ROLE virtues NOSUPERUSER …`). Not yet checked on the live box.
 
@@ -181,6 +185,9 @@ released app can ignore. `0f5feff2b` breaks that on purpose for the eight
 owner-proof routes: a released shell has no `owner_proof_sign`, so a box that
 carries `0f5feff2b` refuses its reveal, pair, AI key and import requests.
 
+- The same holds for the terminal and admin turns: a box that requires the
+  proof on them refuses a released shell's terminal and its `/admin` turns,
+  and an app that sends the old `sudo` mode is told to update.
 - A box build that contains `0f5feff2b` must not reach staging or stable
   until Mac, iOS and Windows shell builds with `owner_proof_sign` (command
   surface 15, `apps/web/src-tauri/src/lib.rs`) are published, and Linux and
@@ -308,9 +315,6 @@ each item to its commit and says which are still open.
 
 ## Open
 
-- **The owner proof on `/ws/terminal` and admin chat turns.** Until both
-  ask for it, a process on a paired computer can reach the six actions and
-  `virtues.env` through them (see "Who can read what").
 - **Applet schema DDL runs as the server's role on the main pool.** That
   includes a `check_only` setup the model can call with no allow, whose
   Postgres errors come back to the model. `2d24fd854` refuses the
@@ -328,9 +332,9 @@ each item to its commit and says which are still open.
   preflight. CORS hides the reply, and nothing stops the write
   (`middleware/security.rs`).
 - **`POST /api/pair/reopen-onboarding` has no owner proof.** It revokes
-  every device. The owner left destructive routes inside the 7117 gap;
-  adding the proof here protects nothing while the terminal and admin turns
-  stay open, so it belongs with them.
+  every device. The owner left destructive routes inside the 7117 gap. Now
+  that the terminal and admin turns need the proof, adding it here would
+  close this one; the owner has not decided.
 - **Per-applet key allows** (decision 3) are not built. Any applet's
   `SKILL.md` can still name any key.
 - **Drive downloads with `?disposition=inline`** still serve the stored type

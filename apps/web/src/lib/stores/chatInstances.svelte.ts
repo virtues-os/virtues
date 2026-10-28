@@ -13,6 +13,7 @@ import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import type { CheckpointMessage } from '$lib/types/chat';
 import { placeCheckpoint } from '$lib/components/chat/state/checkpoint';
 import { dropReplayedPartial } from '$lib/components/chat/state/rejoin';
+import { ownerProofHeaders } from '$lib/api/client';
 
 // --- Streaming reactivity helpers (see replaceMessage override below) ---------
 //
@@ -95,6 +96,9 @@ function syncMessageInPlace(target: any, src: any): void {
     if (tParts.length > sParts.length) tParts.length = sParts.length;
 }
 // -----------------------------------------------------------------------------
+
+/** The shipped applet whose turns run root commands (`chat_applets::ADMIN_APPLET`). */
+const ADMIN_APPLET = 'admin';
 
 interface ChatInstanceEntry {
     chat: Chat;
@@ -250,8 +254,12 @@ class ChatInstanceStore {
         // Create new Chat instance with transport that uses the getters
         const transport = new DefaultChatTransport({
             api: '/api/chat',
-            prepareSendMessagesRequest: ({ messages, trigger }) => {
+            prepareSendMessagesRequest: async ({ messages, trigger }) => {
                 const inputs = turnInputs();
+                // An admin turn runs root commands on the box, so the box
+                // asks for the app's owner proof (`ChatMode::is_sudo`).
+                const headers =
+                    inputs.agentMode === ADMIN_APPLET ? await ownerProofHeaders('POST', '/chat') : undefined;
 
                 // The box owns the history and rebuilds it from its own
                 // store, reading only the last user turn off the wire; it
@@ -267,6 +275,7 @@ class ChatInstanceStore {
                 const wireMessages = inputs.temporary ? messages : messages.slice(-1);
 
                 return {
+                    headers,
                     body: {
                         chatId: conversationId,
                         agentId: 'auto',

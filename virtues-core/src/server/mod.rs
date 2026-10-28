@@ -1731,4 +1731,152 @@ mod owner_proof_route_tests {
         let res = app.call(from_mac("GET", path, Some(&proof))).await.unwrap();
         assert_eq!(code(res).await, (StatusCode::FORBIDDEN, Some("owner_proof_required".to_string())));
     }
+
+    /// A request from the paired Mac with `headers` and a `body`.
+    fn from_mac_with(
+        method: &str,
+        uri: &str,
+        headers: &[(&str, &str)],
+        body: impl Into<Body>,
+    ) -> Request<Body> {
+        let mut req = Request::builder()
+            .method(Method::from_bytes(method.as_bytes()).unwrap())
+            .uri(uri)
+            .header("host", "127.0.0.1:7117");
+        for (name, value) in headers {
+            req = req.header(*name, *value);
+        }
+        let mut req = req.body(body.into()).unwrap();
+        req.extensions_mut().insert(virtues_iroh::ProvenPeer(mac_key().public()));
+        req
+    }
+
+    /// A fresh proof from the box's own nonce route, signed with the Mac's key.
+    async fn sign(app: &mut Router, method: &str, path: &str) -> String {
+        let res = app.call(from_mac("POST", "/api/owner-proof/nonce", None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let nonce = serde_json::from_slice::<serde_json::Value>(&body).unwrap()["nonce"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let sig = mac_key().sign(&virtues_improv::protocol::http_owner_proof_message(method, path, &nonce));
+        virtues_improv::protocol::http_owner_proof_header(&nonce, &hex::encode(sig.to_bytes()))
+    }
+
+    /// The body text of a response, for the chat route's own refusal shape.
+    async fn text(res: axum::response::Response) -> (StatusCode, String) {
+        let status = res.status();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        (status, String::from_utf8_lossy(&body).into_owned())
+    }
+
+    /// The two ways to act as the box's admin, the terminal and an admin
+    /// chat turn, with the paste and the Allow beside them: each refuses the
+    /// Mac without a proof, gets past the check with one, and refuses the
+    /// same proof a second time.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_admin_routes_need_the_proof(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label, endpoint_id) \
+             VALUES ('dev_admin_mac', $1, 'desktop_app', 'Mac', $2)",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .bind(mac_key().public().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut app = app(&pool);
+        let refused = (StatusCode::FORBIDDEN, Some("owner_proof_required".to_string()));
+
+        // The terminal socket. Past the proof, the request reaches the
+        // upgrade, which a test request cannot make (426). The proof rides
+        // in the URL; a header works too.
+        let upgrade = [
+            ("connection", "upgrade"),
+            ("upgrade", "websocket"),
+            ("sec-websocket-version", "13"),
+            ("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ=="),
+        ];
+        let ws = |q: &str| format!("/ws/terminal?cols=80&rows=24{q}");
+        let res = app.call(from_mac_with("GET", &ws(""), &upgrade, Body::empty())).await.unwrap();
+        assert_eq!(code(res).await, refused);
+        let proof = sign(&mut app, "GET", "/ws/terminal").await;
+        let uri = ws(&format!("&owner_proof={proof}"));
+        let res = app.call(from_mac_with("GET", &uri, &upgrade, Body::empty())).await.unwrap();
+        assert_eq!(res.status(), StatusCode::UPGRADE_REQUIRED);
+        let res = app.call(from_mac_with("GET", &uri, &upgrade, Body::empty())).await.unwrap();
+        assert_eq!(code(res).await, refused, "a replayed terminal proof");
+        // A proof signed for the terminal opens nothing else from the URL.
+        let proof = sign(&mut app, "GET", "/api/keys/TEST_KEY/value").await;
+        let res = app
+            .call(from_mac("GET", &format!("/api/keys/TEST_KEY/value?owner_proof={proof}"), None))
+            .await
+            .unwrap();
+        assert_eq!(code(res).await, refused, "the query parameter is the terminal's alone");
+
+        // The paste. An empty one gets past the proof to the handler's own
+        // 400, which writes nothing under $HOME.
+        let paste = |proof: Option<&str>| {
+            let mut headers = vec![("content-type", "image/png")];
+            if let Some(p) = proof {
+                headers.push((virtues_improv::protocol::HTTP_OWNER_PROOF_HEADER, p));
+            }
+            from_mac_with("POST", "/api/terminal/paste", &headers, Body::empty())
+        };
+        let res = app.call(paste(None)).await.unwrap();
+        assert_eq!(code(res).await, refused);
+        let proof = sign(&mut app, "POST", "/api/terminal/paste").await;
+        let res = app.call(paste(Some(&proof))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::BAD_REQUEST);
+        let res = app.call(paste(Some(&proof))).await.unwrap();
+        assert_eq!(code(res).await, refused, "a replayed paste proof");
+
+        // An admin turn. Past the proof, a box with no AI answers 409.
+        let chat = |mode: &str, proof: Option<&str>| {
+            let mut headers = vec![("content-type", "application/json")];
+            if let Some(p) = proof {
+                headers.push((virtues_improv::protocol::HTTP_OWNER_PROOF_HEADER, p));
+            }
+            let body = serde_json::json!({ "chatId": "chat_admin_test", "messages": [], "agentMode": mode });
+            from_mac_with("POST", "/api/chat", &headers, body.to_string())
+        };
+        let (status, body) = text(app.call(chat("admin", None)).await.unwrap()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(body.contains("owner_proof_required"), "{body}");
+        let proof = sign(&mut app, "POST", "/api/chat").await;
+        let (status, body) = text(app.call(chat("admin", Some(&proof))).await.unwrap()).await;
+        assert_eq!(status, StatusCode::CONFLICT, "{body}");
+        assert!(body.contains("AI is not connected"), "{body}");
+        let (status, _) = text(app.call(chat("admin", Some(&proof))).await.unwrap()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "a replayed admin proof");
+        // An app from before admin was an applet asks for `sudo` and is told
+        // to update. Ordinary chat needs no proof.
+        let (status, body) = text(app.call(chat("sudo", None)).await.unwrap()).await;
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert!(body.contains("Update the Virtues app"), "{body}");
+        let (status, _) = text(app.call(chat("chat", None)).await.unwrap()).await;
+        assert_eq!(status, StatusCode::CONFLICT);
+
+        // The Allow on an admin command. An ordinary grant needs no proof.
+        let path = "/api/chats/chat_admin_test/permissions";
+        let grant = |entity_id: &str, proof: Option<&str>| {
+            let mut headers = vec![("content-type", "application/json")];
+            if let Some(p) = proof {
+                headers.push((virtues_improv::protocol::HTTP_OWNER_PROOF_HEADER, p));
+            }
+            let body = serde_json::json!({ "entity_id": entity_id, "entity_type": "command" });
+            from_mac_with("POST", path, &headers, body.to_string())
+        };
+        let admin = crate::tools::sudo_gate::grant_id("shell", "rm -rf /tmp/example");
+        let res = app.call(grant(&admin, None)).await.unwrap();
+        assert_eq!(code(res).await, refused);
+        let proof = sign(&mut app, "POST", path).await;
+        let res = app.call(grant(&admin, Some(&proof))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let res = app.call(grant(&admin, Some(&proof))).await.unwrap();
+        assert_eq!(code(res).await, refused, "a replayed grant proof");
+        let res = app.call(grant("page_example", None)).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+    }
 }

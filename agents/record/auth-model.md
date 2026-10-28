@@ -247,6 +247,8 @@ paired device and no owner proof.
 4. The route's extractor (`OwnerProven`) takes the nonce, checks it was
    issued to this device, and verifies the signature against the device's
    stored endpoint id. Console requests are exempt; agent devices never pass.
+   The terminal socket may carry the same value in its `owner_proof` query
+   parameter, since a browser's WebSocket cannot set a header.
 ```
 
 It exists because a paired computer's loopback port reaches the box as that
@@ -257,8 +259,9 @@ On Windows and Linux it is in `box.json`, which any program running as the
 same user can read, until the dated TODO in
 `apps/web/plugins/reach/src/store.rs` lands. Android keeps it in the app's
 private storage. On a Mac whose Keychain refused the move, the seed also
-stays in `box.json`. The web terminal and a chat turn of the admin applet do
-not ask for the proof yet; see the Defenses table below.
+stays in `box.json`. The web terminal (`/ws/terminal` and its paste), a
+chat turn of the admin applet and the Allow on one of its commands take the
+proof too, since each reaches the box's console.
 
 Each reveal, enrollment, pair code and AI key change also writes a row to
 `app_auth_event` (`api::audit::record`), readable at `GET /api/audit/auth`.
@@ -275,7 +278,7 @@ Each reveal, enrollment, pair code and AI key change also writes a row to
 | Network died mid-consume | The consume path uses a single transaction; partial failure leaves the code unconsumed and retryable until it expires. |
 | Stolen device | It has full access until revoked from another device or with `virtues device rm`. The auth-event log has no page, so noticing an unfamiliar device depends on the Devices list. |
 | DNS rebinding onto a trusted transport | The `Host` check refuses names the box does not serve (`middleware/security.rs`). |
-| Another process on a paired computer | The owner proof on reveal, enroll, pair mint, the AI key and package import, so a direct request to those routes through the app's loopback port is refused. Everything else stays open to a local process there, an accepted gap. That gap includes `/ws/terminal`, which opens a shell on the box, and a chat turn of the admin applet (agentMode `admin`, or `sudo` from an older app). From either, a local process reaches the box's own console, which the proof exempts, so it can still do the six actions and read `virtues.env` until those two need the proof as well. |
+| Another process on a paired computer | The owner proof on reveal, enroll, pair mint, the AI key, package import, the web terminal and an admin applet chat turn, so a direct request to those routes through the app's loopback port is refused. Everything else stays open to a local process there, an accepted gap. `POST /api/pair/reopen-onboarding`, which revokes every device, is in that gap. |
 | A web page in a browser on a paired computer | It can send a request to `127.0.0.1:7117` that needs no CORS preflight, and nothing stops the write. CORS keeps it from reading the reply. |
 | Clickjacking | `X-Frame-Options: DENY` and CSP `frame-ancestors 'none'` on every response except applet faces, which the app frames. |
 | MIME sniffing | `X-Content-Type-Options: nosniff` on every response. Message attachments that are not raster images, audio or video download as `application/octet-stream` with a sandbox CSP. |

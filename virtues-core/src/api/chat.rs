@@ -1718,6 +1718,7 @@ pub async fn chat_handler(
     State(live_turns): State<LiveTurns>,
     State(ghost_permissions): State<crate::api::chat_permissions::GhostPermissions>,
     user: AuthUser,
+    headers: axum::http::HeaderMap,
     Json(request): Json<ChatRequest>,
 ) -> Response {
     // One turn, one key. Nothing persists a turn id — a turn is a request, not
@@ -1738,6 +1739,7 @@ pub async fn chat_handler(
         State(live_turns),
         State(ghost_permissions),
         user,
+        headers,
         Json(request),
     )
     .instrument(span)
@@ -1750,7 +1752,8 @@ async fn chat_handler_inner(
     State(cancel_state): State<ChatCancellationState>,
     State(live_turns): State<LiveTurns>,
     State(ghost_permissions): State<crate::api::chat_permissions::GhostPermissions>,
-    _user: AuthUser,
+    user: AuthUser,
+    headers: axum::http::HeaderMap,
     Json(request): Json<ChatRequest>,
 ) -> Response {
     // Where the time before the first model call goes, one log line per turn
@@ -1763,6 +1766,17 @@ async fn chat_handler_inner(
     // The turn's mode, decided once. Some chats are a mode by id (the
     // interview, the getting-started room), whatever the client sent.
     let mode = ChatMode::resolve(&pool, &request.chat_id, &request.agent_mode).await;
+
+    // An admin turn runs root commands, so it needs the app's owner proof
+    // (`api::owner_proof`), or any program on a paired Mac could start one
+    // through the app's loopback port.
+    if mode.is_sudo() {
+        match crate::api::owner_proof::proven(&pool, &user, "POST", "/api/chat", &headers).await {
+            Ok(true) => {}
+            Ok(false) => return admin_refused(&request.agent_mode),
+            Err(failed) => return failed,
+        }
+    }
 
     // A local turn has no cloud step, so it leaves before the first one: no
     // model choice and no readiness check for a gateway it never calls.
@@ -1927,6 +1941,22 @@ fn internal(error: &str) -> Response {
 
 /// The refusals that come before any work: no model to answer with, or a
 /// turn already running in this chat. Both are 409s the client keys on.
+/// The refusal for an admin turn without a valid owner proof, in the shape
+/// the chat view reads (`ChatError.svelte`). An app from before admin was an
+/// applet asks for `sudo`, and it cannot sign, so it is told to update.
+fn admin_refused(agent_mode: &str) -> Response {
+    let details = if agent_mode == "sudo" {
+        "Update the Virtues app to use admin. This version can't sign the check your server asks for."
+    } else {
+        crate::api::owner_proof::REFUSED
+    };
+    (
+        StatusCode::FORBIDDEN,
+        Json(ChatError { error: "owner_proof_required".to_string(), details: Some(details.to_string()) }),
+    )
+        .into_response()
+}
+
 async fn reject_if_unready(
     pool: &PgPool,
     request: &ChatRequest,
