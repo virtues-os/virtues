@@ -27,6 +27,43 @@ Owner decisions taken as given, and not argued here: one table, one box key in
 browser extension, no box-side browser, a model never sees a value, and an
 applet runs with the owner's authority.
 
+## Status on 2026-10-28
+
+Each item of the now tier (section 10), checked against the code on `wave`
+at `955df8b38` and the commits that changed it. Nothing here has run on a
+box or a device. The findings below are left as they were found.
+
+| Now-tier item | Fixed in | Open, and why |
+|---|---|---|
+| The Browser pane refuses loopback and private hosts | `2a3ebeeef` | Not yet tried in the Mac app. |
+| Snapshots blank password, one-time-code and card fields | `2a3ebeeef` | Screenshots also draw them as dots. Not yet tried in real WebKit. |
+| The box refuses foreign `Host` names | `9705ab8c5`, `078b0ad55` | |
+| `.virtues` requires `Origin` to match `Host` | `9705ab8c5` | The `.virtues` arm was removed instead. |
+| Attachments get a sandbox CSP and `attachment` disposition | `9705ab8c5` | Open for Drive downloads with `?disposition=inline`, which serve the stored type at the box origin with no sandbox CSP. The chat file handler is sandboxed by its own rule and should move onto `inline_type` and `STORED_FILE_CSP` so there is one rule. |
+| The reveal routes get `no-store`, an audit row and the local-client check | `9705ab8c5`, `0f5feff2b` | The local-client check is the owner proof (decision 2). |
+| The Mac keeps its seed in the Keychain | `2a3ebeeef`, `7a3054101` | Windows and Linux still keep the seed in `box.json` (dated TODO in `plugins/reach/src/store.rs`), and so does a Mac whose Keychain refused the move. The move is one way: an older Mac build shows the server as unreachable until the owner forgets it on the Mac and pairs again. |
+| Reveal, enroll and pairing go over the app's own channel | `0f5feff2b`, `7a3054101` | Built as the owner proof on eight routes. Open: `/ws/terminal` and an admin applet chat turn reach the box's console without it. A box with `0f5feff2b` must wait for surface-15 shells ([plan/secrets-plan.md](../plan/secrets-plan.md), "Release order"). |
+| Sudo mode starts from a clean environment, `--init-key` asks | `37c526afa` | Sudo mode is now the admin applet (`71525b857`). `f6e541881` keeps the recovery key off the Terminal's history. |
+| The copy says what sudo can still reach | `d053b6e61` | The admin applet's description, shown in the `/` menu and the chip. |
+| Backups and restores stage on the box and clean up after an interrupt | `10fe384cf`, `f6e541881` | A restore's `move_tree` and env copy can still follow a link in a swapped stage. |
+| Runtime secret files move to `/run` | open | `aaf3d7b9f` sweeps leftover run files at the first applet run in each server process instead. The folder stays in the data dir, so a file a crash left stays until that run. |
+| One list of per-box secret files drives deprovision, reset and image-check | `aaf3d7b9f`, `f6e541881` | |
+| One resolver for `virtues.env` | `10fe384cf` | `applets/src/lib.rs` and `relay.rs` still read the default path (dated TODO in `box_env.rs`). |
+| A key check before anything is sealed or a restore reports success | `10fe384cf`, `f6e541881` | Restore fails when the key opens no row. Open: the check at server start only logs and shows attention, and nothing stops sealing under a wrong key. |
+| The Passwords list marks an unreadable row | `78aba6abc` | |
+| Revoking a source or clearing the AI key wipes its ciphertext | `78aba6abc`, `955df8b38` | `955df8b38` also empties rows revoked before this, at server start. |
+| Revoked Google and Strava grants become `reauth_required` | `a96faee9d`, `955df8b38` | The proxy answers 502 with a `code`, so it can deploy in any order. Not run against a live provider. |
+| Reconnect repairs the row it was pressed on | `55bbefa72`, `955df8b38` | |
+| Linking reports Ready only when the box holds the key | `78aba6abc` | Not run against real atlas. |
+| Model SQL fails closed on a box | `5b5c5f4b6` | Open beside it: applet `schema_sql` runs as the server's role on the main pool. `2d24fd854` narrows it; the fix is its own login (slice 9 of `plan/applet-shape.md`). |
+| Installs set up the restricted logins | `5b5c5f4b6`, `10fe384cf`, `f6e541881` | The installer, first boot, a custom data dir and restore all run the db-logins repair. Not run on a box. |
+| A test pins the grants on `credentials` | `5b5c5f4b6` | |
+| Rewrite the secrets plan | 2026-10-28, with this section | |
+| Rewrite the runbook | `95eb83553`, `0f5feff2b`, `f6e541881` | |
+| Rewrite stale comments | in part | `relay.rs`'s module doc still names a bearer and cookie layer, `pair.rs`'s `mint_pair_token` doc says app mints start pending, and the revoke steps in `api/devices.rs` still name a WireGuard key and sessions. |
+| Delete the dead credential code | `78aba6abc` (`credentials/types.rs`), `95eb83553` (`SetupConfig`) | `check_pairing_status`, `list_pending_pairings`, `PairingStatus` and `PendingPairing` in `api/credentials.rs` still have no caller outside their re-exports. |
+| Drop the Keys count | `95eb83553` | |
+
 ## 1. Summary
 
 **What holds.**

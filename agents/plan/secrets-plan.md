@@ -1,34 +1,50 @@
 # Secrets plan
 
-Written 2026-10-25, revised 2026-10-27. Status: slices 1–5 and the box and
-page halves of slice 6 built on `wave`, not yet run on a box; the Mac pane's
-half of slice 6 and slice 7 planned.
+Written 2026-10-25, revised 2026-10-28. Status: slices 1–5 and the box and
+page halves of slice 6 are built, and so are the fixes for the 2026-10-27
+audit's now tier. Slice 1 (`72b40f7e3`) and slice 2's `cf27154c8` are on
+staging and shipped in the `v0.2.0-staging.6` prerelease. The rest, slice
+2's connect form (`163af1ed8`) included, is on `wave` only and has not run on
+a box or a device. The audit's "Status on 2026-10-28" table lists the
+now-tier items still open. The Mac pane's half of slice 6 and slice 7 are
+planned. Before `0f5feff2b` reaches staging, read "Release order" below.
 
 The box keeps every secret its owner has, in one table: the sessions and
 tokens its syncs use, the box's own keys, named keys that applets need (API
-keys, webhook tokens), and the owner's saved passwords. One module reads and
-writes them, one Settings page shows them, and a model never sees a value.
-It started from the AI chat sync spike
+keys, webhook tokens), sign-ins for other services' MCP servers, and the
+owner's saved passwords. Settings → Keys shows the syncs' sign-ins and the
+named keys, Sources shows the MCP connections, Drive → Passwords shows saved
+logins, and Settings → Billing shows the key for the owner's own AI
+provider. A model never sees a value, with the one exception under "Who can
+read what". It started from the AI chat sync spike
 ([record/ai-chat-sync-spike-2026-10-23.md](../record/ai-chat-sync-spike-2026-10-23.md)),
 which needed somewhere to keep site sessions.
 
 ## Where secrets live today
 
 - **`credentials`** ([0001_initial.sql:795](../../virtues-core/migrations/0001_initial.sql),
-  reshaped by `0062_one_secrets_table.sql`): `source` rows, one per connected
-  source, and `box` rows for the box's own keys (the iroh secret, the door
-  key, the link code, the relay config). Both kinds are read through
-  `crate::box_secrets` (box) and `virtues_helpers::auth::vault` (source).
+  reshaped by `0062_one_secrets_table.sql`): one row per secret, with `kind`
+  saying what it is (the table below). `box` and `env` rows are read and
+  written through `crate::secrets` (`Kind::Box`, `Kind::Env`), `source` rows
+  through `virtues_helpers::auth::vault`, `login` rows through
+  `api/passwords.rs`, and `connection` rows through `tools/connection.rs`.
 - **`virtues.env`**: `VIRTUES_ENCRYPTION_KEY`, which encrypts the table, and
   `DATABASE_URL`, which reaches it. Both stay there: neither can live inside
-  the table it unlocks.
-- **Developer overrides in the environment.** `VIRTUES_API_KEY` is read in four
-  places as a dev override of the box's linked key (`virtues_api/client.rs`,
-  `api/subscription.rs`); a box keeps the real one as the `virtues_api`
-  source row. `AI_GATEWAY_API_KEY` is read on the box only by tests that spend
-  real money. These stay environment variables. They are not owner secrets.
-- **`/var/lib/virtues/secrets/`**, created `0700` by the installer
-  (`install.rs`, the data dir step). No code reads or writes it.
+  the table it unlocks. `box_env::path` is the one resolver for the file
+  (`<data dir>/virtues.env`, from the install manifest). The applet runtime
+  (`applets/src/lib.rs`) and `relay.rs` still read the default path, under a
+  dated TODO in `box_env.rs`.
+- **Developer overrides in the environment.** `VIRTUES_API_KEY` is a dev
+  override of the box's linked key, read at five call sites in four files:
+  `virtues_api/client.rs`, `api/subscription.rs` (twice), `maps/sync.rs`, and
+  `applet_runner/mod.rs`, which passes it to shipped applets only. A box keeps
+  the real key as the `virtues_api` source row. `AI_GATEWAY_API_KEY` is read
+  in core only by tests that spend real money. These stay environment
+  variables. They are not owner secrets.
+- **Per-box files.** The door key and shared pages, a sandboxed run's env and
+  credential files (`<data dir>/applet-env`), a backup or restore's staging
+  folder, and the backup recipient. `box_files.rs` lists them, and
+  deprovision, reset and image-check read that list.
 
 ## The table
 
@@ -38,17 +54,27 @@ which needed somewhere to keep site sessions.
 |---|---|---|---|---|
 | `source` | a sync's session or tokens | source id (`x`) | JSON: `{jar}`, named fields, or OAuth tokens | that source's applets |
 | `box` | the box's own keys | name (`iroh_secret_key`) | the bare string | core only |
-| `env` | a named key an applet needs | variable name (`OPENAI_API_KEY`) | the bare string | applets that declare it |
-| `login` | a saved password | site origin (`https://example.com`) | JSON: `{username, password, totp_secret, notes}` | the Mac browser's fill, by row id |
+| `env` | a named key an applet needs | variable name (`OPENAI_API_KEY`) | the bare string | applets that declare it; Settings → Keys through `GET /api/keys/:name/value`, with the owner proof |
+| `login` | a saved password | site origin (`https://example.com`) | JSON: `{username, password, notes}` | Drive → Passwords through `GET /api/passwords/:id/secret`, with the owner proof |
+| `connection` | the sign-in for another service's MCP server | the connection's short name, the prefix of its tool names | OAuth tokens, refreshed by rmcp | `tools/connection.rs`, when the chat or an allowed applet calls that service's tools |
+
+Two `source` keys are the box's own: `virtues_api` (the subscription key) and
+`__byo_ai_key__` (the owner's AI provider key). Two hand-kept lists hide them
+from the source list and setup status (`INTERNAL_SOURCE_IDS` in
+`api/credentials.rs`, and `api/box_status.rs`). The chat's context uses
+neither, so it names them as connected sources (`api/circumstances.rs`).
+Making them `box` rows is in the audit's next tier.
 
 The other columns are as they are today: `id`, `name` (the label the owner
 sees), `secrets_ciphertext`, `metadata` (non-secret context), `status`,
 `status_reason`, `expires_at`, `next_refresh_at`, `last_seen_at`,
 `created_at`, `updated_at`. `box` and `env` rows stay `active` with no expiry.
+A revoked row keeps its id and its payload becomes a sealed `{}`.
 
-`box` and `env` keys are unique within their kind. A site can have several
-`source` or `login` rows, one per account. A login's username sits inside the
-ciphertext, so a database dump does not list which accounts the owner has.
+`box`, `env` and `connection` keys are unique within their kind. A site can
+have several `source` or `login` rows, one per account. A login's username
+sits inside the ciphertext, so a database dump does not list which accounts
+the owner has. It does show each login's site and label.
 
 ## One key
 
@@ -70,36 +96,56 @@ change for it, because `kind` already says which rows it would cover.
 
 ## Who can read what
 
-- **The owner, and code acting as the owner.** The position written above
-  `build_command` in `virtues-core/src/applet_runner/mod.rs` (2026-09-14)
-  stays: an applet can do what the owner can do. This plan does not change
-  it.
-- **An applet gets the values it declares, as environment variables.** A
-  manifest lists `secrets = ["OPENAI_API_KEY"]`; the runner reads those `env`
-  rows and sets them for that run alone, the way `needs_vault_key` already
-  grants the box key (`declares_vault_key_need` in `applet_templates`). An
-  undeclared value is never passed. A declared one that is missing fails the
-  run with "Add OPENAI_API_KEY in Settings, under Keys." Decided 2026-10-27:
+- **Shipped code acts as the owner; other code runs in the sandbox.** Shipped
+  applet code runs directly as the box user and can do what the owner can do.
+  Code from an import or written by the assistant runs in a transient unit
+  (`applet_runner/sandboxed.rs`): a throwaway user, the box's data hidden, no
+  network unless the owner allowed hosts on its page, the restricted writer
+  login for SQL, and only the keys it declares. A release build without
+  systemd refuses to run it.
+- **An applet gets the values it declares, as environment variables.** An
+  applet's `SKILL.md` lists `secrets: OPENAI_API_KEY` under `metadata`; the
+  runner reads those `env` rows and sets them for that run alone. The box key
+  goes only to the shipped applets in `VAULT_KEY_APPLETS`
+  (`applet_templates/skill.rs`), a list in the code that no folder can join.
+  An undeclared value is never passed. A declared one that is missing fails
+  the run with "Add OPENAI_API_KEY in Settings, under Keys." Decided 2026-10-27:
   an unshipped applet also needs the owner to allow each declared key for
   that applet on its page, the way network hosts work. Shipped applets get
-  their declared keys without that step. Not built yet.
+  their declared keys without that step. That allow is not built yet.
 - **A model sees names, never values.** It can know that a key or a login
   exists, so a chat can say "you have a GitHub token" or ask the owner to add
   one. The owner types the value into Settings. `sql_query` runs as
-  `virtues_face_reader`, which has no grant on `credentials`. No test pins
-  that yet, and the `SET LOCAL ROLE` fallback in `database/restricted.rs`
-  can be undone from inside a query
-  ([record/secrets-audit-2026-10-27.md](../record/secrets-audit-2026-10-27.md),
-  section 3).
-- **Sudo mode is the one exception** (decided 2026-10-27). A chat in sudo mode
-  can reach every secret on the box, and the mode's copy says so. Its shell
-  starts from a clean environment, so the server's variables are not
-  inherited, and `virtues backup --init-key` asks first, the way deletes do.
-  Reads never ask. Not built yet.
-- **Six actions need the app's own signature** (decided 2026-10-27).
-  Revealing a password, revealing a key, enrolling a device, minting a pair
-  code (the collector's code too, since it redeems into a device), changing
-  the AI key and importing an applet package each need a fresh owner proof.
+  `virtues_face_reader` and sandboxed applet SQL as `virtues_applet_writer`.
+  Neither login has a privilege on `credentials`, `app_pair_token`,
+  `app_setup_phrase`, `app_publications` or `app_device`, and tests in
+  `database/restricted.rs` pin that, including SQL that resets its own role
+  (`5b5c5f4b6`). On a box, model SQL refuses when its login does not connect;
+  only dev and tests fall back to `SET LOCAL ROLE`. The db-logins repair sets
+  the logins' passwords, and it runs from the installer, first boot,
+  `virtues migrate` and `virtues restore`. The Browser pane shows a filled
+  password, one-time-code or card field as "(filled, value hidden)" in a
+  snapshot and as dots in a screenshot. Applet `schema_sql` is an open hole in
+  this rule; see Open.
+- **The admin applet is the one exception** (decided 2026-10-27). A chat turn
+  of the admin applet (`/admin`, or agentMode `admin`, or `sudo` from an older
+  app) runs bash on the box with passwordless sudo, and its SQL runs as the
+  server's role, so it can reach every secret on the box. Its shell starts
+  from a clean environment, so the server's variables are not inherited, and
+  `virtues backup --init-key` asks first, the way deletes do (`37c526afa`).
+  Reads never ask. The description the owner sees in the `/` menu and the
+  chip says it can read every saved password and key and that what it reads
+  goes to the AI model (`d053b6e61`). An unshipped applet named `sudo` is
+  refused, and one named `admin` is left out of the `/` menu, so neither can
+  start it (`d053b6e61`).
+- **Six actions need the app's own signature** (decided 2026-10-27, built in
+  `0f5feff2b`). Revealing a password, revealing a key, enrolling a device,
+  minting a pair code (the collector's code too, since it redeems into a
+  device), changing the AI key and importing an applet package each need a
+  fresh owner proof. That is eight routes: `GET /api/passwords/:id/secret`,
+  `GET /api/keys/:name/value`, `POST /api/devices/enroll-peer`,
+  `POST /api/pair/mint`, `POST /api/pair/mint-collector`, `POST` and
+  `DELETE /api/settings/byo-key`, and `POST /api/admin/applets/import-git`.
   The box hands out a one-time nonce (`POST /api/owner-proof/nonce`), and the
   app signs it with the device key, the same signing
   `crates/virtues-reach-client/src/owner.rs` does for an offline box, over a
@@ -107,30 +153,53 @@ change for it, because `kind` already says which rows it would cover.
   its loopback is exempt. Each reveal, enrollment and pair code also writes an
   `app_auth_event` row. With it: the box refuses unknown `Host` names, the
   Browser pane refuses loopback, private and `.local` hosts, and the Mac
-  keeps its device seed in the Keychain. Built on `wave`; not yet run on a
-  box or a device.
+  keeps its device seed in the Keychain. An app below command surface 15
+  tells the owner to update it and sends nothing (`7a3054101`).
 
-  The last two actions replace the `virtues sudo` confirmation, which is
+  The last two actions replaced the `virtues sudo` confirmation, which is
   removed. Migration 0070 empties its table and keeps it for one release,
   because the previous binary's sweeper fails without it after
   `virtues rollback`. A later migration drops `app_sudo_request`.
 
-  Every other route stays open to any connection on the Mac's
+  Every other route stays open to any connection on a paired computer's
   `127.0.0.1:7117`, which is the accepted gap. Two routes in that gap reach
-  past the proof: `/ws/terminal` opens a shell on the box, and a chat request
-  can ask for sudo mode. From either, a process on the Mac reaches the
-  box's console and `virtues.env`. So the six actions are closed to a direct
-  request through 7117 and still open through those two, until the terminal
-  socket and a sudo-mode chat need the proof too. Not built yet. A browser
-  socket cannot set a header, so the terminal would carry the proof in its
-  URL.
-- **A password is filled by row id.** The Mac browser host decrypts the row
-  and types the password into the page itself, so the value never appears in
-  a tool result or a prompt. The shell's refusal to let the model type into
-  password, one-time-code and card fields stays
-  ([record/browser.md](../record/browser.md)).
+  past the proof: `/ws/terminal` opens a shell on the box as the service
+  user, which has passwordless sudo, and a chat turn of the admin applet runs
+  commands as the box's admin. From either, a process on that computer
+  reaches the box's console, which the proof exempts, and `virtues.env`. So
+  the six actions are closed to a direct request through 7117 and still open
+  through those two, until the terminal socket and an admin chat turn need
+  the proof too. A browser socket cannot set a header, so the terminal would
+  carry the proof in its URL.
 - **The pool role is not a superuser** (since 2026-08-18; first boot runs
   `ALTER ROLE virtues NOSUPERUSER …`). Not yet checked on the live box.
+
+## Release order
+
+The app updates before the box, so a box change normally only adds what a
+released app can ignore. `0f5feff2b` breaks that on purpose for the eight
+owner-proof routes: a released shell has no `owner_proof_sign`, so a box that
+carries `0f5feff2b` refuses its reveal, pair, AI key and import requests.
+
+- A box build that contains `0f5feff2b` must not reach staging or stable
+  until Mac, iOS and Windows shell builds with `owner_proof_sign` (command
+  surface 15, `apps/web/src-tauri/src/lib.rs`) are published, and Linux and
+  Android builds too if owners use them. The Mac updater, the App Store and
+  the Windows channel each have to serve that build first. Check with
+  `gh release list`, and record the order in the wave → staging PR.
+- A surface-15 app against an older box works for reveals and pairing: the
+  box issues no nonce, and the app sends the request without a proof. If the
+  app's own UI runs against such a box, changing the AI key and importing a
+  package fail with a message to update the server, because that box still
+  asks for a `virtues sudo` approval (`explainOldServer` in
+  `apps/web/src/lib/api/client.ts`).
+- `services/virtues-api` may deploy before or after any box release. Its
+  `/refresh` answers every provider failure with 502 and puts the reason in
+  `code` (`955df8b38`). Released boxes retry a 502, and new boxes read
+  `code`. A proxy built from `a96faee9d` up to `955df8b38` answers 401 for
+  `invalid_grant` instead, which lets a released box mark a working Strava
+  sign-in `reauth_required` when two refreshes race. If such a build is
+  deployed, replace it with a current one.
 
 ## Built
 
@@ -155,9 +224,10 @@ change for it, because `kind` already says which rows it would cover.
    the unused `secrets/` directory. `source` and `login` rows keep their own
    paths, since a site can have several of each.
 4. **Declared keys** (`bac2a0657`; the applet page's "Keys it needs"
-   section in `163af1ed8`). `secrets = [...]` in a manifest; the runner sets the declared `env` values for each run and fails a run
+   section in `163af1ed8`). `secrets` under `metadata` in an applet's
+   `SKILL.md`; the runner sets the declared `env` values for each run and fails a run
    missing one with the Settings sentence. The loader drops names the box
-   sets itself. A jailed run gets its environment from a 0600
+   sets itself. A sandboxed run gets its environment from a 0600
    `EnvironmentFile=` in a folder the unit cannot see, so values stay off
    sudo's command line and out of the journal (tested with a throwaway unit on systemd 255;
    `7dd15806e`).
@@ -173,18 +243,61 @@ change for it, because `kind` already says which rows it would cover.
    `/api/passwords` lists site, label and username; the password and notes
    come only from `GET /api/passwords/:id/secret`, which nothing a model
    calls can reach. An edit with an empty password keeps the saved one.
-   Drive → Passwords lists them, shows and copies, edits and removes.
+   Drive → Passwords lists them, shows and copies, edits and removes. A
+   login the box key cannot open is listed as unreadable and can be removed
+   (`78aba6abc`).
 
 The cookie format and the order of the rollout are recorded in the commit
 messages. Two rules outlive them: the Mac app updates before the box does,
 so a request field is only ever added, and the old named fields leave the
-app only once every supported box release reads `jar`.
+app only once every supported box release reads `jar`. The owner proof is
+the exception to the first rule, handled under "Release order".
+
+### The audit's now tier
+
+Built on 2026-10-27 and 10-28. The audit's "Status on 2026-10-28" table maps
+each item to its commit and says which are still open.
+
+- The owner proof on eight routes, `virtues sudo` removed (`0f5feff2b`);
+  an app below surface 15 says to update, and a pairing whose record does
+  not load stays paired (`7a3054101`).
+- The Browser pane refuses local hosts and hides secret fields; the Mac
+  seed is in the Keychain (`2a3ebeeef`).
+- The `Host` check, `no-store` on secret and pair routes, and message
+  attachments served sandboxed (`9705ab8c5`, `078b0ad55`).
+- The admin applet's clean shell and `--init-key` ask (`37c526afa`), its
+  description and reserved name (`d053b6e61`), and the recovery key kept
+  off the Terminal's history (`f6e541881`).
+- Model SQL refuses without its login, installs and restores set the
+  logins, and tests pin the grants (`5b5c5f4b6`, `10fe384cf`,
+  `f6e541881`).
+- Backups and restores stage on the box, restore and server start check
+  the key, and one resolver finds `virtues.env` (`10fe384cf`,
+  `f6e541881`).
+- Per-box secret files in one list, and leftover run files swept at the
+  first run in each server process (`aaf3d7b9f`, `f6e541881`).
+- Revoking empties the payload, including rows revoked earlier, and a link
+  is Ready only once the key is stored (`78aba6abc`, `955df8b38`).
+- Refused grants become `reauth_required`, refreshes lock across
+  processes, and Reconnect repairs the row it was pressed on
+  (`a96faee9d`, `955df8b38`, `55bbefa72`).
+- Applet `schema_sql` limited to table and index statements
+  (`2d24fd854`). This narrows the hole and does not close it; see Open.
+- The runbook (`95eb83553`, `f6e541881`), the Keys page count
+  (`95eb83553`), and part of the dead credential code: `credentials/types.rs`
+  (`78aba6abc`) and the unused `SetupConfig` fields (`95eb83553`). The rest
+  is under Open.
 
 ## Slices
 
 6. **Saved logins in the Mac pane.** After a sign-in in the pane, the app
    offers to save it. In the pane, a saved login for the page's site fills by
-   row id.
+   row id: the box opens the row and hands the value to the Mac's browser
+   host, which types it into the page itself and checks the frame's origin
+   against the site saved with it. The value never appears in a tool result
+   or a prompt. The shell's refusal to let the model type into password,
+   one-time-code and card fields stays
+   ([record/browser.md](../record/browser.md)).
 7. **Importing logins.** CSV exports from 1Password, Bitwarden, Chrome and
    iCloud Keychain become `login` rows. A row matches on site and username,
    so importing the same file again adds only what is new or changed, as
@@ -192,11 +305,64 @@ app only once every supported box release reads `jar`.
 
 ## Open
 
-- Confirm on the live box that `virtues` is not a superuser and that the two
-  reader roles have no grant on `credentials`.
+- **The owner proof on `/ws/terminal` and admin chat turns.** Until both
+  ask for it, a process on a paired computer can reach the six actions and
+  `virtues.env` through them (see "Who can read what").
+- **Applet schema DDL runs as the server's role on the main pool.** That
+  includes a `check_only` setup the model can call with no allow, whose
+  Postgres errors come back to the model. `2d24fd854` refuses the
+  statements and functions known to read another table, but the DDL still
+  runs as the server's role, so any function a `CHECK` or `DEFAULT` calls
+  runs with that role's rights. A text check is not a boundary. The fix is a
+  DDL login that owns only the `applet_*`
+  schemas and has no privilege on `public`, `data_*`, `wiki_*` or `app_*`,
+  connected the way `database::restricted` connects (never `SET ROLE`), with
+  `EXECUTE` on functions in those schemas revoked from `PUBLIC`. That is
+  slice 9 of [plan/applet-shape.md](applet-shape.md).
+- **Writes from a web page on a paired computer.** There is no CSRF token,
+  so a page on any site, open in a browser on a computer where the desktop
+  app is paired, can send `127.0.0.1:7117` a request that needs no CORS
+  preflight. CORS hides the reply, and nothing stops the write
+  (`middleware/security.rs`).
+- **`POST /api/pair/reopen-onboarding` has no owner proof.** It revokes
+  every device. The owner left destructive routes inside the 7117 gap;
+  adding the proof here protects nothing while the terminal and admin turns
+  stay open, so it belongs with them.
+- **Per-applet key allows** (decision 3) are not built. Any applet's
+  `SKILL.md` can still name any key.
+- **Drive downloads with `?disposition=inline`** still serve the stored type
+  at the box origin with no sandbox CSP (`server/api/drive.rs`). The chat
+  file handler is sandboxed by its own rule. Both should move onto
+  `inline_type` and `STORED_FILE_CSP`, as message attachments did, so there
+  is one rule.
+- **The Keychain move goes one way.** An older Mac build, for example after
+  going from the prerelease channel back to stable, finds no seed in
+  `box.json`, cannot connect, and shows the server as unreachable until the
+  owner forgets it on the Mac and pairs again. The reconnect page shows the
+  plugin's `problem` sentence, but it does not yet offer Pair again when the
+  key is missing (`problem.pairAgain`).
+- **The seed outside a keychain.** Windows and Linux keep the seed in
+  `box.json`, so a program running as the same user can read it and sign the
+  owner proof (dated TODO in `apps/web/plugins/reach/src/store.rs`). On a Mac
+  whose Keychain refused the move, the seed also stays in `box.json`.
+  Android keeps it in the app's private storage.
+- **Dead credential code.** `check_pairing_status`, `list_pending_pairings`,
+  `PairingStatus` and `PendingPairing` in `api/credentials.rs` have no caller
+  outside their re-exports in `api/mod.rs` and `lib.rs`.
+- **A restore can still follow a link in a swapped stage**: `move_tree` and
+  the env copy in `cli/restore.rs` need a root-owned parent for the stage.
+- **The start-time key check only reports.** It logs and shows attention
+  when the key opens none of the sampled rows; nothing stops the box sealing
+  new rows under the wrong key.
+- **`make dev` serves Vite on every interface,** and its proxy reaches core
+  from loopback, so a client on the developer's network that opens port 5173
+  is the owner of the dev box.
+- Confirm on the live box that `virtues` is not a superuser, that the reader
+  and writer logins connect, and that neither has a grant on `credentials`.
 - Whether a password manager fills inside the Mac app's WebKit view, which
   decides how much slice 6 matters to someone who already has one.
 - Passkeys: platforms barely allow them to be exported, and the export
   standards were not checked for this plan.
-- TOTP codes: whether the box should generate them from a stored
-  `totp_secret`, which makes the box a second factor as well as the first.
+- TOTP codes: whether a login should also hold a TOTP secret the box
+  generates codes from, which makes the box a second factor as well as the
+  first.

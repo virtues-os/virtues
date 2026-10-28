@@ -1,19 +1,35 @@
 # Auth Model
 
 > Pair-only auth: no passwords, no email, no magic links. Every client that
-> talks to the box is a **device**; the device list is the auth surface.
+> talks to the box is a **device** with its own iroh key, and the box's
+> allowlist of device keys is the auth surface.
 
 ## TL;DR
 
-1. To get in for the first time, run `virtues link` on the box and open the printed URL.
-2. To add another device, open `Settings → Devices → Add device` from an already-paired session and scan/open the URL on the new device.
-3. To revoke access, delete the device from the same page. The credential is invalidated and (if applicable) the WireGuard peer is evicted in the same transaction.
-4. A few routes (revealing a password or a key, adding a device, minting a pair code, changing the AI key, importing an applet package) also need a fresh owner proof: a signature by the Virtues app with the device's own key. The `virtues sudo` confirmation that used to guard two of them was removed on 2026-10-27 (`api/owner_proof.rs`).
+1. Your first phone pairs during setup over Bluetooth. It sends the
+   four-word phrase shown on the box's screen, and the box pairs it with no
+   code to type ([build/onboarding.md](../build/onboarding.md)).
+2. Any later device pairs with a six-digit code. `virtues pair` on the box
+   prints one, and Settings → Devices → Add device in the app mints one. The
+   new device sends the code and its iroh key to `POST /api/pair/consume`,
+   and the box adds the key to its allowlist.
+3. A paired laptop can also enroll a phone that cannot reach the box: it
+   mints a key for the phone, enrolls it, and shows it in one QR
+   (`crates/virtues-reach-client/src/handoff.rs`).
+4. To revoke a device, remove it in Settings → Devices or run
+   `virtues device rm <id>`. The box drops its key from the allowlist and
+   refuses its next request.
+5. A few routes (revealing a password or a key, adding a device, minting a
+   pair code, changing the AI key, importing an applet package) also need a
+   fresh owner proof: a signature by the Virtues app with the device's own
+   key (`api/owner_proof.rs`).
 
-There is no login form, no password to brute-force, no email to phish, no
-magic-link URL to leak. The only way into the box is to (a) prove physical
-access to it (`virtues link`) or (b) hold a credential issued by something
-that already has access.
+There is no login form, account password, session cookie, bearer or CSRF
+token. The ways in are physical access to the box (its screen and Bluetooth
+during setup, or a shell on it for `virtues pair`) and a device that is
+already paired adding another. One exception follows from the desktop app:
+a process on a computer where the app is paired reaches the box as that
+computer (see "The desktop app's loopback port" below).
 
 ## Why pair-only
 
@@ -26,10 +42,10 @@ is a continuously-present surface to brute-force.
 
 A single-tenant appliance has a stronger primitive available: **physical
 proximity to the box**. We treat that as the root of trust. Everything else
-descends from it via pair tokens. This is the same primitive Plex, Tailscale,
-Apple Continuity, and most modern consumer infra use; it is rare in
-self-hosted software because self-hosted templates copied the SaaS auth
-model.
+descends from it via pair codes and devices that are already paired. This is
+the same primitive Plex, Tailscale, Apple Continuity, and most modern consumer
+infra use; it is rare in self-hosted software because self-hosted templates
+copied the SaaS auth model.
 
 ## The money plane: how the box pays for AI
 
@@ -72,77 +88,148 @@ relationship, not a data boundary — uses an email magic-link, because that's t
 right primitive for "prove you're the person paying Stripe." The two planes
 use different roots of trust by design.
 
-## Schema (4 + 3 tables)
+## How a request is authenticated
 
-Four tables hold authority:
+`middleware/auth.rs` accepts three things, checked in order:
+
+1. **A proven iroh key.** The box serves its API over iroh. The QUIC
+   handshake proves the peer's key, and `serve()` forwards only keys on the
+   allowlist, which `relay::reconcile` keeps equal to the `endpoint_id` of
+   every `app_device` row with no `revoked_at`. The extractor maps the key to
+   its device row and checks `revoked_at IS NULL` again on every request. An
+   agent device (an MCP bridge on the owner's computer) reaches `/api/mcp`
+   and no other route.
+2. **The loopback console.** A process on the box that connects straight to
+   `127.0.0.1` or `::1` with no forwarding header is the owner, as the
+   device `local-console`. It can already read `virtues.env`, so this adds
+   nothing. A request that carries `X-Forwarded-For` or `Forwarded` is
+   refused here, because a reverse proxy also connects from loopback.
+3. **The dev fallback.** With `ENVIRONMENT=dev`, a loopback request that
+   carries a forwarding header is the owner too. A box never sets it.
+
+The plain HTTP listener on port 8000 never carries a proven key, so a
+request there from another machine reaches only the routes that need no
+device, such as `/api/pair/consume`.
+
+Nothing else authenticates as a device. A pair code opens one pairing, a
+signed OAuth state opens one callback, and a face token opens one face load;
+none of them opens the API.
+
+`middleware/security.rs` refuses, with 421, a request in those three classes
+whose `Host` names something the box does not serve. That keeps a
+DNS-rebinding page off them. It also sets `X-Frame-Options: DENY`, `nosniff`
+and a restrictive CSP on every response, and `Cache-Control: no-store` on the
+reveal and pair routes.
+
+### The desktop app's loopback port
+
+On a computer where the desktop app is paired, the app's reach plugin listens
+on `127.0.0.1:7117` (`apps/web/plugins/reach/src/lib.rs`) and copies each
+connection onto the app's own iroh connection
+(`crates/virtues-reach-client/src/proxy.rs`, `serve_on_provider`). The box
+sees the app's key, so any process or browser page on that computer that
+opens the port is that device for every route the owner proof does not
+cover. This is the gap the owner accepted on 2026-10-27
+([plan/secrets-plan.md](../plan/secrets-plan.md), "Who can read what").
+
+Because there is no CSRF token, a page on another site open in a browser on
+that computer can also send a request to the port. CORS keeps it from reading
+the reply; nothing on the box stops a write that needs no preflight.
+
+## Tables
 
 | Table | What it holds |
 |---|---|
-| `app_auth_user` | Singleton owner in v1 (`is_owner = true`). Multi-user `user_id` seam present but UI not yet wired. |
-| `app_device` | The canonical paired-device record. Every client (browser, mobile app, sensor, CLI) is one row. Soft-revoked via `revoked_at`. |
-| `app_auth_session` | Browser cookies. FKs to `app_device`. Has `last_used_at` for idle timeout (8h). |
-| `credentials` | App/sensor bearers + WG peers. FKs to `app_device` via `device_id` (nullable; OAuth source credentials don't have a device). |
+| `app_auth_user` | The owner. One row; `app_device.user_id` points at it. |
+| `app_device` | One row per paired device: `kind` (`mobile_app`, `desktop_app`, `sensor`, `cli`, `agent`), its iroh `endpoint_id`, a label, `last_seen_at` and `revoked_at`. The `local-console` row stands for the box itself. |
+| `app_pair_token` | Pair codes. Only SHA-256 of a code is stored, except a standing code's display copy, which is sealed with the box key so the box's own screen can show it. `kind` is `oneoff`, `standing` or `review`. `status` is `authorized`, `consumed` or `denied`. The schema also allows `pending` and `expired`, which nothing writes, and the sweeper deletes a code once it has expired. |
+| `app_setup_phrase` | The four-word phrase that opens setup over Bluetooth and later serves as the recovery key. |
+| `app_auth_event` | Append-only log of pairings, enrollments, revokes, pair codes, AI key changes and each password or key revealed, written through `api::audit::record` and read at `GET /api/audit/auth`. A pairing records the caller's IP and user agent; the other rows leave both empty. No page shows the log. |
 
-Three tables support the auth machinery:
-
-| Table | What it holds |
-|---|---|
-| `app_pair_token` | RFC-8628-shape bootstrap tokens. SHA-256 hash persisted, raw token only exists in the response/QR. State machine: `pending → authorized → consumed | expired | denied`. |
-| `app_auth_event` | Append-only audit log of pair/revoke/session/key events with IP + UA. Written on every event and served by `GET /api/audit/auth`; **no UI surfaces it** since the Activity page was removed. |
+A device has no row in `credentials`. That table holds what the box presents
+to other services, never something a caller presents to the box.
 
 ## Flows
 
 ### First device (fresh box)
 
 ```
-[box]
-$ sudo -u virtues virtues link
-  → mints a pair_token with status = 'authorized' (CLI = physical proof)
-  → prints http://localhost:8000/pair#t=<24B hex>   (or http://localhost:5173/pair#t=… in dev)
-
-[laptop browser]
-1. Open the URL — the `t=…` is in the URL fragment, so it never hits server
-   logs or referer headers. JS reads it, POSTs /api/pair/consume.
-2. Server creates app_device + app_auth_session, returns redirect + Set-Cookie.
-3. Browser lands at /onboarding (or / if already onboarded).
+[phone, Bluetooth]
+1. The setup device finds the box and sends ClaimSetup with the four-word
+   phrase shown on the box's screen. That opens a session bound to this
+   Bluetooth connection.
+2. PairConsume (0x83): the box redeems its own standing code against
+   /api/pair/consume over loopback, with the phone's iroh key, and streams
+   the answer back. Nothing is typed.
+3. The box is claimed. Every standing code expires, and the Bluetooth
+   service stops.
 ```
 
-### Add a device from a paired session
+Without Bluetooth, `virtues pair` on the box prints the standing code during
+setup, and the app sends it to `/api/pair/consume`.
+
+### Add a device
 
 ```
-[Mac browser, paired]
-1. Settings → Devices → Add device.
-2. Frontend POSTs /api/pair/mint → token (status 'pending').
-3. Modal renders a QR + the pair URL + a Confirm/Cancel.
-4. User clicks Confirm. POST /api/pair/confirm/:id flips token to 'authorized'.
+[box shell]                         [app, paired device]
+virtues pair                        Settings → Devices → Add device
+ → a one-time code, 30 minutes       → POST /api/pair/mint, with the owner
+                                       proof: a one-time code, authorized at
+                                       once, 5 minutes, shown with a QR
+                                     → closing the modal sends
+                                       POST /api/pair/deny/:id
 
-[iPhone]
-5. Scan QR → /pair#t=… in mobile Safari.
-6. POST /api/pair/consume → cookie set, browser lands at /.
+[new device]
+POST /api/pair/consume {token, kind, label, device_node_id}
+ → app_device row with the device's endpoint_id, code marked consumed
+ → relay::reconcile adds the key to the allowlist
+ → a `paired` row in app_auth_event
 
-[Mac browser]
-7. Polling /api/pair/status/:id sees 'consumed', shows "iPhone · Safari paired", closes.
+[app]
+GET /api/pair/status/:id until the code is consumed or denied, or the
+route answers 404 once the code has expired and been swept.
 ```
 
-The Confirm step stops someone who sees the QR over your shoulder from using
-it. The QR alone does nothing until the minting device explicitly authorizes it.
+`/api/pair/consume` is the one pair route that needs no device. It allows
+10 attempts per 30 minutes per socket peer (an IPv6 peer is counted by its
+/64), and loopback is exempt.
+
+The handoff for a phone that cannot reach the box: the paired laptop mints a
+key for the phone, sends `POST /api/devices/enroll-peer` with the owner
+proof, and shows one QR holding that key and the box's answer. The QR
+carries a private key, so whoever photographs it gets a device.
 
 ### Revoke a device
 
 ```
-[any paired session]
-DELETE /api/devices/:id
-  → in one transaction:
-      UPDATE app_device   SET revoked_at = now()
-      UPDATE credentials  SET status = 'revoked', secret_lookup_hash = NULL
-      DELETE FROM app_auth_session WHERE device_id = $1
-  → after commit, evict any WG peer attached to that credential:
-      wg set wg0 peer <pubkey> remove
-  → append `revoked` to app_auth_event
+[app]  DELETE /api/devices/:id
+  → one transaction: lock the device, refuse if it is the last active
+    device (409, "Pair another device first."), set revoked_at and clear
+    its push address
+  → relay::reconcile drops the key from the allowlist
+  → a `revoked` row in app_auth_event
 
-  Guard: refuses if this would leave zero active devices (lockout
-  prevention). Pair another device first, or start over from Devices.
+[box shell]  virtues device rm <id>
+  → set revoked_at and clear the push address, with no last-device check
+  → no audit row
+  → the server drops the key from the allowlist at its next reconcile,
+    within 15 minutes
 ```
+
+The CLI can revoke the last device (`revoke_device_cli` in
+`api/devices.rs`). Its own call to `relay::after_pairing_change` runs in the
+CLI process, which holds no allowlist, so the running server's allowlist
+changes only on the server's 15-minute reconcile tick. Until then the
+`revoked_at` check refuses every request from that device.
+
+The device has no other credential to revoke, so clearing its key is the
+whole of it. After a revoke from the app, its next connection fails at the
+handshake, and a request on a connection that is already open fails the
+`revoked_at` check.
+
+`POST /api/pair/reopen-onboarding` (Devices → Start over) revokes every
+device at once and keeps the data, network and account link. It needs a
+paired device and no owner proof.
 
 ### Owner proof
 
@@ -159,57 +246,53 @@ DELETE /api/devices/:id
    stored endpoint id. Console requests are exempt; agent devices never pass.
 ```
 
-It exists because a paired Mac's loopback port reaches the box as that Mac
-for any local process, and only the app holds the key
+It exists because a paired computer's loopback port reaches the box as that
+computer for any local process, and only the app holds the key
 ([secrets-audit-2026-10-27.md](secrets-audit-2026-10-27.md), section 2).
-The web terminal and sudo-mode chat do not ask for it yet; see the Defenses
-table below.
+That holds on the Mac, whose app keeps the key in the Keychain, and on iOS.
+On Windows and Linux it is in `box.json`, which any program running as the
+same user can read, until the dated TODO in
+`apps/web/plugins/reach/src/store.rs` lands. Android keeps it in the app's
+private storage. On a Mac whose Keychain refused the move, the seed also
+stays in `box.json`. The web terminal and a chat turn of the admin applet do
+not ask for the proof yet; see the Defenses table below.
 
 Each reveal, enrollment, pair code and AI key change also writes a row to
 `app_auth_event` (`api::audit::record`), readable at `GET /api/audit/auth`.
-
-## Idle timeout
-
-Beyond the 30-day hard expiry on every session, the middleware enforces an
-**8-hour idle ceiling** keyed off `app_auth_session.last_used_at`. Every
-authenticated request bumps the timestamp. A tab left open overnight is
-silently invalid the next morning; the user re-pairs. The `peek_session`
-helper (used by `/auth/session` and `/auth/signout`) explicitly does NOT
-bump the timestamp, so a polling check doesn't keep an idle session alive.
 
 ## Defenses
 
 | Concern | How it's handled |
 |---|---|
-| Brute-force the login | No login surface exists. `/pair` w/o a token shows static copy and accepts no credentials. |
-| Phished pair URL | URL only valid on the LAN (TLS pinned to the box CA) and revoked after one use within ~5–15 min. |
-| Token leakage via referer | Pair token is in the URL fragment (`#t=…`), not the query (`?t=…`). Fragments are not sent by browsers to servers. |
-| Token leakage via server logs | Raw tokens are never logged. Only SHA-256(token) is persisted in `app_pair_token`. |
-| Shoulder-surfing the QR | Web-minted tokens start `pending` and require the minting device to explicitly confirm before they become `authorized`. |
-| Network died mid-consume | The consume path uses a single transaction; partial failure leaves the token unconsumed and retryable until TTL. |
-| Stolen device — read access | Unavoidable for any logged-in device. Mitigated by: 8h idle timeout, easy revoke from any other device (Settings → Devices). The auth-event log is recorded and readable at `GET /api/audit/auth`, but has no UI — so noticing an unfamiliar pairing depends on the Devices list, not on a log anyone reads. |
-| Another process on a paired Mac | The owner proof on reveal, enroll, pair mint, the AI key and package import, so a direct request to those routes through the app's loopback port is refused. Everything else stays open to a local process there, an accepted gap. That gap includes `/ws/terminal`, which opens a shell on the box, and a chat request in sudo mode. From either, a local process reaches the box's own console, which the proof exempts, so it can still do the six actions and read `virtues.env` until those two need the proof as well. |
-| Clickjacking the Add-Device modal | `X-Frame-Options: DENY` + CSP `frame-ancestors 'none'` on every response. |
-| CSRF on state-changing requests | Double-submit cookie: `virtues.csrf-token` (NOT HttpOnly) + `X-CSRF-Token` header. Client-side `hooks.client.ts` wraps `fetch` to auto-attach. Exempt: `/api/pair/consume` (anonymous, body-token = capability), `/auth/signout` (idempotent, kills only own session), `/webhook/*`, `/internal/*`, `/oauth/callback`. |
-| MIME sniffing | `X-Content-Type-Options: nosniff` on every response. |
-| WG peer survives revoke | Revoke handler reads the credential's `wg_public_key` from metadata before the tx, then after commit calls `virtues_wg::manager::remove_peer()` (Linux-only; no-op on the macOS dev host where there's no kernel WG anyway). |
+| Brute-force a login | No login surface exists. |
+| Guessing a pair code | Six digits, 10 attempts per 30 minutes per socket peer. A claimed box issues only one-time codes, which die on use, except a review box, whose `VIRTUES_REVIEW_PAIR_CODE` code is multi-use. The standing code rotates every 15 minutes, lasts 20, and every standing code expires when the box is claimed. |
+| A pair code read off a screen | An app code lasts 5 minutes and a `virtues pair` code 30, and each works once. Closing the Add device modal denies the code. |
+| Token leakage via server logs | Raw codes are never logged. Only SHA-256(code) is stored, and a standing code's display copy is sealed with the box key. The pair routes are `no-store`. |
+| The handoff QR | It carries a private key. The laptop never writes it to disk, withdraws the QR once the phone appears, and the new device shows in Devices at once. |
+| Network died mid-consume | The consume path uses a single transaction; partial failure leaves the code unconsumed and retryable until it expires. |
+| Stolen device | It has full access until revoked from another device or with `virtues device rm`. The auth-event log has no page, so noticing an unfamiliar device depends on the Devices list. |
+| DNS rebinding onto a trusted transport | The `Host` check refuses names the box does not serve (`middleware/security.rs`). |
+| Another process on a paired computer | The owner proof on reveal, enroll, pair mint, the AI key and package import, so a direct request to those routes through the app's loopback port is refused. Everything else stays open to a local process there, an accepted gap. That gap includes `/ws/terminal`, which opens a shell on the box, and a chat turn of the admin applet (agentMode `admin`, or `sudo` from an older app). From either, a local process reaches the box's own console, which the proof exempts, so it can still do the six actions and read `virtues.env` until those two need the proof as well. |
+| A web page in a browser on a paired computer | It can send a request to `127.0.0.1:7117` that needs no CORS preflight, and nothing stops the write. CORS keeps it from reading the reply. |
+| Clickjacking | `X-Frame-Options: DENY` and CSP `frame-ancestors 'none'` on every response except applet faces, which the app frames. |
+| MIME sniffing | `X-Content-Type-Options: nosniff` on every response. Message attachments that are not raster images, audio or video download as `application/octet-stream` with a sandbox CSP. |
 
 ## What pair-only DOES NOT defend against
 
 - A trusted device that's running malicious code (compromised browser
   extension, malware on the laptop). Same as any auth model — credential
-  access = full access at the credential's scope.
-- A coerced approval (the box owner forced to run `virtues link`). Out of
+  access = full access at the credential's scope. On a computer with the
+  desktop app, any process there counts, through the loopback port.
+- A coerced owner (the box owner forced to run `virtues pair`). Out of
   scope for a digital control plane.
 - Disclosure of data the user already saw. Read access is unavoidable once
   authenticated; that's true of any system.
 
 ## v1.1+ roadmap
 
-<!-- iOS migration shipped in v1; see "Shipped in v1 (already done)" below. -->
 - **Per-device scopes** (a sensor that should only write health data; a
   dev browser that shouldn't be able to wipe). Stored on `app_device` and
-  enforced at handler entry.
+  enforced at handler entry. Agent devices are the one scope today.
 - **Multi-user UI** — the `user_id` column already exists; only the UI to
   add/manage additional users is gated.
 
@@ -219,10 +302,7 @@ bump the timestamp, so a polling check doesn't keep an idle session alive.
   in-process via the `qrcode` crate. The pair URL never leaves the box's
   process boundary on its way to the user's browser. (Previous implementations
   routed through `api.qrserver.com`; that dependency was removed.)
-- **iOS unified pair-only auth** — the legacy `/api/pairing/initiate` and
-  `/api/pairing/complete/:id` endpoints were removed. iOS now pairs via
-  `/api/pair/consume` with `kind = "mobile_app"`, gets a server-issued
-  bearer (stored in Keychain via the new `KeychainStore`), and the
-  endpoint also returns the action-id fan-out + (when a `wg_public_key`
-  was supplied) the WireGuard provisioning bundle.
-
+- **iOS pairs like every device.** It sends a code and its iroh key to
+  `/api/pair/consume` with `kind = "mobile_app"` and keeps the key in the
+  Keychain. The box answers with its reach details and the applet ids for
+  the phone's collectors. There is no bearer.

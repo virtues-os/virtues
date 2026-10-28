@@ -28,9 +28,10 @@
 //!
 //! The box's own console (a process on the box's loopback, and the dev
 //! fallback) is exempt: it can already read `virtues.env`. An agent device is
-//! never accepted. The web terminal (`/ws/terminal`) and a chat in sudo mode
-//! do not ask for the proof yet, and both reach that console, so a process on
-//! the Mac can still get to these actions through them.
+//! never accepted. The web terminal (`/ws/terminal`) and a chat turn of the
+//! admin applet (agentMode `admin`, or `sudo` from an older app) do not ask
+//! for the proof yet, and both reach that console, so a process on the Mac
+//! can still get to these actions through them.
 //!
 //! Nonces live in memory. The server is one process, a nonce lasts a minute,
 //! and a restart only costs the app one retry.

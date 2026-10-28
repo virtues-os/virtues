@@ -1,7 +1,7 @@
 ---
 title: Reaching your server
 description: How your phone and laptop connect to your Virtues server at home and away - pairing devices, what the relay can and cannot see, and what to expect when the network changes.
-updated: 2026-10-20
+updated: 2026-10-28
 ---
 
 Your server sits at home behind a router that, by default, blocks incoming
@@ -34,12 +34,20 @@ and no port forwarding.
 
 Use the iPhone app or the desktop app. Both use the key-based protocol. A
 plain web browser can't, because it has no key to prove it's yours, so the
-server refuses a browser on another machine, even one on your own network.
+server refuses a browser on another machine with no paired app, even one on
+your own network.
 
-The one exception is a browser running on the server itself: the server
-trusts requests from its own loopback address, so `http://localhost:8000` on
-the server works without pairing. Otherwise, use the apps or a terminal on the
-server.
+A browser running on the server itself also works: the server trusts requests
+from its own loopback address, so `http://localhost:8000` on the server works
+without pairing.
+
+On a computer where the desktop app is paired, the app serves your server on a
+local port, `127.0.0.1:7117`, and carries that traffic over its own key. Any
+browser or program on that computer that opens the port reaches your server as
+that computer. A few actions also need the app's own signature (see
+[Sensitive actions](/docs/operate/cli#sensitive-actions)).
+Treat that computer like the paired device it is: anyone who can run programs
+on it can reach your server.
 
 ## Pairing a device
 
