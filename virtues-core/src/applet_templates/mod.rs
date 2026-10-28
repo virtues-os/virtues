@@ -2424,8 +2424,8 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
     async fn a_new_config_key_reaches_an_old_row_and_a_held_one_stays(pool: sqlx::PgPool) {
         reconcile_templates(&pool).await.expect("reconcile");
 
-        // A box seeded before `delivers` existed, whose owner raised the limit
-        // and whose chat is linked.
+        // A box seeded before `model_slot` was set, whose owner raised the
+        // limit and whose chat is linked.
         sqlx::query(
             "UPDATE app_applets SET config = '{\"limits\": {\"max_llm_cost\": 0.5}, \"chat_id\": \"chat_x\"}'::jsonb \
              WHERE id = 'applet_morning_examen'",
@@ -2440,7 +2440,7 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
                 .fetch_one(&pool)
                 .await
                 .unwrap();
-        assert_eq!(config["delivers"]["kind"], "page", "the new key arrives");
+        assert_eq!(config["model_slot"], "lite", "the new key arrives");
         assert_eq!(config["limits"]["max_llm_cost"], 0.5, "their limit stands");
         assert_eq!(config["chat_id"], "chat_x", "the box's own keys stay");
     }

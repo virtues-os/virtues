@@ -220,59 +220,25 @@ pub(crate) fn convert_folder(
 mod tests {
     use super::*;
 
-    /// Every shipped manifest converts, and what reconcile loads from the
-    /// SKILL.md is what it loaded from the manifest: the id, what starts it,
-    /// what runs, its ceilings, its model, and what it writes.
+    /// The shipped tree was converted with `convert_folder` on 2026-10-27,
+    /// and checked then to load with the same id, schedule, prompt, command,
+    /// source, writes, owner, triggers, limits and model. No manifest is
+    /// left, every applet loads, and none landed in the `/` menu by mistake.
     #[test]
-    fn every_shipped_manifest_converts_to_the_same_applet() {
+    fn the_shipped_tree_is_all_skill_md() {
         let shipped = super::super::shipped_root();
-        let copy = tempfile::tempdir().unwrap();
-        super::super::copy_tree(&shipped, copy.path()).unwrap();
-        let never = |_: &str| None;
-        let mut converted = 0;
-        for entry in std::fs::read_dir(copy.path()).unwrap().flatten() {
+        let mut loaded = 0;
+        for entry in std::fs::read_dir(&shipped).unwrap().flatten() {
             let dir = entry.file_name().to_string_lossy().into_owned();
-            let manifest = entry.path().join("manifest.toml");
-            if !manifest.is_file() {
-                continue;
-            }
-            let before = super::super::parse_template(&manifest, &dir).unwrap();
-            let c = convert_folder(copy.path(), &dir, true, &never).unwrap_or_else(|e| panic!("{dir}: {e}"));
-            let folder = copy.path().join(&c.dir);
-            let text = std::fs::read_to_string(folder.join("SKILL.md")).unwrap();
-            let after = super::super::skill::parse(&text, &folder, &c.dir, true).unwrap();
-
-            assert_eq!(after.id_prefix, before.id_prefix, "{dir}: the id must not change");
-            assert_eq!(after.schedule, before.schedule, "{dir}");
-            assert_eq!(after.agent.as_deref().map(str::trim), before.agent.as_deref().map(str::trim), "{dir}");
-            assert_eq!(after.command, before.command, "{dir}");
-            assert_eq!(after.source.as_ref().map(|s| &s.id), before.source.as_ref().map(|s| &s.id), "{dir}");
-            assert_eq!(after.per_credential, before.per_credential, "{dir}");
-            assert_eq!(after.writes, before.writes, "{dir}");
-            assert_eq!(after.default_enabled, before.default_enabled, "{dir}");
-            assert_eq!(after.needs_vault_key, before.needs_vault_key, "{dir}");
-            assert_eq!(after.owner, before.owner, "{dir}: who owns the row must not change");
-            let wanted = |t: &[String], k: &str| t.iter().any(|x| x == k);
-            for k in ["cron", "tool", "webhook"] {
-                assert_eq!(wanted(&after.triggers, k), wanted(&before.triggers, k), "{dir}: trigger {k}");
-            }
-            let limits = |t: &Template| {
-                t.config.as_ref().and_then(|c| c.get("limits")).map(|l| serde_json::to_value(l).unwrap())
-            };
-            let as_f64 = |v: Option<serde_json::Value>, k: &str| v.and_then(|l| l.get(k).and_then(|x| x.as_f64()));
-            for k in ["max_llm_cost", "max_llm_cost_per_day", "timeout_s"] {
-                assert_eq!(as_f64(limits(&after), k), as_f64(limits(&before), k), "{dir}: limit {k}");
-            }
-            if before.agent.is_some() {
-                let slot = |t: &Template| {
-                    t.config.as_ref().and_then(|c| c.get("model_slot")).and_then(|v| v.as_str()).map(str::to_string)
-                };
-                assert_eq!(slot(&after).unwrap_or_default(), slot(&before).unwrap_or_else(|| "lite".into()), "{dir}");
-                assert!(!after.invoke_chat, "{dir}: a converted applet is not in the / menu");
-            }
-            converted += 1;
+            assert!(!entry.path().join("manifest.toml").exists(), "{dir} still has a manifest.toml");
+            let Ok(text) = std::fs::read_to_string(entry.path().join("SKILL.md")) else { continue };
+            let t = super::super::skill::parse(&text, &entry.path(), &dir, true)
+                .unwrap_or_else(|e| panic!("{dir}: {e:?}"));
+            let chat = ["meeting-prep", "morning-brief", "trip-planner", "weekly-review", "new-applet"];
+            assert_eq!(t.invoke_chat, chat.contains(&dir.as_str()), "{dir}");
+            loaded += 1;
         }
-        assert!(converted >= 25, "only {converted} manifests found");
+        assert!(loaded >= 30, "only {loaded} applets loaded");
     }
 
     /// A one-off becomes `on <date>`, a condition becomes `run` SQL, and a
@@ -325,3 +291,4 @@ mod tests {
         assert!(!root.path().join("pack/odd-one").exists());
     }
 }
+

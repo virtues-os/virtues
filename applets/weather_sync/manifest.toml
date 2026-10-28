@@ -1,6 +1,0 @@
-name = "Weather Sync"
-description = "Records the weather where you are, hour by hour."
-owner = "system"
-command = ["weather_sync"]
-triggers = ["cron", "manual"]
-schedule = "0 0 * * * *"

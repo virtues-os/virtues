@@ -395,11 +395,11 @@ jobs:
           rm -rf staging/applets/src staging/applets/examples \
                  staging/applets/Cargo.toml staging/applets/AGENTS.md \
                  staging/applets/AUTHORING.md staging/applets/MANIFEST_SCHEMA.json
-          # A manifest with no face and no schema is still a valid applet, but
-          # zero manifests means the box has no actions at all — catch that here
-          # rather than on a customer's first boot.
-          test "$(find staging/applets -name manifest.toml | wc -l)" -gt 0 \
-            || (echo "no applet manifests staged" >&2 && exit 1)
+          # An applet with no view and no tables is still a valid applet, but
+          # zero SKILL.md files means the box has no applets at all — catch that
+          # here rather than on a customer's first boot.
+          test "$(find staging/applets -name SKILL.md | wc -l)" -gt 0 \
+            || (echo "no applets staged" >&2 && exit 1)
 
           # Stage every action binary. The list comes from cargo metadata so it
           # tracks applets/Cargo.toml's [[bin]] entries automatically (no
