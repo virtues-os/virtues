@@ -1,22 +1,22 @@
 {
 	"sections": [
 		{
-			"title": "Start here",
-			"pages": [{ "slug": "index", "title": "What Virtues is" }]
+			"title": "Introduction",
+			"pages": [{ "slug": "index", "title": "Overview" }]
 		},
 		{
-			"title": "Set up",
+			"title": "Installation",
 			"pages": [
-				{ "slug": "setup/requirements", "title": "What to run it on" },
-				{ "slug": "inference", "title": "Setting up inference" },
-				{ "slug": "setup/accelerators", "title": "Faster search on a GPU or NPU" },
-				{ "slug": "setup/install", "title": "Installing" },
-				{ "slug": "setup/first-boot", "title": "First boot", "planned": true },
+				{ "slug": "setup/prerequisites", "title": "Prerequisites" },
+				{ "slug": "setup/requirements", "title": "System requirements" },
+				{ "slug": "setup/install", "title": "Install script" },
 				{
 					"title": "Connecting your devices",
 					"pages": [
-						{ "slug": "setup/devices/iphone", "title": "iPhone", "planned": true },
-						{ "slug": "setup/devices/mac", "title": "Mac", "planned": true }
+						{ "slug": "setup/devices", "title": "Overview" },
+						{ "slug": "setup/devices/mac", "title": "Mac" },
+						{ "slug": "setup/devices/windows", "title": "Windows" },
+						{ "slug": "setup/devices/iphone", "title": "iPhone" }
 					]
 				},
 				{
@@ -28,6 +28,13 @@
 						{ "slug": "setup/sources/finance", "title": "Banks & cards", "planned": true }
 					]
 				}
+			]
+		},
+		{
+			"title": "Guides",
+			"pages": [
+				{ "slug": "inference", "title": "Set up a custom embedding server" },
+				{ "slug": "setup/accelerators", "title": "GPU and NPU acceleration" }
 			]
 		},
 		{

@@ -1,129 +1,141 @@
 ---
-title: What to run it on
-description: The machine Virtues needs - OS, memory, disk, and whether you need a GPU. What determines whether it feels fast, and where you can save money.
-updated: 2026-10-20
+title: System requirements
+description: What your server needs to run Virtues - operating system, RAM, storage, GPU and network - and what affects how fast it feels.
+updated: 2026-10-26
 ---
 
-You need a Linux machine with 8 GB of RAM, an SSD, and an ordinary internet
-connection. **No GPU is required.**
+Each requirement includes the command to check it. Run them on the machine
+that will become your server.
 
-## The machine
+## Hardware
 
-- **Linux**, `x86_64` or `aarch64`, with **systemd** and root.
-- **Debian or Ubuntu**, or **Fedora**. The installer drives `apt` on the
-  first two - adding the PGDG repository where the distribution's own
-  packages ship an older PostgreSQL than the one Virtues needs - and `dnf` on
-  Fedora, whose PostgreSQL is recent enough as shipped.
-- **Not macOS or Windows.** Installing needs root, a native PostgreSQL
-  cluster, and systemd units of its own. The Mac and iPhone apps are
-  *clients* that talk to a server; neither is one.
-- A **virtual machine is fine**. A Docker or LXC container generally is not:
-  the installer writes systemd units and expects to own the machine's
-  services.
+- **8 GB of RAM.** To check, run `free -h` and read the `total` column of the
+  `Mem` row. A machine with 8 GB shows a little under 8, such as `7.6Gi`
+  or `7.7Gi`, because the system reserves some RAM. That's enough.
+- **4 GB of free disk space** to install, then more as your data grows. An SSD
+  is strongly recommended. To check, run `df -h /` and read the `Avail`
+  column.
+- **An `x86_64` or `aarch64` processor.** To check, run `uname -m`.
+- **No GPU is required.** To make search faster with a GPU or NPU, follow
+  [GPU and NPU acceleration](/docs/setup/accelerators).
 
-An old laptop, a NUC-class mini PC, a rack server you already have, or a
-capable single-board computer all work. How well the server performs depends
-almost entirely on memory and disk, in that order.
+## Operating system
 
-## Memory
+- **Ubuntu 22.04 or later.** To check, run `cat /etc/os-release` and read the
+  `VERSION` line. Ubuntu 26.04 hasn't been tested yet.
+- **systemd, the Linux service manager.** Standard Ubuntu installs include it.
+  To check, run `systemctl --version`. If it prints a version number, you
+  have it.
+- **A virtual machine works.** A Docker or LXC container usually doesn't,
+  because the installer sets up system services of its own and needs to
+  manage the machine's services.
 
-Eight gigabytes is the minimum. PostgreSQL and the Virtues server itself use
-a couple of gigabytes between them. The embedding
-model server, when it runs on this machine, sits at roughly a gigabyte of
-resident memory with the flags Virtues starts it under: one request slot, no
-prompt cache, a 2048-token context. With a model server's own defaults it
-would use about two and a half gigabytes, which on an 8 GB board can push the
-machine into swap. While search moves to a new model, the old and new servers
-run side by side for a while, so plan for an extra gigabyte during that time.
+Any of these can be your server: an old laptop, a mini PC, a rack server you
+already have, or a single-board computer with enough RAM. Your server's
+speed depends mostly on its RAM, then on its storage.
 
-If you run the model on a different machine - see
-[Setting up inference](/docs/inference) - then 8 GB on this machine leaves
-plenty of room.
+## Devices you connect with
 
-## Disk
+To use Virtues, open the app on one of these devices. For the first pairing,
+your device must be on the same network as your server.
 
-Installing needs **about 4 GB free on `/`** for PostgreSQL, the binaries, the
-local models if they're stored here, and working space. After that, the record
-keeps growing as data comes in, in two places under `/var/lib/virtues`: the
-PostgreSQL cluster, and the file store for raw attachments, recordings and
-documents.
+- **A Mac with macOS 26.2 or later**, with the Virtues desktop app.
+- **A Windows PC**, with the Virtues desktop app.
+- **An iPhone with iOS 26.2 or later**, with the Virtues app.
+
+A web browser on another computer can't connect to your server; use the app
+instead.
+
+[Connecting your devices](/docs/setup/devices) explains how to pair each
+one.
+
+## Tested hardware
+
+We test on `x86_64` Ubuntu servers and on the `aarch64` Radxa
+Dragon. To measure other hardware, check the storage and search-speed grades
+the installer shows, then run `virtues doctor` once your server is running.
+
+## Next steps
+
+When your machine meets these requirements, continue with
+[Install script](/docs/setup/install).
+
+---
+
+## How Virtues uses RAM
+
+| Process | RAM |
+|---|---|
+| PostgreSQL and the Virtues server | About 2 GB together |
+| Embedding model server, on the same machine | About 1 GB |
+| A second embedding model server, while search switches to a new model | About 1 GB more, until the switch finishes |
+
+The embedding model server stays at about 1 GB because of the flags Virtues
+starts it under: one request slot, no prompt cache, a 2048-token context. With
+a model server's own defaults, it would use about 2.5 GB, which can push an
+8 GB server into swap.
+
+If your embedding server runs on another computer, your Virtues server needs
+about 1 GB less RAM, so the suggested minimum of 8 GB leaves plenty to
+spare.
+
+## How Virtues uses the network
+
+- **Outgoing connections only.** Virtues doesn't need any incoming port, so
+  there's no port forwarding to set up on your router. Your paired devices
+  reach your server by its key, as [Reaching your server](/docs/operate/reach)
+  explains.
+- **Two sites during the install.** The installer downloads the release from
+  `github.com` and PostgreSQL from `apt.postgresql.org`, and checks that it
+  can reach both before it changes anything. On a network that only allows
+  sites by name, both need to be allowed.
+
+## How search uses the GPU
+
+- **The model that writes your day pages and answers your questions doesn't
+  run on your server,** so it needs no GPU. It runs in the cloud, through our
+  gateway, which asks every model provider for zero data retention, except for
+  models marked as not zero retention. If you bring your own AI key, your
+  provider's own terms apply.
+- **The CPU engine doesn't offload to the GPU.** The model's math overflows
+  16-bit arithmetic, which some GPU paths use. If you set up your own GPU
+  server, Virtues checks it when you connect it.
+- **Search doesn't use a reranker**, a second model that re-sorts results. The
+  small rerankers we tested sorted results worse than search alone, so search
+  runs one model.
+- **Search speed depends on how fast your embedding server answers.** The
+  installer measures the median (p50) latency of your endpoint and grades it:
+  under 100 ms, searches feel instant. Up to 400 ms, they feel a little slow.
+  Above that, every search has a noticeable wait. That measurement says more
+  about a machine's search speed than its spec sheet does.
+
+## How Virtues uses storage
+
+- **Installing** uses about 4 GB on `/`, for PostgreSQL, the Virtues programs,
+  the search model and working space.
+- **After that,** your server uses more storage as data comes in. Virtues
+  stores it in two places under `/var/lib/virtues`: the PostgreSQL database,
+  and a file store for attachments, recordings and documents.
 
 **The type of disk matters more than its size.** Vector search does a lot of
 random reads and the write-ahead log does a lot of fsyncs, so the disk is the
 biggest factor in how fast search feels. Before it installs anything, the
-installer identifies and measures the disk under the data directory and tells
-you which tier it's in:
+installer identifies and measures the disk that holds the data directory, and
+tells you which type it is:
 
-| What it finds | What it says |
+| Disk type | What to expect |
 |---|---|
-| NVMe, or a SATA/other SSD | Great - this is the intended case |
-| eMMC | Workable to around a hundred thousand items; large index builds are slow and the flash wears |
-| microSD | Searches will feel slow and the card will wear out under database load |
-| USB-attached | Works, but some USB bridges don't honor cache flushes, which risks corruption on power loss |
-| Spinning disk | Expect multi-second searches |
-| NFS or SMB | Don't. PostgreSQL on a network filesystem is a known corruption risk |
+| NVMe or SATA SSD | The best choice. Virtues is designed for it. |
+| eMMC | Works up to about 100,000 items. Building a large search index is slow, and the storage wears out over time. |
+| microSD | Search feels slow, and the card wears out under the database's constant writes. |
+| USB-attached disk | Works, but some USB adapters report data as saved before it is, so a power cut can corrupt it. |
+| Hard disk | Each search takes several seconds. |
+| NFS or SMB network share | Unsafe. PostgreSQL on a network share can corrupt your data. |
 
-Some disks confirm a write before the data is physically saved, so a power
-cut can still lose it. The installer times `fsync` to catch this and
-flags a disk whose numbers are impossible for its medium.
+Note: some disks confirm a write before the data is physically saved, so a
+power cut can still lose it. The installer times `fsync` to catch this, and
+warns you when a disk's numbers are impossible for its type.
 
-None of these warnings stop the install. `virtues doctor`
-re-reports storage later. To put the data somewhere other than
-`/var/lib/virtues`, set `DATA_DIR` when you run the installer, and point it
-at a **local** disk.
-
-## Do you need a GPU?
-
-Most people don't. This section lists which models run where.
-
-**The model that writes does not run on your server.** Composing an account of
-your day, answering a question, transcribing a recording - that work goes to
-a model provider, through our gateway by default or through an endpoint you
-choose. You don't need GPU memory for it.
-
-**The only local model is for search:** one embedding model, which turns your
-record into vectors. It runs on the CPU by default, and for everyday use that
-is enough. A GPU or NPU can make every search and the first index of your
-history faster, so if the machine has one, consider setting it up after
-installing:
-[Faster search on a GPU or NPU](/docs/setup/accelerators).
-
-- **The CPU engine doesn't offload to the GPU.** The model's math overflows
-  16-bit arithmetic, which some GPU paths use. A GPU server you set
-  up yourself gets checked when you point Virtues at it.
-- **Search doesn't use a reranker.** The small rerankers we tested ranked
-  results worse than search without them, so there is no second model to plan
-  hardware for.
-
-**Most NPUs need their vendor's runtime.** They reach Virtues through any
-server that offers the embedding contract, which is what bring-your-own
-inference is for. On a Radxa Dragon, Virtues runs search on the NPU itself.
-
-**Embedding latency is the number that matters.** The installer measures the
-median (p50) latency of your endpoint and grades it: under 100 ms, searches
-feel instant; up to 400 ms, they feel a little slow; above that, every search
-waits on it noticeably. Use that measurement, rather than a spec sheet, to
-decide whether the machine is fast enough.
-
-## Network
-
-Virtues only makes outbound connections. It doesn't open **any inbound port**
-and needs no forwarding rule; a paired device reaches the server by key, over paths described in
-[Reaching your server](/docs/operate/reach). During the install it needs to
-reach `github.com` for the release and `apt.postgresql.org` for PostgreSQL,
-and it probes both before touching anything.
-
-Locally it binds three ports: `8000` for the server, `5432` for PostgreSQL,
-and `18181` for the embedding endpoint when that runs on the same machine.
-The installer warns if something is already using them.
-
-## What we test on
-
-We test on `x86_64` Debian and Ubuntu servers and on our own `aarch64` board.
-On other hardware, measure it yourself with the tools the installer includes:
-the storage and embedding-latency grades during setup, then `virtues doctor`
-on the running server.
-
-Next: [Setting up inference](/docs/inference), the one part to set up
-*before* you install if you run your own embedding server, and then
-[Installing](/docs/setup/install).
+None of these warnings stop the install, and `virtues doctor` reports on
+storage again later. The data location comes from `DATA_DIR` at install time,
+and defaults to `/var/lib/virtues`.
