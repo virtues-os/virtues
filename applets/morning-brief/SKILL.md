@@ -1,9 +1,9 @@
 ---
 name: morning-brief
-description: What today holds, what is due, and what is waiting on you
+description: Briefs you on what today holds, what is due and what is waiting on you. Use when you ask about your day ahead or what needs doing today.
 allowed-tools: sql_query semantic_search web_search
 metadata:
-  invoke: chat
+  invoke: chat, assistant
   limit: $2.5 per run, 8 minutes
   icon: ri:sun-line
 ---

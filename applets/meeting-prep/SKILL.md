@@ -1,9 +1,9 @@
 ---
 name: meeting-prep
-description: Get ready for your next meeting, or one you name
+description: Gets you ready for your next meeting, or one you name. Use when you ask to prepare for a meeting or about the people you are about to meet.
 allowed-tools: sql_query semantic_search get_project_item
 metadata:
-  invoke: chat
+  invoke: chat, assistant
   limit: $2.5 per run, 8 minutes
   icon: ri:team-line
 ---

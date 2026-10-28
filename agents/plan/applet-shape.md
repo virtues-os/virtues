@@ -950,10 +950,10 @@ Built on 2026-10-27 except the live check: no model has yet been shown a
   loading one lists its files.
 - An applet's own `/name` turn and its runs get a files-only tool when its
   folder has `references/` or `assets/`.
-- No shipped applet is offered. Whether the shipped chat applets (weekly
-  review, meeting prep, morning brief, trip planner) should also be
-  `assistant` is the owner's call, since it changes the shape of answers
-  to ordinary questions.
+- The owner made the four shipped chat applets (weekly review, meeting
+  prep, morning brief, trip planner) `invoke: chat, assistant`, each
+  description ending in when to use it. Admin, deep research and new applet
+  stay `/name` only.
 
 ### 7. Output, threads and the Inbox
 

@@ -190,11 +190,20 @@ mod tests {
         assert_eq!(own["function"]["parameters"]["properties"]["file"]["enum"][0], "references/units.md");
     }
 
-    /// No shipped applet is a prompt the assistant loads today, so chat on a
-    /// box with only shipped applets is offered no `use_applet`.
+    /// The four shipped chat applets are also the assistant's, so chat on
+    /// any box lists them; the two old modes and the code applets are not.
     #[test]
-    fn chat_offers_it_only_when_an_applet_is_loadable() {
-        let shipped_only = crate::applet_templates::assistant_applets().is_empty();
-        assert_eq!(definition().is_none(), shipped_only);
+    fn chat_lists_the_shipped_applets_the_assistant_may_load() {
+        let def = definition().expect("shipped applets are loadable");
+        let names = def["function"]["parameters"]["properties"]["name"]["enum"].as_array().unwrap().clone();
+        for name in ["meeting-prep", "morning-brief", "trip-planner", "weekly-review"] {
+            assert!(names.contains(&serde_json::json!(name)), "{name} is not listed: {names:?}");
+            let r = execute(&serde_json::json!({ "name": name })).unwrap();
+            assert!(!r.data["instructions"].as_str().unwrap().is_empty(), "{name}");
+        }
+        for name in ["admin", "deep-research", "new-applet", "wiki-editor", "day-summary-eod"] {
+            assert!(!names.contains(&serde_json::json!(name)), "{name} is listed");
+        }
+        assert!(execute(&serde_json::json!({ "name": "admin" })).is_err(), "admin is /admin only");
     }
 }

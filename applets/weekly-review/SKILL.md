@@ -1,9 +1,9 @@
 ---
 name: weekly-review
-description: Look back over the past seven days and what the next seven hold
+description: Reviews your past seven days and looks at the next seven. Use when you ask how your week went or what next week holds.
 allowed-tools: sql_query semantic_search get_project_item create_page
 metadata:
-  invoke: chat
+  invoke: chat, assistant
   limit: $3 per run, 10 minutes
   icon: ri:calendar-check-line
 ---

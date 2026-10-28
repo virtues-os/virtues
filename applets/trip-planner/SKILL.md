@@ -1,9 +1,9 @@
 ---
 name: trip-planner
-description: Plan a trip around your calendar and the places you like
+description: Plans a trip around your calendar and the places you like. Use when you ask for help planning a trip or a weekend away.
 allowed-tools: sql_query semantic_search web_search create_page
 metadata:
-  invoke: chat
+  invoke: chat, assistant
   limit: $3 per run, 12 minutes
   icon: ri:plane-line
 ---

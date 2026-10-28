@@ -408,7 +408,9 @@ pub(crate) mod tests {
             .filter(|name| name != "think")
             .collect();
 
-        assert_eq!(tool_names(&ChatMode::Chat), every);
+        let mut chat = every.clone();
+        chat.insert("use_applet".into());
+        assert_eq!(tool_names(&ChatMode::Chat), chat);
         assert_eq!(tool_names(&ChatMode::Applet(applet("admin"))), set(&["sudo", "sql_query", "sql_write"]));
         assert_eq!(
             tool_names(&ChatMode::Applet(applet("deep-research"))),
@@ -471,10 +473,13 @@ pub(crate) mod tests {
             ("interview", &["write_it_up"], 1_500),
             ("getting_started", &["skip_step", "record_introductions"], 2_200),
         ];
-        // (mode's wire name, total ceiling). Chat's is the sum of its group
-        // ceilings; the rest sit just above their 2026-09-29 size.
+        // (mode's wire name, total ceiling). Chat's was the sum of its group
+        // ceilings, and rose 1,300 on 2026-10-27 for `use_applet` listing the
+        // four shipped chat applets; the applets a box adds grow it toward
+        // that group's ceiling, which this test cannot see. The rest sit just
+        // above their 2026-09-29 size.
         const MODES: &[(&str, usize)] = &[
-            ("chat", 21_900),
+            ("chat", 23_200),
             ("interview", 1_500),
             ("getting_started", 2_200),
             ("local", 0),
