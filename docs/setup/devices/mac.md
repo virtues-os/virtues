@@ -25,11 +25,11 @@ anywhere.
    **Join it instead**. (The search only finds hardware we build, not a server
    you installed yourself.)
 4. On your server, run `virtues pair`. It prints a six-digit pairing code.
-   The code expires if the command prompt (such as `user@server:~$`) comes
-   back below it. If so, run `virtues pair` again.
+   If the app later says the code is wrong, run `virtues pair` again for a
+   new one.
 5. On your Mac, enter your server's address and the pairing code in the app.
-   Your Mac needs to be on the same network as your server for this step. For the address, use your server's IP address followed by `:8000`,
-   such as `192.168.1.20:8000`. To find it, run `hostname -I` on your server.
+   For the address, use your server's IP address followed by `:8000`, such
+   as `192.168.1.20:8000`. To find it, run `hostname -I` on your server.
 
 If you installed over SSH and your network stops devices from seeing each
 other, use the `ssh -L` command the installer printed.

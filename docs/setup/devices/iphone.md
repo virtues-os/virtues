@@ -8,12 +8,11 @@ The Virtues iPhone app needs iOS 26.2 or later.
 
 ## Pair your iPhone as your first device
 
-> These steps haven't been tested yet.
+> Not yet tested on real hardware.
 
 1. On your server, run `virtues pair`. It prints a six-digit pairing code.
-   The code works until the command prompt (such as `user@server:~$`) comes
-   back below it. Once it does, the code has expired: run `virtues pair`
-   again.
+   If the app later says the code is wrong, run `virtues pair` again for a
+   new one.
 2. Install the Virtues iPhone app from the App Store, and open it.
 3. The app opens a QR code scanner. Tap **Find your server on this network**.
 4. Enter the six-digit code.

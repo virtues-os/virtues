@@ -6,12 +6,11 @@ updated: 2026-10-26
 
 ## Pair your PC as your first device
 
-> These steps haven't been tested yet.
+> Not yet tested on real hardware.
 
 1. On your server, run `virtues pair`. It prints a six-digit pairing code.
-   The code works until the command prompt (such as `user@server:~$`) comes
-   back below it. Once it does, the code has expired: run `virtues pair`
-   again.
+   If the app later says the code is wrong, run `virtues pair` again for a
+   new one.
 2. Download the Virtues desktop app from
    [virtues.com/downloads](https://virtues.com/downloads), and open it.
 3. Enter the six-digit code.

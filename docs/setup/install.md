@@ -55,10 +55,15 @@ hardware.
   it. If you haven't set one
   up yet, follow [Set up a custom embedding server](/docs/inference) first.
 
-If your server has a GPU or NPU and you want faster search, follow
-[GPU and NPU acceleration](/docs/setup/accelerators), before or after you
-install. If the installer finds a GPU or NPU, it also prints a link to that
-page in your terminal.
+If the installer finds a GPU or NPU, it prints a link to
+[GPU and NPU acceleration](/docs/setup/accelerators) and asks the same
+question with three answers instead:
+
+- **On this computer's CPU for now** runs search on the CPU, as above. You
+  can move it to the GPU or NPU any time after installing.
+- **On a server I've already set up** is the same as **On my own server**.
+- **Stop, so I can set up the server first** exits without installing
+  anything. Follow the guide, then run the install command again.
 
 After you answer, the installer finishes the install, which takes about ten
 minutes, and ends by printing a six-digit pairing code.

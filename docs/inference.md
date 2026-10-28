@@ -20,8 +20,14 @@ we've already set up search.)
   - **Use a different embedding model.** Follow this page.
 
   Set up that server before you run the install command, because the
-  installer asks for its URL and tests it: `http://localhost:8080` for a server on this
-  machine, or `http://192.168.1.20:8080` for one on another computer.
+  installer asks for its URL and tests it: `http://localhost:8080` for a
+  server on this machine, or `http://192.168.1.20:8080` for one on another
+  computer.
+
+If the installer finds a GPU or NPU, the answers read **On this computer's
+CPU for now**, **On a server I've already set up**, and **Stop, so I can set
+up the server first**, which exits so you can set up your server and run the
+install command again.
 
 An embedding server runs the small model that turns everything in your record
 into vectors, which search uses to find things by meaning.

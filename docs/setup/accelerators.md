@@ -43,7 +43,8 @@ curl -fLO https://huggingface.co/ggml-org/embeddinggemma-2-GGUF/resolve/bfcd2987
 ```
 
 **3. Start the server on the accelerator.** `-ngl 99` puts the whole model on
-it.
+it. Some GPU paths compute this model wrong, because its math overflows
+16-bit arithmetic. Step 4 checks for that and stops before anything changes.
 
 ```bash
 ./llama-b11507/llama-server --embedding --pooling mean \
