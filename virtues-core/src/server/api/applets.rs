@@ -54,6 +54,12 @@ pub fn routes() -> Router<AppState> {
             "/api/applets/:id/hosts",
             get(get_applet_hosts_handler).put(put_applet_hosts_handler),
         )
+        // The connections an applet may use, set here only for the same
+        // reason (scheduler::applets::set_applet_connections).
+        .route(
+            "/api/applets/:id/connections",
+            get(get_applet_connections_handler).put(put_applet_connections_handler),
+        )
         .route("/api/applets/:id/run", post(trigger_applet_handler))
         .route("/api/applets/:id/message", post(message_applet_handler))
         .route("/api/applets/:id/data", get(get_applet_data_handler))
@@ -323,7 +329,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         r.try_get("next_due_at").unwrap_or(None);
                     let last_slot_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("last_slot_at").unwrap_or(None);
-                    let has_face = crate::server::faces::face_dir_for(&id).is_some();
+                    let has_face = crate::server::faces::face_for(&id).is_some();
                     let origin = crate::scheduler::applets::origin_of(
                         &owner,
                         credential_id.is_some() || device_id.is_some(),
@@ -578,7 +584,7 @@ pub async fn get_applet_handler(
                     "archived_at": action.archived_at,
                     "next_due_at": action.next_due_at,
                     "last_slot_at": action.last_slot_at,
-                    "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
+                    "has_face": crate::server::faces::face_for(&action.id).is_some(),
                     "secrets": secrets,
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,
@@ -655,6 +661,31 @@ pub async fn put_applet_hosts_handler(
     Json(body): Json<PutHostsBody>,
 ) -> Result<Json<crate::scheduler::applets::NetHosts>, Error> {
     Ok(Json(crate::scheduler::applets::set_net_hosts(state.db.pool(), &applet_id, &body.hosts).await?))
+}
+
+/// GET /api/applets/:id/connections — the connections the applet's file asks
+/// for and the ones the owner allowed.
+pub async fn get_applet_connections_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+) -> Result<Json<crate::scheduler::applets::AppletConnections>, Error> {
+    Ok(Json(crate::scheduler::applets::applet_connections(state.db.pool(), &applet_id).await?))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct PutConnectionsBody {
+    pub connections: Vec<String>,
+}
+
+/// PUT /api/applets/:id/connections — set the connections the owner allows.
+pub async fn put_applet_connections_handler(
+    State(state): State<AppState>,
+    Path(applet_id): Path<String>,
+    Json(body): Json<PutConnectionsBody>,
+) -> Result<Json<crate::scheduler::applets::AppletConnections>, Error> {
+    Ok(Json(
+        crate::scheduler::applets::set_applet_connections(state.db.pool(), &applet_id, &body.connections).await?,
+    ))
 }
 
 /// PATCH /api/applets/:id — partial update. Enforces system-owner guard.
@@ -1006,40 +1037,19 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
         .into_response()
 }
 
-/// `POST /api/admin/actions/import-git`
+/// `POST /api/admin/applets/import-git`
 ///
 /// Clone (or update) a Git repo into `actions/<slug>/` and reconcile so the
 /// new manifests show up as `app_applets` rows. We scope the per-row diff to
 /// the slug prefix and clean up rows for manifests that disappeared upstream.
+///
+/// This fetches and runs somebody else's code, so it needs the app's owner
+/// proof (`api::owner_proof`).
 pub async fn import_git_applets_handler(
     State(state): State<AppState>,
-    user: crate::middleware::auth::AuthUser,
+    _proof: crate::api::owner_proof::OwnerProven,
     Json(body): Json<crate::applet_git_import::ImportRequest>,
 ) -> Response {
-    // Sudo-gated: this fetches and runs somebody else's code.
-    let Some(sudo_id) = body.sudo_request_id.as_deref().filter(|s| !s.is_empty()) else {
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "sudo_required" })),
-        )
-            .into_response();
-    };
-    if let Err(resp) = crate::api::sudo::verify_and_consume(
-        state.db.pool(),
-        sudo_id,
-        "import_applet_package",
-        &user.device_id,
-    )
-    .await
-    {
-        tracing::warn!("applet import: sudo verify failed: {resp}");
-        return (
-            StatusCode::FORBIDDEN,
-            Json(serde_json::json!({ "error": "sudo_not_approved" })),
-        )
-            .into_response();
-    }
-
     let outcome = match crate::applet_git_import::import(state.db.pool(), body).await {
         Ok(o) => o,
         Err(e) => {

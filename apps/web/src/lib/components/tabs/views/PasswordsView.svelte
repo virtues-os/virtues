@@ -6,6 +6,10 @@
 	 * fetched when you open a login, and nothing the assistant can call reads
 	 * them (`api/passwords.rs`). API keys for applets and the sources'
 	 * sign-ins are in Settings → Keys (`KeysView`).
+	 *
+	 * A login the server's key cannot open comes back `unreadable`, with its
+	 * site and label only. Opening one says what happened and offers Remove,
+	 * since it cannot be revealed or edited.
 	 */
 	import { onMount } from 'svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
@@ -79,6 +83,11 @@
 		openError = null;
 		passwordShown = false;
 		copied = null;
+		if (login.unreadable) {
+			removing = login;
+			removeError = null;
+			return;
+		}
 		try {
 			const secret = await revealLogin(login.id);
 			opened = { login, ...secret };
@@ -207,7 +216,13 @@
 					<span class="site-host">{host(l.site)}</span>
 				{/if}
 			</td>
-			<td class="cell dim">{l.username || 'No username'}</td>
+			<td class="cell dim">
+				{#if l.unreadable}
+					Can't be opened
+				{:else}
+					{l.username || 'No username'}
+				{/if}
+			</td>
 			<td class="cell dim hide-mobile">{formatRelativeTimestamp(l.updated_at)}</td>
 		{/snippet}
 	</UniversalDataGrid>
@@ -298,19 +313,34 @@
 
 <Modal
 	open={removing !== null}
-	title={`Remove ${removing?.name ?? ''}?`}
+	title={removing?.unreadable
+		? `${removing.name} can't be opened`
+		: `Remove ${removing?.name ?? ''}?`}
 	onClose={() => (removing = null)}
 >
 	{#if removing}
-		<p class="body">
-			Your server deletes the login for {removing.username || host(removing.site)}. This can't be
-			undone.
-		</p>
+		{#if removing.unreadable}
+			<p class="body">
+				Your server can't open this login with its current key. That happens when a login was
+				saved under a different key, for example before a restore.
+			</p>
+			<p class="body">
+				To read it again, put back the key it was saved with. Or remove it. Removing it can't be
+				undone.
+			</p>
+		{:else}
+			<p class="body">
+				Your server deletes the login for {removing.username || host(removing.site)}. This can't be
+				undone.
+			</p>
+		{/if}
 		{#if removeError}
 			<p class="form-error">{removeError}</p>
 		{/if}
 		<div class="form-actions">
-			<Button variant="ghost" onclick={() => (removing = null)}>Cancel</Button>
+			<Button variant="ghost" onclick={() => (removing = null)}>
+				{removing.unreadable ? 'Close' : 'Cancel'}
+			</Button>
 			<Button variant="danger" disabled={busy} onclick={remove}>Remove</Button>
 		</div>
 	{/if}
@@ -372,6 +402,9 @@
 		font-size: 0.875rem;
 		line-height: 1.5;
 		color: var(--color-foreground-muted);
+	}
+	.body + .body {
+		margin-top: 0.75rem;
 	}
 	.form {
 		display: flex;

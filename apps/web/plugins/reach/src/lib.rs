@@ -1,10 +1,8 @@
-//! In-process reach for the mobile app.
+//! In-process reach for the app, on every desktop and on the phone.
 //!
-//! The desktop ships a `virtues-client` sidecar that pairs and runs a `:7117`
-//! loopback proxy over iroh. iOS can't spawn sidecars, so this plugin runs the
-//! same `virtues-reach-client` core in-process: it pairs the device, persists
-//! the record to the app container, and serves the box over iroh on a loopback
-//! port the webview loads.
+//! Runs the `virtues-reach-client` core inside the app: it pairs the device,
+//! persists the record (`store.rs`), and serves the box over iroh on a
+//! loopback port the webview loads.
 
 use std::net::TcpListener as StdTcpListener;
 use std::path::PathBuf;
@@ -24,11 +22,13 @@ mod error;
 mod ffi;
 mod models;
 mod stats;
+mod store;
 mod upload;
 mod widget;
 
 pub use error::{Error, Result};
 use models::ReachStatus;
+pub(crate) use store::FileStore;
 
 // ─── Dev profiles ────────────────────────────────────────────────────────────
 //
@@ -308,8 +308,9 @@ async fn recover_inner() -> i32 {
 
 // ─── Credential storage ──────────────────────────────────────────────────────
 //
-// The 32-byte device seed is the credential. On iOS it lives in the Keychain
-// (see `keychain` below); elsewhere it is a 0600 file in the app container.
+// The 32-byte device seed is the credential. Where it lives on each platform
+// is in `store.rs`: the Keychain on iOS and macOS, a file elsewhere (mode 0600
+// on Unix).
 
 /// Base dir injected from the plugin's `setup()` via Tauri's path API. Set on
 /// Android, where `dirs::data_dir()` is unreliable: with no XDG vars and no
@@ -353,138 +354,6 @@ fn init_outbox(store: &FileStore) {
     return;
   }
   let _ = outbox::reset_stale();
-}
-
-/// iOS Keychain bridge (Swift `@_cdecl` in location-probe's Keychain.swift). The
-/// pairing (seed + box info) lives in the Keychain so it SURVIVES app deletion —
-/// a reinstalled app stays paired — and is cleared only by `forget`.
-#[cfg(target_os = "ios")]
-mod keychain {
-  use std::ffi::{CStr, CString};
-  use std::os::raw::c_char;
-
-  extern "C" {
-    fn virtues_keychain_save(json: *const c_char) -> i32;
-    fn virtues_keychain_load() -> *mut c_char;
-    fn virtues_keychain_delete() -> i32;
-    fn virtues_keychain_free(ptr: *mut c_char);
-  }
-
-  pub fn save(json: &str) -> anyhow::Result<()> {
-    let c = CString::new(json)?;
-    let rc = unsafe { virtues_keychain_save(c.as_ptr()) };
-    if rc != 0 {
-      anyhow::bail!("keychain save failed (OSStatus {rc})");
-    }
-    Ok(())
-  }
-
-  pub fn load() -> anyhow::Result<Option<String>> {
-    let ptr = unsafe { virtues_keychain_load() };
-    if ptr.is_null() {
-      return Ok(None);
-    }
-    let s = unsafe { CStr::from_ptr(ptr) }.to_string_lossy().into_owned();
-    unsafe { virtues_keychain_free(ptr) };
-    Ok(Some(s))
-  }
-
-  pub fn delete() -> anyhow::Result<()> {
-    let rc = unsafe { virtues_keychain_delete() };
-    if rc != 0 {
-      anyhow::bail!("keychain delete failed (OSStatus {rc})");
-    }
-    Ok(())
-  }
-}
-
-/// Persists the `PairedBox`. On iOS this is Keychain-backed (survives app
-/// deletion); elsewhere it's a `0600` JSON file. `path` is still used on iOS for
-/// the one-time migration of a pre-Keychain `box.json` and as the desktop sink.
-struct FileStore {
-  path: PathBuf,
-}
-
-impl FileStore {
-  fn new() -> Self {
-    FileStore {
-      path: virtues_dir().join("box.json"),
-    }
-  }
-}
-
-impl BoxStore for FileStore {
-  fn load(&self) -> anyhow::Result<Option<PairedBox>> {
-    #[cfg(target_os = "ios")]
-    {
-      if let Some(json) = keychain::load()? {
-        return Ok(Some(serde_json::from_str(&json)?));
-      }
-      // One-time migration: older builds wrote a plaintext box.json. Move it into
-      // the Keychain and delete the file so the seed no longer sits on disk.
-      match std::fs::read_to_string(&self.path) {
-        Ok(json) => {
-          keychain::save(&json)?;
-          let _ = std::fs::remove_file(&self.path);
-          Ok(Some(serde_json::from_str(&json)?))
-        }
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e.into()),
-      }
-    }
-    #[cfg(not(target_os = "ios"))]
-    {
-      match std::fs::read_to_string(&self.path) {
-        Ok(json) => Ok(Some(serde_json::from_str(&json)?)),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(e) => Err(e.into()),
-      }
-    }
-  }
-
-  fn save(&self, rec: &PairedBox) -> anyhow::Result<()> {
-    let json = serde_json::to_string(rec)?;
-    #[cfg(target_os = "ios")]
-    {
-      keychain::save(&json)?;
-      return Ok(());
-    }
-    #[cfg(not(target_os = "ios"))]
-    {
-      if let Some(dir) = self.path.parent() {
-        std::fs::create_dir_all(dir)?;
-      }
-      let tmp = self.path.with_extension("tmp");
-      {
-        use std::io::Write as _;
-        let mut opts = std::fs::OpenOptions::new();
-        opts.write(true).create(true).truncate(true);
-        #[cfg(unix)]
-        {
-          use std::os::unix::fs::OpenOptionsExt;
-          opts.mode(0o600);
-        }
-        let mut f = opts.open(&tmp)?;
-        f.write_all(json.as_bytes())?;
-        f.sync_all().ok();
-      }
-      std::fs::rename(&tmp, &self.path)?;
-      Ok(())
-    }
-  }
-
-  fn delete(&self) -> anyhow::Result<()> {
-    #[cfg(target_os = "ios")]
-    {
-      keychain::delete()?;
-    }
-    // Also remove any on-disk copy (legacy iOS file, or the desktop sink).
-    match std::fs::remove_file(&self.path) {
-      Ok(()) => Ok(()),
-      Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-      Err(e) => Err(e.into()),
-    }
-  }
 }
 
 // ─── Plugin state ────────────────────────────────────────────────────────────
@@ -918,6 +787,14 @@ impl ReachState {
     virtues_reach_client::owner::sign_owner_proof(self.store.as_ref(), nonce)
   }
 
+  /// Sign one HTTP request for the box with this device's paired key: the
+  /// owner proof the box asks for before revealing a secret, adding a device,
+  /// changing the AI key or importing an applet package. Returns the header
+  /// value; the key never leaves the store.
+  pub fn sign_http_owner_proof(&self, method: &str, path: &str, nonce: &str) -> anyhow::Result<String> {
+    virtues_reach_client::owner::sign_http_owner_proof(self.store.as_ref(), method, path, nonce)
+  }
+
   /// LAPTOP SIDE of the pairing handoff: mint an identity for a phone that
   /// cannot reach the box, enroll its public half, and return the QR that
   /// carries the result. See `virtues_reach_client::handoff` for the shape and
@@ -929,11 +806,31 @@ impl ReachState {
     self.ensure_serving().await?;
     let client = warm_client().ok_or_else(|| Error::Reach("not connected to your box".into()))?;
 
+    // The box enrolls a device only with a fresh owner proof from this app.
+    // A server too old to issue a nonce does not ask for one.
+    let nonce_resp = client
+      .request(&virtues_reach_client::owner::nonce_request())
+      .await
+      .map_err(|e| Error::Reach(format!("enroll failed: {e:#}")))?;
+    let (nonce_status, nonce_body) =
+      virtues_reach_client::handoff::split_response(&nonce_resp).map_err(|e| Error::Reach(e.to_string()))?;
+    let proof = match virtues_reach_client::owner::parse_nonce_response(nonce_status, &nonce_body)
+      .map_err(|e| Error::Reach(format!("{e:#}")))?
+    {
+      Some(nonce) => Some(
+        self
+          .sign_http_owner_proof("POST", virtues_reach_client::handoff::ENROLL_PATH, &nonce)
+          .map_err(|e| Error::Reach(format!("{e:#}")))?,
+      ),
+      None => None,
+    };
+
     let identity = virtues_reach_client::pair::mint_identity();
     let raw = virtues_reach_client::handoff::enroll_request(
       &identity.node_id,
       "mobile_app",
       label.as_deref(),
+      proof.as_deref(),
     )
     .map_err(|e| Error::Reach(e.to_string()))?;
 
@@ -1051,9 +948,9 @@ impl ReachState {
   pub fn forget(&self) -> Result<()> {
     // Full teardown so a re-pair (even to a different box) serves fresh WITHOUT an
     // app restart: abort the loopback + drain tasks (frees the loopback port),
-    // clear the warm client, reset the serving flag, then delete the creds. The
-    // pairing lives in the Keychain (survives app deletion), so this is the only
-    // way to truly forget a box.
+    // clear the warm client, reset the serving flag, then delete the creds. On
+    // iOS the pairing lives in the Keychain and survives app deletion, and on
+    // the Mac the seed does, so this is the only way to truly forget a box.
     if let Ok(mut t) = self.tasks.lock() {
       for h in t.drain(..) {
         h.abort();
@@ -1201,7 +1098,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::pair_door_close,
       commands::pair_door_status,
       commands::pair_handoff_create,
-      commands::pair_handoff_accept
+      commands::pair_handoff_accept,
+      commands::owner_proof_sign
     ])
     .setup(|app, _api| {
       #[cfg(target_os = "ios")]

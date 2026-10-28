@@ -378,7 +378,6 @@ more than the server. The tag tells you which product a release is for:
 | `virtues pair` | Prints a code for connecting a device |
 | `virtues device ls` / `add` / `rm <id>` | Lists, adds, or removes the devices that can reach this server. A removed device is refused on its next connection attempt |
 | `virtues subscribe` | Connects the server to a subscription so the assistant can use a language model |
-| `virtues sudo` | Approves a pending sensitive action. Running it proves you have physical access to the server |
 | `virtues upgrade` / `rollback` | Moves between releases on this server's channel. The server never updates itself |
 | `virtues channel` | Shows or sets the release channel this server follows |
 | `virtues backup` / `restore` | Takes and restores snapshots of the server's data |

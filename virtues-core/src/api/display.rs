@@ -11,11 +11,11 @@
 //! The standing pair code is the box's live credential: anyone who can read it
 //! can enroll a device. The whole trust model is that reading it requires
 //! standing in front of the box — proximity is the authority, exactly as with
-//! `virtues sudo`. That is why the raw code is stored encrypted and shown only
-//! on physical surfaces, and why it must never be served over the LAN: a
-//! stranger on the wifi who cannot see the screen must not be able to claim the
-//! box. `/api/setup/state` stays LAN-public precisely because it carries no
-//! secret; this endpoint is its box-local sibling.
+//! `virtues pair` at the box's console. That is why the raw code is stored
+//! encrypted and shown only on physical surfaces, and why it must never be
+//! served over the LAN: a stranger on the wifi who cannot see the screen must
+//! not be able to claim the box. `/api/setup/state` stays LAN-public precisely
+//! because it carries no secret; this endpoint is its box-local sibling.
 //!
 //! The loopback test mirrors `middleware::auth`: a peer address of `127.0.0.1`
 //! or `::1` **and** no forwarding header, because a reverse proxy in front of

@@ -168,6 +168,9 @@ async fn main() -> Result<()> {
         // OAuth proxy (google/notion/strava/plaid) — folded in from the Node
         // oauth-proxy (WS-4). Mounted at root: /{provider}/start|callback|...
         .merge(routes::oauth::router())
+        // The return leg of a box's MCP connection sign-in: the service
+        // sends the browser here, and the box claims the code.
+        .merge(routes::connections::router())
         // Bearer-auth account endpoints (whoami + usage)
         .merge(routes::bearer_test::router())
         // Bearer-auth + entitlement charge: Places, Exa, Unsplash, AI.

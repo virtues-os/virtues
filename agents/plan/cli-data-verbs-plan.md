@@ -67,7 +67,7 @@ gets its own SQL, its own role switch or its own validation:
 | `virtues write <sql>` | `sql_write` | `applet_*` schemas only |
 | `virtues schema [table]` | the `sql_catalog` description `sql_query` already generates | what an outside agent needs first |
 
-Not exposed: `shell`, `sql_sudo`, `generate_image`, `code_interpreter`
+Not exposed: `shell`, `sudo`, `sql_sudo`, `generate_image`
 (an outside agent has its own), `web_search` (same, and it spends the box's
 gateway money), `update_memory` and the narrative-identity tools (they write
 the owner's account of themselves).
@@ -156,7 +156,7 @@ which is the boundary that matters. `agent-key` is box-only.
 1. **Read verbs over the executor.** Built 2026-10-05 in `cli/data.rs`:
    `query` (`-` reads stdin), `search`, `schema`, `applet ls/get`, `page get`,
    with the output rules above. `CLI_TOOLS` in `tools/mod.rs` is the
-   allowlist; `ToolExecutor::without_warmup` skips the code_interpreter
+   allowlist; `ToolExecutor::without_warmup` skips the shell's Python
    package build `new` starts; `sql_query` results now carry `columns` in the
    SELECT's order; the verbs log at `error` so a failure prints once. Checked
    on the dev database: `box_secrets` and `pg_read_file` are refused,

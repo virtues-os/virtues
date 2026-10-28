@@ -1339,18 +1339,21 @@ async fn refresh(
     Json(body): Json<RefreshBody>,
 ) -> axum::response::Response {
     let Some(cfg) = provider_cfg(&provider) else {
-        return err(StatusCode::NOT_FOUND, "unknown provider");
+        return refresh_err(StatusCode::NOT_FOUND, "unknown_provider", "unknown provider");
     };
     // This is the door to flip to required FIRST. Unauthenticated, it performs
     // the refresh grant with OUR client_secret for anyone holding a refresh
     // token — the secret is exactly what is supposed to make a stolen refresh
     // token useless to a third party. Its only legitimate caller is the box's
     // credential-refresh cron, which sends the key from the next release on.
+    // Boxes released before the `code` field read any 4xx from this route as
+    // a refused grant and ask the owner to reconnect, so the refusal for a
+    // missing key needs its own `code` and has to wait until they upgrade.
     if caller_api_key(&headers).is_none() {
         tracing::info!(provider = %provider, "oauth refresh without box key (pre-upgrade box)");
     }
     let Some(refresh_token) = body.refresh_token.filter(|s| !s.is_empty()) else {
-        return err(StatusCode::BAD_REQUEST, "missing refresh_token");
+        return refresh_err(StatusCode::BAD_REQUEST, "missing_refresh_token", "missing refresh_token");
     };
 
     // Notion + Plaid tokens are permanent — echo back in the canonical shape so
@@ -1375,16 +1378,16 @@ async fn refresh(
     let v = match send_form(state.http_client.post(&cfg.token_url), &form).await {
         Ok(v) => v,
         Err(e) => {
-            let status = if e.contains("invalid_grant") {
-                StatusCode::UNAUTHORIZED
-            } else {
-                StatusCode::BAD_GATEWAY
-            };
-            return err(status, &format!("refresh failed: {e}"));
+            let (status, body) = refresh_failure(&e);
+            return (status, Json(body)).into_response();
         }
     };
     let Some(access) = v.get("access_token").and_then(|x| x.as_str()) else {
-        return err(StatusCode::BAD_GATEWAY, "no access_token in refresh response");
+        return refresh_err(
+            StatusCode::BAD_GATEWAY,
+            "upstream_error",
+            "no access_token in refresh response",
+        );
     };
     // Google may omit a new refresh_token — preserve the old one.
     let new_refresh = v
@@ -1422,29 +1425,120 @@ async fn refresh(
 async fn send_form(
     req: reqwest::RequestBuilder,
     form: &[(&str, &str)],
-) -> Result<Value, String> {
+) -> Result<Value, UpstreamError> {
     let resp = req.form(form).send().await;
     json_ok(resp).await
 }
 
-async fn json_ok(resp: reqwest::Result<reqwest::Response>) -> Result<Value, String> {
-    let resp = resp.map_err(|e| e.to_string())?;
-    let status = resp.status();
-    if !status.is_success() {
-        // F5: discard the upstream body on error. OAuth/Plaid error responses
-        // can echo back caller-supplied secrets (notably Plaid `public_token`
-        // on exchange failures), and this error string flows into
-        // `tracing::warn!` at the call site. Status only; never the body.
-        let _ = resp.text().await;
-        return Err(format!("upstream status {}", status.as_u16()));
-    }
-    let body = resp.text().await.map_err(|e| e.to_string())?;
-    serde_json::from_str::<Value>(&body).map_err(|e| format!("bad json: {e}"))
+/// Why a call to a provider failed, kept to fields that cannot carry a secret.
+///
+/// F5: the upstream body never leaves `json_ok`. OAuth and Plaid error
+/// responses can echo back caller-supplied secrets (notably Plaid
+/// `public_token` on exchange failures), and these errors flow into
+/// `tracing::warn!` and into answers to the box. What survives is the status
+/// and an OAuth error code from [`OAUTH_ERROR_CODES`].
+#[derive(Debug)]
+enum UpstreamError {
+    /// No usable answer: the request failed, or a success body was not JSON.
+    NoAnswer(String),
+    /// The provider answered with an error status.
+    Refused { status: u16, code: Option<&'static str> },
 }
 
-// (`parse_field` lived here to pull `link_token` out of the old single-field
-// Plaid response; Hosted Link needs two fields at once, so plaid_start reads
-// the object directly and this had no callers left.)
+impl std::fmt::Display for UpstreamError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NoAnswer(msg) => f.write_str(msg),
+            Self::Refused { status, code: Some(code) } => write!(f, "upstream status {status} ({code})"),
+            Self::Refused { status, code: None } => write!(f, "upstream status {status}"),
+        }
+    }
+}
+
+impl From<UpstreamError> for String {
+    fn from(e: UpstreamError) -> Self {
+        e.to_string()
+    }
+}
+
+async fn json_ok(resp: reqwest::Result<reqwest::Response>) -> Result<Value, UpstreamError> {
+    let resp = resp.map_err(|e| UpstreamError::NoAnswer(e.to_string()))?;
+    let status = resp.status();
+    if !status.is_success() {
+        // An unreadable error body only means there is no code to report.
+        let body = resp.text().await.unwrap_or_default();
+        return Err(UpstreamError::Refused {
+            status: status.as_u16(),
+            code: oauth_error_code(&body),
+        });
+    }
+    let body = resp.text().await.map_err(|e| UpstreamError::NoAnswer(e.to_string()))?;
+    serde_json::from_str::<Value>(&body).map_err(|e| UpstreamError::NoAnswer(format!("bad json: {e}")))
+}
+
+/// The error codes an OAuth token endpoint answers with (RFC 6749, section 5.2).
+const OAUTH_ERROR_CODES: [&str; 6] = [
+    "invalid_request",
+    "invalid_client",
+    "invalid_grant",
+    "unauthorized_client",
+    "unsupported_grant_type",
+    "invalid_scope",
+];
+
+/// The OAuth error code in a token endpoint's error body, when it is one of
+/// [`OAUTH_ERROR_CODES`]. The result is always one of this file's own strings,
+/// so nothing the provider or the caller wrote passes through it.
+///
+/// Strava answers with its own fault shape instead of `error`, for example
+/// `{"message": "Bad Request", "errors": [{"resource": "RefreshToken",
+/// "field": "refresh_token", "code": "invalid"}]}`. A fault on the refresh
+/// token or the authorization code is a refused grant; a fault on the
+/// application is a refused client. Other faults, such as a rate limit, have
+/// no OAuth code.
+fn oauth_error_code(body: &str) -> Option<&'static str> {
+    let v: Value = serde_json::from_str(body).ok()?;
+    if let Some(code) = v.get("error").and_then(|e| e.as_str()) {
+        return OAUTH_ERROR_CODES.iter().copied().find(|known| *known == code);
+    }
+    v.get("errors")?.as_array()?.iter().find_map(|fault| {
+        let field = |k: &str| fault.get(k).and_then(|x| x.as_str());
+        match (field("resource")?, field("code")?) {
+            ("RefreshToken" | "AuthorizationCode", "invalid") => Some("invalid_grant"),
+            ("Application", "invalid") => Some("invalid_client"),
+            _ => None,
+        }
+    })
+}
+
+/// An error answer from `/refresh`. `error` is the message every box reads.
+/// `code` and `upstream_status` let a box tell a refused grant from every
+/// other failure (`virtues_helpers::auth::proxy::is_refused_grant`); a box
+/// released before them ignores both.
+fn refresh_error_body(code: &str, upstream_status: Option<u16>, msg: &str) -> Value {
+    json!({ "error": msg, "code": code, "upstream_status": upstream_status })
+}
+
+fn refresh_err(status: StatusCode, code: &str, msg: &str) -> axum::response::Response {
+    (status, Json(refresh_error_body(code, None, msg))).into_response()
+}
+
+/// The answer when the provider fails a refresh. A refused grant
+/// (`invalid_grant`: the owner revoked access, or the grant expired) is 401,
+/// the status every box release treats as "reconnect needed". Everything
+/// else is 502, which a box treats as a failure worth retrying.
+fn refresh_failure(e: &UpstreamError) -> (StatusCode, Value) {
+    let (code, upstream_status) = match e {
+        UpstreamError::Refused { status, code } => (code.unwrap_or("upstream_error"), Some(*status)),
+        UpstreamError::NoAnswer(_) => ("upstream_error", None),
+    };
+    let status = if code == "invalid_grant" {
+        StatusCode::UNAUTHORIZED
+    } else {
+        StatusCode::BAD_GATEWAY
+    };
+    (status, refresh_error_body(code, upstream_status, &format!("refresh failed: {e}")))
+}
 
 #[cfg(test)]
 mod tests {
@@ -1662,6 +1756,74 @@ mod tests {
         });
         assert_eq!(extract_public_token(&v).as_deref(), Some("p"));
         assert_eq!(extract_institution(&v), None);
+    }
+
+    #[test]
+    fn reads_the_oauth_error_code_and_nothing_else() {
+        let google = r#"{"error": "invalid_grant", "error_description": "Token has been expired or revoked."}"#;
+        assert_eq!(oauth_error_code(google), Some("invalid_grant"));
+        assert_eq!(oauth_error_code(r#"{"error": "invalid_client"}"#), Some("invalid_client"));
+
+        // A code this file does not name is dropped, so a body that echoes
+        // what the caller sent cannot pass it through.
+        assert_eq!(oauth_error_code(r#"{"error": "1//refresh-token-echo"}"#), None);
+        // Plaid's error shape carries no OAuth code.
+        assert_eq!(
+            oauth_error_code(r#"{"error_code": "INVALID_PUBLIC_TOKEN", "error_type": "INVALID_INPUT"}"#),
+            None
+        );
+        assert_eq!(oauth_error_code("<html>Bad Gateway</html>"), None);
+        assert_eq!(oauth_error_code(""), None);
+    }
+
+    #[test]
+    fn reads_stravas_fault_shape() {
+        let refused = r#"{"message": "Bad Request", "errors": [{"resource": "RefreshToken", "field": "refresh_token", "code": "invalid"}]}"#;
+        assert_eq!(oauth_error_code(refused), Some("invalid_grant"));
+        let bad_code = r#"{"message": "Bad Request", "errors": [{"resource": "AuthorizationCode", "field": "code", "code": "invalid"}]}"#;
+        assert_eq!(oauth_error_code(bad_code), Some("invalid_grant"));
+        let bad_client = r#"{"message": "Bad Request", "errors": [{"resource": "Application", "field": "client_id", "code": "invalid"}]}"#;
+        assert_eq!(oauth_error_code(bad_client), Some("invalid_client"));
+        let limited = r#"{"message": "Rate Limit Exceeded", "errors": [{"resource": "Application", "field": "rate limit", "code": "exceeded"}]}"#;
+        assert_eq!(oauth_error_code(limited), None);
+        assert_eq!(oauth_error_code(r#"{"message": "Bad Request", "errors": []}"#), None);
+    }
+
+    #[test]
+    fn a_refused_grant_is_401_with_its_code() {
+        let (status, body) = refresh_failure(&UpstreamError::Refused {
+            status: 400,
+            code: Some("invalid_grant"),
+        });
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+        assert_eq!(body["code"], json!("invalid_grant"));
+        assert_eq!(body["upstream_status"], json!(400));
+        // The message released boxes log keeps its old form, plus the code.
+        assert_eq!(body["error"], json!("refresh failed: upstream status 400 (invalid_grant)"));
+    }
+
+    #[test]
+    fn other_refresh_failures_are_502() {
+        let (status, body) = refresh_failure(&UpstreamError::Refused {
+            status: 401,
+            code: Some("invalid_client"),
+        });
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["code"], json!("invalid_client"));
+        // A released box marks a credential for reconnect on "upstream 4" in
+        // its error, which is built from this answer. A refused client is the
+        // proxy's own configuration, so it must not match.
+        assert!(!body.to_string().contains("upstream 4"), "{body}");
+
+        let (status, body) = refresh_failure(&UpstreamError::Refused { status: 503, code: None });
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["code"], json!("upstream_error"));
+        assert_eq!(body["upstream_status"], json!(503));
+
+        let (status, body) = refresh_failure(&UpstreamError::NoAnswer("bad json: eof".into()));
+        assert_eq!(status, StatusCode::BAD_GATEWAY);
+        assert_eq!(body["code"], json!("upstream_error"));
+        assert_eq!(body["upstream_status"], Value::Null);
     }
 
     /// A Plaid exchange_token is spendable exactly once — the property the

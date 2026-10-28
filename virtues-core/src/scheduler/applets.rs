@@ -81,6 +81,10 @@ pub struct Applet {
     /// proven iroh key authorizes posts to this action.
     pub device_id: Option<String>,
     pub command: Option<Vec<String>>,
+    /// Read-only SQL run before the prompt; its rows go to the prompt, and
+    /// none means a skipped run (`applet_runner::run_sql`).
+    #[serde(default)]
+    pub run_sql: Option<String>,
     /// Lifecycle: NULL = forever · `"once"` = archive after first success ·
     /// SQL boolean = archive when it evaluates true (checked post-success).
     pub until: Option<String>,
@@ -632,9 +636,9 @@ pub async fn update_applet(
     }
     q = q.bind(applet_id);
 
-    // A chat-authored applet's manifest is what reconcile restores it from,
+    // A chat-authored applet's SKILL.md is what reconcile restores it from,
     // so the edit is written there too, inside the row's transaction: a
-    // manifest that cannot be written rolls the row back instead of leaving
+    // file that cannot be written rolls the row back instead of leaving
     // an edit the next reconcile undoes. The reconcile lock keeps a reconcile
     // from reading the old catalog between the write and the reload.
     let is_ai = current.owner == "ai";
@@ -652,7 +656,7 @@ pub async fn update_applet(
         return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
     }
     if is_ai {
-        crate::applet_templates::mirror_patch_to_manifest(applet_id, obj)?;
+        crate::applet_templates::mirror_patch_to_file(applet_id, obj)?;
     }
     tx.commit().await?;
     if is_ai {
@@ -706,6 +710,63 @@ pub async fn set_net_hosts(db: &PgPool, applet_id: &str, hosts: &[String]) -> Re
         return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
     }
     net_hosts(db, applet_id).await
+}
+
+/// The connections an applet's file asks for (`linear__*` in
+/// `allowed-tools`) and the ones the owner allowed, by short name. A run gets
+/// the tools of the connections on both lists (`tools::connection`).
+#[derive(Debug, Clone, serde::Serialize, PartialEq)]
+pub struct AppletConnections {
+    pub requested: Vec<String>,
+    pub allowed: Vec<String>,
+    /// The requested ones the box holds a sign-in for. The others cannot be
+    /// allowed until the owner connects them in Sources.
+    pub connected: Vec<String>,
+}
+
+pub async fn applet_connections(db: &PgPool, applet_id: &str) -> Result<AppletConnections> {
+    let applet = get_applet(db, applet_id).await?;
+    let entries: Vec<String> = applet
+        .config
+        .get("allowed_tools")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+    let allowed: Vec<String> = sqlx::query_scalar("SELECT connections FROM app_applets WHERE id = $1")
+        .bind(applet_id)
+        .fetch_one(db)
+        .await?;
+    let requested = crate::tools::connection::requested(&entries);
+    let held = crate::tools::connection::connected(db).await?;
+    let connected = requested.iter().filter(|r| held.iter().any(|c| &&c.id == r)).cloned().collect();
+    Ok(AppletConnections { requested, allowed, connected })
+}
+
+/// Set the connections the owner allows. Only the owner's own API route
+/// calls this, for the same reason as [`set_net_hosts`]: a connection's
+/// writes are a way out. Each name must be a connection the box holds.
+pub async fn set_applet_connections(db: &PgPool, applet_id: &str, names: &[String]) -> Result<AppletConnections> {
+    let held = crate::tools::connection::connected(db).await?;
+    let mut checked: Vec<String> = Vec::new();
+    for name in names {
+        if !held.iter().any(|c| &c.id == name) {
+            return Err(Error::InvalidInput(format!(
+                "{name} is not a connected service. Connect it in Sources first."
+            )));
+        }
+        if !checked.contains(name) {
+            checked.push(name.clone());
+        }
+    }
+    let res = sqlx::query("UPDATE app_applets SET connections = $1, updated_at = now() WHERE id = $2")
+        .bind(&checked)
+        .bind(applet_id)
+        .execute(db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
+    }
+    applet_connections(db, applet_id).await
 }
 
 /// Slugify a name into a lowercase `a-z0-9_` identifier suitable for use as
@@ -1211,6 +1272,8 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         credential_id: row.try_get("credential_id")?,
         device_id: row.try_get("device_id")?,
         command,
+        // absent-ok: a query that does not select it is not running the applet.
+        run_sql: row.try_get("run_sql").ok().flatten(),
         until: row.try_get("until").ok().flatten(),
         archived_at: row.try_get("archived_at").ok().flatten(),
         last_slot_at: row.try_get("last_slot_at").ok().flatten(),

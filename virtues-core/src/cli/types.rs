@@ -27,7 +27,7 @@ pub(crate) fn default_port() -> u16 {
 /// `image-check`, `bringup`), which drive systemd and must not drop
 /// privilege.
 pub const RUNS_AS_SERVICE_USER: &[&str] = &[
-    "init", "pair", "link", "login", "subscribe", "sudo", "backup", "reset", "status",
+    "init", "pair", "link", "login", "subscribe", "backup", "reset", "status",
     "migrate",
     // `doctor` reads the env file (inference mode) and the DB (reach legs),
     // both `virtues`-owned. Run as another user it can read neither, so it
@@ -370,28 +370,6 @@ pub enum Commands {
         /// to be used (scripts, copy-paste workflows).
         #[arg(long)]
         no_wait: bool,
-    },
-
-    /// Approve a pending sudo request from the box.
-    ///
-    /// A "sudo request" is the confirmation step a paired web client triggers
-    /// when it wants to do one of the 5 high-sensitivity actions (export all
-    /// data, swap BYO AI key, wipe the box, revoke the last remaining other
-    /// device, install a third party's applet package — that last one runs
-    /// their code on this box). Running `virtues sudo` proves physical access
-    /// — a thief with your laptop can't do it from outside, but you can sit
-    /// at the box and approve.
-    ///
-    /// With no args: lists open requests and prompts for each.
-    /// With `--id <REQ>`: targets one specific request id (scripting hook).
-    Sudo {
-        /// Approve a specific request id directly (skip the interactive list).
-        #[arg(long)]
-        id: Option<String>,
-
-        /// Deny instead of approve.
-        #[arg(long, conflicts_with = "id")]
-        deny: bool,
     },
 
     /// Manage the devices allowed to reach this box.

@@ -93,12 +93,13 @@ a Client ID Metadata Document we host (for example
 `https://virtues.com/mcp/client.json`). There is no client secret to keep, so
 the box redeems the code itself.
 
-The box has no public URL, so the redirect goes to `auth.virtues.com`, which
-forwards the code to the box in the same signed exchange shape the proxy uses
-today. The PKCE verifier never leaves the box, so the proxy cannot redeem the
-code and never holds a token. When the owner signs in from the Mac app, a
-loopback redirect through `:7117` can skip the proxy entirely; the 2026-07-28
-spec allows `localhost` redirects for native clients.
+The box has no public URL, so the redirect goes to `auth.virtues.com`
+(`services/virtues-api/src/routes/connections.rs`), which keeps the code
+until the box claims it by `state`. The PKCE verifier never leaves the box,
+so the proxy cannot redeem the code and never holds a token. A loopback
+redirect through the app's `:7117` does not work on a phone: on 2026-10-27
+Safari on the owner's iPhone could not load `127.0.0.1:7117` while the app
+was open behind it.
 
 ### Tools become registry rows
 
@@ -154,7 +155,12 @@ An applet names a connection's tools in `allowed-tools`, by tool or by
 connection (`linear__*`). For the Rule of Two in applet-shape.md, a
 connection counts as both outside text (its results) and a way out (its
 writes). As with `net(…)` hosts, only the owner can add a connection to an
-applet that did not ship; the assistant's `applet` tool cannot.
+applet; the assistant's `applet` tool cannot. The owner allows it on the
+applet's page (`app_applets.connections`, set only by
+`PUT /api/applets/:id/connections`), and a run gets the tools only when the
+file and the owner both name the connection. This applies to shipped
+applets too, the same as hosts. A tool its server labels destructive is never
+offered to a run.
 
 Chat already holds all three legs through `browse` and `send_imessage`, and a
 connection adds another. Applet-shape.md leaves chat's leak paths out of
@@ -341,8 +347,10 @@ name.
    - Built: `tools/connection.rs` and `server/api/connections.rs`, on rmcp's
      client and `auth` features over the reqwest 0.13 iroh already links.
      Sign-in is OAuth 2.1 with PKCE as a public client registered by dynamic
-     client registration; the redirect is `/api/connections/callback` at the
-     origin the owner's app sends, so no proxy holds the code. Tokens are a
+     client registration. The redirect is the proxy's
+     `/connections/callback`; the box asks `POST /connections/claim/{state}`
+     every two seconds for up to ten minutes and redeems the code itself.
+     Tokens are a
      sealed `credentials` row (kind `connection`), which rmcp loads and
      refreshes. Chat gets one `connection(name, task, confirmed)` tool
      (its own 900-character budget group); a Lite-slot worker gets the
@@ -352,11 +360,13 @@ name.
      the executor branch unless the chat called with `confirmed`, which sets
      `ToolContext::owner_confirmed`.
    - Built after: any registry server or pasted address, not one constant
-     (`tools/connection_registry.rs`); Settings → Connections with the
-     featured list, a registry search and an address field
-     (`ConnectionsView.svelte`); routes `GET /api/connections`, `GET
-     /api/connections/search?q=`, `POST /api/connections/connect {origin,
-     registry | url}`, `DELETE /api/connections/:id`; the connected services'
+     (`tools/connection_registry.rs`); the featured services as rows in
+     the Sources catalog, labeled "The assistant can act here" beside
+     sources' "Syncs your data", with the table's search also searching the
+     registry and an address field under it (`SourcesCatalog.svelte`);
+     routes `GET /api/connections`, `GET
+     /api/connections/search?q=`, `POST /api/connections/connect {registry
+     | url}` (an older app's `origin` is ignored), `DELETE /api/connections/:id`; the connected services'
      short names in the chat's context.
    - Checked: each featured server starts a sign-in from the box (discovery,
      dynamic registration, a sign-in URL with PKCE S256 and `resource`).
@@ -395,9 +405,27 @@ name.
        only from the answer itself or a nested object with its own
        `identifier`, else the written `body`.
    - Left: servers that take an API key in a header.
-4. **Connections in applets.** `allowed-tools` entries for connection tools,
-   the Rule of Two legs, owner-only adding. Then owner-added URLs from
-   Settings.
+   - Return through the proxy, checked 2026-10-27 against a local
+     virtues-api: the owner approved a Linear sign-in, the proxy kept the
+     code, and the box claimed it and stored the connection within four
+     seconds. Shipping needs the virtues-api deploy before the box release.
+     On iOS (command surface 14) connection and source sign-ins open in
+     Apple's sign-in sheet over the app (`location-probe|sign_in`,
+     `SignInSheet.swift`), so the app stays in front. The proxy's return
+     page, and the box's `/oauth/callback` for a source, close the sheet by
+     sending it to `virtues-signin://done` when the sign-in carries
+     `sheet=1`. Not yet run on a phone: whether a source's return to
+     `:7117` loads inside the sheet is the open question.
+4. **Connections in applets.** Built on wave: `allowed-tools` takes
+   `linear__*` and `linear__save_comment`; the owner allows a connection on
+   the applet's page (migration 0071), the same switch list as hosts
+   (`AppletAllowList.svelte`); an unattended run is offered the named,
+   non-destructive tools of the connections on both lists; and `call_tool`
+   refuses an applet run's call to anything outside that, before reaching
+   the service, since the agent loop runs a call to a tool it did not offer.
+   Not yet run against a real service from an applet. A turn `/name` starts
+   does not get connection tools; it has the chat's `connection` tool if
+   the applet lists it. Owner-added URLs from Settings remain.
 5. **Tier 2.** The SNI router (shared with publishing wave 3), the box as an
    authorization server, the approve-in-the-app flow, the token class, the
    tier 2 allowlist and the terms flag. Tier 3's setting follows from it.

@@ -367,6 +367,14 @@ mod tests {
         assert_eq!(r1.new_files, 2);
         assert!(r1.increment.is_some());
         assert!(r1.full.exists());
+        // Only ciphertext reaches the drive: the pg_dump is staged on the box.
+        let on_drive: Vec<String> = std::fs::read_dir(&archives)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| !(n.starts_with("full-") || n.starts_with("lake-")) || !n.ends_with(".tar.gz.age"))
+            .collect();
+        assert!(on_drive.is_empty(), "a backup left plaintext or a stage on the drive: {on_drive:?}");
 
         // Run 2: nothing changed, so no increment at all — the point of the
         // whole design is that a quiet day costs nothing.

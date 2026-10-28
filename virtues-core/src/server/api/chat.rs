@@ -210,9 +210,11 @@ pub async fn live_chats_handler(State(state): State<AppState>) -> Response {
     Json(serde_json::json!({ "running": state.live_turns.running() })).into_response()
 }
 
-/// GET /api/skills — the shipped skills and the person's own, for the `/` menu.
+/// GET /api/skills — the applets `/name` starts, for the composer's `/` menu.
+/// The path is the one the menu read when these were skills, which older
+/// clients still call.
 pub async fn list_skills_handler() -> Response {
-    Json(crate::api::skills::list()).into_response()
+    Json(crate::api::chat_applets::menu()).into_response()
 }
 
 /// GET /api/suggestions/current — the suggested question for an empty new

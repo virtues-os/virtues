@@ -12,7 +12,6 @@
 		toolStatus,
 		type ToolPart,
 	} from "$lib/components/chat/state/toolPresentation";
-	import type { AgentModeId } from "$lib/config/agentModes";
 	import type { WorkerStep } from "$lib/stores/chatInstances.svelte";
 
 	interface Props {
@@ -45,11 +44,11 @@
 		 *  stopped or failed: nothing landed. */
 		land?: boolean;
 		/**
-		 * Which mode the turn is running in. Deep Research is, by
-		 * construction, a turn that goes out to the record — so the mark starts a
-		 * dimension up rather than waiting for the first tool to prove it.
+		 * What the turn runs as: "chat", or the name of the applet `/name`
+		 * picked. An applet turn goes out to the record by design, so the mark
+		 * starts a dimension up rather than waiting for the first tool.
 		 */
-		agentMode?: AgentModeId;
+		agentMode?: string;
 	}
 
 	let {

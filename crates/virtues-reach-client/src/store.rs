@@ -1,9 +1,11 @@
 //! Credential storage is injected, not baked in.
 //!
-//! The desktop sidecar stores the [`PairedBox`] in the OS keychain (+ a 0600
-//! file fallback) via the `keyring` crate; the mobile plugin stores it in the
-//! iOS Keychain. Rather than cfg-gate those into this crate, each host provides
-//! a [`BoxStore`] and passes it into the reach functions.
+//! Each host provides a [`BoxStore`] and passes it into the reach functions,
+//! so no platform keystore is compiled into this crate. The app's reach plugin
+//! (`apps/web/plugins/reach/src/store.rs`) keeps the whole record in the
+//! Keychain on iOS, the device seed in the Keychain and the rest in a 0600
+//! `box.json` on macOS, and all of it in that file on every other platform. An
+//! MCP agent's record is a file of its own ([`crate::mcp::AgentStore`]).
 
 use anyhow::Result;
 

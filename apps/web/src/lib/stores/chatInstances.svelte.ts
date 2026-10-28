@@ -13,7 +13,6 @@ import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import type { CheckpointMessage } from '$lib/types/chat';
 import { placeCheckpoint } from '$lib/components/chat/state/checkpoint';
 import { dropReplayedPartial } from '$lib/components/chat/state/rejoin';
-import type { LocalStats } from '$lib/stores/localModel.svelte';
 
 // --- Streaming reactivity helpers (see replaceMessage override below) ---------
 //
@@ -114,7 +113,6 @@ export interface TurnInputs {
     chatMode: string;
     timezone: string;
     temporary?: true;
-    think?: boolean;
     projectId?: string;
     activePage?: ActivePageContext;
     model?: string;
@@ -153,11 +151,9 @@ interface CreateChatConfig {
     getModel: () => string | undefined;
     getProjectId: () => string | null; // Getter for space ID (null for system space)
     getActivePageContext?: () => ActivePageContext | null; // Getter for active page context (bound page)
-    getAgentMode?: () => string; // Getter for agent mode (agent, chat, research)
+    getAgentMode?: () => string; // The applet `/name` picked for this turn, else 'chat'
     getChatMode?: () => string; // Getter for retrieval scope: 'open' | 'scoped' (project chats)
     getTemporary?: () => boolean; // Getter for temporary/ghost mode (don't persist server-side)
-    /** Local mode only: whether the small model reasons before answering. */
-    getThink?: () => boolean;
 }
 
 class ChatInstanceStore {
@@ -175,15 +171,6 @@ class ChatInstanceStore {
     // The browsing agent's call in flight, keyed by conversationId; cleared
     // with the panel each turn and when the agent finishes.
     private browseSteps = $state(new Map<string, WorkerStep>());
-
-    // What each local reply measured, keyed by conversation then message id.
-    // Transient: shown under replies from this session, never stored.
-    private localStats = $state(new Map<string, Map<string, LocalStats>>());
-
-    /** The measurements for one local reply, once its turn has finished. */
-    getLocalStats(conversationId: string, messageId: string): LocalStats | undefined {
-        return this.localStats.get(conversationId)?.get(messageId);
-    }
 
     /** Current Deep Research subagents for a conversation (empty if none active). */
     getSubagents(conversationId: string): SubagentStatus[] {
@@ -223,7 +210,7 @@ class ChatInstanceStore {
      * @param config - Configuration including conversationId and getModel getter
      */
     getOrCreate(config: CreateChatConfig): Chat {
-        const { conversationId, getModel, getProjectId, getActivePageContext, getAgentMode, getChatMode, getTemporary, getThink } = config;
+        const { conversationId, getModel, getProjectId, getActivePageContext, getAgentMode, getChatMode, getTemporary } = config;
         const existing = this.instances.get(conversationId);
 
         if (existing) {
@@ -249,7 +236,6 @@ class ChatInstanceStore {
                 chatMode: getChatMode?.() || 'open',
                 // Ghost/temporary chat — backend should skip persistence when true.
                 ...(getTemporary?.() && { temporary: true as const }),
-                ...(agentMode === 'local' && { think: getThink?.() ?? false }),
                 // User's timezone for temporal awareness (IANA format, e.g., "America/Los_Angeles")
                 timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                 // The Space (room) this chat lives in — drives the agent's
@@ -318,17 +304,6 @@ class ChatInstanceStore {
                         else this.browseSteps.delete(conversationId);
                     } else {
                         this.applySubagent(conversationId, update);
-                    }
-                }
-                // A local turn's measurements arrive as its last part, so they
-                // belong to the reply being written now.
-                else if (dataPart.type === 'data-local-stats') {
-                    const messages = this.instances.get(conversationId)?.chat.messages ?? [];
-                    const reply = [...messages].reverse().find((m) => m.role === 'assistant');
-                    if (reply) {
-                        const perChat = new Map(this.localStats.get(conversationId) ?? []);
-                        perChat.set(reply.id, dataPart.data as LocalStats);
-                        this.localStats.set(conversationId, perChat);
                     }
                 }
                 // The interview's write_it_up finished: open the "In your own

@@ -32,8 +32,24 @@ use sqlx::PgPool;
 /// read as version 1 so those applets keep working and can be migrated on top.
 pub const LEGACY_SCHEMA_FILE: &str = "schema.sql";
 
-/// Subdirectory holding the numbered versions.
+/// Subdirectory holding the numbered versions, in a `manifest.toml` folder.
+// TODO(2026-10-27): drop with the manifest.toml reader (slice 4 of
+// agents/plan/applet-shape.md).
 pub const SCHEMA_DIR: &str = "schema";
+
+/// The same, in a `SKILL.md` folder.
+pub const TABLES_DIR: &str = "tables";
+
+/// The folder an applet's versions are in: `tables/` when it has one, else
+/// `schema/`.
+pub fn versions_dir(dir: &std::path::Path) -> std::path::PathBuf {
+    let tables = dir.join(TABLES_DIR);
+    if tables.is_dir() {
+        tables
+    } else {
+        dir.join(SCHEMA_DIR)
+    }
+}
 
 pub fn checksum(ddl: &str) -> String {
     let mut h = Sha256::new();
@@ -123,7 +139,7 @@ pub fn classify(ddl: &str, applied: &[AppliedMigration]) -> Submission {
 /// the shape the applet expects, and the reason versions are files rather than
 /// only rows.
 pub fn versions_on_disk(dir: &std::path::Path) -> Vec<(i32, String, String)> {
-    let schema_dir = dir.join(SCHEMA_DIR);
+    let schema_dir = versions_dir(dir);
     if schema_dir.is_dir() {
         let mut out: Vec<(i32, String, String)> = std::fs::read_dir(&schema_dir)
             .into_iter()
@@ -731,6 +747,17 @@ mod tests {
         .execute(pool)
         .await
         .expect("insert applet");
+    }
+
+    /// A `SKILL.md` folder keeps its versions in `tables/`.
+    #[test]
+    fn versions_are_read_from_tables_when_the_folder_has_it() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(TABLES_DIR)).unwrap();
+        std::fs::write(dir.path().join(TABLES_DIR).join("0001_log.sql"), "create table applet_x.log (id int);").unwrap();
+        let v = versions_on_disk(dir.path());
+        assert_eq!(v.len(), 1);
+        assert_eq!(v[0].0, 1);
     }
 
     fn write_version(dir: &std::path::Path, name: &str, sql: &str) {

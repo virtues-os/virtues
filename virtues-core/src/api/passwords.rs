@@ -10,7 +10,10 @@
 //! The list carries site, label and username. The password and notes leave
 //! the box only through [`reveal`], which the Passwords page calls when the
 //! owner opens a login. No tool calls any of this, and the chat's SQL role has
-//! no grant on `credentials`, so a model never sees a password.
+//! no grant on `credentials`, so a model never sees a password. The reveal
+//! route also needs the app's owner proof (`api::owner_proof`), so a direct
+//! request from another process on the owner's Mac, through the app's loopback
+//! port, cannot read a password.
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -30,8 +33,14 @@ pub struct LoginItem {
     /// The site's origin, `https://example.com`.
     pub site: String,
     pub name: String,
+    /// Empty when the row is `unreadable`.
     pub username: String,
     pub updated_at: DateTime<Utc>,
+    /// The server's key does not open this row, for example a login sealed
+    /// under another key before a restore. Site and label are plaintext
+    /// columns, so the row is still listed and can be removed; it cannot be
+    /// opened or edited.
+    pub unreadable: bool,
 }
 
 /// What the owner sees after opening a login.
@@ -72,13 +81,18 @@ pub async fn list(pool: &PgPool) -> Result<Vec<LoginItem>> {
     .fetch_all(pool)
     .await?;
     let enc = encryptor()?;
-    let mut items = rows
+    // One row that does not open is listed as unreadable rather than failing
+    // the page, so the owner still sees every other login and can remove it.
+    let mut items: Vec<LoginItem> = rows
         .into_iter()
-        .map(|(id, site, name, ciphertext, updated_at)| {
-            let sealed = open(&enc, &id, &ciphertext)?;
-            Ok(LoginItem { id, site, name, username: sealed.username, updated_at })
+        .map(|(id, site, name, ciphertext, updated_at)| match open(&enc, &id, &ciphertext) {
+            Ok(sealed) => LoginItem { id, site, name, username: sealed.username, updated_at, unreadable: false },
+            Err(e) => {
+                tracing::warn!(error = %e, "a saved login does not open with this server's key; listed as unreadable");
+                LoginItem { id, site, name, username: String::new(), updated_at, unreadable: true }
+            }
         })
-        .collect::<Result<Vec<_>>>()?;
+        .collect();
     items.sort_by(|a, b| {
         (a.name.to_lowercase(), a.username.to_lowercase()).cmp(&(b.name.to_lowercase(), b.username.to_lowercase()))
     });
@@ -154,7 +168,7 @@ async fn get(pool: &PgPool, id: &str) -> Result<LoginItem> {
     .await?;
     let (site, name, ciphertext, updated_at) = row.ok_or_else(not_found)?;
     let sealed = open(&encryptor()?, id, &ciphertext)?;
-    Ok(LoginItem { id: id.to_string(), site, name, username: sealed.username, updated_at })
+    Ok(LoginItem { id: id.to_string(), site, name, username: sealed.username, updated_at, unreadable: false })
 }
 
 async fn load(pool: &PgPool, id: &str) -> Result<Sealed> {
@@ -221,18 +235,7 @@ fn normalize_site(input: &str) -> Result<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn ensure_test_key() {
-        // Sealing needs a vault key; CI has none. Thirty-two zero bytes, as
-        // the crypto crate's own tests use, and only when nothing is set.
-        if std::env::var("VIRTUES_ENCRYPTION_KEY").is_err() {
-            use base64::Engine;
-            std::env::set_var(
-                "VIRTUES_ENCRYPTION_KEY",
-                base64::engine::general_purpose::STANDARD.encode([0u8; 32]),
-            );
-        }
-    }
+    use crate::credentials::ensure_test_key;
 
     fn input(site: &str, username: &str, password: Option<&str>) -> LoginInput {
         LoginInput {
@@ -288,6 +291,42 @@ mod tests {
         delete(&pool, &id).await.unwrap();
         assert!(list(&pool).await.unwrap().is_empty());
         assert!(matches!(reveal(&pool, &id).await, Err(Error::NotFound(_))));
+    }
+
+    /// A login sealed under another key, as after a restore that kept the
+    /// box's own key, is listed as unreadable beside the good ones, and the
+    /// owner can still remove it.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn one_unreadable_login_does_not_hide_the_rest(pool: PgPool) {
+        use base64::Engine;
+        ensure_test_key();
+        let good = create(&pool, input("example.com", "nick@example.com", Some("first-pass"))).await.unwrap();
+
+        let other_key = base64::engine::general_purpose::STANDARD.encode([7u8; 32]);
+        let other = TokenEncryptor::from_base64_key(&other_key).unwrap();
+        let foreign = other
+            .encrypt(r#"{"username":"david@example.com","password":"old-pass","notes":""}"#)
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO credentials (id, kind, key, name, status, secrets_ciphertext, metadata)
+             VALUES ('login:foreign', 'login', 'https://example.org', 'example.org', 'active', $1, '{}'::jsonb)",
+        )
+        .bind(&foreign)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let listed = list(&pool).await.unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0], good);
+        let bad = &listed[1];
+        assert_eq!((bad.id.as_str(), bad.site.as_str(), bad.name.as_str()), ("login:foreign", "https://example.org", "example.org"));
+        assert!(bad.unreadable);
+        assert!(bad.username.is_empty(), "nothing from the sealed part is guessed");
+
+        assert!(reveal(&pool, "login:foreign").await.is_err());
+        delete(&pool, "login:foreign").await.unwrap();
+        assert_eq!(list(&pool).await.unwrap(), vec![good]);
     }
 
     #[sqlx::test(migrations = "./migrations")]

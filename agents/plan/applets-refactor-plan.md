@@ -180,6 +180,7 @@ Syncs and ingest under their connection in Sources; upkeep in System. The
   fixes as shipped that are not (the row toggle and glossed fields); correct it
   in slice 3.
 - [applets/AGENTS.md](../../applets/AGENTS.md) and
-  [MANIFEST_SCHEMA.json](../../applets/MANIFEST_SCHEMA.json) are rewritten
+  `MANIFEST_SCHEMA.json` (deleted on 2026-10-27, when applets became
+  `SKILL.md` folders) are rewritten
   against the code in slices 0 and 1: the run contract, the gate, faces, and
   the `message` trigger the schema omits.

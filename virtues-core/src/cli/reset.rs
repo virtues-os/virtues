@@ -3,7 +3,10 @@
 //! HIDDEN, destructive, no `--keep-data` (yet). Drops the entire `public`
 //! schema (all data PLUS the box's identity — iroh secret, paired
 //! devices, subscription link), re-runs migrations to an empty schema, then
-//! clears the data lake. The encryption key in the env file is left untouched.
+//! clears the data lake and the per-box files that copy dropped rows
+//! (`crate::box_files`: the shared pages with the door's key, and leftover
+//! applet run files). The encryption key in the env file and the backup
+//! recipient are left untouched, since the same owner keeps the box.
 //! Because the box's own secrets are gone, the box must re-register with atlas and
 //! re-pair every device afterward.
 //!
@@ -37,8 +40,10 @@ pub async fn run(keep_data: bool, yes: bool, force: bool) -> Result<(), crate::E
     println!("     • the entire Postgres database: all data AND the box's");
     println!("       identity (iroh secret, paired devices, billing link)");
     println!("     • the data lake at {}", lake.display());
+    println!("     • shared pages, the door key and leftover applet run files");
     println!("   The box will re-register with atlas and you must re-pair every");
-    println!("   device afterward. The encryption key in the env file is kept.");
+    println!("   device afterward. The encryption key in the env file and the");
+    println!("   backup recipient are kept.");
     println!("   Consider `virtues backup` first.");
     println!();
 
@@ -145,6 +150,15 @@ pub async fn run(keep_data: bool, yes: bool, force: bool) -> Result<(), crate::E
     }
     std::fs::create_dir_all(&lake)
         .map_err(|e| crate::Error::Other(format!("recreate lake: {e}")))?;
+
+    // ── Per-box files that copy the rows dropped above ──────────────────────
+    // The door's key file copies the `door_key` row, and a run file copies
+    // credentials. Left in place, they keep values the wipe above removed.
+    println!("→ removing per-box files that copy the database…");
+    let files = crate::box_files::all();
+    crate::box_files::remove_each(
+        files.iter().filter(|f| f.on_reset == crate::box_files::OnReset::Remove),
+    )?;
 
     println!();
     println!("✓ reset complete — box is back to a fresh state.");

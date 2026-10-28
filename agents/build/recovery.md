@@ -139,36 +139,56 @@ from taking over the box. See `virtues-core/src/maintenance/reset_button.rs`.
 
 ## Reset the BYO key
 
-From the UI: `Settings → AI Provider Key` → Remove → paste the new one. Both
-steps fire the sudo gate; approve at the box with `sudo -u virtues virtues
-sudo`.
+The key is one `credentials` row: `kind = 'source'`, `key = '__byo_ai_key__'`
+(`BYO_SOURCE_ID` in `virtues-core/src/api/settings_byo.rs`). Every AI call
+reads the active row, so a change applies on the next call.
 
-From the CLI, when the UI is unreachable — this is the statement
-`api/settings_byo.rs:266` actually runs:
+From the UI: `Settings → Billing → Bring your own AI → Manage`. Remove clears
+the key (`delete_handler`). Saving a new one revokes the old row and inserts
+a new one (`save_handler`), so you do not need to remove first. Both need the
+app's owner proof (`virtues-core/src/api/owner_proof.rs`), which the app signs
+on its own, so neither asks the owner anything.
 
-```bash
-sudo -u virtues psql -d virtues -c \
-  "UPDATE credentials SET status='revoked', status_reason='replaced_by_user', \
-          updated_at=now() \
-    WHERE source_id='__byo_ai_key__' AND status='active';"
-```
-
-(The previous version of this doc set `secret_lookup_hash=NULL` — a column
-`credentials` has never had, so the whole statement errored out.)
-
-Chat falls back to the Virtues wallet on the next call.
-
-### The sudo gate
-
-Two actions require proof of physical access, listed in `GATED_ACTIONS`
-(`virtues-core/src/api/sudo.rs`): `change_byo_key` and `import_applet_package`.
-Requests carry a 5-minute TTL and are single-use.
+When no paired device can reach the UI, run the same Remove from a shell on
+the box. The server treats a request to `localhost:8000` with no
+forwarding header as the box's local console (`virtues-core/src/middleware/auth.rs`),
+and the console needs no owner proof, so `curl` can call `delete_handler`
+directly:
 
 ```bash
-sudo -u virtues virtues sudo          # list open requests, prompt for each
-sudo -u virtues virtues sudo --id REQ # target one
-sudo -u virtues virtues sudo --deny
+# A working remove answers {"ok":true}.
+curl -s -X DELETE http://localhost:8000/api/settings/byo-key
 ```
+
+This runs the same handler as Remove, so it changes the row and writes the
+`byo_key_cleared` audit row exactly as Remove does. If the server is not
+running, nothing is calling the provider; get it running first
+([Service won't start](#service-wont-start)).
+
+Do not revoke the row by hand with `psql`. An `UPDATE` that only sets
+`status` leaves the old key sealed in the revoked row, and nothing removes it
+later, because Remove and a new save only touch the active row.
+
+With no active row, AI calls go to the Virtues subscription.
+
+### Routes that need the owner proof
+
+Revealing a password (`GET /api/passwords/:id/secret`) or a key
+(`GET /api/keys/:name/value`), enrolling a device
+(`POST /api/devices/enroll-peer`), minting a pair code (`POST /api/pair/mint`,
+`POST /api/pair/mint-collector`), changing or clearing the AI key, and
+importing an applet package (`POST /api/admin/applets/import-git`) need an
+`X-Virtues-Owner-Proof` header. The app fetches a one-time nonce from
+`POST /api/owner-proof/nonce`, which lasts a minute, and signs it with the
+device's iroh key (`virtues_reach_client::owner::sign_http_owner_proof`). The
+box checks the signature against the key the requesting device paired with.
+
+A request without one gets a 403 that says to use the Virtues app or update
+it. Requests from the box's own console are exempt, and an agent device is
+always refused. Nonces live in the server's memory, so a restart drops the
+outstanding ones and the app's next try fetches a new one. The design and the
+gap it accepts are in [plan/secrets-plan.md](../plan/secrets-plan.md), under
+"Who can read what".
 
 ---
 
@@ -488,10 +508,9 @@ work, case-insensitively. Default is on.
 virtues status --json
 ```
 
-Emits `{schema_version, virtues_version, diag_enabled, box_id, auth, sudo,
-pair, billing, actions, network, recent_events}` — device count, pending and
-consumed sudo requests, pair-token counts, auto-top-up and BYO state, applet
-health, and the last 10 auth events. Excluded by design: secrets of any kind,
+Emits `{schema_version, virtues_version, diag_enabled, box_id, auth, pair,
+billing, actions, network, recent_events}` — device count, pair-token counts,
+auto-top-up and BYO state, applet health, and the last 10 auth events. Excluded by design: secrets of any kind,
 user content, and paired-device IPs — so it is safe to paste.
 
 If the daemon won't start far enough to run it:

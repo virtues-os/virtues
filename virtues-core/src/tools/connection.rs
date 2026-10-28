@@ -4,16 +4,38 @@
 //! Any server in the public MCP Registry can be connected, or any server
 //! address the owner pastes (`connection_registry.rs`). Signing in is OAuth
 //! 2.1 with PKCE through rmcp, as a public client the box registers with the
-//! service at sign-in (dynamic client registration). The redirect comes back
-//! to the box at the address the owner's app reaches it by, so no proxy ever
-//! holds the code or the token. The tokens live sealed in `credentials` (kind
+//! service at sign-in (dynamic client registration).
+//!
+//! The service sends the owner's browser back to the OAuth proxy
+//! (`services/virtues-api/src/routes/connections.rs`), never to the box. On a
+//! phone the app reaches the box through a listener inside the app, and
+//! Safari cannot reach it, so a sign-in that returned there failed. The proxy
+//! keeps the code, and the box claims it server to server and exchanges it.
+//! The proxy cannot use the code: the exchange needs the PKCE verifier, which
+//! never leaves the box. The tokens live sealed in `credentials` (kind
 //! `connection`, key the connection's short name), with the server's address
 //! in the row's metadata, and rmcp refreshes them through the same row.
+//!
+//! When the service stops accepting the sign-in, the row's status becomes
+//! `reauth_required`. The connection stays listed, the Sources catalog and the
+//! attention list ask the owner to sign in again, and signing in again
+//! replaces the tokens in the same row. Disconnecting revokes the grant at the
+//! service when it publishes a revocation endpoint (RFC 7009), then deletes
+//! the row.
 //!
 //! The chat reaches a connection through one tool, `connection`, which runs a
 //! worker loop with only that service's tools on the Lite slot, the way
 //! `browse` does. The chat's own tool list stays the same whatever is
 //! connected, so its cached prompt does too.
+//!
+//! An applet run calls a connection's tools directly. Its file asks for them
+//! in `allowed-tools` (`linear__*`, or `linear__save_comment`), and the owner
+//! allows the connection on the applet's page (`app_applets.connections`). A
+//! run gets the tools only when both name the connection, as with `net(host)`:
+//! a connection's results are outside text and its writes are a way out, so
+//! it is the Rule of Two's third leg, which only the owner adds
+//! (agents/plan/applet-shape.md). A tool the service labels destructive is
+//! never offered to a run, because no one is there to confirm it.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -24,8 +46,8 @@ use futures::StreamExt;
 use rmcp::model::{CallToolRequestParams, ClientConfig, Tool};
 use rmcp::service::RunningService;
 use rmcp::transport::auth::{
-    AuthClient, AuthError, AuthorizationManager, AuthorizationRequest, CredentialStore, OAuthState,
-    StoredCredentials,
+    AuthClient, AuthError, AuthorizationManager, AuthorizationMetadata, AuthorizationRequest, CredentialStore,
+    OAuthState, StoredCredentials,
 };
 use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use rmcp::transport::StreamableHttpClientTransport;
@@ -43,9 +65,20 @@ use crate::api::compaction::build_context_for_llm;
 /// The chat's tool.
 pub const TOOL: &str = "connection";
 
-/// Where a sign-in comes back to: `GET` on the box, at whatever origin the
-/// owner's app reaches it by (`server/api/connections.rs`).
-pub const CALLBACK_PATH: &str = "/api/connections/callback";
+/// Where every sign-in comes back to: the OAuth proxy's return route.
+/// `sheet` asks the proxy to close the iOS app's sign-in sheet once the
+/// sign-in lands there.
+fn redirect_uri(sheet: bool) -> String {
+    let base = format!("{}/connections/callback", virtues_helpers::auth::proxy_url());
+    if sheet {
+        format!("{base}?sheet=1")
+    } else {
+        base
+    }
+}
+
+/// How often the box asks the proxy whether a sign-in's code has arrived.
+const CLAIM_EVERY: Duration = Duration::from_secs(2);
 
 /// The `credentials` kind a connection's sign-in is stored under.
 const KIND: &str = "connection";
@@ -61,6 +94,9 @@ pub struct Connection {
     /// Its registry name, when it came from the registry.
     pub registry: Option<String>,
     pub icon: Option<String>,
+    /// The service stopped accepting the sign-in, so the assistant cannot use
+    /// it until the owner signs in again.
+    pub needs_sign_in: bool,
 }
 
 impl Connection {
@@ -74,6 +110,7 @@ impl Connection {
             url: listing.url,
             registry: Some(listing.registry),
             icon: listing.icon,
+            needs_sign_in: false,
         }
     }
 
@@ -95,6 +132,7 @@ impl Connection {
             url,
             registry: None,
             icon: None,
+            needs_sign_in: false,
         })
     }
 }
@@ -205,28 +243,37 @@ impl CredentialStore for Stored {
         Ok(())
     }
 
+    /// rmcp clears the tokens when the service's authorization server changes.
+    /// The owner has to sign in again with the new one.
     async fn clear(&self) -> Result<(), AuthError> {
-        disconnect(&self.pool, &self.connection.id).await.map_err(store_error)
+        mark_signed_out(&self.pool, &self.connection.id).await.map_err(store_error)
+    }
+
+    /// The service answered `invalid_grant` to a refresh.
+    async fn on_refresh_token_rejected(&self, _credentials: &StoredCredentials) -> Result<(), AuthError> {
+        mark_signed_out(&self.pool, &self.connection.id).await.map_err(store_error)
     }
 }
 
-/// Every connection with a live sign-in, by name.
+/// Every connection, by name, including those that need a fresh sign-in.
 pub async fn connected(pool: &PgPool) -> Result<Vec<Connection>, sqlx::Error> {
-    let rows: Vec<(String, String, Value)> = sqlx::query_as(
-        "SELECT key, name, metadata FROM credentials WHERE kind = $1 AND status = 'active' ORDER BY name",
+    let rows: Vec<(String, String, Value, String)> = sqlx::query_as(
+        "SELECT key, name, metadata, status FROM credentials
+         WHERE kind = $1 AND status IN ('active', 'reauth_required') ORDER BY name",
     )
     .bind(KIND)
     .fetch_all(pool)
     .await?;
     Ok(rows
         .into_iter()
-        .filter_map(|(id, name, metadata)| {
+        .filter_map(|(id, name, metadata, status)| {
             let text = |key: &str| metadata.get(key).and_then(Value::as_str).map(str::to_string);
             Some(Connection {
                 url: text("url")?,
                 about: text("about").unwrap_or_default(),
                 registry: text("registry"),
                 icon: text("icon"),
+                needs_sign_in: status == "reauth_required",
                 id,
                 name,
             })
@@ -239,16 +286,135 @@ async fn load(pool: &PgPool, id: &str) -> Result<Option<Connection>> {
     Ok(connected(pool).await?.into_iter().find(|c| c.id == id))
 }
 
-/// Forgets the sign-in. The service keeps its own record of the grant until
-/// the owner removes it there.
-pub async fn disconnect(pool: &PgPool, id: &str) -> Result<()> {
+/// Marks a connection as needing a fresh sign-in. The tokens stay, so a
+/// disconnect can still revoke them, and signing in again replaces them.
+async fn mark_signed_out(pool: &PgPool, id: &str) -> Result<(), sqlx::Error> {
+    let marked = sqlx::query(
+        "UPDATE credentials SET status = 'reauth_required', updated_at = now()
+         WHERE kind = $1 AND key = $2 AND status = 'active'",
+    )
+    .bind(KIND)
+    .bind(id)
+    .execute(pool)
+    .await?;
+    if marked.rows_affected() > 0 {
+        tracing::warn!(connection = %id, "connection needs a fresh sign-in");
+    }
+    forget_session(id).await;
+    Ok(())
+}
+
+/// What happened to the service's own grant when the owner disconnected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Grant {
+    /// The service confirmed it revoked the tokens.
+    Revoked,
+    /// The service publishes no revocation endpoint, so the grant stays
+    /// until the owner removes it in the service's settings.
+    NotOffered,
+    /// The service could not be reached or refused the revocation.
+    NotRevoked,
+}
+
+/// Revokes the grant at the service where it can, then deletes the sign-in.
+/// The row is deleted whatever the service answers. `None` when nothing was
+/// connected under this name.
+pub async fn disconnect(pool: &PgPool, id: &str) -> Result<Option<Grant>> {
+    let row: Option<(String, Value)> =
+        sqlx::query_as("SELECT secrets_ciphertext, metadata FROM credentials WHERE kind = $1 AND key = $2")
+            .bind(KIND)
+            .bind(id)
+            .fetch_optional(pool)
+            .await?;
+    let Some((sealed, metadata)) = row else { return Ok(None) };
+    // absent-ok: a row with no address has no service to revoke at; `revoke` answers NotRevoked.
+    let url = metadata.get("url").and_then(Value::as_str).unwrap_or_default();
+    let grant = revoke(&sealed, url).await;
     sqlx::query("DELETE FROM credentials WHERE kind = $1 AND key = $2")
         .bind(KIND)
         .bind(id)
         .execute(pool)
         .await?;
     forget_session(id).await;
-    Ok(())
+    tracing::info!(audit = "connection_disconnect", connection = %id, grant = ?grant, "connection disconnected");
+    Ok(Some(grant))
+}
+
+/// Revokes the stored tokens at the revocation endpoint the service's
+/// authorization server publishes. The refresh token goes first: revoking it
+/// ends the grant (RFC 7009 section 2.1).
+async fn revoke(sealed: &str, url: &str) -> Grant {
+    let stored = match unseal(sealed) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::warn!(error = %format!("{e:#}"), "connection disconnect: the sign-in could not be read");
+            return Grant::NotRevoked;
+        }
+    };
+    let metadata = match AuthorizationManager::new(url).await {
+        Ok(manager) => manager.resolve_metadata().await.map(|r| r.metadata),
+        Err(e) => Err(e),
+    };
+    let metadata = match metadata {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::warn!(error = %e, "connection disconnect: the service's sign-in details could not be read");
+            return Grant::NotRevoked;
+        }
+    };
+    let Some(endpoint) = revocation_endpoint(&metadata) else { return Grant::NotOffered };
+    let requests = revocations(&stored);
+    if requests.is_empty() {
+        return Grant::Revoked;
+    }
+    for form in requests {
+        match http().post(&endpoint).form(&form).send().await {
+            Ok(r) if r.status().is_success() => {}
+            Ok(r) => {
+                tracing::warn!(status = %r.status(), "connection disconnect: the service refused the revocation");
+                return Grant::NotRevoked;
+            }
+            Err(e) => {
+                tracing::warn!(error = %e, "connection disconnect: the service could not be reached");
+                return Grant::NotRevoked;
+            }
+        }
+    }
+    Grant::Revoked
+}
+
+fn unseal(sealed: &str) -> Result<Value> {
+    let json = TokenEncryptor::from_env()?.decrypt(sealed)?;
+    Ok(serde_json::from_str(&json)?)
+}
+
+/// The service's revocation endpoint, when it publishes one over https.
+fn revocation_endpoint(metadata: &AuthorizationMetadata) -> Option<String> {
+    metadata
+        .additional_fields
+        .get("revocation_endpoint")
+        .and_then(Value::as_str)
+        .filter(|e| e.starts_with("https://"))
+        .map(str::to_string)
+}
+
+/// One revocation request per stored token, refresh token first. The box is
+/// a public client, so each request names the client and carries no secret.
+fn revocations(stored: &Value) -> Vec<Vec<(&'static str, String)>> {
+    let client_id = stored.get("client_id").and_then(Value::as_str).unwrap_or_default();
+    let tokens = stored.get("token_response");
+    ["refresh_token", "access_token"]
+        .into_iter()
+        .filter_map(|hint| {
+            let token = tokens?.get(hint)?.as_str()?;
+            Some(vec![
+                ("token", token.to_string()),
+                ("token_type_hint", hint.to_string()),
+                ("client_id", client_id.to_string()),
+            ])
+        })
+        .collect()
 }
 
 // ── Signing in ──────────────────────────────────────────────────────────────
@@ -265,14 +431,15 @@ fn pending() -> &'static Mutex<HashMap<String, Pending>> {
 }
 
 /// Starts a sign-in and returns the service's authorization URL for the
-/// owner's browser. `redirect_uri` is [`CALLBACK_PATH`] at the origin the
-/// owner's app uses.
-pub async fn start(pool: &PgPool, connection: Connection, redirect_uri: &str) -> Result<String> {
+/// owner's browser. A task then waits for the code at the proxy and finishes
+/// the sign-in when it arrives. `sheet` is set when the owner's app opens the
+/// sign-in in its sign-in sheet.
+pub async fn start(pool: &PgPool, connection: Connection, sheet: bool) -> Result<String> {
     let mut state = OAuthState::new(&connection.url, None).await.context("reach the service")?;
     if let OAuthState::Unauthorized(manager) = &mut state {
         manager.set_credential_store(Stored { pool: pool.clone(), connection: connection.clone() });
     }
-    let request = AuthorizationRequest::new(redirect_uri)
+    let request = AuthorizationRequest::new(&redirect_uri(sheet))
         .with_client_name("Virtues")
         .with_application_type("native");
     state.start_authorization(request).await.context("start the sign-in")?;
@@ -285,12 +452,82 @@ pub async fn start(pool: &PgPool, connection: Connection, redirect_uri: &str) ->
 
     let mut waiting = pending().lock().await;
     waiting.retain(|_, p| p.started.elapsed() < SIGN_IN_WINDOW);
-    waiting.insert(csrf, Pending { connection, state, started: Instant::now() });
+    waiting.insert(csrf.clone(), Pending { connection, state, started: Instant::now() });
+    drop(waiting);
+    tokio::spawn(claim(csrf));
     Ok(url)
 }
 
-/// Finishes a sign-in from the redirect's query. Returns the connection.
-pub async fn finish(code: &str, csrf: &str, issuer: Option<&str>) -> Result<Connection> {
+/// What the proxy hands back for a sign-in.
+#[derive(serde::Deserialize)]
+struct Returned {
+    code: Option<String>,
+    iss: Option<String>,
+    error: Option<String>,
+}
+
+/// Asks the proxy for the sign-in's code until it arrives, the sign-in is
+/// gone, or its ten minutes pass, then finishes it. Nothing waits on this
+/// task; the Sources catalog shows the connection once it is stored.
+async fn claim(csrf: String) {
+    let url = format!(
+        "{}/connections/claim/{}",
+        virtues_helpers::auth::proxy_url(),
+        urlencoding::encode(&csrf)
+    );
+    let started = Instant::now();
+    while started.elapsed() < SIGN_IN_WINDOW {
+        tokio::time::sleep(CLAIM_EVERY).await;
+        if !pending().lock().await.contains_key(&csrf) {
+            return;
+        }
+        let response = match http().post(&url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!(error = %e, "connection sign-in: proxy unreachable, asking again");
+                continue;
+            }
+        };
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            continue;
+        }
+        if !response.status().is_success() {
+            tracing::warn!(status = %response.status(), "connection sign-in: the proxy refused the claim");
+            continue;
+        }
+        let returned: Returned = match response.json().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "connection sign-in: the proxy's answer did not parse");
+                continue;
+            }
+        };
+        match (returned.code, returned.error) {
+            (Some(code), None) => match finish(&code, &csrf, returned.iss.as_deref()).await {
+                Ok(c) => tracing::info!(connection = %c.id, "connection signed in"),
+                Err(e) => tracing::warn!(error = %format!("{e:#}"), "connection sign-in did not finish"),
+            },
+            (_, error) => {
+                pending().lock().await.remove(&csrf);
+                tracing::warn!(error = ?error, "connection sign-in refused by the service");
+            }
+        }
+        return;
+    }
+}
+
+fn http() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
+/// Finishes a sign-in with the code the service sent. Returns the connection.
+async fn finish(code: &str, csrf: &str, issuer: Option<&str>) -> Result<Connection> {
     let Some(mut sign_in) = pending().lock().await.remove(csrf) else {
         bail!("this sign-in is unknown or more than ten minutes old. Start it again.");
     };
@@ -338,8 +575,20 @@ async fn tools(client: &Client, connection: &Connection) -> Result<Arc<Vec<Tool>
     Ok(tools)
 }
 
+/// What the chat and the worker are told when a connection needs the owner
+/// to sign in again.
+fn signed_out(connection: &Connection) -> String {
+    format!(
+        "{} stopped accepting the owner's sign-in. The owner can sign in again in Sources, then ask again.",
+        connection.name
+    )
+}
+
 /// A live MCP session with `connection`, signed in from its stored tokens.
 async fn client(pool: &PgPool, connection: &Connection) -> Result<Arc<Client>> {
+    if connection.needs_sign_in {
+        bail!(signed_out(connection));
+    }
     if let Some(client) = clients().lock().await.get(&connection.id) {
         if !client.is_transport_closed() {
             return Ok(client.clone());
@@ -349,20 +598,54 @@ async fn client(pool: &PgPool, connection: &Connection) -> Result<Arc<Client>> {
     let mut manager = AuthorizationManager::new(&connection.url).await.context("reach the service")?;
     manager.set_credential_store(Stored { pool: pool.clone(), connection: connection.clone() });
     if !manager.initialize_from_store().await.context("read the sign-in")? {
-        bail!("{} is not connected. Connect it in Settings, then try again.", connection.name);
+        mark_signed_out(pool, &connection.id).await?;
+        bail!(signed_out(connection));
     }
     let transport = StreamableHttpClientTransport::with_client(
         AuthClient::new(reqwest_rmcp::Client::default(), manager),
         StreamableHttpClientTransportConfig::with_uri(connection.url.clone()),
     );
-    let client = Arc::new(
-        ClientConfig::default()
-            .serve(transport)
-            .await
-            .with_context(|| format!("open a session with {}", connection.name))?,
-    );
+    let client = match ClientConfig::default().serve(transport).await {
+        Ok(client) => Arc::new(client),
+        Err(e) => {
+            if refuses_sign_in(pool, connection).await {
+                mark_signed_out(pool, &connection.id).await?;
+                bail!(signed_out(connection));
+            }
+            return Err(anyhow!(e).context(format!("open a session with {}", connection.name)));
+        }
+    };
     clients().lock().await.insert(connection.id.clone(), client.clone());
     Ok(client)
+}
+
+/// After a failed request, asks whether the service still accepts the
+/// stored sign-in. It does not when no token can be had or refreshed, or when
+/// its MCP server answers a ping carrying the token with 401, which is how an
+/// MCP server refuses a token (MCP authorization spec). rmcp's session errors
+/// do not carry the status through, so the box asks again directly. A service
+/// it cannot reach counts as accepting: that failure is not the owner's to fix.
+async fn refuses_sign_in(pool: &PgPool, connection: &Connection) -> bool {
+    let Ok(mut manager) = AuthorizationManager::new(&connection.url).await else { return false };
+    manager.set_credential_store(Stored { pool: pool.clone(), connection: connection.clone() });
+    match manager.initialize_from_store().await {
+        Ok(true) => {}
+        Ok(false) => return true,
+        Err(_) => return false,
+    }
+    let token = match manager.get_access_token().await {
+        Ok(token) => token,
+        Err(AuthError::AuthorizationRequired | AuthError::TokenRefreshRejected(_)) => return true,
+        Err(_) => return false,
+    };
+    let ping = http()
+        .post(&connection.url)
+        .bearer_auth(token)
+        .header(reqwest::header::ACCEPT, "application/json, text/event-stream")
+        .json(&json!({ "jsonrpc": "2.0", "id": 0, "method": "ping" }))
+        .send()
+        .await;
+    matches!(ping, Ok(r) if r.status() == reqwest::StatusCode::UNAUTHORIZED)
 }
 
 /// The tool name the worker sees for one of a connection's tools.
@@ -545,6 +828,20 @@ pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, context: &To
         Err(e) => return ToolResult::error(format!("{e:#}")),
     };
     let connection = &connection;
+    // The agent loop runs a call to a tool it did not offer, so a run's grant
+    // is checked here too, before the service is reached.
+    if let Some(applet_id) = context.applet_id.as_deref() {
+        match applet_may_call(pool, applet_id, &connection.id, tool).await {
+            Ok(true) => {}
+            Ok(false) => {
+                return ToolResult::error(format!(
+                    "This applet may not use {tool} in {}. Its file has to list it in allowed-tools, and the owner has to allow {} on the applet's page.",
+                    connection.name, connection.name
+                ))
+            }
+            Err(e) => return ToolResult::error(format!("Could not read this applet's connections: {e}")),
+        }
+    }
     let client = match client(pool, connection).await {
         Ok(client) => client,
         Err(e) => return ToolResult::error(format!("{e:#}")),
@@ -593,9 +890,115 @@ pub async fn call_tool(pool: &PgPool, name: &str, arguments: Value, context: &To
         Err(e) => {
             // A dead session is dropped so the next call opens a fresh one.
             forget_session(&connection.id).await;
+            if refuses_sign_in(pool, connection).await {
+                return match mark_signed_out(pool, &connection.id).await {
+                    Ok(()) => ToolResult::error(signed_out(connection)),
+                    Err(e) => ToolResult::error(format!("Could not record that {} needs a sign-in: {e}", connection.name)),
+                };
+            }
             ToolResult::error(format!("{} did not answer: {e}", connection.name))
         }
     }
+}
+
+// ── Applets ─────────────────────────────────────────────────────────────────
+
+/// A connection entry in an applet's `allowed-tools`: `linear__*` for every
+/// tool the connection has, or `linear__save_comment` for one.
+pub fn applet_entry(entry: &str) -> Option<(&str, &str)> {
+    let (id, tool) = split(entry)?;
+    let named = tool.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.'));
+    (tool == "*" || named).then_some((id, tool))
+}
+
+/// Whether an applet's `allowed-tools` names this tool of this connection.
+fn entries_name(entries: &[String], id: &str, tool: &str) -> bool {
+    entries
+        .iter()
+        .filter_map(|e| applet_entry(e))
+        .any(|(c, t)| c == id && (t == "*" || t == tool))
+}
+
+/// The applet's `allowed-tools` and the connections the owner allowed it.
+async fn applet_grant(pool: &PgPool, applet_id: &str) -> Result<(Vec<String>, Vec<String>), sqlx::Error> {
+    let (listed, allowed): (Option<Value>, Vec<String>) =
+        sqlx::query_as("SELECT config->'allowed_tools', connections FROM app_applets WHERE id = $1")
+            .bind(applet_id)
+            .fetch_one(pool)
+            .await?;
+    let entries = listed
+        .as_ref()
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
+        // absent-ok: an applet with no `allowed-tools` names no connections.
+        .unwrap_or_default();
+    Ok((entries, allowed))
+}
+
+async fn applet_may_call(pool: &PgPool, applet_id: &str, id: &str, tool: &str) -> Result<bool, sqlx::Error> {
+    let (entries, allowed) = applet_grant(pool, applet_id).await?;
+    Ok(allowed.iter().any(|a| a == id) && entries_name(&entries, id, tool))
+}
+
+/// The tool definitions an applet run is offered from its connections: each
+/// connection its file asks for and the owner allowed, and of those only the
+/// tools its file names, without the destructive ones. A connection that
+/// needs a fresh sign-in or does not answer is left out, and the run goes on
+/// with the rest; the attention list already asks the owner to sign in.
+pub async fn applet_tool_definitions(pool: &PgPool, applet_id: &str) -> Vec<Value> {
+    let (entries, allowed) = match applet_grant(pool, applet_id).await {
+        Ok(grant) => grant,
+        Err(e) => {
+            tracing::warn!(applet_id, error = %e, "applet run: could not read its connections");
+            return Vec::new();
+        }
+    };
+    if allowed.is_empty() || !entries.iter().any(|e| applet_entry(e).is_some()) {
+        return Vec::new();
+    }
+    let connections = match connected(pool).await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!(applet_id, error = %e, "applet run: could not read the connections");
+            return Vec::new();
+        }
+    };
+    let mut out = Vec::new();
+    for connection in connections.iter().filter(|c| allowed.contains(&c.id)) {
+        if !entries.iter().filter_map(|e| applet_entry(e)).any(|(id, _)| id == connection.id) {
+            continue;
+        }
+        let tools = match client(pool, connection).await {
+            Ok(client) => tools(&client, connection).await,
+            Err(e) => Err(e),
+        };
+        match tools {
+            Ok(tools) => {
+                let named: Vec<Tool> =
+                    tools.iter().filter(|t| entries_name(&entries, &connection.id, &t.name)).cloned().collect();
+                out.extend(tool_definitions(&named, connection, false));
+            }
+            Err(e) => tracing::warn!(
+                applet_id,
+                connection = %connection.id,
+                error = %format!("{e:#}"),
+                "applet run: connection left out"
+            ),
+        }
+    }
+    out
+}
+
+/// The connections an applet's file asks for, by short name, from its
+/// `allowed-tools`.
+pub fn requested(entries: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for (id, _) in entries.iter().filter_map(|e| applet_entry(e)) {
+        if !out.iter().any(|o| o == id) {
+            out.push(id.to_string());
+        }
+    }
+    out
 }
 
 // ── The chat's tool ─────────────────────────────────────────────────────────
@@ -621,6 +1024,9 @@ pub async fn run_tool(pool: &PgPool, args: &Value, context: &ToolContext) -> Too
             format!("`{name}` is not connected. Connected: {}.", list.join(", "))
         });
     };
+    if connection.needs_sign_in {
+        return ToolResult::error(signed_out(connection));
+    }
 
     let model = match crate::virtues_api::completion::background_model_for_slot(
         pool,
@@ -862,8 +1268,146 @@ mod tests {
         let sources = crate::api::credentials::list_credentials(&pool).await.unwrap();
         assert!(sources.iter().all(|c| c.id != "connection:notion"));
 
-        disconnect(&pool, "notion").await.unwrap();
+        // The sealed value is not a real sign-in, so nothing can be revoked,
+        // and the row goes anyway.
+        assert_eq!(disconnect(&pool, "notion").await.unwrap(), Some(Grant::NotRevoked));
         assert!(connected(&pool).await.unwrap().is_empty());
+        assert_eq!(disconnect(&pool, "notion").await.unwrap(), None);
+    }
+
+    /// A refused sign-in keeps the connection listed, marked, and the chat is
+    /// told to have the owner sign in again.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_refused_sign_in_stays_listed_until_the_owner_signs_in_again(pool: PgPool) {
+        sqlx::query(
+            "INSERT INTO credentials (id, kind, key, name, status, secrets_ciphertext, metadata)
+             VALUES ('connection:linear', 'connection', 'linear', 'Linear', 'active', 'sealed', $1)",
+        )
+        .bind(json!({ "url": "https://mcp.linear.app/mcp", "registry": "app.linear/linear" }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        let linear = connected(&pool).await.unwrap().remove(0);
+        assert!(!linear.needs_sign_in);
+
+        // rmcp clears the store when the authorization server changes.
+        Stored { pool: pool.clone(), connection: linear.clone() }.clear().await.unwrap();
+        let listed = connected(&pool).await.unwrap();
+        assert_eq!(listed.len(), 1, "the connection stays listed");
+        assert!(listed[0].needs_sign_in);
+        assert!(
+            Stored { pool: pool.clone(), connection: linear.clone() }.load().await.unwrap().is_none(),
+            "rmcp is not handed tokens the service refused"
+        );
+
+        let result = run_tool(&pool, &json!({ "name": "linear", "task": "list my issues" }), &ToolContext::default()).await;
+        assert!(result.error.unwrap().contains("sign in again in Sources"));
+
+        // Signing in again stores fresh tokens in the same row.
+        crate::credentials::ensure_test_key();
+        let fresh = serde_json::from_value::<StoredCredentials>(json!({ "client_id": "c1", "token_response": null })).unwrap();
+        Stored { pool: pool.clone(), connection: linear }.save(fresh).await.unwrap();
+        let listed = connected(&pool).await.unwrap();
+        assert_eq!((listed.len(), listed[0].needs_sign_in), (1, false));
+    }
+
+    #[test]
+    fn an_applet_names_a_connections_tools_one_by_one_or_all() {
+        let entries: Vec<String> =
+            ["sql_query", "linear__*", "notion__search", "notion__search"].iter().map(|s| s.to_string()).collect();
+        assert!(entries_name(&entries, "linear", "save_comment"));
+        assert!(entries_name(&entries, "notion", "search"));
+        assert!(!entries_name(&entries, "notion", "update_page"));
+        assert!(!entries_name(&entries, "github", "search"));
+        assert_eq!(requested(&entries), ["linear", "notion"]);
+        assert_eq!(applet_entry("linear__*"), Some(("linear", "*")));
+        assert_eq!(applet_entry("linear__x(y)"), None);
+    }
+
+    /// A run may call a connection's tool only when its file lists the tool
+    /// and the owner allowed the connection, and only the owner's route sets
+    /// that.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn an_applet_uses_a_connection_only_when_its_file_and_the_owner_both_name_it(pool: PgPool) {
+        use crate::scheduler::applets::{set_applet_connections, update_applet, AppletConnections};
+        sqlx::query(
+            "INSERT INTO credentials (id, kind, key, name, status, secrets_ciphertext, metadata)
+             VALUES ('connection:linear', 'connection', 'linear', 'Linear', 'active', 'sealed', $1)",
+        )
+        .bind(json!({ "url": "https://mcp.linear.app/mcp" }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, config) \
+             VALUES ('applet_triage', 'Triage', 'ai', '{\"allowed_tools\": [\"sql_query\", \"linear__save_comment\"]}')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(!applet_may_call(&pool, "applet_triage", "linear", "save_comment").await.unwrap(), "the file alone opens nothing");
+        let err = update_applet(&pool, "applet_triage", &json!({ "connections": ["linear"] })).await.unwrap_err();
+        assert!(err.to_string().contains("unknown field"), "PATCH cannot allow a connection: {err}");
+        let err = set_applet_connections(&pool, "applet_triage", &["github".into()]).await.unwrap_err();
+        assert!(err.to_string().contains("not a connected service"), "{err}");
+
+        let set = set_applet_connections(&pool, "applet_triage", &["linear".into(), "linear".into()]).await.unwrap();
+        assert_eq!(
+            set,
+            AppletConnections {
+                requested: vec!["linear".into()],
+                allowed: vec!["linear".into()],
+                connected: vec!["linear".into()]
+            }
+        );
+        assert!(applet_may_call(&pool, "applet_triage", "linear", "save_comment").await.unwrap());
+        assert!(!applet_may_call(&pool, "applet_triage", "linear", "delete_issue").await.unwrap(), "only the tools it lists");
+
+        // A call it was not given is refused before the service is reached,
+        // even when the model names the tool.
+        let run = ToolContext { applet_id: Some("applet_triage".into()), ..Default::default() };
+        let refused = call_tool(&pool, "linear__delete_issue", json!({}), &run).await;
+        assert!(refused.error.unwrap().contains("This applet may not use delete_issue in Linear"));
+        sqlx::query("UPDATE app_applets SET connections = '{}' WHERE id = 'applet_triage'").execute(&pool).await.unwrap();
+        let refused = call_tool(&pool, "linear__save_comment", json!({}), &run).await;
+        assert!(refused.error.unwrap().contains("may not use save_comment"));
+        assert!(applet_tool_definitions(&pool, "applet_triage").await.is_empty());
+    }
+
+    #[test]
+    fn disconnect_revokes_the_refresh_token_first_as_a_public_client() {
+        let stored = json!({
+            "client_id": "client-1",
+            "token_response": { "access_token": "at", "refresh_token": "rt", "token_type": "bearer" }
+        });
+        let forms = revocations(&stored);
+        assert_eq!(forms.len(), 2);
+        assert_eq!(forms[0], vec![
+            ("token", "rt".to_string()),
+            ("token_type_hint", "refresh_token".to_string()),
+            ("client_id", "client-1".to_string()),
+        ]);
+        assert_eq!(forms[1][0], ("token", "at".to_string()));
+        assert!(revocations(&json!({ "client_id": "c", "token_response": null })).is_empty());
+    }
+
+    #[test]
+    fn only_an_https_revocation_endpoint_is_used() {
+        let metadata = |endpoint: Value| -> AuthorizationMetadata {
+            serde_json::from_value(json!({
+                "authorization_endpoint": "https://mcp.example.com/authorize",
+                "token_endpoint": "https://mcp.example.com/token",
+                "revocation_endpoint": endpoint,
+            }))
+            .unwrap()
+        };
+        assert_eq!(
+            revocation_endpoint(&metadata(json!("https://mcp.example.com/token"))).as_deref(),
+            Some("https://mcp.example.com/token")
+        );
+        assert_eq!(revocation_endpoint(&metadata(json!("http://mcp.example.com/revoke"))), None);
+        assert_eq!(revocation_endpoint(&metadata(Value::Null)), None);
     }
 
     /// The chat is told which services are connected when it names another.

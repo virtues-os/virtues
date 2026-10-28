@@ -929,6 +929,9 @@ pub async fn provision_db() -> Result<()> {
 /// still cannot mint roles of its own — and turns each migration's guarded
 /// CREATE into the no-op it was written to be.
 ///
+/// NOLOGIN here because their passwords derive from the encryption key, which
+/// does not exist yet. `set_db_logins` gives them their logins once it does.
+///
 /// `WITH ADMIN OPTION` is load-bearing, not belt-and-braces. Each migration
 /// follows its CREATE with `GRANT <role> TO current_user` so the pool can
 /// `SET ROLE` into it, and since PG16 a GRANT on a role requires ADMIN OPTION
@@ -1317,7 +1320,47 @@ pub async fn run_bringup(cfg: &InstallConfig) -> Result<()> {
     );
     let mut cmd = Command::new("sudo");
     cmd.args(["-u", "virtues", "bash", "-c", &cmd_str]);
-    run_step("Load env + run virtues bringup", cmd).await
+    run_step("Load env + run virtues bringup", cmd).await?;
+    set_db_logins(cfg).await;
+    Ok(())
+}
+
+/// Give the two restricted Postgres roles their logins before the server
+/// first starts. SQL that chat or an applet writes logs in as them, and a box
+/// refuses to run that SQL without them (core's `database::restricted`).
+///
+/// This runs core's own `db-logins` system repair, the one every upgrade
+/// runs, so the installer holds no second copy of it. `virtues migrate`
+/// started as root runs the system repairs before it drops to the service
+/// user, and `--check` applies no migration. It needs the key in the env
+/// file, which is why it comes after `write_env_file`, and root, because the
+/// server's role has no CREATEROLE. A failure is not fatal, since the box
+/// still serves everything else. `health_check` reports it.
+async fn set_db_logins(cfg: &InstallConfig) {
+    let bin = cfg.binary_path();
+    let out = Command::new(&bin)
+        .args(["migrate", "--check"])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await;
+    match out {
+        Ok(o) => {
+            // The repairs print one line each when they change or fail
+            // something, in the same shape as this installer's own lines.
+            for line in String::from_utf8_lossy(&o.stdout).lines().filter(|l| l.contains("system repair `")) {
+                println!("{line}");
+            }
+            if !o.status.success() {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                ui::warn(&format!(
+                    "`virtues migrate --check` failed ({}): {}",
+                    o.status,
+                    stderr.lines().last().unwrap_or("").trim()
+                ));
+            }
+        }
+        Err(e) => ui::warn(&format!("could not run {} migrate --check: {e}", bin.display())),
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1863,9 +1906,10 @@ const DISPLAY_SHIM: &str = include_str!("../assets/display.py");
 /// so a silent rotation turns every stored credential into undecryptable
 /// garbage with nothing in the logs to say why.
 fn install_firstboot_unit(cfg: &InstallConfig) -> Result<()> {
-    let data_dir = cfg.data_dir.display().to_string();
-
-    let script = FIRSTBOOT_SCRIPT.replace("__DATA_DIR__", &data_dir);
+    let script = firstboot_script(
+        &cfg.data_dir.display().to_string(),
+        &cfg.binary_path().display().to_string(),
+    );
     fs::write("/usr/local/sbin/virtues-firstboot.sh", script)
         .context("writing /usr/local/sbin/virtues-firstboot.sh")?;
     #[cfg(unix)]
@@ -1884,6 +1928,11 @@ fn install_firstboot_unit(cfg: &InstallConfig) -> Result<()> {
     )
     .context("writing /etc/systemd/system/virtues-firstboot.service")?;
     Ok(())
+}
+
+/// The first-boot script with this install's paths filled in.
+fn firstboot_script(data_dir: &str, bin: &str) -> String {
+    FIRSTBOOT_SCRIPT.replace("__DATA_DIR__", data_dir).replace("__BIN__", bin)
 }
 
 /// The Postgres major version this box has a cluster config for, e.g. `18`.
@@ -2251,6 +2300,34 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
         issues += 1;
     }
 
+    // Chat and applet SQL, run through the installed binary's own `query`
+    // verb, which takes the path chat's `sql_query` takes. A binary that runs
+    // that SQL on the restricted logins refuses without them, and its error
+    // names the fix. An older binary needs no login, so this reports a
+    // problem only where the installed version has one. Env loaded as
+    // `run_bringup` loads it.
+    let probe = format!(
+        "set -a; . '{env_file}'; set +a; exec '{bin}' query 'SELECT 1'",
+        env_file = cfg.env_file_path().display(),
+        bin = cfg.binary_path().display(),
+    );
+    let sql = Command::new("sudo")
+        .args(["-u", "virtues", "bash", "-c", &probe])
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await?;
+    if sql.status.success() {
+        ui::ok("Chat and applets can run SQL");
+    } else {
+        let stderr = String::from_utf8_lossy(&sql.stderr);
+        let why = stderr.lines().rev().map(str::trim).find(|l| !l.is_empty()).unwrap_or("no error output");
+        ui::warn(&format!(
+            "Chat and applets cannot run SQL. `virtues query 'SELECT 1'` failed: {}",
+            why.trim_start_matches("error: ")
+        ));
+        issues += 1;
+    }
+
     if let InferenceMode::Dragon = mode {
         // `install_qnn` declines to install the unit at all when QAIRT is absent,
         // and says so at length there. Repeating it here as "not responding, check
@@ -2490,7 +2567,16 @@ fn migrate_applets_out_of_shipped_tree(cfg: &InstallConfig) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::rank_lib_dirs;
+    use super::{firstboot_script, rank_lib_dirs};
+
+    /// A placeholder left in the script is a command or path that does not
+    /// exist on the unit, found only on a first boot.
+    #[test]
+    fn the_firstboot_script_has_no_placeholder_left() {
+        let script = firstboot_script("/var/lib/virtues", "/usr/local/bin/virtues");
+        assert!(!script.contains("__"), "a placeholder survived: {}", script.lines().find(|l| l.contains("__")).unwrap());
+        assert!(script.contains("/usr/local/bin/virtues migrate --check"));
+    }
 
     /// The exact shape the lab Dragon presents: one QAIRT unpack, six copies of
     /// `libQnnHtp.so`, emitted by `find` in filesystem order. The old `head -1`

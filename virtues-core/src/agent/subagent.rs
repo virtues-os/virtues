@@ -1,6 +1,6 @@
 //! Deep Research fan-out — the `dispatch_subagents` tool implementation.
 //!
-//! The orchestrator (Deep Research mode) calls `dispatch_subagents` with a list of independent
+//! The orchestrator (the `deep-research` applet) calls `dispatch_subagents` with a list of independent
 //! missions. Each mission runs as its own **read-only** nested agent loop, in parallel, and returns
 //! a compressed findings summary plus (bounded) sources for citations. Workers do not get the
 //! `dispatch_subagents` tool, so there is no recursion.
@@ -420,9 +420,9 @@ async fn build_worker_prompt(pool: &PgPool, objective: &str) -> String {
          Current date/time: {datetime}\n\n\
          <objective>\n{objective}\n</objective>\n\n\
          Rules:\n\
-         - You are READ-ONLY: use sql_query, semantic_search, web_search, code_interpreter, and think. \
+         - You are READ-ONLY: use sql_query, semantic_search, web_search, shell, and think. \
          You cannot edit anything or spawn other workers.\n\
-         - Compute real statistics with code_interpreter where the objective calls for it; report the \
+         - Compute real statistics with shell where the objective calls for it; report the \
          sample size (n) and how strong or weak any pattern is.\n\
          - Cite the specific records, tables, or web sources you used.\n\
          - Report correlations and observations only — never assert causation.\n\

@@ -11,19 +11,22 @@
 //! higher role to return to.
 //!
 //! Each login's password is derived from a box secret ([`password`]), so the
-//! server and the root repair that sets it (`cli/system_repairs.rs`) agree
-//! without storing it anywhere. The connection goes over TCP to the same
-//! host, because a box's own login uses peer auth on the socket and these two
-//! roles have no OS user. Debian's default `pg_hba.conf` accepts a password
-//! on `127.0.0.1`.
+//! server and the root repair that sets it (`db-logins` in
+//! `cli/system_repairs.rs`) agree without storing it anywhere. The installer
+//! and first boot run that repair before the server first starts, and every
+//! upgrade runs it again. The connection goes over TCP to the same host,
+//! because a box's own login uses peer auth on the socket and these two roles
+//! have no OS user. Debian's default `pg_hba.conf` accepts a password on
+//! `127.0.0.1`; where a cluster's does not, the repair adds a line that does.
 //!
-//! When the login is not available (a box that has not upgraded through the
-//! repair, a `pg_hba.conf` that refuses it), [`begin`] falls back to
-//! `SET LOCAL ROLE` on the main pool and logs an error. That is the old
-//! behavior, so a box without the login is no worse than before and keeps
-//! working.
+//! When the login does not connect, [`begin`] refuses on a box and returns an
+//! error that says how to set the login. It does not drop the main pool into
+//! the role instead, because the SQL inside could undo that. Dev
+//! (`ENVIRONMENT=dev`) and this crate's tests still fall back to
+//! `SET LOCAL ROLE` and log an error: there the dev server and test runs
+//! share one cluster and may each set the passwords from a different secret.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -101,17 +104,48 @@ pub fn alter_login_sql(secret: &str, login: Login) -> String {
     format!("ALTER ROLE {} LOGIN PASSWORD '{}'", login.role(), password(secret, login))
 }
 
-/// Make both logins usable, where this process is allowed to. On a box the
-/// server has no CREATEROLE, so this is refused and the root repair does it
-/// instead; that refusal is expected and only logged at debug.
+/// The fix [`begin`] names when a login does not connect on a box.
+const FIX: &str = "run `sudo virtues migrate` on the box to set the login, then try again";
+
+/// Connect both logins at server start, and set a login that fails where this
+/// process may.
+///
+/// Only a superuser or a CREATEROLE role may change another role's password.
+/// The server's role is one in dev and CI, so there it sets a login that does
+/// not connect. On a box it is neither, and Postgres would refuse the
+/// `ALTER ROLE` and write the statement, password included, to its log. So on
+/// a box this only connects, which also logs the fix for a login that fails.
 pub async fn ensure_logins(pool: &PgPool) {
     let Some(secret) = secret() else {
         tracing::debug!("no secret to derive restricted Postgres logins from");
         return;
     };
+    let may_alter = match sqlx::query_scalar::<_, bool>(
+        "SELECT rolsuper OR rolcreaterole FROM pg_roles WHERE rolname = current_user",
+    )
+    .fetch_one(pool)
+    .await
+    {
+        Ok(may) => may,
+        Err(e) => {
+            tracing::warn!(error = %e, "cannot read this role's privileges, so the restricted logins are left as they are");
+            false
+        }
+    };
+    let fallback = fallback_allowed();
     for login in Login::ALL {
-        if let Err(e) = sqlx::query(&alter_login_sql(&secret, login)).execute(pool).await {
-            tracing::debug!(role = login.role(), error = %e, "cannot set the restricted login here");
+        let mut connected = pool_for(pool, login, Some(&secret)).await;
+        if connected.is_err() && may_alter {
+            match sqlx::query(&alter_login_sql(&secret, login)).execute(pool).await {
+                Ok(_) => {
+                    forget_failure(pool, login);
+                    connected = pool_for(pool, login, Some(&secret)).await;
+                }
+                Err(e) => tracing::warn!(role = login.role(), error = %e, "could not set the restricted login"),
+            }
+        }
+        if let Err(why) = connected {
+            report(login, &why, fallback);
         }
     }
 }
@@ -122,17 +156,23 @@ type Key = (String, Login);
 
 struct State {
     pools: HashMap<Key, PgPool>,
-    /// When a login last failed to connect. Retried after [`RETRY_AFTER`],
-    /// so a box without the login does not pay a failed connect per query.
-    failed: HashMap<Key, Instant>,
-    warned: bool,
+    /// When a login last failed to connect, and why. Retried after
+    /// [`RETRY_AFTER`], so a box without the login does not pay a failed
+    /// connect per query.
+    failed: HashMap<Key, (Instant, String)>,
+    /// Logins whose failure this process has already logged.
+    reported: HashSet<Login>,
 }
 
 const RETRY_AFTER: Duration = Duration::from_secs(60);
 
 fn state() -> &'static Mutex<State> {
     static S: OnceLock<Mutex<State>> = OnceLock::new();
-    S.get_or_init(|| Mutex::new(State { pools: HashMap::new(), failed: HashMap::new(), warned: false }))
+    S.get_or_init(|| Mutex::new(State { pools: HashMap::new(), failed: HashMap::new(), reported: HashSet::new() }))
+}
+
+fn key(main: &PgPool, login: Login) -> Key {
+    (main.connect_options().get_database().unwrap_or_default().to_string(), login)
 }
 
 fn options(main: &PgConnectOptions, secret: &str, login: Login) -> PgConnectOptions {
@@ -156,55 +196,119 @@ fn options(main: &PgConnectOptions, secret: &str, login: Login) -> PgConnectOpti
     opts
 }
 
-/// The login's pool, if it can connect. `None` means use the fallback.
-async fn pool_for(main: &PgPool, login: Login) -> Option<PgPool> {
-    let main_opts = main.connect_options();
-    let key: Key = (main_opts.get_database().unwrap_or_default().to_string(), login);
+/// The login's pool, or why it does not connect.
+async fn pool_for(main: &PgPool, login: Login, secret: Option<&str>) -> Result<PgPool, String> {
+    let key = key(main, login);
     {
         let st = state().lock().expect("restricted login state poisoned");
         if let Some(p) = st.pools.get(&key) {
-            return Some(p.clone());
+            return Ok(p.clone());
         }
-        if st.failed.get(&key).is_some_and(|t| t.elapsed() < RETRY_AFTER) {
-            return None;
+        if let Some((at, why)) = st.failed.get(&key) {
+            if at.elapsed() < RETRY_AFTER {
+                return Err(why.clone());
+            }
         }
     }
-    let secret = secret()?;
+    let Some(secret) = secret else {
+        return Err("there is no VIRTUES_ENCRYPTION_KEY to derive its password from".into());
+    };
     let pool = PgPoolOptions::new()
         .max_connections(4)
         .acquire_timeout(Duration::from_secs(10))
         .idle_timeout(Duration::from_secs(600))
-        .connect_with(options(&main_opts, &secret, login))
+        .connect_with(options(&main.connect_options(), secret, login))
         .await;
     let mut st = state().lock().expect("restricted login state poisoned");
     match pool {
         Ok(pool) => {
             st.failed.remove(&key);
             st.pools.insert(key, pool.clone());
-            Some(pool)
+            Ok(pool)
         }
         Err(e) => {
-            if !st.warned {
-                st.warned = true;
-                tracing::error!(
-                    role = login.role(),
-                    error = %e,
-                    "restricted Postgres login unavailable; falling back to SET ROLE, which a query \
-                     can undo. Upgrading the box sets the login (system repair `db-logins`)."
-                );
-            }
-            st.failed.insert(key, Instant::now());
-            None
+            let why = e.to_string();
+            st.failed.insert(key, (Instant::now(), why.clone()));
+            Err(why)
         }
     }
 }
 
-/// Begin a transaction as `login`: on its own login when it can connect,
-/// otherwise on `main` after `SET LOCAL ROLE`. Run nothing that needs the
-/// server's own tables in it; read those from `main` first.
+/// Retry `login` on the next call, after its password was just set.
+fn forget_failure(main: &PgPool, login: Login) {
+    state().lock().expect("restricted login state poisoned").failed.remove(&key(main, login));
+}
+
+/// Close the login pools kept for `main`'s database. A test calls this at the
+/// end, because `#[sqlx::test]` cannot drop a database these pools still use.
+#[cfg(test)]
+pub(crate) async fn close_pools(main: &PgPool) {
+    let db = main.connect_options().get_database().unwrap_or_default().to_string();
+    let pools: Vec<PgPool> = {
+        let mut st = state().lock().expect("restricted login state poisoned");
+        let keys: Vec<Key> = st.pools.keys().filter(|(d, _)| *d == db).cloned().collect();
+        keys.iter().filter_map(|k| st.pools.remove(k)).collect()
+    };
+    for pool in pools {
+        pool.close().await;
+    }
+}
+
+/// Whether a login that does not connect may fall back to `SET LOCAL ROLE`
+/// on the main pool. Only in dev and in this crate's tests (see the module
+/// doc); a box refuses instead.
+fn fallback_allowed() -> bool {
+    cfg!(test) || crate::middleware::auth::is_dev()
+}
+
+/// What a box says when `login` does not connect.
+fn refusal(login: Login, why: &str) -> String {
+    format!(
+        "The Postgres login {} does not connect ({why}), so this box does not run SQL that chat or an applet wrote. To fix it, {FIX}.",
+        login.role()
+    )
+}
+
+/// Log a login that does not connect, once per login per process.
+fn report(login: Login, why: &str, fallback: bool) {
+    if !state().lock().expect("restricted login state poisoned").reported.insert(login) {
+        return;
+    }
+    if fallback {
+        tracing::error!(
+            role = login.role(),
+            error = %why,
+            "restricted Postgres login unavailable; falling back to SET ROLE, which a query can undo. \
+             This happens only in dev and tests."
+        );
+    } else {
+        tracing::error!(role = login.role(), "{}", refusal(login, why));
+    }
+}
+
+/// Begin a transaction as `login`, on its own login. Run nothing that needs
+/// the server's own tables in it; read those from `main` first.
+///
+/// On a box, a login that does not connect is an error that says how to fix
+/// it. In dev and tests the transaction falls back to `main` after
+/// `SET LOCAL ROLE`.
 pub async fn begin(main: &PgPool, login: Login) -> Result<Transaction<'static, Postgres>, sqlx::Error> {
-    if let Some(pool) = pool_for(main, login).await {
-        return pool.begin().await;
+    begin_as(main, login, secret().as_deref(), fallback_allowed()).await
+}
+
+async fn begin_as(
+    main: &PgPool,
+    login: Login,
+    secret: Option<&str>,
+    fallback: bool,
+) -> Result<Transaction<'static, Postgres>, sqlx::Error> {
+    let why = match pool_for(main, login, secret).await {
+        Ok(pool) => return pool.begin().await,
+        Err(why) => why,
+    };
+    report(login, &why, fallback);
+    if !fallback {
+        return Err(sqlx::Error::Configuration(refusal(login, &why).into()));
     }
     let mut tx = main.begin().await?;
     sqlx::query(&format!("SET LOCAL ROLE {}", login.role())).execute(&mut *tx).await?;
@@ -228,6 +332,104 @@ mod tests {
                 .expect("session_user");
             assert_eq!(who, login.role(), "{login:?} fell back to SET ROLE");
         }
+        close_pools(&pool).await;
+    }
+
+    /// On a box, a login that does not connect is an error that names the
+    /// fix, and the SQL never runs on the main pool. The main pool here
+    /// points at a database that does not exist, so the login's connect fails
+    /// whatever `pg_hba.conf` allows, and a fallback would fail differently.
+    #[sqlx::test]
+    async fn a_box_refuses_when_the_login_does_not_connect(pool: PgPool) {
+        let missing = (*pool.connect_options()).clone().database("virtues_no_such_database");
+        let main = PgPoolOptions::new().connect_lazy_with(missing);
+        for login in Login::ALL {
+            let err = begin_as(&main, login, Some("this-box-secret"), false)
+                .await
+                .expect_err("a box must not run this SQL without the login");
+            let msg = err.to_string();
+            assert!(msg.contains(login.role()), "{msg}");
+            assert!(msg.contains(FIX), "{msg}");
+        }
+    }
+
+    /// Tables that hold secrets or what authenticates the owner.
+    const SECRET_TABLES: [&str; 5] = ["credentials", "app_pair_token", "app_setup_phrase", "app_publications", "app_device"];
+
+    /// Neither login holds any privilege on a table that holds secrets, after
+    /// the boot grant sweep and after the second sweep every later boot runs.
+    ///
+    /// Checked for every role the login can act as, not the login alone.
+    /// `has_table_privilege` counts only inherited privileges, and since PG16
+    /// a membership granted `WITH INHERIT FALSE` still lets the login
+    /// `SET ROLE` to its role. `pg_has_role(.., 'MEMBER')` counts both.
+    #[sqlx::test]
+    async fn neither_login_has_a_privilege_on_secret_tables(pool: PgPool) {
+        for _ in 0..2 {
+            crate::server::faces::ensure_applet_db_grants(&pool).await.expect("grant sweep");
+        }
+        for login in Login::ALL {
+            let roles: Vec<String> =
+                sqlx::query_scalar("SELECT rolname::text FROM pg_roles WHERE pg_has_role($1::name, oid, 'MEMBER')")
+                    .bind(login.role())
+                    .fetch_all(&pool)
+                    .await
+                    .expect("roles the login can act as");
+            assert!(roles.iter().any(|r| r == login.role()), "{} is missing", login.role());
+            for role in &roles {
+                for table in SECRET_TABLES {
+                    let table = format!("public.{table}");
+                    for privilege in ["SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"] {
+                        let has: bool =
+                            sqlx::query_scalar("SELECT has_table_privilege($1::name, $2::text, $3::text)")
+                                .bind(role)
+                                .bind(&table)
+                                .bind(privilege)
+                                .fetch_one(&pool)
+                                .await
+                                .expect("has_table_privilege");
+                        assert!(!has, "{} can act as {role}, which has {privilege} on {table}", login.role());
+                    }
+                    let any_column: bool = sqlx::query_scalar(
+                        "SELECT has_any_column_privilege($1::name, $2::text, 'SELECT, INSERT, UPDATE, REFERENCES')",
+                    )
+                    .bind(role)
+                    .bind(&table)
+                    .fetch_one(&pool)
+                    .await
+                    .expect("has_any_column_privilege");
+                    assert!(!any_column, "{} can act as {role}, which has a column privilege on {table}", login.role());
+                }
+            }
+        }
+    }
+
+    /// Resetting the role inside the SQL does not reach `credentials`: the
+    /// session user is the login itself, so there is no higher role to return
+    /// to, and `SET ROLE` to the server's role is refused. Run as a box runs
+    /// it, with no fallback.
+    #[sqlx::test]
+    async fn neither_login_reaches_credentials_by_resetting_its_role(pool: PgPool) {
+        crate::server::faces::ensure_applet_db_grants(&pool).await.expect("grant sweep");
+        ensure_logins(&pool).await;
+        let secret = secret();
+        let read = "SELECT set_config('role', session_user, true) AS r, \
+                    query_to_xml('select count(*) as n from public.credentials', true, false, '') AS x";
+        let delete = "DO $$BEGIN PERFORM set_config('role', session_user, true); \
+                      DELETE FROM public.credentials; END$$";
+        let server_role: String = sqlx::query_scalar("SELECT quote_ident(current_user)")
+            .fetch_one(&pool)
+            .await
+            .expect("the server's role");
+        let set_role = format!("SET LOCAL ROLE {server_role}");
+        for login in Login::ALL {
+            for sql in [read, delete, set_role.as_str()] {
+                let mut tx = begin_as(&pool, login, secret.as_deref(), false).await.expect("the login connects");
+                let err = sqlx::query(sql).execute(&mut *tx).await.expect_err("the escape must be refused");
+                assert!(err.to_string().contains("permission denied"), "{login:?}: {err}");
+            }
+        }
+        close_pools(&pool).await;
     }
 
     #[test]

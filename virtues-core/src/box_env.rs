@@ -16,17 +16,64 @@ use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
 
-/// The box env file: `<data dir>/virtues.env`, where the installer wrote it.
-/// The data dir comes from the install manifest, since an install can put it
-/// elsewhere (`DATA_DIR`); `VIRTUES_ENV_FILE` overrides both, for tests.
+/// The data dir when the install manifest names none.
+const DEFAULT_DATA_DIR: &str = "/var/lib/virtues";
+
+/// The box env file: `<data dir>/virtues.env`, where the installer wrote it
+/// and where the server unit's `EnvironmentFile=` points. The data dir comes
+/// from the install manifest, since an install can put it elsewhere
+/// (`DATA_DIR`); `VIRTUES_ENV_FILE` overrides both, for tests.
+///
+/// This answers "where is the file that holds `VIRTUES_ENCRYPTION_KEY`".
+/// Backup archives this file, restore writes it, the CLI loads it at start
+/// ([`path_for_startup`]), and the CLI's switch to the service user looks for
+/// it ([`installed_path`]). A reader with its own list of paths can disagree
+/// with the server about which file holds the key: a backup then archives a
+/// file without the key, or a restore writes the key where systemd never
+/// reads it.
+///
+/// TODO(2026-10-27): migrate the applet runtime (`applets/src/lib.rs`) and
+/// `relay.rs` onto this. Both still read `/var/lib/virtues/virtues.env`
+/// directly, which is wrong on an install that moved its data dir.
 pub fn path() -> PathBuf {
-    if let Ok(p) = std::env::var("VIRTUES_ENV_FILE") {
+    resolve(crate::install_manifest::get().as_ref())
+}
+
+/// [`path`] without the `VIRTUES_ENV_FILE` override: where the installer put
+/// the file on this machine. For questions about the install itself, such as
+/// whether this machine is a box, which a test's override must not answer.
+pub fn installed_path() -> PathBuf {
+    resolve_from(None, crate::install_manifest::get().as_ref())
+}
+
+/// [`path`], for the CLI's own env load, which runs before anything else.
+///
+/// The manifest's location can depend on `INSTALL_PREFIX`, and a command run
+/// from a shell only learns that from this file. `install_manifest::get`
+/// caches its first answer for the life of the process, so asking it this
+/// early would fix the manifest as absent on a prefixed install. This reads
+/// the manifest without caching it.
+pub fn path_for_startup() -> PathBuf {
+    let manifest = crate::install_manifest::load_from(&crate::install_manifest::manifest_path());
+    resolve(manifest.as_ref())
+}
+
+fn resolve(manifest: Option<&crate::install_manifest::InstallManifest>) -> PathBuf {
+    resolve_from(std::env::var_os("VIRTUES_ENV_FILE"), manifest)
+}
+
+/// The rule itself, with the override passed in so a test need not set a
+/// process-wide variable.
+fn resolve_from(
+    explicit: Option<std::ffi::OsString>,
+    manifest: Option<&crate::install_manifest::InstallManifest>,
+) -> PathBuf {
+    if let Some(p) = explicit.filter(|p| !p.is_empty()) {
         return PathBuf::from(p);
     }
-    crate::install_manifest::get()
-        .as_ref()
+    manifest
         .and_then(|m| m.data_dir.clone())
-        .unwrap_or_else(|| PathBuf::from("/var/lib/virtues"))
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_DATA_DIR))
         .join("virtues.env")
 }
 
@@ -45,6 +92,17 @@ pub fn read(path: &Path) -> Option<HashMap<String, String>> {
         }
     }
     Some(out)
+}
+
+/// The variable that holds the box key, the one key that seals every row in
+/// `credentials`.
+pub const ENCRYPTION_KEY: &str = "VIRTUES_ENCRYPTION_KEY";
+
+/// The box key in an env file at `path`, if the file has a non-empty one.
+/// Takes a path because backup and restore also read env files that are not
+/// this box's: the copy inside an archive.
+pub fn encryption_key(path: &Path) -> Option<String> {
+    read(path)?.remove(ENCRYPTION_KEY).filter(|v| !v.trim().is_empty())
 }
 
 /// One key from the file, if the file has it and it's non-empty.
@@ -205,6 +263,21 @@ mod tests {
         assert_eq!(vars["VIRTUES_EMBED_URL"], "http://127.0.0.1:18183");
         assert_eq!(vars["VIRTUES_EMBED_QUERY_PROMPT"], "task: search result | query: ");
         assert_eq!(vars["VIRTUES_ENCRYPTION_KEY"], "abc=");
+    }
+
+    #[test]
+    fn the_env_file_follows_the_manifest_data_dir_unless_overridden() {
+        use crate::install_manifest::InstallManifest;
+        assert_eq!(resolve_from(None, None), PathBuf::from("/var/lib/virtues/virtues.env"));
+        let moved = InstallManifest { data_dir: Some(PathBuf::from("/srv/virtues")), ..Default::default() };
+        assert_eq!(resolve_from(None, Some(&moved)), PathBuf::from("/srv/virtues/virtues.env"));
+        let no_dir = InstallManifest::default();
+        assert_eq!(resolve_from(None, Some(&no_dir)), PathBuf::from("/var/lib/virtues/virtues.env"));
+        assert_eq!(
+            resolve_from(Some("/tmp/drill.env".into()), Some(&moved)),
+            PathBuf::from("/tmp/drill.env")
+        );
+        assert_eq!(resolve_from(Some("".into()), Some(&moved)), PathBuf::from("/srv/virtues/virtues.env"));
     }
 
     #[test]

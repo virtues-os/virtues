@@ -159,7 +159,7 @@
 		active_project: 'Project',
 		scoped: 'Scoped to the project',
 		compacted_conversation: 'Earlier conversation, summarized',
-		skill: 'Skill',
+		applet: 'Applet',
 		active_context: 'Open page',
 		rules: 'Rules',
 		interview: 'Interview',

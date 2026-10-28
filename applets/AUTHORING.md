@@ -1,22 +1,23 @@
 # Authoring an Applet
 
-This is the guide for **builtin applets — the ones that ship with the box and run compiled code.** If you are writing an applet from chat, or anything declarative (a prompt, a schedule, a face), [`AGENTS.md`](./AGENTS.md) is the contract you want. For schema validation see [`MANIFEST_SCHEMA.json`](./MANIFEST_SCHEMA.json).
+This is the guide for **builtin applets — the ones that ship with the box and run compiled code.** If you are writing an applet from chat, or anything declarative (a prompt, a schedule, a view), [`AGENTS.md`](./AGENTS.md) is the contract you want. The format and the reasons for it are in [agents/plan/applet-shape.md](../agents/plan/applet-shape.md).
 
-> **The whole story in one sentence.** An applet is a folder at `applets/<name>/` with a `manifest.toml` and, optionally, code or a face. Drop the folder, hit `POST /api/admin/reconcile`, and the applet is live.
+> **The whole story in one sentence.** An applet is a folder at `applets/<name>/` with a `SKILL.md` and, optionally, a view, tables or scripts. Drop the folder, hit `POST /api/admin/reconcile`, and the applet is live.
 
 ---
 
 ## There is no runtime field
 
-An applet's shape is **derived from which fields you set**, never declared. There was a `runtime` key once; it is gone, because a manifest could declare one thing and set fields that meant another, and the declaration won — a manifest with a command and `runtime = "view"` passed validation and then never ran.
+An applet's shape is **derived from which keys you set**, never declared.
 
 | You set | What it is |
 |---|---|
-| `command` | a subprocess: forked per trigger, stdin/stdout JSON |
-| `agent` | an LLM agent loop (runs after the subprocess phase, if both are set) |
-| a `face/index.html` and neither of the above | a face-only applet — never invoked server-side, so `triggers = []` |
+| `metadata.run` naming a binary or a script | code: forked per trigger, stdin/stdout JSON |
+| `metadata.run: sql …` | read-only SQL before the prompt; no rows skips the run |
+| a body below the frontmatter | the prompt: an LLM agent loop, after `run` if both are set |
+| a `view.html` and none of the above | a view — never invoked server-side |
 
-Reconcile refuses a manifest that runs (has a command or an agent) with an empty `triggers` list, because it could never fire.
+`SKILL.md` follows the [Agent Skills](https://agentskills.io/specification) spec: `name` (the folder's name, lowercase words joined by `-`) and `description` are required, and the Virtues keys live under `metadata` as strings. The reader (`virtues-core/src/applet_templates/skill.rs`) refuses a file with a sentence for each problem.
 
 ---
 
@@ -26,21 +27,28 @@ Reconcile refuses a manifest that runs (has a command or an agent) with an empty
 
 ```
 applets/
+├── my-applet/
+│   └── SKILL.md
 └── my_applet/
-    ├── manifest.toml
     └── main.rs
 ```
 
-`applets/my_applet/manifest.toml`:
+The applet folder holds the applet; the Rust source lives beside it in a folder `applets/Cargo.toml` names, and has no applet file of its own.
 
-```toml
-name = "My Applet"
-description = "What this does, in one sentence."
-owner = "user"
-command = ["my_applet"]           # bare name → Cargo-built binary under target/
-triggers = ["cron", "manual"]
-schedule = "0 */15 * * * *"       # every 15 minutes, box-local time
+`applets/my-applet/SKILL.md`:
+
+```markdown
+---
+name: my-applet
+description: What this does, in one sentence.
+metadata:
+  invoke: none
+  trigger: cron 0 */15 * * * *
+  run: my_applet
+---
 ```
+
+`run: my_applet` is a bare name, so it resolves to the Cargo-built binary. Only a shipped applet may run a binary by name.
 
 `applets/my_applet/main.rs`:
 
@@ -54,7 +62,7 @@ async fn main() -> Result<()> {
     let _db = connect_from_env().await?;
 
     // Do work — read/write data_* tables, call APIs, run an agent.
-    // input.config holds the applet's manifest config + user overrides.
+    // input.config holds the applet's config, its state laid under it.
     // input.credentials is populated for applets linked to a credential.
     // input.payload is the trigger body (webhook request or manual args).
 
@@ -80,22 +88,22 @@ curl -X POST http://localhost:8000/api/admin/reconcile
 
 The applet appears in `/applets`, fires on its cron schedule.
 
-### A subprocess applet (Python / Node / shell)
+### A script applet (Python / shell)
 
-The contract is **stdin JSON in, stdout JSON out, exit 0 on success**. Any language works:
+The contract is **stdin JSON in, stdout JSON out, exit 0 on success**. Put the script under `scripts/`:
 
-`manifest.toml`:
-
-```toml
-name = "My Python Applet"
-description = "..."
-owner = "user"
-command = ["python3", "applets/my_python_applet/main.py"]  # path relative to repo root
-triggers = ["cron"]
-schedule = "0 */30 * * * *"
+```markdown
+---
+name: my-python-applet
+description: What this does, in one sentence.
+metadata:
+  invoke: none
+  trigger: every 30 minutes
+  run: scripts/main.py
+---
 ```
 
-`main.py`:
+`scripts/main.py`:
 
 ```python
 #!/usr/bin/env python3
@@ -110,7 +118,7 @@ result = "synced 42 records"
 print(json.dumps({"result": result, "config": inp["config"]}))
 ```
 
-No Cargo entry needed — a multi-element `command` runs the script directly via `PATH`. Reconcile picks it up after the folder lands.
+A `.py` runs with `python3`, a `.sh` with `sh`, anything else directly. Reconcile picks it up after the folder lands.
 
 That example ships with the box, so it runs directly as the box user. Code
 that did not ship (an import, or an applet in the state root) runs in a
@@ -125,99 +133,89 @@ sandbox with no network, as a throwaway user, and sees:
 | `$CREDENTIALS_DIRECTORY/credentials.json` | its credentials; `inp["credentials"]` is `None` |
 | `HTTPS_PROXY`, `HTTP_PROXY` | set only when the run may reach hosts: the ones its `allowed-tools` asks for with `net(host)` that the owner allowed on the applet's page. Every request is recorded on the run |
 
-### A face-only applet
+### A view-only applet
 
-A face is `face/index.html`, rendered in a sandboxed iframe. There is no Svelte
-option: an applet folder must not mount components inside the app bundle, which
-is the whole point of the iframe's opaque origin.
+A view is `view.html`, one file of at most 48 KB, rendered in a sandboxed iframe. There is no Svelte option: an applet folder must not mount components inside the app bundle, which is the whole point of the iframe's opaque origin.
 
 ```
 applets/
-└── my_dashboard/
-    ├── manifest.toml
-    └── face/
-        └── index.html
+└── my-dashboard/
+    ├── SKILL.md
+    └── view.html
 ```
 
-```toml
-name = "My Dashboard"
-description = "What this shows you, in one sentence."
-owner = "user"
-triggers = []                  # never invoked server-side
-default_enabled = true
+```markdown
+---
+name: my-dashboard
+description: What this shows you, in one sentence.
+---
 ```
 
-Inside `index.html`, link `virtues.css` for the box's theme and use
-`await virtues.query(sql)` for read-only access to your data. See
-`applets/dot_cloud/face/index.html` for a working one.
+Inside `view.html`, link `virtues.css` for the box's theme and use `await virtues.query(sql)` for read-only access to your data. See `applets/dot-cloud/view.html` for a working one. A folder an import brings with a multi-file `face/` keeps serving it from there.
 
 ---
 
 ## Reconcile
 
-Anytime you create, edit, or delete a manifest on disk, tell core to pick up the change:
+Anytime you create, edit, or delete a `SKILL.md` on disk, tell core to pick up the change:
 
 ```bash
 curl -X POST http://localhost:8000/api/admin/reconcile
 ```
 
-Returns:
+Code changes (editing `main.rs`, etc.) require a `cargo build` first if Rust.
 
-```json
-{
-  "upserted": 24,        // total app_applets rows refreshed
-  "restarted": []        // (v1.1)
-}
-```
-
-Code changes (editing `main.rs`, etc.) require a `cargo build` first if Rust. For polyglot applets with `command = [...]` and live-reload tooling, no rebuild needed.
+A `manifest.toml` folder in the state root (an import, a restore from an older box) is converted to `SKILL.md` before the catalog reads it (`applet_templates::convert`); one that cannot convert is logged and not loaded.
 
 ---
 
 ## Field ownership
 
-Manifest is **declarative** — what the applet *is*. SQL (`app_applets`) holds **runtime state** — what it's doing right now. They never disagree because they own different fields:
+`SKILL.md` is **declarative** — what the applet *is*. SQL (`app_applets`) holds **runtime state** — what it's doing right now:
 
 | Field | Lives in | Wins on conflict |
 |---|---|---|
-| `name`, `description`, `command`, `triggers`, `schedule`, `default_enabled`, `per_credential`, `source`, `condition`, `until`, `agent`, `config` | manifest.toml | manifest (system + ai applets) / first-seed-only (user applets) |
-| current `enabled`, current `schedule`, `memory`, `last_slot_at` / `next_due_at`, last_run, runs[], `credential_id` (if fanned out) | SQL | always SQL |
+| `description`, `run`, `trigger`, `invoke`, `source`, `limit`, `model`, `enabled` (the default), the prompt | SKILL.md | the file (shipped and assistant-made applets) / first-seed-only (your own and imports) |
+| current `enabled`, `memory`, `state`, `last_slot_at` / `next_due_at`, runs, `credential_id` (if fanned out), the hosts the owner allowed | SQL | always SQL |
 
-User toggles via the UI (enable/disable, change cron) write SQL only — your manifest is unchanged. User edits to manifest.toml propagate via reconcile but don't blow away user-managed runtime state.
+An edit to an assistant-made applet from the app writes its `SKILL.md`, so reconcile reads the edit back.
 
 ---
 
 ## per_credential fan-out
 
-If your applet needs to run **once per connected account** (e.g. one Google Calendar sync per Google credential), declare:
+If your applet needs to run **once per connected account** (e.g. one Google Calendar sync per Google credential), name the source:
 
-```toml
-per_credential = true
-source = { id = "google" }
+```markdown
+metadata:
+  source: google
 ```
 
 Reconcile materializes one `app_applets` row per active credential of that source. Each row gets `credential_id` set; runtime auto-injects the matching credential into `AppletInput.credentials` when the applet fires.
 
-`webhook` triggers **require** `per_credential = true` so bearer auth resolves to an identity.
+Only an applet that ships with the box may name a `source`, because its runs hold the account's decrypted sign-in. An applet in the state root that names one does not load.
+
+A `webhook` trigger **requires** a `source`, so the post resolves to an identity.
 
 ---
 
 ## Naming conventions
 
-- Folder name → applet's `id_prefix` (`applet_<folder>`) by default
-- A bare `command` (e.g. `["my_applet"]`) must match a `[[bin]]` in `applets/Cargo.toml` for Rust; a multi-element `command` runs via `PATH`
-- A face-only applet sets neither `command` nor `agent`
-- `id_prefix` override is rarely needed; only set it if migrating an existing applet
+- The folder name is the applet's `name`; its id is `applet_` plus the name with `-` as `_`.
+- A bare `run` (e.g. `my_applet`) must match a `[[bin]]` in `applets/Cargo.toml`.
+- A view-only applet sets neither `run` nor a prompt.
+- `metadata.writes` names the data streams the code writes, for the streams page.
 
 ---
 
 ## What gets invoked when
 
-| Applet shape | Cron tick | Webhook POST `/webhook/:id` | Manual fire | Detail page |
+| Applet shape | Schedule | Webhook POST `/webhook/:id` | Run now | Detail page |
 |---|---|---|---|---|
-| has `command` | spawns subprocess | spawns subprocess | spawns subprocess | run log |
-| has `agent` | runs the agent loop | same | same | run log |
-| face only | skipped (never enqueued) | n/a | skipped | renders the face |
+| has `run` code | spawns subprocess | spawns subprocess | spawns subprocess | run log |
+| has `run` SQL | runs it; no rows skips the run | same | same | run log |
+| has a prompt | runs the agent loop | same | same | run log |
+| view only | never scheduled | n/a | n/a | renders the view |
 
 For a subprocess, the trigger payload is delivered as JSON on stdin.
 
@@ -227,19 +225,19 @@ For a subprocess, the trigger payload is delivered as JSON on stdin.
 
 | You want | Pick | Why |
 |---|---|---|
-| Run every N minutes/hours | `command` + `schedule` | Lowest overhead; fork-per-trigger is fine |
-| React to a device webhook | `command` + `triggers = ["webhook"]` + `per_credential` | Standard pattern for iOS/Mac streams |
-| Multi-step LLM agent loop | `agent = "..."`, no `command` | Built-in agent runner |
-| Dashboard of `data_*` tables | `face/index.html` only | No backend needed; the face queries directly |
-| Polyglot script (Python, Node, Bash) | `command = [...]` | Cargo not involved |
+| Run every N minutes/hours | `run` + `trigger: every …` | Lowest overhead; fork-per-trigger is fine |
+| React to a device webhook | `run` + `trigger: webhook` + `source` | Standard pattern for iOS/Mac streams |
+| A prompt only when something is true | `run: sql …` + a prompt | No model call on the days it is false |
+| Multi-step LLM agent loop | a prompt, no `run` | Built-in agent runner |
+| Dashboard of `data_*` tables | `view.html` only | No backend needed; the view queries directly |
 
 ---
 
 ## Common pitfalls
 
-- **Forgot to `cargo build`** — for Rust function applets, the binary must exist before reconcile. Builds happen at the workspace level: `cargo build --bin <bin-name>`.
-- **`webhook` trigger without `per_credential`** — reconcile will refuse the manifest. Webhooks need a credential to authenticate.
-- **Face-only applet with `triggers = ["cron"]`** — the scheduler skips anything with no command and no agent, so it ticks into nothing. Set `triggers = []`.
+- **Forgot to `cargo build`** — for Rust applets, the binary must exist before it runs. Builds happen at the workspace level: `cargo build --bin <bin-name>`.
+- **`webhook` trigger without `source`** — the reader refuses it. Webhooks need a credential to authenticate.
+- **A prompt applet missing `invoke: none`** — without it, an applet with a prompt is offered in the `/` menu and to the assistant.
 - **Live editing `main.rs`** — reconcile doesn't trigger `cargo build`. You still need to rebuild manually for Rust changes.
 
 ---
@@ -249,15 +247,15 @@ For a subprocess, the trigger payload is delivered as JSON on stdin.
 ```
 applets/
 ├── sources.toml                     # [[source]] catalog (auth providers)
-├── Cargo.toml                       # [[bin]] entries for Rust functions
-├── <name>/
-│   ├── manifest.toml                # declarative metadata
-│   ├── main.rs                      # function entry (Rust)
-│   ├── transform.rs                 # ... or whatever helper modules
-│   ├── face/index.html              # optional face (sandboxed iframe)
-│   ├── schema/NNNN_*.sql            # optional owned tables, append-only
-│   └── ...
-└── MANIFEST_SCHEMA.json             # validate your manifest against this
+├── Cargo.toml                       # [[bin]] entries for Rust code
+├── <name>/                          # the applet
+│   ├── SKILL.md                     # frontmatter and prompt
+│   ├── view.html                    # optional view (sandboxed iframe)
+│   ├── tables/NNNN_*.sql            # optional owned tables, append-only
+│   └── scripts/                     # optional code
+└── <name_with_underscores>/         # Rust source for a shipped binary
+    ├── main.rs
+    └── ...
 ```
 
 That's the whole story.

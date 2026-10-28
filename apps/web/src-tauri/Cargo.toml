@@ -135,6 +135,13 @@ lto = true
 opt-level = "s"
 strip = true
 
+# Same dev debug info as the repo workspace's Cargo.toml, which explains why.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+debug = false
+
 # netdev 0.45.0 calls `nw_path_is_ultra_constrained` unconditionally on iOS.
 # That symbol is iOS 26.0+, so the stock crate makes the app unlaunchable on
 # every earlier iOS — dyld aborts at launch when strong-linked, and segfaults

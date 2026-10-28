@@ -37,6 +37,7 @@ pub mod bookmark_media;
 pub mod browse;
 pub mod browser;
 pub mod box_env;
+pub mod box_files;
 pub mod net_check;
 pub mod observe;
 pub mod outbox;

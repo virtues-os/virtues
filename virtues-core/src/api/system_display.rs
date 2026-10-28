@@ -697,7 +697,7 @@ pub async fn set_display_face_handler(
             };
             // The choice is only meaningful if the applet ships a face —
             // hanging a faceless applet would put a 404 on the glass.
-            if crate::server::faces::face_dir_for(&id).is_none() {
+            if crate::server::faces::face_for(&id).is_none() {
                 return bad("that applet has no face");
             }
             // Unused for applet faces; keep the column's default so a later

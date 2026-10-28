@@ -71,7 +71,6 @@ pub const AUTH_SESSION_PREFIX: &str = "authsession";
 pub const AUTH_TOKEN_PREFIX: &str = "authtoken";
 pub const DEVICE_PREFIX: &str = "dev";
 pub const PAIR_TOKEN_PREFIX: &str = "pairtok";
-pub const SUDO_REQUEST_PREFIX: &str = "sudo";
 
 // Drive Layer
 pub const DRIVE_FILE_PREFIX: &str = "file";

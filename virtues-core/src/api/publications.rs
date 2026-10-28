@@ -75,8 +75,10 @@ const WELL_KNOWN_DATA_DIR: &str = "/var/lib/virtues";
 const DEV_STATE_DIR_FROM_CORE: &str = "../.publication-state";
 
 /// Where publication state lives: `VIRTUES_PUBLICATIONS_DIR`, then the box's
-/// data directory, then a gitignored folder in a dev checkout.
-fn state_dir() -> PathBuf {
+/// data directory, then a gitignored folder in a dev checkout. It holds the
+/// shared pages and the door's key file, so `crate::box_files` lists it for
+/// `reset`, `deprovision` and `image-check`.
+pub(crate) fn state_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("VIRTUES_PUBLICATIONS_DIR") {
         if !dir.is_empty() {
             return PathBuf::from(dir);
@@ -116,8 +118,14 @@ fn door_id() -> Option<String> {
 
 /// The door's secret key: from the box's secrets, else adopted from a key file a
 /// door made for itself before the key moved here (so its links keep
-/// working), else new. Also caches the door's EndpointId for links.
+/// working, and only when this database has shared links, see
+/// [`adoptable_key_file`]), else new. Also caches the door's EndpointId for
+/// links.
 pub async fn door_key(pool: &PgPool) -> Result<[u8; 32]> {
+    door_key_with_file(pool, &door_dir().join("door.key")).await
+}
+
+async fn door_key_with_file(pool: &PgPool, key_file: &Path) -> Result<[u8; 32]> {
     let decode = |hex_key: &str| -> Option<[u8; 32]> {
         hex::decode(hex_key.trim()).ok()?.try_into().ok()
     };
@@ -127,10 +135,7 @@ pub async fn door_key(pool: &PgPool) -> Result<[u8; 32]> {
     let seed = match stored.and_then(|(secret, _)| decode(&secret)) {
         Some(seed) => seed,
         None => {
-            let adopted = std::fs::read(door_dir().join("door.key"))
-                .ok()
-                .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok());
-            let seed = match adopted {
+            let seed = match adoptable_key_file(pool, key_file).await? {
                 Some(seed) => seed,
                 None => {
                     use ring::rand::SecureRandom;
@@ -164,6 +169,30 @@ pub async fn door_key(pool: &PgPool) -> Result<[u8; 32]> {
         *cached = Some(id);
     }
     Ok(seed)
+}
+
+/// The key in a door's own key file, when this database shared links under it.
+///
+/// A database without the key row is either one from before the key moved
+/// into the database, whose links name the key in the file, or one that was
+/// just reset, deprovisioned or created on a disk where an earlier database
+/// left the file. Only the first lists publications: `create`, `update` and
+/// `list` all ask for the key before they write or read a row, so a fresh
+/// database has none when it gets here. Adopting the file there would hand
+/// the new database the previous owner's link identity, so it mints its own,
+/// and the door's next start overwrites the file from the database.
+async fn adoptable_key_file(pool: &PgPool, key_file: &Path) -> Result<Option<[u8; 32]>> {
+    let shared_here: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app_publications)")
+        .fetch_one(pool)
+        .await
+        .map_err(|e| Error::Database(format!("check for publications: {e}")))?;
+    if !shared_here {
+        return Ok(None);
+    }
+    // A missing or short file leaves nothing to adopt, and the key is minted.
+    Ok(std::fs::read(key_file)
+        .ok()
+        .and_then(|b| <[u8; 32]>::try_from(b.as_slice()).ok()))
 }
 
 /// A door's EndpointId (64 hex characters, as iroh prints it) in the 43
@@ -234,7 +263,7 @@ const COLUMNS: &str = "id, token, producer_kind, producer_id, title, size_bytes,
 
 /// The page in `face_dir`, if it stands alone off the box with nothing to
 /// stand in for. `Err` names what to change.
-pub fn standalone_html(face_dir: &Path) -> Result<String> {
+pub fn standalone_html(face_dir: &crate::server::faces::Face) -> Result<String> {
     let html = read_face(face_dir)?;
     let findings = box_only_findings(&html);
     if !findings.is_empty() {
@@ -249,7 +278,7 @@ pub fn standalone_html(face_dir: &Path) -> Result<String> {
 
 /// The page in `face_dir` if sharing it through the door can work, and
 /// whether it reads data.
-fn shareable_html(face_dir: &Path) -> Result<(String, bool)> {
+fn shareable_html(face_dir: &crate::server::faces::Face) -> Result<(String, bool)> {
     let html = read_face(face_dir)?;
     let findings = server_only_findings(&html);
     if !findings.is_empty() {
@@ -264,15 +293,18 @@ fn shareable_html(face_dir: &Path) -> Result<(String, bool)> {
 }
 
 /// One face file, within the size limit.
-fn read_face(face_dir: &Path) -> Result<String> {
+fn read_face(face: &crate::server::faces::Face) -> Result<String> {
     // One file goes out. A face that loads a sibling file would publish with
-    // that file missing.
-    let siblings: Vec<String> = std::fs::read_dir(face_dir)
+    // that file missing. A `view.html` is one file already.
+    let siblings: Vec<String> = match face {
+        crate::server::faces::Face::View(_) => Vec::new(),
+        crate::server::faces::Face::Folder(face_dir) => std::fs::read_dir(face_dir)
         .map_err(|e| Error::Other(format!("reading the face: {e}")))?
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|n| n != "index.html")
-        .collect();
+        .collect(),
+    };
     if !siblings.is_empty() {
         return Err(Error::InvalidInput(format!(
             "only a single-file face publishes; this one also has {}. Inline them \
@@ -280,7 +312,7 @@ fn read_face(face_dir: &Path) -> Result<String> {
             siblings.join(", ")
         )));
     }
-    let html = std::fs::read_to_string(face_dir.join("index.html"))
+    let html = std::fs::read_to_string(face.index())
         .map_err(|e| Error::Other(format!("reading the face: {e}")))?;
     if html.len() > MAX_FACE_BYTES {
         return Err(Error::InvalidInput(format!(
@@ -420,7 +452,7 @@ pub async fn standalone_face(pool: &PgPool, applet_id: &str) -> Result<(String, 
         .await
         .map(|a| a.name)
         .map_err(|_| Error::NotFound(format!("no applet {applet_id:?}")))?;
-    let face_dir = crate::server::faces::face_dir_for(applet_id)
+    let face_dir = crate::server::faces::face_for(applet_id)
         .ok_or_else(|| Error::InvalidInput(format!("\"{name}\" has no face to publish")))?;
     let html = standalone_html(&face_dir)?;
     Ok((name, html))
@@ -673,7 +705,7 @@ async fn preview_applet(pool: &PgPool, applet_id: &str) -> Result<SharePreview> 
         .await
         .map(|a| a.name)
         .map_err(|_| Error::NotFound(format!("no applet {applet_id:?}")))?;
-    let Some(face_dir) = crate::server::faces::face_dir_for(applet_id) else {
+    let Some(face_dir) = crate::server::faces::face_for(applet_id) else {
         return Ok(SharePreview::cannot(
             name,
             "This applet has nothing to show, so there is no page to share.".into(),
@@ -764,7 +796,7 @@ async fn build_applet(pool: &PgPool, applet_id: &str, live: bool) -> Result<(Str
         .await
         .map(|a| a.name)
         .map_err(|_| Error::NotFound(format!("no applet {applet_id:?}")))?;
-    let face_dir = crate::server::faces::face_dir_for(applet_id)
+    let face_dir = crate::server::faces::face_for(applet_id)
         .ok_or_else(|| Error::InvalidInput(format!("\"{name}\" has no face to publish")))?;
     let (html, reads) = shareable_html(&face_dir)?;
     if !reads {
@@ -1087,16 +1119,24 @@ mod tests {
 
     #[test]
     fn only_a_single_standalone_file_publishes() {
+        use crate::server::faces::Face;
         let dir = tempfile::tempdir().unwrap();
+        let face = Face::Folder(dir.path().to_path_buf());
         std::fs::write(dir.path().join("index.html"), "<h1>Rome</h1>").unwrap();
-        assert_eq!(standalone_html(dir.path()).unwrap(), "<h1>Rome</h1>");
+        assert_eq!(standalone_html(&face).unwrap(), "<h1>Rome</h1>");
 
         std::fs::write(dir.path().join("style.css"), "h1{}").unwrap();
-        assert!(matches!(standalone_html(dir.path()), Err(Error::InvalidInput(_))));
+        assert!(matches!(standalone_html(&face), Err(Error::InvalidInput(_))));
         std::fs::remove_file(dir.path().join("style.css")).unwrap();
 
         std::fs::write(dir.path().join("index.html"), "<script src=virtues.js></script>").unwrap();
-        assert!(matches!(standalone_html(dir.path()), Err(Error::InvalidInput(_))));
+        assert!(matches!(standalone_html(&face), Err(Error::InvalidInput(_))));
+
+        // A view.html is one file however much sits beside it.
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join("view.html"), "<h1>Rome</h1>").unwrap();
+        std::fs::write(folder.path().join("SKILL.md"), "---\nname: rome\n---\n").unwrap();
+        assert_eq!(standalone_html(&Face::View(folder.path().join("view.html"))).unwrap(), "<h1>Rome</h1>");
     }
 
     #[test]
@@ -1248,10 +1288,9 @@ mod tests {
         assert_eq!(store.load(&kept.token).as_deref(), Some(&b"kept"[..]));
     }
 
-    #[sqlx::test(migrations = "./migrations")]
-    async fn the_door_key_is_minted_once_and_kept(pool: PgPool) {
-        // Sealing needs a vault key; CI has none. Thirty-two zero bytes, as
-        // the crypto crate's own tests use, and only when nothing is set.
+    /// Sealing needs a vault key; CI has none. Thirty-two zero bytes, as the
+    /// crypto crate's own tests use, and only when nothing is set.
+    fn ensure_vault_key() {
         if std::env::var("VIRTUES_ENCRYPTION_KEY").is_err() {
             use base64::Engine;
             std::env::set_var(
@@ -1259,11 +1298,46 @@ mod tests {
                 base64::engine::general_purpose::STANDARD.encode([0u8; 32]),
             );
         }
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_door_key_is_minted_once_and_kept(pool: PgPool) {
+        ensure_vault_key();
         let a = door_key(&pool).await.unwrap();
         let b = door_key(&pool).await.unwrap();
         assert_eq!(a, b);
         let id = virtues_iroh::SecretKey::from_bytes(&a).public().to_string();
         assert_eq!(door_id().as_deref(), Some(id.as_str()));
+    }
+
+    /// A database with no links mints its own key, even with an earlier
+    /// database's key file on the disk, as after a reset or a resale.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_fresh_database_ignores_a_leftover_key_file(pool: PgPool) {
+        ensure_vault_key();
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("door.key");
+        std::fs::write(&file, [7u8; 32]).unwrap();
+
+        let seed = door_key_with_file(&pool, &file).await.unwrap();
+
+        assert_ne!(seed, [7u8; 32]);
+        assert_eq!(door_key_with_file(&pool, &file).await.unwrap(), seed, "kept once minted");
+    }
+
+    /// A database that shared links before the key moved into it adopts the
+    /// key file its door made, so those links keep working.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_database_with_links_adopts_its_doors_key_file(pool: PgPool) {
+        ensure_vault_key();
+        let dir = tempfile::tempdir().unwrap();
+        create_frozen(&pool, dir.path(), &Producer::Applet("applet_user__rome".into()), "Rome", b"page", None, &[])
+            .await
+            .unwrap();
+        let file = dir.path().join("door.key");
+        std::fs::write(&file, [7u8; 32]).unwrap();
+
+        assert_eq!(door_key_with_file(&pool, &file).await.unwrap(), [7u8; 32]);
     }
 
     #[test]

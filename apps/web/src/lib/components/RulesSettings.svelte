@@ -14,7 +14,6 @@
 	import IconButton from '$lib/components/IconButton.svelte';
 	import Input from '$lib/components/Input.svelte';
 	import { getNarrativeRules, saveNarrativeRules, type NarrativeRule } from '$lib/api/client';
-	import { localModel } from '$lib/stores/localModel.svelte';
 
 	type Kind = NarrativeRule['kind'];
 
@@ -89,9 +88,6 @@
 
 	onMount(() => {
 		void load();
-		// A Local turn carries none of these (`local_model::SAFETY_PROMPT` is
-		// its whole prompt), so the hint says so where Local is offered.
-		void localModel.load();
 	});
 
 	function save(onFail?: () => void) {
@@ -245,7 +241,7 @@
 	<!-- What a rule does in chat (RULES_PROMPT in agent/prompt.rs): never
 	     opens the subject, still engages when the owner does. -->
 	<p class="sec-hint">
-		{assistantName} follows these in chat{#if localModel.status.supported}, except in Local{/if}.
+		{assistantName} follows these in chat.
 		It never raises a subject you've ruled out, but talks about it if you do.
 	</p>
 

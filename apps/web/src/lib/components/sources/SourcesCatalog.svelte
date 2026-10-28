@@ -13,15 +13,27 @@
 	or not you've connected it — "what could I plug in" is half of what this page
 	is for. Opening a row goes to that source's page, where its connections live
 	and where both kinds are treated alike (see lib/stores/sources.svelte.ts).
+
+	Services the assistant can act in (other services' MCP servers, see
+	agents/plan/mcp-plan.md) are rows here too, because connecting one is the
+	same act as connecting a source: you sign in to a service. The "What it
+	does" column tells the two apart. A source syncs your data to your server.
+	A connection syncs nothing; the assistant uses its tools when you ask in
+	chat. One search covers both: what you type also searches the public MCP
+	Registry, and its matches are listed under the table.
 -->
 <script lang="ts">
 	import { Page } from '$lib';
 	import Button from '$lib/components/Button.svelte';
+	import Input from '$lib/components/Input.svelte';
+	import TextAction from '$lib/components/TextAction.svelte';
 	import UniversalDataGrid, {
 		type Column
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import { sourcesStore, type Connection } from '$lib/stores/sources.svelte';
-	import { getStreamHealth, type StreamHealth } from '$lib/api/client';
+	import { apiGet, apiSend, getStreamHealth, type StreamHealth } from '$lib/api/client';
+	import { canSignInSheet, openSignIn } from '$lib/tauri/bridge';
+	import { reloadOnReturn } from './connectDispatch';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { relativeTime } from '$lib/applets/palette';
@@ -35,6 +47,7 @@
 
 	$effect(() => {
 		void store.load();
+		void loadConnections();
 		// Failure here costs the footnote, not the table.
 		getStreamHealth()
 			.then((r) => (streams = r))
@@ -62,7 +75,54 @@
 			: []
 	);
 
-	/** One catalog row: a source plus whatever is connected to it. */
+	/** A service the assistant can act in, as `/api/connections` returns it.
+	 *  `needs_sign_in` is absent from an older server. */
+	type Connected = {
+		id: string;
+		name: string;
+		about: string;
+		url: string;
+		registry: string | null;
+		needs_sign_in?: boolean;
+	};
+	/** What happened to the service's own grant on disconnect. */
+	type Grant = 'revoked' | 'not_offered' | 'not_revoked' | null;
+	type Listing = { registry: string; title: string; about: string; url: string; is_connected: boolean };
+
+	const SYNCS = 'Syncs your data';
+	const ACTS = 'The assistant can act here';
+
+	let connected = $state<Connected[]>([]);
+	let featured = $state<Listing[]>([]);
+	let registryError = $state<string | null>(null);
+	let connectionsError = $state<string | null>(null);
+	/** What the last disconnect did at the service. */
+	let disconnected = $state<string | null>(null);
+	/** The key of the connect or disconnect in flight, so its button spins. */
+	let busy = $state<string | null>(null);
+	let results = $state<Listing[] | null>(null);
+	let searching = $state(false);
+	let address = $state('');
+
+	const message = (e: unknown) => (e instanceof Error ? e.message : String(e));
+
+	async function loadConnections() {
+		try {
+			const list = await apiGet<{
+				connected: Connected[];
+				featured: Listing[];
+				registry_error: string | null;
+			}>('/connections');
+			connected = list.connected;
+			featured = list.featured;
+			registryError = list.registry_error;
+			connectionsError = null;
+		} catch (e) {
+			connectionsError = message(e);
+		}
+	}
+
+	/** One catalog row: a source, or a service the assistant can act in. */
 	type Row = {
 		id: string;
 		name: string;
@@ -76,8 +136,22 @@
 		applets: number;
 		/** Life-domains this source can fill, e.g. "Health · Location". */
 		provides: string;
-		/** Null when the connection's source is no longer in the catalog. */
+		/** "Syncs your data" or "The assistant can act here". */
+		does: string;
+		/** Null for a service the assistant acts in, and for a connection
+		 *  whose source is no longer in the catalog. */
 		source: SourceCatalogItem | null;
+		/** Set on a service the assistant acts in. `id` is null until it is
+		 *  connected. */
+		service: Service | null;
+	};
+
+	type Service = {
+		id: string | null;
+		registry: string | null;
+		/** Set when connected; signing in again to a pasted server uses it. */
+		url: string | null;
+		needsSignIn: boolean;
 	};
 
 	const AUTH_LABEL: Record<string, string> = {
@@ -113,7 +187,9 @@
 				last_activity: '—',
 				applets: connections.reduce((n, c) => n + (c.appletCount ?? 0), 0),
 				provides: '—',
-				source: null
+				does: SYNCS,
+				source: null,
+				service: null
 			});
 		}
 		return out;
@@ -142,29 +218,113 @@
 				last_activity: newest ? relativeTime(newest) : '—',
 				applets: connections.reduce((n, c) => n + (c.appletCount ?? 0), 0),
 				provides: (source.domains ?? []).map(domainLabel).join(' · ') || '—',
-				source
+				does: SYNCS,
+				source,
+				service: null
 			};
 		})
 	);
 
-	// Orphans first: they are the only rows here that are actively wrong.
-	const rows = $derived.by<Row[]>(() => {
-		const q = query.trim().toLowerCase();
-		return [...orphanRows, ...catalogRows]
-			.filter((r) => !q || r.name.toLowerCase().includes(q))
-			.sort((a, b) => {
-				const rank = (r: Row) => (r.source === null ? 0 : r.connections.length > 0 ? 1 : 2);
-				return rank(a) - rank(b) || a.name.localeCompare(b.name);
-			});
+	function serviceRow(id: string, name: string, about: string, service: Service): Row {
+		const on = service.id !== null;
+		return {
+			id,
+			name,
+			description: about,
+			icon: 'mynaui:link',
+			kind: AUTH_LABEL.via_proxy,
+			connections: [],
+			connected: on ? 1 : 0,
+			state: service.needsSignIn ? 'needs attention' : on ? 'connected' : 'not connected',
+			last_activity: '—',
+			applets: 0,
+			provides: '—',
+			does: ACTS,
+			source: null,
+			service
+		};
+	}
+
+	// What you have connected, then the featured services you haven't.
+	const serviceRows = $derived.by<Row[]>(() => {
+		const out = connected.map((c) =>
+			serviceRow(c.id, c.name, c.about, {
+				id: c.id,
+				registry: c.registry,
+				url: c.url,
+				needsSignIn: c.needs_sign_in === true
+			})
+		);
+		const have = new Set(connected.map((c) => c.registry));
+		for (const l of featured) {
+			if (have.has(l.registry)) continue;
+			out.push(
+				serviceRow(`registry:${l.registry}`, l.title, l.about, {
+					id: null,
+					registry: l.registry,
+					url: null,
+					needsSignIn: false
+				})
+			);
+		}
+		return out;
+	});
+
+	// Registry matches the table does not already list.
+	const extraResults = $derived.by(() => {
+		if (!results) return null;
+		const listed = new Set(serviceRows.map((r) => r.service?.registry));
+		return results.filter((l) => !listed.has(l.registry));
+	});
+
+	// Orphans first: they are the only rows here that are actively wrong. Then
+	// what you have connected, then the rest.
+	const rows = $derived.by<Row[]>(() =>
+		[...orphanRows, ...catalogRows, ...serviceRows].sort((a, b) => {
+			const rank = (r: Row) =>
+				r.source === null && r.service === null ? 0 : r.connected > 0 ? 1 : 2;
+			return rank(a) - rank(b) || a.name.localeCompare(b.name);
+		})
+	);
+
+	// The registry search runs a moment after typing stops, so each keystroke
+	// is not a request to the registry.
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	$effect(() => {
+		const q = query.trim();
+		clearTimeout(timer);
+		if (!q) {
+			results = null;
+			return;
+		}
+		timer = setTimeout(async () => {
+			searching = true;
+			try {
+				const found = await apiGet<{ results: Listing[] }>('/connections/search', { q });
+				if (query.trim() === q) results = found.results;
+			} catch (e) {
+				connectionsError = message(e);
+			} finally {
+				searching = false;
+			}
+		}, 300);
 	});
 
 	const columns: Column<Row>[] = [
-		{ key: 'name', label: 'Source', icon: 'mynaui:power', width: '20%', minWidth: '140px' },
+		{ key: 'name', label: 'Service', icon: 'mynaui:power', width: '14%', minWidth: '120px' },
+		{
+			key: 'does',
+			label: 'What it does',
+			icon: 'mynaui:info-circle',
+			width: '20%',
+			minWidth: '200px',
+			groupable: true
+		},
 		{
 			key: 'provides',
 			label: 'Provides',
 			icon: 'mynaui:layers-three',
-			width: '22%',
+			width: '18%',
 			minWidth: '150px'
 		},
 		{
@@ -250,13 +410,97 @@
 	}
 
 	function openSource(row: Row) {
+		// A service the assistant acts in has no page; its row carries its one
+		// action.
+		if (row.service) return;
 		windowShellStore.navigate(`/sources/${row.id}`, { label: row.name });
+	}
+
+	/**
+	 * After a sign-in the service sends the browser to the OAuth proxy, and
+	 * your server collects the code from there a few seconds later
+	 * (`tools/connection.rs`). So coming back to the app reloads the list
+	 * until the new connection shows, or a connection that needed a fresh
+	 * sign-in no longer does, for up to half a minute.
+	 */
+	function reloadUntilConnected() {
+		const shape = () => connected.map((c) => `${c.id}:${c.needs_sign_in === true}`).join();
+		const before = shape();
+		let tries = 0;
+		const again = async () => {
+			await loadConnections();
+			if (shape() === before && ++tries < 15) setTimeout(again, 2000);
+		};
+		reloadOnReturn(again);
+	}
+
+	/** Starts a service's sign-in and opens it in the browser. */
+	async function connectService(target: { registry: string } | { url: string }, key: string) {
+		busy = key;
+		connectionsError = null;
+		disconnected = null;
+		try {
+			// `sheet` asks the proxy to close the iOS sign-in sheet once the
+			// sign-in lands there.
+			const sheet = await canSignInSheet();
+			const { auth_url } = await apiSend<{ auth_url: string }>('POST', '/connections/connect', {
+				...target,
+				sheet
+			});
+			reloadUntilConnected();
+			await openSignIn(auth_url);
+		} catch (e) {
+			connectionsError = message(e);
+		} finally {
+			busy = null;
+		}
+	}
+
+	/** What disconnecting did at the service, in a sentence. */
+	function grantNote(name: string, grant: Grant): string | null {
+		switch (grant) {
+			case 'revoked':
+				return `Disconnected ${name}. ${name} confirmed your server's access has ended.`;
+			case 'not_offered':
+				return `Disconnected ${name}. ${name} gives your server no way to end its access, so remove Virtues in ${name}'s settings to end it there.`;
+			case 'not_revoked':
+				return `Disconnected ${name}, but ${name} did not confirm your server's access has ended. Remove Virtues in ${name}'s settings to be sure.`;
+			default:
+				return null;
+		}
+	}
+
+	/** Signs in again to the same server, which keeps the connection's name. */
+	function signInAgain(service: Service) {
+		const key = service.id ?? '';
+		if (service.registry) return connectService({ registry: service.registry }, key);
+		if (service.url) return connectService({ url: service.url }, key);
+	}
+
+	async function disconnectService(id: string) {
+		busy = `out:${id}`;
+		connectionsError = null;
+		disconnected = null;
+		const name = connected.find((c) => c.id === id)?.name ?? id;
+		try {
+			// An older server answers 204 with no body.
+			const answer = await apiSend<{ grant?: Grant } | undefined>(
+				'DELETE',
+				`/connections/${encodeURIComponent(id)}`
+			);
+			disconnected = grantNote(name, answer?.grant ?? null);
+			await loadConnections();
+		} catch (e) {
+			connectionsError = message(e);
+		} finally {
+			busy = null;
+		}
 	}
 </script>
 
 <Page
 	title="Catalog"
-	description="Everything Virtues can draw from, and what you have connected to each."
+	description="Services you can connect. Some sync your data to your server. In others, the assistant can act for you when you ask in chat."
 	maxWidth="wide"
 >
 	{#if store.error}
@@ -264,6 +508,12 @@
 	{/if}
 	{#if connectFlow.error}
 		<div class="error">{connectFlow.error}</div>
+	{/if}
+	{#if connectionsError}
+		<div class="error">{connectionsError}</div>
+	{/if}
+	{#if disconnected}
+		<p class="quiet">{disconnected}</p>
 	{/if}
 
 	<UniversalDataGrid
@@ -275,7 +525,8 @@
 		emptyIcon="mynaui:power"
 		emptyMessage="No sources in the catalog"
 		loadingMessage="Loading sources…"
-		searchPlaceholder="Search sources…"
+		searchPlaceholder="Search services…"
+		bind:searchQuery={query}
 		defaultViewMode="table"
 		onItemClick={openSource}
 		onRetry={() => store.load()}
@@ -285,10 +536,100 @@
 				<Button variant="secondary" size="sm" onclick={() => void connect(row.source!)}>
 					{connectLabel(row)}
 				</Button>
+			{:else if row.service?.id}
+				{@const id = row.service.id}
+				{@const service = row.service}
+				{#if service.needsSignIn}
+					<Button
+						variant="secondary"
+						size="sm"
+						loading={busy === id}
+						disabled={busy !== null}
+						onclick={() => void signInAgain(service)}
+					>
+						Sign in again
+					</Button>
+				{/if}
+				<TextAction
+					loading={busy === `out:${id}`}
+					disabled={busy !== null}
+					onclick={() => void disconnectService(id)}
+				>
+					Disconnect
+				</TextAction>
+			{:else if row.service?.registry}
+				{@const registry = row.service.registry}
+				<Button
+					variant="secondary"
+					size="sm"
+					loading={busy === registry}
+					disabled={busy !== null}
+					onclick={() => void connectService({ registry }, registry)}
+				>
+					Connect
+				</Button>
 			{/if}
 		{/snippet}
 
 	</UniversalDataGrid>
+
+	{#if registryError}
+		<p class="quiet">{registryError}</p>
+	{/if}
+
+	{#if extraResults}
+		<section class="more">
+			<h2 class="heading">From the MCP Registry</h2>
+			<p class="quiet">
+				Anyone can publish a server to the registry. Connect only services you already trust.
+				Servers that need an API key are not listed yet.
+			</p>
+			{#if extraResults.length === 0}
+				<p class="quiet">
+					{searching ? 'Searching the registry…' : 'No other server you can connect matches that.'}
+				</p>
+			{:else}
+				<ul class="listings">
+					{#each extraResults as l (l.registry)}
+						<li>
+							<div class="text">
+								<span class="name">{l.title}</span>
+								<span class="about">{ACTS}.{l.about ? ` ${l.about}` : ''}</span>
+							</div>
+							<Button
+								variant="secondary"
+								size="sm"
+								loading={busy === l.registry}
+								disabled={busy !== null}
+								onclick={() => void connectService({ registry: l.registry }, l.registry)}
+							>
+								Connect
+							</Button>
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+	{/if}
+
+	<section class="more">
+		<h2 class="heading">Add a service by its address</h2>
+		<p class="quiet">
+			For a service's MCP server that is not listed. The assistant can act there once you sign in.
+			Its address starts with https://.
+		</p>
+		<div class="add">
+			<Input type="url" bind:value={address} placeholder="https://mcp.example.com/mcp" />
+			<Button
+				variant="secondary"
+				loading={busy === 'address'}
+				disabled={busy !== null || !address.trim()}
+				onclick={() => void connectService({ url: address.trim() }, 'address')}
+			>
+				Connect
+			</Button>
+		</div>
+	</section>
 
 	{#if uncovered.length > 0}
 		<p class="uncovered">
@@ -306,6 +647,67 @@
 		background: var(--color-error-subtle);
 		color: color-mix(in srgb, var(--color-error) 75%, #000);
 		font-size: 0.8125rem;
+	}
+
+	.more {
+		margin-top: 2rem;
+		max-width: 44rem;
+	}
+	.heading {
+		margin: 0 0 0.375rem;
+		font-size: 0.9375rem;
+		font-weight: 600;
+		color: var(--color-foreground);
+	}
+	.quiet {
+		margin: 0 0 0.75rem;
+		font-size: 0.8125rem;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+	.listings {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.listings li {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 0.75rem 0;
+		border-bottom: 1px solid var(--color-border-subtle);
+	}
+	.listings li:last-child {
+		border-bottom: 0;
+	}
+	.text {
+		display: flex;
+		flex-direction: column;
+		gap: 0.125rem;
+		min-width: 0;
+	}
+	.name {
+		font-weight: 500;
+		color: var(--color-foreground);
+	}
+	.about {
+		font-size: 0.8125rem;
+		line-height: 1.4;
+		color: var(--color-foreground-muted);
+		overflow: hidden;
+		display: -webkit-box;
+		-webkit-line-clamp: 2;
+		line-clamp: 2;
+		-webkit-box-orient: vertical;
+	}
+	.add {
+		display: flex;
+		gap: 0.5rem;
+		align-items: flex-start;
+	}
+	.add > :global(:first-child) {
+		flex: 1;
 	}
 
 	.uncovered {

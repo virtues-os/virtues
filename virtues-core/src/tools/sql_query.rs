@@ -30,7 +30,7 @@ pub struct SqlQueryArgs {
     #[serde(default)]
     pub limit: Option<u32>,
     /// Also keep the whole result as a CSV of this name in the chat's
-    /// code_interpreter workspace
+    /// shell workspace
     #[serde(default)]
     pub save_as: Option<String>,
 }
@@ -100,7 +100,7 @@ impl SqlQueryTool {
                 let name = saved_file_name(name)?;
                 let chat_id = chat_id.ok_or_else(|| {
                     ToolError::InvalidParameters(
-                        "save_as keeps a file for code_interpreter in a saved chat, and this \
+                        "save_as keeps a file for shell in a saved chat, and this \
                          conversation has none. Query without save_as."
                             .into(),
                     )
@@ -565,7 +565,7 @@ impl SqlQueryTool {
                 "file": name,
                 "rows": json_rows.len(),
                 "columns": columns,
-                "read_with": format!("pandas.read_csv('{name}') in code_interpreter"),
+                "read_with": format!("pandas.read_csv('{name}') in python3, through shell"),
             }));
             json_rows.truncate(SAVED_PREVIEW_ROWS);
         }

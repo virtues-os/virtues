@@ -359,7 +359,7 @@ an always-loaded file tends to get ignored:
 | `columns.md` | `*.sql`, Rust under `virtues-core/` | the rule against seven names for one thing, and the sweep a rename needs because `sqlx::query` is untyped |
 | `query-errors.md` | any `*.rs` | why `.ok()` on a `fetch_*` turns a broken query into a plausible number |
 | `migrations.md` | `virtues-core/migrations/**` | claiming a number, the pre-squash citations, and the `.sql.pending` rename that has to happen |
-| `personas.md` | `apps/*/src/**`, `docs/**`, prompts, `skills/**` | the five checks a user-facing change answers against the personas |
+| `personas.md` | `apps/*/src/**`, `docs/**`, prompts, `applets/**/SKILL.md` | the five checks a user-facing change answers against the personas |
 
 If you are editing one of those files, assume the rule is already in front of
 you. If you are reasoning about them from elsewhere, go read it.

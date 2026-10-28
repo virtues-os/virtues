@@ -138,6 +138,110 @@ pub async fn list(db: &PgPool, kind: Kind) -> Result<Vec<Named>> {
         .collect())
 }
 
+/// What a key did with a set of sealed rows: how many it tried, and how many
+/// it opened.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct KeyCheck {
+    pub tried: usize,
+    pub opened: usize,
+}
+
+impl KeyCheck {
+    /// The key opened none of the rows it tried. One row that does not open
+    /// is damage, or a row sealed before a key change; every row failing
+    /// means the key is not the one the table was sealed with.
+    pub fn opens_nothing(&self) -> bool {
+        self.tried > 0 && self.opened == 0
+    }
+
+    pub fn failed(&self) -> usize {
+        self.tried - self.opened
+    }
+}
+
+/// Try a key on sealed values. `None` is a box with no usable key at all,
+/// which opens nothing. Every kind of row is sealed with the same box key, so
+/// any row is a fair test of it.
+pub fn try_key<'a>(enc: Option<&TokenEncryptor>, sealed: impl IntoIterator<Item = &'a str>) -> KeyCheck {
+    let mut check = KeyCheck::default();
+    for value in sealed {
+        check.tried += 1;
+        if enc.is_some_and(|enc| enc.decrypt(value).is_ok()) {
+            check.opened += 1;
+        }
+    }
+    check
+}
+
+/// Up to `limit` sealed values from `credentials`, chosen at random.
+///
+/// Reads only `secrets_ciphertext`, which every schema since the first has,
+/// so it also works on a database restored from an older release before its
+/// migrations run. An empty value is not sealed (`encrypt("")` writes one).
+/// A database with no `credentials` table yet, a box on its first start, has
+/// nothing sealed.
+pub async fn sample_sealed(db: &PgPool, limit: i64) -> Result<Vec<String>> {
+    let has_table: bool = sqlx::query_scalar("SELECT to_regclass('credentials') IS NOT NULL")
+        .fetch_one(db)
+        .await
+        .context("look for the credentials table")?;
+    if !has_table {
+        return Ok(Vec::new());
+    }
+    sqlx::query_scalar(
+        "SELECT secrets_ciphertext FROM credentials WHERE secrets_ciphertext <> '' \
+         ORDER BY random() LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(db)
+    .await
+    .context("sample sealed credentials")
+}
+
+/// How many sealed rows the start-up check tries. Enough that one damaged row
+/// cannot make a good key look wrong, few enough to cost nothing.
+const START_CHECK_ROWS: i64 = 5;
+
+static KEY_AT_START: std::sync::OnceLock<KeyCheck> = std::sync::OnceLock::new();
+
+/// Check the server's key against the table once, when the server starts.
+///
+/// A key that opens none of the sealed rows is the state a restore with the
+/// wrong `virtues.env` leaves. Each feature then fails on its own (reach,
+/// Passwords, applets that need a key) with an error that never names the
+/// key, and every secret saved afterwards is sealed with the wrong one. So
+/// this logs one error that names the cause, and attention shows it
+/// ([`key_at_start`]). It never stops the server: everything that needs no
+/// secret still works, and the owner needs a running server to read the
+/// message.
+pub async fn check_key_at_start(db: &PgPool) {
+    let sealed = match sample_sealed(db, START_CHECK_ROWS).await {
+        Ok(rows) => rows,
+        Err(e) => {
+            tracing::warn!("key check skipped: {e:#}");
+            return;
+        }
+    };
+    let enc = TokenEncryptor::from_env().ok();
+    let check = try_key(enc.as_ref(), sealed.iter().map(String::as_str));
+    if check.opens_nothing() {
+        tracing::error!(
+            tried = check.tried,
+            env_file = %crate::box_env::path().display(),
+            "the encryption key this server started with opens none of the saved secrets it tried, \
+             so every saved password, sign-in and key is unreadable. Put back the virtues.env they \
+             were saved with, then restart the server"
+        );
+    }
+    let _ = KEY_AT_START.set(check);
+}
+
+/// What [`check_key_at_start`] found, or `None` before it has run (and in
+/// any process that is not the server).
+pub fn key_at_start() -> Option<KeyCheck> {
+    KEY_AT_START.get().copied()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,6 +279,50 @@ mod tests {
         delete(&pool, Kind::Box, "test_key").await.unwrap();
         assert_eq!(get(&pool, Kind::Box, "test_key").await.unwrap(), None);
         delete(&pool, Kind::Box, "test_key").await.unwrap();
+    }
+
+    fn encryptor(byte: u8) -> TokenEncryptor {
+        use base64::Engine;
+        TokenEncryptor::from_base64_key(&base64::engine::general_purpose::STANDARD.encode([byte; 32])).unwrap()
+    }
+
+    #[test]
+    fn a_key_check_tells_the_wrong_key_from_one_damaged_row() {
+        let right = encryptor(1);
+        let wrong = encryptor(2);
+        let sealed: Vec<String> = ["a", "b", "c"].iter().map(|s| right.encrypt(s).unwrap()).collect();
+        let rows = || sealed.iter().map(String::as_str);
+
+        assert_eq!(try_key(Some(&right), rows()), KeyCheck { tried: 3, opened: 3 });
+        let wrong_key = try_key(Some(&wrong), rows());
+        assert!(wrong_key.opens_nothing(), "{wrong_key:?}");
+        assert!(try_key(None, rows()).opens_nothing(), "no key opens nothing");
+
+        // A damaged row beside good ones is not a wrong key.
+        let mixed = try_key(Some(&right), rows().chain(["not sealed"]));
+        assert_eq!((mixed.opened, mixed.failed()), (3, 1));
+        assert!(!mixed.opens_nothing());
+
+        // Nothing sealed is nothing to be wrong about.
+        assert!(!try_key(Some(&wrong), std::iter::empty()).opens_nothing());
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_sample_holds_only_sealed_values(pool: PgPool) {
+        let enc = encryptor(3);
+        sqlx::query(
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) VALUES \
+             ('cred_sealed', 'ios', 'Phone', 'active', $1), \
+             ('cred_empty', 'mac', 'Mac', 'pending', '')",
+        )
+        .bind(enc.encrypt("{\"token\":\"invented\"}").unwrap())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let sample = sample_sealed(&pool, 10).await.unwrap();
+        assert_eq!(sample.len(), 1, "an empty value is not sealed: {sample:?}");
+        assert_eq!(try_key(Some(&enc), sample.iter().map(String::as_str)).opened, 1);
+        assert!(try_key(Some(&encryptor(4)), sample.iter().map(String::as_str)).opens_nothing());
     }
 
     #[sqlx::test(migrations = "./migrations")]

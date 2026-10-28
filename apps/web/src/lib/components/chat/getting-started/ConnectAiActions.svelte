@@ -1,7 +1,7 @@
 <!--
 	Connect AI's controls: three doors in one row. Sign in unfolds in place
 	into one field and a send; an endpoint of your own unfolds into three
-	fields and the approval at the server's command line. Keys are typed here
+	fields, saved with the app's owner proof (`apiSendProven`). Keys are typed here
 	and nowhere else in the room, and never reach the transcript.
 
 	The fields are the app's own `Input` — the same control Settings and the
@@ -13,7 +13,6 @@
 	import { onDestroy } from "svelte";
 	import { fly } from "svelte/transition";
 	import { cubicOut } from "svelte/easing";
-	import SudoModal from "$lib/components/SudoModal.svelte";
 	import Input from "$lib/components/Input.svelte";
 	import { openExternal } from "$lib/tauri/bridge";
 	import { setupLinkPoll, setupSubscribeStart, setupLoginStart, setByoKey } from "$lib/api/client";
@@ -31,7 +30,6 @@
 	let endpointUrl = $state("");
 	let apiKey = $state("");
 	let chatModel = $state("");
-	let showSudo = $state(false);
 	let checkoutUrl = $state<string | null>(null);
 
 	const emailValid = $derived(/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim()));
@@ -126,11 +124,10 @@
 			error = UNREACHABLE;
 		}
 	}
-	async function saveEndpoint(sudoRequestId: string) {
+	async function saveEndpoint() {
 		mode = "saving";
 		try {
 			await setByoKey({
-				sudo_request_id: sudoRequestId,
 				endpoint_url: endpointUrl.trim(),
 				api_key: apiKey,
 				// `chat` is the Standard slot's old name. Every box reads it
@@ -214,13 +211,13 @@
 				class="form"
 				onsubmit={(e) => {
 					e.preventDefault();
-					if (endpointValid) showSudo = true;
+					if (endpointValid) void saveEndpoint();
 				}}
 			>
 				<p class="help">
 					Any endpoint that answers OpenAI-style chat completions with a bearer token: a gateway such as
 					Vercel AI Gateway or OpenRouter, a provider's own API, or a local Ollama. The key is stored
-					encrypted on your server, and saving it asks for an approval at the server's command line.
+					encrypted on your server.
 				</p>
 				<Input
 					id="gs-endpoint"
@@ -255,13 +252,6 @@
 		</div>
 	{/if}
 </div>
-<SudoModal
-	bind:show={showSudo}
-	action="change_byo_key"
-	title="Save your endpoint"
-	description="Every AI call will route through this endpoint. Confirm at the server's command line."
-	onApproved={saveEndpoint}
-/>
 {#if error}
 	<p class="error">{error}</p>
 {/if}

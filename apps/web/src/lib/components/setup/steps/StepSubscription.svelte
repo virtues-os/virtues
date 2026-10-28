@@ -17,12 +17,10 @@
 	on it: "$20/mo" in a filled pill reads as "clicking charges me", when the
 	click only opens a checkout.
 
-	YOUR OWN AI, WITHOUT A COMMAND LINE. The first key saved during setup,
-	from the device that set the server up, needs no approval at the
-	server's command line (settings_byo.rs, `first_key_during_setup`): an
-	appliance owner has no command line, and the form used to end at one.
-	Anyone else, or any later change, still gets the approval, so the save
-	tries without it first and asks only when the server says so.
+	YOUR OWN AI, WITHOUT A COMMAND LINE. Saving the key carries the app's
+	owner proof (api/owner_proof.rs), which the app signs with this device's
+	key without an extra step. An appliance owner has no command line, so
+	setup never sends them to one.
 
 	DONE IS A STATE, NOT A TOAST. Once the server reports AI connected — by
 	any of the three paths, or because it already was — the step shows a
@@ -36,7 +34,6 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import ThinkingMark from "$lib/components/ThinkingMark.svelte";
 	import Input from "$lib/components/Input.svelte";
-	import SudoModal from "$lib/components/SudoModal.svelte";
 	import { openExternal } from "$lib/tauri/bridge";
 	import { setupLinkPoll, setupSubscribeStart, setupLoginStart, setByoKey } from "$lib/api/client";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
@@ -54,7 +51,6 @@
 	let endpointUrl = $state("");
 	let apiKey = $state("");
 	let chatModel = $state("");
-	let showSudo = $state(false);
 	/** "Chat model" waits behind More options: almost nobody needs it. */
 	let moreOptions = $state(false);
 	let checkoutUrl = $state<string | null>(null);
@@ -157,12 +153,11 @@
 			error = UNREACHABLE;
 		}
 	}
-	async function saveEndpoint(sudoRequestId?: string) {
+	async function saveEndpoint() {
 		mode = "saving";
 		error = null;
 		try {
 			await setByoKey({
-				...(sudoRequestId ? { sudo_request_id: sudoRequestId } : {}),
 				endpoint_url: endpointUrl.trim(),
 				api_key: apiKey,
 				// `chat` is the Standard slot's old name. Every box reads it
@@ -174,11 +169,6 @@
 			await gettingStarted.refresh();
 		} catch (e) {
 			mode = "endpoint";
-			// Not the first key during setup: the server wants its approval.
-			if (!sudoRequestId && e instanceof Error && e.message === "sudo_not_approved") {
-				showSudo = true;
-				return;
-			}
 			error = e instanceof Error ? e.message : "Your server couldn't save that address. Check it, then try again.";
 		}
 	}
@@ -378,14 +368,6 @@
 		</aside>
 	{/if}
 </StepFrame>
-
-<SudoModal
-	bind:show={showSudo}
-	action="change_byo_key"
-	title="Connect your own AI"
-	description="Every AI call will go through this address. Confirm at the server's command line."
-	onApproved={saveEndpoint}
-/>
 
 <style>
 	/* The card: the thing being chosen, centered, a little lifted off the

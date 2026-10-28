@@ -3,9 +3,9 @@
 //!
 //! The chat authoring loop (agents/record/applets.md). The model fills
 //! flat params; this executor — trusted Rust — validates them (the "check"),
-//! writes the folder at `applets root/user/<slug>/`, and reconciles under the
-//! global mutex. The DB row is derived from disk like every other applet:
-//! one door.
+//! writes the folder at `<state root>/user/<name>/` with its `SKILL.md`, and
+//! reconciles under the global mutex. The DB row is derived from disk like
+//! every other applet: one door.
 //!
 //! Core invariant served here: **no path from model output to an enabled,
 //! scheduled row without a user action** — any applet that crosses a boundary
@@ -13,7 +13,6 @@
 //! `default_enabled = false`; enabling is a user-surface action the tool
 //! layer refuses (see the `edit` action in `applet_management`).
 
-use serde::Serialize;
 use sqlx::PgPool;
 
 use super::executor::{ToolContext, ToolError, ToolResult};
@@ -41,26 +40,6 @@ pub(crate) fn authoring_guide() -> &'static str {
 /// `{"guide": true}` asks for the guide and creates nothing.
 pub(crate) fn wants_guide(arguments: &serde_json::Value) -> bool {
     arguments.get("guide").and_then(|v| v.as_bool()) == Some(true)
-}
-
-/// Manifest shape we serialize. Field names match the template loader.
-#[derive(Serialize)]
-struct ManifestOut {
-    name: String,
-    description: String,
-    owner: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    schedule: Option<String>,
-    triggers: Vec<String>,
-    default_enabled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    condition: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    until: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    agent: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    config: Option<toml::Value>,
 }
 
 /// `{"check_only": true}` runs the check and creates nothing: the dry run an
@@ -100,11 +79,15 @@ pub(crate) struct Draft {
     schema_sql: Option<String>,
     face_html: Option<String>,
     limits: Option<serde_json::Value>,
-    /// What each run makes: "page", "chat" or "dashboard". Written to
-    /// `config.delivers`, where a page applet's run that writes no page is
-    /// recorded as failed (agent::applet_runner).
-    delivers: Option<String>,
     triggers: Vec<String>,
+    /// Who may start it by hand: `chat` (the `/` menu) and `assistant`, the
+    /// latter also from `tool` in `triggers`.
+    invoke: Vec<String>,
+    /// `allowed-tools`: what its prompt may call. None is the default set.
+    tools: Option<Vec<String>>,
+    /// `standard` or `deep`. None is the background model for an unattended
+    /// applet and Standard for one `/name` starts.
+    model: Option<String>,
 }
 
 impl Draft {
@@ -139,8 +122,10 @@ impl Draft {
             schema_sql: opt_str(arguments, "schema_sql"),
             face_html: opt_str(arguments, "face_html"),
             limits: arguments.get("limits").cloned().filter(|v| v.is_object()),
-            delivers: opt_str(arguments, "delivers"),
             triggers,
+            invoke: str_list(arguments, "invoke").unwrap_or_default(),
+            tools: str_list(arguments, "tools"),
+            model: opt_str(arguments, "model"),
         })
     }
 }
@@ -148,9 +133,9 @@ impl Draft {
 /// The check: every finding a draft has, each naming its fix. Validates
 /// BEFORE anything touches disk, and is the whole of what `check_only` runs.
 pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value> {
-    let Draft { name, agent, schedule, condition, until, schema_sql, face_html, limits, delivers, triggers, .. } =
-        draft;
+    let Draft { name, agent, schedule, condition, until, schema_sql, face_html, limits, triggers, .. } = draft;
     let mut findings: Vec<serde_json::Value> = Vec::new();
+    findings.extend(check_invoke(draft));
 
     // An applet must DO or SHOW something: a prompt to run, or a face to view.
     if agent.is_none() && face_html.is_none() {
@@ -163,13 +148,33 @@ pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value
     }
 
     for t in triggers {
-        if !matches!(t.as_str(), "cron" | "manual" | "tool" | "api" | "webhook" | "message") {
-            findings.push(finding(
+        match t.as_str() {
+            "cron" | "manual" | "tool" | "message" => {}
+            "api" => findings.push(finding("triggers", "the `api` trigger never fired and is gone", Some("leave it out"))),
+            "webhook" => findings.push(finding(
+                "triggers",
+                "a `webhook` applet needs a connected source, which setup cannot give it",
+                Some("leave it out"),
+            )),
+            _ => findings.push(finding(
                 "triggers",
                 &format!("invalid trigger '{t}'"),
-                Some("one of: cron, manual, tool, api, webhook, message"),
-            ));
+                Some("one of: cron, manual, tool, message"),
+            )),
         }
+    }
+    match until.as_deref().map(str::trim) {
+        Some(u) if u.eq_ignore_ascii_case("once") && schedule.is_none() => findings.push(finding(
+            "until",
+            "`until: \"once\"` runs the schedule once, and there is no schedule",
+            Some("add a schedule, or leave `until` out"),
+        )),
+        Some(u) if !u.is_empty() && !u.eq_ignore_ascii_case("once") => findings.push(finding(
+            "until",
+            "an applet no longer ends on a SQL check",
+            Some("use \"once\" for a one-off, or leave `until` out"),
+        )),
+        _ => {}
     }
 
     if let Some(cron) = schedule.as_deref() {
@@ -179,15 +184,6 @@ pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value
                 "schedule",
                 &format!("cron '{cron}' has {fields} fields"),
                 Some("6 fields (seconds first), box-local timezone — e.g. '0 0 6 * * *' = daily 6am"),
-            ));
-        }
-        // The scheduler only picks up rows whose triggers include `cron`, so
-        // a schedule without it is saved, shown, and never fires.
-        if !triggers.iter().any(|t| t == "cron") {
-            findings.push(finding(
-                "triggers",
-                "a schedule is set but `triggers` has no `cron`, so it would never run on that schedule",
-                Some("add \"cron\" to triggers, or remove the schedule"),
             ));
         }
     }
@@ -201,18 +197,10 @@ pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value
         }
     }
 
-    let sql_checks: Vec<(&'static str, String)> = [
-        ("condition", condition.clone()),
-        ("until", until.clone()),
-    ]
-    .into_iter()
-    .filter_map(|(f, v)| v.map(|sql| (f, sql)))
-    .filter(|(f, sql)| !(*f == "until" && sql.eq_ignore_ascii_case("once")))
-    .collect();
-    for (field, sql) in sql_checks {
-        if let Err(e) = explain_bool_expr(pool, &sql).await {
+    if let Some(sql) = condition {
+        if let Err(e) = explain_bool_expr(pool, sql).await {
             let suggestion = did_you_mean(pool, &e).await;
-            findings.push(finding(field, &e, suggestion.as_deref()));
+            findings.push(finding("condition", &e, suggestion.as_deref()));
         }
     }
 
@@ -253,9 +241,6 @@ pub(crate) async fn check(pool: &PgPool, draft: &Draft) -> Vec<serde_json::Value
     // on the gate and does nothing. So an unknown key is a finding, not a
     // silently-ignored field. (This is how `timeout` came to be advertised
     // for months while only `timeout_s` was ever read.)
-    if let Some(f) = check_delivers(delivers.as_deref()) {
-        findings.push(f);
-    }
     for f in check_limits(limits.as_ref()) {
         findings.push(f);
     }
@@ -295,41 +280,33 @@ pub async fn execute(
         })));
     }
 
-    let Draft { name, description, agent, schedule, condition, until, schema_sql, face_html, limits, delivers, triggers } =
+    let Draft { name, description, agent, schedule, condition, until, schema_sql, face_html, limits, triggers, invoke, tools, model } =
         draft;
     let name = name.as_str();
     let description = description.as_str();
-    let slug = slugify(name);
 
-    // ---- 3. Resolve the folder (collision-safe) --------------------------
+    // ---- 3. Resolve the folder ------------------------------------------
     // Authoring always writes to the state root — never the shipped tree,
-    // which is root-owned and replaced wholesale on upgrade.
+    // which is root-owned and replaced wholesale on upgrade. The folder is
+    // the spec's name, lowercase words joined by hyphens, so the same name is
+    // the same applet: "Calorie tracker" is user/calorie-tracker.
     let root = crate::applet_templates::state_root();
-    // A slug is "ours to update" only if an existing folder's manifest has the
-    // same name. A different applet that merely collapses to the same slug
-    // gets a numeric suffix instead of silently overwriting it.
-    let slug = disambiguate_slug(&root, &slug, name);
-    let dir = root.join("user").join(&slug);
-    let existed = dir.join("manifest.toml").is_file();
-    let applet_id = format!(
-        "{}{slug}",
-        crate::scheduler::applets::USER_APPLET_PREFIX
-    );
+    let spec = spec_name(name);
+    let slug = spec.replace('-', "_");
+    let rel = format!("user/{spec}");
+    let dir = root.join(&rel);
+    let existed = dir.join("SKILL.md").is_file();
+    let applet_id = format!("{}{slug}", crate::scheduler::applets::USER_APPLET_PREFIX);
 
-    // Boundary predicate: schedule/trigger beyond manual+tool = unattended.
-    let crosses_boundary = schedule.is_some()
-        || triggers.iter().any(|t| matches!(t.as_str(), "api" | "webhook"));
+    // Boundary predicate: a schedule = unattended.
+    let crosses_boundary = schedule.is_some();
 
     // Re-gate logic: read the current row (if any) so an update can preserve
     // the user's enable choice AND force-disable when a boundary is newly
     // added to an already-enabled applet (the gate invariant).
     let (was_boundary, was_enabled) = if existed {
         match applets::get_applet(pool, &applet_id).await {
-            Ok(a) => (
-                a.schedule.is_some()
-                    || a.triggers.iter().any(|t| t == "api" || t == "webhook"),
-                a.enabled,
-            ),
+            Ok(a) => (a.schedule.is_some(), a.enabled),
             Err(_) => (false, false),
         }
     } else {
@@ -337,8 +314,8 @@ pub async fn execute(
     };
     let re_gate = existed && crosses_boundary && !was_boundary;
 
-    // Manifest default_enabled: fresh → gate on boundary; re-gate → false;
-    // otherwise preserve the user's last choice (restore fidelity).
+    // Fresh → gate on boundary; re-gate → off; otherwise preserve the user's
+    // last choice (restore fidelity).
     let default_enabled = if !existed {
         !crosses_boundary
     } else if re_gate {
@@ -347,37 +324,47 @@ pub async fn execute(
         was_enabled
     };
 
-    let mut config = toml::value::Table::new();
-    if let Some(cid) = &chat_id {
-        config.insert("chat_id".into(), toml::Value::String(cid.clone()));
-    }
-    if let Some(lim) = &limits {
-        if let Ok(v) = toml_from_json(lim) {
-            config.insert("limits".into(), v);
+    // ---- 4. The SKILL.md ---------------------------------------------------
+    // When it starts: the schedule, or its next time for a one-off.
+    let once = until.as_deref().is_some_and(|u| u.trim().eq_ignore_ascii_case("once"));
+    let trigger = match schedule.as_deref() {
+        Some(cron) if once => {
+            let tz = crate::scheduler::resolve_schedule_tz(pool).await;
+            Some(
+                crate::applet_templates::next_once(cron, tz, chrono::Utc::now())
+                    .ok_or_else(|| ToolError::InvalidParameters(format!("`{cron}` has no next time to run once")))?,
+            )
         }
-    }
-    if let Some(kind) = &delivers {
-        let mut d = toml::value::Table::new();
-        d.insert("kind".into(), toml::Value::String(kind.clone()));
-        config.insert("delivers".into(), toml::Value::Table(d));
-    }
-
-    let manifest = ManifestOut {
-        name: name.to_string(),
-        description: description.to_string(),
-        owner: "ai",
-        schedule: schedule.clone(),
-        triggers: triggers.clone(),
-        default_enabled,
-        condition: condition.clone(),
-        until: until.clone(),
-        agent: agent.clone(),
-        config: if config.is_empty() { None } else { Some(toml::Value::Table(config)) },
+        Some(cron) => Some(format!("cron {cron}")),
+        None => None,
     };
-    let manifest_toml = toml::to_string_pretty(&manifest)
-        .map_err(|e| ToolError::ExecutionFailed(format!("manifest serialize failed: {e}")))?;
+    let mut invoke = invoke;
+    if triggers.iter().any(|t| t == "tool") && !invoke.iter().any(|i| i == "assistant") {
+        invoke.push("assistant".into());
+    }
+    if invoke.is_empty() {
+        invoke.push("none".into());
+    }
+    let chat_started = invoke.iter().any(|i| i == "chat");
+    let md = crate::applet_templates::SkillMd {
+        name: spec.clone(),
+        description: description.to_string(),
+        allowed_tools: tools.clone(),
+        invoke,
+        trigger,
+        // A condition is SQL that finds a row when the run should happen.
+        run: condition.as_deref().map(|c| format!("sql select 1 where ({c})")),
+        limit: limits.as_ref().and_then(|l| l.as_object()).and_then(crate::applet_templates::limit_from_config),
+        deep: model.as_deref() == Some("deep"),
+        // Unattended prompts run on the background model unless they ask.
+        lite: agent.is_some() && model.is_none() && !chat_started,
+        enabled: default_enabled,
+        body: agent.clone().unwrap_or_default(),
+        ..Default::default()
+    };
+    let skill_md = crate::applet_templates::render_skill_md(&md).map_err(ToolError::ExecutionFailed)?;
 
-    // ---- 4. Write the folder; reconcile applies the schema ----------------
+    // ---- 5. Write the folder; reconcile applies the schema ----------------
     // Each submission is one numbered, append-only migration rather than a
     // rewritten file. Identical DDL — the ordinary re-setup that only changed
     // the prompt — matches the last recorded checksum and is recognized as
@@ -406,33 +393,47 @@ pub async fn execute(
 
     std::fs::create_dir_all(&dir)
         .map_err(|e| ToolError::ExecutionFailed(format!("mkdir failed: {e}")))?;
-    std::fs::write(dir.join("manifest.toml"), &manifest_toml)
-        .map_err(|e| ToolError::ExecutionFailed(format!("manifest write failed: {e}")))?;
+    if let Some(html) = &face_html {
+        std::fs::write(dir.join("view.html"), html)
+            .map_err(|e| ToolError::ExecutionFailed(format!("view write failed: {e}")))?;
+    }
     if let (Some(ddl), Some(version)) = (&schema_sql, schema_version) {
         use crate::tools::applet_schema as schema;
-        let schema_dir = dir.join(schema::SCHEMA_DIR);
-        std::fs::create_dir_all(&schema_dir)
-            .map_err(|e| ToolError::ExecutionFailed(format!("schema dir failed: {e}")))?;
+        let tables_dir = dir.join(schema::TABLES_DIR);
+        std::fs::create_dir_all(&tables_dir)
+            .map_err(|e| ToolError::ExecutionFailed(format!("tables dir failed: {e}")))?;
         let file_name = format!("{version:04}_schema.sql");
-        let path = schema_dir.join(&file_name);
         // Written unconditionally, including for AlreadyApplied: the row may
         // exist on a box whose folder was restored from elsewhere, and the
         // folder is what a fresh box replays.
-        std::fs::write(&path, ddl)
-            .map_err(|e| ToolError::ExecutionFailed(format!("schema write failed: {e}")))?;
+        std::fs::write(tables_dir.join(&file_name), ddl)
+            .map_err(|e| ToolError::ExecutionFailed(format!("tables write failed: {e}")))?;
         schema_file = Some(file_name);
     }
-    if let Some(html) = &face_html {
-        let face_dir = dir.join("face");
-        std::fs::create_dir_all(&face_dir)
-            .map_err(|e| ToolError::ExecutionFailed(format!("face dir failed: {e}")))?;
-        std::fs::write(face_dir.join("index.html"), html)
-            .map_err(|e| ToolError::ExecutionFailed(format!("face write failed: {e}")))?;
+    // What is written must load, or the next reconcile would skip it.
+    if let Err(problems) = crate::applet_templates::check_skill_md(&skill_md, &dir, &rel) {
+        let findings: Vec<serde_json::Value> = problems.iter().map(|p| finding("skill_md", p, None)).collect();
+        return Ok(ToolResult::success(serde_json::json!({ "status": "check_failed", "findings": findings })));
     }
+    // Written whole, then moved into place, so a reader never sees half a file.
+    let tmp = dir.join(".SKILL.md.tmp");
+    std::fs::write(&tmp, &skill_md).map_err(|e| ToolError::ExecutionFailed(format!("write failed: {e}")))?;
+    std::fs::rename(&tmp, dir.join("SKILL.md")).map_err(|e| ToolError::ExecutionFailed(format!("write failed: {e}")))?;
 
     crate::applet_templates::reload_and_reconcile(pool)
         .await
         .map_err(|e| ToolError::ExecutionFailed(format!("reconcile failed: {e}")))?;
+
+    // The chat it was made in is where its runs post until runs have a home
+    // of their own. It lives in the row: it is this box's, not the applet's.
+    if let Some(cid) = &chat_id {
+        sqlx::query("UPDATE app_applets SET config = config || jsonb_build_object('chat_id', $1::text) WHERE id = $2")
+            .bind(cid)
+            .bind(&applet_id)
+            .execute(pool)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("could not link the chat: {e}")))?;
+    }
 
     // Reconcile ran the pending version as part of its replay pass. Confirm it
     // actually landed rather than trusting that it did: the whole point of
@@ -503,7 +504,7 @@ pub async fn execute(
         "applet_id": applet_id,
         "name": name,
         "slug": slug,
-        "folder": format!("user/{slug}"),
+        "folder": rel,
         "enabled": default_enabled,
         // The card renders from these; the string below is for the model, so
         // it says the same thing in its own reply.
@@ -520,7 +521,8 @@ pub async fn execute(
         }).unwrap_or("forever"),
         "capabilities": capabilities,
         "estimated_cost_per_day": est_cost_per_day,
-        "manifest": manifest_toml,
+        "run_it_with": chat_started.then(|| format!("/{spec}")),
+        "skill_md": skill_md,
     })))
 }
 
@@ -541,6 +543,55 @@ fn opt_str(args: &serde_json::Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(String::from)
+}
+
+fn str_list(arguments: &serde_json::Value, key: &str) -> Option<Vec<String>> {
+    arguments
+        .get(key)
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect())
+}
+
+/// The spec name a draft's name becomes: lowercase words joined by hyphens,
+/// which is also its folder. "Morning note" is `morning-note`.
+fn spec_name(name: &str) -> String {
+    let mut out = String::with_capacity(name.len());
+    for ch in name.trim().chars() {
+        if ch.is_ascii_alphanumeric() {
+            out.push(ch.to_ascii_lowercase());
+        } else if !out.is_empty() && !out.ends_with('-') {
+            out.push('-');
+        }
+    }
+    out.trim_end_matches('-').chars().take(64).collect::<String>().trim_end_matches('-').to_string()
+}
+
+/// The findings `invoke` can have: its values, a prompt for an applet
+/// `/name` starts, and a name no chat mode or shipped applet already has.
+fn check_invoke(draft: &Draft) -> Vec<serde_json::Value> {
+    let mut findings = Vec::new();
+    for i in &draft.invoke {
+        if !matches!(i.as_str(), "chat" | "assistant") {
+            findings.push(finding("invoke", &format!("invalid invoke '{i}'"), Some("chat, assistant, or both")));
+        }
+    }
+    if draft.invoke.iter().any(|i| i == "chat") {
+        if draft.agent.is_none() {
+            findings.push(finding("agent", "an applet started with /name needs a prompt to run", None));
+        }
+        let name = spec_name(&draft.name);
+        if crate::api::chat_mode::RESERVED_CHAT_NAMES.contains(&name.as_str()) {
+            findings.push(finding("name", &format!("'{name}' is a chat mode's name"), Some("pick another name")));
+        } else if crate::applet_templates::chat_applet_named(&name).is_some_and(|a| a.shipped) {
+            findings.push(finding("name", &format!("'{name}' is a built-in applet's name"), Some("pick another name")));
+        }
+    }
+    if let Some(m) = draft.model.as_deref() {
+        if !matches!(m, "standard" | "deep") {
+            findings.push(finding("model", &format!("invalid model '{m}'"), Some("standard or deep")));
+        }
+    }
+    findings
 }
 
 fn finding(field: &str, error: &str, suggestion: Option<&str>) -> serde_json::Value {
@@ -612,21 +663,6 @@ async fn check_prompt_tables(pool: &PgPool, prompt: &str) -> Vec<serde_json::Val
         .collect()
 }
 
-/// What an applet can say it makes. Only `page` is checked after a run; the
-/// others name the destination for the Applets page.
-const DELIVERS_KINDS: &[&str] = &["page", "chat", "dashboard"];
-
-fn check_delivers(delivers: Option<&str>) -> Option<serde_json::Value> {
-    let kind = delivers?;
-    (!DELIVERS_KINDS.contains(&kind)).then(|| {
-        finding(
-            "delivers",
-            &format!("unknown `delivers` kind `{kind}`"),
-            Some(&format!("one of: {}", DELIVERS_KINDS.join(", "))),
-        )
-    })
-}
-
 /// Validate the `limits` object: known keys, right types, sane values.
 fn check_limits(limits: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
     let mut out = Vec::new();
@@ -677,45 +713,6 @@ fn check_limits(limits: Option<&serde_json::Value>) -> Vec<serde_json::Value> {
     out
 }
 
-/// Return a slug that is either free, or already owned by an applet with the
-/// SAME name (an update). If the base slug is taken by a DIFFERENT applet
-/// (two names collapsing to one slug), append `_2`, `_3`, … so we never
-/// overwrite an unrelated applet.
-fn disambiguate_slug(root: &std::path::Path, base: &str, name: &str) -> String {
-    let owns = |slug: &str| -> Option<bool> {
-        // Some(true) = folder exists and its manifest name matches (ours to update)
-        // Some(false) = folder exists, different name (collision)
-        // None = free
-        //
-        // A shipped folder of the same name is always a collision, never ours
-        // to update: both id shapes resolve to the schema `applet_<slug>`, so
-        // an authored "Calorie Tracker" would otherwise write into the tables
-        // of the one that ships.
-        if crate::applet_templates::shipped_root().join(slug).is_dir() {
-            return Some(false);
-        }
-        let mf = root.join("user").join(slug).join("manifest.toml");
-        let text = std::fs::read_to_string(&mf).ok()?;
-        let existing_name = text
-            .parse::<toml::Value>()
-            .ok()
-            .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
-            .unwrap_or_default();
-        Some(existing_name == name)
-    };
-    match owns(base) {
-        None | Some(true) => return base.to_string(),
-        Some(false) => {}
-    }
-    for n in 2..=99 {
-        let cand = format!("{base}_{n}");
-        match owns(&cand) {
-            None | Some(true) => return cand,
-            Some(false) => continue,
-        }
-    }
-    base.to_string()
-}
 
 pub(crate) fn slugify(name: &str) -> String {
     let mut slug = String::new();
@@ -731,17 +728,13 @@ pub(crate) fn slugify(name: &str) -> String {
 }
 
 /// EXPLAIN a boolean SQL expression under the hardened read-only path.
+/// Plan the condition as the reader login, which is what runs it: setup
+/// writes it as `run: sql`, so a table the reader cannot see fails here
+/// rather than on every run.
 async fn explain_bool_expr(pool: &PgPool, expr: &str) -> Result<(), String> {
-    let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
-    sqlx::query("SET TRANSACTION READ ONLY")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    sqlx::query("SET LOCAL statement_timeout = '5s'")
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| e.to_string())?;
-    let sql = format!("EXPLAIN SELECT (({expr}))::boolean");
+    let (mut tx, _zone) =
+        crate::server::faces::reader_transaction(pool, "5s").await?;
+    let sql = format!("EXPLAIN SELECT 1 WHERE ({expr})");
     let res = sqlx::query(&sql).fetch_all(&mut *tx).await;
     tx.rollback().await.ok();
     res.map(|_| ()).map_err(|e| e.to_string())
@@ -818,9 +811,6 @@ fn estimate_runs_per_day(cron: &str) -> f64 {
     }
 }
 
-fn toml_from_json(v: &serde_json::Value) -> Result<toml::Value, String> {
-    toml::Value::try_from(v).map_err(|e| e.to_string())
-}
 
 #[cfg(test)]
 mod tests {
@@ -849,15 +839,6 @@ mod tests {
         assert!(AGENTS_MD.contains("\n## For builtin (Rust) applet development"));
         assert!(wants_guide(&serde_json::json!({ "guide": true })));
         assert!(!wants_guide(&serde_json::json!({ "name": "x", "description": "y" })));
-    }
-
-    #[test]
-    fn delivers_takes_only_the_kinds_the_box_knows() {
-        assert!(check_delivers(None).is_none());
-        assert!(check_delivers(Some("page")).is_none());
-        assert!(check_delivers(Some("dashboard")).is_none());
-        let f = check_delivers(Some("text")).expect("an unknown kind is a finding");
-        assert!(f["suggestion"].as_str().unwrap().contains("page, chat, dashboard"));
     }
 
     /// A typo in a table name is the failure the authoring contract calls out
@@ -892,29 +873,59 @@ mod tests {
         assert!(out.is_empty(), "unexpected findings: {out:?}");
     }
 
-    /// The scheduler only runs rows whose triggers include `cron`. A draft
-    /// that sets a schedule and lists its own triggers without it was saved
-    /// and shown as scheduled, and never ran.
+    /// What setup refuses about `invoke`, `until`, and triggers the format
+    /// no longer has.
+    #[test]
+    fn checks_refuse_what_skill_md_cannot_say() {
+        let draft = |extra: serde_json::Value| {
+            let mut args = serde_json::json!({
+                "name": "Garden log",
+                "description": "Says what grew this week",
+                "agent": "Read the garden pages and say what grew.",
+                "invoke": ["chat"],
+            });
+            for (k, v) in extra.as_object().unwrap() {
+                args[k] = v.clone();
+            }
+            Draft::parse(&args).unwrap()
+        };
+        assert_eq!(spec_name("Garden log"), "garden-log");
+        assert_eq!(spec_name("  Weekly -- Review! "), "weekly-review");
+        assert!(check_invoke(&draft(serde_json::json!({}))).is_empty());
+        for (extra, field) in [
+            (serde_json::json!({ "invoke": ["everyone"] }), "invoke"),
+            (serde_json::json!({ "name": "Chat" }), "name"),
+            (serde_json::json!({ "name": "Weekly review" }), "name"),
+            (serde_json::json!({ "model": "huge" }), "model"),
+        ] {
+            let f = check_invoke(&draft(extra.clone()));
+            assert!(f.iter().any(|x| x["field"] == field), "{extra}: {f:?}");
+        }
+    }
+
     #[sqlx::test]
-    async fn a_schedule_without_a_cron_trigger_is_a_finding(pool: PgPool) {
-        let draft = |triggers: serde_json::Value| {
-            Draft::parse(&serde_json::json!({
+    async fn until_must_be_once_on_a_schedule_and_api_and_webhook_are_gone(pool: PgPool) {
+        let check_of = |extra: serde_json::Value| {
+            let mut args = serde_json::json!({
                 "name": "Morning note",
                 "description": "Writes a short note each morning.",
                 "agent": "Write one sentence about the weather.",
-                "schedule": "0 0 7 * * *",
-                "triggers": triggers,
-            }))
-            .unwrap()
+            });
+            for (k, v) in extra.as_object().unwrap() {
+                args[k] = v.clone();
+            }
+            Draft::parse(&args).unwrap()
         };
-        let on_triggers = |out: &[serde_json::Value]| {
-            out.iter().filter(|f| f["field"] == "triggers").count()
-        };
-
-        let out = check(&pool, &draft(serde_json::json!(["manual", "tool"]))).await;
-        assert_eq!(on_triggers(&out), 1, "a schedule with no cron must be refused: {out:?}");
-
-        let out = check(&pool, &draft(serde_json::json!(["cron", "manual"]))).await;
-        assert_eq!(on_triggers(&out), 0, "unexpected findings: {out:?}");
+        for (extra, field) in [
+            (serde_json::json!({ "until": "once" }), "until"),
+            (serde_json::json!({ "schedule": "0 0 7 * * *", "until": "select true" }), "until"),
+            (serde_json::json!({ "triggers": ["api"] }), "triggers"),
+            (serde_json::json!({ "triggers": ["webhook"] }), "triggers"),
+        ] {
+            let f = check(&pool, &check_of(extra.clone())).await;
+            assert!(f.iter().any(|x| x["field"] == field), "{extra}: {f:?}");
+        }
+        let ok = check(&pool, &check_of(serde_json::json!({ "schedule": "0 0 7 * * *", "until": "once" }))).await;
+        assert!(ok.is_empty(), "{ok:?}");
     }
 }

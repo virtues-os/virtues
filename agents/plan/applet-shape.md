@@ -870,6 +870,13 @@ lists applets whose `invoke` includes `chat` and is titled "Applets"
 **Done when:** `/weekly-review` runs from its applet folder, and no code reads
 `skills/`.
 
+Built on 2026-10-27, except for what is still named "skill" where another
+change is in flight (the composer's chip in `ChatInput.svelte`) or where the
+name is internal (`SkillsPanel.svelte`, `stores/skills.svelte.ts`, the
+`/api/skills` path, kept for older clients). Skills a person saved move into
+`<state root>/user/` as applets at boot (`chat_applets::move_saved_skills`),
+behind a dated `TODO` to delete the move once every box has run it.
+
 ### 4. Convert every manifest
 
 Every `manifest.toml` becomes `SKILL.md`, prompts move out of TOML, and folders
@@ -885,15 +892,39 @@ are deleted.
 runs, memory, state and tables, and a converted condition that is false records
 a skipped run with no model call.
 
+Built on 2026-10-27 except the box: the shipped tree is converted, setup
+writes `SKILL.md`, the state root converts at boot, and the false-condition
+test passes; an upgrade on a real box has not been run. Decided on the way:
+`metadata.writes` and `metadata.secrets` stay as keys; `model: lite` keeps a
+converted unattended prompt's cost; `N runs per day/hour` joined `limit`;
+`metadata.forked-from` records a fork; shipped starters stay the owner's;
+shipped Rust sources stay in their underscore folders beside the applet
+folders.
+
 ### 5. Remove chat modes
 
 `deep-research` and `admin` ship as applets. The composer loses the depth and
-access controls
-([agentModes.ts](../../apps/web/src/lib/config/agentModes.ts)). `ChatMode`
+access controls, and `config/agentModes.ts` goes. `ChatMode`
 keeps the default, `Applet`, the two rooms, and Local untouched.
 
 **Done when:** nothing in the composer says depth or access, and a deep
 research turn and an admin turn run from their applet folders.
+
+Built on 2026-10-27 except on a box (71525b857, 01e646554). Decided on the
+way:
+- The applet chip stays after a send until it is taken off, so a chat
+  stays in `/admin` for as long as the owner keeps it. Opening another chat
+  clears it.
+- The owner removed Local from the app instead of giving it a control of
+  its own. The server's Local mode stays, with a dated TODO, until a model
+  picker brings it back or it is deleted.
+- Only a shipped applet may list `sudo` or `dispatch_subagents`, and a sudo
+  turn also checks that the applet shipped.
+- A listed `think` reaches a turn `/name` starts. Deep research plans with
+  it.
+- An applet turn's step ceiling is 60, the old admin figure. Its dollars and
+  minutes come from `limit`.
+- A client that still sends `sudo` or `deep_research` gets the applet.
 
 ### 6. Let the assistant call applets
 
@@ -904,6 +935,24 @@ stage.
 
 **Done when:** a chat that mentions drinking water calls `water` without `/`,
 and an applet's prompt can read a file from its `references/`.
+
+Built on 2026-10-27 except the live check: no model has yet been shown a
+`water` applet in a running chat. Decided on the way:
+- One tool, `use_applet`, does both stages. With a name it returns the
+  prompt and its files; with `file` it returns one of them.
+- A loaded prompt runs with the calling chat's tools and limits. Its own
+  `allowed-tools`, `limit` and `model` apply only to turns and runs it
+  starts itself.
+- Only a prompt alone is loaded. An applet with a `run` stage still starts
+  through the `applet` tool's `run`, which runs all of it.
+- Chat lists at most 25 applets at 160 characters each, with no files;
+  loading one lists its files.
+- An applet's own `/name` turn and its runs get a files-only tool when its
+  folder has `references/` or `assets/`.
+- The owner made the four shipped chat applets (weekly review, meeting
+  prep, morning brief, trip planner) `invoke: chat, assistant`, each
+  description ending in when to use it. Admin, deep research and new applet
+  stay `/name` only.
 
 ### 7. Output, threads and the Inbox
 

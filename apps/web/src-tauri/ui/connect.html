@@ -927,7 +927,18 @@
         }
         if (ready) {
           try {
-            const res = await fetch(BOX_URL + '/api/pair/mint-collector', { method: 'POST' });
+            // Minting the collector's code needs this app's owner proof: a
+            // nonce from the server, signed with this device's key. A server
+            // too old to issue one (404) does not ask for it.
+            const headers = {};
+            const n = await fetch(BOX_URL + '/api/owner-proof/nonce', { method: 'POST' });
+            if (n.ok) {
+              const { nonce } = await n.json();
+              headers['X-Virtues-Owner-Proof'] = await invoke('plugin:reach|owner_proof_sign', {
+                method: 'POST', path: '/api/pair/mint-collector', nonce,
+              });
+            }
+            const res = await fetch(BOX_URL + '/api/pair/mint-collector', { method: 'POST', headers });
             if (res.ok) {
               const { token } = await res.json();
               if (token) await invoke('install_collector', { token });

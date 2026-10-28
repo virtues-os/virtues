@@ -11,7 +11,6 @@ import { flushSync, mount, unmount } from 'svelte';
 type Rule = { id: string; rule: string; kind: 'avoid' | 'defend'; active: boolean };
 
 let serverRules: Rule[] = [];
-let localSupported = false;
 
 vi.mock('$lib/api/client', () => ({
 	getNarrativeRules: vi.fn(async () => ({
@@ -19,22 +18,10 @@ vi.mock('$lib/api/client', () => ({
 		proposed: [{ id: 'proposed_000', rule: 'my old job', kind: 'avoid', active: false }],
 	})),
 	saveNarrativeRules: vi.fn(async () => {}),
-	// `GET /local-model`, which the store asks once per session.
-	request: vi.fn(async () => ({ ...NO_LOCAL, supported: localSupported })),
 }));
 
 const { default: RulesSettings } = await import('./RulesSettings.svelte');
 const { saveNarrativeRules } = await import('$lib/api/client');
-const { localModel } = await import('$lib/stores/localModel.svelte');
-
-const NO_LOCAL = {
-	supported: false,
-	ready: false,
-	downloading: false,
-	downloadedBytes: 0,
-	totalBytes: 0,
-	error: null,
-};
 
 let target: HTMLElement;
 let mounted: ReturnType<typeof mount> | null = null;
@@ -46,8 +33,6 @@ beforeEach(() => {
 	];
 	vi.mocked(saveNarrativeRules).mockReset();
 	vi.mocked(saveNarrativeRules).mockResolvedValue(undefined);
-	localSupported = false;
-	localModel.status = { ...NO_LOCAL };
 	target = document.createElement('div');
 	document.body.appendChild(target);
 });
@@ -94,14 +79,6 @@ describe('RulesSettings', () => {
 		expect(rows).toEqual(['Never bring up my ex', 'Hold me to no work email on Sundays']);
 		expect(text()).not.toContain('my old job');
 		expect(text()).toContain('Nick follows these in chat.');
-	});
-
-	it('says Local carries no rules, on a server that offers Local', async () => {
-		// Set both ways: the store keeps the first answer it gets for the session.
-		localSupported = true;
-		localModel.status = { ...NO_LOCAL, supported: true };
-		await open();
-		expect(text()).toContain('Nick follows these in chat, except in Local.');
 	});
 
 	it('adds a rule at the bottom and sends the whole set, keeping proposals', async () => {

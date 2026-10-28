@@ -1,6 +1,0 @@
-name = "Transcription Resolution"
-description = "Turns the audio you record into readable text."
-owner = "system"
-command = ["transcription_resolution"]
-triggers = ["cron", "manual"]
-schedule = "0 */2 * * * *"

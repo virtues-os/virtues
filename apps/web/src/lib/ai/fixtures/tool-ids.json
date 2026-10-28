@@ -9,7 +9,6 @@
   "browser_scroll",
   "browser_snapshot",
   "browser_type",
-  "code_interpreter",
   "connection",
   "create_page",
   "create_task",
@@ -21,7 +20,6 @@
   "read_asset",
   "record_introductions",
   "revise_article",
-  "save_skill",
   "semantic_search",
   "send_imessage",
   "shell",
@@ -29,10 +27,12 @@
   "skip_step",
   "sql_query",
   "sql_write",
+  "sudo",
   "think",
   "update_applet_memory",
   "update_memory",
   "update_task",
+  "use_applet",
   "web_search",
   "write_it_up"
 ]

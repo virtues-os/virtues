@@ -136,7 +136,7 @@ pub async fn get_bookmark_handler(
     api_response(crate::api::bookmarks::get_bookmark(state.db.pool(), &id).await)
 }
 
-/// GET /api/messages/:id/attachments/:index — the bytes, served inline.
+/// GET /api/messages/:id/attachments/:index — the bytes a message carried.
 ///
 /// 404 covers every "not here": no such message, a deleted one, an index past
 /// the end, or an attachment the Mac has not sent yet (iCloud had not
@@ -148,23 +148,46 @@ pub async fn get_message_attachment_handler(
     match crate::storage::message_media::load_attachment(state.db.pool(), &state.storage, &id, index)
         .await
     {
-        Ok((bytes, mime)) => (
-            [
-                (axum::http::header::CONTENT_TYPE, mime),
-                (axum::http::header::CONTENT_DISPOSITION, "inline".to_string()),
-                (axum::http::header::CONTENT_LENGTH, bytes.len().to_string()),
-                // The bytes behind an (id, index) never change; a deletion
-                // makes the route 404 rather than serve different bytes.
-                (
-                    axum::http::header::CACHE_CONTROL,
-                    "private, max-age=86400".to_string(),
-                ),
-            ],
-            bytes,
-        )
-            .into_response(),
+        Ok((bytes, declared)) => attachment_response(bytes, &declared, index),
         Err(e) => error_response(e),
     }
+}
+
+/// An attachment's bytes as a response. Whoever sent the message chose the
+/// bytes and the type, so they never act as the box's own page: an image,
+/// audio or video displays inline under its own type, anything else
+/// downloads as `application/octet-stream`, and both are sandboxed
+/// (`middleware::security::inline_type`, `STORED_FILE_CSP`). Served as the
+/// sender declared, an HTML file opened at the box's address could load a
+/// second attachment as same-origin script and call every `/api` route as
+/// the owner.
+fn attachment_response(bytes: Vec<u8>, declared: &str, index: usize) -> Response {
+    use crate::middleware::security::{inline_type, STORED_FILE_CSP};
+    use axum::http::header;
+    let (content_type, disposition) = match inline_type(declared) {
+        Some(t) => (t.to_string(), "inline".to_string()),
+        None => (
+            "application/octet-stream".to_string(),
+            format!(
+                "attachment; filename=\"attachment-{index}.{}\"",
+                crate::storage::message_media::extension_for(declared)
+            ),
+        ),
+    };
+    (
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CONTENT_DISPOSITION, disposition),
+            (header::CONTENT_LENGTH, bytes.len().to_string()),
+            (header::CONTENT_SECURITY_POLICY, STORED_FILE_CSP.to_string()),
+            (header::X_CONTENT_TYPE_OPTIONS, "nosniff".to_string()),
+            // The bytes behind an (id, index) never change; a deletion
+            // makes the route 404 rather than serve different bytes.
+            (header::CACHE_CONTROL, "private, max-age=86400".to_string()),
+        ],
+        bytes,
+    )
+        .into_response()
 }
 
 /// GET /api/messages/outbox/:id — a sent or scheduled message, as it stands.
@@ -577,4 +600,44 @@ pub async fn revoke_publication_handler(
     Path(id): Path<String>,
 ) -> Response {
     api_response(crate::api::publications::revoke(state.db.pool(), &id).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::attachment_response;
+    use crate::middleware::security::STORED_FILE_CSP;
+    use axum::http::header;
+
+    fn served(declared: &str) -> axum::http::HeaderMap {
+        attachment_response(b"bytes".to_vec(), declared, 1).headers().clone()
+    }
+
+    /// A file a stranger sent opens as a download under a type no browser
+    /// runs, and sandboxed even then.
+    #[test]
+    fn an_attachment_that_could_run_script_downloads() {
+        for (declared, filename) in [
+            ("text/html", "attachment-1.bin"),
+            ("image/svg+xml", "attachment-1.bin"),
+            ("text/javascript", "attachment-1.bin"),
+            ("application/pdf", "attachment-1.pdf"),
+            ("text/plain", "attachment-1.txt"),
+        ] {
+            let h = served(declared);
+            assert_eq!(h[header::CONTENT_TYPE], "application/octet-stream", "{declared}");
+            assert_eq!(h[header::CONTENT_DISPOSITION], format!("attachment; filename=\"{filename}\"").as_str());
+            assert_eq!(h[header::CONTENT_SECURITY_POLICY], STORED_FILE_CSP, "{declared}");
+            assert_eq!(h[header::X_CONTENT_TYPE_OPTIONS], "nosniff", "{declared}");
+        }
+    }
+
+    /// A photo still displays where the app draws it.
+    #[test]
+    fn an_image_attachment_displays_inline() {
+        let h = served("image/jpeg");
+        assert_eq!(h[header::CONTENT_TYPE], "image/jpeg");
+        assert_eq!(h[header::CONTENT_DISPOSITION], "inline");
+        assert_eq!(h[header::CONTENT_SECURITY_POLICY], STORED_FILE_CSP);
+        assert_eq!(h[header::CONTENT_LENGTH], "5");
+    }
 }

@@ -43,7 +43,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::request_push,
       commands::status,
       commands::request_location,
-      commands::open_settings
+      commands::open_settings,
+      commands::sign_in
     ])
     .setup(|app, api| {
       #[cfg(mobile)]

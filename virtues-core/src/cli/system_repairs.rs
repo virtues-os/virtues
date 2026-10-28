@@ -32,6 +32,11 @@
 //!   The server can't ever do this work: `virtues.service` runs as
 //!   `User=virtues`, which cannot chown a root-owned directory to itself.)
 //!
+//! Hook 1 runs for `virtues migrate --check` too, which applies no migration.
+//! The installer and first boot run that as root, so a new box gets the
+//! repairs before its server first starts, and so does an upgrade's
+//! preflight, which runs it under the staged binary.
+//!
 //! `virtues migrate` is also a documented power-user command that runs
 //! un-sudo'd, so everything here is gated on euid 0 and skips quietly without
 //! it — a repair that can only half-run without privilege must not half-run.
@@ -65,6 +70,10 @@ pub fn run() {
                 // A warning, never an error: see the module doc. The boot-time
                 // lake probe (`storage::health_check`) is the surface that
                 // keeps shouting if this stays broken.
+                //
+                // First boot reads stdout for "`db-logins` could not finish"
+                // to decide whether to retry (`virtues-firstboot.sh` §3), and
+                // the installer forwards each "system repair `" line.
                 super::ui::warn(&format!("system repair `{name}` could not finish: {why}"));
             }
         }
@@ -99,20 +108,25 @@ const REPAIRS: &[(&str, fn(&std::path::Path) -> Outcome)] = &[
 
 /// The two low-privilege Postgres roles can log in, with the passwords the
 /// server derives from this box's encryption key (`database::restricted`).
-/// Model- and applet-written SQL runs on those logins; without them the server
-/// falls back to `SET ROLE`, which the SQL itself can undo.
+/// Model- and applet-written SQL runs on those logins, and a box refuses to
+/// run that SQL without them.
 ///
 /// Root is needed because the server's role has no CREATEROLE and so cannot
 /// alter the roles itself. Checked by logging in over TCP the way the server
 /// will, so a `pg_hba.conf` that refuses the login reports as Failed instead
-/// of Converged. The installer does not set the logins yet (its bring-up runs
-/// as `virtues`), so a freshly installed box gets them on its first upgrade.
+/// of Converged. The installer and first boot run this after the key exists
+/// and before the server first starts (see the module doc), and every upgrade
+/// runs it again before the new server starts.
+///
+/// Debian's `pg_hba.conf` takes a password on 127.0.0.1. Fedora's uses
+/// `ident` there, which these roles cannot pass because they have no OS user,
+/// so when the login still fails after its password is set, the repair adds
+/// [`LOGINS_TCP_LINE`] and checks again.
 ///
 /// Sandboxed applet code has no network, so it logs in as the writer on the
 /// Postgres socket instead. A box's `pg_hba.conf` maps socket logins to OS
 /// users (`peer`), and the sandbox's throwaway user is no Postgres role, so
-/// the repair adds a password line for the writer ahead of that rule
-/// ([`with_writer_socket_line`]) and checks the login works.
+/// the repair adds [`WRITER_SOCKET_LINE`] for that and checks the login works.
 #[cfg(target_os = "linux")]
 fn db_logins(data_dir: &std::path::Path) -> Outcome {
     use crate::database::restricted::{alter_login_sql, password, Login};
@@ -134,6 +148,31 @@ fn db_logins(data_dir: &std::path::Path) -> Outcome {
             .output()
             .map(|o| o.status.success())
             .unwrap_or(false)
+    };
+    let as_postgres = |sql: &str| {
+        Command::new("runuser")
+            .args(["-u", "postgres", "--", "psql", "-d", "postgres", "-tAc", sql])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+    };
+    // Put `line` in pg_hba.conf and reload, unless it is there already.
+    // Returns the file, and whether this added the line.
+    let add_hba_line = |line: &str, why: &str| -> Result<(std::path::PathBuf, bool), String> {
+        let Some(hba) = as_postgres("SHOW hba_file").filter(|p| !p.is_empty()) else {
+            return Err("could not ask Postgres where pg_hba.conf is".into());
+        };
+        let hba = std::path::PathBuf::from(hba);
+        let text = std::fs::read_to_string(&hba).map_err(|e| format!("could not read {}: {e}", hba.display()))?;
+        let Some(updated) = with_hba_line(&text, line, why) else {
+            return Ok((hba, false));
+        };
+        replace_keeping_owner(&hba, &updated).map_err(|e| format!("could not write {}: {e}", hba.display()))?;
+        if as_postgres("SELECT pg_reload_conf()").is_none() {
+            return Err(format!("added `{line}` to {} but could not reload Postgres", hba.display()));
+        }
+        Ok((hba, true))
     };
 
     let mut done = Vec::new();
@@ -169,12 +208,24 @@ fn db_logins(data_dir: &std::path::Path) -> Outcome {
     }
     if !missing.is_empty() {
         let roles = missing.iter().map(|l| l.role()).collect::<Vec<_>>().join(", ");
-        if !missing.iter().all(|l| can_log_in(*l)) {
-            return Outcome::Failed(format!(
-                "set the login for {roles}, but Postgres still refuses it on 127.0.0.1 (check pg_hba.conf)"
-            ));
-        }
         done.push(format!("set the login for {roles}"));
+        if !missing.iter().all(|l| can_log_in(*l)) {
+            let hba = match add_hba_line(LOGINS_TCP_LINE, "chat and applet SQL logs in with a password on 127.0.0.1.") {
+                Ok((hba, added)) => {
+                    if added {
+                        done.push(format!("let them log in with a password on 127.0.0.1 ({})", hba.display()));
+                    }
+                    hba
+                }
+                Err(why) => return Outcome::Failed(format!("set the login for {roles}, but {why}")),
+            };
+            if !missing.iter().all(|l| can_log_in(*l)) {
+                return Outcome::Failed(format!(
+                    "set the login for {roles}, but Postgres still refuses it on 127.0.0.1 (check {})",
+                    hba.display()
+                ));
+            }
+        }
     }
 
     let writer_on_socket = || {
@@ -191,31 +242,15 @@ fn db_logins(data_dir: &std::path::Path) -> Outcome {
             .unwrap_or(false)
     };
     if !writer_on_socket() {
-        let as_postgres = |sql: &str| {
-            Command::new("runuser")
-                .args(["-u", "postgres", "--", "psql", "-d", "postgres", "-tAc", sql])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        };
-        let Some(hba) = as_postgres("SHOW hba_file").filter(|p| !p.is_empty()) else {
-            return Outcome::Failed("could not ask Postgres where pg_hba.conf is".into());
-        };
-        let hba = std::path::Path::new(&hba);
-        let text = match std::fs::read_to_string(hba) {
-            Ok(t) => t,
-            Err(e) => return Outcome::Failed(format!("could not read {}: {e}", hba.display())),
-        };
-        if let Some(updated) = with_writer_socket_line(&text) {
-            if let Err(e) = replace_keeping_owner(hba, &updated) {
-                return Outcome::Failed(format!("could not write {}: {e}", hba.display()));
+        let hba = match add_hba_line(WRITER_SOCKET_LINE, "sandboxed applet code logs in as the writer with its password.") {
+            Ok((hba, added)) => {
+                if added {
+                    done.push(format!("let the applet writer log in on the socket ({})", hba.display()));
+                }
+                hba
             }
-            if as_postgres("SELECT pg_reload_conf()").is_none() {
-                return Outcome::Failed("added the applet writer's socket line but could not reload Postgres".into());
-            }
-            done.push(format!("let the applet writer log in on the socket ({})", hba.display()));
-        }
+            Err(why) => return Outcome::Failed(why),
+        };
         if !writer_on_socket() {
             return Outcome::Failed(format!(
                 "Postgres refuses the applet writer on the socket (check {})",
@@ -236,25 +271,31 @@ fn db_logins(data_dir: &std::path::Path) -> Outcome {
 #[cfg(any(target_os = "linux", test))]
 const WRITER_SOCKET_LINE: &str = "local virtues virtues_applet_writer scram-sha-256";
 
-/// `hba` with [`WRITER_SOCKET_LINE`] ahead of its first rule, or `None` when
-/// it already has it. Postgres takes the first rule that matches, so the line
-/// has to come before the `local all all peer` a box ships with.
+/// The `pg_hba.conf` line that lets both restricted roles log in with their
+/// passwords on 127.0.0.1, where the server connects them.
 #[cfg(any(target_os = "linux", test))]
-fn with_writer_socket_line(hba: &str) -> Option<String> {
-    let has = hba.lines().any(|l| l.split_whitespace().collect::<Vec<_>>().join(" ") == WRITER_SOCKET_LINE);
+const LOGINS_TCP_LINE: &str = "host virtues virtues_face_reader,virtues_applet_writer 127.0.0.1/32 scram-sha-256";
+
+/// `hba` with `line`, under a comment that says `why`, ahead of its first
+/// rule, or `None` when it already has the line. Postgres takes the first
+/// rule that matches, so the line has to come before the `peer` and `ident`
+/// rules a box ships with.
+#[cfg(any(target_os = "linux", test))]
+fn with_hba_line(hba: &str, line: &str, why: &str) -> Option<String> {
+    let has = hba.lines().any(|l| l.split_whitespace().collect::<Vec<_>>().join(" ") == line);
     if has {
         return None;
     }
-    let block = format!("# Virtues: sandboxed applet code logs in as the writer with its password.\n{WRITER_SOCKET_LINE}\n");
+    let block = format!("# Virtues: {why}\n{line}\n");
     let mut out = String::with_capacity(hba.len() + block.len());
     let mut placed = false;
-    for line in hba.split_inclusive('\n') {
-        let t = line.trim();
+    for existing in hba.split_inclusive('\n') {
+        let t = existing.trim();
         if !placed && !t.is_empty() && !t.starts_with('#') {
             out.push_str(&block);
             placed = true;
         }
-        out.push_str(line);
+        out.push_str(existing);
     }
     if !placed {
         if !out.is_empty() && !out.ends_with('\n') {
@@ -435,13 +476,38 @@ mod tests {
     #[test]
     fn the_writer_socket_line_goes_ahead_of_the_first_rule_once() {
         let hba = "# comment\n\nlocal   all   postgres   peer\nlocal all all peer\nhost all all 127.0.0.1/32 scram-sha-256\n";
-        let updated = with_writer_socket_line(hba).unwrap();
+        let updated = with_hba_line(hba, WRITER_SOCKET_LINE, "why").unwrap();
         let rules: Vec<&str> = updated.lines().filter(|l| !l.trim().is_empty() && !l.starts_with('#')).collect();
         assert_eq!(rules[0], WRITER_SOCKET_LINE);
         assert_eq!(rules[1], "local   all   postgres   peer");
         assert!(updated.starts_with("# comment\n"), "comments above the rules stay first");
-        assert!(with_writer_socket_line(&updated).is_none(), "added once");
+        assert!(with_hba_line(&updated, WRITER_SOCKET_LINE, "why").is_none(), "added once");
         let spaced = updated.replace(WRITER_SOCKET_LINE, "local  virtues  virtues_applet_writer  scram-sha-256");
-        assert!(with_writer_socket_line(&spaced).is_none(), "spacing does not matter");
+        assert!(with_hba_line(&spaced, WRITER_SOCKET_LINE, "why").is_none(), "spacing does not matter");
+    }
+
+    /// Fedora's `postgresql-setup --initdb` writes `ident` for 127.0.0.1,
+    /// which a role with no OS user cannot pass. The password line has to
+    /// come first, and adding the socket line later keeps both.
+    #[test]
+    fn the_tcp_line_goes_ahead_of_an_ident_rule() {
+        let hba = "local all all peer\nhost all all 127.0.0.1/32 ident\nhost all all ::1/128 ident\n";
+        let updated = with_hba_line(hba, LOGINS_TCP_LINE, "why").unwrap();
+        let updated = with_hba_line(&updated, WRITER_SOCKET_LINE, "why").unwrap();
+        let rules: Vec<&str> = updated.lines().filter(|l| !l.starts_with('#')).collect();
+        let tcp = rules.iter().position(|l| *l == LOGINS_TCP_LINE).unwrap();
+        let ident = rules.iter().position(|l| l.contains("127.0.0.1/32 ident")).unwrap();
+        assert!(tcp < ident, "{updated}");
+        assert!(rules.contains(&WRITER_SOCKET_LINE));
+        assert!(with_hba_line(&updated, LOGINS_TCP_LINE, "why").is_none(), "added once");
+    }
+
+    /// The lines name the roles `database::restricted` connects as.
+    #[test]
+    fn the_hba_lines_name_the_restricted_roles() {
+        use crate::database::restricted::Login;
+        let roles = Login::ALL.iter().map(|l| l.role()).collect::<Vec<_>>().join(",");
+        assert_eq!(LOGINS_TCP_LINE.split_whitespace().nth(2), Some(roles.as_str()));
+        assert_eq!(WRITER_SOCKET_LINE.split_whitespace().nth(2), Some(Login::Writer.role()));
     }
 }

@@ -28,8 +28,25 @@
 //! with a thumbnail (`browser:step`). The owner clicking or typing in the page
 //! takes control: the assistant's next step is refused until they hand it back.
 //! What only the owner can do (a password, a code, a CAPTCHA) the assistant
-//! asks for with a handoff, which waits for their Done; it never types into a
-//! password, card or one-time-code field.
+//! asks for with a handoff, which waits for their Done.
+//!
+//! What the assistant cannot reach through the pane:
+//! - Local addresses. The pane refuses localhost, loopback, private and
+//!   link-local addresses and `.local` names, for `browser_open` and for every
+//!   navigation inside the page (`pane_may_load`). For the address it is asked
+//!   to open, it also looks the name up and refuses one that points at a local
+//!   address (`resolves_local`). On this Mac 127.0.0.1:7117 is the reach
+//!   loopback, which the box answers as the owner, so a page that sent the
+//!   pane there could have shown the assistant saved passwords.
+//! - Secret fields. The assistant cannot type into a field the pane
+//!   recognizes as a password, card or one-time-code field, into a frame from
+//!   another site, or into a page component whose inside is closed to scripts.
+//!   Snapshots and screenshots show such a field as filled without its value
+//!   (`virtuesSecretField` in the vendored script). A screenshot also blanks
+//!   frames from another site that look like payment or code forms, since the
+//!   fields inside them cannot be checked.
+//!
+//! All of these are best-effort checks against pages that behave normally.
 
 use std::ptr::NonNull;
 use std::sync::{Mutex, MutexGuard};
@@ -334,11 +351,21 @@ async fn step(app: &AppHandle, op: &str, args: &Value) -> Result<Value, String> 
     }
     agent().busy = true;
     announce(app);
-    let out = if op == "handoff" { handoff(app, args).await } else { perform(app, op, args).await };
+    let started = Instant::now();
+    let mut out = if op == "handoff" { handoff(app, args).await } else { perform(app, op, args).await };
     {
         let mut a = agent();
         a.busy = false;
         a.last_step = Some(Instant::now());
+    }
+    // A link, a redirect or a form that tried to take the pane somewhere it
+    // refuses: say so, or the step reads as if the page simply did nothing.
+    if let Ok(result) = out.as_mut() {
+        if let Some((_, refused)) = refused_since(started) {
+            if result.is_object() && result.get("note").is_none() {
+                result["note"] = json!(refused.note());
+            }
+        }
     }
     announce(app);
     {
@@ -505,11 +532,14 @@ async fn perform(app: &AppHandle, op: &str, args: &Value) -> Result<Value, Strin
         "click" => click(&pane(app)?, &arg("ref").ok_or("`ref` is required")?).await,
         "type" => {
             let win = pane(app)?;
-            refuse_secret_field(&win, arg("ref")).await?;
+            let text = arg("text").ok_or("`text` is required")?;
             if let Some(r) = arg("ref") {
+                refuse_secret_field(&win, Some(&r)).await?;
                 click(&win, &r).await?;
             }
-            let text = arg("text").ok_or("`text` is required")?;
+            // Checked again where the text will land. Clicking a label focuses
+            // its input, and a page can move focus on its own.
+            refuse_secret_field(&win, None).await?;
             on_main(&win, move |wk, _| unsafe {
                 focus_view(wk);
                 let _: () = msg_send![wk, insertText: &*NSString::from_str(&text)];
@@ -569,12 +599,182 @@ fn store_id() -> [u8; 16] {
     id
 }
 
+const LOCAL_REFUSED: &str = "The Browser does not open local addresses: localhost, 127.0.0.1, private network \
+                             addresses and .local names. It opens public websites only.";
+
+/// What the pane last refused, for telling the assistant.
+#[derive(Clone, Debug, PartialEq)]
+enum Refused {
+    /// A local address.
+    Local,
+    /// A link that is not a web page, such as `mailto:`, another app's link
+    /// or the app's own scheme.
+    Scheme(String),
+}
+
+impl Refused {
+    fn of(url: &tauri::Url) -> Self {
+        match url.scheme() {
+            "http" | "https" => Refused::Local,
+            // Capped, since the page picks it.
+            other => Refused::Scheme(other.chars().take(24).collect()),
+        }
+    }
+
+    /// For `open`, when the page it asked for went somewhere the pane refused.
+    fn redirect(&self) -> String {
+        match self {
+            Refused::Local => {
+                "The page sent the Browser to a local address, which it does not open. It opens public websites only."
+                    .into()
+            }
+            Refused::Scheme(scheme) => {
+                format!("The page sent the Browser to a `{scheme}:` link, which it does not open. It opens web pages only.")
+            }
+        }
+    }
+
+    /// For any other step, as a note on its result.
+    fn note(&self) -> String {
+        match self {
+            Refused::Local => "The page tried to load a local address, and the Browser refused it.".into(),
+            Refused::Scheme(scheme) => format!(
+                "The page tried to open a `{scheme}:` link, and the Browser refused it. It opens web pages only."
+            ),
+        }
+    }
+}
+
+/// A page the Browser may show: http or https, and not a local address.
 fn parse_page(url: &str) -> Result<tauri::Url, String> {
     let target: tauri::Url = url.parse().map_err(|_| format!("`{url}` is not a URL"))?;
     if !matches!(target.scheme(), "https" | "http") {
         return Err("Only http and https pages can be opened.".into());
     }
+    if !pane_may_load(&target) {
+        return Err(LOCAL_REFUSED.into());
+    }
     Ok(target)
+}
+
+/// `parse_page`, and then the name looked up: the check for an address the
+/// assistant or the owner asks the pane to open.
+pub(crate) async fn checked_page(url: &str) -> Result<tauri::Url, String> {
+    let target = parse_page(url)?;
+    if resolves_local(&target).await {
+        return Err(LOCAL_REFUSED.into());
+    }
+    Ok(target)
+}
+
+/// Whether the URL's name resolves to a local address on this Mac. A public
+/// name can point anywhere: wildcard DNS such as `127.0.0.1.nip.io` answers
+/// with the address in the name, and `pane_may_load` sees only the name.
+///
+/// Only the address asked for is looked up. A page's own redirects and links
+/// are not, because the navigation check runs on the main thread, where a
+/// lookup would stall the app. A name can also answer differently a moment
+/// later (DNS rebinding). A box that refuses a `Host` it does not serve stops
+/// both; a box without that check does not.
+///
+/// A name that does not resolve, or not within a few seconds, is let through.
+/// The pane is unlikely to load it either, and whoever controls a name's
+/// answers can rebind it anyway.
+async fn resolves_local(url: &tauri::Url) -> bool {
+    let Some(url::Host::Domain(name)) = url.host() else { return false };
+    let (name, port) = (name.to_string(), url.port_or_known_default().unwrap_or(443));
+    let lookup = tauri::async_runtime::spawn_blocking(move || {
+        use std::net::ToSocketAddrs as _;
+        (name.as_str(), port).to_socket_addrs().map(|found| found.collect::<Vec<_>>())
+    });
+    match tokio::time::timeout(Duration::from_secs(5), lookup).await {
+        Ok(Ok(Ok(found))) => found.iter().any(|at| is_local_ip(at.ip())),
+        _ => false,
+    }
+}
+
+/// Whether the pane may load `url`, as a page, a frame or a popup.
+///
+/// Local addresses are refused because the pane is not a sandbox from this
+/// Mac. Anything on 127.0.0.1:7117 is spliced to the box under this device's
+/// key, so the box answers it as the owner, and the assistant reads whatever
+/// the pane shows. The app's own schemes (`virtues:`, `tauri:`) are refused
+/// because a page on them is given the app's commands. `about:`, `data:` and
+/// `blob:` documents belong to the page that made them.
+///
+/// A public name that resolves to a local address passes here: see
+/// `resolves_local` for what catches it and what does not.
+fn pane_may_load(url: &tauri::Url) -> bool {
+    match url.scheme() {
+        "http" | "https" => url.host().is_some_and(|host| !is_local_host(host)),
+        "about" | "data" | "blob" => true,
+        _ => false,
+    }
+}
+
+/// The URL parser has already read every numeric form of an address (decimal
+/// `2130706433`, hex `0x7f000001`, short `127.1`, bracketed IPv6) into an IP,
+/// so the checks below look at the address itself, never at its spelling.
+fn is_local_host(host: url::Host<&str>) -> bool {
+    match host {
+        url::Host::Ipv4(ip) => is_local_ipv4(ip),
+        url::Host::Ipv6(ip) => is_local_ipv6(ip),
+        url::Host::Domain(name) => is_local_name(name),
+    }
+}
+
+fn is_local_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => is_local_ipv4(v4),
+        std::net::IpAddr::V6(v6) => is_local_ipv6(v6),
+    }
+}
+
+fn is_local_ipv4(ip: std::net::Ipv4Addr) -> bool {
+    let [a, b, ..] = ip.octets();
+    a == 0 // 0.0.0.0/8: on macOS a connection to 0.0.0.0 reaches this machine
+        || ip.is_loopback()
+        || ip.is_private()
+        || ip.is_link_local()
+        || (a == 100 && (b & 0xc0) == 64) // 100.64.0.0/10: carrier NAT and tailnets
+        || ip.is_broadcast()
+}
+
+fn is_local_ipv6(ip: std::net::Ipv6Addr) -> bool {
+    // `::ffff:a.b.c.d` and the older `::a.b.c.d` carry an IPv4 address, and
+    // `::1` and `::` fall in the second form.
+    if let Some(v4) = ip.to_ipv4() {
+        return is_local_ipv4(v4);
+    }
+    let first = ip.segments()[0];
+    (first & 0xfe00) == 0xfc00 // fc00::/7, unique local
+        || (first & 0xffc0) == 0xfe80 // fe80::/10, link-local
+        || (first & 0xffc0) == 0xfec0 // fec0::/10, the retired site-local block
+}
+
+/// Names that resolve only on this machine or its network. A single label
+/// resolves through the network's own search domains. `.virtues` is the box's
+/// own name on a LAN. `.test` is reserved for testing, and local development
+/// servers (Laravel Valet, dnsmasq) point it at this Mac; `.localdomain` is the
+/// usual suffix of a machine's own name.
+fn is_local_name(name: &str) -> bool {
+    let name = name.trim_end_matches('.').to_ascii_lowercase();
+    !name.contains('.')
+        || ["localhost", "local", "lan", "home", "internal", "home.arpa", "virtues", "test", "localdomain"]
+            .iter()
+            .any(|suffix| name == *suffix || name.ends_with(&format!(".{suffix}")))
+}
+
+/// When the pane last refused a navigation, and what it refused. `open` and
+/// the step log read it to tell the assistant why a page went nowhere.
+static REFUSED_AT: Mutex<Option<(Instant, Refused)>> = Mutex::new(None);
+
+fn note_refusal(url: &tauri::Url) {
+    *REFUSED_AT.lock().unwrap_or_else(|e| e.into_inner()) = Some((Instant::now(), Refused::of(url)));
+}
+
+fn refused_since(since: Instant) -> Option<(Instant, Refused)> {
+    REFUSED_AT.lock().unwrap_or_else(|e| e.into_inner()).clone().filter(|(at, _)| *at >= since)
 }
 
 /// Show `target` in the pane, creating it the first time. `announce` asks the
@@ -605,7 +805,29 @@ async fn create(app: &AppHandle, target: &tauri::Url) -> Result<Webview, String>
     let builder = WebviewBuilder::new(LABEL, WebviewUrl::External(target.clone()))
         .user_agent(SAFARI_UA)
         .data_store_identifier(store_id())
-        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Allow)
+        // Every navigation in the pane, a frame's included: links, redirects,
+        // form posts, history and reloads. A refused one is cancelled and the
+        // page stays where it was.
+        .on_navigation(|url| {
+            let allowed = pane_may_load(url);
+            if !allowed {
+                note_refusal(url);
+                eprintln!("[browser] refused a navigation to a local address or a link that is not a web page");
+            }
+            allowed
+        })
+        // Popups (a provider's sign-in window) open in a WebKit window of
+        // their own. Only the first address is checked: that window has no
+        // navigation check after it. The assistant cannot read it.
+        .on_new_window(|url, _| {
+            if pane_may_load(&url) {
+                tauri::webview::NewWindowResponse::Allow
+            } else {
+                note_refusal(&url);
+                eprintln!("[browser] refused a popup to a local address or a link that is not a web page");
+                tauri::webview::NewWindowResponse::Deny
+            }
+        })
         .on_page_load(|view, payload| {
             if matches!(payload.event(), tauri::webview::PageLoadEvent::Finished) {
                 let _ = view
@@ -684,7 +906,7 @@ pub async fn login(
     domains: &[String],
     timeout: Duration,
 ) -> Result<Vec<tauri::webview::Cookie<'static>>, String> {
-    let page = parse_page(url)?;
+    let page = checked_page(url).await?;
     let view = show(app, &page, true).await?;
     let started = std::time::Instant::now();
     loop {
@@ -702,7 +924,8 @@ pub async fn login(
 }
 
 async fn open(app: &AppHandle, url: &str) -> Result<Value, String> {
-    let target = parse_page(url)?;
+    let target = checked_page(url).await?;
+    let asked = Instant::now();
     let win = show(app, &target, true).await?;
 
     // Wait for the new document to finish loading. A same-document navigation
@@ -723,6 +946,16 @@ async fn open(app: &AppHandle, url: &str) -> Result<Value, String> {
         let done = state.as_ref().is_some_and(|s| {
             s["ready"] == "complete" && s["url"] != "about:blank" && s["fresh"] == true
         });
+        // A redirect the pane refused was cancelled: the old document is
+        // still there, and waiting longer would show nothing new. A second's
+        // grace, since a refused frame inside a page that is still loading
+        // looks the same at first.
+        let stayed = state.as_ref().is_some_and(|s| s["fresh"] != true || s["url"] == "about:blank");
+        if let Some((at, refused)) = refused_since(asked) {
+            if !done && stayed && at.elapsed() > Duration::from_secs(1) {
+                return Err(refused.redirect());
+            }
+        }
         if done || started.elapsed() > Duration::from_secs(40) {
             let s = state.unwrap_or(Value::Null);
             return Ok(json!({ "url": s["url"], "title": s["title"], "loaded": done }));
@@ -736,8 +969,11 @@ async fn ensure_agent(win: &Webview) -> Result<(), String> {
     if eval(win, "return window.__virtuesAgent ? '1' : ''", true).await? == "1" {
         return Ok(());
     }
+    // The vendored script's own test for a secret field is also what `type`
+    // and `screenshot` ask, so the three never disagree about a field.
     let bootstrap = format!(
-        "const module = {{}};\n{INJECTED}\nwindow.__virtuesAgent = new (module.exports.InjectedScript())(window, \
+        "const module = {{}};\n{INJECTED}\nwindow.__virtuesSecretField = virtuesSecretField;\n\
+         window.__virtuesAgent = new (module.exports.InjectedScript())(window, \
          {{ isUnderTest: false, sdkLanguage: 'javascript', frameSeq: 0, testIdAttributeName: 'data-testid', \
          stableRafCount: 1, browserName: 'webkit', shouldPrependErrorPrefix: true, isUtilityWorld: true, \
          customEngines: [] }});\nreturn '1';"
@@ -781,27 +1017,46 @@ async fn snapshot(win: &Webview, scope: Option<String>, depth: Option<u64>) -> R
 
 // ─── Acting ─────────────────────────────────────────────────────────────────
 
-/// The assistant never types a password, a card or a one-time code: it does not
-/// have them, and a page that asks the assistant for one is a page to be wary
-/// of. Checks the field `ref` names, or the focused one.
-async fn refuse_secret_field(win: &Webview, r#ref: Option<String>) -> Result<(), String> {
+/// The assistant does not type a password, a card or a one-time code: it does
+/// not have them, and a page that asks the assistant for one is a page to be
+/// wary of. Checks the field `ref` names, or with no ref the element that has
+/// focus, followed down through open shadow roots and frames from the same
+/// site. A frame from another site is refused as well: the assistant cannot
+/// see into it, and payment and code forms are usually built that way.
+///
+/// So is focus inside a closed shadow root, where the page reports the
+/// component itself as focused. A custom element (a name with a hyphen) can
+/// only hold focus that way when it has no open shadow root, no `tabindex`
+/// and is not editable itself.
+async fn refuse_secret_field(win: &Webview, r#ref: Option<&str>) -> Result<(), String> {
     ensure_agent(win).await?;
     let body = format!(
         "const ref = {ref_json};\n\
-         const e = ref ? window.__virtuesAgent._lastAriaSnapshotForQuery?.info?.get(ref)?.element : document.activeElement;\n\
-         if (!e || !e.getAttribute) return '';\n\
-         const type = (e.getAttribute('type') || '').toLowerCase();\n\
-         const auto = (e.getAttribute('autocomplete') || '').toLowerCase();\n\
-         if (type === 'password' || /(^|\\s)(current|new)-password/.test(auto)) return 'password';\n\
-         if (/one-time-code/.test(auto)) return 'code';\n\
-         if (/(^|\\s)cc-/.test(auto)) return 'card';\n\
-         return '';",
+         const kind = window.__virtuesSecretField;\n\
+         if (typeof kind !== 'function') return 'unchecked';\n\
+         let e = ref ? window.__virtuesAgent._lastAriaSnapshotForQuery?.info?.get(ref)?.element : document.activeElement;\n\
+         for (let hops = 0; e && hops < 32; hops++) {{\n\
+           if (e.shadowRoot && e.shadowRoot.activeElement) {{ e = e.shadowRoot.activeElement; continue; }}\n\
+           const tag = (e.tagName || '').toUpperCase();\n\
+           if (tag !== 'IFRAME' && tag !== 'FRAME') break;\n\
+           let doc = null;\n\
+           try {{ doc = e.contentDocument; }} catch (_) {{}}\n\
+           if (!doc) return 'frame';\n\
+           const inner = doc.activeElement;\n\
+           if (!inner || inner === doc.body || inner === doc.documentElement) return '';\n\
+           e = inner;\n\
+         }}\n\
+         if (!ref && e && (e.localName || '').includes('-') && !e.shadowRoot && !e.isContentEditable && !e.hasAttribute('tabindex')) return 'closed';\n\
+         return e && e.getAttribute ? kind(e) : '';",
         ref_json = serde_json::to_string(&r#ref).unwrap_or_else(|_| "null".into())
     );
     match eval(win, &body, true).await?.as_str() {
         "password" => Err("That is a password field, and you never type passwords. Call browser_handoff and ask the owner to sign in.".into()),
         "code" => Err("That field wants a one-time code, which only the owner has. Call browser_handoff and ask them to enter it.".into()),
         "card" => Err("That is a payment card field. Call browser_handoff and let the owner enter their card.".into()),
+        "frame" => Err("That field is inside a frame from another site, such as a payment or sign-in form, which you cannot read. Call browser_handoff and ask the owner to fill it in.".into()),
+        "closed" => Err("That field is inside a page component the browser cannot look into, so it cannot tell whether the field wants a password, a card or a code. Call browser_handoff and ask the owner to fill it in.".into()),
+        "unchecked" => Err("The browser could not check that field. Take a fresh browser_snapshot and try again.".into()),
         _ => Ok(()),
     }
 }
@@ -992,16 +1247,69 @@ async fn scroll(win: &Webview, dy: f64) -> Result<Value, String> {
     serde_json::from_str(&eval(win, &body, false).await?).map_err(|e| e.to_string())
 }
 
+/// Hides, or shows again, what the model's picture of the page must not have:
+/// the click cursor, which is for the owner, and the text of every filled
+/// secret field, drawn as dots while the picture is taken. A card number or a
+/// code in an ordinary input is otherwise drawn in plain digits. Fields are
+/// found in the page, its open shadow roots and its frames from the same site.
+/// A frame from another site cannot be looked into, so one whose title, name
+/// or address says it is a payment or code form is blanked instead: card forms
+/// at checkout are usually built that way. Returns how many frames it
+/// blanked, or `unchecked` when the field test is missing.
+const SCREENSHOT_SHADE: &str = "const hide = HIDE;\n\
+     const s = window.__virtuesCursor; if (s) s.host.style.display = hide ? 'none' : '';\n\
+     if (!hide) {\n\
+       for (const [e, name, value, priority] of window.__virtuesShaded || []) {\n\
+         if (value) e.style.setProperty(name, value, priority); else e.style.removeProperty(name);\n\
+       }\n\
+       window.__virtuesShaded = null;\n\
+       return '';\n\
+     }\n\
+     const kind = window.__virtuesSecretField;\n\
+     if (typeof kind !== 'function') return 'unchecked';\n\
+     const payment = /card|payment|checkout|secure|cvc|cvv|stripe|braintree|adyen|hosted[-_ ]?field|one[-_ ]?time|otp/i;\n\
+     const fields = [], frames = [];\n\
+     const visit = root => { for (const e of root.querySelectorAll('*')) {\n\
+       if (e.shadowRoot) visit(e.shadowRoot);\n\
+       if (e.tagName === 'IFRAME' || e.tagName === 'FRAME') {\n\
+         let doc = null;\n\
+         try { doc = e.contentDocument; } catch (_) {}\n\
+         if (doc) visit(doc);\n\
+         else if (payment.test([e.title, e.name, e.id, e.src, e.getAttribute('aria-label')].join(' '))) frames.push(e);\n\
+       } else if (e.value && kind(e)) fields.push(e);\n\
+     } };\n\
+     visit(document);\n\
+     const shade = [...fields.map(e => [e, '-webkit-text-security', 'disc']), ...frames.map(e => [e, 'visibility', 'hidden'])];\n\
+     window.__virtuesShaded = shade.map(([e, name]) => [e, name, e.style.getPropertyValue(name), e.style.getPropertyPriority(name)]);\n\
+     for (const [e, name, value] of shade) e.style.setProperty(name, value, 'important');\n\
+     return String(frames.length);";
+
 async fn screenshot(win: &Webview) -> Result<Value, String> {
-    // The click cursor is for the owner; the model sees the page alone.
-    let cursor = "const s = window.__virtuesCursor; if (s) s.host.style.display = DISPLAY; return ''";
-    let _ = eval(win, &cursor.replace("DISPLAY", "'none'"), true).await;
+    ensure_agent(win).await?;
+    let blanked = match eval(win, &SCREENSHOT_SHADE.replace("HIDE", "true"), true).await {
+        Ok(frames) if frames != "unchecked" => frames.parse::<u32>().unwrap_or(0),
+        failed => {
+            let _ = eval(win, &SCREENSHOT_SHADE.replace("HIDE", "false"), true).await;
+            return Err(failed.err().unwrap_or_else(|| {
+                "The browser could not hide the page's secret fields, so it took no picture. \
+                 Try browser_screenshot again."
+                    .into()
+            }));
+        }
+    };
     // Points; a Retina screen doubles it. Enough to read, small enough to send
     // with every look.
     let jpeg = jpeg(win, 900.0).await;
-    let _ = eval(win, &cursor.replace("DISPLAY", "''"), true).await;
+    let _ = eval(win, &SCREENSHOT_SHADE.replace("HIDE", "false"), true).await;
     let jpeg = jpeg?;
-    Ok(json!({ "url": current_url(win), "jpeg_base64": jpeg }))
+    let mut out = json!({ "url": current_url(win), "jpeg_base64": jpeg });
+    if blanked > 0 {
+        out["note"] = json!(
+            "Frames from another site that look like payment or code forms are blank in this picture. \
+             Their fields are for the owner to fill in."
+        );
+    }
+    Ok(out)
 }
 
 /// The visible page as a base64 JPEG, `width` points wide.
@@ -1145,4 +1453,160 @@ async fn eval(win: &Webview, body: &str, agent_world: bool) -> Result<String, St
         .await
         .map_err(|_| "the page did not answer within 20 seconds".to_string())?
         .map_err(|_| "the page went away".to_string())?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{checked_page, pane_may_load, parse_page, resolves_local, Refused, INJECTED, LOCAL_REFUSED};
+
+    fn may(url: &str) -> bool {
+        pane_may_load(&url.parse().unwrap())
+    }
+
+    #[test]
+    fn public_pages_load() {
+        for url in [
+            "https://example.com/",
+            "http://example.com:8080/a?b=c",
+            "https://8.8.8.8/",
+            "https://[2606:4700:4700::1111]/",
+            "https://localhost.example.com/",
+            "https://www.local.example.com/",
+        ] {
+            assert!(may(url), "{url} should load");
+        }
+    }
+
+    #[test]
+    fn loopback_is_refused_in_every_spelling() {
+        for url in [
+            "http://127.0.0.1:7117/api/passwords",
+            "http://localhost:7117/",
+            "http://LOCALHOST./",
+            "http://app.localhost/",
+            "http://2130706433:7117/",
+            "http://0x7f000001/",
+            "http://0177.0.0.1/",
+            "http://127.1/",
+            "http://127.255.255.254/",
+            "http://0.0.0.0:7117/",
+            "http://0/",
+            "http://[::1]:7117/",
+            "http://[0:0:0:0:0:0:0:1]/",
+            "http://[::]/",
+            "http://[::ffff:127.0.0.1]/",
+            "http://[::ffff:7f00:1]/",
+            "http://[::127.0.0.1]/",
+        ] {
+            assert!(!may(url), "{url} should be refused");
+        }
+    }
+
+    #[test]
+    fn private_and_link_local_addresses_are_refused() {
+        for url in [
+            "http://10.0.0.5/",
+            "http://172.16.0.1/",
+            "http://172.31.255.255/",
+            "http://192.168.1.20:8000/",
+            "http://3232235796:8000/",
+            "http://169.254.169.254/",
+            "http://100.64.0.1/",
+            "http://100.127.255.255/",
+            "http://255.255.255.255/",
+            "http://[fd12:3456::1]/",
+            "http://[fe80::1]/",
+            "http://[fec0::1]/",
+            "http://[::ffff:192.168.1.1]/",
+            "http://[::ffff:a00:5]/",
+        ] {
+            assert!(!may(url), "{url} should be refused");
+        }
+    }
+
+    #[test]
+    fn addresses_just_outside_the_private_blocks_load() {
+        for url in ["http://172.32.0.1/", "http://100.128.0.1/", "http://192.169.0.1/", "http://11.0.0.1/", "http://[2001:db8::1]/"] {
+            assert!(may(url), "{url} should load");
+        }
+    }
+
+    #[test]
+    fn local_network_names_are_refused() {
+        for url in [
+            "http://virtues.local:8000/",
+            "http://Virtues-Box.LOCAL./",
+            "http://box:8000/",
+            "http://box.lan/",
+            "http://nas.home.arpa/",
+            "http://printer.internal/",
+            "http://box.virtues:8000/",
+            "http://myapp.test/",
+            "http://mac.localdomain/",
+        ] {
+            assert!(!may(url), "{url} should be refused");
+        }
+    }
+
+    #[test]
+    fn the_app_schemes_are_refused() {
+        for url in ["virtues://localhost/settings", "tauri://localhost/", "file:///etc/hosts", "javascript:alert(1)"] {
+            assert!(!may(url), "{url} should be refused");
+        }
+    }
+
+    #[test]
+    fn documents_a_page_makes_itself_load() {
+        for url in ["about:blank", "about:srcdoc", "data:text/html,hi", "blob:https://example.com/0f3e"] {
+            assert!(may(url), "{url} should load");
+        }
+    }
+
+    #[test]
+    fn opening_a_local_address_says_why() {
+        assert_eq!(parse_page("http://127.0.0.1:7117/api/keys/OPENAI_API_KEY/value").unwrap_err(), LOCAL_REFUSED);
+        assert_eq!(parse_page("http://[::ffff:127.0.0.1]:7117/").unwrap_err(), LOCAL_REFUSED);
+        assert!(parse_page("virtues://localhost/").unwrap_err().contains("http and https"));
+        assert_eq!(parse_page("https://example.com/a").unwrap().as_str(), "https://example.com/a");
+    }
+
+    #[test]
+    fn a_name_that_resolves_to_this_mac_is_refused() {
+        // `localhost` answers from /etc/hosts, so this needs no network. Any
+        // public name whose DNS answer is 127.0.0.1 takes the same path.
+        use tauri::async_runtime::block_on;
+        assert!(block_on(resolves_local(&"http://localhost:7117/".parse().unwrap())));
+        // An address is checked as written, not looked up.
+        assert!(!block_on(resolves_local(&"https://8.8.8.8/".parse().unwrap())));
+        assert_eq!(block_on(checked_page("http://[::1]:7117/")).unwrap_err(), LOCAL_REFUSED);
+    }
+
+    /// Needs the network: `cargo test --bin virtues-app -- --ignored wildcard`.
+    #[test]
+    #[ignore]
+    fn a_wildcard_dns_name_for_loopback_is_refused() {
+        let page = tauri::async_runtime::block_on(checked_page("http://127.0.0.1.nip.io:7117/api/passwords"));
+        assert_eq!(page.unwrap_err(), LOCAL_REFUSED);
+    }
+
+    #[test]
+    fn a_refusal_says_what_was_refused() {
+        let local = Refused::of(&"http://127.0.0.1:7117/".parse().unwrap());
+        assert_eq!(local, Refused::Local);
+        assert!(local.redirect().contains("local address"));
+        let mail = Refused::of(&"mailto:nick@example.com".parse().unwrap());
+        assert_eq!(mail, Refused::Scheme("mailto".into()));
+        assert!(mail.note().contains("`mailto:` link"));
+        assert!(!mail.redirect().contains("local address"));
+    }
+
+    /// A re-sync of the vendored script from a newer Playwright drops the one
+    /// change made to it, and the outline goes back to carrying passwords.
+    #[test]
+    fn the_snapshot_script_hides_secret_values() {
+        assert!(INJECTED.contains("function virtuesSecretField(element)"));
+        assert!(INJECTED.contains("result.children = [virtuesFieldValue(element)]"));
+        assert!(!INJECTED.contains("result.children = [element.value]"));
+        assert!(!INJECTED.contains("compositeString(element.value,"));
+    }
 }

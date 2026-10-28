@@ -78,7 +78,7 @@ pub async fn run_agent_loop(
         }
         None => false,
     };
-    let has_face = crate::server::faces::face_dir_for(applet_id).is_some();
+    let has_face = crate::server::faces::face_for(applet_id).is_some();
     let delivers = delivers_kind(&action.config);
     if let Some(reason) = missing_destination(delivers, has_chat, has_face) {
         tracing::warn!(applet_id, %reason, "applet has nowhere to put its work");
@@ -132,6 +132,7 @@ pub async fn run_agent_loop(
         user_id: Some("system".to_string()),
         chat_id: chat_id.clone(),
         applet_id: Some(applet_id.to_string()),
+        applet_run_id: Some(run_id.to_string()),
         // A run is a turn: what it reads of a page serves it, not a later run
         // that sees this one's results only as clipped replays.
         turn: Some(crate::api::chat::generate_id()),
@@ -147,7 +148,14 @@ pub async fn run_agent_loop(
             system_prompt: build_applet_system_prompt(pool, prompt, context, action.memory.as_deref()).await,
             chat_id: chat_id.clone(),
             message,
-            tools: crate::tools::get_tools_for_applet(chat_id.is_some(), allowed_tools.as_deref()),
+            tools: {
+                let mut tools = crate::tools::get_tools_for_applet(chat_id.is_some(), allowed_tools.as_deref());
+                // Its `references/` and `assets/`, when it has any.
+                tools.extend(crate::tools::use_applet::own_files_definition_for_id(applet_id));
+                // The connection tools its file lists and the owner allowed.
+                tools.extend(crate::tools::connection::applet_tool_definitions(pool, applet_id).await);
+                tools
+            },
             tool_context,
             max_cost_micros: limits.max_llm_cost_micros,
             feature: "applet",

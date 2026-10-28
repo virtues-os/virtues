@@ -18,58 +18,41 @@
 1 virtues-core/src/api/census.rs	.unwrap_or_else(|e| {
 1 virtues-core/src/api/chat.rs	.ok()??;
 1 virtues-core/src/api/chats.rs	let msg_id = msg.id.clone().unwrap_or_else(|| {
-2 virtues-core/src/api/day_summary.rs	.ok()
 1 virtues-core/src/api/devices.rs	.ok()
 1 virtues-core/src/api/drive.rs	let (drive_bytes, file_count, folder_count) = row.unwrap_or((0, 0, 0));
 1 virtues-core/src/api/entities.rs	.unwrap_or(false);
 1 virtues-core/src/api/entities.rs	let is_home = req.set_as_home.unwrap_or(false);
-2 virtues-core/src/api/entity_article_gen.rs	.unwrap_or_default();
 1 virtues-core/src/api/home.rs	.ok()
-1 virtues-core/src/api/pages.rs	let version_number = max_version.unwrap_or(0) + 1;
 1 virtues-core/src/api/pair.rs	.ok()
 1 virtues-core/src/api/projects.rs	let name = req.name.as_deref().unwrap_or(&existing.name).trim().to_string();
 2 virtues-core/src/api/projects.rs	touch_project(pool, project_id).await.ok();
-1 virtues-core/src/api/settings_byo.rs	.ok()
-1 virtues-core/src/api/settings_byo.rs	.unwrap_or(false)
 1 virtues-core/src/api/setup_phrase.rs	.unwrap_or(false)
-1 virtues-core/src/api/sudo.rs	.ok()
 1 virtues-core/src/api/system_display.rs	.and_then(|name| name.parse::<chrono_tz::Tz>().ok());
 1 virtues-core/src/api/system_display.rs	.ok()
 1 virtues-core/src/applet_runner/limits.rs	Ok(n.unwrap_or(0))
 2 virtues-core/src/applet_runner/limits.rs	Ok(total.unwrap_or(0))
 1 virtues-core/src/applet_runner/mod.rs	Ok(result.unwrap_or(false))
-1 virtues-core/src/cli/backup.rs	Ok(row.map(|(v,)| v.to_string()).unwrap_or_else(|| "unknown".to_string()))
 1 virtues-core/src/cli/backup_volume.rs	.and_then(|v| u64::try_from(v).ok())
 1 virtues-core/src/cli/backup_volume.rs	.ok()
 1 virtues-core/src/cli/backup_volume.rs	.unwrap_or(MIN_FREE_BYTES);
-10 virtues-core/src/cli/commands/status_json.rs	.ok()
+1 virtues-core/src/cli/backup.rs	Ok(row.map(|(v,)| v.to_string()).unwrap_or_else(|| "unknown".to_string()))
+8 virtues-core/src/cli/commands/status_json.rs	.ok()
 2 virtues-core/src/cli/commands/status_json.rs	.unwrap_or_default();
-1 virtues-core/src/cli/commands/status_json.rs	consumed_24h: consumed.map(|(n,)| n).unwrap_or(0),
 1 virtues-core/src/cli/commands/status_json.rs	devices_paired: devices.map(|(n,)| n).unwrap_or(0),
-1 virtues-core/src/cli/commands/status_json.rs	pending: pending.map(|(n,)| n).unwrap_or(0),
 1 virtues-core/src/cli/commands/status_json.rs	profile.unwrap_or((true, 0, None, "unknown".to_string()));
 1 virtues-core/src/cli/commands/status_json.rs	row.map(|(v,)| v.to_string()).unwrap_or_else(|| "unknown".to_string())
 1 virtues-core/src/cli/commands/status_json.rs	tokens_authorized: authorized.map(|(n,)| n).unwrap_or(0),
 1 virtues-core/src/cli/commands/status_json.rs	tokens_pending: pending.map(|(n,)| n).unwrap_or(0),
-1 virtues-core/src/cli/configure_inference.rs	.unwrap_or(0);
-1 virtues-core/src/cli/reindex.rs	.unwrap_or(0);
-1 virtues-core/src/client.rs	.unwrap_or(0) as usize;
 1 virtues-core/src/database/mod.rs	let from = current.map(|d| d.to_string()).unwrap_or_else(|| "?".into());
 2 virtues-core/src/dayline/annotate.rs	.ok()
 2 virtues-core/src/dayline/autonomic_scoring.rs	.ok()?;
 1 virtues-core/src/dayline/gaps.rs	.unwrap_or_default();
 3 virtues-core/src/dayline/sleep.rs	.ok()
-1 virtues-core/src/dayline/sleep.rs	// once `.ok()` collapses them, and the difference is the whole story:
-1 virtues-core/src/entity_resolution/people.rs	let identifiers: Vec<String> = serde_json::from_value(row.attendee_identifiers).ok()?;
 1 virtues-core/src/entity_resolution/places.rs	let id = Uuid::parse_str(&row.id).ok()?;
-1 virtues-core/src/search/embedder.rs	.ok()
 1 virtues-core/src/search/query.rs	.unwrap_or((0, 0));
 1 virtues-core/src/server/api/applets.rs	.unwrap_or(0);
-1 virtues-core/src/server/yjs.rs	.unwrap_or(false);
 1 virtues-core/src/timezone.rs	.ok()
 1 virtues-core/src/tools/applet_setup.rs	.ok()?;
-1 virtues-core/src/tools/dayline_events.rs	.and_then(|st| st.parse::<DateTime<Utc>>().ok().map(|dt| dt.date_naive()))
-1 virtues-core/src/tools/dayline_events.rs	.ok()
 1 virtues-core/src/tools/sql_query.rs	.ok();
 1 virtues-core/src/tools/sql_query.rs	let row_count: i64 = count_row.map(|r| r.get("cnt")).unwrap_or(0);
 1 virtues-core/src/virtues_api/client.rs	.ok()

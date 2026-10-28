@@ -35,6 +35,12 @@ virtues-reach-client = { path = "../../../../crates/virtues-reach-client" }
 [target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
 virtues-improv = { path = "../../../../crates/virtues-improv", features = ["client"] }
 
+# The Mac keeps its device seed in the login Keychain (src/store.rs).
+# `apple-native` is what selects the Keychain: without it keyring stores
+# values in memory and reports success.
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { version = "3", features = ["apple-native"] }
+
 [build-dependencies]
 tauri-plugin = { version = "2.6.3", features = ["build"] }
 virtues-plugin-lockstep = { path = "../lockstep" }

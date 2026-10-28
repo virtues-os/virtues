@@ -1420,15 +1420,15 @@ async fn build_system_prompt_blocks(
                 }
             }),
         },
-        // The skill this chat is running, if any — its file's body, in the
+        // The applet this turn runs, if `/name` started one: its body, in the
         // TAIL: PerTurn cadence puts it (and everything after) outside the
         // cached prefix, so the prefix is the same whatever the chat does
-        // and switching skills rewrites a few KB, not the cache.
+        // and switching applets rewrites a few KB, not the cache.
         Block {
-            meta: BlockMeta { tag: "skill", author: Author::System, mood: Mood::Imperative, rung: 60, cadence: Cadence::PerTurn },
+            meta: BlockMeta { tag: "applet", author: Author::System, mood: Mood::Imperative, rung: 60, cadence: Cadence::PerTurn },
             body: Box::pin(async move {
                 match mode {
-                    ChatMode::Skill(s) => Some(format!("\n\n<skill name=\"{}\">\n{}\n</skill>", s.name, s.body)),
+                    ChatMode::Applet(a) => Some(format!("\n\n<applet name=\"{}\">\n{}\n</applet>", a.name, a.body)),
                     _ => None,
                 }
             }),
@@ -2412,6 +2412,7 @@ fn create_agent_stream(
             temporary,
             ghost_permissions: Some(ghost_permissions.clone()),
             sudo: mode.is_sudo(),
+            applet_run_id: None,
             timezone: request.timezone.clone(),
             turn: Some(turn_key),
             console: false,
@@ -2903,27 +2904,27 @@ mod tests {
         assert!(preview.messages[1].text.contains(r#"→ sql_query({"sql":"SELECT 1"})"#), "{}", preview.messages[1].text);
     }
 
-    /// A skill's body is in the tail, never the cached prefix: the prefix
-    /// must be the same whatever the chat is doing, or switching skills
-    /// rewrites the cache. And ordinary chat carries no skill block at all.
+    /// An applet's body is in the tail, never the cached prefix: the prefix
+    /// must be the same whatever the chat is doing, or switching applets
+    /// rewrites the cache. And ordinary chat carries no applet block at all.
     #[sqlx::test]
-    async fn a_skill_rides_in_the_tail_and_chat_carries_none(pool: PgPool) {
+    async fn an_applet_rides_in_the_tail_and_chat_carries_none(pool: PgPool) {
         let (stable, volatile, rendered) = build_system_prompt_blocks(
-            &pool, None, None, Some("America/Chicago"), &crate::api::chat_mode::tests::fixture_skill(), None, "Ari", "Adam",
+            &pool, None, None, Some("America/Chicago"), &crate::api::chat_mode::tests::fixture_applet(), None, "Ari", "Adam",
         )
         .await;
-        assert!(rendered.iter().any(|r| r.tag == "skill"), "a skill renders its skill block");
-        assert!(!stable.contains("<skill name=\"fixture\">"), "the skill body must not be in the cached prefix");
-        assert!(volatile.contains("<skill name=\"fixture\">"), "the skill body is in the tail");
+        assert!(rendered.iter().any(|r| r.tag == "applet"), "an applet renders its applet block");
+        assert!(!stable.contains("<applet name=\"fixture\">"), "the applet body must not be in the cached prefix");
+        assert!(volatile.contains("<applet name=\"fixture\">"), "the applet body is in the tail");
         assert!(volatile.contains("<fixture>"), "the body is the file's body");
-        assert!(!stable.contains("<page_tools>"), "a skill without page tools gets no page guidance");
+        assert!(!stable.contains("<page_tools>"), "an applet without page tools gets no page guidance");
 
         let (stable, volatile, rendered) = build_system_prompt_blocks(
             &pool, None, None, Some("America/Chicago"), &ChatMode::Chat, None, "Ari", "Adam",
         )
         .await;
-        assert!(!rendered.iter().any(|r| r.tag == "skill"));
-        assert!(!format!("{stable}{volatile}").contains("<skill"));
+        assert!(!rendered.iter().any(|r| r.tag == "applet"));
+        assert!(!format!("{stable}{volatile}").contains("<applet"));
         assert!(stable.contains("<mode>chat</mode>"));
     }
 
@@ -2946,7 +2947,7 @@ mod tests {
         assert_eq!(tags.last(), Some(&"rules"), "rules must render last — nearest the conversation");
         assert!(tags.contains(&"rules"), "seeded rule missing from the assembly");
         assert!(tags.contains(&"circumstances"));
-        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "coverage", "active_project", "skill", "active_context", "rules"];
+        let expected = ["base", "precedence", "new_user", "memory", "circumstances", "coverage", "active_project", "applet", "active_context", "rules"];
         let mut last = 0usize;
         for t in &tags {
             let pos = expected.iter().position(|e| e == t).expect("unknown block tag");

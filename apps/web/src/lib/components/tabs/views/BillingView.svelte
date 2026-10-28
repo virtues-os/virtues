@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from '$lib/tabs/types';
-	import { Button, Input, Badge, SudoModal, Page, TextAction } from '$lib';
+	import { Button, Input, Badge, Page, TextAction } from '$lib';
 	import UsageView from '$lib/components/tabs/views/UsageView.svelte';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
@@ -23,6 +23,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import { toast } from 'svelte-sonner';
 	import { reloadApp } from '$lib/reload';
+	import { confirmAction } from '$lib/stores/dialog.svelte';
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
@@ -277,9 +278,8 @@
 	// precisely how `anthropic` and `google` shipped pointing at APIs we
 	// cannot call. Plan of record: agents/plan/byo-ai-plan.md.
 	//
-	// Save and Delete are both sudo-gated (`change_byo_key` is one of the four
-	// locked sensitive actions); the SudoModal handles the prompt + CLI
-	// approval round-trip.
+	// Save and Delete both carry the app's owner proof (`setByoKey`,
+	// `deleteByoKey`). The app signs it, so neither has an extra step.
 	type ByoStatus = {
 		configured: boolean;
 		/** Legacy label on credentials saved before the picker was removed. */
@@ -359,10 +359,9 @@
 	}
 	byoModels = blankSlots();
 
-	// Sudo modal coordination — we mint a sudo request, then on approval we
-	// fire the actual save/delete with the approved request id.
-	let showSudoSave = $state(false);
-	let showSudoDelete = $state(false);
+	/** A save or a removal is in flight. A save asks the endpoint first, which
+	 *  can take a few seconds. */
+	let byoBusy = $state(false);
 
 	async function loadByo() {
 		byoLoading = true;
@@ -386,7 +385,7 @@
 		if (byoOpen && !byoStatus && !byoLoading) void loadByo();
 	}
 
-	function startByoSave() {
+	async function saveByo() {
 		if (!byoEndpointUrl.trim()) {
 			toast.error('Enter the endpoint URL first.');
 			return;
@@ -395,10 +394,7 @@
 			toast.error('Enter the API key first.');
 			return;
 		}
-		showSudoSave = true;
-	}
-
-	async function performByoSave(sudoRequestId: string) {
+		byoBusy = true;
 		try {
 			// No `provider` — the box takes the URL as given. The field still
 			// exists server-side to resolve credentials saved before the picker
@@ -416,7 +412,6 @@
 				return;
 			}
 			await setByoKey({
-				sudo_request_id: sudoRequestId,
 				api_key: byoApiKey,
 				endpoint_url: byoEndpointUrl,
 				models,
@@ -431,23 +426,42 @@
 			toast.error('Could not save the key', {
 				description: e instanceof Error ? e.message : 'Unknown error',
 			});
+		} finally {
+			byoBusy = false;
 		}
 	}
 
-	function startByoDelete() {
-		showSudoDelete = true;
-	}
-
-	async function performByoDelete(sudoRequestId: string) {
+	async function removeByo() {
+		const ok = await confirmAction({
+			title: 'Remove your AI key?',
+			body: 'AI calls go back to the Virtues subscription. You can add a key again at any time.',
+			confirmLabel: 'Remove',
+			danger: true,
+		});
+		if (!ok) return;
+		byoBusy = true;
 		try {
-			await deleteByoKey(sudoRequestId);
-			toast.success('Key removed. AI calls are back on the subscription.');
-			await Promise.all([loadByo(), loadLocal()]);
+			await deleteByoKey();
 		} catch (e) {
 			toast.error('Could not remove the key', {
 				description: e instanceof Error ? e.message : 'Unknown error',
 			});
+			return;
+		} finally {
+			byoBusy = false;
 		}
+		await Promise.all([loadByo(), loadLocal()]);
+		// Servers on older releases answer ok even when the write failed, so
+		// the status read afterwards decides which message is true.
+		if (!byoLoadError && byoStatus?.configured) {
+			toast.error('Could not remove the key', {
+				description: 'Your server still has it, and AI calls still go to your endpoint. Try again.',
+			});
+			return;
+		}
+		toast.success('Key removed. AI calls are back on the subscription.', {
+			description: 'Your provider still accepts the key until you revoke it there.',
+		});
 	}
 
 	// ─── Wallet balance + recent ledger (proxied from virtues-api) ─────────
@@ -956,9 +970,9 @@
 						That covers gateways like Vercel AI Gateway, OpenRouter, and LiteLLM, a provider's
 						own API, and a local server such as Ollama or llama.cpp. AWS Bedrock signs
 						requests instead of taking a key, so it needs a gateway in front. Your key is
-						stored encrypted on your server. It changes only with an approval at the command
-						line, so a browser session alone cannot swap it. Maps, web search, photos, and
-						bank connections are not AI calls and stay on the subscription.
+						stored encrypted on your server. To change it, the Virtues app on one of your
+						paired devices signs the request with that device's own key. Maps, web search,
+						photos, and bank connections are not AI calls and stay on the subscription.
 					</p>
 					<p class="prose-note warn">
 						One caution. A key from your employer sends your personal life through systems
@@ -995,7 +1009,7 @@
 										subscription isn't in the path, and we don't charge it.
 									</p>
 								</div>
-								<Button variant="ghost" onclick={startByoDelete}>
+								<Button variant="ghost" disabled={byoBusy} onclick={removeByo}>
 									<Icon icon="mynaui:x-circle" />
 									Remove
 								</Button>
@@ -1006,7 +1020,7 @@
 							<div class="panel-title">Replace the key</div>
 							{@render byoKeyForm()}
 							<div class="panel-actions">
-								<Button variant="primary" onclick={startByoSave}>Save new key</Button>
+								<Button variant="primary" loading={byoBusy} onclick={saveByo}>Save new key</Button>
 							</div>
 						</div>
 					{:else}
@@ -1018,7 +1032,7 @@
 							</p>
 							{@render byoKeyForm()}
 							<div class="panel-actions">
-								<Button variant="primary" onclick={startByoSave}>Save key</Button>
+								<Button variant="primary" loading={byoBusy} onclick={saveByo}>Save key</Button>
 							</div>
 						</div>
 					{/if}
@@ -1134,22 +1148,6 @@
 		</div>
 	</div>
 {/snippet}
-
-<SudoModal
-	bind:show={showSudoSave}
-	action="change_byo_key"
-	title="Save your AI key"
-	description="Every AI call will go to this endpoint instead of the subscription. Approve at your server's command line."
-	onApproved={performByoSave}
-/>
-
-<SudoModal
-	bind:show={showSudoDelete}
-	action="change_byo_key"
-	title="Remove your AI key"
-	description="AI calls will go back to the Virtues subscription. Approve at your server's command line."
-	onApproved={performByoDelete}
-/>
 
 <style>
 	/* ─── Chapters ──────────────────────────────────────────────────────────

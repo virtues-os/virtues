@@ -19,8 +19,8 @@
 //! slug's id prefix before/after reconcile.
 //!
 //! **Trust note:** `command` is argv, so an import runs somebody else's native
-//! code. What holds is not a ban but the route: importing is sudo-gated
-//! (`import_applet_package`), and an unshipped applet spawns inside a
+//! code. What holds is not a ban but the route: importing needs the app's
+//! owner proof (`api::owner_proof`), and an unshipped applet spawns inside a
 //! transient `systemd-run` unit (`NoNewPrivileges`, `ProtectSystem=strict`, a
 //! syscall filter, memory and runtime ceilings), because the box user has
 //! passwordless sudo. See `agents/record/sources-packages.md`.
@@ -36,6 +36,8 @@ use tokio::process::Command;
 use crate::applet_templates;
 use crate::error::{Error, Result};
 
+/// The import body. Released apps also send a `sudo_request_id`, which serde
+/// ignores as an unknown field; keep it that way (no `deny_unknown_fields`).
 #[derive(Debug, Deserialize)]
 pub struct ImportRequest {
     /// HTTPS URL or `git@host:owner/repo.git` form. Validated before use.
@@ -43,10 +45,6 @@ pub struct ImportRequest {
     /// Branch, tag, or commit SHA. Defaults to `main` when absent or empty.
     #[serde(default)]
     pub r#ref: Option<String>,
-    /// Sudo request id from `/api/sudo/request`. Required — importing runs a
-    /// third party's code on this box.
-    #[serde(default)]
-    pub sudo_request_id: Option<String>,
 }
 
 #[derive(Debug, Serialize, Default)]
@@ -457,19 +455,28 @@ fn applets_root_buf() -> PathBuf {
 /// single-character wildcard in LIKE — without that, `applet_foo_%` would also
 /// claim rows belonging to `applet_fooX`.
 async fn ids_under_slug(db: &PgPool, slug: &str) -> Result<HashSet<String>> {
-    let prefix = format!("applet_{}", slug.replace('/', "__"));
+    // A folder read from SKILL.md gets its id with hyphens as underscores; one
+    // converted from a manifest pins the id it had, hyphens kept. Both belong
+    // to this slug.
+    let kept = format!("applet_{}", slug.replace('/', "__"));
+    let derived = kept.replace('-', "_");
     // Escape the prefix itself, not just the trailing separator. `applet_` alone
     // contributes an underscore, and a slug may carry more — each one is a
     // single-character wildcard in LIKE, so an unescaped pattern could claim ids
     // belonging to a neighbouring package.
-    let escaped = prefix.replace('\\', "\\\\").replace('_', "\\_").replace('%', "\\%");
-    let like = format!("{escaped}\\_%");
+    let like = |prefix: &str| {
+        let escaped = prefix.replace('\\', "\\\\").replace('_', "\\_").replace('%', "\\%");
+        format!("{escaped}\\_%")
+    };
     let rows: Vec<(String,)> = sqlx::query_as(
         r#"SELECT id FROM app_applets
-            WHERE id = $1 OR id LIKE $2 ESCAPE '\'"#,
+            WHERE id = $1 OR id LIKE $2 ESCAPE '\'
+               OR id = $3 OR id LIKE $4 ESCAPE '\'"#,
     )
-    .bind(&prefix)
-    .bind(&like)
+    .bind(&kept)
+    .bind(like(&kept))
+    .bind(&derived)
+    .bind(like(&derived))
     .fetch_all(db)
     .await?;
     Ok(rows.into_iter().map(|(s,)| s).collect())

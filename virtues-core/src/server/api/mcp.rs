@@ -194,7 +194,7 @@ mod tests {
         for expected in ["sql_query", "semantic_search", "get_page_content", "create_page", "edit_page", "applet"] {
             assert!(names.contains(&expected), "{expected} missing from {names:?}");
         }
-        for never in ["send_imessage", "browse", "shell", "generate_image", "web_search"] {
+        for never in ["send_imessage", "browse", "shell", "sudo", "generate_image", "web_search"] {
             assert!(!names.contains(&never), "{never} must not be listed");
         }
         let read_only = |name: &str| {
@@ -223,8 +223,10 @@ mod tests {
     #[sqlx::test]
     async fn a_tool_not_offered_is_refused(pool: PgPool) {
         let yjs = YjsState::new(pool.clone());
-        let refused = call(&pool, &yjs, "shell", serde_json::json!({ "command": "true" }), "test", "").await;
-        assert!(refused.is_err());
+        for tool in ["shell", "sudo"] {
+            let refused = call(&pool, &yjs, tool, serde_json::json!({ "command": "true" }), "test", "").await;
+            assert!(refused.is_err(), "{tool}");
+        }
     }
 
     /// A read runs through the executor and comes back as text the calling

@@ -30,6 +30,7 @@ const COMMANDS: &[&str] = &[
   "pair_door_status",
   "pair_handoff_create",
   "pair_handoff_accept",
+  "owner_proof_sign",
 ];
 
 fn main() {

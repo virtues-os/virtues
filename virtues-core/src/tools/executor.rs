@@ -94,10 +94,13 @@ pub struct ToolContext {
     pub temporary: bool,
     /// Where a ghost's grants live for as long as the ghost does.
     pub ghost_permissions: Option<crate::api::chat_permissions::GhostPermissions>,
-    /// The turn is in sudo mode: the owner chose it for this chat. Nothing
-    /// asks before it runs, and `shell` runs at all. Set only by the chat
+    /// The turn runs the admin applet: the owner picked it in this chat. Nothing
+    /// asks before it runs, and `sudo` runs at all. Set only by the chat
     /// handler — applet runs and subagents build their context without it.
     pub sudo: bool,
+    /// The applet run this call is part of, so what the run's `shell` reaches
+    /// is recorded on it. `None` outside an applet run.
+    pub applet_run_id: Option<String>,
     /// The IANA zone the owner's client is in, the one the prompt's clock is
     /// written in. SQL tools read dates in it. `None` (an applet run, a
     /// worker) falls back to `home_timezone`.
@@ -134,6 +137,7 @@ impl Default for ToolContext {
             temporary: false,
             ghost_permissions: None,
             sudo: false,
+            applet_run_id: None,
             timezone: None,
             turn: None,
             console: false,
@@ -245,7 +249,7 @@ pub struct ToolExecutor {
     yjs_state: Option<YjsState>,
 }
 
-/// Start the code_interpreter packages building on a box that lacks them, so
+/// Start the shell's Python packages building on a box that lacks them, so
 /// they are ready before the first chat reaches for them. Not in a debug
 /// build: a developer machine builds them on the first code run instead of
 /// fetching 400 MB whenever the server starts.
@@ -278,7 +282,7 @@ impl ToolExecutor {
         }
     }
 
-    /// For a one-shot CLI verb: the same tools, without the code_interpreter
+    /// For a one-shot CLI verb: the same tools, without the shell's
     /// package build `new` starts. A `virtues query` that began a 400 MB fetch
     /// on a box missing them would be a surprising side effect of a read.
     pub fn without_warmup(pool: PgPool) -> Self {
@@ -310,8 +314,6 @@ impl ToolExecutor {
         // asked, but could rewrite what the digest says and set it to fire
         // hourly, silently.
         "applet",
-        // Writes a prompt that later runs with tools, as an applet's does.
-        "save_skill",
         // Deletes rows, in the person's own record.
         "sql_write",
         // Real money, per call.
@@ -389,13 +391,6 @@ impl ToolExecutor {
                         "sql_write" => ("your records".to_string(), "write to"),
                         "generate_image" => ("an image".to_string(), "generate"),
                         "applet" => ("a new action".to_string(), "create"),
-                        "save_skill" => (
-                            arguments
-                                .get("name")
-                                .and_then(|v| v.as_str())
-                                .map_or_else(|| "a skill".to_string(), |n| format!("the skill /{n}")),
-                            "save",
-                        ),
                         other => (other.to_string(), "run"),
                     };
                     (tool_name.to_string(), "tool", title, verb)
@@ -486,7 +481,6 @@ impl ToolExecutor {
                 }
             }
             "update_memory" => self.execute_update_memory(arguments).await,
-            "save_skill" => Self::execute_save_skill(arguments),
             // Getting started's tools: markers, never writes (the client's
             // cards write). `skip_step` is the one exception and it lands in
             // the same stored list the door uses.
@@ -518,24 +512,24 @@ impl ToolExecutor {
                 super::sql_sudo::execute(&self._pool, &sql, context.timezone.as_deref()).await
             }
             "sql_query" => {
-                // A saved chat can keep a result as a file for code_interpreter.
+                // A saved chat can keep a result as a file for shell.
                 let chat_id = context.chat_id.as_deref().filter(|_| !context.temporary);
                 self.sql_query.execute(arguments, chat_id, context.timezone.as_deref()).await
             }
             "sql_write" => super::sql_write::execute(&self._pool, arguments, context.timezone.as_deref()).await,
             // The tool lists already keep it out of every other mode; this is
             // the second lock, for a model that names a tool it was not given.
-            "shell" if context.sudo && context.applet_id.is_none() => {
+            "sudo" if context.sudo && context.applet_id.is_none() => {
                 use super::sudo_gate;
                 let command =
                     arguments.get("command").and_then(|v| v.as_str()).unwrap_or("").trim().to_string();
-                if sudo_gate::shell_destroys(&command) && !self.sudo_granted(context, "shell", &command).await {
-                    return Ok(sudo_gate::ask("shell", &command));
+                if sudo_gate::shell_destroys(&command) && !self.sudo_granted(context, "sudo", &command).await {
+                    return Ok(sudo_gate::ask("sudo", &command));
                 }
-                super::shell::execute(arguments).await
+                super::sudo_shell::execute(arguments).await
             }
-            "shell" => Err(ToolError::ExecutionFailed(
-                "shell runs only in sudo mode, which the owner turns on in the chat".into(),
+            "sudo" => Err(ToolError::ExecutionFailed(
+                "sudo runs only in the admin applet, which the owner picks with /admin in the chat".into(),
             )),
             "read_asset" => self.execute_read_asset(arguments).await,
             "show" => super::show::execute(&self.sql_query, arguments, context.timezone.as_deref()).await,
@@ -554,7 +548,7 @@ impl ToolExecutor {
             name if crate::browser::TOOLS.contains(&name) => {
                 Ok(crate::browser::run_tool(name, arguments).await)
             }
-            "code_interpreter" => self.execute_code_interpreter(arguments, context).await,
+            "shell" => self.execute_shell(arguments, context).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
             "dispatch_subagents" => {
                 crate::agent::subagent::dispatch(self._pool.clone(), arguments, context).await
@@ -623,6 +617,7 @@ impl ToolExecutor {
             "applet" => {
                 super::applet_management::execute(&self._pool, self.yjs_state.as_ref(), arguments, context).await
             }
+            super::use_applet::TOOL => super::use_applet::execute(&arguments),
             // Applet memory (persistent scratchpad for actions across runs)
             "update_applet_memory" => self.execute_update_applet_memory(arguments, context).await,
             // Dayline event CRUD (used by hourly/EOD actions)
@@ -664,17 +659,19 @@ impl ToolExecutor {
         })))
     }
 
-    /// Run model-written Python in the sandbox (api/code.rs), in the chat's
-    /// workspace when it has one (api/code_env.rs).
-    async fn execute_code_interpreter(
+    /// Run a model-written command in the sandbox (api/code.rs), in the
+    /// chat's workspace when it has one (api/code_env.rs). From an applet's
+    /// run it also sees the applet's folder, and reaches the hosts its file
+    /// asks for that the owner allowed, with each request recorded on the run.
+    async fn execute_shell(
         &self,
         arguments: serde_json::Value,
         context: &ToolContext,
     ) -> Result<ToolResult, ToolError> {
-        let code = arguments
-            .get("code")
+        let command = arguments
+            .get("command")
             .and_then(|v| v.as_str())
-            .ok_or_else(|| ToolError::InvalidParameters("code is required".into()))?;
+            .ok_or_else(|| ToolError::InvalidParameters("command is required".into()))?;
 
         let timeout = arguments
             .get("timeout")
@@ -690,11 +687,35 @@ impl ToolExecutor {
         }
         .map_err(ToolError::ExecutionFailed)?;
 
-        let request = crate::api::code::ExecuteCodeRequest {
-            code: code.to_string(),
-            timeout,
-        };
-        let response = crate::api::code::execute_code(request, &ws).await;
+        let mut request = crate::api::code::ShellRequest { command: command.to_string(), timeout, ..Default::default() };
+        let mut proxy = None;
+        if let Some(applet_id) = context.applet_id.as_deref() {
+            request.folder = crate::applet_templates::dir_for_applet_id(applet_id)
+                .map(|d| crate::applet_templates::resolve_applet_dir(&d))
+                .filter(|p| p.is_dir());
+            let applet = crate::scheduler::applets::get_applet(self._pool.as_ref(), applet_id)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+            let hosts = crate::applet_runner::allowed_hosts(self._pool.as_ref(), applet_id, &applet.config)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+            if !hosts.is_empty() {
+                let run = context.applet_run_id.as_deref().unwrap_or("shell");
+                let p = crate::applet_runner::start_proxy(&format!("{run}-{}", uuid::Uuid::new_v4()), &hosts)
+                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
+                request.egress = Some(p.path().to_path_buf());
+                proxy = Some(p);
+            }
+        }
+        let response = crate::api::code::run_shell(request, &ws).await;
+        if let Some(p) = proxy {
+            let requests = p.finish(std::time::Duration::from_secs(2)).await;
+            if let Some(run_id) = context.applet_run_id.as_deref() {
+                if let Err(e) = crate::applet_runner::record_requests(self._pool.as_ref(), run_id, &requests).await {
+                    tracing::error!(run_id, error = %e, "could not record the shell's network requests");
+                }
+            }
+        }
 
         // The chat shows a saved chat's images from its workspace; the model
         // gets their paths, never bytes.
@@ -730,7 +751,7 @@ impl ToolExecutor {
         }
 
         // A failed run is a failed tool call carrying the whole result, so the
-        // model gets the traceback to fix its code from and the chat can show it.
+        // model gets the traceback to fix its command from and the chat can show it.
         Ok(ToolResult {
             success: response.success,
             data,
@@ -1054,42 +1075,6 @@ impl ToolExecutor {
     /// Open one step's card. A done step has no card to open, and the
 
     /// Skip a step on the person's ask. `connect_ai` is the door's alone.
-    /// Save one of the person's skills (`api::skills`). Every check lives
-    /// there, so a refused name or tool comes back as the reason.
-    fn execute_save_skill(arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
-        let text = |key: &str| arguments.get(key).and_then(|v| v.as_str()).map(str::to_string);
-        let required = |key: &str| text(key).ok_or_else(|| ToolError::InvalidParameters(format!("{key} is required")));
-        let tools = arguments
-            .get("tools")
-            .and_then(|v| v.as_array())
-            .map(|a| a.iter().filter_map(|t| t.as_str().map(str::to_string)).collect())
-            .unwrap_or_default();
-        let slot = match text("model").as_deref() {
-            None | Some("standard") => virtues_registry::models::ModelSlot::Standard,
-            Some("deep") => virtues_registry::models::ModelSlot::Deep,
-            Some(other) => {
-                return Err(ToolError::InvalidParameters(format!("model {other:?} is not standard or deep")))
-            }
-        };
-        let (skill, replaced) = crate::api::skills::save(crate::api::skills::NewSkill {
-            name: required("name")?,
-            description: required("description")?,
-            icon: text("icon"),
-            tools,
-            body: required("body")?,
-            slot,
-        })
-        .map_err(|e| match e {
-            crate::error::Error::InvalidInput(why) => ToolError::InvalidParameters(why),
-            e => ToolError::ExecutionFailed(format!("save skill: {e}")),
-        })?;
-        Ok(ToolResult::success(serde_json::json!({
-            "saved": skill.name,
-            "replaced": replaced,
-            "run_it_with": format!("/{}", skill.name),
-        })))
-    }
-
     async fn execute_skip_step(&self, arguments: serde_json::Value) -> Result<ToolResult, ToolError> {
         let step = arguments
             .get("step")

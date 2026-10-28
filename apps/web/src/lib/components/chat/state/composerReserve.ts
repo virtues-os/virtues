@@ -10,6 +10,22 @@
  *
  * Returns a teardown, so the caller is one line of `$effect`.
  */
+
+/**
+ * Marks a part of the composer that draws over the transcript instead of
+ * reserving room in it, such as the `/` and `@` menus. Its height is left
+ * out of the reserve, so opening it moves nothing behind it.
+ */
+export const COMPOSER_OVERLAY_ATTR = "data-composer-overlay";
+
+function reservedHeight(composer: HTMLElement): number {
+	let height = composer.offsetHeight;
+	for (const el of composer.querySelectorAll<HTMLElement>(`[${COMPOSER_OVERLAY_ATTR}]`)) {
+		height -= el.offsetHeight;
+	}
+	return height;
+}
+
 export function observeComposerReserve(
 	composer: HTMLElement,
 	scroller: HTMLElement,
@@ -23,10 +39,10 @@ export function observeComposerReserve(
 	// kept explicit because at send time the new message lands while the
 	// composer is still collapsing, and "keep my offset" would leave them
 	// one message short of it (VIR-332).
-	let lastHeight = composer.offsetHeight;
+	let lastHeight = reservedHeight(composer);
 	scroller.style.setProperty("--composer-height", `${lastHeight}px`);
 	const observer = new ResizeObserver(() => {
-		const height = composer.offsetHeight;
+		const height = reservedHeight(composer);
 		const delta = height - lastHeight;
 		if (delta === 0) return;
 		lastHeight = height;

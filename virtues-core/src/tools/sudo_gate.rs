@@ -1,7 +1,9 @@
-//! Sudo mode runs what the model calls, as a coding agent's bypass mode does:
-//! reads, writes, services, packages, files. One kind of call still stops the
-//! turn and asks the owner, with the exact command on the card: one that
-//! deletes data, which has no undo.
+//! The admin applet runs what the model calls, as a coding agent's bypass mode does:
+//! reads, writes, services, packages, files. Two kinds of call still stop the
+//! turn and ask the owner, with the exact command on the card: one that
+//! deletes data, which has no undo, and `virtues backup --init-key`, which
+//! prints a new backup recovery key into the tool result, where the model
+//! reads it.
 //!
 //! - SQL asks when it names `DROP`, `TRUNCATE` or `DELETE`: in the SQL tools,
 //!   and anywhere in a shell line that runs psql (on the line, a pipe or a
@@ -9,11 +11,21 @@
 //! - A shell line asks when one of its commands deletes files outside /tmp,
 //!   wipes or repartitions a disk, drops a database or role, or runs a
 //!   `virtues` verb that erases the box (`reset`, `uninstall`, `deprovision`,
-//!   `restore`). `bash -c`, `sudo` and `xargs` are looked through.
+//!   `restore`). Wrappers (`sudo`, `doas`, `runuser`, `env`, `nice`,
+//!   `timeout`, `stdbuf`), the shell keywords that start a command (`{`,
+//!   `if`, `!`), and the programs that run another command line (`bash -c`,
+//!   `script -c`, `eval`, `watch`, `xargs`, `find -exec`) are looked through.
+//! - A shell line asks when it names `--init-key` and the `virtues` binary
+//!   anywhere. That is read from the line's words rather than its commands,
+//!   so a wrapper or a quoted script does not hide it.
 //!
-//! This catches the plain spellings of a delete, and is not a sandbox: a
-//! script can remove a file without saying `rm`. The rest rests on the prompt
-//! (`SUDO_MODE_PROMPT`) and on Stop. When unsure the check asks, which costs
+//! Reads never ask, secrets included. The admin applet can read every secret on
+//! the box; that is the owner's stated exception to "a model never sees a value"
+//! (agents/plan/secrets-plan.md, "Who can read what").
+//!
+//! This catches the plain spellings, and is not a sandbox: a script can remove
+//! a file without saying `rm`. Beyond that, the admin applet relies on its
+//! prompt (`applets/admin/SKILL.md`) and on Stop. When unsure the check asks, which costs
 //! the owner one click.
 //!
 //! A grant is for one exact command in one chat, so allowing
@@ -40,14 +52,34 @@ pub fn sql_destroys(sql: &str) -> bool {
     })
 }
 
-/// Whether a shell command line deletes data. See the module comment.
+/// Whether a shell command line waits for the owner: it deletes data, or it
+/// prints the backup recovery key. See the module comment.
+// TODO(2026-10-27): rename to `shell_asks`, with its caller in tools/executor.rs.
 pub fn shell_destroys(line: &str) -> bool {
+    line_deletes(line) || prints_recovery_key(line)
+}
+
+/// Whether a shell command line deletes data.
+fn line_deletes(line: &str) -> bool {
     let commands = commands(line);
     let runs_sql = commands.iter().any(|c| {
         let (program, args) = program(c);
         program == "psql" || (program == "virtues" && matches!(first_positional(args), Some("query" | "write")))
     });
     (runs_sql && sql_destroys(line)) || commands.iter().any(|c| command_destroys(c))
+}
+
+/// Whether a shell command line may run `virtues backup --init-key`: one of
+/// its words is `--init-key` and another names the `virtues` binary. This
+/// reads the whole line's words rather than its commands, so a wrapper, a
+/// brace group or a quoted script (`script -c`, `eval`) does not hide it. A
+/// line that only mentions the flag asks too.
+fn prints_recovery_key(line: &str) -> bool {
+    // The shell joins quoted pieces and backslash escapes into one word.
+    let joined: String = line.chars().filter(|c| !matches!(c, '\'' | '"' | '\\')).collect();
+    let splits = |c: char| c.is_whitespace() || ";|&(){}<>`$=".contains(c);
+    let words: Vec<&str> = joined.split(splits).collect();
+    words.contains(&"--init-key") && words.iter().any(|w| w.rsplit('/').next() == Some("virtues"))
 }
 
 /// The permission id for one exact command in one kind of tool.
@@ -60,6 +92,7 @@ pub fn grant_id(kind: &str, command: &str) -> String {
 /// `awaiting_owner` is what the agent loop pauses on (`agent::turn::needs_user`).
 pub fn ask(kind: &str, command: &str) -> ToolResult {
     let shown: String = command.trim().chars().take(2000).collect();
+    let shows_key = kind != "sql" && prints_recovery_key(command);
     ToolResult::success(serde_json::json!({
         "permission_needed": true,
         "awaiting_owner": true,
@@ -68,10 +101,18 @@ pub fn ask(kind: &str, command: &str) -> ToolResult {
         "entity_title": shown,
         "message": match kind {
             "sql" => "Run this statement on the database?",
+            _ if shows_key => "Run this command on the server? It prints a new backup recovery key into this chat, \
+                               so your assistant sees it. You can run it in Terminal instead.",
             _ => "Run this command on the server?",
         },
-        "note": "Not run. This deletes data, so the owner has to allow it. \
-                 Stop here. Once they allow it, run exactly the same command again.",
+        "note": if shows_key {
+            "Not run. This prints a new backup recovery key into your tool result, so the owner has to allow it. \
+             Stop here, and offer them the command to run in Terminal, where the key stays with them. \
+             If they allow it here instead, run exactly the same command again."
+        } else {
+            "Not run. This deletes data, so the owner has to allow it. \
+             Stop here. Once they allow it, run exactly the same command again."
+        },
     }))
 }
 
@@ -102,18 +143,48 @@ fn command_destroys(words: &[String]) -> bool {
         p if p.starts_with("mkfs") => true,
         "dropdb" | "dropuser" | "pg_dropcluster" | "pg_resetwal" | "pg_resetxlog" => true,
         "virtues" => matches!(first_positional(args), Some("reset" | "uninstall" | "deprovision" | "restore")),
-        "xargs" => command_destroys(skip_flags(args, &["-n", "-I", "-P", "-d", "-L", "-s", "-E", "-a"])),
-        "bash" | "sh" | "zsh" | "dash" | "su" => {
-            args.iter().position(|a| a == "-c" || (a.starts_with('-') && !a.starts_with("--") && a.ends_with('c')))
-                .and_then(|i| args.get(i + 1))
-                .is_some_and(|script| shell_destroys(script))
-        }
+        // Programs that run another command line: what they run is checked.
+        "xargs" => command_destroys(skip_flags(args, XARGS_VALUE_FLAGS)),
+        "eval" => line_deletes(&args.join(" ")),
+        "watch" => line_deletes(&skip_flags(args, &["-n", "-q", "--interval", "--equexit"]).join(" ")),
+        "bash" | "sh" | "zsh" | "dash" | "su" | "runuser" | "script" => script_arg(args).is_some_and(line_deletes),
         _ => false,
     }
 }
 
-/// The program a command runs and its arguments, past assignments and the
-/// wrappers that run another program (`sudo -u x`, `env`, `nice`, `timeout 5`).
+/// The script a shell (or `su`, `runuser`, `script`) is given to run:
+/// `-c script`, a flag group ending in `c` (`-lc script`), or `--command`.
+fn script_arg(args: &[String]) -> Option<&str> {
+    args.iter().enumerate().find_map(|(i, a)| {
+        if let Some(script) = a.strip_prefix("--command=") {
+            return Some(script);
+        }
+        let short_c = a.starts_with('-') && !a.starts_with("--") && a.ends_with('c');
+        if a == "-c" || a == "--command" || short_c {
+            args.get(i + 1).map(String::as_str)
+        } else {
+            None
+        }
+    })
+}
+
+const XARGS_VALUE_FLAGS: &[&str] = &[
+    "-n", "-I", "-P", "-d", "-L", "-s", "-E", "-a", "--max-args", "--max-procs", "--delimiter", "--max-chars",
+    "--arg-file",
+];
+
+const RUNUSER_VALUE_FLAGS: &[&str] =
+    &["-u", "-g", "-G", "-s", "-w", "--user", "--group", "--supp-group", "--shell", "--whitelist-environment"];
+
+/// The flags of `sudo` and `doas` that take a value.
+const SUDO_VALUE_FLAGS: &[&str] = &[
+    "-u", "-g", "-C", "-h", "-p", "-U", "-D", "-R", "-r", "-t", "-T", "--user", "--group", "--close-from", "--host",
+    "--prompt", "--other-user", "--chdir", "--chroot", "--role", "--type", "--command-timeout",
+];
+
+/// The program a command runs and its arguments, past assignments, the shell
+/// keywords that start a command (`{ … }`, `if`, `!`), and the wrappers that
+/// run another program (`sudo -u x`, `env`, `nice`, `timeout 5`).
 fn program(words: &[String]) -> (&str, &[String]) {
     let mut rest = words;
     loop {
@@ -123,12 +194,19 @@ fn program(words: &[String]) -> (&str, &[String]) {
             continue;
         }
         match first.rsplit('/').next().unwrap_or(first) {
-            "sudo" => rest = skip_flags(&rest[1..], &["-u", "-g", "-C", "-h", "-p", "-U", "-D", "-R"]),
-            "env" => rest = skip_flags(&rest[1..], &["-u", "-C", "-S"]),
-            "nice" | "ionice" => rest = skip_flags(&rest[1..], &["-n", "-c", "-p"]),
+            "{" | "!" | "if" | "then" | "elif" | "else" | "do" | "while" | "until" => rest = &rest[1..],
+            "sudo" | "doas" => rest = skip_flags(&rest[1..], SUDO_VALUE_FLAGS),
+            // `runuser -u x cmd` runs cmd. Without `-u` it takes su's form
+            // (`runuser x -c 'cmd'`), which `command_destroys` reads.
+            "runuser" if rest[1..].iter().any(|w| w == "-u" || w == "--user" || w.starts_with("--user=")) => {
+                rest = skip_flags(&rest[1..], RUNUSER_VALUE_FLAGS)
+            }
+            "env" => rest = skip_flags(&rest[1..], &["-u", "-C", "-S", "--unset", "--chdir", "--split-string"]),
+            "nice" | "ionice" => rest = skip_flags(&rest[1..], &["-n", "-c", "-p", "--adjustment"]),
+            "stdbuf" => rest = skip_flags(&rest[1..], &["-i", "-o", "-e", "--input", "--output", "--error"]),
             "time" | "command" | "nohup" | "exec" => rest = &rest[1..],
             "timeout" => {
-                rest = skip_flags(&rest[1..], &["-s", "-k"]);
+                rest = skip_flags(&rest[1..], &["-s", "-k", "--signal", "--kill-after"]);
                 // The duration.
                 rest = rest.get(1..).unwrap_or(&[]);
             }
@@ -282,6 +360,8 @@ fn is_assignment(word: &str) -> bool {
 }
 
 /// Drop leading flags (and the value of those in `with_value`), and a `--`.
+/// Short flags group as getopt reads them: in `-Hu x` the `u` takes the next
+/// word, and in `-ux` it takes the rest of its own.
 fn skip_flags<'a>(mut words: &'a [String], with_value: &[&str]) -> &'a [String] {
     while let Some(w) = words.first() {
         if w == "--" {
@@ -290,7 +370,15 @@ fn skip_flags<'a>(mut words: &'a [String], with_value: &[&str]) -> &'a [String] 
         if !w.starts_with('-') || w == "-" {
             break;
         }
-        let takes_value = with_value.contains(&w.as_str());
+        let takes_value = if w.starts_with("--") {
+            with_value.contains(&w.as_str())
+        } else {
+            let letters = &w[1..];
+            letters
+                .char_indices()
+                .find(|(_, l)| with_value.contains(&format!("-{l}").as_str()))
+                .is_some_and(|(i, l)| i + l.len_utf8() == letters.len())
+        };
         words = &words[1..];
         if takes_value && !words.is_empty() {
             words = &words[1..];
@@ -326,6 +414,16 @@ mod tests {
             "virtues status",
             "curl -X POST localhost:8000/api/setup/skip-onboarding -d '{}'",
             "git checkout main",
+            "sudo -iu virtues virtues status",
+            "sudo -Hu virtues ls -la /var/lib/virtues",
+            "sudo --user=virtues virtues doctor",
+            "ls /tmp/scratch | xargs -I{} cat /tmp/scratch/{}",
+            "if [ -f /tmp/x ]; then cat /tmp/x; else echo none; fi",
+            "{ uptime; df -h; } 2>&1",
+            "watch -n 5 systemctl status virtues",
+            "script -qc 'virtues status' /dev/null",
+            "runuser -u virtues -- virtues status",
+            "stdbuf -oL journalctl -u virtues -n 50",
         ] {
             assert!(!shell_destroys(cmd), "should run: {cmd}");
         }
@@ -360,9 +458,78 @@ mod tests {
             "psql \"$DATABASE_URL\" <<'SQL'\nDELETE FROM app_chats;\nSQL",
             r#"echo "DROP SCHEMA applet_x CASCADE" | psql "$DATABASE_URL""#,
             r#"virtues write "DELETE FROM data_x""#,
+            // Grouped and long sudo flags take their value.
+            "sudo -Hu virtues virtues reset --yes",
+            "sudo -iu postgres dropdb virtues",
+            "sudo --user virtues rm -rf /var/lib/virtues/lake",
+            "doas -u virtues rm notes.txt",
+            // Keywords, wrappers, and programs that run a command line.
+            "{ rm -rf /var/lib/virtues/lake; } 2>&1",
+            "if rm /var/lib/virtues/x; then echo ok; fi",
+            "! rm notes.txt",
+            "runuser -u virtues -- rm -rf /var/lib/virtues/lake",
+            "runuser virtues -c 'rm -rf /var/lib/virtues/lake'",
+            "stdbuf -oL rm -rf /var/lib/virtues/lake",
+            "script -qc 'rm -rf /var/lib/virtues/lake' /dev/null",
+            "eval 'rm -rf /var/lib/virtues/lake'",
+            "watch -n 5 rm notes.txt",
         ] {
             assert!(shell_destroys(cmd), "should ask: {cmd}");
         }
+    }
+
+    /// `--init-key` prints a new backup recovery key into the tool result, so
+    /// it asks however the line spells it.
+    #[test]
+    fn minting_the_backup_key_asks() {
+        for cmd in [
+            "virtues backup --init-key",
+            "/usr/local/bin/virtues backup --init-key",
+            "sudo -u virtues virtues backup --init-key",
+            "sudo -Hu virtues virtues backup --init-key",
+            "sudo -iu virtues virtues backup --init-key",
+            "sudo --user virtues virtues backup --init-key",
+            "runuser -u virtues -- virtues backup --init-key",
+            "env RUST_LOG=warn virtues backup --init-key",
+            "stdbuf -oL virtues backup --init-key",
+            "echo | xargs virtues backup --init-key",
+            "echo --init-key | xargs virtues backup",
+            "sudo bash -c 'virtues backup --init-key'",
+            "bash -lc \"cd /tmp && virtues backup --init-key\"",
+            "script -qc 'virtues backup --init-key' /dev/null",
+            "eval \"virtues backup --init-key\"",
+            "watch -n 60 virtues backup --init-key",
+            "{ virtues backup --init-key; } 2>&1 | tee /tmp/key.txt",
+            "if virtues backup --init-key; then echo ok; fi",
+            "! virtues backup --init-key",
+            "virtues backup --init-\"key\"",
+            "virtues status; virtues backup --init-key 2>&1 | tee /tmp/key.txt",
+        ] {
+            assert!(shell_destroys(cmd), "should ask: {cmd}");
+        }
+        // A backup, a check of one, and the help text are reads or writes
+        // that print no key.
+        for cmd in [
+            "virtues backup",
+            "virtues backup --verify /var/lib/virtues/backups/x.tar.gz.age --key-file /tmp/k",
+            "virtues backup --help",
+            "grep -n init-key /var/log/virtues.log",
+            "cat /var/lib/virtues/virtues.env",
+            "env",
+        ] {
+            assert!(!shell_destroys(cmd), "should run: {cmd}");
+        }
+    }
+
+    #[test]
+    fn the_ask_says_why() {
+        let key = ask("sudo", "virtues backup --init-key");
+        assert!(key.data["message"].as_str().unwrap().contains("recovery key"));
+        assert!(key.data["note"].as_str().unwrap().contains("recovery key"));
+        let delete = ask("sudo", "rm notes.txt");
+        assert_eq!(delete.data["message"], "Run this command on the server?");
+        assert!(delete.data["note"].as_str().unwrap().contains("deletes data"));
+        assert_eq!(ask("sql", "DELETE FROM t").data["message"], "Run this statement on the database?");
     }
 
     #[test]
@@ -390,18 +557,18 @@ mod tests {
 
     #[test]
     fn a_grant_is_for_one_exact_command() {
-        assert_eq!(grant_id("shell", "rm x"), grant_id("shell", "  rm x\n"));
-        assert_ne!(grant_id("shell", "rm x"), grant_id("shell", "rm y"));
-        assert_ne!(grant_id("shell", "rm x"), grant_id("sql", "rm x"));
+        assert_eq!(grant_id("sudo", "rm x"), grant_id("sudo", "  rm x\n"));
+        assert_ne!(grant_id("sudo", "rm x"), grant_id("sudo", "rm y"));
+        assert_ne!(grant_id("sudo", "rm x"), grant_id("sql", "rm x"));
     }
 
     #[test]
     fn the_ask_pauses_the_turn_and_names_the_command() {
-        let r = ask("shell", "rm x");
+        let r = ask("sudo", "rm x");
         assert_eq!(r.data["awaiting_owner"], true);
         assert_eq!(r.data["permission_needed"], true);
         assert_eq!(r.data["entity_type"], "command");
         assert_eq!(r.data["entity_title"], "rm x");
-        assert_eq!(r.data["entity_id"], grant_id("shell", "rm x"));
+        assert_eq!(r.data["entity_id"], grant_id("sudo", "rm x"));
     }
 }

@@ -49,11 +49,6 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             unreachable!("Pair command should be handled in main.rs");
         }
 
-        Commands::Sudo { .. } => {
-            // Same — handled in main.rs against a bare DB pool.
-            unreachable!("Sudo command should be handled in main.rs");
-        }
-
         Commands::ImageCheck => {
             // Handled in main.rs: it runs on a DEPROVISIONED box, which by
             // definition has no database for the app stack to open.

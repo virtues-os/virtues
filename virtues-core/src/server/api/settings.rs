@@ -21,21 +21,23 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         // ─── Billing settings (BYO key) ───────────────────────────────
         // BYO routes inference around virtues-api entirely: box calls
-        // upstream directly. Save/delete are sudo-gated (change_byo_key);
-        // status is a non-secret read for the Billing page.
+        // upstream directly. Save and delete need the app's owner proof
+        // (api/owner_proof.rs); status is a non-secret read for the Billing
+        // page.
         .route("/api/settings/byo-key",   get(crate::api::settings_byo::status_handler)
                                           .post(crate::api::settings_byo::save_handler)
                                           .delete(crate::api::settings_byo::delete_handler))
         // ─── Keys ─────────────────────────────────────────────────────
         // Names only, except `value`, which Settings calls when the owner
-        // asks to see one. No tool calls these (api/keys.rs).
+        // asks to see one, with the app's owner proof. No tool calls these
+        // (api/keys.rs).
         .route("/api/keys", get(keys_overview_handler))
         .route("/api/keys/:name", put(set_key_handler).delete(delete_key_handler))
         .route("/api/keys/:name/value", get(reveal_key_handler))
         // ─── Passwords (Drive) ────────────────────────────────────────
         // Saved logins. The list carries no passwords; `secret` is what the
-        // page calls when the owner opens one. No tool calls these
-        // (api/passwords.rs).
+        // page calls when the owner opens one, with the app's owner proof.
+        // No tool calls these (api/passwords.rs).
         .route("/api/passwords", get(list_passwords_handler).post(create_password_handler))
         .route("/api/passwords/:id", put(update_password_handler).delete(delete_password_handler))
         .route("/api/passwords/:id/secret", get(reveal_password_handler))
@@ -210,9 +212,21 @@ pub async fn delete_key_handler(State(state): State<AppState>, Path(name): Path<
 }
 
 /// GET /api/keys/:name/value — the value, when the owner asks to see it.
-pub async fn reveal_key_handler(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+/// Needs the app's owner proof, so a direct request from another process on
+/// the owner's Mac, through the app's loopback port, cannot read it. Each reveal is a `key_revealed` row in
+/// the auth log (`api::audit`).
+pub async fn reveal_key_handler(
+    State(state): State<AppState>,
+    crate::api::owner_proof::OwnerProven(user): crate::api::owner_proof::OwnerProven,
+    Path(name): Path<String>,
+) -> Response {
     match crate::api::keys::reveal_key(state.db.pool(), &name).await {
-        Ok(value) => Json(serde_json::json!({ "value": value })).into_response(),
+        Ok(value) => {
+            let detail = serde_json::json!({ "name": &name });
+            crate::api::audit::record(state.db.pool(), Some(&user.device_id), "key_revealed", detail, None, None)
+                .await;
+            Json(serde_json::json!({ "value": value })).into_response()
+        }
         Err(e) => error_response(e),
     }
 }
@@ -248,9 +262,20 @@ pub async fn delete_password_handler(State(state): State<AppState>, Path(id): Pa
 }
 
 /// GET /api/passwords/:id/secret — the password and notes, when the owner
-/// opens a login.
-pub async fn reveal_password_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    api_response(crate::api::passwords::reveal(state.db.pool(), &id).await)
+/// opens a login. Needs the app's owner proof and writes a
+/// `password_revealed` row, like a key's value.
+pub async fn reveal_password_handler(
+    State(state): State<AppState>,
+    crate::api::owner_proof::OwnerProven(user): crate::api::owner_proof::OwnerProven,
+    Path(id): Path<String>,
+) -> Response {
+    let revealed = crate::api::passwords::reveal(state.db.pool(), &id).await;
+    if revealed.is_ok() {
+        let detail = serde_json::json!({ "login_id": &id });
+        crate::api::audit::record(state.db.pool(), Some(&user.device_id), "password_revealed", detail, None, None)
+            .await;
+    }
+    api_response(revealed)
 }
 
 /// Update user profile
