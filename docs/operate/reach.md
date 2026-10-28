@@ -46,10 +46,15 @@ server.
 Pairing puts a device's key on the server's allowlist. Which method you use
 depends on where you are.
 
-**Your first phone, during setup**, connects over Bluetooth. The server shows a
-four-word phrase on its screen, and the phone has to send it back before the
-server will do anything. This proves you can see the machine, so it works
-without a shared secret.
+**Your first device on hardware we build**, during setup, connects over
+Bluetooth. The server shows a four-word phrase on its screen, and the phone
+has to send it back before the server will do anything. This proves you can
+see the machine, so it works without a shared secret.
+
+**Your first device on your own Linux server** pairs with the Virtues app and
+the six-digit code the installer prints.
+[Connecting your devices](/docs/setup/devices) has the steps for each
+device.
 
 **Any later device** pairs with a code from the server:
 

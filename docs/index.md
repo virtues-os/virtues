@@ -1,5 +1,5 @@
 ---
-title: What Virtues is
+title: Overview
 description: Virtues is a server you run at home that stores the data of your life on your own disk, and the software that turns it into a readable record.
 updated: 2026-10-20
 ---

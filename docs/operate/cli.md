@@ -115,7 +115,7 @@ sudo virtues configure-inference --recommended
 
 With `--embed-url`, the command moves search to another embedding server,
 such as llama.cpp on your GPU
-([Faster search on a GPU or NPU](/docs/setup/accelerators)). It keeps your
+([GPU and NPU acceleration](/docs/setup/accelerators)). It keeps your
 index when the new server runs the same model, and re-embeds from source when
 it doesn't. After that, you manage the model and updates don't change it.
 
