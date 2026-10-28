@@ -366,11 +366,10 @@ The rules that follow from these answers are in
    only after the owner allows that key for that applet on its page, the way
    network hosts work. Shipped applets keep getting their declared keys
    automatically.
-4. **`virtues sudo`: leaning toward removing the gate, not yet decided.** If
-   it goes, the two gated actions (changing the AI key, importing a package)
-   could require the owner proof from decision 2. That keeps a check that a
-   rebinding page or another local process cannot pass, without a step on the
-   box.
+4. **`virtues sudo` is removed.** The two gated actions (changing the AI key,
+   importing a package) require the owner proof from decision 2 instead. That
+   keeps a check that a rebinding page or another local process cannot pass,
+   and it drops the step on the box. Decided later the same day.
 
 ## 10. Where the design goes next
 

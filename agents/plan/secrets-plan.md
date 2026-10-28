@@ -96,9 +96,11 @@ change for it, because `kind` already says which rows it would cover.
   starts from a clean environment, so the server's variables are not
   inherited, and `virtues backup --init-key` asks first, the way deletes do.
   Reads never ask. Not built yet.
-- **Four routes need the app's own signature** (decided 2026-10-27).
-  Revealing a password, revealing a key, enrolling a device and minting a
-  pair code each need a fresh owner proof: the box hands out a one-time
+- **Six routes need the app's own signature** (decided 2026-10-27).
+  Revealing a password, revealing a key, enrolling a device, minting a pair
+  code, changing the AI key and importing an applet package each need a
+  fresh owner proof. The last two replace the `virtues sudo` confirmation,
+  which is removed. The box hands out a one-time
   nonce, and the app signs it with the device key, the same signing
   `crates/virtues-reach-client/src/owner.rs` does for an offline box. Every
   other route stays open to any connection on the Mac's `127.0.0.1:7117`,
