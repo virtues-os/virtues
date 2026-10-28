@@ -17,6 +17,9 @@ export interface NoteAnchor {
 	quote: string;
 	/** Its index within its paragraph, when it was written on one sentence. */
 	sentence?: number;
+	/** The chat sky moment it was written on (`event:c1`). Its `quote` is
+	 *  then the moment's name, which the day page shows beside the Abstract. */
+	moment?: string;
 }
 
 export interface Placed<N> {

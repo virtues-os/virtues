@@ -904,8 +904,7 @@ folders.
 ### 5. Remove chat modes
 
 `deep-research` and `admin` ship as applets. The composer loses the depth and
-access controls
-([agentModes.ts](../../apps/web/src/lib/config/agentModes.ts)). `ChatMode`
+access controls, and `config/agentModes.ts` goes. `ChatMode`
 keeps the default, `Applet`, the two rooms, and Local untouched.
 
 **Done when:** nothing in the composer says depth or access, and a deep
