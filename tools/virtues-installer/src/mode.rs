@@ -78,7 +78,7 @@ impl InferenceMode {
                     })?;
                 let embed_url = normalize_url(&embed_url)
                     .context("VIRTUES_EMBED_URL is not a valid http(s) URL")?;
-                ensure_local(&embed_url, "Embedding endpoint")?;
+                confirm_destination(&embed_url, "Embedding endpoint")?;
                 let embed_model = embed_model_from_env();
                 ui::ok(&format!("Inference mode: manual (embed: {embed_url})"));
                 return Ok(Self::Manual { embed_url, embed_model });
@@ -124,64 +124,47 @@ impl InferenceMode {
         }
 
         // CPU is the default: the bundled sidecars are identical on every
-        // machine and need nothing from the owner. An accelerator, when the
-        // kernel shows one, gets a strong nudge toward its guide — the
-        // installer still never installs GPU/NPU software itself (see
-        // `accel`). Pick the path BEFORE demanding a URL, so an owner who
-        // hasn't stood up a server yet is never stuck.
+        // machine and need nothing from the owner. Every machine gets the same
+        // two options, so the docs can quote one menu. A detected accelerator
+        // adds a note and its guide above it; the installer still never
+        // installs GPU/NPU software itself (see `accel`), and
+        // `virtues configure-inference` moves search later, so the install
+        // never has to stop for a server that isn't set up yet.
         let accels = crate::accel::detect();
-        let choice = if let Some(best) = accels.first() {
+        if let Some(best) = accels.first() {
             println!();
             println!(
                 "  {} {}",
                 console::style("Found:").bold(),
                 accels.iter().map(|a| a.label.as_str()).collect::<Vec<_>>().join(", ")
             );
-            println!("  Search runs on this computer's CPU unless you point it at a server on that");
-            println!("  hardware. Search and your first index are much faster there, so we strongly");
-            println!("  recommend setting it up. The guide takes about ten minutes:");
+            println!("  Search and your first index run much faster on an embedding server on that");
+            println!("  hardware. The guide takes about ten minutes, and you can follow it now or later:");
             println!("    {}", console::style(best.kind.guide_url()).cyan());
             println!();
-            cliclack::select("How should search run?")
-                .item(
-                    "bundled",
-                    "On this computer's CPU for now",
-                    "works today; switch later with `virtues configure-inference --embed-url <URL>`",
-                )
-                .item("byo", "On a server I've already set up", "you'll enter its URL next")
-                .item("exit", "Stop, so I can set up the server first", "re-run this installer afterwards")
-                .interact()
-                .context("choosing where search runs")?
-        } else {
-            cliclack::select("How should search run?")
-                .item(
-                    "bundled",
-                    "On this computer's CPU  (recommended)",
-                    "nothing to set up; Virtues installs a small local engine and its models",
-                )
-                .item(
-                    "byo",
-                    "On my own server",
-                    "llama.cpp, Ollama or another server you run on this machine or your network",
-                )
-                .interact()
-                .context("choosing where search runs")?
-        };
-
-        if choice == "exit" {
-            let url = accels.first().map(|a| a.kind.guide_url()).unwrap_or("https://virtues.com/docs/setup/accelerators");
-            println!();
-            println!("  Set up the server with the guide, then run the installer again:");
-            println!("    {url}");
-            println!();
-            std::process::exit(0);
         }
+        let choice = cliclack::select("How should search run?")
+            .item(
+                "bundled",
+                "On this computer's CPU (recommended)",
+                "nothing to set up. To switch later, run `virtues configure-inference`. \
+                 Switching is fastest before you connect any device or source",
+            )
+            .item(
+                "byo",
+                "On an embedding server I run",
+                "llama.cpp, Ollama or another server on this machine or your network. \
+                 You'll enter its URL next",
+            )
+            .interact()
+            .context("choosing where search runs")?;
+
         if choice == "bundled" {
             ui::ok("Search runs on this computer's CPU");
             return Ok(Self::Bundled);
         }
 
-        // Manual (bring-your-own) — the recommended generic path. Show the
+        // Manual (bring-your-own). Show the
         // per-silicon guide + how to stand a server up, then ask for the URL.
         // Re-running the installer is always safe (idempotent), so "Ctrl-C,
         // start your server, re-run" is a fine path too.
@@ -199,7 +182,7 @@ impl InferenceMode {
             .interact()
             .context("reading embedding endpoint URL")?;
         let embed_url = normalize_url(&embed_url)?;
-        ensure_local(&embed_url, "Embedding endpoint")?;
+        confirm_destination(&embed_url, "Embedding endpoint")?;
 
         // One URL and we're done — no model-name question. llama.cpp / vLLM
         // serve whatever they loaded, so `"default"` is right for them. The one
@@ -256,14 +239,15 @@ fn has_tty() -> bool {
 /// on them, lists known-good models (with dims, for picking — we auto-detect the
 /// real dim when we probe), then shows concrete start commands. Everything
 /// speaks the contracts we pin: OpenAI `/v1/embeddings` (llama.cpp / Ollama /
-/// vLLM all work). Cloud APIs are
-/// intentionally absent — see `ensure_local`.
+/// vLLM all work). Cloud APIs are left out of the list; a public URL still
+/// works over HTTPS once the owner confirms it (`confirm_destination`).
 fn print_byo_guide() {
     use console::style;
     println!();
-    println!("  Virtues runs inference on a service YOU host — this box, a machine on your");
-    println!("  LAN, or one over your VPN. It needs an OpenAI-style /v1/embeddings endpoint.");
-    println!("  Cloud APIs (OpenAI, Cohere, …) are not supported — your data stays yours.");
+    println!("  Search needs an OpenAI-style /v1/embeddings endpoint, usually a server you run");
+    println!("  on this machine, another machine on your network, or one over your VPN.");
+    println!("  A public address works only over HTTPS, and you'll be asked to confirm it,");
+    println!("  because the text your server indexes then leaves your network.");
     println!("  {}", style("You don't need to know your model's dimension — we detect it when we probe.").dim());
     println!();
     println!("  {}", style("Pick a server for your silicon:").bold());
@@ -347,28 +331,29 @@ fn is_local_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-fn public_endpoint_msg(label: &str, host: &str) -> String {
+fn public_endpoint_msg(label: &str, host: &str, why: &str) -> String {
     format!(
-        "{label} ({host}) looks like a public address. Virtues runs inference on a \
-         service you host — this box, a machine on your LAN, or one over your VPN — so \
-         your data never leaves your network. Cloud embedding APIs (OpenAI, Cohere, …) \
-         are deliberately not supported. Point this at a local endpoint (see the recipes \
-         above). Expert override (traffic may leave your network): \
-         VIRTUES_ALLOW_REMOTE_INFERENCE=1."
+        "{label} ({host}) is a public address, outside your network. {why} \
+         Nothing was changed. Use an HTTPS URL, or a server on this machine, your \
+         network or your VPN (see the list above). To skip this check in a scripted \
+         install, set VIRTUES_ALLOW_REMOTE_INFERENCE=1."
     )
 }
 
-/// Refuse an inference endpoint that isn't on the user's own machine/LAN/VPN.
-/// This is the enforcement behind "no cloud APIs": a public host (or a name that
-/// resolves to one) is rejected. `VIRTUES_ALLOW_REMOTE_INFERENCE=1` is the
-/// logged escape hatch for the expert running their own model off-network.
-fn ensure_local(url: &str, label: &str) -> Result<()> {
+/// Check where an inference endpoint sends your text. An address on this
+/// machine, the LAN or a VPN passes. A public address (or a name that resolves
+/// to one) passes only over HTTPS, and only after the owner confirms the host
+/// by name, because your server sends it the text of everything it indexes;
+/// plain HTTP would carry that text across the internet unencrypted.
+/// `VIRTUES_ALLOW_REMOTE_INFERENCE=1` skips the check, for scripted installs
+/// with no terminal to ask on.
+fn confirm_destination(url: &str, label: &str) -> Result<()> {
     use std::net::ToSocketAddrs;
 
     if std::env::var("VIRTUES_ALLOW_REMOTE_INFERENCE").as_deref() == Ok("1") {
         ui::warn(&format!(
-            "{label} locality check bypassed (VIRTUES_ALLOW_REMOTE_INFERENCE=1) — \
-             inference traffic may leave your network"
+            "{label} locality check skipped (VIRTUES_ALLOW_REMOTE_INFERENCE=1). \
+             If it's a public address, the text your server indexes leaves your network"
         ));
         return Ok(());
     }
@@ -379,37 +364,65 @@ fn ensure_local(url: &str, label: &str) -> Result<()> {
     if host.eq_ignore_ascii_case("localhost") || host.to_lowercase().ends_with(".local") {
         return Ok(());
     }
-    // Literal IP → classify directly.
-    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
-        if is_local_ip(ip) {
-            return Ok(());
-        }
-        bail!(public_endpoint_msg(label, &host));
-    }
-    // Hostname → resolve; require every resolved address to be local. If it
-    // can't be resolved right now (private DNS not reachable at install time),
-    // don't hard-block a plausibly-local name — a cloud API always resolves.
-    match (host.as_str(), 0u16).to_socket_addrs() {
-        Ok(addrs) => {
-            let ips: Vec<std::net::IpAddr> = addrs.map(|s| s.ip()).collect();
-            if ips.is_empty() || ips.iter().all(|ip| is_local_ip(*ip)) {
+    let public = if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        !is_local_ip(ip)
+    } else {
+        // Hostname → resolve; any public address counts as public. If it can't
+        // be resolved right now (private DNS not reachable at install time),
+        // don't hard-block a plausibly-local name — a cloud API always resolves.
+        match (host.as_str(), 0u16).to_socket_addrs() {
+            Ok(addrs) => {
+                let ips: Vec<std::net::IpAddr> = addrs.map(|s| s.ip()).collect();
                 if ips.is_empty() {
                     ui::warn(&format!(
                         "{label}: couldn't resolve {host} to verify it's local — proceeding"
                     ));
                 }
-                Ok(())
-            } else {
-                bail!(public_endpoint_msg(label, &host))
+                ips.iter().any(|ip| !is_local_ip(*ip))
+            }
+            Err(_) => {
+                ui::warn(&format!(
+                    "{label}: couldn't resolve {host} to verify it's local — proceeding"
+                ));
+                false
             }
         }
-        Err(_) => {
-            ui::warn(&format!(
-                "{label}: couldn't resolve {host} to verify it's local — proceeding"
-            ));
-            Ok(())
-        }
+    };
+    if !public {
+        return Ok(());
     }
+
+    if !url.starts_with("https://") {
+        bail!(public_endpoint_msg(
+            label,
+            &host,
+            "Over plain HTTP, your text would cross the internet unencrypted.",
+        ));
+    }
+    if !has_tty() {
+        bail!(public_endpoint_msg(
+            label,
+            &host,
+            "Sending your text there needs your confirmation, and there's no terminal to ask on.",
+        ));
+    }
+    println!();
+    println!("  {host} is outside your network. Your server sends it the text of everything");
+    println!("  it indexes for search, from every source you connect, and whoever runs {host}");
+    println!("  can read that text.");
+    println!();
+    let send = cliclack::confirm(format!("Send your search text to {host}?"))
+        .initial_value(false)
+        .interact()
+        .context("confirming a public embedding endpoint")?;
+    if !send {
+        bail!(
+            "{label} not set. Nothing was changed. Run the installer again and choose a \
+             server on your own network, or this computer's CPU."
+        );
+    }
+    ui::ok(&format!("{label}: your search text goes to {host}"));
+    Ok(())
 }
 
 // ────────────────────────────────────────────────────────────────────────

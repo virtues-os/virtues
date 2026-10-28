@@ -34,13 +34,8 @@ pub async fn install_deps(target: &Target) -> Result<()> {
 }
 
 async fn install_deps_apt(target: &Target) -> Result<()> {
-    // apt-get update before anything; needed to refresh package lists.
-    let mut cmd = apt();
-    cmd.args(["update", "-qq"]);
-    run_step("apt index", cmd).await?;
-
-    // PGDG repo for Postgres 18 on Ubuntu 22.04 + 24.04 (default repos
-    // ship older PGs). add_pgdg_repo() is idempotent.
+    // Pre-flight already refreshed the package lists and decided where
+    // Postgres 18 comes from. add_pgdg_repo() is idempotent.
     add_pgdg_repo(target).await?;
 
     apt_install("Postgres 18 + pgvector", &["postgresql-18", "postgresql-18-pgvector"]).await?;
@@ -99,16 +94,12 @@ async fn install_deps_dnf() -> Result<()> {
 }
 
 async fn add_pgdg_repo(target: &Target) -> Result<()> {
-    // Only add PGDG on Ubuntu versions where default repos ship < PG18.
-    let needs_pgdg = matches!(
-        (target.distro.as_str(), target.distro_version.as_str()),
-        ("ubuntu", "22.04" | "24.04" | "25.04" | "25.10"),
-    );
-    if !needs_pgdg {
+    // Only when the distro's own archive has no Postgres 18 (pre-flight).
+    let Some(codename) = target.pgdg.as_deref() else {
         return Ok(());
-    }
+    };
 
-    apt_install("apt key tooling", &["curl", "ca-certificates", "lsb-release", "gnupg"]).await?;
+    apt_install("apt key tooling", &["curl", "ca-certificates", "gnupg"]).await?;
 
     fs::create_dir_all("/usr/share/postgresql-common/pgdg")
         .context("creating /usr/share/postgresql-common/pgdg")?;
@@ -122,8 +113,6 @@ async fn add_pgdg_repo(target: &Target) -> Result<()> {
     ]);
     run_step("PGDG signing key", cmd).await?;
 
-    // Get the distro codename for the PGDG repo URL.
-    let codename = lsb_codename().await?;
     let line = format!(
         "deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] \
          https://apt.postgresql.org/pub/repos/apt {codename}-pgdg main\n"
@@ -134,14 +123,6 @@ async fn add_pgdg_repo(target: &Target) -> Result<()> {
     let mut cmd = apt();
     cmd.args(["update", "-qq"]);
     run_step("Refresh apt index w/ PGDG", cmd).await
-}
-
-async fn lsb_codename() -> Result<String> {
-    let out = Command::new("lsb_release").args(["-cs"]).output().await?;
-    if !out.status.success() {
-        return Err(anyhow!("lsb_release -cs failed"));
-    }
-    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
 }
 
 fn apt() -> Command {

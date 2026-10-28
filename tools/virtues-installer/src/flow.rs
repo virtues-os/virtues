@@ -41,9 +41,9 @@ pub async fn run(cli: Config) -> Result<()> {
 
     // ─── Pre-flight ─────────────────────────────────────────────────────
     ui::section("Pre-flight");
-    let target = steps::detect()?;
+    let mut target = steps::detect()?;
     ui::ok(&format!("Linux {} · {} {}", target.arch, target.distro, target.distro_version));
-    preflight::run().await?;
+    preflight::run(&mut target).await?;
 
     let mut cfg = InstallConfig::recommended_defaults();
     cfg.pinned_version = cli.version.clone();
@@ -58,7 +58,7 @@ pub async fn run(cli: Config) -> Result<()> {
 
     if cli.dry_run {
         ui::skip("dry-run — system would be modified by the following steps");
-        ui::skip("  • Inference: Dragon NPU auto-detect, else this machine's CPU (recommended) or your own server");
+        ui::skip("  • Inference: Dragon NPU auto-detect, else this machine's CPU (recommended) or an embedding server you run");
         ui::skip("  • System locale → C.UTF-8 (when not already UTF-8)");
         ui::skip("  • System packages (Postgres 18, Avahi)");
         ui::skip(&format!(
