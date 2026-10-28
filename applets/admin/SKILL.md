@@ -1,6 +1,6 @@
 ---
 name: admin
-description: Runs commands on your server as its admin and asks before deleting anything. Use when you want to inspect or change the server itself.
+description: Runs commands on your server as its admin. It can read every saved password and key, and what it reads goes to the AI model you use. Asks before deleting anything. Use when you want to inspect or change the server itself.
 allowed-tools: sudo sql_query sql_write
 metadata:
   invoke: chat

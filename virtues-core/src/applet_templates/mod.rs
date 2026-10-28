@@ -973,6 +973,19 @@ pub fn chat_applets() -> Vec<ChatApplet> {
         })
         .collect();
     out.sort_by(|a, b| (!a.shipped, &a.name).cmp(&(!b.shipped, &b.name)));
+    // `/name` and the wire carry only the name, which resolves to the shipped
+    // applet, so an unshipped one with a shipped one's name would show in the
+    // menu as itself and start the shipped one (a pack's `admin` would open
+    // the root shell). It is left out instead.
+    let shipped: std::collections::HashSet<String> =
+        out.iter().filter(|a| a.shipped).map(|a| a.name.clone()).collect();
+    out.retain(|a| {
+        let shadow = !a.shipped && shipped.contains(&a.name);
+        if shadow {
+            tracing::warn!(name = %a.name, applet_id = %a.applet_id, "an applet has a built-in applet's name, so /name leaves it out; rename its folder");
+        }
+        !shadow
+    });
     out
 }
 
@@ -1027,7 +1040,10 @@ fn usable_applets() -> Vec<UsableApplet> {
 /// The applets the assistant may load by name, in the order `use_applet`
 /// lists them.
 pub fn assistant_applets() -> Vec<UsableApplet> {
-    usable_applets().into_iter().filter(|a| a.for_assistant).collect()
+    // A name loads the first applet that has it, the shipped one, so a second
+    // with the same name is not listed as if it were its own.
+    let mut seen = std::collections::HashSet::new();
+    usable_applets().into_iter().filter(|a| seen.insert(a.name.clone())).filter(|a| a.for_assistant).collect()
 }
 
 /// The applet named `name` that has a prompt, shipped first.

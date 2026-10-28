@@ -196,6 +196,13 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         None if has_prompt => vec![Invoke::Chat, Invoke::Assistant],
         None => Vec::new(),
     };
+    if let Some(n) = name.as_deref().filter(|n| !shipped && invoke.contains(&Invoke::Chat)) {
+        if crate::api::chat_mode::RESERVED_CHAT_NAMES.contains(&n) {
+            errors.push(format!(
+                "`/{n}` already starts a built-in chat mode, so an applet named \"{n}\" cannot use `invoke: chat`. Rename the folder and `name`."
+            ));
+        }
+    }
     if invoke.contains(&Invoke::Chat) && !has_prompt {
         errors.push("`invoke: chat` starts it as a chat turn, but there is no prompt below the frontmatter. Add one, or leave `chat` out.".into());
     }
@@ -1680,5 +1687,17 @@ mod tests {
         let e = parse(text, f.path(), "user/mine", false).unwrap_err();
         assert!(e.iter().any(|e| e.contains("only applets that ship")), "{e:?}");
         assert_eq!(parse(text, f.path(), "mine", true).unwrap().source.map(|s| s.id).as_deref(), Some("google"));
+    }
+
+    /// The wire reads `sudo` and the other mode names before any applet, so
+    /// an unshipped applet may not take one as its `/name`.
+    #[test]
+    fn an_unshipped_applet_cannot_take_a_chat_modes_name() {
+        let f = tempfile::tempdir().unwrap();
+        let text = "---\nname: sudo\ndescription: Does things. Use when asked.\nmetadata:\n  invoke: chat\n---\nDo it.";
+        let e = parse(text, f.path(), "pack/sudo", false).unwrap_err();
+        assert!(e.iter().any(|e| e.contains("built-in chat mode")), "{e:?}");
+        let assistant_only = text.replace("invoke: chat", "invoke: assistant");
+        assert!(parse(&assistant_only, f.path(), "pack/sudo", false).is_ok());
     }
 }

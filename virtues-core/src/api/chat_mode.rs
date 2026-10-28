@@ -91,6 +91,14 @@ pub struct Limits {
     pub tool_timeout: Duration,
 }
 
+/// What the wire's mode field names before any applet: the modes, and the old
+/// names a client from before admin and deep research were applets sends.
+/// [`ChatMode::from_wire`] reads these first, so an applet the box did not
+/// ship may not take one as its `/name`: an imported `sudo` would start the
+/// real admin applet.
+pub(crate) const RESERVED_CHAT_NAMES: &[&str] =
+    &["chat", "interview", "local", getting_started::AGENT_MODE, "sudo", "deep_research"];
+
 impl ChatMode {
     /// The mode the client asked for. Unknown strings are ordinary chat.
     pub fn from_wire(requested: &str) -> Self {

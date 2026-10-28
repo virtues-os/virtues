@@ -552,9 +552,6 @@ fn str_list(arguments: &serde_json::Value, key: &str) -> Option<Vec<String>> {
         .map(|arr| arr.iter().filter_map(|v| v.as_str().map(|s| s.trim().to_string())).filter(|s| !s.is_empty()).collect())
 }
 
-/// Names `/name` cannot take: the chat modes the same wire field carries.
-const RESERVED_CHAT_NAMES: &[&str] = &["chat", "sudo", "interview", "local"];
-
 /// The spec name a draft's name becomes: lowercase words joined by hyphens,
 /// which is also its folder. "Morning note" is `morning-note`.
 fn spec_name(name: &str) -> String {
@@ -583,7 +580,7 @@ fn check_invoke(draft: &Draft) -> Vec<serde_json::Value> {
             findings.push(finding("agent", "an applet started with /name needs a prompt to run", None));
         }
         let name = spec_name(&draft.name);
-        if RESERVED_CHAT_NAMES.contains(&name.as_str()) || name == crate::api::getting_started::AGENT_MODE {
+        if crate::api::chat_mode::RESERVED_CHAT_NAMES.contains(&name.as_str()) {
             findings.push(finding("name", &format!("'{name}' is a chat mode's name"), Some("pick another name")));
         } else if crate::applet_templates::chat_applet_named(&name).is_some_and(|a| a.shipped) {
             findings.push(finding("name", &format!("'{name}' is a built-in applet's name"), Some("pick another name")));
