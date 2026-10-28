@@ -196,7 +196,7 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         None if has_prompt => vec![Invoke::Chat, Invoke::Assistant],
         None => Vec::new(),
     };
-    if let Some(n) = name.as_deref().filter(|n| !shipped && invoke.contains(&Invoke::Chat)) {
+    if let Some(n) = name.as_deref().filter(|_| !shipped && invoke.contains(&Invoke::Chat)) {
         if crate::api::chat_mode::RESERVED_CHAT_NAMES.contains(&n) {
             errors.push(format!(
                 "`/{n}` already starts a built-in chat mode, so an applet named \"{n}\" cannot use `invoke: chat`. Rename the folder and `name`."
@@ -410,7 +410,11 @@ fn readable_files(folder: &Path) -> Vec<String> {
     }
     let mut out = Vec::new();
     for dir in READABLE_DIRS {
-        walk(&folder.join(dir), dir, &mut out, 1);
+        // A linked `references/` would list whatever it points at.
+        let top = folder.join(dir);
+        if std::fs::symlink_metadata(&top).is_ok_and(|m| m.is_dir()) {
+            walk(&top, dir, &mut out, 1);
+        }
     }
     out.truncate(MAX_READABLE_FILES);
     out

@@ -153,8 +153,8 @@ pub(crate) fn applet_run_tool_ids() -> &'static [&'static str] {
 ///
 /// `allowed` is the applet's own list (`allowed-tools` in a `SKILL.md`), which
 /// narrows the allowlist; the tools in `ALWAYS_ALLOWED_TOOLS` stay. `None`
-/// gives the whole allowlist. This is the list the model is offered: the
-/// agent loop does not refuse a call to a tool that was not offered.
+/// gives the whole allowlist. This is the list the model is offered, and the
+/// agent loop refuses a call to a tool that was not offered.
 pub fn get_tools_for_applet(has_chat: bool, allowed: Option<&[String]>) -> Vec<serde_json::Value> {
     let ids: Vec<&str> = match allowed {
         Some(list) => APPLET_RUN_ALLOWED_TOOLS

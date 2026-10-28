@@ -98,6 +98,9 @@ pub struct ToolContext {
     /// asks before it runs, and `sudo` runs at all. Set only by the chat
     /// handler — applet runs and subagents build their context without it.
     pub sudo: bool,
+    /// The applet whose prompt this turn or run follows: a `/name` turn or
+    /// an applet's run. `use_applet` then reads only that applet's files.
+    pub own_applet: Option<String>,
     /// The applet run this call is part of, so what the run's `shell` reaches
     /// is recorded on it. `None` outside an applet run.
     pub applet_run_id: Option<String>,
@@ -137,6 +140,7 @@ impl Default for ToolContext {
             temporary: false,
             ghost_permissions: None,
             sudo: false,
+            own_applet: None,
             applet_run_id: None,
             timezone: None,
             turn: None,
@@ -550,7 +554,19 @@ impl ToolExecutor {
             }
             "shell" => self.execute_shell(arguments, context).await,
             // Deep Research fan-out: spawn read-only research workers in parallel.
+            // Only a shipped applet's own turn that lists it may, as with
+            // `sudo`: the turn loop refuses a tool it did not offer, and this
+            // holds even if a list offers it by mistake.
             "dispatch_subagents" => {
+                let allowed = context.applet_id.is_none()
+                    && context.own_applet.as_deref().and_then(crate::applet_templates::chat_applet_named).is_some_and(
+                        |a| a.shipped && a.tools.as_ref().is_some_and(|t| t.iter().any(|t| t == "dispatch_subagents")),
+                    );
+                if !allowed {
+                    return Err(ToolError::InvalidParameters(
+                        "dispatch_subagents runs only in a deep research turn".into(),
+                    ));
+                }
                 crate::agent::subagent::dispatch(self._pool.clone(), arguments, context).await
             }
             // Page editing tools - all routed to PageEditorTool
@@ -617,7 +633,7 @@ impl ToolExecutor {
             "applet" => {
                 super::applet_management::execute(&self._pool, self.yjs_state.as_ref(), arguments, context).await
             }
-            super::use_applet::TOOL => super::use_applet::execute(&arguments),
+            super::use_applet::TOOL => super::use_applet::execute(&arguments, context.own_applet.as_deref()),
             // Applet memory (persistent scratchpad for actions across runs)
             "update_applet_memory" => self.execute_update_applet_memory(arguments, context).await,
             // Dayline event CRUD (used by hourly/EOD actions)

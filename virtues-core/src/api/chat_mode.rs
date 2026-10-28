@@ -235,6 +235,15 @@ impl ChatMode {
         matches!(self, Self::Applet(a) if a.shipped && a.tools.iter().any(|t| t == "sudo"))
     }
 
+    /// The applet a `/name` turn follows, whose files alone `use_applet`
+    /// reads in it.
+    pub fn applet_name(&self) -> Option<&str> {
+        match self {
+            Self::Applet(a) => Some(&a.name),
+            _ => None,
+        }
+    }
+
     /// Whether the turn may honor the person's pin, or must ride the slot
     /// default.
     ///

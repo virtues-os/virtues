@@ -2412,6 +2412,7 @@ fn create_agent_stream(
             temporary,
             ghost_permissions: Some(ghost_permissions.clone()),
             sudo: mode.is_sudo(),
+            own_applet: mode.applet_name().map(str::to_string),
             applet_run_id: None,
             timezone: request.timezone.clone(),
             turn: Some(turn_key),

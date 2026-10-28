@@ -54,7 +54,10 @@ pub(crate) fn own_files_definition(name: &str) -> Option<serde_json::Value> {
     Some(super::llm_definition(virtues_registry::tools::applet_files_tool(&entry(&applet))))
 }
 
-pub(crate) fn execute(arguments: &serde_json::Value) -> Result<ToolResult, ToolError> {
+/// `own` is the applet whose turn or run this is, which may read only its
+/// own files; elsewhere (chat) only an applet offered to the assistant loads
+/// or has its files read.
+pub(crate) fn execute(arguments: &serde_json::Value, own: Option<&str>) -> Result<ToolResult, ToolError> {
     let name = arguments
         .get("name")
         .and_then(|v| v.as_str())
@@ -62,21 +65,35 @@ pub(crate) fn execute(arguments: &serde_json::Value) -> Result<ToolResult, ToolE
         .filter(|n| !n.is_empty())
         .ok_or_else(|| ToolError::InvalidParameters("name is required".into()))?;
     let file = arguments.get("file").and_then(|v| v.as_str()).map(str::trim).filter(|f| !f.is_empty());
+    if let Some(own) = own {
+        if name != own || file.is_none() {
+            return Err(ToolError::InvalidParameters(format!(
+                "In {own}'s turn, use_applet reads only {own}'s own files, by name and file."
+            )));
+        }
+    }
     let applet = crate::applet_templates::usable_applet_named(name)
         .ok_or_else(|| ToolError::InvalidParameters(format!("there is no applet named {name} with a prompt")))?;
+    if own.is_none() && !applet.for_assistant {
+        return Err(not_for_assistant(&applet));
+    }
     match file {
         Some(file) => read_file(&applet, file),
         None => load(&applet),
     }
 }
 
+fn not_for_assistant(applet: &UsableApplet) -> ToolError {
+    ToolError::InvalidParameters(format!(
+        "{} is not one the assistant loads. The owner starts it with /{} in the composer, or it runs on its own.",
+        applet.name, applet.name
+    ))
+}
+
 /// The second stage: the applet's prompt, for the model to follow now.
 fn load(applet: &UsableApplet) -> Result<ToolResult, ToolError> {
     if !applet.for_assistant {
-        return Err(ToolError::InvalidParameters(format!(
-            "{} is not one the assistant loads. The owner starts it with /{} in the composer, or it runs on its own.",
-            applet.name, applet.name
-        )));
+        return Err(not_for_assistant(applet));
     }
     Ok(ToolResult::success(serde_json::json!({
         "applet": applet.name,
@@ -97,6 +114,15 @@ fn read_file(applet: &UsableApplet, file: &str) -> Result<ToolResult, ToolError>
         )));
     }
     let path = applet.folder.join(file);
+    // The listing skipped links, but a file can be swapped for one after the
+    // catalog loaded: what is read must still be a file inside the folder.
+    let inside = match (std::fs::canonicalize(&path), std::fs::canonicalize(&applet.folder)) {
+        (Ok(p), Ok(root)) => p.starts_with(root) && std::fs::symlink_metadata(&path).is_ok_and(|m| m.is_file()),
+        _ => false,
+    };
+    if !inside {
+        return Err(ToolError::ExecutionFailed(format!("{file} is not a file inside {}'s folder", applet.name)));
+    }
     let size = std::fs::metadata(&path)
         .map_err(|e| ToolError::ExecutionFailed(format!("{file} could not be read: {e}")))?
         .len();
@@ -198,12 +224,15 @@ mod tests {
         let names = def["function"]["parameters"]["properties"]["name"]["enum"].as_array().unwrap().clone();
         for name in ["meeting-prep", "morning-brief", "trip-planner", "weekly-review"] {
             assert!(names.contains(&serde_json::json!(name)), "{name} is not listed: {names:?}");
-            let r = execute(&serde_json::json!({ "name": name })).unwrap();
+            let r = execute(&serde_json::json!({ "name": name }), None).unwrap();
             assert!(!r.data["instructions"].as_str().unwrap().is_empty(), "{name}");
         }
         for name in ["admin", "deep-research", "new-applet", "wiki-editor", "day-summary-eod"] {
             assert!(!names.contains(&serde_json::json!(name)), "{name} is listed");
         }
-        assert!(execute(&serde_json::json!({ "name": "admin" })).is_err(), "admin is /admin only");
+        assert!(execute(&serde_json::json!({ "name": "admin" }), None).is_err(), "admin is /admin only");
+        // An applet's own turn reads its own files and nothing of another's.
+        let e = execute(&serde_json::json!({ "name": "meeting-prep" }), Some("weekly-review")).unwrap_err().to_string();
+        assert!(e.contains("only weekly-review's own files"), "{e}");
     }
 }

@@ -1011,6 +1011,12 @@ pub struct UsableApplet {
     pub for_assistant: bool,
 }
 
+/// A folder an import brought: in the state root and not under `user/`,
+/// where the assistant's own applets and saved skills live.
+fn is_imported(t: &Template) -> bool {
+    t.owner == "user" && !t.dir.starts_with("user/") && t.folder.as_ref().is_some_and(|f| f.starts_with(state_root()))
+}
+
 /// Every applet with a prompt, shipped first, each group by name.
 fn usable_applets() -> Vec<UsableApplet> {
     let guard = catalog_lock().read().expect("catalog rwlock poisoned");
@@ -1026,9 +1032,14 @@ fn usable_applets() -> Vec<UsableApplet> {
                     body: t.agent.clone()?,
                     files: t.files.clone(),
                     folder: t.folder.clone()?,
+                    // An import's prompt is not offered: chat has tools no
+                    // applet may list (browse, send_imessage), and a loaded
+                    // prompt runs with them. It still runs as `/name`.
                     for_assistant: t.triggers.iter().any(|x| x == "tool")
                         && t.command.is_none()
-                        && t.run_sql.is_none(),
+                        && t.run_sql.is_none()
+                        && t.default_enabled
+                        && !is_imported(t),
                 },
             ))
         })
