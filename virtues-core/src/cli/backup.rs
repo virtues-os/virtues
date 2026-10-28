@@ -921,11 +921,11 @@ impl Stage {
             .mode(0o700)
             .create(&path)
             .map_err(|e| crate::Error::Other(format!("create {}: {e}", path.display())))?;
-        let stage = Self { dir: open_new_stage(&path)?, path };
+        let stage = Self { dir: open_new_folder(&path)?, path };
         // In a folder every user can write to, such as the shared `/tmp`,
         // another user could have made `root` first, to read what is unpacked
         // into it. The stage belongs to this process's user
-        // (`open_new_stage`), so there the two owners must match.
+        // (`open_new_folder`), so there the two owners must match.
         if in_shared_folder(root) && meta.uid() != effective_uid() {
             return Err(crate::Error::Other(format!(
                 "{} belongs to another user. Remove it, or set TMPDIR to a folder \
@@ -963,8 +963,9 @@ impl Stage {
     }
 }
 
-/// [`Stage::within`] for the folder `dir`, opened at `path`.
-fn reach(path: &Path, dir: &File) -> PathBuf {
+/// [`Stage::within`] for the folder `dir`, opened at `path`. Restore uses it
+/// for the folders it writes into as well.
+pub(crate) fn reach(path: &Path, dir: &File) -> PathBuf {
     #[cfg(target_os = "linux")]
     {
         use std::os::fd::AsRawFd;
@@ -996,19 +997,20 @@ impl Drop for Stage {
     }
 }
 
-/// Open the stage just made at `path`, and check that it is one this process
-/// made: a folder, not a link, owned by this process's user, private and
-/// empty.
+/// Open the folder just made at `path`, and check that it is one this
+/// process made: a folder, not a link, owned by this process's user, private
+/// and empty.
 ///
-/// Between making the folder and opening it, the owner of the staging folder
+/// Between making the folder and opening it, the owner of the folder above
 /// can swap another one in. A folder that passes these checks can only have
-/// been made by this process's user, and nobody else can add to it.
-fn open_new_stage(path: &Path) -> Result<File, crate::Error> {
+/// been made by this process's user, and nobody else can add to it. A stage
+/// is made this way, and so are the lake and applet folders restore fills.
+pub(crate) fn open_new_folder(path: &Path) -> Result<File, crate::Error> {
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     let refuse = |why: &str| {
         crate::Error::Other(format!(
             "{} changed while it was being made ({why}). Something else is writing \
-             in that folder. Nothing has been changed.",
+             in the folder that holds it.",
             path.display()
         ))
     };
@@ -1503,19 +1505,19 @@ mod tests {
         let loose = dir.path().join("loose");
         fs::create_dir(&loose).unwrap();
         fs::set_permissions(&loose, fs::Permissions::from_mode(0o755)).unwrap();
-        let err = open_new_stage(&loose).expect_err("a folder others can open was used");
+        let err = open_new_folder(&loose).expect_err("a folder others can open was used");
         assert!(err.to_string().contains("other users can open it"), "{err}");
 
         let full = dir.path().join("full");
         fs::create_dir(&full).unwrap();
         fs::set_permissions(&full, fs::Permissions::from_mode(0o700)).unwrap();
         fs::write(full.join("lake"), "planted").unwrap();
-        let err = open_new_stage(&full).expect_err("a folder with something in it was used");
+        let err = open_new_folder(&full).expect_err("a folder with something in it was used");
         assert!(err.to_string().contains("not empty"), "{err}");
 
         let linked = dir.path().join("linked");
         std::os::unix::fs::symlink(&full, &linked).unwrap();
-        assert!(open_new_stage(&linked).is_err(), "a link was opened as a stage");
+        assert!(open_new_folder(&linked).is_err(), "a link was opened as a stage");
     }
 
     #[test]

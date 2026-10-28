@@ -518,10 +518,8 @@ pub(crate) fn apply(staging: &Path, targets: &Targets) -> Result<(), crate::Erro
     let staged_lake = staging.join("lake");
     if is_staged_dir(&staged_lake) {
         assert_replaceable_lake(&targets.lake)?;
-        let _ = fs::remove_dir_all(&targets.lake);
-        fs::create_dir_all(&targets.lake)
-            .map_err(|e| crate::Error::Other(format!("create lake dir: {e}")))?;
-        move_tree(&staged_lake, &targets.lake)?;
+        let lake = Target::recreate(&targets.lake, "lake")?;
+        move_tree(&staged_lake, &lake.within())?;
     }
 
     // Authored applets. Replace wholesale like the lake: the tarball is the
@@ -532,10 +530,8 @@ pub(crate) fn apply(staging: &Path, targets: &Targets) -> Result<(), crate::Erro
             "→ restoring authored applets at {}…",
             targets.applets.display()
         );
-        let _ = fs::remove_dir_all(&targets.applets);
-        fs::create_dir_all(&targets.applets)
-            .map_err(|e| crate::Error::Other(format!("create applets dir: {e}")))?;
-        move_tree(&staged_applets, &targets.applets)?;
+        let applets = Target::recreate(&targets.applets, "applets")?;
+        move_tree(&staged_applets, &applets.within())?;
     }
 
     let staged_env = read_staged_env(&staging.join("env/virtues.env"))?;
@@ -576,6 +572,52 @@ pub(crate) fn apply(staging: &Path, targets: &Targets) -> Result<(), crate::Erro
     }
     pg_restore(&dump, &targets.database_url)?;
     Ok(())
+}
+
+/// A folder restore empties and fills, the lake or the applet folder, reached
+/// through the folder it opened rather than through its name.
+///
+/// The folder above it belongs to the service user, so code running as that
+/// user can swap the new folder for a link between restore making it and
+/// filling it. Root moving files in by name would then put them wherever the
+/// link points, and they would stay root's, since the hand-back's `chown -R`
+/// does not follow a link. So restore makes the folder itself, root's and
+/// 0700, opens it, checks it (`backup::open_new_folder`), and moves files in
+/// through the descriptor (`backup::reach`). When restore is done with it,
+/// the folder gets the 0755 a plain `mkdir` would have given it.
+struct Target {
+    path: PathBuf,
+    dir: File,
+}
+
+impl Target {
+    /// Remove whatever is at `path` and make an empty folder there.
+    fn recreate(path: &Path, what: &str) -> Result<Self, crate::Error> {
+        use std::os::unix::fs::DirBuilderExt;
+        // Removes a link at `path` itself, never what it points to.
+        let _ = fs::remove_dir_all(path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| crate::Error::Other(format!("create {}: {e}", parent.display())))?;
+        }
+        fs::DirBuilder::new()
+            .mode(0o700)
+            .create(path)
+            .map_err(|e| crate::Error::Other(format!("create {what} dir {}: {e}", path.display())))?;
+        let dir = super::backup::open_new_folder(path)?;
+        Ok(Self { path: path.to_path_buf(), dir })
+    }
+
+    fn within(&self) -> PathBuf {
+        super::backup::reach(&self.path, &self.dir)
+    }
+}
+
+impl Drop for Target {
+    fn drop(&mut self) {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = self.dir.set_permissions(fs::Permissions::from_mode(0o755));
+    }
 }
 
 /// Open a file in a restore's stage for reading. A link is refused, never
@@ -630,15 +672,24 @@ fn read_staged_env(path: &Path) -> Result<Option<String>, crate::Error> {
 /// can put a link there, and root writing through it would overwrite the file
 /// it names. The new file is 0600, since the key is inside, and keeps the
 /// owner of the file it replaces.
+///
+/// The folder is opened once and both files are reached through it
+/// (`backup::reach`), so the new file is made and renamed in that one folder
+/// even if something swaps the folder's name in between.
 fn write_env_file(target: &Path, contents: &[u8]) -> Result<(), crate::Error> {
     use std::io::Write;
     use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
     let err = |e: std::io::Error| crate::Error::Other(format!("write env: {e}"));
-    if let Some(parent) = target.parent() {
-        fs::create_dir_all(parent).map_err(|e| crate::Error::Other(format!("env parent: {e}")))?;
-    }
-    let name = target.file_name().unwrap_or_default().to_string_lossy();
-    let tmp = target.with_file_name(format!(".{name}.restore-{}", std::process::id()));
+    let (Some(parent), Some(name)) = (target.parent(), target.file_name()) else {
+        return Err(crate::Error::Other(format!("{} is not a file path", target.display())));
+    };
+    let parent = if parent.as_os_str().is_empty() { Path::new(".") } else { parent };
+    fs::create_dir_all(parent).map_err(|e| crate::Error::Other(format!("env parent: {e}")))?;
+    let folder = File::open(parent).map_err(|e| crate::Error::Other(format!("env parent: {e}")))?;
+    let here = super::backup::reach(parent, &folder);
+    let target = here.join(name);
+    let target = target.as_path();
+    let tmp = here.join(format!(".{}.restore-{}", name.to_string_lossy(), std::process::id()));
     // A restore with this pid that stopped here left it.
     let _ = fs::remove_file(&tmp);
     let mut file = fs::OpenOptions::new()
@@ -1590,6 +1641,45 @@ mod drill {
         untouched("an archive's link was followed");
     }
 
+    /// The lake's folder belongs to the service user, which can put a link
+    /// where the lake goes, before restore recreates it or while it fills
+    /// it. Restore never writes through the link.
+    #[test]
+    fn restore_fills_the_lake_it_made_and_never_a_link_at_its_path() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join("root-only");
+        write(&outside.join("id_invented"), "invented secret");
+        let lake = dir.path().join("data/lake");
+        fs::create_dir_all(lake.parent().unwrap()).unwrap();
+        symlink(&outside, &lake).unwrap();
+
+        // A link already at the path is removed, not followed.
+        let target = Target::recreate(&lake, "lake").unwrap();
+        assert!(fs::symlink_metadata(&lake).unwrap().is_dir(), "the link is still there");
+        assert_eq!(fs::read_dir(&outside).unwrap().count(), 1);
+
+        // Swapped after it was made: on Linux, the files still go into the
+        // folder restore made. Elsewhere there is no service user, and the
+        // path is used.
+        let stage = dir.path().join("stage");
+        write(&stage.join("streams/ios/x.jsonl"), "{}");
+        let aside = dir.path().join("data/aside");
+        if cfg!(target_os = "linux") {
+            fs::rename(&lake, &aside).unwrap();
+            symlink(&outside, &lake).unwrap();
+        }
+        move_tree(&stage, &target.within()).expect("move");
+        drop(target);
+        let made = if cfg!(target_os = "linux") { &aside } else { &lake };
+        assert_eq!(fs::read_to_string(made.join("streams/ios/x.jsonl")).unwrap(), "{}");
+        assert_eq!(fs::metadata(made).unwrap().permissions().mode() & 0o777, 0o755);
+        let names: Vec<_> = fs::read_dir(&outside).unwrap().flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, ["id_invented"], "a file went through the link");
+    }
+
     /// The env file's folder belongs to the service user, which can put a
     /// link where the file goes. Restore replaces the link.
     #[test]
@@ -1808,15 +1898,12 @@ pub(crate) fn apply_from_volume(
     // already on the box. Files belonging to no archive would survive, be
     // indistinguishable from restored ones, and quietly make the result
     // something other than the state that was backed up.
-    let _ = fs::remove_dir_all(&targets.lake);
-    fs::create_dir_all(&targets.lake)
-        .map_err(|e| crate::Error::Other(format!("create lake dir: {e}")))?;
-
+    let lake = Target::recreate(&targets.lake, "lake")?;
     for (n, (name, stage)) in staged.iter().enumerate() {
         println!("→ increment {}/{}: {name}", n + 1, staged.len());
         let staged_lake = stage.within().join("lake");
         if is_staged_dir(&staged_lake) {
-            move_tree(&staged_lake, &targets.lake)?;
+            move_tree(&staged_lake, &lake.within())?;
         }
     }
 

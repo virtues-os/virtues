@@ -414,6 +414,13 @@ archive's regular files, and every move and read refuses a link
 one there. The env file is written beside its target and renamed over it, so
 a link at `virtues.env` is replaced, never written through.
 
+The lake and applet folders sit in folders the service user owns too, so
+restore treats them the same way. It removes each one, makes it again as
+root's and 0700, opens it, and moves files in through that descriptor, then
+sets it to 0755 for the hand-back (`Target` in `cli/restore.rs`). The
+hand-back's `chown -R` still goes by name, so a folder swapped at the last
+moment stays root's, and `sudo virtues migrate` hands it over.
+
 Owner-facing version: [`docs/operate/backup-and-restore.md`](../../docs/operate/backup-and-restore.md).
 
 ---
