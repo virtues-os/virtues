@@ -57,6 +57,7 @@
 	import Rail, { topOfElement } from "$lib/components/Rail.svelte";
 	import RestingMark from "$lib/components/chat/RestingMark.svelte";
 	import ChatSky from "$lib/components/chat/ChatSky.svelte";
+	import { MENTION_DROP_ATTR, MENTION_DROP_EVENT } from "$lib/stores/dndManager.svelte";
 	// Getting started — the room after the founder's letter. Same shape as
 	// the interview: the id decides everything, the top of the room is
 	// synthetic and rebuilt from derived state, the cards do the work.
@@ -1023,6 +1024,16 @@
 	// Local input state
 	let input = $state("");
 	let inputFocused = $state(false);
+	// What is typed after an open `@` in the composer, for the chat sky.
+	let mentionQuery = $state<string | null>(null);
+
+	/** Mention something from the chat sky in this chat's composer, the way
+	 *  a dropped tab is mentioned (ChatInput takes MENTION_DROP_EVENT). */
+	function mentionInComposer(url: string, label: string) {
+		composerEl
+			?.querySelector(`[${MENTION_DROP_ATTR}]`)
+			?.dispatchEvent(new CustomEvent(MENTION_DROP_EVENT, { detail: { url, label, at: null } }));
+	}
 	// The hidden figure: "∴" or "therefore" sent into an empty chat opens the
 	// three-body orbit instead of sending. Loaded only when asked for.
 	let threeBodyOpen = $state(false);
@@ -1294,7 +1305,7 @@
 	$effect(() => {
 		if (!showChatMenu || mobileLayout.isMobile) return paneActions.set(tab.id, []);
 		return paneActions.set(tab.id, [
-			{ id: "chat-options", label: "Chat options", icon: "ri:more-2-fill", run: openChatMenu },
+			{ id: "chat-options", label: "Chat options", icon: "mynaui:dots-vertical", run: openChatMenu },
 		]);
 	});
 
@@ -1309,7 +1320,7 @@
 				id: "context",
 				label: `Context ${Math.round(contextUsage.percentage)}%`,
 				description: `${n.format(contextUsage.tokens)} of ${n.format(contextUsage.window)} tokens`,
-				icon: "ri:donut-chart-line",
+				icon: "mynaui:chart-pie",
 				iconColor:
 					contextUsage.status === "critical"
 						? "var(--color-error)"
@@ -1327,7 +1338,7 @@
 				id: "temporary",
 				label: "Temporary chat",
 				description: "Isn't saved or remembered",
-				icon: "ri:ghost-line",
+				icon: "mynaui:incognito",
 				checked: isGhost,
 				dividerAfter: true,
 				action: toggleGhost,
@@ -1343,7 +1354,7 @@
 				id: "share",
 				label: "Share chat…",
 				description: "A read-only link to the conversation",
-				icon: "ri:share-forward-line",
+				icon: "mynaui:share",
 				action: () => {
 					sharing = true;
 				},
@@ -1352,14 +1363,14 @@
 		items.push({
 			id: "pin",
 			label: pinned ? "Unpin tab" : "Pin tab",
-			icon: pinned ? "ri:unpin-line" : "ri:pushpin-line",
+			icon: pinned ? "mynaui:pin" : "mynaui:pin",
 			action: () => windowShellStore.togglePin(tab.id),
 		});
 		if (canManageChat) {
 			items.push({
 				id: "delete",
 				label: "Delete chat",
-				icon: "ri:delete-bin-line",
+				icon: "mynaui:trash",
 				variant: "destructive",
 				dividerBefore: true,
 				action: deleteThisChat,
@@ -1796,7 +1807,7 @@
 		previousTabRoute = route;
 		windowShellStore.updateTab(tab.id, {
 			route,
-			icon: isGhost ? "ri:ghost-line" : "ri:chat-1-line",
+			icon: isGhost ? "mynaui:incognito" : "mynaui:chat",
 			...(PLACEHOLDER_LABELS.has(tab.label) && {
 				label: isGhost ? "Temporary Chat" : "New Chat",
 			}),
@@ -1893,7 +1904,7 @@
 							aria-label="Chat options"
 							title="Chat options"
 						>
-							<Icon icon="ri:more-2-fill" width="16" />
+							<Icon icon="mynaui:dots-vertical" width="16" />
 						</button>
 					{/if}
 				</div>
@@ -2211,7 +2222,7 @@
 													</div>
 												{:else}
 													<div class="generating-image">
-														<Icon icon="ri:image-add-line" width="16" />
+														<Icon icon="mynaui:image" width="16" />
 														<span>Generating image…</span>
 													</div>
 												{/if}
@@ -2286,8 +2297,8 @@
 													>
 														<Icon
 															icon={copiedMessageId === message.id
-																? "ri:check-line"
-																: "ri:file-copy-line"}
+																? "mynaui:check"
+																: "mynaui:copy"}
 															width="14"
 														/>
 													</button>
@@ -2304,7 +2315,7 @@
 																void chat.regenerate();
 															}}
 														>
-															<Icon icon="ri:refresh-line" width="14" />
+															<Icon icon="mynaui:refresh" width="14" />
 														</button>
 													{/if}
 												</div>
@@ -2433,7 +2444,7 @@
 						     yields to staged attachments, whose chips grow upward from
 						     the composer. -->
 						<div class="init-hero" out:fade={{ duration: 200 }}>
-							<ChatSky />
+							<ChatSky query={mentionQuery} draft={input} onMention={mentionInComposer} />
 						</div>
 					{/if}
 
@@ -2447,7 +2458,7 @@
 							in:fade={{ duration: 300 }}
 							out:fly={{ y: -14, duration: 300, easing: cubicInOut }}
 						>
-							<Icon icon="ri:ghost-line" width="22" class="ghost-hero-glyph" />
+							<Icon icon="mynaui:incognito" width="22" class="ghost-hero-glyph" />
 							<h1 class="ghost-hero-title">Temporary Chat</h1>
 							<p class="ghost-hero-note">This chat isn't saved, and your assistant won't remember it. Closing the tab ends it.</p>
 						</div>
@@ -2476,13 +2487,13 @@
 								{#if turnPhase.working}
 									<span class="jump-dots" aria-hidden="true"><i></i><i></i><i></i></span>
 								{:else}
-									<Icon icon="ri:arrow-down-line" width="16" />
+									<Icon icon="mynaui:arrow-down" width="16" />
 								{/if}
 							</button>
 						{/if}
 						{#if isGhost && !isEmpty}
 							<div class="ghost-caption" in:fade={{ duration: 300 }}>
-								<Icon icon="ri:ghost-line" width="12" />
+								<Icon icon="mynaui:incognito" width="12" />
 								<span>Temporary chat · not saved</span>
 							</div>
 						{/if}
@@ -2535,6 +2546,7 @@
 							onModeChange={changeMode}
 							modes={availableModes({ localSupported: localModel.status.supported })}
 							bind:skill={composerSkill}
+							bind:mentionQuery
 							suggestion={suggestionAllowed ? suggestion : null}
 							{onSuggestion}
 						/>

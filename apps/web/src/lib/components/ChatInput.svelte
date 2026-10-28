@@ -11,6 +11,7 @@
 	import { createComposer, type Composer } from "$lib/document/composer";
 	import { outgoingMessage } from "$lib/document/message";
 	import { ATTACH_ACCEPT } from "$lib/components/chat/state/attachments.svelte";
+	import { COMPOSER_OVERLAY_ATTR } from "$lib/components/chat/state/composerReserve";
 	import {
 		AGENT_MODES,
 		DEPTH_NAMES,
@@ -45,6 +46,7 @@
 		skill = $bindable(null),
 		suggestion = null,
 		onSuggestion = undefined,
+		mentionQuery = $bindable(null),
 	}: {
 		value?: string;
 		disabled?: boolean;
@@ -72,6 +74,9 @@
 		/** What became of the suggestion: drawn (`shown`), sent (`used`), or
 		 *  put away with Escape (`dismissed`). */
 		onSuggestion?: (id: string, outcome: "shown" | "used" | "dismissed") => void;
+		/** What is typed after an open `@`, else null. The chat sky lights
+		 *  the moments it matches. */
+		mentionQuery?: string | null;
 	} = $props();
 
 	// The one mode, shown as two chips (see DEPTH_ORDER). Full access runs at
@@ -160,8 +165,8 @@
 		contextMenu.show(
 			{ x: r.left, y: r.top },
 			[
-				{ id: "attach", label: "Add files", icon: "ri:attachment-2", action: pickFiles },
-				{ id: "photos", label: "Add photos", icon: "ri:image-line", action: () => photoInputEl?.click() },
+				{ id: "attach", label: "Add files", icon: "mynaui:paperclip", action: pickFiles },
+				{ id: "photos", label: "Add photos", icon: "mynaui:image", action: () => photoInputEl?.click() },
 			],
 			{
 				anchor: { x: r.left, y: r.top, width: r.width, height: r.height },
@@ -195,6 +200,9 @@
 	let inputIsEmpty = $state(true);
 	// The `@` query while the editor's `@` trigger is open, else null.
 	let mention = $state<string | null>(null);
+	$effect(() => {
+		mentionQuery = mention;
+	});
 	// The `/` query while the skills menu is open, else null.
 	let slash = $state<string | null>(null);
 	// The tray above the card shows one view at a time.
@@ -390,8 +398,11 @@
 	let rowOver = $state(false);
 	const mentionOver = $derived(rowOver || (shellEl !== null && dndManager.mentionTarget === shellEl));
 
+	// A ref sent with no point, from the chat sky, takes the place of an open
+	// `@` and what was typed after it, as a pick from the menu would.
 	function mentionDropped(url: string, label: string, at: { x: number; y: number } | null) {
-		editor?.insertRefHere(label, url, at ?? undefined);
+		if (!at && mention !== null) editor?.insertRef(label, url);
+		else editor?.insertRefHere(label, url, at ?? undefined);
 	}
 
 	function onDragOverCapture(e: DragEvent) {
@@ -520,7 +531,11 @@
 				inputIsEmpty = !markdown.trim();
 			},
 			onFocusChange: (f) => {
-				isFocused = f;
+				// A focused composer that is removed, by leaving the chat, blurs
+				// while Svelte is still tearing the page down, where writing state
+				// throws `state_unsafe_mutation`. The write waits a microtask, for
+				// focus and blur alike so the two keep their order.
+				queueMicrotask(() => (isFocused = f));
 			},
 			onHeight: setHeight,
 			onAttach,
@@ -576,6 +591,7 @@
 			class="tray"
 			class:open={trayOpen}
 			inert={!trayOpen}
+			{...{ [COMPOSER_OVERLAY_ATTR]: "" }}
 			style:height="{trayOpen ? trayContentHeight : 0}px"
 		>
 			<div bind:offsetHeight={trayContentHeight}>
@@ -626,7 +642,7 @@
 			<div class="field-row" style:--skill-indent="{skill ? skillChipWidth + 6 : 0}px">
 				{#if skill}
 					<span class="skill-chip" title={skill.description} bind:offsetWidth={skillChipWidth}>
-						<Icon icon={skill.icon ?? "ri:flashlight-line"} width="13" style="color: inherit" />
+						<Icon icon={skill.icon ?? "mynaui:zap"} width="13" style="color: inherit" />
 						<span>/{skill.name}</span>
 						<button
 							type="button"
@@ -638,7 +654,7 @@
 								editor?.focus();
 							}}
 						>
-							<Icon icon="ri:close-line" width="12" />
+							<Icon icon="mynaui:x" width="12" />
 						</button>
 					</span>
 				{/if}
@@ -699,7 +715,7 @@
 						aria-expanded={attachOpen}
 						title="Add files or photos"
 					>
-						<span class="plus-mark"><Icon icon="ri:add-line" width="18" /></span>
+						<span class="plus-mark"><Icon icon="mynaui:plus" width="18" /></span>
 					</button>
 				{/if}
 
@@ -771,7 +787,7 @@
 							? "Full access: runs commands on your server and asks before deleting anything. Click to ask first."
 							: "Ask first: asks before changing anything. Click for full access."}
 					>
-						<Icon icon={fullAccess ? "ri:lock-unlock-line" : "ri:lock-line"} width="14" style="color: inherit" />
+						<Icon icon={fullAccess ? "mynaui:lock-open" : "mynaui:lock"} width="14" style="color: inherit" />
 						<span>{fullAccess ? "Full access" : "Ask first"}</span>
 					</button>
 				{/if}
@@ -790,7 +806,7 @@
 						aria-label="Dictate"
 						title="Dictate"
 					>
-						<Icon icon="ri:mic-line" width="17" />
+						<Icon icon="mynaui:microphone" width="17" />
 					</button>
 				{/if}
 				<!-- One persistent trailing button — its icon flips between send and
@@ -804,13 +820,13 @@
 				>
 					<span class="icon-swap">
 						<span class="swap-icon" class:active={trailingMode === "send" && (!isBusy || canQueue)}>
-							<Icon icon="ri:arrow-up-line" width="15" style="color: inherit" />
+							<Icon icon="mynaui:arrow-up" width="15" style="color: inherit" />
 						</span>
 						<span class="swap-icon" class:active={trailingMode === "send" && isBusy && !canQueue}>
-							<Icon icon="ri:loader-4-line" class="animate-spin" width="15" style="color: inherit" />
+							<Icon icon="mynaui:spinner" class="animate-spin" width="15" style="color: inherit" />
 						</span>
 						<span class="swap-icon" class:active={trailingMode === "stop"}>
-							<Icon icon="ri:stop-fill" width="15" style="color: inherit" />
+							<Icon icon="mynaui:stop-solid" width="15" style="color: inherit" />
 						</span>
 					</span>
 				</button>
@@ -843,7 +859,7 @@
 		border-radius: var(--shell-radius);
 		background: color-mix(in srgb, var(--color-foreground) 3%, var(--color-surface));
 		/* design-ok: the composer floats over the page (§6 elevation), so it takes a soft lift. */
-		box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--color-foreground) 11%, transparent);
+		box-shadow: 0 6px 18px -6px color-mix(in srgb, var(--color-foreground) 10%, transparent);
 		/* Out at hover-out. A state that comes on (ChatView's drop ring) sets
 		   its own hover-in duration. */
 		transition:
