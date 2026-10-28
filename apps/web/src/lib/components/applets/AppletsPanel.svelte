@@ -24,11 +24,9 @@
 	import { pinMenuItem } from '$lib/pins/pinAction';
 	import { appletGlyph, describeSchedule, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
 	import { needsYou } from '$lib/applets/days';
-	import GitImportModal from './GitImportModal.svelte';
 	import NewAppletSheet from './NewAppletSheet.svelte';
 
 	let newSheetOpen = $state(false);
-	let gitImportOpen = $state(false);
 	let retrying = $state<string | null>(null);
 	let err = $state<string | null>(null);
 
@@ -215,16 +213,7 @@
 	{/if}
 </section>
 
-<NewAppletSheet
-	open={newSheetOpen}
-	onClose={() => (newSheetOpen = false)}
-	onImport={() => {
-		newSheetOpen = false;
-		gitImportOpen = true;
-	}}
-/>
-
-<GitImportModal open={gitImportOpen} onClose={() => (gitImportOpen = false)} onImported={() => appletsStore.load()} />
+<NewAppletSheet open={newSheetOpen} onClose={() => (newSheetOpen = false)} />
 
 <style>
 	.applets-panel {

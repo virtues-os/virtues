@@ -519,6 +519,23 @@ host and keeps its log, and the run's page shows the hosts reached.
 **Done when:** a hand-written script applet reaches a public host with no
 approval, cannot reach the box or the LAN, and its run shows the host.
 
+Built on 2026-10-28 except on a box. Decided on the way:
+- The proxy allows any public host and still refuses IP literals and
+  anything inside the box or its network; the refused-hosts list went with
+  the host lists, since any public host is reachable anyway.
+- The `shell` tool is offline in an applet's run, as in chat; only a code
+  applet's own process gets the proxy.
+- `net(host)` and `lake` in `allowed-tools` are refused with what replaced
+  them, so a file written in between does not load silently wrong.
+- The `net_hosts` and `connections` columns stay, unread, so `virtues
+  rollback` still reads every row; a later migration drops them with
+  `condition` and `agent_shipped`.
+- State-root folders are no longer treated as imports by `use_applet`: with
+  no import, they are the owner's or the assistant's.
+- Decision 3 of agents/plan/secrets-plan.md (the owner allows each declared
+  key per unshipped applet, "the way network hosts work") is the owner's to
+  revisit; it is not built.
+
 Two checks stay when the connection approval goes (from the MCP work): the
 check in `call_tool` that a run may call a connection's tool only when its
 file's `allowed-tools` names it (the owner half goes, and its test is

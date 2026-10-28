@@ -48,18 +48,6 @@ pub fn routes() -> Router<AppState> {
                 .patch(patch_applet_handler)
                 .delete(delete_applet_handler),
         )
-        // The hosts an applet's code may reach. Here only: PATCH and the
-        // applet tool cannot set them (scheduler::applets::set_net_hosts).
-        .route(
-            "/api/applets/:id/hosts",
-            get(get_applet_hosts_handler).put(put_applet_hosts_handler),
-        )
-        // The connections an applet may use, set here only for the same
-        // reason (scheduler::applets::set_applet_connections).
-        .route(
-            "/api/applets/:id/connections",
-            get(get_applet_connections_handler).put(put_applet_connections_handler),
-        )
         .route("/api/applets/:id/run", post(trigger_applet_handler))
         .route("/api/applets/:id/message", post(message_applet_handler))
         .route("/api/applets/:id/data", get(get_applet_data_handler))
@@ -100,10 +88,6 @@ pub fn routes() -> Router<AppState> {
         .route("/api/sources", get(list_sources_handler))
         // Admin API — LLM-authoring on-ramp for new actions
         .route("/api/admin/reconcile", post(admin_reconcile_handler))
-        .route(
-            "/api/admin/applets/import-git",
-            post(import_git_applets_handler),
-        )
         // Developer API
         .route("/api/developer/sql", post(execute_sql_handler))
         .route("/api/developer/tables", get(list_tables_handler))
@@ -599,54 +583,6 @@ pub async fn get_applet_handler(
     }
 }
 
-/// GET /api/applets/:id/hosts — the hosts the applet's file asks for and the
-/// ones the owner allowed.
-pub async fn get_applet_hosts_handler(
-    State(state): State<AppState>,
-    Path(applet_id): Path<String>,
-) -> Result<Json<crate::scheduler::applets::NetHosts>, Error> {
-    Ok(Json(crate::scheduler::applets::net_hosts(state.db.pool(), &applet_id).await?))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PutHostsBody {
-    pub hosts: Vec<String>,
-}
-
-/// PUT /api/applets/:id/hosts — set the hosts the owner allows.
-pub async fn put_applet_hosts_handler(
-    State(state): State<AppState>,
-    Path(applet_id): Path<String>,
-    Json(body): Json<PutHostsBody>,
-) -> Result<Json<crate::scheduler::applets::NetHosts>, Error> {
-    Ok(Json(crate::scheduler::applets::set_net_hosts(state.db.pool(), &applet_id, &body.hosts).await?))
-}
-
-/// GET /api/applets/:id/connections — the connections the applet's file asks
-/// for and the ones the owner allowed.
-pub async fn get_applet_connections_handler(
-    State(state): State<AppState>,
-    Path(applet_id): Path<String>,
-) -> Result<Json<crate::scheduler::applets::AppletConnections>, Error> {
-    Ok(Json(crate::scheduler::applets::applet_connections(state.db.pool(), &applet_id).await?))
-}
-
-#[derive(Debug, Deserialize)]
-pub struct PutConnectionsBody {
-    pub connections: Vec<String>,
-}
-
-/// PUT /api/applets/:id/connections — set the connections the owner allows.
-pub async fn put_applet_connections_handler(
-    State(state): State<AppState>,
-    Path(applet_id): Path<String>,
-    Json(body): Json<PutConnectionsBody>,
-) -> Result<Json<crate::scheduler::applets::AppletConnections>, Error> {
-    Ok(Json(
-        crate::scheduler::applets::set_applet_connections(state.db.pool(), &applet_id, &body.connections).await?,
-    ))
-}
-
 /// PATCH /api/applets/:id — partial update. Enforces system-owner guard.
 pub async fn patch_applet_handler(
     State(state): State<AppState>,
@@ -994,33 +930,6 @@ pub async fn admin_reconcile_handler(State(state): State<AppState>) -> Response 
         Json(serde_json::json!({ "upserted": upserted })),
     )
         .into_response()
-}
-
-/// `POST /api/admin/applets/import-git`
-///
-/// Clone (or update) a Git repo into `actions/<slug>/` and reconcile so the
-/// new manifests show up as `app_applets` rows. We scope the per-row diff to
-/// the slug prefix and clean up rows for manifests that disappeared upstream.
-///
-/// This fetches and runs somebody else's code, so it needs the app's owner
-/// proof (`api::owner_proof`).
-pub async fn import_git_applets_handler(
-    State(state): State<AppState>,
-    _proof: crate::api::owner_proof::OwnerProven,
-    Json(body): Json<crate::applet_git_import::ImportRequest>,
-) -> Response {
-    let outcome = match crate::applet_git_import::import(state.db.pool(), body).await {
-        Ok(o) => o,
-        Err(e) => {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(serde_json::json!({ "error": e.to_string() })),
-            )
-                .into_response();
-        }
-    };
-
-    (StatusCode::OK, Json(outcome)).into_response()
 }
 
 // ============================================================================

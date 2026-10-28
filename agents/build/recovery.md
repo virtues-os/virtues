@@ -182,8 +182,7 @@ With no active row, AI calls go to the Virtues subscription.
 Revealing a password (`GET /api/passwords/:id/secret`) or a key
 (`GET /api/keys/:name/value`), enrolling a device
 (`POST /api/devices/enroll-peer`), minting a pair code (`POST /api/pair/mint`,
-`POST /api/pair/mint-collector`), changing or clearing the AI key, and
-importing an applet package (`POST /api/admin/applets/import-git`) need an
+`POST /api/pair/mint-collector`), and changing or clearing the AI key need an
 `X-Virtues-Owner-Proof` header. The app fetches a one-time nonce from
 `POST /api/owner-proof/nonce`, which lasts a minute, and signs it with the
 device's iroh key (`virtues_reach_client::owner::sign_http_owner_proof`). The

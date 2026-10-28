@@ -10,7 +10,7 @@
 //! `/work`, the run's workspace bind-mounted in, and the pinned Python
 //! environment is bind-mounted read-only at `/opt/py`, first on `PATH` (both
 //! in `api/code_env.rs`). An applet's run also gets its folder read-only at
-//! `/skill`, and an egress socket when its owner allowed hosts. Everything
+//! `/skill`. The shell has no network, in chat and in a run. Everything
 //! else of the box's stays hidden, other chats' workspaces included.
 //!
 //! ## Refusal vs. dev fallback
@@ -47,8 +47,6 @@ pub struct ShellRequest {
     pub timeout: u32,
     /// An applet's folder, mounted read-only at `/skill`.
     pub folder: Option<PathBuf>,
-    /// The run's egress proxy socket, when its owner allowed hosts.
-    pub egress: Option<PathBuf>,
 }
 
 /// What a `shell` call returns.
@@ -240,7 +238,7 @@ const SANDBOX_PATH_WITHOUT_PACKAGES: &str = "/usr/local/bin:/usr/bin:/bin";
 
 /// The sandboxed unit for one run: the workspace at `/work`, the package
 /// environment read-only at `/opt/py`, and for an applet its folder at
-/// `/skill` and its egress socket.
+/// `/skill`.
 fn sandbox_unit(timeout_secs: u32, workspace: &Path, env: Option<&Path>, request: &ShellRequest) -> Unit {
     let mut binds = vec![Bind { host: workspace.to_path_buf(), inside: "/work".into(), writable: true }];
     if let Some(env) = env {
@@ -254,7 +252,7 @@ fn sandbox_unit(timeout_secs: u32, workspace: &Path, env: Option<&Path>, request
         memory_max: MEMORY_MAX,
         working_directory: "/work",
         binds,
-        egress: request.egress.clone(),
+        egress: None,
         postgres: false,
         extra: Vec::new(),
     }
@@ -371,19 +369,13 @@ mod tests {
         assert!(!props.iter().any(|p| p.contains("/skill")), "only an applet's run has a folder");
     }
 
-    /// An applet's run sees its folder at /skill and, when allowed, its
-    /// egress socket.
+    /// An applet's run sees its folder at /skill, and has no way out.
     #[test]
-    fn an_applets_shell_sees_its_folder_and_its_way_out() {
-        let req = ShellRequest {
-            command: "true".into(),
-            timeout: 30,
-            folder: Some("/applets/user/tides".into()),
-            egress: Some("/run/virtues/egress/r1.sock".into()),
-        };
+    fn an_applets_shell_sees_its_folder_and_no_network() {
+        let req = ShellRequest { command: "true".into(), timeout: 30, folder: Some("/applets/user/tides".into()) };
         let props = sandbox_unit(30, Path::new("/ws"), None, &req).properties();
         assert!(props.iter().any(|p| p == "BindReadOnlyPaths=/applets/user/tides:/skill"));
-        assert!(props.iter().any(|p| p.ends_with(":/run/egress.sock")));
+        assert!(!props.iter().any(|p| p.contains("egress")));
     }
 
     /// A direct run, as on a developer machine, keeps only the basics of the

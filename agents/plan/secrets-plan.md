@@ -138,14 +138,15 @@ change for it, because `kind` already says which rows it would cover.
   goes to the AI model (`d053b6e61`). An unshipped applet named `sudo` is
   refused, and one named `admin` is left out of the `/` menu, so neither can
   start it (`d053b6e61`).
-- **Six actions need the app's own signature** (decided 2026-10-27, built in
+- **Five actions need the app's own signature** (decided 2026-10-27, built in
   `0f5feff2b`). Revealing a password, revealing a key, enrolling a device,
   minting a pair code (the collector's code too, since it redeems into a
-  device), changing the AI key and importing an applet package each need a
-  fresh owner proof. That is eight routes: `GET /api/passwords/:id/secret`,
-  `GET /api/keys/:name/value`, `POST /api/devices/enroll-peer`,
-  `POST /api/pair/mint`, `POST /api/pair/mint-collector`, `POST` and
-  `DELETE /api/settings/byo-key`, and `POST /api/admin/applets/import-git`.
+  device) and changing the AI key each need a fresh owner proof. That is
+  seven routes: `GET /api/passwords/:id/secret`, `GET /api/keys/:name/value`,
+  `POST /api/devices/enroll-peer`, `POST /api/pair/mint`,
+  `POST /api/pair/mint-collector`, and `POST` and
+  `DELETE /api/settings/byo-key`. Importing an applet package was a sixth
+  until the import left the app on 2026-10-28 (applet-shape.md, slice 9).
   The box hands out a one-time nonce (`POST /api/owner-proof/nonce`), and the
   app signs it with the device key, the same signing
   `crates/virtues-reach-client/src/owner.rs` does for an offline box, over a
@@ -186,9 +187,9 @@ change for it, because `kind` already says which rows it would cover.
 ## Release order
 
 The app updates before the box, so a box change normally only adds what a
-released app can ignore. `0f5feff2b` breaks that on purpose for the eight
+released app can ignore. `0f5feff2b` breaks that on purpose for the
 owner-proof routes: a released shell has no `owner_proof_sign`, so a box that
-carries `0f5feff2b` refuses its reveal, pair, AI key and import requests.
+carries `0f5feff2b` refuses its reveal, pair and AI key requests.
 
 - The same holds for the terminal and admin turns: a box that requires the
   proof on them refuses a released shell's terminal and its `/admin` turns,
@@ -201,8 +202,8 @@ carries `0f5feff2b` refuses its reveal, pair, AI key and import requests.
   `gh release list`, and record the order in the wave → staging PR.
 - A surface-15 app against an older box works for reveals and pairing: the
   box issues no nonce, and the app sends the request without a proof. If the
-  app's own UI runs against such a box, changing the AI key and importing a
-  package fail with a message to update the server, because that box still
+  app's own UI runs against such a box, changing the AI key fails with a
+  message to update the server, because that box still
   asks for a `virtues sudo` approval (`explainOldServer` in
   `apps/web/src/lib/api/client.ts`).
 - `services/virtues-api` may deploy before or after any box release. Its
@@ -270,7 +271,8 @@ the exception to the first rule, handled under "Release order".
 Built on 2026-10-27 and 10-28. The audit's "Status on 2026-10-28" table maps
 each item to its commit and says which are still open.
 
-- The owner proof on eight routes, `virtues sudo` removed (`0f5feff2b`);
+- The owner proof on eight routes, seven once the applet import left the
+  app, and `virtues sudo` removed (`0f5feff2b`);
   an app below surface 15 says to update, and a pairing whose record does
   not load stays paired (`7a3054101`).
 - The Browser pane refuses local hosts and hides secret fields; the Mac

@@ -672,30 +672,6 @@ export function adminReconcile(): Promise<{ upserted: number }> {
 	return apiSend<{ upserted: number }>('POST', '/admin/reconcile');
 }
 
-/**
- * POST /api/admin/applets/import-git — clones a repo into `actions/<slug>/`
- * and runs the standard scanner. Any folder under the slug containing a
- * `manifest.toml` becomes an action. Returns added/updated/removed ids.
- */
-export function importActionsFromGit(body: {
-	url: string;
-	ref?: string;
-}): Promise<{
-	/** Folder the package landed in — host + owner + repo, so two remotes with
-	 *  the same repo name can't claim each other's. */
-	slug: string;
-	/** Commit actually checked out. The server has always resolved this; the
-	 *  client used to drop it, which is why "is there a newer version" was
-	 *  unanswerable. */
-	commit: string | null;
-	added: string[];
-	updated: string[];
-	removed: string[];
-}> {
-	// Importing runs someone else's code, so it carries the owner proof.
-	return apiSendProven('POST', '/admin/applets/import-git', body);
-}
-
 export interface PatchAppletBody {
 	name?: string;
 	agent?: string | null;
@@ -710,39 +686,6 @@ export interface PatchAppletBody {
 
 export function patchApplet(id: string, patch: PatchAppletBody): Promise<Applet> {
 	return apiSend<Applet>('PATCH', `/applets/${encodeURIComponent(id)}`, patch);
-}
-
-/** The hosts an applet's code asks to reach (`net(host)` in its
- *  `allowed-tools`) and the ones you allowed. It reaches the hosts on both. */
-export interface AppletHosts {
-	requested: string[];
-	allowed: string[];
-}
-
-export function getAppletHosts(id: string): Promise<AppletHosts> {
-	return apiGet<AppletHosts>(`/applets/${encodeURIComponent(id)}/hosts`);
-}
-
-export function putAppletHosts(id: string, hosts: string[]): Promise<AppletHosts> {
-	return apiSend<AppletHosts>('PUT', `/applets/${encodeURIComponent(id)}/hosts`, { hosts });
-}
-
-/** The connections an applet's file asks for (`linear__*`), the ones you
- *  allowed, and the asked-for ones your server holds a sign-in for. */
-export interface AppletConnections {
-	requested: string[];
-	allowed: string[];
-	connected: string[];
-}
-
-export function getAppletConnections(id: string): Promise<AppletConnections> {
-	return apiGet<AppletConnections>(`/applets/${encodeURIComponent(id)}/connections`);
-}
-
-export function putAppletConnections(id: string, connections: string[]): Promise<AppletConnections> {
-	return apiSend<AppletConnections>('PUT', `/applets/${encodeURIComponent(id)}/connections`, {
-		connections,
-	});
 }
 
 export async function deleteApplet(id: string, dropData = false): Promise<void> {

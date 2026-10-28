@@ -699,35 +699,15 @@ impl ToolExecutor {
         }
         .map_err(ToolError::ExecutionFailed)?;
 
+        // The shell is offline wherever it runs, in chat and in an applet's
+        // run alike. An applet's own folder is mounted for its `scripts/`.
         let mut request = crate::api::code::ShellRequest { command: command.to_string(), timeout, ..Default::default() };
-        let mut proxy = None;
         if let Some(applet_id) = context.applet_id.as_deref() {
             request.folder = crate::applet_templates::dir_for_applet_id(applet_id)
                 .map(|d| crate::applet_templates::resolve_applet_dir(&d))
                 .filter(|p| p.is_dir());
-            let applet = crate::scheduler::applets::get_applet(self._pool.as_ref(), applet_id)
-                .await
-                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-            let hosts = crate::applet_runner::allowed_hosts(self._pool.as_ref(), applet_id, &applet.config)
-                .await
-                .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-            if !hosts.is_empty() {
-                let run = context.applet_run_id.as_deref().unwrap_or("shell");
-                let p = crate::applet_runner::start_proxy(&format!("{run}-{}", uuid::Uuid::new_v4()), &hosts)
-                    .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
-                request.egress = Some(p.path().to_path_buf());
-                proxy = Some(p);
-            }
         }
         let response = crate::api::code::run_shell(request, &ws).await;
-        if let Some(p) = proxy {
-            let requests = p.finish(std::time::Duration::from_secs(2)).await;
-            if let Some(run_id) = context.applet_run_id.as_deref() {
-                if let Err(e) = crate::applet_runner::record_requests(self._pool.as_ref(), run_id, &requests).await {
-                    tracing::error!(run_id, error = %e, "could not record the shell's network requests");
-                }
-            }
-        }
 
         // The chat shows a saved chat's images from its workspace; the model
         // gets their paths, never bytes.

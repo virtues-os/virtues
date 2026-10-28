@@ -797,8 +797,8 @@ impl ReachState {
   }
 
   /// Sign one HTTP request for the box with this device's paired key: the
-  /// owner proof the box asks for before revealing a secret, adding a device,
-  /// changing the AI key or importing an applet package. Returns the header
+  /// owner proof the box asks for before revealing a secret, adding a device
+  /// or changing the AI key. Returns the header
   /// value; the key never leaves the store.
   pub fn sign_http_owner_proof(&self, method: &str, path: &str, nonce: &str) -> anyhow::Result<String> {
     virtues_reach_client::owner::sign_http_owner_proof(self.store.as_ref(), method, path, nonce)

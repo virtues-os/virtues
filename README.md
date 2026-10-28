@@ -437,8 +437,8 @@ Pairing happens **in person**, with no passwords, email, or magic links. You go
 to the machine, run `virtues pair`, and enter the code on the new device, which
 adds its key to the allowlist. iroh rejects an unpaired key before any HTTP
 request is processed, and the server then maps the proven key to a paired
-device. Showing a saved password or key, adding a device, changing the AI key
-and importing an applet package also need a fresh signature from the app. To
+device. Showing a saved password or key, adding a device and changing the AI
+key also need a fresh signature from the app. To
 remove a device, run `virtues device rm <id>`; its next connection attempt is
 refused. In daily use you don't type any of this. The apps store the key and
 handle the connection, and on your home network they reach the server

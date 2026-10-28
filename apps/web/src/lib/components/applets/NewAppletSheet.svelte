@@ -1,6 +1,5 @@
 <script lang="ts">
 	import Modal from '$lib/components/Modal.svelte';
-	import TextAction from '$lib/components/TextAction.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
@@ -12,13 +11,10 @@
 	 */
 	let {
 		open,
-		onClose,
-		onImport
+		onClose
 	}: {
 		open: boolean;
 		onClose: () => void;
-		/** Bring applets in from a Git repository instead. */
-		onImport: () => void;
 	} = $props();
 
 	// Each with the glyph of where its work would go, as its row on the
@@ -101,9 +97,6 @@
 			{/each}
 		</ul>
 	</div>
-	{#snippet footer()}
-		<span class="import"><TextAction quiet onclick={onImport}>Import from Git</TextAction></span>
-	{/snippet}
 </Modal>
 
 <style>
@@ -197,8 +190,5 @@
 	.example-note {
 		font-size: 13px;
 		color: var(--color-foreground-muted);
-	}
-	.import {
-		margin-right: auto;
 	}
 </style>

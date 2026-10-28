@@ -16,8 +16,6 @@
 //!   redeems into a full device, so leaving it open would undo the other two.
 //! - `POST` and `DELETE /api/settings/byo-key`, because whoever sets the AI key
 //!   receives every message the assistant sends out.
-//! - `POST /api/admin/applets/import-git`, which runs someone else's code on
-//!   the box.
 //! - `GET /ws/terminal` and `POST /api/terminal/paste`, a shell on the box as
 //!   the service user, who has passwordless sudo.
 //! - `POST /api/chat` when the turn resolves to the admin applet

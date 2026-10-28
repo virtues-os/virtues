@@ -38,8 +38,8 @@ In a dev checkout they are `applets/` and the gitignored `.applet-state/`
 (`shipped_root()` / `state_root()` in `applet_templates/mod.rs`).
 
 - Everything core writes at runtime goes to the state root: chat-authored
-  applets under `user/<name>/`, Git packs imported through
-  `POST /api/admin/applets/import-git` under their slug.
+  applets under `user/<name>/`, forks of shipped applets under their own
+  name, and the owner's changes to shipped applets under `overrides/`.
 - `resolve_applet_dir()` checks state first, so an applet in the state root
   **shadows** a shipped one with the same dir, and deleting it reverts to the
   shipped version.
@@ -92,16 +92,14 @@ sandbox (`sandbox`, `applet_runner/sandboxed.rs`): a transient `systemd-run`
 unit with a throwaway user, no network and the box's data hidden. It sees
 its folder read-only at `/skill` (its working directory), its own lake
 folder at `/lake` (indexed into `lake_objects` after each run, and refused
-while over 2 GB), the whole lake read-only at `/data/lake` only when
-`allowed-tools` lists `lake`, and the Postgres socket with `DATABASE_URL`
-logged in as `virtues_applet_writer`. Its credentials are a file,
-`$CREDENTIALS_DIRECTORY/credentials.json`, and stdin carries `"credentials":
-null`. It has no network unless its `allowed-tools` asks for hosts with
-`net(host)` and the owner allowed them on the applet's page
-(`app_applets.net_hosts`); then the run gets an egress proxy (`egress`) that
-reaches only those hosts, and each request is recorded in
-`app_applet_run_requests`. In a Linux release build a missing `systemd-run`
-refuses the run rather than running it unsandboxed.
+while over 2 GB), the whole lake read-only at `/data/lake`, and the Postgres
+socket with `DATABASE_URL` logged in as `virtues_applet_writer`. Its
+credentials are a file, `$CREDENTIALS_DIRECTORY/credentials.json`, and stdin
+carries `"credentials": null`. It reaches the internet only through an egress
+proxy for the run (`egress`), which allows any public host, refuses the box
+and its network, and records each request in `app_applet_run_requests`. A
+release build without `systemd-run` refuses the run rather than running it
+unsandboxed.
 
 **Faces** are served by `server/faces.rs` into a `sandbox="allow-scripts"`
 iframe with an opaque origin, and every file carries a CSP `sandbox

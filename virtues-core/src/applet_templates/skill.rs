@@ -14,11 +14,10 @@
 //! than accepted and ignored: data triggers (`new <table>`), and `new_rows`
 //! in a `run` SQL, which only a data trigger fills.
 //!
-//! A `net(host)` entry asks for a host. It is kept in `config.net_hosts`,
-//! and a run reaches it only when the owner has also allowed it on the
-//! applet's page (`app_applets.net_hosts`), so nothing written in the file
-//! opens a way out on its own. A connection entry (`linear__*`) works the
-//! same way against `app_applets.connections` (`tools/connection.rs`).
+//! An applet has no permissions of its own beyond its tools: code reaches
+//! any public host through the box's proxy and reads the whole lake, and a
+//! connection entry (`linear__*`) gives a run that connection's tools
+//! (`tools/connection.rs`). Decided 2026-10-28.
 
 use std::path::Path;
 
@@ -73,10 +72,6 @@ const BRAND_SPELLINGS: &[(&str, &str)] = &[
 /// its own notes are not permissions. A turn `/name` starts has only what is
 /// listed, `think` included.
 pub(crate) const ALWAYS_ALLOWED_TOOLS: &[&str] = &["think", "update_applet_memory"];
-
-/// The `allowed-tools` entry that mounts the whole lake read-only for the
-/// applet's code (`applet_runner::sandboxed`).
-const LAKE_GRANT: &str = "lake";
 
 /// The largest per-run spend `limit` may set.
 const MAX_DOLLARS_PER_RUN: f64 = 10.0;
@@ -154,13 +149,7 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
     let agent = Some(body.trim()).filter(|b| !b.is_empty()).map(str::to_string);
     let has_prompt = agent.is_some();
 
-    let (allowed_tools, net_hosts) = match string("allowed-tools", &mut errors) {
-        Some(s) => {
-            let (tools, hosts) = check_allowed_tools(&s, shipped, &mut errors);
-            (Some(tools), hosts)
-        }
-        None => (None, Vec::new()),
-    };
+    let allowed_tools = string("allowed-tools", &mut errors).map(|s| check_allowed_tools(&s, shipped, &mut errors));
 
     // Virtues keys.
     let metadata = match get("metadata") {
@@ -218,14 +207,6 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
     if let Some(s) = &source {
         if s.is_empty() || !s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
             errors.push(format!("`source` \"{s}\" is not a source id, such as `plaid`."));
-        } else if !shipped {
-            // A source's runs are handed the account's decrypted tokens, so
-            // code the box did not ship would hold them. The plan has the
-            // owner approve that per applet, as with `net(host)`.
-            // TODO(2026-10-28): build that approval, then allow it here.
-            errors.push(format!(
-                "`source: {s}` gives each run your {s} account's sign-in, and only applets that ship with the box may ask for that for now."
-            ));
         }
     }
 
@@ -341,12 +322,6 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         config.insert(
             "allowed_tools".into(),
             toml::Value::Array(tools.into_iter().map(toml::Value::String).collect()),
-        );
-    }
-    if !net_hosts.is_empty() {
-        config.insert(
-            "net_hosts".into(),
-            toml::Value::Array(net_hosts.into_iter().map(toml::Value::String).collect()),
         );
     }
 
@@ -942,36 +917,24 @@ fn listable_tools() -> Vec<String> {
     out
 }
 
-/// The tool ids an applet asked for, checked against [`listable_tools`],
-/// and the hosts its `net(host)` entries ask for.
-fn check_allowed_tools(list: &str, shipped: bool, errors: &mut Vec<String>) -> (Vec<String>, Vec<String>) {
+/// The tool ids an applet asked for, checked against [`listable_tools`].
+fn check_allowed_tools(list: &str, shipped: bool, errors: &mut Vec<String>) -> Vec<String> {
     let mut available = listable_tools();
     if shipped {
         available.extend(SHIPPED_ONLY.iter().map(|t| t.to_string()));
     }
     let known: Vec<String> = virtues_registry::tools::default_tools().into_iter().map(|t| t.id).collect();
     let mut out = Vec::new();
-    let mut hosts: Vec<String> = Vec::new();
     for entry in list.split_whitespace() {
-        if let Some(rest) = entry.strip_prefix("net(") {
-            let Some(host) = rest.strip_suffix(')') else {
-                errors.push(format!("`{entry}` must be written as `net(host)`, such as `net(api.weather.gov)`."));
-                continue;
-            };
-            match crate::egress::policy::check_host(host) {
-                Ok(h) if !hosts.contains(&h) => hosts.push(h),
-                Ok(_) => {}
-                Err(why) => errors.push(format!("`{entry}`: {why}")),
-            }
-        } else if entry == LAKE_GRANT {
-            // Not a tool: the whole lake, read-only, for the applet's code.
-            if !out.iter().any(|t| t == entry) {
-                out.push(entry.to_string());
-            }
+        if entry.starts_with("net(") || entry == "lake" {
+            // Kept from 2026-10-27 to 10-28, when hosts and the lake were
+            // grants: say what replaced them rather than "not a tool".
+            errors.push(format!(
+                "`{entry}` is gone: an applet's code reaches any public host and reads the whole lake. Remove it."
+            ));
         } else if crate::tools::connection::split(entry).is_some() {
-            // A connection's tools, `linear__*` or `linear__save_comment`.
-            // Kept in the list as written; a run gets them only once the
-            // owner also allows the connection on the applet's page.
+            // A connection's tools, `linear__*` or `linear__save_comment`,
+            // kept in the list as written.
             if crate::tools::connection::applet_entry(entry).is_none() {
                 errors.push(format!(
                     "`{entry}` must name a connection's tool, such as `linear__save_comment`, or all of them, such as `linear__*`."
@@ -997,7 +960,7 @@ fn check_allowed_tools(list: &str, shipped: bool, errors: &mut Vec<String>) -> (
             errors.push(unknown_key(entry, "a tool an applet can use", &names));
         }
     }
-    (out, hosts)
+    out
 }
 
 #[derive(Debug, PartialEq)]
@@ -1603,14 +1566,9 @@ mod tests {
 
     #[test]
     fn allowed_tools_lists_tools_an_applet_run_can_have() {
-        let t = ok(&format!("{BASE}\nallowed-tools: sql_query net(API.Weather.gov) net(api.weather.gov)"), "Do it.");
-        let cfg = t.config.unwrap();
-        assert_eq!(cfg["net_hosts"].as_array().unwrap().len(), 1, "one host, normalized: {cfg:?}");
-        assert_eq!(cfg["net_hosts"][0].as_str(), Some("api.weather.gov"));
         for (entry, expect) in [
-            ("net(93.184.216.34)", "is an IP address"),
-            ("net(gist.github.com)", "refused even when listed"),
-            ("net(api.weather.gov", "must be written as `net(host)`"),
+            ("net(api.weather.gov)", "is gone"),
+            ("lake", "is gone"),
         ] {
             let e = refused(&format!("{BASE}\nallowed-tools: {entry}"), "Do it.");
             assert!(e.contains(expect), "{entry}: {e}");
@@ -1625,18 +1583,10 @@ mod tests {
         assert!(ok(&format!("{BASE}\nallowed-tools: shell"), "Do it.").config.is_some(), "the sandboxed shell is");
         let e = refused(&format!("{BASE}\nallowed-tools: sql_qeury"), "Do it.");
         assert!(e.contains("Did you mean `sql_query`?"), "{e}");
-        let t = ok(&format!("{BASE}\nallowed-tools: sql_query lake"), "Do it.");
-        let tools: Vec<String> = t.config.unwrap()["allowed_tools"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap().to_string())
-            .collect();
-        assert_eq!(tools, ["sql_query", "lake"], "lake is a grant, kept beside the tools");
     }
 
-    /// A connection's tools are listed as written, for the runner to match
-    /// against the connections the owner allowed.
+    /// A connection's tools are listed as written, and a run gets those of
+    /// the connections the box holds a sign-in for.
     #[test]
     fn allowed_tools_may_name_a_connections_tools() {
         let t = ok(&format!("{BASE}\nallowed-tools: sql_query linear__* notion__search linear__*"), "Do it.");
@@ -1807,15 +1757,13 @@ mod tests {
         assert!(e.iter().any(|e| e.contains("not this folder's")), "a wrong pin loads: {e:?}");
     }
 
-    /// A source's runs get the account's decrypted tokens, so only shipped
-    /// applets may name one until the owner can approve it per applet.
+    /// Any applet may name a source; there is no imported code, so what
+    /// names one was shipped or written by the owner (decided 2026-10-28).
     #[test]
-    fn only_a_shipped_applet_names_a_source() {
+    fn any_applet_names_a_source() {
         let f = tempfile::tempdir().unwrap();
         let text = "---\nname: mine\ndescription: Syncs things. Use when asked.\nmetadata:\n  source: google\n  run: sql select 1\n---\n";
-        let e = parse(text, f.path(), "user/mine", false).unwrap_err();
-        assert!(e.iter().any(|e| e.contains("only applets that ship")), "{e:?}");
-        assert_eq!(parse(text, f.path(), "mine", true).unwrap().source.map(|s| s.id).as_deref(), Some("google"));
+        assert_eq!(parse(text, f.path(), "user/mine", false).unwrap().source.map(|s| s.id).as_deref(), Some("google"));
     }
 
     /// The wire reads `sudo` and the other mode names before any applet, so

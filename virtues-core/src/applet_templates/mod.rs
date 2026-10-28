@@ -322,10 +322,10 @@ const SOURCES_TOML: &str = include_str!("../../../applets/sources.toml");
 /// 3. The in-tree `actions/` relative to this crate, via `CARGO_MANIFEST_DIR`,
 ///    so `cargo run`/tests work regardless of the user's CWD.
 ///
-/// Only the installer writes here. Imports clone into the state root
+/// Only the installer writes here. Everything else is in the state root
 /// ([`state_root`]), and a folder there with a shipped folder's name is read
-/// as unshipped, which is what keeps `sudo` and the other shipped-only
-/// grants out of an import's reach.
+/// as unshipped, which is what keeps `sudo` and the other shipped-only grants
+/// to the applets that shipped.
 pub fn shipped_root() -> std::path::PathBuf {
     for var in ["VIRTUES_APPLETS_DIR", "VIRTUES_ACTIONS_DIR"] {
         if let Ok(dir) = std::env::var(var) {
@@ -1161,12 +1161,6 @@ pub struct UsableApplet {
     pub for_assistant: bool,
 }
 
-/// A folder an import brought: in the state root and not under `user/`,
-/// where the assistant's own applets and saved skills live.
-fn is_imported(t: &Template) -> bool {
-    t.owner == "user" && !t.dir.starts_with("user/") && t.folder.as_ref().is_some_and(|f| f.starts_with(state_root()))
-}
-
 /// Every applet with a prompt, shipped first, each group by name.
 fn usable_applets() -> Vec<UsableApplet> {
     let guard = catalog_lock().read().expect("catalog rwlock poisoned");
@@ -1182,14 +1176,11 @@ fn usable_applets() -> Vec<UsableApplet> {
                     body: t.agent.clone()?,
                     files: t.files.clone(),
                     folder: t.folder.clone()?,
-                    // An import's prompt is not offered: chat has tools no
-                    // applet may list (browse, send_imessage), and a loaded
-                    // prompt runs with them. It still runs as `/name`.
+                    // A disabled applet is not offered.
                     for_assistant: t.triggers.iter().any(|x| x == "tool")
                         && t.command.is_none()
                         && t.run_sql.is_none()
-                        && t.default_enabled
-                        && !is_imported(t),
+                        && t.default_enabled,
                 },
             ))
         })

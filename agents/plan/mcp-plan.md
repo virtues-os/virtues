@@ -152,15 +152,13 @@ matters which servers come first.
 ### Applets and connections
 
 An applet names a connection's tools in `allowed-tools`, by tool or by
-connection (`linear__*`). For the Rule of Two in applet-shape.md, a
-connection counts as both outside text (its results) and a way out (its
-writes). As with `net(…)` hosts, only the owner can add a connection to an
-applet; the assistant's `applet` tool cannot. The owner allows it on the
-applet's page (`app_applets.connections`, set only by
-`PUT /api/applets/:id/connections`), and a run gets the tools only when the
-file and the owner both name the connection. This applies to shipped
-applets too, the same as hosts. A tool its server labels destructive is never
-offered to a run.
+connection (`linear__*`), and a run gets the ones its file names of the
+connections the box holds a sign-in for. There is no approval per applet:
+applet-shape.md decided on 2026-10-28 that an applet can do what chat can,
+and an owner switch per connection went with the host switches. `call_tool`
+still refuses an applet run's call to a tool its file does not name, before
+reaching the service, and a tool its server labels destructive is never
+offered to a run, because no one is there to confirm it.
 
 Chat already holds all three legs through `browse` and `send_imessage`, and a
 connection adds another. Applet-shape.md leaves chat's leak paths out of
@@ -417,12 +415,13 @@ name.
      `sheet=1`. Not yet run on a phone: whether a source's return to
      `:7117` loads inside the sheet is the open question.
 4. **Connections in applets.** Built on wave: `allowed-tools` takes
-   `linear__*` and `linear__save_comment`; the owner allows a connection on
-   the applet's page (migration 0071), the same switch list as hosts
-   (`AppletAllowList.svelte`); an unattended run is offered the named,
-   non-destructive tools of the connections on both lists; and `call_tool`
-   refuses an applet run's call to anything outside that, before reaching
-   the service, since the agent loop runs a call to a tool it did not offer.
+   `linear__*` and `linear__save_comment`; an unattended run is offered the
+   named, non-destructive tools of the connections the box holds; and
+   `call_tool` refuses an applet run's call to anything outside that, before
+   reaching the service. The owner's switch per applet (migration 0071) was
+   removed on 2026-10-28 in applet-shape.md's slice 9; the
+   `app_applets.connections` column stays, unread, until a later migration
+   drops it.
    Not yet run against a real service from an applet. A turn `/name` starts
    does not get connection tools; it has the chat's `connection` tool if
    the applet lists it. Owner-added URLs from Settings remain.

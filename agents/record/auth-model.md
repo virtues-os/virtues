@@ -20,7 +20,7 @@
    `virtues device rm <id>`. The box drops its key from the allowlist and
    refuses its next request.
 5. A few routes (revealing a password or a key, adding a device, minting a
-   pair code, changing the AI key, importing an applet package) also need a
+   pair code, changing the AI key) also need a
    fresh owner proof: a signature by the Virtues app with the device's own
    key (`api/owner_proof.rs`).
 
@@ -280,7 +280,7 @@ Each reveal, enrollment, pair code and AI key change also writes a row to
 | Network died mid-consume | The consume path uses a single transaction; partial failure leaves the code unconsumed and retryable until it expires. |
 | Stolen device | It has full access until revoked from another device or with `virtues device rm`. The auth-event log has no page, so noticing an unfamiliar device depends on the Devices list. |
 | DNS rebinding onto a trusted transport | The `Host` check refuses names the box does not serve (`middleware/security.rs`). |
-| Another process on a paired computer | The owner proof on reveal, enroll, pair mint, the AI key, package import, Start over, the web terminal and an admin applet chat turn, so a direct request to those routes through the app's loopback port is refused. Everything else stays open to a local process there, an accepted gap. |
+| Another process on a paired computer | The owner proof on reveal, enroll, pair mint, the AI key, Start over, the web terminal and an admin applet chat turn, so a direct request to those routes through the app's loopback port is refused. Everything else stays open to a local process there, an accepted gap. |
 | A web page in a browser on a paired computer | CORS keeps it from reading a reply from `127.0.0.1:7117`, and a write whose `Origin` CORS would refuse is refused with 403. A request with no `Origin` is no page's and passes. |
 | Clickjacking | `X-Frame-Options: DENY` and CSP `frame-ancestors 'none'` on every response except applet faces, which the app frames. |
 | MIME sniffing | `X-Content-Type-Options: nosniff` on every response. Message attachments that are not raster images, audio or video download as `application/octet-stream` with a sandbox CSP. |

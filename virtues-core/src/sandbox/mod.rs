@@ -244,9 +244,9 @@ mod tests {
 
     /// The path a client in the unit takes: an ordinary HTTP client with a
     /// proxy setting, through the bridge, into the egress proxy, out to a
-    /// listed host. The proxy's own rules are tested in `egress`.
+    /// public host. The proxy's own rules are tested in `egress`.
     #[tokio::test]
-    async fn a_client_with_a_proxy_setting_reaches_a_listed_host_through_the_bridge() {
+    async fn a_client_with_a_proxy_setting_reaches_a_public_host_through_the_bridge() {
         use crate::egress::{Grant, Proxy, Resolver};
         use std::sync::Arc;
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -263,7 +263,6 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let socket = dir.path().join("egress.sock");
         let grant = Grant {
-            hosts: ["api.example.com".to_string()].into(),
             resolver: Resolver::Fixed([("api.example.com".to_string(), vec![upstream_addr])].into()),
             check_address: Arc::new(|_| Ok(())),
         };

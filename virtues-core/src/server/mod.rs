@@ -1624,7 +1624,6 @@ mod owner_proof_route_tests {
         ("POST", "/api/pair/mint-collector"),
         ("POST", "/api/settings/byo-key"),
         ("DELETE", "/api/settings/byo-key"),
-        ("POST", "/api/admin/applets/import-git"),
         ("POST", "/api/pair/reopen-onboarding"),
     ];
 

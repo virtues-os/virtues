@@ -44,7 +44,6 @@ pub mod limits;
 mod run_sql;
 mod sandboxed;
 
-pub(crate) use sandboxed::{allowed_hosts, record_requests, start_proxy};
 
 use crate::error::{Error, Result};
 use crate::scheduler::applets::{self, Applet};
@@ -1124,22 +1123,13 @@ async fn run_subprocess(
         .map_err(|e| Error::Other(format!("failed to serialize action input: {e}")))?;
 
     let declared = declared_env_secrets(db, &action.id).await?;
-    // The run's way out, when its file asks for hosts the owner allowed.
-    // Dropping it stops the proxy and removes the socket.
-    let proxy = if sandbox {
-        let hosts = sandboxed::allowed_hosts(db, &action.id, &action.config).await?;
-        if hosts.is_empty() { None } else { Some(sandboxed::start_proxy(run_id, &hosts)?) }
-    } else {
-        None
-    };
+    // The run's way out: any public host, through the box's proxy, which
+    // records every request on the run. Dropping it stops the proxy and
+    // removes the socket.
+    let proxy = if sandbox { Some(sandboxed::start_proxy(run_id)?) } else { None };
     // `_run_files` live until the run ends; dropping them removes the files.
     let (mut cmd, _run_files) = if sandbox {
         let env = sandboxed::env(run_id, declared);
-        let whole_lake = action
-            .config
-            .get("allowed_tools")
-            .and_then(|v| v.as_array())
-            .is_some_and(|tools| tools.iter().any(|t| t == "lake"));
         sandboxed::command(
             &action.id,
             &program,
@@ -1147,7 +1137,6 @@ async fn run_subprocess(
             subprocess_timeout(action),
             &env,
             credentials.as_ref(),
-            whole_lake,
             proxy.as_ref().map(|p| p.path()),
         )?
     } else {

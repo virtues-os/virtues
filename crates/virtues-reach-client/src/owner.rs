@@ -6,7 +6,7 @@
 //! `0x88`/`0x89`). And a box that is reachable asks for a proof on the few
 //! routes a local process on this machine must not reach through the app's
 //! loopback port: revealing a password or a key, adding a device, changing the
-//! AI key, importing an applet package ([`sign_http_owner_proof`]).
+//! AI key ([`sign_http_owner_proof`]).
 //!
 //! Both answers sign the box's one-time nonce with the SAME iroh key the box
 //! allowlisted when it paired, so pairing is the enrollment, there is nothing

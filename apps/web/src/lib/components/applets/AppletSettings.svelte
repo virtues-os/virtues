@@ -1,15 +1,10 @@
 <script lang="ts">
 	import Icon from '$lib/components/Icon.svelte';
 	import AppletSource from '$lib/components/applets/AppletSource.svelte';
-	import AppletAllowList from '$lib/components/applets/AppletAllowList.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import TextAction from '$lib/components/TextAction.svelte';
 	import {
-		getAppletConnections,
-		getAppletHosts,
 		patchApplet,
-		putAppletConnections,
-		putAppletHosts,
 		type Applet,
 		type PatchAppletBody
 	} from '$lib/api/client';
@@ -45,11 +40,6 @@
 	// schedule can change: your server keeps those changes beside the shipped
 	// file, so a shipped fix still reaches the rest.
 	const isSystem = $derived(action.owner === 'system');
-	// `lake` in its file mounts every file in the lake for its code to read,
-	// so a host allowed below could receive any of them.
-	const readsLake = $derived(
-		Array.isArray(action.config?.allowed_tools) && action.config.allowed_tools.includes('lake')
-	);
 	const isAgent = $derived(Boolean(action.agent && action.agent.trim().length > 0));
 
 	// What the user is told, though, follows `origin` — the distinction the
@@ -207,28 +197,6 @@
 			</ul>
 		</div>
 	{/if}
-
-	<AppletAllowList
-		appletId={action.id}
-		label="Hosts it can reach"
-		what="hosts"
-		hint={readsLake
-			? 'Its code asks to reach these hosts. Nothing goes out until you allow a host here. It can read every file in your lake, so a host you allow can receive any of them, and your records.'
-			: 'Its code asks to reach these hosts. Nothing goes out until you allow a host here. A host you allow can receive what the applet reads, including your records.'}
-		load={getAppletHosts}
-		save={putAppletHosts}
-	/>
-
-	<AppletAllowList
-		appletId={action.id}
-		label="Services it can use"
-		what="connections"
-		hint="It asks to use these connected services. It can't until you allow one here. A service you allow can receive what the applet reads, including your records. Tools a service marks as deleting something are never offered to it."
-		load={getAppletConnections}
-		save={putAppletConnections}
-		unavailable={(name, grant) =>
-			grant.connected?.includes(name) ? null : 'Not connected. Connect it in Sources first.'}
-	/>
 
 	<!-- Three facts the page never showed, and the reason a person
 	     could not tell why an applet had or hadn't run: what wakes

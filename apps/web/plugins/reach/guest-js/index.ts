@@ -191,7 +191,7 @@ export async function improvDisconnect(): Promise<void> {
 /**
  * Sign one HTTP request for the server with this device's paired key: the
  * owner proof the server asks for before revealing a password or a key,
- * adding a device, changing the AI key or importing an applet package.
+ * adding a device or changing the AI key.
  * `method` and `path` are exactly what the request carries; `nonce` comes from
  * `POST /api/owner-proof/nonce`. Returns the `X-Virtues-Owner-Proof` header
  * value. The key stays in Rust.

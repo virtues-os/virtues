@@ -1,8 +1,7 @@
 //! The one way out of the sandbox: an HTTP proxy on a Unix socket.
 //!
-//! A sandboxed run has no network of its own (`PrivateNetwork=yes`). When its
-//! applet lists hosts in `allowed-tools` as `net(host)`, the run gets one
-//! socket, served by [`Proxy`], and every request goes through it. Which
+//! A sandboxed run has no network of its own (`PrivateNetwork=yes`). It gets
+//! one socket, served by [`Proxy`], and every request goes through it. Which
 //! socket a request arrived on says which run made it, so the proxy needs no
 //! credentials. It:
 //!
@@ -12,7 +11,7 @@
 //!   name is the host the tunnel was opened for; for HTTP, sends the checked
 //!   host as `Host` and one request per connection, so a shared front end
 //!   cannot be asked for another site;
-//! - allows only the run's listed hosts, after [`policy::check_host`];
+//! - allows any public host by name ([`policy::check_host`]);
 //! - resolves the name itself and refuses it when any address it resolves to
 //!   is inside the box or its network ([`policy::check_address`]), then
 //!   connects to the address it checked, so DNS cannot answer differently
@@ -23,7 +22,6 @@
 
 pub mod policy;
 
-use std::collections::HashSet;
 use std::net::{IpAddr, SocketAddr};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
@@ -76,11 +74,9 @@ impl Resolver {
     }
 }
 
-/// What one run may reach, and how its addresses are checked.
+/// How one run's requests are resolved and their addresses checked.
 #[derive(Clone)]
 pub struct Grant {
-    /// Host names, already through [`policy::check_host`].
-    pub hosts: HashSet<String>,
     pub resolver: Resolver,
     /// The address check. [`policy::check_address`] against the box's own
     /// addresses in production.
@@ -88,20 +84,16 @@ pub struct Grant {
 }
 
 impl Grant {
-    /// A grant for `hosts`, with the system resolver and the box's own
-    /// addresses refused. A host the policy refuses is an error, so a
-    /// caller never starts a proxy for a list the save check would refuse.
-    pub fn new<'a>(hosts: impl IntoIterator<Item = &'a str>) -> Result<Self, String> {
-        let hosts = hosts.into_iter().map(policy::check_host).collect::<Result<_, _>>()?;
+    /// The system resolver, with the box's own addresses refused.
+    pub fn new() -> Self {
         let own: Vec<IpAddr> = crate::net_check::list_interfaces()
             .into_iter()
             .flat_map(|(_, addrs)| addrs)
             .collect();
-        Ok(Self {
-            hosts,
+        Self {
             resolver: Resolver::System,
             check_address: Arc::new(move |ip| policy::check_address(ip, &own)),
-        })
+        }
     }
 }
 
@@ -230,10 +222,6 @@ async fn serve(mut client: UnixStream, grant: &Grant) -> Option<Request> {
         Ok(h) => h,
         Err(why) => return Some(refused(&mut client, &host, &method, &why).await),
     };
-    if !grant.hosts.contains(&host) {
-        let why = format!("{host} is not one of the hosts this applet lists.");
-        return Some(refused(&mut client, &host, &method, &why).await);
-    }
     let addrs = match grant.resolver.resolve(&host, port).await {
         Ok(a) if !a.is_empty() => a,
         _ => {
@@ -454,11 +442,10 @@ mod tests {
         s.parse().unwrap()
     }
 
-    /// A grant for `listed`, resolving through `names`. `inward_ok` lets a
-    /// loopback test server through, which only a test may do.
-    fn grant(listed: &[&str], names: &[(&str, Vec<SocketAddr>)], inward_ok: bool) -> Grant {
+    /// A grant resolving through `names`. `inward_ok` lets a loopback test
+    /// server through, which only a test may do.
+    fn grant(names: &[(&str, Vec<SocketAddr>)], inward_ok: bool) -> Grant {
         Grant {
-            hosts: listed.iter().map(|h| h.to_string()).collect(),
             resolver: Resolver::Fixed(names.iter().map(|(n, a)| (n.to_string(), a.clone())).collect::<HashMap<_, _>>()),
             check_address: if inward_ok {
                 Arc::new(|_| Ok(()))
@@ -497,7 +484,7 @@ mod tests {
     async fn a_listed_host_is_reached_over_http_and_the_request_is_recorded() {
         let (server, seen) = upstream(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok").await;
         let (_dir, path) = socket();
-        let proxy = Proxy::start(&path, grant(&["api.example.com"], &[("api.example.com", vec![server])], true)).unwrap();
+        let proxy = Proxy::start(&path, grant(&[("api.example.com", vec![server])], true)).unwrap();
 
         let reply = ask(
             &proxy,
@@ -523,7 +510,7 @@ mod tests {
     async fn connect_opens_a_tunnel_that_relays_both_ways() {
         let (server, seen) = upstream(b"pong").await;
         let (_dir, path) = socket();
-        let proxy = Proxy::start(&path, grant(&["api.example.com"], &[("api.example.com", vec![server])], true)).unwrap();
+        let proxy = Proxy::start(&path, grant(&[("api.example.com", vec![server])], true)).unwrap();
 
         let mut c = UnixStream::connect(proxy.path()).await.unwrap();
         c.write_all(b"CONNECT api.example.com:443 HTTP/1.1\r\nHost: api.example.com:443\r\n\r\n").await.unwrap();
@@ -580,7 +567,7 @@ mod tests {
         assert_eq!(server_name(b"\x16\x03\x01\x00\x01\x02"), None);
         let (server, _seen) = upstream(b"pong").await;
         let (_dir, path) = socket();
-        let proxy = Proxy::start(&path, grant(&["api.example.com"], &[("api.example.com", vec![server])], true)).unwrap();
+        let proxy = Proxy::start(&path, grant(&[("api.example.com", vec![server])], true)).unwrap();
         for first in [client_hello("other.example.net"), b"ping".to_vec()] {
             let mut c = UnixStream::connect(proxy.path()).await.unwrap();
             c.write_all(b"CONNECT api.example.com:443 HTTP/1.1\r\n\r\n").await.unwrap();
@@ -595,7 +582,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn unlisted_refused_and_inward_hosts_are_refused_and_recorded() {
+    async fn ip_literals_and_inward_hosts_are_refused_and_recorded() {
         let (_dir, path) = socket();
         let public = addr("93.184.216.34:443");
         let names = [
@@ -603,12 +590,10 @@ mod tests {
             ("inside.example.com", vec![public, addr("192.168.1.10:443")]),
             ("metadata.example.com", vec![addr("169.254.169.254:80")]),
         ];
-        let listed = ["api.example.com", "inside.example.com", "metadata.example.com"];
-        let proxy = Proxy::start(&path, grant(&listed, &names, false)).unwrap();
+        let proxy = Proxy::start(&path, grant(&names, false)).unwrap();
 
         let cases = [
-            ("CONNECT other.example.com:443 HTTP/1.1\r\n\r\n", "not one of the hosts this applet lists"),
-            ("CONNECT gist.github.com:443 HTTP/1.1\r\n\r\n", "refused even when listed"),
+            ("CONNECT other.example.com:443 HTTP/1.1\r\n\r\n", "did not resolve"),
             ("CONNECT 93.184.216.34:443 HTTP/1.1\r\n\r\n", "is an IP address"),
             ("CONNECT inside.example.com:443 HTTP/1.1\r\n\r\n", "192.168.1.10 is a private network address"),
             ("GET http://metadata.example.com/latest HTTP/1.1\r\n\r\n", "169.254.169.254 is link-local"),
@@ -631,14 +616,9 @@ mod tests {
     async fn a_name_pointing_at_loopback_cannot_reach_the_box() {
         let (server, _seen) = upstream(b"HTTP/1.1 200 OK\r\n\r\n").await;
         let (_dir, path) = socket();
-        let proxy = Proxy::start(&path, grant(&["api.example.com"], &[("api.example.com", vec![server])], false)).unwrap();
+        let proxy = Proxy::start(&path, grant(&[("api.example.com", vec![server])], false)).unwrap();
         let reply = ask(&proxy, "GET http://api.example.com/ HTTP/1.1\r\n\r\n").await;
         assert!(reply.contains("127.0.0.1 is loopback"), "{reply}");
     }
 
-    #[test]
-    fn a_grant_refuses_a_host_the_policy_refuses() {
-        assert!(Grant::new(["api.weather.gov"]).is_ok());
-        assert!(Grant::new(["api.openai.com"]).err().unwrap().contains("refused even when listed"));
-    }
 }

@@ -442,109 +442,6 @@ pub async fn update_applet(
     get_applet(db, applet_id).await
 }
 
-/// The hosts an applet's file asks for (`net(host)` in `allowed-tools`) and
-/// the ones the owner allowed. A run reaches the hosts on both lists.
-#[derive(Debug, Clone, serde::Serialize, PartialEq)]
-pub struct NetHosts {
-    pub requested: Vec<String>,
-    pub allowed: Vec<String>,
-}
-
-pub async fn net_hosts(db: &PgPool, applet_id: &str) -> Result<NetHosts> {
-    let applet = get_applet(db, applet_id).await?;
-    let requested = applet
-        .config
-        .get("net_hosts")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|h| h.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-    let allowed: Vec<String> = sqlx::query_scalar("SELECT net_hosts FROM app_applets WHERE id = $1")
-        .bind(applet_id)
-        .fetch_one(db)
-        .await?;
-    Ok(NetHosts { requested, allowed })
-}
-
-/// Set the hosts the owner allows. Only the owner's own API route calls
-/// this: not `update_applet`, not the applet tool, not reconcile, so neither
-/// the assistant nor an applet's file can give an applet a way out. Each host
-/// passes the egress policy first.
-pub async fn set_net_hosts(db: &PgPool, applet_id: &str, hosts: &[String]) -> Result<NetHosts> {
-    let mut checked: Vec<String> = Vec::new();
-    for h in hosts {
-        let h = crate::egress::policy::check_host(h).map_err(Error::InvalidInput)?;
-        if !checked.contains(&h) {
-            checked.push(h);
-        }
-    }
-    let res = sqlx::query("UPDATE app_applets SET net_hosts = $1, updated_at = now() WHERE id = $2")
-        .bind(&checked)
-        .bind(applet_id)
-        .execute(db)
-        .await?;
-    if res.rows_affected() == 0 {
-        return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
-    }
-    net_hosts(db, applet_id).await
-}
-
-/// The connections an applet's file asks for (`linear__*` in
-/// `allowed-tools`) and the ones the owner allowed, by short name. A run gets
-/// the tools of the connections on both lists (`tools::connection`).
-#[derive(Debug, Clone, serde::Serialize, PartialEq)]
-pub struct AppletConnections {
-    pub requested: Vec<String>,
-    pub allowed: Vec<String>,
-    /// The requested ones the box holds a sign-in for. The others cannot be
-    /// allowed until the owner connects them in Sources.
-    pub connected: Vec<String>,
-}
-
-pub async fn applet_connections(db: &PgPool, applet_id: &str) -> Result<AppletConnections> {
-    let applet = get_applet(db, applet_id).await?;
-    let entries: Vec<String> = applet
-        .config
-        .get("allowed_tools")
-        .and_then(|v| v.as_array())
-        .map(|a| a.iter().filter_map(|t| t.as_str().map(String::from)).collect())
-        .unwrap_or_default();
-    let allowed: Vec<String> = sqlx::query_scalar("SELECT connections FROM app_applets WHERE id = $1")
-        .bind(applet_id)
-        .fetch_one(db)
-        .await?;
-    let requested = crate::tools::connection::requested(&entries);
-    let held = crate::tools::connection::connected(db).await?;
-    let connected = requested.iter().filter(|r| held.iter().any(|c| &&c.id == r)).cloned().collect();
-    Ok(AppletConnections { requested, allowed, connected })
-}
-
-/// Set the connections the owner allows. Only the owner's own API route
-/// calls this, for the same reason as [`set_net_hosts`]: a connection's
-/// writes are a way out. Each name must be a connection the box holds.
-pub async fn set_applet_connections(db: &PgPool, applet_id: &str, names: &[String]) -> Result<AppletConnections> {
-    let held = crate::tools::connection::connected(db).await?;
-    let mut checked: Vec<String> = Vec::new();
-    for name in names {
-        if !held.iter().any(|c| &c.id == name) {
-            return Err(Error::InvalidInput(format!(
-                "{name} is not a connected service. Connect it in Sources first."
-            )));
-        }
-        if !checked.contains(name) {
-            checked.push(name.clone());
-        }
-    }
-    let res = sqlx::query("UPDATE app_applets SET connections = $1, updated_at = now() WHERE id = $2")
-        .bind(&checked)
-        .bind(applet_id)
-        .execute(db)
-        .await?;
-    if res.rows_affected() == 0 {
-        return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
-    }
-    applet_connections(db, applet_id).await
-}
-
 /// Validate a cron expression the way the scheduler and the SKILL.md reader
 /// read it: six fields, seconds first.
 fn validate_cron(cron: &str) -> Result<()> {
@@ -1115,29 +1012,16 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
 mod tests {
     use super::*;
 
-    /// Only the owner's route sets hosts, each through the egress policy, and
-    /// a run's requests show per host on the run.
+    /// A run's requests show per host on the run and its log line.
     #[sqlx::test]
-    async fn owner_hosts_are_checked_and_a_runs_requests_are_summed_per_host(pool: PgPool) {
-        sqlx::query(
-            "INSERT INTO app_applets (id, name, owner, config) \
-             VALUES ('applet_tides', 'Tides', 'user', '{\"net_hosts\": [\"api.weather.gov\"]}')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        let err = set_net_hosts(&pool, "applet_tides", &["api.openai.com".into()]).await.unwrap_err();
-        assert!(err.to_string().contains("refused even when listed"), "{err}");
-        let hosts = set_net_hosts(&pool, "applet_tides", &["API.weather.gov".into(), "api.weather.gov".into()])
+    async fn a_runs_requests_are_summed_per_host(pool: PgPool) {
+        sqlx::query("INSERT INTO app_applets (id, name, owner) VALUES ('applet_tides', 'Tides', 'user')")
+            .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(hosts, NetHosts { requested: vec!["api.weather.gov".into()], allowed: vec!["api.weather.gov".into()] });
-        let err = update_applet(&pool, "applet_tides", &serde_json::json!({ "net_hosts": [] })).await.unwrap_err();
-        assert!(err.to_string().contains("unknown field"), "PATCH cannot set hosts: {err}");
-
         seed_run(&pool, "applet_tides", "success", "ok", 10).await;
         let run_id: String = sqlx::query_scalar("SELECT id FROM app_applet_runs LIMIT 1").fetch_one(&pool).await.unwrap();
-        for (host, refused, sent) in [("api.weather.gov", None, 100i64), ("api.weather.gov", None, 50), ("elsewhere.example.com", Some("not listed"), 0)] {
+        for (host, refused, sent) in [("api.weather.gov", None, 100i64), ("api.weather.gov", None, 50), ("inside.example.com", Some("resolves to a private network address"), 0)] {
             sqlx::query("INSERT INTO app_applet_run_requests (run_id, host, method, sent_bytes, refused_reason) VALUES ($1, $2, 'CONNECT', $3, $4)")
                 .bind(&run_id).bind(host).bind(sent).bind(refused).execute(&pool).await.unwrap();
         }
@@ -1148,7 +1032,7 @@ mod tests {
             runs[0].requests,
             serde_json::json!([
                 { "host": "api.weather.gov", "requests": 2, "refused": 0, "sent_bytes": 150, "received_bytes": 0 },
-                { "host": "elsewhere.example.com", "requests": 1, "refused": 1, "sent_bytes": 0, "received_bytes": 0 },
+                { "host": "inside.example.com", "requests": 1, "refused": 1, "sent_bytes": 0, "received_bytes": 0 },
             ])
         );
     }

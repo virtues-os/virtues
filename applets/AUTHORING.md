@@ -131,7 +131,7 @@ sandbox with no network, as a throwaway user, and sees:
 | `/data/lake` | the whole lake, read-only, only when `allowed-tools` lists `lake` |
 | `DATABASE_URL` | the Postgres socket as `virtues_applet_writer`, which writes applet schemas only |
 | `$CREDENTIALS_DIRECTORY/credentials.json` | its credentials; `inp["credentials"]` is `None` |
-| `HTTPS_PROXY`, `HTTP_PROXY` | set only when the run may reach hosts: the ones its `allowed-tools` asks for with `net(host)` that the owner allowed on the applet's page. Every request is recorded on the run |
+| `HTTPS_PROXY`, `HTTP_PROXY` | the box's egress proxy, which reaches any public host and refuses the box and its network. Every request is recorded on the run |
 
 ### A view-only applet
 
@@ -192,8 +192,6 @@ metadata:
 ```
 
 Reconcile materializes one `app_applets` row per active credential of that source. Each row gets `credential_id` set; runtime auto-injects the matching credential into `AppletInput.credentials` when the applet fires.
-
-Only an applet that ships with the box may name a `source`, because its runs hold the account's decrypted sign-in. An applet in the state root that names one does not load.
 
 A `webhook` trigger **requires** a `source`, so the post resolves to an identity.
 

@@ -59,8 +59,8 @@ virtues device rm <id>     # revoke one — its next connection is refused
 ## Sensitive actions
 
 A few actions need the Virtues app itself on one of your paired devices:
-showing a saved password or key, adding a device, changing the key for your own
-AI provider, and importing an applet package. The app signs each of these
+showing a saved password or key, adding a device, and changing the key for
+your own AI provider. The app signs each of these
 requests with that device's own key, and your server refuses the request
 without that signature. There is nothing to approve: the app signs as you
 click. Requests made on the server itself, such as from its own screen, need
