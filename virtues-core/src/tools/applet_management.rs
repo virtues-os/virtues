@@ -178,6 +178,13 @@ pub async fn edit_applet(
         .cloned()
         .ok_or_else(|| ToolError::InvalidParameters("patch is required".into()))?;
 
+    // What an applet is changes through setup, by its name, which writes its
+    // file. `edit` sets only what the box keeps beside the file.
+    if let Some(key) = patch.as_object().and_then(|p| p.keys().find(|k| !matches!(k.as_str(), "enabled" | "memory"))) {
+        return Err(ToolError::InvalidParameters(format!(
+            "`{key}` is part of what the applet is: change it with setup and the applet's name. `edit` takes `enabled` and `memory`."
+        )));
+    }
     let updated = applets::update_applet(pool, id, &patch)
         .await
         .map_err(map_err)?;

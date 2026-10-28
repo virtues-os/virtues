@@ -451,9 +451,10 @@ pub(crate) mod tests {
     /// person's message. At ~41k characters chat's were most of the prompt
     /// and the model visibly deliberated over them, so every tool belongs to
     /// a group with a ceiling, and every mode has a total, in characters of
-    /// the JSON exactly as `ChatMode::tools()` serializes it. Long how-to
-    /// belongs behind a call (`applet {"action": "setup", "guide": true}`
-    /// returns applets/AGENTS.md), not in the definition. A tool in any mode — chat,
+    /// the JSON exactly as `ChatMode::tools()` serializes it. A definition
+    /// holds what a model needs to call the tool and no more; the applet
+    /// tool's setup instruction is the one long description, and it replaced
+    /// a 2,500-word guide fetched by a second call. A tool in any mode — chat,
     /// interview, getting started, local or an applet —
     /// must join a group here, and a new mode or shipped chat applet must join `MODES`:
     /// unbudgeted tools and modes fail the test.

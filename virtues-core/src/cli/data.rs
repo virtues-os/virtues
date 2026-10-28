@@ -320,10 +320,10 @@ impl Verbs {
             let args: Value = serde_json::from_str(&text).map_err(|e| format!("stdin is not JSON: {e}"))?;
             return Ok((args, Vec::new()));
         }
-        let Some((_, pool)) = &self.local else {
+        if self.local.is_none() {
             return Err("an applet folder is read on this machine; send its JSON on stdin with `-`".into());
-        };
-        folder_args(pool, std::path::Path::new(path)).await
+        }
+        folder_args(std::path::Path::new(path)).await
     }
 
     pub async fn applet(&self, cmd: AppletCmd) -> Result<(), String> {
@@ -730,7 +730,7 @@ fn array_of(v: &Value) -> &[Value] {
 /// Tables: the versions on disk this box has not applied yet, joined in
 /// order, so the dry-run sees an `ALTER` after the `CREATE` it depends on.
 /// None pending means none submitted, which is what a re-put would send.
-async fn folder_args(pool: &PgPool, dir: &std::path::Path) -> Result<(Value, Vec<Value>), String> {
+async fn folder_args(dir: &std::path::Path) -> Result<(Value, Vec<Value>), String> {
     let mut findings = Vec::new();
     let mut args = match crate::applet_templates::skill_md_as_setup_args(dir) {
         Ok(args) => args,
@@ -743,28 +743,15 @@ async fn folder_args(pool: &PgPool, dir: &std::path::Path) -> Result<(Value, Vec
     let view = dir.join("view.html");
     if view.is_file() {
         let html = std::fs::read_to_string(&view).map_err(|e| format!("{}: {e}", view.display()))?;
-        args["face_html"] = json!(html);
+        args["view"] = json!(html);
     }
 
+    // Every version together is the whole schema; setup adds what the box
+    // lacks.
     let versions = crate::tools::applet_schema::versions_on_disk(dir);
     if !versions.is_empty() {
-        let name = args["name"].as_str().unwrap_or_default();
-        let applet_id = format!(
-            "{}{}",
-            crate::scheduler::applets::USER_APPLET_PREFIX,
-            name.replace('-', "_")
-        );
-        let latest = crate::tools::applet_schema::applied(pool, &applet_id)
-            .await?
-            .iter()
-            .map(|a| a.version)
-            .max()
-            .unwrap_or(0);
-        let pending: Vec<&str> =
-            versions.iter().filter(|(v, _, _)| *v > latest).map(|(_, _, sql)| sql.as_str()).collect();
-        if !pending.is_empty() {
-            args["schema_sql"] = json!(pending.join("\n\n"));
-        }
+        let all: Vec<&str> = versions.iter().map(|(_, _, sql)| sql.as_str()).collect();
+        args["tables"] = json!(all.join("\n\n"));
     }
     Ok((args, findings))
 }

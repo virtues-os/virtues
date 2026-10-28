@@ -490,6 +490,27 @@ shrinks; `virtues applet put`, the MCP `applet` tool and the shipped
 water tracker with a table and a view, a weekly review, and a one-off
 reminder, each in one call with no findings.
 
+Built on 2026-10-28 except the live check: no model has been given the new
+description yet. Decided on the way:
+- Setup with a built-in applet's name writes that applet's override, for the
+  keys an override may hold; `run`, `tools`, `tables` and `view` of a
+  built-in applet are refused with "give it a new name". A fork in the state
+  root is edited in place.
+- `edit` takes only `enabled` and `memory`; everything else is setup's.
+- An old parameter (`agent`, `schedule`, `schema_sql`, …) is refused with
+  the key to use instead, so a caller written against the old names learns
+  the new ones.
+- A new applet's defaults are written into its file: `invoke: assistant`,
+  `model: lite` for an unattended prompt, and `$1 per day` added to a limit
+  with no daily cap.
+- `tables` becomes the next `tables/NNNN_schema.sql`: new tables whole,
+  `ADD COLUMN IF NOT EXISTS` for new columns, indexes only for new tables,
+  and a refusal for DROP. A column whose type changed is not detected. DDL
+  runs with the applet's schema as its search path, so names need no schema.
+- `virtues applet put` maps a folder's keys straight across and sends every
+  `tables/` file together as the schema; a key setup does not write, or code
+  in `run`, is refused.
+
 ### 9. Permissions collapse
 
 The deletions under "The permission layers". The proxy allows any public

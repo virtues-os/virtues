@@ -1,29 +1,18 @@
-//! Applet-owned tables: versioned, append-only, and honest about drift.
+//! Applet-owned tables: versioned, append-only, written from the whole schema.
 //!
-//! `schema_sql` used to be applied as one idempotent file. That works exactly
-//! once. Re-calling the applet tool's setup is the edit path, so the second call
-//! rewrote the file and re-applied it — and `CREATE TABLE IF NOT EXISTS`, on a
-//! table that already exists, does nothing.
+//! Setup takes every `CREATE TABLE` an applet wants, every time (`tables`).
+//! [`delta`] compares that with the tables the applet has and writes only
+//! what is missing (new tables, and `ADD COLUMN` for new columns) as the next
+//! numbered migration, `tables/NNNN_schema.sql`. Nothing is ever dropped.
 //!
-//! The failure pointed the wrong way, which is what made it dangerous: the
-//! apply *succeeded*, so a model adding a column believed the column was
-//! there and wrote a prompt that used it. Every later `sql_write` naming that
-//! column failed at runtime, nightly, forever.
+//! The migrations are what makes the folder portable: a fresh box, or one
+//! restored from a backup, replays them in order (`replay_pending`) and gets
+//! the same tables. Each runs once and is recorded in
+//! `app_applet_schema_migrations`.
 //!
-//! Two halves fix it, and both are needed:
-//!
-//! 1. **Mechanism** — each call's DDL is a numbered migration, applied once
-//!    and recorded in `app_applet_schema_migrations`. Files live at
-//!    `applets/<slug>/schema/NNNN_*.sql` so the folder stays the portable
-//!    definition and a fresh box replays them to the same shape.
-//!
-//! 2. **A check that can see the mistake** — the mechanism alone does not
-//!    help if the model resubmits the whole `CREATE TABLE IF NOT EXISTS` with
-//!    an extra column, which is the natural thing to do. That version would be
-//!    recorded as applied while changing nothing. So before anything is
-//!    written, declared columns are compared against the live table, and a
-//!    column that would not be created is a check failure carrying the exact
-//!    `ALTER TABLE` to write instead.
+//! The assistant used to send each change as its own migration, and to know
+//! that `CREATE TABLE IF NOT EXISTS` on an existing table adds no column. A
+//! modest model gets that wrong, so the box works it out instead.
 
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -210,7 +199,7 @@ pub async fn replay_pending(
             tracing::warn!(applet_id, version, error = %e, "applet schema version rejected");
             continue;
         }
-        if let Err(e) = apply(pool, &sql).await {
+        if let Err(e) = apply(pool, &sql, slug).await {
             tracing::warn!(applet_id, version, error = %e, "applet schema version failed to apply");
             break; // ordered migrations: do not run N+1 after N failed
         }
@@ -223,99 +212,146 @@ pub async fn replay_pending(
 }
 
 // ============================================================================
-// Drift detection — the half that makes the silent failure loud
+// From the whole schema to the next migration
 // ============================================================================
 
-/// A table and the columns a `CREATE TABLE` statement declares for it.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct DeclaredTable {
-    pub schema: String,
-    pub table: String,
-    pub columns: Vec<String>,
-}
-
-/// Pull `CREATE TABLE` declarations out of DDL.
+/// The next migration that brings the applet's tables to `desired`: every
+/// table and column it declares that the applet's schema lacks, and the
+/// indexes of tables it creates. `None` when nothing is missing.
 ///
-/// Deliberately conservative: it recognizes the shape the authoring loop
-/// actually writes and gives up on anything it cannot read cleanly. A missed
-/// declaration costs one unhelpful check; a *wrongly* parsed one costs a false
-/// finding that sends the model chasing a problem it does not have, which is
-/// far worse in a retry loop.
-pub fn declared_tables(ddl: &str) -> Vec<DeclaredTable> {
-    // A comment inside the column list reads as a column named `--` (and its
-    // commas split it into more), which is a false drift finding on any
-    // schema that explains itself.
-    let ddl = &strip_sql_comments(ddl);
-    let mut out = Vec::new();
-    let lower = ddl.to_lowercase();
-    let mut search_from = 0usize;
+/// `desired` holds `CREATE TABLE`s, `CREATE [UNIQUE] INDEX`es, `COMMENT ON`s
+/// and `ALTER TABLE … ADD COLUMN`s, with names qualified by the applet's
+/// schema or not. A column whose definition changed is not altered, and
+/// nothing is dropped: a table or column left out of `desired` stays.
+pub async fn delta(pool: &PgPool, desired: &str, slug: &str) -> Result<Option<String>, String> {
+    validate_statements(desired, slug)?;
+    let schema = format!("applet_{slug}");
+    let live: Vec<(String, String)> = sqlx::query_as(
+        "SELECT table_name, column_name FROM information_schema.columns WHERE table_schema = $1",
+    )
+    .bind(&schema)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| format!("could not read the applet's tables: {e}"))?;
+    let mut tables: std::collections::HashMap<String, Vec<String>> = std::collections::HashMap::new();
+    for (table, column) in live {
+        tables.entry(table.to_lowercase()).or_default().push(column.to_lowercase());
+    }
 
-    while let Some(rel) = lower[search_from..].find("create table") {
-        let start = search_from + rel;
-        search_from = start + "create table".len();
-
-        // Everything between "create table" and the opening paren is the
-        // (optional) IF NOT EXISTS and the qualified name.
-        let Some(paren_rel) = ddl[search_from..].find('(') else {
-            break;
-        };
-        let paren = search_from + paren_rel;
-        let head = ddl[search_from..paren]
-            .replace("IF NOT EXISTS", "")
-            .replace("if not exists", "");
-        let name = head.trim().trim_matches('"').to_string();
-        let Some((schema, table)) = name.split_once('.') else {
-            continue; // unqualified — validate_schema_text rejects these anyway
-        };
-
-        // Match the closing paren of the column list, respecting nesting
-        // (a CHECK constraint or a numeric(10,2) contains parens of its own).
-        let body_start = paren + 1;
-        let mut depth = 1i32;
-        let mut end = None;
-        for (i, c) in ddl[body_start..].char_indices() {
-            match c {
-                '(' => depth += 1,
-                ')' => {
-                    depth -= 1;
-                    if depth == 0 {
-                        end = Some(body_start + i);
-                        break;
+    let unqualified = |name: &str| -> String {
+        let name = name.trim().to_lowercase();
+        name.strip_prefix(&format!("{schema}.")).unwrap_or(&name).to_string()
+    };
+    let mut out: Vec<String> = Vec::new();
+    let mut created: Vec<String> = Vec::new();
+    for stmt in split_statements(&strip_comments(desired)) {
+        let stmt = stmt.trim();
+        let lower = stmt.to_lowercase();
+        let words: Vec<&str> = lower.split_whitespace().collect();
+        match words.as_slice() {
+            [] => {}
+            ["create", "schema", ..] => {}
+            ["drop", ..] => {
+                return Err("`tables` never drops a table or index; leave out what you no longer need, and it stays".into())
+            }
+            ["create", "table", ..] => {
+                let (name, columns) = create_table_parts(stmt)
+                    .ok_or_else(|| format!("could not read the CREATE TABLE in '{}…'", &stmt.chars().take(60).collect::<String>()))?;
+                let table = unqualified(&name);
+                match tables.get_mut(&table) {
+                    None => {
+                        out.push(stmt.to_string());
+                        tables.insert(table.clone(), columns.iter().map(|(c, _)| c.clone()).collect());
+                        created.push(table);
+                    }
+                    Some(have) => {
+                        for (column, def) in columns {
+                            if !have.contains(&column) {
+                                out.push(format!("ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {def}"));
+                                have.push(column);
+                            }
+                        }
                     }
                 }
-                _ => {}
+            }
+            ["alter", "table", rest @ ..] => {
+                let rest: Vec<&str> = rest.iter().copied().skip_while(|w| matches!(*w, "if" | "exists" | "only")).collect();
+                let Some((name, after)) = rest.split_first() else { continue };
+                let table = unqualified(name);
+                let after: Vec<&str> = after.iter().copied().skip_while(|w| matches!(*w, "add" | "column" | "if" | "not" | "exists")).collect();
+                let adds = lower.contains(" add ");
+                match (adds, after.first(), tables.get_mut(&table)) {
+                    (true, Some(column), Some(have)) if !lower.contains(" constraint ") => {
+                        let column = column.trim_matches(',').to_string();
+                        if !have.contains(&column) {
+                            // The definition as written, after `ADD [COLUMN] [IF NOT EXISTS]`.
+                            let at = stmt.to_lowercase().find(&format!(" {column}")).unwrap_or(0);
+                            out.push(format!("ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {}", stmt[at..].trim()));
+                            have.push(column);
+                        }
+                    }
+                    _ if created.contains(&table) => out.push(stmt.to_string()),
+                    _ => {}
+                }
+            }
+            _ => {
+                // An index or a comment: for a table made here, or one that is
+                // safe to run again.
+                let names_new = created.iter().any(|t| {
+                    lower.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_' || c == '.')).any(|w| unqualified(w) == *t)
+                });
+                if names_new || lower.contains("if not exists") {
+                    out.push(stmt.to_string());
+                }
             }
         }
-        let Some(end) = end else { break };
-        let body = &ddl[body_start..end];
-        search_from = end;
-
-        let columns = split_top_level(body)
-            .into_iter()
-            .filter_map(|item| {
-                let item = item.trim();
-                let first = item.split_whitespace().next()?.trim_matches('"');
-                // Table-level constraints are not columns.
-                if matches!(
-                    first.to_lowercase().as_str(),
-                    "primary" | "foreign" | "unique" | "check" | "constraint" | "exclude" | "like"
-                ) {
-                    return None;
-                }
-                if first.is_empty() {
-                    return None;
-                }
-                Some(first.to_lowercase())
-            })
-            .collect();
-
-        out.push(DeclaredTable {
-            schema: schema.trim().trim_matches('"').to_lowercase(),
-            table: table.trim().trim_matches('"').to_lowercase(),
-            columns,
-        });
     }
-    out
+    if out.is_empty() {
+        return Ok(None);
+    }
+    Ok(Some(format!("CREATE SCHEMA IF NOT EXISTS {schema};\n\n{};\n", out.join(";\n\n"))))
+}
+
+/// A `CREATE TABLE` statement's table name, and each column with its whole
+/// definition (`kcal INTEGER NOT NULL`). Table-level constraints are left out.
+fn create_table_parts(stmt: &str) -> Option<(String, Vec<(String, String)>)> {
+    let lower = stmt.to_lowercase();
+    let after = lower.find("create table")? + "create table".len();
+    let paren = after + stmt[after..].find('(')?;
+    let head = lower[after..paren].replace("if not exists", "");
+    let name = head.trim().to_string();
+    if name.is_empty() {
+        return None;
+    }
+    let body_start = paren + 1;
+    let mut depth = 1i32;
+    let mut end = None;
+    for (i, c) in stmt[body_start..].char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = Some(body_start + i);
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let body = &stmt[body_start..end?];
+    let columns = split_top_level(body)
+        .into_iter()
+        .filter_map(|item| {
+            let item = item.trim().to_string();
+            let first = item.split_whitespace().next()?.to_lowercase();
+            if matches!(first.as_str(), "primary" | "foreign" | "unique" | "check" | "constraint" | "exclude" | "like") {
+                return None;
+            }
+            Some((first, item))
+        })
+        .collect();
+    Some((name, columns))
 }
 
 /// Split DDL into statements on semicolons that actually terminate one.
@@ -384,51 +420,6 @@ fn split_statements(ddl: &str) -> Vec<String> {
     out
 }
 
-/// Split a column list on commas that are not inside parentheses or quotes.
-/// DDL with `--` line comments and `/* */` block comments removed, leaving
-/// string literals alone.
-fn strip_sql_comments(ddl: &str) -> String {
-    let mut out = String::with_capacity(ddl.len());
-    let mut chars = ddl.chars().peekable();
-    let mut in_string = false;
-    while let Some(c) = chars.next() {
-        if in_string {
-            out.push(c);
-            if c == '\'' {
-                in_string = false;
-            }
-            continue;
-        }
-        match (c, chars.peek()) {
-            ('\'', _) => {
-                in_string = true;
-                out.push(c);
-            }
-            ('-', Some('-')) => {
-                for n in chars.by_ref() {
-                    if n == '\n' {
-                        out.push('\n');
-                        break;
-                    }
-                }
-            }
-            ('/', Some('*')) => {
-                chars.next();
-                let mut prev = ' ';
-                for n in chars.by_ref() {
-                    if prev == '*' && n == '/' {
-                        break;
-                    }
-                    prev = n;
-                }
-                out.push(' ');
-            }
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
 fn split_top_level(body: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut depth = 0i32;
@@ -460,102 +451,18 @@ fn split_top_level(body: &str) -> Vec<String> {
     out
 }
 
-/// Columns a live table actually has. Empty when the table does not exist.
-async fn live_columns(pool: &PgPool, schema: &str, table: &str) -> Result<Vec<String>, String> {
-    sqlx::query_scalar(
-        "SELECT column_name FROM information_schema.columns \
-         WHERE table_schema = $1 AND table_name = $2",
-    )
-    .bind(schema)
-    .bind(table)
-    .fetch_all(pool)
-    .await
-    .map_err(|e| e.to_string())
-}
-
-/// A column the DDL declares that the DDL will not actually create.
-#[derive(Debug, Clone)]
-pub struct Drift {
-    pub schema: String,
-    pub table: String,
-    pub missing: Vec<String>,
-}
-
-impl Drift {
-    /// The finding text — the exact statement to write instead. Error-message
-    /// quality is the whole point here: the reader is a model in a retry loop,
-    /// and "this does nothing" without "write this instead" costs a round trip.
-    pub fn message(&self) -> String {
-        let cols = self.missing.join(", ");
-        format!(
-            "table {}.{} already exists, so CREATE TABLE IF NOT EXISTS will not add {} — \
-             the apply would succeed and change nothing",
-            self.schema, self.table, cols
-        )
-    }
-
-    pub fn suggestion(&self) -> String {
-        let alters: Vec<String> = self
-            .missing
-            .iter()
-            .map(|c| {
-                format!(
-                    "ALTER TABLE {}.{} ADD COLUMN IF NOT EXISTS {c} <type>;",
-                    self.schema, self.table
-                )
-            })
-            .collect();
-        format!(
-            "each applet setup call is one MIGRATION, not the whole schema — \
-             submit only what changed: {}",
-            alters.join(" ")
-        )
-    }
-}
-
-/// Find columns the submitted DDL declares on tables that already exist.
-///
-/// This is the check that could not previously exist: the DDL is valid, the
-/// apply succeeds, and the column is simply never created.
-pub async fn detect_drift(pool: &PgPool, ddl: &str) -> Vec<Drift> {
-    let mut out = Vec::new();
-    for decl in declared_tables(ddl) {
-        let Ok(live) = live_columns(pool, &decl.schema, &decl.table).await else {
-            continue;
-        };
-        if live.is_empty() {
-            continue; // table does not exist yet — the CREATE will do its job
-        }
-        let live: Vec<String> = live.into_iter().map(|c| c.to_lowercase()).collect();
-        let missing: Vec<String> = decl
-            .columns
-            .iter()
-            .filter(|c| !live.contains(c))
-            .cloned()
-            .collect();
-        if !missing.is_empty() {
-            out.push(Drift {
-                schema: decl.schema,
-                table: decl.table,
-                missing,
-            });
-        }
-    }
-    out
-}
-
 // ============================================================================
 // Applying DDL — the security guards, in one place
 // ============================================================================
 
 pub async fn check(pool: &PgPool, ddl: &str, slug: &str) -> Result<(), String> {
     validate_text(ddl, slug)?;
-    run_schema_statements(pool, ddl, false).await
+    run_schema_statements(pool, ddl, slug, false).await
 }
 
 /// Apply DDL for real (post-check), committing it.
-pub async fn apply(pool: &PgPool, ddl: &str) -> Result<(), String> {
-    run_schema_statements(pool, ddl, true).await
+pub async fn apply(pool: &PgPool, ddl: &str, slug: &str) -> Result<(), String> {
+    run_schema_statements(pool, ddl, slug, true).await
 }
 
 /// What a statement in `schema_sql` may start with: tables, their indexes
@@ -583,25 +490,38 @@ const FORBIDDEN_WORDS: &[&str] = &["select", "set_config", "ts_stat"];
 /// dollar-quoted, nothing reads data, and every schema-qualified identifier
 /// is the applet's own schema.
 pub fn validate_text(ddl: &str, slug: &str) -> Result<(), String> {
+    validate_statements(ddl, slug)?;
+    let expected = format!("applet_{slug}");
+    if !ddl.to_lowercase().contains(&expected) {
+        return Err(format!(
+            "schema_sql must create tables in schema {expected} (start with CREATE SCHEMA IF NOT EXISTS {expected};)"
+        ));
+    }
+    Ok(())
+}
+
+/// [`validate_text`]'s rules for each statement, without requiring the
+/// `CREATE SCHEMA` line, which [`delta`] writes itself.
+fn validate_statements(ddl: &str, slug: &str) -> Result<(), String> {
     let lowered = ddl.to_lowercase();
     for kw in ["commit", "rollback", "savepoint", "grant", "revoke", "create role", "drop role"] {
         if lowered.contains(kw) {
-            return Err(format!("schema_sql may not contain '{kw}'"));
+            return Err(format!("tables may not contain '{kw}'"));
         }
     }
     // Comments never run, and the shipped files' prose quotes things.
     let code = strip_comments(&lowered);
     for (c, what) in [('"', "quoted identifiers"), ('$', "dollar quoting")] {
         if code.contains(c) {
-            return Err(format!("schema_sql may not use {what} ('{c}'). Use plain lowercase names."));
+            return Err(format!("tables may not use {what} ('{c}'). Use plain lowercase names."));
         }
     }
     if code.contains("to_xml") || code.contains("xmlschema") {
-        return Err("schema_sql may not call the XML export functions, which run queries".into());
+        return Err("tables may not call the XML export functions, which run queries".into());
     }
     for word in code.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
         if FORBIDDEN_WORDS.contains(&word) {
-            return Err(format!("schema_sql may not contain '{word}': it creates and changes tables, and reads nothing"));
+            return Err(format!("tables may not contain '{word}': it creates and changes tables, and reads nothing"));
         }
     }
     for stmt in split_statements(&code) {
@@ -613,7 +533,7 @@ pub fn validate_text(ddl: &str, slug: &str) -> Result<(), String> {
         if !STATEMENTS.iter().any(|s| head == *s || head.starts_with(&format!("{s} "))) {
             let shown = words.iter().take(3).copied().collect::<Vec<_>>().join(" ");
             return Err(format!(
-                "schema_sql may only create, alter or drop tables and indexes in its own schema; '{shown}…' is not one of those"
+                "tables may only create, alter or drop tables and indexes in its own schema; '{shown}…' is not one of those"
             ));
         }
     }
@@ -627,15 +547,10 @@ pub fn validate_text(ddl: &str, slug: &str) -> Result<(), String> {
                 || schema.starts_with("wiki_")
             {
                 return Err(format!(
-                    "schema_sql must only target schema {expected} (found '{token}')"
+                    "tables must only target schema {expected} (found '{token}')"
                 ));
             }
         }
-    }
-    if !lowered.contains(&expected) {
-        return Err(format!(
-            "schema_sql must create tables in schema {expected} (start with CREATE SCHEMA IF NOT EXISTS {expected};)"
-        ));
     }
     Ok(())
 }
@@ -665,7 +580,7 @@ fn strip_comments(stmt: &str) -> String {
 /// statement per query means a smuggled multi-statement string is a protocol
 /// error, not an escape — and it avoids `raw_sql`, whose future trips
 /// rustc's Send-generality inference inside the agent stream.
-async fn run_schema_statements(pool: &PgPool, ddl: &str, commit: bool) -> Result<(), String> {
+async fn run_schema_statements(pool: &PgPool, ddl: &str, slug: &str, commit: bool) -> Result<(), String> {
     let mut tx = pool.begin().await.map_err(|e| e.to_string())?;
     sqlx::query("SET LOCAL statement_timeout = '5s'")
         .execute(&mut *tx)
@@ -675,13 +590,16 @@ async fn run_schema_statements(pool: &PgPool, ddl: &str, commit: bool) -> Result
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
-    // Empty search_path is the real guard (the textual check is belt-and-
-    // braces): every table name must be schema-qualified, so an unqualified
-    // `DROP TABLE data_location_points` or `CREATE TABLE evil (...)` resolves
-    // to no schema and errors instead of hitting `public`. Combined with
-    // validate_text rejecting any qualified name outside applet_<slug>,
-    // there is no path for this DDL to touch data_*/wiki_*/app_*/public.
-    sqlx::query("SET LOCAL search_path = ''")
+    // The search path is the applet's own schema alone, so an unqualified
+    // name (`CREATE TABLE drinks`) lands there and `public` is never on it:
+    // an unqualified `data_location_points` resolves to nothing and errors.
+    // Combined with validate_text rejecting any qualified name outside
+    // applet_<slug>, this DDL cannot touch data_*/wiki_*/app_*/public. The
+    // slug is lowercase letters, digits and underscores, from the folder.
+    if !slug.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
+        return Err(format!("`{slug}` is not an applet slug"));
+    }
+    sqlx::query(&format!("SET LOCAL search_path = applet_{slug}"))
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
@@ -761,76 +679,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn parses_the_shape_the_authoring_loop_writes() {
-        let ddl = "CREATE SCHEMA IF NOT EXISTS applet_calories;\n\
-                   CREATE TABLE IF NOT EXISTS applet_calories.entries (\n\
-                     id TEXT PRIMARY KEY,\n\
-                     eaten_at TIMESTAMPTZ NOT NULL DEFAULT now(),\n\
-                     kcal INTEGER NOT NULL\n\
-                   );";
-        let t = declared_tables(ddl);
-        assert_eq!(t.len(), 1);
-        assert_eq!(t[0].schema, "applet_calories");
-        assert_eq!(t[0].table, "entries");
-        assert_eq!(t[0].columns, vec!["id", "eaten_at", "kcal"]);
-    }
-
-    #[test]
-    fn nested_parens_do_not_end_the_column_list() {
-        let ddl = "CREATE TABLE applet_x.t (\
-                     amount NUMERIC(10,2) NOT NULL,\
-                     kind TEXT CHECK (kind IN ('a','b')),\
-                     PRIMARY KEY (amount, kind)\
-                   );";
-        let t = declared_tables(ddl);
-        assert_eq!(t.len(), 1);
-        // numeric(10,2) must not split into two columns, the CHECK's inner
-        // comma must not either, and PRIMARY KEY is a constraint not a column.
-        assert_eq!(t[0].columns, vec!["amount", "kind"]);
-    }
-
-    #[test]
-    fn table_level_constraints_are_not_columns() {
-        let ddl = "CREATE TABLE applet_x.t (\
-                     id TEXT,\
-                     other_id TEXT,\
-                     CONSTRAINT fk FOREIGN KEY (other_id) REFERENCES applet_x.u(id),\
-                     UNIQUE (id)\
-                   );";
-        assert_eq!(declared_tables(ddl)[0].columns, vec!["id", "other_id"]);
-    }
-
-    #[test]
-    fn several_tables_in_one_submission() {
-        let ddl = "CREATE TABLE applet_x.a (id TEXT); CREATE TABLE applet_x.b (id TEXT, n INT);";
-        let t = declared_tables(ddl);
-        assert_eq!(t.len(), 2);
-        assert_eq!(t[1].table, "b");
-        assert_eq!(t[1].columns, vec!["id", "n"]);
-    }
-
-    #[test]
-    fn unparseable_ddl_yields_nothing_rather_than_a_wrong_guess() {
-        // No column list at all — better to skip the drift check than to
-        // invent a finding the model would chase.
-        assert!(declared_tables("CREATE TABLE applet_x.a").is_empty());
-        assert!(declared_tables("ALTER TABLE applet_x.a ADD COLUMN b INT;").is_empty());
-    }
-
-    #[test]
-    fn comments_in_a_column_list_are_not_columns() {
-        let ddl = "-- version 1, explained\n\
-                   CREATE TABLE IF NOT EXISTS applet_x.readings (\n\
-                   -- the day, in local time\n\
-                   day DATE NOT NULL, /* one row, per slot */\n\
-                   slot TEXT DEFAULT '--not a comment'\n\
-                   );";
-        let t = declared_tables(ddl);
-        assert_eq!(t.len(), 1);
-        assert_eq!(t[0].columns, vec!["day", "slot"]);
-    }
-
     async fn insert_applet(pool: &PgPool, id: &str) {
         sqlx::query(
             "INSERT INTO app_applets (id, name, owner, agent) VALUES ($1, $1, 'ai', 'x')",
@@ -904,47 +752,13 @@ mod tests {
         );
         assert_eq!(replay_pending(&pool, id, "t2", tmp.path()).await, 1);
 
-        let cols = live_columns(&pool, "applet_t2", "entries").await.unwrap();
-        assert!(cols.contains(&"kcal".to_string()), "the ALTER actually ran");
-    }
-
-    /// The regression this module exists for. Re-sending the CREATE with an
-    /// extra column applies cleanly and adds nothing — so it must be caught
-    /// before it is recorded as a successful migration.
-    #[sqlx::test]
-    async fn drift_catches_a_create_that_would_add_nothing(pool: PgPool) {
-        apply(
-            &pool,
-            "CREATE SCHEMA IF NOT EXISTS applet_t3; \
-             CREATE TABLE IF NOT EXISTS applet_t3.entries (id TEXT PRIMARY KEY);",
+        let cols: Vec<String> = sqlx::query_scalar(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'applet_t2' AND table_name = 'entries'",
         )
+        .fetch_all(&pool)
         .await
         .unwrap();
-
-        let resend = "CREATE SCHEMA IF NOT EXISTS applet_t3; \
-                      CREATE TABLE IF NOT EXISTS applet_t3.entries (\
-                        id TEXT PRIMARY KEY, protein_g INTEGER);";
-        let drift = detect_drift(&pool, resend).await;
-        assert_eq!(drift.len(), 1, "the silent no-op is seen");
-        assert_eq!(drift[0].missing, vec!["protein_g"]);
-        assert!(drift[0].suggestion().contains("ADD COLUMN IF NOT EXISTS protein_g"));
-    }
-
-    /// And it must not cry wolf: a first-time CREATE has no drift, and neither
-    /// does an unchanged resubmit.
-    #[sqlx::test]
-    async fn drift_is_silent_when_nothing_is_wrong(pool: PgPool) {
-        let ddl = "CREATE SCHEMA IF NOT EXISTS applet_t4; \
-                   CREATE TABLE IF NOT EXISTS applet_t4.entries (id TEXT PRIMARY KEY);";
-        assert!(
-            detect_drift(&pool, ddl).await.is_empty(),
-            "table does not exist yet — the CREATE will do its job"
-        );
-        apply(&pool, ddl).await.unwrap();
-        assert!(
-            detect_drift(&pool, ddl).await.is_empty(),
-            "unchanged resubmit declares nothing new"
-        );
+        assert!(cols.contains(&"kcal".to_string()), "the ALTER actually ran");
     }
 
     #[test]
@@ -972,16 +786,36 @@ mod tests {
         assert_eq!(stmts.len(), 1);
     }
 
-    #[test]
-    fn the_suggestion_names_the_statement_to_write() {
-        let d = Drift {
-            schema: "applet_calories".into(),
-            table: "entries".into(),
-            missing: vec!["protein_g".into()],
-        };
-        assert!(d.message().contains("will not add protein_g"));
-        assert!(d
-            .suggestion()
-            .contains("ALTER TABLE applet_calories.entries ADD COLUMN IF NOT EXISTS protein_g"));
+    /// The whole schema, sent again with a column and a table added, becomes
+    /// a migration that adds only those, and the same schema again adds
+    /// nothing. Unqualified names land in the applet's own schema.
+    #[sqlx::test]
+    async fn the_whole_schema_becomes_only_what_is_missing(pool: PgPool) {
+        let first = "CREATE TABLE drinks (id TEXT PRIMARY KEY, ml INTEGER NOT NULL);\n\
+                     CREATE INDEX ON drinks (ml);";
+        let ddl = delta(&pool, first, "water").await.unwrap().expect("a first migration");
+        assert!(ddl.starts_with("CREATE SCHEMA IF NOT EXISTS applet_water;"), "{ddl}");
+        assert!(ddl.contains("CREATE INDEX ON drinks"), "{ddl}");
+        apply(&pool, &ddl, "water").await.unwrap();
+        assert_eq!(delta(&pool, first, "water").await.unwrap(), None, "nothing is missing");
+
+        let more = "CREATE TABLE IF NOT EXISTS applet_water.drinks (id TEXT PRIMARY KEY, ml INTEGER NOT NULL, \
+                    note TEXT DEFAULT 'none');\nCREATE INDEX ON drinks (ml);\nCREATE TABLE goals (day DATE PRIMARY KEY, ml INTEGER);";
+        let ddl = delta(&pool, more, "water").await.unwrap().expect("a second migration");
+        assert!(ddl.contains("ALTER TABLE drinks ADD COLUMN IF NOT EXISTS note TEXT DEFAULT 'none'"), "{ddl}");
+        assert!(ddl.contains("CREATE TABLE goals"), "{ddl}");
+        assert!(!ddl.contains("CREATE INDEX"), "the old table's index is not made again: {ddl}");
+        apply(&pool, &ddl, "water").await.unwrap();
+        let columns: Vec<String> = sqlx::query_scalar(
+            "SELECT column_name FROM information_schema.columns WHERE table_schema = 'applet_water' AND table_name = 'drinks' ORDER BY column_name",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(columns, ["id", "ml", "note"]);
+
+        assert!(delta(&pool, "DROP TABLE goals;", "water").await.unwrap_err().contains("never drops"));
+        assert!(delta(&pool, "CREATE TABLE public.x (id int);", "water").await.is_err());
     }
+
 }

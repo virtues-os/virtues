@@ -629,6 +629,57 @@ pub(crate) fn apply_patch(text: &str, patch: &serde_json::Map<String, serde_json
     render_parts(top, meta, &body)
 }
 
+/// The keys setup writes, by the file's own names: the spec's
+/// `description` and `allowed-tools`, `prompt` for the body, and the rest
+/// under `metadata`.
+pub(crate) const SETUP_KEYS: &[&str] = &["description", "allowed-tools", "prompt", "trigger", "run", "invoke", "limit", "model"];
+
+/// A `SKILL.md` with each of `keys` set to its value, or removed when the
+/// value is `None`; every other key is left as it was.
+pub(crate) fn with_keys(text: &str, keys: &[(&str, Option<String>)]) -> Result<String, String> {
+    let (mut top, mut meta, mut body) = parts(text)?;
+    for (key, value) in keys {
+        let k = Yaml::String((*key).to_string());
+        match *key {
+            "prompt" => body = value.clone().unwrap_or_default(),
+            "description" | "allowed-tools" => match value {
+                Some(v) => {
+                    top.insert(k, Yaml::String(v.clone()));
+                }
+                None => {
+                    top.remove(&k);
+                }
+            },
+            "trigger" | "run" | "invoke" | "limit" | "model" => match value {
+                Some(v) => {
+                    meta.insert(k, Yaml::String(v.clone()));
+                }
+                None => {
+                    meta.remove(&k);
+                }
+            },
+            other => return Err(format!("`{other}` is not a key setup writes")),
+        }
+    }
+    render_parts(top, meta, &body)
+}
+
+/// The `metadata` keys a `SKILL.md` sets.
+pub(crate) fn metadata_keys(text: &str) -> Result<Vec<String>, String> {
+    let (_, meta, _) = parts(text)?;
+    Ok(meta.keys().filter_map(|k| k.as_str().map(String::from)).collect())
+}
+
+/// The value of `key` (one of [`SETUP_KEYS`]) in a `SKILL.md`, if it has one.
+pub(crate) fn key_value(text: &str, key: &str) -> Option<String> {
+    let (top, meta, body) = parts(text).ok()?;
+    match key {
+        "prompt" => Some(body).filter(|b| !b.trim().is_empty()),
+        "description" | "allowed-tools" => top.get(&Yaml::String(key.into())).and_then(scalar),
+        _ => meta.get(&Yaml::String(key.into())).and_then(scalar),
+    }
+}
+
 /// A file's frontmatter without `metadata`, its `metadata`, and its body.
 fn parts(text: &str) -> Result<(Hash, Hash, String), String> {
     let (front, body) = split_frontmatter(text)?;

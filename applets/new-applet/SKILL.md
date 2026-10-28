@@ -24,5 +24,5 @@ Choose only the tools the prompt needs:
 
 Use the deep model only for slow research that is worth the cost; otherwise leave it standard.
 
-Save it only after they agree to the draft, with the applet tool: action "setup", invoke ["chat"], and its name, description, agent (the prompt), tools and model. Then tell them to run it by typing / and its name, which the result gives as run_it_with.
+Save it only after they agree to the draft, with the applet tool: action "setup", invoke ["chat"], and its name, description, prompt, tools and model. Then tell them to run it by typing / and its name, which the result gives as run_it_with.
 </new_applet>

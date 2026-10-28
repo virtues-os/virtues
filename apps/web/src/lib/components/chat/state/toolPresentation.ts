@@ -277,7 +277,8 @@ const TOOLS: Record<string, Presentation> = {
 		noun: "an applet",
 		depth: 4,
 		say: (input, live) => {
-			// Setup with `{guide: true}` only reads the authoring guide; it sets nothing up.
+			// Chats from before 2026-10-28 called setup with `{guide: true}`,
+			// which only read the authoring guide and set nothing up.
 			const key = input.action === "setup" && input.guide === true ? "guide" : String(input.action ?? "");
 			const [now, then] = APPLET_SAY[key] ?? ["Working on an applet", "Worked on an applet"];
 			return live ? now : then;

@@ -19,10 +19,12 @@ use std::sync::{OnceLock, RwLock};
 mod convert;
 
 pub use convert::convert_state_root;
-pub(crate) use convert::next_once;
 mod skill;
 
-pub(crate) use skill::{limit_from_config, render as render_skill_md, SkillMd, ALWAYS_ALLOWED_TOOLS};
+pub(crate) use skill::{
+    key_value, overlay, override_between, render as render_skill_md, with_keys, SkillMd,
+    ALWAYS_ALLOWED_TOOLS, SETUP_KEYS,
+};
 
 /// An applet folder written in the Agent Skills format. See [`skill`].
 const SKILL_FILE: &str = "SKILL.md";
@@ -886,6 +888,53 @@ fn edit_shipped(
     skill::override_between(shipped_text, &edited).map_err(Error::InvalidInput)
 }
 
+/// The file setup writes for the applet named `spec`.
+pub(crate) enum SetupTarget {
+    /// A folder in the state root: the assistant's own (`user/<spec>`, which
+    /// may not exist yet) or a fork of a shipped applet (`<spec>`).
+    Own { rel: String, folder: std::path::PathBuf },
+    /// A shipped applet, changed through its override.
+    Shipped { dir: String, folder: std::path::PathBuf },
+}
+
+/// Which file a setup for `spec` changes. The same name is the same applet:
+/// one the assistant made, then a fork, then a shipped applet; a name none of
+/// them has is a new applet under `user/`.
+pub(crate) fn setup_target(spec: &str) -> SetupTarget {
+    let own = format!("user/{spec}");
+    for rel in [own.clone(), spec.to_string()] {
+        let folder = state_root().join(&rel);
+        if folder.join(SKILL_FILE).is_file() {
+            return SetupTarget::Own { rel, folder };
+        }
+    }
+    let shipped = shipped_root().join(spec);
+    if shipped.join(SKILL_FILE).is_file() {
+        return SetupTarget::Shipped { dir: spec.to_string(), folder: shipped };
+    }
+    SetupTarget::Own { folder: state_root().join(&own), rel: own }
+}
+
+/// A shipped applet's file and its override, if it has one.
+pub(crate) fn shipped_and_override(dir: &str) -> Result<(String, Option<String>)> {
+    let path = shipped_root().join(dir).join(SKILL_FILE);
+    let shipped = std::fs::read_to_string(&path).map_err(|e| Error::Other(format!("could not read {}: {e}", path.display())))?;
+    Ok((shipped, std::fs::read_to_string(override_path(dir)).ok()))
+}
+
+/// Write, or with `None` remove, a shipped applet's override.
+pub(crate) fn set_override(dir: &str, text: Option<&str>) -> Result<()> {
+    match text {
+        Some(t) => write_atomic(&override_path(dir), t),
+        None => remove_override(dir),
+    }
+}
+
+/// Write a state-root applet's `SKILL.md`, whole.
+pub(crate) fn write_skill_md(folder: &std::path::Path, text: &str) -> Result<()> {
+    write_atomic(&folder.join(SKILL_FILE), text)
+}
+
 /// Return a shipped applet to exactly what ships.
 pub fn reset_to_shipped(applet_id: &str) -> Result<()> {
     let dir = dir_for_applet_id(applet_id).ok_or_else(|| Error::NotFound(format!("Applet not found: {applet_id}")))?;
@@ -966,10 +1015,22 @@ pub(crate) fn check_skill_md(text: &str, folder: &std::path::Path, dir: &str) ->
     skill::parse(text, folder, dir, false).map(|_| ())
 }
 
+/// What a `SKILL.md` text reads as, for setup's reply: the applet's id, its
+/// schedule as cron, its `until`, and whether `/name` starts it.
+pub(crate) fn read_skill_md(
+    text: &str,
+    folder: &std::path::Path,
+    dir: &str,
+    shipped: bool,
+) -> std::result::Result<(String, Option<String>, Option<String>, bool), Vec<String>> {
+    let t = skill::parse(text, folder, dir, shipped)?;
+    Ok((t.id_prefix.unwrap_or_default(), t.schedule, t.until, t.invoke_chat))
+}
+
 /// A `SKILL.md` folder as the `setup` arguments that would write it, for
-/// `virtues applet put`. A `run` that is not a converted condition, a
-/// `source`, `secrets` and `net(…)` entries have no `setup` field; a folder
-/// with them is refused with what to change, since `put` would drop them.
+/// `virtues applet put`: the same keys by the same names. A key setup does
+/// not write (`source`, `secrets`, `icon`, …) or a `run` that is code is
+/// refused with what to change, since `put` would drop it.
 pub(crate) fn skill_md_as_setup_args(folder: &std::path::Path) -> std::result::Result<serde_json::Value, String> {
     let name = folder
         .file_name()
@@ -977,56 +1038,29 @@ pub(crate) fn skill_md_as_setup_args(folder: &std::path::Path) -> std::result::R
         .ok_or_else(|| format!("{} has no folder name", folder.display()))?;
     let text = std::fs::read_to_string(folder.join(SKILL_FILE))
         .map_err(|e| format!("{}: {e}", folder.join(SKILL_FILE).display()))?;
-    let t = skill::parse(&text, folder, &format!("user/{name}"), false).map_err(|problems| problems.join(" "))?;
-    let mut refused = Vec::new();
-    if t.command.is_some() {
-        refused.push("`run` names code, which `put` cannot carry");
+    skill::parse(&text, folder, &format!("user/{name}"), false).map_err(|problems| problems.join(" "))?;
+    let unsupported: Vec<String> = skill::metadata_keys(&text)?
+        .into_iter()
+        .filter(|k| !SETUP_KEYS.contains(&k.as_str()))
+        .collect();
+    if !unsupported.is_empty() {
+        return Err(format!("`put` cannot carry {}; remove them or set the applet up by hand", unsupported.iter().map(|k| format!("`{k}`")).collect::<Vec<_>>().join(", ")));
     }
-    if t.source.is_some() {
-        refused.push("`source` needs a connected account, which `put` cannot give it");
+    let value = |k: &str| skill::key_value(&text, k);
+    if value("run").is_some_and(|r| !r.starts_with("sql ")) {
+        return Err("`run` names code, which `put` cannot carry".into());
     }
-    if !t.secrets.is_empty() {
-        refused.push("`secrets` are not something `put` sets");
+    let mut args = serde_json::json!({ "name": name });
+    for key in ["description", "prompt", "trigger", "run", "limit", "model"] {
+        if let Some(v) = value(key) {
+            args[key] = serde_json::json!(v);
+        }
     }
-    let config = t.config.as_ref().map(|c| serde_json::to_value(c).unwrap_or_default()).unwrap_or_default();
-    if config.get("net_hosts").is_some() {
-        refused.push("`net(…)` entries are allowed on the applet's page, not by `put`");
+    if let Some(v) = value("invoke") {
+        args["invoke"] = serde_json::json!(v.split(',').map(str::trim).filter(|i| *i != "none").collect::<Vec<_>>());
     }
-    let condition = match t.run_sql.as_deref() {
-        None => None,
-        Some(sql) => match sql.strip_prefix("select 1 where (").and_then(|c| c.strip_suffix(')')) {
-            Some(c) => Some(c.to_string()),
-            None => {
-                refused.push("`run` SQL other than `select 1 where (…)` has no `setup` field yet");
-                None
-            }
-        },
-    };
-    if !refused.is_empty() {
-        return Err(refused.join("; "));
-    }
-    let mut invoke = Vec::new();
-    if t.invoke_chat {
-        invoke.push("chat");
-    }
-    if t.triggers.iter().any(|x| x == "tool") {
-        invoke.push("assistant");
-    }
-    let model = config.get("model_slot").and_then(|m| m.as_str()).filter(|m| *m == "deep" || *m == "standard");
-    let mut args = serde_json::json!({
-        "name": name,
-        "description": t.description.unwrap_or_default(),
-        "agent": t.agent,
-        "schedule": t.schedule,
-        "until": t.until,
-        "condition": condition,
-        "invoke": invoke,
-        "tools": config.get("allowed_tools"),
-        "model": model,
-        "limits": config.get("limits"),
-    });
-    if let Some(obj) = args.as_object_mut() {
-        obj.retain(|_, v| !v.is_null() && v.as_array().is_none_or(|a| !a.is_empty()));
+    if let Some(v) = value("allowed-tools") {
+        args["tools"] = serde_json::json!(v.split_whitespace().collect::<Vec<_>>());
     }
     Ok(args)
 }

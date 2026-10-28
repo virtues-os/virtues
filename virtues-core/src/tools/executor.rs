@@ -343,12 +343,8 @@ impl ToolExecutor {
         if tool_name == "applet" && super::applet_management::is_read(arguments) {
             return Ok(None);
         }
-        // Reading the authoring guide writes nothing; asking "I allow" for it
-        // would put a prompt in front of the step the definition requires.
-        // Nor does a dry run: `check_only` validates and creates nothing.
-        if applet_action == Some("setup")
-            && (super::applet_setup::wants_guide(arguments) || super::applet_setup::wants_check_only(arguments))
-        {
+        // A dry run writes nothing: `check_only` validates and creates nothing.
+        if applet_action == Some("setup") && super::applet_setup::wants_check_only(arguments) {
             return Ok(None);
         }
         // Sudo is the owner's bypass: these run, and a delete in SQL or the
