@@ -516,7 +516,10 @@ impl ToolExecutor {
                 let chat_id = context.chat_id.as_deref().filter(|_| !context.temporary);
                 self.sql_query.execute(arguments, chat_id, context.timezone.as_deref()).await
             }
-            "sql_write" => super::sql_write::execute(&self._pool, arguments, context.timezone.as_deref()).await,
+            "sql_write" => {
+                super::sql_write::execute(&self._pool, arguments, context.timezone.as_deref(), context.applet_run_id.as_deref())
+                    .await
+            }
             // The tool lists already keep it out of every other mode; this is
             // the second lock, for a model that names a tool it was not given.
             "sudo" if context.sudo && context.applet_id.is_none() => {

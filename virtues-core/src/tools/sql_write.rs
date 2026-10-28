@@ -18,10 +18,13 @@ const SQL_MAX: usize = 16 * 1024;
 const RETURN_ROWS_MAX: usize = 500;
 
 /// `timezone` is the owner's; it only puts returned times on their clock.
+/// `run_id` is the applet run the write is part of, which records the rows it
+/// wrote so the run can show them.
 pub async fn execute(
     pool: &PgPool,
     arguments: serde_json::Value,
     timezone: Option<&str>,
+    run_id: Option<&str>,
 ) -> Result<ToolResult, ToolError> {
     let sql = arguments
         .get("sql")
@@ -69,6 +72,7 @@ pub async fn execute(
                 if let Err(e) = tx.commit().await {
                     return Ok(fail(&format!("commit failed: {e}")));
                 }
+                record(pool, run_id, &owned_sql, rows.len() as i64).await;
                 let capped = rows.len().min(RETURN_ROWS_MAX);
                 // The write has committed; a failed zone lookup only leaves the
                 // returned times in UTC, marked `+00:00`.
@@ -93,6 +97,7 @@ pub async fn execute(
                 if let Err(e) = tx.commit().await {
                     return Ok(fail(&format!("commit failed: {e}")));
                 }
+                record(pool, run_id, &owned_sql, done.rows_affected() as i64).await;
                 Ok(ToolResult::success(serde_json::json!({
                     "rows_affected": done.rows_affected(),
                 })))
@@ -105,10 +110,47 @@ pub async fn execute(
     }
 }
 
+/// Record on the run the rows a committed write touched. A record that fails
+/// is logged: the write itself has happened.
+async fn record(pool: &PgPool, run_id: Option<&str>, sql: &str, rows: i64) {
+    let (Some(run_id), Some(table)) = (run_id, target_table(sql)) else { return };
+    if let Err(e) = crate::scheduler::applets::record_rows_output(pool, run_id, &table, rows).await {
+        tracing::warn!(run_id, table, error = %e, "could not record the rows a run wrote");
+    }
+}
+
+/// The table an INSERT, UPDATE or DELETE writes: the name after `INSERT
+/// INTO`, `UPDATE` or `DELETE FROM`.
+fn target_table(sql: &str) -> Option<String> {
+    let words: Vec<String> = sql.split_whitespace().map(|w| w.to_lowercase()).collect();
+    let after = match words.first()?.as_str() {
+        "insert" | "delete" => 2,
+        "update" => 1,
+        _ => return None,
+    };
+    let name = words.get(after)?;
+    let name = name.split(['(', ',']).next()?.trim();
+    (!name.is_empty()).then(|| name.to_string())
+}
+
 fn fail(msg: &str) -> ToolResult {
     ToolResult::success(serde_json::json!({
         "status": "error",
         "error": msg,
-        "hint": "sql_write can only touch tables in applet_* schemas (create them with the applet tool's setup action, schema_sql)",
+        "hint": "sql_write can only touch tables in applet_* schemas (create them with the applet tool's setup action, tables)",
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_table_a_write_names() {
+        assert_eq!(target_table("INSERT INTO applet_water.drinks (ml) VALUES (250)").as_deref(), Some("applet_water.drinks"));
+        assert_eq!(target_table("insert into applet_water.drinks(ml) values (1)").as_deref(), Some("applet_water.drinks"));
+        assert_eq!(target_table("UPDATE applet_water.drinks SET ml = 1").as_deref(), Some("applet_water.drinks"));
+        assert_eq!(target_table("DELETE FROM applet_water.drinks WHERE true").as_deref(), Some("applet_water.drinks"));
+        assert_eq!(target_table("WITH x AS (SELECT 1) INSERT INTO t VALUES (1)"), None);
+    }
 }

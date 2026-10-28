@@ -123,11 +123,13 @@ pub struct AppletRun {
     pub cost_micros: i64,
     /// What the run reached through its egress proxy, one entry per host:
     /// `{host, requests, refused, sent_bytes, received_bytes}`. Empty for a
-    /// run that had no network, which is every run but a sandboxed one whose
-    /// owner allowed hosts.
+    /// run that had no network, which is every run but a sandboxed code one.
     #[serde(default)]
     pub requests: serde_json::Value,
     pub created_at: crate::types::Timestamp,
+    /// What the run made: pages, rows per table, tasks.
+    #[serde(default)]
+    pub made: Vec<RunMade>,
 }
 
 // ============================================================================
@@ -640,7 +642,13 @@ pub async fn query_runs(
     .fetch_all(db)
     .await?;
 
-    rows.iter().map(run_from_row).collect()
+    let mut runs: Vec<AppletRun> = rows.iter().map(run_from_row).collect::<Result<_>>()?;
+    let ids: Vec<String> = runs.iter().map(|r| r.id.clone()).collect();
+    let mut made = made_by_runs(db, &ids).await?;
+    for run in &mut runs {
+        run.made = made.remove(&run.id).unwrap_or_default();
+    }
+    Ok(runs)
 }
 
 /// One line of an applet's log: consecutive runs that shared an outcome.
@@ -659,6 +667,8 @@ pub struct LogEntry {
     /// What these runs reached through the egress proxy, summed per host
     /// across the runs the line stands for, like `cost_micros`.
     pub requests: serde_json::Value,
+    /// What the line's latest run made.
+    pub made: Vec<RunMade>,
 }
 
 /// The run log with identical consecutive outcomes collapsed into one row.
@@ -720,7 +730,8 @@ pub async fn collapsed_log(db: &PgPool, applet_id: &str, limit: i64) -> Result<V
     .await?;
 
     let blank_to_none = |s: String| (!s.is_empty()).then_some(s);
-    rows.iter()
+    let mut lines: Vec<LogEntry> = rows
+        .iter()
         .map(|r| {
             Ok(LogEntry {
                 run_id: r.try_get("latest_run_id")?,
@@ -734,9 +745,18 @@ pub async fn collapsed_log(db: &PgPool, applet_id: &str, limit: i64) -> Result<V
                 last_at: r.try_get("last_at")?,
                 cost_micros: r.try_get("cost_micros")?,
                 requests: r.try_get("requests")?,
+                made: Vec::new(),
             })
         })
-        .collect()
+        .collect::<Result<_>>()?;
+    let ids: Vec<String> = lines.iter().filter_map(|l| l.run_id.clone()).collect();
+    let mut made = made_by_runs(db, &ids).await?;
+    for line in &mut lines {
+        if let Some(id) = &line.run_id {
+            line.made = made.remove(id).unwrap_or_default();
+        }
+    }
+    Ok(lines)
 }
 
 /// One applet's runs on one local day, counted by outcome.
@@ -796,6 +816,95 @@ pub async fn record_page_output(db: &PgPool, run_id: &str, page_id: &str) -> Res
     .bind(page_id)
     .execute(db)
     .await?;
+    Ok(())
+}
+
+/// Record rows a run wrote into one of its tables, adding to what it wrote
+/// there already.
+pub async fn record_rows_output(db: &PgPool, run_id: &str, table: &str, rows: i64) -> Result<()> {
+    if rows <= 0 {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO app_applet_run_outputs (run_id, kind, ref_id, item_count) VALUES ($1, 'rows', $2, $3) \
+         ON CONFLICT (run_id, kind, ref_id) DO UPDATE SET item_count = app_applet_run_outputs.item_count + EXCLUDED.item_count",
+    )
+    .bind(run_id)
+    .bind(table)
+    .bind(i32::try_from(rows).unwrap_or(i32::MAX))
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Record that a run added a task.
+pub async fn record_task_output(db: &PgPool, run_id: &str, task_id: &str) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO app_applet_run_outputs (run_id, kind, ref_id) VALUES ($1, 'task', $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(run_id)
+    .bind(task_id)
+    .execute(db)
+    .await?;
+    Ok(())
+}
+
+/// Whether a run wrote rows or added a task, the things a run can make
+/// besides a page and what it says.
+pub async fn run_made_rows(db: &PgPool, run_id: &str) -> Result<bool> {
+    Ok(sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM app_applet_run_outputs WHERE run_id = $1 AND kind IN ('rows', 'task'))",
+    )
+    .bind(run_id)
+    .fetch_one(db)
+    .await?)
+}
+
+/// One thing a run made: a page (with its title), the rows it wrote into a
+/// table, or a task.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct RunMade {
+    pub kind: String,
+    /// The page or task id, or the table's name.
+    pub ref_id: String,
+    pub title: Option<String>,
+    pub count: i64,
+}
+
+/// What each of `run_ids` made, by run. A page deleted since is left out.
+pub async fn made_by_runs(db: &PgPool, run_ids: &[String]) -> Result<std::collections::HashMap<String, Vec<RunMade>>> {
+    let rows = sqlx::query(
+        r#"SELECT o.run_id, o.kind, o.ref_id, o.item_count::bigint AS item_count, p.title
+             FROM app_applet_run_outputs o
+             LEFT JOIN app_pages p ON o.kind = 'page' AND p.id = o.ref_id AND p.deleted_at IS NULL
+            WHERE o.run_id = ANY($1) AND (o.kind <> 'page' OR p.id IS NOT NULL)
+            ORDER BY o.created_at"#,
+    )
+    .bind(run_ids)
+    .fetch_all(db)
+    .await?;
+    let mut out: std::collections::HashMap<String, Vec<RunMade>> = std::collections::HashMap::new();
+    for r in rows {
+        out.entry(r.try_get("run_id")?).or_default().push(RunMade {
+            kind: r.try_get("kind")?,
+            ref_id: r.try_get("ref_id")?,
+            title: r.try_get("title")?,
+            count: r.try_get("item_count")?,
+        });
+    }
+    Ok(out)
+}
+
+/// Note that the owner opened an applet's page, which clears its "new"
+/// Inbox item.
+pub async fn mark_seen(db: &PgPool, applet_id: &str) -> Result<()> {
+    let res = sqlx::query("UPDATE app_applets SET seen_at = now() WHERE id = $1")
+        .bind(applet_id)
+        .execute(db)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(Error::NotFound(format!("Applet not found: {applet_id}")));
+    }
     Ok(())
 }
 
@@ -1005,6 +1114,7 @@ fn run_from_row(row: &sqlx::postgres::PgRow) -> Result<AppletRun> {
         // absent-ok: a query that does not join the request log has none to show.
         requests: row.try_get("requests").unwrap_or_else(|_| serde_json::json!([])),
         created_at: row.try_get("created_at")?,
+        made: Vec::new(),
     })
 }
 

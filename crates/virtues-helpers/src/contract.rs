@@ -84,6 +84,10 @@ pub struct AppletOutput {
     /// Optional + defaulted, so older action binaries that omit it record 0.
     #[serde(default)]
     pub records: i64,
+    /// Rows this run wrote, by table: `{"applet_tides.tides": 40}`. The run's
+    /// page shows it as what the run made; nothing else trusts it.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub wrote: std::collections::BTreeMap<String, i64>,
 }
 
 impl AppletOutput {
@@ -92,6 +96,7 @@ impl AppletOutput {
             result: result.into(),
             config,
             records: 0,
+            wrote: Default::default(),
         }
     }
 

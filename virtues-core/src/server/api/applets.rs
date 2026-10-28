@@ -49,6 +49,8 @@ pub fn routes() -> Router<AppState> {
                 .delete(delete_applet_handler),
         )
         .route("/api/applets/:id/run", post(trigger_applet_handler))
+        // The owner opened the applet's page, which clears its "new" Inbox item.
+        .route("/api/applets/:id/seen", post(applet_seen_handler))
         .route("/api/applets/:id/message", post(message_applet_handler))
         .route("/api/applets/:id/data", get(get_applet_data_handler))
         // Read the applet's own code. Read-only, owner-authed like everything
@@ -581,6 +583,12 @@ pub async fn get_applet_handler(
         )
             .into_response(),
     }
+}
+
+/// POST /api/applets/:id/seen — the owner opened the applet's page.
+pub async fn applet_seen_handler(State(state): State<AppState>, Path(applet_id): Path<String>) -> Result<StatusCode, Error> {
+    crate::scheduler::applets::mark_seen(state.db.pool(), &applet_id).await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// PATCH /api/applets/:id — partial update. Enforces system-owner guard.

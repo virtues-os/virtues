@@ -554,6 +554,25 @@ cover today. Code's `wrote` is shown on the run.
 **Done when:** a scheduled `weekly-review` adds one Inbox item linking to its
 thread, a failed sync adds one, and a `water` run shows the rows it wrote.
 
+Built on 2026-10-28 except on a box (migration 0073). Decided on the way:
+- The applet's thread is its run log on its page: each run with what was
+  said to it and what it said back, which the page already showed. A run no
+  longer reads or posts into the chat the applet was made in, and setup no
+  longer links one; the page's Chat button still opens that chat to change
+  the applet by talking.
+- The Inbox items are conditions, as the rest of the Inbox is. One per
+  applet that is on and whose latest finished run failed, until a run
+  succeeds. One per applet with an unattended run since you last opened it
+  that wrote a page, or, for your own and the assistant's applets, said
+  something; a shipped applet's own report and a sync's never light it.
+  Opening the applet's page clears it (`app_applets.seen_at`).
+- What a run made is recorded per run: pages, rows per table (from
+  `sql_write`, and from code's `wrote`), and tasks, in
+  `app_applet_run_outputs` with a count. The run log shows "Made …".
+- A prompt that ends with nothing said and nothing made is recorded as
+  skipped, with "Nothing to say."
+- `config.delivers` and the "must write a page" check go.
+
 ### 11. Data triggers
 
 `trigger: new <table>` with `new_rows` for `run`, a `(created_at, id)`

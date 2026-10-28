@@ -687,6 +687,11 @@ export function patchApplet(id: string, patch: PatchAppletBody): Promise<Applet>
 	return apiSend<Applet>('PATCH', `/applets/${encodeURIComponent(id)}`, patch);
 }
 
+/** The owner opened an applet's page, which clears its "new" Inbox item. */
+export async function markAppletSeen(id: string): Promise<void> {
+	await request(`/applets/${encodeURIComponent(id)}/seen`, { method: 'POST' });
+}
+
 export async function deleteApplet(id: string, dropData = false): Promise<void> {
 	await request(`/applets/${encodeURIComponent(id)}`, {
 		method: 'DELETE',
@@ -712,6 +717,17 @@ export interface AppletLogEntry {
 	cost_micros: number;
 	/** Summed per host across the runs this line stands for. */
 	requests: HostRequests[];
+	/** What the line's latest run made. */
+	made?: RunMade[];
+}
+
+/** One thing a run made: a page, the rows it wrote into a table, a task. */
+export interface RunMade {
+	kind: 'page' | 'rows' | 'task';
+	/** The page or task id, or the table's name. */
+	ref_id: string;
+	title: string | null;
+	count: number;
 }
 
 /** A page an applet's runs wrote, with the last time one of them did. */
@@ -1109,7 +1125,8 @@ export async function getStreamHealth(): Promise<StreamHealth[]> {
  *  while the condition holds; the item goes when the server sees it fixed. */
 export interface AttentionItem {
 	key: string;
-	/** `update` | `disk` | `backup` | `source` | `stream`, most urgent first. */
+	/** `key` | `update` | `disk` | `backup` | `source` | `connection` |
+	 *  `stream` | `applet` | `applet_new`, most urgent first. */
 	kind: string;
 	title: string;
 	body: string;

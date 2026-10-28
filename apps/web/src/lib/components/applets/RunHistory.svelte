@@ -145,6 +145,19 @@
 		return parts.join(' ');
 	}
 
+	/** "Made Tuesday, 3 March and 3 rows in drinks." */
+	function madeLine(e: AppletLogEntry): string {
+		const parts = (e.made ?? []).map((m) => {
+			if (m.kind === 'page') return m.title ?? 'a page';
+			if (m.kind === 'task') return 'a task';
+			const table = m.ref_id.split('.').pop() ?? m.ref_id;
+			return `${m.count === 1 ? '1 row' : `${m.count} rows`} in ${table}`;
+		});
+		if (parts.length === 0) return '';
+		const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`;
+		return `Made ${list}.`;
+	}
+
 	// Same relaxation DevicesView chose for its fix button: the deep link opens
 	// THIS machine's settings, so it appears only in the native app.
 	const canFix = isTauri;
@@ -177,9 +190,12 @@
 			{#if e.summary}
 				<p class="run-text">{e.summary}</p>
 			{/if}
+			{#if e.made?.length}
+				<p class="run-span">{madeLine(e)}</p>
+			{/if}
 			{#if e.requests?.length}
-				<!-- Where its code reached through the egress proxy, so a
-				     host you allowed is seen being used. -->
+				<!-- Where its code reached through the egress proxy, so where
+				     its data went is on the run. -->
 				<p class="run-span">{reachedLine(e)}</p>
 			{/if}
 			{#if e.error}

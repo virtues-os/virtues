@@ -494,7 +494,25 @@ async fn execute_prepared_inner(
         {
             Ok(agent_result) => {
                 let steps = agent_result.steps as i64;
-                match agent_outcome(agent_result, subprocess_summary.clone()) {
+                let made_rows = match applets::run_made_rows(&deps.db, &run_id).await {
+                    Ok(made) => made,
+                    Err(e) => {
+                        tracing::warn!(applet_id, error = %e, "could not read what the run wrote; it counts as having written something");
+                        true
+                    }
+                };
+                match agent_outcome(agent_result, subprocess_summary.clone(), made_rows) {
+                    AgentOutcome::Quiet => {
+                        if let Err(e) = applets::complete_run(&deps.db, &run_id, "skipped", steps, None, Some("Nothing to say.")).await {
+                            tracing::error!(applet_id, error = %e, "complete_run failed after a quiet run");
+                        }
+                        return AppletRunResult {
+                            run_id: Some(run_id),
+                            status: AppletRunStatus::Skipped,
+                            summary: "Nothing to say.".to_string(),
+                            error: None,
+                        };
+                    }
                     AgentOutcome::Failed(msg) => {
                         if let Err(e) = applets::complete_run(
                             &deps.db,
@@ -588,6 +606,9 @@ enum AgentOutcome {
     Failed(String),
     BudgetExceeded(String),
     Success(String),
+    /// It ended with nothing to say and made nothing, so it is recorded as
+    /// skipped and adds no Inbox item.
+    Quiet,
 }
 
 /// Decide the run's status from what the agent loop reported. Only a clean
@@ -599,6 +620,7 @@ enum AgentOutcome {
 fn agent_outcome(
     result: crate::agent::applet_runner::AgentLoopResult,
     subprocess_summary: Option<String>,
+    made_rows: bool,
 ) -> AgentOutcome {
     if let Some(msg) = result.error {
         return AgentOutcome::Failed(msg);
@@ -606,9 +628,12 @@ fn agent_outcome(
     if let Some(reason) = result.budget_stopped {
         return AgentOutcome::BudgetExceeded(reason);
     }
-    // No reply and no subprocess output is a legitimate empty summary: the
-    // agent finished without saying anything.
-    AgentOutcome::Success(result.message.or(subprocess_summary).unwrap_or_default())
+    let said = result.message.filter(|m| !m.trim().is_empty()).or(subprocess_summary.filter(|s| !s.trim().is_empty()));
+    match said {
+        Some(summary) => AgentOutcome::Success(summary),
+        None if result.pages_written > 0 || made_rows => AgentOutcome::Success(String::new()),
+        None => AgentOutcome::Quiet,
+    }
 }
 
 // ============================================================================
@@ -1239,6 +1264,13 @@ async fn run_subprocess(
         .await
         .map_err(|e| Error::Database(format!("failed to save applet state: {e}")))?;
 
+    // What it says it wrote, shown on the run as what it made.
+    for (table, rows) in &applet_output.wrote {
+        if let Err(e) = applets::record_rows_output(db, run_id, table, *rows).await {
+            tracing::warn!(applet_id = %action.id, table, error = %e, "could not record what the run says it wrote");
+        }
+    }
+
     // Surface stderr even on a clean exit. An action can succeed (exit 0, valid
     // JSON) while warning on stderr — that channel used to be swallowed, which
     // is exactly how the transcription runaway stayed invisible. Log it, and
@@ -1749,12 +1781,12 @@ mod tests {
     ) -> crate::agent::applet_runner::AgentLoopResult {
         crate::agent::applet_runner::AgentLoopResult {
             applet_id: "applet_x".into(),
-            chat_id: None,
             steps: 0,
             message: message.map(str::to_string),
             cost_micros: 0,
             budget_stopped: budget_stopped.map(str::to_string),
             error: error.map(str::to_string),
+            pages_written: 0,
         }
     }
 
@@ -1765,33 +1797,36 @@ mod tests {
     fn a_model_error_is_a_failed_run() {
         let r = loop_result(None, None, Some("no virtues_api key"));
         assert_eq!(
-            agent_outcome(r, Some("subprocess said hi".into())),
+            agent_outcome(r, Some("subprocess said hi".into()), false),
             AgentOutcome::Failed("no virtues_api key".into())
         );
 
         // Partial text before the error does not rescue it.
         let r = loop_result(Some("half a"), None, Some("stream reset"));
-        assert_eq!(agent_outcome(r, None), AgentOutcome::Failed("stream reset".into()));
+        assert_eq!(agent_outcome(r, None, false), AgentOutcome::Failed("stream reset".into()));
 
         // Nor does a ceiling stop: the error is why the work is missing.
         let r = loop_result(None, Some("ceiling"), Some("upstream 500"));
-        assert_eq!(agent_outcome(r, None), AgentOutcome::Failed("upstream 500".into()));
+        assert_eq!(agent_outcome(r, None, false), AgentOutcome::Failed("upstream 500".into()));
     }
 
     #[test]
     fn a_clean_finish_is_success_and_a_ceiling_is_neither() {
         assert_eq!(
-            agent_outcome(loop_result(Some("done"), None, None), Some("sub".into())),
+            agent_outcome(loop_result(Some("done"), None, None), Some("sub".into()), false),
             AgentOutcome::Success("done".into())
         );
         assert_eq!(
-            agent_outcome(loop_result(None, None, None), Some("sub".into())),
+            agent_outcome(loop_result(None, None, None), Some("sub".into()), false),
             AgentOutcome::Success("sub".into())
         );
         assert_eq!(
-            agent_outcome(loop_result(Some("x"), Some("ceiling"), None), None),
+            agent_outcome(loop_result(Some("x"), Some("ceiling"), None), None, false),
             AgentOutcome::BudgetExceeded("ceiling".into())
         );
+        // Nothing said and nothing made is quiet; rows written are something.
+        assert_eq!(agent_outcome(loop_result(Some("  "), None, None), None, false), AgentOutcome::Quiet);
+        assert_eq!(agent_outcome(loop_result(None, None, None), None, true), AgentOutcome::Success(String::new()));
     }
 
     /// The vault master key must never be granted by the blanket passthrough.

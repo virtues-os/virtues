@@ -73,7 +73,16 @@ pub async fn create(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolR
     }
 
     match tasks::create_tasks(pool, new, origin, &writer(context)).await {
-        Ok(created) => ToolResult::success(json!({ "tasks": created })),
+        Ok(created) => {
+            if let Some(run_id) = context.applet_run_id.as_deref() {
+                for task in &created {
+                    if let Err(e) = crate::scheduler::applets::record_task_output(pool, run_id, &task.id).await {
+                        tracing::warn!(run_id, error = %e, "could not record the task a run added");
+                    }
+                }
+            }
+            ToolResult::success(json!({ "tasks": created }))
+        }
         Err(e) => ToolResult::error(e.to_string()),
     }
 }

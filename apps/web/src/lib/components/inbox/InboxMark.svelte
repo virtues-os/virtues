@@ -5,8 +5,9 @@
 	 * The mark is the app's identity, and it says whether anything needs you:
 	 * its top dot, the "therefore", takes the accent while the server lists
 	 * something (`/api/attention`). Nothing is counted. The dot goes out on its
-	 * own when the server sees the problem fixed, because every item is a
-	 * condition the server observes, not a message to be read.
+	 * own when the server sees the condition end, because every item is one it
+	 * observes: a problem until it is fixed, or something an applet made
+	 * until you open that applet.
 	 *
 	 * Clicking opens the list. Each row leads with what is wrong and opens the
 	 * page that fixes it.

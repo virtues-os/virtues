@@ -4,8 +4,12 @@
 //! `crate::applet_runner::run_applet` after any subprocess phase has completed.
 //! Trigger validation, condition evaluation, concurrency gating, and run-row
 //! lifecycle are all handled upstream. The loop itself is
-//! `agent::headless`; this module adds what is particular to applets: where
-//! the work goes, the model slot, the prompt and its memory.
+//! `agent::headless`; this module adds what is particular to applets: the
+//! model slot, the prompt and its memory.
+//!
+//! A run starts clean and writes into no chat (agents/plan/applet-shape.md,
+//! "Output and where results go"). It reads its memory and its tables, and
+//! what it says lands on its own run, in the applet's thread on its page.
 
 use serde::Serialize;
 use sqlx::PgPool;
@@ -21,7 +25,6 @@ use crate::server::yjs::YjsState;
 #[derive(Debug, Serialize)]
 pub struct AgentLoopResult {
     pub applet_id: String,
-    pub chat_id: Option<String>,
     pub steps: u32,
     pub message: Option<String>,
     /// What this run spent with the model, in micros-USD — the sum of the
@@ -36,6 +39,8 @@ pub struct AgentLoopResult {
     /// the loop ends quietly after an error event, so without this a run that
     /// never reached the model looked like a clean zero-step finish.
     pub error: Option<String>,
+    /// The pages it wrote, which the run records as what it made.
+    pub pages_written: usize,
 }
 
 /// Run one pass of the LLM agent loop for an action.
@@ -61,37 +66,6 @@ pub async fn run_agent_loop(
     let applet_id = &action.id;
     let limits = crate::applet_runner::limits::Limits::from_config(&action.config);
 
-    // Extract optional chat_id and model from config
-    let chat_id = action.config.get("chat_id").and_then(|v| v.as_str()).map(|s| s.to_string());
-
-    // An applet whose work has nowhere to go fails before it spends anything
-    // on the model: the run could only finish as a success that made nothing.
-    // A chat in Recently deleted still has its id here, but nobody reads it.
-    let has_chat = match &chat_id {
-        Some(cid) => {
-            sqlx::query_scalar::<_, bool>(
-                "SELECT EXISTS (SELECT 1 FROM app_chats WHERE id = $1 AND deleted_at IS NULL)",
-            )
-            .bind(cid)
-            .fetch_one(pool)
-            .await?
-        }
-        None => false,
-    };
-    let has_face = crate::server::faces::face_for(applet_id).is_some();
-    let delivers = delivers_kind(&action.config);
-    if let Some(reason) = missing_destination(delivers, has_chat, has_face) {
-        tracing::warn!(applet_id, %reason, "applet has nowhere to put its work");
-        return Ok(AgentLoopResult {
-            applet_id: applet_id.to_string(),
-            chat_id,
-            steps: 0,
-            message: None,
-            cost_micros: 0,
-            budget_stopped: None,
-            error: Some(reason),
-        });
-    }
     let model_override = action.config.get("model").and_then(|v| v.as_str()).map(|s| s.to_string());
     // An applet may ask for a SLOT instead of a model id. The slot is the
     // supported lever: a model id in a manifest is a literal that goes stale
@@ -130,7 +104,6 @@ pub async fn run_agent_loop(
 
     let tool_context = crate::tools::ToolContext {
         user_id: Some("system".to_string()),
-        chat_id: chat_id.clone(),
         applet_id: Some(applet_id.to_string()),
         own_applet: crate::applet_templates::dir_for_applet_id(applet_id)
             .and_then(|d| d.rsplit('/').next().map(str::to_string)),
@@ -148,10 +121,10 @@ pub async fn run_agent_loop(
             label: applet_id,
             model,
             system_prompt: build_applet_system_prompt(pool, prompt, context, action.memory.as_deref()).await,
-            chat_id: chat_id.clone(),
+            chat_id: None,
             message,
             tools: {
-                let mut tools = crate::tools::get_tools_for_applet(chat_id.is_some(), allowed_tools.as_deref());
+                let mut tools = crate::tools::get_tools_for_applet(false, allowed_tools.as_deref());
                 // Its `references/` and `assets/`, when it has any.
                 tools.extend(crate::tools::use_applet::own_files_definition_for_id(applet_id));
                 // The connection tools its file lists and the owner allowed.
@@ -174,58 +147,20 @@ pub async fn run_agent_loop(
         }
     }
 
-    // A run that finished without making what the applet makes failed, even
-    // when the model ended politely. Without this, a run whose query broke
-    // and which then said "I couldn't create today's page" was recorded as a
-    // success. A run already failed or stopped at its ceiling keeps that
-    // reason.
-    let mut error = outcome.error;
-    if error.is_none() && outcome.budget_stopped.is_none() {
-        error = missing_delivery(delivers, !outcome.pages_written.is_empty(), message.is_some());
-    }
-
     Ok(AgentLoopResult {
         applet_id: applet_id.to_string(),
-        chat_id,
         steps: outcome.steps,
         message: outcome.message,
         cost_micros: outcome.cost_micros,
         budget_stopped: outcome.budget_stopped,
-        error,
+        error: outcome.error,
+        pages_written: outcome.pages_written.len(),
     })
 }
 
 // ============================================================================
 // Helpers
 // ============================================================================
-
-/// What an applet says it makes, from `config.delivers.kind` ("page",
-/// "chat", "dashboard"). Absent when it doesn't say, which most don't yet.
-fn delivers_kind(config: &serde_json::Value) -> Option<&str> {
-    config.get("delivers")?.get("kind")?.as_str()
-}
-
-/// Why a finished run failed to make what its applet makes, if it did.
-/// Only a page is checked after the run: the other kinds have no tool whose
-/// success says the work arrived, so `missing_destination` checks them
-/// before it instead. A run a person's message woke is answering them, and a
-/// reply that writes no page is still a reply, so it isn't checked.
-fn missing_delivery(delivers: Option<&str>, wrote_page: bool, answering: bool) -> Option<String> {
-    (delivers == Some("page") && !wrote_page && !answering)
-        .then(|| "The run ended without writing its page.".to_string())
-}
-
-/// Why an applet's work has nowhere to go, if it doesn't. A conversation or a
-/// dashboard can't be checked after the run the way a page is: a run that
-/// found nothing new rightly posts nothing and changes no table. What can be
-/// checked is that the place exists.
-fn missing_destination(delivers: Option<&str>, has_chat: bool, has_face: bool) -> Option<String> {
-    match delivers {
-        Some("chat") if !has_chat => Some("It has no conversation to post to.".to_string()),
-        Some("dashboard") if !has_face => Some("It has no dashboard to update.".to_string()),
-        _ => None,
-    }
-}
 
 /// Build the system prompt for an autonomous action run.
 ///
@@ -273,32 +208,4 @@ async fn build_applet_system_prompt(
     }
 
     prompt
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn a_page_applet_that_wrote_no_page_failed() {
-        let page = json!({ "delivers": { "kind": "page" } });
-        assert_eq!(delivers_kind(&page), Some("page"));
-        assert_eq!(delivers_kind(&json!({})), None);
-        assert!(missing_delivery(Some("page"), false, false).is_some());
-        assert!(missing_delivery(Some("page"), true, false).is_none());
-        assert!(missing_delivery(None, false, false).is_none(), "an applet that says nothing is not checked");
-        assert!(missing_delivery(Some("chat"), false, false).is_none(), "a quiet run on a chat applet is not a failure");
-        assert!(missing_delivery(Some("page"), false, true).is_none(), "a reply to a message is not a missing page");
-    }
-
-    #[test]
-    fn an_applet_with_nowhere_to_put_its_work_fails() {
-        assert!(missing_destination(Some("chat"), false, false).is_some());
-        assert!(missing_destination(Some("chat"), true, false).is_none());
-        assert!(missing_destination(Some("dashboard"), false, false).is_some());
-        assert!(missing_destination(Some("dashboard"), false, true).is_none());
-        assert!(missing_destination(Some("page"), false, false).is_none(), "every box has Pages");
-        assert!(missing_destination(None, false, false).is_none(), "an applet that says nothing is not checked");
-    }
 }

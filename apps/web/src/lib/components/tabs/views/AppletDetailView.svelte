@@ -23,6 +23,7 @@
 		type AppletPage,
 		runApplet,
 		messageApplet,
+		markAppletSeen,
 		patchApplet,
 		type Applet,
 		type AppletLogEntry,
@@ -36,6 +37,7 @@
 	import { indexRunDays } from '$lib/applets/days';
 	import { sourcesStore } from '$lib/stores/sources.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
+	import { attention } from '$lib/stores/attention.svelte';
 	import { explainRunError } from '$lib/sources/run-errors';
 
 	/**
@@ -175,6 +177,11 @@
 			const a = await getApplet(id);
 			action = a;
 			windowShellStore.updateTab(tab.id, { label: a.name });
+			// Opening the page is reading what it made, so its "new" Inbox
+			// item goes. A failed write only leaves the item up.
+			void markAppletSeen(id)
+				.then(() => attention.refresh())
+				.catch(() => {});
 			const [l, d, p] = await Promise.allSettled([getAppletLog(id), getRunsByDay(49), getAppletPages(id)]);
 			log = l.status === 'fulfilled' ? l.value : [];
 			pages = p.status === 'fulfilled' ? p.value : [];

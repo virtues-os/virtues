@@ -274,12 +274,8 @@ fn key_named(problem: &str) -> &'static str {
 pub async fn execute(
     pool: &PgPool,
     arguments: serde_json::Value,
-    context: &ToolContext,
+    _context: &ToolContext,
 ) -> Result<ToolResult, ToolError> {
-    // Owned copy up front — borrowing `context` across the awaits below
-    // trips rustc's higher-ranked Send inference inside the agent stream.
-    let chat_id: Option<String> = context.chat_id.clone();
-
     let draft = Draft::parse(&arguments)?;
     let checked = plan(pool, &draft).await;
     if wants_check_only(&arguments) {
@@ -349,17 +345,6 @@ pub async fn execute(
     let (applet_id, schedule, until, chat_started) = crate::applet_templates::read_skill_md(&plan.text, &folder, &dir, shipped)
         .map_err(|p| ToolError::ExecutionFailed(p.join(" ")))?;
 
-    // The chat it was made in is where its runs post until runs have a home
-    // of their own. It lives in the row: it is this box's, not the applet's.
-    if let (Some(cid), false) = (&chat_id, shipped) {
-        sqlx::query("UPDATE app_applets SET config = config || jsonb_build_object('chat_id', $1::text) WHERE id = $2")
-            .bind(cid)
-            .bind(&applet_id)
-            .execute(pool)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("could not link the chat: {e}")))?;
-    }
-
     // Reconcile ran the new migration in its replay pass. Confirm it landed
     // rather than trusting that it did: an apply that quietly did nothing
     // must never be reported as success.
@@ -394,9 +379,6 @@ pub async fn execute(
     }
     if draft.view.is_some() || folder.join("view.html").is_file() {
         capabilities.push("has a view".into());
-    }
-    if has_prompt && chat_id.is_some() && !shipped {
-        capabilities.push("posts what each run says to this chat".into());
     }
     // Only an applet with a prompt spends anything. The per-run figure is a
     // slot constant, not a measurement, which is why the card calls it an

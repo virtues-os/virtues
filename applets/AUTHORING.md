@@ -115,14 +115,17 @@ inp = json.load(sys.stdin)
 # do the work...
 result = "synced 42 records"
 
-print(json.dumps({"result": result, "config": inp["config"]}))
+print(json.dumps({"result": result, "config": inp["config"], "wrote": {"applet_tides.tides": 42}}))
 ```
 
-A `.py` runs with `python3`, a `.sh` with `sh`, anything else directly. Reconcile picks it up after the folder lands.
+`config` comes back as the applet's state for its next run. `wrote`, optional,
+says how many rows it wrote into each table; the run's page shows it as what
+the run made, and nothing else reads it. A `.py` runs with `python3`, a `.sh`
+with `sh`, anything else directly. Reconcile picks it up after the folder lands.
 
 That example ships with the box, so it runs directly as the box user. Code
-that did not ship (an import, or an applet in the state root) runs in a
-sandbox with no network, as a throwaway user, and sees:
+that did not ship (an applet in the state root) runs in a sandbox, as a
+throwaway user, and sees:
 
 | Path or variable | What it is |
 |---|---|
