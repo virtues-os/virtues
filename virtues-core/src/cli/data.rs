@@ -761,7 +761,10 @@ async fn folder_args(pool: &PgPool, dir: &std::path::Path) -> Result<(Value, Vec
         args["limits"] = serde_json::to_value(limits).map_err(|e| e.to_string())?;
     }
 
-    let face = dir.join("face").join("index.html");
+    // A SKILL.md folder's view.html, or a manifest folder's face/index.html.
+    let face = Some(dir.join("view.html"))
+        .filter(|v| v.is_file())
+        .unwrap_or_else(|| dir.join("face").join("index.html"));
     if face.is_file() {
         let html = std::fs::read_to_string(&face).map_err(|e| format!("{}: {e}", face.display()))?;
         args["face_html"] = json!(html);

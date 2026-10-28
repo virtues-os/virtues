@@ -82,7 +82,7 @@ fn validate_token(token: &str) -> Option<String> {
 /// `GET /api/actions/:id/face-token` — minted by the authenticated app per
 /// iframe load. (Reaching this route at all required the proven transport.)
 pub async fn mint_face_token_handler(Path(applet_id): Path<String>) -> Response {
-    if face_dir_for(&applet_id).is_none() {
+    if face_for(&applet_id).is_none() {
         return (
             StatusCode::NOT_FOUND,
             Json(serde_json::json!({ "error": "applet has no face" })),
@@ -101,13 +101,40 @@ pub async fn mint_face_token_handler(Path(applet_id): Path<String>) -> Response 
 // Face file serving
 // ============================================================================
 
-/// Resolve the on-disk `face/` directory for an applet id, if it has one.
-/// Serving is rooted at `<applet folder>/face` — never the folder root, so
-/// the manifest/prompt are not exposed to the iframe.
-pub fn face_dir_for(applet_id: &str) -> Option<std::path::PathBuf> {
+/// Where an applet's face is: a `SKILL.md` folder's single `view.html`, or a
+/// `manifest.toml` folder's `face/` directory. Never the folder root, so the
+/// manifest, the prompt and the code are not exposed to the iframe.
+#[derive(Debug, Clone)]
+pub enum Face {
+    /// `<applet folder>/face/`, served whole, with `index.html` as its page.
+    Folder(std::path::PathBuf),
+    /// `<applet folder>/view.html`, the only file served.
+    View(std::path::PathBuf),
+}
+
+impl Face {
+    /// The page itself.
+    pub fn index(&self) -> std::path::PathBuf {
+        match self {
+            Face::Folder(dir) => dir.join("index.html"),
+            Face::View(file) => file.clone(),
+        }
+    }
+}
+
+/// The face of an applet id, if it has one. `view.html` wins when a folder
+/// has both, which only happens mid-conversion.
+// TODO(2026-10-27): drop `face/` once every manifest is a SKILL.md (slice 4
+// of agents/plan/applet-shape.md).
+pub fn face_for(applet_id: &str) -> Option<Face> {
     let dir = crate::applet_templates::dir_for_applet_id(applet_id)?;
-    let face = crate::applet_templates::resolve_applet_dir(&dir).join("face");
-    face.join("index.html").is_file().then_some(face)
+    let folder = crate::applet_templates::resolve_applet_dir(&dir);
+    let view = folder.join("view.html");
+    if view.is_file() {
+        return Some(Face::View(view));
+    }
+    let face = folder.join("face");
+    face.join("index.html").is_file().then_some(Face::Folder(face))
 }
 
 fn cors_headers(headers: &mut HeaderMap) {
@@ -188,8 +215,19 @@ async fn serve_face_file(applet_id: &str, raw_path: &str, req_headers: &HeaderMa
         return static_lib(VIRTUES_CSS, "text/css; charset=utf-8");
     }
 
-    let Some(face_dir) = face_dir_for(applet_id) else {
-        return StatusCode::NOT_FOUND.into_response();
+    let face_dir = match face_for(applet_id) {
+        Some(Face::Folder(dir)) => dir,
+        // A view is one file: its page, and nothing beside it.
+        Some(Face::View(file)) => {
+            if rel != "index.html" {
+                return StatusCode::NOT_FOUND.into_response();
+            }
+            let Ok(bytes) = tokio::fs::read(&file).await else {
+                return StatusCode::NOT_FOUND.into_response();
+            };
+            return (face_file_headers("text/html; charset=utf-8", req_headers), bytes).into_response();
+        }
+        None => return StatusCode::NOT_FOUND.into_response(),
     };
 
     // Path-traversal guard: reject any segment that isn't a plain name.

@@ -78,7 +78,7 @@ pub async fn run_agent_loop(
         }
         None => false,
     };
-    let has_face = crate::server::faces::face_dir_for(applet_id).is_some();
+    let has_face = crate::server::faces::face_for(applet_id).is_some();
     let delivers = delivers_kind(&action.config);
     if let Some(reason) = missing_destination(delivers, has_chat, has_face) {
         tracing::warn!(applet_id, %reason, "applet has nowhere to put its work");

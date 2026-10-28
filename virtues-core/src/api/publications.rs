@@ -234,7 +234,7 @@ const COLUMNS: &str = "id, token, producer_kind, producer_id, title, size_bytes,
 
 /// The page in `face_dir`, if it stands alone off the box with nothing to
 /// stand in for. `Err` names what to change.
-pub fn standalone_html(face_dir: &Path) -> Result<String> {
+pub fn standalone_html(face_dir: &crate::server::faces::Face) -> Result<String> {
     let html = read_face(face_dir)?;
     let findings = box_only_findings(&html);
     if !findings.is_empty() {
@@ -249,7 +249,7 @@ pub fn standalone_html(face_dir: &Path) -> Result<String> {
 
 /// The page in `face_dir` if sharing it through the door can work, and
 /// whether it reads data.
-fn shareable_html(face_dir: &Path) -> Result<(String, bool)> {
+fn shareable_html(face_dir: &crate::server::faces::Face) -> Result<(String, bool)> {
     let html = read_face(face_dir)?;
     let findings = server_only_findings(&html);
     if !findings.is_empty() {
@@ -264,15 +264,18 @@ fn shareable_html(face_dir: &Path) -> Result<(String, bool)> {
 }
 
 /// One face file, within the size limit.
-fn read_face(face_dir: &Path) -> Result<String> {
+fn read_face(face: &crate::server::faces::Face) -> Result<String> {
     // One file goes out. A face that loads a sibling file would publish with
-    // that file missing.
-    let siblings: Vec<String> = std::fs::read_dir(face_dir)
+    // that file missing. A `view.html` is one file already.
+    let siblings: Vec<String> = match face {
+        crate::server::faces::Face::View(_) => Vec::new(),
+        crate::server::faces::Face::Folder(face_dir) => std::fs::read_dir(face_dir)
         .map_err(|e| Error::Other(format!("reading the face: {e}")))?
         .filter_map(|e| e.ok())
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .filter(|n| n != "index.html")
-        .collect();
+        .collect(),
+    };
     if !siblings.is_empty() {
         return Err(Error::InvalidInput(format!(
             "only a single-file face publishes; this one also has {}. Inline them \
@@ -280,7 +283,7 @@ fn read_face(face_dir: &Path) -> Result<String> {
             siblings.join(", ")
         )));
     }
-    let html = std::fs::read_to_string(face_dir.join("index.html"))
+    let html = std::fs::read_to_string(face.index())
         .map_err(|e| Error::Other(format!("reading the face: {e}")))?;
     if html.len() > MAX_FACE_BYTES {
         return Err(Error::InvalidInput(format!(
@@ -420,7 +423,7 @@ pub async fn standalone_face(pool: &PgPool, applet_id: &str) -> Result<(String, 
         .await
         .map(|a| a.name)
         .map_err(|_| Error::NotFound(format!("no applet {applet_id:?}")))?;
-    let face_dir = crate::server::faces::face_dir_for(applet_id)
+    let face_dir = crate::server::faces::face_for(applet_id)
         .ok_or_else(|| Error::InvalidInput(format!("\"{name}\" has no face to publish")))?;
     let html = standalone_html(&face_dir)?;
     Ok((name, html))
@@ -673,7 +676,7 @@ async fn preview_applet(pool: &PgPool, applet_id: &str) -> Result<SharePreview> 
         .await
         .map(|a| a.name)
         .map_err(|_| Error::NotFound(format!("no applet {applet_id:?}")))?;
-    let Some(face_dir) = crate::server::faces::face_dir_for(applet_id) else {
+    let Some(face_dir) = crate::server::faces::face_for(applet_id) else {
         return Ok(SharePreview::cannot(
             name,
             "This applet has nothing to show, so there is no page to share.".into(),
@@ -764,7 +767,7 @@ async fn build_applet(pool: &PgPool, applet_id: &str, live: bool) -> Result<(Str
         .await
         .map(|a| a.name)
         .map_err(|_| Error::NotFound(format!("no applet {applet_id:?}")))?;
-    let face_dir = crate::server::faces::face_dir_for(applet_id)
+    let face_dir = crate::server::faces::face_for(applet_id)
         .ok_or_else(|| Error::InvalidInput(format!("\"{name}\" has no face to publish")))?;
     let (html, reads) = shareable_html(&face_dir)?;
     if !reads {
@@ -1087,16 +1090,24 @@ mod tests {
 
     #[test]
     fn only_a_single_standalone_file_publishes() {
+        use crate::server::faces::Face;
         let dir = tempfile::tempdir().unwrap();
+        let face = Face::Folder(dir.path().to_path_buf());
         std::fs::write(dir.path().join("index.html"), "<h1>Rome</h1>").unwrap();
-        assert_eq!(standalone_html(dir.path()).unwrap(), "<h1>Rome</h1>");
+        assert_eq!(standalone_html(&face).unwrap(), "<h1>Rome</h1>");
 
         std::fs::write(dir.path().join("style.css"), "h1{}").unwrap();
-        assert!(matches!(standalone_html(dir.path()), Err(Error::InvalidInput(_))));
+        assert!(matches!(standalone_html(&face), Err(Error::InvalidInput(_))));
         std::fs::remove_file(dir.path().join("style.css")).unwrap();
 
         std::fs::write(dir.path().join("index.html"), "<script src=virtues.js></script>").unwrap();
-        assert!(matches!(standalone_html(dir.path()), Err(Error::InvalidInput(_))));
+        assert!(matches!(standalone_html(&face), Err(Error::InvalidInput(_))));
+
+        // A view.html is one file however much sits beside it.
+        let folder = tempfile::tempdir().unwrap();
+        std::fs::write(folder.path().join("view.html"), "<h1>Rome</h1>").unwrap();
+        std::fs::write(folder.path().join("SKILL.md"), "---\nname: rome\n---\n").unwrap();
+        assert_eq!(standalone_html(&Face::View(folder.path().join("view.html"))).unwrap(), "<h1>Rome</h1>");
     }
 
     #[test]

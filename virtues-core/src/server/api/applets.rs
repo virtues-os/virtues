@@ -323,7 +323,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         r.try_get("next_due_at").unwrap_or(None);
                     let last_slot_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("last_slot_at").unwrap_or(None);
-                    let has_face = crate::server::faces::face_dir_for(&id).is_some();
+                    let has_face = crate::server::faces::face_for(&id).is_some();
                     let origin = crate::scheduler::applets::origin_of(
                         &owner,
                         credential_id.is_some() || device_id.is_some(),
@@ -578,7 +578,7 @@ pub async fn get_applet_handler(
                     "archived_at": action.archived_at,
                     "next_due_at": action.next_due_at,
                     "last_slot_at": action.last_slot_at,
-                    "has_face": crate::server::faces::face_dir_for(&action.id).is_some(),
+                    "has_face": crate::server::faces::face_for(&action.id).is_some(),
                     "secrets": secrets,
                     "created_at": action.created_at,
                     "updated_at": action.updated_at,

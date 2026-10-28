@@ -36,8 +36,16 @@ const SPEC_KEYS: &[&str] = &[
 
 /// The Virtues keys under `metadata`.
 const METADATA_KEYS: &[&str] = &[
-    "invoke", "trigger", "run", "source", "limit", "model", "enabled", "icon", "color",
+    "invoke", "trigger", "run", "source", "limit", "model", "enabled", "icon", "color", "writes", "secrets",
 ];
+
+/// Shipped applets that re-encrypt stored secrets and so are given the
+/// vault key (`VIRTUES_ENCRYPTION_KEY`). A kernel list rather than a key in
+/// the file, so no folder can ask for it.
+const VAULT_KEY_APPLETS: &[&str] = &["credential-refresh"];
+
+/// The most a `view.html` may weigh.
+const VIEW_MAX_BYTES: u64 = 48 * 1024;
 
 const COLORS: &[&str] = &["gray", "red", "orange", "yellow", "green", "blue", "purple", "pink"];
 
@@ -228,6 +236,33 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
             errors.push(format!("`icon` is \"{icon}\". Use a Remix icon id such as `ri:calendar-line`."));
         }
     }
+    // The data streams its code writes, by registry name, for the streams
+    // page. Kept until each run's record of what it wrote replaces it.
+    let writes: Vec<String> = meta("writes").map(list).unwrap_or_default();
+    if !writes.is_empty() {
+        let known: Vec<&str> = virtues_registry::registered_ontologies().iter().map(|o| o.name).collect();
+        for w in &writes {
+            if !known.contains(&w.as_str()) {
+                errors.push(unknown_key(w, "a data stream", &known));
+            }
+        }
+    }
+    // The owner's keys its code needs, set in Settings under Keys.
+    let secrets: Vec<String> = meta("secrets").map(list).unwrap_or_default();
+    for s in &secrets {
+        if !super::valid_secret_name(s) {
+            errors.push(format!(
+                "`secrets` has \"{s}\". A key name is capitals, digits and underscores, starting with a \
+                 capital, and not one the box sets itself."
+            ));
+        }
+    }
+    if let Ok(meta) = folder.join("view.html").metadata() {
+        if meta.len() > VIEW_MAX_BYTES {
+            errors.push(format!("view.html is {} KB. The limit is 48 KB.", meta.len() / 1024));
+        }
+    }
+
     if let Some(color) = meta("color") {
         if !COLORS.contains(&color.trim()) {
             errors.push(format!("`color` is \"{color}\". Use one of: {}.", COLORS.join(", ")));
@@ -293,9 +328,9 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         source: source.map(|id| SourceRef { id }),
         command,
         config: (!config.is_empty()).then_some(toml::Value::Table(config)),
-        writes: Vec::new(),
-        needs_vault_key: false,
-        secrets: Vec::new(),
+        writes,
+        needs_vault_key: shipped && VAULT_KEY_APPLETS.contains(&name.as_str()),
+        secrets,
         forked_from: None,
         invoke_chat: invoke.contains(&Invoke::Chat),
         icon: meta("icon").map(|i| i.trim().to_string()),
@@ -352,6 +387,17 @@ pub(crate) fn render(md: &SkillMd) -> Result<String, String> {
         .dump(&Yaml::Hash(front))
         .map_err(|e| format!("could not write the frontmatter: {e}"))?;
     Ok(format!("{yaml}\n---\n{}\n", md.body.trim()))
+}
+
+/// A comma-separated `metadata` value as its entries.
+fn list(value: &str) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for v in value.split(',').map(str::trim).filter(|v| !v.is_empty()) {
+        if !out.iter().any(|o| o == v) {
+            out.push(v.to_string());
+        }
+    }
+    out
 }
 
 /// The id a folder gets. The spec's names use hyphens and ids, schemas and
@@ -1091,6 +1137,32 @@ mod tests {
         let cfg = t.config.unwrap();
         assert_eq!(cfg["model_slot"].as_str(), Some("deep"));
         assert_eq!(cfg["limits"]["max_llm_cost"].as_float(), Some(3.0));
+    }
+
+    #[test]
+    fn writes_and_secrets_name_real_streams_and_valid_keys() {
+        let t = ok(
+            &format!("{BASE}\nmetadata:\n  writes: health_sleep, health_steps\n  secrets: OPENAI_API_KEY, GITHUB_TOKEN"),
+            "Do it.",
+        );
+        assert_eq!(t.writes, ["health_sleep", "health_steps"]);
+        assert_eq!(t.secrets, ["OPENAI_API_KEY", "GITHUB_TOKEN"]);
+        let e = refused(&format!("{BASE}\nmetadata:\n  writes: health_slep"), "Do it.");
+        assert!(e.contains("Did you mean `health_sleep`?"), "{e}");
+        let e = refused(&format!("{BASE}\nmetadata:\n  secrets: DATABASE_URL"), "Do it.");
+        assert!(e.contains("`secrets` has \"DATABASE_URL\""), "{e}");
+    }
+
+    #[test]
+    fn only_a_listed_shipped_applet_gets_the_vault_key_and_a_view_has_a_size_limit() {
+        let f = folder();
+        let text = skill("name: credential-refresh\ndescription: Refreshes tokens.\nmetadata:\n  run: credential_refresh\n  trigger: every hour", "");
+        assert!(parse(&text, f.path(), "credential-refresh", true).unwrap().needs_vault_key);
+        let text = skill("name: weekly-review\ndescription: x", "Do it.");
+        assert!(!parse(&text, f.path(), "weekly-review", true).unwrap().needs_vault_key);
+        std::fs::write(f.path().join("view.html"), vec![b'x'; 49 * 1024]).unwrap();
+        let e = parse(&text, f.path(), "weekly-review", false).unwrap_err().join(" ");
+        assert!(e.contains("The limit is 48 KB"), "{e}");
     }
 
     #[test]
