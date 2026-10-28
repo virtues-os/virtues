@@ -354,9 +354,48 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         forked_from: meta("forked-from").map(|f| f.trim().to_string()),
         invoke_chat: invoke.contains(&Invoke::Chat),
         icon: meta("icon").map(|i| i.trim().to_string()),
+        folder: Some(folder.to_path_buf()),
+        files: readable_files(folder),
         dir: dir.to_string(),
         unknown: Default::default(),
     })
+}
+
+/// The spec's folders a prompt reads from when its body asks.
+const READABLE_DIRS: &[&str] = &["references", "assets"];
+
+/// How many files [`readable_files`] lists, so a folder full of assets does
+/// not fill every turn that loads it.
+const MAX_READABLE_FILES: usize = 50;
+
+/// The files under `references/` and `assets/`, as paths relative to the
+/// folder, sorted. Hidden files and symlinks are left out, so a listed path
+/// always names a file inside the folder.
+fn readable_files(folder: &Path) -> Vec<String> {
+    fn walk(dir: &Path, rel: &str, out: &mut Vec<String>, depth: usize) {
+        let Ok(entries) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = entries.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for entry in entries {
+            let name = entry.file_name().to_string_lossy().into_owned();
+            let Ok(kind) = entry.file_type() else { continue };
+            if name.starts_with('.') || kind.is_symlink() {
+                continue;
+            }
+            let path = format!("{rel}/{name}");
+            if kind.is_dir() && depth < 3 {
+                walk(&entry.path(), &path, out, depth + 1);
+            } else if kind.is_file() {
+                out.push(path);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    for dir in READABLE_DIRS {
+        walk(&folder.join(dir), dir, &mut out, 1);
+    }
+    out.truncate(MAX_READABLE_FILES);
+    out
 }
 
 /// What a writer puts in a `SKILL.md`: the fields setup and the skills move
@@ -1138,6 +1177,30 @@ mod tests {
 
     fn skill(front: &str, body: &str) -> String {
         format!("---\n{front}\n---\n{body}")
+    }
+
+    /// The third stage reads only what is under `references/` and `assets/`,
+    /// listed in order, and nothing hidden, linked or elsewhere.
+    #[test]
+    fn the_files_a_prompt_may_read_are_its_references_and_assets() {
+        let f = folder();
+        let p = f.path();
+        for (path, text) in [
+            ("references/units.md", "One glass is 250 ml."),
+            ("references/more/sizes.md", "A bottle is 500 ml."),
+            ("references/.draft.md", "hidden"),
+            ("assets/log.csv", "when,ml"),
+            ("scripts/main.py", "print()"),
+            ("view.html", "<p>"),
+        ] {
+            std::fs::create_dir_all(p.join(path).parent().unwrap()).unwrap();
+            std::fs::write(p.join(path), text).unwrap();
+        }
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("/etc/hosts", p.join("references/hosts")).unwrap();
+        let t = parse(&skill(BASE, "Log the water."), p, "user/weekly-review", false).unwrap();
+        assert_eq!(t.files, ["references/more/sizes.md", "references/units.md", "assets/log.csv"]);
+        assert_eq!(t.folder.as_deref(), Some(p));
     }
 
     fn ok(front: &str, body: &str) -> Template {

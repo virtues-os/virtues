@@ -197,6 +197,8 @@ impl ChatMode {
             Self::Chat => {
                 let mut tools = chat_tools();
                 tools.extend(tools_named(&connected_mac_tools()));
+                // The applets it may load, when there are any.
+                tools.extend(crate::tools::use_applet::definition());
                 tools
             }
             // A listener, not an agent. Exactly one tool — the finisher that
@@ -207,9 +209,11 @@ impl ChatMode {
             // The room is about the box, not the record. Skip a step, play
             // introductions back. No search, no data.
             Self::GettingStarted => tools_named(getting_started::TOOLS),
-            // The tools its file declares.
+            // The tools its file declares, and its own files when it has any.
             Self::Applet(applet) => {
-                tools_named(&applet.tools.iter().map(String::as_str).collect::<Vec<_>>())
+                let mut tools = tools_named(&applet.tools.iter().map(String::as_str).collect::<Vec<_>>());
+                tools.extend(crate::tools::use_applet::own_files_definition(&applet.name));
+                tools
             }
             // A 0.6B model can't use tools, and a tool would reach the record.
             Self::Local => Vec::new(),
@@ -434,6 +438,10 @@ pub(crate) mod tests {
             // on 2026-10-27 for setup's invoke, tools and model, which write
             // an applet `/name` starts; how to use them is in the guide.
             ("applets", &["applet"], 2_950),
+            // The applets chat may load, listed by name and description. The
+            // shipped catalog has none; a box's grows to the cap in
+            // `use_applet_tool`.
+            ("use_applet", &["use_applet"], 4_800),
             ("analysis", &["shell", "think", "read_asset", "generate_image"], 2_400),
             ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], 2_400),
             ("search", &["semantic_search", "web_search"], 2_000),

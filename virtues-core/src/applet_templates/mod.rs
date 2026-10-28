@@ -241,6 +241,13 @@ struct Template {
     /// SQL run before the prompt (`applet_runner::run_sql`).
     #[serde(skip)]
     run_sql: Option<String>,
+    /// The folder on disk, set by the reader.
+    #[serde(skip)]
+    folder: Option<std::path::PathBuf>,
+    /// The files under `references/` and `assets/`, relative to the folder:
+    /// what its prompt may read with `use_applet` (the spec's third stage).
+    #[serde(skip)]
+    files: Vec<String>,
     /// Manifest folder relative to the actions root. Populated by the loader
     /// from the on-disk path, never read from TOML — a file can't know its own
     /// location. Examples: `morning_brief`, `team-pack/actions/foo`.
@@ -929,6 +936,8 @@ pub struct ChatApplet {
     pub icon: Option<String>,
     /// It ships with the box.
     pub shipped: bool,
+    /// Its `references/` and `assets/` files (`Template::files`).
+    pub files: Vec<String>,
 }
 
 /// Every applet `/name` in chat can start, shipped ones first, each group by
@@ -959,6 +968,7 @@ pub fn chat_applets() -> Vec<ChatApplet> {
                 deep: get("model_slot").and_then(|v| v.as_str()) == Some("deep"),
                 icon: t.icon.clone(),
                 shipped: t.owner == "system",
+                files: t.files.clone(),
             })
         })
         .collect();
@@ -969,6 +979,60 @@ pub fn chat_applets() -> Vec<ChatApplet> {
 /// The applet `/name` starts, shipped first.
 pub fn chat_applet_named(name: &str) -> Option<ChatApplet> {
     chat_applets().into_iter().find(|a| a.name == name)
+}
+
+/// An applet as `use_applet` reaches it: its prompt, loaded into the turn
+/// that calls it, and the files that prompt may read.
+#[derive(Debug, Clone)]
+pub struct UsableApplet {
+    /// The spec's `name`, its folder's.
+    pub name: String,
+    pub description: String,
+    pub body: String,
+    /// Paths relative to `folder`, under `references/` and `assets/`.
+    pub files: Vec<String>,
+    pub folder: std::path::PathBuf,
+    /// Its `invoke` includes `assistant` and it is a prompt alone, so the
+    /// assistant may load it. An applet with a `run` stage starts through
+    /// the `applet` tool's `run` instead, which runs the whole applet.
+    pub for_assistant: bool,
+}
+
+/// Every applet with a prompt, shipped first, each group by name.
+fn usable_applets() -> Vec<UsableApplet> {
+    let guard = catalog_lock().read().expect("catalog rwlock poisoned");
+    let mut out: Vec<(bool, UsableApplet)> = guard
+        .action
+        .iter()
+        .filter_map(|t| {
+            Some((
+                t.owner == "system",
+                UsableApplet {
+                    name: t.dir.rsplit('/').next()?.to_string(),
+                    description: t.description.clone().unwrap_or_default(),
+                    body: t.agent.clone()?,
+                    files: t.files.clone(),
+                    folder: t.folder.clone()?,
+                    for_assistant: t.triggers.iter().any(|x| x == "tool")
+                        && t.command.is_none()
+                        && t.run_sql.is_none(),
+                },
+            ))
+        })
+        .collect();
+    out.sort_by(|(a_shipped, a), (b_shipped, b)| (!a_shipped, &a.name).cmp(&(!b_shipped, &b.name)));
+    out.into_iter().map(|(_, a)| a).collect()
+}
+
+/// The applets the assistant may load by name, in the order `use_applet`
+/// lists them.
+pub fn assistant_applets() -> Vec<UsableApplet> {
+    usable_applets().into_iter().filter(|a| a.for_assistant).collect()
+}
+
+/// The applet named `name` that has a prompt, shipped first.
+pub fn usable_applet_named(name: &str) -> Option<UsableApplet> {
+    usable_applets().into_iter().find(|a| a.name == name)
 }
 
 /// Copy a shipped applet into the state root so the owner can change it.

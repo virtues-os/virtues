@@ -148,7 +148,12 @@ pub async fn run_agent_loop(
             system_prompt: build_applet_system_prompt(pool, prompt, context, action.memory.as_deref()).await,
             chat_id: chat_id.clone(),
             message,
-            tools: crate::tools::get_tools_for_applet(chat_id.is_some(), allowed_tools.as_deref()),
+            tools: {
+                let mut tools = crate::tools::get_tools_for_applet(chat_id.is_some(), allowed_tools.as_deref());
+                // Its `references/` and `assets/`, when it has any.
+                tools.extend(crate::tools::use_applet::own_files_definition_for_id(applet_id));
+                tools
+            },
             tool_context,
             max_cost_micros: limits.max_llm_cost_micros,
             feature: "applet",

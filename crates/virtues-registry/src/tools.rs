@@ -84,6 +84,7 @@ pub fn default_tools() -> Vec<ToolConfig> {
         get_page_content_tool(),
         edit_page_tool(),
         applet_tool(&APPLET_ALL_ACTIONS),
+        use_applet_tool(&[]),
         update_applet_memory_tool(),
         get_project_item_tool(),
         generate_image_tool(),
@@ -1182,6 +1183,99 @@ pub fn applet_tool(actions: &[&str]) -> ToolConfig {
         icon: "ri:robot-2-line".to_string(),
         display_order: 8,
         is_system: false,
+    }
+}
+
+/// One applet `use_applet` offers.
+pub struct UsableEntry<'a> {
+    pub name: &'a str,
+    pub description: &'a str,
+    /// The files its prompt may read, relative to its folder.
+    pub files: &'a [String],
+}
+
+/// How many applets `use_applet` lists, and how much of each description.
+/// Chat re-sends the list every step, so a box with many applets must not
+/// grow it without end: 25 at 160 characters is about 4,500 at most.
+const USE_APPLET_MAX_ENTRIES: usize = 25;
+const USE_APPLET_MAX_DESCRIPTION: usize = 160;
+
+/// `- name: description`, cut to the limits above. With `files`, the
+/// applet's files follow; chat leaves them out, since loading returns them.
+fn usable_lines(entries: &[UsableEntry], files: bool) -> Vec<String> {
+    entries
+        .iter()
+        .take(USE_APPLET_MAX_ENTRIES)
+        .map(|e| {
+            let mut d: String = e.description.chars().take(USE_APPLET_MAX_DESCRIPTION).collect();
+            if files && !e.files.is_empty() {
+                d.push_str(&format!(" Files: {}.", e.files.join(", ")));
+            }
+            format!("- {}: {d}", e.name)
+        })
+        .collect()
+}
+
+/// `use_applet` as chat offers it: the applets the assistant may load, by
+/// name and description (the spec's first stage). Loading one returns its
+/// prompt (the second), and `file` one of its files (the third). The list is
+/// sorted by the caller and changes only when the catalog does, so the
+/// definition stays in the cached prefix between turns.
+///
+/// In the registry with no entries, as a system tool, so the web client has
+/// an entry for it; chat builds the real one from the catalog
+/// (`ChatMode::tools`).
+pub fn use_applet_tool(entries: &[UsableEntry]) -> ToolConfig {
+    let names: Vec<&str> = entries.iter().take(USE_APPLET_MAX_ENTRIES).map(|e| e.name).collect();
+    ToolConfig {
+        llm_description: format!(
+            "Load an applet: instructions the owner keeps for one kind of request. When a request matches an applet below, call this with its name before you answer, then follow the instructions it returns, in this turn, with the tools you have. With `file`, it returns one of that applet's files, which its instructions name.\nApplets:\n{}",
+            usable_lines(entries, false).join("\n")
+        ),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": { "type": "string", "enum": names },
+                "file": { "type": "string" }
+            }
+        }),
+        ..use_applet_base()
+    }
+}
+
+/// `use_applet` in an applet's own turn or run whose folder has files: its
+/// prompt is already loaded, so the tool only reads them.
+pub fn applet_files_tool(entry: &UsableEntry) -> ToolConfig {
+    ToolConfig {
+        llm_description: format!(
+            "Read one of this applet's own files when its instructions call for it.\n{}",
+            usable_lines(std::slice::from_ref(entry), true).join("\n")
+        ),
+        parameters: serde_json::json!({
+            "type": "object",
+            "required": ["name", "file"],
+            "properties": {
+                "name": { "type": "string", "enum": [entry.name] },
+                "file": { "type": "string", "enum": entry.files }
+            }
+        }),
+        ..use_applet_base()
+    }
+}
+
+fn use_applet_base() -> ToolConfig {
+    ToolConfig {
+        id: "use_applet".to_string(),
+        name: "Use an applet".to_string(),
+        description: "Load an applet's instructions or read one of its files".to_string(),
+        llm_description: String::new(),
+        parameters: serde_json::json!({ "type": "object", "properties": {} }),
+        tool_type: ToolType::Builtin,
+        category: ToolCategory::Data,
+        icon: "ri:robot-2-line".to_string(),
+        display_order: 8,
+        is_system: true,
     }
 }
 

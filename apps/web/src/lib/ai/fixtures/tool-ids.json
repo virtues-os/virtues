@@ -32,6 +32,7 @@
   "update_applet_memory",
   "update_memory",
   "update_task",
+  "use_applet",
   "web_search",
   "write_it_up"
 ]

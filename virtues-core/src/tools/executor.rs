@@ -617,6 +617,7 @@ impl ToolExecutor {
             "applet" => {
                 super::applet_management::execute(&self._pool, self.yjs_state.as_ref(), arguments, context).await
             }
+            super::use_applet::TOOL => super::use_applet::execute(&arguments),
             // Applet memory (persistent scratchpad for actions across runs)
             "update_applet_memory" => self.execute_update_applet_memory(arguments, context).await,
             // Dayline event CRUD (used by hourly/EOD actions)

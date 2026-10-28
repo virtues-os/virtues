@@ -40,6 +40,7 @@ mod show;
 pub mod applet_schema;
 pub mod applet_setup;
 pub mod applet_management;
+pub(crate) mod use_applet;
 
 pub use executor::{
     SubagentStatus, SubagentUpdate, ToolAttachment, ToolContext, ToolError, ToolExecutor, WorkerStep,
@@ -54,7 +55,7 @@ pub use semantic_search::SemanticSearchTool;
 
 /// One registry tool as the LLM reads it (OpenAI/Anthropic function format),
 /// with the detailed `llm_description` as its description.
-fn llm_definition(tool: virtues_registry::tools::ToolConfig) -> serde_json::Value {
+pub(crate) fn llm_definition(tool: virtues_registry::tools::ToolConfig) -> serde_json::Value {
     serde_json::json!({
         "type": "function",
         "function": {

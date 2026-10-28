@@ -283,6 +283,18 @@ const TOOLS: Record<string, Presentation> = {
 			return live ? now : then;
 		},
 	},
+	// An applet's instructions loaded into the turn, or one of its files.
+	use_applet: {
+		noun: "an applet",
+		depth: 4,
+		say: (input, live) => {
+			const name = typeof input.name === "string" && input.name ? input.name : "an applet";
+			if (typeof input.file === "string" && input.file) {
+				return live ? `Reading ${input.file} from ${name}` : `Read ${input.file} from ${name}`;
+			}
+			return live ? `Using ${name}` : `Used ${name}`;
+		},
+	},
 	update_applet_memory: {
 		noun: "an applet",
 		depth: 4,

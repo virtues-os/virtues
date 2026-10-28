@@ -106,8 +106,20 @@ not from a third party, and there is no send-as-me channel. Draft-mode stands.
 
 Set `invoke` to `["chat"]` and the applet is a prompt the owner runs by typing
 `/` and its name in the composer. It runs as a turn of that chat, so its reply
-lands where they asked; it is not a headless run. Add `"assistant"` and you can
-start it with the `run` action too.
+lands where they asked; it is not a headless run.
+
+Add `"assistant"` and the assistant can start it without `/`. Every chat lists
+these applets by name and description, and when a request matches one, the
+assistant loads its prompt with `use_applet` and follows it in that turn, with
+the chat's tools and inside the chat's limits. So the description says what it
+does and when it applies: "Tracks glasses of water. Use when you say you drank
+water." An applet with a `run` stage is not loaded; the `run` action starts the
+whole applet instead.
+
+Files under the folder's `references/` and `assets/` are listed for its
+prompt, which reads one with `use_applet` when it names it. Setup writes only
+the applet's own files, so these come from a folder the owner or an import put
+on the box.
 
 - `agent` is the prompt the turn runs with: what to read, what to write, and
   in what shape, addressed to the assistant.
