@@ -8,7 +8,7 @@ The Virtues iPhone app needs iOS 26.2 or later.
 
 ## Pair your iPhone as your first device
 
-> Not yet tested on real hardware.
+> These steps haven't been tested yet.
 
 1. On your server, run `virtues pair`. It prints a six-digit pairing code.
    The code works until the command prompt (such as `user@server:~$`) comes
