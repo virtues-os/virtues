@@ -478,11 +478,12 @@ pub struct MintResponse {
 /// still work" panel state, which had no way to be produced and so had never
 /// run on hardware (2026-08-13).
 ///
-/// Requires an authenticated device: whoever is revoking every device has to
-/// already be one of them.
+/// Requires the app's owner proof (`api::owner_proof`): whoever is revoking
+/// every device has to already be one of them, and a program on a paired
+/// computer must not lock the owner out through the app's loopback port.
 pub async fn reopen_onboarding_handler(
     State(pool): State<PgPool>,
-    user: AuthUser,
+    OwnerProven(user): OwnerProven,
 ) -> impl IntoResponse {
     match revoke_all_devices(&pool).await {
         Ok((devices, creds)) => {

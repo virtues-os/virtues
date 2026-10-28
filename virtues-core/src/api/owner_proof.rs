@@ -10,6 +10,7 @@
 //!
 //! - `GET /api/passwords/:id/secret` and `GET /api/keys/:name/value`, which
 //!   reveal a secret.
+//! - `POST /api/pair/reopen-onboarding`, which revokes every device.
 //! - `POST /api/devices/enroll-peer`, `POST /api/pair/mint` and
 //!   `POST /api/pair/mint-collector`, which add a device. The collector code
 //!   redeems into a full device, so leaving it open would undo the other two.

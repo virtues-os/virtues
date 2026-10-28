@@ -231,8 +231,8 @@ handshake, and a request on a connection that is already open fails the
 `revoked_at` check.
 
 `POST /api/pair/reopen-onboarding` (Devices → Start over) revokes every
-device at once and keeps the data, network and account link. It needs a
-paired device and no owner proof.
+device at once and keeps the data, network and account link. It needs the
+owner proof.
 
 ### Owner proof
 
@@ -278,7 +278,7 @@ Each reveal, enrollment, pair code and AI key change also writes a row to
 | Network died mid-consume | The consume path uses a single transaction; partial failure leaves the code unconsumed and retryable until it expires. |
 | Stolen device | It has full access until revoked from another device or with `virtues device rm`. The auth-event log has no page, so noticing an unfamiliar device depends on the Devices list. |
 | DNS rebinding onto a trusted transport | The `Host` check refuses names the box does not serve (`middleware/security.rs`). |
-| Another process on a paired computer | The owner proof on reveal, enroll, pair mint, the AI key, package import, the web terminal and an admin applet chat turn, so a direct request to those routes through the app's loopback port is refused. Everything else stays open to a local process there, an accepted gap. `POST /api/pair/reopen-onboarding`, which revokes every device, is in that gap. |
+| Another process on a paired computer | The owner proof on reveal, enroll, pair mint, the AI key, package import, Start over, the web terminal and an admin applet chat turn, so a direct request to those routes through the app's loopback port is refused. Everything else stays open to a local process there, an accepted gap. |
 | A web page in a browser on a paired computer | It can send a request to `127.0.0.1:7117` that needs no CORS preflight, and nothing stops the write. CORS keeps it from reading the reply. |
 | Clickjacking | `X-Frame-Options: DENY` and CSP `frame-ancestors 'none'` on every response except applet faces, which the app frames. |
 | MIME sniffing | `X-Content-Type-Options: nosniff` on every response. Message attachments that are not raster images, audio or video download as `application/octet-stream` with a sandbox CSP. |

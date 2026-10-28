@@ -1625,6 +1625,7 @@ mod owner_proof_route_tests {
         ("POST", "/api/settings/byo-key"),
         ("DELETE", "/api/settings/byo-key"),
         ("POST", "/api/admin/applets/import-git"),
+        ("POST", "/api/pair/reopen-onboarding"),
     ];
 
     fn mac_key() -> virtues_iroh::SecretKey {
@@ -1878,5 +1879,50 @@ mod owner_proof_route_tests {
         assert_eq!(code(res).await, refused, "a replayed grant proof");
         let res = app.call(grant("page_example", None)).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
+
+        // Start over revokes every device, the Mac included, so its replay
+        // is checked in `a_start_over_proof_works_once`.
+        let path = "/api/pair/reopen-onboarding";
+        let res = app.call(from_mac("POST", path, None)).await.unwrap();
+        assert_eq!(code(res).await, refused);
+        let proof = sign(&mut app, "POST", path).await;
+        let res = app.call(from_mac("POST", path, Some(&proof))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::OK);
+        let revoked: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT revoked_at FROM app_device WHERE id = 'dev_admin_mac'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(revoked.is_some(), "start over revokes the device that asked");
+    }
+
+    /// A Start over proof works once. A replay after a real Start over would
+    /// be refused for the revoked device alone, so this spends the nonce on
+    /// a refused request first and then sends the same proof to Start over.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_start_over_proof_works_once(pool: sqlx::PgPool) {
+        sqlx::query(
+            "INSERT INTO app_device (id, user_id, kind, label, endpoint_id) \
+             VALUES ('dev_reopen_mac', $1, 'desktop_app', 'Mac', $2)",
+        )
+        .bind(crate::middleware::http::OWNER_USER_ID)
+        .bind(mac_key().public().to_string())
+        .execute(&pool)
+        .await
+        .unwrap();
+        let mut app = app(&pool);
+        let path = "/api/pair/reopen-onboarding";
+        let proof = sign(&mut app, "POST", path).await;
+        // Spent on a different route, where it is refused.
+        let res = app.call(from_mac("POST", "/api/pair/mint", Some(&proof))).await.unwrap();
+        assert_eq!(res.status(), StatusCode::FORBIDDEN);
+        let res = app.call(from_mac("POST", path, Some(&proof))).await.unwrap();
+        assert_eq!(code(res).await, (StatusCode::FORBIDDEN, Some("owner_proof_required".to_string())));
+        let still: Option<chrono::DateTime<chrono::Utc>> =
+            sqlx::query_scalar("SELECT revoked_at FROM app_device WHERE id = 'dev_reopen_mac'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(still.is_none(), "a refused start over revokes nothing");
     }
 }

@@ -170,7 +170,9 @@ change for it, because `kind` already says which rows it would cover.
   header. `POST /api/chat` takes the header when the turn resolves to the
   admin applet (`ChatMode::is_sudo`), and so does the Allow on one of its
   commands (`POST /api/chats/:id/permissions` with a `sudo:` grant). An app
-  that still asks for `sudo` mode is told to update.
+  that still asks for `sudo` mode is told to update. Start over
+  (`POST /api/pair/reopen-onboarding`), which revokes every device, needs
+  the proof too (decided 2026-10-28).
 
   Every other route stays open to any connection on a paired computer's
   `127.0.0.1:7117`, which is the accepted gap. Two parts of it are still
@@ -284,7 +286,9 @@ each item to its commit and says which are still open.
 - A restore reaches its stage through the folder it opened, never its
   name, unpacks only regular files, refuses every link it finds there,
   gives `pg_restore` the dump on stdin, and renames the env file over a
-  link at `virtues.env` (`d6c5fbe2f`).
+  link at `virtues.env` (`d6c5fbe2f`). It recreates the lake and applet
+  folders itself and fills them the same way, and writes the env file
+  through the folder it opened (`6d4a408df`).
 - Per-box secret files in one list, and leftover run files swept at the
   first run in each server process (`aaf3d7b9f`, `f6e541881`).
 - Revoking empties the payload, including rows revoked earlier, and a link
@@ -335,10 +339,6 @@ each item to its commit and says which are still open.
   app is paired, can send `127.0.0.1:7117` a request that needs no CORS
   preflight. CORS hides the reply, and nothing stops the write
   (`middleware/security.rs`).
-- **`POST /api/pair/reopen-onboarding` has no owner proof.** It revokes
-  every device. The owner left destructive routes inside the 7117 gap. Now
-  that the terminal and admin turns need the proof, adding it here would
-  close this one; the owner has not decided.
 - **Per-applet key allows** (decision 3) are not built. Any applet's
   `SKILL.md` can still name any key.
 - **Drive downloads with `?disposition=inline`** still serve the stored type
@@ -357,15 +357,12 @@ each item to its commit and says which are still open.
   owner proof (dated TODO in `apps/web/plugins/reach/src/store.rs`). On a Mac
   whose Keychain refused the move, the seed also stays in `box.json`.
   Android keeps it in the app's private storage.
-- **Restore writes as root into folders the service user owns.** It
-  recreates the lake and the applet folder at their paths, then renames
-  staged files into them. Code running as that user can swap either folder
-  for a link between the two, and root then puts files from the archive
-  wherever the link points, still root's, since `chown -R` does not follow
-  it. The service user writes the nightly drive backups, so it can also
-  write an archive whose files a restore would place that way. The fix is
-  the one the stage got: open each target when restore recreates it and
-  move into it through that descriptor until it is handed back.
+- **A swapped lake makes the hand-back miss.** Restore fills the lake and
+  applet folders through the folder it opened, then hands them back with
+  `chown -R` by path. If code running as the service user moves the filled
+  folder aside before that, the hand-back changes the folder at the name and
+  the restored one stays root's: the box cannot write its lake until
+  `sudo virtues migrate`. Nothing of root's is exposed.
 - **The start-time key check only reports.** It logs and shows attention
   when the key opens none of the sampled rows; nothing stops the box sealing
   new rows under the wrong key.
