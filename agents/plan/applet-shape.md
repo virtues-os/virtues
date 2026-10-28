@@ -911,6 +911,22 @@ keeps the default, `Applet`, the two rooms, and Local untouched.
 **Done when:** nothing in the composer says depth or access, and a deep
 research turn and an admin turn run from their applet folders.
 
+Built on 2026-10-27 except on a box (71525b857, 01e646554). Decided on the
+way:
+- The applet chip stays after a send until it is taken off, so a chat
+  stays in `/admin` for as long as the owner keeps it. Opening another chat
+  clears it.
+- The owner removed Local from the app instead of giving it a control of
+  its own. The server's Local mode stays, with a dated TODO, until a model
+  picker brings it back or it is deleted.
+- Only a shipped applet may list `sudo` or `dispatch_subagents`, and a sudo
+  turn also checks that the applet shipped.
+- A listed `think` reaches a turn `/name` starts. Deep research plans with
+  it.
+- An applet turn's step ceiling is 60, the old admin figure. Its dollars and
+  minutes come from `limit`.
+- A client that still sends `sudo` or `deep_research` gets the applet.
+
 ### 6. Let the assistant call applets
 
 Applets whose `invoke` includes `assistant` are offered to the model by name
