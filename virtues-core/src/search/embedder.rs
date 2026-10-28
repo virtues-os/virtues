@@ -793,3 +793,90 @@ async fn matches_index(pool: &sqlx::PgPool, e: &LocalEmbedder) -> Result<()> {
     super::indexer::check_index_geometry(pool, &e.model_id(), e.dimension() as i32).await
 }
 
+/// Where an embedding server sits relative to the owner's network. Your server
+/// sends it the text of everything it indexes, so a public one means that text
+/// leaves your network (Settings → Search, `virtues doctor`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Locality {
+    /// Every address the host resolves to is on this machine, the LAN or a VPN.
+    Local,
+    /// At least one address is public.
+    Public,
+    /// The host couldn't be looked up, so there is no answer either way.
+    Unknown,
+}
+
+/// The host of an `http(s)://host[:port][/path]` URL, port stripped, with any
+/// IPv6 brackets kept. For display.
+pub fn url_host(url: &str) -> &str {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let authority = rest.split('/').next().unwrap_or(rest);
+    match authority.rfind(']') {
+        Some(end) => &authority[..=end],
+        None => authority.rsplit_once(':').filter(|(_, p)| p.parse::<u16>().is_ok()).map_or(authority, |(h, _)| h),
+    }
+}
+
+/// Classify an embedding server's URL by looking its host up now, since DNS can
+/// change after setup. Loopback, RFC 1918, link-local, CGNAT (Tailscale) and
+/// IPv6 unique-local and link-local count as local. The installer keeps its own
+/// copy of this rule (`mode::confirm_destination`), since it can't depend on
+/// this crate: change one, change both.
+pub async fn locality(url: &str) -> Locality {
+    let rest = url.split_once("://").map(|(_, r)| r).unwrap_or(url);
+    let authority = rest.split('/').next().unwrap_or(rest);
+    // A port is whatever follows the last ':' outside an IPv6 literal's
+    // brackets: `[::1]:8080` has one, `[::1]` and `host` don't.
+    let has_port = match authority.rfind(']') {
+        Some(end) => authority[end..].contains(':'),
+        None => authority.rsplit_once(':').is_some_and(|(_, p)| p.parse::<u16>().is_ok()),
+    };
+    let lookup = if has_port { authority.to_string() } else { format!("{authority}:80") };
+    let Ok(addrs) = tokio::net::lookup_host(&lookup).await else {
+        return Locality::Unknown;
+    };
+    let addrs: Vec<std::net::IpAddr> = addrs.map(|s| s.ip()).collect();
+    let local = |ip: &std::net::IpAddr| match ip {
+        std::net::IpAddr::V4(v4) => {
+            let o = v4.octets();
+            v4.is_loopback() || v4.is_private() || v4.is_link_local() || (o[0] == 100 && (64..128).contains(&o[1]))
+        }
+        // Loopback, unique-local (fc00::/7) and link-local (fe80::/10).
+        std::net::IpAddr::V6(v6) => {
+            let s0 = v6.segments()[0];
+            v6.is_loopback() || (s0 & 0xfe00) == 0xfc00 || (s0 & 0xffc0) == 0xfe80
+        }
+    };
+    if addrs.is_empty() {
+        Locality::Unknown
+    } else if addrs.iter().all(local) {
+        Locality::Local
+    } else {
+        Locality::Public
+    }
+}
+
+#[cfg(test)]
+mod locality_tests {
+    use super::{locality, url_host, Locality};
+
+    #[test]
+    fn url_host_strips_scheme_port_and_path() {
+        assert_eq!(url_host("https://embed.example.com:8443/v1"), "embed.example.com");
+        assert_eq!(url_host("http://127.0.0.1:18181"), "127.0.0.1");
+        assert_eq!(url_host("http://[fd7a::1]:8080"), "[fd7a::1]");
+        assert_eq!(url_host("http://nas.local"), "nas.local");
+    }
+
+    // IP literals resolve without DNS, so these never touch the network.
+    #[tokio::test]
+    async fn literals_are_classified() {
+        assert_eq!(locality("http://127.0.0.1:18181").await, Locality::Local);
+        assert_eq!(locality("http://192.168.1.20:8080").await, Locality::Local);
+        assert_eq!(locality("http://100.101.102.103").await, Locality::Local);
+        assert_eq!(locality("http://[fd7a::1]:8080").await, Locality::Local);
+        assert_eq!(locality("https://203.0.113.7").await, Locality::Public);
+        assert_eq!(locality("https://[2001:db8::1]:443").await, Locality::Public);
+    }
+}

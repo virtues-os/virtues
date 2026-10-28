@@ -14,6 +14,9 @@ pub struct SearchStatus {
     pub mode: String,
     /// Base URL of the embedding server.
     pub embed_url: String,
+    /// Whether that server is on the owner's network. A public one receives
+    /// the text of everything the server indexes, and the page says so.
+    pub embed_locality: crate::search::embedder::Locality,
     /// The model the index was built with (`search_index_meta.model`), if any.
     pub index_model: Option<String>,
     /// Stored vector width.
@@ -83,9 +86,12 @@ pub async fn status(pool: &PgPool) -> Result<SearchStatus> {
         (env("VIRTUES_ACCELERATOR"), env("VIRTUES_ACCELERATOR_GUIDE"))
     };
 
+    let embed_locality = crate::search::embedder::locality(&cfg.base_url).await;
+
     Ok(SearchStatus {
         mode,
         embed_url: cfg.base_url,
+        embed_locality,
         index_model,
         index_dims,
         model_change,

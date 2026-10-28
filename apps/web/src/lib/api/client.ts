@@ -442,6 +442,9 @@ export function searchLocal(
 export interface SearchStatus {
 	mode: 'dragon' | 'bundled' | 'manual' | 'unknown' | string;
 	embed_url: string;
+	/** Whether the embedding server is on your network. A public one receives
+	 *  the text of everything your server indexes. */
+	embed_locality: 'local' | 'public' | 'unknown';
 	index_model: string | null;
 	index_dims: number | null;
 	/** A move to another model, built in the background while search keeps

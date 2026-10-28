@@ -291,6 +291,21 @@ async fn probe_inference(issues: &mut ui::Issues) {
         // The label stays inside `ui::kv`'s 12-column leader so the value lines
         // up with the rows above it.
         ui::kv("embed live", &format!("{base}  {mark}"));
+        // Not a warning: the owner chose this server. It is here so the
+        // command line shows what Settings → Search shows.
+        let host = crate::search::embedder::url_host(&base);
+        match crate::search::embedder::locality(&base).await {
+            crate::search::embedder::Locality::Local => {
+                ui::kv("embed host", &format!("{host}, on this machine or your network"))
+            }
+            crate::search::embedder::Locality::Public => ui::kv(
+                "embed host",
+                &format!("{host}, outside your network. It receives the text this server indexes"),
+            ),
+            crate::search::embedder::Locality::Unknown => {
+                ui::kv("embed host", &format!("{host}, couldn't be looked up"))
+            }
+        }
         if let Some(what) = finding {
             issues.error(
                 format!("{what} — semantic search is unavailable"),
