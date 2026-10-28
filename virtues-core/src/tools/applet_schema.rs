@@ -558,13 +558,63 @@ pub async fn apply(pool: &PgPool, ddl: &str) -> Result<(), String> {
     run_schema_statements(pool, ddl, true).await
 }
 
-/// Textual guards: no transaction control / role / grant statements, and every
-/// schema-qualified identifier must live in the applet's own schema.
+/// What a statement in `schema_sql` may start with: tables, their indexes
+/// and the applet's own schema, nothing that runs code.
+const STATEMENTS: &[&str] = &[
+    "create schema",
+    "create table",
+    "create index",
+    "create unique index",
+    "alter table",
+    "drop table",
+    "drop index",
+    "comment on",
+];
+
+/// Words that read or run SQL from inside a statement the list allows: a
+/// `CREATE TABLE … AS SELECT`, a default, or a function that runs a query
+/// given as text (`query_to_xml`, `database_to_xml`, `ts_stat`).
+const FORBIDDEN_WORDS: &[&str] = &["select", "set_config", "ts_stat"];
+
+/// Textual guards. The DDL runs as the server's role, so this is the
+/// boundary until the applet has its own login (slice 9 of
+/// agents/plan/applet-shape.md): every statement is one [`STATEMENTS`]
+/// allows, nothing is quoted (a quoted `"public"."x"` hides its schema) or
+/// dollar-quoted, nothing reads data, and every schema-qualified identifier
+/// is the applet's own schema.
 pub fn validate_text(ddl: &str, slug: &str) -> Result<(), String> {
     let lowered = ddl.to_lowercase();
     for kw in ["commit", "rollback", "savepoint", "grant", "revoke", "create role", "drop role"] {
         if lowered.contains(kw) {
             return Err(format!("schema_sql may not contain '{kw}'"));
+        }
+    }
+    // Comments never run, and the shipped files' prose quotes things.
+    let code = strip_comments(&lowered);
+    for (c, what) in [('"', "quoted identifiers"), ('$', "dollar quoting")] {
+        if code.contains(c) {
+            return Err(format!("schema_sql may not use {what} ('{c}'). Use plain lowercase names."));
+        }
+    }
+    if code.contains("to_xml") || code.contains("xmlschema") {
+        return Err("schema_sql may not call the XML export functions, which run queries".into());
+    }
+    for word in code.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')) {
+        if FORBIDDEN_WORDS.contains(&word) {
+            return Err(format!("schema_sql may not contain '{word}': it creates and changes tables, and reads nothing"));
+        }
+    }
+    for stmt in split_statements(&code) {
+        let words: Vec<&str> = stmt.split_whitespace().collect();
+        if words.is_empty() {
+            continue;
+        }
+        let head = words.iter().take(3).copied().collect::<Vec<_>>().join(" ");
+        if !STATEMENTS.iter().any(|s| head == *s || head.starts_with(&format!("{s} "))) {
+            let shown = words.iter().take(3).copied().collect::<Vec<_>>().join(" ");
+            return Err(format!(
+                "schema_sql may only create, alter or drop tables and indexes in its own schema; '{shown}…' is not one of those"
+            ));
         }
     }
     let expected = format!("applet_{slug}");
@@ -588,6 +638,26 @@ pub fn validate_text(ddl: &str, slug: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// A statement with its `--` and `/* */` comments removed.
+fn strip_comments(stmt: &str) -> String {
+    let mut out = String::with_capacity(stmt.len());
+    let mut rest = stmt;
+    while !rest.is_empty() {
+        if let Some(after) = rest.strip_prefix("--") {
+            rest = after.split_once('\n').map_or("", |(_, r)| r);
+            out.push(' ');
+        } else if let Some(after) = rest.strip_prefix("/*") {
+            rest = after.split_once("*/").map_or("", |(_, r)| r);
+            out.push(' ');
+        } else {
+            let c = rest.chars().next().expect("not empty");
+            out.push(c);
+            rest = &rest[c.len_utf8()..];
+        }
+    }
+    out
 }
 
 /// Run the DDL statement-by-statement over the extended protocol inside one
@@ -638,6 +708,28 @@ async fn run_schema_statements(pool: &PgPool, ddl: &str, commit: bool) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Each way past the old text check is refused, and the shape the
+    /// authoring loop writes still passes.
+    #[test]
+    fn schema_sql_creates_tables_and_nothing_else() {
+        let ok = "-- the \"log\", which nobody selects from\nCREATE SCHEMA IF NOT EXISTS applet_water;\n\
+                  CREATE TABLE IF NOT EXISTS applet_water.drinks (id TEXT PRIMARY KEY, ml INTEGER NOT NULL DEFAULT 250, at TIMESTAMPTZ DEFAULT now());\n\
+                  CREATE INDEX ON applet_water.drinks (at);\nALTER TABLE applet_water.drinks ADD COLUMN note TEXT;";
+        assert_eq!(validate_text(ok, "water"), Ok(()));
+        let shipped = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../applets/daily-readings/tables/0001_schema.sql");
+        assert_eq!(validate_text(&std::fs::read_to_string(shipped).unwrap(), "daily_readings"), Ok(()));
+        for bad in [
+            "CREATE SCHEMA IF NOT EXISTS applet_water; CREATE TABLE applet_water.t AS SELECT * FROM \"public\".\"credentials\";",
+            "CREATE SCHEMA IF NOT EXISTS applet_water; CREATE TABLE applet_water.t AS SELECT 1;",
+            "CREATE SCHEMA IF NOT EXISTS applet_water; DO $$ BEGIN END $$;",
+            "CREATE SCHEMA IF NOT EXISTS applet_water; CREATE FUNCTION applet_water.f() RETURNS int AS 'select 1' LANGUAGE sql;",
+            "CREATE SCHEMA IF NOT EXISTS applet_water; ALTER TABLE applet_water.t ADD COLUMN x xml DEFAULT database_to_xml(true, true, '');",
+            "CREATE SCHEMA IF NOT EXISTS applet_water; CREATE VIEW applet_water.v AS (VALUES (1));",
+        ] {
+            assert!(validate_text(bad, "water").is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn classify_recognizes_an_unchanged_resubmit() {
