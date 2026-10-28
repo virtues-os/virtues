@@ -333,6 +333,45 @@ an unexplained gap in a reply or a chart.
 4. **What `virtues sudo` proves.** Either approval needs something the web
    terminal cannot give, or the docs stop calling it physical access.
 
+### What the owner decided, 2026-10-27
+
+The rules that follow from these answers are in
+[plan/secrets-plan.md](../plan/secrets-plan.md), under "Who can read what".
+
+1. **Sudo mode is a stated exception.** Sudo mode can reach every secret, and
+   the mode's copy says so when the owner turns it on. The shell starts from a
+   clean environment, so `env` no longer prints the box key. Because
+   `virtues backup --init-key` prints a recovery key, it asks first, the way
+   deletes do. Reads never ask.
+2. **Port 7117: the owner left the design open, as long as it is not
+   over-engineered.** The chosen design reuses the owner-proof signature the
+   offline-box Bluetooth path already uses
+   (`crates/virtues-reach-client/src/owner.rs`):
+   - The box refuses `Host` names it does not serve, and its `.virtues` CORS
+     arm requires `Origin` to match `Host`.
+   - The Browser pane refuses loopback, private and `.local` hosts.
+   - Message attachments are served sandboxed, as downloads.
+   - Four routes need a fresh owner proof: revealing a password, revealing a
+     key, enrolling a device and minting a pair code. For each, the box issues
+     a one-time nonce, the app signs it natively with the device key, and the
+     request carries the signature. The box's own console on its loopback is
+     exempt, since it already holds `virtues.env`.
+   - The device seed moves from `box.json` into the Keychain.
+
+   A token on every connection was rejected. It would change every request,
+   and `<img>`, media and socket URLs would have to carry it. The gap that
+   remains is accepted: another process on the Mac can still act as the owner
+   for everything except those four routes.
+3. **Keys are allowed per applet.** An unshipped applet gets a declared key
+   only after the owner allows that key for that applet on its page, the way
+   network hosts work. Shipped applets keep getting their declared keys
+   automatically.
+4. **`virtues sudo`: leaning toward removing the gate, not yet decided.** If
+   it goes, the two gated actions (changing the AI key, importing a package)
+   could require the owner proof from decision 2. That keeps a check that a
+   rebinding page or another local process cannot pass, without a step on the
+   box.
+
 ## 10. Where the design goes next
 
 The ranker placed the merged ideas in four tiers. The ones marked as fixes

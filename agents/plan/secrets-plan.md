@@ -79,12 +79,33 @@ change for it, because `kind` already says which rows it would cover.
   rows and sets them for that run alone, the way `needs_vault_key` already
   grants the box key (`declares_vault_key_need` in `applet_templates`). An
   undeclared value is never passed. A declared one that is missing fails the
-  run with "Add OPENAI_API_KEY in Settings, under Keys."
+  run with "Add OPENAI_API_KEY in Settings, under Keys." Decided 2026-10-27:
+  an unshipped applet also needs the owner to allow each declared key for
+  that applet on its page, the way network hosts work. Shipped applets get
+  their declared keys without that step. Not built yet.
 - **A model sees names, never values.** It can know that a key or a login
   exists, so a chat can say "you have a GitHub token" or ask the owner to add
-  one. The owner types the value into Settings. `sql_query` already runs as
-  `virtues_face_reader`, which has no grant on `credentials`; a test pins
-  that.
+  one. The owner types the value into Settings. `sql_query` runs as
+  `virtues_face_reader`, which has no grant on `credentials`. No test pins
+  that yet, and the `SET LOCAL ROLE` fallback in `database/restricted.rs`
+  can be undone from inside a query
+  ([record/secrets-audit-2026-10-27.md](../record/secrets-audit-2026-10-27.md),
+  section 3).
+- **Sudo mode is the one exception** (decided 2026-10-27). A chat in sudo mode
+  can reach every secret on the box, and the mode's copy says so. Its shell
+  starts from a clean environment, so the server's variables are not
+  inherited, and `virtues backup --init-key` asks first, the way deletes do.
+  Reads never ask. Not built yet.
+- **Four routes need the app's own signature** (decided 2026-10-27).
+  Revealing a password, revealing a key, enrolling a device and minting a
+  pair code each need a fresh owner proof: the box hands out a one-time
+  nonce, and the app signs it with the device key, the same signing
+  `crates/virtues-reach-client/src/owner.rs` does for an offline box. Every
+  other route stays open to any connection on the Mac's `127.0.0.1:7117`,
+  which is the accepted gap. The box's own console on its loopback is exempt.
+  With it: the box refuses unknown `Host` names, the Browser pane refuses
+  loopback, private and `.local` hosts, and the Mac keeps its device seed in
+  the Keychain. Not built yet.
 - **A password is filled by row id.** The Mac browser host decrypts the row
   and types the password into the page itself, so the value never appears in
   a tool result or a prompt. The shell's refusal to let the model type into
