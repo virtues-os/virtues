@@ -208,7 +208,10 @@ impl Scheduler {
                     // embedding drain is hours) would otherwise leave the slot
                     // unadvanced for its whole duration, and every sync pass
                     // in that window would read the applet as overdue.
-                    stamp_fired_slot(&deps.db, &applet_id, &cron_expr, tz).await;
+                    if !claim_fired_slot(&deps.db, &applet_id, &cron_expr, tz).await {
+                        tracing::info!(applet_id, "cron slot already ran; skipping the repeat");
+                        return;
+                    }
 
                     if let Err(e) =
                         crate::applet_runner::run_applet(&deps, &applet_id, "cron", None).await
@@ -411,15 +414,22 @@ pub struct ScheduledApplet {
 /// `next_due_at` forward by that drift on every single firing. Falls back to
 /// the wake moment only if the expression will not yield an occurrence, which
 /// keeps a strange schedule from freezing the pointer entirely.
-async fn stamp_fired_slot(db: &PgPool, applet_id: &str, cron_expr: &str, tz: Tz) {
+/// Claim the slot a cron firing belongs to, and say whether to run. False
+/// only when that slot already ran (or a later one did); a slot that cannot
+/// be named or a failed write runs anyway, as before the claim existed.
+async fn claim_fired_slot(db: &PgPool, applet_id: &str, cron_expr: &str, tz: Tz) -> bool {
     let now = chrono::Utc::now();
     let Some(cron) = slots::parse(cron_expr) else {
-        return;
+        return true;
     };
     let slot = slots::previous_at_or_before(&cron, tz, now).unwrap_or(now);
     let next = slots::next_after(&cron, tz, now);
-    if let Err(e) = slots::mark_slot_handled(db, applet_id, slot, next).await {
-        tracing::warn!(applet_id, error = %e, "failed to stamp fired slot");
+    match slots::claim_slot(db, applet_id, slot, next).await {
+        Ok(claimed) => claimed,
+        Err(e) => {
+            tracing::warn!(applet_id, error = %e, "failed to stamp fired slot");
+            true
+        }
     }
 }
 
@@ -452,6 +462,23 @@ pub(crate) async fn resolve_schedule_tz(db: &PgPool) -> Tz {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// When the clocks go back, a re-registered job wakes again for times in
+    /// the repeated hour. Its slot is already claimed, so it does not run
+    /// twice; the next new slot still runs.
+    #[sqlx::test]
+    async fn a_slot_is_claimed_once(pool: PgPool) {
+        sqlx::query("INSERT INTO app_applets (id, name, owner, schedule, command) VALUES ('applet_tick', 'Tick', 'user', '0 30 1 * * *', '[\"true\"]')")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let at = |s: &str| chrono::DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&chrono::Utc);
+        let first = at("2031-11-02T06:30:00Z");
+        assert!(slots::claim_slot(&pool, "applet_tick", first, None).await.unwrap());
+        assert!(!slots::claim_slot(&pool, "applet_tick", first, None).await.unwrap(), "the same slot ran twice");
+        assert!(!slots::claim_slot(&pool, "applet_tick", at("2031-11-01T06:30:00Z"), None).await.unwrap());
+        assert!(slots::claim_slot(&pool, "applet_tick", at("2031-11-03T07:30:00Z"), None).await.unwrap());
+    }
 
     // Requires a live Postgres: `#[sqlx::test]` provisions a scratch DB and
     // applies `core/migrations` automatically. Set DATABASE_URL when running.
