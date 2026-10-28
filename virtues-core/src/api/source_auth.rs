@@ -353,7 +353,7 @@ async fn store_grant(
             id,
             source_id,
             &grant.secrets,
-            Some(&grant.metadata),
+            Some(&repair_metadata(pool, id, grant).await?),
             grant.expires_in,
         )
         .await?
@@ -391,13 +391,15 @@ async fn store_grant(
 }
 
 /// The provider account a grant was made for, where the proxy reports one:
-/// a Strava athlete, a Plaid item, a Notion workspace. A Google grant names
-/// none, because the proxy returns only its scopes.
+/// a Strava athlete, a Plaid item, a Notion workspace, or the account's
+/// `email` (the proxy adds it to a Google grant when it can look it up).
+/// Rows stored before the proxy sent `email` name no account.
 fn grant_account(secrets: &serde_json::Value, metadata: &serde_json::Value) -> Option<String> {
     [
         metadata.pointer("/athlete/id"),
         metadata.pointer("/item_id"),
         secrets.pointer("/workspace_id"),
+        metadata.pointer("/email"),
     ]
     .into_iter()
     .flatten()
@@ -446,6 +448,34 @@ async fn same_account(
         }
     };
     Ok(grant_account(&secrets, &metadata).map_or(true, |old| old == new))
+}
+
+/// The metadata a reconnect stores in the row it repairs. A grant replaces
+/// the row's metadata, but a grant that names no account keeps the `email`
+/// the row had. A Google grant names none when the proxy could not look its
+/// address up. Without the address the row would name no account from then
+/// on, and every later reconnect would repair it, whichever account the owner
+/// signed in to.
+async fn repair_metadata(
+    pool: &PgPool,
+    credential_id: &str,
+    grant: &ProxyExchangeResponse,
+) -> virtues_helpers::auth::Result<serde_json::Value> {
+    let mut metadata = grant.metadata.clone();
+    if grant_account(&grant.secrets, &grant.metadata).is_some() {
+        return Ok(metadata);
+    }
+    // `None` when the row is gone, which the repair then reports.
+    let email: Option<Option<serde_json::Value>> =
+        sqlx::query_scalar("SELECT metadata->'email' FROM credentials WHERE id = $1 AND kind = 'source'")
+            .bind(credential_id)
+            .fetch_optional(pool)
+            .await?;
+    let email = email.flatten().filter(|e| !e.is_null());
+    if let (Some(email), Some(fields)) = (email, metadata.as_object_mut()) {
+        fields.insert("email".to_string(), email);
+    }
+    Ok(metadata)
 }
 
 /// Sending the iOS app's sign-in sheet here closes it. Only the sheet
@@ -678,6 +708,16 @@ mod tests {
         }
     }
 
+    /// A Google grant with the account address the proxy looked up, or none
+    /// when its lookup failed.
+    fn email_grant(access_token: &str, email: Option<&str>) -> ProxyExchangeResponse {
+        let mut grant = grant(access_token, Some(3600));
+        if let Some(email) = email {
+            grant.metadata["email"] = serde_json::json!(email);
+        }
+        grant
+    }
+
     /// A Notion grant, which names its workspace among the secrets.
     fn workspace_grant(access_token: &str, workspace_id: &str) -> ProxyExchangeResponse {
         ProxyExchangeResponse {
@@ -874,6 +914,68 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(same, notion);
+    }
+
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_google_reconnect_to_another_address_adds_a_row(pool: PgPool) {
+        ensure_test_key();
+        let nick = store_grant(&pool, "google", None, &email_grant("at-first", Some("nick@example.com")))
+            .await
+            .unwrap();
+        let name: String = sqlx::query_scalar("SELECT name FROM credentials WHERE id = $1")
+            .bind(&nick)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(name, "nick@example.com", "the address names the sign-in");
+        mark_credential_status(&pool, &nick, CredentialStatus::ReauthRequired, None)
+            .await
+            .unwrap();
+
+        let other = store_grant(&pool, "google", Some(&nick), &email_grant("at-other", Some("david@example.com")))
+            .await
+            .unwrap();
+        assert_ne!(other, nick, "another Google account is a sign-in of its own");
+        assert_eq!(row(&pool, &nick).await.0, "reauth_required");
+        let secrets = read_credential_secrets(&pool, &nick).await.unwrap();
+        assert_eq!(secrets["access_token"], "at-first", "the old row keeps its own grant");
+
+        let same = store_grant(&pool, "google", Some(&nick), &email_grant("at-second", Some("nick@example.com")))
+            .await
+            .unwrap();
+        assert_eq!(same, nick, "the same account repairs the row");
+        assert_eq!(row(&pool, &nick).await.0, "active");
+
+        // A grant whose lookup failed names no account, so it repairs the row,
+        // and the row keeps its address for the next reconnect to compare.
+        let repaired = store_grant(&pool, "google", Some(&nick), &email_grant("at-third", None))
+            .await
+            .unwrap();
+        assert_eq!(repaired, nick);
+        let secrets = read_credential_secrets(&pool, &nick).await.unwrap();
+        assert_eq!(secrets["access_token"], "at-third");
+        assert_eq!(metadata(&pool, &nick).await["email"], "nick@example.com");
+        let after = store_grant(&pool, "google", Some(&nick), &email_grant("at-fourth", Some("david@example.com")))
+            .await
+            .unwrap();
+        assert_ne!(after, nick, "the kept address still tells the accounts apart");
+
+        // A row stored before the proxy sent `email` is repaired as before,
+        // and keeps the address from then on.
+        let older = store_grant(&pool, "google", None, &grant("at-old", Some(3600))).await.unwrap();
+        let repaired = store_grant(&pool, "google", Some(&older), &email_grant("at-new", Some("david@example.com")))
+            .await
+            .unwrap();
+        assert_eq!(repaired, older);
+        assert_eq!(metadata(&pool, &older).await["email"], "david@example.com");
+    }
+
+    async fn metadata(pool: &PgPool, id: &str) -> serde_json::Value {
+        sqlx::query_scalar("SELECT metadata FROM credentials WHERE id = $1")
+            .bind(id)
+            .fetch_one(pool)
+            .await
+            .unwrap()
     }
 
     #[sqlx::test(migrations = "./migrations")]

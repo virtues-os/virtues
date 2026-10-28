@@ -14,13 +14,15 @@
 //! - `Refreshed` — token rotated.
 //! - `Fresh` — already valid; counted as `skipped`.
 //! - `NoRefreshable` — paste-once kinds (api_key, Plaid); counted as `skipped`.
-//! - `Err(Proxy "upstream 4xx")` — provider rejected; row already flipped to
-//!   `reauth_required` by `ensure_fresh`; counted as `reauth_required`.
-//! - `Err(_)` — transient; row untouched; counted as `errored`.
+//! - An error `is_refused_grant` accepts — the provider refused the grant.
+//!   `ensure_fresh` has marked the row `reauth_required`, unless the row
+//!   changed during the refresh; counted as `reauth_required`.
+//! - Any other error — transient; row untouched; counted as `errored`.
 
 use anyhow::Result;
 use sqlx::PgPool;
-use virtues_helpers::auth::{ensure_fresh, AuthError, RefreshOutcome};
+use virtues_helpers::auth::proxy::is_refused_grant;
+use virtues_helpers::auth::{ensure_fresh, RefreshOutcome};
 use virtues_helpers::{connect_from_env, output, read_input};
 
 #[tokio::main]
@@ -72,9 +74,7 @@ async fn sweep_expiring(pool: &PgPool) -> Result<Stats> {
         match ensure_fresh(pool, &id).await {
             Ok(RefreshOutcome::Refreshed) => stats.refreshed += 1,
             Ok(_) => stats.skipped += 1,
-            Err(AuthError::Proxy(msg)) if msg.contains("upstream 4") => {
-                stats.reauth_required += 1;
-            }
+            Err(ref e) if is_refused_grant(e) => stats.reauth_required += 1,
             Err(e) => {
                 tracing::warn!(credential_id = %id, error = %e, "ensure_fresh failed in sweep");
                 stats.errored += 1;

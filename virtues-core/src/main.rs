@@ -697,9 +697,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // the background so a slow database never holds up the start. It only
     // reads, so running beside the migrations is safe. A failure is logged
     // and shown in attention, and never stops the server.
+    //
+    // Beside it, the server empties revoked sign-ins that an earlier release
+    // left holding their tokens. That pass waits for the migrations itself.
     if matches!(cli.command, None | Some(Commands::Server { .. })) {
         let pool = virtues.database.pool().clone();
         tokio::spawn(async move { virtues::secrets::check_key_at_start(&pool).await });
+        let database = virtues.database.clone();
+        tokio::spawn(async move { virtues::credentials::empty_revoked_at_start(&database).await });
     }
 
     // Default to server with auto-migrate if no command specified

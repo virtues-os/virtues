@@ -154,9 +154,8 @@ fn transport_error(what: &str, e: reqwest::Error) -> AuthError {
 
 const UPSTREAM_PREFIX: &str = "upstream ";
 
-/// The error for a non-2xx answer from the proxy. `credential_refresh`
-/// matches "upstream 4" in it, and [`is_refused_grant`] parses it back, so
-/// its wording changes only together with both.
+/// The error for a non-2xx answer from the proxy. [`is_refused_grant`]
+/// parses it back, so its wording changes only together with that.
 fn upstream_error(status: u16, body: &str) -> AuthError {
     AuthError::Proxy(format!("{UPSTREAM_PREFIX}{status}: {body}"))
 }
@@ -261,9 +260,24 @@ mod tests {
             panic!("upstream_error must build a Proxy error");
         };
         assert_eq!(parse_upstream(&msg), Some((401, r#"{"code":"a: b"}"#)));
-        // The substring the credential_refresh applet matches today.
+        // The substring released boxes match a refused grant on. The proxy
+        // keeps it out of every answer to a provider failure
+        // (`refresh_failure` in services/virtues-api's oauth.rs).
         assert!(msg.contains("upstream 4"));
         assert_eq!(parse_upstream("unreachable: error sending request"), None);
+    }
+
+    #[test]
+    fn a_refused_grant_is_believed_whatever_the_status() {
+        // The proxy answers every provider failure with 502, so boxes released
+        // before `code` retry it. The code alone says the grant was refused.
+        let refused = r#"{"error":"refresh failed: upstream status 400 (invalid_grant)","code":"invalid_grant","upstream_status":400}"#;
+        let err = upstream_error(502, refused);
+        assert!(is_refused_grant(&err));
+        assert!(!err.to_string().contains("upstream 4"), "{err}");
+
+        let failed = r#"{"error":"refresh failed: upstream status 503","code":"upstream_error","upstream_status":503}"#;
+        assert!(!is_refused_grant(&upstream_error(502, failed)));
     }
 
     #[tokio::test]
@@ -276,7 +290,7 @@ mod tests {
             .port();
         let token = "xt-test-0123456789";
         let e = client()
-            .post(format!("http://127.0.0.1:{port}/google/exchange/{token}"))
+            .post(format!("http://127.0.0.1:{port}/example_source/exchange/{token}"))
             .send()
             .await
             .expect_err("nothing listens on the port");

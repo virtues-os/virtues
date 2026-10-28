@@ -300,6 +300,13 @@ async fn store_refreshed(
     Ok(result.rows_affected() == 1)
 }
 
+/// The reason Sources shows under a credential whose grant the provider
+/// refused. The source's display name lives in core's catalog, which this
+/// crate cannot read, so the sentence names no source; Sources prints the
+/// source's name beside it.
+const REFUSED_GRANT_REASON: &str =
+    "The service stopped accepting this sign-in. Reconnect to sync again.";
+
 /// Mark the credential `reauth_required` after a refused grant, but only while
 /// the row is active and still has `read_ciphertext`. A refusal of tokens
 /// that were replaced since, or of a source the owner disconnected, says
@@ -308,12 +315,13 @@ async fn mark_refused(db: &PgPool, credential_id: &str, read_ciphertext: &str) -
     let result = sqlx::query(
         r#"UPDATE credentials
               SET status = $1,
-                  status_reason = 'token_rejected_by_provider',
+                  status_reason = $2,
                   updated_at = now()
-            WHERE id = $2 AND kind = 'source'
-              AND status = 'active' AND secrets_ciphertext = $3"#,
+            WHERE id = $3 AND kind = 'source'
+              AND status = 'active' AND secrets_ciphertext = $4"#,
     )
     .bind(CredentialStatus::ReauthRequired.as_str())
+    .bind(REFUSED_GRANT_REASON)
     .bind(credential_id)
     .bind(read_ciphertext)
     .execute(db)
@@ -355,7 +363,7 @@ mod tests {
     async fn insert_credential(pool: &PgPool, id: &str, status: &str, expires_at: DateTime<Utc>) {
         sqlx::query(
             r#"INSERT INTO credentials (id, kind, key, name, status, secrets_ciphertext, expires_at)
-               VALUES ($1, 'source', 'strava', 'nick@example.com', $2, 'ct-read', $3)"#,
+               VALUES ($1, 'source', 'example_source', 'nick@example.com', $2, 'ct-read', $3)"#,
         )
         .bind(id)
         .bind(status)
@@ -584,6 +592,7 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(status, "reauth_required");
-        assert_eq!(reason.as_deref(), Some("token_rejected_by_provider"));
+        // Sources shows this to the owner as written, so it is a sentence.
+        assert_eq!(reason.as_deref(), Some(REFUSED_GRANT_REASON));
     }
 }
