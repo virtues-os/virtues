@@ -69,10 +69,23 @@ pub async fn mint_pending_credential(
     Ok(id)
 }
 
-/// Finalize a `via_proxy` credential — encrypts secrets, stores metadata +
-/// expiry, transitions `pending → active`. Idempotent on second callback
-/// (no-ops if already active). (OAuth scopes were once stored here too —
-/// written, read by nothing, dropped 2026-08-28.)
+/// `expires_at` and `next_refresh_at` for a grant that lasts `expires_in`
+/// seconds. The refresh is due a minute before the grant ends.
+fn expiry_from(expires_in: Option<i64>) -> (Option<DateTime<Utc>>, Option<DateTime<Utc>>) {
+    match expires_in {
+        Some(secs) => {
+            let exp = Utc::now() + Duration::seconds(secs);
+            (Some(exp), Some(exp - Duration::seconds(60)))
+        }
+        None => (None, None),
+    }
+}
+
+/// Finalize a fresh `via_proxy` credential: encrypt secrets, store metadata
+/// and expiry, and move it from `pending` to `active`. A second callback for
+/// the same row is a no-op once it is active. A reconnect goes through
+/// [`reauth_credential`] instead, because this no-op would drop its new
+/// tokens.
 pub async fn finalize_credential(
     db: &PgPool,
     credential_id: &str,
@@ -85,15 +98,7 @@ pub async fn finalize_credential(
     let secrets_ct = encryptor.encrypt(&secrets_str)?;
     let metadata_json = metadata.clone();
 
-    let (expires_at, next_refresh_at): (Option<DateTime<Utc>>, Option<DateTime<Utc>>) =
-        match expires_in {
-            Some(secs) => {
-                let exp = Utc::now() + Duration::seconds(secs);
-                let refresh = exp - Duration::seconds(60);
-                (Some(exp), Some(refresh))
-            }
-            None => (None, None),
-        };
+    let (expires_at, next_refresh_at) = expiry_from(expires_in);
 
     let result = sqlx::query(
         r#"UPDATE credentials
@@ -140,8 +145,54 @@ pub async fn finalize_credential(
     Ok(())
 }
 
+/// Repair a source credential in place when the owner reconnects it, through
+/// OAuth or by pasting new fields: seal the new secrets, reset its expiry, and
+/// set it `active` again. `Some(metadata)` replaces the row's metadata, as a
+/// new OAuth grant does; `None` keeps it. The row keeps its id, name and
+/// applets, so its syncs carry on from their cursors.
+///
+/// Returns `false` when there is nothing to repair: the row is gone, belongs
+/// to another source, or was disconnected. A disconnected (`revoked`) row
+/// stays revoked, and connecting the source again adds a new sign-in.
+pub async fn reauth_credential(
+    db: &PgPool,
+    credential_id: &str,
+    source_id: &str,
+    secrets: &serde_json::Value,
+    metadata: Option<&serde_json::Value>,
+    expires_in: Option<i64>,
+) -> Result<bool> {
+    let encryptor = TokenEncryptor::from_env()?;
+    let secrets_ct = encryptor.encrypt(&serde_json::to_string(secrets)?)?;
+    let (expires_at, next_refresh_at) = expiry_from(expires_in);
+
+    let result = sqlx::query(
+        r#"UPDATE credentials
+              SET status = 'active',
+                  status_reason = NULL,
+                  secrets_ciphertext = $1,
+                  metadata = COALESCE($2, metadata),
+                  expires_at = $3,
+                  next_refresh_at = $4,
+                  last_seen_at = now(),
+                  updated_at = now()
+            WHERE id = $5 AND kind = 'source' AND key = $6 AND status <> 'revoked'"#,
+    )
+    .bind(&secrets_ct)
+    .bind(metadata)
+    .bind(expires_at)
+    .bind(next_refresh_at)
+    .bind(credential_id)
+    .bind(source_id)
+    .execute(db)
+    .await?;
+
+    Ok(result.rows_affected() > 0)
+}
+
 /// Mint + finalize in one call for `api_key` flows. The user pasted a token;
-/// nothing to dedupe via pending state.
+/// nothing to dedupe via pending state. Connecting counts as a use, as it
+/// does for an OAuth grant, so the row starts with `last_seen_at` set.
 pub async fn finalize_apikey_credential(
     db: &PgPool,
     source_id: &str,
@@ -159,8 +210,8 @@ pub async fn finalize_apikey_credential(
 
     sqlx::query(
         r#"INSERT INTO credentials
-              (id, key, name, status, secrets_ciphertext, metadata)
-           VALUES ($1, $2, $3, 'active', $4, '{}'::jsonb)"#,
+              (id, key, name, status, secrets_ciphertext, metadata, last_seen_at)
+           VALUES ($1, $2, $3, 'active', $4, '{}'::jsonb, now())"#,
     )
     .bind(&id)
     .bind(source_id)
@@ -172,7 +223,12 @@ pub async fn finalize_apikey_credential(
     Ok(id)
 }
 
-/// Update an active credential's secrets after a successful refresh.
+/// Replace a credential's secrets and set it `active`, whatever its status.
+/// Relinking the box's own key (`virtues_api::renew`) uses this. The owner
+/// cannot disconnect that key, but an older release let a request revoke its
+/// row, and a relink must still work on such a box. A source sign-in goes
+/// through [`reauth_credential`], which leaves a disconnected row alone.
+/// Writing new secrets counts as a use, so it sets `last_seen_at`.
 pub async fn update_credential_secrets(
     db: &PgPool,
     credential_id: &str,
@@ -183,15 +239,7 @@ pub async fn update_credential_secrets(
     let secrets_str = serde_json::to_string(secrets)?;
     let secrets_ct = encryptor.encrypt(&secrets_str)?;
 
-    let (expires_at, next_refresh_at): (Option<DateTime<Utc>>, Option<DateTime<Utc>>) =
-        match expires_in {
-            Some(secs) => {
-                let exp = Utc::now() + Duration::seconds(secs);
-                let refresh = exp - Duration::seconds(60);
-                (Some(exp), Some(refresh))
-            }
-            None => (None, None),
-        };
+    let (expires_at, next_refresh_at) = expiry_from(expires_in);
 
     let result = sqlx::query(
         r#"UPDATE credentials
@@ -200,6 +248,7 @@ pub async fn update_credential_secrets(
                   next_refresh_at = $3,
                   status = 'active',
                   status_reason = NULL,
+                  last_seen_at = now(),
                   updated_at = now()
             WHERE id = $4 AND kind = 'source'"#,
     )
@@ -239,6 +288,26 @@ pub async fn set_credential_expiry(
     Ok(())
 }
 
+/// Record that a credential was just used. `last_seen_at` means "last used":
+/// activating, reconnecting or refreshing a credential sets it, and so does
+/// every read through [`read_credential_secrets`]. Code that decrypts
+/// `secrets_ciphertext` on its own skips the bump unless it calls this.
+/// Throttled to once a minute (the `app_device` pattern) and best effort,
+/// because a failed bump must never fail the use; it is logged instead.
+pub async fn touch_last_seen(db: &PgPool, credential_id: &str) {
+    if let Err(e) = sqlx::query(
+        "UPDATE credentials SET last_seen_at = now() \
+         WHERE id = $1 AND kind = 'source' AND (last_seen_at IS NULL \
+            OR last_seen_at < now() - interval '60 seconds')",
+    )
+    .bind(credential_id)
+    .execute(db)
+    .await
+    {
+        tracing::warn!(credential_id, error = %e, "could not record when a credential was used");
+    }
+}
+
 /// Decrypt the secrets payload of a credential row.
 pub async fn read_credential_secrets(
     db: &PgPool,
@@ -251,19 +320,7 @@ pub async fn read_credential_secrets(
             .await?;
     let (ciphertext,) = row.ok_or_else(|| AuthError::NotFound(credential_id.to_string()))?;
 
-    // `last_seen_at` means "last USED", and this decrypt is the one gate every
-    // use passes through. It used to be bumped only by token refresh, so an
-    // api-key or Plaid credential in daily service rendered as "never seen" in
-    // Settings forever. Throttled to once a minute (the app_device pattern) and
-    // best-effort: a failed bump must never fail the read.
-    let _ = sqlx::query(
-        "UPDATE credentials SET last_seen_at = now() \
-         WHERE id = $1 AND kind = 'source' AND (last_seen_at IS NULL \
-            OR last_seen_at < now() - interval '60 seconds')",
-    )
-    .bind(credential_id)
-    .execute(db)
-    .await;
+    touch_last_seen(db, credential_id).await;
 
     let encryptor = TokenEncryptor::from_env()?;
     let plaintext = encryptor.decrypt(&ciphertext)?;
@@ -274,8 +331,9 @@ pub async fn read_credential_secrets(
 /// `key = 'virtues_api'` by core's `virtues_api::renew`. Lives here
 /// rather than in core because the credential-refresh cron (this crate) needs
 /// it to identify itself to the OAuth proxy, and helpers cannot depend on
-/// core. `Ok(None)` is an unlinked box, an ordinary state; `Err` is a vault
-/// that could not be read, which is not.
+/// core. It reads the row whatever its status, as `renew::read_api_key` does,
+/// so both send the same key. `Ok(None)` is an unlinked box, an ordinary
+/// state; `Err` is a vault that could not be read, which is not.
 pub async fn read_box_api_key(db: &PgPool) -> Result<Option<String>> {
     let row: Option<(String,)> =
         sqlx::query_as("SELECT id FROM credentials WHERE kind = 'source' AND key = 'virtues_api' LIMIT 1")
@@ -289,7 +347,9 @@ pub async fn read_box_api_key(db: &PgPool) -> Result<Option<String>> {
         .map(String::from))
 }
 
-/// Mark a credential's status without touching its secret payload.
+/// Mark a credential's status without touching its secret payload. A
+/// `revoked` row is refused with `Conflict`, so a run that fails after the
+/// owner disconnected a source cannot put it back under "Needs you".
 pub async fn mark_credential_status(
     db: &PgPool,
     credential_id: &str,
@@ -301,7 +361,7 @@ pub async fn mark_credential_status(
               SET status = $1,
                   status_reason = $2,
                   updated_at = now()
-            WHERE id = $3 AND kind = 'source'"#,
+            WHERE id = $3 AND kind = 'source' AND status <> 'revoked'"#,
     )
     .bind(status.as_str())
     .bind(reason)
@@ -310,9 +370,24 @@ pub async fn mark_credential_status(
     .await?;
 
     if result.rows_affected() == 0 {
-        return Err(AuthError::NotFound(credential_id.to_string()));
+        return Err(missing_or_revoked(db, credential_id).await);
     }
     Ok(())
+}
+
+/// The error for a write that matched no row: `NotFound` when the row does
+/// not exist, `Conflict` when the owner disconnected it.
+async fn missing_or_revoked(db: &PgPool, credential_id: &str) -> AuthError {
+    let status: std::result::Result<Option<String>, sqlx::Error> =
+        sqlx::query_scalar("SELECT status FROM credentials WHERE id = $1 AND kind = 'source'")
+            .bind(credential_id)
+            .fetch_optional(db)
+            .await;
+    match status {
+        Ok(Some(_)) => AuthError::Conflict(format!("credential {credential_id} was disconnected")),
+        Ok(None) => AuthError::NotFound(credential_id.to_string()),
+        Err(e) => e.into(),
+    }
 }
 
 /// Return the per-device fan-out map: `command-name → app_applets.id` for every

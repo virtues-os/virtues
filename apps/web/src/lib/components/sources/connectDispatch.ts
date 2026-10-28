@@ -19,6 +19,13 @@ export type ConnectIntent =
 	| { kind: 'oauth'; external: boolean }
 	| { kind: 'error'; message: string };
 
+/** `next`: where a browser connect lands afterwards. `credentialId`:
+ *  reconnecting that credential, which the box repairs in place. */
+export interface ConnectOptions {
+	next?: string;
+	credentialId?: string;
+}
+
 /**
  * Start a via_proxy OAuth connect. Returns whether the flow was handed to the
  * system browser (Tauri) rather than a full-page redirect (browser tab).
@@ -35,7 +42,7 @@ export type ConnectIntent =
  */
 export async function startOAuth(
 	sourceId: string,
-	opts?: { next?: string },
+	opts?: ConnectOptions,
 ): Promise<{ external: boolean }> {
 	const origin = getBackendOrigin() || window.location.origin;
 	// Tauri hands OAuth to the system browser, so the callback's usual 302 into
@@ -57,7 +64,14 @@ export async function startOAuth(
 		: opts?.next
 			? `${origin}/oauth/callback?next=${encodeURIComponent(opts.next)}`
 			: `${origin}/oauth/callback`;
-	const { redirect_url } = await oauthStart(sourceId, { return_url: returnUrl });
+	// A reconnect sends `credential_id`. A released box ignores that name and
+	// adds a new row, as it always has. It acts on `existing_credential_id`
+	// and then fails the callback with a 409, so the app never sends that one.
+	// TODO(2026-10-27): migrate oauthStart's opts type in client.ts to
+	// `credential_id`. Until then `body` is a variable, which TypeScript checks
+	// without the excess-property rule.
+	const body = { return_url: returnUrl, credential_id: opts?.credentialId };
+	const { redirect_url } = await oauthStart(sourceId, body);
 	if (isTauri) {
 		await openSignIn(redirect_url);
 		return { external: true };
@@ -85,7 +99,7 @@ export function reloadOnReturn(reload: () => void): void {
 
 export async function connectIntent(
 	source: SourceCatalogItem,
-	opts?: { next?: string },
+	opts?: ConnectOptions,
 ): Promise<ConnectIntent> {
 	// One narrative for every device app: get the app, then enter the code. The
 	// Mac briefly had its own flow because pairing the Mac app pairs a *viewer*
