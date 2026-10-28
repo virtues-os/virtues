@@ -892,6 +892,15 @@ are deleted.
 runs, memory, state and tables, and a converted condition that is false records
 a skipped run with no model call.
 
+Built on 2026-10-27 except the box: the shipped tree is converted, setup
+writes `SKILL.md`, the state root converts at boot, and the false-condition
+test passes; an upgrade on a real box has not been run. Decided on the way:
+`metadata.writes` and `metadata.secrets` stay as keys; `model: lite` keeps a
+converted unattended prompt's cost; `N runs per day/hour` joined `limit`;
+`metadata.forked-from` records a fork; shipped starters stay the owner's;
+shipped Rust sources stay in their underscore folders beside the applet
+folders.
+
 ### 5. Remove chat modes
 
 `deep-research` and `admin` ship as applets. The composer loses the depth and
