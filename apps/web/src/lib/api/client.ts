@@ -872,8 +872,12 @@ export interface LoginItem {
 	/** The site's origin, `https://example.com`. */
 	site: string;
 	name: string;
+	/** Empty when `unreadable`. */
 	username: string;
 	updated_at: string;
+	/** The server's key does not open this login. It can be removed, not
+	 *  opened or edited. Absent from servers that predate the flag. */
+	unreadable?: boolean;
 }
 
 /** A new login, or an edit. On an edit, an empty `password` keeps the saved

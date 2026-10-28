@@ -130,7 +130,7 @@ pub struct ByoStatus {
 /// (Anthropic)" or "Using Virtues subscription"; never returns the key
 /// itself.
 pub async fn status_handler(State(pool): State<PgPool>, _user: AuthUser) -> impl IntoResponse {
-    let row: Option<(serde_json::Value, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
+    let row: Option<(serde_json::Value, chrono::DateTime<chrono::Utc>)> = match sqlx::query_as(
         "SELECT metadata, created_at FROM credentials \
          WHERE kind = 'source' AND key = $1 AND status = 'active' \
          LIMIT 1",
@@ -138,8 +138,20 @@ pub async fn status_handler(State(pool): State<PgPool>, _user: AuthUser) -> impl
     .bind(BYO_SOURCE_ID)
     .fetch_optional(&pool)
     .await
-    .ok()
-    .flatten();
+    {
+        Ok(row) => row,
+        // A failed read is not "no key". Answering `configured: false` here
+        // would tell the owner their calls use the subscription while they
+        // may still be going to their own endpoint.
+        Err(e) => {
+            tracing::warn!("BYO key status: read failed: {e:#}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "status_read_failed" })),
+            )
+                .into_response();
+        }
+    };
 
     match row {
         Some((metadata, created_at)) => {
@@ -327,9 +339,22 @@ pub async fn save_handler(
         metadata["provider"] = json!(p);
     }
 
-    // Replace any existing BYO credential in one transaction. We never
-    // keep both old and new live at the same time — the user expects "I
-    // pasted a new key, the old one is gone."
+    // Replace any existing BYO credential in one transaction, so old and new
+    // are never live at the same time. The owner expects "I pasted a new key,
+    // the old one is gone", so the old row's sealed key is replaced with an
+    // empty payload as it is revoked. The row itself stays, because
+    // `first_key_during_setup` counts it.
+    let emptied = match crate::credentials::emptied_secrets() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("BYO key save: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "encrypt_failed" })),
+            )
+                .into_response();
+        }
+    };
     let mut tx = match pool.begin().await {
         Ok(t) => t,
         Err(e) => {
@@ -341,14 +366,14 @@ pub async fn save_handler(
                 .into_response();
         }
     };
-    let _ = sqlx::query(
-        "UPDATE credentials SET status = 'revoked', \
-                                 status_reason = 'replaced_by_user', updated_at = now() \
-         WHERE kind = 'source' AND key = $1 AND status = 'active'",
-    )
-    .bind(BYO_SOURCE_ID)
-    .execute(&mut *tx)
-    .await;
+    if let Err(e) = revoke_active_key(&mut *tx, "replaced_by_user", &emptied).await {
+        tracing::warn!("BYO key save: revoking the old key failed: {e:#}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "internal" })),
+        )
+            .into_response();
+    }
 
     if let Err(e) = sqlx::query(
         "INSERT INTO credentials \
@@ -383,9 +408,10 @@ pub async fn save_handler(
             .into_response();
     }
 
-    // Audit log — `app_auth_event`, readable at GET /api/audit/auth. (It had a
-    // UI at /virtues/activity; that page is gone. The row is still written.)
-    let _ = sqlx::query(
+    // Audit log — `app_auth_event`, readable at GET /api/audit/auth. The key
+    // is already saved, so a failed audit row is logged rather than turned
+    // into a failed save.
+    if let Err(e) = sqlx::query(
         "INSERT INTO app_auth_event (user_id, device_id, event_type, detail) \
          VALUES ($1, $2, 'byo_key_set', $3)",
     )
@@ -393,7 +419,10 @@ pub async fn save_handler(
     .bind(&user.device_id)
     .bind(json!({ "provider": req.provider }))
     .execute(&pool)
-    .await;
+    .await
+    {
+        tracing::warn!("BYO key save: audit row not written: {e:#}");
+    }
 
     /* A non-2xx that is not an auth rejection is REPORTED, never blocking.
      * A 404 is a wrong path or a model id this gateway spells differently —
@@ -440,12 +469,48 @@ async fn first_key_during_setup(pool: &PgPool, device_id: &str) -> Result<bool, 
     Ok(status.as_deref() != Some("active") && !had_key && first.as_deref() == Some(device_id))
 }
 
+/// Revoke the active BYO row and replace its sealed key with `emptied` (a
+/// sealed `{}`) in the same statement, so a revoked row never keeps a key the
+/// owner removed or replaced. The row stays for `first_key_during_setup`.
+async fn revoke_active_key<'e>(
+    db: impl sqlx::PgExecutor<'e>,
+    reason: &str,
+    emptied: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        "UPDATE credentials SET status = 'revoked', status_reason = $2, \
+                                 secrets_ciphertext = $3, expires_at = NULL, \
+                                 next_refresh_at = NULL, updated_at = now() \
+         WHERE kind = 'source' AND key = $1 AND status = 'active'",
+    )
+    .bind(BYO_SOURCE_ID)
+    .bind(reason)
+    .bind(emptied)
+    .execute(db)
+    .await
+    .map(|_| ())
+}
+
 /// `DELETE /api/settings/byo-key` — clear the BYO key. Requires sudo.
 pub async fn delete_handler(
     State(pool): State<PgPool>,
     user: AuthUser,
     Json(req): Json<DeleteRequest>,
 ) -> impl IntoResponse {
+    // Sealed before the approval is checked, so a server that cannot seal
+    // refuses without spending the approval.
+    let emptied = match crate::credentials::emptied_secrets() {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::warn!("BYO key delete: {e}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "Your server couldn't remove the key because its encryption key is missing from virtues.env. Put the key back in that file, then restart the server." })),
+            )
+                .into_response();
+        }
+    };
+
     if let Err(_) = crate::api::sudo::verify_and_consume(
         &pool,
         &req.sudo_request_id,
@@ -461,23 +526,28 @@ pub async fn delete_handler(
             .into_response();
     }
 
-    let _ = sqlx::query(
-        "UPDATE credentials SET status = 'revoked', \
-                                 status_reason = 'user_deleted', updated_at = now() \
-         WHERE kind = 'source' AND key = $1 AND status = 'active'",
-    )
-    .bind(BYO_SOURCE_ID)
-    .execute(&pool)
-    .await;
+    // A failed write is reported. Answering ok would show "Key removed" while
+    // every AI call kept going to the owner's endpoint.
+    if let Err(e) = revoke_active_key(&pool, "user_deleted", &emptied).await {
+        tracing::warn!("BYO key delete: revoke failed: {e:#}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "Your server couldn't remove the key. Nothing changed. Try again." })),
+        )
+            .into_response();
+    }
 
-    let _ = sqlx::query(
+    if let Err(e) = sqlx::query(
         "INSERT INTO app_auth_event (user_id, device_id, event_type, detail) \
          VALUES ($1, $2, 'byo_key_cleared', '{}'::jsonb)",
     )
     .bind(&user.id)
     .bind(&user.device_id)
     .execute(&pool)
-    .await;
+    .await
+    {
+        tracing::warn!("BYO key delete: audit row not written: {e:#}");
+    }
 
     (StatusCode::OK, Json(json!({ "ok": true }))).into_response()
 }
@@ -849,6 +919,7 @@ pub async fn load_byo_credential(pool: &PgPool) -> Result<Option<ByoCredential>,
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::credentials::ensure_test_key;
 
     /// A credential saved before the Standard/Deep rename keys its chat model
     /// as `chat`. Every lookup is by the current name, so an unnormalized map
@@ -1015,5 +1086,54 @@ mod tests {
         .await
         .unwrap();
         assert!(!first_key_during_setup(&pool, "dev_first").await.unwrap());
+    }
+
+    /// Removing or replacing the key revokes the row and wipes the sealed key
+    /// in one statement. The revoked row still counts as "ever had a key",
+    /// so the setup exemption stays closed.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_removed_key_is_wiped_and_still_ends_the_setup_exemption(pool: PgPool) {
+        ensure_test_key();
+        let enc = crate::crypto::TokenEncryptor::from_env().unwrap();
+        let sealed = enc.encrypt(r#"{"api_key":"sk-example"}"#).unwrap();
+        sqlx::query(
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext, metadata) \
+             VALUES ('cred_byo', $1, 'BYO gw.example', 'active', $2, $3)",
+        )
+        .bind(BYO_SOURCE_ID)
+        .bind(&sealed)
+        .bind(json!({ "endpoint_url": "https://gw.example/v1/chat/completions" }))
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            load_byo_credential(&pool).await.unwrap().map(|c| c.api_key).as_deref(),
+            Some("sk-example")
+        );
+
+        let emptied = crate::credentials::emptied_secrets().unwrap();
+        revoke_active_key(&pool, "user_deleted", &emptied).await.unwrap();
+
+        let (status, reason, ciphertext): (String, Option<String>, String) = sqlx::query_as(
+            "SELECT status, status_reason, secrets_ciphertext FROM credentials WHERE id = 'cred_byo'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((status.as_str(), reason.as_deref()), ("revoked", Some("user_deleted")));
+        assert_eq!(enc.decrypt(&ciphertext).unwrap(), "{}", "the removed key is gone");
+        assert!(!byo_is_active_checked(&pool).await.unwrap());
+        assert!(load_byo_credential(&pool).await.unwrap().is_none());
+
+        // Removing again, with no active key, is not an error.
+        revoke_active_key(&pool, "user_deleted", &emptied).await.unwrap();
+
+        let (had_key,): (bool,) =
+            sqlx::query_as("SELECT EXISTS (SELECT 1 FROM credentials WHERE kind = 'source' AND key = $1)")
+                .bind(BYO_SOURCE_ID)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(had_key, "the revoked row stays, so first_key_during_setup sees it");
     }
 }

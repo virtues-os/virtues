@@ -212,22 +212,36 @@ pub async fn rename_credential(db: &PgPool, credential_id: &str, new_name: &str)
 /// Revoke a credential and delete its fan-out `app_applets` rows.
 ///
 /// Flow:
-/// 1. Set `status = 'revoked'` so template reconcile skips this credential.
+/// 1. Set `status = 'revoked'` so template reconcile skips this credential,
+///    and in the same statement replace the sealed tokens or session with
+///    an empty payload and clear the refresh schedule. The provider still
+///    honors the grant until the owner revokes it there; the box no longer
+///    holds it.
 /// 2. Nullify `applet_id` on any historical runs for the credential's
 ///    fan-out actions (FK safety).
 /// 3. Delete the per-credential action rows. Reconcile won't re-create
 ///    them because the credential is no longer active.
 ///
-/// Run history is preserved with `applet_id = NULL` so the history view
-/// can still surface past runs.
+/// The row itself stays, and run history is preserved with
+/// `applet_id = NULL`, so the history view can still surface past runs.
+///
+/// The box's own keys ([`INTERNAL_SOURCE_IDS`]) are not found here, as in
+/// the list. Billing is the only place that removes them: removing the BYO
+/// key needs the owner's approval, and this route asks for none.
 pub async fn revoke_credential(db: &PgPool, credential_id: &str) -> Result<()> {
+    let emptied = crate::credentials::emptied_secrets()?;
     let affected = sqlx::query(
         r#"UPDATE credentials
               SET status = 'revoked',
-                  status_reason = 'user_revoked'
-            WHERE id = $1 AND kind = 'source'"#,
+                  status_reason = 'user_revoked',
+                  secrets_ciphertext = $2,
+                  expires_at = NULL,
+                  next_refresh_at = NULL
+            WHERE id = $1 AND kind = 'source' AND key <> ALL($3)"#,
     )
     .bind(credential_id)
+    .bind(&emptied)
+    .bind(&INTERNAL_SOURCE_IDS[..])
     .execute(db)
     .await?
     .rows_affected();
@@ -338,6 +352,80 @@ pub async fn list_pending_pairings(db: &PgPool) -> Result<Vec<PendingPairing>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::credentials::ensure_test_key;
+
+    /// Revoking forgets the value. The row stays for run history, but a
+    /// backup taken afterwards must not carry the tokens the owner removed.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn revoking_a_source_wipes_its_sealed_tokens(pool: PgPool) {
+        ensure_test_key();
+        let enc = crate::crypto::TokenEncryptor::from_env().unwrap();
+        let sealed = enc
+            .encrypt(r#"{"access_token":"at-example","refresh_token":"rt-example"}"#)
+            .unwrap();
+        sqlx::query(
+            "INSERT INTO credentials (id, key, name, status, secrets_ciphertext, expires_at, next_refresh_at) \
+             VALUES ('cred_example', 'google', 'Google', 'active', $1, now() + interval '1 hour', now() + interval '59 minutes')",
+        )
+        .bind(&sealed)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        revoke_credential(&pool, "cred_example").await.unwrap();
+
+        let (status, ciphertext, expires_at, next_refresh_at): (
+            String,
+            String,
+            Option<DateTime<Utc>>,
+            Option<DateTime<Utc>>,
+        ) = sqlx::query_as(
+            "SELECT status, secrets_ciphertext, expires_at, next_refresh_at FROM credentials WHERE id = 'cred_example'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(status, "revoked");
+        assert_eq!(enc.decrypt(&ciphertext).unwrap(), "{}", "the tokens are gone");
+        assert_eq!((expires_at, next_refresh_at), (None, None));
+
+        // An id that is not a source row is still an error.
+        assert!(matches!(revoke_credential(&pool, "cred_missing").await, Err(Error::NotFound(_))));
+    }
+
+    /// The subscription key and the BYO key are removed from Billing only.
+    /// A revoke by id leaves them active and sealed as they were.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn the_box_own_keys_are_not_revoked_by_id(pool: PgPool) {
+        ensure_test_key();
+        let enc = crate::crypto::TokenEncryptor::from_env().unwrap();
+        for (id, key) in [
+            ("cred_subscription", INTERNAL_SOURCE_IDS[0]),
+            ("cred_byo", INTERNAL_SOURCE_IDS[1]),
+        ] {
+            sqlx::query(
+                "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) \
+                 VALUES ($1, $2, 'Box key', 'active', $3)",
+            )
+            .bind(id)
+            .bind(key)
+            .bind(enc.encrypt(r#"{"api_key":"vk-example"}"#).unwrap())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+            assert!(matches!(revoke_credential(&pool, id).await, Err(Error::NotFound(_))), "{key}");
+
+            let (status, ciphertext): (String, String) =
+                sqlx::query_as("SELECT status, secrets_ciphertext FROM credentials WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(status, "active", "{key}");
+            assert_eq!(enc.decrypt(&ciphertext).unwrap(), r#"{"api_key":"vk-example"}"#, "{key}");
+        }
+    }
 
     #[test]
     fn sync_state_lifecycle() {

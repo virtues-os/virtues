@@ -441,13 +441,24 @@
 	async function performByoDelete(sudoRequestId: string) {
 		try {
 			await deleteByoKey(sudoRequestId);
-			toast.success('Key removed. AI calls are back on the subscription.');
-			await Promise.all([loadByo(), loadLocal()]);
 		} catch (e) {
 			toast.error('Could not remove the key', {
 				description: e instanceof Error ? e.message : 'Unknown error',
 			});
+			return;
 		}
+		await Promise.all([loadByo(), loadLocal()]);
+		// Servers on older releases answer ok even when the write failed, so
+		// the status read afterwards decides which message is true.
+		if (!byoLoadError && byoStatus?.configured) {
+			toast.error('Could not remove the key', {
+				description: 'Your server still has it, and AI calls still go to your endpoint. Try again.',
+			});
+			return;
+		}
+		toast.success('Key removed. AI calls are back on the subscription.', {
+			description: 'Your provider still accepts the key until you revoke it there.',
+		});
 	}
 
 	// ─── Wallet balance + recent ledger (proxied from virtues-api) ─────────
