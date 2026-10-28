@@ -74,23 +74,10 @@ async fn create_checkout_session(
     // The email the account signed in with, to pre-fill. Its absence is a
     // contract break (every key hangs off an account since 0017), not a
     // reason to open an anonymous checkout that would fork the account.
-    let email: Option<String> = match super::claim::account_id_by_key_hash(&state.pool, &token_hash[..]).await {
-        Ok(Some(account_id)) => {
-            match sqlx::query_scalar::<_, String>("SELECT email FROM accounts WHERE account_id = $1")
-                .bind(&account_id)
-                .fetch_optional(&state.pool)
-                .await
-            {
-                Ok(e) => e,
-                Err(e) => {
-                    tracing::warn!("checkout account email lookup failed: {e:#}");
-                    return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "account lookup failed");
-                }
-            }
-        }
-        Ok(None) => None,
+    let email = match super::claim::account_email_by_key_hash(&state.pool, &token_hash[..]).await {
+        Ok(e) => e,
         Err(e) => {
-            tracing::warn!("checkout account lookup failed: {e:#}");
+            tracing::warn!("checkout account email lookup failed: {e:#}");
             return err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "account lookup failed");
         }
     };

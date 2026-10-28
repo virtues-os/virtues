@@ -649,6 +649,9 @@
 				<span class="plan-state">Active</span>
 				{#if renewsLabel}<span class="plan-aside">Renews {renewsLabel}</span>{/if}
 			</div>
+			{#if subscriptionStore.email}
+				<p class="account-line">Subscription on {subscriptionStore.email}</p>
+			{/if}
 		</section>
 	{:else if subscriptionStore.linked && subscriptionStore.entitlementKnown}
 		<!-- Linked, not subscribed: the account exists and the wallet does not.
@@ -663,6 +666,13 @@
 					<span class="leader"></span>
 					<span class="ledger-value">None</span>
 				</div>
+				{#if subscriptionStore.email}
+					<div class="ledger-row">
+						<span class="ledger-label">Account</span>
+						<span class="leader"></span>
+						<span class="ledger-value">{subscriptionStore.email}</span>
+					</div>
+				{/if}
 			</div>
 			<p class="chapter-lede">
 				Your account is connected, but there is no subscription behind it yet. Hosted AI,
@@ -1421,6 +1431,7 @@
 	.plan { font-family: var(--font-serif); font-size: 22px; color: var(--color-foreground); }
 	.plan-state { font-size: 13px; color: var(--color-success); }
 	.plan-aside { margin-left: auto; font-size: 13px; color: var(--color-foreground-subtle); }
+	.account-line { margin: 6px 0 0; font-size: 13px; color: var(--color-foreground-subtle); }
 
 	/* ─── The figures: Apple-large, mono, the cents recede ─────────────── */
 	.chapter-figures { padding-top: 22px; margin-top: 22px; }

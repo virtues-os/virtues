@@ -487,6 +487,21 @@ pub(crate) async fn account_id_by_key_hash(
     .await
 }
 
+/// The email the account behind this key signed in with. `None` when the key
+/// resolves to no account, or the account has no email row.
+pub(crate) async fn account_email_by_key_hash(
+    pool: &sqlx::PgPool,
+    key_hash: &[u8],
+) -> Result<Option<String>, sqlx::Error> {
+    let Some(account_id) = account_id_by_key_hash(pool, key_hash).await? else {
+        return Ok(None);
+    };
+    sqlx::query_scalar("SELECT email FROM accounts WHERE account_id = $1")
+        .bind(&account_id)
+        .fetch_optional(pool)
+        .await
+}
+
 /// Record a freshly minted box key, scoped to the box that earned it.
 ///
 /// Known `endpoint_id` → replace only THAT box's key (a second box linking no

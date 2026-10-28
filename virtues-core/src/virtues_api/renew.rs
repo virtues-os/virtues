@@ -200,6 +200,7 @@ pub enum Entitlement {
 }
 
 /// `POST {atlas}/account/entitlement` — read-only, Stripe-free, safe to poll.
+/// Also returns the email the account signed in with, when atlas sends one.
 ///
 /// Err means we did not get an answer (transport, 5xx, malformed body). The
 /// caller must hold its last known answer rather than render "unsubscribed"
@@ -208,7 +209,7 @@ pub async fn fetch_entitlement(
     http: &reqwest::Client,
     atlas_url: &str,
     api_key: &str,
-) -> Result<Entitlement> {
+) -> Result<(Entitlement, Option<String>)> {
     let resp = http
         .post(format!(
             "{}/account/entitlement",
@@ -221,7 +222,7 @@ pub async fn fetch_entitlement(
 
     let status = resp.status();
     if status == reqwest::StatusCode::UNAUTHORIZED {
-        return Ok(Entitlement::KeyUnknown);
+        return Ok((Entitlement::KeyUnknown, None));
     }
     if !status.is_success() {
         let b = resp.text().await.unwrap_or_default();
@@ -234,11 +235,14 @@ pub async fn fetch_entitlement(
     let subscribed = v["subscribed"]
         .as_bool()
         .ok_or_else(|| anyhow!("entitlement response missing `subscribed`"))?;
-    Ok(if subscribed {
+    let entitlement = if subscribed {
         Entitlement::Subscribed
     } else {
         Entitlement::Free
-    })
+    };
+    // Optional: an atlas older than the email field omits it.
+    let email = v["email"].as_str().map(str::to_owned);
+    Ok((entitlement, email))
 }
 
 /// What atlas said when this linked box asked to buy a subscription.
