@@ -28,7 +28,8 @@ const LOW_DISK_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 pub struct AttentionItem {
     /// Stable while the condition holds; a new key is a new problem.
     pub key: String,
-    /// `update` | `disk` | `backup` | `source` | `stream`, most urgent first.
+    /// `key` | `update` | `disk` | `backup` | `source` | `stream`, most
+    /// urgent first.
     pub kind: &'static str,
     pub title: String,
     pub body: String,
@@ -39,6 +40,7 @@ pub struct AttentionItem {
 pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
     let mut items = Vec::new();
 
+    key_items(&mut items, crate::secrets::key_at_start());
     update_items(&mut items);
     disk_items(&mut items, crate::storage::lake::free_bytes());
 
@@ -69,6 +71,26 @@ pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
     }
 
     Ok(items)
+}
+
+/// The server's key opens none of its saved secrets (`secrets::check_key_at_start`).
+/// First in the list, because every sign-in, password and key is unreadable
+/// until it is fixed, and anything saved meanwhile is sealed with the wrong
+/// key. The check runs once per start, so the item stays until a restart
+/// with the right key, which is also the only fix.
+fn key_items(items: &mut Vec<AttentionItem>, check: Option<crate::secrets::KeyCheck>) {
+    if !check.is_some_and(|c| c.opens_nothing()) {
+        return;
+    }
+    items.push(AttentionItem {
+        key: "key:wrong".into(),
+        kind: "key",
+        title: "Your server can't open its saved sign-ins and keys".into(),
+        body: "The encryption key it started with isn't the one they were saved with. \
+               Put back the virtues.env from your backup, then restart your server."
+            .into(),
+        route: "/virtues/system",
+    });
 }
 
 fn update_items(items: &mut Vec<AttentionItem>) {
@@ -352,6 +374,21 @@ fn quiet_stream_items(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wrong_key_is_one_item_and_a_right_or_unchecked_one_says_nothing() {
+        use crate::secrets::KeyCheck;
+        let mut items = vec![];
+        key_items(&mut items, None);
+        key_items(&mut items, Some(KeyCheck { tried: 0, opened: 0 }));
+        key_items(&mut items, Some(KeyCheck { tried: 5, opened: 4 }));
+        assert!(items.is_empty(), "{items:?}");
+
+        key_items(&mut items, Some(KeyCheck { tried: 5, opened: 0 }));
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].key, "key:wrong");
+        assert_eq!(items[0].kind, "key");
+    }
 
     #[test]
     fn plenty_of_disk_says_nothing() {

@@ -42,12 +42,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Load env in this priority order:
         //   1. Existing process env (set by systemd's EnvironmentFile or the
         //      operator's `env VAR=… virtues …` invocation) — never override.
-        //   2. /var/lib/virtues/virtues.env — the canonical production env
-        //      file install.sh writes. Lets `sudo -u virtues virtues init`
-        //      work without `env $(cat /var/lib/virtues/virtues.env | xargs)`.
+        //   2. The box env file the installer wrote, wherever the install put
+        //      its data dir (`box_env::path_for_startup`). Lets
+        //      `sudo -u virtues virtues init` work without exporting it first.
         //   3. ./.env in CWD (Mac/dev convention).
         //   4. ../.env (for running from virtues-core/ during dev).
-        let _ = dotenv::from_path("/var/lib/virtues/virtues.env");
+        let _ = dotenv::from_path(virtues::box_env::path_for_startup());
         if dotenv::dotenv().is_err() {
             let _ = dotenv::from_path("../.env");
         }
@@ -767,6 +767,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // resolver exists to prevent.
     let virtues = VirtuesBuilder::new().database(&database_url).build().await?;
 
+    // The server checks once that its key opens the secrets it sealed, in
+    // the background so a slow database never holds up the start. It only
+    // reads, so running beside the migrations is safe. A failure is logged
+    // and shown in attention, and never stops the server.
+    if matches!(cli.command, None | Some(Commands::Server { .. })) {
+        let pool = virtues.database.pool().clone();
+        tokio::spawn(async move { virtues::secrets::check_key_at_start(&pool).await });
+    }
+
     // Default to server with auto-migrate if no command specified
     let cli = if cli.command.is_none() {
         println!("🚀 Starting Virtues (auto-setup mode)...");
@@ -960,7 +969,8 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
 ///
 /// Guards (all must hold, so dev machines are never touched):
 ///   - argv[1] is one of the DB-touching interactive commands
-///   - `/var/lib/virtues/virtues.env` exists (the box-install marker)
+///   - the box env file exists where the installer put it
+///     (`box_env::installed_path`, the box-install marker)
 ///   - the current user isn't already `virtues`
 ///
 /// On exec failure (no sudo rights, etc.) we print the one-line manual hint
@@ -978,7 +988,7 @@ fn maybe_reexec_as_service_user() {
     if cmd == "configure-inference" && std::env::args().any(|a| a == "--recommended") {
         return;
     }
-    if !std::path::Path::new("/var/lib/virtues/virtues.env").exists() {
+    if !virtues::box_env::installed_path().exists() {
         return;
     }
     let user = std::process::Command::new("id")

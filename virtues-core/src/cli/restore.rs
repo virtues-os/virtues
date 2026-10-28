@@ -9,6 +9,10 @@
 //!      unfixable data loss surface. The user should `virtues upgrade` to
 //!      the matching binary first. (Not `--force`-able.)
 //!   3. Every artifact's sha256 must match the manifest. (Not `--force`-able.)
+//!
+//! Archives are decrypted into a private folder on this box's own disk
+//! (`backup::Stage`), never beside the archive, and after the database loads
+//! restore checks that the restored key opens the restored secrets.
 
 use std::fs::{self, File};
 use std::io::{Read, Seek};
@@ -16,20 +20,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use flate2::read::GzDecoder;
-use sha2::{Digest, Sha256};
 
-use super::backup::{Artifact, Manifest};
+use super::backup::{Artifact, Manifest, Stage};
 
-/// Where to put the restored env file. Must be the path the running service
-/// actually reads, not the FHS-correct one — restoring the key to a file
-/// systemd never loads leaves a box that boots fine (the unit's
-/// `EnvironmentFile=-` prefix makes a missing file non-fatal) and cannot
-/// decrypt anything. Prefer an env file that already exists on this box;
-/// fall back to the FHS path for a bare-metal restore onto a fresh machine.
-fn restore_env_target() -> PathBuf {
-    crate::cli::backup::find_env_file()
-        .unwrap_or_else(|| PathBuf::from(crate::cli::backup::ENV_CANDIDATES[0]))
-}
 /// Directories that only ever exist inside a lake. Presence of any one of them
 /// is what distinguishes "this is the lake, replace it" from "the resolver
 /// pointed somewhere else entirely".
@@ -85,7 +78,10 @@ impl Targets {
                 .map_err(|e| crate::Error::Other(format!("DATABASE_URL: {e}")))?,
             lake: crate::storage::lake::lake_root(),
             applets: crate::applet_templates::state_root(),
-            env_file: restore_env_target(),
+            // The file the server unit loads. A key restored anywhere else
+            // leaves a box that boots fine (`EnvironmentFile=-` makes a
+            // missing file non-fatal) and cannot decrypt anything.
+            env_file: crate::box_env::path(),
         })
     }
 }
@@ -122,8 +118,10 @@ pub async fn run(
         check_service_inactive()?;
     }
 
-    // Extract into a staging dir we can inspect.
-    let stage = mkstage(&path)?;
+    // Extract into a stage on this box's disk that we can inspect.
+    sweep_stages_near(&path);
+    ensure_room_to_unpack(std::slice::from_ref(&path))?;
+    let stage = open_stage("restore")?;
     let staging: &Path = stage.as_ref();
     println!("→ extracting {}…", path.display());
     extract_into(open_archive(&path, identity.as_ref())?, staging)?;
@@ -138,18 +136,20 @@ pub async fn run(
     verify_sha256(staging, &manifest.artifacts)?;
     let targets = Targets::from_env()?;
     preflight_database(&targets.database_url)?;
+    ensure_room_for_database(&targets, &manifest)?;
 
-    // We've validated everything. Past this line is destructive.
+    // We've validated everything. Past `begin_changes` is destructive.
     println!();
     println!("⚠  About to overwrite live box state. Press Ctrl-C in 5s to abort.");
     std::thread::sleep(std::time::Duration::from_secs(5));
 
+    super::backup::begin_changes()?;
     apply(staging, &targets)?;
 
     // Everything above was written by root (restore requires it — it stops the
-    // unit, writes the env file, and drives pg_restore). `copy_tree` is
-    // create_dir_all + fs::copy, neither of which preserves ownership, so the
-    // restored trees land root-owned while the service runs as `virtues`. Left
+    // unit, writes the env file, and drives pg_restore). Root extracted the
+    // files that `move_tree` moved or copied into place, so the restored trees
+    // land root-owned while the service runs as `virtues`. Left
     // that way, the box comes back up unable to write its own state: applet
     // authoring fails with `mkdir failed: Permission denied` and lake writes
     // fail the same way. Hand ownership back before declaring success.
@@ -162,9 +162,249 @@ pub async fn run(
             give_to_service_user(dir);
         }
     }
+    super::backup::end_changes();
+    // The plaintext goes before the key check, which may fail the command.
+    drop(stage);
 
+    check_restored_key(&targets)?;
     print_next_steps();
     Ok(())
+}
+
+/// A stage for decrypting an archive, on this box's own disk.
+///
+/// Restore runs as root, but `pg_restore` runs as the service user and has
+/// to pass through the staging folder to read the dump (`pg_restore` hands
+/// the stage itself over). A root-owned staging folder would also stop the
+/// next backup, which runs as that user. So the folder goes to the service
+/// user; the stage inside it stays root's, 0700, until the dump is needed.
+fn open_stage(purpose: &str) -> Result<Stage, crate::Error> {
+    let stage = Stage::create(purpose)?;
+    if let Some(root) = stage.path().parent() {
+        // Best-effort and quiet, like the hand-over in `pg_restore`: off a
+        // box there is no service user, and nothing needs one.
+        let _ = Command::new("chown").arg("virtues:virtues").arg(root).output();
+    }
+    Ok(stage)
+}
+
+/// Clear stages earlier runs left: this box's own stale ones, and any an
+/// earlier release made beside the archive.
+fn sweep_stages_near(archive: &Path) {
+    super::backup::sweep_stale_stages();
+    if let Some(dir) = archive.parent() {
+        super::backup::sweep_legacy_stages(dir);
+    }
+}
+
+/// Refuse before unpacking when this box's disk cannot hold the archives and
+/// still leave the floor free.
+///
+/// The stage is on the box, never on the backup drive, so a restore needs
+/// room here for what it unpacks, while Postgres is still writing to the same
+/// disk. The archives' compressed size is a lower bound on what they unpack
+/// to. A box short of it would fail partway through unpacking.
+fn ensure_room_to_unpack(archives: &[PathBuf]) -> Result<(), crate::Error> {
+    let root = super::backup::staging_root();
+    let Some(free) = super::backup::free_bytes_under(&root) else {
+        return Ok(()); // cannot measure; the unpack itself reports a full disk
+    };
+    let need: u64 = archives
+        .iter()
+        .filter_map(|a| fs::metadata(a).ok())
+        .map(|m| m.len())
+        .sum();
+    let floor = super::backup::STAGE_FLOOR_BYTES;
+    if free < need.saturating_add(floor) {
+        return Err(crate::Error::Other(format!(
+            "not enough room on this server to unpack the backup. {} MB is free \
+             where restore unpacks it ({}). The archives alone are {} MB, and \
+             restore leaves {} MB free so the database can keep working. Restore \
+             unpacks on this server, never on the backup drive. Free some space, \
+             then run it again. Nothing has been changed.",
+            free / (1024 * 1024),
+            root.display(),
+            need / (1024 * 1024),
+            floor / (1024 * 1024),
+        )));
+    }
+    Ok(())
+}
+
+/// Refuse before anything is replaced when the restored database will not
+/// fit beside the unpacked archive.
+///
+/// `pg_restore` loads the database while the stage is still on disk, and a
+/// load that runs out of room stops halfway, after the lake, applets and env
+/// file have been replaced. `--clean` drops the current database first, so
+/// the load has the free space plus what that database takes. The dump's own
+/// size stands in for the restored database, which is larger once indexes are
+/// rebuilt, so this catches only a clear shortfall. It measures the disk that
+/// holds the stage, which on a box usually holds Postgres too.
+fn ensure_room_for_database(targets: &Targets, manifest: &Manifest) -> Result<(), crate::Error> {
+    // `apply` refuses an archive with no dump, and says why.
+    let Some(dump) = manifest.artifacts.iter().find(|a| a.path == "db/virtues.dump") else {
+        return Ok(());
+    };
+    let root = super::backup::staging_root();
+    let Some(free) = super::backup::free_bytes_under(&root) else {
+        return Ok(()); // cannot measure; pg_restore itself reports a full disk
+    };
+    let current: u64 = psql_lines(
+        &targets.database_url,
+        "SELECT pg_database_size(current_database())",
+    )?
+    .first()
+    .and_then(|n| n.trim().parse().ok())
+    .ok_or_else(|| crate::Error::Other("could not read the size of the current database".into()))?;
+    let floor = super::backup::STAGE_FLOOR_BYTES;
+    if free.saturating_add(current) < dump.size_bytes.saturating_add(floor) {
+        return Err(crate::Error::Other(format!(
+            "not enough room on this server to load the restored database. The \
+             database dump is {} MB. With the backup unpacked, {} MB is free at {}, \
+             and replacing the current database frees {} MB more. Restore leaves {} MB \
+             free so the database can keep working. Free some space, then run it \
+             again. Nothing has been changed.",
+            dump.size_bytes / (1024 * 1024),
+            free / (1024 * 1024),
+            root.display(),
+            current / (1024 * 1024),
+            floor / (1024 * 1024),
+        )));
+    }
+    Ok(())
+}
+
+/// How many sealed rows restore tries with the restored key. Every row on a
+/// typical box; a random sample on one with more.
+const KEY_CHECK_ROWS: usize = 2000;
+
+/// Check that the key now in the env file opens the restored `credentials`.
+///
+/// The database and the key arrive separately: the key from the archive's
+/// env file, or this box's own when the archive had none. A key that does not
+/// match leaves a box that starts and cannot read a single saved password,
+/// sign-in or key, and every secret saved after that is sealed with the wrong
+/// key. So restore does not report success until the key opens the table.
+///
+/// Rows that do not open beside rows that do were sealed with another key, or
+/// damaged, before the backup was made: the key is right, so they are a
+/// warning, not a failure.
+pub(crate) fn check_restored_key(targets: &Targets) -> Result<(), crate::Error> {
+    println!("→ checking that the restored key opens the restored secrets…");
+    let total: usize = psql_lines(
+        &targets.database_url,
+        "SELECT count(*) FROM credentials WHERE secrets_ciphertext <> ''",
+    )?
+    .first()
+    .and_then(|n| n.trim().parse().ok())
+    .ok_or_else(|| crate::Error::Other("could not count the restored secrets".into()))?;
+    if total == 0 {
+        println!("→ the backup holds no saved secrets, so there is no key to check");
+        return Ok(());
+    }
+    let sealed = psql_lines(
+        &targets.database_url,
+        &format!(
+            "SELECT secrets_ciphertext FROM credentials WHERE secrets_ciphertext <> '' \
+             ORDER BY random() LIMIT {KEY_CHECK_ROWS}"
+        ),
+    )?;
+    let env = targets.env_file.display();
+    let (key, source) = key_after_restore(
+        &targets.env_file,
+        std::env::var(crate::box_env::ENCRYPTION_KEY).ok(),
+    );
+    let enc = match key {
+        Some(key) => Some(
+            virtues_helpers::crypto::TokenEncryptor::from_base64_key(&key).map_err(|e| {
+                crate::Error::Other(format!(
+                    "the {} in {source} is not a valid key ({e}), so none of the {total} \
+                     restored secrets can be opened. Put the virtues.env from the server \
+                     this backup came from at {env}, then start the service.",
+                    crate::box_env::ENCRYPTION_KEY
+                ))
+            })?,
+        ),
+        None => None,
+    };
+    let check = crate::secrets::try_key(enc.as_ref(), sealed.iter().map(String::as_str));
+    let tried = if check.tried < total {
+        format!("{} of the {total} saved secrets, chosen at random", check.tried)
+    } else if total == 1 {
+        "the one saved secret".to_string()
+    } else {
+        format!("all {total} saved secrets")
+    };
+
+    if check.opens_nothing() {
+        let why = if enc.is_none() {
+            format!("{source} has no {}", crate::box_env::ENCRYPTION_KEY)
+        } else {
+            format!("the key in {source} is not the one they were saved with")
+        };
+        return Err(crate::Error::Other(format!(
+            "the files and the database are restored, but {why}. Restore tried \
+             {tried}, and none opened. Every saved password, sign-in and key \
+             is unreadable until that is fixed.\n\n    \
+             Put the virtues.env from the server this backup came from at {env}, \
+             then start the service. Until then, do not enter passwords or keys \
+             again: anything saved now is sealed with the wrong key."
+        )));
+    }
+    if check.failed() > 0 {
+        eprintln!(
+            "warning: restore tried {tried}, and {} did not open with the \
+             restored key. The rest do, so the key is right: those rows were sealed \
+             with another key, or damaged, before the backup was made. Enter them \
+             again once the server is running.",
+            check.failed(),
+        );
+    } else {
+        println!("→ the restored key opens {tried}");
+    }
+    Ok(())
+}
+
+/// The key the server will read after the restore, and where it is, for
+/// messages.
+///
+/// The env file when it exists: on a box the unit loads it, and this
+/// process's own environment still holds the key from before the restore.
+/// With no env file, as on a dev machine that keeps its key in a repo `.env`,
+/// the server takes its key from its environment, which this process loaded
+/// the same way at start (`process_key`).
+fn key_after_restore(env_file: &Path, process_key: Option<String>) -> (Option<String>, String) {
+    if env_file.exists() {
+        return (
+            crate::box_env::encryption_key(env_file),
+            env_file.display().to_string(),
+        );
+    }
+    (
+        process_key.filter(|k| !k.trim().is_empty()),
+        format!("this process's environment (there is no {})", env_file.display()),
+    )
+}
+
+/// One line per row of a single-column query, run through `psql` as the
+/// user that can reach the database (`db_command`).
+fn psql_lines(database_url: &str, sql: &str) -> Result<Vec<String>, crate::Error> {
+    let out = db_command("psql")
+        .args(["-X", "-tA", database_url, "-c", sql])
+        .output()
+        .map_err(|e| crate::Error::Other(format!("could not run psql ({e})")))?;
+    if !out.status.success() {
+        return Err(crate::Error::Other(format!(
+            "the restored database could not be read to check the key: {}",
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 /// Build a command that talks to Postgres as whoever can actually authenticate.
@@ -238,7 +478,7 @@ pub(crate) fn apply(staging: &Path, targets: &Targets) -> Result<(), crate::Erro
         let _ = fs::remove_dir_all(&targets.lake);
         fs::create_dir_all(&targets.lake)
             .map_err(|e| crate::Error::Other(format!("create lake dir: {e}")))?;
-        copy_tree(&staged_lake, &targets.lake)?;
+        move_tree(&staged_lake, &targets.lake)?;
     }
 
     // Authored applets. Replace wholesale like the lake: the tarball is the
@@ -252,11 +492,24 @@ pub(crate) fn apply(staging: &Path, targets: &Targets) -> Result<(), crate::Erro
         let _ = fs::remove_dir_all(&targets.applets);
         fs::create_dir_all(&targets.applets)
             .map_err(|e| crate::Error::Other(format!("create applets dir: {e}")))?;
-        copy_tree(&staged_applets, &targets.applets)?;
+        move_tree(&staged_applets, &targets.applets)?;
     }
 
     let staged_env = staging.join("env/virtues.env");
-    if staged_env.exists() {
+    // An archive env file without the key never replaces one with it: that
+    // would destroy the only key this box has, for nothing.
+    let keeps_own_key = staged_env.exists()
+        && crate::box_env::encryption_key(&staged_env).is_none()
+        && crate::box_env::encryption_key(&targets.env_file).is_some();
+    if keeps_own_key {
+        eprintln!(
+            "warning: the backup's env file has no {}, so this box keeps its own \
+             env file at {}. The key check after the database loads says whether \
+             that key opens the restored secrets.",
+            crate::box_env::ENCRYPTION_KEY,
+            targets.env_file.display()
+        );
+    } else if staged_env.exists() {
         println!("→ restoring env at {}…", targets.env_file.display());
         if let Some(parent) = targets.env_file.parent() {
             fs::create_dir_all(parent)
@@ -271,12 +524,13 @@ pub(crate) fn apply(staging: &Path, targets: &Targets) -> Result<(), crate::Erro
             let _ = fs::set_permissions(&targets.env_file, fs::Permissions::from_mode(0o600));
         }
     } else {
-        // The tarball carries no key. Everything encrypted in the dump we are
-        // about to load is unreadable; say so plainly rather than reporting a
-        // clean restore.
+        // The tarball carries no key, so whether the restored secrets open
+        // depends on this box's own key, which `check_restored_key` tests.
         eprintln!(
-            "warning: backup contains no env file — restored credentials will \
-             NOT be decryptable without VIRTUES_ENCRYPTION_KEY from the source box"
+            "warning: the backup has no env file, so {} stays as it is. The key \
+             check after the database loads says whether its key opens the \
+             restored secrets.",
+            targets.env_file.display()
         );
     }
 
@@ -292,18 +546,6 @@ pub(crate) fn apply(staging: &Path, targets: &Targets) -> Result<(), crate::Erro
 }
 
 fn print_next_steps() {
-
-    // Everything above was written by root (restore requires it — it stops the
-    // unit, writes the env file, and drives pg_restore). `copy_tree` is
-    // create_dir_all + fs::copy, neither of which preserves ownership, so the
-    // restored trees land root-owned while the service runs as `virtues`. Left
-    // that way, the box comes back up unable to write its own state: applet
-    // authoring fails with `mkdir failed: Permission denied` and lake writes
-    // fail the same way. Hand ownership back before declaring success.
-    //
-    // Runs last, and never fatally: aborting here would leave a fully restored
-    // box refusing to finish over a fixable permission, so a failure prints the
-    // exact command instead.
     println!();
     println!("✓ restore complete.");
     println!("  Next steps:");
@@ -328,7 +570,11 @@ fn check_service_inactive() -> Result<(), crate::Error> {
 fn read_manifest(staging: &Path) -> Result<Manifest, crate::Error> {
     let raw = fs::read(staging.join("manifest.json"))
         .map_err(|e| crate::Error::Other(format!("read manifest: {e}")))?;
-    serde_json::from_slice::<Manifest>(&raw)
+    parse_manifest(&raw)
+}
+
+fn parse_manifest(raw: &[u8]) -> Result<Manifest, crate::Error> {
+    serde_json::from_slice::<Manifest>(raw)
         .map_err(|e| crate::Error::Other(format!("parse manifest: {e}")))
 }
 
@@ -363,39 +609,32 @@ fn current_migration_max() -> Option<u64> {
 fn verify_sha256(staging: &Path, artifacts: &[Artifact]) -> Result<(), crate::Error> {
     println!("→ verifying sha256 of {} artifact(s)…", artifacts.len());
     for art in artifacts {
-        let abs = staging.join(&art.path);
         // Streamed, not slurped. Verification runs over every artifact in the
         // archive — the database dump included — and reading each one into
         // memory in full to hash it put the peak footprint of a *restore* at the
         // size of its largest member.
-        let mut f = File::open(&abs)
+        let read = File::open(staging.join(&art.path)).and_then(super::backup::digest);
+        let got = read
             .map_err(|e| crate::Error::Other(format!("read artifact {}: {e}", art.path)))?;
-        let mut h = Sha256::new();
-        let mut buf = vec![0u8; 64 * 1024];
-        let mut len: u64 = 0;
-        loop {
-            let n = f
-                .read(&mut buf)
-                .map_err(|e| crate::Error::Other(format!("read artifact {}: {e}", art.path)))?;
-            if n == 0 {
-                break;
-            }
-            h.update(&buf[..n]);
-            len += n as u64;
-        }
-        if len != art.size_bytes {
-            return Err(crate::Error::Other(format!(
-                "{} size mismatch (manifest {}, actual {len})",
-                art.path, art.size_bytes,
-            )));
-        }
-        let got = format!("{:x}", h.finalize());
-        if got != art.sha256 {
-            return Err(crate::Error::Other(format!(
-                "{} sha256 mismatch — backup is corrupt or modified",
-                art.path
-            )));
-        }
+        check_artifact(art, &got)?;
+    }
+    Ok(())
+}
+
+/// Compare one artifact with the length and sha256 read for it
+/// (`backup::digest`). Restore and `--verify` both decide here.
+fn check_artifact(art: &Artifact, (len, sha256): &(u64, String)) -> Result<(), crate::Error> {
+    if *len != art.size_bytes {
+        return Err(crate::Error::Other(format!(
+            "{} size mismatch (manifest {}, actual {len})",
+            art.path, art.size_bytes,
+        )));
+    }
+    if *sha256 != art.sha256 {
+        return Err(crate::Error::Other(format!(
+            "{} sha256 mismatch — backup is corrupt or modified",
+            art.path
+        )));
     }
     Ok(())
 }
@@ -568,6 +807,10 @@ fn read_identity(path: &Path) -> Result<age::x25519::Identity, crate::Error> {
 fn extract_into(reader: Box<dyn Read>, dest: &Path) -> Result<(), crate::Error> {
     let gz = GzDecoder::new(reader);
     let mut t = tar::Archive::new(gz);
+    // Restored files are dated by the restore, as copies are. The archive's
+    // headers carry no real time, and `move_tree` renames files into place,
+    // which would otherwise keep that one.
+    t.set_preserve_mtime(false);
     t.unpack(dest)
         .map_err(|e| crate::Error::Other(format!("tar unpack: {e}")))?;
     Ok(())
@@ -599,7 +842,13 @@ pub(crate) fn give_to_service_user(dir: &Path) {
     }
 }
 
-fn copy_tree(src: &Path, dst: &Path) -> Result<(), crate::Error> {
+/// Move a staged tree into place, file by file.
+///
+/// A rename when the stage and the target share a filesystem, which they
+/// usually do now that the stage is on the box's own disk: the restore then
+/// needs room for one copy of the lake, not two. A copy when they do not, as
+/// for a lake on a disk of its own. Either way the stage is deleted after.
+fn move_tree(src: &Path, dst: &Path) -> Result<(), crate::Error> {
     fs::create_dir_all(dst)
         .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", dst.display())))?;
     for entry in fs::read_dir(src)
@@ -609,50 +858,21 @@ fn copy_tree(src: &Path, dst: &Path) -> Result<(), crate::Error> {
         let path = entry.path();
         let dest = dst.join(entry.file_name());
         if path.is_dir() {
-            copy_tree(&path, &dest)?;
-        } else {
-            fs::copy(&path, &dest)
-                .map_err(|e| crate::Error::Other(format!("copy {}: {e}", path.display())))?;
+            move_tree(&path, &dest)?;
+            continue;
+        }
+        match fs::rename(&path, &dest) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
+                fs::copy(&path, &dest)
+                    .map_err(|e| crate::Error::Other(format!("copy {}: {e}", path.display())))?;
+            }
+            Err(e) => {
+                return Err(crate::Error::Other(format!("move {}: {e}", path.display())));
+            }
         }
     }
     Ok(())
-}
-
-struct Stage(PathBuf);
-impl Drop for Stage {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
-    }
-}
-impl AsRef<Path> for Stage {
-    fn as_ref(&self) -> &Path {
-        &self.0
-    }
-}
-
-fn mkstage(near: &Path) -> Result<Stage, crate::Error> {
-    let base = near
-        .parent()
-        .filter(|p| p.is_dir())
-        .unwrap_or_else(|| Path::new("/tmp"))
-        .to_path_buf();
-    let stamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%f");
-    let path = base.join(format!(".virtues-restore-stage-{stamp}"));
-    fs::create_dir_all(&path)
-        .map_err(|e| crate::Error::Other(format!("staging dir: {e}")))?;
-    Ok(Stage(path))
-}
-
-// Tiny helper: read into Vec; not currently used, but kept for future
-// in-memory comparison paths.
-#[allow(dead_code)]
-fn read_all(path: &Path) -> Result<Vec<u8>, crate::Error> {
-    let mut f = File::open(path)
-        .map_err(|e| crate::Error::Other(format!("open {}: {e}", path.display())))?;
-    let mut buf = vec![];
-    f.read_to_end(&mut buf)
-        .map_err(|e| crate::Error::Other(format!("read {}: {e}", path.display())))?;
-    Ok(buf)
 }
 
 /// The round-trip drill.
@@ -716,6 +936,30 @@ mod drill {
         fs::write(path, contents).unwrap();
     }
 
+    /// An invented box key, base64 of 32 equal bytes.
+    fn key(byte: u8) -> String {
+        use base64::Engine;
+        base64::engine::general_purpose::STANDARD.encode([byte; 32])
+    }
+
+    fn seal(key_b64: &str, value: &str) -> String {
+        virtues_helpers::crypto::TokenEncryptor::from_base64_key(key_b64)
+            .unwrap()
+            .encrypt(value)
+            .unwrap()
+    }
+
+    /// Everything in `dir` but `keep`. A backup or a verify must leave nothing
+    /// beside the archive: that folder is often the backup drive.
+    fn beside(dir: &Path, keep: &Path) -> Vec<String> {
+        fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.path() != keep)
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect()
+    }
+
     #[sqlx::test]
     async fn round_trip_restores_database_lake_applets_and_env(pool: sqlx::PgPool) {
         require_pg_tools();
@@ -741,12 +985,14 @@ mod drill {
         fs::create_dir_all(lake.join("media/ios")).unwrap();
         fs::write(lake.join("media/ios/clip.bin"), &blob).unwrap();
         write(&applets.join("user/drill/manifest.json"), "{\"name\":\"drill\"}");
-        write(&env_file, "VIRTUES_ENCRYPTION_KEY=drill-key\n");
+        let box_key = key(7);
+        write(&env_file, &format!("VIRTUES_ENCRYPTION_KEY={box_key}\n"));
         sqlx::query(
             "INSERT INTO credentials (id, key, name, status, secrets_ciphertext) \
-             VALUES ($1, 'ios', 'drill', 'active', 'x')",
+             VALUES ($1, 'ios', 'drill', 'active', $2)",
         )
         .bind("cred_drill")
+        .bind(seal(&box_key, "{\"token\":\"invented\"}"))
         .execute(&pool)
         .await
         .expect("seed credential");
@@ -762,6 +1008,9 @@ mod drill {
         // secret half; production never does.
         let identity = age::x25519::Identity::generate();
         let archive = scratch_dir("out").join("backup.tar.gz.age");
+        // A stage an earlier release left beside its output, with a dump in it.
+        let legacy = archive.with_file_name(".virtues-backup-stage-20260101T000000");
+        write(&legacy.join("virtues.dump"), "PGDMP");
         crate::cli::backup::write_archive(
             &pool,
             Some(archive.clone()),
@@ -773,6 +1022,11 @@ mod drill {
         .await
         .expect("backup");
         assert!(archive.exists(), "archive was not written");
+        assert_eq!(
+            beside(archive.parent().unwrap(), &archive),
+            Vec::<String>::new(),
+            "the backup left something beside its archive"
+        );
 
         // Encrypted at rest: the plaintext key we seeded must not be findable
         // by scanning the bytes on disk.
@@ -782,7 +1036,7 @@ mod drill {
             "archive is not age-encrypted"
         );
         assert!(
-            !raw.windows(9).any(|w| w == b"drill-key"),
+            !raw.windows(box_key.len()).any(|w| w == box_key.as_bytes()),
             "the encryption key appears in cleartext inside the archive"
         );
         // And it must not open without the key.
@@ -801,8 +1055,12 @@ mod drill {
         fs::remove_file(&env_file).unwrap();
 
         // ── Restore, through the real gates ──────────────────────────────────
-        let stage = mkstage(&archive).expect("stage");
+        let stage = open_stage("restore").expect("stage");
         let staging: &Path = stage.as_ref();
+        assert!(
+            !staging.starts_with(archive.parent().unwrap()),
+            "restore staged beside the archive"
+        );
         extract_into(
             open_archive(&archive, Some(&identity)).expect("decrypt"),
             staging,
@@ -816,16 +1074,30 @@ mod drill {
             "manifest recorded no artifacts, so the digest gate proved nothing"
         );
 
-        apply(
-            staging,
-            &Targets {
-                database_url: url,
-                lake: lake.clone(),
-                applets: applets.clone(),
-                env_file: env_file.clone(),
-            },
-        )
-        .expect("restore");
+        let targets = Targets {
+            database_url: url,
+            lake: lake.clone(),
+            applets: applets.clone(),
+            env_file: env_file.clone(),
+        };
+        apply(staging, &targets).expect("restore");
+        assert!(
+            !staging.join("lake/streams/ios/records_deadbeef.jsonl").exists(),
+            "the lake was copied out of the stage rather than moved"
+        );
+        drop(stage);
+        check_restored_key(&targets).expect("the restored key opens the restored table");
+
+        // The same database under another key is the failure the check exists
+        // for: it must fail, and say how many it tried.
+        let real = fs::read_to_string(&env_file).unwrap();
+        write(&env_file, &format!("VIRTUES_ENCRYPTION_KEY={}\n", key(8)));
+        let err = check_restored_key(&targets).expect_err("a wrong key passed the check");
+        assert!(format!("{err}").contains("the one saved secret"), "{err}");
+        write(&env_file, "DATABASE_URL=postgres:///virtues\n");
+        let err = check_restored_key(&targets).expect_err("a missing key passed the check");
+        assert!(format!("{err}").contains("has no VIRTUES_ENCRYPTION_KEY"), "{err}");
+        write(&env_file, &real);
 
         // ── Assert it came back ──────────────────────────────────────────────
         let (name,): (String,) = sqlx::query_as("SELECT name FROM credentials WHERE id = $1")
@@ -857,7 +1129,7 @@ mod drill {
             "applet state differs after restore"
         );
         assert!(
-            fs::read_to_string(&env_file).unwrap().contains("drill-key"),
+            fs::read_to_string(&env_file).unwrap().contains(&box_key),
             "env file (and therefore the encryption key) did not survive"
         );
 
@@ -898,9 +1170,19 @@ mod drill {
         .await
         .expect("backup");
 
+        // A restore stage an earlier release left beside the archive, with
+        // the box key in it.
+        let legacy = archive.with_file_name(".virtues-restore-stage-20260101T000000");
+        write(&legacy.join("env/virtues.env"), "VIRTUES_ENCRYPTION_KEY=invented\n");
+
         verify(archive.clone(), Some(key_path.clone()))
             .await
             .expect("a freshly written archive must verify");
+        assert_eq!(
+            beside(archive.parent().unwrap(), &archive),
+            Vec::<String>::new(),
+            "verify left something beside the archive"
+        );
 
         // Without the key it cannot even be opened, let alone verified.
         assert!(verify(archive.clone(), None).await.is_err());
@@ -945,6 +1227,94 @@ mod drill {
             let _ = fs::remove_dir_all(d);
         }
     }
+
+    /// A gzipped tar in memory with the given members, in order.
+    fn tarball(members: &[(&str, &[u8])]) -> Vec<u8> {
+        let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut builder = tar::Builder::new(gz);
+        for (path, body) in members {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(body.len() as u64);
+            header.set_mode(0o600);
+            // `set_path` refuses `..`, which a hand-made archive can still hold.
+            header.as_gnu_mut().unwrap().name[..path.len()].copy_from_slice(path.as_bytes());
+            header.set_cksum();
+            builder.append(&header, *body).unwrap();
+        }
+        builder.into_inner().unwrap().finish().unwrap()
+    }
+
+    fn artifact(path: &str, body: &[u8]) -> Artifact {
+        let (size_bytes, sha256) = crate::cli::backup::digest(body).unwrap();
+        Artifact { path: path.into(), size_bytes, sha256 }
+    }
+
+    fn manifest_json(artifacts: Vec<Artifact>) -> Vec<u8> {
+        serde_json::to_vec(&Manifest {
+            manifest_version: 1,
+            binary_version: "0.0.0".into(),
+            schema_version: "1".into(),
+            created_at: "2026-10-27T04:00:00Z".into(),
+            distro: None,
+            artifacts,
+        })
+        .unwrap()
+    }
+
+    #[test]
+    fn verify_reads_members_from_the_stream_as_restore_would_unpack_them() {
+        let dump: &[u8] = b"PGDMP invented";
+        let manifest = manifest_json(vec![artifact("db/virtues.dump", dump)]);
+        // A leading `./` is dropped by restore's unpack, so it is here too.
+        let archive = tarball(&[("./db/virtues.dump", dump), ("manifest.json", &manifest)]);
+        let (read, members) = digest_members(Box::new(std::io::Cursor::new(archive))).unwrap();
+        assert_eq!(read.artifacts.len(), 1);
+        let got = members.get("db/virtues.dump").expect("the member was not read");
+        check_artifact(&read.artifacts[0], got).expect("an intact member failed its check");
+
+        // Restore's unpack skips a member with `..` in its path, so it cannot
+        // satisfy the manifest here either.
+        let manifest = manifest_json(vec![artifact("../db/virtues.dump", dump)]);
+        let archive = tarball(&[("../db/virtues.dump", dump), ("manifest.json", &manifest)]);
+        let (read, members) = digest_members(Box::new(std::io::Cursor::new(archive))).unwrap();
+        assert!(members.is_empty(), "a member restore would skip was read: {members:?}");
+        assert!(!read.artifacts.is_empty());
+
+        // A changed member fails the same check restore uses.
+        let manifest = manifest_json(vec![artifact("db/virtues.dump", dump)]);
+        let archive = tarball(&[("db/virtues.dump", b"PGDMP changed"), ("manifest.json", &manifest)]);
+        let (read, members) = digest_members(Box::new(std::io::Cursor::new(archive))).unwrap();
+        assert!(check_artifact(&read.artifacts[0], &members["db/virtues.dump"]).is_err());
+
+        // No manifest, nothing to check against.
+        let archive = tarball(&[("db/virtues.dump", dump)]);
+        let err = digest_members(Box::new(std::io::Cursor::new(archive))).unwrap_err();
+        assert!(err.to_string().contains("no manifest"), "{err}");
+    }
+
+    #[test]
+    fn the_key_check_reads_the_env_file_when_there_is_one_and_the_environment_otherwise() {
+        let dir = scratch_dir("key-source");
+        let env_file = dir.join("virtues.env");
+        let shell = Some("from-the-environment=".to_string());
+
+        // No file, as on a dev machine: the server's key is in its environment.
+        let (key, source) = key_after_restore(&env_file, shell.clone());
+        assert_eq!(key.as_deref(), Some("from-the-environment="));
+        assert!(source.contains("there is no"), "{source}");
+        assert_eq!(key_after_restore(&env_file, None).0, None);
+
+        // A file: the server reads it, and the environment holds the key from
+        // before the restore, so the environment is ignored.
+        write(&env_file, "VIRTUES_ENCRYPTION_KEY=from-the-file=\n");
+        let (key, source) = key_after_restore(&env_file, shell.clone());
+        assert_eq!(key.as_deref(), Some("from-the-file="));
+        assert_eq!(source, env_file.display().to_string());
+        write(&env_file, "DATABASE_URL=postgres:///virtues\n");
+        assert_eq!(key_after_restore(&env_file, shell).0, None);
+
+        let _ = fs::remove_dir_all(&dir);
+    }
 }
 
 /// `virtues restore --from-volume <path>`.
@@ -966,6 +1336,8 @@ async fn run_from_volume(
     let root = resolve_volume_root(path)?;
     let targets = Targets::from_env()?;
     preflight_database(&targets.database_url)?;
+    super::backup::sweep_stale_stages();
+    super::backup::sweep_legacy_stages(&root.join("archives"));
 
     println!();
     println!("⚠  About to overwrite live box state. Press Ctrl-C in 5s to abort.");
@@ -977,6 +1349,8 @@ async fn run_from_volume(
             give_to_service_user(dir);
         }
     }
+    super::backup::end_changes();
+    check_restored_key(&targets)?;
     print_next_steps();
     Ok(())
 }
@@ -1041,10 +1415,9 @@ fn read_dirs(path: &Path) -> Vec<PathBuf> {
 /// required — each file exists in exactly one — and they must be applied in
 /// order so that a file is never shadowed by an older copy of itself.
 ///
-/// A missing increment is a hole in the restored lake. It fails loudly and names
-/// the window rather than restoring short and silent, because a restore that
-/// quietly returns less than it should is the failure this whole path exists to
-/// prevent.
+/// A missing increment is a hole in the restored lake, and this cannot see
+/// one: the drive keeps no list of the increments it should hold, so a deleted
+/// one restores short with no warning. The manual says so.
 pub(crate) fn apply_from_volume(
     root: &Path,
     targets: &Targets,
@@ -1064,21 +1437,46 @@ pub(crate) fn apply_from_volume(
     // reaches its own clearing branch and never runs this check — the volume
     // path has to do it itself.
     assert_replaceable_lake(&targets.lake)?;
+    let mut everything = vec![full.clone()];
+    everything.extend(increments.iter().cloned());
+    ensure_room_to_unpack(&everything)?;
 
-    // The full archive first: it replaces the database and applet state
-    // wholesale, so increments unpacked before it would survive into a restore
-    // whose database does not describe them.
-    let stage = mkstage(&full)?;
-    let staging: &Path = stage.as_ref();
-    extract_into(open_archive(&full, identity)?, staging)?;
-    let manifest = read_manifest(staging)?;
+    // OPEN AND CHECK EVERY ARCHIVE BEFORE DESTROYING ANYTHING.
+    //
+    // A bad sector, a wrong key or a full disk while unpacking increment 3 of
+    // 7 must leave the box as it was. So the full archive and every increment
+    // are unpacked into stages on this server and checksummed first, and kept
+    // for the moves below so the work is not repeated. An interrupt in this
+    // part removes the stages and changes nothing.
+    let full_stage = open_stage("restore")?;
+    extract_into(open_archive(&full, identity)?, full_stage.path())?;
+    let manifest = read_manifest(full_stage.path())?;
     println!(
         "→ full archive: binary {}, schema {}, created {}",
         manifest.binary_version, manifest.schema_version, manifest.created_at
     );
     check_schema_compatible(&manifest)?;
-    verify_sha256(staging, &manifest.artifacts)?;
-    apply(staging, targets)?;
+    verify_sha256(full_stage.path(), &manifest.artifacts)?;
+
+    println!("→ checking {} increment(s) before touching anything…", increments.len());
+    let mut staged: Vec<(String, Stage)> = Vec::with_capacity(increments.len());
+    for (n, inc) in increments.iter().enumerate() {
+        let name = inc.file_name().unwrap_or_default().to_string_lossy().to_string();
+        println!("   {}/{}: {name}", n + 1, increments.len());
+        let stage = open_stage("restore")?;
+        extract_into(open_archive(inc, identity)?, stage.path())?;
+        let manifest = read_manifest(stage.path())?;
+        verify_sha256(stage.path(), &manifest.artifacts)?;
+        staged.push((name, stage));
+    }
+    ensure_room_for_database(targets, &manifest)?;
+
+    // Past this line is destructive. The full archive goes first: it replaces
+    // the database and applet state wholesale, so increments moved in before
+    // it would survive into a restore whose database does not describe them.
+    super::backup::begin_changes()?;
+    apply(full_stage.path(), targets)?;
+    drop(full_stage);
 
     // Clear the lake explicitly. `apply` only does this when the archive it was
     // given contains a `lake/` member, which a volume full never does — so
@@ -1086,43 +1484,15 @@ pub(crate) fn apply_from_volume(
     // already on the box. Files belonging to no archive would survive, be
     // indistinguishable from restored ones, and quietly make the result
     // something other than the state that was backed up.
-    // VERIFY EVERY INCREMENT BEFORE DESTROYING ANYTHING.
-    //
-    // The wipe used to come first, and the increments were opened one at a time
-    // afterwards. So increment 3 of 7 failing — a bad sector, a wrong key, the
-    // backup drive filling while staging — left the owner with a destroyed
-    // lake, two increments restored, and a database already replaced. There was
-    // no way back: the pre-restore state was gone before anything had been
-    // shown to be readable.
-    //
-    // Each increment is opened, extracted and checksummed here, and the staging
-    // directories are held for the copy below, so the work is not repeated.
-    println!("→ verifying {} increment(s) before touching the lake…", increments.len());
-    let mut staged: Vec<(String, Stage)> = Vec::with_capacity(increments.len());
-    for (n, inc) in increments.iter().enumerate() {
-        let name = inc.file_name().unwrap_or_default().to_string_lossy().to_string();
-        println!("   {}/{}: {name}", n + 1, increments.len());
-        let stage = mkstage(inc)?;
-        {
-            let staging: &Path = stage.as_ref();
-            extract_into(open_archive(inc, identity)?, staging)?;
-            let manifest = read_manifest(staging)?;
-            verify_sha256(staging, &manifest.artifacts)?;
-        }
-        staged.push((name, stage));
-    }
-
-    // Only now is the live lake replaced. Everything below is a copy from
-    // material already proven readable.
     let _ = fs::remove_dir_all(&targets.lake);
     fs::create_dir_all(&targets.lake)
         .map_err(|e| crate::Error::Other(format!("create lake dir: {e}")))?;
 
     for (n, (name, stage)) in staged.iter().enumerate() {
         println!("→ increment {}/{}: {name}", n + 1, staged.len());
-        let staged_lake = stage.as_ref().join("lake");
+        let staged_lake = stage.path().join("lake");
         if staged_lake.is_dir() {
-            copy_tree(&staged_lake, &targets.lake)?;
+            move_tree(&staged_lake, &targets.lake)?;
         }
     }
 
@@ -1174,10 +1544,14 @@ fn survey_volume(archives: &Path) -> Result<(PathBuf, Vec<PathBuf>), crate::Erro
 /// `virtues backup --verify <archive>` — prove an archive is readable without
 /// restoring anything.
 ///
-/// Decrypts, extracts to a scratch directory, and re-hashes every member against
-/// the manifest. Deliberately shares `open_archive`, `read_manifest` and
-/// `verify_sha256` with the restore path: a verifier that checked the archive its
-/// own way could pass something restore would reject.
+/// Decrypts the archive and hashes every member as it streams past, then
+/// checks each one against the manifest, which is the last member. Nothing
+/// it decrypts is written anywhere, so it needs no free space and leaves
+/// nothing behind, on the backup drive or on this machine. It shares
+/// `open_archive`, the manifest parse, `backup::digest` and `check_artifact`
+/// with the restore path: a verifier that checked the archive its own way
+/// could pass something restore would reject. Member paths are read the way
+/// tar's unpack reads them for restore ([`unpacked_path`]).
 pub async fn verify(
     archive: PathBuf,
     key_file: Option<PathBuf>,
@@ -1187,16 +1561,20 @@ pub async fn verify(
     }
     let identity = key_file.as_deref().map(read_identity).transpose()?;
     println!("→ verifying {}…", archive.display());
+    sweep_stages_near(&archive);
 
-    let stage = mkstage(&archive)?;
-    let staging: &Path = stage.as_ref();
-    extract_into(open_archive(&archive, identity.as_ref())?, staging)?;
-    let manifest = read_manifest(staging)?;
+    let (manifest, members) = digest_members(open_archive(&archive, identity.as_ref())?)?;
     println!(
         "→ manifest: binary {}, schema {}, created {}",
         manifest.binary_version, manifest.schema_version, manifest.created_at
     );
-    verify_sha256(staging, &manifest.artifacts)?;
+    println!("→ verifying sha256 of {} artifact(s)…", manifest.artifacts.len());
+    for art in &manifest.artifacts {
+        let got = members.get(&art.path).ok_or_else(|| {
+            crate::Error::Other(format!("read artifact {}: not in the archive", art.path))
+        })?;
+        check_artifact(art, got)?;
+    }
 
     let total: u64 = manifest.artifacts.iter().map(|a| a.size_bytes).sum();
     println!(
@@ -1208,4 +1586,54 @@ pub async fn verify(
     // round-trip drill is for. This proves the bytes are intact and readable,
     // which is the failure mode an unattended backup actually has.
     Ok(())
+}
+
+/// The length and sha256 of each member, by the path it unpacks to.
+type MemberDigests = std::collections::HashMap<String, (u64, String)>;
+
+/// The manifest and the length and sha256 of every regular file in an
+/// archive, read in one pass without writing anything.
+fn digest_members(reader: Box<dyn Read>) -> Result<(Manifest, MemberDigests), crate::Error> {
+    let mut tar = tar::Archive::new(GzDecoder::new(reader));
+    let read_err = |e: std::io::Error| crate::Error::Other(format!("read archive: {e}"));
+    let mut members = MemberDigests::new();
+    let mut manifest = None;
+    for entry in tar.entries().map_err(read_err)? {
+        let mut entry = entry.map_err(read_err)?;
+        if !entry.header().entry_type().is_file() {
+            continue;
+        }
+        let Some(path) = unpacked_path(&entry.path().map_err(read_err)?) else {
+            continue; // restore's unpack skips it too
+        };
+        if path == "manifest.json" {
+            let mut raw = Vec::new();
+            entry.read_to_end(&mut raw).map_err(read_err)?;
+            manifest = Some(parse_manifest(&raw)?);
+        } else {
+            let got = super::backup::digest(&mut entry)
+                .map_err(|e| crate::Error::Other(format!("read artifact {path}: {e}")))?;
+            members.insert(path, got);
+        }
+    }
+    let manifest = manifest
+        .ok_or_else(|| crate::Error::Other("read manifest: the archive has no manifest.json".into()))?;
+    Ok((manifest, members))
+}
+
+/// The path a tar member lands at under the stage when restore unpacks it,
+/// as the manifest names it: leading `/` and `.` parts dropped. `None` for a
+/// member with a `..` part, which tar's unpack skips.
+fn unpacked_path(path: &Path) -> Option<String> {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::Normal(p) => out.push(p),
+            Component::ParentDir => return None,
+            Component::RootDir | Component::CurDir | Component::Prefix(_) => {}
+        }
+    }
+    let out = out.to_string_lossy().into_owned();
+    (!out.is_empty()).then_some(out)
 }
