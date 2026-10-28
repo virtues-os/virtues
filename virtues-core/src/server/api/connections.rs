@@ -83,6 +83,10 @@ struct Connect {
     registry: Option<String>,
     /// Or a server address the owner pasted.
     url: Option<String>,
+    /// The app opens the sign-in in its iOS sign-in sheet, which the proxy
+    /// then closes when the sign-in lands there.
+    #[serde(default)]
+    sheet: bool,
 }
 
 async fn connect_handler(State(pool): State<PgPool>, Json(ask): Json<Connect>) -> Response {
@@ -108,7 +112,7 @@ async fn connect_handler(State(pool): State<PgPool>, Json(ask): Json<Connect>) -
         (None, None) => return refuse(StatusCode::BAD_REQUEST, "Name a registry server or give a server address."),
     };
     let name = c.name.clone();
-    match connection::start(&pool, c).await {
+    match connection::start(&pool, c, ask.sheet).await {
         Ok(auth_url) => Json(json!({ "auth_url": auth_url })).into_response(),
         Err(e) => refuse(StatusCode::BAD_GATEWAY, &format!("Could not start the sign-in with {name}: {e:#}")),
     }

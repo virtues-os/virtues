@@ -377,6 +377,36 @@ export async function openExternal(url: string): Promise<void> {
 	}
 }
 
+/** The surface that added `location-probe|sign_in` (iOS). */
+export const SIGN_IN_SHEET_SURFACE = 14;
+
+/** Fired on `window` when the sign-in sheet closes, the way `focus` fires
+ *  when someone comes back from the system browser. */
+export const SIGN_IN_CLOSED = 'virtues:sign-in-closed';
+
+/**
+ * Whether this shell opens sign-ins in Apple's sign-in sheet. iOS only: in
+ * Safari the app went to the background, and Safari could not reach the
+ * app's listener a sign-in returns through.
+ */
+export async function canSignInSheet(): Promise<boolean> {
+	return isIOS && shellSupports(SIGN_IN_SHEET_SURFACE);
+}
+
+/**
+ * Open a service's sign-in: in the sign-in sheet where the shell has one,
+ * otherwise in the system browser. Returns once it is open, not when it
+ * ends; `SIGN_IN_CLOSED` fires when the sheet closes, and `reloadOnReturn`
+ * in `connectDispatch.ts` listens for it.
+ */
+export async function openSignIn(url: string): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke || !(await canSignInSheet())) return openExternal(url);
+	invoke('plugin:location-probe|sign_in', { payload: { url } })
+		.catch((e) => console.error('[tauri] sign-in sheet failed', e))
+		.finally(() => window.dispatchEvent(new Event(SIGN_IN_CLOSED)));
+}
+
 /** The surface that added `browser_login` (lib.rs `COMMAND_SURFACE_VERSION`). */
 export const BROWSER_LOGIN_SURFACE = 10;
 

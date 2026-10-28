@@ -74,6 +74,8 @@ pub mod web_bundle;
 /// |   | mic button starts the system's dictation in the focused field |
 /// | 13 | `connect_agent` (desktop): pair an AI agent's MCP bridge as a device
 /// |   | of its own; the bridge is this binary run as `mcp --name <name>` |
+/// | 14 | `location-probe|sign_in` (iOS): a service's sign-in opens in Apple's
+/// |   | sign-in sheet over the app instead of in Safari (`SignInSheet.swift`) |
 ///
 /// `bundle-contract.json` requires 9. No shell below it has ever run a box
 /// bundle (they all boot white), so requiring it strands no client: they keep
@@ -81,7 +83,7 @@ pub mod web_bundle;
 ///
 /// Lives here rather than in main.rs so mobile can see it: main.rs is the
 /// desktop bin and is never compiled for iOS/Android.
-pub const COMMAND_SURFACE_VERSION: u32 = 13;
+pub const COMMAND_SURFACE_VERSION: u32 = 14;
 
 /// What the native shell knows about itself.
 ///

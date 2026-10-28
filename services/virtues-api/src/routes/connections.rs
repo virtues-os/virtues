@@ -3,7 +3,8 @@
 //!
 //!   GET  /connections/callback       — the service sends the owner's browser
 //!                                       here with `code` and `state`; keep
-//!                                       them and tell the owner to go back
+//!                                       them and tell the owner to go back,
+//!                                       or close the iOS app's sign-in sheet
 //!   POST /connections/claim/{state}  — the box collects them, once
 //!
 //! The box cannot be the redirect URI itself. On a phone the app reaches the
@@ -19,7 +20,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::{header, StatusCode},
-    response::IntoResponse,
+    response::{IntoResponse, Redirect},
     routing::{get, post},
     Json, Router,
 };
@@ -31,6 +32,11 @@ use crate::AppState;
 
 /// How long a code waits to be claimed. The box gives a sign-in ten minutes.
 const RETURN_TTL_SECS: f64 = 600.0;
+
+/// Sending the iOS app's sign-in sheet here closes it
+/// (`apps/web/plugins/location-probe/ios/Sources/SignInSheet.swift`). Only the
+/// sheet listens for this scheme, so it carries nothing.
+const CLOSE_SHEET: &str = "virtues-signin://done";
 
 pub fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -45,6 +51,9 @@ struct Back {
     iss: Option<String>,
     error: Option<String>,
     error_description: Option<String>,
+    /// `1` when the box registered this address for a sign-in the iOS app
+    /// opened in its sign-in sheet.
+    sheet: Option<String>,
 }
 
 async fn callback(State(state): State<Arc<AppState>>, Query(back): Query<Back>) -> axum::response::Response {
@@ -81,6 +90,11 @@ async fn callback(State(state): State<Arc<AppState>>, Query(back): Query<Back>) 
         return page(StatusCode::INTERNAL_SERVER_ERROR, "Virtues could not pass the sign-in to your server. Start it again in Virtues.");
     }
 
+    // The app reloads its list when the sheet closes. A refused sign-in
+    // leaves the service unconnected there.
+    if back.sheet.as_deref() == Some("1") {
+        return Redirect::to(CLOSE_SHEET).into_response();
+    }
     match error {
         Some(why) => page(StatusCode::OK, &format!("The sign-in did not finish: {why}. Go back to Virtues and try again.")),
         None => page(StatusCode::OK, "You're signed in. Go back to Virtues; your server is finishing the connection."),

@@ -50,8 +50,15 @@ use crate::api::compaction::build_context_for_llm;
 pub const TOOL: &str = "connection";
 
 /// Where every sign-in comes back to: the OAuth proxy's return route.
-fn redirect_uri() -> String {
-    format!("{}/connections/callback", virtues_helpers::auth::proxy_url())
+/// `sheet` asks the proxy to close the iOS app's sign-in sheet once the
+/// sign-in lands there.
+fn redirect_uri(sheet: bool) -> String {
+    let base = format!("{}/connections/callback", virtues_helpers::auth::proxy_url());
+    if sheet {
+        format!("{base}?sheet=1")
+    } else {
+        base
+    }
 }
 
 /// How often the box asks the proxy whether a sign-in's code has arrived.
@@ -276,13 +283,14 @@ fn pending() -> &'static Mutex<HashMap<String, Pending>> {
 
 /// Starts a sign-in and returns the service's authorization URL for the
 /// owner's browser. A task then waits for the code at the proxy and finishes
-/// the sign-in when it arrives.
-pub async fn start(pool: &PgPool, connection: Connection) -> Result<String> {
+/// the sign-in when it arrives. `sheet` is set when the owner's app opens the
+/// sign-in in its sign-in sheet.
+pub async fn start(pool: &PgPool, connection: Connection, sheet: bool) -> Result<String> {
     let mut state = OAuthState::new(&connection.url, None).await.context("reach the service")?;
     if let OAuthState::Unauthorized(manager) = &mut state {
         manager.set_credential_store(Stored { pool: pool.clone(), connection: connection.clone() });
     }
-    let request = AuthorizationRequest::new(&redirect_uri())
+    let request = AuthorizationRequest::new(&redirect_uri(sheet))
         .with_client_name("Virtues")
         .with_application_type("native");
     state.start_authorization(request).await.context("start the sign-in")?;

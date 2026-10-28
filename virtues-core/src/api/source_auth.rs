@@ -20,7 +20,7 @@
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, HeaderValue, StatusCode},
-    response::{IntoResponse, Response},
+    response::{IntoResponse, Redirect, Response},
     Json,
 };
 use serde::{Deserialize, Serialize};
@@ -149,6 +149,11 @@ pub struct OauthCallbackQuery {
     /// terminal "return to Virtues" page instead. Absent for browser connects.
     #[serde(default)]
     pub shell: Option<String>,
+    /// `"1"` when the iOS app opened the sign-in in its sign-in sheet
+    /// (`SignInSheet.swift`). The box then sends the sheet to
+    /// [`CLOSE_SHEET`], which closes it, instead of showing a page in it.
+    #[serde(default)]
+    pub sheet: Option<String>,
     /// Where the browser leg's 302 should land instead of the default
     /// `/sources` — a connect started from onboarding must return to the
     /// onboarding screen it left, not dump the person into the app. Set by the
@@ -191,6 +196,9 @@ pub async fn oauth_callback_handler(
                 reason = %code,
                 "oauth callback returned without an exchange token"
             );
+            if q.sheet.as_deref() == Some("1") {
+                return Redirect::to(CLOSE_SHEET).into_response();
+            }
             return oauth_incomplete_response(
                 &claims.source_id,
                 code,
@@ -271,6 +279,9 @@ pub async fn oauth_callback_handler(
     //    copy of the app in a browser tab with no way back. Render a terminal
     //    success page instead; the app's own focus handler refreshes the source
     //    list when the user switches back to it. Browser connects keep the 302.
+    if q.sheet.as_deref() == Some("1") {
+        return Redirect::to(CLOSE_SHEET).into_response();
+    }
     if claims_shell_is_native(q.shell.as_deref()) {
         return oauth_return_page(&claims.source_id).into_response();
     }
@@ -284,6 +295,11 @@ pub async fn oauth_callback_handler(
     );
     (StatusCode::FOUND, headers).into_response()
 }
+
+/// Sending the iOS app's sign-in sheet here closes it. Only the sheet
+/// listens for this scheme, so it carries nothing; the app reloads its
+/// sources when the sheet closes.
+const CLOSE_SHEET: &str = "virtues-signin://done";
 
 fn claims_shell_is_native(shell: Option<&str>) -> bool {
     shell == Some("native")

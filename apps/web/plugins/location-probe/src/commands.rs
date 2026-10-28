@@ -61,6 +61,16 @@ pub(crate) async fn open_settings<R: Runtime>(app: AppHandle<R>) -> Result<OpenS
   app.location_probe().open_settings()
 }
 
+/// Open a service's sign-in in Apple's sign-in sheet over the app, and
+/// resolve when the sheet closes. Shell-level like `open_settings`.
+#[command]
+pub(crate) async fn sign_in<R: Runtime>(
+  app: AppHandle<R>,
+  payload: SignInRequest,
+) -> Result<SignInResponse> {
+  app.location_probe().sign_in(payload).await
+}
+
 #[command]
 pub(crate) async fn read_rows<R: Runtime>(
   app: AppHandle<R>,

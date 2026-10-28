@@ -32,7 +32,7 @@
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import { sourcesStore, type Connection } from '$lib/stores/sources.svelte';
 	import { apiGet, apiSend, getStreamHealth, type StreamHealth } from '$lib/api/client';
-	import { openExternal } from '$lib/tauri/bridge';
+	import { canSignInSheet, openSignIn } from '$lib/tauri/bridge';
 	import { reloadOnReturn } from './connectDispatch';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -410,9 +410,15 @@
 		busy = key;
 		connectionsError = null;
 		try {
-			const { auth_url } = await apiSend<{ auth_url: string }>('POST', '/connections/connect', target);
+			// `sheet` asks the proxy to close the iOS sign-in sheet once the
+			// sign-in lands there.
+			const sheet = await canSignInSheet();
+			const { auth_url } = await apiSend<{ auth_url: string }>('POST', '/connections/connect', {
+				...target,
+				sheet
+			});
 			reloadUntilConnected();
-			await openExternal(auth_url);
+			await openSignIn(auth_url);
 		} catch (e) {
 			connectionsError = message(e);
 		} finally {

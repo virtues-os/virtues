@@ -404,8 +404,13 @@ name.
      virtues-api: the owner approved a Linear sign-in, the proxy kept the
      code, and the box claimed it and stored the connection within four
      seconds. Shipping needs the virtues-api deploy before the box release.
-     Source sign-ins on the phone still return to `:7117` and fail the same
-     way.
+     On iOS (command surface 14) connection and source sign-ins open in
+     Apple's sign-in sheet over the app (`location-probe|sign_in`,
+     `SignInSheet.swift`), so the app stays in front. The proxy's return
+     page, and the box's `/oauth/callback` for a source, close the sheet by
+     sending it to `virtues-signin://done` when the sign-in carries
+     `sheet=1`. Not yet run on a phone: whether a source's return to
+     `:7117` loads inside the sheet is the open question.
 4. **Connections in applets.** `allowed-tools` entries for connection tools,
    the Rule of Two legs, owner-only adding. Then owner-added URLs from
    Settings.
