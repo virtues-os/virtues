@@ -180,6 +180,8 @@ async fn prepare_run(
     applet_id: &str,
     trigger: &str,
 ) -> Result<PrepareOutcome> {
+    RunFile::sweep_once();
+
     // 1. Fetch action
     let action = match applets::get_applet(&deps.db, applet_id).await {
         Ok(a) if a.enabled => a,
@@ -893,19 +895,44 @@ fn direct_command(program: &std::path::Path, args: &[String], env: &[(String, St
 /// A file a sandboxed run needs until it ends, such as its environment or its
 /// credentials: mode 0600, in a folder only the box user can open and the
 /// unit itself is denied, and removed when dropped.
-struct RunFile {
+///
+/// Drop does not run when the server dies without unwinding (SIGKILL, the
+/// OOM killer, power loss), so the first run in each server process also
+/// removes whatever an earlier process left in the folder ([`Self::sweep_once`]).
+pub(crate) struct RunFile {
     path: std::path::PathBuf,
 }
 
 impl RunFile {
-    fn dir() -> std::path::PathBuf {
+    /// The folder every run file lives in. `crate::box_files` lists it, so
+    /// `reset` and `deprovision` remove it and `image-check` looks in it.
+    pub(crate) fn dir() -> std::path::PathBuf {
         crate::data_disk::data_dir().join("applet-env")
+    }
+
+    /// Remove the run files an earlier server process left behind, once per
+    /// process and before this process writes its first. Only the server runs
+    /// applets, and every jailed run is its child, so at that point no file in
+    /// the folder belongs to a run that is still starting.
+    fn sweep_once() {
+        static SWEPT: std::sync::Once = std::sync::Once::new();
+        SWEPT.call_once(|| {
+            let dir = Self::dir();
+            let removed = remove_run_files_in(&dir);
+            if removed > 0 {
+                tracing::info!(
+                    "removed {removed} applet run file(s) that an earlier server process left in {}",
+                    dir.display()
+                );
+            }
+        });
     }
 
     fn write(extension: &str, contents: &[u8]) -> Result<Self> {
         use std::io::Write;
         use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
 
+        Self::sweep_once();
         let dir = Self::dir();
         let fail = |what: &str, e: std::io::Error| {
             Error::Other(format!("could not {what} a file for the applet's run in {}: {e}", dir.display()))
@@ -937,6 +964,32 @@ impl Drop for RunFile {
             tracing::warn!("could not remove applet run file {}: {e}", self.path.display());
         }
     }
+}
+
+/// Remove everything in `dir` and return how many entries went. A missing
+/// folder means no run has written one yet, which is not an error.
+fn remove_run_files_in(dir: &std::path::Path) -> usize {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return 0,
+        Err(e) => {
+            tracing::warn!("could not read {} to remove old applet run files: {e}", dir.display());
+            return 0;
+        }
+    };
+    let mut removed = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let gone = match entry.file_type() {
+            Ok(t) if t.is_dir() => std::fs::remove_dir_all(&path),
+            _ => std::fs::remove_file(&path),
+        };
+        match gone {
+            Ok(()) => removed += 1,
+            Err(e) => tracing::warn!("could not remove old applet run file {}: {e}", path.display()),
+        }
+    }
+    removed
 }
 
 /// `KEY="value"` lines for `EnvironmentFile=`. Inside double quotes systemd
@@ -1514,6 +1567,25 @@ mod tests {
             env_file_contents(&env),
             "EXAMPLE_KEY=\"a \\\"b\\\" \\\\c $d\"\nMULTI=\"one\ntwo\"\n"
         );
+    }
+
+    /// Files a killed server left behind are removed, folder and all, and a
+    /// folder that was never made is not an error.
+    #[test]
+    fn the_sweep_removes_every_leftover_run_file() {
+        let root = tempfile::tempdir().unwrap();
+        let dir = root.path().join("applet-env");
+        assert_eq!(remove_run_files_in(&dir), 0);
+
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("a.env"), "EXAMPLE_KEY=\"sk-example\"\n").unwrap();
+        std::fs::write(dir.join("b.json"), r#"{"access_token":"example"}"#).unwrap();
+        std::fs::create_dir(dir.join("stray")).unwrap();
+        std::fs::write(dir.join("stray").join("c.env"), "").unwrap();
+
+        assert_eq!(remove_run_files_in(&dir), 3);
+        assert_eq!(std::fs::read_dir(&dir).unwrap().count(), 0);
+        assert!(dir.is_dir(), "the folder itself stays for the next run");
     }
 
     /// A sync gets its cursor back, and a manifest value beats a stale copy

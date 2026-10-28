@@ -8,7 +8,7 @@
 //!
 //! On a box the door is a transient `systemd-run` unit, created through
 //! `sudo` as `api::code` creates its sandbox: a throwaway uid
-//! (`DynamicUser`), its key in a systemd-managed state directory, the bundle
+//! (`DynamicUser`), its key handed to it by systemd as a credential, the bundle
 //! directory bound read-only at `/pub`, and the box's data, the database
 //! socket and loopback all out of reach. It reaches the internet, because it
 //! homes on the relay, and nothing on the box but its own files.
@@ -196,20 +196,38 @@ fn key_file() -> std::path::PathBuf {
     publications::door_dir().join("door.key")
 }
 
-/// Write the door key where only this user can read it.
-fn write_key_file(seed: &[u8; 32]) -> std::io::Result<()> {
-    let path = key_file();
+/// Write the door key to `path` where only this user can read it. The copy is
+/// created 0600, so no other user can open it even for a moment, and is
+/// renamed into place. A copy a crash left behind is removed first, because
+/// the mode applies only to a file this call creates.
+fn write_key_file(path: &Path, seed: &[u8; 32]) -> std::io::Result<()> {
+    use std::io::Write;
+
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
     let tmp = path.with_extension("key.tmp");
-    std::fs::write(&tmp, seed)?;
+    match std::fs::remove_file(&tmp) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(e),
+        _ => {}
+    }
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600))?;
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
     }
-    std::fs::rename(&tmp, &path)
+    let written = (|| {
+        let mut file = options.open(&tmp)?;
+        file.write_all(seed)?;
+        file.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    written
 }
 
 /// Launch the door, with its key in place and the bundle directory matching
@@ -231,7 +249,7 @@ async fn start(pool: &PgPool) -> Option<Child> {
             return None;
         }
     };
-    if let Err(e) = write_key_file(&seed) {
+    if let Err(e) = write_key_file(&key_file(), &seed) {
         tracing::error!(error = %e, "door: could not write its key file");
         return None;
     }
@@ -392,6 +410,27 @@ mod tests {
         let writable: Vec<_> = props.iter().filter(|p| p.starts_with("BindPaths=")).collect();
         assert_eq!(writable.len(), 1, "only the core's socket: {writable:?}");
         assert!(writable[0].ends_with(":/run/virtues-core.sock"));
+    }
+
+    /// The key file is 0600 from creation, and a world-readable copy a crash
+    /// left behind is replaced rather than reused with its old mode.
+    #[cfg(unix)]
+    #[test]
+    fn the_key_file_is_never_readable_by_others() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("door").join("door.key");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let stale = path.with_extension("key.tmp");
+        std::fs::write(&stale, b"stale").unwrap();
+        std::fs::set_permissions(&stale, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        write_key_file(&path, &[7u8; 32]).unwrap();
+
+        assert_eq!(std::fs::read(&path).unwrap(), [7u8; 32]);
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600, "mode {mode:o}");
+        assert!(!stale.exists());
     }
 
     #[test]

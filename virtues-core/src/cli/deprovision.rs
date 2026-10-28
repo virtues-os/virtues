@@ -35,6 +35,8 @@
 //!   * chat-authored applets, code (state root) and data (`applet_*` schemas)
 //!     alike — the owner's own writing, which would otherwise be cloned onto
 //!     every unit built from this master
+//!   * every per-box file in `crate::box_files`: the backup recipient, the
+//!     shared pages with the door's key, and leftover applet run files
 //!   * the journal
 //!
 //! **What it keeps:** the installed binary, the systemd units, the env file's
@@ -68,6 +70,7 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     println!("     • VIRTUES_ENCRYPTION_KEY (re-minted on first boot)");
     println!("     • machine-id, SSH host keys, saved wifi networks");
     println!("     • chat-authored applets (their code AND their data)");
+    println!("     • the backup recipient, shared pages, the door key, applet run files");
     println!("   KEEPS: the binary, systemd units, models, QAIRT libs.");
     println!();
     // When the network actually drops depends on where the profile lived, and
@@ -241,6 +244,15 @@ pub async fn run(yes: bool, force: bool) -> Result<(), crate::Error> {
     // an RMA, a resale, a cofounder's bench. "Deprovisioned" is the claim that
     // is supposed to make that safe.
     remove_backups();
+
+    // ── 3a3. Per-box files outside the database ─────────────────────────────
+    // `reset` above removed the ones that copy rows it dropped. This removes
+    // all of them, which adds the backup recipient. Left in place, it makes
+    // the next owner's backups encrypt to this owner's recovery key without
+    // an error, and the next owner is never asked to make a key of their own.
+    // This runs as root, so a file root wrote goes too.
+    crate::box_files::remove_each(&crate::box_files::all())
+        .map_err(|e| crate::Error::Other(format!("{e}. Not safe to image.")))?;
 
     // ── 3b. The relocated Postgres cluster ──────────────────────────────────
     // On an appliance the cluster lives on the data disk and `/var/lib/postgresql`

@@ -22,6 +22,10 @@
 //! * **Saved wifi** ships the workshop's network password to customers — and
 //!   on Ubuntu it is stored by netplan, not by NetworkManager, which is where
 //!   this check used to look and find nothing.
+//! * **Per-box files outside the database** (`crate::box_files`): a backup
+//!   recipient makes the next owner's backups open only with this owner's
+//!   key, the door key lets its holder answer as this box's shared links, and
+//!   an applet run file holds decrypted keys.
 //!
 //! ## Read-only, on purpose
 //!
@@ -242,6 +246,21 @@ pub async fn run() -> i32 {
                     fix: "sudo virtues deprovision",
                 });
             }
+        }
+    }
+
+    // ── Per-box files outside the database ──────────────────────────────────
+    // The list `deprovision` and `reset` remove from, read here too, so a file
+    // added to it is checked from then on. The backup recipient is the costly
+    // one: a board handed on with it encrypts the next owner's backups to the
+    // previous owner's key, and nothing reports it.
+    for f in crate::box_files::all() {
+        if crate::box_files::holds_a_file(&f.path) {
+            findings.push(Finding {
+                what: f.what,
+                detail: format!("{} is still on this disk: {}", f.path.display(), f.why),
+                fix: "sudo virtues deprovision",
+            });
         }
     }
 
@@ -677,6 +696,25 @@ fn audit_card_side(findings: &mut Vec<Finding>) {
                 ),
             fix: "sudo virtues deprovision   (reseeds env onto the card)",
         }),
+    }
+    // Firstboot copies the card side onto each clone's disk, so a per-box file
+    // under the mount reaches every clone.
+    for f in crate::box_files::all() {
+        let Ok(rel) = f.path.strip_prefix(data_dir) else {
+            continue;
+        };
+        if crate::box_files::holds_a_file(&card.join(rel)) {
+            findings.push(Finding {
+                what: "card-side per-box file",
+                detail: format!(
+                    "a copy of the {} at {} sits under the data-disk mount, so every clone gets it: {}",
+                    f.what,
+                    f.path.display(),
+                    f.why
+                ),
+                fix: "sudo virtues deprovision   (wipes and reseeds the card side)",
+            });
+        }
     }
     if !card.join(".needs-firstboot").exists() {
         findings.push(Finding {
