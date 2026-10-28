@@ -260,9 +260,9 @@ fn run_trigger(context: &ToolContext) -> &'static str {
 }
 
 /// run: dispatch an action now, under [`run_trigger`].
-/// Optional `payload` is forwarded to the runner; optional `date` is merged
-/// into the action's `config.date` for actions that accept a date override
-/// (e.g. `day_summary_eod`).
+/// Optional `payload` is forwarded to the runner; optional `date` goes into
+/// the payload as `date` for actions that accept a date override (e.g.
+/// `day_summary_eod`). It is never written to the row, so it lasts one run.
 pub async fn run_applet(
     pool: &PgPool,
     yjs: &YjsState,
@@ -274,22 +274,7 @@ pub async fn run_applet(
         .and_then(|v| v.as_str())
         .ok_or_else(|| ToolError::InvalidParameters("id is required".into()))?;
 
-    let payload = arguments.get("payload").cloned();
-
-    // Date override: if present, merge into the stored config so the binary
-    // picks it up via stdin. Uses `update_applet` with just the config key
-    // so the system-owner guard still applies correctly.
-    if let Some(date) = arguments.get("date").and_then(|v| v.as_str()) {
-        let current = applets::get_applet(pool, id).await.map_err(map_err)?;
-        let mut config = current.config.clone();
-        if let Some(obj) = config.as_object_mut() {
-            obj.insert("date".to_string(), serde_json::json!(date));
-        }
-        let patch = serde_json::json!({ "config": config });
-        applets::update_applet(pool, id, &patch)
-            .await
-            .map_err(map_err)?;
-    }
+    let payload = with_date(arguments.get("payload").cloned(), arguments.get("date").and_then(|v| v.as_str()));
 
     let deps = RunnerDeps {
         db: pool.clone(),
@@ -320,9 +305,32 @@ pub async fn run_applet(
     })))
 }
 
+/// The run's payload with a date override added. The runner saves a run's
+/// returned config to `state` only, so an override written to the row's
+/// `config` would stay there and pin every later scheduled run to that day.
+fn with_date(payload: Option<serde_json::Value>, date: Option<&str>) -> Option<serde_json::Value> {
+    let Some(date) = date else { return payload };
+    let mut obj = match payload {
+        Some(serde_json::Value::Object(m)) => m,
+        _ => serde_json::Map::new(),
+    };
+    obj.insert("date".to_string(), serde_json::json!(date));
+    Some(serde_json::Value::Object(obj))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_date_override_rides_in_the_payload() {
+        assert_eq!(with_date(None, None), None);
+        assert_eq!(with_date(None, Some("2026-03-02")), Some(serde_json::json!({ "date": "2026-03-02" })));
+        assert_eq!(
+            with_date(Some(serde_json::json!({ "x": 1 })), Some("2026-03-02")),
+            Some(serde_json::json!({ "x": 1, "date": "2026-03-02" }))
+        );
+    }
 
     #[test]
     fn the_console_runs_an_applet_manually() {
