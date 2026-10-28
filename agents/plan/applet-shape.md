@@ -46,6 +46,9 @@ a permission system per applet is not wanted.
   messages or drive your Mac's browser, because nobody is there to see it.
   There is no per-applet permission system: no host approvals, no Rule of
   Two check, no lake grant, no login per applet.
+- **Decided the same day:** the per-applet connection approval goes with
+  the rest (an applet that lists a connection's tools gets them), and the
+  unattended-sends line stays.
 - **What an applet did is shown, not gated.** Every run records what it
   reached outside the box and what it made, and the run's page shows it. This
   is what the data sovereign asks for.
@@ -388,8 +391,10 @@ Each item is deleted in its slice, not disabled.
 - The `lake` grant (code reads the lake by default), the shipped-only rule
   on `source`, and the PATCH guard on `allowed_tools` and `net_hosts`.
 - The planned Rule of Two check and the planned login per applet.
-- The per-applet connection approval (`app_applets.connections`, built in
-  261ae171e by the MCP work), if the owner agrees (Open decisions).
+- The per-applet connection approval (`app_applets.connections`, its
+  route and the connections half of `AppletAllowList.svelte`, built in
+  261ae171e by the MCP work). An applet that lists a connection's tools
+  gets them.
 - The Git import in the app (`GitImportModal.svelte`, the import endpoint and
   `applet_git_import.rs`), until imports are wanted.
 
@@ -522,19 +527,6 @@ The converter's mapping, for boxes upgrading from `manifest.toml`:
 | an id with hyphens | `metadata.id` |
 
 ## Open decisions
-
-### The per-applet connection approval
-
-An applet uses a connection's tools (Linear, say) only once the owner allows
-that connection on the applet's page. It is the one approval left that the
-2026-10-28 direction would remove. A connection acts as you on another
-service, which may be reason enough to keep it. The MCP work built it.
-
-### Unattended sends
-
-An unattended run has no `send_imessage` and no `browse`. That is a product
-line more than a permission: with no one watching, a text goes out with no
-undo. Keep it, or let an applet list them?
 
 ### How many rows `run: sql` hands to the prompt
 
