@@ -6,12 +6,12 @@ updated: 2026-10-20
 
 Search runs on your server's CPU unless you change it. The installer sets up a
 small local engine and its model, and that is enough for everyday use: a few
-minutes of work a day for a typical record.
+minutes of CPU work a day for a typical record.
 
 A GPU or NPU can make two things faster: every search, and the first index
 of your history, which on a CPU can take hours. How much faster depends on the
-hardware. If the installer finds one, it prints a link to this page. Setting it up takes about ten minutes, and you can
-do it any time after installing.
+hardware. If the installer finds one, it prints a link to this page. Setting
+it up takes about ten minutes, and you can do it any time after installing.
 
 ## Set up acceleration
 
@@ -19,21 +19,23 @@ You run the embedding model on the accelerator with
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`, then point
 Virtues at it with one command. Virtues never installs GPU or NPU software for
 you, because we can't test every machine. It does check the server you give
-it before switching to it.
+it before switching.
 
 The same four steps apply to every accelerator below. Only the llama.cpp build
 you download in step 1 changes.
 
-**1. Download llama.cpp for your hardware.** llama.cpp publishes ready-made
-Linux builds on its [releases page](https://github.com/ggml-org/llama.cpp/releases).
-Use the build we run or a newer one. Unpack it anywhere:
+**1. Download the llama.cpp build for your hardware.** Find it in the section
+for your accelerator below (CUDA for NVIDIA, ROCm or Vulkan for AMD, SYCL for
+Intel, and so on), and download it from llama.cpp's [releases page](https://github.com/ggml-org/llama.cpp/releases).
+Use the build we run or a newer one, and unpack it anywhere. For example, the
+Vulkan build that "Other GPUs" uses:
 
 ```bash
 curl -fLO https://github.com/ggml-org/llama.cpp/releases/download/b11507/llama-b11507-bin-ubuntu-vulkan-x64.tar.gz
 tar -xzf llama-b11507-bin-ubuntu-vulkan-x64.tar.gz
 ```
 
-**2. Download the model** Virtues recommends. When Settings → Search shows
+**2. Download the model Virtues recommends.** When Settings → Search shows
 that model, your index stays valid; otherwise the switch rebuilds it:
 
 ```bash
@@ -92,7 +94,7 @@ Mali, Adreno, and other GPUs with a Vulkan driver can try the Vulkan build
 check matters most here. On our own Dragon, the Adreno GPU's Vulkan driver
 hangs, which is why the Dragon uses its NPU instead.
 
-## NPUs
+## Other NPUs
 
 Most NPUs need their vendor's runtime instead of llama.cpp. Any server works if it
 offers an OpenAI-style `/v1/embeddings` endpoint on your machine or network:

@@ -235,18 +235,13 @@ different model. Search doesn't return an error; it returns the wrong results.
 So when the fingerprint doesn't match, the server **stops serving search**
 instead of answering from an index that no longer matches the model.
 
-To recover, run:
-
-```bash
-virtues configure-inference
-```
-
-It re-probes the endpoint, reports what changed, and - on your confirmation -
-re-pins the fingerprint and dimensions, rebuilds the derived index from your
-source data with the new model, and rescores every day's events. Then restart
-the server so search uses the new model. **Your source data is never
-changed.** The embeddings are derived from it and can always be rebuilt.
-`virtues reindex` rebuilds the same index when the endpoint hasn't changed.
+When this happens, `virtues configure-inference` re-probes the endpoint,
+reports what changed, and - on your confirmation - re-pins the fingerprint and
+dimensions, rebuilds the derived index from your source data with the new
+model, and rescores every day's events. Search uses the new model once the
+server restarts. **Your source data is never changed.** The embeddings are
+derived from it and can always be rebuilt. `virtues reindex` rebuilds the same
+index when the endpoint hasn't changed.
 
 Two caveats. A quantization change counts as a different model, so
 re-quantizing the same weights currently triggers a re-embed that isn't
