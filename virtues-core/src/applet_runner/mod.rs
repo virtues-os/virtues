@@ -41,6 +41,7 @@ use tokio::process::Command;
 use tracing::Instrument;
 
 pub mod limits;
+mod run_sql;
 mod sandboxed;
 
 pub(crate) use sandboxed::{allowed_hosts, record_requests, start_proxy};
@@ -211,7 +212,9 @@ async fn prepare_run(
     // invoked server-side. Skip silently so cron ticks don't churn the runs
     // table.
     let has_agent = action.agent.as_deref().is_some_and(|s| !s.trim().is_empty());
-    let has_exec = has_agent || action.command.as_ref().is_some_and(|c| !c.is_empty());
+    let has_exec = has_agent
+        || action.command.as_ref().is_some_and(|c| !c.is_empty())
+        || action.run_sql.as_deref().is_some_and(|s| !s.trim().is_empty());
     if !has_exec {
         tracing::debug!(applet_id, "face-only applet — never invoked server-side");
         return Ok(PrepareOutcome::Early(AppletRunResult {
@@ -448,6 +451,47 @@ async fn execute_prepared_inner(
         None
     };
 
+    // 6b. SQL phase: `run: sql`, read-only, before the prompt. No rows means
+    // nothing to do, so a run with a prompt is skipped without a model call.
+    // A message is the exception, for the reason a condition does not gate
+    // one: what someone typed is the input, whatever the SQL found.
+    let has_prompt = action.agent.as_ref().is_some_and(|s| !s.trim().is_empty());
+    let mut sql_context: Option<String> = None;
+    if let Some(sql) = action.run_sql.as_deref().filter(|s| !s.trim().is_empty()) {
+        match run_sql::run(&deps.db, sql).await {
+            Err(e) => {
+                let msg = e.to_string();
+                tracing::error!(applet_id, error = %msg, "run SQL failed");
+                return fail(&deps, &run_id, &applet_id, msg).await;
+            }
+            Ok(result) if result.total == 0 && trigger != "message" => {
+                let (status, summary, run_status) = if has_prompt {
+                    ("skipped", "Its SQL returned no rows, so there was nothing to do.", AppletRunStatus::Skipped)
+                } else {
+                    ("success", "No rows.", AppletRunStatus::Success)
+                };
+                if let Err(e) = applets::complete_run(&deps.db, &run_id, status, 0, None, Some(summary)).await {
+                    tracing::error!(applet_id, error = %e, "complete_run failed after empty run SQL");
+                }
+                return AppletRunResult {
+                    run_id: Some(run_id),
+                    status: run_status,
+                    summary: summary.to_string(),
+                    error: None,
+                };
+            }
+            Ok(result) if !has_prompt => {
+                let summary = format!("{} {}.", result.total, if result.total == 1 { "row" } else { "rows" });
+                if let Err(e) = applets::complete_run(&deps.db, &run_id, "success", result.total, None, Some(&summary)).await {
+                    tracing::error!(applet_id, error = %e, "complete_run failed after run SQL");
+                }
+                maybe_archive_on_until(&deps.db, &action).await;
+                return AppletRunResult { run_id: Some(run_id), status: AppletRunStatus::Success, summary, error: None };
+            }
+            Ok(result) => sql_context = (result.total > 0).then(|| result.for_prompt()),
+        }
+    }
+
     // 7. Subprocess phase.
     let mut subprocess_summary: Option<String> = None;
     let mut subprocess_records: i64 = 0;
@@ -479,7 +523,11 @@ async fn execute_prepared_inner(
 
     // 8. Agent phase.
     if let Some(prompt) = action.agent.as_ref().filter(|s| !s.trim().is_empty()) {
-        let ctx = subprocess_summary.as_deref();
+        let joined: Option<String> = match (subprocess_summary.as_deref(), sql_context.as_deref()) {
+            (Some(a), Some(b)) => Some(format!("{a}\n\n{b}")),
+            (a, b) => a.or(b).map(str::to_string),
+        };
+        let ctx = joined.as_deref();
         match crate::agent::applet_runner::run_agent_loop(
             &deps.db,
             &deps.yjs,
@@ -1519,6 +1567,42 @@ mod tests {
             .fetch_one(pool)
             .await
             .unwrap()
+    }
+
+    /// A `run` SQL that finds nothing records a skipped run and calls no
+    /// model; one with no prompt after it reports its rows as the run.
+    #[sqlx::test]
+    async fn run_sql_with_no_rows_skips_the_prompt(pool: sqlx::PgPool) {
+        let deps = RunnerDeps { db: pool.clone(), yjs: YjsState::new(pool.clone()) };
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent, run_sql, triggers, enabled) VALUES \
+             ('applet_quiet', 'Quiet', 'user', 'Say what happened.', 'select 1 where false', '[\"cron\",\"manual\"]', TRUE), \
+             ('applet_count', 'Count', 'user', NULL, 'select g from generate_series(1, 3) g', '[\"cron\",\"manual\"]', TRUE)",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let quiet = run_applet(&deps, "applet_quiet", "cron", None).await.unwrap();
+        assert_eq!(quiet.status, AppletRunStatus::Skipped);
+        let (status, summary): (String, Option<String>) =
+            sqlx::query_as("SELECT status, result_summary FROM app_applet_runs WHERE applet_id = 'applet_quiet'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "skipped", "the skip is recorded, unlike a falsy condition");
+        assert!(summary.unwrap().contains("no rows"));
+        let calls: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM app_ai_calls c JOIN app_applet_runs r ON r.id = c.applet_run_id WHERE r.applet_id = 'applet_quiet'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(calls, 0, "no model call");
+
+        let count = run_applet(&deps, "applet_count", "manual", None).await.unwrap();
+        assert_eq!(count.status, AppletRunStatus::Success);
+        assert_eq!(count.summary, "3 rows.");
     }
 
     /// A condition gates POLLS. Someone who just pressed send is not a poll, and

@@ -392,10 +392,13 @@ pub(crate) fn seen_queries(applet_id: &str) -> Vec<String> {
     seen_store().lock().expect("face query store poisoned").get(applet_id).cloned().unwrap_or_default()
 }
 
-pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::result::Result<serde_json::Value, String> {
-    if sql.len() > 20_000 {
-        return Err("query too long".into());
-    }
+/// A read-only transaction on the reader login, with a statement timeout and
+/// the owner's timezone, and the zone it was set to. View SQL and an applet's
+/// `run` SQL both run in one.
+pub(crate) async fn reader_transaction(
+    pool: &sqlx::PgPool,
+    timeout: &str,
+) -> std::result::Result<(sqlx::Transaction<'static, sqlx::Postgres>, String), String> {
     // The zone comes from the profile, an app_* table the reader cannot see,
     // so it is read on the main pool before the reader's transaction.
     let zone = crate::timezone::resolve_timezone(pool, None)
@@ -408,13 +411,21 @@ pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::resul
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
-    sqlx::query("SET LOCAL statement_timeout = '5s'")
+    sqlx::query(&format!("SET LOCAL statement_timeout = '{timeout}'"))
         .execute(&mut *tx)
         .await
         .map_err(|e| e.to_string())?;
     crate::timezone::apply_timezone(&mut tx, &zone)
         .await
         .map_err(|e| e.to_string())?;
+    Ok((tx, zone))
+}
+
+pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::result::Result<serde_json::Value, String> {
+    if sql.len() > 20_000 {
+        return Err("query too long".into());
+    }
+    let (mut tx, _) = reader_transaction(pool, "5s").await?;
 
     let wrapped = format!(
         "SELECT COALESCE(json_agg(row_to_json(q)), '[]'::json) FROM \

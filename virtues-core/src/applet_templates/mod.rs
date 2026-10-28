@@ -233,6 +233,10 @@ struct Template {
     /// A `SKILL.md`'s `icon`, an `ri:` id, for the `/` menu.
     #[serde(skip)]
     icon: Option<String>,
+    /// A `SKILL.md`'s `run: sql …`, or the text of its `.sql` file: read-only
+    /// SQL run before the prompt (`applet_runner::run_sql`).
+    #[serde(skip)]
+    run_sql: Option<String>,
     /// Manifest folder relative to the actions root. Populated by the loader
     /// from the on-disk path, never read from TOML — a file can't know its own
     /// location. Examples: `morning_brief`, `team-pack/actions/foo`.
@@ -1335,6 +1339,7 @@ pub async fn reconcile_templates(db: &PgPool) -> Result<usize> {
         // then never ran. This is the same derivation the runner and the API
         // already use.
         let runs_server_side = template.command.as_ref().is_some_and(|c| !c.is_empty())
+            || template.run_sql.is_some()
             || template.agent.as_deref().is_some_and(|a| !a.trim().is_empty());
         if template.triggers.is_empty() && runs_server_side {
             return Err(Error::Other(format!(
@@ -1618,9 +1623,9 @@ async fn upsert_row(
         INSERT INTO app_applets (
             id, name, owner, agent, agent_shipped, schedule, enabled, config,
             condition, triggers, credential_id, command, device_id, until,
-            description
+            description, run_sql
         )
-        VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14, $15)
         ON CONFLICT(id) DO UPDATE SET
             agent = CASE
                 -- A hole. An agent applet with no prompt is a scheduled no-op
@@ -1651,9 +1656,9 @@ async fn upsert_row(
         INSERT INTO app_applets (
             id, name, owner, agent, agent_shipped, schedule, enabled, config,
             condition, triggers, credential_id, command, device_id, until,
-            description
+            description, run_sql
         )
-        VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14, $15)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             agent          = EXCLUDED.agent,
@@ -1664,6 +1669,7 @@ async fn upsert_row(
             triggers       = EXCLUDED.triggers,
             until          = EXCLUDED.until,
             description    = EXCLUDED.description,
+            run_sql        = EXCLUDED.run_sql,
             updated_at     = now()
         "#
     } else {
@@ -1671,9 +1677,9 @@ async fn upsert_row(
         INSERT INTO app_applets (
             id, name, owner, agent, agent_shipped, schedule, enabled, config,
             condition, triggers, credential_id, command, device_id, until,
-            description
+            description, run_sql
         )
-        VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10, $11, $12, $13, $14, $15)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             owner          = EXCLUDED.owner,
@@ -1687,6 +1693,7 @@ async fn upsert_row(
             device_id      = EXCLUDED.device_id,
             until          = EXCLUDED.until,
             description    = EXCLUDED.description,
+            run_sql        = EXCLUDED.run_sql,
             updated_at     = now()
         "#
     };
@@ -1706,6 +1713,7 @@ async fn upsert_row(
         .bind(device_id)
         .bind(&template.until)
         .bind(&template.description)
+        .bind(&template.run_sql)
         .execute(db)
         .await?;
 

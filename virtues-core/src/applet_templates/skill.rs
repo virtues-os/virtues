@@ -11,7 +11,8 @@
 //! when there is any.
 //!
 //! Parts of the format that have nothing behind them yet are refused rather
-//! than accepted and ignored: data triggers (`new <table>`) and SQL in `run`.
+//! than accepted and ignored: data triggers (`new <table>`), and `new_rows`
+//! in a `run` SQL, which only a data trigger fills.
 //!
 //! A `net(host)` entry asks for a host. It is kept in `config.net_hosts`,
 //! and a run reaches it only when the owner has also allowed it on the
@@ -192,7 +193,11 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
     }
 
     let triggers = meta("trigger").map(|v| parse_triggers(v, &mut errors)).unwrap_or_default();
-    let command = meta("run").and_then(|v| parse_run(v, folder, shipped, &mut errors));
+    let (command, run_sql) = match meta("run").and_then(|v| parse_run(v, folder, shipped, &mut errors)) {
+        Some(Run::Command(argv)) => (Some(argv), None),
+        Some(Run::Sql(sql)) => (None, Some(sql)),
+        None => (None, None),
+    };
     let source = meta("source").map(str::trim).map(str::to_string);
     if let Some(s) = &source {
         if s.is_empty() || !s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
@@ -201,7 +206,7 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
     }
 
     let starts_alone = triggers.schedule.is_some() || triggers.webhook;
-    if starts_alone && !has_prompt && command.is_none() {
+    if starts_alone && !has_prompt && command.is_none() && run_sql.is_none() {
         errors.push("`trigger` starts it, but it has no prompt and no `run`, so a run would do nothing.".into());
     }
     if triggers.webhook && source.is_none() {
@@ -277,7 +282,7 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
     // The run's triggers. Run now, and the thread for a prompt, are always
     // there; a webhook-only applet starts only from its posts.
     let mut trigger_list: Vec<String> = Vec::new();
-    if (has_prompt || command.is_some()) && !(triggers.webhook && triggers.schedule.is_none()) {
+    if (has_prompt || command.is_some() || run_sql.is_some()) && !(triggers.webhook && triggers.schedule.is_none()) {
         trigger_list.push("manual".into());
     }
     if has_prompt {
@@ -327,6 +332,7 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         per_credential: source.is_some(),
         source: source.map(|id| SourceRef { id }),
         command,
+        run_sql,
         config: (!config.is_empty()).then_some(toml::Value::Table(config)),
         writes,
         needs_vault_key: shipped && VAULT_KEY_APPLETS.contains(&name.as_str()),
@@ -738,12 +744,36 @@ fn parse_step(n: &str, max: u32) -> Result<u32, String> {
         .ok_or_else(|| format!("\"{n}\" must be a whole number from 2 to {max}."))
 }
 
-/// `run` as the argv the runner spawns.
-fn parse_run(value: &str, folder: &Path, shipped: bool, errors: &mut Vec<String>) -> Option<Vec<String>> {
-    let value = value.trim();
-    if value.starts_with("sql ") || value.ends_with(".sql") {
-        errors.push("SQL in `run` is not supported yet. Use a script under `scripts/`.".into());
+/// What `run` names: code to spawn, or SQL to run before the prompt.
+enum Run {
+    Command(Vec<String>),
+    Sql(String),
+}
+
+/// SQL `run` may hold: one statement, and no `new_rows`, which only a data
+/// trigger fills. Whether it prepares is for Postgres, at save.
+fn check_run_sql(sql: &str, errors: &mut Vec<String>) -> Option<String> {
+    let sql = sql.trim().trim_end_matches(';').trim();
+    if sql.is_empty() {
+        errors.push("`run` has no SQL after `sql`.".into());
         return None;
+    }
+    if sql.contains(';') {
+        errors.push("`run` SQL is one statement.".into());
+        return None;
+    }
+    if sql.to_ascii_lowercase().contains("new_rows") {
+        errors.push("`run` SQL reads `new_rows`, which only a data trigger fills, and an applet cannot start on new data yet.".into());
+        return None;
+    }
+    Some(sql.to_string())
+}
+
+/// `run` as the argv the runner spawns, or the SQL it runs.
+fn parse_run(value: &str, folder: &Path, shipped: bool, errors: &mut Vec<String>) -> Option<Run> {
+    let value = value.trim();
+    if let Some(sql) = value.strip_prefix("sql ") {
+        return check_run_sql(sql, errors).map(Run::Sql);
     }
     if value.contains('/') {
         let Some(rel) = value.strip_prefix("scripts/") else {
@@ -759,12 +789,21 @@ fn parse_run(value: &str, folder: &Path, shipped: bool, errors: &mut Vec<String>
             errors.push(format!("`run` names {value}, which is not in the folder."));
             return None;
         }
+        if path.extension().and_then(|e| e.to_str()) == Some("sql") {
+            return match std::fs::read_to_string(&path) {
+                Ok(sql) => check_run_sql(&sql, errors).map(Run::Sql),
+                Err(e) => {
+                    errors.push(format!("`run` names {value}, which could not be read: {e}"));
+                    None
+                }
+            };
+        }
         let path = path.to_string_lossy().into_owned();
-        return Some(match Path::new(value).extension().and_then(|e| e.to_str()) {
+        return Some(Run::Command(match Path::new(value).extension().and_then(|e| e.to_str()) {
             Some("py") => vec!["python3".into(), path],
             Some("sh") => vec!["sh".into(), path],
             _ => vec![path],
-        });
+        }));
     }
     if value.is_empty() || !value.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
         errors.push(format!(
@@ -778,7 +817,7 @@ fn parse_run(value: &str, folder: &Path, shipped: bool, errors: &mut Vec<String>
         ));
         return None;
     }
-    Some(vec![value.to_string()])
+    Some(Run::Command(vec![value.to_string()]))
 }
 
 /// `limit`: `$N per run`, `$N per day` and a duration, comma-separated.
@@ -1052,8 +1091,9 @@ mod tests {
     #[test]
     fn run_is_a_script_in_the_folder_or_a_shipped_binary() {
         for (run, expect) in [
-            ("sql select 1", "SQL in `run` is not supported yet"),
-            ("scripts/check.sql", "SQL in `run` is not supported yet"),
+            ("sql select 1; drop table x", "one statement"),
+            ("sql select * from new_rows", "only a data trigger fills"),
+            ("scripts/check.sql", "which is not in the folder"),
             ("../escape.py", "must be a file under `scripts/`"),
             ("scripts/../../etc/passwd", "must be a file under `scripts/`"),
             ("scripts/missing.py", "which is not in the folder"),
@@ -1163,6 +1203,25 @@ mod tests {
         std::fs::write(f.path().join("view.html"), vec![b'x'; 49 * 1024]).unwrap();
         let e = parse(&text, f.path(), "weekly-review", false).unwrap_err().join(" ");
         assert!(e.contains("The limit is 48 KB"), "{e}");
+    }
+
+    /// SQL in `run`, inline or as a file under `scripts/`, runs before the
+    /// prompt; a schedule with only SQL behind it is a run.
+    #[test]
+    fn run_takes_sql_inline_or_from_a_file() {
+        let t = ok(
+            &format!("{BASE}\nmetadata:\n  run: sql select 1 where not exists (select 1 from data_health_workout)\n  trigger: every day at 09:00"),
+            "Say it has been a while.",
+        );
+        assert_eq!(t.run_sql.as_deref(), Some("select 1 where not exists (select 1 from data_health_workout)"));
+        assert!(t.command.is_none());
+        let f = folder();
+        std::fs::create_dir_all(f.path().join("scripts")).unwrap();
+        std::fs::write(f.path().join("scripts/high.sql"), "select bpm from data_health_heart_rate where bpm > 100;\n").unwrap();
+        let text = skill("name: high\ndescription: High readings.\nmetadata:\n  run: scripts/high.sql\n  trigger: every hour", "");
+        let t = parse(&text, f.path(), "high", false).unwrap();
+        assert_eq!(t.run_sql.as_deref(), Some("select bpm from data_health_heart_rate where bpm > 100"));
+        assert!(t.triggers.contains(&"cron".to_string()));
     }
 
     #[test]

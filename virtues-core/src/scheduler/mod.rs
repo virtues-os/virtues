@@ -99,7 +99,8 @@ impl Scheduler {
                  AND archived_at IS NULL
                  AND schedule IS NOT NULL
                  AND triggers @> '["cron"]'::jsonb
-                 AND (command IS NOT NULL OR (agent IS NOT NULL AND btrim(agent) <> ''))"#,
+                 AND (command IS NOT NULL OR run_sql IS NOT NULL
+                      OR (agent IS NOT NULL AND btrim(agent) <> ''))"#,
             )
             .fetch_all(&self.db)
             .await?;

@@ -81,6 +81,10 @@ pub struct Applet {
     /// proven iroh key authorizes posts to this action.
     pub device_id: Option<String>,
     pub command: Option<Vec<String>>,
+    /// Read-only SQL run before the prompt; its rows go to the prompt, and
+    /// none means a skipped run (`applet_runner::run_sql`).
+    #[serde(default)]
+    pub run_sql: Option<String>,
     /// Lifecycle: NULL = forever · `"once"` = archive after first success ·
     /// SQL boolean = archive when it evaluates true (checked post-success).
     pub until: Option<String>,
@@ -1211,6 +1215,8 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         credential_id: row.try_get("credential_id")?,
         device_id: row.try_get("device_id")?,
         command,
+        // absent-ok: a query that does not select it is not running the applet.
+        run_sql: row.try_get("run_sql").ok().flatten(),
         until: row.try_get("until").ok().flatten(),
         archived_at: row.try_get("archived_at").ok().flatten(),
         last_slot_at: row.try_get("last_slot_at").ok().flatten(),
