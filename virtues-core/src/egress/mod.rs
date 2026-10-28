@@ -8,6 +8,10 @@
 //!
 //! - accepts `CONNECT host:443` for HTTPS and absolute-form `http://host/…`
 //!   requests on port 80, and nothing else;
+//! - for HTTPS, reads the TLS ClientHello and refuses it unless its server
+//!   name is the host the tunnel was opened for; for HTTP, sends the checked
+//!   host as `Host` and one request per connection, so a shared front end
+//!   cannot be asked for another site;
 //! - allows only the run's listed hosts, after [`policy::check_host`];
 //! - resolves the name itself and refuses it when any address it resolves to
 //!   is inside the box or its network ([`policy::check_address`]), then
@@ -31,6 +35,9 @@ use tokio::task::JoinHandle;
 
 /// The largest request head the proxy reads before refusing it.
 const MAX_HEAD_BYTES: usize = 16 * 1024;
+/// The largest TLS record (2^14 bytes and its 5-byte header, plus the
+/// expansion TLS allows), which bounds a ClientHello read.
+const MAX_TLS_RECORD: usize = 5 + 16384 + 2048;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const HEAD_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -211,7 +218,7 @@ async fn serve(mut client: UnixStream, grant: &Grant) -> Option<Request> {
             None => (authority.to_ascii_lowercase(), 80),
         };
         let path = if path.is_empty() { "/" } else { path };
-        (host, port, Some(origin_form(&parsed, &method, path)))
+        (host.clone(), port, Some(origin_form(&parsed, &method, &host, path)))
     };
 
     let wanted_port = if method == "CONNECT" { 443 } else { 80 };
@@ -248,8 +255,95 @@ async fn serve(mut client: UnixStream, grant: &Grant) -> Option<Request> {
         }
     };
 
-    let (sent, received) = relay(client, upstream, preface, &head[end..], method == "CONNECT").await;
+    let early = &head[end..];
+    let first = match preface {
+        Some(mut p) => {
+            p.extend_from_slice(early);
+            p
+        }
+        None => {
+            // The tunnel is open from the client's side; what it sends first
+            // must be a ClientHello for the host it asked for.
+            if client.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await.is_err() {
+                return None;
+            }
+            let hello = match tokio::time::timeout(HEAD_TIMEOUT, read_client_hello(&mut client, early.to_vec())).await {
+                Ok(Ok(h)) => h,
+                _ => return Some(closed(&host, &method, "The tunnel did not start with a TLS ClientHello.")),
+            };
+            match server_name(&hello) {
+                Some(name) if name.eq_ignore_ascii_case(&host) => hello,
+                Some(name) => {
+                    let why = format!("The TLS server name {name} is not {host}, which the tunnel was opened for.");
+                    return Some(closed(&host, &method, &why));
+                }
+                None => return Some(closed(&host, &method, "The TLS ClientHello names no server.")),
+            }
+        }
+    };
+    let (sent, received) = relay(client, upstream, &first).await;
     Some(Request { host, method, bytes_sent: sent, bytes_received: received, refused: None })
+}
+
+/// Read the client's first TLS record, starting from bytes already read.
+/// A ClientHello fits in one record in practice; one split across records is
+/// refused rather than reassembled.
+async fn read_client_hello(client: &mut UnixStream, mut buf: Vec<u8>) -> std::io::Result<Vec<u8>> {
+    let mut chunk = [0u8; 4096];
+    loop {
+        if buf.len() >= 5 {
+            let want = 5 + u16::from_be_bytes([buf[3], buf[4]]) as usize;
+            if buf[0] != 0x16 || want > MAX_TLS_RECORD {
+                return Err(std::io::Error::other("not a TLS handshake record"));
+            }
+            if buf.len() >= want {
+                return Ok(buf);
+            }
+        }
+        let n = client.read(&mut chunk).await?;
+        if n == 0 {
+            return Err(std::io::Error::other("closed before the ClientHello"));
+        }
+        buf.extend_from_slice(&chunk[..n]);
+    }
+}
+
+/// The `server_name` a TLS record holding a ClientHello asks for, or `None`
+/// when it is not one, names no host, or does not parse.
+fn server_name(record: &[u8]) -> Option<String> {
+    let take = |b: &[u8], at: usize, n: usize| b.get(at..at + n).map(|s| s.to_vec());
+    let u16_at = |b: &[u8], at: usize| take(b, at, 2).map(|s| u16::from_be_bytes([s[0], s[1]]) as usize);
+    let record_len = u16_at(record, 3)?;
+    let hs = record.get(5..5 + record_len)?;
+    if *hs.first()? != 0x01 {
+        return None;
+    }
+    let hs_len = u32::from_be_bytes([0, *hs.get(1)?, *hs.get(2)?, *hs.get(3)?]) as usize;
+    let body = hs.get(4..4 + hs_len)?;
+    let mut at = 2 + 32; // client_version, random
+    at += 1 + *body.get(at)? as usize; // session_id
+    at += 2 + u16_at(body, at)?; // cipher_suites
+    at += 1 + *body.get(at)? as usize; // compression_methods
+    let ext_end = at + 2 + u16_at(body, at)?;
+    at += 2;
+    while at + 4 <= ext_end {
+        let (kind, len) = (u16_at(body, at)?, u16_at(body, at + 2)?);
+        let data = body.get(at + 4..at + 4 + len)?;
+        if kind == 0 {
+            // server_name_list: length, then (type, length, name) entries.
+            let mut i = 2;
+            while i + 3 <= data.len() {
+                let n = u16_at(data, i + 1)?;
+                if data[i] == 0 {
+                    return String::from_utf8(data.get(i + 3..i + 3 + n)?.to_vec()).ok();
+                }
+                i += 3 + n;
+            }
+            return None;
+        }
+        at += 4 + len;
+    }
+    None
 }
 
 /// Read until the blank line that ends a request head. Returns the offset
@@ -274,11 +368,13 @@ async fn read_head(client: &mut UnixStream, buf: &mut Vec<u8>) -> std::io::Resul
 /// The request rewritten for the origin server: origin-form target, no
 /// proxy headers, and one request per connection so the proxy sees every
 /// request's host.
-fn origin_form(parsed: &httparse::Request, method: &str, path: &str) -> Vec<u8> {
-    let mut out = format!("{method} {path} HTTP/1.1\r\n").into_bytes();
+fn origin_form(parsed: &httparse::Request, method: &str, host: &str, path: &str) -> Vec<u8> {
+    // The checked host, never the client's own `Host`, which a shared front
+    // end would route by.
+    let mut out = format!("{method} {path} HTTP/1.1\r\nHost: {host}\r\n").into_bytes();
     for h in parsed.headers.iter() {
         let name = h.name.to_ascii_lowercase();
-        if name.starts_with("proxy-") || name == "connection" || name == "keep-alive" {
+        if name.starts_with("proxy-") || matches!(name.as_str(), "host" | "connection" | "keep-alive" | "upgrade") {
             continue;
         }
         out.extend_from_slice(h.name.as_bytes());
@@ -290,33 +386,13 @@ fn origin_form(parsed: &httparse::Request, method: &str, path: &str) -> Vec<u8> 
     out
 }
 
-/// Copy both ways until either side closes. Returns bytes sent upstream and
-/// bytes received from it.
-async fn relay(
-    mut client: UnixStream,
-    mut upstream: TcpStream,
-    preface: Option<Vec<u8>>,
-    early: &[u8],
-    connect: bool,
-) -> (u64, u64) {
-    let mut sent = 0u64;
-    if connect {
-        if client.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await.is_err() {
-            return (0, 0);
-        }
-    } else if let Some(p) = preface {
-        if upstream.write_all(&p).await.is_err() {
-            return (0, 0);
-        }
-        sent += p.len() as u64;
+/// Send `first` upstream, then copy both ways until either side closes.
+/// Returns bytes sent upstream and bytes received from it.
+async fn relay(mut client: UnixStream, mut upstream: TcpStream, first: &[u8]) -> (u64, u64) {
+    if upstream.write_all(first).await.is_err() {
+        return (0, 0);
     }
-    // Bytes the client sent after the head, before the relay began.
-    if !early.is_empty() {
-        if upstream.write_all(early).await.is_err() {
-            return (sent, 0);
-        }
-        sent += early.len() as u64;
-    }
+    let sent = first.len() as u64;
     match tokio::io::copy_bidirectional(&mut client, &mut upstream).await {
         Ok((up, down)) => (sent + up, down),
         Err(_) => (sent, 0),
@@ -334,8 +410,14 @@ async fn refuse(client: &mut UnixStream, status: u16, why: &str) -> std::io::Res
 }
 
 async fn refused(client: &mut UnixStream, host: &str, method: &str, why: &str) -> Request {
-    tracing::info!(host, method, why, "egress refused");
     let _ = refuse(client, 403, why).await;
+    closed(host, method, why)
+}
+
+/// A refusal recorded after the tunnel opened, when no HTTP answer can be
+/// sent: the connection just closes.
+fn closed(host: &str, method: &str, why: &str) -> Request {
+    tracing::info!(host, method, why, "egress refused");
     Request {
         host: host.to_ascii_lowercase(),
         method: method.to_string(),
@@ -419,7 +501,7 @@ mod tests {
 
         let reply = ask(
             &proxy,
-            "GET http://api.example.com/tides?x=1 HTTP/1.1\r\nHost: api.example.com\r\nProxy-Authorization: x\r\n\r\n",
+            "GET http://api.example.com/tides?x=1 HTTP/1.1\r\nHost: other.example.net\r\nProxy-Authorization: x\r\n\r\n",
         )
         .await;
         assert!(reply.ends_with("ok"), "{reply}");
@@ -427,6 +509,8 @@ mod tests {
         assert!(forwarded.starts_with("GET /tides?x=1 HTTP/1.1\r\n"), "{forwarded}");
         assert!(!forwarded.to_ascii_lowercase().contains("proxy-authorization"), "{forwarded}");
         assert!(forwarded.contains("Connection: close"), "{forwarded}");
+        assert_eq!(forwarded.matches("Host: ").count(), 1, "{forwarded}");
+        assert!(forwarded.contains("Host: api.example.com\r\n"), "the checked host, not the client's: {forwarded}");
 
         let log = settled(&proxy, 1).await;
         assert_eq!(log.len(), 1);
@@ -446,15 +530,68 @@ mod tests {
         let mut buf = vec![0u8; 128];
         let n = c.read(&mut buf).await.unwrap();
         assert!(String::from_utf8_lossy(&buf[..n]).starts_with("HTTP/1.1 200"), "tunnel opens");
-        c.write_all(b"ping").await.unwrap();
+        let hello = client_hello("api.example.com");
+        c.write_all(&hello).await.unwrap();
         let mut out = Vec::new();
         c.read_to_end(&mut out).await.unwrap();
         assert_eq!(out, b"pong");
-        assert_eq!(seen.await.unwrap(), b"ping");
+        assert_eq!(seen.await.unwrap(), hello);
         // A request is recorded when both sides have closed; finish waits.
         drop(c);
         let log = proxy.finish(Duration::from_secs(2)).await;
-        assert_eq!((log[0].method.as_str(), log[0].bytes_sent, log[0].bytes_received), ("CONNECT", 4, 4));
+        assert_eq!(
+            (log[0].method.as_str(), log[0].bytes_sent, log[0].bytes_received),
+            ("CONNECT", hello.len() as u64, 4)
+        );
+    }
+
+    /// A minimal TLS record holding a ClientHello that names `host`.
+    fn client_hello(host: &str) -> Vec<u8> {
+        let name = host.as_bytes();
+        let mut sni = vec![0u8, 0];
+        let list_len = (3 + name.len()) as u16;
+        let ext_len = 2 + list_len;
+        sni.extend_from_slice(&ext_len.to_be_bytes());
+        sni.extend_from_slice(&list_len.to_be_bytes());
+        sni.push(0);
+        sni.extend_from_slice(&(name.len() as u16).to_be_bytes());
+        sni.extend_from_slice(name);
+        let mut body = vec![3u8, 3];
+        body.extend_from_slice(&[7u8; 32]);
+        body.push(0); // session id
+        body.extend_from_slice(&[0, 2, 0x13, 0x01]); // one cipher suite
+        body.extend_from_slice(&[1, 0]); // null compression
+        body.extend_from_slice(&(sni.len() as u16).to_be_bytes());
+        body.extend_from_slice(&sni);
+        let mut hs = vec![1u8];
+        hs.extend_from_slice(&(body.len() as u32).to_be_bytes()[1..]);
+        hs.extend_from_slice(&body);
+        let mut record = vec![0x16, 3, 1];
+        record.extend_from_slice(&(hs.len() as u16).to_be_bytes());
+        record.extend_from_slice(&hs);
+        record
+    }
+
+    /// A tunnel opened for one host may not carry a TLS session for another,
+    /// which a shared front end would route by its server name.
+    #[tokio::test]
+    async fn a_tunnel_refuses_a_different_tls_server_name() {
+        assert_eq!(server_name(&client_hello("api.example.com")).as_deref(), Some("api.example.com"));
+        assert_eq!(server_name(b"\x16\x03\x01\x00\x01\x02"), None);
+        let (server, _seen) = upstream(b"pong").await;
+        let (_dir, path) = socket();
+        let proxy = Proxy::start(&path, grant(&["api.example.com"], &[("api.example.com", vec![server])], true)).unwrap();
+        for first in [client_hello("other.example.net"), b"ping".to_vec()] {
+            let mut c = UnixStream::connect(proxy.path()).await.unwrap();
+            c.write_all(b"CONNECT api.example.com:443 HTTP/1.1\r\n\r\n").await.unwrap();
+            c.write_all(&first).await.unwrap();
+            let mut out = Vec::new();
+            let _ = tokio::time::timeout(Duration::from_secs(5), c.read_to_end(&mut out)).await;
+            assert!(!String::from_utf8_lossy(&out).contains("pong"));
+        }
+        let log = settled(&proxy, 2).await;
+        assert!(log.iter().all(|r| r.refused.is_some()), "{log:?}");
+        assert_eq!(log.iter().map(|r| r.bytes_sent).sum::<u64>(), 0);
     }
 
     #[tokio::test]

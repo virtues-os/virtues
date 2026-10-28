@@ -160,6 +160,9 @@ fn check_v6(ip: Ipv6Addr, own: &[IpAddr]) -> Result<(), String> {
     // (64:ff9b::/96) and 6to4 (2002::/16). The embedded address decides.
     let embedded = if let Some(v4) = ip.to_ipv4_mapped() {
         Some(v4)
+    } else if s[..6] == [0, 0, 0, 0, 0, 0] && !ip.is_loopback() && !ip.is_unspecified() {
+        // IPv4-compatible (::a.b.c.d), deprecated but still parsed.
+        Some(Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8))
     } else if s[0] == 0x64 && s[1] == 0xff9b && s[2..6] == [0, 0, 0, 0] {
         Some(Ipv4Addr::new((s[6] >> 8) as u8, s[6] as u8, (s[7] >> 8) as u8, s[7] as u8))
     } else if s[0] == 0x2002 {
@@ -180,6 +183,17 @@ fn check_v6(ip: Ipv6Addr, own: &[IpAddr]) -> Result<(), String> {
         "a private network address"
     } else if (s[0] & 0xffc0) == 0xfe80 {
         "link-local"
+    } else if (s[0] & 0xffc0) == 0xfec0 {
+        "site-local, which is a private network"
+    } else if s[0] == 0x64 && s[1] == 0xff9b && s[2] == 1 {
+        "a local NAT64 address, which can reach a private network"
+    } else if s[0] == 0x2001 && s[1] == 0 {
+        "Teredo, whose IPv4 address is hidden"
+    } else if s[0] == 0x2001 && s[1] == 0x0db8 {
+        "reserved for documentation"
+    } else if own.iter().any(|o| matches!(o, IpAddr::V6(o) if o.segments()[..4] == s[..4])) {
+        // A LAN's devices share the box's /64 and have public addresses.
+        "on this box's network"
     } else {
         return Ok(());
     };
@@ -213,7 +227,7 @@ mod tests {
 
     #[test]
     fn an_address_inside_the_box_or_its_network_is_refused() {
-        let own: Vec<IpAddr> = vec!["203.0.113.7".parse().unwrap()];
+        let own: Vec<IpAddr> = vec!["203.0.113.7".parse().unwrap(), "2600:1700:5:9::7".parse().unwrap()];
         for ip in [
             "127.0.0.1",
             "10.1.2.3",
@@ -230,6 +244,11 @@ mod tests {
             "::ffff:192.168.1.10",
             "64:ff9b::a9fe:a9fe",
             "2002:c0a8:0101::1",
+            "2600:1700:5:9::1",
+            "::192.168.1.10",
+            "64:ff9b:1::a",
+            "2001:0:4136:e378::1",
+            "fec0::1",
         ] {
             let ip: IpAddr = ip.parse().unwrap();
             assert!(check_address(ip, &own).is_err(), "{ip} must be refused");
