@@ -861,7 +861,8 @@ pub enum Commands {
     #[command(name = "configure-inference")]
     ConfigureInference {
         /// Switch search to this embedding server (an OpenAI-style
-        /// /v1/embeddings endpoint on this machine, your LAN, or your VPN).
+        /// /v1/embeddings endpoint on this machine, your LAN, or your VPN; a
+        /// public address needs HTTPS and asks before your text goes there).
         #[arg(long)]
         embed_url: Option<String>,
         /// Model name sent with every request; Ollama routes by it.
