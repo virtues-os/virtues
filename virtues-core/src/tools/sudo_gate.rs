@@ -1,4 +1,4 @@
-//! Sudo mode runs what the model calls, as a coding agent's bypass mode does:
+//! The admin applet runs what the model calls, as a coding agent's bypass mode does:
 //! reads, writes, services, packages, files. Two kinds of call still stop the
 //! turn and ask the owner, with the exact command on the card: one that
 //! deletes data, which has no undo, and `virtues backup --init-key`, which
@@ -19,13 +19,13 @@
 //!   anywhere. That is read from the line's words rather than its commands,
 //!   so a wrapper or a quoted script does not hide it.
 //!
-//! Reads never ask, secrets included. Sudo mode can read every secret on the
-//! box; that is the owner's stated exception to "a model never sees a value"
+//! Reads never ask, secrets included. The admin applet can read every secret on
+//! the box; that is the owner's stated exception to "a model never sees a value"
 //! (agents/plan/secrets-plan.md, "Who can read what").
 //!
 //! This catches the plain spellings, and is not a sandbox: a script can remove
-//! a file without saying `rm`. Beyond that, sudo mode relies on the prompt
-//! (`SUDO_MODE_PROMPT`) and on Stop. When unsure the check asks, which costs
+//! a file without saying `rm`. Beyond that, the admin applet relies on its
+//! prompt (`applets/admin/SKILL.md`) and on Stop. When unsure the check asks, which costs
 //! the owner one click.
 //!
 //! A grant is for one exact command in one chat, so allowing

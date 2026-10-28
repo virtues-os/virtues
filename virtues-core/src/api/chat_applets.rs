@@ -28,8 +28,11 @@ pub struct AppletTurn {
     pub max_cost_usd: f64,
     pub max_minutes: u64,
     pub slot: ModelSlot,
-    /// An `ri:` id for the `/` menu.
+    /// An icon id for the `/` menu.
     pub icon: Option<String>,
+    /// It ships with the box. Only a shipped applet can make a sudo turn
+    /// (`ChatMode::is_sudo`).
+    pub shipped: bool,
 }
 
 /// An applet as the composer's `/` menu lists it. The wire shape is the one
@@ -55,10 +58,17 @@ pub struct Menu {
 /// The shipped applet that helps the person write one of their own.
 pub const CREATE_APPLET: &str = "new-applet";
 
+/// The shipped applet that runs commands on the server as its admin.
+pub const ADMIN_APPLET: &str = "admin";
+
+/// The shipped applet that investigates and writes a cited report.
+pub const DEEP_RESEARCH_APPLET: &str = "deep-research";
+
 /// The step ceiling for a turn an applet starts. The format has no key for
-/// it (agents/plan/applet-shape.md keeps steps internal); thirty is what the
-/// longest shipped skills had.
-const MAX_STEPS: u32 = 30;
+/// it (agents/plan/applet-shape.md keeps steps internal), so the applet's
+/// `limit` in dollars and minutes is what bounds a turn; sixty is what admin
+/// work needed as a mode.
+const MAX_STEPS: u32 = 60;
 
 /// Every applet `/name` starts, shipped first, each group by name.
 pub fn menu() -> Menu {
@@ -103,6 +113,7 @@ fn turn_from_applet(a: crate::applet_templates::ChatApplet) -> AppletTurn {
         max_minutes: a.max_minutes.unwrap_or(10),
         slot: if a.deep { ModelSlot::Deep } else { ModelSlot::Standard },
         icon: a.icon,
+        shipped: a.shipped,
     }
 }
 

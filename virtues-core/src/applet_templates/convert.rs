@@ -286,7 +286,8 @@ mod tests {
             let Ok(text) = std::fs::read_to_string(entry.path().join("SKILL.md")) else { continue };
             let t = super::super::skill::parse(&text, &entry.path(), &dir, true)
                 .unwrap_or_else(|e| panic!("{dir}: {e:?}"));
-            let chat = ["meeting-prep", "morning-brief", "trip-planner", "weekly-review", "new-applet"];
+            let chat =
+                ["admin", "deep-research", "meeting-prep", "morning-brief", "trip-planner", "weekly-review", "new-applet"];
             assert_eq!(t.invoke_chat, chat.contains(&dir.as_str()), "{dir}");
             loaded += 1;
         }

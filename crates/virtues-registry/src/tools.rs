@@ -1026,9 +1026,9 @@ fn sql_write_tool() -> ToolConfig {
 }
 
 /// Sudo tool — a command on the server itself, as its admin account.
-/// Sudo mode only: `ChatMode::tools` lists it for no other mode and
-/// the executor refuses it outside a sudo turn. The sandboxed `shell` is the
-/// one every other mode and applet gets.
+/// The admin applet only: no other applet may list it, and the executor
+/// refuses it outside a sudo turn. The sandboxed `shell` is the one chat and
+/// every other applet gets.
 fn sudo_tool() -> ToolConfig {
     ToolConfig {
         id: "sudo".to_string(),
@@ -1125,7 +1125,6 @@ pub fn applet_tool(actions: &[&str]) -> ToolConfig {
         add("until", serde_json::json!({ "type": "string" }));
         add("schema_sql", serde_json::json!({ "type": "string" }));
         add("face_html", serde_json::json!({ "type": "string" }));
-        add("delivers", serde_json::json!({ "type": "string", "enum": ["page", "chat", "dashboard"] }));
         add("invoke", serde_json::json!({ "type": "array", "items": { "type": "string", "enum": ["chat", "assistant"] } }));
         add("tools", serde_json::json!({ "type": "array", "items": { "type": "string" } }));
         add("model", serde_json::json!({ "type": "string", "enum": ["standard", "deep"] }));

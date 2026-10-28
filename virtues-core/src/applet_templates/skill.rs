@@ -67,8 +67,9 @@ const BRAND_SPELLINGS: &[(&str, &str)] = &[
     ("sql", "SQL"),
 ];
 
-/// Tools every prompt applet has whatever `allowed-tools` says: thinking and
-/// its own notes are not permissions.
+/// Tools every unattended run has whatever `allowed-tools` says: thinking and
+/// its own notes are not permissions. A turn `/name` starts has only what is
+/// listed, `think` included.
 pub(crate) const ALWAYS_ALLOWED_TOOLS: &[&str] = &["think", "update_applet_memory"];
 
 /// The `allowed-tools` entry that mounts the whole lake read-only for the
@@ -153,7 +154,7 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
 
     let (allowed_tools, net_hosts) = match string("allowed-tools", &mut errors) {
         Some(s) => {
-            let (tools, hosts) = check_allowed_tools(&s, &mut errors);
+            let (tools, hosts) = check_allowed_tools(&s, shipped, &mut errors);
             (Some(tools), hosts)
         }
         None => (None, Vec::new()),
@@ -716,6 +717,13 @@ fn check_name(name: &str) -> Result<(), String> {
 /// or run as root (`sudo`).
 const NEVER_LISTED: &[&str] = &["browse", "send_imessage", "sudo"];
 
+/// Tools only a shipped applet may list: `sudo`, for `admin`, and
+/// `dispatch_subagents`, the worker fan-out `deep-research` runs on, which no
+/// applet could reach before these were applets. The shipped root is written
+/// only by the installer, and a folder elsewhere with the same name is read
+/// as unshipped, so it is refused.
+const SHIPPED_ONLY: &[&str] = &["sudo", "dispatch_subagents"];
+
 /// The tool ids an applet may list: what ordinary chat offers, for a turn
 /// `/name` starts, and what an unattended run can be given. An unattended
 /// run is offered only the tools on both its list and the run allowlist
@@ -731,8 +739,11 @@ fn listable_tools() -> Vec<String> {
 
 /// The tool ids an applet asked for, checked against [`listable_tools`],
 /// and the hosts its `net(host)` entries ask for.
-fn check_allowed_tools(list: &str, errors: &mut Vec<String>) -> (Vec<String>, Vec<String>) {
-    let available = listable_tools();
+fn check_allowed_tools(list: &str, shipped: bool, errors: &mut Vec<String>) -> (Vec<String>, Vec<String>) {
+    let mut available = listable_tools();
+    if shipped {
+        available.extend(SHIPPED_ONLY.iter().map(|t| t.to_string()));
+    }
     let known: Vec<String> = virtues_registry::tools::default_tools().into_iter().map(|t| t.id).collect();
     let mut out = Vec::new();
     let mut hosts: Vec<String> = Vec::new();
@@ -749,6 +760,11 @@ fn check_allowed_tools(list: &str, errors: &mut Vec<String>) -> (Vec<String>, Ve
             }
         } else if entry == LAKE_GRANT {
             // Not a tool: the whole lake, read-only, for the applet's code.
+            if !out.iter().any(|t| t == entry) {
+                out.push(entry.to_string());
+            }
+        } else if entry == "think" {
+            // A run always has it; listed, a turn `/name` starts gets it too.
             if !out.iter().any(|t| t == entry) {
                 out.push(entry.to_string());
             }
@@ -1176,7 +1192,7 @@ mod tests {
         assert_eq!(cfg["limits"]["max_llm_cost_per_day"].as_float(), Some(3.0));
         assert_eq!(cfg["limits"]["timeout_s"].as_integer(), Some(600));
         let tools: Vec<&str> = cfg["allowed_tools"].as_array().unwrap().iter().filter_map(|v| v.as_str()).collect();
-        assert_eq!(tools, ["sql_query", "create_page"], "think is always given and not listed");
+        assert_eq!(tools, ["sql_query", "create_page", "think"], "a listed think reaches a chat turn");
     }
 
     #[test]
@@ -1360,6 +1376,10 @@ mod tests {
         }
         let e = refused(&format!("{BASE}\nallowed-tools: sudo"), "Do it.");
         assert!(e.contains("`sudo` is not available to an applet"), "{e}");
+        let f = folder();
+        let shipped = parse(&skill(&format!("{BASE}\nallowed-tools: sudo"), "Do it."), f.path(), "weekly-review", true)
+            .expect("a shipped applet may list sudo");
+        assert_eq!(shipped.config.unwrap()["allowed_tools"][0].as_str(), Some("sudo"));
         assert!(ok(&format!("{BASE}\nallowed-tools: get_project_item"), "Do it.").config.is_some(), "a chat tool is listable");
         assert!(ok(&format!("{BASE}\nallowed-tools: shell"), "Do it.").config.is_some(), "the sandboxed shell is");
         let e = refused(&format!("{BASE}\nallowed-tools: sql_qeury"), "Do it.");

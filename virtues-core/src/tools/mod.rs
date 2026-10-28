@@ -107,7 +107,7 @@ pub fn get_all_tool_definitions_for_llm() -> Vec<serde_json::Value> {
         .collect()
 }
 
-/// Tools that exist only in sudo mode: the owner's admin shell. Every other
+/// Tools only the admin applet lists: the owner's admin shell. Every other
 /// tool list is built by filtering these out or by an allowlist that never
 /// names them, and the executor refuses them outside a sudo turn as well.
 pub(crate) const SUDO_ONLY_TOOLS: &[&str] = &["sudo"];
@@ -281,20 +281,6 @@ const SUBAGENT_TOOLS: &[&str] = &[
 pub fn get_tools_for_subagent() -> Vec<serde_json::Value> {
     tools_named(SUBAGENT_TOOLS)
 }
-
-/// The orchestrator's tools in Deep Research mode: the read-only research set, plus the fan-out
-/// tool and `create_page` for the report artifact. Explicit allow-list (not a category filter) so
-/// genuinely read-write Data-category tools (`update_memory`, `sql_write`)
-/// can't leak into a mode that's meant to be read-only.
-pub(crate) const DEEP_RESEARCH_TOOLS: &[&str] = &[
-    "think",
-    "web_search",
-    "semantic_search",
-    "sql_query",
-    "shell",
-    "dispatch_subagents",
-    "create_page",
-];
 
 #[cfg(test)]
 mod slot_model_smoke {
@@ -530,12 +516,12 @@ mod sudo_scope {
     }
 
     #[test]
-    fn only_sudo_mode_lists_the_shell() {
+    fn only_the_admin_applet_lists_the_shell() {
         let mode = |name| ChatMode::from_wire(name).tools();
-        assert!(names(&mode("sudo")).contains(&"sudo".to_string()));
+        assert!(names(&mode("admin")).contains(&"sudo".to_string()));
         for listing in [
             mode("chat"),
-            mode("deep_research"),
+            mode("deep-research"),
             mode("interview"),
             mode("getting_started"),
             mode("anything-else"),
@@ -547,12 +533,5 @@ mod sudo_scope {
         ] {
             assert!(!names(&listing).contains(&"sudo".to_string()));
         }
-    }
-
-    #[test]
-    fn sudo_mode_keeps_everything_chat_has() {
-        let chat = names(&ChatMode::Chat.tools());
-        let sudo = names(&ChatMode::Sudo.tools());
-        assert!(chat.iter().all(|t| sudo.contains(t)));
     }
 }

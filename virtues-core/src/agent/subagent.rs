@@ -1,6 +1,6 @@
 //! Deep Research fan-out — the `dispatch_subagents` tool implementation.
 //!
-//! The orchestrator (Deep Research mode) calls `dispatch_subagents` with a list of independent
+//! The orchestrator (the `deep-research` applet) calls `dispatch_subagents` with a list of independent
 //! missions. Each mission runs as its own **read-only** nested agent loop, in parallel, and returns
 //! a compressed findings summary plus (bounded) sources for citations. Workers do not get the
 //! `dispatch_subagents` tool, so there is no recursion.

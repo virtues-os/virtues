@@ -1,12 +1,14 @@
-//! `sudo` — a command on the machine this server runs on, for sudo mode.
+//! `sudo` — a command on the machine this server runs on, for the admin applet.
 //!
 //! This is the owner's admin shell handed to the model: the same account, the
 //! same PATH and the same passwordless sudo the web terminal (`/ws/terminal`)
 //! gives a person. The boundaries are elsewhere:
 //!
-//! - only a chat turn in `sudo` mode lists the tool (`ChatMode::tools`)
+//! - only a shipped applet may list the tool (`applet_templates::skill`), and
+//!   only `admin` does; a chat turn it starts is the only sudo turn
+//!   (`ChatMode::is_sudo`)
 //! - the executor refuses it unless the turn's context says sudo, so a model
-//!   naming it in any other mode — or an applet run, or a subagent, none of
+//!   naming it in any other turn — or an applet run, or a subagent, none of
 //!   which can carry that flag — gets a refusal, not a shell
 //! - a command that deletes data, or one that prints the backup recovery key,
 //!   waits for the owner to allow it (`sudo_gate`); everything else runs
@@ -14,8 +16,8 @@
 //! The command does not get the server's environment, which holds the box key
 //! and the rest of `virtues.env`, because whatever it prints goes into the
 //! chat. It gets the basics ([`KEPT_ENV`]), its own PATH and pager settings,
-//! and libpq's variables for the app's database without a password. Sudo mode
-//! can still read every secret on the box, `virtues.env` included; that is the
+//! and libpq's variables for the app's database without a password. The admin
+//! applet can still read every secret on the box, `virtues.env` included; that is the
 //! owner's stated exception (agents/plan/secrets-plan.md, "Who can read
 //! what"). A clean environment keeps an ordinary `env` from printing the key.
 //!

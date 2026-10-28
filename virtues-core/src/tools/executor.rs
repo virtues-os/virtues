@@ -94,7 +94,7 @@ pub struct ToolContext {
     pub temporary: bool,
     /// Where a ghost's grants live for as long as the ghost does.
     pub ghost_permissions: Option<crate::api::chat_permissions::GhostPermissions>,
-    /// The turn is in sudo mode: the owner chose it for this chat. Nothing
+    /// The turn runs the admin applet: the owner picked it in this chat. Nothing
     /// asks before it runs, and `sudo` runs at all. Set only by the chat
     /// handler — applet runs and subagents build their context without it.
     pub sudo: bool,
@@ -529,7 +529,7 @@ impl ToolExecutor {
                 super::sudo_shell::execute(arguments).await
             }
             "sudo" => Err(ToolError::ExecutionFailed(
-                "sudo runs only in sudo mode, which the owner turns on in the chat".into(),
+                "sudo runs only in the admin applet, which the owner picks with /admin in the chat".into(),
             )),
             "read_asset" => self.execute_read_asset(arguments).await,
             "show" => super::show::execute(&self.sql_query, arguments, context.timezone.as_deref()).await,
