@@ -109,10 +109,11 @@ change for it, because `kind` already says which rows it would cover.
   goes only to the shipped applets in `VAULT_KEY_APPLETS`
   (`applet_templates/skill.rs`), a list in the code that no folder can join.
   An undeclared value is never passed. A declared one that is missing fails
-  the run with "Add OPENAI_API_KEY in Settings, under Keys." Decided 2026-10-27:
-  an unshipped applet also needs the owner to allow each declared key for
-  that applet on its page, the way network hosts work. Shipped applets get
-  their declared keys without that step. That allow is not built yet.
+  the run with "Add OPENAI_API_KEY in Settings, under Keys." Any applet gets
+  the keys it declares, with no allow per applet: on 2026-10-28 the owner
+  dropped the per-applet allow decided the day before, along with every other
+  per-applet permission ([plan/applet-shape.md](applet-shape.md)). The Keys
+  page shows which applets use each key.
 - **A model sees names, never values.** It can know that a key or a login
   exists, so a chat can say "you have a GitHub token" or ask the owner to add
   one. The owner types the value into Settings. `sql_query` runs as
@@ -337,10 +338,9 @@ each item to its commit and says which are still open.
   DDL login that owns only the `applet_*`
   schemas and has no privilege on `public`, `data_*`, `wiki_*` or `app_*`,
   connected the way `database::restricted` connects (never `SET ROLE`), with
-  `EXECUTE` on functions in those schemas revoked from `PUBLIC`. That is
-  slice 9 of [plan/applet-shape.md](applet-shape.md).
-- **Per-applet key allows** (decision 3) are not built. Any applet's
-  `SKILL.md` can still name any key.
+  `EXECUTE` on functions in those schemas revoked from `PUBLIC`. One login
+  for all applet DDL, not one per applet: [plan/applet-shape.md](applet-shape.md)
+  dropped a login per applet on 2026-10-28, and nothing plans this one yet.
 - **Drive downloads with `?disposition=inline`** still serve the stored type
   at the box origin with no sandbox CSP (`server/api/drive.rs`). The chat
   file handler is sandboxed by its own rule. Both should move onto

@@ -402,7 +402,9 @@ The rules that follow from these answers are in
 3. **Keys are allowed per applet.** An unshipped applet gets a declared key
    only after the owner allows that key for that applet on its page, the way
    network hosts work. Shipped applets keep getting their declared keys
-   automatically.
+   automatically. Reversed on 2026-10-28, unbuilt: the owner dropped every
+   per-applet permission, host approvals included, so an applet gets the keys
+   it declares ([plan/applet-shape.md](../plan/applet-shape.md)).
 4. **`virtues sudo` is removed.** The two gated actions (changing the AI key,
    importing a package) require the owner proof from decision 2 instead. That
    keeps a check that a rebinding page or another local process cannot pass,

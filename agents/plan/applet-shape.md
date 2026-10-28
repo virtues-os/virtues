@@ -532,9 +532,8 @@ Built on 2026-10-28 except on a box. Decided on the way:
   `condition` and `agent_shipped`.
 - State-root folders are no longer treated as imports by `use_applet`: with
   no import, they are the owner's or the assistant's.
-- Decision 3 of agents/plan/secrets-plan.md (the owner allows each declared
-  key per unshipped applet, "the way network hosts work") is the owner's to
-  revisit; it is not built.
+- The owner dropped decision 3 of agents/plan/secrets-plan.md the same day:
+  an applet gets the keys it declares, with no allow per applet.
 
 Two checks stay when the connection approval goes (from the MCP work): the
 check in `call_tool` that a run may call a connection's tool only when its
