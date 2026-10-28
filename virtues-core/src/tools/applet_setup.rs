@@ -186,7 +186,11 @@ async fn plan(pool: &PgPool, draft: &Draft) -> Result<Plan, Vec<serde_json::Valu
         match run.strip_prefix("sql ") {
             None => findings.push(finding("run", "setup takes only SQL for `run`", Some("`sql select 1 where (…)`, which returns a row only when it should run"))),
             Some(sql) => {
-                if let Err(e) = explain_run_sql(pool, sql).await {
+                // A data trigger's rows are `new_rows`, empty here.
+                let new_rows = crate::applet_templates::key_value(&text, "trigger")
+                    .and_then(|t| crate::applet_templates::watch_in(&t))
+                    .and_then(|watch| crate::scheduler::watch::Batch { watch, range: None }.cte().ok());
+                if let Err(e) = explain_run_sql(pool, sql, new_rows.as_deref()).await {
                     let suggestion = did_you_mean(pool, &e).await;
                     findings.push(finding("run", &e, suggestion.as_deref()));
                 }
@@ -488,9 +492,10 @@ async fn check_prompt_tables(pool: &PgPool, prompt: &str) -> Vec<serde_json::Val
 
 /// Plan `run` SQL as the reader login, which is what runs it, so a table the
 /// reader cannot see fails here rather than on every run.
-async fn explain_run_sql(pool: &PgPool, sql: &str) -> Result<(), String> {
+async fn explain_run_sql(pool: &PgPool, sql: &str, with: Option<&str>) -> Result<(), String> {
     let (mut tx, _zone) = crate::server::faces::reader_transaction(pool, "5s").await?;
-    let res = sqlx::query(&format!("EXPLAIN {sql}")).fetch_all(&mut *tx).await;
+    let with = with.unwrap_or_default();
+    let res = sqlx::query(&format!("EXPLAIN {with}SELECT * FROM ({sql}) q")).fetch_all(&mut *tx).await;
     tx.rollback().await.ok();
     res.map(|_| ()).map_err(|e| e.to_string())
 }
@@ -626,6 +631,19 @@ mod tests {
         assert_eq!(key_named("`trigger` \"every fortnight\" is not a time."), "trigger");
         assert_eq!(key_named("`allowed-tools` lists `nope`, which is not a tool."), "tools");
         assert_eq!(key_named("Something else entirely."), "prompt");
+    }
+
+    /// `run` SQL that reads `new_rows` plans when the trigger has a data
+    /// trigger to fill it, and is a finding when it has none.
+    #[sqlx::test]
+    async fn run_sql_reads_new_rows_only_with_a_data_trigger(pool: PgPool) {
+        crate::server::faces::ensure_applet_db_grants(&pool).await.unwrap();
+        let sql = "select title from new_rows where title ilike '%review%'";
+        let watch = crate::applet_templates::watch_in("every day at 07:00, new data_calendar_event").expect("a data trigger");
+        let cte = crate::scheduler::watch::Batch { watch, range: None }.cte().unwrap();
+        assert_eq!(explain_run_sql(&pool, sql, Some(&cte)).await, Ok(()));
+        let e = explain_run_sql(&pool, sql, None).await.unwrap_err();
+        assert!(e.contains("new_rows"), "{e}");
     }
 
     /// A typo in a table name is the failure the authoring contract calls out

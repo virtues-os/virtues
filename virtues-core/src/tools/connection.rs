@@ -984,18 +984,6 @@ pub async fn applet_tool_definitions(pool: &PgPool, applet_id: &str) -> Vec<Valu
     out
 }
 
-/// The connections an applet's file asks for, by short name, from its
-/// `allowed-tools`.
-pub fn requested(entries: &[String]) -> Vec<String> {
-    let mut out: Vec<String> = Vec::new();
-    for (id, _) in entries.iter().filter_map(|e| applet_entry(e)) {
-        if !out.iter().any(|o| o == id) {
-            out.push(id.to_string());
-        }
-    }
-    out
-}
-
 // ── The chat's tool ─────────────────────────────────────────────────────────
 
 /// The chat's `connection` call: run the task in one connected service on
@@ -1314,7 +1302,6 @@ mod tests {
         assert!(entries_name(&entries, "notion", "search"));
         assert!(!entries_name(&entries, "notion", "update_page"));
         assert!(!entries_name(&entries, "github", "search"));
-        assert_eq!(requested(&entries), ["linear", "notion"]);
         assert_eq!(applet_entry("linear__*"), Some(("linear", "*")));
         assert_eq!(applet_entry("linear__x(y)"), None);
     }

@@ -139,7 +139,7 @@ async fn new_from_applets(db: &Database) -> Result<Vec<(String, String, String, 
            LEFT JOIN app_applet_run_outputs o ON o.run_id = r.id AND o.kind = 'page' \
            LEFT JOIN app_pages p ON p.id = o.ref_id AND p.deleted_at IS NULL \
           WHERE a.enabled AND a.archived_at IS NULL \
-            AND r.status = 'success' AND r.trigger IN ('cron', 'webhook') \
+            AND r.status = 'success' AND r.trigger IN ('cron', 'webhook', 'data') \
             AND r.started_at > coalesce(a.seen_at, '-infinity'::timestamptz) \
             AND (p.id IS NOT NULL \
                  OR (a.owner <> 'system' AND a.agent IS NOT NULL AND btrim(coalesce(r.result_summary, '')) <> '')) \

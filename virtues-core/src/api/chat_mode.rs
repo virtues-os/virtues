@@ -463,10 +463,11 @@ pub(crate) mod tests {
         // (group, tools, ceiling). A group's size is measured per mode: the
         // tools of it that mode offers.
         const GROUPS: &[(&str, &[&str], usize)] = &[
-            // One tool for every applet action, chosen by `action`. Raised 150
-            // on 2026-10-27 for setup's invoke, tools and model, which write
-            // an applet `/name` starts; how to use them is in the guide.
-            ("applets", &["applet"], 2_950),
+            // One tool for every applet action, chosen by `action`; setup's
+            // line is the whole instruction for writing one. Raised 150 on
+            // 2026-10-27 for setup's invoke, tools and model, and 200 on
+            // 2026-10-28 for the three data triggers.
+            ("applets", &["applet"], 3_150),
             // The applets chat may load, listed by name and description. The
             // shipped catalog has none; a box's grows to the cap in
             // `use_applet_tool`.
@@ -513,13 +514,14 @@ pub(crate) mod tests {
             // The shipped chat applets, each just above its 2026-10-22 size as a
             // skill; admin and deep research just above their size as modes,
             // less what admin no longer lists. Clarity review just above its
-            // size when it shipped on 2026-10-28.
+            // size when it shipped on 2026-10-28. New applet is the applet
+            // tool alone, so it follows that group's ceiling.
             ("admin", 9_000),
             ("clarity-review", 7_000),
             ("deep-research", 13_250),
             ("meeting-prep", 8_400),
             ("morning-brief", 8_700),
-            ("new-applet", 2_950),
+            ("new-applet", 3_150),
             ("trip-planner", 9_000),
             ("weekly-review", 8_700),
         ];

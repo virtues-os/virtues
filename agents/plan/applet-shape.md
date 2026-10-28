@@ -230,7 +230,7 @@ Plain words separated by commas, in the box's timezone.
 | Time | `every day at 07:00`, `every weekday at 08:30`, `every monday and thursday at 09:00`, `every month on day 1 at 09:00`, `every hour`, `every 15 minutes`, `cron 0 0 7 * * *` |
 | | any of those followed by ` until 2026-12-01` |
 | | `on 2026-11-02 at 09:00`, which runs once and archives itself |
-| Data | `new <table>`, `30 minutes before <table>`, `15 minutes after <table> ends` (slice 11) |
+| Data | `new <table>`, `30 minutes before <table>`, `15 minutes after <table> ends`, one per applet |
 | Outside | `webhook`, which needs `source` |
 
 Run now and the applet's thread are always available and are not listed.
@@ -580,6 +580,35 @@ watermark per applet and table, batching, no waking on the applet's own rows
 or a source's first backfill, and rate limits on by default, per
 [applets-next-plan.md](applets-next-plan.md). `before` and `after … ends`
 follow.
+
+Built on 2026-10-28 except on a box (migration 0074), all three forms.
+Decided on the way:
+- The watermark is a time, `app_applets.watched_through`, with no row id.
+  Every row has a moment: `created_at` for `new`, the start minus the
+  minutes for `before`, the end plus the minutes for `after … ends`. A run
+  takes the rows whose moment falls after the watermark and at or before a
+  cutoff a minute behind the clock, which covers ties and rows whose
+  transaction commits a little after it began.
+- Once a minute the scheduler's refresh loop looks for waiting rows and
+  starts a run with trigger `data`. Any run of the applet takes the rows by
+  moving the watermark, Run now included, and only one run can move it from
+  a given value. A data run that finds nothing leaves no run row.
+- The first poll sets the watermark to now, so rows already there start
+  nothing. `new` also counts only rows whose own time is within seven days,
+  which passes over a new source's backfill and keeps the poll on the time
+  column's index. A poll on a large table such as location points still
+  reads a week of rows each minute; an index on `created_at` would remove
+  that.
+- An applet is refused `new` on a table in its own `writes`. Tables are
+  `data_*` ones the registry knows and the assistant may read; an
+  owner-only table is refused.
+- Rows wait while a run is going or the applet is at its hourly limit, and
+  the next run takes all of them. A data trigger gets `6 runs per hour` when
+  its file sets no hourly limit.
+- `run` SQL and the prompt read the rows as `new_rows`. A prompt with no
+  `run` gets them as a table, the first 200 and the count. Code gets the
+  table and the two times as its payload. Data runs reach the Inbox like
+  scheduled ones.
 
 ### Later: imports and export
 

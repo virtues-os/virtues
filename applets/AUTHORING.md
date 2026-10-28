@@ -220,6 +220,14 @@ A `webhook` trigger **requires** a `source`, so the post resolves to an identity
 
 For a subprocess, the trigger payload is delivered as JSON on stdin.
 
+A data trigger (`new <table>`, `30 minutes before <table>`,
+`15 minutes after <table> ends`) starts a run once a minute when rows are
+waiting, and every run of the applet takes the rows that came since its last
+one. `run` SQL and the prompt read them as `new_rows`; a prompt with no `run`
+gets them as a table. Code gets `{"table", "after", "through"}` as its payload,
+the times the rows' moments fall between. The design is in
+`virtues-core/src/scheduler/watch.rs`.
+
 ---
 
 ## When to choose what
@@ -229,6 +237,7 @@ For a subprocess, the trigger payload is delivered as JSON on stdin.
 | Run every N minutes/hours | `run` + `trigger: every …` | Lowest overhead; fork-per-trigger is fine |
 | React to a device webhook | `run` + `trigger: webhook` + `source` | Standard pattern for iOS/Mac streams |
 | A prompt only when something is true | `run: sql …` + a prompt | No model call on the days it is false |
+| React to new rows in a data table | `trigger: new <table>` + `run: sql … from new_rows` | No model call unless the new rows match |
 | Multi-step LLM agent loop | a prompt, no `run` | Built-in agent runner |
 | Dashboard of `data_*` tables | `view.html` only | No backend needed; the view queries directly |
 

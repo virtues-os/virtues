@@ -24,6 +24,7 @@ use std::path::Path;
 use yaml_rust2::{yaml::Hash, Yaml, YamlLoader};
 
 use super::{SourceRef, Template};
+use crate::scheduler::watch::Watch;
 
 /// The spec's top-level keys. Nothing else may appear beside them.
 const SPEC_KEYS: &[&str] = &[
@@ -203,6 +204,12 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         Some(Run::Sql(sql)) => (None, Some(sql)),
         None => (None, None),
     };
+    if run_sql.as_deref().is_some_and(|s| s.to_ascii_lowercase().contains("new_rows")) && triggers.watch.is_none() {
+        errors.push(
+            "`run` SQL reads `new_rows`, which only a data trigger fills. Add one to `trigger`, such as `new data_health_workout`."
+                .into(),
+        );
+    }
     let source = meta("source").map(str::trim).map(str::to_string);
     if let Some(s) = &source {
         if s.is_empty() || !s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
@@ -213,7 +220,7 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
     if invoke.contains(&Invoke::Assistant) && !has_prompt && command.is_none() && run_sql.is_none() {
         errors.push("`invoke: assistant` lets the assistant start it, but it has no prompt and no `run`, so a run would do nothing.".into());
     }
-    let starts_alone = triggers.schedule.is_some() || triggers.webhook;
+    let starts_alone = triggers.schedule.is_some() || triggers.webhook || triggers.watch.is_some();
     if starts_alone && !has_prompt && command.is_none() && run_sql.is_none() {
         errors.push("`trigger` starts it, but it has no prompt and no `run`, so a run would do nothing.".into());
     }
@@ -224,6 +231,11 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
     let mut limits = toml::value::Table::new();
     if let Some(v) = meta("limit") {
         parse_limit(v, &mut limits, &mut errors);
+    }
+    // A data trigger has an hourly limit unless the file sets one. Rows that
+    // come while it waits go to its next run.
+    if triggers.watch.is_some() && !limits.contains_key("max_runs_per_hour") {
+        limits.insert("max_runs_per_hour".into(), toml::Value::Integer(crate::scheduler::watch::RUNS_PER_HOUR));
     }
     // `lite` is the background model unattended applets ran on before this
     // format, kept so a converted applet does not change what it costs.
@@ -278,6 +290,14 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
             errors.push(format!("view.html is {} KB. The limit is 48 KB.", meta.len() / 1024));
         }
     }
+    if let Some(w) = triggers.watch.as_ref().filter(|w| w.kind == crate::scheduler::watch::WatchKind::New) {
+        if crate::scheduler::watch::data_table(&w.table).is_some_and(|o| writes.iter().any(|x| x == o.name)) {
+            errors.push(format!(
+                "`new {}` would start it on the rows it writes itself, and each run would start the next. Watch another table.",
+                w.table
+            ));
+        }
+    }
 
     if let Some(color) = meta("color") {
         if !COLORS.contains(&color.trim()) {
@@ -310,6 +330,9 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
     if triggers.webhook {
         trigger_list.push("webhook".into());
     }
+    if triggers.watch.is_some() {
+        trigger_list.push("data".into());
+    }
 
     let mut config = toml::value::Table::new();
     if !limits.is_empty() {
@@ -335,6 +358,7 @@ pub(super) fn parse(text: &str, folder: &Path, dir: &str, shipped: bool) -> Resu
         default_enabled: enabled,
         condition: None,
         until: triggers.until,
+        watch: triggers.watch,
         agent,
         per_credential: source.is_some(),
         source: source.map(|id| SourceRef { id }),
@@ -556,8 +580,10 @@ pub(crate) fn apply_patch(text: &str, patch: &serde_json::Map<String, serde_json
             "condition" => {}
             "agent" => body = value.as_str().unwrap_or_default().trim().to_string(),
             "schedule" => {
-                let mut kept: Vec<String> =
-                    trigger_entries(&text_of(&meta, "trigger")).into_iter().filter(|t| t == "webhook").collect();
+                let mut kept: Vec<String> = trigger_entries(&text_of(&meta, "trigger"))
+                    .into_iter()
+                    .filter(|t| t == "webhook" || is_watch_entry(t))
+                    .collect();
                 if let Some(cron) = value.as_str().filter(|c| !c.trim().is_empty()) {
                     kept.insert(0, format!("cron {}", cron.trim()));
                 }
@@ -994,6 +1020,8 @@ struct Triggers {
     /// Archive after a successful run: `once`, or a date check in SQL.
     until: Option<String>,
     webhook: bool,
+    /// `new <table>`, `N minutes before <table>` or `N minutes after <table> ends`.
+    watch: Option<Watch>,
 }
 
 /// `trigger`'s entries. A comma separates two entries, except inside a
@@ -1028,13 +1056,15 @@ fn parse_triggers(value: &str, errors: &mut Vec<String>) -> Triggers {
             out.webhook = true;
             continue;
         }
-        let words: Vec<&str> = part.split_whitespace().collect();
-        if words.first() == Some(&"new") || words.contains(&"before") || words.last() == Some(&"ends") {
-            errors.push(format!(
-                "\"{part}\": an applet cannot start on new data yet. Use a schedule, such as `every day at 09:00`."
-            ));
+        if is_watch_entry(part) {
+            match parse_watch(part) {
+                Ok(_) if out.watch.is_some() => errors.push("`trigger` has more than one data trigger. An applet has one.".into()),
+                Ok(w) => out.watch = Some(w),
+                Err(e) => errors.push(format!("\"{part}\": {e}")),
+            }
             continue;
         }
+        let words: Vec<&str> = part.split_whitespace().collect();
         match parse_time_trigger(&words) {
             Ok((cron, until)) => {
                 if out.schedule.is_some() {
@@ -1048,6 +1078,64 @@ fn parse_triggers(value: &str, errors: &mut Vec<String>) -> Triggers {
         }
     }
     out
+}
+
+/// The data trigger in a `trigger` value, when it has one that reads.
+pub(crate) fn watch_in(trigger: &str) -> Option<Watch> {
+    trigger_entries(trigger).iter().filter(|e| is_watch_entry(e)).find_map(|e| parse_watch(e).ok())
+}
+
+/// Whether a `trigger` entry has a data trigger's shape: `new …`,
+/// `… before …` or `… ends`.
+fn is_watch_entry(entry: &str) -> bool {
+    let words: Vec<&str> = entry.split_whitespace().collect();
+    words.first() == Some(&"new") || words.contains(&"before") || words.last() == Some(&"ends")
+}
+
+const WATCH_HELP: &str = "Use `new <table>`, `30 minutes before <table>` or `15 minutes after <table> ends`, \
+                          with a data table such as `data_calendar_event`.";
+
+/// One data trigger. The table is a `data_*` table the registry knows and
+/// the assistant may read; `after … ends` needs one whose rows have an end.
+fn parse_watch(entry: &str) -> Result<Watch, String> {
+    use crate::scheduler::watch::{data_table, WatchKind};
+    let words: Vec<&str> = entry.split_whitespace().collect();
+    let (kind, offset, table) = match words.as_slice() {
+        ["new", table] => (WatchKind::New, None, *table),
+        [n, unit, "before", table] => (WatchKind::Before, Some((*n, *unit)), *table),
+        [n, unit, "after", table, "ends"] => (WatchKind::AfterEnd, Some((*n, *unit)), *table),
+        _ => return Err(WATCH_HELP.into()),
+    };
+    let minutes = match offset {
+        None => 0,
+        Some((n, unit)) => {
+            let per = match unit {
+                "minute" | "minutes" => 1,
+                "hour" | "hours" => 60,
+                _ => return Err(WATCH_HELP.into()),
+            };
+            n.parse::<i64>()
+                .ok()
+                .map(|n| n * per)
+                .filter(|m| (1..=24 * 60).contains(m))
+                .ok_or_else(|| format!("`{n} {unit}` must be between 1 minute and 24 hours."))?
+        }
+    };
+    let Some(o) = data_table(table) else {
+        let known: Vec<&str> = virtues_registry::registered_ontologies()
+            .iter()
+            .filter(|o| o.table_name.starts_with("data_") && o.is_model_visible())
+            .map(|o| o.table_name)
+            .collect();
+        return Err(unknown_key(table, "a data table", &known));
+    };
+    if !o.is_model_visible() {
+        return Err(format!("`{table}` can be read only once you turn on its access, so an applet cannot start on it."));
+    }
+    if kind == WatchKind::AfterEnd && o.end_timestamp_column.is_none() {
+        return Err(format!("`{table}` rows have no end. Use `new {table}` or `30 minutes before {table}`."));
+    }
+    Ok(Watch { table: o.table_name.to_string(), kind, minutes, label: o.display_name.to_lowercase() })
 }
 
 const TIME_HELP: &str = "Use a schedule such as `every day at 07:00`, `every monday at 09:00`, \
@@ -1181,8 +1269,8 @@ enum Run {
     Sql(String),
 }
 
-/// SQL `run` may hold: one statement, and no `new_rows`, which only a data
-/// trigger fills. Whether it prepares is for Postgres, at save.
+/// SQL `run` may hold: one statement. Whether it prepares is for Postgres,
+/// at save.
 fn check_run_sql(sql: &str, errors: &mut Vec<String>) -> Option<String> {
     let sql = sql.trim().trim_end_matches(';').trim();
     if sql.is_empty() {
@@ -1191,10 +1279,6 @@ fn check_run_sql(sql: &str, errors: &mut Vec<String>) -> Option<String> {
     }
     if sql.contains(';') {
         errors.push("`run` SQL is one statement.".into());
-        return None;
-    }
-    if sql.to_ascii_lowercase().contains("new_rows") {
-        errors.push("`run` SQL reads `new_rows`, which only a data trigger fills, and an applet cannot start on new data yet.".into());
         return None;
     }
     Some(sql.to_string())
@@ -1527,12 +1611,42 @@ mod tests {
             ("cron 0 0 7 * *", "is not a six-field cron"),
             ("on 2026-13-01 at 09:00", "is not a date"),
             ("every hour, every day at 07:00", "more than one schedule"),
-            ("new data_health_heart_rate", "cannot start on new data yet"),
-            ("30 minutes before data_calendar_event", "cannot start on new data yet"),
+            ("new data_health_heartrate", "Did you mean `data_health_heart_rate`?"),
+            ("new chats", "is not a data table"),
+            ("new", "Use `new <table>`"),
+            ("0 minutes before data_calendar_event", "between 1 minute and 24 hours"),
+            ("30 minutes before data_calendar_event, new data_health_workout", "more than one data trigger"),
+            ("15 minutes after data_health_heart_rate ends", "rows have no end"),
+            ("new data_health_cycle_log", "only once you turn on its access"),
         ] {
             let e = refused(&format!("{BASE}\nmetadata:\n  trigger: {trigger}"), "Do it.");
             assert!(e.contains(expect), "{trigger}: {e}");
         }
+    }
+
+    #[test]
+    fn a_data_trigger_starts_it_on_rows_and_limits_it_hourly() {
+        let t = ok(&format!("{BASE}\nmetadata:\n  trigger: every day at 07:00, 30 minutes before data_calendar_event"), "Prepare them.");
+        let w = t.watch.expect("a data trigger");
+        assert_eq!((w.table.as_str(), w.kind, w.minutes, w.label.as_str()), ("data_calendar_event", crate::scheduler::watch::WatchKind::Before, 30, "calendar events"));
+        assert!(t.triggers.contains(&"data".to_string()) && t.triggers.contains(&"cron".to_string()), "{:?}", t.triggers);
+        let cfg = t.config.expect("config");
+        assert_eq!(cfg["limits"]["max_runs_per_hour"].as_integer(), Some(crate::scheduler::watch::RUNS_PER_HOUR));
+
+        let t = ok(&format!("{BASE}\nmetadata:\n  trigger: 2 hours after data_health_workout ends\n  limit: 20 runs per hour"), "Ask how it went.");
+        assert_eq!(t.watch.map(|w| w.minutes), Some(120));
+        assert_eq!(t.config.expect("config")["limits"]["max_runs_per_hour"].as_integer(), Some(20), "the file's own limit stands");
+
+        let t = ok(&format!("{BASE}\nmetadata:\n  trigger: new data_health_heart_rate\n  run: sql select * from new_rows where bpm > 120"), "");
+        assert!(t.run_sql.is_some() && t.agent.is_none());
+    }
+
+    #[test]
+    fn new_rows_needs_a_data_trigger_and_no_applet_wakes_on_its_own_rows() {
+        let e = refused(&format!("{BASE}\nmetadata:\n  trigger: every hour\n  run: sql select * from new_rows"), "Do it.");
+        assert!(e.contains("only a data trigger fills"), "{e}");
+        let e = refused(&format!("{BASE}\nmetadata:\n  trigger: new data_health_workout\n  writes: health_workout"), "Do it.");
+        assert!(e.contains("rows it writes itself"), "{e}");
     }
 
     #[test]

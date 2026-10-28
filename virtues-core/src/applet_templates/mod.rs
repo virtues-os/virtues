@@ -22,7 +22,7 @@ pub use convert::convert_state_root;
 mod skill;
 
 pub(crate) use skill::{
-    key_value, overlay, override_between, render as render_skill_md, with_keys, SkillMd,
+    key_value, overlay, override_between, render as render_skill_md, watch_in, with_keys, SkillMd,
     ALWAYS_ALLOWED_TOOLS, SETUP_KEYS,
 };
 
@@ -234,6 +234,9 @@ struct Template {
     /// SQL run before the prompt (`applet_runner::run_sql`).
     #[serde(skip)]
     run_sql: Option<String>,
+    /// A `SKILL.md`'s data trigger (`crate::scheduler::watch`).
+    #[serde(skip)]
+    watch: Option<crate::scheduler::watch::Watch>,
     /// The folder on disk, set by the reader.
     #[serde(skip)]
     folder: Option<std::path::PathBuf>,
@@ -1799,12 +1802,20 @@ async fn upsert_row(
     // the row is first made), `memory`, the code's `state`, run history, and
     // config keys the file does not own, such as the chat an applet was made
     // in.
+    let watch_json = match &template.watch {
+        Some(w) => Some(serde_json::to_string(w).map_err(|e| Error::Other(format!("failed to serialize watch: {e}")))?),
+        None => None,
+    };
+
+    // A changed data trigger starts watching afresh: `watched_through` goes,
+    // and the next poll sets it to now (`scheduler::watch`). The label is
+    // only how the table is named, so a new one keeps it.
     let sql = r#"
         INSERT INTO app_applets (
             id, name, owner, agent, schedule, enabled, config, triggers,
-            credential_id, command, device_id, until, description, run_sql
+            credential_id, command, device_id, until, description, run_sql, watch
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13, $14)
+        VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9, $10, $11, $12, $13, $14, $15::jsonb)
         ON CONFLICT(id) DO UPDATE SET
             name           = EXCLUDED.name,
             owner          = EXCLUDED.owner,
@@ -1819,6 +1830,11 @@ async fn upsert_row(
             until          = EXCLUDED.until,
             description    = EXCLUDED.description,
             run_sql        = EXCLUDED.run_sql,
+            watch          = EXCLUDED.watch,
+            watched_through = CASE
+                WHEN app_applets.watch - 'label' IS DISTINCT FROM EXCLUDED.watch - 'label' THEN NULL
+                ELSE app_applets.watched_through
+            END,
             updated_at     = now()
     "#;
 
@@ -1837,6 +1853,7 @@ async fn upsert_row(
         .bind(&template.until)
         .bind(&template.description)
         .bind(&template.run_sql)
+        .bind(&watch_json)
         .execute(db)
         .await?;
 
@@ -2620,6 +2637,48 @@ auth = { kind = "via_proxy", start_path = "/google/start" }
         assert_eq!(triggers, serde_json::json!(["manual", "message", "tool", "cron"]));
         assert_eq!(config["limits"]["max_llm_cost"], 1.0);
         assert_eq!(config["allowed_tools"], serde_json::json!(["sql_query", "create_page"]));
+    }
+
+    /// Reconcile writes a data trigger into the row and keeps how far its
+    /// rows have gone to runs, until the trigger itself changes.
+    #[sqlx::test]
+    async fn a_changed_data_trigger_starts_watching_afresh(pool: sqlx::PgPool) {
+        let root = tempfile::tempdir().unwrap();
+        let folder = root.path().join("meeting-notes");
+        std::fs::create_dir_all(&folder).unwrap();
+        let reconcile = |trigger: &str| {
+            std::fs::write(
+                folder.join("SKILL.md"),
+                format!("---\nname: meeting-notes\ndescription: Asks how a meeting went.\nmetadata:\n  trigger: {trigger}\n---\nAsk how it went.\n"),
+            )
+            .unwrap();
+            scan_root(root.path(), false, None).remove(0)
+        };
+        let watched = || async {
+            sqlx::query_as::<_, (serde_json::Value, Option<chrono::DateTime<chrono::Utc>>)>(
+                "SELECT watch, watched_through FROM app_applets WHERE id = 'applet_meeting_notes'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        };
+
+        let t = reconcile("15 minutes after data_calendar_event ends");
+        upsert_row(&pool, &t, "applet_meeting_notes", None, None, None).await.unwrap();
+        let (watch, _) = watched().await;
+        assert_eq!(watch["kind"], "after_end");
+        sqlx::query("UPDATE app_applets SET watched_through = now() WHERE id = 'applet_meeting_notes'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        upsert_row(&pool, &t, "applet_meeting_notes", None, None, None).await.unwrap();
+        assert!(watched().await.1.is_some(), "the same trigger keeps its place");
+
+        let t = reconcile("30 minutes after data_calendar_event ends");
+        upsert_row(&pool, &t, "applet_meeting_notes", None, None, None).await.unwrap();
+        let (watch, through) = watched().await;
+        assert_eq!((watch["minutes"].as_i64(), through), (Some(30), None), "a changed one starts again");
     }
 
     /// A chat-made applet that is retimed keeps its new schedule through a

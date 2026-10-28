@@ -20,7 +20,7 @@
 	} from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { appletsStore } from '$lib/stores/applets.svelte';
-	import { appletDestination, appletGlyph, describeSchedule, relativeTime, runFix } from '$lib/applets/palette';
+	import { appletDestination, appletGlyph, describeTriggers, relativeTime, runFix } from '$lib/applets/palette';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { appletSpans, DAY_LABEL, indexRunDays, recentSpans, reliabilityScore, type DayState } from '$lib/applets/days';
 	import DayDot from './DayDot.svelte';
@@ -199,7 +199,7 @@
 	function runsLabel(a: Applet): string {
 		if (a.archived_at) return 'Finished';
 		if (!a.enabled) return 'Off';
-		return describeSchedule(a.schedule);
+		return describeTriggers(a);
 	}
 
 	// What made this applet, in the user's terms. "Source" is the one that was

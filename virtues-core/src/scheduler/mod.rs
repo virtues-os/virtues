@@ -30,6 +30,7 @@
 
 pub mod applets;
 pub mod slots;
+pub mod watch;
 
 use chrono_tz::Tz;
 use sqlx::PgPool;
@@ -343,6 +344,10 @@ impl Scheduler {
                 Ok(0) => {}
                 Ok(n) => tracing::info!("scheduler picked up {n} new cron action(s)"),
                 Err(e) => tracing::warn!(error = %e, "scheduler refresh failed; will retry"),
+            }
+            let deps = RunnerDeps { db: self.db.clone(), yjs: self.yjs_state.clone() };
+            if let Err(e) = watch::poll(&deps).await {
+                tracing::warn!(error = %e, "data trigger poll failed; will retry");
             }
         }
     }

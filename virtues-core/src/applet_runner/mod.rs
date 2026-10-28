@@ -47,6 +47,7 @@ mod sandboxed;
 
 use crate::error::{Error, Result};
 use crate::scheduler::applets::{self, Applet};
+use crate::scheduler::watch::Batch;
 use crate::server::yjs::YjsState;
 use limits::Limits;
 
@@ -112,7 +113,7 @@ impl AppletRunResult {
 /// needed) or a created run row that the caller should drive to completion.
 enum PrepareOutcome {
     Early(AppletRunResult),
-    Ready { action: Applet, run_id: String },
+    Ready { action: Applet, run_id: String, batch: Option<Batch> },
 }
 
 /// Run an action end-to-end. The single inline-await dispatch entry point.
@@ -128,9 +129,9 @@ pub async fn run_applet(
 ) -> Result<AppletRunResult> {
     match prepare_run(deps, applet_id, trigger).await? {
         PrepareOutcome::Early(result) => Ok(result),
-        PrepareOutcome::Ready { action, run_id } => {
+        PrepareOutcome::Ready { action, run_id, batch } => {
             let payload = payload.cloned();
-            Ok(execute_prepared(deps.clone(), action, run_id, trigger.to_string(), payload).await)
+            Ok(execute_prepared(deps.clone(), action, run_id, trigger.to_string(), payload, batch).await)
         }
     }
 }
@@ -150,15 +151,14 @@ pub async fn run_applet_detached(
 ) -> Result<AppletRunResult> {
     match prepare_run(deps, applet_id, trigger).await? {
         PrepareOutcome::Early(result) => Ok(result),
-        PrepareOutcome::Ready { action, run_id } => {
+        PrepareOutcome::Ready { action, run_id, batch } => {
             let payload = payload.cloned();
             let deps_owned = deps.clone();
             let run_id_for_task = run_id.clone();
             let trigger_owned = trigger.to_string();
             tokio::spawn(async move {
-                let _ =
-                    execute_prepared(deps_owned, action, run_id_for_task, trigger_owned, payload)
-                        .await;
+                let _ = execute_prepared(deps_owned, action, run_id_for_task, trigger_owned, payload, batch)
+                    .await;
             });
             Ok(AppletRunResult {
                 run_id: Some(run_id),
@@ -306,11 +306,29 @@ async fn prepare_run(
         }
     }
 
+    // 4c. A data trigger's rows: any run of the applet takes the rows that
+    // have come since its last one (`scheduler::watch`). A poll that finds
+    // none, because another run took them, starts nothing.
+    let batch = crate::scheduler::watch::claim(&deps.db, &action).await?;
+    let nothing_new = match &batch {
+        Some(b) if trigger == "data" => b.is_empty(&deps.db).await?,
+        _ => trigger == "data",
+    };
+    if nothing_new {
+        return Ok(PrepareOutcome::Early(AppletRunResult {
+            run_id: None,
+            status: AppletRunStatus::Skipped,
+            summary: "nothing new".to_string(),
+            error: None,
+        }));
+    }
+
     // 5. Create run row.
     let run = applets::create_run(&deps.db, Some(&action.id), trigger).await?;
     Ok(PrepareOutcome::Ready {
         action,
         run_id: run.id,
+        batch,
     })
 }
 
@@ -324,6 +342,7 @@ async fn execute_prepared(
     run_id: String,
     trigger: String,
     payload: Option<serde_json::Value>,
+    batch: Option<Batch>,
 ) -> AppletRunResult {
     // Everything below — the subprocess's own stderr, the agent phase, the AI
     // calls it bills, the failure that lands on the run row — happens inside
@@ -336,7 +355,7 @@ async fn execute_prepared(
     // future instead attaches the span to it, so it follows the work into the
     // spawned task, which is the behavior we actually want here.
     let span = crate::observe::run_span(&run_id, &action.id);
-    execute_prepared_inner(deps, action, run_id, trigger, payload)
+    execute_prepared_inner(deps, action, run_id, trigger, payload, batch)
         .instrument(span)
         .await
 }
@@ -347,6 +366,7 @@ async fn execute_prepared_inner(
     run_id: String,
     trigger: String,
     payload: Option<serde_json::Value>,
+    batch: Option<Batch>,
 ) -> AppletRunResult {
     let applet_id = action.id.clone();
 
@@ -404,14 +424,23 @@ async fn execute_prepared_inner(
         None
     };
 
+    // A data trigger's rows, as `new_rows` for the SQL below and the
+    // prompt, and as the payload code reads when nothing else sent one.
+    let new_rows = match batch.as_ref().map(Batch::cte).transpose() {
+        Ok(cte) => cte,
+        Err(e) => return fail(&deps, &run_id, &applet_id, e.to_string()).await,
+    };
+    let payload = payload.or_else(|| batch.as_ref().map(Batch::payload));
+
     // 6b. SQL phase: `run: sql`, read-only, before the prompt. No rows means
     // nothing to do, so a run with a prompt is skipped without a model call.
     // A message is the exception, for the reason a condition does not gate
     // one: what someone typed is the input, whatever the SQL found.
     let has_prompt = action.agent.as_ref().is_some_and(|s| !s.trim().is_empty());
+    let run_sql_text = action.run_sql.as_deref().filter(|s| !s.trim().is_empty());
     let mut sql_context: Option<String> = None;
-    if let Some(sql) = action.run_sql.as_deref().filter(|s| !s.trim().is_empty()) {
-        match run_sql::run(&deps.db, sql).await {
+    if let Some(sql) = run_sql_text {
+        match run_sql::run(&deps.db, sql, new_rows.as_deref()).await {
             Err(e) => {
                 let msg = e.to_string();
                 tracing::error!(applet_id, error = %msg, "run SQL failed");
@@ -443,6 +472,22 @@ async fn execute_prepared_inner(
             }
             Ok(result) => sql_context = (result.total > 0).then(|| result.for_prompt()),
         }
+    }
+
+    // 6c. A data trigger with no `run` hands its rows to the prompt.
+    if let (Some(b), Some(cte), None, true) = (&batch, &new_rows, run_sql_text, has_prompt) {
+        let listed = match (b.range, b.listing_sql()) {
+            (None, _) => None,
+            (Some(_), Err(e)) => return fail(&deps, &run_id, &applet_id, e.to_string()).await,
+            (Some(_), Ok(sql)) => match run_sql::run(&deps.db, &sql, Some(cte)).await {
+                Ok(result) => Some(result),
+                Err(e) => return fail(&deps, &run_id, &applet_id, e.to_string()).await,
+            },
+        };
+        sql_context = Some(match listed {
+            Some(result) if result.total > 0 => result.for_prompt_with(&b.heading()),
+            _ => b.nothing(),
+        });
     }
 
     // 7. Subprocess phase.
@@ -1650,6 +1695,66 @@ mod tests {
         let count = run_applet(&deps, "applet_count", "manual", None).await.unwrap();
         assert_eq!(count.status, AppletRunStatus::Success);
         assert_eq!(count.summary, "3 rows.");
+    }
+
+    /// An applet with a data trigger, two of its rows waiting: `id` has
+    /// `run_sql` and `agent` as given.
+    async fn watching_applet(pool: &sqlx::PgPool, id: &str, agent: Option<&str>, run_sql: Option<&str>) {
+        sqlx::query(
+            "INSERT INTO app_applets (id, name, owner, agent, run_sql, triggers, watch, watched_through) \
+             VALUES ($1, $1, 'user', $2, $3, '[\"manual\",\"data\"]', \
+                     '{\"table\":\"data_calendar_event\",\"kind\":\"new\",\"minutes\":0,\"label\":\"calendar events\"}', \
+                     now() - interval '10 minutes')",
+        )
+        .bind(id)
+        .bind(agent)
+        .bind(run_sql)
+        .execute(pool)
+        .await
+        .unwrap();
+        for (event, title) in [("ev_1", "Planning"), ("ev_2", "Review")] {
+            sqlx::query(
+                "INSERT INTO data_calendar_event (id, title, started_at, ended_at, source_stream_id, source_table, source_provider, created_at) \
+                 VALUES ($1 || $2, $3, now() + interval '1 day', now() + interval '1 day 1 hour', $1 || $2, 'stream_calendar', 'google', \
+                         now() - interval '5 minutes')",
+            )
+            .bind(id)
+            .bind(event)
+            .bind(title)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        crate::server::faces::ensure_applet_db_grants(pool).await.unwrap();
+    }
+
+    /// A data trigger's run reads the rows waiting for it as `new_rows`, and
+    /// takes them: the next poll-started run finds nothing and leaves no row.
+    #[sqlx::test]
+    async fn a_data_run_takes_the_rows_waiting_for_it_once(pool: sqlx::PgPool) {
+        let deps = RunnerDeps { db: pool.clone(), yjs: YjsState::new(pool.clone()) };
+        watching_applet(&pool, "applet_watch", None, Some("select title from new_rows where title <> 'Review'")).await;
+
+        let first = run_applet(&deps, "applet_watch", "data", None).await.unwrap();
+        assert_eq!((first.status, first.summary.as_str()), (AppletRunStatus::Success, "1 row."), "{:?}", first.error);
+        let again = run_applet(&deps, "applet_watch", "data", None).await.unwrap();
+        assert_eq!((again.status, again.run_id), (AppletRunStatus::Skipped, None));
+        assert_eq!(run_count(&pool, "applet_watch").await, 1);
+    }
+
+    /// When a poll's rows are gone by the time its run starts, the run
+    /// leaves no row and calls no model.
+    #[sqlx::test]
+    async fn a_data_run_whose_rows_are_gone_starts_nothing(pool: sqlx::PgPool) {
+        let deps = RunnerDeps { db: pool.clone(), yjs: YjsState::new(pool.clone()) };
+        watching_applet(&pool, "applet_gone", Some("Say what is new."), None).await;
+        sqlx::query("DELETE FROM data_calendar_event").execute(&pool).await.unwrap();
+
+        let r = run_applet(&deps, "applet_gone", "data", None).await.unwrap();
+        assert_eq!((r.status, r.run_id), (AppletRunStatus::Skipped, None));
+        assert_eq!(run_count(&pool, "applet_gone").await, 0);
+        let calls: i64 = sqlx::query_scalar("SELECT count(*) FROM app_ai_calls").fetch_one(&pool).await.unwrap();
+        assert_eq!(calls, 0);
     }
 
     /// `run` SQL gates polls. Someone who just pressed send is not a poll, and

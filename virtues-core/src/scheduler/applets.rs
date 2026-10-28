@@ -10,7 +10,7 @@
 //! - none set       → nothing to run (a view-only applet)
 //!
 //! `triggers` is a JSON array of what may start the applet:
-//! `cron | manual | tool | webhook | message`.
+//! `cron | manual | tool | webhook | message | data`.
 
 use crate::error::{Error, Result};
 use crate::ids::generate_id;
@@ -88,6 +88,12 @@ pub struct Applet {
     /// The slot currently owed. Far enough in the past = "expected but didn't
     /// run". Derived; see [`crate::scheduler::slots`].
     pub next_due_at: Option<crate::types::Timestamp>,
+    /// Its data trigger, from the file ([`crate::scheduler::watch`]).
+    #[serde(default)]
+    pub watch: Option<crate::scheduler::watch::Watch>,
+    /// How far its data trigger's rows have gone to runs. The box's.
+    #[serde(default)]
+    pub watched_through: Option<crate::types::Timestamp>,
     pub created_at: crate::types::Timestamp,
     pub updated_at: crate::types::Timestamp,
     /// A shipped applet the owner changed: its override file holds what they
@@ -1037,6 +1043,14 @@ pub fn applet_from_row(row: &sqlx::postgres::PgRow) -> Result<Applet> {
         archived_at: row.try_get("archived_at").ok().flatten(),
         last_slot_at: row.try_get("last_slot_at").ok().flatten(),
         next_due_at: row.try_get("next_due_at").ok().flatten(),
+        // absent-ok, as `run_sql`. A watch this build cannot read is no
+        // watch, which the reader's own checks make rare.
+        watch: row
+            .try_get::<Option<serde_json::Value>, _>("watch")
+            .ok()
+            .flatten()
+            .and_then(|v| serde_json::from_value(v).ok()),
+        watched_through: row.try_get("watched_through").ok().flatten(),
         created_at: row.try_get("created_at")?,
         updated_at: row.try_get("updated_at")?,
         has_override,

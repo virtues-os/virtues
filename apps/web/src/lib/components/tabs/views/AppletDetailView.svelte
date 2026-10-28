@@ -29,7 +29,7 @@
 		type AppletLogEntry,
 		type RunDay
 	} from '$lib/api/client';
-	import { appletGlyph, describeSchedule, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
+	import { appletGlyph, describeTriggers, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
 	import RecentDots from '$lib/components/applets/RecentDots.svelte';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
@@ -389,7 +389,7 @@
 	const nextRunText = $derived.by(() => {
 		if (!action || action.archived_at) return 'Finished';
 		if (!action.enabled) return 'Off';
-		if (!action.next_due_at) return describeSchedule(action.schedule);
+		if (!action.next_due_at) return describeTriggers(action);
 		return relativeTime(action.next_due_at);
 	});
 	// The week's cost comes with the applet list, not with one applet.
@@ -407,8 +407,8 @@
 		if (!action) return '';
 		if (action.archived_at) return `Finished ${new Date(action.archived_at).toLocaleDateString()}`;
 		// Off keeps its schedule in view: it's what turning it back on brings back.
-		if (!action.enabled) return `Off · ${describeSchedule(action.schedule)}`;
-		return describeSchedule(action.schedule);
+		if (!action.enabled) return `Off · ${describeTriggers(action)}`;
+		return describeTriggers(action);
 	});
 
 	function openMore(e: MouseEvent) {

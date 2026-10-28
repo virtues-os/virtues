@@ -115,7 +115,8 @@
 		tool: 'From a chat',
 		api: 'From another app',
 		webhook: 'From a webhook',
-		message: 'Your message'
+		message: 'Your message',
+		data: 'From your data'
 	};
 
 	const STATUS_WORD: Record<AppletLogEntry['status'], string> = {

@@ -22,7 +22,7 @@
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';
 	import { contextMenu, type ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 	import { pinMenuItem } from '$lib/pins/pinAction';
-	import { appletGlyph, describeSchedule, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
+	import { appletGlyph, describeTriggers, errorHeadline, relativeTime, runFix } from '$lib/applets/palette';
 	import { needsYou } from '$lib/applets/days';
 	import NewAppletSheet from './NewAppletSheet.svelte';
 
@@ -67,7 +67,7 @@
 			return { text: `Was due ${relativeTime(a.next_due_at)} and hasn't run`, problem: true };
 		}
 		if (!a.enabled) return { text: 'Off', problem: false };
-		const runs = describeSchedule(a.schedule);
+		const runs = describeTriggers(a);
 		const last = a.last_run?.started_at;
 		return { text: last ? `${runs} · last ran ${relativeTime(last)}` : runs, problem: false };
 	}

@@ -20,13 +20,13 @@ folder through the same setup.
 | `name` | `name` and the folder | a few words; `Water log` is `user/water-log/`. The same name is the same applet, a built-in one included |
 | `description` | `description` | one sentence the owner reads: what it does for them, and when to use it |
 | `prompt` | the body | what to read, what to write, how long; under 300 words. It runs with no chat history |
-| `trigger` | `metadata.trigger` | `every day at 07:00`, `every monday at 09:00`, `every hour`, `on 2026-11-02 at 09:00`, `cron 0 0 7 * * *`, in the box's time |
-| `run` | `metadata.run` | `sql …` that returns a row only when it should run; no rows skips the prompt |
+| `trigger` | `metadata.trigger` | `every day at 07:00`, `every monday at 09:00`, `every hour`, `on 2026-11-02 at 09:00`, `cron 0 0 7 * * *`, in the box's time; or on rows in a data table: `new data_health_workout`, `30 minutes before data_calendar_event`, `15 minutes after data_calendar_event ends` |
+| `run` | `metadata.run` | `sql …` that returns a row only when it should run; no rows skips the prompt. With a data trigger it reads the rows as `new_rows` |
 | `invoke` | `metadata.invoke` | `assistant` (the default) lets the assistant start it; `chat` puts it in the `/` menu |
 | `tools` | `allowed-tools` | narrows the tools its prompt has, from chat's ordinary set |
 | `tables` | `tables/NNNN_schema.sql` | every `CREATE TABLE` it should have, every time; the box adds what is missing and never drops |
 | `view` | `view.html` | one HTML page that links `virtues.css` and `virtues.js` and reads with `await virtues.query(sql)` |
-| `limit` | `metadata.limit` | `$0.25 per run, $1 per day, 10 minutes`; an applet with a prompt gets `$1 per day` when it has no daily limit |
+| `limit` | `metadata.limit` | `$0.25 per run, $1 per day, 10 minutes`; an applet with a prompt gets `$1 per day` when it has no daily limit, and one with a data trigger gets `6 runs per hour` when it has no hourly limit |
 | `model` | `metadata.model` | `standard`, `deep` or `lite`; an unattended prompt starts on `lite` |
 
 An applet the assistant makes starts on. Its tables are in schema
@@ -70,6 +70,15 @@ A check with no model call on most days:
   "prompt": "Write one short line suggesting a workout today." }
 ```
 
+A check on new data, with no model call unless a reading is high:
+
+```json
+{ "action": "setup", "name": "High heart rate", "description": "Tells you when your heart rate runs high.",
+  "trigger": "new data_health_heart_rate",
+  "run": "sql select occurred_at, bpm from new_rows where bpm > 120",
+  "prompt": "Write one short line saying when it was high and how high." }
+```
+
 ## What holds for any applet
 
 - **Name only tables that exist.** Setup checks every `data_*` and `wiki_*`
@@ -87,6 +96,11 @@ A check with no model call on most days:
 - **A threshold stays true.** "No workout in 3 days" fires every day of the
   lapse. To fire once, add a cooldown on its own runs to `run`:
   `and not exists (select 1 from app_applet_runs r where r.applet_id = 'applet_user__workout_nudge' and r.status = 'success' and r.started_at > now() - interval '1 day')`.
+- **A data trigger takes what came since its last run.** Each run reads every
+  row that arrived since the one before, as `new_rows`. Rows already there
+  when it is made start nothing, and neither do new rows about more than a
+  week ago, such as the history a new source brings in. `before` and
+  `after … ends` count from each row's own start or end.
 - **Two cadences are two applets**, each restating what it needs.
 - **No persona applets.** "Reply to Mom as me" is not something an applet can
   do; offer one that drafts replies as pages for the owner to send.

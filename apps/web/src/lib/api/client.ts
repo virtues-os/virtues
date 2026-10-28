@@ -249,7 +249,17 @@ function isOwnerProofRefusal(e: unknown): boolean {
 // Actions — new schema (post cutover + PR 2 endpoints)
 // ============================================================================
 
-export type AppletTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook' | 'message';
+export type AppletTrigger = 'cron' | 'manual' | 'tool' | 'api' | 'webhook' | 'message' | 'data';
+
+/** A data trigger: the applet starts on rows in one of your data tables. */
+export interface AppletWatch {
+	table: string;
+	/** `new` rows, a time `before` each row starts, or a time after it ends. */
+	kind: 'new' | 'before' | 'after_end';
+	minutes: number;
+	/** The table as a person says it, "calendar events". */
+	label: string;
+}
 
 export interface AppletRun {
 	id: string;
@@ -319,6 +329,8 @@ export interface Applet {
 	enabled: boolean;
 	config: Record<string, unknown>;
 	triggers: AppletTrigger[];
+	/** Its data trigger, when its file has one. */
+	watch?: AppletWatch | null;
 	memory: string | null;
 	/** Set when the applet is one source connection's fan-out (OAuth/API-key). */
 	credential_id: string | null;
