@@ -281,6 +281,10 @@ each item to its commit and says which are still open.
 - Backups and restores stage on the box, restore and server start check
   the key, and one resolver finds `virtues.env` (`10fe384cf`,
   `f6e541881`).
+- A restore reaches its stage through the folder it opened, never its
+  name, unpacks only regular files, refuses every link it finds there,
+  gives `pg_restore` the dump on stdin, and renames the env file over a
+  link at `virtues.env` (`d6c5fbe2f`).
 - Per-box secret files in one list, and leftover run files swept at the
   first run in each server process (`aaf3d7b9f`, `f6e541881`).
 - Revoking empties the payload, including rows revoked earlier, and a link
