@@ -93,12 +93,13 @@ a Client ID Metadata Document we host (for example
 `https://virtues.com/mcp/client.json`). There is no client secret to keep, so
 the box redeems the code itself.
 
-The box has no public URL, so the redirect goes to `auth.virtues.com`, which
-forwards the code to the box in the same signed exchange shape the proxy uses
-today. The PKCE verifier never leaves the box, so the proxy cannot redeem the
-code and never holds a token. When the owner signs in from the Mac app, a
-loopback redirect through `:7117` can skip the proxy entirely; the 2026-07-28
-spec allows `localhost` redirects for native clients.
+The box has no public URL, so the redirect goes to `auth.virtues.com`
+(`services/virtues-api/src/routes/connections.rs`), which keeps the code
+until the box claims it by `state`. The PKCE verifier never leaves the box,
+so the proxy cannot redeem the code and never holds a token. A loopback
+redirect through the app's `:7117` does not work on a phone: on 2026-10-27
+Safari on the owner's iPhone could not load `127.0.0.1:7117` while the app
+was open behind it.
 
 ### Tools become registry rows
 
@@ -341,8 +342,10 @@ name.
    - Built: `tools/connection.rs` and `server/api/connections.rs`, on rmcp's
      client and `auth` features over the reqwest 0.13 iroh already links.
      Sign-in is OAuth 2.1 with PKCE as a public client registered by dynamic
-     client registration; the redirect is `/api/connections/callback` at the
-     origin the owner's app sends, so no proxy holds the code. Tokens are a
+     client registration. The redirect is the proxy's
+     `/connections/callback`; the box asks `POST /connections/claim/{state}`
+     every two seconds for up to ten minutes and redeems the code itself.
+     Tokens are a
      sealed `credentials` row (kind `connection`), which rmcp loads and
      refreshes. Chat gets one `connection(name, task, confirmed)` tool
      (its own 900-character budget group); a Lite-slot worker gets the
@@ -357,8 +360,8 @@ name.
      sources' "Syncs your data", with the table's search also searching the
      registry and an address field under it (`SourcesCatalog.svelte`);
      routes `GET /api/connections`, `GET
-     /api/connections/search?q=`, `POST /api/connections/connect {origin,
-     registry | url}`, `DELETE /api/connections/:id`; the connected services'
+     /api/connections/search?q=`, `POST /api/connections/connect {registry
+     | url}` (an older app's `origin` is ignored), `DELETE /api/connections/:id`; the connected services'
      short names in the chat's context.
    - Checked: each featured server starts a sign-in from the box (discovery,
      dynamic registration, a sign-in URL with PKCE S256 and `resource`).
@@ -397,6 +400,12 @@ name.
        only from the answer itself or a nested object with its own
        `identifier`, else the written `body`.
    - Left: servers that take an API key in a header.
+   - Return through the proxy, checked 2026-10-27 against a local
+     virtues-api: the owner approved a Linear sign-in, the proxy kept the
+     code, and the box claimed it and stored the connection within four
+     seconds. Shipping needs the virtues-api deploy before the box release.
+     Source sign-ins on the phone still return to `:7117` and fail the same
+     way.
 4. **Connections in applets.** `allowed-tools` entries for connection tools,
    the Rule of Two legs, owner-only adding. Then owner-added URLs from
    Settings.

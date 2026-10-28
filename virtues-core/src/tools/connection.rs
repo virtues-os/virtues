@@ -4,9 +4,15 @@
 //! Any server in the public MCP Registry can be connected, or any server
 //! address the owner pastes (`connection_registry.rs`). Signing in is OAuth
 //! 2.1 with PKCE through rmcp, as a public client the box registers with the
-//! service at sign-in (dynamic client registration). The redirect comes back
-//! to the box at the address the owner's app reaches it by, so no proxy ever
-//! holds the code or the token. The tokens live sealed in `credentials` (kind
+//! service at sign-in (dynamic client registration).
+//!
+//! The service sends the owner's browser back to the OAuth proxy
+//! (`services/virtues-api/src/routes/connections.rs`), never to the box. On a
+//! phone the app reaches the box through a listener inside the app, and
+//! Safari cannot reach it, so a sign-in that returned there failed. The proxy
+//! keeps the code, and the box claims it server to server and exchanges it.
+//! The proxy cannot use the code: the exchange needs the PKCE verifier, which
+//! never leaves the box. The tokens live sealed in `credentials` (kind
 //! `connection`, key the connection's short name), with the server's address
 //! in the row's metadata, and rmcp refreshes them through the same row.
 //!
@@ -43,9 +49,13 @@ use crate::api::compaction::build_context_for_llm;
 /// The chat's tool.
 pub const TOOL: &str = "connection";
 
-/// Where a sign-in comes back to: `GET` on the box, at whatever origin the
-/// owner's app reaches it by (`server/api/connections.rs`).
-pub const CALLBACK_PATH: &str = "/api/connections/callback";
+/// Where every sign-in comes back to: the OAuth proxy's return route.
+fn redirect_uri() -> String {
+    format!("{}/connections/callback", virtues_helpers::auth::proxy_url())
+}
+
+/// How often the box asks the proxy whether a sign-in's code has arrived.
+const CLAIM_EVERY: Duration = Duration::from_secs(2);
 
 /// The `credentials` kind a connection's sign-in is stored under.
 const KIND: &str = "connection";
@@ -265,14 +275,14 @@ fn pending() -> &'static Mutex<HashMap<String, Pending>> {
 }
 
 /// Starts a sign-in and returns the service's authorization URL for the
-/// owner's browser. `redirect_uri` is [`CALLBACK_PATH`] at the origin the
-/// owner's app uses.
-pub async fn start(pool: &PgPool, connection: Connection, redirect_uri: &str) -> Result<String> {
+/// owner's browser. A task then waits for the code at the proxy and finishes
+/// the sign-in when it arrives.
+pub async fn start(pool: &PgPool, connection: Connection) -> Result<String> {
     let mut state = OAuthState::new(&connection.url, None).await.context("reach the service")?;
     if let OAuthState::Unauthorized(manager) = &mut state {
         manager.set_credential_store(Stored { pool: pool.clone(), connection: connection.clone() });
     }
-    let request = AuthorizationRequest::new(redirect_uri)
+    let request = AuthorizationRequest::new(&redirect_uri())
         .with_client_name("Virtues")
         .with_application_type("native");
     state.start_authorization(request).await.context("start the sign-in")?;
@@ -285,12 +295,82 @@ pub async fn start(pool: &PgPool, connection: Connection, redirect_uri: &str) ->
 
     let mut waiting = pending().lock().await;
     waiting.retain(|_, p| p.started.elapsed() < SIGN_IN_WINDOW);
-    waiting.insert(csrf, Pending { connection, state, started: Instant::now() });
+    waiting.insert(csrf.clone(), Pending { connection, state, started: Instant::now() });
+    drop(waiting);
+    tokio::spawn(claim(csrf));
     Ok(url)
 }
 
-/// Finishes a sign-in from the redirect's query. Returns the connection.
-pub async fn finish(code: &str, csrf: &str, issuer: Option<&str>) -> Result<Connection> {
+/// What the proxy hands back for a sign-in.
+#[derive(serde::Deserialize)]
+struct Returned {
+    code: Option<String>,
+    iss: Option<String>,
+    error: Option<String>,
+}
+
+/// Asks the proxy for the sign-in's code until it arrives, the sign-in is
+/// gone, or its ten minutes pass, then finishes it. Nothing waits on this
+/// task; the Sources catalog shows the connection once it is stored.
+async fn claim(csrf: String) {
+    let url = format!(
+        "{}/connections/claim/{}",
+        virtues_helpers::auth::proxy_url(),
+        urlencoding::encode(&csrf)
+    );
+    let started = Instant::now();
+    while started.elapsed() < SIGN_IN_WINDOW {
+        tokio::time::sleep(CLAIM_EVERY).await;
+        if !pending().lock().await.contains_key(&csrf) {
+            return;
+        }
+        let response = match http().post(&url).send().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::debug!(error = %e, "connection sign-in: proxy unreachable, asking again");
+                continue;
+            }
+        };
+        if response.status() == reqwest::StatusCode::NOT_FOUND {
+            continue;
+        }
+        if !response.status().is_success() {
+            tracing::warn!(status = %response.status(), "connection sign-in: the proxy refused the claim");
+            continue;
+        }
+        let returned: Returned = match response.json().await {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(error = %e, "connection sign-in: the proxy's answer did not parse");
+                continue;
+            }
+        };
+        match (returned.code, returned.error) {
+            (Some(code), None) => match finish(&code, &csrf, returned.iss.as_deref()).await {
+                Ok(c) => tracing::info!(connection = %c.id, "connection signed in"),
+                Err(e) => tracing::warn!(error = %format!("{e:#}"), "connection sign-in did not finish"),
+            },
+            (_, error) => {
+                pending().lock().await.remove(&csrf);
+                tracing::warn!(error = ?error, "connection sign-in refused by the service");
+            }
+        }
+        return;
+    }
+}
+
+fn http() -> &'static reqwest::Client {
+    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+    CLIENT.get_or_init(|| {
+        reqwest::Client::builder()
+            .timeout(Duration::from_secs(15))
+            .build()
+            .unwrap_or_default()
+    })
+}
+
+/// Finishes a sign-in with the code the service sent. Returns the connection.
+async fn finish(code: &str, csrf: &str, issuer: Option<&str>) -> Result<Connection> {
     let Some(mut sign_in) = pending().lock().await.remove(csrf) else {
         bail!("this sign-in is unknown or more than ten minutes old. Start it again.");
     };

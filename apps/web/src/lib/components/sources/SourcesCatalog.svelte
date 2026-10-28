@@ -32,7 +32,6 @@
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
 	import { sourcesStore, type Connection } from '$lib/stores/sources.svelte';
 	import { apiGet, apiSend, getStreamHealth, type StreamHealth } from '$lib/api/client';
-	import { backendUrl } from '$lib/config/backend';
 	import { openExternal } from '$lib/tauri/bridge';
 	import { reloadOnReturn } from './connectDispatch';
 	import { connectFlow } from '$lib/stores/connectFlow.svelte';
@@ -390,19 +389,29 @@
 		windowShellStore.navigate(`/sources/${row.id}`, { label: row.name });
 	}
 
+	/**
+	 * After a sign-in the service sends the browser to the OAuth proxy, and
+	 * your server collects the code from there a few seconds later
+	 * (`tools/connection.rs`). So coming back to the app reloads the list
+	 * until the new connection shows, for up to half a minute.
+	 */
+	function reloadUntilConnected() {
+		const before = connected.length;
+		let tries = 0;
+		const again = async () => {
+			await loadConnections();
+			if (connected.length === before && ++tries < 15) setTimeout(again, 2000);
+		};
+		reloadOnReturn(again);
+	}
+
 	/** Starts a service's sign-in and opens it in the browser. */
 	async function connectService(target: { registry: string } | { url: string }, key: string) {
 		busy = key;
 		connectionsError = null;
 		try {
-			// The address your browser reaches the server by, where the service
-			// sends it back after the sign-in.
-			const origin = new URL(backendUrl('/'), location.href).origin;
-			const { auth_url } = await apiSend<{ auth_url: string }>('POST', '/connections/connect', {
-				origin,
-				...target
-			});
-			reloadOnReturn(loadConnections);
+			const { auth_url } = await apiSend<{ auth_url: string }>('POST', '/connections/connect', target);
+			reloadUntilConnected();
 			await openExternal(auth_url);
 		} catch (e) {
 			connectionsError = message(e);
