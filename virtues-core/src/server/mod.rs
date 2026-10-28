@@ -26,6 +26,10 @@ use crate::Virtues;
 
 /// Run the HTTP ingestion server with integrated scheduler
 pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
+    // Before anything can answer a request: the Host check accepts the box's
+    // own name on this port.
+    crate::middleware::security::set_listen_port(port);
+
     // Awaited before anything is spawned: the scheduler resolves cron
     // timezones from home_timezone and schedules the templates reconciled here.
     preflight(&client).await;
@@ -484,6 +488,11 @@ fn static_service() -> Option<
 /// A remote page's origin is `https://whatever.example`, which matches none
 /// of the arms below, so the browser refuses to hand it the response. The
 /// app, the box's own web UI, and local development all still match.
+///
+/// CORS covers only a cross-origin page. A page whose name a DNS rebinding
+/// points at 127.0.0.1:7117 is same-origin with itself, so the browser reads
+/// the reply without asking this layer. The Host check in
+/// `middleware::security` refuses that request instead.
 ///
 /// `server/faces.rs` keeps its own `*` header deliberately: faces are served
 /// into an opaque-origin iframe under a strict CSP and carry no ambient
@@ -1254,9 +1263,16 @@ pub(crate) fn refuse_foreign_socket(
 /// because it is the thing standing between a random web page and the owner's
 /// record, and a subtle parsing slip here is invisible in review.
 ///
-/// Allowed: the app's `tauri://` origin, loopback on any port (the desktop
-/// proxy on 7117, the box's own UI, `pnpm dev` on 5173), and the box's `.virtues`
-/// name. A page served from a remote host has none of these origins.
+/// Allowed: the app's own `tauri://`, `virtues://` and
+/// `https://tauri.localhost` origins, and a loopback page served by the
+/// authority it dials (the desktop proxy on 7117, the box's own UI on
+/// `localhost:8000`). A loopback origin passes only when it equals the
+/// request's `Host`. Every other origin is refused here.
+///
+/// A page the box serves under another name is allowed by
+/// [`origin_is_listed`] instead (`VIRTUES_PUBLIC_ORIGINS`). The `make dev`
+/// page on 5173 is one: vite rewrites `Host` to `localhost:8000`, so that
+/// page's origin never equals `Host`.
 pub(crate) fn origin_is_ours(origin: &str, request_host: Option<&str>) -> bool {
     // The app's own origin: `tauri://localhost` on macOS/iOS,
     // `https://tauri.localhost` on Windows — and `virtues://` on the phone,
@@ -1309,7 +1325,7 @@ pub(crate) fn origin_is_ours(origin: &str, request_host: Option<&str>) -> bool {
         // dial, so a loopback origin must equal the request's Host, exactly.
         return request_host == Some(rest);
     }
-    host == "virtues" || host.ends_with(".virtues")
+    false
 }
 
 #[cfg(test)]
@@ -1336,6 +1352,12 @@ mod cors_tests {
             "https://virtues.evil.example",
             "http://evil.example/virtues://",
             "http://evil.example/localhost",
+            // `.virtues` is not a reserved name, so whoever controls the
+            // Mac's DNS (a café network, a captive portal) can serve a page
+            // from one, and no box serves it.
+            "http://box.virtues:8000",
+            "http://x.virtues",
+            "http://virtues:8000",
             // Non-http schemes and the opaque origin.
             "null",
             "file://",
@@ -1361,10 +1383,18 @@ mod cors_tests {
             ("http://127.0.0.1:7117", Some("127.0.0.1:7117")),
             ("http://[::1]:8000", Some("[::1]:8000")),
             ("http://localhost", Some("localhost")),
-            ("http://box.virtues:8000", None),
-            ("http://virtues:8000", None),
         ] {
             assert!(origin_is_ours(o, host), "must allow {o} for host {host:?}");
+        }
+    }
+
+    /// A name other than loopback is not ours even when the page is served by
+    /// the authority it dials. A name the box answers to goes in
+    /// `VIRTUES_PUBLIC_ORIGINS`.
+    #[test]
+    fn a_named_origin_is_refused_even_when_it_matches_host() {
+        for o in ["box.virtues:8000", "virtues:8000", "x.virtues", "evil.example:7117"] {
+            assert!(!origin_is_ours(&format!("http://{o}"), Some(o)), "must refuse {o}");
         }
     }
 
