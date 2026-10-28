@@ -80,7 +80,11 @@ fn resolve_from(
 /// Every `KEY=value` in the file, values unquoted. `None` when the file is
 /// missing or unreadable, which on a dev machine is the normal case.
 pub fn read(path: &Path) -> Option<HashMap<String, String>> {
-    let contents = std::fs::read_to_string(path).ok()?;
+    Some(parse(&std::fs::read_to_string(path).ok()?))
+}
+
+/// Every `KEY=value` in env-file text, values unquoted.
+fn parse(contents: &str) -> HashMap<String, String> {
     let mut out = HashMap::new();
     for line in contents.lines() {
         let line = line.trim();
@@ -91,7 +95,7 @@ pub fn read(path: &Path) -> Option<HashMap<String, String>> {
             out.insert(k.trim().to_string(), unquote(v.trim()));
         }
     }
-    Some(out)
+    out
 }
 
 /// The variable that holds the box key, the one key that seals every row in
@@ -102,7 +106,12 @@ pub const ENCRYPTION_KEY: &str = "VIRTUES_ENCRYPTION_KEY";
 /// Takes a path because backup and restore also read env files that are not
 /// this box's: the copy inside an archive.
 pub fn encryption_key(path: &Path) -> Option<String> {
-    read(path)?.remove(ENCRYPTION_KEY).filter(|v| !v.trim().is_empty())
+    encryption_key_in(&std::fs::read_to_string(path).ok()?)
+}
+
+/// [`encryption_key`] for env-file text the caller has already read.
+pub fn encryption_key_in(contents: &str) -> Option<String> {
+    parse(contents).remove(ENCRYPTION_KEY).filter(|v| !v.trim().is_empty())
 }
 
 /// One key from the file, if the file has it and it's non-empty.

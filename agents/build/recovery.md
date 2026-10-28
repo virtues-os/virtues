@@ -393,22 +393,26 @@ check fails. The fix it prints is to put back the right `virtues.env`, run
 service.
 
 A restore unpacks into a stage under `<data_dir>/staging`. The stage is
-root's, 0700, until `pg_restore` hands the stage folder, its `db` folder and
-the dump to the service user; the `env` folder stays root's after that. A
-power cut or a kill at any point, or a signal after it starts replacing
+root's and 0700 for the whole restore. `pg_restore` runs as the service user
+and reads the dump on stdin, from a file root opened, so it needs no path
+into the stage. A power cut or a kill at any point, or a signal after it starts replacing
 data, leaves the stage, with the plaintext dump and the backup's env file,
 with its key, in it. The next restore sweeps it as root. A backup runs as the
-service user and cannot remove root's part, so it warns and names the
-folder. The `state-ownership` repair that every upgrade and `sudo virtues
+service user and cannot remove it, so it warns and names the folder. The `state-ownership` repair that every upgrade and `sudo virtues
 migrate` runs hands everything under the data dir to the service user, and a
 backup after that removes it. `deprovision` removes the whole staging
 folder, and `image-check` reports it (`box_files.rs`).
 
 The staging folder itself, like the data dir, belongs to the service user,
 so that user can rename a stage while a restore works in it and put a folder
-of its own in its place. A root-owned stage only stops changes inside it.
-`pg_restore`'s hand-over uses `chown -h`, so a link at one of those paths is
-changed itself and never what it points to.
+or a link of its own at its name. So restore opens the stage when it makes
+it, checks that the folder it opened is root's, private and empty, and from
+then on reaches it through that descriptor (`/proc/self/fd/N`,
+`Stage::within`), never through its name. Inside it, restore unpacks only an
+archive's regular files, and every move and read refuses a link
+(`O_NOFOLLOW`, `symlink_metadata`), in case an archive or anything else put
+one there. The env file is written beside its target and renamed over it, so
+a link at `virtues.env` is replaced, never written through.
 
 Owner-facing version: [`docs/operate/backup-and-restore.md`](../../docs/operate/backup-and-restore.md).
 

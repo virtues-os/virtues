@@ -195,8 +195,8 @@ when the service starts, the server also shows that in the app.
 If a backup or restore is cut off before it can clean up, for example by a
 power cut, it can leave a plain copy of your database in the `staging`
 folder, and after a restore your encryption key too. The next backup or
-restore deletes what a backup left. Part of what a restore left belongs to
-root, so the next restore deletes it. A backup can't delete it until your
+restore deletes what a backup left. What a restore left belongs to root, so
+the next restore deletes it. A backup can't delete it until your
 next upgrade or `sudo virtues migrate` hands it back to the server's own
 user. Until then, a backup that finds it names the folder for you to delete
 with `sudo rm -r`.

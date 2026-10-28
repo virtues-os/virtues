@@ -353,8 +353,15 @@ each item to its commit and says which are still open.
   owner proof (dated TODO in `apps/web/plugins/reach/src/store.rs`). On a Mac
   whose Keychain refused the move, the seed also stays in `box.json`.
   Android keeps it in the app's private storage.
-- **A restore can still follow a link in a swapped stage**: `move_tree` and
-  the env copy in `cli/restore.rs` need a root-owned parent for the stage.
+- **Restore writes as root into folders the service user owns.** It
+  recreates the lake and the applet folder at their paths, then renames
+  staged files into them. Code running as that user can swap either folder
+  for a link between the two, and root then puts files from the archive
+  wherever the link points, still root's, since `chown -R` does not follow
+  it. The service user writes the nightly drive backups, so it can also
+  write an archive whose files a restore would place that way. The fix is
+  the one the stage got: open each target when restore recreates it and
+  move into it through that descriptor until it is handed back.
 - **The start-time key check only reports.** It logs and shows attention
   when the key opens none of the sampled rows; nothing stops the box sealing
   new rows under the wrong key.

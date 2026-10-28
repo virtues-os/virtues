@@ -874,6 +874,8 @@ pub(crate) fn free_bytes_under(path: &Path) -> Option<u64> {
 /// ended without doing either ([`sweep_stale_stages`]).
 pub(crate) struct Stage {
     path: PathBuf,
+    /// The stage folder, opened when it was made. See [`Stage::within`].
+    dir: File,
 }
 
 impl Stage {
@@ -919,42 +921,125 @@ impl Stage {
             .mode(0o700)
             .create(&path)
             .map_err(|e| crate::Error::Other(format!("create {}: {e}", path.display())))?;
+        let stage = Self { dir: open_new_stage(&path)?, path };
         // In a folder every user can write to, such as the shared `/tmp`,
         // another user could have made `root` first, to read what is unpacked
-        // into it. The stage just made belongs to this process's user, so
-        // there the two owners must match.
-        let own_uid = fs::metadata(&path)
-            .map_err(|e| crate::Error::Other(format!("stat {}: {e}", path.display())))?
-            .uid();
-        if in_shared_folder(root) && meta.uid() != own_uid {
-            let _ = fs::remove_dir(&path);
+        // into it. The stage belongs to this process's user
+        // (`open_new_stage`), so there the two owners must match.
+        if in_shared_folder(root) && meta.uid() != effective_uid() {
             return Err(crate::Error::Other(format!(
                 "{} belongs to another user. Remove it, or set TMPDIR to a folder \
                  only you can write to, then run this again.",
                 root.display()
             )));
         }
-        active_stages().push(path.clone());
+        active_stages().push(stage.path.clone());
         clean_up_on_interrupt();
-        Ok(Self { path })
+        Ok(stage)
     }
 
+    /// The stage's name. A restore runs as root and works in the stage
+    /// through [`Stage::within`] instead.
     pub(crate) fn path(&self) -> &Path {
         &self.path
     }
+
+    /// The stage, reached through the folder this process opened when it made
+    /// it rather than through its name.
+    ///
+    /// The staging folder belongs to the service user, so code running as
+    /// that user can rename a restore's stage and put a folder or a link of
+    /// its own at the name. Root following that name would then rename, copy
+    /// and read whatever that code chose. On Linux this path goes through
+    /// `/proc/self/fd`, which always leads to the folder this process opened,
+    /// wherever it has been moved. The folder is root's and 0700 for the whole
+    /// restore, so nothing inside it can change either. Elsewhere, on a dev
+    /// machine with no service user, it is the name.
+    ///
+    /// Only for this process: a child resolves `/proc/self` to itself. Give a
+    /// child an open file instead, as restore gives `pg_restore` the dump.
+    pub(crate) fn within(&self) -> PathBuf {
+        reach(&self.path, &self.dir)
+    }
 }
 
-impl AsRef<Path> for Stage {
-    fn as_ref(&self) -> &Path {
-        &self.path
+/// [`Stage::within`] for the folder `dir`, opened at `path`.
+fn reach(path: &Path, dir: &File) -> PathBuf {
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::fd::AsRawFd;
+        let _ = path;
+        PathBuf::from(format!("/proc/self/fd/{}", dir.as_raw_fd()))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = dir;
+        path.to_path_buf()
     }
 }
 
 impl Drop for Stage {
     fn drop(&mut self) {
         active_stages().retain(|p| p != &self.path);
-        let _ = fs::remove_dir_all(&self.path);
+        // Emptied through the open folder, so a stage that was renamed still
+        // loses its plaintext. Then the name goes, if it is still a folder.
+        if let Ok(entries) = fs::read_dir(self.within()) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let _ = match entry.file_type() {
+                    Ok(t) if t.is_dir() => fs::remove_dir_all(&path),
+                    _ => fs::remove_file(&path),
+                };
+            }
+        }
+        let _ = fs::remove_dir(&self.path);
     }
+}
+
+/// Open the stage just made at `path`, and check that it is one this process
+/// made: a folder, not a link, owned by this process's user, private and
+/// empty.
+///
+/// Between making the folder and opening it, the owner of the staging folder
+/// can swap another one in. A folder that passes these checks can only have
+/// been made by this process's user, and nobody else can add to it.
+fn open_new_stage(path: &Path) -> Result<File, crate::Error> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
+    let refuse = |why: &str| {
+        crate::Error::Other(format!(
+            "{} changed while it was being made ({why}). Something else is writing \
+             in that folder. Nothing has been changed.",
+            path.display()
+        ))
+    };
+    let dir = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|e| crate::Error::Other(format!("open {}: {e}", path.display())))?;
+    let meta = dir
+        .metadata()
+        .map_err(|e| crate::Error::Other(format!("stat {}: {e}", path.display())))?;
+    if meta.uid() != effective_uid() {
+        return Err(refuse("it belongs to another user"));
+    }
+    if meta.mode() & 0o077 != 0 {
+        return Err(refuse("other users can open it"));
+    }
+    // Read through the open folder, which also proves `/proc` can reach it.
+    let empty = fs::read_dir(reach(path, &dir))
+        .map_err(|e| crate::Error::Other(format!("read {}: {e}", path.display())))?
+        .next()
+        .is_none();
+    if !empty {
+        return Err(refuse("it is not empty"));
+    }
+    Ok(dir)
+}
+
+fn effective_uid() -> u32 {
+    // SAFETY: geteuid has no preconditions and cannot fail.
+    unsafe { libc::geteuid() }
 }
 
 /// Whether every user can create entries in `path`'s parent, as in `/tmp`.
@@ -1065,19 +1150,18 @@ pub(crate) fn sweep_legacy_stages(dir: &Path) {
 /// Remove a stage a run left behind, or say how to.
 ///
 /// A backup runs as the service user, and a restore runs as root. A restore's
-/// stage is root's until `pg_restore` hands the stage folder and its `db`
-/// folder to the service user, and its `env` folder stays root's after that.
-/// So a backup that finds one cannot remove it. The next restore can, and so
-/// can a backup after the next upgrade or `sudo virtues migrate`, whose
-/// repairs hand everything under the data dir to the service user.
+/// stage is root's and 0700 for the whole restore, so a backup that finds one
+/// cannot remove it. The next restore can, and so can a backup after the next
+/// upgrade or `sudo virtues migrate`, whose repairs hand everything under the
+/// data dir to the service user.
 fn remove_left_stage(path: &Path) {
     match fs::remove_dir_all(path) {
         Ok(()) => println!("→ removed {}, left by a run that did not finish", path.display()),
         Err(e) => eprintln!(
             "warning: could not remove {} ({e}). A backup or restore that did not \
              finish left it, and it can hold a plaintext copy of the database and \
-             the box key. Part of what a restore leaves belongs to root, so remove \
-             it with `sudo rm -r {}`.",
+             the box key. What a restore leaves belongs to root, so remove it \
+             with `sudo rm -r {}`.",
             path.display(),
             path.display()
         ),
@@ -1172,9 +1256,8 @@ fn clean_up_on_interrupt() {
             if may_remove_stages(&RUN_STATE) {
                 remove_active_stages();
             } else {
-                // Only a restore gets here. Part of its stage belongs to
-                // root, so a backup cannot remove it, and the next restore
-                // does.
+                // Only a restore gets here. Its stage belongs to root, so a
+                // backup cannot remove it, and the next restore does.
                 eprintln!(
                     "\ninterrupted while replacing this server's data, so the restore \
                      is not complete. Run it again. It removes what this one left in {}.",
@@ -1371,6 +1454,68 @@ mod tests {
         assert!(!in_shared_folder(&dir.path().join("virtues-staging")));
         // A folder this user made there is accepted.
         let _stage = Stage::create_in(&shared.join("virtues-staging"), "restore").unwrap();
+    }
+
+    /// The staging folder belongs to the service user, so code running as
+    /// that user can move a restore's stage aside and put a folder of links
+    /// at its name. Root keeps working in the stage it made.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_stage_moved_aside_is_still_the_one_within_reaches() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("staging");
+        let outside = dir.path().join("root-only");
+        fs::create_dir(&outside).unwrap();
+        fs::write(outside.join("id_invented"), "invented secret").unwrap();
+
+        let stage = Stage::create_in(&root, "restore").unwrap();
+        fs::write(stage.within().join("virtues.dump"), "plaintext").unwrap();
+        let aside = root.join("aside");
+        fs::rename(stage.path(), &aside).unwrap();
+        fs::create_dir(stage.path()).unwrap();
+        symlink(&outside, stage.path().join("lake")).unwrap();
+
+        assert_eq!(fs::read_to_string(stage.within().join("virtues.dump")).unwrap(), "plaintext");
+        assert!(
+            fs::symlink_metadata(stage.within().join("lake")).is_err(),
+            "the stage's path led into the folder put at its name"
+        );
+        fs::create_dir(stage.within().join("lake")).unwrap();
+        fs::write(stage.within().join("lake/new.jsonl"), "{}").unwrap();
+        assert!(!outside.join("new.jsonl").exists(), "a write went through the link");
+
+        drop(stage);
+        assert_eq!(
+            fs::read_dir(&aside).unwrap().count(),
+            0,
+            "the plaintext stayed in the stage that was moved aside"
+        );
+        assert_eq!(fs::read_to_string(outside.join("id_invented")).unwrap(), "invented secret");
+    }
+
+    /// Between making a stage and opening it, the owner of the staging folder
+    /// can swap in a folder of its own. One that is not private and empty is
+    /// refused.
+    #[test]
+    fn a_folder_swapped_in_for_a_new_stage_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let loose = dir.path().join("loose");
+        fs::create_dir(&loose).unwrap();
+        fs::set_permissions(&loose, fs::Permissions::from_mode(0o755)).unwrap();
+        let err = open_new_stage(&loose).expect_err("a folder others can open was used");
+        assert!(err.to_string().contains("other users can open it"), "{err}");
+
+        let full = dir.path().join("full");
+        fs::create_dir(&full).unwrap();
+        fs::set_permissions(&full, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(full.join("lake"), "planted").unwrap();
+        let err = open_new_stage(&full).expect_err("a folder with something in it was used");
+        assert!(err.to_string().contains("not empty"), "{err}");
+
+        let linked = dir.path().join("linked");
+        std::os::unix::fs::symlink(&full, &linked).unwrap();
+        assert!(open_new_stage(&linked).is_err(), "a link was opened as a stage");
     }
 
     #[test]

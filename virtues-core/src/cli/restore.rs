@@ -126,7 +126,8 @@ pub async fn run(
     sweep_stages_near(&path);
     ensure_room_to_unpack(std::slice::from_ref(&path))?;
     let stage = open_stage("restore")?;
-    let staging: &Path = stage.as_ref();
+    let staging = stage.within();
+    let staging = staging.as_path();
     println!("→ extracting {}…", path.display());
     extract_into(open_archive(&path, identity.as_ref())?, staging)?;
 
@@ -200,17 +201,23 @@ fn repair_after_restore() {
 
 /// A stage for decrypting an archive, on this box's own disk.
 ///
-/// Restore runs as root, but `pg_restore` runs as the service user and has
-/// to pass through the staging folder to read the dump (`pg_restore` hands
-/// the stage itself over). A root-owned staging folder would also stop the
-/// next backup, which runs as that user. So the folder goes to the service
-/// user; the stage inside it stays root's, 0700, until the dump is needed.
+/// The stage is root's and 0700 for the whole restore, and restore works in
+/// it only through [`Stage::within`]. `pg_restore` gets the dump on stdin, so
+/// the service user never needs a path into it.
+///
+/// The staging folder that holds the stage goes to the service user, whose
+/// backups stage there too: a restore can be the first to make it. `-h`
+/// changes a link itself, never what it points to. That user can put a link
+/// at the folder's name, and a plain chown would hand over whatever it names.
 fn open_stage(purpose: &str) -> Result<Stage, crate::Error> {
     let stage = Stage::create(purpose)?;
     if let Some(root) = stage.path().parent() {
-        // Best-effort and quiet, like the hand-over in `pg_restore`: off a
-        // box there is no service user, and nothing needs one.
-        let _ = Command::new("chown").arg("virtues:virtues").arg(root).output();
+        // Best-effort and quiet: off a box there is no service user, and
+        // nothing needs one.
+        let _ = Command::new("chown")
+            .args(["-h", "virtues:virtues"])
+            .arg(root)
+            .output();
     }
     Ok(stage)
 }
@@ -509,7 +516,7 @@ pub(crate) fn preflight_database(database_url: &str) -> Result<(), crate::Error>
 pub(crate) fn apply(staging: &Path, targets: &Targets) -> Result<(), crate::Error> {
     println!("→ restoring data lake at {}…", targets.lake.display());
     let staged_lake = staging.join("lake");
-    if staged_lake.exists() {
+    if is_staged_dir(&staged_lake) {
         assert_replaceable_lake(&targets.lake)?;
         let _ = fs::remove_dir_all(&targets.lake);
         fs::create_dir_all(&targets.lake)
@@ -520,7 +527,7 @@ pub(crate) fn apply(staging: &Path, targets: &Targets) -> Result<(), crate::Erro
     // Authored applets. Replace wholesale like the lake: the tarball is the
     // intended state, and a merge would resurrect applets the user deleted.
     let staged_applets = staging.join("applets");
-    if staged_applets.is_dir() {
+    if is_staged_dir(&staged_applets) {
         println!(
             "→ restoring authored applets at {}…",
             targets.applets.display()
@@ -531,11 +538,12 @@ pub(crate) fn apply(staging: &Path, targets: &Targets) -> Result<(), crate::Erro
         move_tree(&staged_applets, &targets.applets)?;
     }
 
-    let staged_env = staging.join("env/virtues.env");
+    let staged_env = read_staged_env(&staging.join("env/virtues.env"))?;
     // An archive env file without the key never replaces one with it: that
     // would destroy the only key this box has, for nothing.
-    let keeps_own_key = staged_env.exists()
-        && crate::box_env::encryption_key(&staged_env).is_none()
+    let keeps_own_key = staged_env
+        .as_deref()
+        .is_some_and(|text| crate::box_env::encryption_key_in(text).is_none())
         && crate::box_env::encryption_key(&targets.env_file).is_some();
     if keeps_own_key {
         eprintln!(
@@ -545,20 +553,9 @@ pub(crate) fn apply(staging: &Path, targets: &Targets) -> Result<(), crate::Erro
             crate::box_env::ENCRYPTION_KEY,
             targets.env_file.display()
         );
-    } else if staged_env.exists() {
+    } else if let Some(text) = staged_env {
         println!("→ restoring env at {}…", targets.env_file.display());
-        if let Some(parent) = targets.env_file.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| crate::Error::Other(format!("env parent: {e}")))?;
-        }
-        fs::copy(&staged_env, &targets.env_file)
-            .map_err(|e| crate::Error::Other(format!("write env: {e}")))?;
-        // Lock the env down — encryption key inside.
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = fs::set_permissions(&targets.env_file, fs::Permissions::from_mode(0o600));
-        }
+        write_env_file(&targets.env_file, text.as_bytes())?;
     } else {
         // The tarball carries no key, so whether the restored secrets open
         // depends on this box's own key, which `check_restored_key` tests.
@@ -572,13 +569,100 @@ pub(crate) fn apply(staging: &Path, targets: &Targets) -> Result<(), crate::Erro
 
     println!("→ restoring Postgres database…");
     let dump = staging.join("db/virtues.dump");
-    if !dump.exists() {
+    if fs::symlink_metadata(&dump).is_err() {
         return Err(crate::Error::Other(
             "manifest declared no db dump — refusing to leave you with empty data".to_string(),
         ));
     }
     pg_restore(&dump, &targets.database_url)?;
     Ok(())
+}
+
+/// Open a file in a restore's stage for reading. A link is refused, never
+/// followed, and so is anything that is not a regular file.
+///
+/// Restore runs as root, and root following a link here would read a file the
+/// service user cannot, into the lake or the env file that user is then
+/// given. Restore makes no links when it unpacks (`extract_into`), so a link
+/// here means something changed the stage.
+fn open_staged(path: &Path) -> std::io::Result<File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a regular file",
+        ));
+    }
+    Ok(file)
+}
+
+/// Whether `path` in a stage is a folder itself, not a link to one.
+fn is_staged_dir(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
+}
+
+/// The archive's env file, or `None` when the archive has none.
+fn read_staged_env(path: &Path) -> Result<Option<String>, crate::Error> {
+    let mut file = match open_staged(path) {
+        Ok(file) => file,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => {
+            return Err(crate::Error::Other(format!(
+                "read the backup's env file at {}: {e}",
+                path.display()
+            )))
+        }
+    };
+    let mut text = String::new();
+    file.read_to_string(&mut text)
+        .map_err(|e| crate::Error::Other(format!("read the backup's env file: {e}")))?;
+    Ok(Some(text))
+}
+
+/// Put the archive's env file at `target`, in place of the file there.
+///
+/// Written to a new file beside it and renamed over it, so a link at `target`
+/// is replaced, never followed. The folder belongs to the service user, which
+/// can put a link there, and root writing through it would overwrite the file
+/// it names. The new file is 0600, since the key is inside, and keeps the
+/// owner of the file it replaces.
+fn write_env_file(target: &Path, contents: &[u8]) -> Result<(), crate::Error> {
+    use std::io::Write;
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    let err = |e: std::io::Error| crate::Error::Other(format!("write env: {e}"));
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent).map_err(|e| crate::Error::Other(format!("env parent: {e}")))?;
+    }
+    let name = target.file_name().unwrap_or_default().to_string_lossy();
+    let tmp = target.with_file_name(format!(".{name}.restore-{}", std::process::id()));
+    // A restore with this pid that stopped here left it.
+    let _ = fs::remove_file(&tmp);
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&tmp)
+        .map_err(err)?;
+    let written = (|| {
+        file.write_all(contents)?;
+        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        let new = file.metadata()?;
+        if let Ok(old) = fs::symlink_metadata(target) {
+            if old.is_file() && (old.uid(), old.gid()) != (new.uid(), new.gid()) {
+                std::os::unix::fs::fchown(&file, Some(old.uid()), Some(old.gid()))?;
+            }
+        }
+        file.sync_all()?;
+        fs::rename(&tmp, target)
+    })();
+    if written.is_err() {
+        let _ = fs::remove_file(&tmp);
+    }
+    written.map_err(err)
 }
 
 fn print_next_steps() {
@@ -604,7 +688,9 @@ fn check_service_inactive() -> Result<(), crate::Error> {
 }
 
 fn read_manifest(staging: &Path) -> Result<Manifest, crate::Error> {
-    let raw = fs::read(staging.join("manifest.json"))
+    let mut raw = Vec::new();
+    open_staged(&staging.join("manifest.json"))
+        .and_then(|mut f| f.read_to_end(&mut raw))
         .map_err(|e| crate::Error::Other(format!("read manifest: {e}")))?;
     parse_manifest(&raw)
 }
@@ -649,7 +735,7 @@ fn verify_sha256(staging: &Path, artifacts: &[Artifact]) -> Result<(), crate::Er
         // archive — the database dump included — and reading each one into
         // memory in full to hash it put the peak footprint of a *restore* at the
         // size of its largest member.
-        let read = File::open(staging.join(&art.path)).and_then(super::backup::digest);
+        let read = open_staged(&staging.join(&art.path)).and_then(super::backup::digest);
         let got = read
             .map_err(|e| crate::Error::Other(format!("read artifact {}: {e}", art.path)))?;
         check_artifact(art, &got)?;
@@ -682,27 +768,13 @@ fn pg_restore(dump: &Path, database_url: &str) -> Result<(), crate::Error> {
     // pg_restore authenticates to a peer-auth cluster as `root` and is refused
     // outright. This is why restore had never once completed on a real box.
     //
-    // The staged dump was written by root, so hand it over first or the
-    // service user cannot read what it is being asked to load.
-    //
-    // `-h` changes a link itself, never what it points to. The staging folder
-    // belongs to the service user, so that user can rename this stage and put
-    // a folder of its own at the same path. A plain chown would then follow a
-    // link planted at one of these paths and give the service user any file
-    // root owns.
-    for path in [
-        dump.parent().and_then(|p| p.parent()),
-        dump.parent(),
-        Some(dump),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        let _ = Command::new("chown")
-            .args(["-h", "virtues:virtues"])
-            .arg(path)
-            .status();
-    }
+    // The dump goes in on stdin, opened here by root. The stage stays root's
+    // and 0700, so the service user is never handed a path into it, and a
+    // link in its place is refused (`open_staged`). sudo passes a redirected
+    // stdin through with `use_pty` on, and through a pipe when it logs input,
+    // which pg_restore reads in order.
+    let input = open_staged(dump)
+        .map_err(|e| crate::Error::Other(format!("open {}: {e}", dump.display())))?;
 
     // Drop + recreate the schema cleanly. `--clean --if-exists` makes the
     // pg_restore drop all existing objects before recreating. `--no-owner`
@@ -715,7 +787,7 @@ fn pg_restore(dump: &Path, database_url: &str) -> Result<(), crate::Error> {
         .arg("--no-acl")
         .arg("-d")
         .arg(database_url)
-        .arg(dump)
+        .stdin(input)
         .output()
         .map_err(|e| crate::Error::Other(format!("invoke pg_restore: {e}")))?;
     let stderr = String::from_utf8_lossy(&out.stderr);
@@ -846,15 +918,63 @@ fn read_identity(path: &Path) -> Result<age::x25519::Identity, crate::Error> {
     })
 }
 
+/// Unpack an archive into a stage: its regular files, each at the path the
+/// manifest names it by ([`unpacked_path`]), with the folders those paths
+/// need.
+///
+/// Restore runs as root, so it makes no link, hard link or device from an
+/// archive. `virtues backup` writes only regular files, and the service user,
+/// which writes every backup, could write an archive of its own with a link
+/// to a file of root's in it for `move_tree` to follow. Any other member is
+/// skipped, as `verify` skips it, so a manifest that names one fails its
+/// digest check.
+///
+/// Files are dated by the restore, as copies are: the archive's headers carry
+/// no real time, and `move_tree` renames files into place, which keeps the
+/// time a file has.
 fn extract_into(reader: Box<dyn Read>, dest: &Path) -> Result<(), crate::Error> {
-    let gz = GzDecoder::new(reader);
-    let mut t = tar::Archive::new(gz);
-    // Restored files are dated by the restore, as copies are. The archive's
-    // headers carry no real time, and `move_tree` renames files into place,
-    // which would otherwise keep that one.
-    t.set_preserve_mtime(false);
-    t.unpack(dest)
-        .map_err(|e| crate::Error::Other(format!("tar unpack: {e}")))?;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt, PermissionsExt};
+    let mut tar = tar::Archive::new(GzDecoder::new(reader));
+    let unpack_err = |e: std::io::Error| crate::Error::Other(format!("tar unpack: {e}"));
+    for entry in tar.entries().map_err(unpack_err)? {
+        let mut entry = entry.map_err(unpack_err)?;
+        let kind = entry.header().entry_type();
+        if kind.is_dir() {
+            continue;
+        }
+        let Some(rel) = unpacked_path(&entry.path().map_err(unpack_err)?) else {
+            continue;
+        };
+        if !kind.is_file() {
+            eprintln!(
+                "warning: skipped {rel} in the archive. It is not a regular file, and \
+                 restore unpacks only regular files."
+            );
+            continue;
+        }
+        let path = dest.join(&rel);
+        if let Some(parent) = path.parent() {
+            fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(parent)
+                .map_err(unpack_err)?;
+        }
+        // A later member with the same path replaces an earlier one, as
+        // `verify` counts it.
+        let _ = fs::remove_file(&path);
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .mode(0o600)
+            .open(&path)
+            .map_err(unpack_err)?;
+        std::io::copy(&mut entry, &mut file).map_err(unpack_err)?;
+        let mode = entry.header().mode().map_err(unpack_err)? & 0o777;
+        file.set_permissions(fs::Permissions::from_mode(mode))
+            .map_err(unpack_err)?;
+    }
     Ok(())
 }
 
@@ -890,6 +1010,12 @@ pub(crate) fn give_to_service_user(dir: &Path) {
 /// usually do now that the stage is on the box's own disk: the restore then
 /// needs room for one copy of the lake, not two. A copy when they do not, as
 /// for a lake on a disk of its own. Either way the stage is deleted after.
+///
+/// Each entry is taken for what it is, never for what it points to. Restore
+/// runs as root, and following a link to a folder would rename root's files
+/// out of it into the lake, which then goes to the service user. Restore makes
+/// no links when it unpacks (`extract_into`), so a link here means something
+/// changed the stage, and the move stops there.
 fn move_tree(src: &Path, dst: &Path) -> Result<(), crate::Error> {
     fs::create_dir_all(dst)
         .map_err(|e| crate::Error::Other(format!("mkdir {}: {e}", dst.display())))?;
@@ -899,14 +1025,25 @@ fn move_tree(src: &Path, dst: &Path) -> Result<(), crate::Error> {
         let entry = entry.map_err(|e| crate::Error::Other(format!("dir entry: {e}")))?;
         let path = entry.path();
         let dest = dst.join(entry.file_name());
-        if path.is_dir() {
+        let kind = entry
+            .file_type()
+            .map_err(|e| crate::Error::Other(format!("stat {}: {e}", path.display())))?;
+        if kind.is_dir() {
             move_tree(&path, &dest)?;
             continue;
+        }
+        if !kind.is_file() {
+            return Err(crate::Error::Other(format!(
+                "{} in the restore's stage is not a regular file or a folder, so \
+                 restore stopped without following it. Something changed the stage \
+                 while restore was running. Run the restore again.",
+                path.display()
+            )));
         }
         match fs::rename(&path, &dest) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::CrossesDevices => {
-                fs::copy(&path, &dest)
+                copy_staged(&path, &dest)
                     .map_err(|e| crate::Error::Other(format!("copy {}: {e}", path.display())))?;
             }
             Err(e) => {
@@ -915,6 +1052,21 @@ fn move_tree(src: &Path, dst: &Path) -> Result<(), crate::Error> {
         }
     }
     Ok(())
+}
+
+/// Copy one staged file to `dest`, for a move between disks. A link at either
+/// end is refused, never followed.
+fn copy_staged(src: &Path, dest: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut from = open_staged(src)?;
+    let mut to = fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(dest)?;
+    std::io::copy(&mut from, &mut to)?;
+    to.set_permissions(from.metadata()?.permissions())
 }
 
 /// The round-trip drill.
@@ -1098,11 +1250,12 @@ mod drill {
 
         // ── Restore, through the real gates ──────────────────────────────────
         let stage = open_stage("restore").expect("stage");
-        let staging: &Path = stage.as_ref();
         assert!(
-            !staging.starts_with(archive.parent().unwrap()),
+            !stage.path().starts_with(archive.parent().unwrap()),
             "restore staged beside the archive"
         );
+        let staging = stage.within();
+        let staging = staging.as_path();
         extract_into(
             open_archive(&archive, Some(&identity)).expect("decrypt"),
             staging,
@@ -1337,6 +1490,129 @@ mod drill {
         assert!(err.to_string().contains("no manifest"), "{err}");
     }
 
+    /// A stage with links where restore expects files and folders, as code
+    /// running as the service user could leave one. Root must stop at every
+    /// link: nothing outside the stage may be read, moved or copied.
+    #[test]
+    fn restore_never_follows_a_link_in_its_stage() {
+        use std::os::unix::fs::symlink;
+        let dir = tempfile::tempdir().unwrap();
+        // Root's own files, which the service user must never be handed.
+        let outside = dir.path().join("root-only");
+        write(&outside.join("folder/id_invented"), "invented secret");
+        write(&outside.join("file"), "VIRTUES_ENCRYPTION_KEY=invented-root-key\n");
+        let untouched = |why: &str| {
+            assert_eq!(
+                fs::read_to_string(outside.join("folder/id_invented")).unwrap(),
+                "invented secret",
+                "{why}"
+            );
+            assert_eq!(
+                fs::read_to_string(outside.join("file")).unwrap(),
+                "VIRTUES_ENCRYPTION_KEY=invented-root-key\n",
+                "{why}"
+            );
+        };
+
+        // A link to a folder: following it would rename root's files out.
+        let stage = dir.path().join("stage-a");
+        write(&stage.join("lake/streams/kept.jsonl"), "{}");
+        symlink(outside.join("folder"), stage.join("lake/streams/linked")).unwrap();
+        let lake = dir.path().join("lake-a");
+        let err = move_tree(&stage.join("lake"), &lake).expect_err("moved through a folder link");
+        assert!(err.to_string().contains("not a regular file or a folder"), "{err}");
+        untouched("a folder link was followed");
+        assert!(!lake.join("streams/linked/id_invented").exists());
+
+        // A link to a file: following it would copy root's file into the lake.
+        let stage = dir.path().join("stage-b");
+        fs::create_dir(&stage).unwrap();
+        symlink(outside.join("file"), stage.join("lake-file")).unwrap();
+        let lake = dir.path().join("lake-b");
+        assert!(move_tree(&stage, &lake).is_err(), "moved a file link");
+        assert!(fs::symlink_metadata(lake.join("lake-file")).is_err());
+        // The copy a move between disks makes refuses it too.
+        assert!(copy_staged(&stage.join("lake-file"), &lake.join("copied")).is_err());
+        assert!(!lake.join("copied").exists());
+        untouched("a file link was followed");
+
+        // The env file, the manifest, an artifact and the dump: each read
+        // root makes in the stage refuses a link.
+        let stage = dir.path().join("stage-c");
+        fs::create_dir_all(stage.join("env")).unwrap();
+        fs::create_dir_all(stage.join("db")).unwrap();
+        for name in ["env/virtues.env", "manifest.json", "db/virtues.dump"] {
+            symlink(outside.join("file"), stage.join(name)).unwrap();
+        }
+        let env_file = dir.path().join("data/virtues.env");
+        write(&env_file, "VIRTUES_ENCRYPTION_KEY=this-box\n");
+        let targets = Targets {
+            database_url: "postgres://invalid.invalid/none".into(),
+            lake: dir.path().join("data/lake"),
+            applets: dir.path().join("data/applets"),
+            env_file: env_file.clone(),
+        };
+        assert!(apply(&stage, &targets).is_err(), "apply read a linked env file");
+        assert_eq!(fs::read_to_string(&env_file).unwrap(), "VIRTUES_ENCRYPTION_KEY=this-box\n");
+        assert!(read_manifest(&stage).is_err(), "read a linked manifest");
+        let art = artifact("db/virtues.dump", b"VIRTUES_ENCRYPTION_KEY=invented-root-key\n");
+        assert!(verify_sha256(&stage, &[art]).is_err(), "digested a linked artifact");
+        assert!(open_staged(&stage.join("db/virtues.dump")).is_err(), "opened a linked dump");
+        untouched("a read followed a link");
+
+        // An archive with link members unpacks only its regular files.
+        let gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+        let mut builder = tar::Builder::new(gz);
+        for (kind, name) in [
+            (tar::EntryType::Symlink, "lake/linked"),
+            (tar::EntryType::Link, "lake/hard"),
+        ] {
+            let mut header = tar::Header::new_gnu();
+            header.set_entry_type(kind);
+            header.set_size(0);
+            header.set_mode(0o600);
+            builder
+                .append_link(&mut header, name, outside.join("file"))
+                .unwrap();
+        }
+        let mut header = tar::Header::new_gnu();
+        header.set_size(2);
+        header.set_mode(0o644);
+        builder.append_data(&mut header, "lake/kept.jsonl", &b"{}"[..]).unwrap();
+        let archive = builder.into_inner().unwrap().finish().unwrap();
+        let stage = dir.path().join("stage-d");
+        fs::create_dir(&stage).unwrap();
+        extract_into(Box::new(std::io::Cursor::new(archive)), &stage).expect("extract");
+        assert_eq!(fs::read_to_string(stage.join("lake/kept.jsonl")).unwrap(), "{}");
+        for name in ["lake/linked", "lake/hard"] {
+            assert!(fs::symlink_metadata(stage.join(name)).is_err(), "{name} was unpacked");
+        }
+        untouched("an archive's link was followed");
+    }
+
+    /// The env file's folder belongs to the service user, which can put a
+    /// link where the file goes. Restore replaces the link.
+    #[test]
+    fn the_env_file_replaces_a_link_at_its_path() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let dir = tempfile::tempdir().unwrap();
+        let elsewhere = dir.path().join("elsewhere");
+        write(&elsewhere, "not the env file\n");
+        let env_file = dir.path().join("virtues.env");
+        symlink(&elsewhere, &env_file).unwrap();
+
+        write_env_file(&env_file, b"VIRTUES_ENCRYPTION_KEY=restored\n").unwrap();
+        assert_eq!(fs::read_to_string(&elsewhere).unwrap(), "not the env file\n");
+        let meta = fs::symlink_metadata(&env_file).unwrap();
+        assert!(meta.is_file(), "the link is still there");
+        assert_eq!(meta.permissions().mode() & 0o777, 0o600);
+        assert_eq!(
+            fs::read_to_string(&env_file).unwrap(),
+            "VIRTUES_ENCRYPTION_KEY=restored\n"
+        );
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 2, "a temporary file was left");
+    }
+
     #[test]
     fn the_key_check_reads_the_env_file_when_there_is_one_and_the_environment_otherwise() {
         let dir = scratch_dir("key-source");
@@ -1496,14 +1772,15 @@ pub(crate) fn apply_from_volume(
     // for the moves below so the work is not repeated. An interrupt in this
     // part removes the stages and changes nothing.
     let full_stage = open_stage("restore")?;
-    extract_into(open_archive(&full, identity)?, full_stage.path())?;
-    let manifest = read_manifest(full_stage.path())?;
+    let full_staging = full_stage.within();
+    extract_into(open_archive(&full, identity)?, &full_staging)?;
+    let manifest = read_manifest(&full_staging)?;
     println!(
         "→ full archive: binary {}, schema {}, created {}",
         manifest.binary_version, manifest.schema_version, manifest.created_at
     );
     check_schema_compatible(&manifest)?;
-    verify_sha256(full_stage.path(), &manifest.artifacts)?;
+    verify_sha256(&full_staging, &manifest.artifacts)?;
 
     println!("→ checking {} increment(s) before touching anything…", increments.len());
     let mut staged: Vec<(String, Stage)> = Vec::with_capacity(increments.len());
@@ -1511,9 +1788,9 @@ pub(crate) fn apply_from_volume(
         let name = inc.file_name().unwrap_or_default().to_string_lossy().to_string();
         println!("   {}/{}: {name}", n + 1, increments.len());
         let stage = open_stage("restore")?;
-        extract_into(open_archive(inc, identity)?, stage.path())?;
-        let manifest = read_manifest(stage.path())?;
-        verify_sha256(stage.path(), &manifest.artifacts)?;
+        extract_into(open_archive(inc, identity)?, &stage.within())?;
+        let manifest = read_manifest(&stage.within())?;
+        verify_sha256(&stage.within(), &manifest.artifacts)?;
         staged.push((name, stage));
     }
     ensure_room_for_database(targets, &manifest)?;
@@ -1522,7 +1799,7 @@ pub(crate) fn apply_from_volume(
     // the database and applet state wholesale, so increments moved in before
     // it would survive into a restore whose database does not describe them.
     super::backup::begin_changes()?;
-    apply(full_stage.path(), targets)?;
+    apply(&full_staging, targets)?;
     drop(full_stage);
 
     // Clear the lake explicitly. `apply` only does this when the archive it was
@@ -1537,8 +1814,8 @@ pub(crate) fn apply_from_volume(
 
     for (n, (name, stage)) in staged.iter().enumerate() {
         println!("→ increment {}/{}: {name}", n + 1, staged.len());
-        let staged_lake = stage.path().join("lake");
-        if staged_lake.is_dir() {
+        let staged_lake = stage.within().join("lake");
+        if is_staged_dir(&staged_lake) {
             move_tree(&staged_lake, &targets.lake)?;
         }
     }
