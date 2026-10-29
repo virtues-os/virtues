@@ -117,6 +117,9 @@
 		outline: none;
 		width: 100%;
 		background: var(--surface);
+		/* The modal is portaled to <body>, which sets no text color, so
+		   content without its own color would get the browser's black. */
+		color: var(--foreground);
 		border: 1px solid var(--border);
 		border-radius: var(--radius-xl);
 		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
