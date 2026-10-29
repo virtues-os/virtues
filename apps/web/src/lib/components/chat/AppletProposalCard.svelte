@@ -4,7 +4,8 @@
 	import TextAction from '$lib/components/TextAction.svelte';
 	import { patchApplet } from '$lib/api/client';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { describeSchedule } from '$lib/applets/palette';
+	import { describeTriggers } from '$lib/applets/palette';
+	import { appletsStore } from '$lib/stores/applets.svelte';
 
 	/**
 	 * The receipt for an applet the assistant made or changed: what it does,
@@ -57,7 +58,18 @@
 		windowShellStore.openRouteBeside(`/applet/${appletId}`);
 	}
 
-	const when = $derived(schedule ? describeSchedule(schedule) : 'When you ask it to');
+	// Setup's result names the schedule. A data trigger comes from the
+	// applets list, loaded once when this applet is not in it yet.
+	let looked = false;
+	$effect(() => {
+		if (looked || schedule || appletsStore.list.some((a) => a.id === appletId)) return;
+		looked = true;
+		void appletsStore.load();
+	});
+	const watch = $derived(appletsStore.list.find((a) => a.id === appletId)?.watch ?? null);
+	const when = $derived(
+		schedule || watch ? describeTriggers({ schedule: schedule ?? null, watch }) : 'When you ask it to'
+	);
 	const cost = $derived(
 		estimatedCostPerDay != null && estimatedCostPerDay > 0
 			? `about $${estimatedCostPerDay.toFixed(2)} a day`

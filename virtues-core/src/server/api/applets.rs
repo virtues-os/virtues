@@ -223,7 +223,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
             t.enabled, t.config, t.triggers,
             t.memory, t.credential_id, t.device_id,
             t.command,
-            t.until, t.archived_at,
+            t.until, t.archived_at, t.watch,
             t.next_due_at, t.last_slot_at,
             t.created_at, t.updated_at,
             r.status AS last_run_status,
@@ -308,6 +308,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         .as_deref()
                         .and_then(|s| serde_json::from_str(s).ok());
                     let until: Option<String> = r.try_get("until").unwrap_or(None);
+                    let watch: Option<serde_json::Value> = r.try_get("watch").unwrap_or(None);
                     let archived_at: Option<chrono::DateTime<chrono::Utc>> =
                         r.try_get("archived_at").unwrap_or(None);
                     let next_due_at: Option<chrono::DateTime<chrono::Utc>> =
@@ -380,6 +381,7 @@ pub async fn list_applets_handler(State(state): State<AppState>) -> Response {
                         "origin": origin,
                         "command": command,
                         "until": until,
+                        "watch": watch,
                         "archived_at": archived_at,
                         "next_due_at": next_due_at,
                         "last_slot_at": last_slot_at,
@@ -564,6 +566,7 @@ pub async fn get_applet_handler(
                     "device_id": action.device_id,
                     "origin": crate::scheduler::applets::derived_origin(&action),
                     "until": action.until,
+                    "watch": action.watch,
                     "archived_at": action.archived_at,
                     "next_due_at": action.next_due_at,
                     "last_slot_at": action.last_slot_at,

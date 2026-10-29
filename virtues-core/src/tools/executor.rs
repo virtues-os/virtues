@@ -391,7 +391,7 @@ impl ToolExecutor {
                     let title = crate::scheduler::applets::get_applet(self._pool.as_ref(), applet_id)
                         .await
                         .map(|a| a.name)
-                        .unwrap_or_else(|_| "this action".to_string());
+                        .unwrap_or_else(|_| "this applet".to_string());
                     let verb = match applet_action {
                         Some("delete") => "delete",
                         Some("edit") => "change",
@@ -403,7 +403,17 @@ impl ToolExecutor {
                     let (title, verb) = match tool_name {
                         "sql_write" => ("your records".to_string(), "write to"),
                         "generate_image" => ("an image".to_string(), "generate"),
-                        "applet" => ("a new action".to_string(), "create"),
+                        // Setup names the applet it writes, new or changed.
+                        "applet" => (
+                            arguments
+                                .get("name")
+                                .and_then(|v| v.as_str())
+                                .map(str::trim)
+                                .filter(|n| !n.is_empty())
+                                .unwrap_or("a new applet")
+                                .to_string(),
+                            "set up",
+                        ),
                         other => (other.to_string(), "run"),
                     };
                     (tool_name.to_string(), "tool", title, verb)
