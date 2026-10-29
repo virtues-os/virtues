@@ -953,65 +953,6 @@ fn remove_override(dir: &str) -> Result<()> {
     }
 }
 
-/// Keep the owner's prompt edits to shipped starters across the move to
-/// override files. Before 2026-10-28, three shipped applets (daily readings,
-/// dot cloud, morning examen) were the owner's to edit, and reconcile kept an
-/// edited prompt in the row beside `agent_shipped`. Now every edit is a file,
-/// so an edited prompt becomes that applet's override, once, before the
-/// first reconcile under the new rule rewrites the row from the file. A
-/// marker in the overrides folder records that it ran.
-///
-/// A retimed schedule is not carried over: the row cannot tell a schedule the
-/// owner chose from one an older release shipped.
-/// TODO(2026-10-28): delete once every box has run it, and drop
-/// `agent_shipped` in a migration then.
-/// Returns how many overrides it wrote.
-pub(crate) async fn adopt_row_edits(db: &PgPool) -> usize {
-    let marker = state_root().join(OVERRIDES_DIR).join(".adopted-from-rows");
-    if marker.exists() {
-        return 0;
-    }
-    let mut written = 0;
-    for dir in ["daily-readings", "dot-cloud", "morning-examen"] {
-        let shipped = shipped_root().join(dir).join(SKILL_FILE);
-        let Ok(shipped_text) = std::fs::read_to_string(&shipped) else { continue };
-        let id = format!("applet_{}", dir.replace('-', "_"));
-        let row: Option<(Option<String>, Option<String>)> =
-            match sqlx::query_as("SELECT agent, agent_shipped FROM app_applets WHERE id = $1").bind(&id).fetch_optional(db).await {
-                Ok(r) => r,
-                Err(e) => {
-                    tracing::error!(applet_id = %id, error = %e, "could not read a starter's prompt to keep it; trying again at the next start");
-                    return written;
-                }
-            };
-        let Some((Some(agent), Some(shipped_agent))) = row else { continue };
-        if agent.trim() == shipped_agent.trim() || override_path(dir).exists() {
-            continue;
-        }
-        let patch = serde_json::json!({ "agent": agent });
-        let kept = skill::apply_patch(&shipped_text, patch.as_object().expect("an object"))
-            .and_then(|edited| skill::override_between(&shipped_text, &edited));
-        match kept {
-            Ok(Some(text)) => match write_atomic(&override_path(dir), &text) {
-                Ok(()) => {
-                    tracing::info!(applet_id = %id, "kept the owner's edited prompt as an override");
-                    written += 1;
-                }
-                Err(e) => {
-                    tracing::error!(applet_id = %id, error = %e, "could not keep the owner's edited prompt; trying again at the next start");
-                    return written;
-                }
-            },
-            Ok(None) => {}
-            Err(why) => tracing::error!(applet_id = %id, why = %why, "the owner's edited prompt cannot be an override"),
-        }
-    }
-    if let Err(e) = write_atomic(&marker, "") {
-        tracing::error!(error = %e, "could not record that row edits were adopted");
-    }
-    written
-}
-
 /// The problems a `SKILL.md` would be refused for at `dir` (relative to the
 /// state root) in `folder`, so a writer can check before it writes.
 pub(crate) fn check_skill_md(text: &str, folder: &std::path::Path, dir: &str) -> std::result::Result<(), Vec<String>> {

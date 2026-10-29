@@ -348,13 +348,11 @@ pub(crate) fn next_once(cron: &str, tz: chrono_tz::Tz, now: chrono::DateTime<chr
 /// reads the root, at boot and on each reload, so a folder that arrives as a
 /// manifest (an import, a restored backup) is a `SKILL.md` by the time it
 /// loads. A folder that cannot convert is logged and left as it was, and
-/// the catalog does not load it. It also keeps the owner's edited starter
-/// prompts as overrides, once (`adopt_row_edits`). Returns how many folders
-/// changed, so the caller knows to reload the catalog.
+/// the catalog does not load it. Returns how many folders changed, so the
+/// caller knows to reload the catalog.
 pub async fn convert_state_root(pool: &sqlx::PgPool) -> usize {
     let root = super::state_root();
     recover(&root);
-    let adopted = super::adopt_row_edits(pool).await;
     let mut dirs: Vec<String> = Vec::new();
     let Ok(entries) = std::fs::read_dir(&root) else { return 0 };
     for entry in entries.flatten() {
@@ -373,12 +371,12 @@ pub async fn convert_state_root(pool: &sqlx::PgPool) -> usize {
         }
     }
     if dirs.is_empty() {
-        return adopted;
+        return 0;
     }
     let tz = crate::scheduler::resolve_schedule_tz(pool).await;
     let now = chrono::Utc::now();
     let next = |cron: &str| next_once(cron, tz, now);
-    let mut converted = adopted;
+    let mut converted = 0;
     for dir in dirs {
         match convert_folder(&root, &dir, false, &next) {
             Ok(c) => {

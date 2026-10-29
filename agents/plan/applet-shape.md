@@ -469,13 +469,14 @@ Built on 2026-10-28 except on a box. Decided on the way:
 - PATCH writes `enabled` and `memory` to the row and everything else through
   the file, then reconciles. `reset` removes an override. A shipped applet
   takes `agent` now, so the settings screen edits any shipped prompt.
-- The three shipped starters' edited prompts become overrides once, at boot,
-  from `agent` and `agent_shipped`. A retimed shipped schedule is not carried
-  over, because the row cannot tell it from one an older release shipped.
-  `agent_shipped` stays until every box has run that step.
+- An edited prompt for one of the three shipped starters was to become an
+  override once, at boot, from `agent` and `agent_shipped`. That step was
+  removed before any release ran it, when migration 0075 dropped
+  `agent_shipped`, so such an edit is not carried over.
 - Migration 0072 moves a row's `condition` into `run_sql` and empties the
-  column, which stays so `virtues rollback` still works. A later migration
-  drops both columns.
+  column. Migration 0075 drops it, with `agent_shipped`, `net_hosts` and
+  `connections`. A release from before 0075 cannot read applets after
+  `virtues rollback`, which the owner accepted on 2026-10-28.
 - The chat card is a receipt with Turn off, and `applets/AGENTS.md` says an
   applet starts on.
 
@@ -527,8 +528,7 @@ Built on 2026-10-28 except on a box. Decided on the way:
   applet's own process gets the proxy.
 - `net(host)` and `lake` in `allowed-tools` are refused with what replaced
   them, so a file written in between does not load silently wrong.
-- The `net_hosts` and `connections` columns stay, unread, so `virtues
-  rollback` still reads every row; a later migration drops them with
+- Migration 0075 drops the `net_hosts` and `connections` columns, with
   `condition` and `agent_shipped`.
 - State-root folders are no longer treated as imports by `use_applet`: with
   no import, they are the owner's or the assistant's.
@@ -539,10 +539,8 @@ Two checks stay when the connection approval goes (from the MCP work): the
 check in `call_tool` that a run may call a connection's tool only when its
 file's `allowed-tools` names it (the owner half goes, and its test is
 rewritten around the file alone), and the filter that never offers an
-unattended run a tool its server marks destructive. Dropping
-`app_applets.connections` needs a new migration, because boxes may have
-applied 0071, and agents/plan/mcp-plan.md ("Applets and connections" and
-slice 4) changes with it.
+unattended run a tool its server marks destructive. Migration 0075 drops
+`app_applets.connections`.
 
 ### 10. Output, threads and the Inbox
 

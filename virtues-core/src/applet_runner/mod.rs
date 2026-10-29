@@ -1837,8 +1837,7 @@ mod tests {
         crate::applet_templates::reconcile_templates(&pool).await.expect("reconcile");
         let id = "applet_embedding_index";
         let set = sqlx::query(
-            "UPDATE app_applets SET command = $1::jsonb, triggers = '[\"manual\"]', \
-             condition = NULL, enabled = TRUE WHERE id = $2",
+            "UPDATE app_applets SET command = $1::jsonb, triggers = '[\"manual\"]', enabled = TRUE WHERE id = $2",
         )
         .bind(serde_json::json!(["/usr/bin/python3", "-c", script]))
         .bind(id)

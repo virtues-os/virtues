@@ -419,9 +419,8 @@ name.
    named, non-destructive tools of the connections the box holds; and
    `call_tool` refuses an applet run's call to anything outside that, before
    reaching the service. The owner's switch per applet (migration 0071) was
-   removed on 2026-10-28 in applet-shape.md's slice 9; the
-   `app_applets.connections` column stays, unread, until a later migration
-   drops it.
+   removed on 2026-10-28 in applet-shape.md's slice 9, and migration 0075
+   drops the `app_applets.connections` column.
    Not yet run against a real service from an applet. A turn `/name` starts
    does not get connection tools; it has the chat's `connection` tool if
    the applet lists it. Owner-added URLs from Settings remain.
