@@ -212,6 +212,19 @@ async fn plan(pool: &PgPool, draft: &Draft) -> Result<Plan, Vec<serde_json::Valu
             }
         }
     }
+    // A data trigger's rows are `new_rows`. A `run` that reads the watched
+    // table itself sees all of it, so once one row matches it is true on
+    // every batch after.
+    let watch = crate::applet_templates::key_value(&text, "trigger").and_then(|t| crate::applet_templates::watch_in(&t));
+    if let (Some(watch), Some(run)) = (watch, crate::applet_templates::key_value(&text, "run")) {
+        if reads_table_not_new_rows(&run, &watch.table) {
+            findings.push(finding(
+                "run",
+                &format!("`run` reads {} itself, so it sees every row and not only the new ones", watch.table),
+                Some("read `new_rows`, the rows that woke it: `sql select … from new_rows where …`"),
+            ));
+        }
+    }
     let mut migration = None;
     if let Some(tables) = &draft.tables {
         if tables.len() > TABLES_MAX {
@@ -282,6 +295,13 @@ fn write_keys(before: &str, draft: &Draft, existed: bool, shipped: bool) -> Resu
         None => DEFAULT_DAILY_LIMIT.to_string(),
     };
     crate::applet_templates::with_keys(&text, &[("limit", Some(with_daily))])
+}
+
+/// Whether `run` names `table` and not `new_rows`, by whole identifiers.
+fn reads_table_not_new_rows(run: &str, table: &str) -> bool {
+    let lower = run.to_ascii_lowercase();
+    let words: Vec<&str> = lower.split(|c: char| !(c.is_ascii_alphanumeric() || c == '_')).collect();
+    words.contains(&table) && !words.contains(&"new_rows")
 }
 
 /// The key a reader's sentence is about, by the first one it names, so the
@@ -667,6 +687,38 @@ mod tests {
         assert_eq!(explain_run_sql(&pool, sql, Some(&cte), "applet_reviews").await, Ok(()));
         let e = explain_run_sql(&pool, sql, None, "applet_reviews").await.unwrap_err();
         assert!(e.contains("new_rows"), "{e}");
+    }
+
+    #[test]
+    fn a_run_that_reads_the_watched_table_instead_of_new_rows() {
+        let t = "data_health_heart_rate";
+        assert!(reads_table_not_new_rows("sql SELECT bpm FROM data_health_heart_rate WHERE bpm > 120", t));
+        assert!(reads_table_not_new_rows("sql select 1 from public.data_health_heart_rate", t));
+        assert!(!reads_table_not_new_rows("sql select bpm from new_rows where bpm > 120", t));
+        // Comparing the new rows with the table's history is fine.
+        assert!(!reads_table_not_new_rows(
+            "sql select n.bpm from new_rows n where n.bpm > (select avg(bpm) * 1.5 from data_health_heart_rate)",
+            t
+        ));
+        assert!(!reads_table_not_new_rows("sql select 1 from data_health_heart_rate_daily", t));
+    }
+
+    /// Setup says so when a data-triggered `run` reads the watched table.
+    #[sqlx::test]
+    async fn setup_finds_a_run_that_skips_new_rows(pool: PgPool) {
+        crate::server::faces::ensure_applet_db_grants(&pool).await.unwrap();
+        let draft = |run: &str| {
+            Draft::parse(&serde_json::json!({
+                "name": "Heart alert", "description": "Tells you when your heart rate runs high.",
+                "trigger": "new data_health_heart_rate", "run": run, "prompt": "Say when it was high.",
+            }))
+            .unwrap()
+        };
+        let found = |f: &Vec<serde_json::Value>| f.iter().any(|f| f["field"] == "run" && f["error"].as_str().unwrap().contains("itself"));
+        let bad = plan(&pool, &draft("sql select bpm from data_health_heart_rate where bpm > 120")).await.err().expect("refused");
+        assert!(found(&bad), "{bad:?}");
+        let good = plan(&pool, &draft("sql select bpm from new_rows where bpm > 120")).await.err().unwrap_or_default();
+        assert!(!found(&good), "{good:?}");
     }
 
     /// A built-in applet's name with `tools` is refused for `tools`, by the

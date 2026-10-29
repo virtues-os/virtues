@@ -500,7 +500,9 @@ the reminder and a heart-rate data trigger. 8 of 12 first calls passed, and
 applet's own tables need no schema in its view, `run`, prompt and charts; a
 built-in applet's name sent with `tools` gets one finding that names
 `tools`; and a data-triggered prompt is given `new_rows` beside what `run`
-returned. A view that links `/virtues.css` is a finding. What first calls
+returned. A view that links `/virtues.css` is a finding, and so is a
+data-triggered `run` that reads the watched table and not `new_rows`, which
+one of the rerun's heart-rate tries wrote. What first calls
 still get wrong: a weekly review named like the built-in one sends `tools`,
 and a view links its runtime from the root; each is fixed on the next call.
 Decided on the way:

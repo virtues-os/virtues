@@ -100,7 +100,8 @@ A check on new data, with no model call unless a reading is high:
   lapse. To fire once, add a cooldown on its own runs to `run`:
   `and not exists (select 1 from app_applet_runs r where r.applet_id = 'applet_user__workout_nudge' and r.status = 'success' and r.started_at > now() - interval '1 day')`.
 - **A data trigger takes what came since its last run.** Each run reads every
-  row that arrived since the one before, as `new_rows`. Rows already there
+  row that arrived since the one before, as `new_rows`; a `run` that reads
+  the table itself sees every row and is refused. Rows already there
   when it is made start nothing, and neither do new rows about more than a
   week ago, such as the history a new source brings in. `before` and
   `after … ends` count from each row's own start or end.
