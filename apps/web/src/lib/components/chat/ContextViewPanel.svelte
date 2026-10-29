@@ -1,5 +1,13 @@
+<!--
+	A chat's About page, opened beside the chat (`?view=context`): what the
+	conversation named, cited and made, what left your server for it, and,
+	folded at the foot, how it ran: model, tokens, cost and what the next
+	message will carry.
+-->
 <script lang="ts">
 	import { untitled } from '$lib/refs/identity.svelte';
+	import Page from '$lib/components/Page.svelte';
+	import InThisChat from './about/InThisChat.svelte';
 	import { getChatUsage, getChat, compactChat, getNextTurnContext, type NextTurnContext, type NextTurnPart } from '$lib/api/client';
 	import { chatUsage } from '$lib/stores/chatUsage.svelte';
 	import { chatInstances } from '$lib/stores/chatInstances.svelte';
@@ -41,6 +49,7 @@
 			model?: string;
 			provider?: string;
 		};
+		messages?: unknown[];
 	}
 
 	interface Props {
@@ -65,7 +74,9 @@
 			return;
 		}
 
-		contextViewLoading = true;
+		// Read again after every turn: only the first read shows "Loading", so
+		// the page does not blank out each time the chat saves a message.
+		contextViewLoading = !sessionDetail;
 		contextViewError = null;
 
 		try {
@@ -181,7 +192,11 @@
 	});
 </script>
 
-<div class="context-view">
+<Page
+	title={sessionDetail?.conversation.title || untitled('chat')}
+	description={sessionDetail ? `Started ${formatDate(sessionDetail.conversation.first_message_at)}` : undefined}
+	maxWidth="prose"
+>
 	{#if contextViewLoading}
 		<div class="cv-loading">Loading...</div>
 	{:else if contextViewError}
@@ -189,11 +204,18 @@
 			<span>{contextViewError}</span>
 			<button type="button" onclick={fetchContextViewData}>Retry</button>
 		</div>
-	{:else if sessionUsage && sessionDetail}
-		<dl class="info-grid">
-			<dt>Session</dt>
-			<dd class="title">{sessionDetail.conversation.title || untitled('chat')}</dd>
+	{:else if sessionUsage && sessionDetail && conversationId}
+		<InThisChat chatId={conversationId} messages={sessionDetail.messages ?? []} {under} />
+	{:else}
+		<div class="cv-loading">Loading…</div>
+	{/if}
+</Page>
 
+<!-- How the chat ran, for whoever wants the machinery: folded by default. -->
+{#snippet under()}
+	{#if sessionUsage && sessionDetail}
+	<div class="cv-under">
+		<dl class="info-grid">
 			<dt>Messages</dt>
 			<dd>{sessionDetail.conversation.message_count}</dd>
 
@@ -351,20 +373,16 @@
 
 		{#if sessionUsage.usage_percentage > 20}
 			<button class="cv-compact-btn" onclick={handleCompact} disabled={compacting}>
-				{compacting ? 'Compacting...' : 'Compact Session'}
+				{compacting ? 'Compacting…' : 'Compact this chat'}
 			</button>
 		{/if}
-	{:else}
-		<div class="cv-loading">Loading session data...</div>
+	</div>
 	{/if}
-</div>
+{/snippet}
 
 <style>
-	.context-view {
-		height: 100%;
-		overflow-y: auto;
-		padding: 1.5rem;
-		max-width: 600px;
+	.cv-under {
+		padding: 4px 12px 0;
 	}
 
 	.cv-loading,
@@ -405,10 +423,6 @@
 		margin: 0;
 		font-size: 0.875rem;
 		color: var(--color-foreground);
-	}
-
-	.info-grid dd.title {
-		font-weight: 500;
 	}
 
 	.info-grid dd.mono {

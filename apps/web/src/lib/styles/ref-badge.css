@@ -126,6 +126,16 @@
 	border-bottom-color: var(--color-primary);
 }
 
+/*
+ * Echo: a row in the pane's context panel is under the pointer, and these are
+ * the places in the text that name it. The cite's open tint, on any link.
+ */
+.ref-echo {
+	border-radius: var(--radius-xs);
+	background-color: color-mix(in srgb, var(--color-primary) 13%, transparent);
+	transition: background-color var(--motion-hover-in) var(--ease-premium);
+}
+
 .ref-link.ref-link--cite:focus-visible {
 	outline: 2px solid var(--color-border-focus);
 	outline-offset: 2px;

@@ -1516,7 +1516,7 @@ class WindowShellStore {
 		const entityId = chatId.startsWith('chat_') ? chatId : `chat_${chatId}`;
 		return this.openAside({
 			type: 'chat',
-			label: 'Context',
+			label: 'About this chat',
 			route: `/chat/${entityId}?view=context`,
 			icon: 'mynaui:info-circle'
 		});

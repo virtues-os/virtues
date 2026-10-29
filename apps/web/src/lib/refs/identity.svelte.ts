@@ -134,6 +134,12 @@ export function identityOf(
 	known: { kind?: string | null; title?: string | null; icon?: string | null; color?: string | null } = {},
 	{ ask = true }: { ask?: boolean } = {},
 ): Identity {
+	// A view of a thing (`/chat/<id>?view=context`, the chat's About page) is
+	// not the thing: it keeps the name it was opened with, so it does not take
+	// the chat's title and read as a second copy of the chat.
+	if (url.includes('?view=') && known.title?.trim()) {
+		return { kind: known.kind ?? parseRef(url)?.kind ?? 'route', title: known.title.trim(), icon: known.icon ?? null, color: known.color ?? null };
+	}
 	const live = storeIdentity(url);
 	if (live) {
 		return { ...live, icon: live.icon ?? known.icon ?? null, color: live.color ?? known.color ?? null };

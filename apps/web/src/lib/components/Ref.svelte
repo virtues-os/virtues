@@ -78,6 +78,7 @@
 	oncontextmenu={handleContextMenu}
 	title={cite ? undefined : `View ${shown}`}
 	data-cite-route={cite ? url : undefined}
+	data-ref-url={url}
 	aria-haspopup={cite ? "dialog" : undefined}
 	onmouseenter={(e) => !cite && hover.enter(e.currentTarget)}
 	onmouseleave={() => !cite && hover.leave()}

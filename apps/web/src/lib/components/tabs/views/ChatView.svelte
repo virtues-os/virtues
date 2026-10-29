@@ -140,6 +140,8 @@
 	} from "$lib/api/client";
 	import { chatUsage } from "$lib/stores/chatUsage.svelte";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
+	import { shortcuts } from "$lib/shortcuts/registry.svelte";
+	import { REVEAL_MESSAGE, type RevealMessageDetail } from "$lib/components/chat/about/InThisChat.svelte";
 	import { dropZone, hasFiles } from "$lib/actions/dropZone";
 
 	// Props
@@ -1287,9 +1289,71 @@
 	$effect(() => {
 		if (!showChatMenu || mobileLayout.isMobile) return paneActions.set(tab.id, []);
 		return paneActions.set(tab.id, [
+			...(hasAbout
+				? [
+						{
+							id: "about-chat",
+							label: "About this chat",
+							icon: "mynaui:info-circle",
+							active: !!aboutTab,
+							run: toggleAbout,
+						},
+					]
+				: []),
 			{ id: "chat-options", label: "Chat options", icon: "mynaui:dots-vertical", run: openChatMenu },
 		]);
 	});
+
+	// The chat's About page (chat/ContextViewPanel), opened beside it. A
+	// temporary chat, the Getting started room and a chat with nothing saved
+	// yet have none.
+	const hasAbout = $derived(showChatMenu && !isGhost && !isContextView && uniqueMessages.length > 0);
+	const aboutTab = $derived(
+		hasAbout ? windowShellStore.findTab((t) => t.route === `/chat/${conversationId}?view=context`) : undefined,
+	);
+
+	function toggleAbout() {
+		if (aboutTab) windowShellStore.closeTab(aboutTab.tab.id);
+		else handleContextClick();
+	}
+
+	$effect(() => {
+		if (!active || !hasAbout) return;
+		// The registry is state of its own: registering must not subscribe.
+		return untrack(() =>
+			shortcuts.register({
+				id: "chat.about",
+				keys: "mod+alt+b",
+				label: "Show or hide About this chat",
+				group: "View",
+				run: toggleAbout,
+			}),
+		);
+	});
+
+	// The About page asks the chat to show where something appears.
+	$effect(() => {
+		if (!active || isContextView) return;
+		const onReveal = (e: Event) => {
+			const { chatId, messageId } = (e as CustomEvent<RevealMessageDetail>).detail;
+			if (chatId === conversationId && revealMessage(messageId)) e.preventDefault();
+		};
+		window.addEventListener(REVEAL_MESSAGE, onReveal);
+		return () => window.removeEventListener(REVEAL_MESSAGE, onReveal);
+	});
+
+	/** Scroll a message into view and tint it briefly. False when it is not on screen. */
+	function revealMessage(messageId: string): boolean {
+		const el = scrollContainer?.querySelector<HTMLElement>(`[data-message-id="${CSS.escape(messageId)}"]`);
+		if (!el) return false;
+		const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		el.scrollIntoView({ block: "start", behavior: reduce ? "auto" : "smooth" });
+		el.animate(
+			[{ backgroundColor: "var(--color-highlight)" }, { backgroundColor: "transparent" }],
+			{ duration: reduce ? 0 : 1600, easing: "ease-out" },
+		);
+		return true;
+	}
 
 	function openChatMenu(e?: MouseEvent) {
 		const button = e?.currentTarget as HTMLElement | null | undefined;
@@ -1300,8 +1364,8 @@
 			const n = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
 			items.push({
 				id: "context",
-				label: `Context ${Math.round(contextUsage.percentage)}%`,
-				description: `${n.format(contextUsage.tokens)} of ${n.format(contextUsage.window)} tokens`,
+				label: "About this chat",
+				description: `Context ${Math.round(contextUsage.percentage)}% full, ${n.format(contextUsage.tokens)} of ${n.format(contextUsage.window)} tokens`,
 				icon: "mynaui:chart-pie",
 				iconColor:
 					contextUsage.status === "critical"
