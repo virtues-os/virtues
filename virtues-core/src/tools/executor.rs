@@ -124,6 +124,19 @@ pub struct ToolContext {
     pub owner_confirmed: bool,
 }
 
+impl ToolContext {
+    /// The schema of the applet whose run or `/name` turn this is. Its SQL
+    /// names the applet's own tables without it.
+    pub fn applet_schema(&self) -> Option<String> {
+        let id = match (&self.applet_id, &self.own_applet) {
+            (Some(id), _) => id.clone(),
+            (None, Some(name)) => crate::applet_templates::chat_applet_named(name)?.applet_id,
+            (None, None) => return None,
+        };
+        crate::scheduler::applets::applet_schema_name(&id)
+    }
+}
+
 impl Default for ToolContext {
     fn default() -> Self {
         Self {
@@ -514,11 +527,19 @@ impl ToolExecutor {
             "sql_query" => {
                 // A saved chat can keep a result as a file for shell.
                 let chat_id = context.chat_id.as_deref().filter(|_| !context.temporary);
-                self.sql_query.execute(arguments, chat_id, context.timezone.as_deref()).await
+                let schema = context.applet_schema();
+                self.sql_query.execute(arguments, chat_id, context.timezone.as_deref(), schema.as_deref()).await
             }
             "sql_write" => {
-                super::sql_write::execute(&self._pool, arguments, context.timezone.as_deref(), context.applet_run_id.as_deref())
-                    .await
+                let schema = context.applet_schema();
+                super::sql_write::execute(
+                    &self._pool,
+                    arguments,
+                    context.timezone.as_deref(),
+                    context.applet_run_id.as_deref(),
+                    schema.as_deref(),
+                )
+                .await
             }
             // The tool lists already keep it out of every other mode; this is
             // the second lock, for a model that names a tool it was not given.
@@ -535,7 +556,10 @@ impl ToolExecutor {
                 "sudo runs only in the admin applet, which the owner picks with /admin in the chat".into(),
             )),
             "read_asset" => self.execute_read_asset(arguments).await,
-            "show" => super::show::execute(&self.sql_query, arguments, context.timezone.as_deref()).await,
+            "show" => {
+                let schema = context.applet_schema();
+                super::show::execute(&self.sql_query, arguments, context.timezone.as_deref(), schema.as_deref()).await
+            }
             // The chat's browsing task, run by its own loop, whose steps come
             // back through this executor as the `browser_*` calls below.
             crate::browse::TOOL => Ok(crate::browse::run_tool(&self._pool, &arguments, context).await),

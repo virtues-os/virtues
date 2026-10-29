@@ -19,12 +19,14 @@ const RETURN_ROWS_MAX: usize = 500;
 
 /// `timezone` is the owner's; it only puts returned times on their clock.
 /// `run_id` is the applet run the write is part of, which records the rows it
-/// wrote so the run can show them.
+/// wrote so the run can show them. `schema` is the applet whose turn or run
+/// this is: its own tables need no schema in the statement.
 pub async fn execute(
     pool: &PgPool,
     arguments: serde_json::Value,
     timezone: Option<&str>,
     run_id: Option<&str>,
+    schema: Option<&str>,
 ) -> Result<ToolResult, ToolError> {
     let sql = arguments
         .get("sql")
@@ -55,15 +57,17 @@ pub async fn execute(
         Ok(tx) => tx,
         Err(e) => return Ok(fail(&format!("begin failed: {e}"))),
     };
-    for setup in [
-        "SET LOCAL statement_timeout = '5s'",
-        // Force fully-qualified names; unqualified writes can't fall through
-        // to public even on PG versions where PUBLIC holds create-in-public.
-        "SET LOCAL search_path = ''",
-    ] {
+    // `public` is never on the search path, so an unqualified name cannot
+    // fall through to it even on PG versions where PUBLIC holds
+    // create-in-public. With no applet to write for, every name is
+    // qualified; an applet's own schema alone lets its tables go without.
+    for setup in ["SET LOCAL statement_timeout = '5s'", "SET LOCAL search_path = ''"] {
         if let Err(e) = sqlx::query(setup).execute(&mut *tx).await {
             return Ok(fail(&format!("setup failed: {e}")));
         }
+    }
+    if let Err(e) = crate::server::faces::set_applet_search_path(&mut tx, schema, false).await {
+        return Ok(fail(&format!("setup failed: {e}")));
     }
 
     if wants_rows {
@@ -72,7 +76,7 @@ pub async fn execute(
                 if let Err(e) = tx.commit().await {
                     return Ok(fail(&format!("commit failed: {e}")));
                 }
-                record(pool, run_id, &owned_sql, rows.len() as i64).await;
+                record(pool, run_id, schema, &owned_sql, rows.len() as i64).await;
                 let capped = rows.len().min(RETURN_ROWS_MAX);
                 // The write has committed; a failed zone lookup only leaves the
                 // returned times in UTC, marked `+00:00`.
@@ -97,7 +101,7 @@ pub async fn execute(
                 if let Err(e) = tx.commit().await {
                     return Ok(fail(&format!("commit failed: {e}")));
                 }
-                record(pool, run_id, &owned_sql, done.rows_affected() as i64).await;
+                record(pool, run_id, schema, &owned_sql, done.rows_affected() as i64).await;
                 Ok(ToolResult::success(serde_json::json!({
                     "rows_affected": done.rows_affected(),
                 })))
@@ -110,10 +114,15 @@ pub async fn execute(
     }
 }
 
-/// Record on the run the rows a committed write touched. A record that fails
-/// is logged: the write itself has happened.
-async fn record(pool: &PgPool, run_id: Option<&str>, sql: &str, rows: i64) {
+/// Record on the run the rows a committed write touched, by the table's
+/// qualified name however the statement wrote it. A record that fails is
+/// logged: the write itself has happened.
+async fn record(pool: &PgPool, run_id: Option<&str>, schema: Option<&str>, sql: &str, rows: i64) {
     let (Some(run_id), Some(table)) = (run_id, target_table(sql)) else { return };
+    let table = match schema {
+        Some(s) if !table.contains('.') => format!("{s}.{table}"),
+        _ => table,
+    };
     if let Err(e) = crate::scheduler::applets::record_rows_output(pool, run_id, &table, rows).await {
         tracing::warn!(run_id, table, error = %e, "could not record the rows a run wrote");
     }
@@ -152,5 +161,25 @@ mod tests {
         assert_eq!(target_table("UPDATE applet_water.drinks SET ml = 1").as_deref(), Some("applet_water.drinks"));
         assert_eq!(target_table("DELETE FROM applet_water.drinks WHERE true").as_deref(), Some("applet_water.drinks"));
         assert_eq!(target_table("WITH x AS (SELECT 1) INSERT INTO t VALUES (1)"), None);
+    }
+
+    /// An applet's own write names its table without the schema, and
+    /// `public` is still out of reach.
+    #[sqlx::test]
+    async fn an_applets_write_names_its_own_tables_without_the_schema(pool: PgPool) {
+        sqlx::query("CREATE SCHEMA applet_water").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TABLE applet_water.drinks (ml integer)").execute(&pool).await.unwrap();
+        crate::server::faces::ensure_applet_db_grants(&pool).await.unwrap();
+        crate::database::restricted::ensure_logins(&pool).await;
+        let write = |sql: &str, schema: Option<&'static str>| {
+            let pool = pool.clone();
+            let args = serde_json::json!({ "sql": sql });
+            async move { execute(&pool, args, None, None, schema).await.unwrap().data }
+        };
+        assert_eq!(write("INSERT INTO drinks (ml) VALUES (250)", Some("applet_water")).await["rows_affected"], 1);
+        assert_eq!(write("INSERT INTO drinks (ml) VALUES (250)", None).await["status"], "error");
+        assert_eq!(write("DELETE FROM data_calendar_event", Some("applet_water")).await["status"], "error");
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM applet_water.drinks").fetch_one(&pool).await.unwrap();
+        assert_eq!(n, 1);
     }
 }

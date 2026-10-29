@@ -223,8 +223,8 @@ For a subprocess, the trigger payload is delivered as JSON on stdin.
 A data trigger (`new <table>`, `30 minutes before <table>`,
 `15 minutes after <table> ends`) starts a run once a minute when rows are
 waiting, and every run of the applet takes the rows that came since its last
-one. `run` SQL and the prompt read them as `new_rows`; a prompt with no `run`
-gets them as a table. Code gets `{"table", "after", "through"}` as its payload,
+one. `run` SQL reads them as `new_rows`, and the prompt is given them as a
+table under that name, before what `run` returned. Code gets `{"table", "after", "through"}` as its payload,
 the times the rows' moments fall between. The design is in
 `virtues-core/src/scheduler/watch.rs`.
 

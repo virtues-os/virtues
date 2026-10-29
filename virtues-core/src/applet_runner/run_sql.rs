@@ -28,12 +28,13 @@ pub(super) struct SqlResult {
 }
 
 /// Run `sql`, with `with` in front of it when given: a data trigger's
-/// `WITH new_rows AS (…) ` (`scheduler::watch::Batch::cte`).
-pub(super) async fn run(pool: &sqlx::PgPool, sql: &str, with: Option<&str>) -> Result<SqlResult> {
+/// `WITH new_rows AS (…) ` (`scheduler::watch::Batch::cte`). `schema` is
+/// the applet's, whose own tables the SQL names without it.
+pub(super) async fn run(pool: &sqlx::PgPool, sql: &str, with: Option<&str>, schema: Option<&str>) -> Result<SqlResult> {
     use sqlx::{Column, Row};
     let fail = |e: String| Error::Other(format!("its SQL failed: {e}"));
     let with = with.unwrap_or_default();
-    let (mut tx, zone) = crate::server::faces::reader_transaction(pool, TIMEOUT).await.map_err(fail)?;
+    let (mut tx, zone) = crate::server::faces::reader_transaction(pool, TIMEOUT, schema).await.map_err(fail)?;
     let total: i64 = sqlx::query_scalar(&format!("{with}SELECT count(*) FROM ({sql}) q"))
         .fetch_one(&mut *tx)
         .await
@@ -108,14 +109,14 @@ mod tests {
 
     #[sqlx::test]
     async fn it_returns_rows_and_counts_them(pool: sqlx::PgPool) {
-        let r = run(&pool, "select g as n from generate_series(1, 250) g", None).await.unwrap();
+        let r = run(&pool, "select g as n from generate_series(1, 250) g", None, None).await.unwrap();
         assert_eq!(r.total, 250);
         assert_eq!(r.rows.len(), MAX_ROWS);
         assert_eq!(r.columns, ["n"]);
-        let none = run(&pool, "select 1 where false", None).await.unwrap();
+        let none = run(&pool, "select 1 where false", None, None).await.unwrap();
         assert_eq!(none.total, 0);
-        assert!(run(&pool, "select * from no_such_table", None).await.unwrap_err().to_string().contains("its SQL failed"));
-        let with = run(&pool, "select n from new_rows where n > 1", Some("WITH new_rows AS (SELECT 1 AS n UNION ALL SELECT 2) ")).await.unwrap();
+        assert!(run(&pool, "select * from no_such_table", None, None).await.unwrap_err().to_string().contains("its SQL failed"));
+        let with = run(&pool, "select n from new_rows where n > 1", Some("WITH new_rows AS (SELECT 1 AS n UNION ALL SELECT 2) "), None).await.unwrap();
         assert_eq!(with.total, 1);
     }
 }

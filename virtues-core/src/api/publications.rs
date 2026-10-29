@@ -435,8 +435,9 @@ async fn run_seen_queries(pool: &PgPool, applet_id: &str) -> Result<Vec<FrozenQu
         ));
     }
     let mut out = Vec::with_capacity(seen.len());
+    let schema = crate::scheduler::applets::applet_schema_name(applet_id);
     for sql in seen {
-        let rows = crate::server::faces::run_face_query(pool, &sql).await.map_err(|e| {
+        let rows = crate::server::faces::run_face_query(pool, &sql, schema.as_deref()).await.map_err(|e| {
             Error::InvalidInput(format!(
                 "one of this page's queries failed just now ({e}). Open the page again, then share it."
             ))
@@ -1060,8 +1061,8 @@ pub async fn answer(pool: &PgPool, request: virtues_door::core::CoreRequest) -> 
     let no = CoreAnswer { ok: false, rows: None };
     match request {
         CoreRequest::Query { token, key } => {
-            let sql: Option<String> = match sqlx::query_scalar(
-                "SELECT q.sql FROM app_publication_queries q \
+            let found: Option<(String, String)> = match sqlx::query_as(
+                "SELECT q.sql, p.producer_id FROM app_publication_queries q \
                  JOIN app_publications p ON p.id = q.publication_id \
                  WHERE p.token = $1 AND q.query_key = $2 AND p.revoked_at IS NULL \
                    AND (p.expires_at IS NULL OR p.expires_at > now())",
@@ -1071,14 +1072,15 @@ pub async fn answer(pool: &PgPool, request: virtues_door::core::CoreRequest) -> 
             .fetch_optional(pool)
             .await
             {
-                Ok(sql) => sql,
+                Ok(found) => found,
                 Err(e) => {
                     tracing::warn!(error = %e, "door: approved-query lookup failed");
                     return no;
                 }
             };
-            let Some(sql) = sql else { return no };
-            match crate::server::faces::run_face_query(pool, &sql).await {
+            let Some((sql, applet_id)) = found else { return no };
+            let schema = crate::scheduler::applets::applet_schema_name(&applet_id);
+            match crate::server::faces::run_face_query(pool, &sql, schema.as_deref()).await {
                 Ok(rows) => CoreAnswer { ok: true, rows: Some(rows) },
                 Err(e) => {
                     tracing::warn!(error = %e, "door: an approved query failed");

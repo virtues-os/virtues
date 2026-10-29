@@ -147,15 +147,15 @@ impl Batch {
     pub fn heading(&self) -> String {
         let Watch { table, minutes, .. } = &self.watch;
         match self.watch.kind {
-            WatchKind::New => format!("These rows are new in {table} since this applet's last run:"),
-            WatchKind::Before => format!("These rows in {table} start in {minutes} minutes:"),
-            WatchKind::AfterEnd => format!("These rows in {table} ended {minutes} minutes ago:"),
+            WatchKind::New => format!("new_rows, the rows new in {table} since this applet's last run:"),
+            WatchKind::Before => format!("new_rows, the rows in {table} that start in {minutes} minutes:"),
+            WatchKind::AfterEnd => format!("new_rows, the rows in {table} that ended {minutes} minutes ago:"),
         }
     }
 
     /// What a run with no rows to take says to its prompt.
     pub fn nothing(&self) -> String {
-        format!("No rows in {} have come up since this applet's last run.", self.watch.table)
+        format!("new_rows is empty: no rows in {} have come up since this applet's last run.", self.watch.table)
     }
 
     /// The payload code receives on stdin.

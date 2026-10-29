@@ -21,7 +21,7 @@ folder through the same setup.
 | `description` | `description` | one sentence the owner reads: what it does for them, and when to use it |
 | `prompt` | the body | what to read, what to write, how long; under 300 words. It runs with no chat history |
 | `trigger` | `metadata.trigger` | `every day at 07:00`, `every monday at 09:00`, `every hour`, `on 2026-11-02 at 09:00`, `cron 0 0 7 * * *`, in the box's time; or on rows in a data table: `new data_health_workout`, `30 minutes before data_calendar_event`, `15 minutes after data_calendar_event ends` |
-| `run` | `metadata.run` | `sql …` that returns a row only when it should run; no rows skips the prompt. With a data trigger it reads the rows as `new_rows` |
+| `run` | `metadata.run` | `sql …` that returns a row only when it should run; no rows skips the prompt. With a data trigger it reads the rows as `new_rows`, and the prompt is given them as a table, beside what `run` returned |
 | `invoke` | `metadata.invoke` | `assistant` (the default) lets the assistant start it; `chat` puts it in the `/` menu |
 | `tools` | `allowed-tools` | narrows the tools its prompt has, from chat's ordinary set |
 | `tables` | `tables/NNNN_schema.sql` | every `CREATE TABLE` it should have, every time; the box adds what is missing and never drops |
@@ -30,7 +30,10 @@ folder through the same setup.
 | `model` | `metadata.model` | `standard`, `deep` or `lite`; an unattended prompt starts on `lite` |
 
 An applet the assistant makes starts on. Its tables are in schema
-`applet_<name with underscores>`, and its prompt writes them with `sql_write`.
+`applet_<name with underscores>`. Its prompt, its `run` and its view name
+them without the schema, as `drinks`, and its prompt writes them with
+`sql_write`. A chat that loads its prompt with `use_applet` is told the
+schema to add.
 
 ## Examples
 
@@ -50,7 +53,7 @@ A tracker with a table and a view:
   "description": "Counts the glasses of water you drink. Use when someone says they drank water.",
   "invoke": ["chat", "assistant"],
   "tables": "CREATE TABLE drinks (id TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text, ml INTEGER NOT NULL, drank_at TIMESTAMPTZ NOT NULL DEFAULT now());",
-  "prompt": "Insert one row into applet_water_log.drinks for what they drank (250 ml a glass unless they say), then say today's total.",
+  "prompt": "Insert one row into drinks for what they drank (250 ml a glass unless they say), then say today's total.",
   "view": "<!doctype html><link rel=\"stylesheet\" href=\"virtues.css\"><script src=\"virtues.js\"></script>…" }
 ```
 

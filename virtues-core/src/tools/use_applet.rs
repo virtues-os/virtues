@@ -95,11 +95,15 @@ fn load(applet: &UsableApplet) -> Result<ToolResult, ToolError> {
     if !applet.for_assistant {
         return Err(not_for_assistant(applet));
     }
+    let mut next = "Follow these instructions now, in this turn, with the tools you have. Read a listed file with use_applet and its path only when the instructions need it.".to_string();
+    if let Some(schema) = &applet.schema {
+        next.push_str(&format!(" Its own tables are in schema {schema}: name them {schema}.<table> in this turn."));
+    }
     Ok(ToolResult::success(serde_json::json!({
         "applet": applet.name,
         "instructions": applet.body,
         "files": applet.files,
-        "next": "Follow these instructions now, in this turn, with the tools you have. Read a listed file with use_applet and its path only when the instructions need it.",
+        "next": next,
     })))
 }
 
@@ -156,6 +160,7 @@ mod tests {
             files: vec!["references/units.md".into()],
             folder: folder.to_path_buf(),
             for_assistant,
+            schema: Some("applet_water".into()),
         }
     }
 
@@ -166,6 +171,7 @@ mod tests {
         assert!(r.success);
         assert_eq!(r.data["instructions"], "Log what they drank in the drinks table.");
         assert_eq!(r.data["files"][0], "references/units.md");
+        assert!(r.data["next"].as_str().unwrap().contains("applet_water.<table>"), "{}", r.data["next"]);
 
         let e = load(&water(dir.path(), false)).unwrap_err().to_string();
         assert!(e.contains("/water"), "{e}");

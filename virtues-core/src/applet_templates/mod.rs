@@ -1103,6 +1103,9 @@ pub struct UsableApplet {
     /// assistant may load it. An applet with a `run` stage starts through
     /// the `applet` tool's `run` instead, which runs the whole applet.
     pub for_assistant: bool,
+    /// The schema its tables are in, when it has `tables/`. Its prompt names
+    /// them without it, which a chat turn that loads the prompt has to add.
+    pub schema: Option<String>,
 }
 
 /// Every applet with a prompt, shipped first, each group by name.
@@ -1125,6 +1128,11 @@ fn usable_applets() -> Vec<UsableApplet> {
                         && t.command.is_none()
                         && t.run_sql.is_none()
                         && t.default_enabled,
+                    schema: t
+                        .id_prefix
+                        .as_deref()
+                        .filter(|_| t.folder.as_ref().is_some_and(|f| f.join(crate::tools::applet_schema::TABLES_DIR).is_dir()))
+                        .and_then(crate::scheduler::applets::applet_schema_name),
                 },
             ))
         })

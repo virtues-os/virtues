@@ -332,6 +332,15 @@ async fn prepare_run(
     })
 }
 
+/// A data trigger's rows as the prompt reads them: `new_rows`, as a table.
+async fn new_rows_for_prompt(db: &PgPool, batch: &Batch, schema: Option<&str>) -> Result<String> {
+    if batch.range.is_none() {
+        return Ok(batch.nothing());
+    }
+    let result = run_sql::run(db, &batch.listing_sql()?, Some(&batch.cte()?), schema).await?;
+    Ok(if result.total > 0 { result.for_prompt_with(&batch.heading()) } else { batch.nothing() })
+}
+
 /// Steps 6–9 of the dispatch flow. Loads credentials, runs the subprocess
 /// and/or agent phase, and persists the final run state. Errors are recorded
 /// against the run row rather than propagated, so this function always returns
@@ -437,10 +446,10 @@ async fn execute_prepared_inner(
     // A message is the exception, for the reason a condition does not gate
     // one: what someone typed is the input, whatever the SQL found.
     let has_prompt = action.agent.as_ref().is_some_and(|s| !s.trim().is_empty());
-    let run_sql_text = action.run_sql.as_deref().filter(|s| !s.trim().is_empty());
+    let schema = applets::applet_schema_name(&action.id);
     let mut sql_context: Option<String> = None;
-    if let Some(sql) = run_sql_text {
-        match run_sql::run(&deps.db, sql, new_rows.as_deref()).await {
+    if let Some(sql) = action.run_sql.as_deref().filter(|s| !s.trim().is_empty()) {
+        match run_sql::run(&deps.db, sql, new_rows.as_deref(), schema.as_deref()).await {
             Err(e) => {
                 let msg = e.to_string();
                 tracing::error!(applet_id, error = %msg, "run SQL failed");
@@ -474,19 +483,17 @@ async fn execute_prepared_inner(
         }
     }
 
-    // 6c. A data trigger with no `run` hands its rows to the prompt.
-    if let (Some(b), Some(cte), None, true) = (&batch, &new_rows, run_sql_text, has_prompt) {
-        let listed = match (b.range, b.listing_sql()) {
-            (None, _) => None,
-            (Some(_), Err(e)) => return fail(&deps, &run_id, &applet_id, e.to_string()).await,
-            (Some(_), Ok(sql)) => match run_sql::run(&deps.db, &sql, Some(cte)).await {
-                Ok(result) => Some(result),
-                Err(e) => return fail(&deps, &run_id, &applet_id, e.to_string()).await,
-            },
+    // 6c. A data trigger hands its rows to the prompt as `new_rows`, before
+    // whatever `run` returned, so a prompt that reads them has them even
+    // when `run` only decided whether to wake it.
+    if let (Some(b), true) = (&batch, has_prompt) {
+        let rows = match new_rows_for_prompt(&deps.db, b, schema.as_deref()).await {
+            Ok(rows) => rows,
+            Err(e) => return fail(&deps, &run_id, &applet_id, e.to_string()).await,
         };
-        sql_context = Some(match listed {
-            Some(result) if result.total > 0 => result.for_prompt_with(&b.heading()),
-            _ => b.nothing(),
+        sql_context = Some(match sql_context.take() {
+            Some(from_run) => format!("{rows}\n\n{from_run}"),
+            None => rows,
         });
     }
 
@@ -1740,6 +1747,20 @@ mod tests {
         let again = run_applet(&deps, "applet_watch", "data", None).await.unwrap();
         assert_eq!((again.status, again.run_id), (AppletRunStatus::Skipped, None));
         assert_eq!(run_count(&pool, "applet_watch").await, 1);
+    }
+
+    /// The prompt is handed the rows that woke it as `new_rows`, whether or
+    /// not `run` returned them.
+    #[sqlx::test]
+    async fn the_prompt_reads_the_rows_that_woke_it(pool: sqlx::PgPool) {
+        watching_applet(&pool, "applet_said", Some("Say what is new."), Some("select 1")).await;
+        let applet = applets::get_applet(&pool, "applet_said").await.unwrap();
+        let batch = crate::scheduler::watch::claim(&pool, &applet).await.unwrap().unwrap();
+        let text = new_rows_for_prompt(&pool, &batch, None).await.unwrap();
+        assert!(text.starts_with("new_rows, the rows new in data_calendar_event"), "{text}");
+        assert!(text.contains("Planning") && text.contains("Review") && text.contains("2 rows."), "{text}");
+        let none = crate::scheduler::watch::Batch { range: None, ..batch };
+        assert!(new_rows_for_prompt(&pool, &none, None).await.unwrap().starts_with("new_rows is empty"));
     }
 
     /// When a poll's rows are gone by the time its run starts, the run

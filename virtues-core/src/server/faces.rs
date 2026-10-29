@@ -335,7 +335,8 @@ pub async fn face_query_handler(
     };
 
     let pool = state.db.pool();
-    match run_face_query(pool, &body.sql).await {
+    let schema = crate::scheduler::applets::applet_schema_name(&applet_id);
+    match run_face_query(pool, &body.sql, schema.as_deref()).await {
         Ok(rows) => {
             note_query(&applet_id, &body.sql);
             with_cors((StatusCode::OK, Json(rows)))
@@ -395,9 +396,13 @@ pub(crate) fn seen_queries(applet_id: &str) -> Vec<String> {
 /// A read-only transaction on the reader login, with a statement timeout and
 /// the owner's timezone, and the zone it was set to. View SQL and an applet's
 /// `run` SQL both run in one.
+/// A read-only transaction on the reader login, on the owner's clock.
+/// `schema` is the applet the SQL belongs to: its schema goes first on the
+/// search path, so the applet's own tables need no schema in its SQL.
 pub(crate) async fn reader_transaction(
     pool: &sqlx::PgPool,
     timeout: &str,
+    schema: Option<&str>,
 ) -> std::result::Result<(sqlx::Transaction<'static, sqlx::Postgres>, String), String> {
     // The zone comes from the profile, an app_* table the reader cannot see,
     // so it is read on the main pool before the reader's transaction.
@@ -418,14 +423,41 @@ pub(crate) async fn reader_transaction(
     crate::timezone::apply_timezone(&mut tx, &zone)
         .await
         .map_err(|e| e.to_string())?;
+    set_applet_search_path(&mut tx, schema, true).await?;
     Ok((tx, zone))
 }
 
-pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str) -> std::result::Result<serde_json::Value, String> {
+/// Put an applet's own schema on a transaction's search path, with `public`
+/// after it when `public` is true. The name comes from
+/// `scheduler::applets::applet_schema_name`, which only makes `applet_`
+/// and lowercase letters, digits and underscores; anything else is refused
+/// rather than written into SQL.
+pub(crate) async fn set_applet_search_path(
+    tx: &mut sqlx::Transaction<'static, sqlx::Postgres>,
+    schema: Option<&str>,
+    public: bool,
+) -> std::result::Result<(), String> {
+    let Some(schema) = schema else { return Ok(()) };
+    let safe = schema.starts_with("applet_")
+        && schema.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+    if !safe {
+        return Err(format!("`{schema}` is not an applet's schema"));
+    }
+    let path = if public { format!("{schema}, public") } else { schema.to_string() };
+    sqlx::query(&format!("SET LOCAL search_path = {path}"))
+        .execute(&mut **tx)
+        .await
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// Run a view's SQL. `schema` is its applet's, whose tables the SQL may name
+/// without one.
+pub(crate) async fn run_face_query(pool: &sqlx::PgPool, sql: &str, schema: Option<&str>) -> std::result::Result<serde_json::Value, String> {
     if sql.len() > 20_000 {
         return Err("query too long".into());
     }
-    let (mut tx, _) = reader_transaction(pool, "5s").await?;
+    let (mut tx, _) = reader_transaction(pool, "5s", schema).await?;
 
     let wrapped = format!(
         "SELECT COALESCE(json_agg(row_to_json(q)), '[]'::json) FROM \
@@ -733,7 +765,23 @@ mod tests {
         crate::database::restricted::ensure_logins(&pool).await;
         let escape = "SELECT set_config('role', session_user, true) AS r, \
                       query_to_xml('select count(*) as n from app_applets', true, false, '') AS x";
-        let err = run_face_query(&pool, escape).await.expect_err("the escape must be refused");
+        let err = run_face_query(&pool, escape, None).await.expect_err("the escape must be refused");
         assert!(err.contains("permission denied"), "{err}");
+    }
+
+    /// A view names its own applet's tables without the schema, and still
+    /// reads the record's tables, which are in `public`.
+    #[sqlx::test]
+    async fn a_view_names_its_own_tables_without_the_schema(pool: sqlx::PgPool) {
+        sqlx::query("CREATE SCHEMA applet_water_log").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TABLE applet_water_log.drinks (ml integer)").execute(&pool).await.unwrap();
+        sqlx::query("INSERT INTO applet_water_log.drinks VALUES (250), (500)").execute(&pool).await.unwrap();
+        ensure_applet_db_grants(&pool).await.expect("grant sweep");
+        crate::database::restricted::ensure_logins(&pool).await;
+        let sql = "SELECT sum(ml)::int AS ml, (SELECT count(*) FROM data_calendar_event)::int AS events FROM drinks";
+        let rows = run_face_query(&pool, sql, Some("applet_water_log")).await.unwrap();
+        assert_eq!(rows, serde_json::json!([{ "ml": 750, "events": 0 }]));
+        assert!(run_face_query(&pool, sql, None).await.is_err(), "without its schema `drinks` is unknown");
+        assert!(run_face_query(&pool, sql, Some("public; drop table x")).await.is_err());
     }
 }

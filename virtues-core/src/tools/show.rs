@@ -95,10 +95,13 @@ fn invalid(msg: impl Into<String>) -> ToolError {
 
 /// `timezone` is the owner's, as for sql_query: the SQL's dates and labels
 /// are read in it.
+/// `schema` is the applet whose run or turn this is, whose own tables the
+/// SQL names without it.
 pub async fn execute(
     sql_query: &SqlQueryTool,
     arguments: Value,
     timezone: Option<&str>,
+    schema: Option<&str>,
 ) -> Result<ToolResult, ToolError> {
     let args: ShowArgs = serde_json::from_value(arguments)
         .map_err(|e| invalid(format!("Invalid arguments: {e}")))?;
@@ -133,7 +136,7 @@ pub async fn execute(
     // One more than the kind draws, so a cut result is seen rather than drawn.
     let limit = kind.max_rows() as u32 + 1;
     let result = sql_query
-        .execute(json!({ "operation": "query", "sql": sql, "limit": limit }), None, timezone)
+        .execute(json!({ "operation": "query", "sql": sql, "limit": limit }), None, timezone, schema)
         .await?;
     let data = result.data;
     if data.get("truncated").is_some() {

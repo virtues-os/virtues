@@ -154,9 +154,13 @@ async fn plan(pool: &PgPool, draft: &Draft) -> Result<Plan, Vec<serde_json::Valu
                 Some(o) => crate::applet_templates::overlay(&shipped, o).map_err(|e| vec![finding("name", &e, None)])?,
                 None => shipped.clone(),
             };
-            for key in ["run", "allowed-tools"] {
+            for (key, param) in [("run", "run"), ("allowed-tools", "tools")] {
                 if draft.sent(key).is_some() {
-                    findings.push(finding(key, &format!("`{spec}` is built in, so its {key} cannot change"), Some("leave it out, or give the applet a new name")));
+                    findings.push(finding(
+                        param,
+                        &format!("`{spec}` is built in, so its `{param}` cannot change"),
+                        Some(&format!("leave `{param}` out to change its prompt or trigger, or give your applet another name")),
+                    ));
                 }
             }
             if draft.tables.is_some() || draft.view.is_some() {
@@ -182,6 +186,17 @@ async fn plan(pool: &PgPool, draft: &Draft) -> Result<Plan, Vec<serde_json::Valu
     if draft.view.as_deref().is_some_and(|v| v.len() > VIEW_MAX) {
         findings.push(finding("view", "the view is over 48 KB", None));
     }
+    if let Some(view) = &draft.view {
+        for file in ["virtues.css", "virtues.js"] {
+            if view.contains(&format!("\"/{file}\"")) || view.contains(&format!("'/{file}'")) {
+                findings.push(finding(
+                    "view",
+                    &format!("the view links /{file}, which is the box's root and not the view's folder"),
+                    Some(&format!("link `{file}`, with no leading slash")),
+                ));
+            }
+        }
+    }
     if let Some(Some(run)) = draft.sent("run") {
         match run.strip_prefix("sql ") {
             None => findings.push(finding("run", "setup takes only SQL for `run`", Some("`sql select 1 where (…)`, which returns a row only when it should run"))),
@@ -190,7 +205,7 @@ async fn plan(pool: &PgPool, draft: &Draft) -> Result<Plan, Vec<serde_json::Valu
                 let new_rows = crate::applet_templates::key_value(&text, "trigger")
                     .and_then(|t| crate::applet_templates::watch_in(&t))
                     .and_then(|watch| crate::scheduler::watch::Batch { watch, range: None }.cte().ok());
-                if let Err(e) = explain_run_sql(pool, sql, new_rows.as_deref()).await {
+                if let Err(e) = explain_run_sql(pool, sql, new_rows.as_deref(), &format!("applet_{slug}")).await {
                     let suggestion = did_you_mean(pool, &e).await;
                     findings.push(finding("run", &e, suggestion.as_deref()));
                 }
@@ -221,8 +236,15 @@ async fn plan(pool: &PgPool, draft: &Draft) -> Result<Plan, Vec<serde_json::Valu
     if let Err(problems) = crate::applet_templates::read_skill_md(&text, &folder, &dir, shipped) {
         findings.extend(problems.iter().map(|p| finding(key_named(p), p, None)));
     }
+    // The checks above name each key a built-in applet cannot take. The
+    // override's own refusal is for a key they miss, so it is the only
+    // finding only when they found nothing.
     let override_text = match &shipped_text {
-        Some(s) => crate::applet_templates::override_between(s, &text).map_err(|e| vec![finding("name", &e, None)])?,
+        Some(s) => match crate::applet_templates::override_between(s, &text) {
+            Ok(o) => o,
+            Err(_) if !findings.is_empty() => None,
+            Err(e) => return Err(vec![finding(key_named(&e), &e, None)]),
+        },
         None => None,
     };
     if !findings.is_empty() {
@@ -490,10 +512,11 @@ async fn check_prompt_tables(pool: &PgPool, prompt: &str) -> Vec<serde_json::Val
         .collect()
 }
 
-/// Plan `run` SQL as the reader login, which is what runs it, so a table the
-/// reader cannot see fails here rather than on every run.
-async fn explain_run_sql(pool: &PgPool, sql: &str, with: Option<&str>) -> Result<(), String> {
-    let (mut tx, _zone) = crate::server::faces::reader_transaction(pool, "5s").await?;
+/// Plan `run` SQL as the reader login, with the applet's schema on its path,
+/// which is how it runs, so a table the reader cannot see fails here rather
+/// than on every run.
+async fn explain_run_sql(pool: &PgPool, sql: &str, with: Option<&str>, schema: &str) -> Result<(), String> {
+    let (mut tx, _zone) = crate::server::faces::reader_transaction(pool, "5s", Some(schema)).await?;
     let with = with.unwrap_or_default();
     let res = sqlx::query(&format!("EXPLAIN {with}SELECT * FROM ({sql}) q")).fetch_all(&mut *tx).await;
     tx.rollback().await.ok();
@@ -641,9 +664,36 @@ mod tests {
         let sql = "select title from new_rows where title ilike '%review%'";
         let watch = crate::applet_templates::watch_in("every day at 07:00, new data_calendar_event").expect("a data trigger");
         let cte = crate::scheduler::watch::Batch { watch, range: None }.cte().unwrap();
-        assert_eq!(explain_run_sql(&pool, sql, Some(&cte)).await, Ok(()));
-        let e = explain_run_sql(&pool, sql, None).await.unwrap_err();
+        assert_eq!(explain_run_sql(&pool, sql, Some(&cte), "applet_reviews").await, Ok(()));
+        let e = explain_run_sql(&pool, sql, None, "applet_reviews").await.unwrap_err();
         assert!(e.contains("new_rows"), "{e}");
+    }
+
+    /// A built-in applet's name with `tools` is refused for `tools`, by the
+    /// parameter's name, with what to do instead, and nothing else.
+    #[sqlx::test]
+    async fn a_built_in_applets_tools_are_refused_by_their_parameter(pool: PgPool) {
+        let draft = Draft::parse(&serde_json::json!({
+            "name": "Weekly review", "prompt": "Review my week.", "trigger": "every sunday at 19:00", "tools": ["sql_query"],
+        }))
+        .unwrap();
+        let findings = plan(&pool, &draft).await.err().expect("refused");
+        assert_eq!(findings.len(), 1, "{findings:?}");
+        assert_eq!(findings[0]["field"], "tools");
+        assert!(findings[0]["suggestion"].as_str().unwrap().contains("another name"), "{findings:?}");
+    }
+
+    /// A view that links its runtime from the box's root is a finding.
+    #[sqlx::test]
+    async fn a_view_links_its_runtime_without_a_leading_slash(pool: PgPool) {
+        let draft = Draft::parse(&serde_json::json!({
+            "name": "Water log", "description": "Counts your water.",
+            "view": "<link rel=\"stylesheet\" href=\"/virtues.css\"><script src=\"virtues.js\"></script>",
+        }))
+        .unwrap();
+        let findings = plan(&pool, &draft).await.err().expect("refused");
+        assert!(findings.iter().any(|f| f["field"] == "view" && f["error"].as_str().unwrap().contains("/virtues.css")), "{findings:?}");
+        assert!(!findings.iter().any(|f| f["error"].as_str().unwrap().contains("/virtues.js")), "{findings:?}");
     }
 
     /// A typo in a table name is the failure the authoring contract calls out

@@ -67,11 +67,14 @@ impl SqlQueryTool {
     /// where there is none to keep it (a ghost chat, an applet run).
     /// `timezone` is the owner's zone the query's dates are read in; None
     /// means `home_timezone` (see `crate::timezone::set_local_timezone`).
+    /// `schema` is the applet whose run or turn this is, whose own tables
+    /// the query may name without it.
     pub async fn execute(
         &self,
         arguments: serde_json::Value,
         chat_id: Option<&str>,
         timezone: Option<&str>,
+        schema: Option<&str>,
     ) -> Result<ToolResult, ToolError> {
         let args: SqlQueryArgs = serde_json::from_value(arguments)
             .map_err(|e| ToolError::InvalidParameters(format!("Invalid arguments: {}", e)))?;
@@ -95,7 +98,7 @@ impl SqlQueryTool {
                 // the schema offers send '' or ' ' for one they do not want.
                 let Some(name) = args.save_as.as_deref().map(str::trim).filter(|s| !s.is_empty()) else {
                     let limit = args.limit.unwrap_or(50).min(200);
-                    return self.execute_query(&sql, limit, None, timezone).await;
+                    return self.execute_query(&sql, limit, None, timezone, schema).await;
                 };
                 let name = saved_file_name(name)?;
                 let chat_id = chat_id.ok_or_else(|| {
@@ -108,7 +111,7 @@ impl SqlQueryTool {
                 let ws = crate::api::code_env::Workspace::for_chat(chat_id)
                     .map_err(ToolError::ExecutionFailed)?;
                 let limit = args.limit.unwrap_or(MAX_SAVED_ROWS).min(MAX_SAVED_ROWS);
-                self.execute_query(&sql, limit, Some((&ws.dir.join(&name), &name)), timezone).await
+                self.execute_query(&sql, limit, Some((&ws.dir.join(&name), &name)), timezone, schema).await
             }
             _ => Err(ToolError::InvalidParameters(format!(
                 "Unknown operation: '{}'. Use: query, list_tables, get_schema",
@@ -430,6 +433,7 @@ impl SqlQueryTool {
         limit: u32,
         save: Option<(&std::path::Path, &str)>,
         timezone: Option<&str>,
+        schema: Option<&str>,
     ) -> Result<ToolResult, ToolError> {
         let sql_lower = sql.trim().to_lowercase();
 
@@ -527,6 +531,9 @@ impl SqlQueryTool {
         // 30s, and the error names the fix (see `explain_failure`).
         sqlx::query("SET LOCAL statement_timeout = '25s'")
             .execute(&mut *tx)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
+        crate::server::faces::set_applet_search_path(&mut tx, schema, true)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Query failed: {}", e)))?;
 
@@ -1170,7 +1177,7 @@ mod tests {
         );
 
         let tool = SqlQueryTool::new(Arc::new(pool.clone()));
-        let result = tool.execute_query(sql, 100, None, None).await;
+        let result = tool.execute_query(sql, 100, None, None, None).await;
 
         assert!(
             result.is_err(),
@@ -1196,7 +1203,7 @@ mod tests {
     #[sqlx::test]
     async fn plain_select_still_succeeds(pool: sqlx::PgPool) {
         let tool = SqlQueryTool::new(Arc::new(pool));
-        let result = tool.execute_query("SELECT 1 AS n", 10, None, None).await;
+        let result = tool.execute_query("SELECT 1 AS n", 10, None, None, None).await;
         assert!(result.is_ok(), "a plain SELECT must still run: {result:?}");
     }
 
@@ -1209,10 +1216,10 @@ mod tests {
             serde_json::json!({ "operation": "query", "sql": "SELECT 1 AS n", "save_as": save_as })
         };
         for blank in ["", " ", "\t\n"] {
-            let result = tool.execute(query(blank), None, None).await;
+            let result = tool.execute(query(blank), None, None, None).await;
             assert!(result.is_ok(), "save_as {blank:?} must run the query: {result:?}");
         }
-        let result = tool.execute(query("sleep.csv"), None, None).await;
+        let result = tool.execute(query("sleep.csv"), None, None, None).await;
         assert!(matches!(result, Err(ToolError::InvalidParameters(_))), "{result:?}");
     }
 
@@ -1230,7 +1237,7 @@ mod tests {
         let run = |tz: Option<&'static str>| {
             let tool = &tool;
             async move {
-                let out = tool.execute_query(sql, 10, None, tz).await.expect("query runs");
+                let out = tool.execute_query(sql, 10, None, tz, None).await.expect("query runs");
                 out.data["rows"][0].clone()
             }
         };

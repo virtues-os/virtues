@@ -491,8 +491,19 @@ shrinks; `virtues applet put`, the MCP `applet` tool and the shipped
 water tracker with a table and a view, a weekly review, and a one-off
 reminder, each in one call with no findings.
 
-Built on 2026-10-28 except the live check: no model has been given the new
-description yet. Decided on the way:
+Built on 2026-10-28. The live check ran the same day outside the box: the
+Lite slot's model got only the `applet` and `sql_query` definitions and a
+two-line system prompt, and its calls ran through the real setup against a
+test database, three tries each for the water tracker, the weekly review,
+the reminder and a heart-rate data trigger. 8 of 12 first calls passed, and
+9 of 12 after three fixes; every try ended with an applet. The fixes: an
+applet's own tables need no schema in its view, `run`, prompt and charts; a
+built-in applet's name sent with `tools` gets one finding that names
+`tools`; and a data-triggered prompt is given `new_rows` beside what `run`
+returned. A view that links `/virtues.css` is a finding. What first calls
+still get wrong: a weekly review named like the built-in one sends `tools`,
+and a view links its runtime from the root; each is fixed on the next call.
+Decided on the way:
 - Setup with a built-in applet's name writes that applet's override, for the
   keys an override may hold; `run`, `tools`, `tables` and `view` of a
   built-in applet are refused with "give it a new name". A fork in the state
@@ -603,10 +614,10 @@ Decided on the way:
 - Rows wait while a run is going or the applet is at its hourly limit, and
   the next run takes all of them. A data trigger gets `6 runs per hour` when
   its file sets no hourly limit.
-- `run` SQL and the prompt read the rows as `new_rows`. A prompt with no
-  `run` gets them as a table, the first 200 and the count. Code gets the
-  table and the two times as its payload. Data runs reach the Inbox like
-  scheduled ones.
+- `run` SQL reads the rows as `new_rows`, and the prompt is given them as a
+  table under that name, the first 200 and the count, before what `run`
+  returned. Code gets the table and the two times as its payload. Data runs
+  reach the Inbox like scheduled ones.
 
 ### Later: imports and export
 
