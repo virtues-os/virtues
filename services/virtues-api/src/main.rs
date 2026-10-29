@@ -3,7 +3,7 @@
 //! A "prepaid arcade card" model for AI API access:
 //! - Authenticate the device bearer, look up its entitlement in Postgres
 //! - Enforce per-call cap, daily ceiling, and wallet balance on each charge
-//! - Forward requests upstream (Vercel AI Gateway, Exa, Places, Unsplash)
+//! - Forward requests upstream (Vercel AI Gateway, Places, Unsplash)
 //!
 //! Budget state lives entirely in the `accounts` table (credited by atlas on
 //! subscription renewal + top-up), with the append-only `ledger` as the source
@@ -173,7 +173,7 @@ async fn main() -> Result<()> {
         .merge(routes::connections::router())
         // Bearer-auth account endpoints (whoami + usage)
         .merge(routes::bearer_test::router())
-        // Bearer-auth + entitlement charge: Places, Exa, Unsplash, AI.
+        // Bearer-auth + entitlement charge: Places, web search, Unsplash, AI.
         // AI (`/v1/ai/*`) covers both streaming and non-streaming chat; the
         // charge fires from a callback once the upstream usage is known.
         .merge(routes::places::router())

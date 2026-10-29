@@ -19,7 +19,7 @@
 //!
 //! # Available Tools
 //!
-//! - `web_search`: Search the web using Exa AI
+//! - `web_search`: Search the web (Parallel, through the Vercel AI Gateway)
 //! - `sql_query`: Read-only SQL queries against user data
 //! - `edit_page`: AI-assisted page editing (applied immediately via Yjs)
 

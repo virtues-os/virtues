@@ -35,8 +35,6 @@ pub struct Config {
     // =========================================================================
     // External Service API Keys (All billable services proxied through virtues-api)
     // =========================================================================
-    /// Exa API key (for web search)
-
     /// Google API key (for Places autocomplete)
     pub google_api_key: Option<String>,
 
