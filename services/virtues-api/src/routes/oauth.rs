@@ -29,7 +29,8 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use crate::bearer_auth::key_hash;
+use crate::bearer_auth::{key_hash, resolve_box_key, BearerError};
+use crate::blocklist::Blocklist;
 use crate::entitlement;
 use crate::AppState;
 
@@ -708,7 +709,7 @@ async fn consume_exchange(db: &sqlx::PgPool, sig: &str) -> Result<bool, sqlx::Er
 
 /// The caller's box key, if it sent one. Every box release since v0.1.1 sends
 /// it on `/exchange` and `/refresh`. `/refresh` requires it
-/// ([`caller_account`]); `/exchange` does not check it yet, and the browser
+/// ([`check_caller_key`]); `/exchange` does not check it yet, and the browser
 /// routes (`/start`, `/callback`) cannot carry it.
 fn caller_api_key(headers: &HeaderMap) -> Option<String> {
     headers
@@ -718,35 +719,17 @@ fn caller_api_key(headers: &HeaderMap) -> Option<String> {
         .map(String::from)
 }
 
-/// What the caller's box key says about who is calling. It names no account,
-/// so nothing downstream can log one.
-#[derive(Debug)]
-enum CallerKey {
-    Missing,
-    Unknown,
-    Known,
-}
-
-impl CallerKey {
-    fn label(&self) -> &'static str {
-        match self {
-            CallerKey::Missing => "missing_key",
-            CallerKey::Unknown => "unknown_key",
-            CallerKey::Known => "known_key",
-        }
-    }
-}
-
-/// Whether the caller's box key belongs to an account. A box that is not
-/// linked to an account has no key.
-async fn caller_account(db: &sqlx::PgPool, headers: &HeaderMap) -> anyhow::Result<CallerKey> {
-    let Some(key) = caller_api_key(headers) else {
-        return Ok(CallerKey::Missing);
-    };
-    Ok(match entitlement::resolve_account_by_key(db, &key_hash(&key)).await? {
-        Some(_) => CallerKey::Known,
-        None => CallerKey::Unknown,
-    })
+/// Whether the caller sent a box key we issued. Only the key matters, not
+/// the wallet: an owner who never paid, or whose subscription lapsed, keeps
+/// their sources syncing. The error names no account, so nothing downstream
+/// can log one.
+async fn check_caller_key(
+    db: &sqlx::PgPool,
+    blocklist: &Blocklist,
+    headers: &HeaderMap,
+) -> Result<(), BearerError> {
+    let key = caller_api_key(headers).ok_or(BearerError::MissingHeader)?;
+    resolve_box_key(db, blocklist, &key).await.map(|_| ())
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1382,19 +1365,17 @@ async fn refresh(
     // reads `code` sees `missing_key` or `unknown_key` and does not ask.
     // The refusal is logged without the account: failed authentication is
     // logged, ordinary use is not.
-    match caller_account(&state.db, &headers).await {
-        Ok(CallerKey::Known) => {}
-        Ok(refused) => {
-            tracing::warn!(provider = %provider, code = refused.label(), "oauth refresh refused");
-            return refresh_err(
-                StatusCode::UNAUTHORIZED,
-                refused.label(),
-                "a box key linked to an account is required",
-            );
-        }
-        Err(e) => {
+    match check_caller_key(&state.db, &state.blocklist, &headers).await {
+        Ok(()) => {}
+        Err(BearerError::Internal(e)) => {
             tracing::error!(provider = %provider, error = %e, "oauth refresh key lookup failed");
             return refresh_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "key lookup failed");
+        }
+        Err(refused) => {
+            use virtues_helpers::error::StructuredError;
+            tracing::warn!(provider = %provider, code = refused.code(), "oauth refresh refused");
+            let status = StatusCode::from_u16(refused.status()).unwrap_or(StatusCode::UNAUTHORIZED);
+            return refresh_err(status, refused.code(), &refused.message());
         }
     }
     let Some(refresh_token) = body.refresh_token.filter(|s| !s.is_empty()) else {
@@ -1876,29 +1857,36 @@ mod tests {
         assert_eq!(body["upstream_status"], Value::Null);
     }
 
-    /// `caller_account` tells a missing key, an unknown key and a linked box
-    /// apart, and `/refresh` sends the first two back as the 401's `code`.
+    /// `/refresh` tells a missing key, an unknown key and a blocked key apart,
+    /// and serves a known key whether or not its account has a wallet: an
+    /// owner who never paid keeps their sources syncing.
     #[sqlx::test]
-    async fn caller_account_tells_missing_unknown_and_known_apart(pool: sqlx::PgPool) {
-        entitlement::credit(&pool, "acct-refresh-1", 1_000_000, entitlement::CreditMode::Set, None)
-            .await
-            .expect("fund the account");
+    async fn refresh_needs_a_known_key_and_no_wallet(pool: sqlx::PgPool) {
+        let blocklist = Blocklist::from_env();
+        let header = |key: &str| {
+            let mut h = HeaderMap::new();
+            h.insert("x-virtues-api-key", key.parse().unwrap());
+            h
+        };
         entitlement::register_device(&pool, &key_hash("box-key-1"), "acct-refresh-1", None)
             .await
             .expect("register the box key");
 
-        let none = caller_account(&pool, &HeaderMap::new()).await.expect("lookup runs");
-        assert!(matches!(none, CallerKey::Missing), "{none:?}");
+        let none = check_caller_key(&pool, &blocklist, &HeaderMap::new()).await;
+        assert!(matches!(none, Err(BearerError::MissingHeader)), "{none:?}");
 
-        let mut unknown = HeaderMap::new();
-        unknown.insert("x-virtues-api-key", "box-key-2".parse().unwrap());
-        let unknown = caller_account(&pool, &unknown).await.expect("lookup runs");
-        assert!(matches!(unknown, CallerKey::Unknown), "{unknown:?}");
+        let unknown = check_caller_key(&pool, &blocklist, &header("box-key-2")).await;
+        assert!(matches!(unknown, Err(BearerError::NotFound)), "{unknown:?}");
 
-        let mut known = HeaderMap::new();
-        known.insert("x-virtues-api-key", "box-key-1".parse().unwrap());
-        let known = caller_account(&pool, &known).await.expect("lookup runs");
-        assert!(matches!(known, CallerKey::Known), "{known:?}");
+        assert!(entitlement::get_wallet(&pool, "acct-refresh-1").await.unwrap().is_none());
+        let known = check_caller_key(&pool, &blocklist, &header("box-key-1")).await;
+        assert!(known.is_ok(), "{known:?}");
+
+        blocklist
+            .block(&pool, &key_hash("box-key-1"), crate::blocklist::REASON_RATE_ABUSE, None)
+            .await;
+        let blocked = check_caller_key(&pool, &blocklist, &header("box-key-1")).await;
+        assert!(matches!(blocked, Err(BearerError::Blocked)), "{blocked:?}");
     }
 
     /// A Plaid exchange_token is spendable exactly once — the property the

@@ -33,7 +33,7 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 use crate::bearer_auth::BearerAuth;
-use crate::entitlement::{self, Account};
+use crate::entitlement::{self, Wallet};
 use crate::AppState;
 
 // Fixed per-call cost (micros, pre-markup). Small on purpose: `transactions/sync`
@@ -100,7 +100,7 @@ async fn liabilities_get(
 /// Shared proxy tail: gate, inject the master secret, forward to Plaid, settle.
 async fn proxy_and_settle(
     state: &AppState,
-    ent: &Account,
+    ent: &Wallet,
     plaid_path: &str,
     body: &Value,
     cost_micros: i64,
@@ -170,7 +170,7 @@ fn with_credentials(body: &Value, client_id: &str, secret: &str) -> Value {
 }
 
 /// Read-only pre-flight gate, mirroring `routes/parallel.rs::budget_gate`.
-fn budget_gate(acct: &Account) -> Option<Response> {
+fn budget_gate(acct: &Wallet) -> Option<Response> {
     if acct.balance_micros <= 0 {
         return Some(err(
             StatusCode::PAYMENT_REQUIRED,

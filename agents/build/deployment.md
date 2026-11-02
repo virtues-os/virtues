@@ -157,7 +157,11 @@ automatically. One deploy per service runs at a time.
 **The smoke test runs against the live database, and both services migrate on
 startup.** A failed smoke test leaves the running service untouched, but a
 migration the new image applied stays applied. Migrations are append-only, so
-the old image keeps working on the newer schema — keep it that way.
+the old image keeps working on the newer schema — keep it that way. A rename
+leaves a view under the old name for the image it replaces (virtues-api's
+0011 does). virtues-api starts with sqlx's `ignore_missing`, so a rollback
+image boots past migrations it does not know; an image built before that
+setting cannot, and refuses to start once a newer migration has run.
 
 **Env changes need a recreate.** `docker restart` re-runs the existing
 container, so it neither picks up a new image nor re-reads the env file. After

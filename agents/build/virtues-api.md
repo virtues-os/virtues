@@ -119,7 +119,7 @@ log.
 
 | Credential | Created by | Raw value lives on | Reference kept at | What it does |
 |---|---|---|---|---|
-| **Device api_key** | Billing, at signup (rotatable) | your home server | Billing *and* the API, both hashed | proves "I'm paid" *and* spends the wallet |
+| **Device api_key** | Billing, at link (rotatable) | your home server | Billing *and* the API, both hashed | proves "I'm a box linked to this account"; spends the wallet when the account has one |
 | **Device key** *(pairing bearer)* | your box, at pairing | each of your devices | your box only | your phone / laptop ↔ your own box; **never leaves your house** |
 
 People often confuse these two bearers. The **api_key** authenticates *home
@@ -137,7 +137,7 @@ This is the complete list. If it isn't here, we don't have it.
 | Where | What | What it is *not* |
 |---|---|---|
 | Billing | email, Stripe customer, subscription status, `account_id` | no usage, no content |
-| The API | `account_id`, balance, daily counter, ledger rows (`amount`, `kind`, `timestamp`, pre-markup cost) | no prompts, no completions, no files, **not even which model you used** — an AI charge writes no reference to the call |
+| The API | `account_id`; each box key's hash and box label, until that box links again; the wallet (balance, expiry) and its ledger rows (`amount`, `kind`, `timestamp`, pre-markup cost), deleted 7 days after the wallet lapses | no prompts, no completions, no files, **not even which model you used** — an AI charge writes no reference to the call. No record of when a key was used |
 | The relay | which two endpoint keys are connected, the addresses they connect from, and how many bytes pass when | no key to decrypt with — but **not** "no logs": nothing enforces or attests that, and by design it sees volume and timing |
 | Your box | everything | — |
 

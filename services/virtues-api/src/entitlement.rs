@@ -1,15 +1,17 @@
-//! Account + ledger data layer — linked prepaid model (v1).
+//! Wallet + ledger data layer — linked prepaid model (v1).
 //!
-//! One row per account in `accounts`:
+//! One row per paid-for account in `wallets`:
 //!   `account_id → (balance_micros, expires_at)`
 //!
-//! `account_id` is an opaque string atlas assigns per customer. The box
-//! authenticates with a rotatable api_key (see `device_keys`); the wallet is
-//! keyed by the stable account, so rotating/losing a key never moves money.
+//! `account_id` is the opaque id atlas assigns per account. The box
+//! authenticates with a rotatable api_key (see `device_keys`), which belongs
+//! to the account, not the wallet: a key outlives a lapsed wallet, and an
+//! account that never paid has a key and no wallet. Rotating or losing a key
+//! never moves money.
 //!
 //! ## Source of truth: the ledger
 //!
-//! `accounts.balance_micros` is a fast **projection**. The append-only
+//! `wallets.balance_micros` is a fast **projection**. The append-only
 //! `ledger` table is the truth: every grant (renewal), topup, charge, and
 //! refund is one immutable row, and `balance == SUM(ledger.micros)`. The two
 //! are always written in the same transaction; the projection is rebuildable.
@@ -66,48 +68,40 @@ pub fn usd_to_micros(usd: f64) -> i64 {
     (usd * 1_000_000.0).round() as i64
 }
 
-/// Resolved account, carried by bearer-auth on every gated request.
+/// A live wallet, carried by bearer-auth on every paid request.
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub struct Account {
+pub struct Wallet {
     pub account_id: String,
     pub balance_micros: i64,
     pub expires_at: DateTime<Utc>,
 }
 
-/// Resolve an account from a device api_key hash (the auth hot path). Joins
-/// `device_keys → accounts`.
-pub async fn resolve_account_by_key(
-    pool: &PgPool,
-    api_key_hash: &[u8],
-) -> Result<Option<Account>> {
-    let row = sqlx::query_as::<_, Account>(
-        r#"
-        SELECT a.account_id, a.balance_micros, a.expires_at
-        FROM device_keys k
-        JOIN accounts a ON a.account_id = k.account_id
-        WHERE k.api_key_hash = $1
-        "#,
-    )
-    .bind(api_key_hash)
-    .fetch_optional(pool)
-    .await
-    .context("resolve account by api_key hash")?;
-    Ok(row)
+/// The account a box key belongs to (the auth hot path). Reads only
+/// `device_keys`, so it answers for an account with no wallet.
+pub async fn key_account(pool: &PgPool, api_key_hash: &[u8]) -> Result<Option<String>> {
+    let row: Option<(String,)> =
+        sqlx::query_as("SELECT account_id FROM device_keys WHERE api_key_hash = $1")
+            .bind(api_key_hash)
+            .fetch_optional(pool)
+            .await
+            .context("resolve account by api_key hash")?;
+    Ok(row.map(|(id,)| id))
 }
 
-/// Look up an account by id (used by internal funding ops + tests).
-pub async fn get_by_account_id(pool: &PgPool, account_id: &str) -> Result<Option<Account>> {
-    let row = sqlx::query_as::<_, Account>(
+/// An account's wallet, live or expired. None when the account has never paid
+/// or its wallet was swept.
+pub async fn get_wallet(pool: &PgPool, account_id: &str) -> Result<Option<Wallet>> {
+    let row = sqlx::query_as::<_, Wallet>(
         r#"
         SELECT account_id, balance_micros, expires_at
-        FROM accounts
+        FROM wallets
         WHERE account_id = $1
         "#,
     )
     .bind(account_id)
     .fetch_optional(pool)
     .await
-    .context("select account by id")?;
+    .context("select wallet by account id")?;
     Ok(row)
 }
 
@@ -137,7 +131,7 @@ pub async fn charge(
     // (enforced atlas-side on top-up) as the only spend ceiling.
     let row: Option<(i64,)> = sqlx::query_as(
         r#"
-        UPDATE accounts
+        UPDATE wallets
         SET balance_micros = balance_micros - $1
         WHERE account_id = $2
           AND expires_at > now()
@@ -190,9 +184,9 @@ pub async fn settle(pool: &PgPool, account_id: &str, real_cost_micros: i64) -> R
 
     let mut tx = pool.begin().await?;
 
-    // Unconditional debit — only requires the account to still exist.
+    // Unconditional debit — only requires the wallet to still exist.
     let row: Option<(i64,)> = sqlx::query_as(
-        "UPDATE accounts \
+        "UPDATE wallets \
          SET balance_micros = balance_micros - $1 \
          WHERE account_id = $2 \
          RETURNING balance_micros",
@@ -203,7 +197,7 @@ pub async fn settle(pool: &PgPool, account_id: &str, real_cost_micros: i64) -> R
     .await
     .context("settle debit")?;
     let Some((balance,)) = row else {
-        // Account swept between the call and settlement — nothing to debit.
+        // Wallet swept between the call and settlement — nothing to debit.
         tx.rollback().await?;
         return Ok(0);
     };
@@ -229,7 +223,7 @@ async fn classify_failure(
     _billed: i64,
 ) -> Result<ChargeOk, ChargeError> {
     let row: Option<(DateTime<Utc>, i64)> = sqlx::query_as(
-        "SELECT expires_at, balance_micros FROM accounts WHERE account_id = $1",
+        "SELECT expires_at, balance_micros FROM wallets WHERE account_id = $1",
     )
     .bind(account_id)
     .fetch_optional(pool)
@@ -249,7 +243,7 @@ pub async fn refund(pool: &PgPool, account_id: &str, billed_micros: i64) -> Resu
     let mut tx = pool.begin().await?;
     let updated = sqlx::query(
         r#"
-        UPDATE accounts
+        UPDATE wallets
         SET balance_micros = balance_micros + $1
         WHERE account_id = $2
         "#,
@@ -259,7 +253,7 @@ pub async fn refund(pool: &PgPool, account_id: &str, billed_micros: i64) -> Resu
     .execute(&mut *tx)
     .await
     .context("refund balance")?;
-    // If the account vanished (e.g. swept between charge and a slow upstream
+    // If the wallet vanished (e.g. swept between charge and a slow upstream
     // failure), there's nothing to refund — skip the ledger row rather than
     // orphan it (the FK would reject it anyway). Keeps balance == SUM(ledger).
     if updated.rows_affected() == 0 {
@@ -276,10 +270,9 @@ pub async fn refund(pool: &PgPool, account_id: &str, billed_micros: i64) -> Resu
     Ok(())
 }
 
-/// Register (or rotate) a device api key for an account. Ensures the account
-/// exists (creating an empty, cohort-expiry wallet if new), then installs the
-/// given key. The balance is never touched, so re-linking re-points access
-/// without moving money.
+/// Register (or rotate) a device api key for an account. It creates no wallet:
+/// a key needs only the account, and a wallet comes from a credit. The balance
+/// is never touched, so re-linking re-points access without moving money.
 ///
 /// **Scoped to a BOX when `box_id` is given.** Rotation replaces that box's own
 /// key and leaves every sibling alone, so one account can hold several boxes —
@@ -298,21 +291,7 @@ pub async fn register_device(
     account_id: &str,
     box_id: Option<&str>,
 ) -> Result<()> {
-    let now = Utc::now();
     let mut tx = pool.begin().await?;
-
-    sqlx::query(
-        r#"
-        INSERT INTO accounts (account_id, balance_micros, expires_at)
-        VALUES ($1, 0, $2)
-        ON CONFLICT (account_id) DO NOTHING
-        "#,
-    )
-    .bind(account_id)
-    .bind(cohort_align_after(now + Duration::days(30)))
-    .execute(&mut *tx)
-    .await
-    .context("ensure account on device register")?;
 
     // Drop only what this registration replaces: this BOX's previous key when we
     // know which box it is, otherwise the whole account (the legacy path).
@@ -382,7 +361,7 @@ pub async fn credit(
     let mut tx = pool.begin().await?;
 
     let existing: Option<(i64,)> =
-        sqlx::query_as("SELECT balance_micros FROM accounts WHERE account_id = $1 FOR UPDATE")
+        sqlx::query_as("SELECT balance_micros FROM wallets WHERE account_id = $1 FOR UPDATE")
             .bind(account_id)
             .fetch_optional(&mut *tx)
             .await
@@ -398,7 +377,7 @@ pub async fn credit(
         CreditMode::Set => {
             sqlx::query(
                 r#"
-                INSERT INTO accounts (account_id, balance_micros, expires_at)
+                INSERT INTO wallets (account_id, balance_micros, expires_at)
                 VALUES ($1, $2, $3)
                 ON CONFLICT (account_id) DO UPDATE
                 SET balance_micros = EXCLUDED.balance_micros,
@@ -415,10 +394,10 @@ pub async fn credit(
         CreditMode::Add => {
             sqlx::query(
                 r#"
-                INSERT INTO accounts (account_id, balance_micros, expires_at)
+                INSERT INTO wallets (account_id, balance_micros, expires_at)
                 VALUES ($1, $2, $3)
                 ON CONFLICT (account_id) DO UPDATE
-                SET balance_micros = accounts.balance_micros + $2
+                SET balance_micros = wallets.balance_micros + $2
                 "#,
             )
             .bind(account_id)
@@ -449,7 +428,7 @@ pub async fn usage_summary(
     account_id: &str,
     limit: i64,
 ) -> Result<UsageSummary> {
-    let acct = get_by_account_id(pool, account_id).await?;
+    let acct = get_wallet(pool, account_id).await?;
     let Some(acct) = acct else {
         return Ok(UsageSummary::default());
     };
@@ -527,8 +506,8 @@ impl std::fmt::Display for ChargeError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::InsufficientBudget => write!(f, "wallet empty — add credits"),
-            Self::Expired => write!(f, "subscription wallet expired — reconnect"),
-            Self::NotFound => write!(f, "account not found"),
+            Self::Expired => write!(f, "no active subscription — renew it to continue"),
+            Self::NotFound => write!(f, "no wallet for this account"),
             Self::InvalidCost => write!(f, "real_cost_micros must be > 0"),
             Self::CallTooExpensive => write!(f, "single call exceeds per-call cap"),
             Self::Db(e) => write!(f, "db error: {e}"),
@@ -584,7 +563,7 @@ mod tests {
         );
 
         // balance projection == SUM(ledger).
-        let acct = get_by_account_id(&pool, "acct-low").await.unwrap().unwrap();
+        let acct = get_wallet(&pool, "acct-low").await.unwrap().unwrap();
         // SUM(int8) is NUMERIC in Postgres; cast so it decodes as i64.
         let (sum,): (Option<i64>,) =
             sqlx::query_as("SELECT SUM(micros)::bigint FROM ledger WHERE account_id = $1")
@@ -613,7 +592,7 @@ mod tests {
         charge(&pool, "acct-u", 1_000_000).await.expect("charge");
         charge(&pool, "acct-u", 2_000_000).await.expect("charge");
         let spent = usage_summary(&pool, "acct-u", 10).await.unwrap();
-        let acct = get_by_account_id(&pool, "acct-u").await.unwrap().unwrap();
+        let acct = get_wallet(&pool, "acct-u").await.unwrap().unwrap();
         assert!(spent.month_to_date_micros > 0);
         assert_eq!(
             spent.month_to_date_micros,
@@ -634,20 +613,83 @@ mod tests {
             .unwrap();
         charge(&pool, "acct-r", 1_000_000).await.expect("charge under old key path");
 
-        let before = get_by_account_id(&pool, "acct-r").await.unwrap().unwrap().balance_micros;
+        let before = get_wallet(&pool, "acct-r").await.unwrap().unwrap().balance_micros;
         // Rotate to a new key for the SAME account.
         register_device(&pool, b"keyhash-new-0000000000000000", "acct-r", None)
             .await
             .unwrap();
-        let resolved = resolve_account_by_key(&pool, b"keyhash-new-0000000000000000")
+        let resolved = key_account(&pool, b"keyhash-new-0000000000000000")
             .await
             .unwrap()
             .expect("new key resolves the account");
-        assert_eq!(resolved.balance_micros, before, "balance preserved across rotation");
+        let wallet = get_wallet(&pool, &resolved).await.unwrap().unwrap();
+        assert_eq!(wallet.balance_micros, before, "balance preserved across rotation");
         // Old key no longer resolves.
-        assert!(resolve_account_by_key(&pool, b"keyhash-old-0000000000000000")
+        assert!(key_account(&pool, b"keyhash-old-0000000000000000")
             .await
             .unwrap()
             .is_none());
+    }
+
+    /// Linking a box creates no wallet. An owner who never paid has a key that
+    /// resolves to their account, and nothing for a paid route to spend.
+    #[sqlx::test]
+    async fn register_device_creates_no_wallet(pool: PgPool) {
+        register_device(&pool, b"keyhash-free-000000000000000", "acct-free", Some("box-a"))
+            .await
+            .unwrap();
+        assert_eq!(
+            key_account(&pool, b"keyhash-free-000000000000000").await.unwrap().as_deref(),
+            Some("acct-free")
+        );
+        assert!(get_wallet(&pool, "acct-free").await.unwrap().is_none());
+    }
+
+    /// The image this deploy replaces still reads and writes `accounts`.
+    /// Every statement it runs must keep working through the view that
+    /// migration 0011 leaves, or the service breaks while the new image is
+    /// smoke tested and again after a rollback.
+    #[sqlx::test]
+    async fn the_previous_image_sql_runs_through_the_accounts_view(pool: PgPool) {
+        let q = |sql: &'static str| sqlx::query(sql);
+        // register_device's wallet insert, both credit upserts.
+        q("INSERT INTO accounts (account_id, balance_micros, expires_at) \
+           VALUES ('acct-old', 0, now() + interval '30 days') ON CONFLICT (account_id) DO NOTHING")
+            .execute(&pool).await.expect("insert do nothing");
+        q("INSERT INTO accounts (account_id, balance_micros, expires_at) \
+           VALUES ('acct-old', 9, now() + interval '30 days') ON CONFLICT (account_id) DO UPDATE \
+           SET balance_micros = EXCLUDED.balance_micros, expires_at = EXCLUDED.expires_at")
+            .execute(&pool).await.expect("credit set");
+        q("INSERT INTO accounts (account_id, balance_micros, expires_at) \
+           VALUES ('acct-old', 1, now()) ON CONFLICT (account_id) DO UPDATE \
+           SET balance_micros = accounts.balance_micros + 1")
+            .execute(&pool).await.expect("credit add");
+        q("SELECT balance_micros FROM accounts WHERE account_id = 'acct-old' FOR UPDATE")
+            .execute(&pool).await.expect("lock for credit");
+        q("UPDATE accounts SET balance_micros = balance_micros - 1 \
+           WHERE account_id = 'acct-old' AND expires_at > now() AND balance_micros >= 1 RETURNING balance_micros")
+            .execute(&pool).await.expect("guarded charge");
+        q("INSERT INTO device_keys (api_key_hash, account_id, box_id) VALUES ('\\x01', 'acct-old', NULL)")
+            .execute(&pool).await.expect("register key");
+        let (id,): (String,) = sqlx::query_as(
+            "SELECT a.account_id FROM device_keys k JOIN accounts a ON a.account_id = k.account_id \
+             WHERE k.api_key_hash = '\\x01'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("resolve key through the view");
+        assert_eq!(id, "acct-old");
+
+        let wallet = get_wallet(&pool, "acct-old").await.unwrap().expect("written to wallets");
+        assert_eq!(wallet.balance_micros, 9, "set to 9, plus 1, minus 1");
+        let (created,): (Option<chrono::DateTime<Utc>>,) =
+            sqlx::query_as("SELECT created_at FROM wallets WHERE account_id = 'acct-old'")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert!(created.is_some(), "an insert through the view takes the table's defaults");
+
+        q("DELETE FROM accounts WHERE expires_at < now() - interval '7 days'")
+            .execute(&pool).await.expect("old sweep");
     }
 }
