@@ -12,7 +12,6 @@
 //! apply.
 
 use anyhow::Result;
-use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 
 use crate::entitlement::{self, CreditMode};
@@ -37,7 +36,7 @@ pub async fn seed_dev_account(pool: &PgPool) -> Result<()> {
         .filter(|k| !k.is_empty())
         .unwrap_or_else(|| DEFAULT_DEV_KEY.to_string());
 
-    let key_hash = Sha256::digest(api_key.as_bytes()).to_vec();
+    let key_hash = crate::bearer_auth::key_hash(&api_key);
 
     // Fund the account (set), then register the device key against it.
     entitlement::credit(

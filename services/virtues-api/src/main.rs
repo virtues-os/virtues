@@ -183,8 +183,18 @@ async fn main() -> Result<()> {
         // secret server-side; the box sends only per-user access_tokens.
         .merge(routes::plaid::router())
         .merge(routes::ai::router())
-        // Middleware
-        .layer(TraceLayer::new_for_http())
+        // Middleware. The span is at info so a failed request's log line
+        // names its route; production filters out debug, where the default
+        // span sits. It carries the route pattern and never the URI, whose
+        // query holds OAuth codes on `/callback`.
+        .layer(TraceLayer::new_for_http().make_span_with(|req: &axum::http::Request<_>| {
+            let route = req
+                .extensions()
+                .get::<axum::extract::MatchedPath>()
+                .map(|p| p.as_str())
+                .unwrap_or("-");
+            tracing::info_span!("request", method = %req.method(), route)
+        }))
         // Map files, merged AFTER the trace layer so it never wraps them:
         // which squares a box downloads is location data, and these routes
         // log nothing (routes/maps.rs).

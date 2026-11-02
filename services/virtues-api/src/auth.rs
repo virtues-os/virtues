@@ -83,7 +83,10 @@ impl FromRequestParts<Arc<AppState>> for AuthenticatedRequest {
             .headers
             .get(INTERNAL_SECRET_HEADER)
             .and_then(|v| v.to_str().ok())
-            .ok_or(AuthError::MissingSecret)?;
+            .ok_or_else(|| {
+                tracing::warn!("internal auth refused: missing secret");
+                AuthError::MissingSecret
+            })?;
 
         // Validate secret using constant-time comparison
         if !constant_time_eq(secret.as_bytes(), state.config.internal_secret.as_bytes()) {

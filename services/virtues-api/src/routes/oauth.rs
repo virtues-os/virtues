@@ -29,6 +29,8 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use crate::bearer_auth::key_hash;
+use crate::entitlement;
 use crate::AppState;
 
 pub fn router() -> Router<Arc<AppState>> {
@@ -704,18 +706,47 @@ async fn consume_exchange(db: &sqlx::PgPool, sig: &str) -> Result<bool, sqlx::Er
     Ok(n == 1)
 }
 
-/// The caller's box key, if it sent one. Nothing is enforced on it yet: this
-/// header ships in the next box release, and boxes update only when their
-/// owner types `virtues upgrade`, so requiring it today would break every
-/// box that has not. The log line is how we learn when the fleet has moved —
-/// flip `/refresh` to required first (worst exposure, one known caller), then
-/// the rest.
+/// The caller's box key, if it sent one. Every box release since v0.1.1 sends
+/// it on `/exchange` and `/refresh`. `/refresh` requires it
+/// ([`caller_account`]); `/exchange` does not check it yet, and the browser
+/// routes (`/start`, `/callback`) cannot carry it.
 fn caller_api_key(headers: &HeaderMap) -> Option<String> {
     headers
         .get("x-virtues-api-key")
         .and_then(|v| v.to_str().ok())
         .filter(|s| !s.is_empty())
         .map(String::from)
+}
+
+/// What the caller's box key says about who is calling. It names no account,
+/// so nothing downstream can log one.
+#[derive(Debug)]
+enum CallerKey {
+    Missing,
+    Unknown,
+    Known,
+}
+
+impl CallerKey {
+    fn label(&self) -> &'static str {
+        match self {
+            CallerKey::Missing => "missing_key",
+            CallerKey::Unknown => "unknown_key",
+            CallerKey::Known => "known_key",
+        }
+    }
+}
+
+/// Whether the caller's box key belongs to an account. A box that is not
+/// linked to an account has no key.
+async fn caller_account(db: &sqlx::PgPool, headers: &HeaderMap) -> anyhow::Result<CallerKey> {
+    let Some(key) = caller_api_key(headers) else {
+        return Ok(CallerKey::Missing);
+    };
+    Ok(match entitlement::resolve_account_by_key(db, &key_hash(&key)).await? {
+        Some(_) => CallerKey::Known,
+        None => CallerKey::Unknown,
+    })
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -1286,13 +1317,9 @@ fn plaid_session_lost_page() -> axum::response::Response {
 async fn exchange(
     State(state): State<Arc<AppState>>,
     Path((provider, token)): Path<(String, String)>,
-    headers: HeaderMap,
 ) -> axum::response::Response {
     if provider_cfg(&provider).is_none() {
         return err(StatusCode::NOT_FOUND, "unknown provider");
-    }
-    if caller_api_key(&headers).is_none() {
-        tracing::info!(provider = %provider, "oauth exchange without box key (pre-upgrade box)");
     }
     let secret = match exchange_secret() {
         Ok(s) => s,
@@ -1300,7 +1327,10 @@ async fn exchange(
     };
     let claims = match virtues_helpers::crypto::verify_exchange_token(&secret, &token, &provider) {
         Ok(c) => c,
-        Err(e) => return err(StatusCode::BAD_REQUEST, &format!("invalid exchange_token: {e}")),
+        Err(e) => {
+            tracing::warn!(provider = %provider, code = "invalid_exchange_token", "oauth exchange refused");
+            return err(StatusCode::BAD_REQUEST, &format!("invalid exchange_token: {e}"));
+        }
     };
     // Signature verified; now spend it. The HMAC alone made a token
     // *unforgeable*; this makes it *single-use* — the five-minute window was
@@ -1308,7 +1338,10 @@ async fn exchange(
     let sig = token.rsplit('.').next().unwrap_or_default();
     match consume_exchange(&state.db, sig).await {
         Ok(true) => {}
-        Ok(false) => return err(StatusCode::BAD_REQUEST, "exchange_token already used or unknown"),
+        Ok(false) => {
+            tracing::warn!(provider = %provider, code = "spent_exchange_token", "oauth exchange refused");
+            return err(StatusCode::BAD_REQUEST, "exchange_token already used or unknown");
+        }
         Err(e) => {
             tracing::error!(error = %e, "oauth exchange consume failed");
             return err(StatusCode::INTERNAL_SERVER_ERROR, "exchange bookkeeping failed");
@@ -1341,16 +1374,28 @@ async fn refresh(
     let Some(cfg) = provider_cfg(&provider) else {
         return refresh_err(StatusCode::NOT_FOUND, "unknown_provider", "unknown provider");
     };
-    // This is the door to flip to required FIRST. Unauthenticated, it performs
-    // the refresh grant with OUR client_secret for anyone holding a refresh
-    // token — the secret is exactly what is supposed to make a stolen refresh
-    // token useless to a third party. Its only legitimate caller is the box's
-    // credential-refresh cron, which sends the key from the next release on.
-    // Boxes released before the `code` field read any 4xx from this route as
-    // a refused grant and ask the owner to reconnect, so the refusal for a
-    // missing key needs its own `code` and has to wait until they upgrade.
-    if caller_api_key(&headers).is_none() {
-        tracing::info!(provider = %provider, "oauth refresh without box key (pre-upgrade box)");
+    // This route runs the refresh grant with our client_secret, and the secret
+    // is what makes a stolen refresh token useless to anyone else. So it
+    // serves only a linked box. Every box release since v0.1.1 sends its key
+    // here. A released box reads any 4xx here as a refused grant and asks its
+    // owner to reconnect, which does not help an unlinked box; a box that
+    // reads `code` sees `missing_key` or `unknown_key` and does not ask.
+    // The refusal is logged without the account: failed authentication is
+    // logged, ordinary use is not.
+    match caller_account(&state.db, &headers).await {
+        Ok(CallerKey::Known) => {}
+        Ok(refused) => {
+            tracing::warn!(provider = %provider, code = refused.label(), "oauth refresh refused");
+            return refresh_err(
+                StatusCode::UNAUTHORIZED,
+                refused.label(),
+                "a box key linked to an account is required",
+            );
+        }
+        Err(e) => {
+            tracing::error!(provider = %provider, error = %e, "oauth refresh key lookup failed");
+            return refresh_err(StatusCode::INTERNAL_SERVER_ERROR, "internal", "key lookup failed");
+        }
     }
     let Some(refresh_token) = body.refresh_token.filter(|s| !s.is_empty()) else {
         return refresh_err(StatusCode::BAD_REQUEST, "missing_refresh_token", "missing refresh_token");
@@ -1829,6 +1874,31 @@ mod tests {
         assert_eq!(status, StatusCode::BAD_GATEWAY);
         assert_eq!(body["code"], json!("upstream_error"));
         assert_eq!(body["upstream_status"], Value::Null);
+    }
+
+    /// `caller_account` tells a missing key, an unknown key and a linked box
+    /// apart, and `/refresh` sends the first two back as the 401's `code`.
+    #[sqlx::test]
+    async fn caller_account_tells_missing_unknown_and_known_apart(pool: sqlx::PgPool) {
+        entitlement::credit(&pool, "acct-refresh-1", 1_000_000, entitlement::CreditMode::Set, None)
+            .await
+            .expect("fund the account");
+        entitlement::register_device(&pool, &key_hash("box-key-1"), "acct-refresh-1", None)
+            .await
+            .expect("register the box key");
+
+        let none = caller_account(&pool, &HeaderMap::new()).await.expect("lookup runs");
+        assert!(matches!(none, CallerKey::Missing), "{none:?}");
+
+        let mut unknown = HeaderMap::new();
+        unknown.insert("x-virtues-api-key", "box-key-2".parse().unwrap());
+        let unknown = caller_account(&pool, &unknown).await.expect("lookup runs");
+        assert!(matches!(unknown, CallerKey::Unknown), "{unknown:?}");
+
+        let mut known = HeaderMap::new();
+        known.insert("x-virtues-api-key", "box-key-1".parse().unwrap());
+        let known = caller_account(&pool, &known).await.expect("lookup runs");
+        assert!(matches!(known, CallerKey::Known), "{known:?}");
     }
 
     /// A Plaid exchange_token is spendable exactly once — the property the

@@ -70,55 +70,69 @@ impl FromRequestParts<Arc<AppState>> for BearerAuth {
         parts: &mut Parts,
         state: &Arc<AppState>,
     ) -> Result<Self, Self::Rejection> {
-        let raw = parts
-            .headers
-            .get(header::AUTHORIZATION)
-            .ok_or(BearerError::MissingHeader)?;
-        let header_str = raw.to_str().map_err(|_| BearerError::MalformedHeader)?;
-        let api_key = header_str
-            .strip_prefix("Bearer ")
-            .ok_or(BearerError::MalformedHeader)?
-            .trim();
-        if api_key.is_empty() {
-            return Err(BearerError::MalformedHeader);
+        // Failed authentication is logged, with the reason and nothing that
+        // names the key or its account. Ordinary use is not logged.
+        let result = authenticate(parts, state).await;
+        match &result {
+            Err(BearerError::Internal(e)) => tracing::error!(error = %e, "bearer auth lookup failed"),
+            Err(e) => {
+                use virtues_helpers::error::StructuredError;
+                tracing::warn!(code = e.code(), "bearer auth refused");
+            }
+            Ok(_) => {}
         }
-
-        let hash = sha256(api_key.as_bytes());
-
-        let pool = &state.db;
-
-        let acct = entitlement::resolve_account_by_key(pool, &hash)
-            .await
-            .map_err(|e| BearerError::Internal(e.to_string()))?
-            .ok_or(BearerError::NotFound)?;
-
-        if acct.expires_at < chrono::Utc::now() {
-            return Err(BearerError::Expired);
-        }
-
-        // Behavioral blocklist (in-memory hot path). Already-blocked bearers
-        // are rejected immediately. Otherwise record the request against the
-        // per-bearer rate window; exceeding the ceiling is always flagged +
-        // logged, but only *blocks* when enforcement is explicitly enabled
-        // (BLOCKLIST_RATE_AUTOBLOCK). Default is observe-only.
-        if state.blocklist.is_blocked(&hash) {
-            return Err(BearerError::Blocked);
-        }
-        if state.blocklist.note_request(&hash) && state.blocklist.autoblock_enabled() {
-            state
-                .blocklist
-                .block(pool, &hash, crate::blocklist::REASON_RATE_ABUSE, None)
-                .await;
-            tracing::warn!("bearer auto-blocked for request-rate abuse");
-            return Err(BearerError::Blocked);
-        }
-
-        Ok(BearerAuth(acct))
+        result
     }
 }
 
-fn sha256(data: &[u8]) -> Vec<u8> {
-    let mut h = Sha256::new();
-    h.update(data);
-    h.finalize().to_vec()
+async fn authenticate(parts: &Parts, state: &Arc<AppState>) -> Result<BearerAuth, BearerError> {
+    let raw = parts
+        .headers
+        .get(header::AUTHORIZATION)
+        .ok_or(BearerError::MissingHeader)?;
+    let header_str = raw.to_str().map_err(|_| BearerError::MalformedHeader)?;
+    let api_key = header_str
+        .strip_prefix("Bearer ")
+        .ok_or(BearerError::MalformedHeader)?
+        .trim();
+    if api_key.is_empty() {
+        return Err(BearerError::MalformedHeader);
+    }
+
+    let hash = key_hash(api_key);
+
+    let pool = &state.db;
+
+    let acct = entitlement::resolve_account_by_key(pool, &hash)
+        .await
+        .map_err(|e| BearerError::Internal(e.to_string()))?
+        .ok_or(BearerError::NotFound)?;
+
+    if acct.expires_at < chrono::Utc::now() {
+        return Err(BearerError::Expired);
+    }
+
+    // Behavioral blocklist (in-memory hot path). Already-blocked bearers
+    // are rejected immediately. Otherwise record the request against the
+    // per-bearer rate window; exceeding the ceiling is always flagged +
+    // logged, but only *blocks* when enforcement is explicitly enabled
+    // (BLOCKLIST_RATE_AUTOBLOCK). Default is observe-only.
+    if state.blocklist.is_blocked(&hash) {
+        return Err(BearerError::Blocked);
+    }
+    if state.blocklist.note_request(&hash) && state.blocklist.autoblock_enabled() {
+        state
+            .blocklist
+            .block(pool, &hash, crate::blocklist::REASON_RATE_ABUSE, None)
+            .await;
+        tracing::warn!("bearer auto-blocked for request-rate abuse");
+        return Err(BearerError::Blocked);
+    }
+
+    Ok(BearerAuth(acct))
+}
+
+/// The form a device key is stored and looked up in (`device_keys.api_key_hash`).
+pub fn key_hash(api_key: &str) -> Vec<u8> {
+    Sha256::digest(api_key.as_bytes()).to_vec()
 }

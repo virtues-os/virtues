@@ -180,9 +180,9 @@ async fn refresh_locked(db: &PgPool, credential_id: &str) -> Result<RefreshOutco
         Err(_) => return Ok(RefreshOutcome::NoRefreshable),
     };
 
-    // Identify this box to the proxy (see proxy_refresh). Unlinked is fine;
-    // an unreadable vault is not, and is logged rather than passed off as
-    // "no key".
+    // Identify this box to the proxy (see proxy_refresh). An unlinked box has
+    // no key and the proxy refuses its refresh. An unreadable vault is logged
+    // rather than passed off as "no key".
     let api_key = match super::vault::read_box_api_key(db).await {
         Ok(k) => k,
         Err(e) => {

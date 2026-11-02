@@ -113,10 +113,11 @@ pub async fn proxy_exchange(
 /// `ensure_fresh`, which the action runner and the `credential_refresh`
 /// applet both go through. [`is_refused_grant`] reads its errors.
 ///
-/// `api_key`: as for [`proxy_exchange`]. This is the call the proxy will
-/// require it on first — unauthenticated, `/refresh` performs the refresh
-/// grant with the proxy's own client secret for anyone holding a refresh
-/// token.
+/// `api_key`: as for [`proxy_exchange`], but required. `/refresh` performs
+/// the refresh grant with the proxy's own client secret, so the proxy answers
+/// a missing or unrecognized key with a 401 whose `code` is `missing_key` or
+/// `unknown_key`. [`is_refused_grant`] does not count those as a refused
+/// grant, since reconnecting the source would not fix them.
 pub async fn proxy_refresh(
     source_id: &str,
     refresh_token: &str,
