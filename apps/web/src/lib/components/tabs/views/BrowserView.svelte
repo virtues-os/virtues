@@ -168,7 +168,11 @@
 		cancelAnimationFrame(raf);
 		raf = requestAnimationFrame(() => {
 			if (!available) return;
-			const shown = active && !mobileLayout.isMobile && !modalOpen && slot && slot.offsetParent;
+			// The Mac has one native page for every Browser tab, and it keeps the
+			// last page loaded. A tab with no address keeps it hidden, so a new
+			// tab shows its empty state instead of an earlier tab's page.
+			const shown =
+				active && !!pageUrl && !mobileLayout.isMobile && !modalOpen && slot && slot.offsetParent;
 			const r = shown ? slot!.getBoundingClientRect() : null;
 			void browserPaneBounds(
 				r && r.width > 0 && r.height > 0
@@ -191,6 +195,7 @@
 	$effect(() => {
 		// Re-report whenever visibility inputs change.
 		void active;
+		void pageUrl;
 		void modalOpen;
 		void mobileLayout.isMobile;
 		void available;
