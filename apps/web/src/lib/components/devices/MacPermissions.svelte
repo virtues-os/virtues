@@ -74,10 +74,15 @@
 		}
 	}
 
-	/** The shell shows the drag tile when a pane opens. */
+	/** The shell is new enough to show the drag tile when a pane opens. */
 	let hasTile = $state(false);
-	/** The permission whose tile is up, while the panel watches for its grant. */
+	/** The last "Open …" opened only the pane, so the drag copy would be wrong. */
+	let noTileShown = $state(false);
+	/** A tile this panel opened may still be on System Settings. */
+	let tileOpen = false;
+	/** The permission whose grant the panel is watching for while its tile is up. */
 	let watching = $state<MacPermission["key"] | null>(null);
+	// MAX_LIFE in permission_tile.rs is a little longer than this.
 	const WATCH_EVERY_MS = 4_000;
 	const WATCH_FOR_MS = 3 * 60_000;
 	let watchTimer: ReturnType<typeof setInterval> | undefined;
@@ -88,22 +93,27 @@
 		watching = null;
 	}
 
+	function closeTile(returnToApp: boolean) {
+		stopWatching();
+		if (!tileOpen) return;
+		tileOpen = false;
+		void closePermissionTile(returnToApp);
+	}
+
 	function watch(key: MacPermission["key"]) {
 		stopWatching();
+		tileOpen = true;
 		watching = key;
 		const started = Date.now();
 		watchTimer = setInterval(() => {
-			if (Date.now() - started > WATCH_FOR_MS) return stopWatching();
+			if (Date.now() - started > WATCH_FOR_MS) return closeTile(false);
 			void recheck();
 		}, WATCH_EVERY_MS);
 	}
 
 	$effect(() => {
 		if (!watching) return;
-		if (all.find((p) => p.key === watching)?.granted === true) {
-			stopWatching();
-			void closePermissionTile(true);
-		}
+		if (all.find((p) => p.key === watching)?.granted === true) closeTile(true);
 	});
 
 	onMount(() => {
@@ -111,24 +121,22 @@
 		void shellSupports(PERMISSION_TILE_SURFACE).then((yes) => (hasTile = yes));
 		const onFocus = () => {
 			// Back in Virtues: the tile has done its job or been left behind.
-			if (watching) {
-				stopWatching();
-				void closePermissionTile(false);
-			}
+			closeTile(false);
 			if (missing) void recheck();
 		};
 		window.addEventListener("focus", onFocus);
 		return () => {
 			window.removeEventListener("focus", onFocus);
-			stopWatching();
+			closeTile(false);
 		};
 	});
 
-	function open(e: MouseEvent, perm: MacPermission) {
+	async function open(e: MouseEvent, perm: MacPermission) {
 		// Rows can sit inside a clickable list row; this must not also open it.
 		e.stopPropagation();
-		void perm.open?.();
-		if (hasTile && onRecheck && perm.dragFix) watch(perm.key);
+		const opened = await perm.open?.();
+		noTileShown = opened === "pane";
+		if (opened === "tile" && onRecheck) watch(perm.key);
 	}
 
 	function icon(p: MacPermission) {
@@ -169,7 +177,7 @@
 						<div class="text-xs text-foreground-muted mt-0.5">Off, so {perm.costs}.</div>
 						{#if openable && perm.open}
 							<div class="text-xs text-foreground-muted mt-1">
-								{hasTile && perm.dragFix ? perm.dragFix : perm.fix}
+								{hasTile && !noTileShown && perm.dragFix ? perm.dragFix : perm.fix}
 							</div>
 							<div class="mt-2">
 								<Button variant="secondary" size="sm" onclick={(e) => open(e, perm)}>

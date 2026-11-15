@@ -813,35 +813,32 @@ export async function resumeCollector(): Promise<boolean> {
 // ============================================================================
 
 /**
- * Open System Preferences to Full Disk Access pane
+ * What opening a privacy pane did: `tile` when the shell also put the drag
+ * tile on System Settings, `pane` when it only opened the pane (an older
+ * shell, a dev profile, or no collector installed yet), `null` on failure.
  */
-export async function openFullDiskAccess(): Promise<boolean> {
-	const invoke = await getInvoke();
-	if (!invoke) return false;
+export type PaneOpened = 'tile' | 'pane' | null;
 
+async function openPrivacyPane(command: string): Promise<PaneOpened> {
+	const invoke = await getInvoke();
+	if (!invoke) return null;
 	try {
-		await invoke('open_full_disk_access');
-		return true;
+		// Shells below PERMISSION_TILE_SURFACE return nothing here.
+		return (await invoke<boolean | null>(command)) === true ? 'tile' : 'pane';
 	} catch (e) {
-		console.error('[Tauri] Failed to open Full Disk Access settings:', e);
-		return false;
+		console.error(`[Tauri] ${command} failed:`, e);
+		return null;
 	}
 }
 
-/**
- * Open System Preferences to Accessibility pane
- */
-export async function openAccessibilitySettings(): Promise<boolean> {
-	const invoke = await getInvoke();
-	if (!invoke) return false;
+/** Open System Settings on Full Disk Access. */
+export function openFullDiskAccess(): Promise<PaneOpened> {
+	return openPrivacyPane('open_full_disk_access');
+}
 
-	try {
-		await invoke('open_accessibility_settings');
-		return true;
-	} catch (e) {
-		console.error('[Tauri] Failed to open Accessibility settings:', e);
-		return false;
-	}
+/** Open System Settings on Accessibility. */
+export function openAccessibilitySettings(): Promise<PaneOpened> {
+	return openPrivacyPane('open_accessibility_settings');
 }
 
 /**

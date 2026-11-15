@@ -12,8 +12,9 @@
 //! - Every drop asks for Touch ID or a password, and a drop made while that
 //!   prompt is up is refused. The tile hides while the prompt is up.
 //! - Placed under the window, the tile went off the bottom of the screen.
-//!   It sits under the window when there is room, inside the window's bottom
-//!   edge when there is not, and always on the visible screen.
+//!   It sits under the window when there is room, beside it when there is
+//!   not, inside its bottom edge as a last resort, and always on the visible
+//!   screen.
 //! - Reading window bounds from CGWindowList needs no permission.
 //!
 //! The tile follows System Settings with a 200 ms poll. It closes when System
@@ -34,7 +35,7 @@ use objc2_app_kit::{
     NSDraggingContext, NSDraggingItem, NSDraggingSession, NSDraggingSource, NSEvent, NSFont,
     NSImage, NSImageView, NSPanel, NSRunningApplication, NSScreen, NSTextField, NSView,
     NSVisualEffectBlendingMode, NSVisualEffectMaterial, NSVisualEffectState, NSVisualEffectView,
-    NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
+    NSWindowAnimationBehavior, NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
 };
 use objc2_foundation::{
     NSArray, NSDictionary, NSNumber, NSObjectProtocol, NSPoint, NSRect, NSSize, NSString, NSURL,
@@ -47,6 +48,8 @@ const TILE_W_MIN: f64 = 340.0;
 const TILE_H: f64 = 112.0;
 const INSET: f64 = 16.0;
 const GAP: f64 = 8.0;
+/// The tile's minimum distance from the edges of the visible screen.
+const MARGIN: f64 = 8.0;
 /// Narrower than any System Settings main window. A System Settings window
 /// this small in front of the main one is the Touch ID or password prompt.
 const PROMPT_MAX_W: f64 = 420.0;
@@ -54,8 +57,10 @@ const PROMPT_MAX_W: f64 = 420.0;
 const LAUNCH_WAIT: Duration = Duration::from_secs(10);
 /// How long System Settings may sit with no window before the tile closes.
 const GONE_WAIT: Duration = Duration::from_secs(3);
-/// The tile never outlives this, whatever happens.
-const MAX_LIFE: Duration = Duration::from_secs(15 * 60);
+/// The tile never outlives this, whatever happens. A little longer than the
+/// page watches for the grant (`WATCH_FOR_MS` in MacPermissions.svelte), which
+/// closes it sooner.
+const MAX_LIFE: Duration = Duration::from_secs(4 * 60);
 
 /// Bumped by every show and close. The poll thread stops when it changes.
 static GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -74,6 +79,11 @@ struct Tile {
 thread_local! {
     // Main thread only: AppKit objects.
     static TILE: RefCell<Option<Tile>> = const { RefCell::new(None) };
+    // The last closed tile, freed at the next show or close. The back button
+    // closes the tile from inside the chip's own action method, so releasing
+    // the chip and panel there would free them while AppKit is still using
+    // them.
+    static RETIRED: RefCell<Option<Tile>> = const { RefCell::new(None) };
 }
 
 pub struct ChipIvars {
@@ -177,7 +187,12 @@ pub fn show(app: &AppHandle, collector: &Path) {
     let path = collector.to_string_lossy().into_owned();
     let _ = app.run_on_main_thread(move || {
         let Some(mtm) = MainThreadMarker::new() else { return };
-        close_panel();
+        // A later show or close has already taken over.
+        if GENERATION.load(Ordering::SeqCst) != generation {
+            return;
+        }
+        retire_panel();
+        DRAGGING.store(false, Ordering::SeqCst);
         let tile = build(mtm, &path);
         TILE.with(|t| *t.borrow_mut() = Some(tile));
     });
@@ -190,7 +205,7 @@ pub fn show(app: &AppHandle, collector: &Path) {
         }
         let _ = app.run_on_main_thread(move || {
             if GENERATION.load(Ordering::SeqCst) == generation {
-                tick();
+                tick(generation);
             }
         });
     });
@@ -204,7 +219,7 @@ pub fn close(app: &AppHandle, return_to_app: bool) {
 
 fn close_now(return_to_app: bool) {
     GENERATION.fetch_add(1, Ordering::SeqCst);
-    let was_open = close_panel();
+    let was_open = retire_panel();
     if return_to_app && was_open {
         if let Some(mtm) = MainThreadMarker::new() {
             NSApplication::sharedApplication(mtm).activate();
@@ -212,14 +227,13 @@ fn close_now(return_to_app: bool) {
     }
 }
 
-fn close_panel() -> bool {
-    TILE.with(|t| match t.borrow_mut().take() {
-        Some(tile) => {
-            tile.panel.orderOut(None);
-            true
-        }
-        None => false,
-    })
+/// Order the tile out and move it to RETIRED, freeing the one retired before.
+fn retire_panel() -> bool {
+    let Some(tile) = TILE.with(|t| t.borrow_mut().take()) else { return false };
+    tile.panel.orderOut(None);
+    let previous = RETIRED.with(|r| r.borrow_mut().replace(tile));
+    drop(previous);
+    true
 }
 
 fn label(mtm: MainThreadMarker, text: &str, frame: NSRect, size: f64, secondary: bool) -> Retained<NSTextField> {
@@ -250,6 +264,9 @@ fn build(mtm: MainThreadMarker, path: &str) -> Tile {
     );
     // SAFETY: the panel is kept in TILE and only ever ordered out, never closed.
     unsafe { panel.setReleasedWhenClosed(false) };
+    // No show or hide animation: an animation still running when the panel is
+    // released crashes AppKit.
+    panel.setAnimationBehavior(NSWindowAnimationBehavior::None);
     panel.setFloatingPanel(true);
     // Virtues is not the active app while the tile is up, and panels hide on
     // deactivate by default.
@@ -302,9 +319,9 @@ fn build(mtm: MainThreadMarker, path: &str) -> Tile {
         true,
     ));
 
-    let icon = NSApplication::sharedApplication(mtm)
-        .applicationIconImage()
-        .unwrap_or_else(|| NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(path)));
+    // The file's own icon, which is the icon its row in the list gets. The
+    // Virtues app icon would point at the Virtues row, the wrong one.
+    let icon = NSWorkspace::sharedWorkspace().iconForFile(&NSString::from_str(path));
     let chip_frame = NSRect::new(NSPoint::new(52.0, 12.0), NSSize::new(w - 64.0, 44.0));
     let url = NSURL::fileURLWithPath(&NSString::from_str(path));
     let chip = DragChip::new(mtm, chip_frame, url, icon.clone());
@@ -401,18 +418,18 @@ fn frontmost_pid() -> Option<i32> {
     Some(unsafe { msg_send![&*app, processIdentifier] })
 }
 
-fn tick() {
+fn tick(generation: u64) {
     let Some(mtm) = MainThreadMarker::new() else { return };
     let mut close = false;
     TILE.with(|t| {
         let mut slot = t.borrow_mut();
         let Some(tile) = slot.as_mut() else { return };
-        if DRAGGING.load(Ordering::SeqCst) {
-            return;
-        }
         let now = Instant::now();
         if now.duration_since(tile.opened) > MAX_LIFE {
             close = true;
+            return;
+        }
+        if DRAGGING.load(Ordering::SeqCst) {
             return;
         }
 
@@ -439,8 +456,14 @@ fn tick() {
         place(mtm, &tile.panel, main.rect);
         tile.panel.orderFrontRegardless();
     });
-    if close {
-        close_now(false);
+    // Close only if no show or close has run since this tick was queued;
+    // otherwise this would close the newer tile.
+    if close
+        && GENERATION
+            .compare_exchange(generation, generation + 1, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+    {
+        retire_panel();
     }
 }
 
@@ -448,8 +471,9 @@ fn area(r: NSRect) -> f64 {
     r.size.width * r.size.height
 }
 
-/// Put the tile under System Settings' window, or inside its bottom edge when
-/// there is no room below, kept within the visible part of that screen.
+/// Put the tile under System Settings' window. With no room below, beside it;
+/// with no room beside it either, inside its bottom edge. Always within the
+/// visible part of the screen the window is mostly on.
 fn place(mtm: MainThreadMarker, panel: &NSPanel, cg: NSRect) {
     let screens = NSScreen::screens(mtm);
     let Some(primary) = screens.firstObject() else { return };
@@ -459,30 +483,39 @@ fn place(mtm: MainThreadMarker, panel: &NSPanel, cg: NSRect) {
         NSPoint::new(cg.origin.x, primary_h - cg.origin.y - cg.size.height),
         cg.size,
     );
-    let centre = NSPoint::new(win.origin.x + win.size.width / 2.0, win.origin.y + win.size.height / 2.0);
     let screen = screens
         .iter()
-        .find(|s| {
-            let f = s.frame();
-            centre.x >= f.origin.x
-                && centre.x < f.origin.x + f.size.width
-                && centre.y >= f.origin.y
-                && centre.y < f.origin.y + f.size.height
-        })
+        .max_by(|a, b| overlap(a.frame(), win).total_cmp(&overlap(b.frame(), win)))
         .unwrap_or(primary);
-    let visible = screen.visibleFrame();
+    let vis = screen.visibleFrame();
+    let (left, right) = (vis.origin.x + MARGIN, vis.origin.x + vis.size.width - MARGIN);
+    let (bottom, top) = (vis.origin.y + MARGIN, vis.origin.y + vis.size.height - MARGIN);
 
     let w = (win.size.width - 2.0 * INSET).clamp(TILE_W_MIN, TILE_W_MAX);
-    let mut x = win.origin.x + (win.size.width - w) / 2.0;
-    // Just below the window when it fits, so the tile covers none of the list.
-    // Otherwise inside the window's bottom edge.
-    let below = win.origin.y - GAP - TILE_H;
-    let mut y = if below >= visible.origin.y + 8.0 { below } else { win.origin.y + INSET };
-    x = x.clamp(visible.origin.x + 8.0, visible.origin.x + visible.size.width - w - 8.0);
-    y = y.clamp(visible.origin.y + 8.0, visible.origin.y + visible.size.height - TILE_H - 8.0);
+    let win_right = win.origin.x + win.size.width;
+    let (x, y) = if win.origin.y - GAP - TILE_H >= bottom {
+        (win.origin.x + (win.size.width - w) / 2.0, win.origin.y - GAP - TILE_H)
+    } else if win_right + GAP + w <= right {
+        (win_right + GAP, win.origin.y + INSET)
+    } else if win.origin.x - GAP - w >= left {
+        (win.origin.x - GAP - w, win.origin.y + INSET)
+    } else {
+        (win.origin.x + (win.size.width - w) / 2.0, win.origin.y + INSET)
+    };
+    // Written out instead of f64::clamp, which panics when a tiny screen makes
+    // the lower bound larger than the upper one.
+    let x = x.min(right - w).max(left);
+    let y = y.min(top - TILE_H).max(bottom);
 
     let frame = NSRect::new(NSPoint::new(x, y), NSSize::new(w, TILE_H));
     if panel.frame() != frame {
         panel.setFrame_display(frame, true);
     }
+}
+
+/// The area two rectangles share.
+fn overlap(a: NSRect, b: NSRect) -> f64 {
+    let w = (a.origin.x + a.size.width).min(b.origin.x + b.size.width) - a.origin.x.max(b.origin.x);
+    let h = (a.origin.y + a.size.height).min(b.origin.y + b.size.height) - a.origin.y.max(b.origin.y);
+    w.max(0.0) * h.max(0.0)
 }

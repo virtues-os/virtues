@@ -18,6 +18,7 @@
  * naming the wrong remedy is worse than naming none.
  */
 import { PERMISSION_COPY } from '$lib/devices/shared';
+import type { PaneOpened } from '$lib/tauri/bridge';
 
 export interface RunErrorExplanation {
 	/** Capability name as the collector reports it, e.g. `full_disk_access`. */
@@ -31,7 +32,7 @@ export interface RunErrorExplanation {
 	/** True when the collector's current health report confirms the denial. */
 	confirmed: boolean;
 	/** Deep link to the settings pane, meaningful only on the machine itself. */
-	open?: () => Promise<boolean>;
+	open?: () => Promise<PaneOpened>;
 }
 
 /** The OS refusing access, in the shapes our Rust and sqlite errors take. */

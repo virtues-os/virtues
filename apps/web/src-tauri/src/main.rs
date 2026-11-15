@@ -492,16 +492,23 @@ fn restart_app(app: AppHandle) {
     app.restart();
 }
 
+/// Where `install_collector` puts the collector binary, and where its
+/// LaunchAgent runs it from. macOS keys the collector's privacy grants to this
+/// path.
+fn collector_path() -> std::path::PathBuf {
+    dirs::home_dir()
+        .unwrap_or_default()
+        .join(".virtues")
+        .join("bin")
+        .join("virtues-collector")
+}
+
 /// Get collector daemon status by invoking CLI
 #[tauri::command]
 async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String> {
     let shell = app.shell();
 
-    let installed_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".virtues")
-        .join("bin")
-        .join("virtues-collector");
+    let installed_path = collector_path();
 
     let output = if installed_path.exists() {
         shell
@@ -697,11 +704,7 @@ async fn install_collector(app: AppHandle, token: String) -> Result<(), String> 
 #[tauri::command]
 async fn uninstall_collector(app: AppHandle) -> Result<(), String> {
     deny_collector_in_profile()?;
-    let installed_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".virtues")
-        .join("bin")
-        .join("virtues-collector");
+    let installed_path = collector_path();
 
     if !installed_path.exists() {
         return Ok(());
@@ -726,11 +729,7 @@ async fn uninstall_collector(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn pause_collector(app: AppHandle) -> Result<(), String> {
     deny_collector_in_profile()?;
-    let installed_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".virtues")
-        .join("bin")
-        .join("virtues-collector");
+    let installed_path = collector_path();
 
     if !installed_path.exists() {
         return Err("Collector not installed".to_string());
@@ -755,11 +754,7 @@ async fn pause_collector(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn resume_collector(app: AppHandle) -> Result<(), String> {
     deny_collector_in_profile()?;
-    let installed_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".virtues")
-        .join("bin")
-        .join("virtues-collector");
+    let installed_path = collector_path();
 
     if !installed_path.exists() {
         return Err("Collector not installed".to_string());
@@ -784,11 +779,7 @@ async fn resume_collector(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 async fn stop_collector(app: AppHandle) -> Result<(), String> {
     deny_collector_in_profile()?;
-    let installed_path = dirs::home_dir()
-        .unwrap_or_default()
-        .join(".virtues")
-        .join("bin")
-        .join("virtues-collector");
+    let installed_path = collector_path();
 
     if !installed_path.exists() {
         return Err("Collector not installed".to_string());
@@ -810,39 +801,36 @@ async fn stop_collector(app: AppHandle) -> Result<(), String> {
 }
 
 /// Open System Settings on Full Disk Access, with the drag tile for the
-/// collector on top of it (permission_tile.rs).
+/// collector on top of it (permission_tile.rs). Returns whether the tile was
+/// shown, so the page knows which instructions to give.
 #[tauri::command]
-async fn open_full_disk_access(app: AppHandle) -> Result<(), String> {
+async fn open_full_disk_access(app: AppHandle) -> Result<bool, String> {
     open_privacy_pane(&app, "Privacy_AllFiles")
 }
 
 /// Open System Settings on Accessibility, with the drag tile for the
-/// collector on top of it (permission_tile.rs).
+/// collector on top of it (permission_tile.rs). Returns whether the tile was
+/// shown.
 #[tauri::command]
-async fn open_accessibility_settings(app: AppHandle) -> Result<(), String> {
+async fn open_accessibility_settings(app: AppHandle) -> Result<bool, String> {
     open_privacy_pane(&app, "Privacy_Accessibility")
 }
 
-fn open_privacy_pane(app: &AppHandle, anchor: &str) -> Result<(), String> {
+fn open_privacy_pane(app: &AppHandle, anchor: &str) -> Result<bool, String> {
     app.shell()
         .command("open")
         .args([format!("x-apple.systempreferences:com.apple.preference.security?{anchor}")])
         .spawn()
         .map_err(|e| e.to_string())?;
-    #[cfg(target_os = "macos")]
-    {
-        // A dev profile never touches the machine's real collector, so it
-        // offers nothing to drag. Neither does a Mac with no collector yet.
-        let collector = dirs::home_dir()
-            .unwrap_or_default()
-            .join(".virtues")
-            .join("bin")
-            .join("virtues-collector");
-        if deny_collector_in_profile().is_ok() && collector.exists() {
-            permission_tile::show(app, &collector);
-        }
+    // A dev profile never touches the machine's real collector, so it offers
+    // nothing to drag. Neither does a Mac with no collector yet.
+    let collector = collector_path();
+    if cfg!(target_os = "macos") && deny_collector_in_profile().is_ok() && collector.exists() {
+        #[cfg(target_os = "macos")]
+        permission_tile::show(app, &collector);
+        return Ok(true);
     }
-    Ok(())
+    Ok(false)
 }
 
 /// Close the drag tile on System Settings, if one is up. The page calls this
@@ -1307,9 +1295,7 @@ fn check_app_update_cmd(app: AppHandle) {
 /// (all-false) struct both when stopped AND when never installed, so the tray
 /// needs this to tell "off because not set up" from "installed but paused".
 fn collector_installed() -> bool {
-    dirs::home_dir()
-        .map(|h| h.join(".virtues").join("bin").join("virtues-collector").exists())
-        .unwrap_or(false)
+    collector_path().exists()
 }
 
 /// Status-dot color, drawn as a colored `IconMenuItem` icon (not a template, so

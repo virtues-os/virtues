@@ -7,7 +7,8 @@
 import {
 	openFullDiskAccess,
 	openAccessibilitySettings,
-	type CollectorStatus
+	type CollectorStatus,
+	type PaneOpened
 } from '$lib/tauri/bridge';
 import { confirmAction } from '$lib/stores/dialog.svelte';
 import { isTauri } from '$lib/utils/platform';
@@ -126,7 +127,7 @@ export type PermissionCopy = {
 	dragFix?: string;
 	/** Which pane `open` goes to, for its button: "Open Full Disk Access". */
 	pane?: string;
-	open?: () => Promise<boolean>;
+	open?: () => Promise<PaneOpened>;
 };
 
 /**
