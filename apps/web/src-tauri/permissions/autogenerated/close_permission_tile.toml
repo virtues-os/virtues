@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-close-permission-tile"
+description = "Enables the close_permission_tile command without any pre-configured scope."
+commands.allow = ["close_permission_tile"]
+
+[[permission]]
+identifier = "deny-close-permission-tile"
+description = "Denies the close_permission_tile command without any pre-configured scope."
+commands.deny = ["close_permission_tile"]

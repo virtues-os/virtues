@@ -844,6 +844,26 @@ export async function openAccessibilitySettings(): Promise<boolean> {
 	}
 }
 
+/**
+ * The surface where opening Full Disk Access or Accessibility also shows a
+ * tile on System Settings with the collector ready to drag into the list.
+ */
+export const PERMISSION_TILE_SURFACE = 16;
+
+/**
+ * Close that tile. Call it once the collector reports the grant, with
+ * `returnToApp` so Virtues comes back to the front. Silent on older shells.
+ */
+export async function closePermissionTile(returnToApp: boolean): Promise<void> {
+	const invoke = await getInvoke();
+	if (!invoke || !(await shellSupports(PERMISSION_TILE_SURFACE))) return;
+	try {
+		await invoke('close_permission_tile', { returnToApp });
+	} catch (e) {
+		console.error('[Tauri] Failed to close the permission tile:', e);
+	}
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Dictation
 // ─────────────────────────────────────────────────────────────────────────────

@@ -15,13 +15,24 @@
   again when the window comes back into focus, which is the moment someone
   returns from System Settings, and offers "Check again" by hand.
 
+  On a shell with the drag tile (PERMISSION_TILE_SURFACE), "Open …" also puts
+  a tile on System Settings holding the collector to drag into the list. The
+  person stays in System Settings, so the panel asks every few seconds while
+  the tile is up, and closes it once the grant lands, which brings Virtues
+  back to the front.
+
   The wording lives in `$lib/devices/shared.ts` (PERMISSION_COPY).
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
 	import { Button, TextAction } from "$lib";
 	import { onMount } from "svelte";
-	import type { CollectorStatus } from "$lib/tauri/bridge";
+	import {
+		closePermissionTile,
+		shellSupports,
+		PERMISSION_TILE_SURFACE,
+		type CollectorStatus,
+	} from "$lib/tauri/bridge";
 	import {
 		macPermissionsFromDevice,
 		macPermissionsFromStatus,
@@ -63,19 +74,61 @@
 		}
 	}
 
+	/** The shell shows the drag tile when a pane opens. */
+	let hasTile = $state(false);
+	/** The permission whose tile is up, while the panel watches for its grant. */
+	let watching = $state<MacPermission["key"] | null>(null);
+	const WATCH_EVERY_MS = 4_000;
+	const WATCH_FOR_MS = 3 * 60_000;
+	let watchTimer: ReturnType<typeof setInterval> | undefined;
+
+	function stopWatching() {
+		clearInterval(watchTimer);
+		watchTimer = undefined;
+		watching = null;
+	}
+
+	function watch(key: MacPermission["key"]) {
+		stopWatching();
+		watching = key;
+		const started = Date.now();
+		watchTimer = setInterval(() => {
+			if (Date.now() - started > WATCH_FOR_MS) return stopWatching();
+			void recheck();
+		}, WATCH_EVERY_MS);
+	}
+
+	$effect(() => {
+		if (!watching) return;
+		if (all.find((p) => p.key === watching)?.granted === true) {
+			stopWatching();
+			void closePermissionTile(true);
+		}
+	});
+
 	onMount(() => {
 		if (!local || !onRecheck) return;
+		void shellSupports(PERMISSION_TILE_SURFACE).then((yes) => (hasTile = yes));
 		const onFocus = () => {
+			// Back in Virtues: the tile has done its job or been left behind.
+			if (watching) {
+				stopWatching();
+				void closePermissionTile(false);
+			}
 			if (missing) void recheck();
 		};
 		window.addEventListener("focus", onFocus);
-		return () => window.removeEventListener("focus", onFocus);
+		return () => {
+			window.removeEventListener("focus", onFocus);
+			stopWatching();
+		};
 	});
 
 	function open(e: MouseEvent, perm: MacPermission) {
 		// Rows can sit inside a clickable list row; this must not also open it.
 		e.stopPropagation();
 		void perm.open?.();
+		if (hasTile && onRecheck && perm.dragFix) watch(perm.key);
 	}
 
 	function icon(p: MacPermission) {
@@ -115,7 +168,9 @@
 					{#if perm.granted === false}
 						<div class="text-xs text-foreground-muted mt-0.5">Off, so {perm.costs}.</div>
 						{#if openable && perm.open}
-							<div class="text-xs text-foreground-muted mt-1">{perm.fix}</div>
+							<div class="text-xs text-foreground-muted mt-1">
+								{hasTile && perm.dragFix ? perm.dragFix : perm.fix}
+							</div>
 							<div class="mt-2">
 								<Button variant="secondary" size="sm" onclick={(e) => open(e, perm)}>
 									Open {perm.pane}{local ? "" : " on this Mac"}

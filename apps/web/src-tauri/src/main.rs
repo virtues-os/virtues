@@ -13,6 +13,8 @@ mod browser_host;
 #[cfg(target_os = "macos")]
 mod messages_send;
 #[cfg(target_os = "macos")]
+mod permission_tile;
+#[cfg(target_os = "macos")]
 mod traffic_lights;
 use browser::{browser_login, browser_pane_agent, browser_pane_bounds, browser_pane_go, browser_pane_open};
 
@@ -807,26 +809,51 @@ async fn stop_collector(app: AppHandle) -> Result<(), String> {
     }
 }
 
-/// Open System Preferences to Full Disk Access pane
+/// Open System Settings on Full Disk Access, with the drag tile for the
+/// collector on top of it (permission_tile.rs).
 #[tauri::command]
 async fn open_full_disk_access(app: AppHandle) -> Result<(), String> {
+    open_privacy_pane(&app, "Privacy_AllFiles")
+}
+
+/// Open System Settings on Accessibility, with the drag tile for the
+/// collector on top of it (permission_tile.rs).
+#[tauri::command]
+async fn open_accessibility_settings(app: AppHandle) -> Result<(), String> {
+    open_privacy_pane(&app, "Privacy_Accessibility")
+}
+
+fn open_privacy_pane(app: &AppHandle, anchor: &str) -> Result<(), String> {
     app.shell()
         .command("open")
-        .args(["x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"])
+        .args([format!("x-apple.systempreferences:com.apple.preference.security?{anchor}")])
         .spawn()
         .map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    {
+        // A dev profile never touches the machine's real collector, so it
+        // offers nothing to drag. Neither does a Mac with no collector yet.
+        let collector = dirs::home_dir()
+            .unwrap_or_default()
+            .join(".virtues")
+            .join("bin")
+            .join("virtues-collector");
+        if deny_collector_in_profile().is_ok() && collector.exists() {
+            permission_tile::show(app, &collector);
+        }
+    }
     Ok(())
 }
 
-/// Open System Preferences to Accessibility pane
+/// Close the drag tile on System Settings, if one is up. The page calls this
+/// once the collector reports the grant, with `return_to_app` so Virtues comes
+/// back to the front.
 #[tauri::command]
-async fn open_accessibility_settings(app: AppHandle) -> Result<(), String> {
-    app.shell()
-        .command("open")
-        .args(["x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"])
-        .spawn()
-        .map_err(|e| e.to_string())?;
-    Ok(())
+fn close_permission_tile(app: AppHandle, return_to_app: bool) {
+    #[cfg(target_os = "macos")]
+    permission_tile::close(&app, return_to_app);
+    #[cfg(not(target_os = "macos"))]
+    let _ = (app, return_to_app);
 }
 
 /// Start the Mac's own dictation in whatever has focus — the composer, when
@@ -1794,6 +1821,7 @@ fn main() {
             recheck_collector,
             open_full_disk_access,
             open_accessibility_settings,
+            close_permission_tile,
             start_dictation,
             set_summon_shortcut,
             browser_login,

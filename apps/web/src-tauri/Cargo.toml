@@ -111,8 +111,8 @@ tauri-plugin-audio = { path = "../plugins/audio" }
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 block2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSString", "NSDictionary", "NSError", "NSData", "NSGeometry", "NSValue", "NSObject"] }
-objc2-app-kit = { version = "0.3", features = ["block2", "NSButton", "NSControl", "NSEvent", "NSGraphics", "NSResponder", "NSView", "NSWindow", "NSGraphicsContext", "NSImage", "NSImageRep", "NSBitmapImageRep"] }
+objc2-foundation = { version = "0.3", features = ["NSString", "NSDictionary", "NSError", "NSData", "NSGeometry", "NSValue", "NSObject", "NSArray", "NSEnumerator", "NSURL"] }
+objc2-app-kit = { version = "0.3", features = ["block2", "NSButton", "NSControl", "NSEvent", "NSGraphics", "NSResponder", "NSView", "NSWindow", "NSGraphicsContext", "NSImage", "NSImageRep", "NSBitmapImageRep", "NSPanel", "NSBox", "NSColor", "NSFont", "NSText", "NSTextField", "NSImageView", "NSVisualEffectView", "NSApplication", "NSRunningApplication", "NSWorkspace", "NSScreen", "NSDragging", "NSDraggingItem", "NSDraggingSession", "NSPasteboard"] }
 objc2-web-kit = { version = "0.3", features = ["WKWebView", "WKContentWorld", "WKFrameInfo", "WKSnapshotConfiguration", "WKPreferences", "WKWebViewConfiguration", "block2", "objc2-app-kit"] }
 tokio-tungstenite = "0.24"
 futures-util = "0.3"

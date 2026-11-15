@@ -122,6 +122,8 @@ export type PermissionCopy = {
 	costs: string;
 	/** What to do once the pane is open, in System Settings' own words. */
 	fix?: string;
+	/** The same, for a shell that shows the drag tile on System Settings. */
+	dragFix?: string;
 	/** Which pane `open` goes to, for its button: "Open Full Disk Access". */
 	pane?: string;
 	open?: () => Promise<boolean>;
@@ -137,12 +139,14 @@ export const COLLECTOR_LIST_NAME = 'virtues-collector';
 export const COLLECTOR_BINARY_PATH = '~/.virtues/bin/virtues-collector';
 
 const FULL_DISK_ACCESS_FIX = `Turn on ${COLLECTOR_LIST_NAME} in the list. Not listed? Click + and add ${COLLECTOR_BINARY_PATH}.`;
+const DRAG_FIX = `System Settings opens with ${COLLECTOR_LIST_NAME} ready to drag into the list. macOS asks for Touch ID or your password to add it.`;
 
 export const PERMISSION_COPY: Record<string, PermissionCopy> = {
 	full_disk_access: {
 		label: 'Full Disk Access',
 		costs: "your Mac can't read Messages or Safari history",
 		fix: FULL_DISK_ACCESS_FIX,
+		dragFix: DRAG_FIX,
 		pane: 'Full Disk Access',
 		open: openFullDiskAccess
 	},
@@ -153,6 +157,7 @@ export const PERMISSION_COPY: Record<string, PermissionCopy> = {
 		label: 'Safari history',
 		costs: "your Mac can't read Safari history or bookmarks",
 		fix: FULL_DISK_ACCESS_FIX,
+		dragFix: DRAG_FIX,
 		pane: 'Full Disk Access',
 		open: openFullDiskAccess
 	},
@@ -160,6 +165,7 @@ export const PERMISSION_COPY: Record<string, PermissionCopy> = {
 		label: 'Accessibility',
 		costs: 'your Mac records app events without window titles',
 		fix: `Turn on ${COLLECTOR_LIST_NAME} in the list.`,
+		dragFix: DRAG_FIX,
 		pane: 'Accessibility',
 		open: openAccessibilitySettings
 	},
