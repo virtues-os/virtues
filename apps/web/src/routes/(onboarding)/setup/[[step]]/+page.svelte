@@ -7,17 +7,19 @@
   progress is the mark itself (SetupMark), which Welcome's big ∴ flies up
   to become. The four rules are in agents/build/onboarding.md, "Four rules for the setup flow".
 
-  Ten steps: Welcome (the cold open, with light or dark), the founder's
-  letter, Account, Server, Wi-Fi, Names, Subscription, Connections, Timeline,
-  Interview. Everything through Subscription is required.
+  The steps, in `ORDER` (setup.svelte.ts): Welcome (the cold open, with light
+  or dark), the founder's letter, Server, Account and Wi-Fi (hardware only),
+  Connections, Subscription, Names. Connections can be skipped; the rest are
+  required.
 
   THE FIRST HALF (Account, Server, Wi-Fi, and pairing at Wi-Fi's end) runs
   here only before this device has a server: on the iPhone, whose shell
   opens /setup from its own copy of the app when unpaired, or in dev with
   `?radio=fake` (prepair.svelte.ts). Anywhere else those three are done by
-  construction. Sign-in comes first because the account's grant has to
-  cross the Bluetooth link before pairing. The last three
-  each carry a Skip, and "Finish later" opens the app with whatever is left
+  construction. On hardware the account comes before Wi-Fi because its
+  grant has to cross the Bluetooth link before pairing; a self-installed
+  server pairs with no account, and the subscription step signs in.
+  Connections carries a Skip, and "Finish later" opens the app with it
   waiting on the rail's Setup tile. Setup ends once, with the dots drawing
   together into the ∴ and the app opening beneath it.
 
@@ -44,7 +46,7 @@
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 	import SetupMark from "$lib/components/setup/SetupMark.svelte";
 	import ThemeSwitch from "$lib/components/setup/ThemeSwitch.svelte";
-	import { setup, isSetupStep, intoLabel, SERVER, type SetupStepId } from "$lib/components/setup/setup.svelte";
+	import { setup, isSetupStep, intoLabel, type SetupStepId } from "$lib/components/setup/setup.svelte";
 	import { score } from "$lib/components/setup/score.svelte";
 	import StepPaired from "$lib/components/setup/steps/StepPaired.svelte";
 	import StepAccount from "$lib/components/setup/steps/StepAccount.svelte";
@@ -56,8 +58,6 @@
 	import StepSubscription from "$lib/components/setup/steps/StepSubscription.svelte";
 	import StepNames from "$lib/components/setup/steps/StepNames.svelte";
 	import StepConnections from "$lib/components/setup/steps/StepConnections.svelte";
-	import StepTimeline from "$lib/components/setup/steps/StepTimeline.svelte";
-	import StepInterview from "$lib/components/setup/steps/StepInterview.svelte";
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import { openApp } from "$lib/stores/appOpening";
 	import { getProfile, updateProfile, getSetupState, skipOnboarding } from "$lib/api/client";
@@ -145,7 +145,6 @@
 		const arriving = (name: string) => (setup.streams.find((s) => s.name === name)?.count_7d ?? 0) > 0;
 		if (arriving("communication_message") || arriving("communication_transcription"))
 			return "From tomorrow morning, your server writes up each day it has enough of.";
-		if (setup.status("interview") === "done") return "Your story is ready to read.";
 		return null;
 	});
 
@@ -338,16 +337,6 @@
 		setTimeout(() => (prePair.handingOver = false), still ? 0 : M.base + M.quick);
 	}
 
-	async function skip(id: SetupStepId) {
-		const key = SERVER[id];
-		try {
-			if (key) await gettingStarted.skip(key, true);
-		} catch {
-			/* moving on never waits on the server */
-		}
-		await advance(id);
-	}
-
 	/**
 	 * THE CLOSE. The dots draw together into the ∴ in the middle of the
 	 * screen, then the app opens beneath it. The app shell holds anyone out
@@ -373,15 +362,7 @@
 		// when there is one. Reduced motion takes the movement away, not the
 		// time to read.
 		await new Promise((r) => setTimeout(r, closeLine ? (still ? 2000 : 3800) : still ? 800 : 2300));
-		// The app opens on page one of what Setup made: the story told in the
-		// interview ("You"), else the chapters drawn, else a new chat.
-		const dest =
-			setup.status("interview") === "done"
-				? "/wiki/identity"
-				: setup.status("timeline") === "done"
-					? "/wiki/chapters"
-					: "/chat";
-		await openApp(dest);
+		await openApp("/chat");
 	}
 
 	// The app's gate can still send the close back here (the server changed
@@ -526,14 +507,6 @@
 						<StepNames onnext={() => advance("names")} />
 					{:else if step === "connections"}
 						<StepConnections onnext={() => advance("connections")} />
-					{:else if step === "timeline"}
-						<StepTimeline onnext={() => advance("timeline")} onskip={() => skip("timeline")} />
-					{:else if step === "interview"}
-						<StepInterview
-							onnext={() => advance("interview")}
-							onskip={() => skip("interview")}
-							ondraw={() => go("timeline")}
-						/>
 					{/if}
 				</div>
 			{/key}

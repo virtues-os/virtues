@@ -5,7 +5,7 @@
 	in setup/inApp.ts: the stage the first time through, this tab after.
 
 	WHAT IS HERE. The steps a person can do from inside the app: the letter
-	(to read again), Names, Subscription, Devices, Chapters and the interview.
+	(to read again), Devices, Subscription and Names.
 	Welcome's opening only plays full screen, so it is a link here. The
 	first half (account, server, Wi-Fi) is finished for anyone who can see
 	this, so it isn't listed.
@@ -20,13 +20,11 @@
 	import type { Tab } from "$lib/tabs/types";
 	import "$lib/components/setup/setup.css";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import {
 		setup,
 		isSetupStep,
 		intoLabel,
 		labelOf,
-		SERVER,
 		IN_APP,
 		type SetupStepId,
 	} from "$lib/components/setup/setup.svelte";
@@ -36,8 +34,6 @@
 	import StepNames from "$lib/components/setup/steps/StepNames.svelte";
 	import StepSubscription from "$lib/components/setup/steps/StepSubscription.svelte";
 	import StepConnections from "$lib/components/setup/steps/StepConnections.svelte";
-	import StepTimeline from "$lib/components/setup/steps/StepTimeline.svelte";
-	import StepInterview from "$lib/components/setup/steps/StepInterview.svelte";
 
 	let { tab, active = true }: { tab: Tab; active?: boolean } = $props();
 
@@ -74,16 +70,6 @@
 		const after = steps.find((s) => HERE.indexOf(s.id) > i && s.status !== "done")?.id ?? null;
 		if (active) go(after);
 		else windowShellStore.updateTab(tab.id, { route: after ? `/setup/${after}` : "/setup" });
-	}
-
-	async function skip(id: SetupStepId) {
-		const key = SERVER[id];
-		try {
-			if (key) await gettingStarted.skip(key, true);
-		} catch {
-			/* moving on never waits on the server */
-		}
-		await advance(id);
 	}
 
 	const mark = (status: string) => (status === "done" ? "done" : status === "skipped" ? "skipped" : "open");
@@ -131,10 +117,6 @@
 		<StepSubscription onnext={() => advance("subscription")} />
 	{:else if step === "connections"}
 		<StepConnections onnext={() => advance("connections")} />
-	{:else if step === "timeline"}
-		<StepTimeline onnext={() => advance("timeline")} onskip={() => skip("timeline")} />
-	{:else if step === "interview"}
-		<StepInterview onnext={() => advance("interview")} onskip={() => skip("interview")} ondraw={() => go("timeline")} />
 	{:else}
 		<StepFrame
 			title={next ? "Pick up where you left off" : "Setup is done"}

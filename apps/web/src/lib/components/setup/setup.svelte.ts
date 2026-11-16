@@ -1,13 +1,13 @@
 /**
  * Setup — the one flow, and the order of its steps.
  *
- * ONE PROCESS, ONE WORD (2026-09-24, agents/plan/setup-plan.md). Setup runs
- * full screen at `/setup`: nine steps with a dot each — Welcome (the cold
- * open, and light or dark), the founder's letter, then the seven that do
- * something — then the ∴ and the app. Everything through Subscription is required;
- * the last three can each be skipped, and "Finish later" opens the app with
- * the rest waiting on the rail's Setup tile. It replaced the Getting started room
- * (a stepper in the app's pane, 2026-09-23), which replaced a seeded chat.
+ * ONE PROCESS, ONE WORD (agents/plan/onboarding-diy-plan.md). Setup runs
+ * full screen at `/setup`, a dot per step: Welcome (the cold open, and light
+ * or dark), the founder's letter, the first half (Server, plus Account and
+ * Wi-Fi on hardware), this device's Connections, Subscription, Names, then
+ * the ∴ and the app. Connections can be skipped and "Finish later" opens the
+ * app with it waiting on the rail's Setup tile; everything else is required.
+ * Chapters and the interview are not part of setup.
  *
  * NOTHING HERE IS STORED PROGRESS. Every status is read off real rows — the
  * server's derived getting-started state, the profile, the paired devices,
@@ -44,9 +44,7 @@ export type SetupStepId =
 	| 'wifi'
 	| 'subscription'
 	| 'names'
-	| 'connections'
-	| 'timeline'
-	| 'interview';
+	| 'connections';
 
 export type StepStatus = 'done' | 'open' | 'skipped';
 
@@ -79,14 +77,17 @@ export const ORDER: SetupStepId[] = [
 	'server',
 	'account',
 	'wifi',
-	// Names before Subscription: the person meets the assistant before being
-	// asked to pay for how it thinks, so that step can say its name.
-	'names',
-	'subscription',
+	// This device before the subscription: pairing and collecting need no
+	// account, and Messages and Safari history are the slowest sources to
+	// arrive, so they start while the person finishes the rest.
 	'connections',
-	'timeline',
-	'interview',
+	'subscription',
+	'names',
 ];
+// TODO(2026-11-15): steps/StepTimeline.svelte and steps/StepInterview.svelte
+// left setup and nothing imports them. Delete them, with ChapterExample and
+// nextChapter.ts, unless the home chapters get (onboarding-diy-plan.md,
+// decision 4) reuses them.
 
 const LABELS: Record<SetupStepId, string> = {
 	welcome: 'Welcome',
@@ -97,11 +98,9 @@ const LABELS: Record<SetupStepId, string> = {
 	subscription: 'Subscription',
 	names: 'Names',
 	connections: 'Connections',
-	timeline: 'Chapters',
-	interview: 'Interview',
 };
 
-const OPTIONAL = new Set<SetupStepId>(['connections', 'timeline', 'interview']);
+const OPTIONAL = new Set<SetupStepId>(['connections']);
 
 /** The server's step each flow step reads its status from, if any. */
 export const SERVER: Record<SetupStepId, GettingStartedStepId | null> = {
@@ -113,8 +112,6 @@ export const SERVER: Record<SetupStepId, GettingStartedStepId | null> = {
 	subscription: 'connect_ai',
 	names: 'introductions',
 	connections: 'connect_world',
-	timeline: 'timeline',
-	interview: 'interview',
 };
 
 export function isSetupStep(s: string | null | undefined): s is SetupStepId {
@@ -128,7 +125,7 @@ export function labelOf(id: SetupStepId): string {
 /** The steps Setup offers inside the app (SetupView, the rail's panel), in
  *  order. The first half is finished for anyone in the app, and Welcome's
  *  opening only plays on the stage. The letter is here to read again. */
-export const IN_APP: SetupStepId[] = ['letter', 'names', 'subscription', 'connections', 'timeline', 'interview'];
+export const IN_APP: SetupStepId[] = ['letter', 'connections', 'subscription', 'names'];
 
 /** A button that leads INTO a step says what the person does there. */
 const INTO: Record<SetupStepId, string> = {
@@ -140,8 +137,6 @@ const INTO: Record<SetupStepId, string> = {
 	subscription: 'Choose how your assistant thinks',
 	names: 'Name your assistant',
 	connections: 'Add your devices',
-	timeline: 'Draw your chapters',
-	interview: 'Tell your story',
 };
 
 /** The label for a button that moves on to `id`, or opens the app. */
@@ -272,29 +267,29 @@ class SetupStore {
 	}
 
 	/**
-	 * What a device has already sent, as one line: the payoff for turning it
-	 * on, read off the same stream counts that light the badges. Null until
-	 * something has arrived. Counts are this week's, and each noun names
-	 * exactly what the stream counts (a location update is not a place).
+	 * What a device has started sending, as one line: the payoff for turning
+	 * it on, read off the same streams that light the badges. Null until
+	 * something has arrived. It names what is arriving and never how much:
+	 * setup shows no counts, since someone in recovery sees every page.
 	 */
 	arrived(device: 'computer' | 'phone'): string | null {
-		const n = (name: string) => this.streams.find((s) => s.name === name)?.count_7d ?? 0;
-		const parts: [number, string, string][] =
+		const has = (...names: string[]) => names.some((name) => arriving(this.streams, name));
+		const parts: [boolean, string][] =
 			device === 'computer'
 				? [
-						[n('communication_message'), 'message', 'messages'],
-						[n('activity_web_browsing'), 'page read', 'pages read'],
-						[n('activity_app_session'), 'app session', 'app sessions'],
+						[has('communication_message'), 'your messages'],
+						[has('activity_web_browsing'), 'the pages you read'],
+						[has('activity_app_session'), 'the apps you use'],
 					]
 				: [
-						[n('location_point'), 'location update', 'location updates'],
-						[n('communication_transcription'), 'recording', 'recordings'],
-						[n('health_steps') + n('health_heart_rate') + n('health_sleep'), 'Health reading', 'Health readings'],
+						[has('location_point'), 'where you go'],
+						[has('communication_transcription'), 'your recordings'],
+						[has('health_steps', 'health_heart_rate', 'health_sleep'), 'your Health data'],
 					];
-		const said = parts
-			.filter(([c]) => c > 0)
-			.map(([c, one, many]) => `${c.toLocaleString()} ${c === 1 ? one : many}`);
-		return said.length ? `Arrived this week: ${said.join(', ')}.` : null;
+		const said = parts.filter(([on]) => on).map(([, noun]) => noun);
+		if (!said.length) return null;
+		const list = said.length === 1 ? said[0] : `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]}`;
+		return `Your server is receiving ${list}.`;
 	}
 
 	/** The computer's collector and the phone, once paired. */
@@ -325,9 +320,6 @@ class SetupStore {
 		// at its word walked people past a step Setup never offers to skip.
 		if (own === 'skipped' && !OPTIONAL.has(id)) return 'open';
 		if (own) return own;
-		// A server older than the timeline step: its interview status is the
-		// nearest truth (it once counted drawn chapters too).
-		if (id === 'timeline') return gettingStarted.step('interview')?.status ?? 'open';
 		// An older server with no getting-started state at all is treated as
 		// set up, the way the store treats it — never strand someone on it.
 		return gettingStarted.unsupported ? 'done' : 'open';
@@ -386,7 +378,7 @@ class SetupStore {
 	 *  links the server before pairing, and a dev server marks it done — and
 	 *  keying on it sent those people past Hello straight into Names. */
 	get fresh(): boolean {
-		return (['names', 'connections', 'timeline', 'interview'] as SetupStepId[]).every(
+		return (['connections', 'names'] as SetupStepId[]).every(
 			(id) => this.status(id) === 'open',
 		);
 	}
