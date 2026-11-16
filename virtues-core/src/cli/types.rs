@@ -360,8 +360,9 @@ pub enum Commands {
     /// Before the first device pairs this is the server's standing code, which
     /// is multi-use and rotates (minted if none is live). Once a device has
     /// paired it is a fresh one-time code. Either way it prints how long the
-    /// code lasts and the server's addresses beside it. A browser cannot pair
-    /// (it holds no iroh key). No `.env` touching, no
+    /// code lasts, the server's addresses beside it, and a QR code of the
+    /// address and code for the iPhone app. A browser cannot pair (it holds no
+    /// iroh key). No `.env` touching, no
     /// prompts. Run it as often as needed. THE one human verb for connecting a
     /// device (agents/build/onboarding.md). `login` and `link` are aliases.
     #[command(alias = "login", alias = "link")]

@@ -707,23 +707,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         tokio::spawn(async move { virtues::credentials::empty_revoked_at_start(&database).await });
     }
 
-    // Default to server with auto-migrate if no command specified
+    // Default to the server if no command specified. `Commands::Server` runs
+    // the migrations and the seed itself; doing them here as well ran both
+    // twice on every start.
     let cli = if cli.command.is_none() {
-        println!("🚀 Starting Virtues (auto-setup mode)...");
-        println!();
-
-        // Run migrations first
-        println!("📊 Running migrations...");
-        virtues.database.initialize().await?;
-        println!("✅ Migrations complete");
-        println!();
-
-        // Seed production defaults (models, agents, etc.)
-        println!("🌱 Seeding defaults...");
-        virtues::seeding::prod_seed::seed_production_data(&virtues.database).await?;
-        println!("✅ Seeding complete");
-        println!();
-
         // In production (Nomad), NOMAD_PORT_http is set to the dynamically allocated port.
         // Fall back to 8000 for local development.
         let port = env::var("NOMAD_PORT_http")
@@ -782,7 +769,7 @@ fn print_banner() {
 /// single most important glyph on screen: bright + bold on a TTY, plain when
 /// piped/captured. The box itself uses Unicode line-drawing (renders fine in
 /// terminals and logs); only the colour is TTY-gated to avoid garbling logs.
-fn print_pair_hero(display: &str) {
+fn print_pair_hero(display: &str, minutes_left: i64) {
     use console::style;
     const W: usize = 54; // inner width between the borders (fits the downloads URL line)
     let tty = console::Term::stdout().is_term();
@@ -800,7 +787,7 @@ fn print_pair_hero(display: &str) {
     println!("{blank}");
     println!("{}", line("   Your server is ready."));
     println!("{blank}");
-    println!("{}", line("   1.  Desktop app     https://virtues.com/downloads"));
+    println!("{}", line("   1.  Get the app     https://virtues.com/downloads"));
 
     // The code line: pad on the *visible* length (ANSI is zero-width), then
     // wrap just the code in colour so the right border still aligns.
@@ -814,7 +801,11 @@ fn print_pair_hero(display: &str) {
     println!("  │{prefix}{code}{}│", " ".repeat(pad));
 
     println!("{blank}");
-    println!("{}", line("   Rotates automatically · valid while shown"));
+    // The code expires on its own clock, and this text stays on screen after
+    // `init` exits, so say how long it lasts rather than "while shown".
+    let unit = if minutes_left == 1 { "minute" } else { "minutes" };
+    println!("{}", line(&format!("   Works for about {minutes_left} {unit}.")));
+    println!("{}", line("   For a new code, run:  virtues pair"));
     println!("{blank}");
     println!("{bot}");
 }
@@ -841,7 +832,24 @@ fn print_link_output(minted: &virtues::api::pair::MintedToken) {
     if std::env::var_os("VIRTUES_NO_BANNER").is_none() {
         print_banner();
     }
-    print_pair_hero(&display);
+    // Round up, so a code minted a few seconds ago still reads as its full window.
+    let seconds_left = (minted.expires_at - chrono::Utc::now()).num_seconds().max(0);
+    let minutes_left = ((seconds_left + 59) / 60).max(1);
+    print_pair_hero(&display, minutes_left);
+
+    // A QR of one "address   code" line, the same line printed below for
+    // pasting, so the iPhone app pairs from it exactly as from a paste. The
+    // raw LAN address, because a phone camera can't be assumed to resolve
+    // `.local`. It holds the short-lived code and no key.
+    let qr_line = format!(
+        "http://{}:{}   {display}",
+        virtues::cli::link::forward_host(),
+        virtues::cli::link::INTERNAL_PORT
+    );
+    println!();
+    println!("  On an iPhone, scan this with the Virtues app:");
+    println!();
+    virtues::cli::commands::deploy::print_qr_block(&qr_line);
 
     // On SSH: the desktop app needs a route to the box. On isolated networks
     // (office/hotel) mDNS is blocked, so the existing SSH session is the
