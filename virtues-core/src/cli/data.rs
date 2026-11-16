@@ -151,10 +151,12 @@ impl Console {
             .body(http_body_util::Full::new(axum::body::Bytes::from(body.to_string())))
             .map_err(|e| e.to_string())?;
         // The server closes the connection, unanswered, on a user it does
-        // not take as the owner's (`console_socket::classify`).
+        // not take as the owner's (`console_socket::classify`). A server
+        // that stopped mid-request closes it the same way, so the message
+        // names both.
         let resp = sender.send_request(req).await.map_err(|_| {
             format!(
-                "the virtues server refused this user at {}. Run this as a login in the {} group (sudo virtues migrate adds the login that runs it), or with sudo",
+                "the virtues server closed the connection at {} without answering. Either this user isn't allowed (run this as a login in the {} group, which sudo virtues migrate adds the login that runs it to, or with sudo), or the server stopped (systemctl status virtues)",
                 socket.display(),
                 crate::console_socket::CONSOLE_GROUP
             )

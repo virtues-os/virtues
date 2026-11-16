@@ -65,8 +65,8 @@ question with three answers instead:
   anything. Follow the guide, then run the install command again.
 
 After you answer, the installer finishes the install, which takes about ten
-minutes, and ends by printing a six-digit pairing code and your server's
-addresses.
+minutes, and ends by printing a six-digit pairing code, your server's
+addresses, and a QR code the iPhone app can scan.
 
 On Ubuntu and Debian, the installer also turns on your distribution's
 automatic security updates. They apply security fixes only, never feature

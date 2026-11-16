@@ -125,7 +125,8 @@ pub const CONSOLE_TMPFILES_RULE: &str = "d /run/virtues 0755 virtues virtues -\n
 /// `sudo virtues upgrade`. It already has root through sudo, so the group
 /// gives it nothing it could not take, and it is what lets that person reach
 /// the console without sudo, including from a browser over SSH. Membership
-/// applies to the login's next session.
+/// applies at once: the console socket checks the caller's uid against the
+/// group as each connection arrives (`console_socket::classify`).
 #[cfg(target_os = "linux")]
 fn console_socket(_data_dir: &std::path::Path) -> Outcome {
     use std::path::Path;
@@ -169,7 +170,7 @@ fn console_socket(_data_dir: &std::path::Path) -> Outcome {
                 if !ran(Command::new("usermod").args(["-aG", group, &login])) {
                     return Outcome::Failed(format!("could not add {login} to the {group} group"));
                 }
-                done.push(format!("added {login} to the {group} group (from its next login)"));
+                done.push(format!("added {login} to the {group} group"));
             }
             // `id` cannot name the login: nothing to add.
             None => {}

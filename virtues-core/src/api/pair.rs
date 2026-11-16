@@ -1415,8 +1415,6 @@ mod endpoint_id_conflict_tests {
         assert_eq!(label, "Renamed", "the conflicting insert updated the row");
     }
 
-    /// A NULL endpoint_id (a browser device) is outside the partial index, so
-    /// those always insert fresh — Postgres treats NULLs as distinct.
     /// The standing code pairs one device, like a one-off code: the second
     /// claim of the same code finds nothing, so two devices racing with one
     /// code cannot both pair.
@@ -1441,6 +1439,8 @@ mod endpoint_id_conflict_tests {
         assert_eq!(crate::api::pair::claim_pair_token(&mut tx, &hash).await.unwrap(), None);
     }
 
+    /// A NULL endpoint_id (a browser device) is outside the partial index, so
+    /// those always insert fresh — Postgres treats NULLs as distinct.
     #[sqlx::test(migrations = "./migrations")]
     async fn keyless_devices_never_conflict(pool: sqlx::PgPool) {
         let info = json!({});

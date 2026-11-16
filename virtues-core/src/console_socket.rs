@@ -80,8 +80,9 @@ pub fn classify(uid: u32, known: &Known) -> Option<ConsoleCaller> {
 
 /// The routes an agent caller may use: the console door the data verbs
 /// call (`/api/console/...`), the applet switch `virtues applet enable`
-/// flips (`PATCH /api/applets/<id>`), both from `cli/data.rs`'s `Console`,
-/// and the MCP endpoint `virtues mcp` relays to (`cli/mcp.rs`).
+/// flips (`PATCH /api/applets/<id>`, which takes only `enabled` from an
+/// agent: `server/api/applets.rs`), both from `cli/data.rs`'s `Console`, and
+/// the MCP endpoint `virtues mcp` relays to (`cli/mcp.rs`).
 pub fn agent_may(method: &axum::http::Method, path: &str) -> bool {
     path.starts_with("/api/console/")
         || path == crate::server::api::mcp::PATH
@@ -96,27 +97,54 @@ mod users {
     use std::ffi::{CStr, CString};
 
     /// The uid of user `name`, or `None` when there is no such user.
+    /// The largest buffer a lookup grows to before it gives up. An entry
+    /// that does not fit is reported, and counts as absent: the console
+    /// then fails closed for that user.
+    const MAX_BUF: usize = 1 << 20;
+
     pub fn uid_of(name: &str) -> Option<u32> {
         let name = CString::new(name).ok()?;
-        let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
-        let mut buf = vec![0 as libc::c_char; 16 * 1024];
-        let mut out: *mut libc::passwd = std::ptr::null_mut();
-        // SAFETY: every pointer is valid for the call; `out` is null or `&mut pw`.
-        let rc = unsafe { libc::getpwnam_r(name.as_ptr(), &mut pw, buf.as_mut_ptr(), buf.len(), &mut out) };
-        (rc == 0 && !out.is_null()).then_some(pw.pw_uid)
+        let mut len = 16 * 1024;
+        loop {
+            let mut pw: libc::passwd = unsafe { std::mem::zeroed() };
+            let mut buf = vec![0 as libc::c_char; len];
+            let mut out: *mut libc::passwd = std::ptr::null_mut();
+            // SAFETY: every pointer is valid for the call; `out` is null or `&mut pw`.
+            let rc = unsafe { libc::getpwnam_r(name.as_ptr(), &mut pw, buf.as_mut_ptr(), buf.len(), &mut out) };
+            if rc == libc::ERANGE && len < MAX_BUF {
+                len *= 2;
+                continue;
+            }
+            if rc != 0 {
+                tracing::warn!(rc, "console socket: could not look up a user");
+            }
+            return (rc == 0 && !out.is_null()).then_some(pw.pw_uid);
+        }
     }
 
     /// The uids of the members of group `name`: the users it lists, and
     /// those whose primary group it is. Empty when there is no such group.
     pub fn members_of(name: &str) -> Vec<u32> {
         let Ok(cname) = CString::new(name) else { return vec![] };
+        let mut len = 64 * 1024;
         let mut gr: libc::group = unsafe { std::mem::zeroed() };
-        let mut buf = vec![0 as libc::c_char; 64 * 1024];
+        let mut buf;
         let mut out: *mut libc::group = std::ptr::null_mut();
-        // SAFETY: as in `uid_of`.
-        let rc = unsafe { libc::getgrnam_r(cname.as_ptr(), &mut gr, buf.as_mut_ptr(), buf.len(), &mut out) };
-        if rc != 0 || out.is_null() {
-            return vec![];
+        loop {
+            buf = vec![0 as libc::c_char; len];
+            // SAFETY: as in `uid_of`.
+            let rc = unsafe { libc::getgrnam_r(cname.as_ptr(), &mut gr, buf.as_mut_ptr(), buf.len(), &mut out) };
+            if rc == libc::ERANGE && len < MAX_BUF {
+                len *= 2;
+                continue;
+            }
+            if rc != 0 {
+                tracing::warn!(rc, "console socket: could not look up the console group");
+            }
+            if rc != 0 || out.is_null() {
+                return vec![];
+            }
+            break;
         }
         let gid = gr.gr_gid;
         let mut uids = Vec::new();
@@ -193,6 +221,9 @@ pub fn spawn(app: axum::Router) {
     }
     tracing::info!(path = %path.display(), "console socket listening");
     tokio::spawn(accept_loop(listener, app, |uid| classify(uid, &known())));
+    // `known()` reads the user and group databases, which on an LDAP or
+    // SSSD machine can block: accept_loop runs it per connection, off the
+    // runtime's threads.
 }
 
 #[cfg(not(unix))]
@@ -202,8 +233,9 @@ pub fn spawn(_app: axum::Router) {}
 pub(crate) async fn accept_loop(
     listener: tokio::net::UnixListener,
     app: axum::Router,
-    admit: impl Fn(u32) -> Option<ConsoleCaller>,
+    admit: impl Fn(u32) -> Option<ConsoleCaller> + Send + Sync + 'static,
 ) {
+    let admit = std::sync::Arc::new(admit);
     use hyper::server::conn::http1;
     use hyper_util::rt::TokioIo;
     // axum's Router answers through tower's `Service`, and is always ready.
@@ -225,12 +257,22 @@ pub(crate) async fn accept_loop(
                 continue;
             }
         };
-        let Some(caller) = admit(uid) else {
-            tracing::warn!(uid, "console socket: refused a user that is not the owner's; disconnected");
-            continue;
-        };
         let app = app.clone();
+        let admit = admit.clone();
         tokio::spawn(async move {
+            // Who it is, decided on a blocking thread, so a slow user
+            // database never stalls the next accept.
+            let caller = match tokio::task::spawn_blocking(move || admit(uid)).await {
+                Ok(Some(caller)) => caller,
+                Ok(None) => {
+                    tracing::warn!(uid, "console socket: refused a user that is not the owner's; disconnected");
+                    return;
+                }
+                Err(e) => {
+                    tracing::warn!(uid, error = %e, "console socket: could not decide who called; disconnected");
+                    return;
+                }
+            };
             let svc = hyper::service::service_fn(move |req: hyper::Request<hyper::body::Incoming>| {
                 let mut app = app.clone();
                 async move {

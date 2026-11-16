@@ -738,8 +738,9 @@ pub async fn ensure_utf8_locale() -> Result<()> {
 // Firewall — the ports pairing and the app need
 // ────────────────────────────────────────────────────────────────────────
 
-/// The server's iroh UDP port (`virtues_iroh::DEFAULT_IROH_PORT`), which the
-/// apps use to reach it directly on the same network.
+/// The server's iroh UDP port, which the apps use to reach it directly on
+/// the same network. Must match `virtues_iroh::DEFAULT_IROH_PORT`, which
+/// this crate does not depend on.
 const IROH_PORT: u16 = 51820;
 
 /// Open what a device on the same network needs when a firewall is on:
@@ -748,52 +749,75 @@ const IROH_PORT: u16 = 51820;
 /// and with it closed, pairing fails while the install reports success.
 ///
 /// Only firewalld or ufw that is already running is touched, and only to add
-/// these. A machine with neither, or with a firewall off, is left as it is.
-/// A failure warns and names the command, because the server still runs and
-/// a device away from home reaches it through the relay.
-pub async fn open_firewall() -> Result<()> {
+/// these. A rule that is already open is left alone and not claimed, so
+/// uninstall (which closes exactly the returned rules, through the manifest)
+/// never closes something the owner opened. A failure warns and names the
+/// command, because the server still runs and a device away from home
+/// reaches it through the relay.
+///
+/// Returns what was added, as `firewalld:port:8000/tcp`,
+/// `firewalld:service:mdns` or `ufw:8000/tcp`.
+pub async fn open_firewall() -> Result<Vec<String>> {
     let quiet_ok = |prog: &str, args: &[&str]| {
         let mut c = std::process::Command::new(prog);
         c.args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
         c.status().is_ok_and(|s| s.success())
     };
     let iroh = format!("{IROH_PORT}/udp");
+    let mut added = Vec::new();
 
     if quiet_ok("firewall-cmd", &["--state"]) {
-        let adds = ["--add-port=8000/tcp".to_string(), "--add-service=mdns".to_string(), format!("--add-port={iroh}")];
+        let wanted = [("port", "8000/tcp".to_string()), ("service", "mdns".to_string()), ("port", iroh.clone())];
         let mut ok = true;
-        for flags in [vec!["--permanent".to_string()], vec![]] {
-            let args: Vec<&str> = flags.iter().chain(adds.iter()).map(String::as_str).collect();
-            ok &= quiet_ok("firewall-cmd", &args);
+        for (kind, what) in &wanted {
+            if quiet_ok("firewall-cmd", &["--permanent", &format!("--query-{kind}={what}")]) {
+                continue;
+            }
+            let add = format!("--add-{kind}={what}");
+            let done = quiet_ok("firewall-cmd", &["--permanent", &add]) && quiet_ok("firewall-cmd", &[&add]);
+            if done {
+                added.push(format!("firewalld:{kind}:{what}"));
+            }
+            ok &= done;
         }
         if ok {
-            ui::ok(&format!("Firewall (firewalld): opened 8000/tcp, mDNS and {iroh}"));
+            ui::ok(&format!("Firewall (firewalld): 8000/tcp, mDNS and {iroh} are open"));
         } else {
             ui::warn(&format!(
                 "Couldn't open the firewall for Virtues. Run: sudo firewall-cmd --permanent --add-port=8000/tcp \
                  --add-service=mdns --add-port={iroh} && sudo firewall-cmd --reload"
             ));
         }
-        return Ok(());
+        return Ok(added);
     }
 
-    let ufw_active = std::process::Command::new("ufw")
-        .arg("status")
-        .output()
-        .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("Status: active"));
-    if ufw_active {
-        let ok = ["8000/tcp", "5353/udp", iroh.as_str()]
-            .iter()
-            .all(|rule| quiet_ok("ufw", &["allow", rule]));
+    let status = std::process::Command::new("ufw").arg("status").output().ok();
+    let status = status
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).into_owned())
+        .filter(|s| s.contains("Status: active"));
+    if let Some(status) = status {
+        let open_already = |rule: &str| status.lines().any(|l| l.split_whitespace().next() == Some(rule));
+        let mut ok = true;
+        for rule in ["8000/tcp", "5353/udp", iroh.as_str()] {
+            if open_already(rule) {
+                continue;
+            }
+            if quiet_ok("ufw", &["allow", rule]) {
+                added.push(format!("ufw:{rule}"));
+            } else {
+                ok = false;
+            }
+        }
         if ok {
-            ui::ok(&format!("Firewall (ufw): opened 8000/tcp, mDNS (5353/udp) and {iroh}"));
+            ui::ok(&format!("Firewall (ufw): 8000/tcp, mDNS (5353/udp) and {iroh} are open"));
         } else {
             ui::warn(&format!(
                 "Couldn't open the firewall for Virtues. Run: sudo ufw allow 8000/tcp && sudo ufw allow 5353/udp && sudo ufw allow {iroh}"
             ));
         }
     }
-    Ok(())
+    Ok(added)
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -1682,7 +1706,7 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
 /// restarted a different subset. So the installer, the thing that actually
 /// creates the units, declares the full set once, and the others read it. A
 /// unit that stops being installed stops being listed.
-pub fn write_install_manifest(cfg: &InstallConfig, mode: &InferenceMode) -> Result<()> {
+pub fn write_install_manifest(cfg: &InstallConfig, mode: &InferenceMode, firewall: &[String]) -> Result<()> {
     let (profile, sidecars): (&str, Vec<&str>) = match mode {
         InferenceMode::Dragon => ("dragon", vec!["virtues-qnnd"]),
         InferenceMode::Bundled => ("bundled", vec!["virtues-embed"]),
@@ -1694,15 +1718,33 @@ pub fn write_install_manifest(cfg: &InstallConfig, mode: &InferenceMode) -> Resu
     let mut units: Vec<&str> = vec!["virtues"];
     units.extend(sidecars.iter().copied());
 
+    let path = cfg.share_virtues_dir().join("install.json");
+    // Firewall rules this installer opened, across reinstalls: a reinstall
+    // finds its own earlier rules already open and adds nothing, so what the
+    // last manifest claimed is kept.
+    let mut firewall: Vec<String> = firewall.to_vec();
+    if let Some(earlier) = fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| v.get("firewall").cloned())
+        .and_then(|v| serde_json::from_value::<Vec<String>>(v).ok())
+    {
+        for rule in earlier {
+            if !firewall.contains(&rule) {
+                firewall.push(rule);
+            }
+        }
+    }
+
     let manifest = serde_json::json!({
         "profile": profile,
         "sidecars": sidecars,
         "units": units,
+        "firewall": firewall,
         "data_dir": cfg.data_dir,
         "models_dir": cfg.models_dir(),
         "written_by": env!("CARGO_PKG_VERSION"),
     });
-    let path = cfg.share_virtues_dir().join("install.json");
     fs::write(&path, serde_json::to_vec_pretty(&manifest).expect("manifest serializes"))
         .with_context(|| format!("writing {}", path.display()))?;
     ui::ok(&format!("Wrote topology manifest → {}", path.display()));

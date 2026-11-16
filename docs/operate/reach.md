@@ -45,7 +45,7 @@ ssh -L 8000:/run/virtues/console.sock you@your-server
 ```
 
 Then open `http://localhost:8000`. This works for the login that installed
-Virtues, from its next login after the install, and for root. Another login on
+Virtues, and for root. Another login on
 the server is refused, and so is any program that connects to port 8000 from
 the server itself: the server treats it like an unpaired device.
 

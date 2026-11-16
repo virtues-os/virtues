@@ -99,13 +99,13 @@ printed line and never a key.
 `api/pair.rs` and `maintenance/pair_rotator.rs`. Six digits, shown `123 456`.
 Digits because the main use is a person typing what they read.
 
-- **While the server is unclaimed** there is one standing code. It is
-  multi-use, and the rotator mints a new one every 15 minutes
+- **While the server is unclaimed** there is one standing code. It pairs
+  one device and is then used up, and the rotator mints a new one every 15 minutes
   (`STANDING_ROTATE_INTERVAL_MIN`); the old one stays valid for 5 more
   (`STANDING_GRACE_MIN`), so a code read just before a rotation does not
   expire while the user types it.
 - **At the first pairing** every standing code is expired
-  (`expire_standing_codes`). A multi-use code that stays live on a claimed
+  (`expire_standing_codes`). A code that stays live on a claimed
   server is a permanent password anyone on the network can guess at. The
   rotator keeps running, so a server reset back to unclaimed gets a code
   again.
@@ -178,7 +178,7 @@ missing or unreadable key is fixed only on the device.
 Welcome → Server → Names → Connections → Subscription → Arrival → app
 ```
 
-The founder's letter is not a step: the pair code lasts about 15 minutes,
+The founder's letter is not a step: the pair code lasts 20 minutes at most,
 so nothing stands between the person and it. Arrival offers it as "A note
 from us"; Setup in the app keeps it to reread (`IN_APP`), and
 `/founders-letter` shows it on its own.

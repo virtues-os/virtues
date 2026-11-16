@@ -158,8 +158,8 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
     }
 
     // ── Files the units point at ────────────────────────────────────────
-    // After the units, never before: removing the kiosk shim out from under a
-    // running `virtues-display` would leave cage restarting into a missing
+    // After the units, never before: removing a file out from under a running
+    // unit (an old box's `virtues-display` kiosk) would leave it restarting into a missing
     // script every 5s for as long as the rest of this takes.
     for f in &m.extra_files {
         report(std::fs::remove_file(f).is_ok(), &format!("removed {f}"));
@@ -225,21 +225,22 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
     }
 
     // ── Undo the Postgres relocation ────────────────────────────────────
-    // On an appliance we symlinked /var/lib/postgresql into the data dir. Both
-    // tiers have to undo it, for different reasons:
+    // Hardware Virtues shipped symlinked /var/lib/postgresql into the data
+    // dir. A full purge undoes it: the data dir is about to be deleted, and
+    // a symlink into nothing would leave the machine's Postgres unable to
+    // start for anything else that ever wanted it ("shared infra is left
+    // alone" is one of this command's rules).
     //
-    //   full purge — the data dir is about to be deleted, and a symlink into
-    //   nothing would leave the machine's Postgres unable to start for anything
-    //   else that ever wanted it. "Shared infra is left alone" is one of this
-    //   command's four rules, and leaving it broken breaks that rule.
-    //
-    //   --keep-data — the cluster survives inside the kept data dir, which is
-    //   the point of the tier; but the symlink is ours, and a reinstall
-    //   recreates it.
+    // --keep-data leaves the link: the kept cluster lives behind it, and
+    // nothing recreates it any more (the installer no longer moves Postgres),
+    // so removing it would leave a reinstall with an empty database beside
+    // the kept one.
     //
     // Only ever removes a SYMLINK. A DIY box's /var/lib/postgresql is a real
     // directory holding somebody's databases and is not ours to touch.
-    if m.pg_symlink {
+    if m.pg_symlink && keep_data {
+        ui::skip(&format!("kept the {PG_LINK} link to the kept data dir"));
+    } else if m.pg_symlink {
         report(
             std::fs::remove_file(PG_LINK).is_ok(),
             &format!("removed the {PG_LINK} symlink (Postgres back on its own path)"),
@@ -406,18 +407,17 @@ fn print_manifest(m: &Manifest, keep_data: bool) {
     if m.web_dir {
         ui::kv_at(MANIFEST_COL, "web UI", WEB_DIR);
     }
-    ui::kv_at(
-        MANIFEST_COL,
-        "firewall",
-        &format!("8000/tcp, mDNS, {}/udp  (closed if firewalld or ufw is on)", virtues_iroh::DEFAULT_IROH_PORT),
-    );
+    let opened = crate::install_manifest::get().as_ref().map(|m| m.firewall.clone()).unwrap_or_default();
+    if !opened.is_empty() {
+        ui::kv_at(MANIFEST_COL, "firewall", &format!("{}  (the rules the installer opened)", opened.join(", ")));
+    }
     if m.avahi {
         ui::kv_at(MANIFEST_COL, "mDNS advertisement", AVAHI_SERVICE);
     }
     for f in &m.extra_files {
         ui::kv_at(MANIFEST_COL, "installed file", f);
     }
-    if m.pg_symlink {
+    if m.pg_symlink && !keep_data {
         ui::kv_at(MANIFEST_COL, "Postgres path", &format!("{PG_LINK} symlink  (cluster moves back to its own path)"));
     }
     if m.models_dir {
@@ -470,33 +470,29 @@ fn hostname() -> String {
         .unwrap_or_else(|| "virtues".to_string())
 }
 
-/// Close what the installer opened in a running firewalld or ufw
-/// (`open_firewall` in the installer): TCP 8000, mDNS, and the iroh UDP port.
-/// A firewall that is off, or a rule already gone, is left alone.
+/// Close the firewall rules the installer opened, as its manifest lists
+/// them (`InstallManifest::firewall`). A rule the owner had open before the
+/// install was never listed, so it stays open; an install from before the
+/// installer opened any lists none. Each rule is closed on its own, so one
+/// that fails leaves the others closed.
 fn close_firewall() {
-    let iroh = format!("{}/udp", virtues_iroh::DEFAULT_IROH_PORT);
-    if run_quiet("firewall-cmd", &["--state"]) {
-        let removes = ["--remove-port=8000/tcp".to_string(), "--remove-service=mdns".to_string(), format!("--remove-port={iroh}")];
-        let mut ok = true;
-        for permanent in [true, false] {
-            let mut args: Vec<&str> = removes.iter().map(String::as_str).collect();
-            if permanent {
-                args.insert(0, "--permanent");
+    let rules = crate::install_manifest::get()
+        .as_ref()
+        .map(|m| m.firewall.clone())
+        .unwrap_or_default();
+    for rule in rules {
+        let ok = match rule.split(':').collect::<Vec<_>>().as_slice() {
+            ["firewalld", kind @ ("port" | "service"), what] => {
+                let remove = format!("--remove-{kind}={what}");
+                // Both, so the rule is gone now and after the next reload.
+                let permanent = run_quiet("firewall-cmd", &["--permanent", &remove]);
+                let now = run_quiet("firewall-cmd", &[&remove]);
+                permanent && now
             }
-            ok &= run_quiet("firewall-cmd", &args);
-        }
-        report(ok, &format!("closed 8000/tcp, mDNS and {iroh} in firewalld"));
-        return;
-    }
-    let ufw_active = Command::new("ufw")
-        .arg("status")
-        .output()
-        .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("Status: active"));
-    if ufw_active {
-        let ok = ["8000/tcp", "5353/udp", iroh.as_str()]
-            .iter()
-            .all(|rule| run_quiet("ufw", &["delete", "allow", rule]));
-        report(ok, &format!("closed 8000/tcp, 5353/udp and {iroh} in ufw"));
+            ["ufw", what] => run_quiet("ufw", &["delete", "allow", what]),
+            _ => false,
+        };
+        report(ok, &format!("closed the firewall rule {rule}"));
     }
 }
 

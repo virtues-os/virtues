@@ -597,12 +597,42 @@ pub async fn applet_seen_handler(State(state): State<AppState>, Path(applet_id):
 /// PATCH /api/applets/:id — partial update. Enforces system-owner guard.
 pub async fn patch_applet_handler(
     State(state): State<AppState>,
+    caller: Option<axum::Extension<crate::console_socket::ConsoleCaller>>,
     Path(applet_id): Path<String>,
     Json(patch): Json<serde_json::Value>,
 ) -> Result<Json<crate::scheduler::applets::Applet>, Error> {
+    // An outside agent reaches this route for `virtues applet enable` and
+    // nothing else (`console_socket::agent_may`): it may turn an applet on
+    // or off, never rewrite its schedule, config or triggers.
+    if matches!(caller, Some(axum::Extension(crate::console_socket::ConsoleCaller::Agent)))
+        && !agent_patch_ok(&patch)
+    {
+        return Err(Error::Unauthorized("an agent key may only turn an applet on or off".into()));
+    }
     Ok(Json(
         crate::scheduler::applets::update_applet(state.db.pool(), &applet_id, &patch).await?,
     ))
+}
+
+/// An agent's patch: exactly `{"enabled": <bool>}`.
+fn agent_patch_ok(patch: &serde_json::Value) -> bool {
+    patch.as_object().is_some_and(|o| o.len() == 1 && o.get("enabled").is_some_and(|v| v.is_boolean()))
+}
+
+#[cfg(test)]
+mod agent_patch_tests {
+    use super::agent_patch_ok;
+    use serde_json::json;
+
+    #[test]
+    fn an_agent_may_only_flip_enabled() {
+        assert!(agent_patch_ok(&json!({ "enabled": true })));
+        assert!(agent_patch_ok(&json!({ "enabled": false })));
+        assert!(!agent_patch_ok(&json!({ "enabled": true, "schedule": "* * * * *" })));
+        assert!(!agent_patch_ok(&json!({ "config": {} })));
+        assert!(!agent_patch_ok(&json!({ "enabled": "yes" })));
+        assert!(!agent_patch_ok(&json!([])));
+    }
 }
 
 /// DELETE /api/applets/:id?drop_data= — delete a user-owned applet. System rows

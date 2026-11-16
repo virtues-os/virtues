@@ -95,8 +95,8 @@ Built on wave 2026-11-16, unverified on a real server. The code is
   the login that ran it through sudo (`SUDO_USER`). It runs from the
   installer's `migrate --check` and from the new binary on the upgrade that
   first carries it, so the installing login, or whoever runs
-  `sudo virtues upgrade`, joins the group. Membership applies from that
-  login's next session.
+  `sudo virtues upgrade`, joins the group. Membership applies at once: the
+  socket checks the caller's uid against the group per connection.
 - **SSH.** The `ssh -L 8000:localhost:8000` the installer prints stays: it is
   the app's route to pair, and pairing needs the code, not the console. The
   browser-as-owner route is `ssh -L 8000:/run/virtues/console.sock`,
@@ -126,9 +126,6 @@ Built on wave 2026-11-16, unverified on a real server. The code is
 
 ## Not in this plan
 
-- The standing pair code being multi-use (`api/pair.rs`). Its reasons were
-  the panel and the Bluetooth flow, both deleted. Making it one-use is a
-  small change of its own.
 - `compute_setup_state` counting `local-console` as claimed
   (`api/box_status.rs`).
 - The data folder's own mode. The installer creates it through `useradd`

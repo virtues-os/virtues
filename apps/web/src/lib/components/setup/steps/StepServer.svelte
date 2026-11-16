@@ -340,7 +340,7 @@
 						/>
 					{/each}
 				</div>
-				<span class="hint">Works for about 15 minutes. For a new one, run <code>virtues pair</code> on your server.</span>
+				<span class="hint">A code works once, for a short while. For a new one, run <code>virtues pair</code> on your server.</span>
 			</div>
 			<button type="submit" hidden aria-hidden="true" tabindex="-1"></button>
 		</form>

@@ -49,4 +49,4 @@ other, use the `ssh -L` command the installer printed.
 
 If your server already has a paired device, run `virtues pair` on your server
 for a code, then pair the same way as above. After pairing, Setup opens
-**Add your devices** for this Mac, and the app opens once you move on.
+**What this Mac can share**, and the app opens once you move on.

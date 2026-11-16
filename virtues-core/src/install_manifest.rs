@@ -68,6 +68,12 @@ pub struct InstallManifest {
     /// The state root this install was configured with.
     #[serde(default)]
     pub data_dir: Option<PathBuf>,
+    /// Firewall rules the installer opened, and only those (a rule already
+    /// open was left alone): `firewalld:port:8000/tcp`,
+    /// `firewalld:service:mdns`, `ufw:5353/udp`. Uninstall closes exactly
+    /// these.
+    #[serde(default)]
+    pub firewall: Vec<String>,
 }
 
 /// Read and cache the manifest.

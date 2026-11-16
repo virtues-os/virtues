@@ -195,7 +195,8 @@ fn refuse_cross_site_write(req: &Request, dev: bool, listed: &[String]) -> Optio
 /// - **An IP literal, any port.** A rebinding needs a name to re-point. A
 ///   page loaded from an IP literal dials that address and nothing else.
 ///   This covers the Mac and iOS webviews (`127.0.0.1:<splice port>`), the
-///   box's own CLI (`127.0.0.1:8000`) and a collector paired by address.
+///   collector paired by address. (The box's own CLI sends `localhost` on its
+///   console socket.)
 /// - **`localhost`, any port.** Browsers resolve it to loopback themselves
 ///   and never ask DNS. This covers the Mac app's own calls through the splice
 ///   and the collector (`localhost:7117`, or the port a dev profile or

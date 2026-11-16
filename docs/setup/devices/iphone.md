@@ -15,7 +15,8 @@ The Virtues iPhone app needs iOS 26.2 or later.
 2. At **Scan your server's code**, choose **Open the camera** and point it at
    the QR code the installer printed. The app pairs from the code alone.
 3. If you can't scan it, choose **Find it on this network** or **Type the
-   address and code**, and enter the six-digit code the installer printed.
+   address and code**, enter the six-digit code the installer printed, and
+   choose **Connect**.
    If the app says the code didn't work, it may have expired: run
    `virtues pair` on your server for a new one.
 4. Name your assistant, say what it should call you, and choose your home.
@@ -37,4 +38,4 @@ code with the iPhone app. This works even when your iPhone and server are on
 different networks. Anyone who photographs that QR code gets access to your
 server, so don't show it on a shared screen.
 [Reaching your server](/docs/operate/reach#pairing-a-device) explains more.
-After pairing, Setup opens **Add your devices** for this iPhone.
+After pairing, Setup opens **What this iPhone can share**.

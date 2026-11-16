@@ -83,7 +83,7 @@ Build + reconcile:
 
 ```bash
 cargo build --bin my_applet
-curl -X POST http://localhost:8000/api/admin/reconcile
+sudo curl -X POST --unix-socket /run/virtues/console.sock http://localhost/api/admin/reconcile
 ```
 
 The applet appears in `/applets`, fires on its cron schedule.
@@ -163,7 +163,7 @@ Inside `view.html`, link `virtues.css` for the box's theme and use `await virtue
 Anytime you create, edit, or delete a `SKILL.md` on disk, tell core to pick up the change:
 
 ```bash
-curl -X POST http://localhost:8000/api/admin/reconcile
+sudo curl -X POST --unix-socket /run/virtues/console.sock http://localhost/api/admin/reconcile
 ```
 
 Code changes (editing `main.rs`, etc.) require a `cargo build` first if Rust.

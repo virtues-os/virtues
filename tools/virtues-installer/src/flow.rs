@@ -95,7 +95,7 @@ pub async fn run(cli: Config) -> Result<()> {
     install::install_deps(&target).await?;
     install::enable_security_updates(&target).await?;
     install::configure_mdns().await?;
-    install::open_firewall().await?;
+    let firewall = install::open_firewall().await?;
 
     install::create_user(&cfg).await?;
     install::provision_db().await?;
@@ -118,7 +118,7 @@ pub async fn run(cli: Config) -> Result<()> {
     // every path gets it, Dragon and DIY alike.
     install::install_pdfium(&cfg).await?;
 
-    install::write_install_manifest(&cfg, &inference)?;
+    install::write_install_manifest(&cfg, &inference, &firewall)?;
     install::write_env_file(&cfg, &inference, validation.as_ref()).await?;
     install::run_bringup(&cfg).await?;
     install::install_systemd_unit(&cfg).await?;
