@@ -46,8 +46,6 @@ const JUST_PAIRED_KEY = 'virtues-just-paired';
  *  without this the flow would go looking for a server that is no longer
  *  there. Per launch: the next one bakes the truth. */
 const FORGOT_KEY = 'virtues-forgot-server';
-/** The network server this tab was last sent to the code screen for. */
-const FORWARDED_KEY = 'virtues-setup-forwarded';
 
 type Shell = { __VIRTUES_MOBILE__?: boolean; __VIRTUES_PAIRED__?: boolean; __VIRTUES_BOX_URL__?: string };
 
@@ -267,39 +265,34 @@ class PrePair {
 	}
 
 	/**
-	 * Pair with a server found on the network: the connect page asks for the
-	 * code `virtues pair` printed. Its back arrow returns here. Not in the dev
-	 * fake, which has no connect page.
+	 * Pair with a server by its address and the code `virtues pair` printed,
+	 * here in Setup, then leave the first half. Throws what the reach plugin
+	 * threw; `pairError` (pairing.ts) puts it in words.
 	 */
-	toCodeEntry(server: NetworkServer): void {
-		const q = new URLSearchParams({ origin: server.origin, name: server.name });
-		if (server.claimed !== null) q.set('claimed', String(server.claimed));
-		this.leaveFor(`/connect.html#pair?${q}`);
-	}
-
-	/** True the first time this tab is sent on to `origin`'s code screen, so
-	 *  the back arrow from there lands on the list rather than bouncing. */
-	forwardOnce(origin: string): boolean {
-		try {
-			if (sessionStorage.getItem(FORWARDED_KEY) === origin) return false;
-			sessionStorage.setItem(FORWARDED_KEY, origin);
-		} catch {
-			/* without storage, forwarding every time beats never */
-		}
-		return true;
-	}
-
-	/** The address and the code, typed or pasted from `virtues pair`. */
-	toAddressEntry(): void {
-		this.leaveFor('/connect.html#address');
-	}
-
-	private leaveFor(href: string): void {
+	async pairByAddress(address: string, code: string): Promise<void> {
 		if (isFake()) {
-			console.info('[setup] the dev fake has no connect page:', href);
-			return;
+			await new Promise((r) => setTimeout(r, 900));
+			sessionStorage.setItem(FAKE_PAIRED_KEY, '1');
+		} else {
+			const { invoke } = await import('@tauri-apps/api/core');
+			const status = await invoke<{ paired?: boolean }>('plugin:reach|pair', {
+				payload: { server: address, code: code.replace(/\s+/g, '') },
+			});
+			if (!status?.paired) throw new Error('Pairing did not complete.');
+			const shell = window as unknown as Shell;
+			if (!shell.__VIRTUES_MOBILE__) {
+				// Pairing starts this computer's connection to the server; this
+				// makes sure of it before Setup reads from the server.
+				await invoke('install_helpers', { server: '' }).catch(() => {});
+			}
+			try {
+				localStorage.setItem(JUST_PAIRED_KEY, 'true');
+				sessionStorage.removeItem(FORGOT_KEY);
+			} catch {
+				/* the plugin holds the pairing; this only spares a relaunch */
+			}
 		}
-		window.location.href = href;
+		this.active = false;
 	}
 
 	/**
@@ -354,42 +347,6 @@ class PrePair {
 		await this.link.grant(g.grant);
 	}
 
-	/**
-	 * On a computer, after pairing: wait for the server to answer on this
-	 * machine's loopback, then open its own copy of the app at Setup.
-	 * `carry` rides along in the address, for what this copy knows and the
-	 * server's copy can't read (another origin, its own storage): how far
-	 * through Welcome and the letter they are, and the theme they chose.
-	 * 'away' once it has navigated, 'silent' when the server never answered
-	 * (opening it anyway only showed the webview's own error page), and
-	 * 'here' where there is nothing to hand to (the phone: one origin).
-	 */
-	async handOff(carry: Record<string, string> = {}): Promise<'away' | 'silent' | 'here'> {
-		if (!bakedDesktop()) return 'here';
-		const box = (window as unknown as Shell).__VIRTUES_BOX_URL__ ?? 'http://localhost:7117';
-		try {
-			const { invoke } = await import('@tauri-apps/api/core');
-			// Pairing already starts the loopback; this makes sure of it.
-			await invoke('install_helpers', { server: '' });
-		} catch {
-			/* an older shell: pairing started it */
-		}
-		const until = Date.now() + 60000;
-		let answered = false;
-		while (!answered && Date.now() < until) {
-			try {
-				answered = (await fetch(`${box}/api/box/health`, { cache: 'no-store' })).ok;
-			} catch {
-				/* not answering yet */
-			}
-			if (!answered) await new Promise((r) => setTimeout(r, 1500));
-		}
-		if (!answered) return 'silent';
-		const q = new URLSearchParams(carry).toString();
-		window.location.href = `${box}/setup${q ? `?${q}` : ''}`;
-		return 'away';
-	}
-
 	/** Pair this device through the server's radio, then leave the first half. */
 	async pair(): Promise<void> {
 		if (!this.link) throw new BoxRadioError('not-found', 'Your server is no longer connected. Start again.');
@@ -402,13 +359,9 @@ class PrePair {
 			/* the plugin holds the pairing; this only spares a relaunch */
 		}
 		await this.link.close().catch(() => {});
-		// A computer stays on this half until it hands over (`handOff`): the
-		// server's app is at another origin, and this copy can't read it.
-		if (!bakedDesktop()) {
-			this.handingOver = true;
-			this.link = null;
-			this.active = false;
-		}
+		this.handingOver = true;
+		this.link = null;
+		this.active = false;
 	}
 }
 

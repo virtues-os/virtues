@@ -5,8 +5,8 @@
 	Two searches at once: Bluetooth for Virtues hardware, over the app's radio
 	bridge ($lib/tauri/boxRadio.ts), and the network for a server someone
 	installed themselves (`prePair.serversOnNetwork`). A server on the network
-	pairs on the connect page with the code `virtues pair` prints, and one
-	found alone goes there straight away. The beats:
+	pairs here with the code `virtues pair` prints, and one found alone goes
+	to its code straight away. The beats:
 
 	  looking   both searches run
 	  choose    "Which server?": hardware by the number its screen shows
@@ -17,6 +17,10 @@
 	            Nothing found: the main action is the address and code,
 	            because some networks block the search while the server is
 	            right there. The search keeps running underneath.
+	  address   the address and code, typed or pasted from `virtues pair`
+	            (one pasted line fills both), filled in for a server picked
+	            from the list
+	  pairing   pairing by address (`prePair.pairByAddress`)
 	  waking    the old firmware probe, once, before any words are asked
 	            for (`tryOpenWithoutWords`): a server that predates the
 	            four words opens here, and there is nothing to save
@@ -35,12 +39,13 @@
 	import { boxRadio, BoxRadioError, boxLabel, type NearbyBox } from "$lib/tauri/boxRadio";
 	import type { NetworkServer } from "$lib/tauri/bridge";
 	import { isIOS, isMacOS } from "$lib/utils/platform";
+	import { pairError, splitPasted } from "../pairing";
 
-	let { onnext }: { onnext: () => void } = $props();
+	let { onnext, onpaired }: { onnext: () => void; onpaired: () => Promise<void> | void } = $props();
 
 	const here = isIOS ? "this iPhone" : isMacOS ? "this Mac" : "this device";
 
-	type Phase = "looking" | "choose" | "waking" | "words" | "checking" | "keep";
+	type Phase = "looking" | "choose" | "address" | "pairing" | "waking" | "words" | "checking" | "keep";
 	let phase = $state<Phase>(prePair.link ? "keep" : "looking");
 	let found = $state<NearbyBox[]>([]);
 	let network = $state<NetworkServer[]>([]);
@@ -50,6 +55,11 @@
 	let saved = $state(prePair.wordsKept);
 	let copied = $state(false);
 	let wordsEl = $state<HTMLInputElement | null>(null);
+	let address = $state("");
+	let code = $state("");
+	let addressEl = $state<HTMLInputElement | null>(null);
+	let codeEl = $state<HTMLInputElement | null>(null);
+	const codeOk = $derived(code.replace(/\s+/g, "").length === 6);
 
 	const open = $derived(found.filter((b) => b.state !== "needs-owner"));
 	/** Network servers that aren't hardware already listed over Bluetooth. */
@@ -92,13 +102,48 @@
 		await search();
 		if (my !== gen) return;
 		phase = "choose";
-		// One server on the network and no hardware: straight to its code,
-		// once. Coming back from the code screen means they want to choose.
-		if (found.length === 0 && network.length === 1 && prePair.forwardOnce(network[0].origin)) {
-			prePair.toCodeEntry(network[0]);
+		// One server on the network and no hardware: straight to its code.
+		if (found.length === 0 && network.length === 1) {
+			void toAddress(network[0].origin);
 			return;
 		}
 		void keepLooking(my);
+	}
+
+	/** The address and code form, filled in with `origin` when one was picked. */
+	async function toAddress(origin = "") {
+		gen++;
+		error = null;
+		address = origin;
+		phase = "address";
+		await tick();
+		(origin ? codeEl : addressEl)?.focus();
+	}
+
+	/** A whole line pasted from `virtues pair` fills both fields. */
+	function onAddressInput() {
+		error = null;
+		const line = splitPasted(address);
+		if (line) {
+			address = line.address;
+			code = line.code;
+		}
+	}
+
+	async function pairHere() {
+		if (!address.trim() || !codeOk || phase === "pairing") return;
+		phase = "pairing";
+		error = null;
+		try {
+			await prePair.pairByAddress(address.trim(), code);
+		} catch (e) {
+			console.error("[setup] pairing by address failed", e);
+			const said = pairError(e, { address, device: here });
+			error = said.text;
+			phase = "address";
+			return;
+		}
+		await onpaired();
 	}
 
 	/** While nothing is found, search again every few seconds, so a server
@@ -179,7 +224,9 @@
 	});
 
 	const title = $derived(
-		phase === "words" || phase === "checking"
+		phase === "address" || phase === "pairing"
+			? "Connect to your server"
+			: phase === "words" || phase === "checking"
 			? "Enter the four words on its screen"
 			: phase === "keep"
 				? "Save your recovery phrase"
@@ -190,7 +237,9 @@
 						: "Find your server",
 	);
 	const subtitle = $derived(
-		phase === "looking"
+		phase === "address" || phase === "pairing"
+			? "Enter the address and code your server printed. Pasting the whole line fills both. Lost the code? Run virtues pair on your server."
+			: phase === "looking"
 			? `Looking over Bluetooth and on this network. If ${here} asks, allow both so Virtues can find your server.`
 			: phase === "choose"
 				? nothing
@@ -244,7 +293,7 @@
 			{/each}
 			{#each elsewhere as s (s.origin)}
 				<li>
-					<button type="button" class="server" onclick={() => prePair.toCodeEntry(s)}>
+					<button type="button" class="server" onclick={() => toAddress(s.origin)}>
 						<span class="name">{boxLabel(s.name)}</span>
 						<span class="state">
 							{s.claimed === true ? "Already set up, " : ""}{s.origin.replace(/^https?:\/\//, "")}
@@ -253,6 +302,39 @@
 				</li>
 			{/each}
 		</ul>
+	{:else if phase === "address" || phase === "pairing"}
+		<form class="pairform" onsubmit={(e) => (e.preventDefault(), pairHere())} in:rise>
+			<label class="field">
+				<span>Address</span>
+				<input
+					class="setup-field"
+					type="text"
+					autocomplete="off"
+					autocapitalize="off"
+					spellcheck="false"
+					placeholder="http://192.168.1.20:8000"
+					bind:this={addressEl}
+					bind:value={address}
+					disabled={phase === "pairing"}
+					oninput={onAddressInput}
+				/>
+			</label>
+			<label class="field">
+				<span>Code</span>
+				<input
+					class="setup-field"
+					type="text"
+					inputmode="numeric"
+					autocomplete="one-time-code"
+					placeholder="123 456"
+					bind:this={codeEl}
+					bind:value={code}
+					disabled={phase === "pairing"}
+					oninput={() => (error = null)}
+				/>
+			</label>
+			<button type="submit" hidden aria-hidden="true" tabindex="-1"></button>
+		</form>
 	{:else if phase === "words" || phase === "checking"}
 		<form class="one" onsubmit={(e) => (e.preventDefault(), openWithWords())} in:rise>
 			<input
@@ -298,14 +380,19 @@
 			{#if open.length === 1 && elsewhere.length === 0}
 				<button type="button" class="setup-go" onclick={() => choose(open[0])}>Set up {open[0].label}</button>
 			{/if}
+			<button type="button" class={nothing ? "setup-go" : "setup-past"} onclick={() => toAddress()}
+				>Enter address and code</button
+			>
+		{:else if phase === "address" || phase === "pairing"}
 			<button
 				type="button"
-				class={nothing ? "setup-go" : "setup-past"}
-				onclick={() => {
-					gen++;
-					prePair.toAddressEntry();
-				}}>Enter address and code</button
+				class="setup-go"
+				onclick={pairHere}
+				disabled={!address.trim() || !codeOk || phase === "pairing"}
 			>
+				{phase === "pairing" ? "Connecting…" : "Connect"}
+			</button>
+			<button type="button" class="setup-past" onclick={look} disabled={phase === "pairing"}>Search again</button>
 		{:else if phase === "words" || phase === "checking"}
 			<button type="button" class="setup-go" onclick={openWithWords} disabled={!fourWords || phase === "checking"}>
 				{phase === "checking" ? "Checking…" : "Continue"}
@@ -319,6 +406,20 @@
 </StepFrame>
 
 <style>
+	.pairform {
+		display: flex;
+		flex-direction: column;
+		gap: 14px;
+	}
+	.field {
+		display: flex;
+		flex-direction: column;
+		gap: 6px;
+	}
+	.field span {
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
 	.searching {
 		display: flex;
 		justify-content: center;

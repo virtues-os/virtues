@@ -40,7 +40,7 @@
 	import "$lib/components/setup/setup.css";
 	import { M, rise } from "$lib/components/setup/motion";
 	import { isMacOS } from "$lib/utils/platform";
-	import { applyTheme, DEFAULT_THEMES, getTheme, isValidTheme, setTheme } from "$lib/utils/theme";
+	import { applyTheme, DEFAULT_THEMES, isValidTheme, setTheme } from "$lib/utils/theme";
 	import { THEME_CHOSEN_KEY } from "$lib/components/setup/themeReveal";
 	import Hello from "$lib/components/onboarding/Hello.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
@@ -177,22 +177,12 @@
 	const step = $derived<SetupStepId | null>(isSetupStep(param) ? param : null);
 	const current = $derived(setup.steps.find((s) => s.id === step) ?? null);
 
-	/** What this copy knows that the server's can't read: how far through the
-	 *  reading they got, and a theme, only if one was picked on Welcome. A
-	 *  followed system mode or this copy's fallback stays here, so the server
-	 *  keeps its own rather than saving a choice nobody made. */
-	function carried(): Record<string, string> {
-		const out: Record<string, string> = { intro: String(setup.introStage) };
-		try {
-			if (localStorage.getItem(THEME_CHOSEN_KEY)) out.theme = getTheme();
-		} catch {
-			/* no theme to carry */
-		}
-		return out;
-	}
-
-	/** What the Mac's own copy handed over (`prePair.handOff`): taken once,
-	 *  then dropped from the address. */
+	/** What a copy of the app at another origin handed over in the address:
+	 *  how far through the reading they got, and the theme picked on Welcome.
+	 *  Taken once, then dropped from the address.
+	 *  TODO(2026-11-15): nothing sends these since the Mac pairs in its own
+	 *  copy; delete this and the `?intro`/`?theme` rule in inApp.ts unless the
+	 *  Windows app's own copy needs a hand-off (onboarding-diy-plan.md, slice 3). */
 	function takeCarried() {
 		const q = page.url.searchParams;
 		const intro = Number(q.get("intro"));
@@ -314,17 +304,34 @@
 	}
 
 	/**
+	 * Paired by address and code: wait for the server to answer here (this
+	 * device's connection to it is seconds old), then open this device's own
+	 * step. On a new server that step isn't reachable yet and the step guard
+	 * sends it to the first step still open; on a server that is already set
+	 * up, this device still gets its permissions. A server that never answers
+	 * reloads into Setup, which says it can't reach it.
+	 */
+	async function pairedByAddress() {
+		const until = Date.now() + 60_000;
+		for (;;) {
+			await setup.refresh();
+			if (gettingStarted.loaded && (gettingStarted.state || gettingStarted.unsupported)) break;
+			if (Date.now() > until) {
+				location.replace("/setup");
+				return;
+			}
+			await new Promise((r) => setTimeout(r, 1500));
+		}
+		go("connections");
+	}
+
+	/**
 	 * Paired: the second half reads the server, in place, so the mark and the
 	 * stage carry on without a reload. If the server can't be read yet (the
 	 * phone's connection to it is seconds old), reload into Setup, which
 	 * then starts from wherever the server says things stand.
 	 */
 	async function paired() {
-		// A computer carries on in the server's own copy of the app, told how
-		// far through the reading this one got and the theme picked on Welcome.
-		const away = await prePair.handOff(carried());
-		if (away === "away") return;
-		if (away === "silent") throw new Error("silent");
 		await setup.refresh();
 		if (!gettingStarted.loaded || (!gettingStarted.state && !gettingStarted.unsupported)) {
 			location.replace("/setup");
@@ -490,7 +497,7 @@
 					{:else if step === "account" && prePair.active}
 						<StepAccount onnext={() => advance("account")} />
 					{:else if step === "server" && prePair.active}
-						<StepServer onnext={() => advance("server")} />
+						<StepServer onnext={() => advance("server")} onpaired={pairedByAddress} />
 					{:else if step === "wifi" && (prePair.active || prePair.handingOver)}
 						<!-- Without an open link (a reload drops it) Wi-Fi isn't
 						     reachable, and the step guard sends it back to Server. -->
