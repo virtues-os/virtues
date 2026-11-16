@@ -147,10 +147,8 @@ commit:
 Item 3 is done (`4481b9939`), widened by the owner on 2026-11-15 to the
 display panel and Settings › Network's Wi-Fi: the HTTP owner proof moved to
 `virtues_iroh::owner_proof`, migration 0076 drops `app_setup_phrase` and
-`app_display`, and CI's Improv wire check went (`7e26efd08`). Still left:
-deleting `crates/virtues-improv` and the `bluer` dependency (both wait on
-`virtues-core/Cargo.toml`, which another change has open); the appliance
-image tooling (the installer and appliance detection went in `a0142c761`;
+`app_display`, and CI's Improv wire check went (`7e26efd08`). `crates/virtues-improv` and `bluer` are deleted (`4e032edd8`). Still left: the
+appliance image tooling (the installer and appliance detection went in `a0142c761`;
 its subcommands are wired through `virtues-core/src/main.rs`, also open) (`cli/deprovision.rs`, `cli/image_check.rs`,
 `tools/build-dragon.sh` and the imaging scripts). Every apt install turns on
 security-only automatic updates (`c8f074c4e`, owner's call 2026-11-15). Existing Dragons have Postgres relocated to a
