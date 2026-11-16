@@ -1152,20 +1152,7 @@ pub async fn consume_handler(
     // the fan-out, so its ingest action is created against an allowlisted device.
     crate::relay::after_pairing_change(pool.clone());
 
-    // FIRST claim freezes the setup phrase: it stops rotating, leaves the panel
-    // forever, and becomes this box's permanent credential — the one thing that
-    // will let its owner back in after a reset. Doing it here, at the moment the
-    // box stops being empty, is what makes the reset button safe: from now on a
-    // screwdriver can clear the claim but cannot re-make it.
-    //
-    // Best-effort and idempotent. A failure leaves the phrase rotating, which is
-    // a live-secret-on-glass problem worth shouting about — but never a reason to
-    // undo a pairing the device already believes in.
-    if let Err(e) = crate::api::setup_phrase::freeze_current(&pool).await {
-        tracing::error!(error = %e, "pair: could not freeze the setup phrase — it is still on the panel");
-    }
-
-    // Same moment, same reason: the standing pair code does not outlive claim.
+    // The standing pair code does not outlive claim.
     // The box now has an owner, so the always-live multi-use code is retired;
     // further devices are added with a one-time code minted on demand. The
     // rotator also stops once claimed, but expiring here kills the current one

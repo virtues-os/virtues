@@ -123,13 +123,6 @@ pub fn routes() -> Router<AppState> {
             "/api/system/history",
             get(crate::api::system_telemetry::history_handler),
         )
-        // Box network management (Settings → Box → Network) — the authed
-        // successors to the setup-phase /api/provision/* surface, which
-        // correctly evaporates at claim time, so a box on a captive guest
-        // network still has a way to leave. See api/network.rs.
-        .route("/api/network/status", get(crate::api::network::status_handler))
-        .route("/api/network/scan",   get(crate::api::network::scan_handler))
-        .route("/api/network/join",   post(crate::api::network::join_handler))
         // The rendezvous, named and switchable (agents/record/open-relay.md).
         .route(
             "/api/network/relay",
@@ -147,27 +140,6 @@ pub fn routes() -> Router<AppState> {
         .route(
             "/api/system/update/apply",
             post(apply_update_handler),
-        )
-        // The box's attached screen (Settings → Display). Deliberately NOT in
-        // the loopback-only /api/display/* family: that module's uniform
-        // box-local rule is its security argument, and these are the paired
-        // device's side of the glass — panel facts, the ambient face choice,
-        // and the restart verb. Nothing here carries the setup phrase.
-        .route(
-            "/api/system/display",
-            get(crate::api::system_display::get_display_settings_handler),
-        )
-        .route(
-            "/api/system/display/face",
-            put(crate::api::system_display::set_display_face_handler),
-        )
-        .route(
-            "/api/system/display/hours",
-            put(crate::api::system_display::set_display_hours_handler),
-        )
-        .route(
-            "/api/system/display/restart",
-            post(crate::api::system_display::restart_display_handler),
         )
 }
 

@@ -138,7 +138,7 @@ pub fn enroll_request(
     raw.extend_from_slice(b"Host: virtues\r\n");
     raw.extend_from_slice(b"Content-Type: application/json\r\n");
     if let Some(proof) = owner_proof {
-        let header = virtues_improv::protocol::HTTP_OWNER_PROOF_HEADER;
+        let header = virtues_iroh::owner_proof::HTTP_OWNER_PROOF_HEADER;
         raw.extend_from_slice(format!("{header}: {proof}\r\n").as_bytes());
     }
     raw.extend_from_slice(format!("Content-Length: {}\r\n", body.len()).as_bytes());

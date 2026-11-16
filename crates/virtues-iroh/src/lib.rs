@@ -17,6 +17,8 @@ mod client;
 mod endpoint;
 mod server;
 
+pub mod owner_proof;
+
 pub use client::{is_not_allowlisted, NotAllowlisted, PathKind, VirtuesIrohClient};
 pub use endpoint::{
     build_endpoint, install_crypto_provider, iroh_port, DEFAULT_IROH_PORT, VIRTUES_ALPN,

@@ -354,7 +354,7 @@ mod tests {
     }
 
     /// Tables that hold secrets or what authenticates the owner.
-    const SECRET_TABLES: [&str; 5] = ["credentials", "app_pair_token", "app_setup_phrase", "app_publications", "app_device"];
+    const SECRET_TABLES: [&str; 4] = ["credentials", "app_pair_token", "app_publications", "app_device"];
 
     /// Neither login holds any privilege on a table that holds secrets, after
     /// the boot grant sweep and after the second sweep every later boot runs.

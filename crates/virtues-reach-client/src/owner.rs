@@ -26,13 +26,13 @@ pub struct OwnerProof {
 /// Sign one HTTP request for the box: `method` and `path` exactly as the
 /// request will carry them (path without the query string), and the `nonce`
 /// the box issued at `POST /api/owner-proof/nonce`. Returns the value for the
-/// [`virtues_improv::protocol::HTTP_OWNER_PROOF_HEADER`] header.
+/// [`virtues_iroh::owner_proof::HTTP_OWNER_PROOF_HEADER`] header.
 ///
 /// Fails when this device is not paired, or was paired before devices had
 /// their own keys (`device_secret_hex` is `None` on those records) — neither
 /// can prove anything, and re-pairing is the only fix for the second.
 pub fn sign_http_owner_proof(store: &dyn BoxStore, method: &str, path: &str, nonce: &str) -> Result<String> {
-    use virtues_improv::protocol::{http_owner_proof_header, http_owner_proof_message};
+    use virtues_iroh::owner_proof::{http_owner_proof_header, http_owner_proof_message};
     let seed = paired_seed(store)?;
     let proof = sign_with_seed(&seed, &http_owner_proof_message(method, path, nonce));
     Ok(http_owner_proof_header(nonce, &proof.signature_hex))
@@ -139,7 +139,7 @@ mod tests {
 
     #[test]
     fn the_http_proof_verifies_against_the_allowlisted_key_for_its_request_only() {
-        use virtues_improv::protocol::{http_owner_proof_message, parse_http_owner_proof_header};
+        use virtues_iroh::owner_proof::{http_owner_proof_message, parse_http_owner_proof_header};
         let seed = [6u8; 32];
         let store = paired(Some(hex::encode(seed)));
         let header = sign_http_owner_proof(&store, "GET", "/api/passwords/login_1/secret", "00ff").unwrap();

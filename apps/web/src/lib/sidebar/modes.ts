@@ -154,15 +154,6 @@ export const SETTINGS_MODE: SidebarMode = {
 			href: '/virtues/applets',
 			group: 'Server',
 		},
-		// The screen on the server: what it shows, its hours, other screens.
-		{
-			id: 'display',
-			label: 'Display',
-			icon: 'mynaui:tv',
-			glyph: 'display',
-			href: '/virtues/display',
-			group: 'Server',
-		},
 		// In the order the questions get asked: is anything broken right now,
 		// what can I plug in, and what has actually been running.
 		{ id: 'sources', label: 'Overview', icon: 'mynaui:layout-dashboard', glyph: 'overview', href: '/sources', group: 'Sources' },

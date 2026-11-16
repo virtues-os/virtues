@@ -45,7 +45,6 @@
 		billing: 'mynaui:credit-card',
 		system: 'mynaui:servers',
 		devices: 'mynaui:desktop',
-		display: 'mynaui:monitor',
 		keys: 'mynaui:key',
 		shared: 'mynaui:share',
 

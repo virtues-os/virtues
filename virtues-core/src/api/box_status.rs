@@ -563,19 +563,9 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     // false on any transient LAN blip, which previously bounced a fully-set-up
     // user back into /setup.
     //
-    // `account` gates the APPLIANCE only. An appliance is a guided product: its
-    // panel sequences the three steps and the owner bought hardware that
-    // assumes a subscription, so requiring the link there is the intended
-    // shape. A DIY box is somebody's own server — forcing an account on it
-    // contradicts the doctrine outright ("prescribe, never enforce"), and until
-    // now this constant enforced it on both, with `/setup` offering no exit.
-    // That made the promise false for exactly the users it was written for.
-    let requires_account = crate::maintenance::setup_ap::is_appliance();
-    let required: &[&str] = if requires_account {
-        &["claimed", "account"]
-    } else {
-        &["claimed"]
-    };
+    // `account` is not required: the server is the owner's own, and forcing
+    // an account on it would contradict "prescribe, never enforce".
+    let required: &[&str] = &["claimed"];
     let setup_complete = setup
         .iter()
         .filter(|s| required.contains(&s.id))

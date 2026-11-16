@@ -9392,7 +9392,6 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "virtues-improv",
  "virtues-iroh",
 ]
 

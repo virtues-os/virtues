@@ -238,27 +238,6 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
         crate::api::drive::DriveConfig::new(client.storage.clone()),
     );
 
-    // Setup access point. An appliance arrives with no network and a display
-    // its owner cannot type on, so the box raises its own wifi and the phone
-    // does the typing. Up while unclaimed, down once a device pairs — NOT down
-    // when the box gets wifi, which would drop the network the phone is still
-    // sitting on mid-provision. No-op on a DIY box. See maintenance::setup_ap.
-    crate::maintenance::setup_ap::spawn(pool.clone());
-
-    // BLE wifi provisioning — the Improv service, and the PRIMARY setup path
-    // (the AP above is the frozen fallback). Advertised while unclaimed, gone
-    // once a device pairs. No-op on a DIY box and on non-Linux dev hosts. See
-    // maintenance::ble_provision for the week of hardware findings that led
-    // here.
-    crate::maintenance::ble_provision::spawn(pool.clone());
-
-    // The button behind the case. Held for three seconds, it forgets every
-    // paired device — and nothing else: not the network, not the account, not
-    // the data, and not the phrase. Anyone who can open the case can make that
-    // nuisance; only someone holding the four words can then claim the box.
-    // No-op off an appliance. See maintenance::reset_button.
-    crate::maintenance::reset_button::spawn(pool.clone());
-
     spawn_review_pair_code(pool.clone());
 
     // Entity resolver: periodically turns raw lake primitives (location points,
@@ -271,10 +250,6 @@ fn spawn_background(client: &Virtues, yjs_state: &yjs::YjsState) {
     // window or its scheduled time, then goes through the Mac app.
     crate::outbox::spawn(pool.clone());
 
-    // Hours — the screen's sleep schedule, enforced server-side because sleep
-    // is a precedence state (a held button must wake dark glass). No-op off
-    // an appliance. See api::system_display::sleep_engine.
-    crate::api::system_display::sleep_engine::spawn(pool.clone());
 }
 
 fn spawn_scheduler(pool: sqlx::PgPool, yjs_state: yjs::YjsState) {
@@ -624,51 +599,6 @@ fn public_routes() -> Router<AppState> {
             "/api/getting-started/interview",
             post(crate::api::getting_started::start_interview_handler),
         )
-        // What the attached 7" display renders. Registered here because the
-        // kiosk draws before any device is paired, but UNLIKE its neighbours
-        // above it carries the live pair code — so the handler itself refuses
-        // anything that isn't loopback. Proximity is the authority: a stranger
-        // on the wifi who cannot see the screen must not be able to claim the
-        // box. See api/display.rs.
-        .route(
-            "/api/display/state",
-            get(crate::api::display::display_state_handler),
-        )
-        // Lets the panel latch "an upgrade is running" while this server is
-        // still up to say so — after it stops, the kiosk's page is gone with
-        // it. See api/display.rs.
-        .route(
-            "/api/display/updating",
-            get(crate::api::display::display_updating_handler),
-        )
-        // The case button at 1s cadence — the 30s ambient poll cannot see a
-        // 3s hold. See api/display.rs.
-        .route(
-            "/api/display/button",
-            get(crate::api::display::display_button_handler),
-        )
-        // Wifi provisioning over the setup AP. The one unauthenticated WRITE
-        // surface on the box, and unauthenticated by necessity: the phone that
-        // just joined the AP has no credential yet, because obtaining one is
-        // what the rest of onboarding is for. Each handler re-checks both gates
-        // itself — caller is on the AP subnet (or loopback), and the box is
-        // still unclaimed — rather than trusting placement in this router.
-        // See api/provision.rs.
-        .route(
-            "/api/provision/networks",
-            get(crate::api::provision::networks_handler),
-        )
-        .route(
-            "/api/provision/join",
-            post(crate::api::provision::join_handler),
-        )
-        .route(
-            "/api/provision/status",
-            get(crate::api::provision::status_handler),
-        )
-        // No browser provisioning (`/portal`, `/provision`), on purpose: pairing
-        // needs a held iroh key a browser cannot have, and iOS captive sheets
-        // misbehave. BLE (`maintenance::ble_provision`) and `/api/network/*` do it.
         // Auth — pair-only model. Public consume + session probe (returns the
         // AuthUser resolved from the request's proven iroh key, if any).
         // /api/pair/{mint,confirm,deny,status} are auth'd and live under the
@@ -1664,7 +1594,7 @@ mod owner_proof_route_tests {
             req = req.header("content-type", "application/json");
         }
         if let Some(proof) = proof {
-            req = req.header(virtues_improv::protocol::HTTP_OWNER_PROOF_HEADER, proof);
+            req = req.header(virtues_iroh::owner_proof::HTTP_OWNER_PROOF_HEADER, proof);
         }
         let mut req = req.body(if has_body { Body::from("{}") } else { Body::empty() }).unwrap();
         req.extensions_mut().insert(virtues_iroh::ProvenPeer(mac_key().public()));
@@ -1719,8 +1649,8 @@ mod owner_proof_route_tests {
             .unwrap()
             .to_string();
         let path = "/api/keys/TEST_KEY/value";
-        let sig = mac_key().sign(&virtues_improv::protocol::http_owner_proof_message("GET", path, &nonce));
-        let proof = virtues_improv::protocol::http_owner_proof_header(&nonce, &hex::encode(sig.to_bytes()));
+        let sig = mac_key().sign(&virtues_iroh::owner_proof::http_owner_proof_message("GET", path, &nonce));
+        let proof = virtues_iroh::owner_proof::http_owner_proof_header(&nonce, &hex::encode(sig.to_bytes()));
         let res = app.call(from_mac("GET", path, Some(&proof))).await.unwrap();
         assert_eq!(res.status(), StatusCode::OK);
         let logged: Vec<(Option<String>, serde_json::Value)> = sqlx::query_as(
@@ -1764,8 +1694,8 @@ mod owner_proof_route_tests {
             .as_str()
             .unwrap()
             .to_string();
-        let sig = mac_key().sign(&virtues_improv::protocol::http_owner_proof_message(method, path, &nonce));
-        virtues_improv::protocol::http_owner_proof_header(&nonce, &hex::encode(sig.to_bytes()))
+        let sig = mac_key().sign(&virtues_iroh::owner_proof::http_owner_proof_message(method, path, &nonce));
+        virtues_iroh::owner_proof::http_owner_proof_header(&nonce, &hex::encode(sig.to_bytes()))
     }
 
     /// The body text of a response, for the chat route's own refusal shape.
@@ -1824,7 +1754,7 @@ mod owner_proof_route_tests {
         let paste = |proof: Option<&str>| {
             let mut headers = vec![("content-type", "image/png")];
             if let Some(p) = proof {
-                headers.push((virtues_improv::protocol::HTTP_OWNER_PROOF_HEADER, p));
+                headers.push((virtues_iroh::owner_proof::HTTP_OWNER_PROOF_HEADER, p));
             }
             from_mac_with("POST", "/api/terminal/paste", &headers, Body::empty())
         };
@@ -1840,7 +1770,7 @@ mod owner_proof_route_tests {
         let chat = |mode: &str, proof: Option<&str>| {
             let mut headers = vec![("content-type", "application/json")];
             if let Some(p) = proof {
-                headers.push((virtues_improv::protocol::HTTP_OWNER_PROOF_HEADER, p));
+                headers.push((virtues_iroh::owner_proof::HTTP_OWNER_PROOF_HEADER, p));
             }
             let body = serde_json::json!({ "chatId": "chat_admin_test", "messages": [], "agentMode": mode });
             from_mac_with("POST", "/api/chat", &headers, body.to_string())
@@ -1867,7 +1797,7 @@ mod owner_proof_route_tests {
         let grant = |entity_id: &str, proof: Option<&str>| {
             let mut headers = vec![("content-type", "application/json")];
             if let Some(p) = proof {
-                headers.push((virtues_improv::protocol::HTTP_OWNER_PROOF_HEADER, p));
+                headers.push((virtues_iroh::owner_proof::HTTP_OWNER_PROOF_HEADER, p));
             }
             let body = serde_json::json!({ "entity_id": entity_id, "entity_type": "command" });
             from_mac_with("POST", path, &headers, body.to_string())

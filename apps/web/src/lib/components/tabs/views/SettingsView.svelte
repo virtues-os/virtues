@@ -24,7 +24,6 @@
 	               /virtues/devices/:id    — another device, as the box knows it
 	  Shared links /virtues/shared         — every link shared through the door
 	  Applets      /virtues/applets        — every applet, built-in ones included
-	  Display      /virtues/display        — the screen on the box, and what it shows
 	  Developer    /virtues/developer      — SQL · Terminal
 
 	"Box" was three of those in one door (2026-08-17). It stacked a Wi-Fi
@@ -56,7 +55,6 @@
 	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
 	import DevicesView from '$lib/components/tabs/views/DevicesView.svelte';
-	import DisplayView from '$lib/components/tabs/views/DisplayView.svelte';
 	import DeviceView from '$lib/components/tabs/views/DeviceView.svelte';
 	import ThisDeviceView from '$lib/components/tabs/views/ThisDeviceView.svelte';
 	import DeveloperSqlView from '$lib/components/tabs/views/DeveloperSqlView.svelte';
@@ -97,10 +95,9 @@
 		// The 24h readings went back to System (2026-09-03): they are the
 		// machine measured, and had no business under a wallet balance.
 		'/virtues/system/history': '/virtues/system',
-		// Network, Display and Software stopped being top-level sections
-		// (2026-08-31). Network and Display are the machine's own connection and
-		// its own screen, so they live under System; Software described the
-		// release a DEVICE runs, so it became that device's page under Devices.
+		// Network lives under System, as the machine's own connection; Software
+		// described the release a DEVICE runs, so it is that device's page
+		// under Devices.
 		'/virtues/network': '/virtues/system',
 		'/virtues/software': '/virtues/devices/server',
 		// Box split into System · Network · Software (2026-08-17). Its own door
@@ -187,7 +184,6 @@
 		| 'devices'
 		| 'shared'
 		| 'applets'
-		| 'display'
 		| 'developer';
 
 	const SECTIONS = [
@@ -199,7 +195,6 @@
 		'devices',
 		'shared',
 		'applets',
-		'display',
 		'developer',
 	];
 
@@ -245,8 +240,6 @@
 			<SystemInfoView {tab} {active} />
 		{:else if section === 'search'}
 			<SearchSettingsView />
-		{:else if section === 'display'}
-			<DisplayView />
 		{:else if section === 'shared'}
 			<SharedLinksView />
 		{:else if section === 'applets'}

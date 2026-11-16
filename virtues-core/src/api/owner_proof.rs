@@ -26,14 +26,13 @@
 //!
 //! On each, the request carries an `X-Virtues-Owner-Proof` header: a nonce
 //! from `POST /api/owner-proof/nonce` and the device key's signature over
-//! `virtues_improv::protocol::http_owner_proof_message` of the method, the
+//! `virtues_iroh::owner_proof::http_owner_proof_message` of the method, the
 //! path and that nonce. A browser cannot set a header on a WebSocket, so the
 //! terminal socket alone may carry the same value in its `owner_proof` query
 //! parameter instead, signed over `GET /ws/terminal`. Only the app holds the
 //! key, and it signs natively
 //! (`virtues_reach_client::owner::sign_http_owner_proof`), so a process that
-//! can only open the loopback port cannot answer. The message has its own
-//! prefix, so a Bluetooth owner proof cannot be replayed here.
+//! can only open the loopback port cannot answer.
 //!
 //! The box's own console (a process on the box's loopback, and the dev
 //! fallback) is exempt: it can already read `virtues.env`. An agent device is
@@ -56,7 +55,7 @@ use axum::{
 use rand::RngCore;
 use serde_json::json;
 use sqlx::PgPool;
-use virtues_improv::protocol::{
+use virtues_iroh::owner_proof::{
     http_owner_proof_message, parse_http_owner_proof_header, HTTP_OWNER_PROOF_HEADER,
 };
 
@@ -319,7 +318,7 @@ mod tests {
 
     fn proof(key: &SecretKey, method: &str, path: &str, nonce: &str) -> String {
         let sig = key.sign(&http_owner_proof_message(method, path, nonce));
-        virtues_improv::protocol::http_owner_proof_header(nonce, &hex::encode(sig.to_bytes()))
+        virtues_iroh::owner_proof::http_owner_proof_header(nonce, &hex::encode(sig.to_bytes()))
     }
 
     fn mac(endpoint_id: &str) -> Requester<'_> {
@@ -401,11 +400,6 @@ mod tests {
         let h = proof(&k, "GET", "/api/settings/byo-key", &nonce);
         assert!(!accepts(&mut n, now, mac(&id), "DELETE", "/api/settings/byo-key", Some(&h)));
 
-        // The Bluetooth proof signs other bytes and is no use here.
-        let nonce = n.issue("dev_mac", now);
-        let ble = k.sign(&virtues_improv::owner_proof_message(nonce.as_bytes()));
-        let h = virtues_improv::protocol::http_owner_proof_header(&nonce, &hex::encode(ble.to_bytes()));
-        assert!(!accepts(&mut n, now, mac(&id), "GET", PATH, Some(&h)));
     }
 
     #[test]

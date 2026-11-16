@@ -91,7 +91,6 @@ pub async fn start(db: &PgPool, http: &reqwest::Client, atlas_url: &str) -> Resu
         "box": {
             "name": format!("virtues-{}", crate::codename::box_number()),
             "label": crate::api::identity::box_label(db).await,
-            "model": crate::maintenance::setup_ap::is_appliance().then_some("Dragon Q6A"),
             "endpoint_id": crate::relay::box_endpoint_id(),
             "version": crate::VERSION,
         }
@@ -136,16 +135,11 @@ pub async fn start(db: &PgPool, http: &reqwest::Client, atlas_url: &str) -> Resu
     })
 }
 
-/// Inject an app-supplied claim grant — a pre-approved `device_code` carried
-/// over BLE (RPC 0x82) — as this box's in-flight link. The normal poll loop
-/// redeems it the moment the box can reach atlas; nothing else about the flow
-/// changes, which is the point: the grant path reuses every line of the
-/// QR-path machinery below it (poll → api key → relay config → rebind).
-///
-/// The stored `user_code`/`verification_uri_complete` are empty on purpose:
-/// this link never had a code meant for a screen, and the display renders its
-/// pending state for the seconds it takes the redeem to land.
-pub async fn inject_grant(db: &PgPool, device_code: &str) -> Result<()> {
+/// Store a pre-approved `device_code` as this server's in-flight link, the
+/// state the poll loop redeems. Tests use it to stand up a link without
+/// atlas's start call.
+#[cfg(test)]
+async fn inject_grant(db: &PgPool, device_code: &str) -> Result<()> {
     if device_code.is_empty() {
         return Err(anyhow!("empty claim grant"));
     }
@@ -158,17 +152,10 @@ pub async fn inject_grant(db: &PgPool, device_code: &str) -> Result<()> {
     secrets::put(db, Kind::Box, INFLIGHT_KEY, device_code, &meta).await
 }
 
-/// The public bits of the in-flight link, if one exists. `user_code` is empty
-/// for app-injected grants (they never had a screen code).
-///
-/// This exists so the display can RESUME a link across a service restart —
-/// or notice a grant the app injected over BLE — instead of minting a fresh
-/// session on top of it: `start` overwrites the stored `device_code`, which
-/// would orphan a code someone may be mid-redeeming on their phone. The
-/// remaining TTL is not stored, so `expires_in` is a fixed optimistic guess;
-/// if the link actually expired, the next poll hears `expired` from atlas and
-/// clears it, which self-corrects within one interval.
-pub async fn inflight(db: &PgPool) -> Result<Option<LinkStart>> {
+/// The public bits of the in-flight link, if one exists. Tests read it to
+/// see whether a poll cleared the link.
+#[cfg(test)]
+async fn inflight(db: &PgPool) -> Result<Option<LinkStart>> {
     let Some((_device_code, meta)) = secrets::get(db, Kind::Box, INFLIGHT_KEY).await? else {
         return Ok(None);
     };
@@ -184,8 +171,8 @@ pub async fn inflight(db: &PgPool) -> Result<Option<LinkStart>> {
     }))
 }
 
-/// Serializes polls inside this process. The display loop, the BLE grant
-/// loop and the web UI can poll the same link at once. Without this, a poll
+/// Serializes polls inside this process. The web UI and the CLI can poll the
+/// same link at once. Without this, a poll
 /// that hears `claimed` while another is still storing the key would find no
 /// [`STORED_FROM_KEY`] record yet and report `Expired`. A poll from another
 /// process (`virtues subscribe`) is not covered, and can still do that if
