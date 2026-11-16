@@ -40,7 +40,7 @@
 	import {
 		ActivityHeatmap,
 		ChaptersSection,
-		StoriesSection,
+		ThingsSection,
 		DaysChronicle,
 		NarrativeIdentitySection,
 	} from '$lib/components/wiki';
@@ -105,7 +105,7 @@
 	//   - the day page is its own route (`/day`), not a `/wiki/<section>` one,
 	//     so the index's "Today" row points outside this view.
 
-	type Section = 'overview' | 'stories' | 'days' | 'years' | 'entities' | 'identity' | 'chapters' | 'history';
+	type Section = 'overview' | 'things' | 'days' | 'years' | 'entities' | 'identity' | 'chapters' | 'history';
 
 
 	// The active section comes from the route; the overview's index does the linking.
@@ -140,7 +140,10 @@
 			? 'overview'
 			: (FOLDS_INTO_ENTITIES as readonly string[]).includes(routeSegment)
 				? 'entities'
-				: (routeSegment as Section)
+				: // A tab saved while the room was called Stories opens Things.
+					routeSegment === 'stories'
+					? 'things'
+					: (routeSegment as Section)
 	);
 
 	// The lifeline left the wiki for the Timeline, the rail's own room for a
@@ -975,9 +978,9 @@
 			<div class="identity-wrap">
 				<ChaptersSection />
 			</div>
-		{:else if section === 'stories'}
+		{:else if section === 'things'}
 			<div class="identity-wrap">
-				<StoriesSection />
+				<ThingsSection />
 			</div>
 		{/if}
 	</main>

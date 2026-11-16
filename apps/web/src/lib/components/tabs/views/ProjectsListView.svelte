@@ -23,8 +23,9 @@
 	import {
 		newProject,
 		openProject,
+		outcomeLabel,
 		projectRowMenuItems,
-		unarchiveProject,
+		reopenProject,
 	} from '$lib/utils/projectActions';
 
 	let { active: _active }: { tab?: unknown; active?: boolean } = $props();
@@ -43,7 +44,7 @@
 		projects.length === 1 ? '1 project' : `${projects.length} projects`
 	);
 
-	// Folded by default: the archive is where finished things wait, not the
+	// Folded by default: finished and dropped projects wait here, out of the
 	// list you scan. The count on the head says there is something there.
 	let archivedOpen = $state(false);
 
@@ -99,7 +100,7 @@
 			loading={firstLoad}
 			error={projectStore.error}
 			emptyIcon={PROJECT_ICON}
-			emptyMessage={projects.length === 0 ? 'Every project is archived' : 'No projects match'}
+			emptyMessage={projects.length === 0 ? 'Every project has ended' : 'No projects match'}
 			loadingMessage="Loading projects…"
 			searchPlaceholder="Search projects…"
 			defaultViewMode="table"
@@ -113,6 +114,10 @@
 					<span class="name-cell">
 						<ProjectGlyph project={p} size={16} />
 						<span class="name-text">{p.name}</span>
+						{#if p.thing_title}
+							<!-- The thing it sits under, said quietly beside its name. -->
+							<span class="name-thing">{p.thing_title}</span>
+						{/if}
 					</span>
 				</td>
 <td class="col-num">{p.chat_count || '—'}</td>
@@ -149,7 +154,7 @@
 				onclick={() => (archivedOpen = !archivedOpen)}
 			>
 				<Icon icon={archivedOpen ? 'mynaui:chevron-down' : 'mynaui:chevron-right'} width="14" />
-				<span>Archived</span>
+				<span>Finished and dropped</span>
 				<span class="archived-count">{archived.length}</span>
 			</button>
 			{#if archivedOpen}
@@ -161,9 +166,9 @@
 								<span>{p.name}</span>
 							</button>
 							<span class="archived-when">
-								{p.archived_at ? `Archived ${formatRelativeTimestamp(p.archived_at)}` : ''}
+								{p.archived_at ? `${outcomeLabel(p)} ${formatRelativeTimestamp(p.archived_at)}` : ''}
 							</span>
-							<Button variant="secondary" size="sm" onclick={() => unarchiveProject(p)}>Unarchive</Button>
+							<Button variant="secondary" size="sm" onclick={() => reopenProject(p)}>Reopen</Button>
 						</li>
 					{/each}
 				</ul>
@@ -195,6 +200,11 @@
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
+	}
+	.name-thing {
+		flex-shrink: 0;
+		font-size: 0.8125rem;
+		color: var(--color-foreground-subtle);
 	}
 	.col-dim,
 	.col-num {
@@ -280,7 +290,7 @@
 		color: var(--color-foreground-muted);
 	}
 
-	/* The Archived fold: a group head like the sidebar's, air above it, no rule. */
+	/* The fold of ended projects: a group head like the sidebar's, air above it, no rule. */
 	.archived {
 		margin-top: 32px;
 	}

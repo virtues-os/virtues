@@ -1,9 +1,9 @@
 /**
  * Project Store
  *
- * A Project is the "room" a chat lives in — a manual collection the user returns
- * to (project, pet, hobby, goal, topic). It gathers entities, chats, and pages
- * as URL-native members and carries a single accent tint plus a catch-up memo.
+ * A project is the "room" a chat lives in: something unresolved the person is
+ * working toward, which ends finished or dropped. It gathers entities, chats,
+ * and pages as URL-native members and carries an accent tint and a brief.
  *
  * This store owns Project CRUD, the membership list, and the chat↔Project binding.
  * Tab/window/URL concerns live in `window-shell.svelte.ts`, not here.
@@ -22,6 +22,7 @@ import {
 	reorderProjectItems,
 	setProjectItemRole,
 	type ProjectItemRole,
+	type ProjectOutcome,
 	type Project,
 	type ProjectSummary,
 	type ProjectDetail
@@ -37,7 +38,7 @@ import { chatSessions } from '$lib/stores/chatSessions.svelte';
 const isChatUrl = (url: string) => url.startsWith('/chat/');
 
 export class ProjectStore {
-	/** Every project that is not in the trash, archived ones included. */
+	/** Every project that is not in the trash, ended ones included. */
 	private all = $state<ProjectSummary[]>([]);
 	loading = $state(false);
 	error = $state<string | null>(null);
@@ -70,14 +71,14 @@ export class ProjectStore {
 
 	/**
 	 * The working set — what the Home panel, ⌘K and "Add to project" list.
-	 * Archived projects are kept out here rather than at each reader, so a
-	 * closed project cannot leak into a menu that forgot to filter.
+	 * Ended projects are kept out here rather than at each reader, so one
+	 * cannot leak into a menu that forgot to filter.
 	 */
 	get projects(): ProjectSummary[] {
 		return this.all.filter((p) => !p.archived_at);
 	}
 
-	/** The closed ones, for the projects page's Archived fold. */
+	/** The ended ones, finished or dropped, for the projects page's fold. */
 	get archived(): ProjectSummary[] {
 		return this.all.filter((p) => !!p.archived_at);
 	}
@@ -99,9 +100,12 @@ export class ProjectStore {
 		}
 	}
 
-	/** POST /api/projects/:id/archive — close it, then refresh list and detail. */
-	async archive(id: string): Promise<void> {
-		await archiveProject(id);
+	/**
+	 * POST /api/projects/:id/archive — end it as finished or dropped, then
+	 * refresh list and detail. On an ended project it changes how it ended.
+	 */
+	async archive(id: string, outcome: ProjectOutcome): Promise<void> {
+		await archiveProject(id, outcome);
 		await this.afterArchiveChange(id);
 	}
 
@@ -137,8 +141,16 @@ export class ProjectStore {
 	}
 
 	/** POST /api/projects — create, refresh the list, return the new Project. */
-	async create(name: string, opts?: { icon?: string | null; accent_color?: string | null }): Promise<Project> {
-		const project = await createProject({ name, icon: opts?.icon, accent_color: opts?.accent_color });
+	async create(
+		name: string,
+		opts?: { icon?: string | null; accent_color?: string | null; thing_id?: string | null },
+	): Promise<Project> {
+		const project = await createProject({
+			name,
+			icon: opts?.icon,
+			accent_color: opts?.accent_color,
+			thing_id: opts?.thing_id,
+		});
 		await this.load();
 		return project;
 	}
@@ -152,6 +164,7 @@ export class ProjectStore {
 			accent_color?: string | null;
 			instructions?: string | null;
 			sort_order?: number;
+			thing_id?: string | null;
 		}
 	): Promise<Project> {
 		const updated = await updateProject(id, patch);

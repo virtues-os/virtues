@@ -6,6 +6,8 @@
 		getPlaceById,
 		getOrganizationById,
 		getDayByDate,
+		getThing,
+		type ThingDetailApi,
 		type WikiPersonApi,
 		type WikiPlaceApi,
 		type WikiOrganizationApi,
@@ -17,6 +19,7 @@
 		PersonPage,
 		PlacePage,
 		OrganizationPage,
+		ThingPage,
 	} from "$lib/components/wiki";
 
 	/**
@@ -33,7 +36,8 @@
 		| { kind: "day"; page: WikiDayApi }
 		| { kind: "person"; page: WikiPersonApi }
 		| { kind: "place"; page: WikiPlaceApi }
-		| { kind: "organization"; page: WikiOrganizationApi };
+		| { kind: "organization"; page: WikiOrganizationApi }
+		| { kind: "thing"; page: ThingDetailApi };
 
 	interface Props {
 		/** The entity ID to display (e.g., person_abc123, day_2026-01-25) */
@@ -162,6 +166,17 @@
 					break;
 				}
 
+				case "thing": {
+					const thing = await getThing(entityId);
+					if (thing) {
+						wikiPage = { kind: "thing", page: thing };
+						updateLabel(thing.title);
+					} else {
+						error = `Thing "${entityId}" not found`;
+					}
+					break;
+				}
+
 
 
 
@@ -227,6 +242,8 @@
 			<PlacePage page={wikiPage.page} />
 		{:else if wikiPage.kind === "organization"}
 			<OrganizationPage page={wikiPage.page} />
+		{:else if wikiPage.kind === "thing"}
+			<ThingPage page={wikiPage.page} onRenamed={updateLabel} />
 		{/if}
 	{:else}
 		<div class="error">

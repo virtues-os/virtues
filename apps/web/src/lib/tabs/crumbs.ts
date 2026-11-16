@@ -63,6 +63,7 @@ const WIKI_ENTITY_ROWS: Record<string, string> = {
 	person: '/wiki/people',
 	place: '/wiki/places',
 	org: '/wiki/orgs',
+	thing: '/wiki/things',
 	day: '/wiki/days',
 	year: '/wiki/years',
 };

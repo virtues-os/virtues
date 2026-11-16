@@ -20,6 +20,7 @@ pub mod library;
 pub mod mcp;
 pub mod pages;
 pub mod tasks;
+pub mod things;
 pub mod settings;
 pub mod wiki;
 

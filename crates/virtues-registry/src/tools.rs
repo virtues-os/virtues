@@ -105,7 +105,7 @@ fn create_task_tool() -> ToolConfig {
         id: "create_task".to_string(),
         name: "Add a task".to_string(),
         description: "Add tasks to your list".to_string(),
-        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). A task for "assistant" runs in the background, at its due time if it has one. Never for things only mentioned in passing. Titles: short, in their words."#.to_string(),
+        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). A task for "assistant" runs in the background, at its due time if it has one. Never for things only mentioned in passing. Titles: short, in their words. One step each. thing_id (a wiki_things id) puts it under a thing in place of a project. recur_every with recur_unit makes the owner's own task recur, that long after they finish it."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["tasks"],
@@ -120,7 +120,10 @@ fn create_task_tool() -> ToolConfig {
                             "notes": { "type": "string" },
                             "due": { "type": "string", "description": "Only if said: 2026-10-23 or 2026-10-23T17:00, owner's time" },
                             "for": { "type": "string", "enum": ["owner", "assistant"] },
-                            "project_id": { "type": "string" }
+                            "project_id": { "type": "string" },
+                            "thing_id": { "type": "string" },
+                            "recur_every": { "type": "integer" },
+                            "recur_unit": { "type": "string", "enum": ["day", "week", "month", "year"] }
                         }
                     }
                 },
@@ -141,7 +144,7 @@ fn update_task_tool() -> ToolConfig {
         id: "update_task".to_string(),
         name: "Update a task".to_string(),
         description: "Edit, finish or dismiss a task".to_string(),
-        llm_description: r#"Change one task by id: fields, status, or a note in its history. To finish one assigned to you: "ready" with a result, never "done". due "none" clears it."#.to_string(),
+        llm_description: r#"Change one task by id: fields, status, or a note in its history. To finish one assigned to you: "ready" with a result, never "done". "none" clears due, thing_id or recur_unit."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["id"],
@@ -152,6 +155,9 @@ fn update_task_tool() -> ToolConfig {
                 "due": { "type": "string" },
                 "for": { "type": "string", "enum": ["owner", "assistant"] },
                 "project_id": { "type": "string" },
+                "thing_id": { "type": "string" },
+                "recur_every": { "type": "integer" },
+                "recur_unit": { "type": "string" },
                 "status": { "type": "string", "enum": ["open", "active", "ready", "done", "dismissed"] },
                 "result": { "type": "string" },
                 "result_url": { "type": "string" },

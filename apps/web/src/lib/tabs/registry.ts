@@ -87,7 +87,7 @@ export interface TabDefinition {
  * section.
  */
 export const WIKI_SECTION_RE =
-	/^\/wiki\/(days|years|entities|identity|chapters|stories|lifeline|history|people|places|orgs|unlinked)$/;
+	/^\/wiki\/(days|years|entities|identity|chapters|things|stories|lifeline|history|people|places|orgs|unlinked)$/;
 
 /**
  * Sections of the Sources room. Same one-list rule as the wiki above, and here
@@ -331,6 +331,44 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		icon: 'mynaui:building',
 		defaultLabel: 'Organizations',
 		component: WikiListView,
+		detailComponent: WikiDetailView,
+	},
+
+	// ========================================================================
+	// THING NAMESPACE: /thing/{id}
+	//
+	// The list is the wiki's Things room, `/wiki/things`, so the bare path
+	// opens that room.
+	// ========================================================================
+	thing: {
+		match: (path) => path === '/thing' || /^\/thing\/[^/]+$/.test(path),
+		parse: (path) => {
+			if (path === '/thing') {
+				return {
+					type: 'wiki',
+					label: 'Wiki',
+					icon: 'mynaui:book',
+					normalizedRoute: '/wiki/things',
+				};
+			}
+			const match = path.match(/^\/thing\/([^/]+)$/);
+			return {
+				type: 'thing',
+				label: 'Thing',
+				icon: 'atlas:things',
+				entityId: match?.[1],
+			};
+		},
+		serialize: (id) => id || 'thing',
+		deserialize: (serialized) => {
+			if (serialized && serialized !== 'thing') {
+				return `/thing/${serialized}`;
+			}
+			return '/wiki/things';
+		},
+		icon: 'atlas:things',
+		defaultLabel: 'Things',
+		component: WikiView,
 		detailComponent: WikiDetailView,
 	},
 
@@ -986,6 +1024,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'person',
 		'place',
 		'org',
+		'thing',
 		'project',
 		// Detail before the room: /bookmark/{id} and /bookmarks are distinct
 		// paths, but keeping the pair adjacent is how the next person notices

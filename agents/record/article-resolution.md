@@ -41,6 +41,10 @@ This split keeps the cost down:
 | **first draft** | one model call, everything in the prompt | there is no existing text to respect and nothing to go looking for |
 | **revision** | an agent loop with tools | it must read the current article, work out what is genuinely new, find the evidence, decide whether it changes anything, and make a surgical edit — none of which is knowable in advance |
 
+(A story is called a thing since 2026-11-16: `wiki_stories` became
+`wiki_things`, and its brief is `thing.md`. This record keeps the word it was
+written with.)
+
 **Stories show why revision needs an agent.** Every other page is built on
 existing material: a day has
 its events, a year its days, a person the records that mention them. A story —

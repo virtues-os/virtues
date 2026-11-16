@@ -10,7 +10,7 @@ export { default as ActivityHeatmap } from './ActivityHeatmap.svelte';
 export { default as DaysChronicle } from './DaysChronicle.svelte';
 export { default as NarrativeIdentitySection } from './NarrativeIdentitySection.svelte';
 export { default as ChaptersSection } from './ChaptersSection.svelte';
-export { default as StoriesSection } from './StoriesSection.svelte';
+export { default as ThingsSection } from './ThingsSection.svelte';
 
 // Entity page sections
 export { default as EntityArticleSection } from './EntityArticleSection.svelte';
@@ -22,6 +22,7 @@ export { default as EntityRecordsSection } from './EntityRecordsSection.svelte';
 export { default as PersonPage } from './PersonPage.svelte';
 export { default as PlacePage } from './PlacePage.svelte';
 export { default as OrganizationPage } from './OrganizationPage.svelte';
+export { default as ThingPage } from './ThingPage.svelte';
 
 // Tables
 export { default as PersonTable } from './PersonTable.svelte';

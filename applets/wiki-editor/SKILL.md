@@ -25,7 +25,7 @@ YOU HAVE ALREADY BEEN GIVEN the article as it stands and what the record has
 for it. Do not spend a call rediscovering either. How much more to look up
 depends on what you were handed, and the brief for this kind of article says
 how to search: a year handed its days or a chapter handed its years usually
-needs few calls, while an entity or a story has to go and find its material.
+needs few calls, while an entity or a thing has to go and find its material.
 
 Spend calls on what a sentence needs, never on a survey. A run that spends its
 budget researching and writes nothing is the worst outcome available to you; it

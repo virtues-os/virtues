@@ -25,7 +25,7 @@ use std::collections::HashMap;
 pub struct ResolvedRef {
     /// The URL this resolves, echoed back so callers can key on it.
     pub url: String,
-    /// `person` | `place` | `org` | `page` | `drive` | `day` | `year` | `web`
+    /// `person` | `place` | `org` | `thing` | `page` | `drive` | `day` | `year` | `web`
     pub kind: String,
     /// Display name. Never empty — falls back to the id, then the URL.
     pub title: String,
@@ -239,9 +239,7 @@ async fn fetch_names(
         "org" => {
             "SELECT id, COALESCE(NULLIF(name, ''), id) FROM wiki_orgs WHERE id = ANY($1)"
         }
-        // No "thing" arm: migration 0071 dropped wiki_things and swept every
-        // stored /thing/ url. An unknown kind resolves to nothing, which is
-        // the right answer for a retired paradigm's stragglers.
+        "thing" => "SELECT id, COALESCE(NULLIF(title, ''), id) FROM wiki_things WHERE id = ANY($1)",
         "page" => {
             "SELECT id, COALESCE(NULLIF(title, ''), 'Untitled page') \
              FROM app_pages WHERE id = ANY($1)"
@@ -296,7 +294,7 @@ pub struct RefIdentity {
 /// that can be trashed.
 const OWNED: [&str; 3] = ["chat", "page", "project"];
 /// Kinds `fetch_names` can look up, so a miss means the record is gone.
-const LOOKED_UP: [&str; 4] = ["person", "place", "org", "drive"];
+const LOOKED_UP: [&str; 5] = ["person", "place", "org", "thing", "drive"];
 
 /// Resolve many URLs to identities. Chats, pages and projects are read here,
 /// with icon, color and trash state, and a database error is returned; every
@@ -421,16 +419,27 @@ mod tests {
             .unwrap();
         sqlx::query("UPDATE app_pages SET deleted_at = now() WHERE id = 'page_t'").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO wiki_people (id, name) VALUES ('person_i1', 'Nick')").execute(&pool).await.unwrap();
-        let urls: Vec<String> = ["/page/page_l", "/page/page_t", "/page/page_gone", "/person/person_i1", "/settings/display"]
-            .into_iter()
-            .map(String::from)
-            .collect();
+        sqlx::query("INSERT INTO wiki_things (id, title) VALUES ('thing_i1', 'The garden')").execute(&pool).await.unwrap();
+        let urls: Vec<String> = [
+            "/page/page_l",
+            "/page/page_t",
+            "/page/page_gone",
+            "/person/person_i1",
+            "/thing/thing_i1",
+            "/thing/thing_gone",
+            "/settings/display",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
         let got = resolve_identities(&pool, &urls).await.unwrap();
         let state = |u: &str| (got[u].state, got[u].title.clone());
         assert_eq!(state("/page/page_l"), ("live", "Live".into()));
         assert_eq!(state("/page/page_t").0, "trashed");
         assert_eq!(state("/page/page_gone").0, "gone");
         assert_eq!(state("/person/person_i1"), ("live", "Nick".into()));
+        assert_eq!(state("/thing/thing_i1"), ("live", "The garden".into()));
+        assert_eq!(state("/thing/thing_gone").0, "gone");
         assert_eq!(state("/settings/display").0, "unknown");
     }
 

@@ -1,6 +1,6 @@
 /**
- * Result toasts for archive and delete — the one place the app says what just
- * happened to something the person put away.
+ * Result toasts for ending a project and for delete — the one place the app
+ * says what just happened to something the person put away.
  *
  * Both actions used to be silent on success: a confirm dialog, then the row
  * vanished and (for a project or chat) the tab closed under you. The only
@@ -19,6 +19,7 @@ import { toast } from 'svelte-sonner';
 import {
 	restoreTrashed,
 	restoreDriveFile,
+	type ProjectOutcome,
 	type TrashKind,
 } from '$lib/api/client';
 import { chatSessions } from '$lib/stores/chatSessions.svelte';
@@ -129,20 +130,20 @@ export function notifyTrashed(opts: TrashedOptions): void {
 }
 
 /**
- * A project was archived. No View: archiving leaves it open in front of you,
- * and the fold it went to is one click down the projects list.
+ * A project ended, finished or dropped. No View: ending leaves it open in
+ * front of you, and the fold it went to is one click down the projects list.
  */
-export function notifyArchived(id: string, name: string | null | undefined): void {
-	toast(`Archived ${quoted(name)}`, {
-		description: 'Find it under Archived on your projects list',
+export function notifyEnded(id: string, name: string | null | undefined, outcome: ProjectOutcome): void {
+	toast(`${outcome === 'finished' ? 'Finished' : 'Dropped'} ${quoted(name)}`, {
+		description: 'Find it under Finished and dropped on your projects list',
 		duration: UNDO_DURATION,
 		action: {
 			label: 'Undo',
 			onClick: () => {
 				void projectStore.unarchive(id).catch((e) => {
-					console.error('[toasts] unarchive failed:', e);
+					console.error('[toasts] reopen failed:', e);
 					toast.error(`Your server couldn't reopen ${quoted(name)}`, {
-						description: 'Try Unarchive on your projects list',
+						description: 'Try Reopen on your projects list',
 					});
 				});
 			},

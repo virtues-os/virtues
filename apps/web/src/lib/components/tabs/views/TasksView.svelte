@@ -15,6 +15,10 @@
 	 * opens in place, with its title editable in the row. No counts, no
 	 * pills and no red anywhere: the list must never nag.
 	 *
+	 * A to-do can sit under a project or a thing, and it can recur: finishing
+	 * it opens the next one, due that long after today, so one is open at a
+	 * time and a missed one never piles up.
+	 *
 	 * The server works requests in the background, so while one is queued or
 	 * running the page reloads the list every few seconds.
 	 */
@@ -22,6 +26,7 @@
 	import { addTaskNote, getByoKey, listTaskEvents, type Task, type TaskEvent, type TaskPatch } from "$lib/api/client";
 	import { tasksStore } from "$lib/stores/tasks.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
+	import { thingsStore } from "$lib/stores/things.svelte";
 	import { pagesStore } from "$lib/stores/pages.svelte";
 	import { modelSlots } from "$lib/stores/modelSlots.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
@@ -30,11 +35,15 @@
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
+	import MenuItem from "$lib/components/MenuItem.svelte";
 	import RefCard from "$lib/components/RefCard.svelte";
 	import Popover from "$lib/floating/primitives/Popover.svelte";
+	import TaskCheck from "$lib/components/tasks/TaskCheck.svelte";
 	import TaskComposer from "$lib/components/tasks/TaskComposer.svelte";
 	import DuePicker from "$lib/components/tasks/DuePicker.svelte";
+	import { isClosed, toggleTaskDone } from "$lib/tasks/actions";
 	import { dueGroup, dueLabel, isoDay, parseDue, type DueGroup } from "$lib/tasks/due";
+	import { RECUR_CHOICES, recurLabel, recurrenceOf, type Recurrence } from "$lib/tasks/recur";
 	import { toast } from "svelte-sonner";
 	import { onMount, tick } from "svelte";
 
@@ -118,6 +127,12 @@
 		return names;
 	});
 
+	/** What a task sits under, by name: its project or its thing. */
+	function parentName(t: Task): string | undefined {
+		if (t.project_id) return projectName.get(t.project_id);
+		return thingsStore.byId(t.thing_id)?.title;
+	}
+
 	// ── loading and live refresh ────────────────────────────────────────────
 
 	$effect(() => {
@@ -150,6 +165,7 @@
 
 	onMount(() => {
 		if (!projectStore.loaded) void projectStore.load();
+		thingsStore.ensure();
 		if (!modelSlots.loaded) void modelSlots.load();
 		void getByoKey<{ endpoint_url?: string | null }>()
 			.then((s) => (byoPlace = placeOf(s.endpoint_url)))
@@ -244,12 +260,8 @@
 		}
 	}
 
-	function isClosed(t: Task): boolean {
-		return t.status === "done" || t.status === "dismissed";
-	}
-
 	function toggleDone(t: Task) {
-		void save(t.id, { status: isClosed(t) ? "open" : "done" }, "Your server couldn't update that task");
+		void toggleTaskDone(t);
 	}
 
 	function accept(t: Task) {
@@ -290,8 +302,22 @@
 		void save(t.id, { due_on, due_at }, "Your server couldn't change that date");
 	}
 
-	function saveProject(t: Task, project_id: string | null) {
-		if (project_id !== t.project_id) void save(t.id, { project_id }, "Your server couldn't move that");
+	/** Put a task under a project, under a thing, or on its own. */
+	function saveParent(t: Task, parent: { project_id: string } | { thing_id: string } | null) {
+		const project_id = parent && "project_id" in parent ? parent.project_id : null;
+		const thing_id = parent && "thing_id" in parent ? parent.thing_id : null;
+		if (project_id === (t.project_id ?? null) && thing_id === (t.thing_id ?? null)) return;
+		void save(t.id, { project_id, thing_id }, "Your server couldn't move that");
+	}
+
+	function saveRecurrence(t: Task, recurs: Recurrence | null) {
+		const now = recurrenceOf(t);
+		if ((recurs?.every ?? null) === (now?.every ?? null) && (recurs?.unit ?? null) === (now?.unit ?? null)) return;
+		void save(
+			t.id,
+			{ recur_every: recurs?.every ?? null, recur_unit: recurs?.unit ?? null },
+			"Your server couldn't change how that recurs",
+		);
 	}
 
 	/** Reply to a ready request: it runs again in the same work chat. */
@@ -346,13 +372,15 @@
 	let focused = $state<string | null>(null);
 	let history = $state<TaskEvent[]>([]);
 	let duePickerOpen = $state(false);
-	let projectPickerOpen = $state(false);
+	let parentPickerOpen = $state(false);
+	let recurPickerOpen = $state(false);
 
 	function open(id: string | null, focusTitle = false) {
 		expanded = id;
 		history = [];
 		duePickerOpen = false;
-		projectPickerOpen = false;
+		parentPickerOpen = false;
+		recurPickerOpen = false;
 		if (!id) return;
 		focused = id;
 		void loadHistory(id);
@@ -410,7 +438,7 @@
 	function onKeydown(e: KeyboardEvent) {
 		if (!active || e.defaultPrevented) return;
 		// A picker that is open takes its own Escape.
-		if (duePickerOpen || projectPickerOpen) return;
+		if (duePickerOpen || parentPickerOpen || recurPickerOpen) return;
 		if (e.key === "Escape" && expanded) {
 			const id = expanded;
 			open(null);
@@ -453,7 +481,7 @@
 		const body = e.body as Record<string, unknown>;
 		switch (e.kind) {
 			case "created":
-				return `${who} added this`;
+				return body.recurred_from ? "It came back after the last one was finished" : `${who} added this`;
 			case "status": {
 				const to = String(body.to ?? "");
 				const said: Record<string, string> = {
@@ -477,6 +505,9 @@
 					due_on: "date",
 					due_at: "time",
 					project_id: "project",
+					thing_id: "thing",
+					recur_every: "recurrence",
+					recur_unit: "recurrence",
 					result_url: "result",
 				};
 				const changed = [...new Set(fields.map((f) => names[f] ?? f))];
@@ -661,26 +692,17 @@
 
 {#snippet line(t: Task)}
 	{@const request = t.assignee === "assistant" && !isClosed(t)}
-	{@const project = t.project_id ? projectName.get(t.project_id) : undefined}
+	{@const parent = parentName(t)}
+	{@const recurs = isClosed(t) ? null : recurrenceOf(t)}
 	<div class="line">
 		{#if request}
 			{@render mark(t)}
 		{:else}
-			<button
-				type="button"
-				class="check"
-				class:checked={t.status === "done"}
-				role="checkbox"
-				aria-checked={t.status === "done"}
-				aria-label={isClosed(t) ? `Reopen ${t.title}` : `Complete ${t.title}`}
+			<TaskCheck
+				done={t.status === "done"}
+				label={isClosed(t) ? `Reopen ${t.title}` : `Complete ${t.title}`}
 				onclick={() => toggleDone(t)}
-			>
-				{#if t.status === "done"}
-					<svg viewBox="0 0 16 16" width="12" height="12" aria-hidden="true"
-						><path d="M4 8.3 6.7 11 12 5.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" /></svg
-					>
-				{/if}
-			</button>
+			/>
 		{/if}
 		{#if expanded === t.id && !isClosed(t)}
 			<input
@@ -705,8 +727,11 @@
 			{:else if t.due_on && !isClosed(t)}
 				<span>{dueLabel(t.due_on, t.due_at)}</span>
 			{/if}
-			{#if project}
-				<span>{project}</span>
+			{#if recurs}
+				<span>{recurLabel(recurs.every, recurs.unit).toLowerCase()}</span>
+			{/if}
+			{#if parent}
+				<span>{parent}</span>
 			{/if}
 		</button>
 		{#if !isClosed(t)}
@@ -741,7 +766,8 @@
 
 {#snippet detail(t: Task)}
 	{@const request = t.assignee === "assistant"}
-	{@const project = t.project_id ? projectName.get(t.project_id) : undefined}
+	{@const parent = parentName(t)}
+	{@const recurs = recurrenceOf(t)}
 	{@const where = whereItRan(t)}
 	<div class="detail">
 		{#key t.id}
@@ -773,39 +799,89 @@
 				{/snippet}
 			</Popover>
 			<span class="dot" aria-hidden="true">·</span>
-			<Popover bind:open={projectPickerOpen} placement="bottom-start" offset={4}>
-				{#snippet trigger({ toggle: toggleProject })}
-					<button type="button" class="fact" onclick={toggleProject} aria-haspopup="menu">
-						{project ?? "No project"}
+			<Popover bind:open={parentPickerOpen} placement="bottom-start" offset={4}>
+				{#snippet trigger({ toggle: toggleParent })}
+					<button type="button" class="fact" onclick={toggleParent} aria-haspopup="menu">
+						{parent ?? "On its own"}
 					</button>
 				{/snippet}
 				{#snippet children({ close })}
-					<div class="menu" role="menu">
-						<button
-							type="button"
+					<div class="menu" role="menu" aria-label="What this task sits under">
+						<MenuItem
 							role="menuitemradio"
-							aria-checked={!t.project_id}
-							class="menu-item"
+							checked={!t.project_id && !t.thing_id}
+							label="On its own"
 							onclick={() => {
-								saveProject(t, null);
+								saveParent(t, null);
 								close();
-							}}>No project</button
-						>
-						{#each projectStore.projects as p (p.id)}
-							<button
-								type="button"
-								role="menuitemradio"
-								aria-checked={t.project_id === p.id}
-								class="menu-item"
-								onclick={() => {
-									saveProject(t, p.id);
-									close();
-								}}>{p.name}</button
-							>
-						{/each}
+							}}
+						/>
+						{#if projectStore.projects.length > 0}
+							<p class="menu-label">Projects</p>
+							{#each projectStore.projects as p (p.id)}
+								<MenuItem
+									role="menuitemradio"
+									checked={t.project_id === p.id}
+									label={p.name}
+									onclick={() => {
+										saveParent(t, { project_id: p.id });
+										close();
+									}}
+								/>
+							{/each}
+						{/if}
+						{#if thingsStore.things.length > 0}
+							<p class="menu-label">Things</p>
+							{#each thingsStore.things as th (th.id)}
+								<MenuItem
+									role="menuitemradio"
+									checked={t.thing_id === th.id}
+									label={th.title}
+									onclick={() => {
+										saveParent(t, { thing_id: th.id });
+										close();
+									}}
+								/>
+							{/each}
+						{/if}
 					</div>
 				{/snippet}
 			</Popover>
+			{#if !request}
+				<span class="dot" aria-hidden="true">·</span>
+				<Popover bind:open={recurPickerOpen} placement="bottom-start" offset={4}>
+					{#snippet trigger({ toggle: toggleRecur })}
+						<button type="button" class="fact" onclick={toggleRecur} aria-haspopup="menu">
+							{recurs ? recurLabel(recurs.every, recurs.unit) : "Once"}
+						</button>
+					{/snippet}
+					{#snippet children({ close })}
+						<div class="menu" role="menu" aria-label="How often this task recurs">
+							<MenuItem
+								role="menuitemradio"
+								checked={!recurs}
+								label="Once"
+								onclick={() => {
+									saveRecurrence(t, null);
+									close();
+								}}
+							/>
+							{#each RECUR_CHOICES as choice (choice.every + choice.unit)}
+								<MenuItem
+									role="menuitemradio"
+									checked={recurs?.every === choice.every && recurs?.unit === choice.unit}
+									label={recurLabel(choice.every, choice.unit)}
+									onclick={() => {
+										saveRecurrence(t, choice);
+										close();
+									}}
+								/>
+							{/each}
+							<p class="menu-note">Counted from the day you finish it.</p>
+						</div>
+					{/snippet}
+				</Popover>
+			{/if}
 			{#if t.source_url}
 				<span class="dot" aria-hidden="true">·</span>
 				<button type="button" class="fact" onclick={() => openRoute(t.source_url!)}>
@@ -824,7 +900,10 @@
 		{#if !isClosed(t)}
 			<div class="actions">
 				{#if !request}
-					<button type="button" class="action" onclick={() => handOver(t)}>Ask the assistant to do it</button>
+					<!-- A recurring to-do stays yours: a request runs once. -->
+					{#if !recurs}
+						<button type="button" class="action" onclick={() => handOver(t)}>Ask the assistant to do it</button>
+					{/if}
 				{:else if t.status !== "ready"}
 					{#if t.status === "open" && !t.next_run_at}
 						<button type="button" class="action strong" onclick={() => handOver(t)}>Start</button>
@@ -978,28 +1057,6 @@
 	}
 	.line:hover .dismiss {
 		opacity: 1;
-	}
-
-	.check {
-		flex-shrink: 0;
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 18px;
-		height: 18px;
-		border-radius: 50%;
-		border: 1.5px solid var(--color-foreground-subtle);
-		background: transparent;
-		color: var(--color-background);
-		cursor: pointer;
-		transition: background-color 120ms ease, border-color 120ms ease;
-	}
-	.check:hover {
-		border-color: var(--color-foreground-muted);
-	}
-	.check.checked {
-		background: var(--color-foreground-muted);
-		border-color: var(--color-foreground-muted);
 	}
 
 	.mark {
@@ -1193,20 +1250,17 @@
 		border: 1px solid var(--color-border);
 		border-radius: var(--radius-lg);
 	}
-	.menu-item {
-		text-align: left;
-		background: none;
-		border: none;
-		border-radius: var(--radius-md);
-		padding: 0.375rem 0.5rem;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-foreground);
-		cursor: pointer;
+	.menu-label,
+	.menu-note {
+		margin: 0;
+		padding: 0.5rem 0.5rem 0.25rem;
+		font-size: 0.75rem;
+		color: var(--color-foreground-subtle);
 	}
-	.menu-item:hover,
-	.menu-item[aria-checked="true"] {
-		background: color-mix(in srgb, var(--wash-ink) 6%, transparent);
+	.menu-note {
+		max-width: 14rem;
+		padding-bottom: 0.5rem;
+		line-height: 1.4;
 	}
 
 	.history {

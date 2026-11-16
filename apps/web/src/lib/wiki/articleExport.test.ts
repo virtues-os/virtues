@@ -27,7 +27,7 @@ const CORPUS = path.join(ROOT, "crates/virtues-document/tests/corpus/articles.js
 
 interface Entry {
 	name: string;
-	kind: "day" | "year" | "entity" | "story" | "identity";
+	kind: "day" | "year" | "entity" | "thing" | "identity";
 	markdown: string;
 	export: string;
 	/** The export is the markdown, byte for byte (the crate's own test holds it). */

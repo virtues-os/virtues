@@ -130,6 +130,15 @@ pub async fn home_timezone_or_utc(pool: &PgPool, date: NaiveDate) -> String {
     .unwrap_or_else(|| "UTC".to_string())
 }
 
+/// The owner's today, in the box's home zone (UTC when it cannot be read).
+pub async fn home_today(pool: &PgPool) -> NaiveDate {
+    let now = Utc::now();
+    let zone = home_timezone_or_utc(pool, now.date_naive()).await;
+    zone.parse::<chrono_tz::Tz>()
+        .map(|tz| now.with_timezone(&tz).date_naive())
+        .unwrap_or_else(|_| now.date_naive())
+}
+
 /// Set the transaction's `TimeZone` to the owner's, so SQL someone else wrote
 /// reads dates the way the owner does: a bare `'2026-10-06'`, `::date`,
 /// `date_trunc('day', …)` and `to_char(…)` mean the owner's day and clock, not

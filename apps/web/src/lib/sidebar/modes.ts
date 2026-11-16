@@ -325,17 +325,15 @@ export const WIKI_MODE: SidebarMode = {
 			href: '/wiki/orgs',
 			group: 'Subjects',
 		},
-		// A subject, not a span — which is exactly what `api/stories.rs` says
-		// separates a story from a chapter: "Sailing" is a thing the
-		// record is about, "the Berlin years" is a stretch of it. Both are named
-		// by the person rather than derived, which is why they used to sit
-		// together; the two axes split them, and the split is the right one.
+		// What goes on in a life and the person named: "Sailing", "The garden".
+		// A subject like a person or a place, with one difference: nothing in
+		// the record resolves to it, so only the person adds one.
 		{
-			id: 'stories',
-			label: 'Stories',
-			icon: 'mynaui:book',
-			glyph: 'stories',
-			href: '/wiki/stories',
+			id: 'things',
+			label: 'Things',
+			icon: 'mynaui:box',
+			glyph: 'things',
+			href: '/wiki/things',
 			group: 'Subjects',
 		},
 		{

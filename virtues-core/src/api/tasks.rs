@@ -7,6 +7,12 @@
 //!
 //! A task assigned to the assistant is a request. Whenever a write leaves a
 //! request open, `queue_time` decides when the worker may run it.
+//!
+//! A task is one step. It sits under a project, under a thing
+//! (`crate::api::things`) or under nothing, with one parent at most. The
+//! owner's own task can recur: finishing it opens the next occurrence, due
+//! `recur_every` `recur_unit`s after the day it was finished, so one
+//! occurrence is open at a time and a missed one never piles up.
 
 use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
@@ -18,8 +24,12 @@ use crate::ids::{generate_id, TASK_PREFIX};
 use crate::types::Timestamp;
 
 const TASK_COLUMNS: &str = "id, title, notes, assignee, status, due_on, due_at, project_id, \
+     thing_id, recur_every, recur_unit, recurred_from_id, \
      origin, source_url, sort_order, closed_at, created_at, updated_at, result, result_url, \
      chat_id, next_run_at, attempts";
+
+/// The units a task can recur in.
+const RECUR_UNITS: [&str; 4] = ["day", "week", "month", "year"];
 
 /// What a request's runs used, read from its work chat's AI calls: the
 /// model and purse of the latest call, and the wallet spend across all of
@@ -110,6 +120,15 @@ pub struct Task {
     pub due_on: Option<NaiveDate>,
     pub due_at: Option<Timestamp>,
     pub project_id: Option<String>,
+    /// The thing it sits under. A task has one parent at most: a project or a
+    /// thing.
+    pub thing_id: Option<String>,
+    /// It recurs every `recur_every` `recur_unit`s (`day`, `week`, `month` or
+    /// `year`), counted from the day the owner finishes it. Both null: once.
+    pub recur_every: Option<i32>,
+    pub recur_unit: Option<String>,
+    /// The occurrence this one followed, for a task that recurred.
+    pub recurred_from_id: Option<String>,
     pub origin: String,
     pub source_url: Option<String>,
     pub sort_order: f64,
@@ -180,9 +199,10 @@ pub struct ListFilter {
     pub status: Option<String>,
     pub assignee: Option<Actor>,
     pub project_id: Option<String>,
+    pub thing_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 pub struct NewTask {
     pub title: String,
     pub notes: Option<String>,
@@ -190,6 +210,10 @@ pub struct NewTask {
     pub due_on: Option<NaiveDate>,
     pub due_at: Option<Timestamp>,
     pub project_id: Option<String>,
+    pub thing_id: Option<String>,
+    /// Recurrence, as a pair: both or neither.
+    pub recur_every: Option<i32>,
+    pub recur_unit: Option<String>,
     pub source_url: Option<String>,
 }
 
@@ -207,6 +231,15 @@ pub struct TaskPatch {
     pub due_at: Option<Option<Timestamp>>,
     #[serde(default, deserialize_with = "double_option")]
     pub project_id: Option<Option<String>>,
+    /// Moving a task under a thing takes it out of its project, and moving
+    /// it into a project takes it out from under its thing.
+    #[serde(default, deserialize_with = "double_option")]
+    pub thing_id: Option<Option<String>>,
+    /// Recurrence, set or cleared as a pair.
+    #[serde(default, deserialize_with = "double_option")]
+    pub recur_every: Option<Option<i32>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub recur_unit: Option<Option<String>>,
     pub sort_order: Option<f64>,
     /// Only the assistant writes a result, when it marks a request ready.
     #[serde(skip)]
@@ -241,6 +274,7 @@ pub async fn list_tasks(pool: &PgPool, filter: &ListFilter) -> Result<Vec<Task>>
          WHERE status = ANY($1)
            AND ($2::text IS NULL OR assignee = $2)
            AND ($3::text IS NULL OR project_id = $3)
+           AND ($4::text IS NULL OR thing_id = $4)
          ORDER BY closed_at DESC NULLS FIRST, due_on ASC NULLS LAST,
                   due_at ASC NULLS LAST, sort_order ASC, created_at DESC
          LIMIT 1000"
@@ -249,6 +283,7 @@ pub async fn list_tasks(pool: &PgPool, filter: &ListFilter) -> Result<Vec<Task>>
         .bind(&statuses)
         .bind(filter.assignee.map(Actor::as_str))
         .bind(&filter.project_id)
+        .bind(&filter.thing_id)
         .fetch_all(pool)
         .await?)
 }
@@ -291,12 +326,25 @@ pub async fn create_tasks(
             ));
         }
         let next_run_at = (assignee == Actor::Assistant).then(|| queue_time(new.due_at));
+        let project_id = clean_text(new.project_id);
+        let thing_id = clean_text(new.thing_id);
+        if project_id.is_some() && thing_id.is_some() {
+            return Err(one_parent());
+        }
+        if let Some(thing_id) = &thing_id {
+            require_thing(&mut tx, thing_id).await?;
+        }
+        let (recur_every, recur_unit) = clean_recurrence(new.recur_every, new.recur_unit)?;
+        if recur_every.is_some() && assignee == Actor::Assistant {
+            return Err(requests_run_once());
+        }
         // Keep the order they were given: the first ends up on top.
         let sort_order = top - (count - i) as f64;
         let sql = format!(
             "INSERT INTO app_tasks (id, title, notes, assignee, due_on, due_at, project_id,
-                                    origin, source_url, sort_order, next_run_at)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                                    origin, source_url, sort_order, next_run_at,
+                                    thing_id, recur_every, recur_unit)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
              RETURNING {TASK_COLUMNS}"
         );
         let task = sqlx::query_as::<_, Task>(&sql)
@@ -306,11 +354,14 @@ pub async fn create_tasks(
             .bind(assignee.as_str())
             .bind(due_on)
             .bind(new.due_at)
-            .bind(&new.project_id)
+            .bind(&project_id)
             .bind(origin.as_str())
             .bind(clean_text(new.source_url))
             .bind(sort_order)
             .bind(next_run_at)
+            .bind(&thing_id)
+            .bind(recur_every)
+            .bind(&recur_unit)
             .fetch_one(&mut *tx)
             .await?;
         append_event(&mut tx, &task.id, writer, "created", json!({ "title": title })).await?;
@@ -363,8 +414,28 @@ pub async fn update_task(
         }
     }
     next.due_on = due_day(next.due_on, next.due_at);
+    let to_project = matches!(patch.project_id, Some(Some(_)));
+    let to_thing = matches!(patch.thing_id, Some(Some(_)));
     if let Some(project_id) = patch.project_id {
-        next.project_id = project_id;
+        next.project_id = clean_text(project_id);
+    }
+    if let Some(thing_id) = patch.thing_id {
+        next.thing_id = clean_text(thing_id);
+    }
+    if next.project_id.is_some() && next.thing_id.is_some() {
+        match (to_project, to_thing) {
+            (true, false) => next.thing_id = None,
+            (false, true) => next.project_id = None,
+            _ => return Err(one_parent()),
+        }
+    }
+    if let Some(thing_id) = next.thing_id.as_ref().filter(|t| before.thing_id.as_ref() != Some(*t)) {
+        require_thing(&mut tx, thing_id).await?;
+    }
+    if patch.recur_every.is_some() || patch.recur_unit.is_some() {
+        let every = patch.recur_every.unwrap_or(before.recur_every);
+        let unit = patch.recur_unit.clone().unwrap_or_else(|| before.recur_unit.clone());
+        (next.recur_every, next.recur_unit) = clean_recurrence(every, unit)?;
     }
     if let Some(sort_order) = patch.sort_order {
         next.sort_order = sort_order;
@@ -384,6 +455,9 @@ pub async fn update_task(
     }
     if let Some(result_url) = patch.result_url {
         next.result_url = clean_text(result_url);
+    }
+    if next.recur_every.is_some() && next.assignee == "assistant" {
+        return Err(requests_run_once());
     }
     // A request queues when a write leaves it open and it was not already
     // waiting on the same time. A request that is not open never runs.
@@ -410,7 +484,8 @@ pub async fn update_task(
         "UPDATE app_tasks
          SET title = $2, notes = $3, assignee = $4, status = $5, due_on = $6, due_at = $7,
              project_id = $8, sort_order = $9, closed_at = $10, result = $11,
-             result_url = $12, next_run_at = $13, attempts = $14, updated_at = now()
+             result_url = $12, next_run_at = $13, attempts = $14,
+             thing_id = $15, recur_every = $16, recur_unit = $17, updated_at = now()
          WHERE id = $1
          RETURNING {TASK_COLUMNS}"
     );
@@ -429,8 +504,20 @@ pub async fn update_task(
         .bind(&next.result_url)
         .bind(next.next_run_at)
         .bind(next.attempts)
+        .bind(&next.thing_id)
+        .bind(next.recur_every)
+        .bind(&next.recur_unit)
         .fetch_one(&mut *tx)
         .await?;
+
+    // Finishing a recurring task opens the next occurrence. Dismissing one
+    // ends the recurrence. Reopening a finished one takes back the occurrence
+    // that finishing it opened, so undo leaves one task and not two.
+    if status_changed && next.status == "done" {
+        open_next_occurrence(&mut tx, pool, &task, writer).await?;
+    } else if status_changed && before.status == "done" {
+        take_back_next_occurrence(&mut tx, id).await?;
+    }
 
     // Reordering and queueing alone are not history. A result shows in the
     // status event that marks the request ready.
@@ -473,6 +560,139 @@ fn check_status(status: Status, before: &Task, result: Option<&str>, writer: &Wr
         )),
         _ => Ok(()),
     }
+}
+
+fn one_parent() -> Error {
+    Error::InvalidInput("a task sits under a project or under a thing. Pick one.".into())
+}
+
+fn requests_run_once() -> Error {
+    Error::InvalidInput(
+        "a recurring task stays with the owner. Clear its recurrence to hand it to the assistant."
+            .into(),
+    )
+}
+
+async fn require_thing(tx: &mut Transaction<'_, Postgres>, thing_id: &str) -> Result<()> {
+    let found: Option<String> = sqlx::query_scalar("SELECT id FROM wiki_things WHERE id = $1")
+        .bind(thing_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    found.map(|_| ()).ok_or_else(|| Error::NotFound(format!("No thing: {thing_id}")))
+}
+
+/// A recurrence as a checked pair, or none.
+fn clean_recurrence(
+    every: Option<i32>,
+    unit: Option<String>,
+) -> Result<(Option<i32>, Option<String>)> {
+    let unit = unit.map(|u| u.trim().to_lowercase()).filter(|u| !u.is_empty());
+    match (every, unit) {
+        (None, None) => Ok((None, None)),
+        (Some(every), Some(unit)) => {
+            if !RECUR_UNITS.contains(&unit.as_str()) {
+                return Err(Error::InvalidInput(
+                    "a task recurs in days, weeks, months or years".into(),
+                ));
+            }
+            if !(1..=999).contains(&every) {
+                return Err(Error::InvalidInput(
+                    "a task recurs every 1 to 999 days, weeks, months or years".into(),
+                ));
+            }
+            Ok((Some(every), Some(unit)))
+        }
+        _ => Err(Error::InvalidInput(
+            "a recurrence needs both `recur_every` and `recur_unit`".into(),
+        )),
+    }
+}
+
+/// The day a recurring task comes back: `every` units after the day it was
+/// finished. A month that lacks the day (January 31 plus one month) gives
+/// that month's last day.
+fn next_due(done_on: NaiveDate, every: i32, unit: &str) -> Option<NaiveDate> {
+    let n = u32::try_from(every).ok()?;
+    match unit {
+        "day" => done_on.checked_add_days(chrono::Days::new(n.into())),
+        "week" => done_on.checked_add_days(chrono::Days::new(u64::from(n) * 7)),
+        "month" => done_on.checked_add_months(chrono::Months::new(n)),
+        "year" => done_on.checked_add_months(chrono::Months::new(n.checked_mul(12)?)),
+        _ => None,
+    }
+}
+
+/// Open the occurrence after a recurring task that was just finished: the
+/// same task, due `recur_every` `recur_unit`s after the owner's today. A
+/// date with a time recurs as a date only. Nothing happens for a task that
+/// does not recur, or when the occurrence after it is already open (the
+/// owner reopened this one, changed the next, and finished this one again).
+async fn open_next_occurrence(
+    tx: &mut Transaction<'_, Postgres>,
+    pool: &PgPool,
+    done: &Task,
+    writer: &Writer,
+) -> Result<()> {
+    let (Some(every), Some(unit)) = (done.recur_every, done.recur_unit.as_deref()) else {
+        return Ok(());
+    };
+    let open: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM app_tasks
+         WHERE recurred_from_id = $1 AND status IN ('open', 'active') LIMIT 1",
+    )
+    .bind(&done.id)
+    .fetch_optional(&mut **tx)
+    .await?;
+    if open.is_some() {
+        return Ok(());
+    }
+    let done_on = crate::timezone::home_today(pool).await;
+    let due_on = next_due(done_on, every, unit)
+        .ok_or_else(|| Error::InvalidInput("that recurrence runs past the calendar".into()))?;
+    let id = generate_id(TASK_PREFIX, &[&uuid::Uuid::new_v4().to_string()]);
+    sqlx::query(
+        "INSERT INTO app_tasks (id, title, notes, assignee, due_on, project_id, thing_id,
+                                recur_every, recur_unit, recurred_from_id, origin, sort_order)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
+    )
+    .bind(&id)
+    .bind(&done.title)
+    .bind(&done.notes)
+    .bind(&done.assignee)
+    .bind(due_on)
+    .bind(&done.project_id)
+    .bind(&done.thing_id)
+    .bind(every)
+    .bind(unit)
+    .bind(&done.id)
+    .bind(&done.origin)
+    .bind(done.sort_order)
+    .execute(&mut **tx)
+    .await?;
+    append_event(
+        tx,
+        &id,
+        writer,
+        "created",
+        json!({ "title": done.title, "recurred_from": done.id }),
+    )
+    .await?;
+    Ok(())
+}
+
+/// Undo `open_next_occurrence` when a finished task is reopened: remove the
+/// occurrence after it if nobody has touched that one. This is the one place
+/// a task row is deleted, and it deletes only a row the same click created.
+/// An occurrence that was edited, noted, worked or closed stays.
+async fn take_back_next_occurrence(tx: &mut Transaction<'_, Postgres>, id: &str) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM app_tasks
+         WHERE recurred_from_id = $1 AND status = 'open' AND updated_at = created_at",
+    )
+    .bind(id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
 }
 
 /// When a newly queued request may run: at its due time when it has one
@@ -668,6 +888,9 @@ fn edited_fields(before: &Task, after: &Task) -> Map<String, Value> {
     put("due_on", json!(before.due_on), json!(after.due_on));
     put("due_at", json!(before.due_at), json!(after.due_at));
     put("project_id", json!(before.project_id), json!(after.project_id));
+    put("thing_id", json!(before.thing_id), json!(after.thing_id));
+    put("recur_every", json!(before.recur_every), json!(after.recur_every));
+    put("recur_unit", json!(before.recur_unit), json!(after.recur_unit));
     put("result_url", json!(before.result_url), json!(after.result_url));
     out
 }
@@ -695,15 +918,7 @@ mod tests {
     use super::*;
 
     fn new(title: &str) -> NewTask {
-        NewTask {
-            title: title.into(),
-            notes: None,
-            assignee: None,
-            due_on: None,
-            due_at: None,
-            project_id: None,
-            source_url: None,
-        }
+        NewTask { title: title.into(), ..Default::default() }
     }
 
     /// A task's whole life: created in order, edited, closed and reopened,
@@ -941,5 +1156,161 @@ mod tests {
     async fn a_blank_title_is_refused(pool: PgPool) {
         assert!(create_tasks(&pool, vec![new("   ")], Origin::Owner, &Writer::owner()).await.is_err());
         assert!(list_tasks(&pool, &ListFilter { status: Some("all".into()), ..Default::default() }).await.unwrap().is_empty());
+    }
+
+    async fn thing(pool: &PgPool, title: &str) -> String {
+        crate::api::things::create_thing(pool, title).await.unwrap().id
+    }
+
+    async fn set_status(pool: &PgPool, id: &str, status: Status) -> Task {
+        update_task(pool, id, TaskPatch { status: Some(status), ..Default::default() }, &Writer::owner())
+            .await
+            .unwrap()
+    }
+
+    /// A task has one parent at most. Moving it under a thing takes it out of
+    /// its project, and moving it into a project takes it out from under the
+    /// thing.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_task_sits_under_a_project_or_a_thing(pool: PgPool) {
+        let house = thing(&pool, "The house").await;
+        sqlx::query("INSERT INTO app_projects (id, name) VALUES ('nb_p', 'Repaint the hallway')")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let both = NewTask { project_id: Some("nb_p".into()), thing_id: Some(house.clone()), ..new("Buy paint") };
+        assert!(create_tasks(&pool, vec![both], Origin::Owner, &Writer::owner()).await.is_err());
+        let missing = NewTask { thing_id: Some("thing_missing".into()), ..new("Buy paint") };
+        assert!(create_tasks(&pool, vec![missing], Origin::Owner, &Writer::owner()).await.is_err());
+
+        let under_thing = NewTask { thing_id: Some(house.clone()), ..new("Clean the gutters") };
+        let task = create_tasks(&pool, vec![under_thing], Origin::Owner, &Writer::owner()).await.unwrap().remove(0);
+        assert_eq!(task.thing_id.as_deref(), Some(house.as_str()));
+        let filter = ListFilter { thing_id: Some(house.clone()), ..Default::default() };
+        assert_eq!(list_tasks(&pool, &filter).await.unwrap().len(), 1);
+
+        let into_project = TaskPatch { project_id: Some(Some("nb_p".into())), ..Default::default() };
+        let moved = update_task(&pool, &task.id, into_project, &Writer::owner()).await.unwrap();
+        assert_eq!((moved.project_id.as_deref(), moved.thing_id.as_deref()), (Some("nb_p"), None));
+        assert!(list_tasks(&pool, &filter).await.unwrap().is_empty());
+
+        let under_thing = TaskPatch { thing_id: Some(Some(house.clone())), ..Default::default() };
+        let back = update_task(&pool, &task.id, under_thing, &Writer::owner()).await.unwrap();
+        assert_eq!((back.project_id.as_deref(), back.thing_id.as_deref()), (None, Some(house.as_str())));
+
+        let both = TaskPatch {
+            project_id: Some(Some("nb_p".into())),
+            thing_id: Some(Some(house.clone())),
+            ..Default::default()
+        };
+        assert!(update_task(&pool, &task.id, both, &Writer::owner()).await.is_err());
+    }
+
+    /// Finishing a recurring task opens the next one, due that long after the
+    /// owner's today and under the same thing. Dismissing one ends it.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn finishing_a_recurring_task_opens_the_next(pool: PgPool) {
+        let house = thing(&pool, "The house").await;
+        let recurring = NewTask {
+            thing_id: Some(house.clone()),
+            recur_every: Some(3),
+            recur_unit: Some("month".into()),
+            notes: Some("The filter is 16 by 25.".into()),
+            ..new("Change the furnace filter")
+        };
+        let first = create_tasks(&pool, vec![recurring], Origin::Owner, &Writer::owner()).await.unwrap().remove(0);
+
+        // Read on both sides of the write, so a run across midnight still passes.
+        let before = crate::timezone::home_today(&pool).await;
+        set_status(&pool, &first.id, Status::Done).await;
+        let after = crate::timezone::home_today(&pool).await;
+
+        let open = list_tasks(&pool, &ListFilter::default()).await.unwrap();
+        assert_eq!(open.len(), 1, "one occurrence is open at a time");
+        let next = &open[0];
+        assert_ne!(next.id, first.id);
+        assert_eq!(next.title, "Change the furnace filter");
+        assert_eq!(next.notes.as_deref(), Some("The filter is 16 by 25."));
+        assert_eq!(next.thing_id.as_deref(), Some(house.as_str()));
+        assert_eq!((next.recur_every, next.recur_unit.as_deref()), (Some(3), Some("month")));
+        assert_eq!(next.recurred_from_id.as_deref(), Some(first.id.as_str()));
+        let months = chrono::Months::new(3);
+        assert!(
+            next.due_on == before.checked_add_months(months) || next.due_on == after.checked_add_months(months),
+            "due three months after the day it was finished: {:?}",
+            next.due_on
+        );
+        let made = list_events(&pool, &next.id).await.unwrap();
+        assert_eq!(made[0].body["recurred_from"], first.id.as_str());
+
+        set_status(&pool, &next.id, Status::Dismissed).await;
+        assert!(list_tasks(&pool, &ListFilter::default()).await.unwrap().is_empty(), "dismissing ends the recurrence");
+    }
+
+    /// Undo leaves one task: reopening a finished recurring task takes back
+    /// the occurrence that finishing it opened. An occurrence the owner has
+    /// changed stays, and finishing the first again does not open a third.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn reopening_takes_back_the_next_occurrence(pool: PgPool) {
+        let weekly = NewTask { recur_every: Some(1), recur_unit: Some("week".into()), ..new("Water the ferns") };
+        let first = create_tasks(&pool, vec![weekly], Origin::Owner, &Writer::owner()).await.unwrap().remove(0);
+        let open = |pool: PgPool| async move { list_tasks(&pool, &ListFilter::default()).await.unwrap() };
+
+        set_status(&pool, &first.id, Status::Done).await;
+        set_status(&pool, &first.id, Status::Open).await;
+        let now_open = open(pool.clone()).await;
+        assert_eq!(now_open.iter().map(|t| t.id.as_str()).collect::<Vec<_>>(), [first.id.as_str()]);
+
+        set_status(&pool, &first.id, Status::Done).await;
+        let next = open(pool.clone()).await.remove(0);
+        let renamed = TaskPatch { title: Some("Water the ferns and the fig".into()), ..Default::default() };
+        update_task(&pool, &next.id, renamed, &Writer::owner()).await.unwrap();
+        set_status(&pool, &first.id, Status::Open).await;
+        assert_eq!(open(pool.clone()).await.len(), 2, "an occurrence the owner changed stays");
+
+        set_status(&pool, &first.id, Status::Done).await;
+        assert_eq!(open(pool.clone()).await.len(), 1, "the changed occurrence is the next one; no third");
+    }
+
+    /// A recurrence is a count and a known unit together, and a request runs
+    /// once.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_recurrence_is_checked(pool: PgPool) {
+        let make = |every: Option<i32>, unit: Option<&str>| NewTask {
+            recur_every: every,
+            recur_unit: unit.map(str::to_string),
+            ..new("Back up the laptop")
+        };
+        for bad in [make(Some(2), None), make(None, Some("week")), make(Some(0), Some("week")), make(Some(2), Some("fortnight"))] {
+            assert!(create_tasks(&pool, vec![bad], Origin::Owner, &Writer::owner()).await.is_err());
+        }
+        let request = NewTask { assignee: Some(Actor::Assistant), ..make(Some(1), Some("week")) };
+        assert!(create_tasks(&pool, vec![request], Origin::Owner, &Writer::owner()).await.is_err(), "a request runs once");
+
+        let task = create_tasks(&pool, vec![make(Some(2), Some("Week"))], Origin::Owner, &Writer::owner()).await.unwrap().remove(0);
+        assert_eq!(task.recur_unit.as_deref(), Some("week"));
+        let hand_over = TaskPatch { assignee: Some(Actor::Assistant), ..Default::default() };
+        assert!(update_task(&pool, &task.id, hand_over, &Writer::owner()).await.is_err());
+
+        let monthly = TaskPatch { recur_every: Some(Some(1)), recur_unit: Some(Some("month".into())), ..Default::default() };
+        let changed = update_task(&pool, &task.id, monthly, &Writer::owner()).await.unwrap();
+        assert_eq!((changed.recur_every, changed.recur_unit.as_deref()), (Some(1), Some("month")));
+        let cleared = TaskPatch { recur_every: Some(None), recur_unit: Some(None), ..Default::default() };
+        let once = update_task(&pool, &task.id, cleared, &Writer::owner()).await.unwrap();
+        assert_eq!((once.recur_every, once.recur_unit), (None, None));
+        set_status(&pool, &task.id, Status::Done).await;
+        assert!(list_tasks(&pool, &ListFilter::default()).await.unwrap().is_empty(), "a task that no longer recurs opens nothing");
+    }
+
+    #[test]
+    fn a_month_that_lacks_the_day_gives_its_last_day() {
+        let day = |y, m, d| NaiveDate::from_ymd_opt(y, m, d).unwrap();
+        assert_eq!(next_due(day(2031, 1, 31), 1, "month"), Some(day(2031, 2, 28)));
+        assert_eq!(next_due(day(2032, 2, 29), 1, "year"), Some(day(2033, 2, 28)));
+        assert_eq!(next_due(day(2031, 5, 9), 6, "month"), Some(day(2031, 11, 9)));
+        assert_eq!(next_due(day(2031, 5, 9), 2, "week"), Some(day(2031, 5, 23)));
+        assert_eq!(next_due(day(2031, 5, 9), 10, "day"), Some(day(2031, 5, 19)));
+        assert_eq!(next_due(day(2031, 5, 9), 1, "fortnight"), None);
     }
 }

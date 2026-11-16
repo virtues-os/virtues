@@ -36,8 +36,7 @@
 use std::collections::HashMap;
 use std::sync::LazyLock;
 
-use chrono::{Duration, NaiveDate, NaiveTime, Utc};
-use chrono_tz::Tz;
+use chrono::{Duration, NaiveDate, NaiveTime};
 use regex::Regex;
 use serde::Deserialize;
 use sqlx::PgPool;
@@ -1442,15 +1441,6 @@ pub enum Weekly {
     Stopped { date: NaiveDate, outcome: PaintOutcome },
 }
 
-/// The owner's today, in their home zone.
-async fn home_today(pool: &PgPool) -> NaiveDate {
-    let now = Utc::now();
-    let zone = crate::timezone::home_timezone_or_utc(pool, now.date_naive()).await;
-    zone.parse::<Tz>()
-        .map(|tz| now.with_timezone(&tz).date_naive())
-        .unwrap_or_else(|_| now.date_naive())
-}
-
 /// One tick: when pictures are on and the week holds none, walk the week's
 /// days, most unlike the usual first, until one paints, asking the director
 /// about at most [`MAX_DAYS_ASKED`] of them.
@@ -1458,7 +1448,7 @@ pub async fn weekly(pool: &PgPool, yjs: &YjsState, drive: &DriveConfig) -> Resul
     let Some(style) = chosen_style(pool).await? else {
         return Ok(Weekly::Off);
     };
-    let days = match this_week(pool, home_today(pool).await).await? {
+    let days = match this_week(pool, crate::timezone::home_today(pool).await).await? {
         Week::Painted => return Ok(Weekly::AlreadyPainted),
         Week::Candidates(days) => days,
     };

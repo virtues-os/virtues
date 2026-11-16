@@ -94,6 +94,11 @@ pub const WIKI_ARTICLE_PREFIX: &str = "article";
 // which is all any caller does.
 pub const CHAPTER_PREFIX: &str = "chapter";
 
+// Things (wiki_things): what goes on in a life and the person named. The
+// prefix is the subject kind, which is how `api/subjects.rs` finds a subject
+// from an id.
+pub const THING_PREFIX: &str = "thing";
+
 // Sidebar pins (user's globally-pinned URLs)
 pub const PIN_PREFIX: &str = "pin";
 

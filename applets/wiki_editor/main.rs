@@ -73,7 +73,7 @@ async fn main() -> Result<()> {
 
         // A FIRST WRITE is not a revision, and the difference decides the run.
         // `machine_text` is NULL when the record has never written this article
-        // — a story seeded with the owner's one sentence, say. Told to
+        // — a thing seeded with the owner's one sentence, say. Told to
         // "revise", the editor compares the evidence against that sentence,
         // finds it already said, and correctly declines: the restraint rule
         // firing on a page that has never been written at all.
@@ -112,17 +112,16 @@ async fn main() -> Result<()> {
 /// A year rests on its days, and the days written up ARE the change, at one
 /// query. A chapter rests on the years inside it, not their days. An entity
 /// rests on records that reference it, and those are better searched than
-/// dumped, so it gets a count and goes looking if it wants detail. A story
-/// rests on nothing at all, which is the rung's whole point.
+/// dumped, so it gets a count and goes looking if it wants detail. No record
+/// points at a thing, so it is handed nothing and searches.
 async fn changed_since(
     pool: &sqlx::PgPool,
     article: &virtues::api::wiki_editor::DueArticle,
 ) -> Result<String> {
-    if article.subject_type == "story" {
-        // A story has nothing beneath it to hand over — that is the rung's whole
-        // point. Saying "new records reference this" would be a lie: nothing
-        // references a story.
-        return Ok("Nothing is gathered for a story. Its material is wherever the \
+    if article.subject_type == "thing" {
+        // No record references a thing, so there is nothing to hand over, and
+        // saying "new records reference this" would be false.
+        return Ok("Nothing is gathered for a thing. Its material is wherever the \
                    record happens to keep it, so searching IS the work here."
             .to_string());
     }

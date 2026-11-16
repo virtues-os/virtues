@@ -1992,9 +1992,10 @@ export function deleteChat(chatId: string): Promise<{ deleted: boolean }> {
 // =============================================================================
 // Projects API — the "room" a chat lives in
 //
-// A Project is a manual collection the user returns to: a project, pet, hobby,
-// goal, or topic. It gathers entities, chats, and pages as URL-native members
-// and carries an icon, a color and a brief (`instructions`).
+// A project is something unresolved in the person's life that can be finished
+// and takes more than one step. It ends finished or dropped, and can sit under
+// a thing. It gathers entities, chats, and pages as URL-native members and
+// carries an icon, a color and a brief (`instructions`).
 // A chat lives in at most one Project (see `updateChat`'s `projectId`).
 // =============================================================================
 
@@ -2006,11 +2007,19 @@ export interface Project {
 	accent_color: string | null;
 	instructions: string | null;
 	sort_order: number;
-	/** Set when the project is closed: kept, out of the working view. Not the trash. */
+	/** When the project ended: kept, out of the working view. Not the trash. */
 	archived_at: string | null;
+	/** How it ended, set with `archived_at`. Absent from a box older than the field. */
+	outcome?: ProjectOutcome | null;
+	/** The thing it sits under and that thing's name. Absent from a box older than the fields. */
+	thing_id?: string | null;
+	thing_title?: string | null;
 	created_at: string;
 	updated_at: string;
 }
+
+/** How a project ended. */
+export type ProjectOutcome = 'finished' | 'dropped';
 
 /** List-view summary — adds member and chat counts. */
 export interface ProjectSummary extends Project {
@@ -2090,9 +2099,13 @@ export async function listProjects(opts?: {
 	});
 }
 
-/** POST /api/projects/:id/archive — close a project. Reversible; no confirm needed. */
-export function archiveProject(id: string): Promise<void> {
-	return apiSend<void>('POST', `/projects/${encodeURIComponent(id)}/archive`);
+/**
+ * POST /api/projects/:id/archive — end a project as finished or dropped.
+ * Reversible; no confirm needed. Sent again for an ended project, it changes
+ * only how it ended.
+ */
+export function archiveProject(id: string, outcome: ProjectOutcome): Promise<void> {
+	return apiSend<void>('POST', `/projects/${encodeURIComponent(id)}/archive`, { outcome });
 }
 
 /** POST /api/projects/:id/unarchive — reopen it. */
@@ -2110,14 +2123,16 @@ export function createProject(body: {
 	name: string;
 	icon?: string | null;
 	accent_color?: string | null;
+	/** Start it under this thing. */
+	thing_id?: string | null;
 }): Promise<Project> {
 	return apiSend<Project>('POST', '/projects', body);
 }
 
 /**
  * PUT /api/projects/:id — update a Project. For the nullable fields
- * (`icon`/`accent_color`/`instructions`): omit the key to leave unchanged,
- * send `null` to clear, send a value to set.
+ * (`icon`/`accent_color`/`instructions`/`thing_id`): omit the key to leave
+ * unchanged, send `null` to clear, send a value to set.
  */
 export function updateProject(
 	id: string,
@@ -2127,6 +2142,7 @@ export function updateProject(
 		accent_color?: string | null;
 		instructions?: string | null;
 		sort_order?: number;
+		thing_id?: string | null;
 	}
 ): Promise<Project> {
 	return apiSend<Project>('PUT', `/projects/${encodeURIComponent(id)}`, patch);
@@ -2276,6 +2292,7 @@ export interface PageListResponse {
 export type TaskActor = 'owner' | 'assistant';
 /** `ready`: a request's run finished and its result waits for the owner. */
 export type TaskStatus = 'open' | 'active' | 'ready' | 'done' | 'dismissed';
+export type RecurUnit = 'day' | 'week' | 'month' | 'year';
 
 export interface Task {
 	id: string;
@@ -2288,6 +2305,16 @@ export interface Task {
 	/** A time, only when one was given. */
 	due_at: string | null;
 	project_id: string | null;
+	/** The thing it sits under. A task has one parent at most: a project or a thing. */
+	thing_id?: string | null;
+	/**
+	 * It recurs every `recur_every` `recur_unit`s, counted from the day it is
+	 * finished. Both null: once. Absent from a box older than the fields.
+	 */
+	recur_every?: number | null;
+	recur_unit?: RecurUnit | null;
+	/** The occurrence this one followed, for a task that recurred. */
+	recurred_from_id?: string | null;
 	/** Who created it: typed into the list, asked for in chat, or the assistant's own. */
 	origin: 'owner' | 'chat' | 'assistant';
 	/** An app URL (`/page/page_…`) the task came from. */
@@ -2331,16 +2358,36 @@ export interface NewTask {
 	due_on?: string | null;
 	due_at?: string | null;
 	project_id?: string | null;
+	thing_id?: string | null;
+	recur_every?: number | null;
+	recur_unit?: RecurUnit | null;
 }
 
-/** A partial edit: `null` clears a field, an absent key leaves it. */
+/**
+ * A partial edit: `null` clears a field, an absent key leaves it. Recurrence
+ * is set or cleared as a pair, and moving a task under a thing takes it out
+ * of its project (and the other way round).
+ */
 export type TaskPatch = Partial<
-	Pick<Task, 'title' | 'notes' | 'assignee' | 'status' | 'due_on' | 'due_at' | 'project_id' | 'sort_order'>
+	Pick<
+		Task,
+		| 'title'
+		| 'notes'
+		| 'assignee'
+		| 'status'
+		| 'due_on'
+		| 'due_at'
+		| 'project_id'
+		| 'thing_id'
+		| 'recur_every'
+		| 'recur_unit'
+		| 'sort_order'
+	>
 >;
 
 export function listTasks(
 	status: 'open' | 'closed' | 'all' = 'open',
-	filter: { assignee?: TaskActor; project_id?: string } = {},
+	filter: { assignee?: TaskActor; project_id?: string; thing_id?: string } = {},
 ): Promise<Task[]> {
 	return apiGet('/tasks', { status, ...filter });
 }

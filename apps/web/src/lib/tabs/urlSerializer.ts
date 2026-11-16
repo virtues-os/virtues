@@ -23,6 +23,7 @@ const KNOWN_TYPES: TabType[] = [
 	'person',
 	'place',
 	'org',
+	'thing',
 	'project',
 	'bookmarks',
 	'passwords',

@@ -67,7 +67,7 @@
 		people: 'mynaui:users',
 		places: 'mynaui:map-pin',
 		organizations: 'mynaui:building',
-		stories: 'mynaui:book-open',
+		things: 'mynaui:box',
 		history: 'mynaui:clock-circle',
 	};
 

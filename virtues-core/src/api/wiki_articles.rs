@@ -853,7 +853,7 @@ pub async fn subject_name(pool: &PgPool, subject_type: &str, subject_id: &str) -
         "person" => "SELECT name FROM wiki_people WHERE id = $1",
         "place" => "SELECT name FROM wiki_places WHERE id = $1",
         "organization" => "SELECT name FROM wiki_orgs WHERE id = $1",
-        "story" => "SELECT title FROM wiki_stories WHERE id = $1",
+        "thing" => "SELECT title FROM wiki_things WHERE id = $1",
         _ => return Ok(None),
     };
     sqlx::query_scalar::<_, String>(sql)
@@ -864,7 +864,7 @@ pub async fn subject_name(pool: &PgPool, subject_type: &str, subject_id: &str) -
 }
 
 /// Re-title a subject's article page from the subject. The page is created
-/// with a copy of the name; every rename of a person, place, org or story
+/// with a copy of the name; every rename of a person, place, org or thing
 /// calls this, so the copy follows instead of keeping the old name forever.
 /// A no-op when the subject has no article or the title already matches.
 pub async fn retitle_article(pool: &PgPool, subject_type: &str, subject_id: &str) -> Result<()> {

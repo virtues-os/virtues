@@ -386,9 +386,9 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     // The task list, read here; written only through create_task and
     // update_task so every change reaches the task's history.
     m.insert("app_tasks", TableMetadata {
-        description: "The to-do list the owner and the assistant share. assignee is owner or assistant (a request, worked in the background); status open, active (being worked), ready (a request's result waits for the owner), done or dismissed; due_on is the owner's local day, due_at a time when one was given; result is a ready request's answer",
+        description: "The to-do list the owner and the assistant share. assignee is owner or assistant (a request, worked in the background); status open, active (being worked), ready (a request's result waits for the owner), done or dismissed; due_on is the owner's local day, due_at a time when one was given; result is a ready request's answer. A task sits under a project (project_id), a thing (thing_id) or neither. One that recurs comes back recur_every recur_unit after the owner finishes it",
         category: "tasks",
-        key_columns: &["title", "notes", "assignee", "status", "due_on", "due_at", "project_id", "closed_at", "result", "result_url"],
+        key_columns: &["title", "notes", "assignee", "status", "due_on", "due_at", "project_id", "thing_id", "recur_every", "recur_unit", "closed_at", "result", "result_url"],
         join_hint: None,
         note: Some("not closed: status IN ('open','active','ready')"),
     });
@@ -424,12 +424,12 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
         join_hint: Some("id is 'year_YYYY'; the days of a year are wiki_days filtered by EXTRACT(YEAR FROM date)"),
         note: Some("id is 'year_YYYY'"),
     });
-    m.insert("wiki_stories", TableMetadata {
-        description: "Subjects the owner named themselves — a theme or thread that mattered, not a span",
+    m.insert("wiki_things", TableMetadata {
+        description: "Things: what goes on in the owner's life and cannot be finished, named by the owner (the garden, a bike, guitar). Not a person, place or organization. Projects and tasks can sit under one",
         category: "wiki",
         key_columns: &["title", "summary", "started_at", "ended_at"],
-        join_hint: Some("dates are optional and often absent; a story is not a time range"),
-        note: Some("dates often absent"),
+        join_hint: Some("a thing's tasks: app_tasks WHERE thing_id = wiki_things.id; dates are optional and often absent"),
+        note: Some("named by the owner; app_tasks.thing_id joins here"),
     });
 
     // ============================================================================

@@ -334,19 +334,35 @@ pub async fn list_projects_handler(
 
 #[derive(Deserialize)]
 pub struct ListProjectsQuery {
-    /// `?include_archived=true` — the projects page, which folds them.
+    /// `?include_archived=true` — ended projects too, for the projects page,
+    /// which folds them.
     pub include_archived: Option<bool>,
     /// `?member=/page/…` — only the projects holding that url.
     pub member: Option<String>,
 }
 
-/// POST /api/projects/:id/archive — close a project (kept, out of the working view)
+#[derive(Deserialize)]
+pub struct EndProjectRequest {
+    /// `finished` or `dropped`.
+    pub outcome: Option<crate::api::projects::Outcome>,
+}
+
+/// POST /api/projects/:id/archive — end a project as finished or dropped
+/// (kept, out of the working view). Called again on an ended project, it
+/// changes only how it ended.
+///
+/// The body is optional: an app built before projects had an outcome sends
+/// none, and closing a project meant finishing it then.
 pub async fn archive_project_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
+    body: Option<Json<EndProjectRequest>>,
 ) -> Response {
-    match crate::api::projects::archive_project(state.db.pool(), &id).await {
-        Ok(()) => success_message("Project archived"),
+    let outcome = body
+        .and_then(|Json(request)| request.outcome)
+        .unwrap_or(crate::api::projects::Outcome::Finished);
+    match crate::api::projects::archive_project(state.db.pool(), &id, outcome).await {
+        Ok(()) => success_message("Project ended"),
         Err(e) => error_response(e),
     }
 }

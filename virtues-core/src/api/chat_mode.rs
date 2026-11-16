@@ -476,7 +476,10 @@ pub(crate) mod tests {
             ("pages", &["edit_page", "get_page_content", "create_page", "get_project_item"], 2_400),
             ("search", &["semantic_search", "web_search"], 2_000),
             ("self", &["update_memory"], 800),
-            ("tasks", &["create_task", "update_task"], 1_500),
+            // Raised 450 on 2026-11-16 for a task's thing and its
+            // recurrence: three parameters on each tool, and the sentence in
+            // each description that says what they do.
+            ("tasks", &["create_task", "update_task"], 1_950),
             ("sql_write", &["sql_write"], 600),
             // A service the owner connected over MCP (`tools/connection.rs`).
             // One tool whatever is connected; the services' own tools go to
@@ -491,8 +494,9 @@ pub(crate) mod tests {
             // dropped: failures were 6 unknown columns and 5 ambiguous joins
             // in 1,422 calls, so the columns stay and the prose went. Raised
             // 150 on 2026-10-20 for app_tasks, the one table the task tools
-            // read through it.
-            ("sql_query", &["sql_query"], 6_650),
+            // read through it, and 50 on 2026-11-16 for app_tasks' thing and
+            // recurrence columns.
+            ("sql_query", &["sql_query"], 6_700),
             // Mode-only tools, each set just above its 2026-09-29 size. Sudo
             // raised on 2026-10-27 for its clean environment and the
             // recovery-key ask.
@@ -518,7 +522,8 @@ pub(crate) mod tests {
             // tool alone, so it follows that group's ceiling.
             ("admin", 9_000),
             ("clarity-review", 7_000),
-            ("deep-research", 13_250),
+            // Deep research rose 100 on 2026-11-16 with the sql_query group.
+            ("deep-research", 13_350),
             ("meeting-prep", 8_400),
             ("morning-brief", 8_700),
             ("new-applet", 3_150),
