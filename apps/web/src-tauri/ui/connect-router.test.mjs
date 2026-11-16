@@ -246,6 +246,17 @@ test('a line pasted from `virtues pair` fills both fields', () => {
   assert.equal(Router.splitPasted('http://192.168.1.20:8000'), null);
 });
 
+test('the server QR and a computer handoff are told apart', () => {
+  // `virtues pair` encodes its own printed line, so the scanner reads it with
+  // the same rule as a paste.
+  assert.deepEqual(Router.splitPasted('http://192.168.1.20:8000   482 913'), {
+    address: 'http://192.168.1.20:8000',
+    code: '482913',
+  });
+  // A connected computer's handoff is JSON and must fall through to it.
+  assert.equal(Router.splitPasted('{"v":1,"seed":"x","box_json":"{}"}'), null);
+});
+
 test('a pairing failure says which part failed, never the raw error', () => {
   const say = (raw) => Router.pairError(raw, { address: 'http://192.168.1.20:8000', device: 'this computer' });
   const dns = say('POST http://virtues.local:8000/api/pair/consume: error sending request: client error (Connect): dns error: failed to lookup address information: nodename nor servname provided, or not known');
@@ -253,7 +264,7 @@ test('a pairing failure says which part failed, never the raw error', () => {
   assert.doesNotMatch(dns.text, /dns error/);
   assert.match(say('client error (Connect): tcp connect error: Operation timed out (os error 60)').text, /directly/);
   assert.match(say('tcp connect error: Connection refused (os error 61)').text, /isn't serving on that port/);
-  assert.match(say('pair failed: 401 Unauthorized — {"error":"invalid_or_expired_token"}').text, /fresh one/);
+  assert.match(say('pair failed: 401 Unauthorized — {"error":"invalid_or_expired_token"}').text, /run virtues pair for a new one/);
   assert.match(say('pair failed: 429 Too Many Requests — {"error":"too_many_attempts"}').text, /30 minutes/);
   // The server took the code; only this Mac's loopback is taken.
   const port = say('bind 127.0.0.1:7117: Address already in use (os error 48)');

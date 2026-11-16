@@ -1252,8 +1252,8 @@
         app.innerHTML = `
           <button class="backnav" id="back" aria-label="Back">←</button>
           <h1>Scan the QR code</h1>
-          <p class="sub">On a computer that's already connected: Settings → Devices →
-            Add device. Point this phone at the code it shows.</p>
+          <p class="sub">Point this phone at the code your server printed when it finished
+            installing, or at the one on a connected computer under Settings → Devices.</p>
           <video id="cam" playsinline muted
                  style="width:100%;max-width:340px;border-radius:14px;background:#000"></video>
           <p class="hint err" id="scanerr"></p>
@@ -1331,7 +1331,19 @@
           <h1>Pairing</h1>
           <div class="wait"><span class="pip"></span><span>Setting this phone up</span></div>`;
         try {
-          await invoke('plugin:reach|pair_handoff_accept', { payload });
+          // Two codes reach this scanner. The server's own QR holds the same
+          // line `virtues pair` prints (address and six-digit code, no key),
+          // so it pairs by address exactly as a pasted line would. Anything
+          // else is a connected computer's handoff.
+          const line = Router.splitPasted(payload);
+          if (line) {
+            const status = await invoke('plugin:reach|pair', {
+              payload: { server: line.address, code: line.code },
+            });
+            if (!status.paired) throw new Error('Pairing did not complete. Run virtues pair on your server and scan the new code.');
+          } else {
+            await invoke('plugin:reach|pair_handoff_accept', { payload });
+          }
           return finishPairing('Paired');
         } catch (e) {
           // Straight back to the scanner carrying the reason — a wrong or
