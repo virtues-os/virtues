@@ -61,6 +61,15 @@
 	let addressEl = $state<HTMLInputElement | null>(null);
 	let boxes = $state<(HTMLInputElement | null)[]>([]);
 	const codeOk = $derived(/^\d{6}$/.test(code));
+	/** Why Connect is still off, once the person has put something in:
+	 *  a greyed button alone said nothing. */
+	const missing = $derived(
+		!address.trim() && code.length > 0
+			? "Add the address your server printed, above the code."
+			: address.trim() && code.length > 0 && !codeOk
+				? "The code has six digits."
+				: null,
+	);
 	/** The name the server appears under once paired. */
 	let pairedName = $state("Your server");
 	let pairedAt = $state("");
@@ -284,7 +293,7 @@
 					autocomplete="off"
 					autocapitalize="off"
 					spellcheck="false"
-					placeholder="http://192.168.1.20:8000"
+					placeholder="For example, http://192.168.1.20:8000"
 					bind:this={addressEl}
 					bind:value={address}
 					disabled={phase === "pairing"}
@@ -328,7 +337,9 @@
 		</div>
 	{/if}
 	{#if phase !== "paired"}
-		<p class="note" class:error role={error ? "alert" : undefined}>{error ?? " "}</p>
+		<p class="note" class:error role={error ? "alert" : undefined} aria-live="polite">
+			{error ?? (phase === "address" ? missing : null) ?? " "}
+		</p>
 	{/if}
 	{#if phase === "choose" && isIOS && prePair.canJoinExisting}
 		<!-- The phone's other way in: the code a paired computer shows, on the
@@ -356,7 +367,7 @@
 			>
 				{phase === "pairing" ? "Connecting…" : "Connect"}
 			</button>
-			<button type="button" class="setup-past" onclick={look} disabled={phase === "pairing"}>Search again</button>
+			<button type="button" class="setup-past" onclick={look} disabled={phase === "pairing"}>Find it on this network</button>
 		{/if}
 	{/snippet}
 </StepFrame>
@@ -389,11 +400,17 @@
 			border-color var(--m-quick) ease,
 			outline var(--m-quick) ease;
 	}
+	/* Focus is a full-strength ring the width of two hairlines, so it reads
+	   on every theme, not a tint that vanishes on a dark one. */
 	.addr:focus,
 	.box:focus {
 		border-color: var(--color-primary);
-		outline: 3px solid color-mix(in srgb, var(--color-primary) 14%, transparent);
-		outline-offset: 0;
+		outline: 2px solid var(--color-primary);
+		outline-offset: -1px;
+	}
+	.addr::placeholder {
+		color: var(--color-foreground-subtle, var(--color-foreground-muted));
+		opacity: 0.75;
 	}
 	.boxes {
 		display: flex;

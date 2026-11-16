@@ -60,6 +60,21 @@
 		mode = next === "byo" ? "endpoint" : "choose";
 		if (next === "byo") focusField("setup-endpoint");
 	}
+
+	/** A radio group's keys: the arrows move the choice and its focus, and
+	 *  only the chosen tile is a Tab stop. */
+	function onChoiceKey(e: KeyboardEvent) {
+		const fwd = e.key === "ArrowRight" || e.key === "ArrowDown";
+		const back = e.key === "ArrowLeft" || e.key === "ArrowUp";
+		if (!fwd && !back) return;
+		e.preventDefault();
+		const next = pick === "sub" ? "byo" : "sub";
+		if (mode === "checkout" || mode === "saving") return;
+		pick = next;
+		error = null;
+		mode = next === "byo" ? "endpoint" : "choose";
+		document.querySelector<HTMLElement>(`.choice[data-pick="${next}"]`)?.focus();
+	}
 	let error = $state<string | null>(null);
 	let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -205,6 +220,7 @@
 <!-- WHY, ON THE SCREEN (2026-09-28): this is the one step with no way past,
      and the page never said so. It is said here only (not on Account). -->
 <StepFrame
+	centered={false}
 	title={done ? (via === "byo" ? "Your server is using your own AI" : "You've set up your subscription") : `Choose how ${name} thinks`}
 	subtitle={done
 		? undefined
@@ -232,7 +248,16 @@
 		</div>
 	{:else}
 		<div class="choices" role="radiogroup" aria-label="How {name} thinks">
-			<button type="button" class="choice" role="radio" aria-checked={pick === "sub"} onclick={() => choose("sub")}>
+			<button
+				type="button"
+				class="choice"
+				role="radio"
+				data-pick="sub"
+				aria-checked={pick === "sub"}
+				tabindex={pick === "sub" ? 0 : -1}
+				onclick={() => choose("sub")}
+				onkeydown={onChoiceKey}
+			>
 				<span class="choice-head">
 					<span class="choice-name">A Virtues subscription</span>
 					<span class="radio" aria-hidden="true"></span>
@@ -240,7 +265,16 @@
 				<span class="choice-line">{name} on the best models there are, with web search, place search and bank connections.</span>
 				<span class="price"><span class="amount">$20</span> a month</span>
 			</button>
-			<button type="button" class="choice" role="radio" aria-checked={pick === "byo"} onclick={() => choose("byo")}>
+			<button
+				type="button"
+				class="choice"
+				role="radio"
+				data-pick="byo"
+				aria-checked={pick === "byo"}
+				tabindex={pick === "byo" ? 0 : -1}
+				onclick={() => choose("byo")}
+				onkeydown={onChoiceKey}
+			>
 				<span class="choice-head">
 					<span class="choice-name">Your own AI</span>
 					<span class="radio" aria-hidden="true"></span>
@@ -492,7 +526,7 @@
 		margin-top: 1.5rem;
 		display: flex;
 		flex-direction: column;
-		align-items: center;
+		align-items: flex-start;
 	}
 	.placeholder {
 		height: 12rem;
@@ -503,7 +537,6 @@
 	}
 	.fine {
 		margin: 0.7rem 0 0;
-		text-align: center;
 		font-size: 13px;
 		color: var(--color-foreground-subtle);
 	}
@@ -516,19 +549,17 @@
 	}
 	.settled-card {
 		max-width: 25rem;
-		margin: 0 auto;
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		text-align: center;
+		align-items: flex-start;
 		gap: 0.9rem;
 	}
 
 	/* The reason, for whoever wants it: the letter's P.S., at the foot, in
 	   the letter's serif, quiet. */
 	.why {
-		max-width: 30rem;
-		margin: 3rem auto 0;
+		max-width: 32rem;
+		margin: 2.5rem 0 0;
 		font-family: var(--font-serif, Georgia, serif);
 		font-size: 0.975rem;
 		line-height: 1.65;
@@ -554,7 +585,7 @@
 	.links {
 		display: flex;
 		align-items: center;
-		justify-content: center;
+		justify-content: flex-start;
 		flex-wrap: wrap;
 		gap: 0.6rem;
 		margin-top: 1.25rem;
@@ -598,7 +629,7 @@
 		flex-direction: column;
 		gap: 0.875rem;
 		max-width: 30rem;
-		margin: 1.25rem auto 0;
+		margin: 1.25rem 0 0;
 		text-align: left;
 	}
 	.fold.narrow {

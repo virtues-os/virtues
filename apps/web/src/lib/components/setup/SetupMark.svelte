@@ -60,7 +60,11 @@
 			return mine.filter((s) => s.status === "done").length / mine.length;
 		}),
 	);
-	const label = $derived(index >= 0 ? `${steps[index].label} · ${index + 1} of ${steps.length}` : "");
+	/** The step's name, shown under the mark on every step: a phone has no
+	 *  hover to ask for it. Where it stands in the walk is for the screen
+	 *  reader, in the button's name. */
+	const label = $derived(index >= 0 ? steps[index].label : "");
+	const position = $derived(index >= 0 ? `${steps[index].label}, step ${index + 1} of ${steps.length}` : "progress");
 
 	let open = $state(false);
 	let el = $state<HTMLElement | null>(null);
@@ -124,7 +128,7 @@
 		type="button"
 		class="glyph"
 		aria-expanded={open}
-		aria-label="Setup, {label || 'progress'}. Show the steps"
+		aria-label="Setup, {position}. Show the steps"
 		onclick={() => (open = !open)}
 		disabled={closing}
 	>
@@ -141,7 +145,7 @@
 				/>
 			{/each}
 		</svg>
-		<span class="label">{label}</span>
+		<span class="label" aria-hidden="true">{label}</span>
 	</button>
 
 	{#if open}
@@ -205,23 +209,20 @@
 		outline: 2px solid var(--color-primary);
 		outline-offset: 2px;
 	}
-	/* The label is there when asked for: on hover, on focus, with the list. */
+	/* The step's name, always there under the mark: small capitals, quiet,
+	   darker on hover and with the list. */
 	.label {
-		font-size: 12px;
-		letter-spacing: 0.01em;
-		color: var(--color-foreground-subtle);
+		font-size: 11px;
+		letter-spacing: 0.16em;
+		text-transform: uppercase;
+		color: var(--color-foreground-muted);
 		white-space: nowrap;
-		opacity: 0;
-		transform: translateY(-3px);
-		transition:
-			opacity var(--m-quick) ease,
-			transform var(--m-base) var(--m-ease);
+		transition: color var(--m-quick) ease;
 	}
 	.glyph:hover .label,
 	.glyph:focus-visible .label,
 	.glyph[aria-expanded="true"] .label {
-		opacity: 1;
-		transform: none;
+		color: var(--color-foreground);
 	}
 
 	.well {

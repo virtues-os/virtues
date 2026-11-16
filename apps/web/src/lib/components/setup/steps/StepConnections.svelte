@@ -407,7 +407,7 @@
 	</article>
 {/snippet}
 
-<StepFrame {eyebrow} {title} {subtitle}>
+<StepFrame {eyebrow} {title} {subtitle} centered={false}>
 	<div class="cards">
 		{#if phoneFirst}
 			{@render phoneCard()}
@@ -634,7 +634,6 @@
 
 	.more {
 		margin: 1.5rem 0 0;
-		text-align: center;
 		font-size: 14px;
 		color: var(--color-foreground-muted);
 	}

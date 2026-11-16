@@ -60,6 +60,7 @@
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import { openApp } from "$lib/stores/appOpening";
 	import { getProfile, updateProfile, getSetupState, skipOnboarding } from "$lib/api/client";
+	import { getTheme, isThemeDark } from "$lib/utils/theme";
 	import { reloadApp } from "$lib/reload";
 
 	let ready = $state(false);
@@ -133,6 +134,15 @@
 	});
 	$effect(() => () => score.fade(0));
 	let closing = $state(false);
+	/** The print runs quieter on a dark ground, where light line work reads
+	 *  loud (as Welcome's does). */
+	let darkGround = $state(false);
+	onMount(() => {
+		const read = () => (darkGround = isThemeDark(getTheme()));
+		read();
+		window.addEventListener("themechange", read);
+		return () => window.removeEventListener("themechange", read);
+	});
 	/** The server step stays up through its paired moment, after pairing
 	 *  has made this device paired (StepServer's `onpairing`). */
 	let holdServer = $state(false);
@@ -363,7 +373,12 @@
 <div class="setup-stage" aria-hidden="true"></div>
 <!-- The print along the foot of the window, in the theme's ink. Welcome
      draws its own, larger; Arrival trades it for the painting. -->
-<div class="setup-print" class:shown={ready && !unreachable && !!step && step !== "welcome" && !closing} aria-hidden="true">
+<div
+	class="setup-print"
+	class:shown={ready && !unreachable && !!step && step !== "welcome" && !closing}
+	class:dark={darkGround}
+	aria-hidden="true"
+>
 	<div class="ink"></div>
 </div>
 {#if closing}
@@ -696,6 +711,9 @@
 		opacity: 0.3;
 		transform: none;
 	}
+	.setup-print.shown.dark {
+		opacity: 0.16;
+	}
 	.setup-print .ink {
 		width: 100%;
 		height: 100%;
@@ -729,6 +747,15 @@
 			opacity: 0;
 			transform: translateY(18px);
 		}
+	}
+	/* The sentence under a step's title, in the letter's serif and near the
+	   text color: on the sheet it is the voice of the page, not a caption. */
+	.flow :global(.frame:not(.bleed) .subtitle) {
+		max-width: 32rem;
+		font-family: var(--font-serif, Georgia, serif);
+		font-size: 1.2rem;
+		line-height: 1.5;
+		color: color-mix(in srgb, var(--color-foreground) 78%, transparent);
 	}
 	/* On the sheet the way forward sits closer to the work: the sheet's own
 	   edge already sets it apart from the window. */
