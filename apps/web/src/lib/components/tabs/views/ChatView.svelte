@@ -139,7 +139,7 @@
 		type SuggestedQuestion,
 	} from "$lib/api/client";
 	import { chatUsage } from "$lib/stores/chatUsage.svelte";
-	import { projectCrumb, projectsCrumb } from "$lib/tabs/crumbs";
+	import { projectCrumb } from "$lib/tabs/crumbs";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { untitled } from "$lib/refs/identity.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
@@ -290,16 +290,14 @@
 	// picker; filing happens from "Move to project".
 	const chatProject = $derived(chatProjectId ? projectStore.byId(chatProjectId) : undefined);
 
-	// A chat filed in a project sits under it in the action toolbar's path.
+	// A chat filed in a project names it in the action toolbar's path. The
+	// tab already says the chat's own name, so the path stops at the project.
 	$effect(() => {
 		if (!chatProject || isGhost || mobileLayout.isMobile || inRoom) return;
 		return paneActions.setCrumbs(tab.id, {
 			glyph: "projects",
-			crumbs: [
-				projectsCrumb(),
-				projectCrumb(chatProject.id, chatProject.name || untitled("project")),
-				{ label: chatTitle || untitled("chat") },
-			],
+			crumbs: [projectCrumb(chatProject.id, chatProject.name || untitled("project"))],
+			withoutPage: true,
 		});
 	});
 

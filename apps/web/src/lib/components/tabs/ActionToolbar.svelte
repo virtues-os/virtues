@@ -5,7 +5,8 @@
 	 *
 	 * The left end moves this tab back and forward. The middle says where the
 	 * page is (`tabs/crumbs.ts`, or the path a view publishes with
-	 * `paneActions.setCrumbs`), with the pin at its end. A segment that holds
+	 * `paneActions.setCrumbs`), with the pin at its end. A chat's path stops
+	 * at its project, since its tab already says its name. A segment that holds
 	 * things opens a menu of them (`tabs/crumbMenus.ts`), and once one is
 	 * open, pointing at another segment opens its menu instead, as in the
 	 * Mac's menu bar. The last segment is the page itself: double-click to
@@ -41,12 +42,14 @@
 	// The page's name as its tab shows it (WindowTabBar's `tabLook`).
 	const title = $derived(identityOf(tab.route, { title: tab.label, icon: null, color: null }).title);
 	const path = $derived(paneActions.crumbsFor(tab.id) ?? crumbsForRoute(tab.route, title));
+	/** Which segment is the page itself, or -1 when the path leaves it out. */
+	const pageAt = $derived(path.withoutPage ? -1 : path.crumbs.length - 1);
 	const pinnable = $derived(canPin(tab.route));
 	const pinned = $derived(pinnable && isPinned(tab.route));
 
 	// Only a thing with a name of its own renames here, through the same
 	// path as the tab and the sidebar (`renameRef`), so they all move together.
-	const renamable = $derived(!!ownedRef(tab.route));
+	const renamable = $derived(!!ownedRef(tab.route) && pageAt >= 0);
 	/** The name being typed, while the last segment is a field. */
 	let draft = $state<string | null>(null);
 
@@ -185,11 +188,13 @@
 	</div>
 
 	<div class="path">
-		<span class="path-glyph" aria-hidden="true"><AtlasIcon name={path.glyph} size={14} bare /></span>
+		{#if path.crumbs.length}
+			<span class="path-glyph" aria-hidden="true"><AtlasIcon name={path.glyph} size={14} bare /></span>
+		{/if}
 		<nav class="crumbs" aria-label="Where this page is" bind:this={crumbsEl}>
 			{#each path.crumbs as crumb, i (i)}
 				{#if i > 0}<span class="crumb-sep" aria-hidden="true">/</span>{/if}
-				{#if crumb.menu && i < path.crumbs.length - 1}
+				{#if crumb.menu && i !== pageAt}
 					<button
 						class="crumb link menu"
 						class:root={i === 0}
@@ -199,11 +204,11 @@
 						aria-expanded={openCrumb === i}
 						onclick={(e) => showCrumbMenu(i, e.currentTarget)}>{crumb.label}</button
 					>
-				{:else if (crumb.route || crumb.run) && i < path.crumbs.length - 1}
+				{:else if (crumb.route || crumb.run) && i !== pageAt}
 					<button class="crumb link" class:root={i === 0} onclick={() => (crumb.run ? crumb.run() : go(crumb.route!))}
 						>{crumb.label}</button
 					>
-				{:else if i === path.crumbs.length - 1 && draft !== null}
+				{:else if i === pageAt && draft !== null}
 					<input
 						class="crumb current rename"
 						bind:value={draft}
@@ -218,11 +223,11 @@
 					<span
 						class="crumb"
 						class:root={i === 0}
-						class:current={i === path.crumbs.length - 1}
-						class:renamable={renamable && i === path.crumbs.length - 1}
-						aria-current={i === path.crumbs.length - 1 ? "page" : undefined}
-						ondblclick={i === path.crumbs.length - 1 ? startRename : undefined}
-						oncontextmenu={i === path.crumbs.length - 1 ? showPageMenu : undefined}>{crumb.label}</span
+						class:current={i === pageAt}
+						class:renamable={renamable && i === pageAt}
+						aria-current={i === pageAt ? "page" : undefined}
+						ondblclick={i === pageAt ? startRename : undefined}
+						oncontextmenu={i === pageAt ? showPageMenu : undefined}>{crumb.label}</span
 					>
 				{/if}
 			{/each}

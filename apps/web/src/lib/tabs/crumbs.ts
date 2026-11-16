@@ -44,6 +44,10 @@ export interface CrumbPath {
 	/** AtlasIcon glyph drawn before the first segment. */
 	glyph: string;
 	crumbs: Crumb[];
+	/** The path stops where the page is filed and leaves the page out. A
+	 *  chat's tab already carries its name, so its bar says where the chat
+	 *  is instead: its project, or nothing. */
+	withoutPage?: boolean;
 }
 
 /** A door in the sidebar and the routes that sit under it. */
@@ -123,6 +127,7 @@ export function crumbsForRoute(route: string, title: string, fallbackGlyph = 'ch
 		return { glyph: 'wiki', crumbs: inRow(wikiCrumb(), wikiRow, path, title) };
 	}
 	if (under(path, '/wiki')) return { glyph: 'wiki', crumbs: [{ label: path === '/wiki' ? 'Wiki' : title }] };
+	if (path.startsWith('/chat/')) return { glyph: fallbackGlyph, crumbs: [], withoutPage: true };
 
 	return { glyph: fallbackGlyph, crumbs: [{ label: title }] };
 }
