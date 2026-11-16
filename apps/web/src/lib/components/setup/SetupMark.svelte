@@ -2,11 +2,8 @@
 	Setup's progress, as the mark itself.
 
 	A small ∴ at the top of every step. Its three dots are the three thirds
-	of Setup, the grouping the close has always drawn: Welcome, the letter
-	and the server are the left foot; Wi-Fi, the subscription and the names
-	the right; the three about your life the apex. Premise, premise,
-	therefore. Each dot fills as its third is done, and the one you are in
-	breathes.
+	of Setup's steps, in order. Premise, premise, therefore. Each dot fills
+	as its third is done, and the one you are in breathes.
 
 	It replaced nine dots and a "Welcome · next, Letter" label (2026-09-25):
 	a progress bar in an admin tool's grammar, over a cold open. Arc shows no

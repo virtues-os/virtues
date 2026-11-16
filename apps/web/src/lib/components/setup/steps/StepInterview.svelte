@@ -573,7 +573,7 @@
 					{:else}
 						<!-- Out loud, for now through the keyboard's own dictation;
 						     a recorder of our own would need a transcription route
-						     the web app does not have yet (setup-plan.md). -->
+						     the web app does not have yet. -->
 						<span class="keys">Tap the microphone on your keyboard to answer out loud</span>
 					{/if}
 				</div>

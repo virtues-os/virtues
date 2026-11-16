@@ -2,8 +2,8 @@
 
 Settings › Display, the face precedence, the applet-face shelf, the mirror for
 paired browsers, and Hours with its sleep engine are built; how and why is in
-[display-faces.md](../record/display-faces.md), and the panel's measured
-behaviour in [display-hardware.md](../record/display-hardware.md). Delete this
+[display-faces.md](display-faces.md), and the panel's measured
+behaviour in [display-hardware.md](display-hardware.md). Delete this
 plan when the list below is empty.
 
 ## Open

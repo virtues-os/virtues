@@ -5,7 +5,7 @@ real device yet. Decided 2026-11-15: Virtues sells no hardware, so
 setup is designed for a person who installs the server on their own machine
 that stays on, from its terminal, and then connects a Mac or iPhone app to it.
 The desktop app never runs the server. This plan supersedes the hardware parts
-of [setup-plan.md](setup-plan.md) and [build/onboarding.md](../build/onboarding.md).
+of [setup-plan.md](../archive/setup-plan.md) and [build/onboarding.md](../build/onboarding.md).
 
 ## The flow
 
@@ -117,9 +117,10 @@ After the code ships, since the manual claims only what ships. Rewrite
 `docs/setup/devices/*.md` and the end of `docs/setup/install.md`; remove the
 hardware lines in `docs/index.md`, `install.md`, `inference.md`,
 `requirements.md`, `accelerators.md`, `operate/recovery.md` and
-`operate/reach.md`. Archive `build/onboarding-paradigm.md`,
-`build/appliance-image.md` and the display records; delete `setup-plan.md` and
-`display-plan.md`; rewrite `build/onboarding.md` around this path.
+`operate/reach.md`. Done 2026-11-16: `onboarding-paradigm.md`,
+`appliance-image.md`, `setup-plan.md`, `display-plan.md` and the display
+records are in `agents/archive/`, and `build/onboarding.md` describes this
+path.
 
 ### 7. Delete the hardware setup path
 

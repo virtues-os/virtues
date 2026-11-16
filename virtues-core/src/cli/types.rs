@@ -803,12 +803,8 @@ pub enum Commands {
     ///
     /// Hidden power-user command, and the distinction it turns on is worth
     /// keeping straight: `virtues pair` attaches a DEVICE to this box, this
-    /// attaches this box to an ACCOUNT. In the normal flow the app carries the
-    /// account grant over Bluetooth (agents/build/onboarding-paradigm.md §7) and
-    /// neither is typed.
-    ///
-    /// (It used to describe itself as pairing with `virtues init`'s "[1] Log
-    /// in" branch — a menu that no longer exists.)
+    /// attaches this box to an ACCOUNT. In the normal flow the app's
+    /// subscription step links the account and neither is typed.
     #[command(name = "account-login", hide = true)]
     AccountLogin,
 

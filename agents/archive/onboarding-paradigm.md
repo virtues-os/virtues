@@ -3,7 +3,7 @@
 > The settled model for how a box gets online, whose it is, and which devices
 > may read it. Written 2026-08-12 after two days of building the pieces on
 > hardware and finding the design by running into its limits. This document
-> explains why the flow works the way it does; [onboarding.md](onboarding.md) is what
+> explains why the flow works the way it does; [onboarding.md](../build/onboarding.md) is what
 > is built, [linking-plan.md](../archive/linking-plan.md) is the account step in detail,
 > and [onboarding-plan.md](../archive/onboarding-plan.md) is the build order.
 >

@@ -5,7 +5,7 @@ replaces. Built 2026-08-26 to 08-27 (`ab34e908`, audit `39d10c98`, gaps
 `675dca73`). The hardware behaviour it rests on (true off by forcing the
 connector, no brightness, never probe DDC, the pinned EDID, the Q6A
 bootloader) is in [display-hardware.md](display-hardware.md). Open work:
-[display-plan.md](../plan/display-plan.md).
+[display-plan.md](display-plan.md).
 
 ## What exists
 

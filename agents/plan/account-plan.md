@@ -43,7 +43,7 @@ hosted AI stops.
 - **Where the subscription is offered.** Two sources contradict each other.
   `connect.html` ("setup never mentions money") and the open-relay decision say
   setup's only questions are network and ownership, and the subscription is
-  offered the first time hosted AI is invoked. `agents/plan/setup-plan.md`
+  offered the first time hosted AI is invoked. `agents/archive/setup-plan.md`
   and the built stepper (`routes/(onboarding)/setup/[[step]]/+page.svelte`,
   `StepSubscription.svelte`) make Subscription a required step with no skip,
   passable by subscribing, signing in, or bringing your own AI. Either the

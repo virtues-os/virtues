@@ -253,7 +253,7 @@
 			</div>
 		</div>
 
-		<!-- The letter is Setup's preface (setup-plan.md), so it ends on one
+		<!-- The letter is Setup's preface, so it ends on one
 		     button. Its P.S. about the subscription moved to the Subscription
 		     step, with the question it answers. -->
 		<div class="exit">

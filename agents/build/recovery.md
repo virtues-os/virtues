@@ -450,7 +450,7 @@ needed unless the key check fails.
 Note that a restore brings the old box's **identity** with it — the database
 stores the iroh secret. If you are imaging hardware rather than migrating one
 box, that is `virtues deprovision` followed by `virtues image-check`, not this;
-see [appliance-image.md](appliance-image.md).
+see [appliance-image.md](../archive/appliance-image.md).
 
 ---
 

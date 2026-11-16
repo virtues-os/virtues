@@ -3,9 +3,9 @@
 > How a Radxa Dragon Q6A goes from a board in a box to a unit a customer can
 > plug in, written against the boot chain as measured on hardware.
 >
-> Companion to [onboarding.md](onboarding.md) (what the owner does),
-> [deployment.md](deployment.md) (how the software ships), and
-> [recovery.md](recovery.md) (what happens when it breaks).
+> Companion to [onboarding.md](../build/onboarding.md) (what the owner does),
+> [deployment.md](../build/deployment.md) (how the software ships), and
+> [recovery.md](../build/recovery.md) (what happens when it breaks).
 
 ## Units boot and store data on one NVMe
 

@@ -306,13 +306,11 @@ pub async fn box_health_handler(State(state): State<AppState>) -> impl IntoRespo
 
 // ─── Setup / onboarding state machine (agents/build/onboarding.md) ──────────────────
 //
-// One source of truth, three renderers: the phone wizard, the appliance
-// panel, and `virtues status`. Two distinct lists by design:
+// One source of truth, two renderers: the app's Setup and `virtues status`.
+// Two distinct lists by design:
 //
-//   * `setup` — the wizard's REQUIRED core. Ends early ("setup ≠ onboarding"):
-//     claimed → account → on-network. Everything else is deferred. (The box
-//     keeps its default `virtues.local` name — naming is cosmetic and reach is
-//     WireGuard/SPKI + localhost, not mDNS, so there's no rename step.)
+//   * `setup` — the wizard's steps. Only `claimed` is required ("setup ≠
+//     onboarding"); everything else is deferred.
 //   * `onboarding` — the dashboard's "next wins" checklist for the first
 //     week: progressive, abandonable, never blocking.
 //
@@ -383,7 +381,7 @@ pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
 
     // Claimed = at least one device has paired (the pair token was consumed
     // by an owner's browser or phone). Ownership-by-proximity, see
-    // agents/build/onboarding.md, "The phrase and the pair code".
+    // agents/build/onboarding.md, "The pair code".
     //
     // Every gate below is `?`, not `.unwrap_or(0|false)`. These are counts and
     // EXISTS checks: an empty table already answers 0 / false, so the only way

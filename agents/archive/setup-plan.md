@@ -26,11 +26,11 @@ How the flow works, and the four rules it follows, are in [onboarding.md](../bui
   a real pair and hand-off to the server's origin on a Mac.
 - **Explain Bluetooth before the system prompt.** Today the OS sheet is the
   first mention of Bluetooth anywhere in Setup. One screen in our own words
-  before it (from the [establishing-screen specimen](specimens/establishing-screen/README.md)).
+  before it (from the [establishing-screen specimen](../plan/specimens/establishing-screen/README.md)).
 - **Where the subscription is offered.** Not decided. Setup makes Subscription
   a required step with no skip; `connect.html` and the open-relay record say
   setup never mentions money and the subscription is offered the first time
-  hosted AI is used. Pick one; tracked in [account-plan.md](account-plan.md).
+  hosted AI is used. Pick one; tracked in [account-plan.md](../plan/account-plan.md).
 - **Paying outside the US.** US storefront iPhone apps may link out to web
   checkout, which is what Subscription does. Anywhere else needs in-app
   purchase or a regional arrangement. Decide before the iOS app is sold

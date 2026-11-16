@@ -1,7 +1,8 @@
 //! `virtues doctor` — the box examined.
 //!
-//! Four ledgers (Inference, Reach, Appliance, Diagnostics) and one verdict.
-//! Appliance is printed only on hardware we shipped. The editorial rules:
+//! Four ledgers (Inference, Reach, Data disk, Diagnostics) and one verdict.
+//! Data disk is printed only on a server whose Postgres cluster was moved to
+//! a data disk. The editorial rules:
 //!
 //! 1. **Say each fact once.** The old report printed the global IPv6 three
 //!    times (class line, headline, network line); here every fact has one row.
@@ -44,8 +45,8 @@ pub async fn run() -> i32 {
 /// are going to post a journal tail off the box by default, the tool people
 /// are told to run when they are worried has to say so.
 ///
-/// Unlike Appliance, this prints on every box, DIY included — the beacon
-/// does not care what hardware it is running on.
+/// Unlike Data disk, this prints on every server: the beacon does not care
+/// what hardware it is running on.
 fn print_diagnostics() {
     ui::subsection("Diagnostics");
     if super::diag::enabled() {
