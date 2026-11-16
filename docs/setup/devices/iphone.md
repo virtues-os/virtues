@@ -22,12 +22,12 @@ The Virtues iPhone app needs iOS 26.2 or later.
    `virtues pair` on your server for a new one.
 4. When it connects, your server's name appears for a moment. Then name
    your assistant, say what it should call you, and choose your home.
-5. At **Add your devices**, choose **Turn on Location and Health**, and allow
+5. At **What this iPhone can share**, choose **Turn on Location and Health**, and allow
    each one when iOS asks.
-6. At **Choose how … thinks**, choose **Set up your subscription** and
-   confirm in your browser. If you already have an account, choose
-   **I already have an account**. To use your own AI model, choose
-   **Use my own AI**.
+6. At **Choose how … thinks**, keep **A Virtues subscription** chosen,
+   choose **Continue to checkout**, and confirm in your browser. If you
+   already have an account, choose **I already have an account**. To use
+   your own AI model, choose **Your own AI** and enter its address and key.
 7. Choose **Open Virtues**. **A note from us** opens the founder's letter,
    which you can also read later from Setup in the app.
 

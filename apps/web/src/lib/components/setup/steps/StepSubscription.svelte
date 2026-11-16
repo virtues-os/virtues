@@ -22,6 +22,13 @@
 	key without an extra step, so setup never sends anyone to a command line
 	for it.
 
+	TWO CHOICES, SIDE BY SIDE (2026-11-16, the revised Setup the owner
+	approved). The subscription and your own AI are the two ways an
+	assistant gets to think, so they are the two things on the page, as
+	choices; the subscription is chosen when the page opens, and the one way
+	forward follows the choice. Signing in to an account that already pays is
+	a link under them, because it is not a third kind of AI.
+
 	DONE IS A STATE, NOT A TOAST. Once the server reports AI connected — by
 	any of the three paths, or because it already was — the step shows a
 	drawn check and the way on. Nothing advances on its own; the check is the
@@ -44,6 +51,15 @@
 
 	type Mode = "choose" | "checkout" | "signin" | "sending" | "mailed" | "endpoint" | "saving";
 	let mode = $state<Mode>("choose");
+	/** Which way the assistant thinks, as chosen on the page. */
+	let pick = $state<"sub" | "byo">("sub");
+	function choose(next: "sub" | "byo") {
+		if (mode === "checkout" || mode === "saving") return;
+		pick = next;
+		error = null;
+		mode = next === "byo" ? "endpoint" : "choose";
+		if (next === "byo") focusField("setup-endpoint");
+	}
 	let error = $state<string | null>(null);
 	let timer: ReturnType<typeof setInterval> | null = null;
 
@@ -197,9 +213,9 @@
 			: `${name} can't answer anything until it has AI to think with. A Virtues subscription gives it the best models there are, or you can connect your own.`}
 >
 	{#if !loaded}
-		<div class="card placeholder" aria-hidden="true"></div>
+		<div class="placeholder" aria-hidden="true"></div>
 	{:else if done}
-		<div class="card settled-card" in:fade={{ duration: still ? 0 : 400 }}>
+		<div class="settled-card" in:fade={{ duration: still ? 0 : 400 }}>
 			<span class="check" aria-hidden="true">
 				<svg viewBox="0 0 24 24" width="36" height="36">
 					<circle cx="12" cy="12" r="11" />
@@ -215,17 +231,28 @@
 			</button>
 		</div>
 	{:else}
-		<div class="card">
-			<p class="kind">Virtues subscription</p>
-			<p class="price"><span class="amount">$20</span> a month</p>
-			<ul class="covers">
-				<li><Icon icon="mynaui:check" width="16" /> {name}, on the best models there are</li>
-				<li><Icon icon="mynaui:check" width="16" /> Web search</li>
-				<li><Icon icon="mynaui:check" width="16" /> Place search</li>
-				<li><Icon icon="mynaui:check" width="16" /> Bank connections</li>
-			</ul>
+		<div class="choices" role="radiogroup" aria-label="How {name} thinks">
+			<button type="button" class="choice" role="radio" aria-checked={pick === "sub"} onclick={() => choose("sub")}>
+				<span class="choice-head">
+					<span class="choice-name">A Virtues subscription</span>
+					<span class="radio" aria-hidden="true"></span>
+				</span>
+				<span class="choice-line">{name} on the best models there are, with web search, place search and bank connections.</span>
+				<span class="price"><span class="amount">$20</span> a month</span>
+			</button>
+			<button type="button" class="choice" role="radio" aria-checked={pick === "byo"} onclick={() => choose("byo")}>
+				<span class="choice-head">
+					<span class="choice-name">Your own AI</span>
+					<span class="radio" aria-hidden="true"></span>
+				</span>
+				<span class="choice-line">An API key from a provider, or a model you run yourself. It covers your assistant.</span>
+				<span class="price quiet">You pay your provider</span>
+			</button>
+		</div>
+
+		{#if pick === "sub"}
 			{#if mode === "checkout"}
-				<div class="waiting" in:fly={IN}>
+				<div class="waiting fold narrow" in:fly={IN}>
 					<span class="wait-mark" aria-hidden="true"><ThinkingMark depth={4} size={18} /></span>
 					<p>
 						Finish in the window that opened. This page picks up on its own, and Virtues charges nothing until you
@@ -239,31 +266,26 @@
 					<button class="setup-past" onclick={back}>Back</button>
 				</div>
 			{:else}
-				<button class="setup-go wide" onclick={subscribe}>
-					Set up your subscription
-					<Icon icon="mynaui:arrow-right" width="16" />
-				</button>
-				<p class="fine">You'll confirm in your browser.</p>
+				<div class="go">
+					<button class="setup-go" onclick={subscribe}>
+						Continue to checkout
+						<Icon icon="mynaui:arrow-right" width="16" />
+					</button>
+					<p class="fine">You'll confirm in your browser.</p>
+				</div>
 			{/if}
-		</div>
+		{/if}
 
-		<div class="links">
-			{#if !signedIn}
+		{#if !signedIn && pick === "sub" && mode !== "checkout"}
+			<div class="links">
 				<button
 					class="link"
 					class:on={mode === "signin" || mode === "sending" || mode === "mailed"}
 					aria-expanded={mode === "signin" || mode === "sending" || mode === "mailed"}
 					onclick={() => open("signin")}>I already have an account</button
 				>
-				<span class="dot" aria-hidden="true">·</span>
-			{/if}
-			<button
-				class="link"
-				class:on={mode === "endpoint" || mode === "saving"}
-				aria-expanded={mode === "endpoint" || mode === "saving"}
-				onclick={() => open("endpoint")}>Use my own AI</button
-			>
-		</div>
+			</div>
+		{/if}
 
 		{#if mode === "signin" || mode === "sending"}
 			<form
@@ -306,9 +328,9 @@
 				}}
 			>
 				<p class="help">
-					Any service that answers OpenAI-style chat completions: a gateway such as OpenRouter, a provider's own
-					API, or a local Ollama. Your server stores the key encrypted. Your own AI covers your assistant; web
-					search, place search and bank connections still need a subscription.
+					Any service that answers OpenAI-style chat completions: a gateway such as OpenRouter, a provider's own API,
+					or a local Ollama. Your server stores the key encrypted. Web search, place search and bank connections
+					still need a subscription.
 				</p>
 				<Input
 					id="setup-endpoint"
@@ -357,76 +379,123 @@
 		<!-- The letter's P.S., moved here with the question it answers. The
 		     claim is checked against the build: every default model runs under
 		     zero data retention, enforced per request at the gateway. -->
-		<aside class="why">
-			<p class="why-head">Why a subscription</p>
-			<p>
-				Your server keeps the record of your life. Keeping it well takes a librarian: models that read each day,
-				write it up, and find what you ask for. Every one runs under zero data retention (ZDR): nothing you send
-				is stored or trained on.
-			</p>
-			<p>The goal is for all of it to run in your home. The hardware is close, but not yet cheap enough.</p>
-		</aside>
+		{#if pick === "sub"}
+			<aside class="why">
+				<p class="why-head">Why a subscription</p>
+				<p>
+					Your server keeps the record of your life. Keeping it well takes a librarian: models that read each day,
+					write it up, and find what you ask for. Every one runs under zero data retention (ZDR): nothing you send
+					is stored or trained on.
+				</p>
+				<p>The goal is for all of it to run in your home. The hardware is close, but not yet cheap enough.</p>
+			</aside>
+		{/if}
 	{/if}
 </StepFrame>
 
 <style>
-	/* The card: the thing being chosen, centered, a little lifted off the
-	   stage like the letter's sheet. */
-	.card {
-		width: 100%;
-		max-width: 25rem;
-		margin: 0 auto;
-		padding: 1.75rem 1.75rem 1.5rem;
-		border-radius: var(--radius-xl);
-		background: var(--color-surface-overlay, var(--color-surface));
-		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
-		outline-offset: -1px;
+	/* The two ways an assistant thinks, side by side: each a hairline tile
+	   on the sheet, the chosen one drawn in the primary ink. */
+	.choices {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 12px;
 		text-align: left;
 		animation: setup-rise var(--m-slow) var(--m-ease) both;
 		animation-delay: 120ms;
 	}
-	.card.placeholder {
-		height: 22rem;
-		opacity: 0;
+	@media (max-width: 560px) {
+		.choices {
+			grid-template-columns: minmax(0, 1fr);
+		}
 	}
-	.kind {
-		margin: 0;
-		font-size: 13px;
-		letter-spacing: 0.02em;
-		color: var(--color-foreground-subtle);
+	.choice {
+		display: flex;
+		flex-direction: column;
+		gap: 8px;
+		padding: 18px 18px 16px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg);
+		background: transparent;
+		font: inherit;
+		color: var(--color-foreground);
+		text-align: left;
+		cursor: pointer;
+		transition:
+			border-color var(--m-quick) ease,
+			background-color var(--m-quick) ease,
+			transform var(--m-base) var(--m-spring);
+	}
+	.choice:hover {
+		background: color-mix(in srgb, var(--color-foreground) 3%, transparent);
+	}
+	.choice:active {
+		transform: scale(0.985);
+		transition-duration: 90ms;
+	}
+	.choice[aria-checked="true"] {
+		border-color: var(--color-primary);
+		outline: 3px solid color-mix(in srgb, var(--color-primary) 10%, transparent);
+		background: color-mix(in srgb, var(--color-primary) 3%, transparent);
+	}
+	.choice:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 2px;
+	}
+	.choice-head {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+	}
+	.choice-name {
+		font-size: 16px;
+		font-weight: 500;
+	}
+	.radio {
+		flex: none;
+		width: 18px;
+		height: 18px;
+		box-sizing: border-box;
+		border-radius: 50%;
+		border: 1.5px solid var(--color-border);
+		transition:
+			border-width var(--m-base) var(--m-spring),
+			border-color var(--m-quick) ease;
+	}
+	.choice[aria-checked="true"] .radio {
+		border: 5px solid var(--color-primary);
+	}
+	.choice-line {
+		font-size: 14px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
 	}
 	.price {
-		margin: 0.4rem 0 0;
-		font-size: 15px;
+		margin-top: auto;
+		padding-top: 6px;
+		font-size: 13px;
 		color: var(--color-foreground-muted);
+	}
+	.price.quiet {
+		line-height: 30px;
 	}
 	.amount {
 		font-family: var(--font-serif, Georgia, serif);
-		font-size: 3rem;
+		font-size: 26px;
 		line-height: 1;
-		letter-spacing: -0.02em;
+		letter-spacing: -0.01em;
 		color: var(--color-foreground);
-		margin-right: 0.25rem;
+		margin-right: 0.2rem;
 	}
-	.covers {
-		margin: 1.25rem 0 1.5rem;
-		padding: 1.1rem 0 0;
-		border-top: 1px solid var(--color-border);
-		list-style: none;
+	.go {
+		margin-top: 1.5rem;
 		display: flex;
 		flex-direction: column;
-		gap: 0.6rem;
-		font-size: 15px;
-		color: var(--color-foreground);
-	}
-	.covers li {
-		display: flex;
 		align-items: center;
-		gap: 0.6rem;
 	}
-	.covers :global(svg) {
-		flex: none;
-		color: var(--color-success);
+	.placeholder {
+		height: 12rem;
 	}
 	:global(.setup-go.wide) {
 		width: 100%;
@@ -446,6 +515,8 @@
 		margin-top: 0.5rem;
 	}
 	.settled-card {
+		max-width: 25rem;
+		margin: 0 auto;
 		display: flex;
 		flex-direction: column;
 		align-items: center;
@@ -516,9 +587,6 @@
 		outline: 2px solid var(--color-primary);
 		outline-offset: 3px;
 		border-radius: 0;
-	}
-	.dot {
-		color: var(--color-foreground-subtle);
 	}
 	.link.more {
 		align-self: flex-start;

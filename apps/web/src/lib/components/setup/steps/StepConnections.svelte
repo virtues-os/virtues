@@ -27,6 +27,12 @@
 	is left behind, not the filled way forward.
 
 	ACCOUNTS ARE NOT A STEP. Google, a bank and the rest live in Sources.
+
+	ONE SHEET, NO CARDS (2026-11-16). On the stage the step is already a
+	sheet, so the device in hand is the page itself: the title names it
+	("What this Mac can share") and its permissions sit straight on the
+	sheet. The other device is one quiet row under a hairline, added now or
+	later. In a browser, where neither device is in hand, both are rows.
 -->
 <script lang="ts">
 	import { useShowing } from "../showing";
@@ -75,6 +81,20 @@
 					: null;
 	const phoneName = isIPad ? "iPad" : "iPhone";
 	const phoneFirst = here === "iphone" || here === "phone";
+
+	/** The page's title and sentence name the device in hand. */
+	const title =
+		here === "mac"
+			? "What this Mac can share"
+			: here === "iphone"
+				? `What this ${phoneName} can share`
+				: "Add your devices";
+	const subtitle =
+		here === "mac"
+			? "Your messages, the apps you use and the pages you read. Messages takes longest to arrive, so it starts first."
+			: here === "iphone"
+				? "Where you go, how you sleep, and what the microphone hears. Each one is asked for in turn."
+				: "Your iPhone brings where you went, and a Mac brings your messages. Each sends its part of your day to your server.";
 
 	let pairing = $state<{ deviceType: "ios" | "mac"; displayName: string } | null>(null);
 	let busy = $state(false);
@@ -251,13 +271,15 @@
 
 {#snippet computerCard()}
 	<article class="card" class:paired={macOn} class:here={here === "mac" || here === "computer"}>
-		<div class="card-head">
-			<span class="glyph" aria-hidden="true"><Icon icon="mynaui:desktop" width="22" /></span>
-			<div class="card-title">
-				<h2>{here === "mac" ? "This Mac" : here === "computer" ? thisComputerLabel[0].toUpperCase() + thisComputerLabel.slice(1) : "Mac"}</h2>
-				{#if here !== "computer"}<p>Messages, the apps you use, and the pages you read.</p>{/if}
+		{#if here !== "mac"}
+			<div class="card-head">
+				<span class="glyph" aria-hidden="true"><Icon icon="mynaui:desktop" width="20" /></span>
+				<div class="card-title">
+					<h2>{here === "computer" ? thisComputerLabel[0].toUpperCase() + thisComputerLabel.slice(1) : "Your Mac"}</h2>
+					{#if here !== "computer"}<p>Messages, the apps you use, and the pages you read.</p>{/if}
+				</div>
 			</div>
-		</div>
+		{/if}
 		{#if here === "mac"}
 			{#if mac?.running}
 				<MacPermissions status={mac} onRecheck={recheckMac} />
@@ -300,13 +322,15 @@
 
 {#snippet phoneCard()}
 	<article class="card" class:paired={phoneOn} class:here={phoneFirst}>
-		<div class="card-head">
-			<span class="glyph" aria-hidden="true"><Icon icon="mynaui:mobile" width="22" /></span>
-			<div class="card-title">
-				<h2>{here === "iphone" ? `This ${phoneName}` : here === "phone" ? "This phone" : "iPhone"}</h2>
-				<p>Where you go, how you sleep, and what the microphone hears.</p>
+		{#if here !== "iphone"}
+			<div class="card-head">
+				<span class="glyph" aria-hidden="true"><Icon icon="mynaui:mobile" width="20" /></span>
+				<div class="card-title">
+					<h2>{here === "phone" ? "This phone" : "Your iPhone"}</h2>
+					<p>Where you go, how you sleep, and what the microphone hears.</p>
+				</div>
 			</div>
-		</div>
+		{/if}
 		{#if here === "iphone"}
 			{@render badges(phoneParts)}
 			{@render payoff(setup.arrived("phone"))}
@@ -383,7 +407,7 @@
 	</article>
 {/snippet}
 
-<StepFrame {eyebrow} title="Add your devices" subtitle="Your iPhone brings where you went, and a Mac brings your messages. Each sends its part of your day to your server.">
+<StepFrame {eyebrow} {title} {subtitle}>
 	<div class="cards">
 		{#if phoneFirst}
 			{@render phoneCard()}
@@ -431,33 +455,45 @@
 {/if}
 
 <style>
+	/* The device in hand first, as the page; any other device after it,
+	   each a row under a hairline. */
 	.cards {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		/* Each card as tall as it is: stretched to its neighbor's height, a
-		   short card's button sat far below its text. */
-		align-items: start;
-		gap: 1rem;
+		display: flex;
+		flex-direction: column;
+		text-align: left;
 	}
-	@media (max-width: 640px) {
-		.cards {
-			grid-template-columns: 1fr;
-		}
-	}
-
 	.card {
 		display: flex;
 		flex-direction: column;
-		gap: 1.1rem;
-		padding: 1.25rem 1.25rem 1.1rem;
-		border-radius: var(--radius-xl);
-		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
-		outline-offset: -1px;
-		background: var(--color-surface-overlay, var(--color-surface));
+		gap: 1rem;
+		padding: 1.25rem 0;
+		border-top: 1px solid var(--color-border);
 	}
-	.card.paired {
-		outline: 1px solid color-mix(in srgb, var(--color-success) 35%, var(--color-border));
-		outline-offset: -1px;
+	.card:first-child {
+		padding-top: 0;
+		border-top: 0;
+	}
+	/* The device in hand opens straight onto its permissions. */
+	.card.here {
+		padding-bottom: 1.5rem;
+	}
+	/* Another device, not in hand: its name and line on the left, its one
+	   action on the right. */
+	.card:not(.here) {
+		flex-direction: row;
+		flex-wrap: wrap;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem 1.25rem;
+	}
+	.card:not(.here) .card-act {
+		margin-top: 0;
+	}
+	.card:not(.here) .card-head {
+		flex: 1 1 16rem;
+	}
+	.card:not(.here) > :global(:not(.card-head):not(.card-act)) {
+		flex-basis: 100%;
 	}
 
 	.card-head {
@@ -469,8 +505,8 @@
 		flex: none;
 		display: grid;
 		place-items: center;
-		width: 40px;
-		height: 40px;
+		width: 36px;
+		height: 36px;
 		border-radius: var(--radius-xl);
 		color: var(--color-foreground);
 		background: color-mix(in srgb, var(--color-foreground) 5%, transparent);
@@ -479,7 +515,7 @@
 		margin: 0;
 		font-family: var(--font-serif, Georgia, serif);
 		font-weight: 400;
-		font-size: 1.35rem;
+		font-size: 1.2rem;
 		line-height: 1.2;
 		color: var(--color-foreground);
 	}
