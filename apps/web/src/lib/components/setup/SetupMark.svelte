@@ -16,8 +16,8 @@
 	the big one (`from`, the big mark's ink box) and flies up to its place,
 	so the logo visibly becomes the progress.
 
-	THE CLOSE. At the end the mark comes down to the middle of the window,
-	fills, and grows; the app opens beneath it.
+	THE CLOSE. At Arrival the mark comes down into the upper third of the
+	window, fills, and grows, and the greeting rises under it.
 
 	Pressing it lists the steps, the way the dots could be pressed: any step
 	up to the first one still open can be revisited.
@@ -251,10 +251,16 @@
 		}
 	}
 
-	/* The close: down to the middle, whole, and large. */
+	/* The close: down into the upper third, whole, and large, over the
+	   greeting (Arrival, in the route). */
 	.mark.closing {
-		top: 50%;
-		transform: translate(-50%, -50%) scale(4.5);
+		top: clamp(96px, 24vh, 220px);
+		transform: translate(-50%, -50%) scale(2.6);
+	}
+	@media (max-height: 520px) {
+		.mark.closing {
+			top: 64px;
+		}
 	}
 	.mark.closing .label {
 		opacity: 0 !important;

@@ -170,6 +170,9 @@ assumptions.
 
 1. Whether the installer stops renaming a self-installed machine to `virtues`
    (`install.rs`, `configure_mdns`). `virtues.local` depends on the rename.
-2. Whether Welcome and the founder's letter stay in setup or the letter moves
-   to the install page.
-3. Where chapters live now that the interview is out of setup.
+2. Where chapters live now that the interview is out of setup.
+
+Decided 2026-11-16: Welcome stays; the letter leaves Setup and waits at
+Arrival as "A note from us". The owner approved the revised flow sketched on
+the onboarding canvas ("Yes, build it"): Welcome, Server, Names,
+Connections, Subscription, Arrival.

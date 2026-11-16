@@ -175,14 +175,27 @@ missing or unreadable key is fixed only on the device.
 `apps/web/src/lib/components/setup/setup.svelte.ts`:
 
 ```
-Welcome → Letter → Server → Connections → Subscription → Names → ∴ → app
+Welcome → Server → Names → Connections → Subscription → Arrival → app
 ```
+
+The founder's letter is not a step: the pair code lasts about 15 minutes,
+so nothing stands between the person and it. Arrival offers it as "A note
+from us"; Setup in the app keeps it to reread (`IN_APP`), and
+`/founders-letter` shows it on its own.
+
+Every step after Welcome is a sheet on the desk, with the Tuscany print
+faded along the bottom in the theme's ink. The ∴ at the top is the
+progress. Arrival is the close: the ∴ comes down, the print gives way to
+the painting in color (`/scenes/lake.jpg`, the home painting), and the
+person opens the app or the letter themselves.
 
 - **Server** (`steps/StepServer.svelte`) searches the network
   (`plugin:reach|discover`, a subnet scan, so it works where mDNS does not),
   asks "Which server is yours?" when it finds more than one, and otherwise
-  asks for the address and code. One pasted line from `virtues pair` fills
-  both. Pairing is `prePair.pairByAddress` (`prepair.svelte.ts`), which calls
+  asks for the address and code. The code is six boxes in the terminal's
+  monospaced face; one pasted line from `virtues pair` fills the address and
+  all six, wherever it is pasted. Once paired, the server appears for a
+  moment (its name, set large) before Setup moves on by itself. Pairing is `prePair.pairByAddress` (`prepair.svelte.ts`), which calls
   the reach plugin's `pair`; `pairing.ts` turns failures into sentences.
 - **Server runs only on a device that has no server yet** and carries the
   app itself: the iPhone and the Mac. Anywhere else it is already done. In
@@ -197,7 +210,8 @@ Welcome → Letter → Server → Connections → Subscription → Names → ∴
   of this step. Saving your own AI key needs the app's owner proof
   (`api/owner_proof.rs`), which the app signs itself, so the owner never needs
   a command line for it. Pairing and collecting need no account.
-- **Names** names the person and the assistant.
+- **Names** names the person and the assistant, straight after the server,
+  so the assistant has a name before any step uses it.
 - Chapters and the interview are not part of setup.
 
 **Resume position is derived, never stored.** Each in-app step reads its
@@ -334,8 +348,7 @@ Do not rebuild one of these without first addressing why it failed.
 ## Open questions
 
 The DIY plan's open decisions are the current list: whether the installer
-keeps renaming the machine to `virtues`, whether Welcome and the letter stay
-in setup, and where chapters live
+keeps renaming the machine to `virtues`, and where chapters live
 ([onboarding-diy-plan.md](../plan/onboarding-diy-plan.md#open-decisions)).
 Also open:
 

@@ -65,16 +65,21 @@ export interface SetupStep {
 	reachable: boolean;
 }
 
+/** The stage's steps, in order. The letter is not one of them: the pair
+ *  code lasts about 15 minutes, so nothing stands between the person and
+ *  it. The letter waits at the close, as "A note from us", and stays
+ *  readable in the app (IN_APP) and at /founders-letter. */
 export const ORDER: SetupStepId[] = [
 	'welcome',
-	'letter',
 	'server',
+	// The names straight after the server: ten seconds, and from then on
+	// the assistant has a name and the person has been asked theirs.
+	'names',
 	// This device before the subscription: pairing and collecting need no
 	// account, and Messages and Safari history are the slowest sources to
 	// arrive, so they start while the person finishes the rest.
 	'connections',
 	'subscription',
-	'names',
 ];
 // TODO(2026-11-15): steps/StepTimeline.svelte and steps/StepInterview.svelte
 // left setup and nothing imports them. Delete them, with ChapterExample and
@@ -113,7 +118,7 @@ export function labelOf(id: SetupStepId): string {
 /** The steps Setup offers inside the app (SetupView, the rail's panel), in
  *  order. The first half is finished for anyone in the app, and Welcome's
  *  opening only plays on the stage. The letter is here to read again. */
-export const IN_APP: SetupStepId[] = ['letter', 'connections', 'subscription', 'names'];
+export const IN_APP: SetupStepId[] = ['letter', 'names', 'connections', 'subscription'];
 
 /** A button that leads INTO a step says what the person does there. */
 const INTO: Record<SetupStepId, string> = {
@@ -184,7 +189,8 @@ class SetupStore {
 	}
 	private inflight: Promise<void> | null = null;
 
-	/** Record that Welcome (1) or the letter (2) has been passed. */
+	/** Record that Welcome (1) or the letter (2) has been passed. The stage
+	 *  passes only Welcome; the letter is read in the app. */
 	passIntro(stage: 1 | 2): void {
 		if (this.introStage >= stage) return;
 		this.introStage = stage;
@@ -310,8 +316,15 @@ class SetupStore {
 	}
 
 	get steps(): SetupStep[] {
+		return this.stepsIn(ORDER);
+	}
+
+	/** `ids` as steps, in that order: the stage's (ORDER) or the app's
+	 *  (IN_APP, which also lists the letter to reread). A step is reachable
+	 *  while every one before it in `ids` is settled. */
+	stepsIn(ids: SetupStepId[]): SetupStep[] {
 		let open = true;
-		return ORDER.map((id) => {
+		return ids.map((id) => {
 			const status = this.status(id);
 			const reachable = open;
 			if (status === 'open') open = false;
@@ -338,7 +351,7 @@ class SetupStore {
 	/** In the app: the first step there still open, else the first set
 	 *  aside, else nothing. The letter is only ever reread, never owed. */
 	get resumeInApp(): SetupStepId | null {
-		const steps = this.steps.filter((s) => IN_APP.includes(s.id) && s.id !== 'letter');
+		const steps = this.stepsIn(IN_APP).filter((s) => s.id !== 'letter');
 		return (
 			steps.find((s) => s.status === 'open')?.id ?? steps.find((s) => s.status === 'skipped')?.id ?? null
 		);
@@ -349,13 +362,13 @@ class SetupStore {
 	 *  choosing a step, not walking them; and the letter and Welcome, which
 	 *  count as read only on the device that read them, never lock anything. */
 	opensInApp(id: SetupStepId): boolean {
-		const steps = this.steps.filter((s) => IN_APP.includes(s.id) && s.id !== 'letter');
+		const steps = this.stepsIn(IN_APP).filter((s) => s.id !== 'letter');
 		const at = steps.findIndex((s) => s.id === id);
 		return at < 0 || steps.slice(0, at).every((s) => s.optional || s.status === 'done');
 	}
 
 	/** Nothing the person does in Setup has happened yet: the flow opens
-	 *  with Hello and the letter. Anyone further along resumes at their step.
+	 *  with Hello. Anyone further along resumes at their step.
 	 *
 	 *  The subscription is NOT part of this. It can be settled before anyone
 	 *  reaches /setup — the pairing screen's "I already have an account"

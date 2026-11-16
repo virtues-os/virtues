@@ -13,6 +13,15 @@
 	            (one pasted line fills both), filled in for a server found
 	            alone or picked from the list
 	  pairing   pairing by address (`prePair.pairByAddress`)
+	  paired    the server appears: its name, set large, and the dot that
+	            fills, held for a moment before Setup moves on by itself.
+	            Connecting is the peak of Setup, so it gets a beat of its
+	            own instead of a page change.
+
+	The code is six boxes in a monospaced face, the way the terminal shows
+	it. Typing moves to the next box, Backspace on an empty box goes back,
+	and pasting anywhere takes the whole line `virtues pair` printed
+	(address and code) or just the six digits.
 -->
 <script lang="ts">
 	import { onMount, tick } from "svelte";
@@ -23,19 +32,34 @@
 	import { isIOS, isMacOS } from "$lib/utils/platform";
 	import { pairError, serverLabel, splitPasted } from "../pairing";
 
-	let { onpaired }: { onpaired: () => Promise<void> | void } = $props();
+	let {
+		onpairing,
+		onpaired,
+	}: {
+		/** Pairing has started: the route keeps this step on screen through
+		 *  the paired moment, though the device is no longer unpaired. */
+		onpairing?: () => void;
+		onpaired: () => Promise<void> | void;
+	} = $props();
 
 	const here = isIOS ? "this iPhone" : isMacOS ? "this Mac" : "this device";
 
-	type Phase = "looking" | "choose" | "address" | "pairing";
+	type Phase = "looking" | "choose" | "address" | "pairing" | "paired";
 	let phase = $state<Phase>("looking");
 	let network = $state<NetworkServer[]>([]);
 	let error = $state<string | null>(null);
 	let address = $state("");
-	let code = $state("");
+	let digits = $state<string[]>(["", "", "", "", "", ""]);
+	const code = $derived(digits.join(""));
 	let addressEl = $state<HTMLInputElement | null>(null);
-	let codeEl = $state<HTMLInputElement | null>(null);
-	const codeOk = $derived(code.replace(/\s+/g, "").length === 6);
+	let boxes = $state<(HTMLInputElement | null)[]>([]);
+	const codeOk = $derived(/^\d{6}$/.test(code));
+	/** The name the server appears under once paired. */
+	let pairedName = $state("Your server");
+	let pairedAt = $state("");
+
+	const still =
+		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 	const nothing = $derived(network.length === 0);
 
 	/** Bumped by anything that ends a search, so a stale round can't redraw. */
@@ -73,16 +97,90 @@
 		address = origin;
 		phase = "address";
 		await tick();
-		(origin ? codeEl : addressEl)?.focus();
+		(origin ? boxes[0] : addressEl)?.focus();
 	}
 
-	/** A whole line pasted from `virtues pair` fills both fields. */
+	/** Fill the boxes from a run of digits, starting at `from`, and put the
+	 *  cursor after the last one filled. */
+	function fillFrom(from: number, run: string) {
+		const ds = run.replace(/\D/g, "").slice(0, 6 - from).split("");
+		if (!ds.length) return;
+		const next = [...digits];
+		ds.forEach((d, i) => (next[from + i] = d));
+		digits = next;
+		boxes[Math.min(5, from + ds.length)]?.focus();
+	}
+
+	/** A whole line from `virtues pair` fills both fields, wherever it lands. */
+	function takeLine(text: string): boolean {
+		const line = splitPasted(text);
+		if (!line) return false;
+		address = line.address;
+		digits = ["", "", "", "", "", ""];
+		fillFrom(0, line.code);
+		return true;
+	}
+
 	function onAddressInput() {
 		error = null;
-		const line = splitPasted(address);
-		if (line) {
-			address = line.address;
-			code = line.code;
+		takeLine(address);
+	}
+
+	function onBoxInput(i: number, e: Event) {
+		error = null;
+		const el = e.currentTarget as HTMLInputElement;
+		const value = el.value;
+		if (value.length > 1) {
+			// Autofill of a one-time code, or a fast typist: spread it out.
+			fillFrom(i, value);
+			el.value = digits[i];
+			return;
+		}
+		const d = value.replace(/\D/g, "");
+		const next = [...digits];
+		next[i] = d;
+		digits = next;
+		el.value = d;
+		if (d && i < 5) boxes[i + 1]?.focus();
+	}
+
+	function onBoxKey(i: number, e: KeyboardEvent) {
+		if (e.key === "Backspace" && !digits[i] && i > 0) {
+			e.preventDefault();
+			const next = [...digits];
+			next[i - 1] = "";
+			digits = next;
+			boxes[i - 1]?.focus();
+		} else if (e.key === "ArrowLeft" && i > 0) {
+			e.preventDefault();
+			boxes[i - 1]?.focus();
+		} else if (e.key === "ArrowRight" && i < 5) {
+			e.preventDefault();
+			boxes[i + 1]?.focus();
+		} else if (e.key === "Enter") {
+			e.preventDefault();
+			void pairHere();
+		}
+	}
+
+	function onBoxPaste(i: number, e: ClipboardEvent) {
+		const text = e.clipboardData?.getData("text") ?? "";
+		e.preventDefault();
+		error = null;
+		if (!takeLine(text)) fillFrom(i, text);
+	}
+
+	/** What to call the server when it appears: the name the network search
+	 *  reported, else a host name from the address, else "Your server". */
+	function nameFor(origin: string): string {
+		const found = network.find((s) => s.origin === origin);
+		if (found) return serverLabel(found.name);
+		try {
+			const host = new URL(origin.includes("://") ? origin : `http://${origin}`).hostname;
+			if (/^[\d.]+$/.test(host) || host.includes(":")) return "Your server";
+			return serverLabel(host.replace(/\.local$/, ""));
+		} catch {
+			return "Your server";
 		}
 	}
 
@@ -90,6 +188,7 @@
 		if (!address.trim() || !codeOk || phase === "pairing") return;
 		phase = "pairing";
 		error = null;
+		onpairing?.();
 		try {
 			await prePair.pairByAddress(address.trim(), code);
 		} catch (e) {
@@ -98,6 +197,11 @@
 			phase = "address";
 			return;
 		}
+		pairedName = nameFor(address.trim());
+		pairedAt = address.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+		phase = "paired";
+		// Long enough to read the name; reduced motion keeps the time to read.
+		await new Promise((r) => setTimeout(r, still ? 1400 : 1900));
 		await onpaired();
 	}
 
@@ -107,15 +211,19 @@
 	});
 
 	const title = $derived(
-		phase === "address" || phase === "pairing"
+		phase === "paired"
+			? undefined
+			: phase === "address" || phase === "pairing"
 			? "Connect to your server"
 			: network.length > 1
 				? "Which server is yours?"
 				: "Find your server",
 	);
 	const subtitle = $derived(
-		phase === "address" || phase === "pairing"
-			? "Enter the address and code your server printed. Pasting the whole line fills both. Lost the code? Run virtues pair on your server."
+		phase === "paired"
+			? undefined
+			: phase === "address" || phase === "pairing"
+			? "Enter the address and six-digit code your server printed. Paste the whole line and both fill in."
 			: phase === "looking"
 				? `Looking on this network. If ${here} asks, allow it so Virtues can find your server.`
 				: nothing
@@ -151,7 +259,7 @@
 			<label class="field">
 				<span>Address</span>
 				<input
-					class="setup-field"
+					class="addr"
 					type="text"
 					autocomplete="off"
 					autocapitalize="off"
@@ -163,24 +271,45 @@
 					oninput={onAddressInput}
 				/>
 			</label>
-			<label class="field">
-				<span>Code</span>
-				<input
-					class="setup-field"
-					type="text"
-					inputmode="numeric"
-					autocomplete="one-time-code"
-					placeholder="123 456"
-					bind:this={codeEl}
-					bind:value={code}
-					disabled={phase === "pairing"}
-					oninput={() => (error = null)}
-				/>
-			</label>
+			<div class="field">
+				<span id="code-label">Code</span>
+				<div class="boxes" role="group" aria-labelledby="code-label">
+					{#each digits as d, i (i)}
+						{#if i === 3}<span class="gap" aria-hidden="true"></span>{/if}
+						<input
+							class="box"
+							class:filled={!!d}
+							type="text"
+							inputmode="numeric"
+							autocomplete={i === 0 ? "one-time-code" : "off"}
+							aria-label="Digit {i + 1} of 6"
+							value={d}
+							bind:this={boxes[i]}
+							disabled={phase === "pairing"}
+							oninput={(e) => onBoxInput(i, e)}
+							onkeydown={(e) => onBoxKey(i, e)}
+							onpaste={(e) => onBoxPaste(i, e)}
+							onfocus={(e) => (e.currentTarget as HTMLInputElement).select()}
+						/>
+					{/each}
+				</div>
+				<span class="hint">Works for about 15 minutes. For a new one, run <code>virtues pair</code> on your server.</span>
+			</div>
 			<button type="submit" hidden aria-hidden="true" tabindex="-1"></button>
 		</form>
+	{:else if phase === "paired"}
+		<div class="appears" role="status">
+			<span class="dot" aria-hidden="true"><span class="halo"></span></span>
+			<p class="with" in:rise={{ delay: still ? 0 : 120 }}>{here[0].toUpperCase() + here.slice(1)} is now paired with</p>
+			<h1 class="appeared" in:rise={{ delay: still ? 0 : 260, y: 12 }}>{pairedName}</h1>
+			<p class="where" in:rise={{ delay: still ? 0 : 420 }}>
+				Only the devices you pair can reach it.{#if pairedAt}<br /><span class="mono">{pairedAt}</span>{/if}
+			</p>
+		</div>
 	{/if}
-	<p class="note" class:error role={error ? "alert" : undefined}>{error ?? " "}</p>
+	{#if phase !== "paired"}
+		<p class="note" class:error role={error ? "alert" : undefined}>{error ?? " "}</p>
+	{/if}
 	{#if phase === "choose" && isIOS && prePair.canJoinExisting}
 		<!-- The phone's other way in: the code a paired computer shows, on the
 		     connect page (prepair.joinExisting). -->
@@ -213,7 +342,151 @@
 	.pairform {
 		display: flex;
 		flex-direction: column;
-		gap: 14px;
+		gap: 22px;
+		width: min(100%, 25rem);
+		margin: 0 auto;
+		text-align: left;
+	}
+	/* The address in the interface's face; the code in the serif, its
+	   figures lined up the way the terminal prints them. */
+	.addr {
+		height: 48px;
+		box-sizing: border-box;
+		padding: 0 14px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-surface);
+		font: inherit;
+		font-size: 15px;
+		letter-spacing: 0.01em;
+		color: var(--color-foreground);
+		outline: 0 solid transparent;
+		outline-offset: 2px;
+		transition:
+			border-color var(--m-quick) ease,
+			outline var(--m-quick) ease;
+	}
+	.addr:focus,
+	.box:focus {
+		border-color: var(--color-primary);
+		outline: 3px solid color-mix(in srgb, var(--color-primary) 14%, transparent);
+		outline-offset: 0;
+	}
+	.boxes {
+		display: flex;
+		align-items: center;
+		gap: 8px;
+	}
+	.box {
+		flex: 1;
+		min-width: 0;
+		height: 60px;
+		box-sizing: border-box;
+		padding: 0;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-md);
+		background: var(--color-surface);
+		font-family: var(--font-serif, Georgia, serif);
+		font-weight: 400;
+		font-size: 30px;
+		font-variant-numeric: lining-nums tabular-nums;
+		text-align: center;
+		color: var(--color-foreground);
+		caret-color: var(--color-primary);
+		outline: 0 solid transparent;
+		transition:
+			border-color var(--m-quick) ease,
+			outline var(--m-quick) ease,
+			transform var(--m-base) var(--m-spring);
+	}
+	/* A digit lands: a touch of lift, then home. */
+	.box.filled {
+		animation: land var(--m-base) var(--m-spring);
+	}
+	@keyframes land {
+		40% {
+			transform: translateY(-2px) scale(1.04);
+		}
+	}
+	.gap {
+		flex: none;
+		width: 10px;
+		height: 1.5px;
+		background: var(--color-border);
+	}
+	.hint {
+		font-size: 13px;
+		line-height: 1.5;
+		color: var(--color-foreground-muted);
+	}
+	.hint code,
+	.mono {
+		font: inherit;
+		font-weight: 500;
+		color: var(--color-foreground);
+	}
+
+	/* ── the server appears ── */
+	.appears {
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		text-align: center;
+		padding: 8px 0 4px;
+	}
+	.dot {
+		position: relative;
+		width: 18px;
+		height: 18px;
+		margin-bottom: 20px;
+		border-radius: 50%;
+		background: var(--color-primary);
+		outline: 6px solid color-mix(in srgb, var(--color-primary) 12%, transparent);
+		animation: dot-in var(--m-slow) var(--m-spring) both;
+	}
+	.halo {
+		position: absolute;
+		inset: 0;
+		border-radius: 50%;
+		background: var(--color-primary);
+		animation: halo 1.6s var(--m-ease) 0.2s both;
+	}
+	@keyframes dot-in {
+		from {
+			transform: scale(0.2);
+			opacity: 0;
+		}
+	}
+	@keyframes halo {
+		from {
+			transform: scale(1);
+			opacity: 0.45;
+		}
+		to {
+			transform: scale(3);
+			opacity: 0;
+		}
+	}
+	.with {
+		margin: 0;
+		font-size: 13px;
+		letter-spacing: 0.02em;
+		color: var(--color-foreground-muted);
+	}
+	.appeared {
+		margin: 6px 0 0;
+		font-family: var(--font-serif, Georgia, serif);
+		font-weight: 400;
+		font-size: clamp(2.75rem, 7vw, 4rem);
+		line-height: 1.02;
+		letter-spacing: -0.018em;
+		color: var(--color-foreground);
+	}
+	.where {
+		margin: 16px 0 0;
+		font-size: 15px;
+		line-height: 1.6;
+		color: var(--color-foreground-muted);
 	}
 	.field {
 		display: flex;
@@ -315,6 +588,14 @@
 		circle {
 			animation: none !important;
 			opacity: 0.6;
+		}
+		.box.filled,
+		.dot,
+		.halo {
+			animation: none;
+		}
+		.halo {
+			opacity: 0;
 		}
 	}
 </style>

@@ -52,7 +52,7 @@
 		void setup.refresh().finally(() => (loaded = true));
 	});
 
-	const steps = $derived(setup.steps.filter((s) => HERE.includes(s.id)));
+	const steps = $derived(setup.stepsIn(HERE));
 	const open = (id: SetupStepId) => setup.opensInApp(id);
 	/** The first step here still to do. */
 	const next = $derived(setup.resumeInApp);
