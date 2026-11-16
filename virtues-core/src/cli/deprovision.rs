@@ -404,21 +404,7 @@ fn remove_backups() {
     }
 }
 
-/// `/var/lib/postgresql`, which on a relocated appliance is a symlink into the
-/// data dir. Named here so `image_check` can ask the same question.
-pub const PG_LINK: &str = "/var/lib/postgresql";
-
-/// The relocated cluster directory, if this box has one.
-///
-/// `None` on a DIY box, where `/var/lib/postgresql` is a real directory owned
-/// by the distro and emphatically not ours to delete.
-pub fn relocated_cluster_dir() -> Option<std::path::PathBuf> {
-    let md = std::fs::symlink_metadata(PG_LINK).ok()?;
-    if !md.file_type().is_symlink() {
-        return None;
-    }
-    std::fs::read_link(PG_LINK).ok()
-}
+pub use crate::data_disk::{relocated_cluster_dir, PG_LINK};
 
 /// Delete the relocated cluster, stopping Postgres first.
 ///

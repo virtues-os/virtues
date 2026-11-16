@@ -5,7 +5,7 @@
 //!   · **Dragon** — our own board (Radxa Dragon Q6A, Hexagon v68 NPU),
 //!     detected from the device tree. Inference is built in: the installer
 //!     provisions the on-box NPU daemon and the runtime talks to it over
-//!     loopback. Zero config, the "it just works" appliance path.
+//!     loopback. Zero config.
 //!   · **Bundled (the default)** — a portable CPU-only llama-server we
 //!     build+test in CI, running the recommended embedding model, which
 //!     `virtues upgrade` keeps current. A detected GPU or NPU gets a guide.
@@ -104,7 +104,7 @@ impl InferenceMode {
             if text.to_lowercase().contains("qcom") {
                 ui::warn(&format!(
                     "board reports \"{}\" — not recognized as a Dragon; if it is one, \
-                     re-run with --appliance (and tell us that string)",
+                     re-run with VIRTUES_INFERENCE=dragon (and tell us that string)",
                     text.trim()
                 ));
             }

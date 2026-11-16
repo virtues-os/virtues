@@ -69,7 +69,7 @@ async fn install_deps_dnf() -> Result<()> {
     //
     // The cost lands in ONE place, so it is worth naming: `pg_dump` output from
     // a newer server cannot be read by an older `pg_restore`. A backup taken on
-    // an appliance (18) will not restore onto a Fedora DIY box on 16. If that
+    // a Debian or Ubuntu box (18) will not restore onto a Fedora box on 16. If that
     // ever needs to work, this is the line to change.
     dnf_install("Postgres + pgvector", &["postgresql-server", "postgresql-contrib", "pgvector"]).await?;
     dnf_install("Avahi (mDNS)", &["avahi", "nss-mdns"]).await?;
@@ -240,7 +240,7 @@ pub async fn install_pdfium(cfg: &InstallConfig) -> Result<()> {
 ///
 /// Depends on two things this installer does NOT produce: the `virtues-qnnd`
 /// binary in the tarball (CI must build it for aarch64 with `QNN_SDK_ROOT`) and
-/// the Qualcomm QAIRT runtime libs on the appliance image (proprietary — see
+/// the Qualcomm QAIRT runtime libs on the Dragon's OS image (proprietary — see
 /// `QNN_UNIT_TEMPLATE`).
 pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
     let bin = cfg.qnnd_binary_path();
@@ -292,7 +292,7 @@ pub async fn install_qnn(cfg: &InstallConfig) -> Result<()> {
             format!("Environment=LD_LIBRARY_PATH={host}\nEnvironment=ADSP_LIBRARY_PATH={adsp}\n")
         }
         // `detect_qnn_libs` returning None spans two very different worlds: the
-        // baked appliance image, where the libs sit on the default loader path
+        // Dragon's OS image, where the libs sit on the default loader path
         // and the unit correctly needs no env at all, and a box that simply has
         // no QAIRT on it. A bounded `find` cannot tell those apart, so ask the
         // loader instead — that is the question that actually matters.
@@ -563,7 +563,7 @@ WantedBy=multi-user.target
 /// `LD_LIBRARY_PATH` (host-side `libQnnHtp.so`/`libQnnSystem.so`) and
 /// `ADSP_LIBRARY_PATH` (the DSP-side `libQnnHtpV68Skel.so`, loaded onto the
 /// Hexagon) to the detected QAIRT lib dir — verified sufficient on-device. Empty
-/// when the libs are already on the default loader path (appliance image).
+/// when the libs are already on the default loader path (the Dragon's OS image).
 ///
 /// `StartLimit*` caps the restart loop. Without it `Restart=on-failure` at
 /// `RestartSec=5` is two starts per ten seconds, which stays under systemd's
@@ -755,26 +755,6 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
     // gpu_access_groups + the sidecar units). Runs on both the fresh and
     // already-exists paths so upgrades of older boxes pick it up; `usermod -aG`
     // is additive and idempotent. No-op on a CPU-only host (no such groups).
-    // And to `input`, so `maintenance::reset_button` can read the power key.
-    //
-    // `/dev/input/event0` is `root:input` mode 660 and the service runs as
-    // `virtues`, which is in `video` and `render` and was in nothing else — so
-    // the watcher opened the device, failed, and returned. The button would
-    // have shipped built, wired, and dead, announcing nothing worse than a
-    // warning every sixty seconds. Caught on hardware; it is not reproducible
-    // anywhere without a real input node.
-    //
-    // Unconditional, unlike the GPU groups: `input` exists on every systemd
-    // host, and a box with no power key simply never finds one to watch.
-    // Supplementary groups are fixed at process start, so this only takes
-    // effect on the service restart at the end of this install — which is why
-    // it sits here rather than beside the appliance profile.
-    {
-        let mut cmd = Command::new("usermod");
-        cmd.args(["-aG", "input", "virtues"]);
-        run_step("Grant 'virtues' input access (the case button)", cmd).await?;
-    }
-
     let gpu_groups = gpu_access_groups().await;
     if !gpu_groups.is_empty() {
         let mut cmd = Command::new("usermod");
@@ -798,18 +778,18 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
     migrate_applets_out_of_shipped_tree(cfg)?;
     // chown -R virtues:virtues, EXCEPT the Postgres cluster.
     //
-    // The cluster lives at `<data dir>/postgresql` on a relocated appliance, and
-    // it belongs to `postgres` — a recursive chown over the whole data dir takes
-    // it too, and Postgres then cannot read its own files:
+    // Boxes provisioned as Dragons by earlier installers keep their cluster at
+    // `<data dir>/postgresql`, symlinked from `/var/lib/postgresql`. This
+    // installer no longer moves the cluster there, but a reinstall over one of
+    // those boxes still finds it, and it belongs to `postgres`. A recursive
+    // chown over the whole data dir takes it too, and Postgres then cannot read
+    // its own files:
     //
     //     FATAL: could not open file "global/pg_filenode.map": Permission denied
     //
-    // Which is exactly what happened on the test box the first time this ran
-    // after the relocation landed: the move succeeded, Postgres served, and then
-    // this line four steps later broke it. The failure surfaces as `createuser`
-    // failing, which reads like a Postgres problem and is really an ownership
-    // one — worth the paragraph, because the next person will meet it as a
-    // confusing error about a role.
+    // The failure surfaces as `createuser` failing, which reads like a Postgres
+    // problem and is really an ownership one. On a box without that directory
+    // the prune matches nothing.
     //
     // `-prune` rather than a chown of each sibling: subdirectories here are not
     // a fixed list (lake, models, applets, journal, backups, upgrade
@@ -945,7 +925,7 @@ async fn provision_separation_roles() -> Result<()> {
     Ok(())
 }
 
-/// Appliance-durability tuning for the Postgres cluster.
+/// Durability tuning for the Postgres cluster.
 ///
 /// Two problems this fixes, both invisible until the day power is yanked from
 /// a box in someone's home:
@@ -1348,855 +1328,14 @@ async fn set_db_logins(cfg: &InstallConfig) {
 // systemd unit
 // ────────────────────────────────────────────────────────────────────────
 
-pub async fn install_systemd_unit(cfg: &InstallConfig, appliance: bool) -> Result<()> {
+pub async fn install_systemd_unit(cfg: &InstallConfig) -> Result<()> {
     let body = SYSTEMD_UNIT_TEMPLATE
         .replace("__BIN__", &cfg.binary_path().display().to_string())
         .replace("__DATA_DIR__", &cfg.data_dir.display().to_string());
     fs::write("/etc/systemd/system/virtues.service", body)
         .context("writing /etc/systemd/system/virtues.service")?;
-
-    // FIRST-BOOT IS APPLIANCE-ONLY. It claims a blank NVMe, relocates the
-    // journal, creates the Postgres cluster on the data disk, and mints the
-    // encryption key from the deprovision marker — every one of which is an
-    // appliance-image concern. On a DIY box $DATA_DIR is a plain directory on
-    // the root filesystem, the installer wrote the env + key directly, and
-    // there is no marker — so the unit would do nothing useful and one thing
-    // actively harmful: §1's blank-NVMe claim loop has no appliance gate, so a
-    // DIY machine with a spare unpartitioned NVMe would get it formatted, and
-    // §1e would growpart the owner's root partition. So it is installed and
-    // enabled only on an appliance. (Found in the second-bench audit,
-    // 2026-08-19.)
-    if appliance {
-        install_firstboot_unit(cfg)?;
-    }
-
-    systemctl(&["daemon-reload"], "Install systemd unit").await?;
-
-    if appliance {
-        // Ordered Before=virtues.service, so it must be enabled or the ordering
-        // never applies — an enabled-but-inert oneshot is the normal steady state.
-        systemctl(&["enable", "virtues-firstboot"], "Enable first-boot unit").await?;
-    }
-    Ok(())
+    systemctl(&["daemon-reload"], "Install systemd unit").await
 }
-
-/// Turn a general-purpose Linux box into a Virtues appliance.
-///
-/// Everything here was found by provisioning a Dragon by hand and watching what
-/// a stock Radxa image does wrong when it is the *only* thing a person will
-/// ever see:
-///
-/// * **`NetworkManager-wait-online` must go.** It blocks boot until a
-///   connection comes up, then fails after 30–60s if none does. On a brand-new
-///   appliance there is no configured network — that is the entire premise of
-///   the onboarding we're about to run — so it is guaranteed to time out on
-///   every first boot, adding a minute and a red FAILED to the one screen the
-///   owner is watching hardest. A box whose first job is "help me get online"
-///   cannot block on being online. Measured: 11.6s → 9.9s and zero failed units.
-/// * **The desktop session must go.** GNOME owns the DRM device, so the kiosk
-///   cannot have it. Disabled rather than purged: reversible, and the packages
-///   cost disk we have plenty of.
-/// * **The display kiosk goes in.** `cage` + WebKit on bare DRM — no X, no
-///   session, no snap. See the module docs on `DISPLAY_UNIT_TEMPLATE` for why
-///   it is not Chromium.
-///
-/// Idempotent, like every other step: re-running the installer on a working
-/// appliance converges.
-pub async fn apply_appliance_profile(cfg: &InstallConfig) -> Result<()> {
-    // Kiosk runtime. `libwebkit2gtk-4.1-0` is already the Tauri webview on
-    // Linux, so this is the same engine the desktop app uses.
-    apt_install(
-        "Install display runtime (cage + WebKit)",
-        &[
-            "cage",
-            "seatd",
-            "python3-gi",
-            "gir1.2-webkit2-4.1",
-            "gir1.2-gtk-3.0",
-            // BLE provisioning (maintenance::ble_provision): the Improv service
-            // needs bluetoothd running. Radxa's image ships it, but the appliance
-            // profile must not depend on that staying true.
-            "bluez",
-            // growpart, for firstboot §1e: masters are cut shrunk
-            // (tools/shrink-image.sh) and the first boot on real hardware grows
-            // the rootfs back to fill whatever card it landed on.
-            "cloud-guest-utils",
-        ],
-    )
-    .await?;
-
-    // Boot text on the glass. From power to cage the panel used to be pure
-    // black — `quiet splash` hides the kernel and systemd entirely, so nobody
-    // can tell a booting box from a dead one until the kiosk paints
-    // (2026-08-19 bench feedback). With them dropped, fbcon scrolls the boot on
-    // the panel and cage takes the VT over when it starts; the shim's
-    // diagnostic page covers everything after that.
-    //
-    // The Dragon boots SYSTEMD-BOOT, not GRUB (agents/build/appliance-image.md) — the
-    // cmdline lives in the `options` line of each loader entry, so that is the
-    // real edit. An earlier version only touched /etc/default/grub, which the
-    // product has none of, so the step reported success while changing nothing.
-    // GRUB is kept as a fallback for non-Dragon appliance hosts.
-    let mut cmdline = Command::new("sh");
-    cmdline.args([
-        "-c",
-        "changed=0; \
-         for d in /boot/efi/loader/entries /boot/loader/entries; do \
-             [ -d \"$d\" ] || continue; \
-             for e in \"$d\"/*.conf; do \
-                 [ -f \"$e\" ] || continue; \
-                 grep -qE '^options .*\\b(quiet|splash)\\b' \"$e\" || continue; \
-                 sed -i -E '/^options /{s/\\b(quiet|splash)\\b//g; s/  +/ /g; s/ +$//}' \"$e\"; \
-                 changed=1; \
-             done; \
-         done; \
-         if [ -f /etc/default/grub ] && command -v update-grub >/dev/null 2>&1; then \
-             sed -i -E '/^GRUB_CMDLINE_LINUX_DEFAULT=/ s/\\b(quiet|splash)\\b//g' /etc/default/grub && \
-             update-grub >/dev/null 2>&1; changed=1; \
-         fi; \
-         [ \"$changed\" = 1 ] && echo 'boot messages will show on the panel' \
-                             || echo 'no loader entries or GRUB found - boot stays quiet'",
-    ]);
-    run_step("Show boot messages on the panel", cmdline).await?;
-
-    // BLE provisioning needs bluetoothd up from boot; installing bluez does
-    // not reliably enable it on a server image.
-    systemctl(&["enable", "--now", "bluetooth"], "Enable bluetooth service").await?;
-
-    systemctl_try(&["enable", "--now", "seatd"]).await;
-
-    enable_unattended_security_upgrades().await?;
-
-    // Let the service user drive NetworkManager.
-    //
-    // virtues.service runs as `User=virtues`, and polkit refuses networking
-    // control to unprivileged users — so `nmcli device wifi hotspot` fails with
-    // "Not authorized to control networking" and the setup AP never rises. On a
-    // DIY box that is correct and we leave it alone; on an appliance the box IS
-    // the network administrator, and there is no human at a console to
-    // authenticate to.
-    //
-    // Scoped to the three actions onboarding actually needs rather than the
-    // whole `org.freedesktop.NetworkManager.*` tree: raise the AP, join a
-    // network, and persist the resulting connection.
-    install_file("/etc/polkit-1/rules.d/50-virtues-network.rules", POLKIT_NETWORK_RULE)?;
-    ui::ok("NetworkManager control granted to the virtues user");
-
-    // The data disk is real on an appliance, so Postgres must wait for it.
-    install_postgres_mount_guard(cfg)?;
-
-    // Hand the power key to us.
-    //
-    // The button behind the case is the appliance's only physical control, and
-    // logind owns it by default — so the first press powers the box off, which
-    // is both the wrong action and an unrecoverable one for an owner who has
-    // opened the case precisely because they cannot reach their box.
-    //
-    // `ignore` rather than a different logind action, because none of logind's
-    // options is what we want: it can power off, reboot, suspend, hibernate or
-    // lock, and cannot run this. `maintenance::reset_button` reads the evdev
-    // node itself once logind stops consuming the key.
-    //
-    // A drop-in, so an apt upgrade of systemd does not overwrite it, and so the
-    // reason is legible next to the setting rather than buried in a vendor file.
-    install_file("/etc/systemd/logind.conf.d/10-virtues-power-key.conf", LOGIND_POWER_KEY)?;
-    // reload-or-restart rather than restart: restarting logind on a box with an
-    // active session kills it.
-    systemctl_try(&["reload-or-restart", "systemd-logind"]).await;
-    ui::ok("Power key handed to Virtues (hold 3s to forget devices)");
-
-    // Retire the captive-portal plumbing, on every run.
-    //
-    // Two artifacts used to go in here so a phone joining the setup AP would
-    // have its connectivity probe answered by the box and a captive sheet
-    // opened onto `/provision`: a dnsmasq drop-in resolving EVERY name to
-    // 10.42.0.1, and a unit that added an iptables :80 → :8000 REDIRECT at
-    // boot. Both are gone with `/portal` (see `server/mod.rs`) — the browser
-    // flow they served could provision wifi and then strand the owner, because
-    // pairing needs a held iroh key that a browser tab does not have.
-    //
-    // Removed rather than merely not-written, because an appliance built
-    // before this shipped still has them, and a reinstall is the moment we can
-    // reach them. A wildcard-DNS drop-in and a boot-time NAT rule for a subnet
-    // that no longer comes up are two loaded guns aimed at whichever future
-    // network happens to reuse 10.42.0.0/24.
-    retire_captive_artifacts().await;
-
-    // Boot: no display manager, no waiting on a network we don't have, and no
-    // second update channel.
-    //
-    // `systemd-sysupdate` is the vendor image's own OS auto-updater. It was
-    // found ENABLED AND FAILING on the lab board — harmless there only because
-    // it has no config to act on. Masked rather than disabled: a distro package
-    // update can re-enable a disabled unit, and the entire argument for WebKit
-    // over Chromium was refusing to put a self-updating release channel
-    // underneath ours. It applies at least as strongly to one that updates the
-    // whole operating system.
-    for args in [
-        vec!["disable", "NetworkManager-wait-online.service"],
-        vec!["mask", "systemd-sysupdate.timer"],
-        vec!["mask", "systemd-sysupdate.service"],
-        vec!["mask", "systemd-sysupdate-reboot.timer"],
-        vec!["mask", "systemd-sysupdate-reboot.service"],
-        vec!["disable", "gdm"],
-        vec!["disable", "gdm3"],
-        vec!["disable", "sddm"],
-        vec!["disable", "lightdm"],
-        vec!["set-default", "multi-user.target"],
-    ] {
-        // Absent units are the normal case — most boxes have exactly one
-        // display manager, or none — so a failure here is not interesting.
-        systemctl_try(&args).await;
-    }
-    ui::ok("Boot trimmed (no desktop session, no wait-online, no vendor auto-update)");
-
-    // The kiosk shim + unit.
-    install_file("/usr/local/lib/virtues/display.py", DISPLAY_SHIM)?;
-    fs::write(
-        "/etc/systemd/system/virtues-display.service",
-        DISPLAY_UNIT_TEMPLATE.replace("__DATA_DIR__", &cfg.data_dir.display().to_string()),
-    )
-    .context("writing virtues-display.service")?;
-
-    systemctl_try(&["daemon-reload"]).await;
-
-    systemctl(&["enable", "virtues-display"], "Install display kiosk").await
-}
-
-/// Automatic OS security patching.
-///
-/// The system layer (kernel, WebKit, OpenSSL, everything from apt) is NOT
-/// carried in a Virtues release slot, so `virtues upgrade` cannot patch it —
-/// which would leave a fielded box unable to close a third-party CVE without an
-/// operator SSHing in per box. Ubuntu's own `unattended-upgrades` closes that:
-/// the box pulls the SECURITY pocket on a timer and applies it itself.
-///
-/// Scoped to the security origins only — never feature updates — because a box
-/// nobody watches must not silently move a package to a new feature version
-/// under itself. Security backports within a release are ABI-stable, so this
-/// patches WebKit/Postgres/etc in place without breaking the appliance, which
-/// is exactly why nothing is blacklisted: the CVE fix is the point.
-///
-/// `Automatic-Reboot false` on purpose: a personal appliance must never yank
-/// itself offline mid-use. Userspace patches apply at once; a kernel fix waits
-/// for the next natural reboot. A scheduled-maintenance-window reboot, gated on
-/// "is it safe right now", is a deliberate later feature, not this.
-async fn enable_unattended_security_upgrades() -> Result<()> {
-    apt_install("Automatic security updates", &["unattended-upgrades"]).await?;
-
-    fs::create_dir_all("/etc/apt/apt.conf.d").context("mkdir apt.conf.d")?;
-    fs::write(
-        "/etc/apt/apt.conf.d/20auto-upgrades",
-        "APT::Periodic::Update-Package-Lists \"1\";\n\
-         APT::Periodic::Unattended-Upgrade \"1\";\n",
-    )
-    .context("writing 20auto-upgrades")?;
-    fs::write(
-        "/etc/apt/apt.conf.d/52virtues-unattended",
-        UNATTENDED_CONF,
-    )
-    .context("writing 52virtues-unattended")?;
-
-    // The timers ship disabled on a server image; enable them explicitly.
-    for timer in ["apt-daily.timer", "apt-daily-upgrade.timer"] {
-        systemctl_try(&["enable", "--now", timer]).await;
-    }
-    ui::ok("Automatic OS security updates enabled (security pocket only, no auto-reboot)");
-    Ok(())
-}
-
-const UNATTENDED_CONF: &str = r#"// Installed by virtues-installer (appliance profile).
-// Security-pocket only — never feature updates on an unwatched box.
-Unattended-Upgrade::Allowed-Origins {
-    "${distro_id}:${distro_codename}-security";
-    "${distro_id}ESMApps:${distro_codename}-apps-security";
-    "${distro_id}ESM:${distro_codename}-infra-security";
-};
-// Never reboot a personal appliance out from under its owner. Userspace
-// patches apply immediately; a kernel fix waits for the next natural reboot.
-Unattended-Upgrade::Automatic-Reboot "false";
-Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
-Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
-"#;
-
-/// Tear down the captive-portal artifacts an older appliance install left.
-///
-/// Best-effort throughout: every step is "remove a thing that is probably not
-/// there", and a box that never had them must not see an error. The one part
-/// that matters is ordering — stop the unit before deleting it, so its
-/// `ExecStop` gets to remove the iptables rule it added. Deleting the unit
-/// first would strand a NAT rule with nothing left that knows how to undo it.
-///
-/// REMOVE AFTER: every appliance imaged before 2026-08-17 has been reinstalled
-/// or reimaged. Then delete this function, its call in
-/// `apply_appliance_profile`, and the comment above that call.
-async fn retire_captive_artifacts() {
-    const UNIT: &str = "virtues-captive-redirect";
-    const UNIT_PATH: &str = "/etc/systemd/system/virtues-captive-redirect.service";
-    const DNSMASQ_CONF: &str =
-        "/etc/NetworkManager/dnsmasq-shared.d/00-virtues-captive.conf";
-
-    let existed = std::path::Path::new(UNIT_PATH).exists()
-        || std::path::Path::new(DNSMASQ_CONF).exists();
-
-    for args in [["stop", UNIT], ["disable", UNIT]] {
-        systemctl_try(&args).await;
-    }
-    let _ = fs::remove_file(UNIT_PATH);
-    let _ = fs::remove_file(DNSMASQ_CONF);
-
-    // The ExecStop above only fires if the unit was loaded and active. Clear
-    // the rule directly too — an appliance that was hard-powered mid-life
-    // never ran it, and the rule is re-added at every boot by a unit we just
-    // deleted, so this is the last chance anything will remove it.
-    let mut ipt = Command::new("iptables");
-    ipt.args([
-        "-t", "nat", "-D", "PREROUTING", "-s", "10.42.0.0/24", "-p", "tcp",
-        "--dport", "80", "-j", "REDIRECT", "--to-port", "8000",
-    ]);
-    let _ = ipt.output().await;
-
-    if existed {
-        systemctl_try(&["daemon-reload"]).await;
-        ui::ok("Removed the retired captive-portal DNS + :80 redirect");
-    }
-}
-
-/// The drop-in itself. A raw string like `DISPLAY_UNIT_TEMPLATE` and
-/// `SYSTEMD_UNIT_TEMPLATE`, rather than a `format!` with `\n\` continuations —
-/// those carry the source's indentation into the generated file, and a systemd
-/// drop-in whose `[Unit]` header is indented four spaces reads as broken even
-/// though systemd strips it.
-const PG_MOUNT_GUARD_TEMPLATE: &str = r#"# Installed by virtues-installer.
-#
-# The Virtues state root is its own filesystem on an appliance (a blank NVMe
-# claimed at first boot). fstab carries `nofail` so a missing disk never blocks
-# boot — the box must still come up far enough to say so on its display — but
-# Postgres must NOT start without it, or it initdb's a fresh empty cluster onto
-# the boot card and every check reports healthy while the owner's record sits
-# unmounted on a disk nobody asked for.
-#
-# The template's own `RequiresMountsFor=/var/lib/postgresql/%I` does not cover
-# this: that path is a SYMLINK into the data dir here, and the dependency is
-# taken on the path as written, not on what it resolves to.
-#
-# After= the first-boot unit, which is what CREATES the cluster on a freshly
-# claimed disk. Without it Postgres races ahead on a virgin unit, finds nothing,
-# and fails — recoverably, but with a red unit on the one screen the owner is
-# watching hardest.
-#
-# ExecStartPre fires ONLY when fstab declares a data disk, and that condition is
-# the whole correction. The first version of this asked `mountpoint -q` flatly —
-# which bricks a board whose ROOT is already the NVMe and whose state root is a
-# directory on it. That is not a hypothetical layout; it is what the lab board
-# is, and running the installer on it would have left Postgres refusing to start
-# with no way for the owner to find out why. Verified before shipping it.
-#
-# So: fstab entry means "this box was given a data disk", and then the mount is
-# required. No entry means the data lives on the root filesystem by design, and
-# there is nothing to wait for.
-#
-# WHAT THIS DELIBERATELY DOES NOT DO is refuse when a disk that SHOULD be here
-# is absent, and that is a trade rather than an oversight. virtues.service waits
-# on pg_isready, and the panel is served by virtues.service — so a Postgres that
-# refuses takes the display with it, and the owner gets a black screen instead
-# of the "Storage disconnected" message written for exactly this moment. A box
-# running on the wrong disk is recoverable and says so on the glass; a box that
-# will not boot says nothing at all. See `crate::data_disk` for the half that
-# reports it.
-[Unit]
-RequiresMountsFor=__DATA_DIR__
-After=virtues-firstboot.service
-# Never park. The vendor unit ships no Restart=, so any failure after a start
-# attempt — a lost mount race, a crash mid-recovery — left the instance down
-# FOREVER while the postgresql.service umbrella (a oneshot wrapper) reported
-# active over it, and virtues.service burned its own start-limit polling a
-# socket that could never appear. (The 2026-08-25 bench wedge itself was the
-# never-started variant — a truncated start.conf skipping the generator —
-# repaired in firstboot §1c'; this drop-in covers the started-then-failed
-# class.) A cluster that is genuinely broken restart-loops instead of
-# parking: on an appliance in someone's home, a loop that heals the moment
-# the cause clears beats a unit that stays dead until a reboot.
-StartLimitIntervalSec=0
-
-[Service]
-ExecStartPre=/bin/sh -c '! grep -qE "[[:space:]]__DATA_DIR__[[:space:]]" /etc/fstab || mountpoint -q __DATA_DIR__'
-Restart=on-failure
-RestartSec=10
-"#;
-
-/// Stops logind consuming the power key, so `maintenance::reset_button` can
-/// read it. Without this the first press of the only button on the product
-/// powers the box off.
-const LOGIND_POWER_KEY: &str = r#"# Installed by virtues-installer (appliance profile).
-#
-# The button behind the case forgets this box's paired devices when it is held
-# for three seconds. It does NOT power the box off, and it does not erase
-# anything: the record, the network, the account and the four-word phrase all
-# survive. See maintenance::reset_button and agents/build/onboarding-paradigm.md.
-#
-# HandlePowerKeyLongPress is set too, or logind claims the long press even
-# while ignoring the short one - which is exactly the gesture we need.
-[Login]
-HandlePowerKey=ignore
-HandlePowerKeyLongPress=ignore
-"#;
-
-/// Lets `User=virtues` raise the setup AP and join a network. See
-/// `apply_appliance_profile` for why an appliance needs this and a DIY box
-/// must not get it.
-const POLKIT_NETWORK_RULE: &str = r#"// Installed by virtues-installer (appliance profile).
-// The box administers its own network during onboarding; there is no human at
-// a console to authenticate to. Scoped to what onboarding needs, not the whole
-// NetworkManager action tree.
-polkit.addRule(function(action, subject) {
-    if (subject.user !== "virtues") { return undefined; }
-    switch (action.id) {
-        case "org.freedesktop.NetworkManager.network-control":
-        case "org.freedesktop.NetworkManager.wifi.share.protected":
-        case "org.freedesktop.NetworkManager.settings.modify.system":
-            return polkit.Result.YES;
-    }
-    return undefined;
-});
-"#;
-
-/// The kiosk unit.
-///
-/// **Why WebKit and not Chromium.** On Ubuntu 24.04 arm64 `chromium-browser`
-/// resolves to a snap transition stub, which would drag snapd — a second,
-/// self-updating release channel — onto an appliance whose whole update story
-/// is ours. `cog`/WPE has no arm64 candidate. `libwebkit2gtk-4.1-0` is a
-/// first-class deb and is what Tauri already links against on Linux, so the
-/// display and the desktop app share an engine.
-///
-/// **The DRM guard.** The same image ships to boxes with and without a screen,
-/// so the unit starts only when a connector actually reports one. Checked in
-/// ExecStartPre rather than a `Condition`, because the answer lives in the
-/// *contents* of the sysfs file, not in its existence.
-///
-/// **`-s` is not optional.** Without it cage grabs the keyboard and swallows
-/// Ctrl+Alt+F<n>, so there is no way to reach a text console — and on an
-/// appliance the kiosk is running at exactly the moments you most need one. It
-/// cost us a box: while the setup AP was up (so no network) with the kiosk
-/// holding the keyboard (so no console), the only remaining recovery was
-/// pulling the power. A physically-present owner must always be able to get a
-/// login prompt.
-const DISPLAY_UNIT_TEMPLATE: &str = r#"[Unit]
-Description=Virtues display (cage + WebKit kiosk)
-Documentation=https://virtues.com/docs
-# After=virtues.service narrows the first-boot race: the panel is served BY
-# virtues.service, and first boot is the longest boot there is (firstboot
-# claims the NVMe and creates the Postgres cluster before virtues can start).
-# Ordering-only, not Wants= — the kiosk must still come up to say "Storage
-# disconnected" when virtues can't run. And with Type=simple this only orders
-# process start, not listening, so the shim's retry remains the guarantee.
-After=systemd-user-sessions.service seatd.service virtues.service
-Wants=seatd.service
-# Cap the restart loop. Restart=always + RestartSec=5 is 2 starts/10s, under
-# systemd's default burst of 5 — so a headless board (ExecStartPre's DRM guard
-# fails) or a crash-looping kiosk would restart forever. With the cap it parks
-# after 5 and shows up in `systemctl --failed`, which on a headless board is
-# the correct end state.
-StartLimitIntervalSec=300
-StartLimitBurst=5
-
-[Service]
-Type=simple
-Environment=XDG_RUNTIME_DIR=/run/user/0
-Environment=LIBSEAT_BACKEND=seatd
-Environment=WLR_BACKENDS=drm
-Environment=GDK_BACKEND=wayland
-# The shim's diagnostic page reports provisioning facts about the data dir
-# (file presence only, never contents), so it needs to know where it is.
-Environment=VIRTUES_DATA_DIR=__DATA_DIR__
-EnvironmentFile=-__DATA_DIR__/virtues.env
-# Pin the panel's EDID for every re-probe, when the image ships a blob. The
-# panel's DDC wire reproducibly fails on forced re-detect (Hours' wake), which
-# would fall the connector back to VESA modes and stretch the glass; the
-# pinned blob makes every wake deterministic. RUNTIME module param, not kernel
-# cmdline: on the Q6A the boot chain bakes bootargs into the device tree and
-# /boot/extlinux is decorative (verified 2026-08-26 — /etc/kernel/cmdline +
-# u-boot-update regenerate an append line nothing reads), and Hours' re-detects
-# are post-boot by definition, so the param set here is always in time.
-# `-` prefix: a missing blob or read-only sysfs must not stop the kiosk.
-ExecStartPre=-/bin/sh -c "[ -f /usr/lib/firmware/edid/virtues-panel-1080.bin ] && echo HDMI-A-1:edid/virtues-panel-1080.bin > /sys/module/drm/parameters/edid_firmware"
-# The connected-connector guard keeps a headless board from crash-looping
-# cage. The marker-file escape is Hours: while the sleep engine holds the
-# panel's connector forced off (api::system_display::sleep_engine), a restart
-# of this unit — an upgrade's restart_display fires one — must still start,
-# or the unit parks in --failed against a connector the box darkened on
-# purpose. Cage survives losing its outputs AND starts with zero outputs
-# (both hardware-verified 2026-08-26); the page draws to nobody until wake
-# re-detects the connector and wlroots hotplugs it back.
-ExecStartPre=/bin/sh -c "mkdir -p /run/user/0; chmod 700 /run/user/0; grep -qx connected /sys/class/drm/*/status || [ -e /run/virtues-display-asleep ]"
-ExecStart=/usr/bin/cage -s -- /usr/bin/python3 /usr/local/lib/virtues/display.py
-# The box's own server may still be starting; the shim retries, and a crash
-# should put the display back rather than leave a black screen.
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-"#;
-
-/// The WebKit shim the kiosk runs.
-///
-/// **The zoom is not cosmetic and must not be "fixed" to 1.0.** The 7" panel
-/// reports itself as 53×30 cm in its EDID — a ~24" monitor — when it is
-/// physically 15.5×8.7 cm. Every DPI heuristic in the stack believes the EDID,
-/// so WebKit computes ~92 DPI against a real 315, sets devicePixelRatio to 1,
-/// and renders the whole UI 3.28× too small: body text lands at 1.4 mm tall,
-/// which is unreadable at any distance. Measured with a CSS `10cm` rule that
-/// came out 3 cm on glass. Never trust EDID-derived DPI on this hardware.
-///
-/// The zoom is DERIVED from the connected connector's pixel mode, not pinned:
-/// `mode_width / 585`, so every panel renders the same 585×329 CSS canvas the
-/// /display page is designed against (585 = 1920/3.28, the validated 7"
-/// layout). A pinned 3.28 was correct only for a 1080p panel — a bench panel
-/// running 800×480 got a 244-px-wide viewport and drew the setup screen as
-/// overlapping billboard text (2026-08-25). The EDID's physical size is still
-/// never trusted; the MODE is real. `VIRTUES_DISPLAY_ZOOM` remains as a
-/// per-box override via the env file.
-///
-/// Python + GTK because it is what the apt-installable WebKit binding gives
-/// us. Two jobs now: show the real UI, and — after a short grace window when
-/// the real UI won't load — show a locally-generated diagnostic page instead
-/// of a blank screen (the 2026-08-19 field lesson; see the shim's docstring).
-/// The intended end state is the Tauri app in kiosk mode, which shares this
-/// engine.
-const DISPLAY_SHIM: &str = include_str!("../assets/display.py");
-
-/// The first-boot oneshot: mint this unit's own encryption key.
-///
-/// Exists because `virtues deprovision` strips `VIRTUES_ENCRYPTION_KEY` before
-/// a box is imaged — a key minted on the master would be baked into the image
-/// and shared by every clone, so it has to be minted per unit, here, on the
-/// customer's first boot.
-///
-/// Everything else identity-shaped already self-mints: systemd repopulates an
-/// empty `machine-id`, sshd regenerates host keys, and the box's iroh secret is
-/// created by `load_or_create_secret` when `virtues.service` first starts. The
-/// encryption key is the one secret that must exist *before* the service comes
-/// up, because the unit reads it from the env file — hence a separate oneshot
-/// ordered `Before=virtues.service` rather than folding it into bringup.
-///
-/// **It mints only when the marker is present.** A box that lost its key some
-/// other way — a botched edit, a half-restored backup — must fail loudly, not
-/// receive a fresh key: the old ciphertext is still on disk and still parses,
-/// so a silent rotation turns every stored credential into undecryptable
-/// garbage with nothing in the logs to say why.
-fn install_firstboot_unit(cfg: &InstallConfig) -> Result<()> {
-    let script = firstboot_script(
-        &cfg.data_dir.display().to_string(),
-        &cfg.binary_path().display().to_string(),
-    );
-    fs::write("/usr/local/sbin/virtues-firstboot.sh", script)
-        .context("writing /usr/local/sbin/virtues-firstboot.sh")?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(
-            "/usr/local/sbin/virtues-firstboot.sh",
-            fs::Permissions::from_mode(0o750),
-        )
-        .context("chmod virtues-firstboot.sh")?;
-    }
-
-    fs::write(
-        "/etc/systemd/system/virtues-firstboot.service",
-        FIRSTBOOT_UNIT_TEMPLATE,
-    )
-    .context("writing /etc/systemd/system/virtues-firstboot.service")?;
-    Ok(())
-}
-
-/// The first-boot script with this install's paths filled in.
-fn firstboot_script(data_dir: &str, bin: &str) -> String {
-    FIRSTBOOT_SCRIPT.replace("__DATA_DIR__", data_dir).replace("__BIN__", bin)
-}
-
-/// The Postgres major version this box has a cluster config for, e.g. `18`.
-///
-/// Read from `/etc/postgresql`, which is where Debian keeps cluster
-/// configuration — deliberately not from the data directory, because this is
-/// also called when the data directory is the thing that does not exist yet.
-/// Highest version wins if a box somehow carries two.
-pub fn pg_cluster_version() -> Option<String> {
-    let mut versions: Vec<u32> = fs::read_dir("/etc/postgresql")
-        .ok()?
-        .flatten()
-        .filter_map(|e| e.file_name().to_string_lossy().parse::<u32>().ok())
-        .collect();
-    versions.sort_unstable();
-    versions.last().map(|v| v.to_string())
-}
-
-/// Where a relocated cluster lives, and the symlink that points at it.
-pub fn pg_link_path() -> &'static Path {
-    Path::new("/var/lib/postgresql")
-}
-pub fn pg_relocated_dir(data_dir: &Path) -> std::path::PathBuf {
-    data_dir.join("postgresql")
-}
-/// The pre-move copy, kept until an operator removes it. See below.
-const PG_PRE_MOVE: &str = "/var/lib/postgresql.pre-move";
-
-/// Move the Postgres cluster onto the data disk.
-///
-/// ## Why, in one number
-///
-/// The lab box carried 3.0 GB of Postgres and 8.9 GB of lake. The lake was
-/// already on the data disk; Postgres was not — so the busiest writer on the
-/// box, the one doing a WAL flush per transaction forever, was landing on the
-/// the boot medium — a microSD card on the Q6A, which is the weakest storage on
-/// the board and the one that wears out under database load. `storage.rs` warns
-/// about exactly this; getting the writes off it is acting on that warning.
-///
-/// ## Why a symlink rather than `data_directory`
-///
-/// Debian's `postgresql.conf` has a `data_directory` setting, and pointing it
-/// at the data disk is the obvious move. It is the wrong one. That path is also
-/// known to `pg_createcluster`, `pg_dropcluster`, `pg_upgradecluster`, the
-/// `postgresql@.service` template's own `RequiresMountsFor`, and every apt
-/// maintainer script — and each of those would then need to be told, or would
-/// quietly disagree with us at the worst moment (a major-version upgrade).
-///
-/// Symlinking `/var/lib/postgresql` moves the whole tree and leaves every one
-/// of those working on vanilla paths that resolve through it. We verified the
-/// unit carries no `ProtectSystem`/`ReadWritePaths` sandbox that a symlink out
-/// of `/var/lib` would trip.
-///
-/// ## Why the original is copied and kept, not moved
-///
-/// This is the only copy of the owner's database. So: stop, **copy**, swap the
-/// symlink in, start, and prove it serves — and only then is the original
-/// redundant. It is left at `/var/lib/postgresql.pre-move` for the operator to
-/// remove, because a rollback that exists is worth more than the disk it costs.
-/// `virtues image-check` reports it as a finding, so it cannot ship inside an
-/// image by being forgotten.
-pub async fn relocate_postgres_to_data_dir(cfg: &InstallConfig) -> Result<()> {
-    let link = pg_link_path();
-    let dest = pg_relocated_dir(&cfg.data_dir);
-
-    // Already done. Checked on the symlink itself (`symlink_metadata`), because
-    // `Path::is_symlink` on a link whose TARGET is missing must still say yes —
-    // which is exactly the state a freshly imaged unit is in.
-    if let Ok(md) = fs::symlink_metadata(link) {
-        if md.file_type().is_symlink() {
-            ui::skip(&format!(
-                "Postgres already lives on the data disk ({})",
-                dest.display()
-            ));
-            return Ok(());
-        }
-    }
-
-    let Some(ver) = pg_cluster_version() else {
-        ui::warn("No Postgres cluster config in /etc/postgresql — skipping relocation");
-        return Ok(());
-    };
-
-    // A box whose fstab declares the data disk but does not have it mounted is
-    // MID-PROVISIONING: virtues-firstboot claims and mounts it on the next
-    // boot, and until then the pg mount guard refuses every start below the
-    // unmounted path — correctly. Attempting the move here can only produce
-    // copy → guard refuses → rollback, forever, with an error that reads as a
-    // broken cluster ("/var/lib/postgresql/18/main is not accessible") when
-    // nothing is broken at all. Found in the field 2026-08-19, on a freshly
-    // imaged clone that ran sh-pre before its claiming reboot. Defer with the
-    // same instruction build-dragon.sh gives for the same state.
-    let fstab_declares = fs::read_to_string("/etc/fstab")
-        .map(|s| s.contains("LABEL=virtues-data"))
-        .unwrap_or(false);
-    if fstab_declares {
-        let mounted = Command::new("mountpoint")
-            .args(["-q", &cfg.data_dir.display().to_string()])
-            .status()
-            .await
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !mounted {
-            return Err(anyhow!(
-                "the data disk is declared in fstab but {} is not mounted — this box \
-                 has not claimed it yet.\n       Reboot (virtues-firstboot claims and \
-                 mounts the disk), then re-run this installer.",
-                cfg.data_dir.display()
-            ));
-        }
-    }
-
-    fs::create_dir_all(&cfg.data_dir)
-        .with_context(|| format!("mkdir {}", cfg.data_dir.display()))?;
-
-    // Stop it — naming BOTH the wrapper and the instance, and the second name
-    // is the fix for a copy that raced a shutdown. `postgresql@<ver>-main` is
-    // `PartOf=postgresql.service`, so stopping the wrapper does propagate — but
-    // `systemctl stop` only WAITS for the units named on the command line, and
-    // the wrapper is a one-shot that stops instantly. The propagated stop of
-    // the instance runs asynchronously, and on 2026-08-18 the copy below beat
-    // it: the copied pg_wal ended 8 bytes short of the shutdown checkpoint that
-    // the copied pg_control pointed at (Postgres writes the WAL record first,
-    // pg_control second — the copy read them on opposite sides of that write),
-    // and the relocated cluster PANICked with "could not locate a valid
-    // checkpoint record". Naming the instance makes systemctl wait for it.
-    systemctl(
-        &["stop", "postgresql", &format!("postgresql@{ver}-main")],
-        "Stop Postgres for the move",
-    )
-    .await?;
-
-    // Belt and braces: the postmaster pid file is removed as the very last act
-    // of a shutdown, after the checkpoint is on disk. If it is still there,
-    // the copy below would be of a cluster that is still writing.
-    for _ in 0..30u8 {
-        if !Path::new(&format!("{}/{ver}/main/postmaster.pid", link.display())).exists() {
-            break;
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-
-    // Copy. `-a` carries ownership and modes, and both matter: Postgres refuses
-    // to start on a data directory that is group- or world-readable.
-    if dest.exists() {
-        // A previous interrupted run. The cluster we are about to trust must be
-        // a complete copy of the one we have, not a merge with a partial one.
-        fs::remove_dir_all(&dest)
-            .with_context(|| format!("clearing a partial {}", dest.display()))?;
-    }
-    fs::create_dir_all(&dest).with_context(|| format!("mkdir {}", dest.display()))?;
-    let mut cp = Command::new("cp");
-    cp.args(["-a", &format!("{}/.", link.display()), &dest.display().to_string()]);
-    run_step(
-        &format!("Copy the Postgres cluster to {}", dest.display()),
-        cp,
-    )
-    .await?;
-
-    // Swap. Rename rather than delete — until Postgres has actually served from
-    // the copy, the original is the only thing we know works.
-    let _ = fs::remove_dir_all(PG_PRE_MOVE);
-    fs::rename(link, PG_PRE_MOVE)
-        .with_context(|| format!("moving {} aside", link.display()))?;
-    std::os::unix::fs::symlink(&dest, link)
-        .with_context(|| format!("symlink {} -> {}", link.display(), dest.display()))?;
-
-    // Start, and prove it serves. A failure here is recoverable precisely
-    // because the original is still there, so say how.
-    let mut start = Command::new("systemctl");
-    start.args(["start", &format!("postgresql@{ver}-main")]);
-    let started = start.status().await.map(|s| s.success()).unwrap_or(false);
-    let serving = started && pg_is_ready().await;
-    if !serving {
-        // Put it back. An installer that leaves a box without a database
-        // because it was tidying disk layout is worse than one that never
-        // tried. The rename is CHECKED: if it fails, the link was already
-        // removed and /var/lib/postgresql would simply not exist — a dangling
-        // half-rollback that presents as a destroyed cluster.
-        let _ = fs::remove_file(link);
-        if let Err(e) = fs::rename(PG_PRE_MOVE, link) {
-            ui::warn(&format!(
-                "rollback could not restore {}: {e} — the untouched cluster is at \
-                 {PG_PRE_MOVE}; restore it by hand: mv {PG_PRE_MOVE} {}",
-                link.display(),
-                link.display()
-            ));
-        }
-        let mut back = Command::new("systemctl");
-        back.args(["start", &format!("postgresql@{ver}-main")]);
-        let _ = back.status().await;
-        return Err(anyhow!(
-            "Postgres would not serve from {} — rolled back to {}. \
-             The cluster is untouched; check `journalctl -u postgresql@{ver}-main`.",
-            dest.display(),
-            link.display()
-        ));
-    }
-
-    ui::ok(&format!("Postgres cluster moved to {}", dest.display()));
-    ui::warn(&format!(
-        "the pre-move copy is at {PG_PRE_MOVE} — remove it once you're satisfied: rm -rf {PG_PRE_MOVE}"
-    ));
-    Ok(())
-}
-
-/// Is Postgres accepting connections?
-async fn pg_is_ready() -> bool {
-    for _ in 0..30 {
-        let ok = Command::new("pg_isready")
-            .args(["-q", "-h", "/var/run/postgresql"])
-            .status()
-            .await
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if ok {
-            return true;
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-    }
-    false
-}
-
-/// Refuse to start Postgres when the data disk is absent.
-///
-/// `virtues.service` already carries `RequiresMountsFor=<data dir>`, and its
-/// comment explains why: without the data disk, Postgres `initdb`s a fresh
-/// empty cluster and the box looks perfectly healthy while being empty. But
-/// the guard was on the wrong unit. `virtues.service` waits for Postgres
-/// (`ExecStartPre` polls `pg_isready`), so Postgres starts FIRST — and by the
-/// time our guard declined to run, the empty cluster it was protecting against
-/// had already been created.
-///
-/// A drop-in rather than an edit to the vendor unit: `postgresql@.service` is
-/// distro-owned and an apt upgrade would overwrite anything written into it.
-///
-/// **DIY boxes get nothing.** There is one disk on a self-hosted server by
-/// definition, `data_dir` is a plain directory on it, and both checks here
-/// would be wrong there — `mountpoint` would fail on a perfectly good install.
-/// We are a guest on that machine and its Postgres is not ours to constrain.
-fn install_postgres_mount_guard(cfg: &InstallConfig) -> Result<()> {
-    let body = PG_MOUNT_GUARD_TEMPLATE
-        .replace("__DATA_DIR__", &cfg.data_dir.display().to_string());
-    install_file(
-        "/etc/systemd/system/postgresql@.service.d/10-virtues-data-mount.conf",
-        &body,
-    )?;
-    ui::ok("Postgres will not start without the data disk");
-    Ok(())
-}
-
-const FIRSTBOOT_UNIT_TEMPLATE: &str = r#"[Unit]
-Description=Virtues first boot — claim the data disk, mint this unit's secrets
-Documentation=https://virtues.com/docs
-# Before BOTH, and Postgres is the one that is easy to forget. This claims the
-# data disk and creates the cluster on it; Postgres starting first would find
-# the symlink target missing and fail, and would then need a second, manual
-# start after we had fixed it up underneath.
-Before=virtues.service postgresql.service
-DefaultDependencies=yes
-
-[Service]
-Type=oneshot
-RemainAfterExit=yes
-# The claim is minutes of work — mkfs on an NVMe plus a several-hundred-MB
-# seed copy that grows with the model set — and a oneshot inherits systemd's
-# 90s DefaultTimeoutStartSec. At 90s the copy is SIGKILLed mid-flight, which is
-# exactly the interrupted-claim state §0 exists to repair, on every unit once
-# models outgrow the default. Postgres already got `infinity` for its own
-# long recovery; the longer-running unit did not, until now.
-TimeoutStartSec=infinity
-ExecStart=/usr/local/sbin/virtues-firstboot.sh
-
-[Install]
-WantedBy=multi-user.target
-"#;
-
-/// Per-unit appliance provisioning, idempotent across boots. Only the KEY MINT
-/// (§2) is marker-gated; the disk claim, journal relocation, cluster creation,
-/// growpart, ssh-key mint and loud-fail all run on their own guards every boot
-/// (each a no-op once satisfied). So "does nothing without the marker" is false
-/// — do not remove the marker expecting the script to go inert.
-const FIRSTBOOT_SCRIPT: &str = include_str!("../assets/virtues-firstboot.sh");
 
 const SYSTEMD_UNIT_TEMPLATE: &str = r#"[Unit]
 Description=Virtues — your data, on your hardware
@@ -2210,13 +1349,11 @@ Wants=postgresql.service network-online.target
 StartLimitIntervalSec=600
 StartLimitBurst=5
 
-# The data directory is its own filesystem on the appliance (a blank NVMe
-# claimed at first boot). fstab carries `nofail` so a missing disk never blocks
-# boot — the box must still come up far enough to say so on the display — but
-# the app must NOT start without it. Otherwise Postgres cheerfully initdb's a
-# fresh empty cluster onto the boot card and the box looks perfectly healthy while
-# being empty, which is the same silent-divergence class as a mis-numbered
-# migration. `nofail` for the boot, RequiresMountsFor for the app.
+# The data directory may be its own filesystem (a separate data disk, as on
+# boxes provisioned as Dragons). The app must not start without it mounted.
+# Otherwise Postgres initdb's a fresh empty cluster onto the boot disk and the
+# box looks healthy while being empty. When the data directory is a plain
+# directory on the root filesystem, this only orders the unit after that mount.
 RequiresMountsFor=__DATA_DIR__
 
 [Service]
@@ -2244,7 +1381,7 @@ RestartSec=5
 #   ProtectSystem/ProtectHome         — /usr,/etc,/home mounted read-only.
 #   ProtectKernel*/ControlGroups      — blocked sysctl + cgroup writes.
 #   RestrictNamespaces                — blocked containers (podman/unshare).
-# The box is a single-tenant, owner-operated appliance; that shell IS the admin
+# The box is a single-tenant, owner-operated server; that shell IS the admin
 # surface and its security boundary is the WG/SPKI + session auth in front of
 # /ws/terminal, not this sandbox. TRADE-OFF: the network-facing app on :8000
 # runs in this same unit, so an RCE in the app now escalates to root — accepted
@@ -2414,25 +1551,15 @@ pub async fn health_check(cfg: &InstallConfig, mode: &InferenceMode) -> Result<u
 /// restarted qnnd). Rewritten on every install run — the installer is the
 /// only writer.
 ///
-/// ## Why `appliance` and `units` live here
+/// ## Why `units` lives here
 ///
 /// Three consumers used to each keep their own idea of what an install
-/// contains, and all three were wrong in different directions.
-/// `setup_ap::is_appliance()` tested for `virtues-display.service` on disk —
-/// which gates BLE provisioning, the setup AP and the account requirement off
-/// a file that a headless appliance may legitimately not have.
-/// `uninstall.rs` carried a hardcoded unit list that still named
-/// `virtues-wireguard` (deleted long ago) and had never heard of the display,
-/// first-boot or captive units. `upgrade.rs` restarted a third subset.
-///
-/// So the installer — the thing that actually creates them — declares the
-/// full set once, and the others read it. A field added here is a field all
-/// three see; a unit that stops being installed stops being listed.
-pub fn write_install_manifest(
-    cfg: &InstallConfig,
-    mode: &InferenceMode,
-    appliance: bool,
-) -> Result<()> {
+/// contains, and all three were wrong in different directions: `uninstall.rs`
+/// carried a hardcoded unit list naming units long deleted, and `upgrade.rs`
+/// restarted a different subset. So the installer, the thing that actually
+/// creates the units, declares the full set once, and the others read it. A
+/// unit that stops being installed stops being listed.
+pub fn write_install_manifest(cfg: &InstallConfig, mode: &InferenceMode) -> Result<()> {
     let (profile, sidecars): (&str, Vec<&str>) = match mode {
         InferenceMode::Dragon => ("dragon", vec!["virtues-qnnd"]),
         InferenceMode::Bundled => ("bundled", vec!["virtues-embed"]),
@@ -2440,39 +1567,14 @@ pub fn write_install_manifest(
     };
 
     // Every unit this installer writes, in the order a teardown should stop
-    // them: the display first (it renders the server that is about to go),
-    // then the server, then what the server depends on.
-    let mut units: Vec<&str> = Vec::new();
-    if appliance {
-        units.push("virtues-display");
-    }
-    units.push("virtues");
+    // them: the server first, then what the server depends on.
+    let mut units: Vec<&str> = vec!["virtues"];
     units.extend(sidecars.iter().copied());
-    units.push("virtues-firstboot");
-
-    // Files outside the unit directory that only exist because we put them
-    // there. Uninstall needs the list; nothing else should have to know it.
-    let mut extra_files: Vec<String> = vec![
-        "/usr/local/sbin/virtues-firstboot.sh".to_string(),
-    ];
-    if appliance {
-        extra_files.push("/usr/local/lib/virtues/display.py".to_string());
-        extra_files.push("/etc/polkit-1/rules.d/50-virtues-network.rules".to_string());
-        extra_files.push(
-            "/etc/systemd/system/postgresql@.service.d/10-virtues-data-mount.conf".to_string(),
-        );
-        extra_files.push("/etc/systemd/logind.conf.d/10-virtues-power-key.conf".to_string());
-    }
 
     let manifest = serde_json::json!({
         "profile": profile,
-        // Is this a guided product (our hardware, or `--appliance`) rather
-        // than somebody's own Linux server? Decides whether the box may
-        // administer its own radio, require an account, and serve Improv.
-        "appliance": appliance,
         "sidecars": sidecars,
         "units": units,
-        "extra_files": extra_files,
         "data_dir": cfg.data_dir,
         "models_dir": cfg.models_dir(),
         "written_by": env!("CARGO_PKG_VERSION"),
@@ -2548,16 +1650,7 @@ fn migrate_applets_out_of_shipped_tree(cfg: &InstallConfig) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{firstboot_script, rank_lib_dirs};
-
-    /// A placeholder left in the script is a command or path that does not
-    /// exist on the unit, found only on a first boot.
-    #[test]
-    fn the_firstboot_script_has_no_placeholder_left() {
-        let script = firstboot_script("/var/lib/virtues", "/usr/local/bin/virtues");
-        assert!(!script.contains("__"), "a placeholder survived: {}", script.lines().find(|l| l.contains("__")).unwrap());
-        assert!(script.contains("/usr/local/bin/virtues migrate --check"));
-    }
+    use super::rank_lib_dirs;
 
     /// The exact shape the lab Dragon presents: one QAIRT unpack, six copies of
     /// `libQnnHtp.so`, emitted by `find` in filesystem order. The old `head -1`
