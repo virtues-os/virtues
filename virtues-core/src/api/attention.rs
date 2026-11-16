@@ -69,16 +69,7 @@ pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
         Err(e) => tracing::warn!("attention: applet runs unreadable: {e}"),
     }
 
-    match crate::api::stream_health::stream_health(db).await {
-        Ok(streams) => {
-            stream_items(&mut items, &streams);
-            match crate::api::stream_health::stream_days(db, RHYTHM_WINDOW_DAYS).await {
-                Ok(days) => quiet_stream_items(&mut items, &streams, &days),
-                Err(e) => tracing::warn!("attention: stream arrivals unreadable: {e}"),
-            }
-        }
-        Err(e) => tracing::warn!("attention: stream health unreadable: {e}"),
-    }
+    items.extend(stream_attention(db).await);
 
     match new_from_applets(db).await {
         Ok(rows) => new_applet_items(&mut items, rows),
@@ -86,6 +77,51 @@ pub async fn attention(db: &Database) -> Result<Vec<AttentionItem>> {
     }
 
     Ok(items)
+}
+
+/// How long the stream items are reused. Reading them scans every `data_*`
+/// table (counts and a 75-day histogram), and clients poll this list every
+/// minute. A stream counts as stopped after a day or more, so items a few
+/// minutes old say the same thing.
+const STREAM_ITEMS_TTL: std::time::Duration = std::time::Duration::from_secs(300);
+
+/// The last stream items and when they were read. Process-local, as
+/// `subscription`'s cache is: a restart reads again, which costs one scan.
+static STREAM_ITEMS: std::sync::Mutex<Option<(std::time::Instant, Vec<AttentionItem>)>> =
+    std::sync::Mutex::new(None);
+
+/// Items for stopped and unusually quiet streams, from a read at most
+/// `STREAM_ITEMS_TTL` old. A read that fails is not kept, so the next poll
+/// tries again.
+async fn stream_attention(db: &Database) -> Vec<AttentionItem> {
+    if let Ok(cache) = STREAM_ITEMS.lock() {
+        if let Some((at, items)) = cache.as_ref() {
+            if at.elapsed() < STREAM_ITEMS_TTL {
+                return items.clone();
+            }
+        }
+    }
+    let mut items = Vec::new();
+    let streams = match crate::api::stream_health::stream_health(db).await {
+        Ok(streams) => streams,
+        Err(e) => {
+            tracing::warn!("attention: stream health unreadable: {e}");
+            return items;
+        }
+    };
+    stream_items(&mut items, &streams);
+    match crate::api::stream_health::stream_days(db, RHYTHM_WINDOW_DAYS).await {
+        Ok(days) => quiet_stream_items(&mut items, &streams, &days),
+        Err(e) => {
+            // Return what there is, but don't keep it: the quiet items are missing.
+            tracing::warn!("attention: stream arrivals unreadable: {e}");
+            return items;
+        }
+    }
+    if let Ok(mut cache) = STREAM_ITEMS.lock() {
+        *cache = Some((std::time::Instant::now(), items.clone()));
+    }
+    items
 }
 
 /// `(applet id, name, run id, error)` for each applet that is on and whose

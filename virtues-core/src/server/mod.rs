@@ -355,7 +355,8 @@ fn build_app(state: AppState) -> Router {
         .merge(protected_routes(&state))
         .with_state(state)
         .layer(middleware::from_fn(crate::middleware::security::headers_layer))
-        .layer(DefaultBodyLimit::max(260 * 1024 * 1024)); // 260MB (slightly above 250MB file limit for multipart overhead)
+        .layer(DefaultBodyLimit::max(260 * 1024 * 1024)) // 260MB (slightly above 250MB file limit for multipart overhead)
+        .layer(api_compression());
 
     // API namespaces must NEVER fall through to the SPA fallback below: an
     // unknown /api path answered with a cacheable 200 index.html poisons
@@ -380,6 +381,39 @@ fn build_app(state: AppState) -> Router {
     // Outside even that: the request span has to be open before any other
     // layer logs, or the first lines of a request are the ones without a key.
     app.layer(axum::middleware::from_fn(request_id))
+}
+
+/// Gzip or brotli for API responses, as the client asks. Transcripts, lists
+/// and wiki pages are JSON that compresses several times over, and every byte
+/// of it crosses the relay to a phone. Only the routes get this: the static
+/// build is precompressed on disk (`static_service`).
+///
+/// JSON and text only. `DefaultPredicate` already skips small bodies, images
+/// and `text/event-stream`, so the chat stream is never buffered. A ranged
+/// reply (206, or any `Content-Range`) is also skipped: its byte offsets refer
+/// to the uncompressed file.
+fn api_compression() -> tower_http::compression::CompressionLayer<
+    impl tower_http::compression::Predicate + Clone,
+> {
+    use tower_http::compression::predicate::{DefaultPredicate, Predicate};
+    let worth_it = |status: axum::http::StatusCode,
+                    _: axum::http::Version,
+                    headers: &axum::http::HeaderMap,
+                    _: &axum::http::Extensions| {
+        if status == axum::http::StatusCode::PARTIAL_CONTENT
+            || headers.contains_key(axum::http::header::CONTENT_RANGE)
+        {
+            return false;
+        }
+        headers
+            .get(axum::http::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|ct| ct.starts_with("application/json") || ct.starts_with("text/"))
+    };
+    tower_http::compression::CompressionLayer::new()
+        .no_deflate()
+        .no_zstd()
+        .compress_when(DefaultPredicate::new().and(worth_it))
 }
 
 /// The SvelteKit static build, falling back to 200.html for SPA routing, or
@@ -803,6 +837,64 @@ fn static_cache_control(path: &str) -> Option<&'static str> {
         Some("public, max-age=604800")
     } else {
         None
+    }
+}
+
+#[cfg(test)]
+mod api_compression_tests {
+    use super::*;
+    use axum::{http::header, response::IntoResponse, routing::get, Router};
+    use tower::Service;
+
+    /// A body well over `DefaultPredicate`'s 32-byte floor.
+    fn big() -> String {
+        "the quick brown fox jumps over the lazy dog ".repeat(40)
+    }
+
+    async fn encoding(path: &str) -> Option<String> {
+        let mut app = Router::new()
+            .route("/json", get(|| async { axum::Json(serde_json::json!({ "text": big() })) }))
+            .route(
+                "/sse",
+                get(|| async { ([(header::CONTENT_TYPE, "text/event-stream")], big()).into_response() }),
+            )
+            .route(
+                "/range",
+                get(|| async {
+                    (
+                        axum::http::StatusCode::PARTIAL_CONTENT,
+                        [(header::CONTENT_TYPE, "text/plain"), (header::CONTENT_RANGE, "bytes 0-9/100")],
+                        big(),
+                    )
+                        .into_response()
+                }),
+            )
+            .route(
+                "/audio",
+                get(|| async { ([(header::CONTENT_TYPE, "audio/mpeg")], big()).into_response() }),
+            )
+            .layer(api_compression());
+        let req = axum::http::Request::builder()
+            .uri(path)
+            .header(header::ACCEPT_ENCODING, "br, gzip")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = app.call(req).await.unwrap();
+        res.headers()
+            .get(header::CONTENT_ENCODING)
+            .map(|v| v.to_str().unwrap().to_string())
+    }
+
+    #[tokio::test]
+    async fn compresses_json() {
+        assert_eq!(encoding("/json").await.as_deref(), Some("br"));
+    }
+
+    #[tokio::test]
+    async fn leaves_the_chat_stream_ranges_and_media_alone() {
+        assert_eq!(encoding("/sse").await, None, "an event stream must not be buffered");
+        assert_eq!(encoding("/range").await, None, "a 206's offsets refer to the raw bytes");
+        assert_eq!(encoding("/audio").await, None);
     }
 }
 
