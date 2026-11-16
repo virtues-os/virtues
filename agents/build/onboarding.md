@@ -192,8 +192,8 @@ person opens the app or the letter themselves.
 - **Server** (`steps/StepServer.svelte`) searches the network
   (`plugin:reach|discover`, a subnet scan, so it works where mDNS does not),
   asks "Which server is yours?" when it finds more than one, and otherwise
-  asks for the address and code. The code is six boxes in the terminal's
-  monospaced face; one pasted line from `virtues pair` fills the address and
+  asks for the address and code. The code is six boxes in the serif, its
+  figures lined up; one pasted line from `virtues pair` fills the address and
   all six, wherever it is pasted. Once paired, the server appears for a
   moment (its name, set large) before Setup moves on by itself. Pairing is `prePair.pairByAddress` (`prepair.svelte.ts`), which calls
   the reach plugin's `pair`; `pairing.ts` turns failures into sentences.
