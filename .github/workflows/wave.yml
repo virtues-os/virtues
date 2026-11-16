@@ -113,10 +113,9 @@ jobs:
           # `cargo build` (rlib), and they should not evict each other.
           shared-key: wave-gate
 
-      # `bluer` (the Improv/BLE service) pulls libdbus-sys, a pkg-config build
-      # script — a hard prerequisite of compiling the box on Linux at all.
-      - name: Install libdbus headers (bluer/BLE provisioning)
-        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
+      # libsqlite3-sys and onig_sys look for pkg-config in their build scripts.
+      - name: Install pkg-config
+        run: sudo apt-get update && sudo apt-get install -y pkg-config
 
       # `check`, not `build`: this asks "does it still compile", which is the
       # question every failure this gate exists for answered with "no".
