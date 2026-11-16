@@ -144,13 +144,11 @@
 </div>
 
 <style>
-	/* The corner of the header. The anchor is positioned, not the capsule,
-	   so the list opens under the capsule itself. */
+	/* WindowHeader places the corner. The anchor wraps only the capsule, so
+	   the list opens under the capsule itself. */
 	.capsule-anchor {
-		position: absolute;
-		top: 7px;
-		right: 10px;
-		z-index: 3;
+		position: relative;
+		display: flex;
 	}
 
 	.status-capsule {
@@ -168,7 +166,9 @@
 		font-size: 12px;
 		white-space: nowrap;
 		color: var(--color-foreground);
-		background: var(--color-surface);
+		background: var(--glass-bg, var(--color-surface));
+		backdrop-filter: var(--glass-blur, none);
+		-webkit-backdrop-filter: var(--glass-blur, none);
 		cursor: pointer;
 		animation: capsule-in 220ms var(--ease-premium);
 		transition: border-color var(--motion-hover-out) var(--ease-premium);

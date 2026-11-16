@@ -6,8 +6,9 @@
 	 * Over the sidebar it holds the ∴ mark, which is also the sidebar toggle
 	 * (HeaderMark). New chat is the sidebar's first door. The mark moves only
 	 * when the Mac app's traffic lights come or go, on entering and leaving
-	 * full screen. At the right end, the status capsule says what your server
-	 * is doing and opens what needs you (StatusCapsule).
+	 * full screen. At the right end sit search (HeaderSearch), which searches
+	 * everything, and the status capsule, which says what your server is doing
+	 * and opens what needs you (StatusCapsule).
 	 * Back and forward are on each page's action toolbar (ActionToolbar),
 	 * since they act on that page's tab. Over the cards it holds each pane's tab strip, lined up with the
 	 * pane below it, so a tab always sits on top of its own content.
@@ -18,6 +19,7 @@
 	import HeaderMark from './HeaderMark.svelte';
 	import WindowTabBar from './WindowTabBar.svelte';
 	import StatusCapsule from './StatusCapsule.svelte';
+	import HeaderSearch from './HeaderSearch.svelte';
 	import { windowShellStore, SPLIT_GUTTER_PX } from '$lib/stores/window-shell.svelte';
 	import { sidebarState, SIDEBAR_INSET } from '$lib/stores/sidebarState.svelte';
 	import { trafficLights } from '$lib/tauri/trafficLights.svelte';
@@ -107,7 +109,11 @@
 			{/if}
 		</div>
 	</div>
-	<StatusCapsule />
+	<!-- One positioned corner, so search moves left as the capsule widens. -->
+	<div class="corner">
+		<HeaderSearch />
+		<StatusCapsule />
+	</div>
 </header>
 
 <style>
@@ -157,10 +163,21 @@
 			width var(--motion-layout) var(--ease-premium);
 	}
 
-	/* The last strip's tabs stop short of the status capsule in the corner
-	   (StatusCapsule): its resting width and the air around it. */
+	/* The last strip's tabs stop short of the corner: search and the status
+	   capsule at their resting widths, the gap between them, and the air
+	   around them. */
 	.strip:last-child {
-		padding-right: 48px;
+		padding-right: 84px;
+	}
+
+	.corner {
+		position: absolute;
+		top: 7px;
+		right: 10px;
+		z-index: 3;
+		display: flex;
+		align-items: center;
+		gap: 6px;
 	}
 
 	.resizing .strips,

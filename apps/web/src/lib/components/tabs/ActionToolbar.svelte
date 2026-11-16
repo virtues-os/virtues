@@ -10,9 +10,9 @@
 	 * things opens a menu of them (`tabs/crumbMenus.ts`), and once one is
 	 * open, pointing at another segment opens its menu instead, as in the
 	 * Mac's menu bar. The last segment is the page itself: double-click to
-	 * rename it in place, right-click for its actions. The magnifier after
-	 * the path opens the search palette (SearchModal), as ⌘K does. The right
-	 * end holds the page's status mark (`usePageStatus`, with the cloud whenever its work
+	 * rename it in place, right-click for its actions. Search is not here:
+	 * it searches everything, so it sits in the window header's corner
+	 * (HeaderSearch). The right end holds the page's status mark (`usePageStatus`, with the cloud whenever its work
 	 * leaves the server), then what the page lets you do: the controls a
 	 * view hands over with `usePageActions`, then the buttons it publishes
 	 * with `paneActions.set`, two inline and the rest behind a `···`, since a
@@ -23,7 +23,6 @@
 	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { contextMenu, type ContextMenuItem } from "$lib/stores/contextMenu.svelte";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import { search } from "$lib/stores/search.svelte";
 	import { canPin, isPinned, togglePin } from "$lib/pins/pinAction";
 	import { crumbsForRoute } from "$lib/tabs/crumbs";
 	import { crumbMenuItems } from "$lib/tabs/crumbMenus";
@@ -245,10 +244,6 @@
 			</button>
 		{/if}
 	</div>
-
-	<button class="action" onclick={() => search.show()} aria-label="Search" data-tip="Search (⌘K)">
-		<AtlasIcon name="search" size={16} bare />
-	</button>
 
 	{#if status || controls.length > 0 || actions.length > 0}
 		<div class="actions">
