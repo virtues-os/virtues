@@ -892,8 +892,12 @@
             localStorage.setItem('virtues-just-paired', 'true');
             sessionStorage.removeItem('virtues-forgot-server');
           } catch { /* best effort */ }
-          // Give the loopback a beat, then load the bundled SPA at root.
-          setTimeout(() => window.location.replace('/'), 400);
+          // Give the loopback a beat, then open this device's step in the
+          // bundled SPA. On a new server that step isn't reachable yet and
+          // Setup sends the phone to the first step still open; on a server
+          // that is already set up, this phone still gets its own permissions
+          // instead of going straight into the app.
+          setTimeout(() => window.location.replace('/setup/connections'), 400);
           return;
         }
         try {
