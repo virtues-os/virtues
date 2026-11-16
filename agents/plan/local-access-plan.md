@@ -1,6 +1,6 @@
 # Local access to the server: plan
 
-**Status:** Planned. Decisions 1 to 3 below are for the owner.
+**Status:** Planned. Decision 1 is made (2026-11-16); 2 and 3 are open.
 
 ## What is wrong
 
@@ -85,10 +85,10 @@ have it.
 - **The CLI.** `cli/data.rs` and `agent-exec` talk to the socket.
   `reqwest` has no Unix-socket support, so this uses `hyper` with a
   `UnixStream` connector, or a small request writer like the door client's.
-- **A browser over SSH.** This depends on decision 1. If it stays, the recipe
-  becomes `ssh -L 8000:/run/virtues/console.sock user@host`. sshd connects as
-  the person's login, which is in `virtues-console`, so it works for the
-  owner and for nobody else with an account.
+- **A browser over SSH.** It stays (decision 1). The recipe becomes
+  `ssh -L 8000:/run/virtues/console.sock user@host`. sshd connects as the
+  person's login, which is in `virtues-console`, so it works for the owner
+  and for nobody else with an account.
 - **Upgrades.** An upgraded server needs the group and the unit change. Both
   belong in a system repair (`cli/system_repairs.rs`), which the new binary
   runs as root on the upgrade that first carries it.
@@ -111,8 +111,9 @@ have it.
    release.
 3. Installer and system repair: the group, membership for `SUDO_USER` and
    `virtues-agent`, the unit's `RuntimeDirectory`.
-4. The SSH recipe in `cli/link.rs`, or its removal (decision 1), and the
-   manual page that mentions it.
+4. The SSH recipe in `cli/link.rs` becomes the socket forward, and the
+   manual pages that cite it (`docs/setup/devices/mac.md`, `windows.md`)
+   follow.
 5. Comments and docs that state "physical access is the owner"
    (`middleware/auth.rs`, the sudoers comment in the installer, which also
    still says "WG/SPKI", and `agents/build/recovery.md`).
@@ -122,13 +123,14 @@ verbs then fail until slice 2 lands, so slices 1 and 2 go in one release.
 
 ## Decisions for the owner
 
-1. **Keep the browser over SSH?** It is the only way to use the web app with
-   no paired device. Keep it as a socket forward that only the installer's
-   login can use (recommended), or drop it and have every owner pair a
-   device.
-2. **Who joins `virtues-console`?** The login that ran the installer
-   (recommended), or nobody, which leaves the console to root and `sudo -u
-   virtues`.
+1. **Decided 2026-11-16: keep the browser over SSH.** Asked "Keep the
+   browser-over-SSH path, limited to your own login?", the owner answered
+   "Yes, keep it". It becomes a socket forward that only the owner's login
+   can use.
+2. **Who joins `virtues-console`?** Decision 1 needs the owner's login in the
+   group, so the open part is which logins count as the owner's: the one that
+   ran the installer (recommended), or a list `virtues console add <user>`
+   keeps.
 3. **The terminal's passwordless sudo.** With this plan only an owner reaches
    the terminal, so it can stay. Narrowing it is separate work.
 
