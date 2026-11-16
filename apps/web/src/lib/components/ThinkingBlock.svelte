@@ -317,15 +317,23 @@
 	const detail = $derived(thinkingDetail.value);
 	const shownSteps = $derived(detail === "all" ? steps : steps.filter((s) => !s.said));
 
-	/** The folded row: one mark per step, up to a dozen. */
-	const ROW_MAX = 12;
-	const rowSteps = $derived(steps.filter((s) => !s.said));
-
 	/** "a, b and c" */
 	function listed(words: string[]): string {
 		if (words.length < 2) return words.join("");
 		return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 	}
+
+	/**
+	 * The folded turn says what it used, in words: the first three things,
+	 * then "and more". Never how many: a number of steps is a count, and a
+	 * row of identical dots is the same count drawn.
+	 */
+	const HEADER_TOOLS = 3;
+	const headerTools = $derived(
+		uniqueToolNames.length > HEADER_TOOLS
+			? `${uniqueToolNames.slice(0, HEADER_TOOLS).join(", ")} and more`
+			: listed(uniqueToolNames),
+	);
 
 	/** Brief: what the turn used, in one sentence. */
 	const brief = $derived(
@@ -341,11 +349,11 @@
 	];
 </script>
 
-{#snippet marker(step: Step, small = false)}
+{#snippet marker(step: Step)}
 	{#if step.status === "failed" || step.status === "unfinished"}
-		<span class="mark-ring" class:failed={step.status === "failed"} class:small></span>
+		<span class="mark-ring" class:failed={step.status === "failed"}></span>
 	{:else}
-		<span class="mark-dot" class:running={step.status === "running"} class:small></span>
+		<span class="mark-dot" class:running={step.status === "running"}></span>
 	{/if}
 {/snippet}
 
@@ -391,18 +399,10 @@
 				<span class="duration-text">Worked on this</span>
 			{/if}
 
-			<!-- The summary of a finished turn: one dot per step. While it
-			     runs, the label already names the call in flight. -->
-			{#if !isThinking && rowSteps.length > 0}
-				<span class="header-steps" aria-hidden="true">
-					{#each rowSteps.slice(0, ROW_MAX) as step (step.key)}
-						{@render marker(step, true)}
-					{/each}
-					{#if rowSteps.length > ROW_MAX}<span class="row-more">…</span>{/if}
-				</span>
-				{#if uniqueToolNames.length > 0}
-					<span class="sr-only">Used {listed(uniqueToolNames)}</span>
-				{/if}
+			<!-- The summary of a finished turn: what it used. While it runs,
+			     the label already names the call in flight. -->
+			{#if !isThinking && headerTools}
+				<span class="header-tools">{headerTools}</span>
 			{/if}
 		</span>
 
@@ -571,7 +571,8 @@
 		white-space: nowrap;
 	}
 
-	.thinking-text {
+	.thinking-text,
+	.header-tools {
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -610,16 +611,13 @@
 		color: var(--color-foreground-muted);
 	}
 
-	/* The folded turn's steps, after the label. */
-	.header-steps {
-		display: inline-flex;
-		align-items: center;
-		gap: 6px;
-		align-self: center;
+	.header-tools {
+		color: var(--color-foreground-muted);
 	}
 
-	.row-more {
-		color: var(--color-foreground-subtle);
+	.header-tools::before {
+		content: "·";
+		margin-right: 8px;
 	}
 
 	/* Content area. Filled with the same wash the header takes on hover, so
@@ -754,11 +752,6 @@
 		background: var(--color-foreground-muted);
 	}
 
-	.mark-dot.small {
-		width: 4px;
-		height: 4px;
-	}
-
 	.mark-ring {
 		position: relative;
 		width: 9px;
@@ -766,12 +759,6 @@
 		box-sizing: border-box;
 		border-radius: 50%;
 		border: 1.5px solid var(--color-foreground-subtle);
-	}
-
-	.mark-ring.small {
-		width: 6px;
-		height: 6px;
-		border-width: 1px;
 	}
 
 	/* A failed step: the ring struck through. */
