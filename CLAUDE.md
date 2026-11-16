@@ -11,7 +11,7 @@ Every product decision is made for five people, defined in
 | Primary | Quantified self | "I want charts and numbers from my own data, right in the reply." |
 | Secondary | Tech prosumer | "I want to find something new and beautifully polished before anyone else, with features worth showing off and posting about." |
 | Tertiary | Recovery | "I want a chat that remembers my progress and setbacks, and helps me understand what drives them. Streaks and games don't help me." |
-| Tertiary | Data sovereign | "I want to see when work happens on my server and when it leaves it." |
+| Tertiary | Data sovereign | "I want my data on my own server, and to find out exactly what leaves it when I look." |
 
 Before you change anything a person sees or reads (UI, copy, a reply's
 shape, a prompt, a default, an empty state, the manual), say which persona
@@ -21,7 +21,10 @@ it serves and check it against the rest:
   not make the default worse for either primary.
 - Nothing may add streaks, counts, overdue alarms or game mechanics, since
   someone in recovery sees every page.
-- Anything that sends work off the box shows that it did.
+- Don't mark work as on or off your server anywhere a person looks: no
+  cloud marks, no "off your server" labels, no lanes. The marks worried
+  people and nobody used them. Where data goes is written down in the
+  manual and in `agents/build/privacy-boundary.md`.
 - When you report a design or review one, name what each persona gets from
   it, primaries first.
 

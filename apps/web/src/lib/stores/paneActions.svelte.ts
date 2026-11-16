@@ -36,17 +36,17 @@ export interface PaneAction {
 
 /**
  * One short mark before a page's actions: its state ("Saved", "Offline"),
- * or where the work on it runs. Whenever a mark says work leaves the box,
- * `offBox` is true and the toolbar draws the cloud; the claims allowed are
- * in agents/build/privacy-boundary.md.
+ * or what is working on it.
  */
 export interface StatusMark {
 	label: string;
 	/** The longer sentence, shown on hover. */
 	tip?: string;
-	/** Myna icon drawn before the label. The cloud when `offBox`. */
+	/** Myna icon drawn before the label. */
 	icon?: string;
-	/** The work this mark describes runs on a model provider's servers. */
+	/** TODO(2026-11-16): delete once DayPage stops passing it (another
+	 *  agent has DayPage open). Nothing reads it: the toolbar no longer
+	 *  marks work that leaves the box. */
 	offBox?: boolean;
 	/** Something to act on (a failed save). */
 	tone?: "muted" | "error";

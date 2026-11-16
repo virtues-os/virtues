@@ -8,14 +8,12 @@
 		clip,
 		describeTool,
 		toolDepth,
-		toolLeavesServer,
 		toolName,
 		toolNoun,
 		toolStatus,
 		type ToolPart,
 		type ToolStatus,
 	} from "$lib/components/chat/state/toolPresentation";
-	import Icon from "$lib/components/Icon.svelte";
 	import { thinkingDetail, type ThinkingDetail } from "$lib/stores/thinkingDetail.svelte";
 	import type { WorkerStep } from "$lib/stores/chatInstances.svelte";
 
@@ -262,13 +260,9 @@
 	/**
 	 * THE RAIL. The turn as a line of steps, in the order they happened: the
 	 * model's reasoning, what it said on the way, each call, and the reply.
-	 * A dot is a step done on your server; a cloud is a step done off it
-	 * (`toolLeavesServer`): the model's thinking and writing, the web, a
-	 * connected service. So the open block shows where each step ran.
 	 */
 	interface Step {
 		key: string;
-		off: boolean;
 		status: ToolStatus;
 		label: string;
 		/** Why a call failed or stopped. */
@@ -284,14 +278,13 @@
 		if (reasoningContent) {
 			out.push({
 				key: "reasoning",
-				off: true,
 				status: isThinking && toolCalls.length === 0 ? "running" : "done",
 				label: "Thought it through",
 				text: reasoningContent,
 			});
 		}
 		narration.forEach((line, i) => {
-			out.push({ key: `said-${i}`, off: true, status: "done", label: clip(line, 90), text: line, said: true });
+			out.push({ key: `said-${i}`, status: "done", label: clip(line, 90), text: line, said: true });
 		});
 		toolCalls.forEach((tool, i) => {
 			const status = toolStatus(tool, isThinking);
@@ -299,12 +292,11 @@
 			const key = tool.toolCallId || `tool-${i}`;
 			if (name === "think") {
 				const thought = String(tool.input?.thought ?? "").trim();
-				out.push({ key, off: true, status, label: thought ? clip(thought, 90) : "Planned", text: thought });
+				out.push({ key, status, label: thought ? clip(thought, 90) : "Planned", text: thought });
 				return;
 			}
 			out.push({
 				key,
-				off: toolLeavesServer(name),
 				status,
 				label: describeTool(tool, status === "running" || status === "unfinished"),
 				reason:
@@ -315,10 +307,9 @@
 							: undefined,
 			});
 		});
-		// Every reply is written by the model, off your server. A turn that
-		// was stopped or failed wrote none.
+		// A turn that was stopped or failed wrote no reply.
 		if (!isThinking && land) {
-			out.push({ key: "reply", off: true, status: "done", label: "Wrote the reply" });
+			out.push({ key: "reply", status: "done", label: "Wrote the reply" });
 		}
 		return out;
 	});
@@ -336,17 +327,12 @@
 		return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
 	}
 
-	/** Brief: where the work ran, in words. */
-	const brief = $derived.by(() => {
-		const on = new Set<string>();
-		const off = new Set<string>(["the model"]);
-		for (const tool of toolCalls) {
-			const name = toolName(tool);
-			if (name === "think" || name === "dispatch_subagents" || name === "write_it_up") continue;
-			(toolLeavesServer(name) ? off : on).add(toolNoun(name));
-		}
-		return { on: listed([...on]), off: listed([...off]) };
-	});
+	/** Brief: what the turn used, in one sentence. */
+	const brief = $derived(
+		uniqueToolNames.length > 0
+			? `Used ${listed(uniqueToolNames)}.`
+			: "Thought it through and wrote the reply.",
+	);
 
 	const DETAILS: { key: ThinkingDetail; label: string }[] = [
 		{ key: "brief", label: "Brief" },
@@ -358,10 +344,6 @@
 {#snippet marker(step: Step, small = false)}
 	{#if step.status === "failed" || step.status === "unfinished"}
 		<span class="mark-ring" class:failed={step.status === "failed"} class:small></span>
-	{:else if step.off}
-		<span class="mark-cloud" class:running={step.status === "running"} class:small>
-			<Icon icon="mynaui:cloud" width={small ? 11 : 13} />
-		</span>
 	{:else}
 		<span class="mark-dot" class:running={step.status === "running"} class:small></span>
 	{/if}
@@ -409,9 +391,8 @@
 				<span class="duration-text">Worked on this</span>
 			{/if}
 
-			<!-- The summary of a finished turn: one mark per step, a dot for
-			     your server and a cloud for off it. While it runs, the label
-			     already names the call in flight. -->
+			<!-- The summary of a finished turn: one dot per step. While it
+			     runs, the label already names the call in flight. -->
 			{#if !isThinking && rowSteps.length > 0}
 				<span class="header-steps" aria-hidden="true">
 					{#each rowSteps.slice(0, ROW_MAX) as step (step.key)}
@@ -464,14 +445,7 @@
 			</div>
 
 			{#if detail === "brief"}
-				<p class="brief">
-					{#if brief.on}<span class="brief-line">On your server: {brief.on}.</span>{/if}
-					<span class="brief-line"
-						>Off your server: {brief.off}.<span class="brief-cloud" aria-hidden="true"
-							><Icon icon="mynaui:cloud" width="13" /></span
-						></span
-					>
-				</p>
+				<p class="brief">{brief}</p>
 			{:else}
 				<ol class="rail">
 					{#each shownSteps as step (step.key)}
@@ -481,7 +455,7 @@
 							class:failed={step.status === "failed"}
 							class:unfinished={step.status === "unfinished"}
 						>
-							<span class="step-mark" title={step.off ? "Done off your server" : "Done on your server"}>
+							<span class="step-mark">
 								{@render marker(step)}
 							</span>
 							<div class="step-body">
@@ -708,17 +682,7 @@
 
 	.brief {
 		margin: 0;
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
 		color: var(--color-foreground);
-	}
-
-	.brief-cloud {
-		display: inline-flex;
-		margin-left: 6px;
-		vertical-align: -2px;
-		color: var(--color-foreground-muted);
 	}
 
 	/* One step per row, its mark on a hairline that joins it to the next. */
@@ -795,11 +759,6 @@
 		height: 4px;
 	}
 
-	.mark-cloud {
-		display: flex;
-		color: var(--color-foreground-muted);
-	}
-
 	.mark-ring {
 		position: relative;
 		width: 9px;
@@ -837,11 +796,6 @@
 		animation: step-breathes 1.6s ease-in-out infinite;
 	}
 
-	.mark-cloud.running {
-		color: var(--color-primary);
-		animation: step-breathes 1.6s ease-in-out infinite;
-	}
-
 	@keyframes step-breathes {
 		50% {
 			opacity: 0.35;
@@ -867,8 +821,7 @@
 			color: var(--color-foreground-muted);
 		}
 
-		.mark-dot.running,
-		.mark-cloud.running {
+		.mark-dot.running {
 			animation: none;
 		}
 	}

@@ -1261,15 +1261,6 @@
 		}
 	}
 
-	// Every reply is written by a cloud model, so the composer says so and
-	// names it. The mark opens the Assistant settings, where it is chosen.
-	const offServer = $derived({
-		tip: models.selected
-			? `Replies are written by ${models.selected.displayName}, off your server.`
-			: "Replies are written by a model provider, off your server.",
-		run: () => windowShellStore.openTabFromRoute("/virtues/assistant", { label: "Assistant", focusExisting: true }),
-	});
-
 	// On the desktop the chat's menu is a view action: its ⋮ sits at the end
 	// of the page's action toolbar, where every view's actions go, rather
 	// than in the corner of the conversation beside its first message.
@@ -2513,7 +2504,6 @@
 							onStop={() => handleChatStop()}
 							bind:skill={composerSkill}
 							bind:mentionQuery
-							{offServer}
 						/>
 						{/if}
 

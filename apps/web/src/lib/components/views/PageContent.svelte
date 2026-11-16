@@ -92,8 +92,7 @@
 		if (aiSession.active) {
 			return {
 				label: "Virtues is writing",
-				tip: "A model provider is writing in this page, off your server. Click to stop.",
-				offBox: true,
+				tip: "Virtues is writing in this page. Click to stop.",
 				run: () => treeAiDriver.abort(),
 			};
 		}

@@ -330,28 +330,6 @@ function unknownWords(name: string): string {
 	return name.replace(/_/g, " ");
 }
 
-/**
- * Tools whose work is done outside your server: by the model (its thinking,
- * the parallel searches it fans out to, the interview write-up), on the web,
- * by a service you connected, by an image provider, or sent out as a
- * message. Everything else runs on your server. The thinking block marks
- * these steps with the cloud, so you can see where each step ran.
- */
-const OFF_SERVER = new Set([
-	"think",
-	"dispatch_subagents",
-	"write_it_up",
-	"web_search",
-	"browse",
-	"connection",
-	"generate_image",
-	"send_imessage",
-]);
-
-export function toolLeavesServer(name: string): boolean {
-	return OFF_SERVER.has(name) || name.startsWith("browser_");
-}
-
 export function toolNoun(name: string): string {
 	return presentation(name)?.noun ?? unknownWords(name);
 }

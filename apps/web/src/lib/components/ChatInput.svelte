@@ -34,7 +34,6 @@
 		suggestion = null,
 		onSuggestion = undefined,
 		mentionQuery = $bindable(null),
-		offServer = null,
 	}: {
 		value?: string;
 		disabled?: boolean;
@@ -59,10 +58,6 @@
 		/** What is typed after an open `@`, else null. The chat sky lights
 		 *  the moments it matches. */
 		mentionQuery?: string | null;
-		/** Where the reply is written, when that is off your server: the
-		 *  composer says so beside its + and names the model in `tip`.
-		 *  `run` opens the place the model is chosen. */
-		offServer?: { tip: string; run?: () => void } | null;
 	} = $props();
 
 	let fileInputEl: HTMLInputElement | null = $state(null);
@@ -653,20 +648,6 @@
 					</button>
 				{/if}
 
-				{#if offServer}
-					<button
-						type="button"
-						class="off-server"
-						onclick={offServer.run}
-						disabled={!offServer.run}
-						title={offServer.tip}
-						aria-label={offServer.tip}
-					>
-						<Icon icon="mynaui:cloud" width="14" />
-						<span>Off your server</span>
-					</button>
-				{/if}
-
 				<span class="toolbar-spacer"></span>
 
 				{#if showMic}
@@ -965,34 +946,6 @@
 
 	.toolbar-spacer {
 		flex: 1;
-	}
-
-	/* Where the reply is written: read more than pressed, so it stays in
-	   the toolbar's quietest ink until the pointer is on it. */
-	.off-server {
-		display: flex;
-		align-items: center;
-		gap: 4px;
-		min-width: 0;
-		height: 2rem;
-		padding: 0 8px;
-		border-radius: var(--radius-full);
-		font-size: 12px;
-		color: var(--color-foreground-subtle);
-		white-space: nowrap;
-		cursor: pointer;
-		transition:
-			background-color var(--motion-hover-out) var(--ease-premium),
-			color var(--motion-hover-out) var(--ease-premium);
-	}
-
-	.off-server:hover:not(:disabled) {
-		background: var(--hover-bg);
-		color: var(--color-foreground);
-	}
-
-	.off-server:disabled {
-		cursor: default;
 	}
 
 

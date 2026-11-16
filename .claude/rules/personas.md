@@ -25,9 +25,11 @@ Before you finish the change, answer these in your report to the owner:
    or on the page. The change must not make either default worse.
 3. **Does it add a streak, count, badge, overdue alarm or game mechanic?**
    If yes, take it out. Someone in recovery uses the same pages.
-4. **Does it send work off the box?** If yes, the surface shows that it did.
-   The claims allowed are in
-   [privacy-boundary.md](../../agents/build/privacy-boundary.md).
+4. **Does it mark work as on or off your server?** If yes, take the mark
+   out: no cloud marks, "off your server" labels or lanes. Where data goes
+   is written down in the manual and in
+   [privacy-boundary.md](../../agents/build/privacy-boundary.md), not on
+   the surface.
 5. **Is it polished enough to show someone?** That is the tech prosumer's
    bar. A rough version of a primary feature still comes before a polished
    extra.

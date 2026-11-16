@@ -7,9 +7,8 @@
 	 *
 	 *   - Your server isn't answering: the dots turn to outlines and it says
 	 *     so. Neutral colors, because a server asleep is ordinary.
-	 *   - A chat is replying, here or on another device: the thinking mark,
-	 *     the words, and the cloud mark, because every reply is written by a
-	 *     model off your server. The tooltip names the model.
+	 *   - A chat is replying, here or on another device: the thinking mark
+	 *     and the words. The tooltip names the model.
 	 *   - Your server lists something you have not looked at yet
 	 *     (`attention.unseen`): the top dot grows and takes the accent while
 	 *     the other two recede, and one ring spreads out, once. The shape
@@ -25,7 +24,6 @@
 	 */
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
-	import Icon from '$lib/components/Icon.svelte';
 	import ThinkingMark from '$lib/components/ThinkingMark.svelte';
 	import { Popover } from '$lib/floating';
 	import type { AttentionItem } from '$lib/api/client';
@@ -59,18 +57,16 @@
 		reachability.unreachable ? 'offline' : chatActivity.anyRunning ? 'working' : lit ? 'lit' : 'rest'
 	);
 
-	const offTip = $derived.by(() => {
+	const writingTip = $derived.by(() => {
 		const model = getSelectedModel() ?? getDefaultModel();
-		return model
-			? `Replies are written by ${model.displayName}, off your server.`
-			: 'Replies are written by a model provider, off your server.';
+		return model ? `${model.displayName} is writing a reply` : 'Writing a reply';
 	});
 
 	const tip = $derived(
 		mode === 'offline'
 			? "Your server isn't answering"
 			: mode === 'working'
-				? offTip
+				? writingTip
 				: mode === 'lit'
 					? `Something new needs you: ${fresh[0]?.title ?? ''}`
 					: items.length > 0
@@ -103,7 +99,7 @@
 				class="status-capsule"
 				class:rest={mode === 'rest'}
 				class:lit={mode === 'lit'}
-				aria-label={mode === 'working' ? `Writing a reply. ${tip}` : tip}
+				aria-label={tip}
 				aria-haspopup="dialog"
 				aria-expanded={open}
 				data-tip={open || mode === 'lit' ? undefined : tip}
@@ -120,7 +116,6 @@
 				{:else if mode === 'working'}
 					<ThinkingMark depth={3} size={16} />
 					<span class="label">Writing a reply</span>
-					<span class="off" aria-hidden="true"><Icon icon="mynaui:cloud" width="16" /></span>
 				{:else if mode === 'lit'}
 					{#key litKey}
 						<svg class="mark lights" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
@@ -321,12 +316,6 @@
 			opacity: 0;
 			transform: scale(3.4);
 		}
-	}
-
-	.off {
-		display: flex;
-		margin-left: 4px;
-		color: var(--color-foreground-muted);
 	}
 
 	@keyframes capsule-in {

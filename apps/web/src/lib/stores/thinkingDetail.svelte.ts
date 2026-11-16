@@ -1,5 +1,5 @@
 /**
- * How much an open thinking block shows: a brief of where the work ran, one
+ * How much an open thinking block shows: one sentence of what it used, one
  * line per step, or every step with its full text. Kept in this browser,
  * like the page display settings. Steps is the default.
  */

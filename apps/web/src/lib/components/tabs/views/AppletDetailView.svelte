@@ -58,10 +58,10 @@
 	// controls sit at the toolbar's end; the phone keeps both in the header.
 	const toolbar = usePageActions(() => headActions);
 
-	// An applet with a prompt runs it on a model slot, off the server
-	// (applet_runner.rs), and the toolbar says so. A code applet gets no
-	// mark: some call a model themselves (transcription, the day summary),
-	// and the applet record does not say which.
+	// An applet with a prompt runs it on a model slot (applet_runner.rs),
+	// and the toolbar names which. A code applet gets no mark: some call a
+	// model themselves (transcription, the day summary), and the applet
+	// record does not say which.
 	usePageStatus(() => {
 		if (!action?.agent) return null;
 		const asked = typeof action.config?.model_slot === 'string' ? action.config.model_slot : 'lite';
@@ -69,8 +69,7 @@
 		const name = slot ? `${slot.mark[0].toUpperCase()}${slot.mark.slice(1)} model` : 'Background model';
 		return {
 			label: name,
-			tip: `This applet's prompt runs on your ${name.toLowerCase()}, off your server, with what it was written to read.`,
-			offBox: true,
+			tip: `This applet's prompt runs on your ${name.toLowerCase()}, with what it was written to read.`,
 		};
 	});
 
