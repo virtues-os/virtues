@@ -5,13 +5,18 @@
 	import ThinkingMark, { LAND_MS } from "./ThinkingMark.svelte";
 	import { toolErrorSummary } from "$lib/components/chat/state/toolError";
 	import {
+		clip,
 		describeTool,
 		toolDepth,
+		toolLeavesServer,
 		toolName,
 		toolNoun,
 		toolStatus,
 		type ToolPart,
+		type ToolStatus,
 	} from "$lib/components/chat/state/toolPresentation";
+	import Icon from "$lib/components/Icon.svelte";
+	import { thinkingDetail, type ThinkingDetail } from "$lib/stores/thinkingDetail.svelte";
 	import type { WorkerStep } from "$lib/stores/chatInstances.svelte";
 
 	interface Props {
@@ -253,7 +258,114 @@
 			.map(toolNoun);
 		return [...new Set(names)];
 	});
+
+	/**
+	 * THE RAIL. The turn as a line of steps, in the order they happened: the
+	 * model's reasoning, what it said on the way, each call, and the reply.
+	 * A dot is a step done on your server; a cloud is a step done off it
+	 * (`toolLeavesServer`): the model's thinking and writing, the web, a
+	 * connected service. So the open block shows where each step ran.
+	 */
+	interface Step {
+		key: string;
+		off: boolean;
+		status: ToolStatus;
+		label: string;
+		/** Why a call failed or stopped. */
+		reason?: string;
+		/** The whole text, shown at All. */
+		text?: string;
+		/** A line the model said on the way: shown only at All. */
+		said?: boolean;
+	}
+
+	const steps = $derived.by((): Step[] => {
+		const out: Step[] = [];
+		if (reasoningContent) {
+			out.push({
+				key: "reasoning",
+				off: true,
+				status: isThinking && toolCalls.length === 0 ? "running" : "done",
+				label: "Thought it through",
+				text: reasoningContent,
+			});
+		}
+		narration.forEach((line, i) => {
+			out.push({ key: `said-${i}`, off: true, status: "done", label: clip(line, 90), text: line, said: true });
+		});
+		toolCalls.forEach((tool, i) => {
+			const status = toolStatus(tool, isThinking);
+			const name = toolName(tool);
+			const key = tool.toolCallId || `tool-${i}`;
+			if (name === "think") {
+				const thought = String(tool.input?.thought ?? "").trim();
+				out.push({ key, off: true, status, label: thought ? clip(thought, 90) : "Planned", text: thought });
+				return;
+			}
+			out.push({
+				key,
+				off: toolLeavesServer(name),
+				status,
+				label: describeTool(tool, status === "running" || status === "unfinished"),
+				reason:
+					status === "failed" && tool.errorText
+						? `failed: ${toolErrorSummary(tool.errorText)}`
+						: status === "unfinished"
+							? "didn't finish"
+							: undefined,
+			});
+		});
+		// Every reply is written by the model, off your server. A turn that
+		// was stopped or failed wrote none.
+		if (!isThinking && land) {
+			out.push({ key: "reply", off: true, status: "done", label: "Wrote the reply" });
+		}
+		return out;
+	});
+
+	const detail = $derived(thinkingDetail.value);
+	const shownSteps = $derived(detail === "all" ? steps : steps.filter((s) => !s.said));
+
+	/** The folded row: one mark per step, up to a dozen. */
+	const ROW_MAX = 12;
+	const rowSteps = $derived(steps.filter((s) => !s.said));
+
+	/** "a, b and c" */
+	function listed(words: string[]): string {
+		if (words.length < 2) return words.join("");
+		return `${words.slice(0, -1).join(", ")} and ${words.at(-1)}`;
+	}
+
+	/** Brief: where the work ran, in words. */
+	const brief = $derived.by(() => {
+		const on = new Set<string>();
+		const off = new Set<string>(["the model"]);
+		for (const tool of toolCalls) {
+			const name = toolName(tool);
+			if (name === "think" || name === "dispatch_subagents" || name === "write_it_up") continue;
+			(toolLeavesServer(name) ? off : on).add(toolNoun(name));
+		}
+		return { on: listed([...on]), off: listed([...off]) };
+	});
+
+	const DETAILS: { key: ThinkingDetail; label: string }[] = [
+		{ key: "brief", label: "Brief" },
+		{ key: "steps", label: "Steps" },
+		{ key: "all", label: "All" },
+	];
 </script>
+
+{#snippet marker(step: Step, small = false)}
+	{#if step.status === "failed" || step.status === "unfinished"}
+		<span class="mark-ring" class:failed={step.status === "failed"} class:small></span>
+	{:else if step.off}
+		<span class="mark-cloud" class:running={step.status === "running"} class:small>
+			<Icon icon="mynaui:cloud" width={small ? 11 : 13} />
+		</span>
+	{:else}
+		<span class="mark-dot" class:running={step.status === "running"} class:small></span>
+	{/if}
+{/snippet}
 
 <div class="thinking-block">
 	<!-- What a screen reader hears: that a turn started, then how long it
@@ -297,16 +409,19 @@
 				<span class="duration-text">Worked on this</span>
 			{/if}
 
-			<!-- The summary of a finished turn. While it runs, the label already
-			     names the tool in flight, and the two side by side only took
-			     width from the one that is live. -->
-			{#if !isThinking && uniqueToolNames.length > 0}
-				<span class="header-tools">
-					{uniqueToolNames.slice(0, 3).join(", ")}
-					{#if uniqueToolNames.length > 3}
-						+{uniqueToolNames.length - 3} more
-					{/if}
+			<!-- The summary of a finished turn: one mark per step, a dot for
+			     your server and a cloud for off it. While it runs, the label
+			     already names the call in flight. -->
+			{#if !isThinking && rowSteps.length > 0}
+				<span class="header-steps" aria-hidden="true">
+					{#each rowSteps.slice(0, ROW_MAX) as step (step.key)}
+						{@render marker(step, true)}
+					{/each}
+					{#if rowSteps.length > ROW_MAX}<span class="row-more">…</span>{/if}
 				</span>
+				{#if uniqueToolNames.length > 0}
+					<span class="sr-only">Used {listed(uniqueToolNames)}</span>
+				{/if}
 			{/if}
 		</span>
 
@@ -335,55 +450,58 @@
 			class="block-content markdown"
 			transition:slide={{ duration: reduceMotion ? 0 : 200, easing: cubicOut }}
 		>
-			{#if reasoningContent}
-				<p class="reasoning-text">{reasoningContent}</p>
-			{/if}
+			<div class="detail-row">
+				<div class="detail-switch" role="group" aria-label="How much to show">
+					{#each DETAILS as d (d.key)}
+						<button
+							type="button"
+							aria-pressed={detail === d.key}
+							class:on={detail === d.key}
+							onclick={() => thinkingDetail.set(d.key)}>{d.label}</button
+						>
+					{/each}
+				</div>
+			</div>
 
-			<!-- What the model said on the way here. It used to sit in the
-			     transcript forever, above the answer, so reopening a chat meant
-			     reading a finished process narrate itself. It belongs with the
-			     rest of the working-out: available, not in the way. -->
-			{#each narration as line, i (i)}
-				<p class="narration-line">{line}</p>
-			{/each}
-
-			{#if toolCalls.length > 0}
-				<ul class="tool-list">
-					{#each toolCalls as tool, index (tool.toolCallId || `tool-${index}`)}
-						{@const status = toolStatus(tool, isThinking)}
-						{@const isPending = status === "running"}
-						{@const isError = status === "failed"}
-						{@const isThinkTool = toolName(tool) === "think"}
-						{#if isThinkTool}
-							<li class="think-item">
-								<p class="think-text">{tool.input?.thought || ""}</p>
-							</li>
-						{:else}
-							<li
-								class="tool-item"
-								class:pending={isPending}
-								class:error={isError}
-								class:unfinished={status === "unfinished"}
-							>
-								{#if isPending}
-									<span class="tool-spinner"></span>
-								{:else}
-									<span class="tool-icon" class:error={isError}>·</span>
-								{/if}
+			{#if detail === "brief"}
+				<p class="brief">
+					{#if brief.on}<span class="brief-line">On your server: {brief.on}.</span>{/if}
+					<span class="brief-line"
+						>Off your server: {brief.off}.<span class="brief-cloud" aria-hidden="true"
+							><Icon icon="mynaui:cloud" width="13" /></span
+						></span
+					>
+				</p>
+			{:else}
+				<ol class="rail">
+					{#each shownSteps as step (step.key)}
+						<li
+							class="step"
+							class:running={step.status === "running"}
+							class:failed={step.status === "failed"}
+							class:unfinished={step.status === "unfinished"}
+						>
+							<span class="step-mark" title={step.off ? "Done off your server" : "Done on your server"}>
+								{@render marker(step)}
+							</span>
+							<div class="step-body">
 								<!-- A failed call says why, in one line: the Postgres
 								     message, not the column list the model was handed.
-								     The next item in this list is the retry, so a failure
-								     the model recovered from reads as what it was — one
-								     wrong guess on the way — and never leaves this block
-								     for the transcript (ChatView keeps the body-level
-								     error for a turn that ENDED on the failure). -->
-								<span class="tool-description">
-									{describeTool(tool, isPending || status === "unfinished")}{#if isError && tool.errorText}<span class="tool-reason"> · failed: {toolErrorSummary(tool.errorText)}</span>{:else if status === "unfinished"}<span class="tool-reason"> · didn't finish</span>{/if}
-								</span>
-							</li>
-						{/if}
+								     The next step is the retry, so a failure the model
+								     recovered from reads as what it was, one wrong guess
+								     on the way, and never leaves this block for the
+								     transcript (ChatView keeps the body-level error for a
+								     turn that ENDED on the failure). -->
+								<span class="step-label"
+									>{step.label}{#if step.reason}<span class="tool-reason"> · {step.reason}</span>{/if}</span
+								>
+								{#if detail === "all" && step.text && step.text !== step.label}
+									<p class="step-text">{step.text}</p>
+								{/if}
+							</div>
+						</li>
 					{/each}
-				</ul>
+				</ol>
 			{/if}
 		</div>
 	{/if}
@@ -479,8 +597,7 @@
 		white-space: nowrap;
 	}
 
-	.thinking-text,
-	.header-tools {
+	.thinking-text {
 		min-width: 0;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -519,13 +636,16 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.header-tools {
-		color: var(--color-foreground-muted);
+	/* The folded turn's steps, after the label. */
+	.header-steps {
+		display: inline-flex;
+		align-items: center;
+		gap: 6px;
+		align-self: center;
 	}
 
-	.header-tools::before {
-		content: "·";
-		margin-right: 8px;
+	.row-more {
+		color: var(--color-foreground-subtle);
 	}
 
 	/* Content area. Filled with the same wash the header takes on hover, so
@@ -545,102 +665,186 @@
 		line-height: 1.6;
 	}
 
-	/* Think tool content */
-	.think-item {
-		list-style: none;
+	.detail-row {
+		display: flex;
+		justify-content: flex-end;
+		margin-bottom: 8px;
 	}
 
-	.think-text {
-		margin: 0;
-		color: var(--color-foreground);
-		line-height: 1.5;
-		white-space: pre-wrap;
+	.detail-switch {
+		display: flex;
+		gap: 4px;
 	}
 
-	.narration-line {
-		margin: 0 0 12px 0;
+	.detail-switch button {
+		height: 22px;
+		padding: 0 8px;
+		border: 0;
+		border-radius: var(--radius-sm);
+		font: inherit;
+		font-size: 12px;
+		line-height: 1;
 		color: var(--color-foreground-muted);
-		line-height: 1.5;
+		background: transparent;
+		cursor: pointer;
 	}
 
-	.narration-line:last-child {
-		margin-bottom: 0;
-	}
-
-	/* Reasoning text - matches .markdown p */
-	.reasoning-text {
-		margin: 0 0 16px 0;
+	.detail-switch button:hover {
 		color: var(--color-foreground);
-		line-height: 1.5;
-		white-space: pre-wrap;
 	}
 
-	.reasoning-text:last-child {
-		margin-bottom: 0;
+	.detail-switch button.on {
+		color: var(--color-foreground);
+		background: var(--color-surface);
+		box-shadow:
+			0 0 0 1px color-mix(in srgb, var(--color-foreground) 6%, transparent),
+			0 1px 2px rgb(0 0 0 / 0.08);
 	}
 
-	/* Tool list - matches .markdown ul */
-	.tool-list {
+	.detail-switch button:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 1px;
+	}
+
+	.brief {
+		margin: 0;
+		display: flex;
+		flex-direction: column;
+		gap: 4px;
+		color: var(--color-foreground);
+	}
+
+	.brief-cloud {
+		display: inline-flex;
+		margin-left: 6px;
+		vertical-align: -2px;
+		color: var(--color-foreground-muted);
+	}
+
+	/* One step per row, its mark on a hairline that joins it to the next. */
+	.rail {
 		list-style: none;
 		margin: 0;
 		padding: 0;
 		display: flex;
 		flex-direction: column;
-		gap: 8px;
+		gap: 6px;
 	}
 
-	.tool-item {
+	.step {
+		position: relative;
+		display: grid;
+		grid-template-columns: 20px 1fr;
+		column-gap: 8px;
+		color: var(--color-foreground);
+	}
+
+	.step:not(:last-child)::before {
+		content: "";
+		position: absolute;
+		left: 9.5px;
+		top: 19px;
+		bottom: -8px;
+		width: 1px;
+		background: var(--color-border);
+	}
+
+	.step.running,
+	.step.unfinished {
+		color: var(--color-foreground-muted);
+	}
+
+	.step.failed {
+		color: var(--color-error);
+	}
+
+	.step-mark {
+		height: 21px;
 		display: flex;
 		align-items: center;
-		gap: 10px;
-		color: var(--color-foreground);
+		justify-content: center;
+	}
+
+	.step-body {
+		min-width: 0;
+		line-height: 1.6;
+	}
+
+	.step-text {
+		margin: 4px 0 0;
+		padding-left: 12px;
+		border-left: 2px solid var(--color-border);
+		color: var(--color-foreground-muted);
 		line-height: 1.5;
-	}
-
-	.tool-item.pending {
-		color: var(--color-foreground-muted);
-	}
-
-	.tool-item.unfinished {
-		color: var(--color-foreground-muted);
-	}
-
-	.tool-item.error {
-		color: var(--color-error);
-	}
-
-	.tool-icon {
-		font-size: 12px;
-		opacity: 0.7;
-		flex-shrink: 0;
-	}
-
-	.tool-icon.error {
-		color: var(--color-error);
-		opacity: 1;
-	}
-
-	.tool-description {
-		flex: 1;
+		white-space: pre-wrap;
 	}
 
 	.tool-reason {
 		opacity: 0.85;
 	}
 
-	.tool-spinner {
-		width: 12px;
-		height: 12px;
-		border: 1.5px solid var(--color-border);
-		border-top-color: var(--color-foreground-muted);
+	.mark-dot {
+		width: 7px;
+		height: 7px;
 		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-		flex-shrink: 0;
+		background: var(--color-foreground-muted);
 	}
 
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
+	.mark-dot.small {
+		width: 4px;
+		height: 4px;
+	}
+
+	.mark-cloud {
+		display: flex;
+		color: var(--color-foreground-muted);
+	}
+
+	.mark-ring {
+		position: relative;
+		width: 9px;
+		height: 9px;
+		box-sizing: border-box;
+		border-radius: 50%;
+		border: 1.5px solid var(--color-foreground-subtle);
+	}
+
+	.mark-ring.small {
+		width: 6px;
+		height: 6px;
+		border-width: 1px;
+	}
+
+	/* A failed step: the ring struck through. */
+	.mark-ring.failed {
+		border-color: var(--color-error);
+	}
+
+	.mark-ring.failed::after {
+		content: "";
+		position: absolute;
+		left: calc(50% - 0.75px);
+		top: -2px;
+		bottom: -2px;
+		width: 1.5px;
+		background: var(--color-error);
+		transform: rotate(45deg);
+	}
+
+	/* The step in flight takes the accent and breathes. */
+	.mark-dot.running {
+		background: var(--color-primary);
+		animation: step-breathes 1.6s ease-in-out infinite;
+	}
+
+	.mark-cloud.running {
+		color: var(--color-primary);
+		animation: step-breathes 1.6s ease-in-out infinite;
+	}
+
+	@keyframes step-breathes {
+		50% {
+			opacity: 0.35;
 		}
 	}
 
@@ -663,7 +867,8 @@
 			color: var(--color-foreground-muted);
 		}
 
-		.tool-spinner {
+		.mark-dot.running,
+		.mark-cloud.running {
 			animation: none;
 		}
 	}

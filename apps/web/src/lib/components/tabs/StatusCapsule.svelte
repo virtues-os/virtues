@@ -2,24 +2,31 @@
 	/**
 	 * The status capsule at the right end of the window header: the one place
 	 * the window says what your server is doing and whether anything needs
-	 * you. It shows one state, the first of these that holds:
+	 * you. It is drawn as the app's ∴, and shows one state, the first of
+	 * these that holds:
 	 *
-	 *   - Your server isn't answering: it says so. Neutral colors, because a
-	 *     server asleep is ordinary.
-	 *   - A chat is replying, here or on another device: a spinner, the words,
-	 *     and the cloud mark, because every reply is written by a model off
-	 *     your server. The tooltip names the model.
-	 *   - Your server lists something that needs you (`/api/attention`): the
-	 *     dot takes the accent and swells once, then holds still.
-	 *   - Otherwise: a quiet dot, and no words.
+	 *   - Your server isn't answering: the dots turn to outlines and it says
+	 *     so. Neutral colors, because a server asleep is ordinary.
+	 *   - A chat is replying, here or on another device: the thinking mark,
+	 *     the words, and the cloud mark, because every reply is written by a
+	 *     model off your server. The tooltip names the model.
+	 *   - Your server lists something you have not looked at yet
+	 *     (`attention.unseen`): the top dot grows and takes the accent while
+	 *     the other two recede, and one ring spreads out, once. The shape
+	 *     changes as well as the color. Pointing at it widens the capsule to
+	 *     name the first such thing, in words.
+	 *   - Otherwise: the ∴ in quiet ink, and no words.
 	 *
 	 * Clicking opens the list of what needs you, whatever it shows, with a row
-	 * that leads to /reconnect while the server is away. Nothing is counted.
-	 * Every item goes out on its own when the server sees its condition end.
+	 * that leads to /reconnect while the server is away. Opening it marks
+	 * everything in it seen, so the mark goes quiet while the items stay
+	 * listed. Nothing is counted. Every item goes out on its own when the
+	 * server sees its condition end.
 	 */
 	import { onMount } from 'svelte';
 	import { goto } from '$app/navigation';
 	import Icon from '$lib/components/Icon.svelte';
+	import ThinkingMark from '$lib/components/ThinkingMark.svelte';
 	import { Popover } from '$lib/floating';
 	import type { AttentionItem } from '$lib/api/client';
 	import { attention } from '$lib/stores/attention.svelte';
@@ -36,7 +43,17 @@
 
 	let open = $state(false);
 	const items = $derived(attention.items);
-	const lit = $derived(items.length > 0);
+	const fresh = $derived(attention.unseen);
+	const lit = $derived(fresh.length > 0);
+	/** Changes when something new arrives, so the mark lights again for it. */
+	const litKey = $derived(fresh.map((item) => item.key).join(' '));
+
+	// Whatever is in the list while it is open has been seen, including an
+	// item that arrives with it open.
+	$effect(() => {
+		void attention.items;
+		if (open) attention.markSeen();
+	});
 
 	const mode = $derived(
 		reachability.unreachable ? 'offline' : chatActivity.anyRunning ? 'working' : lit ? 'lit' : 'rest'
@@ -55,9 +72,17 @@
 			: mode === 'working'
 				? offTip
 				: mode === 'lit'
-					? 'Something needs you'
-					: 'Nothing needs you'
+					? `Something new needs you: ${fresh[0]?.title ?? ''}`
+					: items.length > 0
+						? 'What needs you'
+						: 'Nothing needs you'
 	);
+
+	const DOTS: [number, number][] = [
+		[12, 5],
+		[4.5, 18],
+		[19.5, 18]
+	];
 
 	onMount(() => {
 		attention.start();
@@ -76,26 +101,40 @@
 			<button
 				type="button"
 				class="status-capsule"
-				class:rest={mode === 'rest' || mode === 'lit'}
+				class:rest={mode === 'rest'}
 				class:lit={mode === 'lit'}
 				aria-label={mode === 'working' ? `Writing a reply. ${tip}` : tip}
 				aria-haspopup="dialog"
 				aria-expanded={open}
-				data-tip={open ? undefined : tip}
+				data-tip={open || mode === 'lit' ? undefined : tip}
 				onclick={() => {
 					if (!open) void attention.refresh();
 					toggle();
 				}}
 			>
 				{#if mode === 'offline'}
-					<Icon icon="mynaui:wifi-off" width="14" />
+					<svg class="mark away" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+						{#each DOTS as [x, y] (x)}<circle cx={x} cy={y} r="2.6" />{/each}
+					</svg>
 					<span class="label">Can't reach your server</span>
 				{:else if mode === 'working'}
-					<span class="spin" aria-hidden="true"></span>
+					<ThinkingMark depth={3} size={16} />
 					<span class="label">Writing a reply</span>
 					<span class="off" aria-hidden="true"><Icon icon="mynaui:cloud" width="16" /></span>
+				{:else if mode === 'lit'}
+					{#key litKey}
+						<svg class="mark lights" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+							<circle class="ring" cx="12" cy="5" r="3.6" />
+							<circle class="apex" cx="12" cy="5" r="3.6" />
+							<circle class="base" cx="4.5" cy="18" r="2.4" />
+							<circle class="base" cx="19.5" cy="18" r="2.4" />
+						</svg>
+					{/key}
+					<span class="peek" aria-hidden="true">{fresh[0]?.title}</span>
 				{:else}
-					<span class="dot" aria-hidden="true"></span>
+					<svg class="mark" viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+						{#each DOTS as [x, y] (x)}<circle cx={x} cy={y} r="3" />{/each}
+					</svg>
 				{/if}
 			</button>
 		{/snippet}
@@ -191,31 +230,96 @@
 		animation: none;
 	}
 
-	.dot {
-		width: 7px;
-		height: 7px;
-		border-radius: 50%;
-		background: var(--color-success);
-		transition: background-color var(--motion-state) var(--ease-premium);
+	/* Lit, it rests at the round size and widens to name the first new
+	   thing while you point at it or tab to it. */
+	.status-capsule.lit {
+		gap: 0;
+		padding: 0 8px;
+		animation: none;
+		transition:
+			border-color var(--motion-hover-out) var(--ease-premium),
+			padding var(--motion-layout) var(--ease-premium);
+	}
+
+	.peek {
+		max-width: 0;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		opacity: 0;
+		transition:
+			max-width var(--motion-layout) var(--ease-premium),
+			margin var(--motion-layout) var(--ease-premium),
+			opacity var(--motion-state) var(--ease-premium);
+	}
+
+	.status-capsule.lit:hover,
+	.status-capsule.lit:focus-visible {
+		padding: 0 12px 0 8px;
+	}
+
+	.status-capsule.lit:hover .peek,
+	.status-capsule.lit:focus-visible .peek {
+		max-width: 260px;
+		margin-left: 8px;
+		opacity: 1;
+	}
+
+	.mark {
+		flex: none;
+		overflow: visible;
+		fill: var(--color-foreground-muted);
+	}
+
+	.mark.away circle {
+		fill: none;
+		stroke: var(--color-foreground-muted);
+		stroke-width: 1.6;
 	}
 
 	/* The theme's accent, not red: something is waiting, nothing is on fire.
-	   The dot swells once as it lights and then holds still, since a dot
-	   that kept pulsing would say the server is working. */
-	.lit .dot {
-		background: var(--color-primary);
-		animation: dot-lights 640ms var(--ease-premium) 1;
+	   The top dot swells once as it lights and then holds still, since a
+	   mark that kept pulsing would say the server is working. */
+	.lights .apex {
+		fill: var(--color-primary);
+		transform-box: fill-box;
+		transform-origin: center;
+		animation: apex-lights 640ms var(--ease-premium) 1;
 	}
 
-	@keyframes dot-lights {
+	.lights .base {
+		fill: var(--color-foreground-subtle);
+	}
+
+	.lights .ring {
+		fill: none;
+		stroke: var(--color-primary);
+		stroke-width: 1.4;
+		opacity: 0;
+		transform-box: fill-box;
+		transform-origin: center;
+		animation: ring-spreads 900ms cubic-bezier(0.22, 1, 0.36, 1) 120ms 1;
+	}
+
+	@keyframes apex-lights {
 		0% {
-			transform: scale(1);
+			transform: scale(0.7);
 		}
-		35% {
-			transform: scale(1.4);
+		40% {
+			transform: scale(1.3);
 		}
 		100% {
 			transform: scale(1);
+		}
+	}
+
+	@keyframes ring-spreads {
+		0% {
+			opacity: 0.7;
+			transform: scale(1);
+		}
+		100% {
+			opacity: 0;
+			transform: scale(3.4);
 		}
 	}
 
@@ -223,22 +327,6 @@
 		display: flex;
 		margin-left: 4px;
 		color: var(--color-foreground-muted);
-	}
-
-	.spin {
-		width: 12px;
-		height: 12px;
-		box-sizing: border-box;
-		border-radius: 50%;
-		border: 1.5px solid color-mix(in srgb, var(--color-primary) 25%, transparent);
-		border-top-color: var(--color-primary);
-		animation: spin 1.1s linear infinite;
-	}
-
-	@keyframes spin {
-		to {
-			transform: rotate(360deg);
-		}
 	}
 
 	@keyframes capsule-in {
@@ -320,14 +408,15 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.spin,
 		.status-capsule,
-		.lit .dot {
+		.lights .apex,
+		.lights .ring {
 			animation: none;
 		}
 
 		.status-capsule,
-		.dot,
+		.status-capsule.lit,
+		.peek,
 		.inbox-row {
 			transition: none;
 		}
