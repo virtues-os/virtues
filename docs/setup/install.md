@@ -1,7 +1,7 @@
 ---
 title: Install script
 description: Install Virtues on your own Linux machine with one command.
-updated: 2026-10-23
+updated: 2026-11-15
 ---
 
 ## Read the install script (optional)
@@ -66,7 +66,8 @@ question with three answers instead:
   anything. Follow the guide, then run the install command again.
 
 After you answer, the installer finishes the install, which takes about ten
-minutes, and ends by printing a six-digit pairing code.
+minutes, and ends by printing a six-digit pairing code and your server's
+addresses.
 
 ## Next steps
 

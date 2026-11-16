@@ -1,7 +1,7 @@
 ---
 title: Mac
 description: Pair a Mac with your Virtues server, as your first device or a later one.
-updated: 2026-10-26
+updated: 2026-11-15
 ---
 
 The Virtues desktop app needs macOS 26.2 or later.
@@ -16,20 +16,27 @@ anywhere.
 
 1. On your Mac, download the Virtues desktop app from
    [virtues.com/downloads](https://virtues.com/downloads), and open it.
-2. At **Sign in to Virtues**, enter your email, then the six-digit code
-   Virtues emails you. This is a different code from your server's pairing
-   code. A new email creates your account, and you don't pay anything here.
-   To skip the account and use your own AI model, choose
-   **Use my own AI instead**.
-3. When the search for Virtues hardware returns no results, choose
-   **Join it instead**. (The search only finds hardware we build, not a server
-   you installed yourself.)
-4. On your server, run `virtues pair`. It prints a six-digit pairing code.
-   If the app later says the code is wrong, run `virtues pair` again for a
-   new one.
-5. On your Mac, enter your server's address and the pairing code in the app.
-   For the address, use your server's IP address followed by `:8000`, such
-   as `192.168.1.20:8000`. To find it, run `hostname -I` on your server.
+   Setup opens. Go through the welcome and the letter.
+2. At **Find your server**, the app looks for your server on your network.
+   If it finds one, it opens **Connect to your server** with the address
+   already filled in. If it finds more than one, choose yours. If it finds
+   none, choose **Enter address and code**.
+3. Enter the pairing code the installer printed, then choose **Connect**.
+   You can also paste a whole address line from the installer's output into
+   **Address**, which fills in both fields. If the app says the code didn't
+   work, it may have expired: run `virtues pair` on your server for a new
+   one.
+4. At **Add your devices**, choose **Collect from this Mac**, then
+   **Open Full Disk Access**. System Settings opens with `virtues-collector`
+   ready to drag into the list. macOS asks for Touch ID or your password to
+   add it. Your Mac starts sending your messages and browsing to your server
+   right away, before you choose a subscription.
+5. At **Choose how … thinks**, choose **Set up your subscription** and
+   confirm in your browser. If you already have an account, choose
+   **I already have an account**. To use your own AI model, choose
+   **Use my own AI**.
+6. Name your assistant, say what it should call you, and choose your home.
+   The app opens.
 
 If you installed over SSH and your network stops devices from seeing each
 other, use the `ssh -L` command the installer printed.
@@ -38,6 +45,6 @@ other, use the `ssh -L` command the installer printed.
 
 ## Pair your Mac as a later device
 
-If your Mac isn't the first device you're pairing with your server, run
-`virtues pair` on your server to show a new code, then enter it in the desktop
-app, the same way as above.
+If your server already has a paired device, run `virtues pair` on your server
+for a code, then pair the same way as above. After pairing, Setup opens
+**Add your devices** for this Mac, and the app opens once you move on.

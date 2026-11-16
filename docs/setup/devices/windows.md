@@ -1,7 +1,7 @@
 ---
 title: Windows
 description: Pair a Windows PC with your Virtues server, as your first device or a later one.
-updated: 2026-10-26
+updated: 2026-11-15
 ---
 
 ## Pair your PC as your first device
@@ -9,8 +9,8 @@ updated: 2026-10-26
 > Not yet tested on real hardware.
 
 1. On your server, run `virtues pair`. It prints a six-digit pairing code.
-   If the app later says the code is wrong, run `virtues pair` again for a
-   new one.
+   If the app later says the code didn't work, it may have expired: run
+   `virtues pair` again for a new one.
 2. Download the Virtues desktop app from
    [virtues.com/downloads](https://virtues.com/downloads), and open it.
 3. Enter the six-digit code.
