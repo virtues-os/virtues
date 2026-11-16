@@ -515,7 +515,6 @@ export async function setUpdateChannel(channel: 'stable' | 'prerelease'): Promis
 
 export interface ReopenOnboardingResponse {
 	devices: number;
-	credentials: number;
 }
 
 /**

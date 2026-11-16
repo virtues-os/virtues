@@ -280,8 +280,8 @@ mod imp {
         let pool = pool.clone();
         handle.spawn(async move {
             match crate::api::pair::revoke_all_devices(&pool).await {
-                Ok((devices, creds)) => {
-                    tracing::warn!(devices, creds, "reset_button: onboarding re-opened");
+                Ok(devices) => {
+                    tracing::warn!(devices, "reset_button: onboarding re-opened");
                 }
                 Err(e) => tracing::error!("reset_button: revoke failed: {e:#}"),
             }

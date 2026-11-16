@@ -1,10 +1,8 @@
 //! Output helpers for `virtues link` / `virtues init`.
 //!
-//! With the localhost-daemon trust model (see [[localhost-daemon-trust]] in
-//! MEMORY.md), there are no certs to install on the client. The box exposes
-//! plain HTTP on :8000 and the only browser that can reach it without a
-//! daemon is the Jetson's own Chromium hitting `http://localhost:8000`. For
-//! other devices we point at the Virtues client (v0.2 work).
+//! The server exposes plain HTTP on :8000 and there are no certificates to
+//! install. A browser cannot pair (it holds no iroh key), so every device
+//! connects through the Virtues app.
 //!
 //! This module builds the URL list shown by `virtues link` / `virtues init`.
 //!
@@ -13,8 +11,8 @@
 //! local-forward recipe. On client-isolated networks the printed LAN URL
 //! never loads — but the SSH session the user is already typing in is a
 //! proven transport to the box, so we fold it into the handoff and into the
-//! `wait_for_pair` 90-second hint (agents/build/onboarding.md: "auto-enable nothing,
-//! auto-notice everything").
+//! `wait_for_new_device` 90-second hint (agents/build/onboarding.md: "auto-enable
+//! nothing, auto-notice everything").
 
 use std::net::{IpAddr, SocketAddr, UdpSocket};
 
@@ -408,7 +406,7 @@ fn passwd_name_for_uid(passwd: &str, uid: u32) -> Option<String> {
 
 /// `user@host` for the printed ssh command — or bare `host` when the login
 /// user couldn't be determined honestly. Shared by the init/login handoff
-/// block and the `wait_for_pair` hint so the two never drift.
+/// block and the `wait_for_new_device` hint so the two never drift.
 fn forward_target(ctx: &SshContext, host: &str) -> String {
     match &ctx.user {
         Some(user) => format!("{user}@{host}"),
@@ -438,83 +436,10 @@ pub fn ssh_handoff_block(ctx: &SshContext, host: &str) -> Vec<String> {
     ]
 }
 
-/// Outcome of waiting on a minted pair token.
-pub enum PairWaitOutcome {
-    /// The human opened the link — a device/session consumed the token.
-    Consumed,
-    /// The token expired (or was denied) before anyone arrived.
-    Expired,
-}
-
-/// Block until the minted pair token is consumed or expires, polling the DB.
-///
-/// After ~90s of silence, print the client-isolation hint
-/// (agents/build/onboarding.md "hostile networks"): the only reliable box-side signal
-/// for a network that blocks device-to-device traffic is "the link was
-/// printed and nobody arrived." Two branches: when we auto-noticed an SSH
-/// session ([`ssh_context`]), lead with the concrete `ssh -L` forward — the
-/// session the user is staring at works regardless of client isolation.
-/// Otherwise the copy stays setup-scoped — hotspot or a network you control,
-/// plus a self-excluding SSH pointer; no VPN/overlay talk at the moment of
-/// max fragility.
-pub async fn wait_for_pair(
-    pool: &sqlx::PgPool,
-    token_id: &str,
-) -> anyhow::Result<PairWaitOutcome> {
-    const HINT_AFTER: std::time::Duration = std::time::Duration::from_secs(90);
-    let start = std::time::Instant::now();
-    let mut hinted = false;
-    // Auto-notice once, up front — the answer can't change mid-wait, and the
-    // hint must print instantly when the 90s mark hits.
-    let ssh = ssh_context();
-    let host = ssh_forward_host();
-    loop {
-        let row: Option<(String, chrono::DateTime<chrono::Utc>)> = sqlx::query_as(
-            "SELECT status, expires_at FROM app_pair_token WHERE id = $1",
-        )
-        .bind(token_id)
-        .fetch_optional(pool)
-        .await?;
-        let Some((status, expires_at)) = row else {
-            return Ok(PairWaitOutcome::Expired);
-        };
-        match status.as_str() {
-            "consumed" => return Ok(PairWaitOutcome::Consumed),
-            "expired" | "denied" => return Ok(PairWaitOutcome::Expired),
-            _ => {}
-        }
-        if chrono::Utc::now() > expires_at {
-            return Ok(PairWaitOutcome::Expired);
-        }
-        if !hinted && start.elapsed() >= HINT_AFTER {
-            hinted = true;
-            println!();
-            match &ssh {
-                Some(ctx) => {
-                    let target = forward_target(ctx, &host);
-                    println!("  Still waiting — this network may block device-to-device traffic");
-                    println!("  (common in offices, hotels, WeWork). You're on SSH, so forward");
-                    println!("  the port from your laptop and open it there:");
-                    println!("    ssh -L {INTERNAL_PORT}:localhost:{INTERNAL_PORT} {target}");
-                    println!("    then open http://localhost:{INTERNAL_PORT} in the app or browser");
-                }
-                None => {
-                    println!("  Still waiting — if the app or page won't load, this network may");
-                    println!("  block device-to-device traffic (offices, hotels, WeWork).");
-                    println!("  → Use your phone's hotspot, or a network you control.");
-                    println!("  → Or SSH in: ssh -L {INTERNAL_PORT}:localhost:{INTERNAL_PORT} {host}");
-                    println!("  You can move the server to a different network after setup.");
-                }
-            }
-        }
-        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
-    }
-}
-
 /// Wait until a NEW device pairs. The universal standing code is multi-use and
 /// never transitions to `consumed`, so we watch for an additional non-revoked
-/// device row rather than a token state change. Mirrors [`wait_for_pair`]'s 90s
-/// client-isolation hint.
+/// device row rather than a token state change. After 90s of silence it prints
+/// the client-isolation hint.
 pub async fn wait_for_new_device(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     const HINT_AFTER: std::time::Duration = std::time::Duration::from_secs(90);
     let baseline: i64 =

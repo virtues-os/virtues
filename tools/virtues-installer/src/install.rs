@@ -685,7 +685,7 @@ pub async fn configure_mdns() -> Result<()> {
         if std::env::var("VIRTUES_KEEP_HOSTNAME").as_deref() == Ok("1") {
             ui::warn(&format!(
                 "Keeping hostname '{current}' (VIRTUES_KEEP_HOSTNAME=1). \
-                 Reachable at https://{current}.local, not virtues.local."
+                 Reachable at http://{current}.local:8000, not virtues.local."
             ));
         } else {
             let mut cmd = Command::new("hostnamectl");

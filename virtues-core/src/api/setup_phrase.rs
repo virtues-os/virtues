@@ -398,6 +398,16 @@ pub async fn freeze_current(pool: &PgPool) -> crate::Result<()> {
     .await
     .map_err(|e| crate::Error::Database(format!("freeze setup phrase: {e}")))?;
     if frozen.rows_affected() == 0 {
+        // A server with no panel never mints a phrase (only the panel poll
+        // does), so an empty table is the normal state on a self-installed
+        // server and there is nothing to freeze.
+        let any: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM app_setup_phrase)")
+            .fetch_one(pool)
+            .await
+            .map_err(|e| crate::Error::Database(format!("check setup phrase: {e}")))?;
+        if !any {
+            return Ok(());
+        }
         return Err(crate::Error::Other(
             "no live setup phrase to freeze - the panel may still be showing one".into(),
         ));

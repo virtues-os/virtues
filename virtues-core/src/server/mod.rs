@@ -63,10 +63,14 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
 
     tracing::info!("Server listening on {}", transport.describe());
 
-    // DIY discovery aid: the operator ran `compose up` and knows their host, so
-    // just point them at the web UI + the CLI dashboard. `0.0.0.0` means "all
-    // interfaces" — they reach it at this box's LAN IP.
-    let shown = if host == "0.0.0.0" || host == "::" {
+    // A pointer for whoever installed the server. An unspecified bind address
+    // (`0.0.0.0`, `::` or `[::]`) means every interface, so they reach it at
+    // this machine's LAN address.
+    let unspecified = host
+        .trim_matches(|c| c == '[' || c == ']')
+        .parse::<std::net::IpAddr>()
+        .is_ok_and(|ip| ip.is_unspecified());
+    let shown = if unspecified {
         format!("http://<this-box-ip>:{port}")
     } else {
         format!("http://{host}:{port}")

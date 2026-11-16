@@ -1,6 +1,6 @@
 //! Pair-only auth bootstrap.
 //!
-//! One primitive — a short-lived 24-byte random token in `app_pair_token` —
+//! One primitive — a short-lived six-digit code in `app_pair_token` —
 //! grants the right to enroll a device. The token never carries any
 //! long-lived secret; the redeeming device generates its own iroh key and
 //! submits its EndpointId (`device_node_id`) when consuming.
@@ -486,13 +486,15 @@ pub async fn reopen_onboarding_handler(
     OwnerProven(user): OwnerProven,
 ) -> impl IntoResponse {
     match revoke_all_devices(&pool).await {
-        Ok((devices, creds)) => {
+        Ok(devices) => {
             tracing::info!(
                 by_device = %user.device_id,
-                devices, creds,
+                devices,
                 "onboarding re-opened from the app. Every device revoked"
             );
-            (StatusCode::OK, Json(json!({ "devices": devices, "credentials": creds })))
+            // `credentials` stays in the reply for apps built before it went:
+            // the API only grows. A device holds no credential rows.
+            (StatusCode::OK, Json(json!({ "devices": devices, "credentials": 0 })))
         }
         Err(e) => {
             tracing::warn!("reopen onboarding: {e:#}");
@@ -504,9 +506,9 @@ pub async fn reopen_onboarding_handler(
     }
 }
 
-/// Revoke every paired device and its credentials, in one transaction.
+/// Revoke every paired device, in one transaction.
 ///
-/// Returns `(devices, credentials)` revoked.
+/// Returns how many devices were revoked.
 ///
 /// **This is the whole of "reset".** Shared by the app's
 /// `/api/pair/reopen-onboarding` and the appliance's physical button
@@ -527,7 +529,7 @@ pub async fn reopen_onboarding_handler(
 ///
 /// Credentials go with the devices deliberately. Leaving them active would let a
 /// revoked device keep talking, which is the whole thing being undone.
-pub async fn revoke_all_devices(pool: &PgPool) -> Result<(u64, u64), sqlx::Error> {
+pub async fn revoke_all_devices(pool: &PgPool) -> Result<u64, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let devices = sqlx::query("UPDATE app_device SET revoked_at = now(), push_address = NULL, push_address_at = NULL WHERE revoked_at IS NULL")
         .execute(&mut *tx)
@@ -548,11 +550,10 @@ pub async fn revoke_all_devices(pool: &PgPool) -> Result<(u64, u64), sqlx::Error
     // the whole thing being in one transaction was worth having.
     //
     // A device is a row in `app_device`. Credentials belong to SOURCES.
-    let creds = 0u64;
     tx.commit().await?;
     // The box is unclaimed again, so the Improv service should come back and the
     // panel should return to a setup screen. Both reconcile on their own timers.
-    Ok((devices, creds))
+    Ok(devices)
 }
 
 /// `POST /api/pair/mint` — auth'd. Paired user creates a token to add a new

@@ -354,16 +354,16 @@ pub enum Commands {
     #[command(hide = true)]
     Init,
 
-    /// Pair a device with your box: print the standing code to type into the
-    /// app, then wait until it's used.
+    /// Pair a device with your server: print a code to enter in the app, then
+    /// wait until a device pairs.
     ///
-    /// Prints the box's multi-use standing code (minting one if none is live),
-    /// NOT a fresh one-time token, and NOT a URL or QR — a browser cannot pair
-    /// (it holds no iroh key) and the desktop app has no camera, so the code is
-    /// typed by hand. No `.env` touching, no prompts. Idempotent — run as often
-    /// as needed. THE one human verb for connecting a device to the box
-    /// (agents/build/onboarding.md). `login` and `link` survive as aliases (this used
-    /// to be `virtues login`).
+    /// Before the first device pairs this is the server's standing code, which
+    /// is multi-use and rotates (minted if none is live). Once a device has
+    /// paired it is a fresh one-time code. Either way it prints how long the
+    /// code lasts and the server's addresses beside it. A browser cannot pair
+    /// (it holds no iroh key). No `.env` touching, no
+    /// prompts. Run it as often as needed. THE one human verb for connecting a
+    /// device (agents/build/onboarding.md). `login` and `link` are aliases.
     #[command(alias = "login", alias = "link")]
     Pair {
         /// Print the code and exit immediately instead of waiting for it

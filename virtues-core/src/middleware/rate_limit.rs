@@ -2,10 +2,10 @@
 //!
 //! Two users, two very different reasons:
 //!
-//! - **`pair_limiter`**, keyed by source IP. The pair token is a 6-char code
-//!   from a 24-char alphabet (≈191M combos). That's unbrutable within the
-//!   30-minute window ONLY if we cap attempts per IP. Without this, a LAN
-//!   attacker can enumerate freely. This one is a security control.
+//! - **`pair_limiter`**, keyed by source IP. The pair code is six digits
+//!   (1M combinations), so it holds only because attempts are capped per IP
+//!   and the code expires. Without this, anyone who can reach the server can
+//!   enumerate freely. This one is a security control.
 //! - **`event_limiter`**, keyed by device id. A client reporting its own
 //!   errors (`POST /api/events`) can get stuck in a render loop and report the
 //!   same failure thousands of times a minute. journald rate-limits per unit,

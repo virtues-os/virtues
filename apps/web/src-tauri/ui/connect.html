@@ -615,7 +615,7 @@
             return { paired: true, text: `Paired. Another copy of Virtues on ${device} is using the port it needs. Quit the other copy, then open Virtues again.` };
           }
           if (/invalid_or_expired_token|\b401\b/.test(s)) {
-            return { paired: false, text: "That code didn't work. Each code works once and lasts about 15 minutes. Run virtues pair for a fresh one." };
+            return { paired: false, text: "That code didn't work. It may have expired. On your server, run virtues pair for a new one." };
           }
           if (/too_many_attempts|\b429\b/.test(s)) {
             return { paired: false, text: 'Too many wrong codes. Wait 30 minutes, then try a fresh code from virtues pair.' };
@@ -2500,7 +2500,7 @@ its devices apart — type its address.",
           <div class="msg err" id="msg">${autoErr ? esc(autoErr) : ''}</div>
           <p class="hint">${server.claimed === false
             ? 'The install printed one too, when it finished. Codes rotate - a fresh one always works.'
-            : 'Each code works once and lasts about 15 minutes.'}</p>
+            : 'Each code works once and lasts about 30 minutes.'}</p>
           ${server.bleId ? '<button class="back" id="blewifi">Set up its Wi-Fi instead</button>' : ''}`;
         document.getElementById('back').addEventListener('click', () => (state.fromSetup ? history.back() : start()));
         // The escape hatch for a stale "already online" advertisement: if the
