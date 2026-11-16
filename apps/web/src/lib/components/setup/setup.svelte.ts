@@ -2,11 +2,11 @@
  * Setup — the one flow, and the order of its steps.
  *
  * ONE PROCESS, ONE WORD (agents/plan/onboarding-diy-plan.md). Setup runs
- * full screen at `/setup`, a dot per step: Welcome (the cold open, and light
- * or dark), the founder's letter, Server (finding and pairing it), this
- * device's Connections, Subscription, Names, then
- * the ∴ and the app. Connections can be skipped and "Finish later" opens the
- * app with it waiting on the rail's Setup tile; everything else is required.
+ * full screen at `/setup`: Welcome (the cold open, and light or dark),
+ * Server (finding and pairing it), Names, this device's Connections,
+ * Subscription, then Arrival and the app. Connections can be skipped; its
+ * "Finish later" opens the app only once nothing required follows it.
+ * Everything else is required. The founder's letter waits at Arrival.
  * Chapters and the interview are not part of setup.
  *
  * NOTHING HERE IS STORED PROGRESS. Every status is read off real rows — the

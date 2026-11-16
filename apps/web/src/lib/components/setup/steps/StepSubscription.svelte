@@ -1,21 +1,10 @@
 <!--
-	Step 3 — Subscription. The one required step with no way past: the
-	interview needs AI, and so does everything the assistant does. Any of
-	three ways through settles it — a subscription, signing in to an existing
-	account, or your own AI — and all three unfold on this screen.
-
-	WHY ON THIS SCREEN, NOT THE LETTER'S. It was the letter's close
-	(2026-09-23), when the letter was the last thing before the app. Setup
-	puts the letter first, as a preface, so the subscription's one paragraph
-	of reasons came with it: the server keeps the record, the subscription
-	pays for the intelligence, and the goal is for all of it to run at home.
-	In Adam's voice, still — it is the letter's P.S., moved to where it is
-	needed.
-
-	ONE PRIMARY AND TWO QUIET LINKS, not three equal buttons. Three peers made
-	paying read as one option of three. The price sits under the button, not
-	on it: "$20/mo" in a filled pill reads as "clicking charges me", when the
-	click only opens a checkout.
+	Subscription, the last step before Arrival. The one required step with
+	no way past: everything the assistant does needs AI. Any of three ways
+	through settles it (a subscription, signing in to an existing account,
+	or your own AI) and all three unfold on this screen. Its one paragraph
+	of reasons, at the foot, is the letter's P.S., in Adam's voice, moved to
+	where it is needed.
 
 	YOUR OWN AI, WITHOUT A COMMAND LINE. Saving the key carries the app's
 	owner proof (api/owner_proof.rs), which the app signs with this device's
@@ -47,7 +36,15 @@
 	import StepFrame from "../StepFrame.svelte";
 	import { setup, intoLabel } from "../setup.svelte";
 
-	let { onnext }: { onnext: () => void } = $props();
+	let {
+		onnext,
+		nextLabel,
+	}: {
+		onnext: () => void;
+		/** What the way on says, when the host knows better than the stage's
+		 *  order (in the app, the next step there, or the list). */
+		nextLabel?: string;
+	} = $props();
 
 	type Mode = "choose" | "checkout" | "signin" | "sending" | "mailed" | "endpoint" | "saving";
 	let mode = $state<Mode>("choose");
@@ -97,7 +94,7 @@
 	/** Signed in already (before pairing, or earlier), with no subscription on
 	 *  the account: signing in again would change nothing. */
 	const signedIn = $derived(via === "linked");
-	/** Met on Names, the step before this one. */
+	/** Named on Names, earlier in Setup. */
 	const name = $derived(setup.assistantName);
 
 	const still =
@@ -242,7 +239,7 @@
 				{via === "byo" ? "Every AI call goes through the address you gave." : `${name} can answer now.`}
 			</p>
 			<button class="setup-go wide" onclick={onnext}>
-				{intoLabel(setup.upNext("subscription"))}
+				{nextLabel ?? intoLabel(setup.upNext("subscription"))}
 				<Icon icon="mynaui:arrow-right" width="16" />
 			</button>
 		</div>

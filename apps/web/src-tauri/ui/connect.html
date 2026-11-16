@@ -815,7 +815,7 @@
           });
         } catch (e) {
           err.textContent =
-            'The camera is unavailable - allow camera access for Virtues in Settings, then try again. (' + String(e && e.name || e) + ')';
+            'The camera is unavailable. Allow camera access for Virtues in Settings, then try again.';
           return;
         }
         scanStream = stream;

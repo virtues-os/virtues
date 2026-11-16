@@ -134,6 +134,15 @@
 	});
 	$effect(() => () => score.fade(0));
 	let closing = $state(false);
+	/** "Finish later" ends Setup, so it is offered only on an optional step
+	 *  with no required step still open after it: on Connections, the
+	 *  subscription still follows, and ending there opened the app with no
+	 *  AI to think with. That step's own "Skip for now" moves on instead. */
+	const laterOk = $derived.by(() => {
+		if (!current?.optional || current.status === "done") return false;
+		const i = setup.steps.findIndex((s) => s.id === current.id);
+		return !setup.steps.slice(i + 1).some((s) => !s.optional && s.status !== "done");
+	});
 	/** The print runs quieter on a dark ground, where light line work reads
 	 *  loud (as Welcome's does). */
 	let darkGround = $state(false);
@@ -154,7 +163,8 @@
 	 *  shown at the foot of the steps after this device's, so the person sees
 	 *  the work begin while they finish. Words only, never a count. */
 	const reading = $derived.by(() => {
-		if (step !== "connections" && step !== "subscription") return null;
+		// Connections says it on its own sheet; the line carries it after.
+		if (step !== "subscription") return null;
 		const what = [setup.arriving("computer"), setup.arriving("phone")].filter(Boolean).join(", and ");
 		return what ? `${setup.assistantName} is reading ${what}` : null;
 	});
@@ -282,7 +292,7 @@
 	}
 
 	/** On to the next step still to do. Steps already done are passed over:
-	 *  in the web app Server and Wi-Fi always are, and a subscription linked
+	 *  in the web app Server always is, and a subscription linked
 	 *  before pairing is too, so their receipts never interrupt the walk.
 	 *  Any done step can still be opened from its dot. */
 	async function advance(from: SetupStepId) {
@@ -312,7 +322,9 @@
 			}
 			await new Promise((r) => setTimeout(r, 1500));
 		}
-		go(setup.status("names") === "open" ? "names" : "connections");
+		// The hold ends only once the next step is on screen: released first,
+		// the paired receipt (StepPaired) drew for a frame under the move.
+		await goto(`/setup/${setup.status("names") === "open" ? "names" : "connections"}`);
 		holdServer = false;
 	}
 
@@ -346,8 +358,24 @@
 	async function enter(to: "/chat" | "/founders-letter") {
 		if (entering) return;
 		entering = true;
-		await openApp(to);
+		try {
+			await openApp(to);
+		} catch (e) {
+			// A failed open leaves both ways in pressable, with the reason.
+			console.error("[setup] opening from Arrival failed", e);
+			entering = false;
+			closeError = "Virtues couldn't open. Try again.";
+		}
 	}
+
+	// Arrival takes focus once its way in has risen, so a keyboard or screen
+	// reader lands on it rather than on the steps that faded out under it.
+	let openButton = $state<HTMLButtonElement | null>(null);
+	$effect(() => {
+		if (!arrived || !openButton) return;
+		const t = setTimeout(() => openButton?.focus({ preventScroll: true }), still ? 0 : 1300);
+		return () => clearTimeout(t);
+	});
 
 	// The app's gate can still send the close back here (the server changed
 	// its mind between the two reads). This page is reused, not remounted, so
@@ -417,7 +445,7 @@
 	     rises under it as it settles, so what the person meets in the app has
 	     been introduced, and the app opens beneath the two together. -->
 	{#if closing && arrived}
-		<div class="arrival">
+		<div class="arrival" role="status">
 			<h1 class="arrival-title" in:rise={{ delay: still ? 0 : 700, duration: still ? 0 : M.slow, y: 12 }}>
 				Welcome home{ownerName ? `, ${ownerName}` : ""}.
 			</h1>
@@ -425,13 +453,13 @@
 				{closeLine ?? `${setup.assistantName} is ready when you are.`}
 			</p>
 			<div class="arrival-ways" in:rise={{ delay: still ? 0 : 1100, duration: still ? 0 : M.slow }}>
-				<button type="button" class="setup-go" onclick={() => enter("/chat")} disabled={entering}>Open Virtues</button>
+				<button type="button" class="setup-go" bind:this={openButton} onclick={() => enter("/chat")} disabled={entering}>Open Virtues</button>
 				<button type="button" class="setup-past" onclick={() => enter("/founders-letter")} disabled={entering}>A note from us</button>
 			</div>
 		</div>
 	{/if}
 
-	<!-- Not on a finished step: there, "Finish later" means the same as the
+	<!-- A failed close, or a failed open from Arrival, said where it happened.
 	     step's own way on, and the last step's is "Finish setup". -->
 	{#if closeError}
 		<div class="close-error" role="alert" transition:fade={{ duration: 200 }}>
@@ -440,7 +468,7 @@
 		</div>
 	{/if}
 
-	{#if reading && !closing}
+	{#if reading && !closing && !closeError}
 		<p class="reading" role="status" transition:fade={{ duration: 300 }}>
 			<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
 				<circle cx="12" cy="5" r="2.8" />
@@ -451,7 +479,7 @@
 		</p>
 	{/if}
 
-	{#if current?.optional && current.status !== "done" && !closing}
+	{#if laterOk && !closing}
 		<button type="button" class="later" onclick={finish} transition:fade={{ duration: 200 }}>Finish later</button>
 	{/if}
 
@@ -481,7 +509,7 @@
 	{/if}
 	</div>
 
-	<main class="flow" class:closing>
+	<main class="flow" class:closing inert={closing}>
 		{#if step}
 			{#key step}
 				<!-- Opacity only: a transform here would carry Welcome's fixed
@@ -633,7 +661,7 @@
 		display: flex;
 		gap: 0;
 	}
-	/* On a phone the nine dots take most of the top line; the corner
+	/* On a phone the ∴ and its step name take the top line's middle; the corner
 	   tightens so it clears them down to a 360px screen. */
 	@media (max-width: 440px) {
 		.corner {
@@ -873,7 +901,8 @@
 		.arrival-ways .setup-past {
 			/* design-ok: over the painting, which is the same on every theme */
 			color: white;
-			text-shadow: 0 1px 10px color-mix(in srgb, var(--color-foreground) 55%, transparent);
+			/* design-ok: a dark shadow on every theme, since the painting is the same on every theme */
+			text-shadow: 0 1px 10px color-mix(in srgb, black 55%, transparent);
 		}
 	}
 
@@ -888,18 +917,17 @@
 		display: flex;
 		align-items: center;
 		gap: 8px;
-		max-width: calc(100% - 32px);
+		max-width: min(calc(100% - 32px), 28rem);
 		margin: 0;
 		padding: 8px 16px 8px 12px;
-		border-radius: var(--radius-full);
+		border-radius: var(--radius-lg);
 		background: var(--color-surface-overlay, var(--color-surface));
 		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
 		outline-offset: -1px;
 		font-size: 13px;
+		line-height: 1.4;
 		color: var(--color-foreground);
-		white-space: nowrap;
-		overflow: hidden;
-		text-overflow: ellipsis;
+		text-wrap: balance;
 	}
 	.reading svg {
 		flex: none;

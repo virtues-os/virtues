@@ -22,8 +22,7 @@
 	            Connecting is the peak of Setup, so it gets a beat of its
 	            own instead of a page change.
 
-	The code is six boxes in a monospaced face, the way the terminal shows
-	it. Typing moves to the next box, Backspace on an empty box goes back,
+	The code is six boxes in the serif, its figures lined up. Typing moves to the next box, Backspace on an empty box goes back,
 	and pasting anywhere takes the whole line `virtues pair` printed
 	(address and code) or just the six digits.
 -->
@@ -61,12 +60,15 @@
 	let addressEl = $state<HTMLInputElement | null>(null);
 	let boxes = $state<(HTMLInputElement | null)[]>([]);
 	const codeOk = $derived(/^\d{6}$/.test(code));
-	/** Why Connect is still off, once the person has put something in:
-	 *  a greyed button alone said nothing. */
+	/** Connect was pressed with something missing. */
+	let tried = $state(false);
+	/** What is missing, said once the code is whole or Connect was pressed:
+	 *  a greyed button alone said nothing, and a hint that fires after the
+	 *  first digit nags someone still typing. */
 	const missing = $derived(
-		!address.trim() && code.length > 0
+		!address.trim() && (codeOk || tried)
 			? "Add the address your server printed, above the code."
-			: address.trim() && code.length > 0 && !codeOk
+			: tried && !codeOk
 				? "The code has six digits."
 				: null,
 	);
@@ -145,7 +147,13 @@
 	function onBoxInput(i: number, e: Event) {
 		error = null;
 		const el = e.currentTarget as HTMLInputElement;
-		const value = el.value;
+		let value = el.value;
+		// Typing over a filled box: iOS often keeps the old digit (it ignores
+		// the select on focus), so the box holds two. The new one is the one
+		// that isn't the old one.
+		if (value.length === 2 && digits[i] && value.includes(digits[i])) {
+			value = value[0] === digits[i] ? value[1] : value[0];
+		}
 		if (value.length > 1) {
 			// Autofill of a one-time code, or a fast typist: spread it out.
 			fillFrom(i, value);
@@ -183,7 +191,8 @@
 		const text = e.clipboardData?.getData("text") ?? "";
 		e.preventDefault();
 		error = null;
-		if (!takeLine(text)) fillFrom(i, text);
+		// A whole code fills from the first box wherever it lands.
+		if (!takeLine(text)) fillFrom(text.replace(/\D/g, "").length >= 6 ? 0 : i, text);
 	}
 
 	/** What to call the server when it appears: the name the network search
@@ -201,7 +210,12 @@
 	}
 
 	async function pairHere() {
-		if (!address.trim() || !codeOk || phase === "pairing") return;
+		if (phase === "pairing") return;
+		if (!address.trim() || !codeOk) {
+			tried = true;
+			(address.trim() ? boxes[digits.findIndex((d) => !d)] : addressEl)?.focus();
+			return;
+		}
 		phase = "pairing";
 		error = null;
 		onpairing?.();
@@ -211,6 +225,10 @@
 			console.error("[setup] pairing by address failed", e);
 			error = pairError(e, { address, device: here }).text;
 			phase = "address";
+			// The fields were disabled while pairing, so focus fell to the
+			// page; put it back on the code.
+			await tick();
+			boxes[0]?.focus();
 			return;
 		}
 		pairedName = nameFor(address.trim());
@@ -363,7 +381,9 @@
 				type="button"
 				class="setup-go"
 				onclick={pairHere}
-				disabled={!address.trim() || !codeOk || phase === "pairing"}
+				disabled={phase === "pairing"}
+				aria-disabled={!address.trim() || !codeOk}
+				class:incomplete={!address.trim() || !codeOk}
 			>
 				{phase === "pairing" ? "Connecting…" : "Connect"}
 			</button>
@@ -464,6 +484,12 @@
 		font: inherit;
 		font-weight: 500;
 		color: var(--color-foreground);
+	}
+
+	/* Connect stays pressable while something is missing, so pressing it
+	   can say what; it only looks quieter. */
+	.incomplete {
+		opacity: 0.55;
 	}
 
 	/* ── the camera, before it opens ── */

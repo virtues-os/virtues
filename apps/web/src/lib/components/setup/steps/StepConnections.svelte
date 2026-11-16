@@ -63,7 +63,17 @@
 	import { setup, intoLabel, type StepPart } from "../setup.svelte";
 	import StepFrame from "../StepFrame.svelte";
 
-	let { eyebrow, onnext }: { eyebrow?: string; onnext: () => void } = $props();
+	let {
+		eyebrow,
+		onnext,
+		nextLabel,
+	}: {
+		eyebrow?: string;
+		onnext: () => void;
+		/** What the way on says, when the host knows better than the stage's
+		 *  order (in the app, the next step there, or the list). */
+		nextLabel?: string;
+	} = $props();
 
 	/**
 	 * The device in hand. iOS first: an iPad reports a Mac platform. A
@@ -430,7 +440,7 @@
 		     names the next step still to do, like every step's does. -->
 		{#if anything}
 			<button type="button" class="setup-go" disabled={busy} onclick={moveOn}>
-				{intoLabel(setup.upNext("connections"))}
+				{nextLabel ?? intoLabel(setup.upNext("connections"))}
 				<Icon icon="mynaui:arrow-right" width="16" />
 			</button>
 		{:else if macHalfway}

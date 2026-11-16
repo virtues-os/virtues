@@ -1,5 +1,5 @@
 <!--
-	Step 4 — Names. One exchange and one place: its name, then yours ("And
+	Names, the step after the server. One exchange and one place: its name, then yours ("And
 	what should Ari call you?"), then home on the city chart.
 
 	Three beats, one dot. The names are one conversation — the assistant is
