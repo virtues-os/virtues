@@ -258,7 +258,7 @@
 						{/each}
 					</div>
 				{:else}
-					<p class="prose">
+					<p class="sentence">
 						{#each tiles as t, i (t.key)}{#if i > 0}{' '}{/if}{t.before}{#if t.open && t.url}<a
 									class="link"
 									href={t.url}
@@ -499,12 +499,13 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	.prose {
+	.sentence {
 		margin: 0;
 		font-family: var(--font-serif);
 		font-size: 20px;
 		line-height: 1.55;
 		color: var(--color-foreground-muted);
+		overflow-wrap: break-word;
 	}
 
 	.link,
