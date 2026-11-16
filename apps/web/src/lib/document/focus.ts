@@ -10,7 +10,7 @@
 import { Extension } from '@tiptap/core';
 import { Plugin, PluginKey, type EditorState, type Transaction } from '@tiptap/pm/state';
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view';
-import { isChangeOrigin } from '@tiptap/extension-collaboration';
+import { isChangeOrigin } from './ykeys';
 import { scrollerOf } from './outline';
 
 /** Where typewriter mode keeps the caret, as a share of the scroller's height. */

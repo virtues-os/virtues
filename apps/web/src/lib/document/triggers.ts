@@ -13,9 +13,9 @@
  */
 
 import { Extension } from '@tiptap/core';
-import { isChangeOrigin } from '@tiptap/extension-collaboration';
 import { Plugin, PluginKey, TextSelection, type EditorState } from '@tiptap/pm/state';
 import type { EditorView } from '@tiptap/pm/view';
+import { isChangeOrigin } from './ykeys';
 
 export interface TriggerCallbacks {
 	/** The trigger character. */

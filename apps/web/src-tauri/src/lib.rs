@@ -581,9 +581,20 @@ pub fn run() {
       // the first request queues rather than gets refused.
       let reach = app.reach();
       let paired = reach.is_paired();
+      // Only the bind waits; the client build (a name lookup and a dial) runs
+      // on a task so the launch never waits on the network.
       if paired {
-        if let Err(e) = tauri::async_runtime::block_on(reach.ensure_serving()) {
-          eprintln!("[reach] serve failed: {e}");
+        match reach.bind_loopback() {
+          Ok(Some(bound)) => {
+            let handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+              if let Err(e) = handle.reach().serve_bound(bound).await {
+                eprintln!("[reach] serve failed: {e}");
+              }
+            });
+          }
+          Ok(None) => {}
+          Err(e) => eprintln!("[reach] serve failed: {e}"),
         }
       }
 

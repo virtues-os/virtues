@@ -49,6 +49,7 @@ import { insertBlockAt } from './place';
 import { kindOfLink } from './media-kind';
 import type { ContextHandler } from './gesture';
 import { anchorAt, anchorRange, resolveRange } from './anchor';
+import { shareableHref } from './share';
 
 const HOVER_SHOW_MS = 350;
 const HOVER_HIDE_MS = 160;
@@ -107,11 +108,6 @@ export function openLink(href: string, label: string): void {
 export function openLinkInNewTab(href: string, label: string): void {
 	if (isRef(href)) void windowShellStore.openInNewTab(href, label);
 	else if (linkAllowed(href)) void openWebLink(href);
-}
-
-/** The address to copy: a ref as a full link to this box. */
-export function shareableHref(href: string): string {
-	return href.startsWith('/') ? `${window.location.origin}${href}` : href;
 }
 
 const refLinksKey = new PluginKey<DecorationSet>('refLinks');

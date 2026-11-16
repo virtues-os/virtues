@@ -19,7 +19,7 @@
 	import { linkEditor } from "$lib/stores/linkEditor.svelte";
 	import { openMenuItems } from "$lib/utils/openMenuItems";
 	import { isRoute } from "$lib/document/schema";
-	import { shareableHref } from "$lib/document/links";
+	import { shareableHref } from "$lib/document/share";
 	import type { ViewState } from "$lib/document/nodeviews.svelte";
 
 	let { view }: { view: ViewState } = $props();

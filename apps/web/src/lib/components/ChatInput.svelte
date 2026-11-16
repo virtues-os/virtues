@@ -679,7 +679,8 @@
 							<Icon icon="mynaui:arrow-up" width="15" style="color: inherit" />
 						</span>
 						<span class="swap-icon" class:active={trailingMode === "send" && isBusy && !canQueue}>
-							<Icon icon="mynaui:spinner" class="animate-spin" width="15" style="color: inherit" />
+							<!-- Spin only while shown: a hidden infinite animation keeps the page repainting. -->
+							<Icon icon="mynaui:spinner" class={trailingMode === "send" && isBusy && !canQueue ? "animate-spin" : ""} width="15" style="color: inherit" />
 						</span>
 						<span class="swap-icon" class:active={trailingMode === "stop"}>
 							<Icon icon="mynaui:stop-solid" width="15" style="color: inherit" />

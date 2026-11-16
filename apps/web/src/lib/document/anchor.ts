@@ -17,7 +17,7 @@
  */
 
 import { Extension } from '@tiptap/core';
-import { isChangeOrigin } from '@tiptap/extension-collaboration';
+import { isChangeOrigin } from './ykeys';
 import { GapCursor } from '@tiptap/pm/gapcursor';
 import type { Node as PmNode } from '@tiptap/pm/model';
 import { Plugin, type EditorState, type Selection, type Transaction } from '@tiptap/pm/state';

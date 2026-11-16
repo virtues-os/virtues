@@ -1526,19 +1526,16 @@ fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
 /// Only touches a collector that's ALREADY installed — first-run install stays
 /// with the "Turn on this Mac" opt-in flow. A no-op once in sync, so it's safe
 /// to run on every launch. Returns true if the collector was redeployed.
-fn reconcile_helpers() -> bool {
-    let mut changed = false;
+fn reconcile_helpers() {
     for (name, agent) in [("virtues-collector", "com.virtues.collector")] {
         match reconcile_one(name, agent) {
             Ok(true) => {
-                changed = true;
                 eprintln!("[reconcile] {name}: redeployed to match app bundle + restarted {agent}");
             }
             Ok(false) => {}
             Err(e) => eprintln!("[reconcile] {name}: {e}"),
         }
     }
-    changed
 }
 
 /// Reconcile one helper. `Ok(true)` = it was stale and got redeployed.
@@ -1641,12 +1638,27 @@ fn is_adhoc_signed(path: &std::path::Path) -> bool {
 
 /// Byte-equal? Cheap size check first, content compare only if sizes match (the
 /// up-to-date case). Any IO error → treat as "differ" so we err toward refresh.
+/// Compares in chunks and stops at the first difference: the collector is tens
+/// of megabytes, and reading both copies whole held two of it in memory.
 fn files_differ(a: &std::path::Path, b: &std::path::Path) -> bool {
+    use std::io::Read;
     match (a.metadata(), b.metadata()) {
         (Ok(ma), Ok(mb)) if ma.len() == mb.len() => {
-            match (std::fs::read(a), std::fs::read(b)) {
-                (Ok(x), Ok(y)) => x != y,
-                _ => true,
+            let (Ok(mut fa), Ok(mut fb)) = (std::fs::File::open(a), std::fs::File::open(b)) else {
+                return true;
+            };
+            let (mut ba, mut bb) = (vec![0u8; 1 << 16], vec![0u8; 1 << 16]);
+            loop {
+                let n = match fa.read(&mut ba) {
+                    Ok(n) => n,
+                    Err(_) => return true,
+                };
+                if n == 0 {
+                    return false;
+                }
+                if fb.read_exact(&mut bb[..n]).is_err() || ba[..n] != bb[..n] {
+                    return true;
+                }
             }
         }
         _ => true,
@@ -1855,12 +1867,12 @@ fn main() {
             // ... and never from a dev profile: reconcile kickstarts the
             // machine's real collector, which is exactly the cross-profile
             // side effect profiles exist to prevent.
+            //
+            // On its own thread: nothing the window needs waits on it, and the
+            // byte compare reads two copies of a tens-of-megabytes binary.
             #[cfg(target_os = "macos")]
-            if tauri_plugin_reach::profile().is_none()
-                && app.reach().is_paired()
-                && reconcile_helpers()
-            {
-                std::thread::sleep(std::time::Duration::from_millis(300));
+            if tauri_plugin_reach::profile().is_none() && app.reach().is_paired() {
+                std::thread::spawn(reconcile_helpers);
             }
 
             // Bring reach up IN-PROCESS before the launch probe: when paired,
@@ -1869,9 +1881,24 @@ fn main() {
             // old durable virtues-client proxy sidecar — the app now serves its
             // own box reach for its session (the collector reaches the box over
             // its own embedded iroh, independent of this).
+            //
+            // Only the bind happens here. Building the client resolves the
+            // box's LAN name and dials, which off the home network can take
+            // seconds, so it runs on a task and the window opens now. The bound
+            // port already listens: the webview's first requests wait in its
+            // backlog until the client is up.
             if app.reach().is_paired() {
-                if let Err(e) = tauri::async_runtime::block_on(app.reach().ensure_serving()) {
-                    eprintln!("[reach] ensure_serving failed: {e}");
+                match app.reach().bind_loopback() {
+                    Ok(Some(bound)) => {
+                        let handle = app.handle().clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = handle.reach().serve_bound(bound).await {
+                                eprintln!("[reach] ensure_serving failed: {e}");
+                            }
+                        });
+                    }
+                    Ok(None) => {}
+                    Err(e) => eprintln!("[reach] ensure_serving failed: {e}"),
                 }
             }
 

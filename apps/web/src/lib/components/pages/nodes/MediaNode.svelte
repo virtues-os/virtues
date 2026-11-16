@@ -40,7 +40,7 @@
 	import { fileIcon } from "$lib/utils/refRoutes";
 	import { driveFileId, mediaSrc, nameOfSrc } from "$lib/document/media";
 	import { askUpload, retryUpload, watchUpload, type LocalUpload, type RemoteUpload } from "$lib/document/uploads";
-	import { shareableHref } from "$lib/document/links";
+	import { shareableHref } from "$lib/document/share";
 	import { dragToResize, sizeByKey } from "$lib/document/resize";
 	import type { ViewState } from "$lib/document/nodeviews.svelte";
 

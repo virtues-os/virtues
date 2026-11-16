@@ -81,7 +81,13 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		// Three quick tries, then give up and continue. Onboarding is worth a
 		// second of patience; it is never worth locking someone out of their
 		// own app over a box that blipped.
-		try {
+		//
+		// PARALLEL, because only the session has to come first. Setup state,
+		// the version floor and the profile don't depend on each other, so all
+		// three start now and are read in gate order below. Each one awaited in
+		// turn cost a round trip apiece before the shell, which on the relay is
+		// most of a cold start. A gate that redirects leaves the others unread.
+		const setupP = (async () => {
 			let setup: {
 				setup_complete?: boolean;
 				onboarding_complete?: boolean;
@@ -96,6 +102,16 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 					// keep trying
 				}
 			}
+			return setup;
+		})();
+		const floorP = boxBelowFloor(fetch);
+		const profileP = fetch('/api/profile');
+		// Mark both handled now: a redirect below returns before they're awaited.
+		floorP.catch(() => {});
+		profileP.catch(() => {});
+
+		try {
+			const setup = await setupP;
 			if (setup) {
 				// Gate on onboarding_status ONLY, never on setup_complete. Setup
 				// is the claim; whether the person has finished or dismissed the
@@ -125,13 +141,13 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 
 		// The server is too old for this copy of the app: one clear screen
 		// rather than a half-working app. See $lib/boxApi.ts.
-		if (await boxBelowFloor(fetch)) throw redirect(303, '/server-update');
+		if (await floorP) throw redirect(303, '/server-update');
 
 		// Let in: from here `/setup` opens as a tab in the app, not the stage.
 		markInApp(true);
 
 		// Fetch profile for user preferences
-		const profileResponse = await fetch('/api/profile');
+		const profileResponse = await profileP;
 
 		if (profileResponse.ok) {
 			const profile = await profileResponse.json();

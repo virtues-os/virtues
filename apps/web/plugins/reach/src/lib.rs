@@ -403,6 +403,12 @@ struct PairDoor {
   task: tauri::async_runtime::JoinHandle<()>,
 }
 
+/// A loopback port bound by `ReachState::bind_loopback`, not yet served.
+pub struct BoundLoopback {
+  listener: StdTcpListener,
+  rec: PairedBox,
+}
+
 pub struct ReachState {
   store: Arc<FileStore>,
   serving: AtomicBool,
@@ -529,38 +535,63 @@ impl ReachState {
   /// Binds the port synchronously *first* so a webview pointed at it queues
   /// rather than gets refused, then builds the warm client and serves.
   pub async fn ensure_serving(&self) -> Result<()> {
-    if self.serving.swap(true, Ordering::SeqCst) {
-      return Ok(());
+    match self.bind_loopback()? {
+      Some(bound) => self.serve_bound(bound).await,
+      None => Ok(()),
     }
-    // Everything up to the spawn below can fail, and every failure has to
-    // put the flag back. It used to stay set on a failed bind or a failed
-    // client build (a launch off the home network with no relay, a port
-    // someone else held), and every later call took the early return above:
-    // nothing listened on the loopback again until the app was killed.
-    let started: Result<(StdTcpListener, _)> = async {
+  }
+
+  /// The synchronous half of `ensure_serving`: claim the serving flag and bind
+  /// the loopback port. `None` when something is already serving.
+  ///
+  /// A launch calls this on the main thread and hands the result to
+  /// `serve_bound` on a task. `bind` also listens, so the webview's first
+  /// requests wait in the kernel's backlog until the client is up, and the
+  /// window never waits on the network (resolving `virtues.local` off the home
+  /// network can take seconds).
+  pub fn bind_loopback(&self) -> Result<Option<BoundLoopback>> {
+    if self.serving.swap(true, Ordering::SeqCst) {
+      return Ok(None);
+    }
+    let bound: Result<BoundLoopback> = (|| {
       let rec = self
         .store
         .load()?
         .ok_or_else(|| Error::Reach("not paired".into()))?;
 
       let port = loopback_port();
-      let std_listener = StdTcpListener::bind(("127.0.0.1", port))
+      let listener = StdTcpListener::bind(("127.0.0.1", port))
         .map_err(|e| Error::Reach(format!("bind 127.0.0.1:{port}: {e}")))?;
-      std_listener.set_nonblocking(true)?;
+      listener.set_nonblocking(true)?;
 
       // Refresh the outbox's device id now that we're definitely paired
       // (setup() may have run pre-pair with an empty id).
       init_outbox(&self.store);
-
-      let client = virtues_reach_client::build_client(&rec).await?;
-      Ok((std_listener, client))
-    }
-    .await;
-    let (std_listener, client) = match started {
-      Ok(v) => v,
+      Ok(BoundLoopback { listener, rec })
+    })();
+    match bound {
+      Ok(b) => Ok(Some(b)),
       Err(e) => {
         self.serving.store(false, Ordering::SeqCst);
-        return Err(e);
+        Err(e)
+      }
+    }
+  }
+
+  /// The network half of `ensure_serving`: build the warm client, then serve
+  /// the bound loopback and start the upload loop.
+  pub async fn serve_bound(&self, bound: BoundLoopback) -> Result<()> {
+    let BoundLoopback { listener: std_listener, rec } = bound;
+    // Every failure from here to the spawn below has to put the flag back. It
+    // used to stay set on a failed bind or a failed client build (a launch off
+    // the home network with no relay, a port someone else held), and every
+    // later call took the early return: nothing listened on the loopback again
+    // until the app was killed.
+    let client = match virtues_reach_client::build_client(&rec).await {
+      Ok(c) => c,
+      Err(e) => {
+        self.serving.store(false, Ordering::SeqCst);
+        return Err(e.into());
       }
     };
     // WARM_CLIENT is the single source of truth — the loopback, upload path, and
