@@ -135,4 +135,5 @@ sudo virtues uninstall
 
 Prints the exact manifest of everything it found before touching anything, and
 asks you to type the server's hostname to confirm. Shared infrastructure it
-didn't install - the PostgreSQL server, Avahi - is left alone.
+didn't install - the PostgreSQL server, Avahi - is left alone. If a firewall is
+on, it closes the ports the installer opened: TCP 8000, mDNS and UDP 51820.

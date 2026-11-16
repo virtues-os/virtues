@@ -428,9 +428,9 @@ pub fn ssh_handoff_block(ctx: &SshContext, host: &str) -> Vec<String> {
     ]
 }
 
-/// Wait until a NEW device pairs. The universal standing code is multi-use and
-/// never transitions to `consumed`, so we watch for an additional non-revoked
-/// device row rather than a token state change. After 90s of silence it prints
+/// Wait until a NEW device pairs. The standing code is replaced after use, so
+/// we watch for an additional non-revoked device row rather than one token's
+/// state. After 90s of silence it prints
 /// the client-isolation hint.
 pub async fn wait_for_new_device(pool: &sqlx::PgPool) -> anyhow::Result<()> {
     const HINT_AFTER: std::time::Duration = std::time::Duration::from_secs(90);

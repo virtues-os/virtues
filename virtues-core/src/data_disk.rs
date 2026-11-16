@@ -1,26 +1,16 @@
 //! Is the server's data disk actually there?
 //!
-//! On hardware Virtues shipped, the state root is its own filesystem (an NVMe)
-//! and Postgres was moved onto it, while the OS lives on the boot medium (a
-//! microSD card). The card is the weakest storage on the board and wears out
-//! under database load, so the database, the lake and the journal belong on
-//! the NVMe. A server with its Postgres cluster moved to the data disk
-//! ([`relocated_cluster_dir`]) is one that expects that disk.
+//! Servers Virtues shipped as hardware keep the state root on its own disk
+//! (an NVMe), with the Postgres cluster moved onto it and the OS on the boot
+//! card. `fstab` carries `nofail`, so a missing disk never blocks boot. The
+//! risk is the other way: the server comes up, Postgres can start a fresh
+//! empty cluster on the card, and everything looks healthy while the
+//! owner's record sits on a disk nobody mounted. `virtues doctor` reports
+//! that state (`cli/doctor.rs`).
 //!
-//! The split's other half is the reason this module exists. Keeping a bootable
-//! OS on the card means a box whose NVMe is dead, unseated, or was never
-//! fitted still comes up — and a box that comes up can SAY SO. `fstab` carries
-//! `nofail` for exactly that, so a missing disk must never block boot.
-//!
-//! But "must not block boot" and "may be ignored" are different claims, and
-//! conflating them is how you get the worst outcome available here: Postgres
-//! cheerfully `initdb`s a fresh empty cluster onto the card, every service
-//! reports healthy, and the owner's box looks perfectly fine while being
-//! empty. Their record is not lost — it is sitting on a disk nobody mounted —
-//! but nothing on any screen would tell them that, and the longer it runs the
-//! more a "restore from backup" would destroy.
-//!
-//! So: boot anyway, refuse to serve, and put it on the glass.
+//! Only a server whose cluster was moved into its state root
+//! ([`relocated_cluster_dir`]) expects a separate disk. An ordinary install
+//! keeps everything on one disk, which is correct.
 
 use std::path::{Path, PathBuf};
 
@@ -35,28 +25,6 @@ pub enum DataDisk {
     /// This box is configured to have a separate data disk and does not have
     /// one right now. The state a human needs told about.
     Missing,
-}
-
-impl DataDisk {
-    /// Should the box refuse to serve?
-    ///
-    /// Only [`DataDisk::Missing`]. `OnRoot` is a perfectly good DIY install.
-    pub fn is_fault(self) -> bool {
-        matches!(self, DataDisk::Missing)
-    }
-
-    /// One line, written for someone standing in front of the box rather than
-    /// reading a log. Names the part, says the record is intact, and gives the
-    /// single next action.
-    pub fn message(self) -> Option<&'static str> {
-        match self {
-            DataDisk::Missing => Some(
-                "I can't find my storage disk. Your record is on it, not lost — \
-                 the disk needs reseating or replacing.",
-            ),
-            _ => None,
-        }
-    }
 }
 
 /// The state root this box is configured with.
@@ -91,14 +59,25 @@ pub const PG_LINK: &str = "/var/lib/postgresql";
 
 /// The moved cluster directory, if this server has one.
 ///
-/// `None` on an ordinary install, where `/var/lib/postgresql` is a real
-/// directory owned by the distro and emphatically not ours to touch.
+/// Only a link that points into the state root counts: that is the layout
+/// the hardware installer made (`<data dir>/postgresql`). `None` on an
+/// ordinary install, where `/var/lib/postgresql` is the distro's own
+/// directory, and `None` when someone linked it to a disk of their own,
+/// which is theirs to look after and not a data disk this server expects.
 pub fn relocated_cluster_dir() -> Option<PathBuf> {
     let md = std::fs::symlink_metadata(PG_LINK).ok()?;
     if !md.file_type().is_symlink() {
         return None;
     }
-    std::fs::read_link(PG_LINK).ok()
+    let target = std::fs::read_link(PG_LINK).ok()?;
+    moved_into(&target, &data_dir()).then_some(target)
+}
+
+/// Whether a `/var/lib/postgresql` link to `target` is the cluster moved
+/// into the state root `data_dir`. A relative target is not: the installer
+/// always wrote an absolute one.
+fn moved_into(target: &Path, data_dir: &Path) -> bool {
+    target.is_absolute() && target.starts_with(data_dir)
 }
 
 /// Assess the data disk.
@@ -167,16 +146,22 @@ mod tests {
         // install: a DIY state root is a plain directory, by design.
         let s = status_of(Path::new("/nonexistent/virtues"), false);
         assert_eq!(s, DataDisk::OnRoot);
-        assert!(!s.is_fault());
-        assert!(s.message().is_none());
     }
 
     #[test]
     fn a_server_expecting_a_disk_without_one_is_a_fault() {
         let s = status_of(Path::new("/nonexistent/virtues"), true);
         assert_eq!(s, DataDisk::Missing);
-        assert!(s.is_fault());
-        assert!(s.message().unwrap().contains("not lost"));
+    }
+
+    #[test]
+    fn only_a_cluster_moved_into_the_state_root_expects_a_disk() {
+        let data = Path::new("/var/lib/virtues");
+        assert!(moved_into(Path::new("/var/lib/virtues/postgresql"), data));
+        // Someone's own disk, or a relative link: not a disk we expect.
+        assert!(!moved_into(Path::new("/mnt/bigdisk/postgresql"), data));
+        assert!(!moved_into(Path::new("/var/lib/virtues-other/postgresql"), data));
+        assert!(!moved_into(Path::new("virtues/postgresql"), data));
     }
 
     #[test]
@@ -192,15 +177,5 @@ mod tests {
         std::fs::create_dir_all(&d).unwrap();
         assert!(!is_mount_point(&d));
         let _ = std::fs::remove_dir_all(&d);
-    }
-
-    #[test]
-    fn the_message_leads_with_the_record_being_intact() {
-        // Copy rule, pinned because it is the whole point of the state: the
-        // owner is looking at a box that says it cannot find its storage, and
-        // the sentence they need first is that their life is still on it.
-        let m = DataDisk::Missing.message().unwrap();
-        assert!(m.contains("Your record is on it"));
-        assert!(!m.to_lowercase().contains("error"));
     }
 }

@@ -68,7 +68,8 @@ const CLI_REDEEM_TTL_MIN: i64 = 30;
 /// typing it on a numeric pad — far less error-prone than a 24-letter
 /// alphabet. 10^6 = 1M combinations: smaller than the old letter space, so the
 /// /api/pair/consume per-IP rate limit is load-bearing, especially for the
-/// multi-use standing code. It holds because the standing code also ROTATES
+/// standing code, which is live for the whole setup window. It holds because
+/// the standing code also ROTATES
 /// (~every 20 min, see `STANDING_TTL_MIN`): 10 guesses/30-min/IP against a
 /// target that changes every 20 min makes enumeration of a 1M space
 /// infeasible. (A box-wide lockout was considered and rejected — it hands an
@@ -224,11 +225,12 @@ pub fn group_code(code: &str) -> String {
 
 // ─── Standing rotating code (the universal box code) ─────────────────────────
 //
-// One code pairs everything (phone setup, desktop app, CLI). Unlike a one-off
-// token it is MULTI-use within its window and rotated on a timer (see
-// maintenance::pair_rotator) with an overlap window. The raw value is stored
-// encrypted (display_secret) so box-local surfaces can DISPLAY it; it is never
-// served over the LAN.
+// The code an unclaimed server shows (`virtues pair`, the install's last
+// screen). Unlike a one-off token it is always live while the server is
+// unclaimed: rotated on a timer (see maintenance::pair_rotator) with an
+// overlap window, and replaced after it is used. Like a one-off token it
+// pairs one device. The raw value is stored encrypted (display_secret) so the
+// CLI can show it; it is never served over the LAN.
 
 /// How often the rotator mints a fresh standing code.
 pub const STANDING_ROTATE_INTERVAL_MIN: i64 = 15;
@@ -239,7 +241,7 @@ pub const STANDING_GRACE_MIN: i64 = 5;
 const STANDING_TTL_MIN: i64 = STANDING_ROTATE_INTERVAL_MIN + STANDING_GRACE_MIN;
 
 /// Mint a fresh standing code. Stores SHA-256(code) for matching AND the raw
-/// code encrypted (for box-local display). Multi-use; expires by time. Returns
+/// code encrypted (for the CLI to show). Single-use; expires by time. Returns
 /// the row as a `MintedToken` (raw code in `.token`).
 pub async fn mint_standing_code(pool: &PgPool) -> crate::Result<MintedToken> {
     let token = random_pair_code();
@@ -303,10 +305,8 @@ pub async fn current_standing(pool: &PgPool) -> crate::Result<Option<MintedToken
 }
 
 /// Return the current standing code (minting one if none is valid). Used during
-/// SETUP (unclaimed) — the rotator keeps one fresh so `virtues pair` and the
-/// box's own `0x83` redemption always have a valid code, and it is multi-use so
-/// a device can pair with it. (`0x85`, the RPC that used to hand this code to
-/// the app, was deleted 2026-08-24; the panel never renders it.)
+/// SETUP (unclaimed): the rotator keeps one fresh so `virtues pair` always has
+/// a valid code.
 /// Callers on a CLAIMED box must not use this: see `cli_pair_code`
 /// and `expire_standing_codes` for why the standing code does not outlive claim.
 pub async fn ensure_standing(pool: &PgPool) -> crate::Result<MintedToken> {
@@ -319,10 +319,8 @@ pub async fn ensure_standing(pool: &PgPool) -> crate::Result<MintedToken> {
 /// Expire every live standing code, immediately.
 ///
 /// Called at CLAIM. The standing code is the one setup surface that used to
-/// outlive claim — an always-live, multi-use, 6-digit code is a permanent
-/// brute-forceable pairing password, and every other setup surface (BLE, the
-/// phrase, the AP) shuts off the moment the box has an owner. This makes the
-/// code do the same. Post-claim device adds mint a fresh ONE-TIME code on
+/// outlive claim: an always-live 6-digit code is a permanent brute-forceable
+/// pairing password once the server has an owner. Post-claim device adds mint a fresh ONE-TIME code on
 /// demand (`cli_pair_code`). Sets `expires_at` rather than touching `status`, so
 /// `current_standing`'s `expires_at > now()` filter drops them at once and the
 /// sweeper reaps the rows. (Setup-runtime audit, 2026-08-19.)
@@ -340,8 +338,7 @@ pub async fn expire_standing_codes(pool: &PgPool) -> crate::Result<u64> {
 /// The pair code the CLI (`virtues pair`, `device add`) and the init handoff
 /// should show.
 ///
-/// UNCLAIMED → the standing setup code (multi-use, also what the BLE flow hands
-/// over). CLAIMED → a FRESH ONE-TIME code (kind defaults to `oneoff`, consumed
+/// UNCLAIMED → the standing setup code. CLAIMED → a FRESH ONE-TIME code (kind defaults to `oneoff`, consumed
 /// on first use, 30-min TTL). This is the "mint as needed, not everlasting"
 /// rule: after the box has an owner, adding a device produces a code that dies
 /// on use, and the always-live standing code is gone.
@@ -957,11 +954,11 @@ pub async fn consume_handler(
     //   • `matched` locks the valid token row (FOR UPDATE) so concurrent
     //     redeems of the same one-off token serialize — the second sees no
     //     'authorized' row after the first commits.
-    //   • `consumed` marks it 'consumed' ONLY for 'oneoff' tokens (single-use).
-    //     'standing' codes are multi-use within their window, so they are
-    //     validated but NOT consumed — they pair many devices over their life.
-    // We RETURN the id from `matched` either way (a standing match is still a
-    // successful pair). `consumed_by_device` is back-filled after the device
+    //   • `consumed` marks it 'consumed', a standing code as well as a one-off:
+    //     each pairs one device, so two devices racing with one code cannot
+    //     both pair. The rotator, or the next `virtues pair`, mints a new
+    //     standing code if the server is still unclaimed.
+    // `consumed_by_device` is back-filled after the device
     // INSERT below (the FK would reject it here). On error we surface the DB
     // message so a real bug doesn't masquerade as `invalid_or_expired_token`.
     let token_id = match claim_pair_token(&mut tx, &token_hash).await {
@@ -1137,7 +1134,7 @@ pub async fn consume_handler(
     crate::relay::after_pairing_change(pool.clone());
 
     // The standing pair code does not outlive claim.
-    // The box now has an owner, so the always-live multi-use code is retired;
+    // The box now has an owner, so any other live standing code is retired;
     // further devices are added with a one-time code minted on demand. The
     // rotator also stops once claimed, but expiring here kills the current one
     // promptly rather than waiting out its ~20-min TTL.
@@ -1198,9 +1195,8 @@ pub(crate) async fn assemble_applet_fanout(
 }
 
 /// Atomically claim a pair token by its hash: locks the valid 'authorized' row
-/// `FOR UPDATE` (so concurrent redeems of a one-off serialize), marks a `oneoff`
-/// token 'consumed' (a `standing` code is validated but left multi-use), and
-/// returns the token id. `Ok(None)` = no valid/unexpired token. Shared by the
+/// `FOR UPDATE` (so concurrent redeems serialize), marks it 'consumed' (a
+/// standing code as well as a one-off), and returns the token id. `Ok(None)` = no valid/unexpired token. Shared by the
 /// HTTP consume handler and any other enrollment path.
 pub(crate) async fn claim_pair_token(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -1218,7 +1214,7 @@ pub(crate) async fn claim_pair_token(
              UPDATE app_pair_token t \
              SET status = 'consumed', consumed_at = now() \
              FROM matched m \
-             WHERE t.id = m.id AND m.kind = 'oneoff' \
+             WHERE t.id = m.id \
              RETURNING t.id \
          ) \
          SELECT id FROM matched",
@@ -1421,6 +1417,30 @@ mod endpoint_id_conflict_tests {
 
     /// A NULL endpoint_id (a browser device) is outside the partial index, so
     /// those always insert fresh — Postgres treats NULLs as distinct.
+    /// The standing code pairs one device, like a one-off code: the second
+    /// claim of the same code finds nothing, so two devices racing with one
+    /// code cannot both pair.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn a_standing_code_pairs_one_device(pool: sqlx::PgPool) {
+        let hash = crate::api::pair::hash_token("424242");
+        sqlx::query(
+            "INSERT INTO app_pair_token \
+             (id, token_hash, minted_via, status, kind, display_secret, authorized_at, expires_at) \
+             VALUES ('pt_standing_test', $1, 'cli', 'authorized', 'standing', 'x', now(), now() + interval '20 minutes')",
+        )
+        .bind(&hash)
+        .execute(&pool)
+        .await
+        .expect("insert a standing code");
+
+        let mut tx = pool.begin().await.expect("begin");
+        assert_eq!(crate::api::pair::claim_pair_token(&mut tx, &hash).await.unwrap().as_deref(), Some("pt_standing_test"));
+        tx.commit().await.expect("commit");
+
+        let mut tx = pool.begin().await.expect("begin");
+        assert_eq!(crate::api::pair::claim_pair_token(&mut tx, &hash).await.unwrap(), None);
+    }
+
     #[sqlx::test(migrations = "./migrations")]
     async fn keyless_devices_never_conflict(pool: sqlx::PgPool) {
         let info = json!({});

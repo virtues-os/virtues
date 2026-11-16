@@ -205,6 +205,16 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
         run_quiet("sh", &["-c", "systemctl reload avahi-daemon 2>/dev/null || true"]);
     }
 
+    // ── Firewall ports and the console socket's folder ─────────────────
+    close_firewall();
+    let tmpfiles = crate::cli::system_repairs::CONSOLE_TMPFILES;
+    if std::path::Path::new(tmpfiles).exists() {
+        report(std::fs::remove_file(tmpfiles).is_ok(), &format!("removed {tmpfiles}"));
+    }
+    if std::path::Path::new("/run/virtues").is_dir() {
+        report(std::fs::remove_dir_all("/run/virtues").is_ok(), "removed /run/virtues");
+    }
+
     // ── GGUF models (opt-in with --keep-data; full purge removes the whole
     //    data dir below anyway). They re-download on the next install. ────
     if m.models_dir {
@@ -263,6 +273,10 @@ pub async fn run(keep_data: bool, purge_models: bool, force: bool) -> Result<()>
         }
         if m.system_user {
             report(run_quiet("userdel", &["virtues"]), "removed system user 'virtues'");
+        }
+        let group = crate::console_socket::CONSOLE_GROUP;
+        if run_quiet("getent", &["group", group]) {
+            report(run_quiet("groupdel", &[group]), &format!("removed group '{group}'"));
         }
     }
 
@@ -392,6 +406,11 @@ fn print_manifest(m: &Manifest, keep_data: bool) {
     if m.web_dir {
         ui::kv_at(MANIFEST_COL, "web UI", WEB_DIR);
     }
+    ui::kv_at(
+        MANIFEST_COL,
+        "firewall",
+        &format!("8000/tcp, mDNS, {}/udp  (closed if firewalld or ufw is on)", virtues_iroh::DEFAULT_IROH_PORT),
+    );
     if m.avahi {
         ui::kv_at(MANIFEST_COL, "mDNS advertisement", AVAHI_SERVICE);
     }
@@ -449,6 +468,36 @@ fn hostname() -> String {
                 .filter(|s| !s.is_empty())
         })
         .unwrap_or_else(|| "virtues".to_string())
+}
+
+/// Close what the installer opened in a running firewalld or ufw
+/// (`open_firewall` in the installer): TCP 8000, mDNS, and the iroh UDP port.
+/// A firewall that is off, or a rule already gone, is left alone.
+fn close_firewall() {
+    let iroh = format!("{}/udp", virtues_iroh::DEFAULT_IROH_PORT);
+    if run_quiet("firewall-cmd", &["--state"]) {
+        let removes = ["--remove-port=8000/tcp".to_string(), "--remove-service=mdns".to_string(), format!("--remove-port={iroh}")];
+        let mut ok = true;
+        for permanent in [true, false] {
+            let mut args: Vec<&str> = removes.iter().map(String::as_str).collect();
+            if permanent {
+                args.insert(0, "--permanent");
+            }
+            ok &= run_quiet("firewall-cmd", &args);
+        }
+        report(ok, &format!("closed 8000/tcp, mDNS and {iroh} in firewalld"));
+        return;
+    }
+    let ufw_active = Command::new("ufw")
+        .arg("status")
+        .output()
+        .is_ok_and(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).contains("Status: active"));
+    if ufw_active {
+        let ok = ["8000/tcp", "5353/udp", iroh.as_str()]
+            .iter()
+            .all(|rule| run_quiet("ufw", &["delete", "allow", rule]));
+        report(ok, &format!("closed 8000/tcp, 5353/udp and {iroh} in ufw"));
+    }
 }
 
 /// Run a command, swallowing output; true on exit 0.

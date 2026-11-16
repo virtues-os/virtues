@@ -358,7 +358,7 @@ pub enum Commands {
     /// wait until a device pairs.
     ///
     /// Before the first device pairs this is the server's standing code, which
-    /// is multi-use and rotates (minted if none is live). Once a device has
+    /// rotates (minted if none is live). Once a device has
     /// paired it is a fresh one-time code. Either way it prints how long the
     /// code lasts, the server's addresses beside it, and a QR code of the
     /// address and code for the iPhone app. A browser cannot pair (it holds no

@@ -75,9 +75,9 @@ fn print_diagnostics() {
 ///
 /// Prints nothing on an ordinary install, where the state root is a plain
 /// directory and the cluster sits on the distro's own path, both correctly.
-/// The disk is the one failure that looks like health: a server whose NVMe
-/// never mounted runs, serves, and quietly writes the owner's record to the
-/// boot card. See `crate::data_disk`.
+/// The disk is the one failure that looks like health: a server whose data
+/// disk never mounted runs, serves, and quietly writes to the boot disk.
+/// See `crate::data_disk`.
 fn print_data_disk(issues: &mut ui::Issues) {
     let Some(cluster) = crate::data_disk::relocated_cluster_dir() else {
         return;
@@ -89,9 +89,9 @@ fn print_data_disk(issues: &mut ui::Issues) {
         crate::data_disk::DataDisk::Missing => {
             ui::kv("data disk", "MISSING");
             issues.error(
-                "the data disk is not mounted — the record belongs on it, and \
-                 Postgres is configured to refuse to start without it",
-                Some("reseat or replace the NVMe, then: sudo systemctl reboot"),
+                "the data disk is not mounted, and your Postgres data is on it. \
+                 Nothing is lost, but the server can't read it",
+                Some("check that the disk is connected, then: sudo systemctl reboot"),
             );
         }
     }
