@@ -26,6 +26,31 @@ export function dropMotion(): { duration: number; easing: string } {
 	};
 }
 
+/** How long a landed block's light takes to fade: long enough to find it, short enough not to linger. */
+const GLOW_MS = 700;
+
+/**
+ * Light the blocks a move or a copy just put at `from`..`to`, and let the
+ * light fade, so you can see where they went on a long page or after the
+ * page scrolled to them. It fades to whatever the block shows underneath,
+ * the selection's tint included. A drag from the grip and ⌥↑ ⌥↓ both end
+ * this way.
+ */
+export function glowLanded(view: EditorView, from: number, to: number): void {
+	if (view.isDestroyed) return;
+	const primary = getComputedStyle(view.dom).getPropertyValue('--color-primary').trim();
+	if (!primary) return;
+	const light = `color-mix(in srgb, ${primary} 18%, transparent)`;
+	const timing = { duration: GLOW_MS, easing: 'ease-out' };
+	view.state.doc.nodesBetween(from, to, (node, pos) => {
+		if (pos < from || pos + node.nodeSize > to) return true;
+		const el = view.nodeDOM(pos);
+		// One keyframe: it ends on the block's own look.
+		if (el instanceof HTMLElement && typeof el.animate === 'function') el.animate([{ backgroundColor: light, boxShadow: `0 0 0 4px ${light}` }], timing);
+		return false;
+	});
+}
+
 /**
  * Take the drop line away now. The drop cursor removes it when a drag
  * leaves the editor for somewhere else, which is what this tells it.

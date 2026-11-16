@@ -41,7 +41,7 @@ import { pageNodeViews } from './views';
 import { clipboardText } from './markdown';
 import { ProposalsPasted, ProposalsRead, TypingOutsideDeletions } from './suggestions';
 import { KeptThroughOthersEdits } from './anchor';
-import { DragHandle } from './drag-handle';
+import { DragHandle, type DragHandleOptions } from './drag-handle';
 import { dropLine } from './drop-line';
 import { scrollerOf } from './outline';
 
@@ -66,6 +66,8 @@ export interface PageEditorOptions {
 	/** The node views; the page's own by default. */
 	extras?: Extras;
 	spellcheck?: boolean;
+	/** The menu a click on a heading's level mark opens (Flat headings); none by default. */
+	headingMenu?: DragHandleOptions['headingMenu'];
 }
 
 /**
@@ -325,6 +327,7 @@ export function createPageEditor(o: PageEditorOptions): Editor {
 			dragEnded: (view) => {
 				if (dragSource === view) dragSource = null;
 			},
+			headingMenu: o.headingMenu ?? null,
 		}),
 		Gapcursor,
 		drawnCaret(),

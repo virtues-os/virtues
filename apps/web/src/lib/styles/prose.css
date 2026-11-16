@@ -424,6 +424,72 @@
 	color: var(--color-foreground-muted);
 }
 
+/* ── Flat headings: a page's display setting (pageDisplay.headingMode).
+   Every heading sits at the body's size and line, so the page keeps one
+   rhythm, and its level is marked by #s hung in the left margin. The marks
+   are generated content, so copy and export see a plain heading. Each is
+   given empty alt text (`/ ""`), so a screen reader says the heading
+   without the #s. The editor puts the class on an ancestor of `prose`. */
+
+.prose--flat-headings .prose :is(h1, h2, h3, h4, h5, h6) {
+	position: relative;
+	font-family: inherit;
+	font-size: inherit;
+	line-height: inherit;
+	font-weight: 600;
+	color: var(--color-foreground);
+}
+
+.prose--flat-headings .prose :is(h3, h4, h5, h6) {
+	color: var(--color-foreground-muted);
+}
+
+.prose--flat-headings .prose :is(h1, h2, h3, h4, h5, h6)::before {
+	position: absolute;
+	right: 100%;
+	/* GRIP_GAP in drag-handle.ts: the grip that stands in for the mark on
+	   hover sits exactly here. */
+	margin-right: 12px;
+	font-weight: 400;
+	color: var(--color-foreground-disabled);
+	white-space: nowrap;
+	pointer-events: none;
+	user-select: none;
+}
+
+.prose--flat-headings .prose h1::before { content: "#"; content: "#" / ""; }
+.prose--flat-headings .prose h2::before { content: "##"; content: "##" / ""; }
+.prose--flat-headings .prose h3::before { content: "###"; content: "###" / ""; }
+.prose--flat-headings .prose h4::before { content: "####"; content: "####" / ""; }
+.prose--flat-headings .prose h5::before { content: "#####"; content: "#####" / ""; }
+.prose--flat-headings .prose h6::before { content: "######"; content: "######" / ""; }
+
+/* The serif has one weight (agents/build/typography.md), so in Serif mode
+   the levels step by ink alone. */
+.prose--article.prose--flat-headings .prose :is(h1, h2, h3, h4, h5, h6) {
+	font-weight: 400;
+}
+
+/* A heading inside a quote, list or callout has the block's bar or bullet
+   at its left edge, so its mark leads the line instead of hanging. */
+.prose--flat-headings .prose > :not(h1, h2, h3, h4, h5, h6) :is(h1, h2, h3, h4, h5, h6)::before {
+	position: static;
+	margin-right: 0.5em;
+}
+
+/* A margin too narrow to hang the marks in (a phone, a narrow pane): they
+   lead the line instead. The page measures its margin (PageContent). */
+.prose--marks-inline .prose--flat-headings .prose :is(h1, h2, h3, h4, h5, h6)::before {
+	position: static;
+	margin-right: 0.5em;
+}
+
+@media print {
+	.prose--flat-headings .prose :is(h1, h2, h3, h4, h5, h6)::before {
+		content: none;
+	}
+}
+
 /* ── The composer: a message as it is typed, in the same rules on tighter
    spacing. Blocks sit 6px apart and list items touch, as a short message
    reads in a box a few lines tall. In rem, so the code block's smaller

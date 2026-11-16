@@ -3,6 +3,7 @@
 	import {
 		pageDisplay,
 		type FontMode,
+		type HeadingMode,
 		type TextSize,
 		type WidthMode,
 	} from "$lib/stores/pageDisplay.svelte";
@@ -24,6 +25,11 @@
 		{ value: "s", label: "S" },
 		{ value: "m", label: "M" },
 		{ value: "l", label: "L" },
+	];
+
+	const headingModes: { value: HeadingMode; label: string; title: string }[] = [
+		{ value: "sized", label: "Sized", title: "Headings step up in size" },
+		{ value: "flat", label: "Flat", title: "Headings at the text's size, marked with # in the margin" },
 	];
 
 	const widthModes: { value: WidthMode; icon: string; label: string }[] = [
@@ -81,6 +87,22 @@
 					onclick={() => pageDisplay.setWidth(opt.value)}
 				>
 					<Icon icon={opt.icon} width="16" />
+				</button>
+			{/each}
+		</div>
+	</div>
+
+	<div class="row">
+		<span class="row-label">Headings</span>
+		<div class="segmented">
+			{#each headingModes as opt (opt.value)}
+				<button
+					class="seg"
+					class:active={pageDisplay.headingMode === opt.value}
+					title={opt.title}
+					onclick={() => pageDisplay.setHeadingMode(opt.value)}
+				>
+					{opt.label}
 				</button>
 			{/each}
 		</div>

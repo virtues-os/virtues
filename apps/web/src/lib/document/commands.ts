@@ -26,6 +26,7 @@ import type { EditorView } from '@tiptap/pm/view';
 import type { MenuCommand } from '$lib/components/menuCommand';
 import type { Applet } from '$lib/api/client';
 import type { Anchor } from './anchor';
+import { glowLanded } from './drop-line';
 import { kindOfMime, mediaNode } from './media';
 import { insertBlockAt } from './place';
 import { contract, isRoute, joinLists, joinListsAround } from './schema';
@@ -783,9 +784,11 @@ export function moveBlock(editor: Editor, by: -1 | 1): boolean {
 	if (other < 0 || other >= parent.childCount) return false;
 	const neighbour = parent.child(other);
 	editor.view.dispatch(state.tr.delete(start, end));
-	const tr = editor.state.tr.insert(by < 0 ? start - neighbour.nodeSize : start + neighbour.nodeSize, nodes);
+	const at = by < 0 ? start - neighbour.nodeSize : start + neighbour.nodeSize;
+	const tr = editor.state.tr.insert(at, nodes);
 	tr.setSelection(shifted(state, tr.doc, by < 0 ? -neighbour.nodeSize : neighbour.nodeSize));
 	editor.view.dispatch(tr.scrollIntoView());
+	glowLanded(editor.view, at, at + (end - start));
 	return true;
 }
 
@@ -880,9 +883,11 @@ export function copyBlock(editor: Editor, by: -1 | 1): boolean {
 	const { state } = editor;
 	const unit = unitAt(state);
 	if (!unit) return false;
-	const tr = state.tr.insert(by < 0 ? unit.start : unit.end, unit.nodes.map(withoutIds));
+	const at = by < 0 ? unit.start : unit.end;
+	const tr = state.tr.insert(at, unit.nodes.map(withoutIds));
 	if (by > 0) tr.setSelection(shifted(state, tr.doc, unit.end - unit.start));
 	editor.view.dispatch(tr.scrollIntoView());
+	glowLanded(editor.view, at, at + (unit.end - unit.start));
 	return true;
 }
 

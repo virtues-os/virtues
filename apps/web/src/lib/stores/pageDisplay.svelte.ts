@@ -2,7 +2,8 @@
  * Page display settings — the "Aa" popover model.
  *
  * One persisted, app-wide set of reading/writing preferences for the page
- * editor: font mode, text size, page width, and focus/typewriter mode.
+ * editor: font mode, text size, page width, heading style, and
+ * focus/typewriter mode.
  * Width `page` sets the page as an A4 sheet (210 mm), the width it prints at.
  * Font + size are surfaced to the editor via the `--prose-family`,
  * `--prose-size`, `--prose-lh` and `--prose-scale` custom properties (see
@@ -12,6 +13,8 @@
 export type FontMode = "sans" | "serif" | "mono";
 export type TextSize = "s" | "m" | "l";
 export type WidthMode = "small" | "medium" | "full" | "page";
+/** `flat` draws every heading at the body's size, its level marked by `#`s in the margin. */
+export type HeadingMode = "sized" | "flat";
 
 const STORAGE_KEY = "virtues-page-display";
 
@@ -63,6 +66,7 @@ interface Persisted {
 	fontMode: FontMode;
 	textSize: TextSize;
 	widthMode: WidthMode;
+	headingMode: HeadingMode;
 	focusMode: boolean;
 	spellcheck: boolean;
 }
@@ -71,6 +75,7 @@ const DEFAULTS: Persisted = {
 	fontMode: "sans",
 	textSize: "m",
 	widthMode: "medium",
+	headingMode: "sized",
 	focusMode: false,
 	spellcheck: true,
 };
@@ -89,6 +94,7 @@ class PageDisplay {
 	fontMode = $state<FontMode>(DEFAULTS.fontMode);
 	textSize = $state<TextSize>(DEFAULTS.textSize);
 	widthMode = $state<WidthMode>(DEFAULTS.widthMode);
+	headingMode = $state<HeadingMode>(DEFAULTS.headingMode);
 	focusMode = $state(DEFAULTS.focusMode);
 	spellcheck = $state(DEFAULTS.spellcheck);
 
@@ -97,6 +103,7 @@ class PageDisplay {
 		this.fontMode = p.fontMode;
 		this.textSize = p.textSize;
 		this.widthMode = p.widthMode;
+		this.headingMode = p.headingMode;
 		this.focusMode = p.focusMode;
 		this.spellcheck = p.spellcheck;
 	}
@@ -134,6 +141,7 @@ class PageDisplay {
 					fontMode: this.fontMode,
 					textSize: this.textSize,
 					widthMode: this.widthMode,
+					headingMode: this.headingMode,
 					focusMode: this.focusMode,
 					spellcheck: this.spellcheck,
 				}),
@@ -155,6 +163,11 @@ class PageDisplay {
 
 	setWidth(mode: WidthMode) {
 		this.widthMode = mode;
+		this.persist();
+	}
+
+	setHeadingMode(mode: HeadingMode) {
+		this.headingMode = mode;
 		this.persist();
 	}
 
