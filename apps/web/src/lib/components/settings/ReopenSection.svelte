@@ -68,8 +68,8 @@
 	{#if armed}
 		<div class="confirm">
 			<p>
-				You'll sign out every paired device, including this one. You'll then set
-				your server up again from the app, using the words on its screen.
+				You'll sign out every paired device, including this one. To pair again,
+				run virtues pair on your server and enter the code in the app.
 			</p>
 			<div class="row">
 				<Button variant="danger" size="sm" loading={busy} onclick={go}>

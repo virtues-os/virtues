@@ -70,10 +70,8 @@ pub fn has_internet() -> bool {
 
 /// NetworkManager's connectivity verdict, verbatim: `full` | `portal` |
 /// `limited` | `none`, or `unknown` where nmcli is absent (dev hosts, DIY
-/// boxes without NM). `portal` is the state the display's screen 1 must NAME
-/// — "joined, but that network wants a browser sign-in" — because with honest
-/// online-detection a captive join otherwise reads as still-offline with no
-/// explanation, and that silent wait was the commonest office failure.
+/// /// servers without NM). `portal` means the network wants a browser sign-in
+/// before it passes traffic, which `has_internet` counts as offline.
 pub fn connectivity() -> String {
     match std::process::Command::new("nmcli")
         .args(["-t", "networking", "connectivity", "check"])
@@ -222,14 +220,6 @@ pub fn ssh_forward_host() -> String {
         return addr.to_string();
     }
     forward_host()
-}
-
-/// The URL to encode in the handoff QR. Prefer the raw LAN IP — phones
-/// (notably Android) fumble `.local` resolution, and the QR is precisely the
-/// phone path (agents/build/onboarding.md: "LAN IP, not mDNS, inside the QR"). Falls
-/// back to the mDNS name when no address is discoverable.
-pub fn qr_pair_url(token: &str) -> String {
-    format!("http://{}:{INTERNAL_PORT}/pair#t={token}", forward_host())
 }
 
 // ─── SSH session auto-notice ────────────────────────────────────────────────

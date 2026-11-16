@@ -225,8 +225,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(Commands::Pair { no_wait }) = &cli.command {
         let database_url = virtues::database::normalize_database_url()?;
         let db = virtues::database::Database::new(&database_url)?;
-        // On an UNCLAIMED box this shows the standing setup code (multi-use,
-        // what the panel and BLE flow use). On a CLAIMED box it mints a FRESH
+        // On an UNCLAIMED box this shows the standing setup code (multi-use
+        // until it rotates). On a CLAIMED box it mints a FRESH
         // ONE-TIME code, consumed on use — the always-live standing code is
         // retired at claim. See `api::pair::cli_pair_code`.
         match virtues::api::pair::cli_pair_code(db.pool()).await {

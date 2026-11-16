@@ -862,12 +862,13 @@
         app.innerHTML = `
           <h1>Pairing</h1>
           <div class="wait"><span class="pip"></span><span>Setting this phone up</span></div>`;
+        let line = null;
         try {
           // Two codes reach this scanner. The server's own QR holds the same
           // line `virtues pair` prints (address and six-digit code, no key),
           // so it pairs by address exactly as a pasted line would. Anything
           // else is a connected computer's handoff.
-          const line = Router.splitPasted(payload);
+          line = Router.splitPasted(payload);
           if (line) {
             const status = await invoke('plugin:reach|pair', {
               payload: { server: line.address, code: line.code },
@@ -878,12 +879,15 @@
           }
           return finishPairing('Paired');
         } catch (e) {
-          // Straight back to the scanner carrying the reason — a wrong or
-          // expired code is the common case and deserves another try, not a
-          // dead end.
+          // Straight back to the scanner carrying the reason. A wrong or
+          // expired code is the common case and deserves another try. The
+          // server's QR fails the way a typed code does, so it is said the
+          // same way (Router.pairError); a handoff's error is already words.
+          const raw = e && e.message ? e.message : e;
+          const said = line ? Router.pairError(raw, { address: line.address, device: THIS_DEVICE }).text : String(raw);
           await renderScan();
           const err = document.getElementById('scanerr');
-          if (err) err.textContent = String(e && e.message ? e.message : e);
+          if (err) err.textContent = said;
         }
       }
 

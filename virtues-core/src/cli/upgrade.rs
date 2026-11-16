@@ -416,7 +416,6 @@ async fn activate(
     // Relay migration: an upgrade from a WireGuard-era release has an orphaned
     // `virtues-wireguard.service`. Best-effort; no-op on boxes that never had it.
     disable_legacy_wireguard();
-    retire_legacy_appliance_files();
 
     // ── Stop → flip → migrate → start ───────────────────────────────────────
     // Sidecars restart only when the release replaces their binaries
@@ -1216,34 +1215,6 @@ fn installed_inference_units() -> Vec<String> {
 
 fn service_stop(unit: &str) {
     let _ = Command::new("systemctl").arg("stop").arg(unit).status();
-}
-
-/// Retire what a server Virtues shipped carries for hardware it no longer
-/// drives: the display panel's kiosk and its shim (the page it loaded is
-/// gone), the polkit rule that let the server manage NetworkManager (it no
-/// longer manages the network), and the logind drop-in that handed the power
-/// key to the reset button (the button is gone, so the key goes back to
-/// logind's default at the next boot). Best-effort, and a no-op on a server
-/// that never had them. The first-boot unit stays: each of its sections is
-/// guarded, and it still repairs a cluster after a power cut.
-fn retire_legacy_appliance_files() {
-    const UNIT: &str = "virtues-display.service";
-    if Path::new("/etc/systemd/system/virtues-display.service").exists() {
-        ui::step("retiring virtues-display.service (no on-server display)…");
-        let _ = Command::new("systemctl").args(["disable", "--now", UNIT]).status();
-        let _ = std::fs::remove_file("/etc/systemd/system/virtues-display.service");
-        let _ = std::fs::remove_file("/usr/local/lib/virtues/display.py");
-        let _ = Command::new("systemctl").arg("daemon-reload").status();
-    }
-    for f in [
-        "/etc/polkit-1/rules.d/50-virtues-network.rules",
-        "/etc/systemd/logind.conf.d/10-virtues-power-key.conf",
-    ] {
-        if Path::new(f).exists() {
-            ui::step(&format!("removing {f} (no longer used)…"));
-            let _ = std::fs::remove_file(f);
-        }
-    }
 }
 
 /// Relay migration: retire a leftover `virtues-wireguard.service` from a

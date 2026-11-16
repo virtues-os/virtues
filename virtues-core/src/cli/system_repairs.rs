@@ -107,7 +107,56 @@ const REPAIRS: &[(&str, fn(&std::path::Path) -> Outcome)] = &[
     ("state-ownership", state_ownership),
     ("dragon-watchdog", dragon_watchdog),
     ("db-logins", db_logins),
+    ("retired-hardware", retired_hardware),
 ];
+
+/// Nothing is left of the hardware Virtues no longer ships: the display
+/// panel's kiosk unit and its shim (the page it loaded is gone), the polkit
+/// rule that let the server manage NetworkManager (it no longer manages the
+/// network), and the logind drop-in that handed the power key to the reset
+/// button (the key goes back to logind's default at the next boot). The
+/// first-boot unit stays: each of its sections is guarded, and it still
+/// repairs a cluster after a power cut.
+///
+/// A repair, not an upgrade step, because the upgrade orchestrator is the
+/// old binary: only the new binary's root instant (hook 1 above) runs on the
+/// upgrade that first carries this. Converged on a server that never had
+/// any of it.
+#[cfg(target_os = "linux")]
+fn retired_hardware(_data_dir: &std::path::Path) -> Outcome {
+    use std::path::Path;
+    use std::process::Command;
+    const UNIT: &str = "virtues-display.service";
+    const UNIT_FILE: &str = "/etc/systemd/system/virtues-display.service";
+    let mut removed = Vec::new();
+    if Path::new(UNIT_FILE).exists() {
+        // Best-effort stop: a unit that is already stopped or broken still
+        // has its file removed below.
+        let _ = Command::new("systemctl").args(["disable", "--now", UNIT]).status();
+        if let Err(e) = std::fs::remove_file(UNIT_FILE) {
+            return Outcome::Failed(format!("removing {UNIT_FILE}: {e}"));
+        }
+        let _ = std::fs::remove_file("/usr/local/lib/virtues/display.py");
+        let _ = Command::new("systemctl").arg("daemon-reload").status();
+        removed.push(UNIT);
+    }
+    for f in [
+        "/etc/polkit-1/rules.d/50-virtues-network.rules",
+        "/etc/systemd/logind.conf.d/10-virtues-power-key.conf",
+    ] {
+        if Path::new(f).exists() {
+            if let Err(e) = std::fs::remove_file(f) {
+                return Outcome::Failed(format!("removing {f}: {e}"));
+            }
+            removed.push(f);
+        }
+    }
+    if removed.is_empty() {
+        Outcome::Converged
+    } else {
+        Outcome::Repaired(format!("removed {}", removed.join(", ")))
+    }
+}
 
 /// The two low-privilege Postgres roles can log in, with the passwords the
 /// server derives from this box's encryption key (`database::restricted`).

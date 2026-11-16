@@ -791,8 +791,7 @@ pub enum Commands {
     /// phone or browser; the box never holds a Stripe key.
     ///
     /// A power-user hatch for re-subscribing or dev iteration. In the normal
-    /// flow the app carries the account grant to the box over Bluetooth and
-    /// nobody runs this. (It used to point at `virtues init` as the "full
+    /// flow the app's Setup links the account and nobody runs this. (It used to point at `virtues init` as the "full
     /// first-run wizard: config + subscribe + migrate" — init has been
     /// plumbing-only since the account conversation left the TTY.)
     #[command(alias = "claim", hide = true)]

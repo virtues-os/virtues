@@ -135,8 +135,8 @@ fn exchange_secret() -> Result<String, String> {
 /// and no wider.
 ///
 /// Private IPv4/IPv6 is in the list because the box hands those out itself:
-/// `qr_pair_url` puts the raw LAN IP in the onboarding QR on purpose (phones
-/// fumble mDNS), and `virtues link` prints it as the `.local` fallback. Without
+/// the pair QR carries the raw LAN IP on purpose (phones fumble mDNS), and
+/// `virtues link` prints it as the `.local` fallback. Without
 /// this, every OAuth connect from a phone that scanned the QR fails with a 400
 /// raised on a host the box operator cannot see.
 ///
@@ -1574,7 +1574,7 @@ mod tests {
 
     #[test]
     fn accepts_the_addresses_the_box_hands_out() {
-        // `qr_pair_url` / `virtues link` print these; a connect started from one
+        // The pair QR and `virtues link` print these; a connect started from one
         // must not die on the proxy.
         for url in [
             "http://192.168.1.40:7117/oauth/callback",

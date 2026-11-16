@@ -100,12 +100,9 @@ fn random_pair_code() -> String {
 /// this box" and counting rows naively gets `true` from the moment it powers
 /// on.
 ///
-/// `api::box_status::compute_setup_state` deliberately still counts the console
-/// row. Its `claimed` step is in `REQUIRED_SETUP_STEPS`, so making it honest
-/// would push a box whose only session is the on-box browser permanently back
-/// into `/setup` — that surface's console user has no device to pair *with*.
-/// The two answers differ because the questions do: "is there any session here"
-/// versus "did a human bring a device to this box".
+/// `api::box_status::compute_setup_state` still counts the console row, so its
+/// `claimed` step is true on a server nobody has paired. The app no longer
+/// gates on `setup_complete`, so nothing reads that as a claim today.
 pub async fn paired_device_count(pool: &PgPool) -> i64 {
     try_paired_device_count(pool).await.unwrap_or(0)
 }

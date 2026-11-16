@@ -1,7 +1,7 @@
 //! Box health status — one source of truth, several surfaces: the `virtues
 //! status` CLI (full identity detail), and the public-on-LAN `GET /api/box/health` (the boot
 //! state machine as flat gates + the inference resolution report, secrets
-//! stripped) that the first-run web page and the appliance screen poll.
+//! stripped) that the connect page and the reach client poll.
 //! Composability: the box, a DIY server, the CLI, and the app all report
 //! identical health from this one computation.
 
@@ -179,7 +179,7 @@ async fn degraded_collectors(pool: &PgPool) -> Result<Vec<DegradedCollector>> {
         .collect())
 }
 
-// ─── Public health (first-run web page + appliance screen) ──────────────────
+// ─── Public health (connect page + reach client) ────────────────────────────
 
 /// The boot state machine as flat booleans. Each gate is a stage a fresh box
 /// passes through on the way to fully usable; the first-run UI renders these in
@@ -288,8 +288,8 @@ pub async fn compute_health(pool: &PgPool) -> Result<BoxHealth> {
     })
 }
 
-/// `GET /api/box/health` — public, LAN-reachable, non-sensitive. The first-run
-/// web page and the appliance screen poll this before any owner session exists.
+/// `GET /api/box/health` — public, LAN-reachable, non-sensitive. The connect
+/// page and the reach client poll this before any owner session exists.
 pub async fn box_health_handler(State(state): State<AppState>) -> impl IntoResponse {
     match compute_health(state.db.pool()).await {
         Ok(health) => (StatusCode::OK, Json(health)).into_response(),
@@ -374,7 +374,7 @@ pub struct SetupState {
 }
 
 /// Compute the setup/onboarding state. Reuses [`compute_status`] for the
-/// vault-backed signals so the wizard, panel, and CLI can never disagree
+/// vault-backed signals so Setup and the CLI can never disagree
 /// with `virtues status`.
 pub async fn compute_setup_state(pool: &PgPool) -> Result<SetupState> {
     let s = compute_status(pool).await?;
@@ -789,8 +789,7 @@ fn remote_access_step(
 }
 
 /// `GET /api/setup/state` — public-on-LAN like `/api/box/health`, and by the
-/// same argument: the onboarding flow and the appliance panel must render it
-/// before any owner session exists, and it carries only booleans and step
+/// same argument: Setup must render it before any owner session exists, and it carries only booleans and step
 /// copy. (No name field: there is no "named" step and no rename endpoint —
 /// the box keeps `virtues.local`.) Note the onboarding vec is a fuller
 /// behavioral sketch than `/api/box/identity`'s three bits — whether a phone
