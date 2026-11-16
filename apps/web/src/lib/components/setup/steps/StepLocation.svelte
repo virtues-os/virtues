@@ -448,10 +448,11 @@
 	.globe {
 		display: block;
 		/* As large as the window allows with the title, the city, its time
-		   and the way forward all still on screen: the rest of the step takes
-		   about 540px, so a 1280×800 window gets a 260px globe and the button
-		   above the fold. 360 at most, never under 200. */
-		width: min(100%, 360px, max(200px, 100svh - 540px));
+		   and the way forward all still on screen: on the stage the rest of
+		   the step, with its sheet's margin and padding, takes about 620px, so
+		   a 1280×800 window gets a 200px globe and the button above the fold.
+		   360 at most, never under 200. */
+		width: min(100%, 360px, max(200px, 100svh - 620px));
 		aspect-ratio: 1;
 		cursor: grab;
 		/* A vertical swipe still scrolls the page on a phone; a sideways one turns the globe. */
