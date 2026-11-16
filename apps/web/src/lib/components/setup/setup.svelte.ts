@@ -265,6 +265,13 @@ class SetupStore {
 	 * setup shows no counts, since someone in recovery sees every page.
 	 */
 	arrived(device: 'computer' | 'phone'): string | null {
+		const list = this.arriving(device);
+		return list ? `Your server is receiving ${list}.` : null;
+	}
+
+	/** What a device has started sending, as a list of nouns ("your messages
+	 *  and the pages you read"), or null. Never how much. */
+	arriving(device: 'computer' | 'phone'): string | null {
 		const has = (...names: string[]) => names.some((name) => arriving(this.streams, name));
 		const parts: [boolean, string][] =
 			device === 'computer'
@@ -280,8 +287,7 @@ class SetupStore {
 					];
 		const said = parts.filter(([on]) => on).map(([, noun]) => noun);
 		if (!said.length) return null;
-		const list = said.length === 1 ? said[0] : `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]}`;
-		return `Your server is receiving ${list}.`;
+		return said.length === 1 ? said[0] : `${said.slice(0, -1).join(', ')} and ${said[said.length - 1]}`;
 	}
 
 	/** The computer's collector and the phone, once paired. */

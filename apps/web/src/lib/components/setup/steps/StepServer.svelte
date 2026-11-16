@@ -4,6 +4,10 @@
 
 	The beats:
 
+	  scan      on an iPhone, first: scan the QR code the installer printed.
+	            The camera is the connect page's (`prePair.joinExisting`),
+	            which reads a server's code and a paired computer's alike.
+	            The network search and the typed address are one tap away.
 	  looking   the network search runs (`prePair.serversOnNetwork`)
 	  choose    "Which server is yours?" when it finds more than one.
 	            Nothing found: the main action is the address and code,
@@ -44,8 +48,11 @@
 
 	const here = isIOS ? "this iPhone" : isMacOS ? "this Mac" : "this device";
 
-	type Phase = "looking" | "choose" | "address" | "pairing" | "paired";
-	let phase = $state<Phase>("looking");
+	type Phase = "scan" | "looking" | "choose" | "address" | "pairing" | "paired";
+	/** An iPhone opens on the code the installer printed: scanning it is
+	 *  what the person expects to do, and it needs nothing typed. */
+	const scanFirst = isIOS && prePair.canJoinExisting;
+	let phase = $state<Phase>(scanFirst ? "scan" : "looking");
 	let network = $state<NetworkServer[]>([]);
 	let error = $state<string | null>(null);
 	let address = $state("");
@@ -206,13 +213,15 @@
 	}
 
 	onMount(() => {
-		void look();
+		if (!scanFirst) void look();
 		return () => gen++;
 	});
 
 	const title = $derived(
 		phase === "paired"
 			? undefined
+			: phase === "scan"
+				? "Scan your server's code"
 			: phase === "address" || phase === "pairing"
 			? "Connect to your server"
 			: network.length > 1
@@ -222,6 +231,8 @@
 	const subtitle = $derived(
 		phase === "paired"
 			? undefined
+			: phase === "scan"
+				? "The QR code it printed when it finished installing."
 			: phase === "address" || phase === "pairing"
 			? "Enter the address and six-digit code your server printed. Paste the whole line and both fill in."
 			: phase === "looking"
@@ -233,7 +244,16 @@
 </script>
 
 <StepFrame {title} {subtitle}>
-	{#if phase === "looking"}
+	{#if phase === "scan"}
+		<button type="button" class="finder" onclick={() => prePair.joinExisting()} in:rise>
+			<span class="corner tl" aria-hidden="true"></span>
+			<span class="corner tr" aria-hidden="true"></span>
+			<span class="corner bl" aria-hidden="true"></span>
+			<span class="corner br" aria-hidden="true"></span>
+			<span class="sweep" aria-hidden="true"></span>
+			<span class="finder-label">Open the camera</span>
+		</button>
+	{:else if phase === "looking"}
 		<div class="searching" in:rise aria-hidden="true">
 			<svg viewBox="0 0 24 24" width="40" height="40">
 				<circle cx="4.5" cy="18" r="2.85" />
@@ -320,7 +340,10 @@
 	{/if}
 
 	{#snippet actions()}
-		{#if phase === "choose"}
+		{#if phase === "scan"}
+			<button type="button" class="setup-past" onclick={look}>Find it on this network</button>
+			<button type="button" class="setup-past" onclick={() => toAddress()}>Type the address and code</button>
+		{:else if phase === "choose"}
 			<button type="button" class={nothing ? "setup-go" : "setup-past"} onclick={() => toAddress()}
 				>Enter address and code</button
 			>
@@ -424,6 +447,90 @@
 		font: inherit;
 		font-weight: 500;
 		color: var(--color-foreground);
+	}
+
+	/* ── the camera, before it opens ── */
+	/* A viewfinder on the sheet: the corners a camera draws, and a line
+	   that sweeps, so the one tap reads as "point it at the code". */
+	.finder {
+		position: relative;
+		display: grid;
+		place-items: end center;
+		width: min(100%, 260px);
+		aspect-ratio: 1;
+		margin: 0 auto;
+		padding: 0 0 24px;
+		border: 0;
+		border-radius: var(--radius-xl);
+		background: var(--color-foreground);
+		color: var(--color-background);
+		font: inherit;
+		cursor: pointer;
+		overflow: hidden;
+		transition: transform var(--m-base) var(--m-spring);
+	}
+	.finder:active {
+		transform: scale(0.98);
+		transition-duration: 90ms;
+	}
+	.finder:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: 3px;
+	}
+	.corner {
+		position: absolute;
+		width: 28px;
+		height: 28px;
+		border: 0 solid currentColor;
+	}
+	.corner.tl {
+		left: 30px;
+		top: 30px;
+		border-left-width: 3px;
+		border-top-width: 3px;
+		border-top-left-radius: var(--radius-md);
+	}
+	.corner.tr {
+		right: 30px;
+		top: 30px;
+		border-right-width: 3px;
+		border-top-width: 3px;
+		border-top-right-radius: var(--radius-md);
+	}
+	.corner.bl {
+		left: 30px;
+		bottom: 30px;
+		border-left-width: 3px;
+		border-bottom-width: 3px;
+		border-bottom-left-radius: var(--radius-md);
+	}
+	.corner.br {
+		right: 30px;
+		bottom: 30px;
+		border-right-width: 3px;
+		border-bottom-width: 3px;
+		border-bottom-right-radius: var(--radius-md);
+	}
+	.sweep {
+		position: absolute;
+		left: 40px;
+		right: 40px;
+		top: 20%;
+		height: 2px;
+		background: currentColor;
+		opacity: 0.7;
+		animation: sweep 2.6s ease-in-out infinite;
+	}
+	@keyframes sweep {
+		50% {
+			top: 74%;
+		}
+	}
+	.finder-label {
+		position: relative;
+		font-size: 14px;
+		font-weight: 500;
+		letter-spacing: 0.01em;
 	}
 
 	/* ── the server appears ── */
@@ -591,7 +698,8 @@
 		}
 		.box.filled,
 		.dot,
-		.halo {
+		.halo,
+		.sweep {
 			animation: none;
 		}
 		.halo {

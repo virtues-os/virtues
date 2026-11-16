@@ -140,6 +140,14 @@
 	let arrived = $state(false);
 	let entering = $state(false);
 	const ownerName = $derived(setup.profile?.preferred_name?.trim() || "");
+	/** What the assistant has started reading, once anything has arrived:
+	 *  shown at the foot of the steps after this device's, so the person sees
+	 *  the work begin while they finish. Words only, never a count. */
+	const reading = $derived.by(() => {
+		if (step !== "connections" && step !== "subscription") return null;
+		const what = [setup.arriving("computer"), setup.arriving("phone")].filter(Boolean).join(", and ");
+		return what ? `${setup.assistantName} is reading ${what}` : null;
+	});
 	/** The close couldn't let the app open, said where the close was. */
 	let closeError = $state<string | null>(null);
 	let unreachable = $state(false);
@@ -415,6 +423,17 @@
 			<p>{closeError}</p>
 			<button type="button" class="setup-past" onclick={finish}>Try again</button>
 		</div>
+	{/if}
+
+	{#if reading && !closing}
+		<p class="reading" role="status" transition:fade={{ duration: 300 }}>
+			<svg viewBox="0 0 24 24" width="13" height="13" aria-hidden="true">
+				<circle cx="12" cy="5" r="2.8" />
+				<circle cx="4.5" cy="18" r="2.8" />
+				<circle cx="19.5" cy="18" r="2.8" />
+			</svg>
+			{reading}
+		</p>
 	{/if}
 
 	{#if current?.optional && current.status !== "done" && !closing}
@@ -808,6 +827,76 @@
 	.arrival-ways .setup-past {
 		color: var(--color-foreground);
 	}
+	/* A phone: the way in sits at the foot, in thumb's reach, over the
+	   lake; the greeting keeps the sky. */
+	@media (max-width: 560px) and (min-height: 521px) {
+		.arrival-ways {
+			position: fixed;
+			left: 20px;
+			right: 20px;
+			bottom: max(28px, calc(env(safe-area-inset-bottom) + 12px));
+			flex-direction: column;
+			gap: 16px;
+		}
+		.arrival-ways .setup-go {
+			width: 100%;
+			justify-content: center;
+			padding: 1rem 1.5rem;
+		}
+		.arrival-ways .setup-past {
+			/* design-ok: over the painting, which is the same on every theme */
+			color: white;
+			text-shadow: 0 1px 10px color-mix(in srgb, var(--color-foreground) 55%, transparent);
+		}
+	}
+
+	/* What the assistant has started reading, at the foot of the window:
+	   the ∴ breathing beside it, so the work shows while setup goes on. */
+	.reading {
+		position: fixed;
+		z-index: 20;
+		left: 50%;
+		bottom: max(20px, env(safe-area-inset-bottom));
+		transform: translateX(-50%);
+		display: flex;
+		align-items: center;
+		gap: 8px;
+		max-width: calc(100% - 32px);
+		margin: 0;
+		padding: 8px 16px 8px 12px;
+		border-radius: var(--radius-full);
+		background: var(--color-surface-overlay, var(--color-surface));
+		outline: 1px solid color-mix(in srgb, var(--color-foreground) 9%, transparent);
+		outline-offset: -1px;
+		font-size: 13px;
+		color: var(--color-foreground);
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.reading svg {
+		flex: none;
+		fill: var(--color-primary);
+	}
+	.reading circle {
+		animation: reading 1.8s ease-in-out infinite;
+	}
+	.reading circle:nth-child(2) {
+		animation-delay: 0.3s;
+	}
+	.reading circle:nth-child(3) {
+		animation-delay: 0.6s;
+	}
+	@keyframes reading {
+		0%,
+		100% {
+			opacity: 0.35;
+		}
+		50% {
+			opacity: 1;
+		}
+	}
+
 	/* A short window (a phone on its side): everything moves up. */
 	@media (max-height: 520px) {
 		.arrival {
@@ -834,6 +923,10 @@
 		}
 		.arrival-veil {
 			animation: none;
+		}
+		.reading circle {
+			animation: none;
+			opacity: 1;
 		}
 	}
 	@keyframes fade-only {
