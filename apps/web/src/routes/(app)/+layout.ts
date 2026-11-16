@@ -53,8 +53,8 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 
 		// TWO GATES, because there are two different kinds of "not ready".
 		//
-		// SETUP is the box coming up — claimed, and (on an appliance) linked to
-		// an account. A box that hasn't done that can't run the app at all.
+		// SETUP is the server coming up: claimed by its first device. A server
+		// that hasn't been claimed can't run the app at all.
 		//
 		// ONBOARDING is the box becoming worth having — something connected, so
 		// it has a life to keep a record of. It used to gate nothing: the state
@@ -97,11 +97,9 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 				}
 			}
 			if (setup) {
-				// Gate on onboarding_status ONLY — never on setup_complete. On an
-				// appliance, setup_complete also requires the linked account, and
-				// the airlock's account step is skippable: gating the shell on it
-				// bounced "Enter Virtues" straight back to the letter forever,
-				// with the remedy stranded behind the wall it was meant to open.
+				// Gate on onboarding_status ONLY, never on setup_complete. Setup
+				// is the claim; whether the person has finished or dismissed the
+				// rest of Setup is onboarding_status.
 				// Connecting AI is the getting-started room's first step now.
 				// `active` covers both finished and dismissed, which is the whole
 				// reason it replaced a separate skipped flag.

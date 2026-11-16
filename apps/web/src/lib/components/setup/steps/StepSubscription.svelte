@@ -19,8 +19,8 @@
 
 	YOUR OWN AI, WITHOUT A COMMAND LINE. Saving the key carries the app's
 	owner proof (api/owner_proof.rs), which the app signs with this device's
-	key without an extra step. An appliance owner has no command line, so
-	setup never sends them to one.
+	key without an extra step, so setup never sends anyone to a command line
+	for it.
 
 	DONE IS A STATE, NOT A TOAST. Once the server reports AI connected — by
 	any of the three paths, or because it already was — the step shows a

@@ -262,7 +262,7 @@
 							/>
 							<span class="field-hint"
 								>IANA timezone of where this server lives (auto-detected from the
-								server). Only change it if you physically relocate the appliance.</span
+								server). Change it only if you move the server to another time zone.</span
 							>
 						</div>
 					</div>

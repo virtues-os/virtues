@@ -44,7 +44,7 @@ which needed somewhere to keep site sessions.
 - **Per-box files.** The door key and shared pages, a sandboxed run's env and
   credential files (`<data dir>/applet-env`), a backup or restore's staging
   folder, and the backup recipient. `box_files.rs` lists them, and
-  deprovision, reset and image-check read that list.
+  `virtues reset` reads that list.
 
 ## The table
 

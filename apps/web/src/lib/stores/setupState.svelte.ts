@@ -67,9 +67,9 @@ class SetupStateStore {
 	}
 
 	/**
-	 * May this box call the models? Account linked, or setup complete without
-	 * one — the second arm is the DIY exemption (`compute_setup_state` requires
-	 * an account only on appliances), mirrored from the old onboarding route.
+	 * May this server call the models? Account linked, or setup complete
+	 * without one: setup requires only the claim (`compute_setup_state`),
+	 * because a server you install yourself may run its own AI key.
 	 */
 	get accountSatisfied(): boolean {
 		const linked = this.setup.find((s) => s.id === 'account')?.done ?? false;

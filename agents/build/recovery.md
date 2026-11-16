@@ -133,13 +133,6 @@ virtues device add    # print a pair code (pair, scoped to the allowlist framing
 anti-lockout guard; nothing was deleted. Pair a second device from the box
 first, then revoke.
 
-**On appliance hardware there is a physical fallback**: the button behind the
-case. A long press forgets every paired device — and nothing else. By
-design it is *not* a factory reset: it shares exactly one action with the app's
-`/api/pair/reopen-onboarding`, and the claim phrase freezes at first claim and
-never returns to the screen. That is what prevents someone with a screwdriver
-from taking over the box. See `virtues-core/src/maintenance/reset_button.rs`.
-
 ---
 
 ## Reset the BYO key
@@ -225,10 +218,6 @@ Everything logs to the journal; there is no Virtues log file.
 | `virtues-embed-next` | only during a search model change, `127.0.0.1:18183` |
 | `virtues-rerank` | older installs only; `virtues upgrade` retires it |
 | `virtues-qnnd` | on NPU hardware, replaces the sidecars and serves `:18181` and `:18182` |
-| `virtues-display` | the on-box screen, where there is one |
-
-**The kiosk caches the SPA**, so after an upgrade the panel can draw the old
-interface: `sudo systemctl restart virtues-display`.
 
 ---
 
@@ -399,8 +388,8 @@ data, leaves the stage, with the plaintext dump and the backup's env file,
 with its key, in it. The next restore sweeps it as root. A backup runs as the
 service user and cannot remove it, so it warns and names the folder. The `state-ownership` repair that every upgrade and `sudo virtues
 migrate` runs hands everything under the data dir to the service user, and a
-backup after that removes it. `deprovision` removes the whole staging
-folder, and `image-check` reports it (`box_files.rs`).
+backup after that removes it. `virtues reset` leaves the staging folder,
+because it can hold root's files (`box_files.rs`).
 
 The staging folder itself, like the data dir, belongs to the service user,
 so that user can rename a stage while a restore works in it and put a folder
@@ -447,10 +436,9 @@ it. The restore brings back the old box's key and resets the logins to match
 (see [Restoring](#restoring)), so no separate `sudo virtues migrate` is
 needed unless the key check fails.
 
-Note that a restore brings the old box's **identity** with it — the database
-stores the iroh secret. If you are imaging hardware rather than migrating one
-box, that is `virtues deprovision` followed by `virtues image-check`, not this;
-see [appliance-image.md](../archive/appliance-image.md).
+Note that a restore brings the old box's **identity** with it, because the
+database stores the iroh secret. Paired devices keep working against the new
+machine for that reason.
 
 ---
 

@@ -448,8 +448,8 @@ async fn session_info(State(state): State<AppState>, headers: HeaderMap) -> impl
 // ─── POST /init/grant — NOT YET, but no longer blocked ─────────────────────
 //
 // The endpoint that would remove the browser from onboarding: a signed-in app
-// asks for a pre-approved `device_code` and carries it to the box over
-// Bluetooth (RPC 0x82, already built box-side). It was deliberately absent
+// asks for a pre-approved `device_code` and carries it to the box over its
+// paired connection. It was deliberately absent
 // while atlas held ONE api key per customer — a second box linking rotated
 // the first box's credential and silently killed it, and building the grant
 // on that would have baked the single-box limit into the very feature meant

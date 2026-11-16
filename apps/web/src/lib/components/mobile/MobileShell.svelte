@@ -308,9 +308,7 @@
 			     answer: what's wrong, and the door to the diagnosis. Calm, not
 			     red — the box being asleep is an ordinary morning, not an alarm.
 			     The door is /reconnect (2026-09-28), which tells this phone
-			     being offline from the server being off, refused, or moved, and
-			     can put a moved server back on Wi-Fi over Bluetooth. It used to
-			     open This device, which could only say "can't reach". -->
+			     being offline from the server being off, refused, or moved. -->
 			<div class="unreachable" role="status">
 				<span class="unreachable-text">Can't reach your server</span>
 				<button class="unreachable-door" onclick={() => void goto("/reconnect")}>Fix it</button>

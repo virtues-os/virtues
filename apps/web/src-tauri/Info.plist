@@ -3,16 +3,8 @@
 <!--
   macOS Info.plist additions. Tauri merges this into the generated bundle.
 
-  Bluetooth is here because the Mac is a FIRST-CLASS FIRST DEVICE: it finds an
-  unclaimed box over Improv/BLE and sets up its wifi, the same as the phone
-  does (see `virtues_improv::client`). Without this key CoreBluetooth refuses
-  the very first scan, and macOS surfaces nothing to the user — the app simply
-  finds no boxes, forever, which is indistinguishable from a box that isn't
-  advertising. The iOS side has carried the same key since BLE setup shipped;
-  this is its desktop twin.
-
-  Local networking covers the other half of setup: discovering an
-  already-online box on the LAN (mDNS + a subnet probe) and pairing to it.
+  Local networking is for setup: discovering a server on the LAN (mDNS and a
+  subnet probe) and pairing to it.
 
   CFBundleIconName points macOS at the `AppIcon` entry inside Assets.car, which
   is what carries the Icon Composer layers — the light / dark / clear / tinted

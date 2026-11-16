@@ -519,8 +519,8 @@ export interface ReopenOnboardingResponse {
 
 /**
  * Revoke every paired device, keeping data, sources, subscription and box
- * identity. The box becomes unclaimed: it advertises over Bluetooth again and
- * the panel returns to a setup screen.
+ * identity. The server becomes unclaimed and pairs with its standing code
+ * again (`virtues pair` prints it).
  *
  * This device is revoked too — the caller loses its own session, by design.
  */
@@ -2644,7 +2644,7 @@ export interface DegradedCollector {
 
 export interface SetupState {
 	setup: SetupStep[];
-	/** The box is up: claimed, and linked to an account on an appliance. */
+	/** The server is up: claimed by its first device. */
 	setup_complete: boolean;
 	onboarding: SetupStep[];
 	/** The box has something to keep a record of — at least one source. */

@@ -150,19 +150,14 @@ display panel and Settings › Network's Wi-Fi: the HTTP owner proof moved to
 `virtues_iroh::owner_proof`, migration 0076 drops `app_setup_phrase` and
 `app_display`, and CI's Improv wire check went (`7e26efd08`). The installer's
 appliance mode and appliance detection went in `a0142c761`, and
-`crates/virtues-improv` and `bluer` in `4e032edd8`. Still left: the appliance
-image tooling (`cli/deprovision.rs`, `cli/image_check.rs`,
-`tools/build-dragon.sh` and the imaging scripts). Every apt install turns on
+`crates/virtues-improv` and `bluer` in `4e032edd8`, and the appliance image
+tooling (`deprovision`, `image-check` and the imaging scripts) in
+`a18f37496`. Every apt install turns on
 security-only automatic updates (`c8f074c4e`, owner's call 2026-11-15). Existing Dragons have Postgres relocated to a
 data disk, so the code that reads a relocated cluster on upgrade stays.
 
-Not covered by the decision, so ask first: runtime hardware support (the
-NPU engine `virtues-qnnd`, display faces and the kiosk). Item 3 overlaps it:
-Settings → Network joins Wi-Fi through `api/provision.rs`
-(`perform_join_full`), the panel reads the setup phrase and the reset button
-(`api/display.rs`), and the server's HTTP owner proof lives in
-`virtues-improv::protocol`, which has to move to another crate before the
-Bluetooth half of that crate can go.
+Not covered by the decision, so ask first: the NPU engine `virtues-qnnd`,
+which a Dragon already running uses for local inference.
 
 ### 6. Servers on a Mac or Windows machine
 
@@ -173,10 +168,8 @@ assumptions.
 
 ## Open decisions
 
-1. Existing hardware owners: keep the Bluetooth, four-word and Wi-Fi path
-   behind appliance mode, or delete it.
-2. Whether the installer stops renaming a self-installed machine to `virtues`
+1. Whether the installer stops renaming a self-installed machine to `virtues`
    (`install.rs`, `configure_mdns`). `virtues.local` depends on the rename.
-3. Whether Welcome and the founder's letter stay in setup or the letter moves
+2. Whether Welcome and the founder's letter stay in setup or the letter moves
    to the install page.
-4. Where chapters live now that the interview is out of setup.
+3. Where chapters live now that the interview is out of setup.

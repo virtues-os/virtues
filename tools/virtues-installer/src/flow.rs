@@ -60,6 +60,7 @@ pub async fn run(cli: Config) -> Result<()> {
         ui::skip("  • Inference: Dragon NPU auto-detect, else this machine's CPU (recommended) or an embedding server you run");
         ui::skip("  • System locale → C.UTF-8 (when not already UTF-8)");
         ui::skip("  • System packages (Postgres 18, Avahi)");
+        ui::skip("  • Automatic security updates (apt systems)");
         ui::skip(&format!(
             "  • Inference sidecar (CPU only, llama-server): {}",
             cfg.embed_gguf
