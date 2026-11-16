@@ -18,7 +18,6 @@
 	import { projectMenuItems, targetForTab } from "$lib/utils/projectActions";
 	import { identityOf, ownedRef, renameRef, setRefLook } from "$lib/refs/identity.svelte";
 	import { accentCss, clothFor } from "$lib/sidebar/pin-colors";
-	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import { isAppleKeyboard } from "$lib/utils/platform";
@@ -67,7 +66,7 @@
 	// than COMPACT_TAB_PX, the tabs you are not on drop their labels and show
 	// only their icon, as a browser's do.
 	const COMPACT_TAB_PX = 80;
-	/** The strip's room besides its tabs: the +, a view's actions, the gaps. */
+	/** The strip's room besides its tabs: the + and the gaps. */
 	const STRIP_RESERVE_PX = 120;
 	let barWidth = $state(0);
 	const tabsCompact = $derived(
@@ -94,30 +93,6 @@
 		paneId ? windowShellStore.activePaneId === paneId : true,
 	);
 
-	// Whatever the view showing in this pane has published (item 5's slot).
-	const viewActions = $derived(paneActions.for(activeTabId));
-
-	// Two inline, the rest behind a `···`. A pane can be dragged to a third of
-	// the window, and the toolbar already carries back/forward/new-tab — without
-	// a cap, a view with four actions would push the tabs out of their own bar.
-	const INLINE_ACTION_LIMIT = 2;
-	const inlineActions = $derived(viewActions.slice(0, INLINE_ACTION_LIMIT));
-	const overflowActions = $derived(viewActions.slice(INLINE_ACTION_LIMIT));
-
-	function showActionOverflow(e: MouseEvent) {
-		e.stopPropagation();
-		contextMenu.show(
-			{ x: e.clientX, y: e.clientY },
-			overflowActions.map((a) => ({
-				id: a.id,
-				label: a.label,
-				icon: a.icon,
-				disabled: a.disabled,
-				checked: a.active,
-				action: a.run,
-			})),
-		);
-	}
 	const isSplitMode = $derived(windowShellStore.isSplit);
 
 	// ⌘N badges, shown only while ⌘ is held. Tabs number left-to-right across
@@ -526,41 +501,9 @@
 	}
 
 	/**
-	 * The edge fades of a strip that scrolls: a side fades while there are
-	 * tabs past it. Measured on scroll and whenever the strip or a tab
-	 * resizes.
-	 */
-	let fadeStart = $state(false);
-	let fadeEnd = $state(false);
-	function trackOverflow(node: HTMLElement) {
-		const measure = () => {
-			const max = node.scrollWidth - node.clientWidth;
-			fadeStart = max > 1 && node.scrollLeft > 1;
-			fadeEnd = max > 1 && node.scrollLeft < max - 1;
-		};
-		const observer = new ResizeObserver(measure);
-		observer.observe(node);
-		const children = new MutationObserver(() => {
-			for (const child of node.children) observer.observe(child);
-			measure();
-		});
-		children.observe(node, { childList: true });
-		for (const child of node.children) observer.observe(child);
-		node.addEventListener("scroll", measure, { passive: true });
-		measure();
-		return {
-			destroy() {
-				observer.disconnect();
-				children.disconnect();
-				node.removeEventListener("scroll", measure);
-			},
-		};
-	}
-
-	/**
 	 * A strip that scrolls brings the tab you switch to into view (⌘9, a
 	 * link that opens an existing tab), as a browser's does, clear of the
-	 * edge fades (the strip's scroll-padding). A tab that is still opening
+	 * strip's edges (its scroll-padding). A tab that is still opening
 	 * is 0px wide, so the strip waits for it to finish opening first.
 	 */
 	let scroller = $state<HTMLElement | null>(null);
@@ -698,10 +641,7 @@
 	<div
 		data-tauri-drag-region
 		class="tabs-scroll"
-		class:fade-start={fadeStart}
-		class:fade-end={fadeEnd}
 		bind:this={scroller}
-		use:trackOverflow
 		role="tablist"
 		tabindex="0"
 		use:dndzone={{
@@ -838,40 +778,7 @@
 		<AtlasIcon name="plus" size={16} bare />
 	</button>
 
-	<!-- The view's own actions, published into the slot rather than rendered
-	     wherever each view felt like putting them. Last in the row, after the
-	     window controls, so the shell's controls stay in one place as views
-	     come and go beneath them. -->
-	{#if viewActions.length > 0}
-		<div class="pane-actions">
-			{#each inlineActions as action (action.id)}
-				<button
-					class="pane-action"
-					class:primary={action.primary}
-					class:toggled={action.active}
-					aria-pressed={action.active !== undefined ? action.active : undefined}
-					disabled={action.disabled}
-					onclick={action.run}
-					aria-label={action.label}
-					data-tip={action.label}
-				>
-					<Icon icon={action.icon} />
-					{#if action.primary}<span class="pane-action-label">{action.label}</span>{/if}
-				</button>
-			{/each}
 
-			{#if overflowActions.length > 0}
-				<button
-					class="pane-action"
-					onclick={showActionOverflow}
-					aria-label="More actions"
-					data-tip="More actions"
-				>
-					<Icon icon="mynaui:dots" />
-				</button>
-			{/if}
-		</div>
-	{/if}
 </div>
 
 <style>
@@ -885,7 +792,7 @@
 		   them and run down to the card. */
 		padding: calc((var(--chrome-row-h) - var(--chrome-tab-h)) / 2) 8px 0 0;
 		height: var(--chrome-row-h);
-		/* The +, a view's actions and the tabs' labels share one centre line,
+		/* The + and the tabs' labels share one centre line,
 		   the middle of a tab. The strip is on the desk and paints nothing. */
 		align-items: center;
 		background: transparent;
@@ -913,8 +820,9 @@
 		align-self: stretch;
 		padding: 0 var(--card-radius) var(--card-radius);
 		margin: 0 calc(-1 * var(--card-radius)) calc(-1 * var(--card-radius));
-		/* A tab scrolled into view stops clear of the edge fades. */
-		scroll-padding-inline: 32px;
+		/* A tab scrolled into view stops clear of the strip's edge, with
+		   room for its flared corners. */
+		scroll-padding-inline: var(--card-radius);
 		/* The room below reaches into the card. Only the tabs take the
 		   pointer, so the card's top edge stays clickable and the gaps
 		   between tabs still move the window. */
@@ -923,30 +831,6 @@
 
 	.tabs-scroll > :global(*) {
 		pointer-events: auto;
-	}
-
-	/* Tabs past an edge fade out over 32px of it: the strip's 8px of flare
-	   room and 24px of tab, the same fade a clipped title gets. A side
-	   fades only while there is something past it. */
-	.tabs-scroll.fade-start,
-	.tabs-scroll.fade-end {
-		--fade-start: 0px;
-		--fade-end: 0px;
-		mask-image: linear-gradient(
-			to right,
-			transparent,
-			black var(--fade-start),
-			black calc(100% - var(--fade-end)),
-			transparent
-		);
-	}
-
-	.tabs-scroll.fade-start {
-		--fade-start: 32px;
-	}
-
-	.tabs-scroll.fade-end {
-		--fade-end: 32px;
 	}
 
 	.tabs-scroll::-webkit-scrollbar {
@@ -1377,79 +1261,6 @@
 
 
 
-	.pane-actions {
-		display: flex;
-		align-items: center;
-		gap: 2px;
-		/* The view's actions keep the far end of the strip; the tabs and
-		   their + read from the left. */
-		margin-left: auto;
-		padding-left: 4px;
-	}
-
-	.pane-action {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		padding: 0;
-		border: none;
-		border-radius: var(--radius-md);
-		background: transparent;
-		color: var(--color-foreground-muted);
-		font-size: 15px;
-		cursor: pointer;
-		flex-shrink: 0;
-		transition: background-color var(--motion-hover-out) var(--ease-premium), color var(--motion-hover-out) var(--ease-premium);
-	}
-
-	.pane-action:hover:not(:disabled) {
-		background: var(--hover-bg);
-		color: var(--color-foreground);
-	}
-
-	.pane-action.primary {
-		color: var(--color-primary);
-		width: auto;
-		gap: 5px;
-		padding: 0 8px;
-	}
-
-	.pane-action-label {
-		font-size: 12px;
-		white-space: nowrap;
-	}
-
-	/* The primary action keeps its label while there's room and drops to an
-	   icon when there isn't. A container query, not a viewport one: what runs
-	   out of space is the pane, and in split view a pane is nothing like the
-	   window. */
-	@container tabbar (max-width: 520px) {
-		.pane-action-label {
-			display: none;
-		}
-		.pane-action.primary {
-			width: 24px;
-			padding: 0;
-		}
-	}
-
-	/* A toggle that's on reads as held down, not as merely hovered. */
-	.pane-action.toggled {
-		background: var(--active-bg);
-		color: var(--color-foreground);
-	}
-
-	.pane-action:disabled {
-		opacity: 0.4;
-		cursor: default;
-	}
-
-	.pane-action:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: -2px;
-	}
 
 	.tab-close {
 		display: flex;

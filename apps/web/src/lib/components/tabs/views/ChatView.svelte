@@ -56,7 +56,9 @@
 	import Composing from "$lib/components/chat/Composing.svelte";
 	import Rail, { topOfElement } from "$lib/components/Rail.svelte";
 	import RestingMark from "$lib/components/chat/RestingMark.svelte";
-	import ChatSky from "$lib/components/chat/ChatSky.svelte";
+	import HomeHero from "$lib/components/chat/home/HomeHero.svelte";
+	import HomeTiles from "$lib/components/chat/home/HomeTiles.svelte";
+	import HomeNotes from "$lib/components/chat/home/HomeNotes.svelte";
 	import { MENTION_DROP_ATTR, MENTION_DROP_EVENT } from "$lib/stores/dndManager.svelte";
 	// Getting started — the room after the founder's letter. Same shape as
 	// the interview: the id decides everything, the top of the room is
@@ -92,14 +94,12 @@
 	import { chatActivity } from "$lib/stores/chatActivity.svelte";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
-	import ProjectChip from "$lib/components/ProjectChip.svelte";
-	import { openProject, projectChipMenuItems, projectMenuItems, targetForTab } from "$lib/utils/projectActions";
+	import { projectChipMenuItems, projectMenuItems, targetForTab } from "$lib/utils/projectActions";
 	import { chatInstances } from "$lib/stores/chatInstances.svelte";
 	import { pendingPrompt } from "$lib/stores/pendingPrompt.svelte";
 	import {
 		deleteChat,
 		getChat,
-		getChatUsage,
 		getAssistantProfile,
 		setChatTitle,
 		cancelChat,
@@ -139,7 +139,9 @@
 		type SuggestedQuestion,
 	} from "$lib/api/client";
 	import { chatUsage } from "$lib/stores/chatUsage.svelte";
+	import { projectCrumb, projectsCrumb } from "$lib/tabs/crumbs";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
+	import { untitled } from "$lib/refs/identity.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
 	import { REVEAL_MESSAGE, type RevealMessageDetail } from "$lib/components/chat/about/InThisChat.svelte";
 	import { dropZone, hasFiles } from "$lib/actions/dropZone";
@@ -288,9 +290,18 @@
 	// picker; filing happens from "Move to project".
 	const chatProject = $derived(chatProjectId ? projectStore.byId(chatProjectId) : undefined);
 
-	function openChatProject() {
-		if (chatProject) openProject(chatProject);
-	}
+	// A chat filed in a project sits under it in the action toolbar's path.
+	$effect(() => {
+		if (!chatProject || isGhost || mobileLayout.isMobile || inRoom) return;
+		return paneActions.setCrumbs(tab.id, {
+			glyph: "projects",
+			crumbs: [
+				projectsCrumb(),
+				projectCrumb(chatProject.id, chatProject.name || untitled("project")),
+				{ label: chatTitle || untitled("chat") },
+			],
+		});
+	});
 
 	/** The project's own menu, from the chip: right-click here, a tap on the phone's bar. */
 	function showProjectChipMenu(e: MouseEvent) {
@@ -360,56 +371,10 @@
 	// the backend sends a transient data-narrative-document part, because tool
 	// parts land in the messages array mutably where no effect observes them.)
 
-	// Context usage state
-	interface ContextUsageState {
-		percentage: number;
-		tokens: number;
-		window: number;
-		status: "healthy" | "warning" | "critical";
-	}
-	let contextUsage = $state<ContextUsageState | undefined>(undefined);
-
-	// A turn in this chat has been saved: read its usage here, and tell the
-	// context view (another tab) to read it too.
+	// A turn in this chat has been saved: tell the context view (another
+	// tab) to read its usage again.
 	function turnWritten() {
-		refreshContextUsage();
 		if (conversationId) chatUsage.turnWritten(conversationId);
-	}
-
-	// Fetch context usage from API
-	async function refreshContextUsage() {
-		if (!conversationId || isNewChat(tab.route)) return;
-
-		try {
-			const data = await getChatUsage<{
-				usage_percentage: number;
-				total_tokens: number;
-				context_window: number;
-			}>(conversationId);
-			const status: "healthy" | "warning" | "critical" =
-				data.usage_percentage >= 85
-					? "critical"
-					: data.usage_percentage >= 70
-						? "warning"
-						: "healthy";
-
-			contextUsage = {
-				percentage: data.usage_percentage,
-				tokens: data.total_tokens,
-				window: data.context_window,
-				status,
-			};
-
-		} catch {
-			// Non-critical, continue without usage data
-		}
-	}
-
-
-	// Handle context indicator click - open context tab in split view
-	function handleContextClick() {
-		const currentPane = windowShellStore.findTabPane(tab.id);
-		windowShellStore.openChatContext(conversationId, currentPane);
 	}
 
 	/**
@@ -728,7 +693,6 @@
 		chat.messages = [];
 		messageMetadata = new Map();
 		liveReplies.clear();
-		contextUsage = undefined;
 		titleDone = false;
 		isAwaitingResponse = false;
 		turnPhase.reset();
@@ -763,7 +727,7 @@
 			// not pinned to the model that last answered it, so it holds the
 			// person's pick across chats, and an unpicked picker keeps showing
 			// the slot default.
-			await Promise.all([refreshContextUsage(), editAllowListStore.init(id)]);
+			await editAllowListStore.init(id);
 		} catch (error) {
 			// Aborts are expected: the tab switched again mid-load.
 			if (error instanceof Error && error.name === "AbortError") return;
@@ -906,10 +870,7 @@
 
 			// Stage 3: Post-load tasks (depend on conversation being loaded)
 			if (tabConversationId) {
-				await Promise.all([
-					refreshContextUsage(),
-					editAllowListStore.init(tabConversationId),
-				]);
+				await editAllowListStore.init(tabConversationId);
 			} else {
 				editAllowListStore.setChatId(conversationId, isGhost);
 			}
@@ -1214,7 +1175,7 @@
 	// sidebar. It is no longer DRAWN here: a title fixed to the top-left of the
 	// pane restated what the tab above it already said, and doubled as a rename
 	// affordance nobody looked for. Renaming lives where the name is shown —
-	// right-click the tab, or the sidebar row.
+	// double-click it in the page bar, right-click the tab, or the sidebar row.
 	const chatTitle = $derived(
 		chatSessions.sessions.find((s) => s.conversation_id === conversationId)?.title ?? "",
 	);
@@ -1230,8 +1191,8 @@
 	//
 	// Placeholders only — a label the user has renamed by hand must not be
 	// overwritten by the server's copy.
-	// Compared lowercased: openers spell it "New chat" and the registry
-	// "New Chat", and an exact match left every tab opened the first way
+	// Compared lowercased: openers have spelled it both "New chat" and
+	// "New Chat", and an exact match left every tab opened the other way
 	// wearing the placeholder for good.
 	const PLACEHOLDER_LABELS = new Set(["chat", "new chat", "temporary chat"]);
 	$effect(() => {
@@ -1283,52 +1244,23 @@
 		}
 	}
 
+	// Every reply is written by a cloud model, so the composer says so and
+	// names it. The mark opens the Assistant settings, where it is chosen.
+	const offServer = $derived({
+		tip: models.selected
+			? `Replies are written by ${models.selected.displayName}, off your server.`
+			: "Replies are written by a model provider, off your server.",
+		run: () => windowShellStore.openTabFromRoute("/virtues/assistant", { label: "Assistant", focusExisting: true }),
+	});
+
 	// On the desktop the chat's menu is a view action: its ⋮ sits at the end
-	// of this pane's tab strip, where every view's actions go, rather than in
-	// the corner of the conversation beside its first message.
+	// of the page's action toolbar, where every view's actions go, rather
+	// than in the corner of the conversation beside its first message.
 	$effect(() => {
 		if (!showChatMenu || mobileLayout.isMobile) return paneActions.set(tab.id, []);
 		return paneActions.set(tab.id, [
-			...(hasAbout
-				? [
-						{
-							id: "about-chat",
-							label: "About this chat",
-							icon: "mynaui:info-circle",
-							active: !!aboutTab,
-							run: toggleAbout,
-						},
-					]
-				: []),
 			{ id: "chat-options", label: "Chat options", icon: "mynaui:dots-vertical", run: openChatMenu },
 		]);
-	});
-
-	// The chat's About page (chat/ContextViewPanel), opened beside it. A
-	// temporary chat, the Getting started room and a chat with nothing saved
-	// yet have none.
-	const hasAbout = $derived(showChatMenu && !isGhost && !isContextView && uniqueMessages.length > 0);
-	const aboutTab = $derived(
-		hasAbout ? windowShellStore.findTab((t) => t.route === `/chat/${conversationId}?view=context`) : undefined,
-	);
-
-	function toggleAbout() {
-		if (aboutTab) windowShellStore.closeTab(aboutTab.tab.id);
-		else handleContextClick();
-	}
-
-	$effect(() => {
-		if (!active || !hasAbout) return;
-		// The registry is state of its own: registering must not subscribe.
-		return untrack(() =>
-			shortcuts.register({
-				id: "chat.about",
-				keys: "mod+alt+b",
-				label: "Show or hide About this chat",
-				group: "View",
-				run: toggleAbout,
-			}),
-		);
 	});
 
 	// The About page asks the chat to show where something appears.
@@ -1360,23 +1292,6 @@
 		const rect = button?.getBoundingClientRect() ?? new DOMRect(window.innerWidth - 48, 8, 28, 28);
 		const pinned = !!windowShellStore.findTab((t) => t.id === tab.id)?.tab.pinned;
 		const items: ContextMenuItem[] = [];
-		if (contextUsage && extractConversationId(tab.route)) {
-			const n = new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 });
-			items.push({
-				id: "context",
-				label: "About this chat",
-				description: `Context ${Math.round(contextUsage.percentage)}% full, ${n.format(contextUsage.tokens)} of ${n.format(contextUsage.window)} tokens`,
-				icon: "mynaui:chart-pie",
-				iconColor:
-					contextUsage.status === "critical"
-						? "var(--color-error)"
-						: contextUsage.status === "warning"
-							? "var(--color-warning)"
-							: undefined,
-				dividerAfter: true,
-				action: handleContextClick,
-			});
-		}
 		// Offered only while it can still be true: a turn that has been sent
 		// cannot be taken back out of storage.
 		if (isEmpty) {
@@ -1855,7 +1770,7 @@
 			route,
 			icon: isGhost ? "mynaui:incognito" : "mynaui:chat",
 			...(PLACEHOLDER_LABELS.has(tab.label) && {
-				label: isGhost ? "Temporary Chat" : "New Chat",
+				label: isGhost ? "Temporary chat" : untitled("chat"),
 			}),
 		});
 	}
@@ -1918,19 +1833,10 @@
 		<div class="chat-container">
 			<!-- Main chat area -->
 			<div class="chat-area" class:ghost={isGhost}>
-				{#if chatProject && !isGhost && !mobileLayout.isMobile && !inRoom}
-					<div class="chat-topbar-left">
-						<ProjectChip
-							project={chatProject}
-							title={`Open ${chatProject.name}`}
-							onclick={openChatProject}
-							oncontextmenu={showProjectChipMenu}
-						/>
-					</div>
-				{/if}
 				<!-- Top-right chrome: the Getting started door, and on the phone the
-				     chat's menu. On the desktop the menu is a view action at the end of
-				     the pane's tab strip (paneActions); the phone has no strip. -->
+				     chat's menu. On the desktop the menu is a view action in the
+				     page's action toolbar (paneActions), and the chat's project is
+				     in its path; the phone has no toolbar. -->
 				<div class="chat-topbar-right">
 					{#if inRoom}
 						<!-- One door. A glyph through the walk, and a word
@@ -2476,13 +2382,25 @@
 							<ThreeBody onClose={() => (threeBodyOpen = false)} />
 						{/await}
 					{:else if isEmpty && !isGhost && attachments.count === 0}
-						<!-- The chat sky, or the mark and word before the day has
-						     anything in it. Positioned off the midpoint, so it sits
-						     above the composer on the phone and the desktop alike. It
-						     yields to staged attachments, whose chips grow upward from
-						     the composer. -->
+						<!-- Home: the painting in color along the bottom, the day as
+						     a headline with the notes line above the composer, and the
+						     tiles under it. It yields to staged attachments, whose
+						     chips grow upward from the composer. -->
+						<img class="home-scene" src="/scenes/lake.jpg" alt="" aria-hidden="true" transition:fade={{ duration: 500 }} />
 						<div class="init-hero" out:fade={{ duration: 200 }}>
-							<ChatSky query={mentionQuery} draft={input} onMention={mentionInComposer} />
+							<HomeHero />
+						</div>
+						<div class="home-tiles-wrap" out:fade={{ duration: 200 }}>
+							<HomeNotes
+								note={suggestionAllowed ? suggestion : null}
+								onShown={(n) => onSuggestion(n.id, "shown")}
+								onAsk={(n) => {
+									onSuggestion(n.id, "used");
+									handleChatSubmit(n.question);
+								}}
+								onDismiss={(n) => onSuggestion(n.id, "dismissed")}
+							/>
+							<HomeTiles currentChatId={conversationId} />
 						</div>
 					{/if}
 
@@ -2493,7 +2411,7 @@
 							out:fly={{ y: -14, duration: 300, easing: cubicInOut }}
 						>
 							<Icon icon="mynaui:incognito" width="22" class="ghost-hero-glyph" />
-							<h1 class="ghost-hero-title">Temporary Chat</h1>
+							<h1 class="ghost-hero-title">Temporary chat</h1>
 							<p class="ghost-hero-note">This chat isn't saved, and your assistant won't remember it. Closing the tab ends it.</p>
 						</div>
 					{/if}
@@ -2578,8 +2496,7 @@
 							onStop={() => handleChatStop()}
 							bind:skill={composerSkill}
 							bind:mentionQuery
-							suggestion={suggestionAllowed ? suggestion : null}
-							{onSuggestion}
+							{offServer}
 						/>
 						{/if}
 
@@ -2625,17 +2542,6 @@
 		display: flex;
 		align-items: center;
 		gap: 6px;
-	}
-
-	/* The project this chat lives in: a label that is also the way back.
-	   Quiet until approached, and held to the top-left corner so it never
-	   competes with the thread for the measure. */
-	.chat-topbar-left {
-		position: absolute;
-		top: 8px;
-		left: 12px;
-		z-index: 6;
-		max-width: 40%;
 	}
 
 
@@ -2733,7 +2639,7 @@
 		position: absolute;
 		left: 0;
 		right: 0;
-		bottom: calc(50% + 52px);
+		bottom: calc(50% + 52px + var(--home-lift));
 		z-index: 2;
 		display: flex;
 		flex-direction: column;
@@ -2769,7 +2675,7 @@
 		position: absolute;
 		left: 0;
 		right: 0;
-		bottom: calc(50% + 72px);
+		bottom: calc(50% + 72px + var(--home-lift));
 		z-index: 2;
 		display: flex;
 		align-items: center;
@@ -2778,7 +2684,51 @@
 		color: var(--color-foreground);
 	}
 
+	/* ── Home ──
+	   The painting in color along the bottom of an empty chat, fading up into
+	   the page. Tiles sit under the centered composer. */
+	/* The painting is sized to the window, not the pane, and pinned to the
+	   pane's right edge, which is the window's. Opening the sidebar covers
+	   its left side instead of rescaling it, so the scene holds still. */
+	.home-scene {
+		position: absolute;
+		right: 0;
+		bottom: 0;
+		width: 100vw;
+		max-width: none;
+		height: min(42%, 380px);
+		object-fit: cover;
+		object-position: 70% 100%;
+		z-index: 0;
+		pointer-events: none;
+		-webkit-mask-image: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.65) 30%, #000 62%);
+		mask-image: linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.65) 30%, #000 62%);
+	}
+
+	/* The nine dark themes dim the painting and invert the print. */
+	:global(:is([data-theme="lothlorien"], [data-theme="baker-street"], [data-theme="narnia"], [data-theme="canterbury"], [data-theme="borghese"], [data-theme="lyceum"], [data-theme="asgard"], [data-theme="agora"], [data-theme="shire"])) .home-scene {
+		filter: brightness(0.55) saturate(0.8);
+	}
+
+	.home-tiles-wrap {
+		position: absolute;
+		left: 0;
+		right: 0;
+		top: calc(50% + 72px - var(--home-lift));
+		z-index: 2;
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		gap: 18px;
+		pointer-events: none;
+	}
+
+	/* Home is placed from the middle of the pane: the composer centered on
+	   it, the headline above and the notes and tiles below. The tiles make
+	   the part below about 300px against 120px above, so the whole group
+	   rises by this much to sit a little above the middle. */
 	.page-container {
+		--home-lift: 104px;
 		height: 100%;
 		position: relative;
 	}
@@ -3008,10 +2958,14 @@
 	}
 
 	.chat-input-wrapper.is-empty {
-		/* Centered relative to the same bottom anchor: bottom edge to mid-container,
-		   then nudged down half its own height → exact vertical center, any height. */
-		bottom: 50%;
-		transform: translateY(50%);
+		/* The bottom edge is fixed half the resting composer's height (111px)
+		   below the middle, so a resting composer is centered. Anything that
+		   grows it, the @ and / menus or a second line, opens upward and the
+		   message box stays put. Centering on its own height moved the box
+		   down by half of whatever opened. The hero and the tiles are placed
+		   from the same middle. */
+		bottom: calc(50% - 56px + var(--home-lift));
+		transform: translateY(0);
 		/* Nothing to mask when centered — let the background (incl. ghost field)
 		   show through instead of a solid surface block around the composer. */
 		background-color: transparent;

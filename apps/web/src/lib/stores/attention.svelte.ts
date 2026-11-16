@@ -1,6 +1,6 @@
 /**
- * What needs the owner, from `GET /api/attention`: the inbox behind the ∴
- * mark in the window header.
+ * What needs the owner, from `GET /api/attention`: the list behind the
+ * status capsule at the right of the window header (StatusCapsule).
  *
  * Every item is a condition the server observes (a stream stopped, the
  * backup is missing). It stays while the condition holds and goes when the

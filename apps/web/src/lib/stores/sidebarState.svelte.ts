@@ -10,7 +10,7 @@ const WIDTH_KEY = "virtues-sidebar-width";
  * The sidebar's width.
  *
  * The floor is the narrowest width at which the fixed rows still fit on one
- * line: Setup with its count, and the offline note above Settings. Chat
+ * line: Setup with its count, and Settings. Chat
  * titles are cut short well before it, so a narrower sidebar would only be a
  * sliver. Dragging on past the floor closes the sidebar on release instead,
  * which is what desktop chat apps have taught people to expect.
@@ -29,12 +29,19 @@ const OLD_DEFAULT_WIDTH = 208;
 export const SIDEBAR_COLLAPSE_AT = SIDEBAR_MIN_WIDTH - 32;
 
 /**
- * The desk: the one gap between the window's edge and a card, and between
- * any two cards (the sidebar and a pane, or two panes). `--pane-inset` in
- * themes.css and the cards' `ml-2` / `mx-2` / `mb-2` are the same 8px.
+ * The desk gap between the window's left edge and the sidebar. The pane has
+ * none: it runs to the window's right and bottom edges and meets the sidebar
+ * and the other pane edge to edge.
  */
 export const DESK_GAP_PX = 8;
 export const SIDEBAR_INSET = DESK_GAP_PX;
+
+/**
+ * The sidebar's width when closed to its glyphs: the desk gap, the panel
+ * body's 4px, a 40px row (12px, the glyph, 12px), and the desk gap again
+ * on the pane side. The glyphs sit where they sit in the open sidebar.
+ */
+export const RAIL_WIDTH = SIDEBAR_INSET + 4 + 40 + DESK_GAP_PX;
 
 function clampWidth(v: number): number {
 	if (!Number.isFinite(v)) return SIDEBAR_DEFAULT_WIDTH;
@@ -100,12 +107,12 @@ export const sidebarState = {
 	},
 
 	/**
-	 * Where the pane card starts, in px from the window's left edge: past
-	 * the desk's 12px, and when the sidebar is open past its card and the
-	 * desk gap between the two cards. The window header aligns the left
-	 * pane's tabs to this.
+	 * Where the pane starts, in px from the window's left edge: the rail's
+	 * edge with the sidebar closed, and the sidebar's edge with it open. The
+	 * pane meets both with no gap. The window header aligns the left pane's
+	 * tabs to this.
 	 */
 	get cardLeft() {
-		return SIDEBAR_INSET + (collapsed ? 0 : width + SIDEBAR_INSET);
+		return collapsed ? RAIL_WIDTH : SIDEBAR_INSET + width;
 	},
 };

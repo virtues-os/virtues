@@ -59,6 +59,7 @@
 		GridServerSource,
 	} from './types';
 	import { applyFilter, isFilterActive } from './types';
+	import { usePageActions } from '$lib/stores/paneActions.svelte';
 
 	interface Props {
 		items: T[];
@@ -120,8 +121,8 @@
 		 *  a run-history strip) passes ['table'], which also hides the view
 		 *  toggle; a stored preference for another view falls back to the table. */
 		viewModes?: ViewMode[];
-		/** Grid-level actions (add, import…) rendered beside the view controls,
-		 *  so a consumer doesn't need its own header row above the toolbar. */
+		/** Grid-level actions (add, import…). On the desktop they sit in the
+		 *  tab's action toolbar; elsewhere beside the grid's view controls. */
 		toolbarActions?: Snippet;
 		/** Multi-select with checkboxes, shift-range, ⌘A and a bulk action bar. */
 		selectable?: boolean;
@@ -188,6 +189,8 @@
 		rowHref,
 		searchQuery = $bindable('')
 	}: Props = $props();
+
+	const pageToolbar = usePageActions(() => toolbarActions);
 
 	/**
 	 * The row menu: the consumer's if it has one, otherwise the standard pair
@@ -985,7 +988,7 @@
 						<Icon icon={VIEW_META[effectiveViewMode].icon} width="16" />
 					</button>
 				{/if}
-				{#if toolbarActions}
+				{#if toolbarActions && !pageToolbar.inToolbar}
 					{@render toolbarActions()}
 				{/if}
 			</div>

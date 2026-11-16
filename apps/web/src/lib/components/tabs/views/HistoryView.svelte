@@ -102,7 +102,7 @@
 	}
 
 	function handleNewChat() {
-		windowShellStore.openTabFromRoute("/", { label: "New Chat" });
+		windowShellStore.openTabFromRoute("/", { label: "New chat" });
 	}
 </script>
 

@@ -32,7 +32,7 @@ class ChatActivityStore {
 		return this.localRunning.includes(chatId) || this.boxRunning.includes(chatId);
 	}
 
-	/** Some chat is replying, here or on the box. The header mark pulses. */
+	/** Some chat is replying, here or on the box. The status capsule says so. */
 	get anyRunning(): boolean {
 		return this.localRunning.length > 0 || this.boxRunning.length > 0;
 	}

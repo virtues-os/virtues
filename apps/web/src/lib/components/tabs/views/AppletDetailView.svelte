@@ -39,6 +39,8 @@
 	import { appletsStore } from '$lib/stores/applets.svelte';
 	import { attention } from '$lib/stores/attention.svelte';
 	import { explainRunError } from '$lib/sources/run-errors';
+	import { usePageActions, usePageStatus } from '$lib/stores/paneActions.svelte';
+	import { SLOTS } from '$lib/stores/modelSlots.svelte';
 
 	/**
 	 * An applet's home opens on its results: its newest page with every page
@@ -51,6 +53,26 @@
 	 * that one open, which is where the table's dots and Last run link.
 	 */
 	let { tab }: { tab: Tab; active: boolean } = $props();
+
+	// On the desktop the applet's name is in the tab's action toolbar and its
+	// controls sit at the toolbar's end; the phone keeps both in the header.
+	const toolbar = usePageActions(() => headActions);
+
+	// An applet with a prompt runs it on a model slot, off the server
+	// (applet_runner.rs), and the toolbar says so. A code applet gets no
+	// mark: some call a model themselves (transcription, the day summary),
+	// and the applet record does not say which.
+	usePageStatus(() => {
+		if (!action?.agent) return null;
+		const asked = typeof action.config?.model_slot === 'string' ? action.config.model_slot : 'lite';
+		const slot = SLOTS.find((s) => s.key === (asked === 'chat' ? 'standard' : asked)) ?? SLOTS.find((s) => s.key === 'lite');
+		const name = slot ? `${slot.mark[0].toUpperCase()}${slot.mark.slice(1)} model` : 'Background model';
+		return {
+			label: name,
+			tip: `This applet's prompt runs on your ${name.toLowerCase()}, off your server, with what it was written to read.`,
+			offBox: true,
+		};
+	});
 
 	const url = $derived(new URL(tab.route, 'http://localhost'));
 	const appletId = $derived(url.pathname.match(/^\/(?:applet|action)\/(applet_[^/]+)$/)?.[1] ?? null);
@@ -456,6 +478,39 @@
 	}
 </script>
 
+{#snippet headActions()}
+	{#if action}
+		{#if chatId}
+			<!-- A word with the icon: a speech bubble alone didn't say you
+			     can tell it things or change it there. -->
+			<Button variant="ghost" size="sm" icon="mynaui:message" onclick={openConversation}>Chat</Button>
+		{/if}
+		<IconButton
+			icon="mynaui:info-circle"
+			label="Info"
+			pressed={insp}
+			onclick={() => (insp = !insp)}
+		/>
+		<IconButton icon="mynaui:dots" label="More" haspopup="menu" onclick={openMore} />
+		{#if action.archived_at}
+			<Button variant="secondary" size="sm" onclick={() => setEnabled(true)} disabled={saving}>
+				Turn back on
+			</Button>
+		{:else}
+			<button
+				type="button"
+				class="switch"
+				class:on={action.enabled}
+				role="switch"
+				aria-checked={action.enabled}
+				aria-label="Run this applet"
+				disabled={saving}
+				onclick={() => setEnabled(!action!.enabled)}
+			></button>
+		{/if}
+	{/if}
+{/snippet}
+
 {#snippet fixAction()}
 	{#if fix}
 		<TextAction inline onclick={openFix}>{fix.label}</TextAction>
@@ -544,40 +599,13 @@
 				<header class="head">
 					<span class="glyph" aria-hidden="true"><AtlasIcon name={appletGlyph(action)} size={20} bare /></span>
 					<div class="title-block">
-						<h1 class="title">{action.name}</h1>
+						{#if !toolbar.inToolbar}<h1 class="title">{action.name}</h1>{/if}
 						<p class="status">{status}</p>
 					</div>
 					<!-- One title block, the icons centred on it, the switch last. -->
-					<div class="head-actions">
-						{#if chatId}
-							<!-- A word with the icon: a speech bubble alone didn't say you
-							     can tell it things or change it there. -->
-							<Button variant="ghost" size="sm" icon="mynaui:message" onclick={openConversation}>Chat</Button>
-						{/if}
-						<IconButton
-							icon="mynaui:info-circle"
-							label="Info"
-							pressed={insp}
-							onclick={() => (insp = !insp)}
-						/>
-						<IconButton icon="mynaui:dots" label="More" haspopup="menu" onclick={openMore} />
-						{#if action.archived_at}
-							<Button variant="secondary" size="sm" onclick={() => setEnabled(true)} disabled={saving}>
-								Turn back on
-							</Button>
-						{:else}
-							<button
-								type="button"
-								class="switch"
-								class:on={action.enabled}
-								role="switch"
-								aria-checked={action.enabled}
-								aria-label="Run this applet"
-								disabled={saving}
-								onclick={() => setEnabled(!action!.enabled)}
-							></button>
-						{/if}
-					</div>
+					{#if !toolbar.inToolbar}
+						<div class="head-actions">{@render headActions()}</div>
+					{/if}
 				</header>
 
 				{#if err}

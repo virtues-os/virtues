@@ -72,7 +72,7 @@ export function newTabMenuItems(paneId: 'left' | 'right' | undefined, opts: { br
 			label: 'New temporary chat',
 			icon: 'mynaui:incognito',
 			shortcut: shortcuts.format('mod+shift+i'),
-			action: () => open('/?temporary=1', 'Temporary Chat'),
+			action: () => open('/?temporary=1', 'Temporary chat'),
 		},
 		{
 			id: 'new-page',

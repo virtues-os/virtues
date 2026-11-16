@@ -10,7 +10,7 @@ import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { GETTING_STARTED_CHAT_ID } from '$lib/components/chat/getting-started/getting-started';
 import { INTERVIEW_CHAT_ID } from '$lib/components/chat/interview/interview';
 import { PROJECT_ICON } from '$lib/utils/iconHelpers';
-import { parseRef } from '$lib/utils/refRoutes';
+import { isRecordRoute, parseRef } from '$lib/utils/refRoutes';
 import { untitled } from '$lib/refs/identity.svelte';
 import { chatSessions } from '$lib/stores/chatSessions.svelte';
 import { projectStore } from '$lib/stores/project.svelte';
@@ -214,7 +214,7 @@ export function projectMenuItems(target: FileTarget | null): ContextMenuItem[] {
 	submenu.push({
 		id: 'new-project-with-item',
 		label: 'New project…',
-		icon: 'ri:add-line',
+		icon: 'mynaui:plus',
 		dividerBefore: projects.length > 0,
 		action: async () => {
 			const name = (
@@ -241,7 +241,7 @@ export function projectMenuItems(target: FileTarget | null): ContextMenuItem[] {
 		submenu.push({
 			id: 'remove-from-project',
 			label: `Remove from ${home.name}`,
-			icon: 'ri:close-line',
+			icon: 'mynaui:x',
 			action: () => removeFromProject(home, target),
 		});
 	}
@@ -250,7 +250,7 @@ export function projectMenuItems(target: FileTarget | null): ContextMenuItem[] {
 		{
 			id: 'add-to-project',
 			label: home ? 'Move to project' : 'Add to project',
-			icon: 'ri:folder-add-line',
+			icon: 'mynaui:folder-plus',
 			dividerBefore: true,
 			submenu,
 		},
@@ -279,12 +279,13 @@ export function startRefDrag(e: DragEvent, url: string, label: string): void {
  */
 export const MENTION_DRAG_TYPE = 'application/x-virtues-mention';
 
-/** The url a row can be mentioned by: one thing, a project included, or a link out. */
+/** The url a row can be mentioned by: one thing, a project included, a
+ *  record (`/record/<ontology>/<id>`), or a link out. */
 export function mentionableUrl(route: string): string | null {
 	if (/^https?:\/\//.test(route)) return route;
 	const path = route.split(/[?#]/)[0];
 	if (path.startsWith('/chat/') && RESERVED_CHATS.has(path.slice('/chat/'.length))) return null;
-	return /^\/[a-z-]+\/[^/]+$/.test(path) ? path : null;
+	return /^\/[a-z-]+\/[^/]+$/.test(path) || isRecordRoute(path) ? path : null;
 }
 
 export function setMentionDrag(e: DragEvent, url: string, label: string): void {
@@ -348,7 +349,7 @@ export function projectChipMenuItems(
 		{
 			id: 'remove-from-this-project',
 			label: `Remove from ${project.name}`,
-			icon: 'ri:close-line',
+			icon: 'mynaui:x',
 			dividerBefore: true,
 			action: () => removeFromProject(project, target),
 		},
@@ -439,11 +440,11 @@ export function projectRowMenuItems(
 	if (project.archived_at) {
 		return [
 			{ id: 'open', label: 'Open', icon: PROJECT_ICON, action: () => openProject(project) },
-			{ id: 'unarchive', label: 'Unarchive', icon: 'ri:inbox-unarchive-line', action: () => unarchiveProject(project) },
+			{ id: 'unarchive', label: 'Unarchive', icon: 'mynaui:inbox-up', action: () => unarchiveProject(project) },
 			{
 				id: 'delete',
 				label: 'Delete',
-				icon: 'ri:delete-bin-line',
+				icon: 'mynaui:trash',
 				variant: 'destructive',
 				dividerBefore: true,
 				action: () => void deleteProject(project),
@@ -452,15 +453,15 @@ export function projectRowMenuItems(
 	}
 	return [
 		...openMenuItems(url, project.name),
-		{ id: 'new-chat', label: 'New chat here', icon: 'ri:chat-new-line', action: () => newChatInProject(project) },
-		{ id: 'rename', label: 'Rename', icon: 'ri:edit-line', action: () => renameProject(project) },
+		{ id: 'new-chat', label: 'New chat here', icon: 'mynaui:chat-plus', action: () => newChatInProject(project) },
+		{ id: 'rename', label: 'Rename', icon: 'mynaui:edit', action: () => renameProject(project) },
 		// No "Add to project": you can't put a project in a project.
 		pinMenuItem({ url, label: project.name, icon: project.icon }),
-		{ id: 'archive', label: 'Archive', icon: 'ri:archive-line', action: () => archiveProject(project) },
+		{ id: 'archive', label: 'Archive', icon: 'mynaui:archive', action: () => archiveProject(project) },
 		{
 			id: 'delete',
 			label: 'Delete',
-			icon: 'ri:delete-bin-line',
+			icon: 'mynaui:trash',
 			variant: 'destructive',
 			dividerBefore: true,
 			action: () => void deleteProject(project),
@@ -475,7 +476,7 @@ export function projectRowMenuItems(
  * somewhere else".
  */
 export function memberIcon(url: string): string {
-	if (/^https?:\/\//.test(url)) return 'ri:external-link-line';
+	if (/^https?:\/\//.test(url)) return 'mynaui:external-link';
 	const map: Record<string, string> = {
 		page: 'atlas:pages',
 		person: 'atlas:people',
@@ -487,7 +488,7 @@ export function memberIcon(url: string): string {
 		chat: 'atlas:chats',
 		source: 'atlas:sources'
 	};
-	return map[parseRef(url)?.kind ?? ''] ?? 'ri:links-line';
+	return map[parseRef(url)?.kind ?? ''] ?? 'mynaui:link';
 }
 
 /**

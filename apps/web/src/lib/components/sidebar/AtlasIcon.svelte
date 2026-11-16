@@ -81,10 +81,6 @@
 <script lang="ts">
 	/**
 	 * A shell glyph by its name in the table above, drawn from the Myna set.
-	 *
-	 * The window header tints the sidebar glyph's column to say the sidebar is
-	 * shown (`.atlas-fill`). Myna draws no column, so it is added here, under
-	 * the outline, and the header fades its fill.
 	 */
 	import myna from '$lib/myna-icons.json';
 
@@ -111,9 +107,6 @@
 	const LINE_PX = 1.25;
 	const strokeWidth = $derived(stroke ?? (LINE_PX * 24) / size);
 
-	const SIDEBAR_COLUMN =
-		'<path class="atlas-fill" d="M9 3.5H9.4C7.16 3.5 6.04 3.5 5.184 3.936a4 4 0 0 0-1.748 1.748C3 6.54 3 7.66 3 9.9v4.7c0 2.24 0 3.36.436 4.216a4 4 0 0 0 1.748 1.748C6.04 21 7.16 21 9.4 21H9z" fill="currentColor" fill-opacity="0" stroke="none"/>';
-
 	// Unknown names fall back to `pages` rather than drawing nothing, which is
 	// forgiving in production and silent in development — a typo'd name looks
 	// like a deliberate sheet of paper. The warning is the only thing that
@@ -124,8 +117,7 @@
 			console.warn(`AtlasIcon: no glyph named "${name}" — drawing "pages" instead`);
 		}
 		const icon = (hit ?? GLYPHS.pages).slice('mynaui:'.length) as keyof typeof myna.icons;
-		const drawn = (myna.icons[icon]?.body ?? '').replace(/stroke-width="[\d.]+"/g, `stroke-width="${strokeWidth}"`);
-		return name === 'sidebar' ? SIDEBAR_COLUMN + drawn : drawn;
+		return (myna.icons[icon]?.body ?? '').replace(/stroke-width="[\d.]+"/g, `stroke-width="${strokeWidth}"`);
 	});
 </script>
 

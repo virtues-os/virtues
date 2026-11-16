@@ -1,11 +1,12 @@
 <!--
 	PageStatusNote.svelte
 
-	A page says nothing about itself while all is well: no counts, no
-	"Saved". This note appears in the page's lower corner only when there is
-	something to act on or know: the assistant writing (with Stop), the
-	assistant failing, the page offline, or a save that failed. The page's
-	counts are under the toolbar's ⋯.
+	On the phone, which has no action toolbar, a page says nothing about
+	itself while all is well. This note appears in the page's lower corner
+	only when there is something to act on or know: the assistant writing
+	(with Stop), the assistant failing, the page offline, or a save that
+	failed. On the desktop the same states, and "Saved", are the toolbar's
+	status mark (PageContent). The page's counts are under the toolbar's ⋯.
 -->
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";

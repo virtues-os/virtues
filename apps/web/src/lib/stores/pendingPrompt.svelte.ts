@@ -48,5 +48,5 @@ export function askVirtues(text: string, projectId?: string | null) {
 	if (!trimmed) return;
 	pendingPrompt.set(trimmed);
 	pendingPrompt.setProject(projectId ?? null);
-	windowShellStore.openTabFromRoute('/', { label: 'New Chat' });
+	windowShellStore.openTabFromRoute('/', { label: 'New chat' });
 }

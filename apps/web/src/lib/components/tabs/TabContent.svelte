@@ -6,10 +6,14 @@
 	import { reloadApp } from "$lib/reload";
 	import Button from "$lib/components/Button.svelte";
 	import SectionNav from "$lib/components/settings/SectionNav.svelte";
+	import ActionToolbar from "./ActionToolbar.svelte";
+	import { provideTabId } from "$lib/stores/paneActions.svelte";
 	import { SETTINGS_MODE, rowForRoute } from "$lib/sidebar/modes";
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	provideTabId(() => tab.id);
 
 	// A Settings page (Sources and Streams among them) carries Settings'
 	// section list down its left, since the sidebar does not change for
@@ -75,36 +79,43 @@
 	});
 </script>
 
-<div class="tab-content" class:active class:with-nav={settingsNav} style:display={active ? "flex" : "none"}>
-	{#if settingsNav}
-		<SectionNav mode={SETTINGS_MODE} route={tab.route} />
+<!-- On the desktop every page has the action toolbar on top (ActionToolbar).
+     The phone has no toolbar row. -->
+<div class="tab-content" class:active style:display={active ? "flex" : "none"}>
+	{#if !mobileLayout.isMobile}
+		<ActionToolbar {tab} />
 	{/if}
-	{#if ViewComponent}
+	<div class="tab-body" class:with-nav={settingsNav}>
 		{#if settingsNav}
-			<div class="section-body">
-				<ViewComponent {tab} {active} />
-			</div>
-		{:else}
-			<ViewComponent {tab} {active} />
+			<SectionNav mode={SETTINGS_MODE} route={tab.route} />
 		{/if}
-	{:else if loadFailed}
-		<div class="placeholder" role="alert">
-			<Icon icon="mynaui:refresh" />
-			<span class="title">This view didn't load</span>
-			<span class="subtitle">Your server may have just updated. Reload the app to get its latest version.</span>
-			<div class="actions">
-				<Button variant="secondary" size="sm" onclick={() => (attempt += 1)}>Try again</Button>
-				<Button size="sm" onclick={() => reloadApp()}>Reload the app</Button>
+		{#if ViewComponent}
+			{#if settingsNav}
+				<div class="section-body">
+					<ViewComponent {tab} {active} />
+				</div>
+			{:else}
+				<ViewComponent {tab} {active} />
+			{/if}
+		{:else if loadFailed}
+			<div class="placeholder" role="alert">
+				<Icon icon="mynaui:refresh" />
+				<span class="title">This view didn't load</span>
+				<span class="subtitle">Your server may have just updated. Reload the app to get its latest version.</span>
+				<div class="actions">
+					<Button variant="secondary" size="sm" onclick={() => (attempt += 1)}>Try again</Button>
+					<Button size="sm" onclick={() => reloadApp()}>Reload the app</Button>
+				</div>
 			</div>
-		</div>
-	{:else if !tabRegistry[tab.type]}
-		<!-- Placeholder for unknown tab types -->
-		<div class="placeholder">
-			<Icon icon="mynaui:file" />
-			<span class="title">Unknown View</span>
-			<span class="subtitle">Tab type: {tab.type}</span>
-		</div>
-	{/if}
+		{:else if !tabRegistry[tab.type]}
+			<!-- Placeholder for unknown tab types -->
+			<div class="placeholder">
+				<Icon icon="mynaui:file" />
+				<span class="title">Unknown View</span>
+				<span class="subtitle">Tab type: {tab.type}</span>
+			</div>
+		{/if}
+	</div>
 </div>
 
 <style>
@@ -115,9 +126,19 @@
 		overflow: hidden;
 	}
 
-	/* The section list, then the page. The body keeps the column layout and
-	   the containment a view expects from the tab itself. */
-	.tab-content.with-nav {
+	/* Under the toolbar, the view gets the column layout and containment it
+	   expects from the tab itself. */
+	.tab-body {
+		position: relative;
+		flex: 1;
+		min-height: 0;
+		display: flex;
+		flex-direction: column;
+		overflow: hidden;
+	}
+
+	/* The section list, then the page. */
+	.tab-body.with-nav {
 		flex-direction: row;
 	}
 

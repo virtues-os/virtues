@@ -25,7 +25,6 @@ import { parseRoute, tabRegistry } from '$lib/tabs/registry';
 import { visits } from '$lib/stores/visits.svelte';
 import { pushState, replaceState } from '$app/navigation';
 import { mobileLayout } from '$lib/stores/mobileLayout.svelte';
-import { DESK_GAP_PX } from '$lib/stores/sidebarState.svelte';
 
 // Re-export types for convenience
 export type { Tab, TabType, PaneState };
@@ -74,11 +73,11 @@ const TAB_STORAGE_VERSION = 10; // Per-tab navigation history (browser model)
 const HISTORY_CAP = 50; // Max routes kept in a single tab's history stack
 
 /**
- * The desk between the two panes' cards in split view, the same gap as
- * between any two cards. SplitContainer lays the panes out with it and the
- * window header lines their tab strips up with it.
+ * The gap between the two panes in split view. The panes meet edge to edge,
+ * divided by the right pane's border. SplitContainer lays the panes out with
+ * it and the window header lines their tab strips up with it.
  */
-export const SPLIT_GUTTER_PX = DESK_GAP_PX;
+export const SPLIT_GUTTER_PX = 0;
 
 // Input shape for tab creation — history/historyIndex are seeded internally.
 type TabInput = Omit<Tab, 'id' | 'createdAt' | 'history' | 'historyIndex'>;
@@ -1484,8 +1483,7 @@ class WindowShellStore {
 	/**
 	 * Open a tab in the opposite pane — auto-enables split, dedupes by route.
 	 *
-	 * Generic helper used by `openChatContext` and anywhere else that needs
-	 * the "click something, see its detail beside the list" pattern.
+	 * For the "click something, see its detail beside the list" pattern.
 	 * Returns the tab id (new or existing).
 	 */
 	openAside(input: TabInput): string {
@@ -1510,16 +1508,6 @@ class WindowShellStore {
 		}
 
 		return this.openTab(input, targetPaneId, { adjacent: true });
-	}
-
-	openChatContext(chatId: string, _currentPaneId: 'left' | 'right' | null): string {
-		const entityId = chatId.startsWith('chat_') ? chatId : `chat_${chatId}`;
-		return this.openAside({
-			type: 'chat',
-			label: 'About this chat',
-			route: `/chat/${entityId}?view=context`,
-			icon: 'mynaui:info-circle'
-		});
 	}
 
 	// ============================================================================

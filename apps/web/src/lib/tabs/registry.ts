@@ -114,7 +114,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				const temporary = params?.get('temporary') === '1';
 				return {
 					type: 'chat',
-					label: temporary ? 'Temporary Chat' : 'New Chat',
+					label: temporary ? 'Temporary chat' : 'New chat',
 					icon: temporary ? 'mynaui:incognito' : 'mynaui:chat',
 					normalizedRoute: temporary ? '/chat?temporary=1' : '/chat',
 				};
@@ -1010,7 +1010,7 @@ export function parseRoute(route: string): ParsedRoute {
 	// Fallback to chat
 	return {
 		type: 'chat',
-		label: 'New Chat',
+		label: 'New chat',
 		icon: 'mynaui:chat',
 	};
 }
