@@ -1,3 +1,44 @@
+<script lang="ts" module>
+	// The emoji set is processed once per session, not once per open: filtering
+	// and sorting emojibase's ~1,900 entries again each time the picker opened
+	// was work nobody saw a reason for.
+	const EMOJI_MAX_VERSION = 15.1;
+	const EMOJI_COMPONENT_GROUP = 2;
+	// emojibase groups, objects and symbols first: they label a page or a
+	// project, and the faces that lead Unicode's own order mostly don't.
+	const EMOJI_GROUP_ORDER = [7, 8, 6, 5, 3, 4, 0, 1, 9];
+	type EmojiEntry = { emoji: string; label: string; terms: string };
+	let emojiSet: Promise<EmojiEntry[]> | null = null;
+
+	function emojiEntries(): Promise<EmojiEntry[]> {
+		emojiSet ??= import('emojibase-data/en/data.json')
+			.then(({ default: data }) =>
+				data
+					.filter(
+						(e) =>
+							e.group !== undefined &&
+							e.group !== EMOJI_COMPONENT_GROUP &&
+							e.version <= EMOJI_MAX_VERSION
+					)
+					.sort(
+						(a, b) =>
+							EMOJI_GROUP_ORDER.indexOf(a.group!) - EMOJI_GROUP_ORDER.indexOf(b.group!) ||
+							(a.order ?? 0) - (b.order ?? 0)
+					)
+					.map((e) => ({
+						emoji: e.emoji,
+						label: e.label,
+						terms: [e.label, ...(e.tags ?? [])].join(' ').toLowerCase()
+					}))
+			)
+			.catch((err) => {
+				emojiSet = null;
+				throw err;
+			});
+		return emojiSet;
+	}
+</script>
+
 <script lang="ts">
 	/**
 	 * IconPicker - the mark a page, chat, pin or project wears
@@ -101,15 +142,10 @@
 	// The full Unicode set, lazy-loaded with its names and keywords so search
 	// can find "dog" rather than only the pasted glyph. Emoji newer than 15.1
 	// are left out: older systems draw them as empty boxes. Skin-tone variants are left out too; the base glyph is the
-	// icon.
-	const EMOJI_MAX_VERSION = 15.1;
-	const EMOJI_COMPONENT_GROUP = 2;
-	// emojibase groups, objects and symbols first: they label a page or a
-	// project, and the faces that lead Unicode's own order mostly don't.
-	const EMOJI_GROUP_ORDER = [7, 8, 6, 5, 3, 4, 0, 1, 9];
-	type EmojiEntry = { emoji: string; label: string; terms: string };
-	let allEmojis = $state<EmojiEntry[]>([]);
+	// icon. Raw: the list is replaced whole, never edited, so it needs no proxy.
+	let allEmojis = $state.raw<EmojiEntry[]>([]);
 	let emojisLoading = $state(false);
+	let emojiPage = $state(0);
 
 	// The icons people reach for to label a page or a project, ahead of the
 	// rest of the set in alphabetical order.
@@ -153,35 +189,21 @@
 	// than widens. Pasting the emoji itself also finds it.
 	const visibleEmojis = $derived.by(() => {
 		const q = search.trim().toLowerCase();
-		if (!q) return allEmojis;
+		// Paged like the icons: the whole set is ~1,900 buttons in one pass.
+		if (!q) return allEmojis.slice(0, (emojiPage + 1) * ICONS_PAGE_SIZE);
 		const words = q.split(/\s+/);
 		return allEmojis.filter(
 			(e) => e.emoji.includes(q) || words.every((w) => e.terms.includes(w))
 		);
 	});
 
+	const hasMoreEmojis = $derived(!search && visibleEmojis.length < allEmojis.length);
+
 	async function loadEmojis() {
 		if (allEmojis.length || emojisLoading) return;
 		emojisLoading = true;
 		try {
-			const { default: data } = await import('emojibase-data/en/data.json');
-			allEmojis = data
-				.filter(
-					(e) =>
-						e.group !== undefined &&
-						e.group !== EMOJI_COMPONENT_GROUP &&
-						e.version <= EMOJI_MAX_VERSION
-				)
-				.sort(
-					(a, b) =>
-						EMOJI_GROUP_ORDER.indexOf(a.group!) - EMOJI_GROUP_ORDER.indexOf(b.group!) ||
-						(a.order ?? 0) - (b.order ?? 0)
-				)
-				.map((e) => ({
-					emoji: e.emoji,
-					label: e.label,
-					terms: [e.label, ...(e.tags ?? [])].join(' ').toLowerCase()
-				}));
+			allEmojis = await emojiEntries();
 		} catch (e) {
 			console.error('Failed to load emoji set:', e);
 		} finally {
@@ -194,7 +216,11 @@
 		loadLucide()
 			.then((names) => (lucideNames = names))
 			.catch((e) => console.error('Failed to load icon set:', e));
-		loadEmojis();
+	});
+
+	// The emoji set loads when its tab opens, not with the picker.
+	$effect(() => {
+		if (activeTab === 'emoji') loadEmojis();
 	});
 
 	function handleSelect(icon: string) {
@@ -358,6 +384,10 @@
 				<div class="empty">Loading emoji...</div>
 			{:else if visibleEmojis.length === 0}
 				<div class="empty">No emoji found</div>
+			{:else if hasMoreEmojis}
+				<Button variant="secondary" size="sm" class="w-full mt-2" onclick={() => emojiPage++}>
+					Load more
+				</Button>
 			{/if}
 		{/if}
 	</div>
