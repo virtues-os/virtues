@@ -2,6 +2,9 @@ import { redirect } from '@sveltejs/kit';
 import type { LayoutLoad } from './$types';
 import { markInApp } from '$lib/components/setup/inApp';
 import { boxBelowFloor } from '$lib/boxApi';
+import type { SetupState } from '$lib/api/client';
+import { setupStateStore } from '$lib/stores/setupState.svelte';
+import { sidebarDoors } from '$lib/stores/sidebarDoors.svelte';
 
 /** Degraded shell data for a transient box blip — keeps the app mounted. */
 const OFFLINE_DATA = {
@@ -112,6 +115,9 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 
 		try {
 			const setup = await setupP;
+			// The shell's setup store and sidebar would ask again on mount;
+			// hand them these answers instead (see `seed` on each).
+			if (setup) setupStateStore.seed(setup as SetupState);
 			if (setup) {
 				// Gate on onboarding_status ONLY, never on setup_complete. Setup
 				// is the claim; whether the person has finished or dismissed the
@@ -151,6 +157,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 
 		if (profileResponse.ok) {
 			const profile = await profileResponse.json();
+			sidebarDoors.seed(profile);
 
 			// (Onboarding redirects live above, off /api/setup/state. This fetch
 			// only feeds preferences.)

@@ -62,9 +62,56 @@ export function deadline(ms: number): AbortSignal {
 }
 
 /**
+ * How long a GET may take when the caller passes no signal of its own. A
+ * request stalled on the relay otherwise never settles, and a poll that waits
+ * on it (an `inflight` latch) stops for good. POSTs have no default: some wait
+ * on a model for longer than this.
+ */
+const GET_DEADLINE_MS = 30_000;
+
+/** A response read to text, so callers sharing one fetch each parse their own copy. */
+interface ReadResponse {
+	ok: boolean;
+	status: number;
+	statusText: string;
+	requestId?: string;
+	text: string;
+}
+
+/**
+ * GETs in flight, by URL. Components and stores that mount together ask for
+ * the same endpoint at once (the profile, the assistant profile), and each
+ * used to pay a round trip. A second identical GET while the first is out
+ * waits on it instead. Only the text is shared: each caller parses its own
+ * object, so one store changing its copy cannot reach another's.
+ */
+const inflightGets = new Map<string, Promise<ReadResponse>>();
+
+async function readResponse(url: string, init?: RequestInit): Promise<ReadResponse> {
+	const res = await fetch(url, init);
+	// Remember it whether or not this request failed: an error thrown LATER,
+	// or an uncaught exception with no request of its own, still wants the
+	// most recent one as a hint. See `noteRequestId`.
+	const requestId = res.headers.get('x-request-id') ?? undefined;
+	if (requestId) noteRequestId(requestId);
+	let text = '';
+	try {
+		text = res.status === 204 ? '' : await res.text();
+	} catch (e) {
+		// A body that failed to read is a failed request when it was meant to
+		// succeed; an error response keeps its status either way.
+		if (res.ok) throw e;
+	}
+	return { ok: res.ok, status: res.status, statusText: res.statusText, requestId, text };
+}
+
+/**
  * Core fetch wrapper for JSON endpoints under `/api`. Serializes an optional
  * query object, throws {@link ApiError} (with status) on non-2xx, and returns
  * the parsed JSON body (or `undefined` for empty/204 responses).
+ *
+ * A GET without its own signal gets a 30s deadline, and joins an identical GET
+ * already in flight (see `inflightGets`).
  *
  * Not for binary/blob endpoints or progress-tracked uploads — those keep their
  * own `fetch`/XHR (see uploadMedia, downloadDriveFile).
@@ -83,37 +130,45 @@ export async function request<T>(
 		if (q) url += `?${q}`;
 	}
 
-	const res = await fetch(url, init);
-	// Remember it whether or not this request failed: an error thrown LATER,
-	// or an uncaught exception with no request of its own, still wants the
-	// most recent one as a hint. See `noteRequestId`.
-	const requestId = res.headers.get('x-request-id') ?? undefined;
-	if (requestId) noteRequestId(requestId);
+	const { query: _query, ...fetchInit } = init ?? {};
+	const isGet = (fetchInit.method ?? 'GET').toUpperCase() === 'GET';
+	let res: ReadResponse;
+	if (isGet && !fetchInit.signal && fetchInit.body == null) {
+		// Headers would make two GETs differ; the shared ones are header-free.
+		const shareable = fetchInit.headers == null;
+		let pending = shareable ? inflightGets.get(url) : undefined;
+		if (!pending) {
+			pending = readResponse(url, { ...fetchInit, signal: deadline(GET_DEADLINE_MS) });
+			if (shareable) {
+				inflightGets.set(url, pending);
+				const forget = () => {
+					if (inflightGets.get(url) === pending) inflightGets.delete(url);
+				};
+				pending.then(forget, forget);
+			}
+		}
+		res = await pending;
+	} else {
+		res = await readResponse(url, fetchInit);
+	}
 
 	if (!res.ok) {
 		let body: unknown;
 		let message = res.statusText || `HTTP ${res.status}`;
-		try {
-			const text = await res.text();
-			if (text) {
-				try {
-					body = JSON.parse(text);
-					const parsed = body as { error?: string; message?: string };
-					message = parsed?.error || parsed?.message || message;
-				} catch {
-					body = text;
-					message = text;
-				}
+		if (res.text) {
+			try {
+				body = JSON.parse(res.text);
+				const parsed = body as { error?: string; message?: string };
+				message = parsed?.error || parsed?.message || message;
+			} catch {
+				body = res.text;
+				message = res.text;
 			}
-		} catch {
-			/* keep statusText fallback */
 		}
-		throw new ApiError(res.status, message, body, requestId);
+		throw new ApiError(res.status, message, body, res.requestId);
 	}
 
-	if (res.status === 204) return undefined as T;
-	const text = await res.text();
-	return (text ? JSON.parse(text) : undefined) as T;
+	return (res.text ? JSON.parse(res.text) : undefined) as T;
 }
 
 /** GET a JSON endpoint, with an optional query object. */
