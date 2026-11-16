@@ -15,7 +15,6 @@ pub mod outbox;
 pub mod owner;
 pub mod pair;
 pub mod pair_door;
-pub mod provision;
 pub mod push;
 pub mod proxy;
 pub mod scan;

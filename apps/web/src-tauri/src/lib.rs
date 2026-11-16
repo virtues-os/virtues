@@ -49,10 +49,10 @@ pub mod web_bundle;
 /// |   | apply, for the sidebar's "Relaunch to X" chip (desktop-only commands;
 /// |   | mobile at 3 still rejects them and the UI treats that as silence) |
 /// | 4 | `check_app_update_cmd` — manual check trigger for This Mac's ledger |
-/// | 5 | `reach|improv_owner_claim` — reopen a moved, offline server over
-/// |   | Bluetooth as its owner (`$lib/tauri/boxRadio.ts` gates on this) |
-/// | 6 | `reach|reach_rehome` — point the pairing at a moved server's new
-/// |   | address after it joins over Bluetooth (the `/reconnect` screen) |
+/// | 5 | `reach|improv_owner_claim`, since removed with the hardware setup
+/// |   | path; the number stays taken |
+/// | 6 | `reach|reach_rehome`, since removed with the hardware setup path;
+/// |   | the number stays taken |
 /// | 7 | `recheck_collector` — make the Mac collector re-check its permissions
 /// |   | now (SIGUSR1); `get_collector_status` gains `safari_library` |
 /// |   | On iOS, same release: `location-probe|status`, `|request_location`

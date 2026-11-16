@@ -33,7 +33,6 @@ virtues-reach-client = { path = "../../../../crates/virtues-reach-client" }
 # there the Swift CoreBluetooth client owns the radio, and btleplug's own
 # CoreBluetooth backend would be a second, competing central in one process.
 [target.'cfg(not(any(target_os = "ios", target_os = "android")))'.dependencies]
-virtues-improv = { path = "../../../../crates/virtues-improv", features = ["client"] }
 
 # The Mac keeps its device seed in the login Keychain (src/store.rs).
 # `apple-native` is what selects the Keychain: without it keyring stores

@@ -331,102 +331,6 @@
           "markdownDescription": "Denies the forget command without any pre-configured scope."
         },
         {
-          "description": "Enables the improv_claim command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-improv-claim",
-          "markdownDescription": "Enables the improv_claim command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_claim command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-improv-claim",
-          "markdownDescription": "Denies the improv_claim command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_disconnect command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-improv-disconnect",
-          "markdownDescription": "Enables the improv_disconnect command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_disconnect command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-improv-disconnect",
-          "markdownDescription": "Denies the improv_disconnect command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_discover command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-improv-discover",
-          "markdownDescription": "Enables the improv_discover command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_discover command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-improv-discover",
-          "markdownDescription": "Denies the improv_discover command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_grant command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-improv-grant",
-          "markdownDescription": "Enables the improv_grant command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_grant command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-improv-grant",
-          "markdownDescription": "Denies the improv_grant command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_owner_claim command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-improv-owner-claim",
-          "markdownDescription": "Enables the improv_owner_claim command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_owner_claim command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-improv-owner-claim",
-          "markdownDescription": "Denies the improv_owner_claim command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_pair command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-improv-pair",
-          "markdownDescription": "Enables the improv_pair command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_pair command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-improv-pair",
-          "markdownDescription": "Denies the improv_pair command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_provision command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-improv-provision",
-          "markdownDescription": "Enables the improv_provision command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_provision command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-improv-provision",
-          "markdownDescription": "Denies the improv_provision command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the improv_wifi_scan command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-improv-wifi-scan",
-          "markdownDescription": "Enables the improv_wifi_scan command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the improv_wifi_scan command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-improv-wifi-scan",
-          "markdownDescription": "Denies the improv_wifi_scan command without any pre-configured scope."
-        },
-        {
           "description": "Enables the outbox_stats command without any pre-configured scope.",
           "type": "string",
           "const": "allow-outbox-stats",
@@ -523,42 +427,6 @@
           "markdownDescription": "Denies the pair_handoff_create command without any pre-configured scope."
         },
         {
-          "description": "Enables the provision_join command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-provision-join",
-          "markdownDescription": "Enables the provision_join command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the provision_join command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-provision-join",
-          "markdownDescription": "Denies the provision_join command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the provision_networks command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-provision-networks",
-          "markdownDescription": "Enables the provision_networks command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the provision_networks command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-provision-networks",
-          "markdownDescription": "Denies the provision_networks command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the provision_open command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-provision-open",
-          "markdownDescription": "Enables the provision_open command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the provision_open command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-provision-open",
-          "markdownDescription": "Denies the provision_open command without any pre-configured scope."
-        },
-        {
           "description": "Enables the radio_stats command without any pre-configured scope.",
           "type": "string",
           "const": "allow-radio-stats",
@@ -569,18 +437,6 @@
           "type": "string",
           "const": "deny-radio-stats",
           "markdownDescription": "Denies the radio_stats command without any pre-configured scope."
-        },
-        {
-          "description": "Enables the reach_rehome command without any pre-configured scope.",
-          "type": "string",
-          "const": "allow-reach-rehome",
-          "markdownDescription": "Enables the reach_rehome command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the reach_rehome command without any pre-configured scope.",
-          "type": "string",
-          "const": "deny-reach-rehome",
-          "markdownDescription": "Denies the reach_rehome command without any pre-configured scope."
         },
         {
           "description": "Enables the reach_status command without any pre-configured scope.",
@@ -595,10 +451,10 @@
           "markdownDescription": "Denies the reach_status command without any pre-configured scope."
         },
         {
-          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-grant`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-improv-owner-claim`\n- `allow-reach-rehome`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`\n- `allow-owner-proof-sign`",
+          "description": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`\n- `allow-owner-proof-sign`",
           "type": "string",
           "const": "default",
-          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-provision-open`\n- `allow-provision-networks`\n- `allow-provision-join`\n- `allow-improv-discover`\n- `allow-improv-claim`\n- `allow-improv-grant`\n- `allow-improv-wifi-scan`\n- `allow-improv-provision`\n- `allow-improv-pair`\n- `allow-improv-disconnect`\n- `allow-improv-owner-claim`\n- `allow-reach-rehome`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`\n- `allow-owner-proof-sign`"
+          "markdownDescription": "Default permissions for the reach plugin\n#### This default permission set includes:\n\n- `allow-pair`\n- `allow-reach-status`\n- `allow-forget`\n- `allow-discover`\n- `allow-outbox-stats`\n- `allow-drain-now`\n- `allow-radio-stats`\n- `allow-pair-door-open`\n- `allow-pair-door-close`\n- `allow-pair-door-status`\n- `allow-pair-handoff-create`\n- `allow-pair-handoff-accept`\n- `allow-owner-proof-sign`"
         }
       ]
     }

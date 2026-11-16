@@ -776,26 +776,6 @@ impl ReachState {
     Ok(self.status().await)
   }
 
-  /// Persist a pairing whose consume exchange rode the box's Bluetooth (RPC
-  /// 0x83 — for LANs that block peer-to-peer) and light up reach, exactly as
-  /// [`Self::pair`] does for the HTTP path.
-  pub async fn pair_finish_ble(
-    &self,
-    response_json: &str,
-    identity: virtues_reach_client::pair::MintedIdentity,
-  ) -> Result<ReachStatus> {
-    virtues_reach_client::pair::finish_consume(self.store.as_ref(), response_json, identity)?;
-    self.ensure_serving().await?;
-    Ok(self.status().await)
-  }
-
-  /// Sign an offline box's owner challenge with this device's paired key —
-  /// the moved-box path (Improv `0x88`/`0x89`). The key never leaves the
-  /// store; only the public id and the signature come back.
-  pub fn sign_owner_proof(&self, nonce: &[u8]) -> anyhow::Result<virtues_reach_client::owner::OwnerProof> {
-    virtues_reach_client::owner::sign_owner_proof(self.store.as_ref(), nonce)
-  }
-
   /// Sign one HTTP request for the box with this device's paired key: the
   /// owner proof the box asks for before revealing a secret, adding a device
   /// or changing the AI key. Returns the header
@@ -900,57 +880,6 @@ impl ReachState {
     self.serving.store(false, Ordering::SeqCst);
 
     self.ensure_serving().await?;
-    Ok(self.status().await)
-  }
-
-  /// The server moved: it joined a new network over its Bluetooth owner
-  /// session and reported the address it now answers on (`reported`, the
-  /// 0x01 join result). Point this pairing at it and swap in a connection
-  /// built from the updated record, so the loopback, uploads and the next
-  /// status probe all dial the new address.
-  ///
-  /// This is what makes a server WITHOUT a relay recoverable after a move.
-  /// Its pairing only knows LAN addresses from where it was set up, and
-  /// nothing else could learn the new one: `refresh_reach` asks the server
-  /// over the very LAN address that is now wrong. With a relay it is not
-  /// needed (iroh finds the server by its EndpointId), and it does no harm:
-  /// the relay path is kept and direct addresses only add routes.
-  ///
-  /// `box_url` is a hint, not an identity — [`build_client`] re-resolves its
-  /// host to the iroh port on every build, and every dial must still reach
-  /// the server's own EndpointId. The old direct addresses are kept on
-  /// purpose: they are where the server lives when it goes home again.
-  ///
-  /// An address that is not an http(s) origin (the server sends "" when it
-  /// has none yet) changes nothing and still returns the live status.
-  pub async fn rehome(&self, reported: &str) -> Result<ReachStatus> {
-    if let Some(origin) = virtues_reach_client::lan_origin(reported) {
-      let mut rec = self
-        .store
-        .load()?
-        .ok_or_else(|| Error::Reach("not paired".into()))?;
-      if rec.box_url != origin {
-        rec.box_url = origin;
-        self.store.save(&rec)?;
-      }
-      // Build BEFORE retiring the old client, so a failed build leaves the
-      // loopback with the connection it had rather than none.
-      match virtues_reach_client::build_client(&rec).await {
-        Ok(fresh) => {
-          let old = WARM_CLIENT.lock().ok().and_then(|mut g| g.replace(fresh));
-          stats::bump(|s| s.dials += 1);
-          if let Some(c) = old {
-            // Bounded, and off the caller's path: a dead QUIC teardown must
-            // not hold up the status the screen is waiting for.
-            tauri::async_runtime::spawn(async move {
-              let _ = tokio::time::timeout(std::time::Duration::from_secs(3), c.shutdown()).await;
-            });
-          }
-          tracing::info!("reach: re-homed onto the server's new address");
-        }
-        Err(e) => tracing::warn!(error = %format!("{e:#}"), "reach: re-home build failed; keeping the old connection"),
-      }
-    }
     Ok(self.status().await)
   }
 
@@ -1187,17 +1116,10 @@ impl<R: Runtime, T: Manager<R>> ReachExt<R> for T {
   }
 }
 
-// The Swift half (`ios/Sources/ReachPlugin.swift`): the CoreBluetooth Improv
-// client, for claiming and provisioning an appliance over BLE from inside the
-// app. (Its previous job — NEHotspotConfiguration wifi joins for the SoftAP
-// flow — was deleted 2026-08-18; see `commands.rs`.)
+// The Swift half (`ios/Sources/ReachPlugin.swift`): load-time setup only
+// (backup exclusion, the widget's App Group path, the share inbox).
 #[cfg(target_os = "ios")]
 tauri::ios_plugin_binding!(init_plugin_reach);
-
-/// Handle to the registered iOS plugin, for `run_mobile_plugin` calls.
-/// Managed state so commands can reach it; iOS-only by construction.
-#[cfg(target_os = "ios")]
-pub(crate) struct IosPluginHandle<R: Runtime>(pub tauri::plugin::PluginHandle<R>);
 
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
   // FIRST, synchronously, before anything spawns: the process-default rustls
@@ -1214,18 +1136,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
       commands::reach_status,
       commands::forget,
       commands::discover,
-      commands::provision_open,
-      commands::provision_networks,
-      commands::provision_join,
-      commands::improv_discover,
-      commands::improv_claim,
-      commands::improv_grant,
-      commands::improv_wifi_scan,
-      commands::improv_provision,
-      commands::improv_pair,
-      commands::improv_disconnect,
-      commands::improv_owner_claim,
-      commands::reach_rehome,
       commands::outbox_stats,
       commands::drain_now,
       commands::radio_stats,
@@ -1239,11 +1149,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
     .setup(|app, _api| {
       #[cfg(target_os = "ios")]
       {
-        match _api.register_ios_plugin(init_plugin_reach) {
-          Ok(handle) => {
-            app.manage(IosPluginHandle(handle));
-          }
-          Err(e) => tracing::error!(error = %e, "reach: iOS plugin registration failed — wifi join unavailable"),
+        if let Err(e) = _api.register_ios_plugin(init_plugin_reach) {
+          tracing::error!(error = %e, "reach: iOS plugin registration failed");
         }
       }
       // Android: pin the storage base to the app-private sandbox BEFORE anything
