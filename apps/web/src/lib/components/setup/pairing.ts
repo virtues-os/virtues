@@ -81,3 +81,19 @@ export function pairError(
 	}
 	return { paired: false, text: "Pairing didn't finish. Try again with a fresh code from virtues pair." };
 }
+
+/**
+ * A server's name for a list: what discovery reports ("virtues",
+ * "virtues-4812"), less the product name, and "Your server" when nothing is
+ * left.
+ */
+export function serverLabel(name: string | null | undefined): string {
+	const rest = String(name || '')
+		.replace(/^[^A-Za-z0-9]+|[^A-Za-z0-9]+$/g, '')
+		.replace(/^Virtues[-_ ]?/i, '')
+		.replace(/[-_]+/g, ' ')
+		.replace(/^box$/i, '')
+		.trim();
+	if (/^\d+$/.test(rest)) return `Virtues ${rest}`;
+	return rest || 'Your server';
+}

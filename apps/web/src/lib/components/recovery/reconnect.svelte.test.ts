@@ -7,10 +7,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ReachPort, ReachStatus } from './reconnect';
 
-vi.mock('$lib/tauri/boxRadio', () => ({
-	boxRadio: { available: true, discover: vi.fn(async () => []) },
-	BoxRadioError: class extends Error {},
-}));
+vi.mock('$lib/utils/platform', () => ({ isTauri: true, isIOS: false, isMacOS: true, isWindows: false, isLinux: false }));
 vi.mock('$lib/components/setup/prepair.svelte', () => ({ prePair: { startOver: vi.fn() } }));
 
 const { Reconnect } = await import('./reconnect.svelte');
@@ -22,7 +19,6 @@ const MISSING = "This Mac's device key is missing. Pair this Mac again to reach 
 function port(...answers: ReachStatus[]): ReachPort & { forget: ReturnType<typeof vi.fn> } {
 	return {
 		status: vi.fn(async () => answers.length > 1 ? answers.shift()! : answers[0]),
-		rehome: vi.fn(async () => true),
 		forget: vi.fn(async () => {}),
 		online: () => true,
 	};

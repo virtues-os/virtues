@@ -8,18 +8,14 @@
   to become. The four rules are in agents/build/onboarding.md, "Four rules for the setup flow".
 
   The steps, in `ORDER` (setup.svelte.ts): Welcome (the cold open, with light
-  or dark), the founder's letter, Server, Account and Wi-Fi (hardware only),
-  Connections, Subscription, Names. Connections can be skipped; the rest are
-  required.
+  or dark), the founder's letter, Server, Connections, Subscription, Names.
+  Connections can be skipped; the rest are required.
 
-  THE FIRST HALF (Account, Server, Wi-Fi, and pairing at Wi-Fi's end) runs
-  here only before this device has a server: on the iPhone, whose shell
-  opens /setup from its own copy of the app when unpaired, or in dev with
-  `?radio=fake` (prepair.svelte.ts). Anywhere else those three are done by
-  construction. On hardware the account comes before Wi-Fi because its
-  grant has to cross the Bluetooth link before pairing; a self-installed
-  server pairs with no account, and the subscription step signs in.
-  Connections carries a Skip, and "Finish later" opens the app with it
+  THE FIRST HALF (Server: finding it and pairing) runs here only before this
+  device has a server: on the iPhone and the Mac, whose shells open /setup
+  from their own copy of the app when unpaired, or in dev with `?radio=fake`
+  (prepair.svelte.ts). Anywhere else it is done by design. Pairing needs no
+  account; the subscription step signs in. Connections carries a Skip, and "Finish later" opens the app with it
   waiting on the rail's Setup tile. Setup ends once, with the dots drawing
   together into the ∴ and the app opening beneath it.
 
@@ -49,10 +45,7 @@
 	import { setup, isSetupStep, intoLabel, type SetupStepId } from "$lib/components/setup/setup.svelte";
 	import { score } from "$lib/components/setup/score.svelte";
 	import StepPaired from "$lib/components/setup/steps/StepPaired.svelte";
-	import StepAccount from "$lib/components/setup/steps/StepAccount.svelte";
 	import StepServer from "$lib/components/setup/steps/StepServer.svelte";
-	import StepWifi from "$lib/components/setup/steps/StepWifi.svelte";
-	import StepPairing from "$lib/components/setup/steps/StepPairing.svelte";
 	import { prePair } from "$lib/components/setup/prepair.svelte";
 	import { holdStage } from "$lib/components/setup/inApp";
 	import StepSubscription from "$lib/components/setup/steps/StepSubscription.svelte";
@@ -297,12 +290,6 @@
 		else await finish();
 	}
 
-	/** The link is gone or they chose another server: back to finding it. */
-	async function lost() {
-		await prePair.forget();
-		go("server");
-	}
-
 	/**
 	 * Paired by address and code: wait for the server to answer here (this
 	 * device's connection to it is seconds old), then open this device's own
@@ -323,25 +310,6 @@
 			await new Promise((r) => setTimeout(r, 1500));
 		}
 		go("connections");
-	}
-
-	/**
-	 * Paired: the second half reads the server, in place, so the mark and the
-	 * stage carry on without a reload. If the server can't be read yet (the
-	 * phone's connection to it is seconds old), reload into Setup, which
-	 * then starts from wherever the server says things stand.
-	 */
-	async function paired() {
-		await setup.refresh();
-		if (!gettingStarted.loaded || (!gettingStarted.state && !gettingStarted.unsupported)) {
-			location.replace("/setup");
-			return;
-		}
-		const at = setup.resumeAt;
-		if (at) go(at);
-		else await finish();
-		// The pairing screen stays up until the next step has faded in over it.
-		setTimeout(() => (prePair.handingOver = false), still ? 0 : M.base + M.quick);
 	}
 
 	/**
@@ -494,20 +462,10 @@
 								<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path d="M5 12h13M13 6.5 18.5 12 13 17.5" /></svg>
 							</button>
 						{/if}
-					{:else if step === "account" && prePair.active}
-						<StepAccount onnext={() => advance("account")} />
 					{:else if step === "server" && prePair.active}
-						<StepServer onnext={() => advance("server")} onpaired={pairedByAddress} />
-					{:else if step === "wifi" && (prePair.active || prePair.handingOver)}
-						<!-- Without an open link (a reload drops it) Wi-Fi isn't
-						     reachable, and the step guard sends it back to Server. -->
-						{#if (prePair.link && prePair.online) || prePair.handingOver}
-							<StepPairing onpaired={paired} onlost={lost} />
-						{:else if prePair.link}
-							<StepWifi link={prePair.link} onjoined={() => (prePair.online = true)} onlost={lost} />
-						{/if}
-					{:else if step === "account" || step === "server" || step === "wifi"}
-						<StepPaired which={step} onnext={() => advance(step)} />
+						<StepServer onpaired={pairedByAddress} />
+					{:else if step === "server"}
+						<StepPaired onnext={() => advance("server")} />
 					{:else if step === "subscription"}
 						<StepSubscription onnext={() => advance("subscription")} />
 					{:else if step === "names"}

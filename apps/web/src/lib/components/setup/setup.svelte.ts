@@ -3,8 +3,8 @@
  *
  * ONE PROCESS, ONE WORD (agents/plan/onboarding-diy-plan.md). Setup runs
  * full screen at `/setup`, a dot per step: Welcome (the cold open, and light
- * or dark), the founder's letter, the first half (Server, plus Account and
- * Wi-Fi on hardware), this device's Connections, Subscription, Names, then
+ * or dark), the founder's letter, Server (finding and pairing it), this
+ * device's Connections, Subscription, Names, then
  * the ∴ and the app. Connections can be skipped and "Finish later" opens the
  * app with it waiting on the rail's Setup tile; everything else is required.
  * Chapters and the interview are not part of setup.
@@ -17,11 +17,10 @@
  * only, how far through Welcome and the letter someone has read, which no
  * row can say (see `introStage`).
  *
- * Account, Server and Wi-Fi are the first half, before this device has a
- * server (`prepair.svelte.ts`). On the phone they run here, from the app's
- * own copy; anywhere Setup is reached through a server they are done by
- * construction, since nothing gets there without a paired device on a
- * connected server.
+ * Server is the first half, before this device has a server
+ * (`prepair.svelte.ts`). It runs here from the app's own copy; anywhere
+ * Setup is reached through a server it is done by design, since nothing gets
+ * there without a paired device on a connected server.
  */
 import {
 	getProfile,
@@ -39,9 +38,7 @@ import { prePair } from './prepair.svelte';
 export type SetupStepId =
 	| 'welcome'
 	| 'letter'
-	| 'account'
 	| 'server'
-	| 'wifi'
 	| 'subscription'
 	| 'names'
 	| 'connections';
@@ -71,12 +68,7 @@ export interface SetupStep {
 export const ORDER: SetupStepId[] = [
 	'welcome',
 	'letter',
-	// The search before the account: a server found on the network pairs on
-	// the connect page without one, and hardware asks for it after its four
-	// words, before its grant has to cross Bluetooth (prepair.svelte.ts).
 	'server',
-	'account',
-	'wifi',
 	// This device before the subscription: pairing and collecting need no
 	// account, and Messages and Safari history are the slowest sources to
 	// arrive, so they start while the person finishes the rest.
@@ -92,9 +84,7 @@ export const ORDER: SetupStepId[] = [
 const LABELS: Record<SetupStepId, string> = {
 	welcome: 'Welcome',
 	letter: 'Letter',
-	account: 'Account',
 	server: 'Server',
-	wifi: 'Wi-Fi',
 	subscription: 'Subscription',
 	names: 'Names',
 	connections: 'Connections',
@@ -106,9 +96,7 @@ const OPTIONAL = new Set<SetupStepId>(['connections']);
 export const SERVER: Record<SetupStepId, GettingStartedStepId | null> = {
 	welcome: null,
 	letter: null,
-	account: null,
 	server: null,
-	wifi: null,
 	subscription: 'connect_ai',
 	names: 'introductions',
 	connections: 'connect_world',
@@ -131,9 +119,7 @@ export const IN_APP: SetupStepId[] = ['letter', 'connections', 'subscription', '
 const INTO: Record<SetupStepId, string> = {
 	welcome: 'Begin',
 	letter: 'Read the letter',
-	account: 'Sign in',
 	server: 'Find your server',
-	wifi: 'Connect to Wi-Fi',
 	subscription: 'Choose how your assistant thinks',
 	names: 'Name your assistant',
 	connections: 'Add your devices',
@@ -309,9 +295,7 @@ class SetupStore {
 			return this.introStage >= need || !this.fresh ? 'done' : 'open';
 		}
 		// The first half: settled here, on this device, before any server.
-		if (id === 'account') return !prePair.active || prePair.accountSettled ? 'done' : 'open';
-		if (id === 'server') return !prePair.active || prePair.serverOpen ? 'done' : 'open';
-		if (id === 'wifi') return prePair.active ? 'open' : 'done';
+		if (id === 'server') return prePair.active ? 'open' : 'done';
 		const key = SERVER[id];
 		if (!key) return 'done';
 		const own = gettingStarted.step(key)?.status;
