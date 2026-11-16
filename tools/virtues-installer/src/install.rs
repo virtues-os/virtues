@@ -60,6 +60,65 @@ async fn install_deps_apt(target: &Target) -> Result<()> {
     Ok(())
 }
 
+/// Automatic OS security patching, on every install.
+///
+/// The system layer (kernel, OpenSSL, Postgres, everything from the package
+/// manager) is not carried in a Virtues release, so `virtues upgrade` cannot
+/// patch it. The distro's own updater closes that: the server pulls security
+/// fixes on a timer and applies them itself.
+///
+/// Security updates only, never feature updates, so an unwatched server never
+/// moves a package to a new feature version under itself. No automatic
+/// reboot: userspace fixes apply at once, and a kernel fix waits for the next
+/// reboot the owner chooses.
+///
+/// Fedora is skipped with a pointer to `dnf-automatic`: its configuration has
+/// not been tested here.
+pub async fn enable_security_updates(target: &Target) -> Result<()> {
+    match target.pkg_mgr {
+        PkgMgr::Apt => enable_unattended_upgrades().await,
+        PkgMgr::Dnf => {
+            ui::skip("Automatic security updates: turn on dnf-automatic to have Fedora apply them");
+            Ok(())
+        }
+    }
+}
+
+async fn enable_unattended_upgrades() -> Result<()> {
+    apt_install("Automatic security updates", &["unattended-upgrades"]).await?;
+
+    fs::create_dir_all("/etc/apt/apt.conf.d").context("mkdir apt.conf.d")?;
+    fs::write(
+        "/etc/apt/apt.conf.d/20auto-upgrades",
+        "APT::Periodic::Update-Package-Lists \"1\";\n\
+         APT::Periodic::Unattended-Upgrade \"1\";\n",
+    )
+    .context("writing 20auto-upgrades")?;
+    fs::write("/etc/apt/apt.conf.d/52virtues-unattended", UNATTENDED_CONF)
+        .context("writing 52virtues-unattended")?;
+
+    // The timers ship disabled on some server images; enable them explicitly.
+    for timer in ["apt-daily.timer", "apt-daily-upgrade.timer"] {
+        systemctl_try(&["enable", "--now", timer]).await;
+    }
+    ui::ok("Automatic OS security updates on (security fixes only, no automatic reboot)");
+    Ok(())
+}
+
+const UNATTENDED_CONF: &str = r#"// Installed by virtues-installer.
+// Security fixes only, never feature updates on an unwatched server.
+Unattended-Upgrade::Allowed-Origins {
+    "${distro_id}:${distro_codename}-security";
+    "${distro_id}ESMApps:${distro_codename}-apps-security";
+    "${distro_id}ESM:${distro_codename}-infra-security";
+};
+// Never reboot the server out from under its owner. Userspace fixes apply
+// immediately; a kernel fix waits for the next reboot.
+Unattended-Upgrade::Automatic-Reboot "false";
+Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+Unattended-Upgrade::Remove-New-Unused-Dependencies "true";
+"#;
+
 async fn install_deps_dnf() -> Result<()> {
     // UNVERSIONED, unlike the apt path's pinned `postgresql-18`, so a Fedora
     // box gets whatever its release ships — 16 or 17 today. That asymmetry is

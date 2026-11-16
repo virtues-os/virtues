@@ -68,6 +68,11 @@ After you answer, the installer finishes the install, which takes about ten
 minutes, and ends by printing a six-digit pairing code and your server's
 addresses.
 
+On Ubuntu and Debian, the installer also turns on your distribution's
+automatic security updates. They apply security fixes only, never feature
+updates, and never restart the server on their own; a kernel fix waits for
+the next time you restart it.
+
 ## Next steps
 
 With the pairing code on screen, pair your first device:

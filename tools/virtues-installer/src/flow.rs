@@ -91,6 +91,7 @@ pub async fn run(cli: Config) -> Result<()> {
     ui::section("System packages");
     install::ensure_utf8_locale().await?;
     install::install_deps(&target).await?;
+    install::enable_security_updates(&target).await?;
     install::configure_mdns().await?;
 
     install::create_user(&cfg).await?;
