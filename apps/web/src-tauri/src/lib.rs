@@ -616,7 +616,7 @@ pub fn run() {
       // overlay present this behaves exactly as before.
       //
       // UNPAIRED, THE iPHONE OPENS SETUP (2026-09-27). Setup's first half
-      // (sign in, find the server, its four words, Wi-Fi, pair) runs from
+      // (find the server, pair by address and code) runs from
       // this app's own baked copy, over the same reach commands the connect
       // page used (apps/web/src/lib/components/setup/prepair.svelte.ts), so
       // the flow runs unbroken from Welcome to the app. A route path is

@@ -51,9 +51,6 @@ async fn names(pool: &sqlx::PgPool) -> (Option<String>, Option<String>) {
 /// house tells no two servers apart (2026-09-28). "Ari's server" only until
 /// the owner has said what to call them.
 ///
-/// The radio name stays machine-shaped (`Virtues-4812`, `setup_ap::ap_ssid`):
-/// a claimed box only advertises while it is offline, and an apostrophe has
-/// no business in an SSID.
 pub async fn box_label(pool: &sqlx::PgPool) -> String {
     if crate::api::pair::is_unclaimed(pool).await {
         return format!("Virtues {}", crate::codename::box_number());

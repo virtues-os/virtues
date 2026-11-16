@@ -1,7 +1,7 @@
 //! Universal rotating pairing code.
 //!
-//! Keeps a fresh standing pair code alive at all times so the panel and
-//! `virtues pair` always have a valid code to show. Mints a new code every
+//! Keeps a fresh standing pair code alive while the server is unclaimed, so
+//! `virtues pair` always has a valid code to show. Mints a new code every
 //! `STANDING_ROTATE_INTERVAL_MIN`; the previous code stays valid for
 //! `STANDING_GRACE_MIN` (the overlap window), so a code read mid-rotation never
 //! dies under the user. Expired rows are pruned by `maintenance::sweeper`.

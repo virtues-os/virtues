@@ -85,8 +85,7 @@ pub fn run() {
 }
 
 /// Dev Macs (and anything else non-Linux) compile repairs out entirely; every
-/// invariant here is about an installed box's layout. Same shape as the
-/// `ble_provision` stub.
+/// invariant here is about an installed box's layout.
 #[cfg(not(target_os = "linux"))]
 pub fn run() {}
 

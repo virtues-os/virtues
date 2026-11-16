@@ -76,11 +76,9 @@ pub async fn run(keep_data: bool, yes: bool, force: bool) -> Result<(), crate::E
     // standing in a database that had just reported itself erased. On this
     // machine that was three schemas of the owner's own data.
     //
-    // The consequence was not a tidiness problem. `deprovision` delegates the
-    // database wipe here, and deprovision is what runs immediately before a
-    // disk is imaged — so the owner's personal applet data would have been
-    // cloned onto every unit shipped from that master, invisibly, since nothing
-    // downstream looks inside the database it was told had been emptied.
+    // The consequence was not a tidiness problem: a reset that reports the
+    // database erased while the owner's applet data stays in it is a false
+    // claim about where their data is.
     //
     // `LIKE 'applet\_%'` with the underscore escaped: unescaped, `_` is a
     // single-character wildcard and would also match a schema called
@@ -114,7 +112,7 @@ pub async fn run(keep_data: bool, yes: bool, force: bool) -> Result<(), crate::E
                   migrations created functions with OR REPLACE; the squashed \
                   0001 is pg_dump output, which does not, so the first \
                   post-squash reset collided on search_embeddings_derive_id \
-                  and every reset/deprovision died at migration 1 — found \
+                  and every reset died at migration 1 — found \
                   sealing the first master, 2026-08-18. The deptype filter is \
                   load-bearing: pgvector's functions are extension-owned, and \
                   dropping them cascades the extension away on a box whose \

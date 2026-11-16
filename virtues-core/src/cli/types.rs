@@ -23,8 +23,8 @@ pub(crate) fn default_port() -> u16 {
 /// sets its noise floor.
 ///
 /// Deliberately absent: the root-only lifecycle verbs (`upgrade`, `prepare`,
-/// `activate`, `auto-update`, `rollback`, `deprovision`, `uninstall`,
-/// `image-check`, `bringup`), which drive systemd and must not drop
+/// `activate`, `auto-update`, `rollback`, `uninstall`, `bringup`), which
+/// drive systemd and must not drop
 /// privilege.
 pub const RUNS_AS_SERVICE_USER: &[&str] = &[
     "init", "pair", "link", "login", "subscribe", "backup", "reset", "status",
@@ -543,44 +543,6 @@ pub enum Commands {
         #[arg(long)]
         force: bool,
     },
-
-    /// Strip every per-unit identity so this box's disk can be imaged and
-    /// cloned. The LAST command before a box ships or its boot card is `dd`'d.
-    ///
-    /// Not a reset and not an uninstall — the software stays installed and
-    /// configured. It removes only what must be unique per unit: the database
-    /// (which holds the iroh secret that IS the box's network identity), the
-    /// lake, `VIRTUES_ENCRYPTION_KEY`, machine-id, SSH host keys, and saved
-    /// wifi. Each clone re-mints them on first boot.
-    ///
-    /// Cloning without this ships every unit as the same box: one EndpointId
-    /// across the fleet, and one data-at-rest key. Neither is visible on the
-    /// bench and neither is fixable in the field.
-    #[command(hide = true)]
-    Deprovision {
-        /// Skip the typed-hostname confirmation (scripts/CI).
-        #[arg(long)]
-        yes: bool,
-
-        /// Bypass the "service is running" check.
-        #[arg(long)]
-        force: bool,
-    },
-
-    /// Is this disk safe to image and clone? Read-only; changes nothing.
-    ///
-    /// The gate between `virtues deprovision` and `dd`. Deprovision reports
-    /// success and tells you to power off, and until now that was the whole
-    /// assurance — nothing ever re-checked the result. A per-unit secret that
-    /// survived into a master image is invisible on the bench and catastrophic
-    /// in the field: the iroh secret IS the box's identity, so clones of an
-    /// un-deprovisioned master are literally the same box, and one leaked
-    /// encryption key decrypts every unit ever shipped.
-    ///
-    /// Exits non-zero on any finding, so it can be the last line of a
-    /// manufacturing script. See agents/build/appliance-image.md.
-    #[command(name = "image-check")]
-    ImageCheck,
 
     /// Self-update from the latest GitHub Release, via atomic release slots.
     ///

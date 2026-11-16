@@ -10,8 +10,7 @@
 //!   heredoc, so the whole line is read).
 //! - A shell line asks when one of its commands deletes files outside /tmp,
 //!   wipes or repartitions a disk, drops a database or role, or runs a
-//!   `virtues` verb that erases the box (`reset`, `uninstall`, `deprovision`,
-//!   `restore`). Wrappers (`sudo`, `doas`, `runuser`, `env`, `nice`,
+//!   `virtues` verb that erases the box (`reset`, `uninstall`, `restore`). Wrappers (`sudo`, `doas`, `runuser`, `env`, `nice`,
 //!   `timeout`, `stdbuf`), the shell keywords that start a command (`{`,
 //!   `if`, `!`), and the programs that run another command line (`bash -c`,
 //!   `script -c`, `eval`, `watch`, `xargs`, `find -exec`) are looked through.
@@ -146,7 +145,7 @@ fn command_destroys(words: &[String]) -> bool {
         | "mke2fs" => !has(&["-l", "--list"]),
         p if p.starts_with("mkfs") => true,
         "dropdb" | "dropuser" | "pg_dropcluster" | "pg_resetwal" | "pg_resetxlog" => true,
-        "virtues" => matches!(first_positional(args), Some("reset" | "uninstall" | "deprovision" | "restore")),
+        "virtues" => matches!(first_positional(args), Some("reset" | "uninstall" | "restore")),
         // Programs that run another command line: what they run is checked.
         "xargs" => command_destroys(skip_flags(args, XARGS_VALUE_FLAGS)),
         "eval" => line_deletes(&args.join(" ")),

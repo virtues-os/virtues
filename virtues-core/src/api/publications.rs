@@ -77,7 +77,7 @@ const DEV_STATE_DIR_FROM_CORE: &str = "../.publication-state";
 /// Where publication state lives: `VIRTUES_PUBLICATIONS_DIR`, then the box's
 /// data directory, then a gitignored folder in a dev checkout. It holds the
 /// shared pages and the door's key file, so `crate::box_files` lists it for
-/// `reset`, `deprovision` and `image-check`.
+/// `reset`.
 pub(crate) fn state_dir() -> PathBuf {
     if let Ok(dir) = std::env::var("VIRTUES_PUBLICATIONS_DIR") {
         if !dir.is_empty() {
@@ -175,7 +175,7 @@ async fn door_key_with_file(pool: &PgPool, key_file: &Path) -> Result<[u8; 32]> 
 ///
 /// A database without the key row is either one from before the key moved
 /// into the database, whose links name the key in the file, or one that was
-/// just reset, deprovisioned or created on a disk where an earlier database
+/// just reset or created on a disk where an earlier database
 /// left the file. Only the first lists publications: `create`, `update` and
 /// `list` all ask for the key before they write or read a row, so a fresh
 /// database has none when it gets here. Adopting the file there would hand

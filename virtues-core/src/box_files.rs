@@ -1,10 +1,8 @@
 //! Files outside the database that belong to one box and its owner.
 //!
-//! `virtues deprovision` removes every one of them, `virtues reset` removes
-//! the ones that copy rows it drops, and `virtues image-check` fails while any
-//! of them holds a file. All three read [`all`], so a writer that leaves a
-//! per-box secret on the disk is added here once and is then cleaned and
-//! checked everywhere.
+//! `virtues reset` removes the ones that copy rows it drops. It reads [`all`],
+//! so a writer that leaves a per-box file on the disk is added here once and
+//! is then handled everywhere.
 //!
 //! Each path comes from the function its writer uses, so the list cannot
 //! point somewhere the writer does not write. The database, the lake, the env
@@ -21,8 +19,7 @@ pub enum OnReset {
     /// Kept, the way reset keeps `VIRTUES_ENCRYPTION_KEY`. A reset is the same
     /// owner starting over, and this file belongs to the owner rather than to
     /// the database. Also for a folder that can hold root's files, which reset
-    /// cannot remove because it runs as the service user; `deprovision` runs as
-    /// root and removes it.
+    /// cannot remove because it runs as the service user.
     Keep,
 }
 
@@ -163,7 +160,7 @@ mod tests {
 
     /// The same owner keeps the recipient through a reset, and the copies of
     /// dropped rows go. Reset also leaves the staging folder, which can hold
-    /// root's files, to `deprovision`.
+    /// root's files.
     #[test]
     fn reset_keeps_only_what_belongs_to_the_owner_or_to_root() {
         let kept: Vec<_> = all().into_iter().filter(|f| f.on_reset == OnReset::Keep).map(|f| f.what).collect();
@@ -171,7 +168,7 @@ mod tests {
     }
 
     /// Backup and restore stage plaintext where `staging_root` says, so that is
-    /// the folder `deprovision` removes and `image-check` looks in.
+    /// the folder listed.
     #[test]
     fn the_staging_folder_is_listed_where_backup_stages() {
         let staging = all().into_iter().find(|f| f.what == "backup staging folder").expect("not listed");

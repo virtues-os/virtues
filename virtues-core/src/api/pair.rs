@@ -98,9 +98,7 @@ fn random_pair_code() -> String {
 /// the box itself is authenticated — so a bare `count(*) FROM app_device` is
 /// `1` on a box nobody has ever touched. Anything asking "has someone claimed
 /// this box" and counting rows naively gets `true` from the moment it powers
-/// on. Found on a fresh Dragon 2026-08-07, where it silently disabled the whole
-/// appliance onboarding path: the setup AP never rose, `/api/provision/*` 404'd,
-/// and the display skipped to its ambient screen.
+/// on.
 ///
 /// `api::box_status::compute_setup_state` deliberately still counts the console
 /// row. Its `claimed` step is in `REQUIRED_SETUP_STEPS`, so making it honest
@@ -122,14 +120,12 @@ pub(crate) async fn try_paired_device_count(pool: &PgPool) -> Result<i64, sqlx::
     .await
 }
 
-/// Whether this box can be CONFIRMED to have no paired device — the predicate
-/// that opens the setup surface (BLE advertising, the AP, `/api/provision/*`,
-/// the panel's setup screens).
+/// Whether this box can be CONFIRMED to have no paired device: the predicate
+/// behind the standing pair code and the unclaimed server's identity.
 ///
 /// It FAILS CLOSED: a DB error returns `false` (assume claimed), because the
-/// cost of a wrong "unclaimed" is a claimed box reopening its provisioning
-/// surface to the LAN, while the cost of a wrong "claimed" is only a delayed
-/// setup screen. `paired_device_count().unwrap_or(0)` — which every door used
+/// cost of a wrong "unclaimed" is a claimed box handing out a standing pair
+/// code, while the cost of a wrong "claimed" is only a delayed setup screen. `paired_device_count().unwrap_or(0)` — which every door used
 /// to call — failed the opposite way: a transient blip read as "nobody has
 /// paired, open everything." (Setup-runtime audit, 2026-08-19.)
 pub async fn is_unclaimed(pool: &PgPool) -> bool {
@@ -510,22 +506,13 @@ pub async fn reopen_onboarding_handler(
 ///
 /// Returns how many devices were revoked.
 ///
-/// **This is the whole of "reset".** Shared by the app's
-/// `/api/pair/reopen-onboarding` and the appliance's physical button
-/// (`maintenance::reset_button`) so the two cannot drift — a physical control
-/// and a software one that do subtly different things is how an owner ends up
-/// unable to predict what their own hardware will do.
+/// **This is the whole of "reset"** behind the app's
+/// `/api/pair/reopen-onboarding`.
 ///
 /// ## What it deliberately does NOT touch
 ///
-/// The network, the account link, the data, and the phrase. `onboarding-paradigm.md`
-/// originally had the button forget the network and unlink the account too; that
-/// is worse on every axis. It adds no security — the phrase is the entire gate,
-/// and a stranger with a screwdriver still cannot claim the box without four
-/// words that are frozen and shown nowhere — while it actively harms the case
-/// the button exists for. The owner who has lost their laptop presses it and now
-/// has a box that is also offline and unlinked, so it can reach neither the
-/// relay nor atlas: recovery got harder, in exchange for nothing.
+/// The account link and the data. An owner who lost a device re-pairs, and
+/// nothing about their server should be harder to reach afterwards.
 ///
 /// Credentials go with the devices deliberately. Leaving them active would let a
 /// revoked device keep talking, which is the whole thing being undone.
@@ -551,8 +538,8 @@ pub async fn revoke_all_devices(pool: &PgPool) -> Result<u64, sqlx::Error> {
     //
     // A device is a row in `app_device`. Credentials belong to SOURCES.
     tx.commit().await?;
-    // The box is unclaimed again, so the Improv service should come back and the
-    // panel should return to a setup screen. Both reconcile on their own timers.
+    // The server is unclaimed again, so the pair rotator mints a standing code
+    // on its next tick.
     Ok(devices)
 }
 

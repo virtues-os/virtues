@@ -9,8 +9,6 @@ pub mod commands;
 pub mod agent_key;
 pub mod configure_inference;
 pub mod data;
-pub mod deprovision;
-pub mod image_check;
 pub mod diag;
 pub mod doctor;
 pub mod lake_adopt;
@@ -47,12 +45,6 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // Handled in main.rs before the Virtues client is created — it
             // only needs the DB pool, not the full app stack.
             unreachable!("Pair command should be handled in main.rs");
-        }
-
-        Commands::ImageCheck => {
-            // Handled in main.rs: it runs on a DEPROVISIONED box, which by
-            // definition has no database for the app stack to open.
-            unreachable!("ImageCheck command should be handled in main.rs");
         }
 
         Commands::Device { .. } => {
@@ -162,12 +154,6 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             unreachable!("Reset command should be handled in main.rs");
         }
 
-        Commands::Deprovision { .. } => {
-            // Same — it wraps Reset and then edits files under /etc, so it
-            // must not need a healthy app stack.
-            unreachable!("Deprovision command should be handled in main.rs");
-        }
-
         Commands::ConfigureInference { .. } => {
             // Same — must run before the app builds the guarded embedder, which
             // would fail on the fingerprint mismatch this command fixes.
@@ -260,8 +246,7 @@ pub async fn run(cli: Cli, virtues: Virtues) -> Result<(), Box<dyn std::error::E
             // The server has stopped and flushed its saves. Exit here instead
             // of returning into the runtime's drop, which waits for every
             // `spawn_blocking` task to end — and a watcher that reads a device
-            // forever (the Dragon's power key, `maintenance::reset_button`)
-            // never does. Every restart, so every self-update, sat out
+            // forever never does. Every restart, so every self-update, sat out
             // systemd's 90s stop timeout and ended in SIGKILL.
             std::process::exit(0);
         }

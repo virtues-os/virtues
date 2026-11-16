@@ -170,8 +170,8 @@ mod tests {
 /// the app, and the display. It exists because two boxes on one LAN rendered
 /// as two identical "Virtues box" chips (seen live 2026-08-10: a prod and a
 /// test box in one house), and a hex suffix disambiguates worse than a name a
-/// human can say out loud. Machine-id is re-minted per unit at first boot
-/// (`deprovision` truncates it), so clones of one image never share a name.
+/// human can say out loud. Each machine has its own machine-id, so two
+/// servers never share a name.
 ///
 /// It is a LABEL, not authorization — the pair code only works on the box
 /// that displayed it, so a mistaken chip tap fails closed.

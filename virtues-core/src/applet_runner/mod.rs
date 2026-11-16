@@ -933,7 +933,7 @@ pub(crate) struct RunFile {
 
 impl RunFile {
     /// The folder every run file lives in. `crate::box_files` lists it, so
-    /// `reset` and `deprovision` remove it and `image-check` looks in it.
+    /// `reset` removes it.
     pub(crate) fn dir() -> std::path::PathBuf {
         crate::data_disk::data_dir().join("applet-env")
     }

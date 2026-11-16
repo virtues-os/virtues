@@ -861,9 +861,8 @@ pub async fn activate_prepared() -> Result<(), crate::Error> {
     // both use this and document why (a box's tag is baked, the binary's
     // CARGO_PKG_VERSION is whatever it was compiled as). Activation had neither
     // this nor the downgrade guard below, so a staged release could move a box
-    // BACKWARDS with no check — which is exactly how a master that baked in an
-    // older stable build (before deprovision learned to strip staged releases)
-    // would have flipped a customer's box on their first update click.
+    // BACKWARDS with no check, so a stale staged release could flip a box to
+    // an older build on its next update.
     let current = super::super::codename::version();
     let current = current.trim_start_matches('v');
 

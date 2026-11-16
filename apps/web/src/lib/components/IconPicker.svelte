@@ -100,8 +100,7 @@
 
 	// The full Unicode set, lazy-loaded with its names and keywords so search
 	// can find "dog" rather than only the pasted glyph. Emoji newer than 15.1
-	// are left out: older systems, and the kiosk's emoji font, draw them as
-	// empty boxes. Skin-tone variants are left out too; the base glyph is the
+	// are left out: older systems draw them as empty boxes. Skin-tone variants are left out too; the base glyph is the
 	// icon.
 	const EMOJI_MAX_VERSION = 15.1;
 	const EMOJI_COMPONENT_GROUP = 2;
