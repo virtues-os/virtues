@@ -226,9 +226,11 @@ pub fn ssh_forward_host() -> String {
 // Headless DIY installs happen over SSH (`ssh box`, then `curl | sudo sh`,
 // which execs `sudo -u virtues virtues init`). On client-isolated wifi the
 // printed LAN URL never loads — but the SSH session itself is a working
-// transport: `ssh -L 8000:localhost:8000 user@box` and the pair page opens at
-// http://localhost:8000. We never install or enable sshd; we only notice a
-// session that already exists and print the concrete forward command.
+// transport: `ssh -L 8000:localhost:8000 user@box` gives the app a route to
+// pair over, with the code. A browser uses the console socket instead
+// (`crate::console_socket`). We never install or enable sshd; we only
+// notice a session that already exists and print the concrete forward
+// command.
 
 /// Evidence this CLI invocation arrived over SSH.
 pub struct SshContext {
@@ -458,7 +460,7 @@ pub async fn wait_for_new_device(pool: &sqlx::PgPool) -> anyhow::Result<()> {
                     println!("  (common in offices, hotels, WeWork). You're on SSH, so forward");
                     println!("  the port from your laptop and open it there:");
                     println!("    ssh -L {INTERNAL_PORT}:localhost:{INTERNAL_PORT} {target}");
-                    println!("    then open http://localhost:{INTERNAL_PORT} in the app or browser");
+                    println!("    then give the app this address:  http://localhost:{INTERNAL_PORT}");
                 }
                 None => {
                     println!("  Still waiting — if the app or page won't load, this network may");

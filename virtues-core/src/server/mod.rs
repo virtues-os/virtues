@@ -54,6 +54,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     // helper. See `crate::relay`.
     crate::relay::maybe_spawn(client.database.pool().clone(), app.clone());
 
+    // The console: the owner's way in from this machine, on a Unix socket
+    // that knows who is calling. See `crate::console_socket`.
+    crate::console_socket::spawn(app.clone());
+
     // The door serves shared links, as its own process with its own key, and
     // only while something is shared. See `crate::door`.
     crate::door::maybe_spawn(client.database.pool().clone());
@@ -77,11 +81,10 @@ pub async fn run(client: Virtues, host: &str, port: u16) -> Result<()> {
     };
     tracing::info!("Open the Virtues web UI at {shown}  ·  run `virtues status` for setup steps");
 
-    // Plain HTTP on :8000 is the only listener. The box has no TLS surface —
-    // paired daemons reach the box over iroh (which provides encryption
-    // + authentication), and the box's own browser hits localhost (Secure
-    // Context per W3C, no cert required). See [[localhost-daemon-trust]] in
-    // MEMORY.md for the architectural commitment.
+    // Plain HTTP on :8000, beside the console socket spawned above. The box
+    // has no TLS surface: paired devices reach it over iroh, which provides
+    // encryption and authentication, and the owner's own machine reaches it
+    // on the console socket.
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
@@ -157,9 +160,8 @@ async fn preflight(client: &Virtues) {
     // root repair `db-logins` does it on upgrade.
     crate::database::restricted::ensure_logins(pool).await;
 
-    // Eager identity bringup: ensure the loopback console device exists so the
-    // box's own browser is authenticated. (The box's TLS identity is its own
-    // cert, obtained at relay spawn; no keypair to mint here.)
+    // Eager identity bringup: ensure the console device row exists, so the
+    // console socket's callers have a device to be (`crate::console_socket`).
     if let Err(e) = crate::middleware::auth::ensure_console_device(pool).await {
         tracing::warn!("identity bringup: ensure_console_device failed: {e}");
     }
@@ -642,7 +644,7 @@ fn public_routes() -> Router<AppState> {
 }
 
 /// Everything that requires a resolved `AuthUser` (proven iroh key /
-/// loopback console / dev fallback): each area's `routes()`, plus the
+/// console socket / dev fallback): each area's `routes()`, plus the
 /// devices, pairing, owner proof, audit, maps and terminal routes that belong
 /// to no area.
 fn protected_routes(state: &AppState) -> Router<AppState> {
@@ -719,7 +721,7 @@ fn protected_routes(state: &AppState) -> Router<AppState> {
                 .layer(DefaultBodyLimit::max(25 * 1024 * 1024)),
         )
         // Blanket auth: all routes in this group require a resolved AuthUser
-        // (proven iroh key / loopback console / dev fallback). `route_layer`
+        // (proven iroh key / console socket / dev fallback). `route_layer`
         // covers only the routes present when it is called, so every merge
         // and route above must stay above it.
         .route_layer(middleware::from_extractor_with_state::<AuthUser, _>(state.clone()))

@@ -10,7 +10,8 @@
 //!
 //! So the CLI sends the tool here and the server runs it through the same
 //! executor chat uses. Only the local console may call it: a process on the
-//! box itself, over loopback, which is what `virtues` on the box is. Each call
+//! box itself, on the console socket (`crate::console_socket`), which is what
+//! `virtues` on the box is. Each call
 //! logs one audit line, which is the record of what an outside agent changed.
 //! The plan is agents/plan/cli-data-verbs-plan.md.
 

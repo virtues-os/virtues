@@ -280,7 +280,7 @@ it ships.
 
 | Situation | Behavior |
 |---|---|
-| **Client-isolated wifi** (offices, hotels) | The SSH session the install ran in is the transport. The handoff prints `ssh -L 8000:localhost:8000 user@server` and "give the app this address: http://localhost:8000", with port 18000 as the fallback when 8000 is busy. The app pairs through the forward. A browser opened at the forwarded address arrives from loopback, which `middleware/auth.rs` treats as the local console when no forwarding header is present. |
+| **Client-isolated wifi** (offices, hotels) | The SSH session the install ran in is the transport. The handoff prints `ssh -L 8000:localhost:8000 user@server` and "give the app this address: http://localhost:8000", with port 18000 as the fallback when 8000 is busy. The app pairs through the forward. A browser opened at the forwarded address arrives over loopback TCP, which an installed server treats like any unpaired device; a browser uses `ssh -L 8000:/run/virtues/console.sock` instead, which is the owner for a login in `virtues-console` (`console_socket.rs`). |
 | **Nobody pairs within 90 seconds** | `virtues pair` (`wait_for_new_device`) prints a hint that the network may block device-to-device traffic: the forward recipe over SSH, otherwise a hotspot or a network you control. |
 | **The app's search finds nothing** | Server falls back to address and code. Every printed handoff lists the raw LAN IP beside the mDNS name. |
 | **Server set up in one place and moved** | Reachability is assessed wherever the server runs. Setup never depends on inbound reachability; remote access is the server dialing out to the relay. |

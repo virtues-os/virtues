@@ -13,8 +13,8 @@
 //!
 //! The relay itself does not care how a request reaches the box: [`serve`]
 //! takes a [`Forwarder`]. The Mac app passes its iroh client; the box's own
-//! `virtues mcp` passes [`Loopback`], for an agent that reaches the box over
-//! SSH with an agent key.
+//! `virtues mcp` passes its console socket, or [`Loopback`] on a developer's
+//! server, for an agent that reaches the box over SSH with an agent key.
 
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -128,9 +128,10 @@ pub async fn serve_stdio(store: &AgentStore) -> Result<()> {
     serve(Arc::new(client), Vec::new()).await
 }
 
-/// A server on this machine, reached over loopback TCP. The box authenticates
-/// a loopback caller as its local console, so this is for a process on the
-/// box itself.
+/// A server on this machine, reached over loopback TCP. Only a developer's
+/// server (`ENVIRONMENT=dev`) takes a loopback caller as the owner; an
+/// installed server's own `virtues mcp` reaches it through its console
+/// socket instead.
 pub struct Loopback {
     addr: SocketAddr,
 }

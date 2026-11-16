@@ -874,9 +874,10 @@ pub async fn create_user(cfg: &InstallConfig) -> Result<()> {
     // Passwordless sudo for the owner's admin shell. `virtues` is a system
     // account with no password, so interactive sudo has nothing to authenticate
     // against — NOPASSWD is the only thing that works, not just a convenience.
-    // Safe here because the only way to reach a `virtues` shell is the
-    // auth-gated web terminal (WG/SPKI + session); there's no local login
-    // (shell is /usr/sbin/nologin). Drop-file at 0440, the mode sudo requires.
+    // Safe here because the only way to reach a `virtues` shell is the web
+    // terminal, which takes a paired device with the app's owner proof or
+    // the console socket's owner (`console_socket.rs`); there's no local
+    // login (shell is /usr/sbin/nologin). Drop-file at 0440, the mode sudo requires.
     let sudoers = "/etc/sudoers.d/virtues";
     fs::write(sudoers, "virtues ALL=(ALL) NOPASSWD: ALL\n")
         .with_context(|| format!("writing {sudoers}"))?;
@@ -1441,8 +1442,9 @@ RestartSec=5
 #   ProtectKernel*/ControlGroups      — blocked sysctl + cgroup writes.
 #   RestrictNamespaces                — blocked containers (podman/unshare).
 # The box is a single-tenant, owner-operated server; that shell IS the admin
-# surface and its security boundary is the WG/SPKI + session auth in front of
-# /ws/terminal, not this sandbox. TRADE-OFF: the network-facing app on :8000
+# surface and its security boundary is the auth in front of /ws/terminal (a
+# paired device with the owner proof, or the console socket's owner), not
+# this sandbox. TRADE-OFF: the network-facing app on :8000
 # runs in this same unit, so an RCE in the app now escalates to root — accepted
 # deliberately for an owner-operated box. The inference sidecars keep their full
 # sandbox; only this human-facing unit is opened up.

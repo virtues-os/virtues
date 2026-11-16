@@ -108,7 +108,80 @@ const REPAIRS: &[(&str, fn(&std::path::Path) -> Outcome)] = &[
     ("dragon-watchdog", dragon_watchdog),
     ("db-logins", db_logins),
     ("retired-hardware", retired_hardware),
+    ("console-socket", console_socket),
 ];
+
+/// The tmpfiles rule that makes the console socket's folder at every boot.
+/// The server runs as `virtues` and cannot create a folder under `/run`.
+pub const CONSOLE_TMPFILES: &str = "/etc/tmpfiles.d/virtues.conf";
+pub const CONSOLE_TMPFILES_RULE: &str = "d /run/virtues 0755 virtues virtues -\n";
+
+/// The console socket can be opened, and the owner can use it
+/// (`crate::console_socket`): the `virtues-console` group exists, the
+/// tmpfiles rule for `/run/virtues` is written and the folder is there, and
+/// the login that ran this through sudo is in the group.
+///
+/// That login is whoever ran the installer or `sudo virtues migrate` or
+/// `sudo virtues upgrade`. It already has root through sudo, so the group
+/// gives it nothing it could not take, and it is what lets that person reach
+/// the console without sudo, including from a browser over SSH. Membership
+/// applies to the login's next session.
+#[cfg(target_os = "linux")]
+fn console_socket(_data_dir: &std::path::Path) -> Outcome {
+    use std::path::Path;
+    use std::process::Command;
+
+    let group = crate::console_socket::CONSOLE_GROUP;
+    let mut done: Vec<String> = Vec::new();
+    let ran = |cmd: &mut Command| cmd.output().map_or(false, |o| o.status.success());
+
+    if !ran(Command::new("getent").args(["group", group])) {
+        if !ran(Command::new("groupadd").args(["--system", group])) {
+            return Outcome::Failed(format!("could not create the {group} group"));
+        }
+        done.push(format!("created the {group} group"));
+    }
+
+    let rule_ok = std::fs::read_to_string(CONSOLE_TMPFILES).is_ok_and(|c| c == CONSOLE_TMPFILES_RULE);
+    if !rule_ok {
+        if let Err(e) = std::fs::write(CONSOLE_TMPFILES, CONSOLE_TMPFILES_RULE) {
+            return Outcome::Failed(format!("writing {CONSOLE_TMPFILES}: {e}"));
+        }
+        done.push(format!("wrote {CONSOLE_TMPFILES}"));
+    }
+    if !Path::new("/run/virtues").is_dir() || !rule_ok {
+        if !ran(Command::new("systemd-tmpfiles").args(["--create", CONSOLE_TMPFILES])) {
+            return Outcome::Failed("systemd-tmpfiles could not create /run/virtues".to_string());
+        }
+        done.push("created /run/virtues".to_string());
+    }
+
+    if let Some(login) = std::env::var("SUDO_USER").ok().filter(|u| !u.is_empty() && u != "root") {
+        let in_group = Command::new("id")
+            .args(["-nG", &login])
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).split_whitespace().any(|g| g == group));
+        match in_group {
+            Some(true) => {}
+            Some(false) => {
+                if !ran(Command::new("usermod").args(["-aG", group, &login])) {
+                    return Outcome::Failed(format!("could not add {login} to the {group} group"));
+                }
+                done.push(format!("added {login} to the {group} group (from its next login)"));
+            }
+            // `id` cannot name the login: nothing to add.
+            None => {}
+        }
+    }
+
+    if done.is_empty() {
+        Outcome::Converged
+    } else {
+        Outcome::Repaired(done.join(", "))
+    }
+}
 
 /// Nothing is left of the hardware Virtues no longer ships: the display
 /// panel's kiosk unit and its shim (the page it loaded is gone), the polkit

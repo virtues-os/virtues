@@ -254,6 +254,14 @@ age = { version = "0.12.1", features = ["armor"] }
 yaml-rust2 = "0.13.0"
 httparse = "1.10.1"
 
+# The console socket (`console_socket.rs`) serves the app over a Unix
+# socket the way virtues-iroh serves it over iroh, and the CLI's data verbs
+# call it there (`cli/data.rs`). Already in the tree through virtues-iroh
+# and reqwest.
+hyper = { version = "1", features = ["http1", "server", "client"] }
+hyper-util = { version = "0.1", features = ["tokio", "server"] }
+http-body-util = "0.1"
+
 [target.'cfg(unix)'.dependencies]
 # getifaddrs(3) for the BYO-transport auto-notice in net_check, and the open(2)
 # flags restore uses to refuse links in its stage (already in the tree

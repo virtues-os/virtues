@@ -92,7 +92,10 @@ transport this codebase no longer has.
 
 What actually reaches the box:
 
-- **On the box itself:** `http://localhost:8000`.
+- **On the box itself:** the console socket, `/run/virtues/console.sock`,
+  for root, the service user and the `virtues-console` group
+  (`virtues-core/src/console_socket.rs`). A TCP request to `localhost:8000`
+  is treated like any unpaired device.
 - **The iPhone and desktop apps**, by dialing the box's iroh EndpointId —
   direct on the LAN, hole-punched across the internet, or through the blind
   relay. No inbound port is opened at home.
@@ -149,14 +152,14 @@ on its own, so neither needs a command on the box. Remove asks for
 confirmation in the app first.
 
 When no paired device can reach the UI, run the same Remove from a shell on
-the box. The server treats a request to `localhost:8000` with no
-forwarding header as the box's local console (`virtues-core/src/middleware/auth.rs`),
-and the console needs no owner proof, so `curl` can call `delete_handler`
-directly:
+the box. The server treats a request on its console socket from root, the
+service user or the `virtues-console` group as the box's local console
+(`virtues-core/src/console_socket.rs`), and the console needs no owner
+proof, so `curl` can call `delete_handler` directly:
 
 ```bash
 # A working remove answers {"ok":true}.
-curl -s -X DELETE http://localhost:8000/api/settings/byo-key
+sudo curl -s --unix-socket /run/virtues/console.sock -X DELETE http://localhost/api/settings/byo-key
 ```
 
 This runs the same handler as Remove, so it changes the row and writes the

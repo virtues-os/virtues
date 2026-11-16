@@ -10,6 +10,7 @@ pub mod api_version;
 pub mod cli;
 pub mod client;
 pub mod codename;
+pub mod console_socket;
 mod version_shape;
 pub mod credentials;
 pub mod crypto;

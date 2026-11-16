@@ -83,7 +83,7 @@ impl axum::extract::FromRef<AppState> for crate::api::live_turn::LiveTurns {
 /// Handler for `POST /webhook/:applet_id`.
 ///
 /// Flow:
-/// 1. `AuthUser` (proven iroh key / loopback console) — a hard extractor, so an
+/// 1. `AuthUser` (proven iroh key / console socket) — a hard extractor, so an
 ///    unauthenticated caller is rejected before this runs.
 /// 2. Fetch action → 404 if missing.
 /// 3. Ownership: the proven device must own the action (`app_applets.device_id`);
@@ -177,7 +177,7 @@ pub async fn webhook(
     }
 
     // Ownership: a proven device may only drive actions anchored to IT
-    // (`app_applets.device_id`). The on-box console (loopback) may drive any
+    // (`app_applets.device_id`). The on-box console (the console socket) may drive any
     // action; an action with no device anchor (e.g. an OAuth action reachable
     // only from the owner's own devices) is likewise owner-level.
     if user.device_id != crate::middleware::auth::CONSOLE_DEVICE_ID {

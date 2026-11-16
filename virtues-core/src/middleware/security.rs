@@ -103,8 +103,8 @@ pub async fn headers_layer(req: Request, next: Next) -> Response {
 /// header, so refusing the name stops the page.
 ///
 /// **Which requests.** Only those the box takes as the owner by how they
-/// arrived ([`owner_by_transport`]: a proven iroh peer, a direct loopback
-/// connection, and when `dev` is set any loopback connection). Any other
+/// arrived ([`owner_by_transport`]: a proven iroh peer, a console-socket
+/// caller, and when `dev` is set any loopback connection). Any other
 /// request gets only what the box gives a stranger on its network, which a
 /// page could ask for at the box's own address anyway, and its `Host` is
 /// whatever name the owner typed to pair (`virtues.local`, a router's name, a
@@ -116,7 +116,7 @@ pub async fn headers_layer(req: Request, next: Next) -> Response {
 ///
 /// [`owner_by_transport`]: crate::middleware::auth::owner_by_transport
 fn refuse_foreign_host(req: &Request, dev: bool, names: &ServedNames) -> Option<Response> {
-    if !crate::middleware::auth::owner_by_transport(req.extensions(), req.headers(), dev) {
+    if !crate::middleware::auth::owner_by_transport(req.extensions(), dev) {
         return None;
     }
     // Every authority the request names: each `Host` header, and the target's
@@ -164,7 +164,7 @@ fn refuse_cross_site_write(req: &Request, dev: bool, listed: &[String]) -> Optio
     if matches!(*req.method(), Method::GET | Method::HEAD | Method::OPTIONS) {
         return None;
     }
-    if !crate::middleware::auth::owner_by_transport(req.extensions(), req.headers(), dev) {
+    if !crate::middleware::auth::owner_by_transport(req.extensions(), dev) {
         return None;
     }
     let origin = req.headers().get(header::ORIGIN)?;
@@ -671,9 +671,14 @@ mod tests {
             call(absolute.extension(proven()).body(empty()).unwrap()).await.status(),
             StatusCode::MISDIRECTED_REQUEST
         );
-        // A loopback console request names a foreign host too.
-        let console = request("/api/passwords", Some("evil.example:8000")).extension(peer("127.0.0.1:50000"));
+        // A console-socket request that names a foreign host is refused too.
+        let console = request("/api/passwords", Some("evil.example:8000"))
+            .extension(crate::console_socket::ConsoleCaller::Owner);
         assert_eq!(call(console.body(empty()).unwrap()).await.status(), StatusCode::MISDIRECTED_REQUEST);
+        // A TCP request from loopback carries no authority on an installed
+        // server, so its name is not checked.
+        let loopback = request("/api/box/identity", Some("evil.example:8000")).extension(peer("127.0.0.1:50000"));
+        assert_eq!(call(loopback.body(empty()).unwrap()).await.status(), StatusCode::OK);
 
         for host in [Some("127.0.0.1:7117"), Some("localhost"), Some("box"), None] {
             let ok = request("/api/passwords", host).extension(proven());
@@ -737,9 +742,8 @@ mod tests {
     /// Caddy in front of the review demo box connects from loopback and adds
     /// a forwarding header. That box runs as a developer's stack, where such
     /// a request is the owner's, so its `Host` must be a name the operator
-    /// listed. On any other box it is not the owner's, and any name passes.
-    /// There, a listed name arrives as the owner's only through a proxy that
-    /// added no forwarding header, and it is refused.
+    /// listed. On any other box a loopback request is not the owner's, with
+    /// or without a forwarding header, and any name passes.
     #[test]
     fn a_proxied_request_on_a_dev_box_names_a_listed_origin() {
         let names = listed(&["https://demo-review.example.com"]);
@@ -761,9 +765,7 @@ mod tests {
         let dev = false;
         assert!(refuse_foreign_host(&proxied("unlisted.example.com"), dev, &names).is_none());
         assert!(refuse_foreign_host(&proxied("demo-review.example.com"), dev, &names).is_none());
-        let unforwarded = from_loopback("demo-review.example.com", false);
-        let refused = refuse_foreign_host(&unforwarded, dev, &names).expect("a listed name with no forwarding header");
-        assert_eq!(refused.status(), StatusCode::MISDIRECTED_REQUEST);
+        assert!(refuse_foreign_host(&from_loopback("unlisted.example.com", false), dev, &names).is_none());
     }
 
     #[test]

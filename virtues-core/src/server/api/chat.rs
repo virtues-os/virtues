@@ -395,7 +395,7 @@ pub async fn remove_chat_permission_handler(
 // =============================================================================
 
 /// GET /auth/session — current session (or null if not paired). Authenticated by
-/// the `AuthUser` extractor (proven iroh key / loopback console / dev fallback);
+/// the `AuthUser` extractor (proven iroh key / console socket / dev fallback);
 /// there is no cookie/signout — the credential is the device's iroh key.
 pub async fn auth_session_handler(user: Option<crate::middleware::auth::AuthUser>) -> Response {
     crate::api::auth::session_handler(user).await.into_response()

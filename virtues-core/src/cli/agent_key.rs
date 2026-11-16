@@ -8,7 +8,9 @@
 //! `authorized_keys` is `restrict,command="virtues agent-exec --key <name>"`:
 //! whatever the agent asks to run, sshd runs `agent-exec`, which reads the
 //! request from `SSH_ORIGINAL_COMMAND`, allows only the data verbs, and sends
-//! each to the server's console door over loopback (`server/api/console.rs`).
+//! each to the server's console door on its console socket
+//! (`server/api/console.rs`, `console_socket.rs`), which admits this user to
+//! the data verbs' routes and nothing else.
 //! The server runs it through the executor and its restricted roles, so the
 //! roles are the boundary the agent meets. The plan is
 //! agents/plan/cli-data-verbs-plan.md.

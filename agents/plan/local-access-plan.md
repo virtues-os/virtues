@@ -1,6 +1,6 @@
 # Local access to the server: plan
 
-**Status:** Planned. Decision 1 is made (2026-11-16); 2 and 3 are open.
+**Status:** Built on wave, not yet run on a server. Decision 1 is made (2026-11-16); 2 and 3 are open.
 
 ## What is wrong
 
@@ -66,60 +66,50 @@ The server's own outbound fetches refuse loopback (`fetch/guard.rs`,
 Option 1 is the only one that limits the console to the people who should
 have it.
 
-## The design, option 1
+## The design, option 1, as built
 
-- **Socket and permissions.** `/run/virtues/console.sock`, created by the
-  server at start (`RuntimeDirectory=virtues` in the unit), mode 0660, group
-  `virtues-console`. The installer creates the group and adds the login that
-  ran it (`SUDO_USER`) and `virtues-agent`.
-- **Who the socket admits.** The server reads the peer uid and maps it:
-  - root, `virtues`, or a member of `virtues-console`: `local-console`, as
-    today;
-  - `virtues-agent`: an agent caller, admitted to `/api/console/tool` only.
-    Today it gets the whole owner surface through the same door.
-  - anyone else: refused. The socket mode stops them first; the uid check
-    covers a mode someone loosened by hand.
-- **TCP loopback.** It loses branch 2 in `middleware/auth.rs`. It keeps
-  branch 3, so a developer's stack (`ENVIRONMENT=dev`) works as before.
-  `owner_by_transport` follows the same change.
-- **The CLI.** `cli/data.rs` and `agent-exec` talk to the socket.
-  `reqwest` has no Unix-socket support, so this uses `hyper` with a
-  `UnixStream` connector, or a small request writer like the door client's.
-- **A browser over SSH.** It stays (decision 1). The recipe becomes
-  `ssh -L 8000:/run/virtues/console.sock user@host`. sshd connects as the
-  person's login, which is in `virtues-console`, so it works for the owner
-  and for nobody else with an account.
-- **Upgrades.** An upgraded server needs the group and the unit change. Both
-  belong in a system repair (`cli/system_repairs.rs`), which the new binary
-  runs as root on the upgrade that first carries it.
-  - Ordering: the new CLI must not try a socket the old server lacks. Until
-    the repair has run, the CLI falls back to TCP and says the server needs
-    `sudo virtues migrate`.
-- **Mac and Windows servers (slice 6).** Unix sockets exist on both
-  platforms. The peer check uses `LOCAL_PEERCRED` on macOS and the pipe's
-  client token on Windows. Design that when slice 6 starts; nothing here
-  blocks it.
+Built on wave 2026-11-16, unverified on a real server. The code is
+`virtues-core/src/console_socket.rs`.
 
-## Slices
+- **Socket and folder.** The server listens on `/run/virtues/console.sock`
+  beside TCP. The folder comes from a tmpfiles rule,
+  `/etc/tmpfiles.d/virtues.conf` (`d /run/virtues 0755 virtues virtues -`),
+  because upgrades never rewrite the service unit, so `RuntimeDirectory=`
+  would not reach existing servers. The socket is mode 0666: the uid check
+  is the boundary, which lets `virtues-agent` connect without joining a
+  group.
+- **Who the socket admits** (`classify`, by `SO_PEERCRED`):
+  - root, `virtues`, or a member of `virtues-console`: `local-console`;
+  - `virtues-agent`: the console door, `PATCH /api/applets/<id>` (applet
+    enable) and `/api/mcp` (`agent_may`), and nothing else;
+  - anyone else: disconnected before the request is read.
+- **TCP loopback** lost branch 2 in `middleware/auth.rs`. Branch 3 stays, so a
+  developer's stack (`ENVIRONMENT=dev`) works as before. `owner_by_transport`
+  follows the same change.
+- **The CLI.** `cli/data.rs`'s `Console` (data verbs and `agent-exec`) and
+  `cli/mcp.rs` (`virtues mcp`) use the socket when it exists, and loopback
+  TCP otherwise, which only a dev server accepts. On TCP a 401 says to run
+  `sudo virtues migrate`.
+- **Group and folder on every server.** The `console-socket` system repair
+  creates the group, writes the tmpfiles rule, makes the folder, and adds
+  the login that ran it through sudo (`SUDO_USER`). It runs from the
+  installer's `migrate --check` and from the new binary on the upgrade that
+  first carries it, so the installing login, or whoever runs
+  `sudo virtues upgrade`, joins the group. Membership applies from that
+  login's next session.
+- **SSH.** The `ssh -L 8000:localhost:8000` the installer prints stays: it is
+  the app's route to pair, and pairing needs the code, not the console. The
+  browser-as-owner route is `ssh -L 8000:/run/virtues/console.sock`,
+  documented in `docs/operate/reach.md`.
+- **Mac and Windows servers (slice 6).** Unix sockets exist on both. The
+  peer check uses `LOCAL_PEERCRED` on macOS and the pipe's client token on
+  Windows. Design that when slice 6 starts.
 
-1. Socket listener, peer-uid mapping, and the auth change, with tests. The
-   tests cover loopback TCP refused in production, loopback TCP admitted
-   with `ENVIRONMENT=dev`, a socket caller as `virtues` admitted, a socket
-   caller as `virtues-agent` admitted only to the console door, and the
-   terminal refusing a loopback TCP request.
-2. CLI and `agent-exec` move to the socket, with the TCP fallback for one
-   release.
-3. Installer and system repair: the group, membership for `SUDO_USER` and
-   `virtues-agent`, the unit's `RuntimeDirectory`.
-4. The SSH recipe in `cli/link.rs` becomes the socket forward, and the
-   manual pages that cite it (`docs/setup/devices/mac.md`, `windows.md`)
-   follow.
-5. Comments and docs that state "physical access is the owner"
-   (`middleware/auth.rs`, the sudoers comment in the installer, which also
-   still says "WG/SPKI", and `agents/build/recovery.md`).
+## What is left
 
-Each slice ships on its own. Slice 1 alone closes the hole, but the CLI data
-verbs then fail until slice 2 lands, so slices 1 and 2 go in one release.
+- Run it on a real Linux server: a fresh install, an upgrade from a release
+  without it, the data verbs as the installing login and through an agent
+  key, `virtues mcp`, and a browser over SSH.
 
 ## Decisions for the owner
 

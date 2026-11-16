@@ -37,9 +37,17 @@ plain web browser can't, because it has no key to prove it's yours, so the
 server refuses a browser on another machine with no paired app, even one on
 your own network.
 
-A browser running on the server itself also works: the server trusts requests
-from its own loopback address, so `http://localhost:8000` on the server works
-without pairing.
+A browser on your laptop can reach the server as you through SSH, by
+forwarding the server's console socket:
+
+```bash
+ssh -L 8000:/run/virtues/console.sock you@your-server
+```
+
+Then open `http://localhost:8000`. This works for the login that installed
+Virtues, from its next login after the install, and for root. Another login on
+the server is refused, and so is any program that connects to port 8000 from
+the server itself: the server treats it like an unpaired device.
 
 On a computer where the desktop app is paired, the app serves your server on a
 local port, `127.0.0.1:7117`, and carries that traffic over its own key. Any
