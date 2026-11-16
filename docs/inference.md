@@ -1,12 +1,11 @@
 ---
 title: Set up a custom embedding server
 description: Optional - run search on your own embedding server instead of your server's CPU.
-updated: 2026-10-23
+updated: 2026-11-15
 ---
 
 When you run the install command, the installer first asks in your terminal:
-**How should search run?** (If you're on hardware we build, skip this page:
-we've already set up search.)
+**How should search run?**
 
 - **On this computer's CPU** (recommended) is the standard setup: the
   installer sets up search for you. Skip this page and continue with
@@ -93,9 +92,8 @@ means re-embedding your record, as described below.
 
 [llama.cpp](https://github.com/ggml-org/llama.cpp)'s `llama-server`
 implements the contract and is what we run in production. The commands below
-are the ones our own hardware uses, except for the port: this page uses
-`8080`, because the installer warns when `18181`, the port of its own CPU
-engine, is already taken.
+use port `8080`, because the installer warns when `18181`, the port of its
+own CPU engine, is already taken.
 
 You do not need to build llama.cpp to try it: every Virtues release ships a
 portable **CPU-only** `llama-server` and puts it at

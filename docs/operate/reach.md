@@ -1,7 +1,7 @@
 ---
 title: Reaching your server
 description: How your phone and laptop connect to your Virtues server at home and away - pairing devices, what the relay can and cannot see, and what to expect when the network changes.
-updated: 2026-10-28
+updated: 2026-11-15
 ---
 
 Your server sits at home behind a router that, by default, blocks incoming
@@ -54,13 +54,8 @@ on it can reach your server.
 Pairing puts a device's key on the server's allowlist. Which method you use
 depends on where you are.
 
-**Your first device on hardware we build**, during setup, connects over
-Bluetooth. The server shows a four-word phrase on its screen, and the phone
-has to send it back before the server will do anything. This proves you can
-see the machine, so it works without a shared secret.
-
-**Your first device on your own Linux server** pairs with the Virtues app and
-the six-digit code the installer prints.
+**Your first device** pairs with the Virtues app and the six-digit code the
+installer prints.
 [Connecting your devices](/docs/setup/devices) has the steps for each
 device.
 

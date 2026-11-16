@@ -42,9 +42,8 @@ installer reports:
 
 ## Choose how search runs
 
-The installer asks: **How should search run?** (On hardware we build, it skips
-the question.) Either way, search is designed to run on your own local
-hardware.
+The installer asks: **How should search run?** Either way, search is designed
+to run on your own local hardware.
 
 - **On this computer's CPU** (recommended) is the standard setup: search runs
   on the CPU of the Linux machine you're installing Virtues on, and the

@@ -10,8 +10,6 @@ read. It runs on your own Linux machine, one that stays on.
 
 To start, read [what to run it on](/docs/setup/requirements), set up
 [inference](/docs/inference), then run the [installer](/docs/setup/install).
-If you already have a server we built, pair a device instead:
-[Reaching your server](/docs/operate/reach).
 
 ## What it does
 
