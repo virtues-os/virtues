@@ -162,6 +162,11 @@
 	/** The close couldn't let the app open, said where the close was. */
 	let closeError = $state<string | null>(null);
 	let unreachable = $state(false);
+	// `/reconnect` runs on the app's own copy: the phone and the Mac.
+	const canDiagnose =
+		typeof window !== "undefined" &&
+		!!((window as unknown as Record<string, unknown>).__VIRTUES_BACKEND_ORIGIN__ ||
+			(window as unknown as Record<string, unknown>).__VIRTUES_MOBILE__);
 
 	const still =
 		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
@@ -369,6 +374,11 @@
 		<!-- Over the relay "the same network" is not the fix, and was untrue. -->
 		<p class="err" in:fade>Couldn't reach your server. Check that it's on and connected to the internet, then try again.</p>
 		<button type="button" class="setup-go" in:fade onclick={() => reloadApp()}>Try again</button>
+		{#if canDiagnose}
+			<!-- The reconnect screen tells this device being offline from the
+			     server being off or refusing it, and can pair again. -->
+			<button type="button" class="diagnose" in:fade onclick={() => goto("/reconnect")}>See what's wrong</button>
+		{/if}
 	</div>
 {:else if !ready}
 	<div class="center" aria-hidden="true"></div>
@@ -495,6 +505,20 @@
 		align-content: center;
 		gap: 16px;
 		padding: 0 16px;
+	}
+	.diagnose {
+		padding: 0;
+		border: none;
+		background: none;
+		font: inherit;
+		font-size: 14px;
+		color: var(--color-foreground-muted);
+		cursor: pointer;
+		transition: color 0.15s ease;
+	}
+	.diagnose:hover,
+	.diagnose:focus-visible {
+		color: var(--color-foreground);
 	}
 	.err {
 		max-width: 28rem;

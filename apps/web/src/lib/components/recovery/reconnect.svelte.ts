@@ -122,7 +122,14 @@ export class Reconnect {
 	async pairAgain(forget = true): Promise<void> {
 		this.dispose();
 		if (forget) await this.reach.forget().catch(() => {});
-		if (!(isTauri && (isIOS || isMacOS || isWindows || isLinux))) {
+		if (isTauri && (isWindows || isLinux)) {
+			// This page is the server's copy, which the forgotten pairing no
+			// longer serves. A relaunch opens the app's own connect page.
+			const { restartApp } = await import('$lib/tauri/bridge');
+			await restartApp();
+			return;
+		}
+		if (!(isTauri && (isIOS || isMacOS))) {
 			// Android pairs on its connect page.
 			window.location.replace('/connect.html');
 			return;

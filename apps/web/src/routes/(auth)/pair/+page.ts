@@ -33,5 +33,35 @@ export const load: PageLoad = async () => {
 		window.location.replace('/reconnect');
 		await new Promise(() => {});
 	}
+	// Windows and Linux show the server's own copy through the loopback, so
+	// there is no app page here to send them to. Relaunching runs the
+	// launch check, which opens the connect page's "your server doesn't
+	// recognize this device" screen (`connect.html#reset`), where they pair
+	// again.
+	//
+	// At most once a minute: if the launch check and the server disagree,
+	// the app would otherwise relaunch into this page forever. Past that,
+	// the page below explains, and quitting and reopening tries again.
+	if (shell && shell.__VIRTUES_BOX_URL__ && !relaunchedRecently()) {
+		const { restartApp } = await import('$lib/tauri/bridge');
+		await restartApp();
+		await new Promise(() => {});
+	}
 	return {};
 };
+
+const RELAUNCHED_AT = 'virtues.pair.relaunchedAt';
+
+/** True when this page relaunched the app in the last minute; records a
+ *  relaunch otherwise. Storage that throws counts as "recently", so the page
+ *  never loops when it cannot remember. */
+function relaunchedRecently(): boolean {
+	try {
+		const last = Number(localStorage.getItem(RELAUNCHED_AT) ?? 0);
+		if (Date.now() - last < 60_000) return true;
+		localStorage.setItem(RELAUNCHED_AT, String(Date.now()));
+		return false;
+	} catch {
+		return true;
+	}
+}

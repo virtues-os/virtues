@@ -34,7 +34,7 @@ redirect(302, 'https://github.com/virtues-os/virtues/releases/latest/download/bo
 Bootstrap downloads the platform-specific `virtues-installer` binary from the latest GitHub Release, sha-verifies it, and execs it. The installer is idempotent; its order is `tools/virtues-installer/src/flow.rs`:
 
 1. **System packages.** `apt` (Debian/Ubuntu, adding the PGDG repo) or `dnf` (Fedora): Postgres 18 + pgvector, `avahi-daemon`, `avahi-utils`, `libnss-mdns`. On apt systems, turn on security-only automatic updates with no automatic reboot (`enable_security_updates`).
-2. **mDNS.** Set the hostname to `virtues` (skip with `VIRTUES_KEEP_HOSTNAME=1`) and drop `/etc/avahi/services/virtues.service`, advertising `_http._tcp` on port 8000.
+2. **mDNS.** Set the hostname to `virtues` (skip with `VIRTUES_KEEP_HOSTNAME=1`) and drop `/etc/avahi/services/virtues.service`, advertising `_http._tcp` on port 8000. When firewalld or ufw is running, open 8000/tcp, mDNS and the iroh port 51820/udp (`open_firewall`).
 3. **User and database.** Create the `virtues` system user and the data dir (default `/var/lib/virtues`), then the Postgres role, database, `vector` extension and the NOLOGIN separation roles the migrations expect.
 4. **Binary.** Resolve the release, verify the tarball against its `.sha256`, stage it into a release slot under `/usr/local/share/virtues/releases/` and flip the `current` link (`download.rs`; `virtues upgrade` and `rollback` work within that layout).
 5. **Local inference.** The QNN NPU daemon (`virtues-qnnd`) on a Dragon, the CPU llama-server sidecar (`virtues-embed`) in bundled mode, nothing for manual endpoints. Then libpdfium.

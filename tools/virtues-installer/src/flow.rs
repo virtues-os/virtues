@@ -66,6 +66,7 @@ pub async fn run(cli: Config) -> Result<()> {
             cfg.embed_gguf
         ));
         ui::skip("  • mDNS (hostname → virtues, _http._tcp on :8000)");
+        ui::skip("  • Firewall, when firewalld or ufw is on: 8000/tcp, mDNS, 51820/udp");
         ui::skip("  • System user 'virtues' + data dir + Postgres role/db/pgvector");
         ui::skip(&format!("  • Virtues binary → {}", cfg.binary_path().display()));
         ui::skip(&format!("  • Env file at {}", cfg.env_file_path().display()));
@@ -94,6 +95,7 @@ pub async fn run(cli: Config) -> Result<()> {
     install::install_deps(&target).await?;
     install::enable_security_updates(&target).await?;
     install::configure_mdns().await?;
+    install::open_firewall().await?;
 
     install::create_user(&cfg).await?;
     install::provision_db().await?;
@@ -167,8 +169,13 @@ pub async fn run(cli: Config) -> Result<()> {
     // `init` to skip its banner and avoid showing it a second time. sudo resets
     // the environment (env_reset), so pass the var through an `env` prefix that
     // runs after the privilege drop rather than via Command::env (stripped).
+    // The binary goes by its full path: sudo searches only its `secure_path`,
+    // which leaves out /usr/local/bin on RHEL, Rocky and Alma.
+    let bin = cfg.binary_path();
     let err = StdCommand::new("sudo")
-        .args(["-u", "virtues", "env", "VIRTUES_NO_BANNER=1", "virtues", "init"])
+        .args(["-u", "virtues", "env", "VIRTUES_NO_BANNER=1"])
+        .arg(&bin)
+        .arg("init")
         .exec();
     // If we reach this line, exec failed.
     Err(anyhow::anyhow!("failed to exec `virtues init`: {err}"))

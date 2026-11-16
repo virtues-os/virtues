@@ -949,9 +949,15 @@ fn maybe_reexec_as_service_user() {
     {
         reexec.arg("env").arg(format!("VIRTUES_SSH_SERVER_IP={ip}"));
     }
-    let err = reexec.args(std::env::args()).exec();
+    // This binary by its full path, then the arguments after argv[0]: sudo
+    // searches only its `secure_path`, which leaves out /usr/local/bin on
+    // RHEL, Rocky and Alma, so a bare `virtues` would not be found.
+    let mut args = std::env::args();
+    let argv0 = args.next().unwrap_or_else(|| "virtues".to_string());
+    let program = std::env::current_exe().map_or_else(|_| std::path::PathBuf::from(argv0), |p| p);
+    let err = reexec.arg(program).args(args).exec();
     eprintln!("could not switch user: {err}");
-    eprintln!("hint: run it as the service user yourself: sudo -u virtues virtues {cmd}");
+    eprintln!("hint: run it as the service user yourself: sudo -u virtues /usr/local/bin/virtues {cmd}");
     std::process::exit(1);
 }
 
