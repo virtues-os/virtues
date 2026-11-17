@@ -59,6 +59,7 @@
 		aria-label="Settings"
 		aria-current={inSettings ? 'page' : undefined}
 		data-tip="Settings"
+		data-tip-key="mod+,"
 	>
 		<AtlasIcon name="settings" size={SHELL_GLYPH_PX} bare />
 	</button>

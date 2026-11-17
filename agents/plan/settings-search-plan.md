@@ -178,7 +178,10 @@ your server heard it" labels, and the stale comments listed above.
    that switch is "use your browser" instead. Left: units, what it may read
    (server-enforced, as cycle data is today), keep recordings, export
    everything, backup as a page, the live style preview.
-8. **⌘K.** The Settings group, `#settings`, controls in the palette.
+8. **⌘K.** The Settings group, `#settings`, controls in the palette. Built:
+   typing in ⌘K lists up to three matching settings under Settings, `#settings`
+   lists them all, Return opens a setting's page at its row, and Theme and
+   Reduce motion change in the palette itself. ⌘ , opens Settings.
 
 Later: the phone, which takes the same landing page and section pages.
 

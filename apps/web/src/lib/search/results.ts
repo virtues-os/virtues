@@ -15,12 +15,13 @@
  *   - a query that starts a command's name ("new", "go") gets Commands;
  *   - chats, pages, threads and applets whose names match;
  *   - people and places whose names match;
+ *   - settings whose names match (lib/settings), a few;
  *   - Commands and Ask, if they did not come first;
  *   - matches inside your records, last, because they arrive from the box
  *     after the rest and rows appearing above the selection would move it.
  *
- * A leading `#chats`, `#pages`, `#threads`, `#applets` or `#commands`
- * shows that kind only. `#projects` still works.
+ * A leading `#chats`, `#pages`, `#threads`, `#applets`, `#settings` or
+ * `#commands` shows that kind only. `#projects` still works.
  */
 import type { LocalSearchHit } from '$lib/api/client';
 import { matchRank } from '$lib/search/match';
@@ -34,6 +35,7 @@ import { parseRef } from '$lib/utils/refRoutes';
 import { isUntitled } from '$lib/refs/identity.svelte';
 import { namedDays, type NamedDay } from '$lib/search/dates';
 import { matchEntities, type EntityRow } from '$lib/search/entities.svelte';
+import { SETTINGS, SECTIONS, titleOf, type Setting } from '$lib/settings';
 
 export interface Command {
 	id: string;
@@ -52,6 +54,7 @@ export type SearchRow =
 	| { kind: 'record'; record: RecentRow }
 	| { kind: 'day'; day: NamedDay }
 	| { kind: 'entity'; entity: EntityRow }
+	| { kind: 'setting'; setting: Setting }
 	| { kind: 'content'; hit: LocalSearchHit };
 
 export interface SearchGroup {
@@ -60,7 +63,7 @@ export interface SearchGroup {
 	rows: SearchRow[];
 }
 
-export type Scope = RecentKind | 'command';
+export type Scope = RecentKind | 'command' | 'setting';
 
 const SCOPES: Record<string, Scope> = {
 	chat: 'chat', chats: 'chat',
@@ -69,6 +72,7 @@ const SCOPES: Record<string, Scope> = {
 	thread: 'thread', threads: 'thread',
 	applet: 'applet', applets: 'applet',
 	command: 'command', commands: 'command',
+	setting: 'setting', settings: 'setting',
 	action: 'command', actions: 'command',
 };
 
@@ -79,6 +83,7 @@ const MATCH_ROWS = 6;
 const SCOPED_ROWS = 25;
 const COMMAND_ROWS = 4;
 const ENTITY_ROWS = 3;
+const SETTING_ROWS = 3;
 
 /** The `#scope` a query starts with, and the text left to match. An unknown
  *  `#foo` is searched as written. */
@@ -124,6 +129,26 @@ function matching(rows: RecentRow[], text: string, limit: number): RecentRow[] {
 		.sort((a, b) => b.rank - a.rank || b.f - a.f || b.row.ts - a.row.ts)
 		.slice(0, limit)
 		.map((x) => x.row);
+}
+
+/** Settings by match quality, then the order Settings lists them. Unscoped,
+ *  only names that start a word with what was typed, so a loose match does
+ *  not crowd the records. */
+function settingsMatching(text: string, assistantName: string | null, minRank: number, limit: number): Setting[] {
+	return SETTINGS.map((setting, order) => {
+		const names = [titleOf(setting.title, assistantName), ...setting.words];
+		return { setting, order, rank: Math.max(...names.map((n) => matchRank(n, text))) };
+	})
+		.filter((x) => x.rank >= minRank)
+		.sort((a, b) => b.rank - a.rank || a.order - b.order)
+		.slice(0, limit)
+		.map((x) => x.setting);
+}
+
+/** The page a setting lives on, as Settings names it: "Billing". */
+export function settingPlace(setting: Setting, assistantName: string | null): string {
+	const section = SECTIONS.find((s) => s.id === setting.section);
+	return section ? titleOf(section.title, assistantName) : 'Settings';
 }
 
 function commandsMatching(commands: Command[], text: string, limit: number): { rows: Command[]; leading: boolean } {
@@ -181,8 +206,16 @@ export function searchGroups(input: {
 	here: string | null;
 	commands: Command[];
 	content: LocalSearchHit[];
+	/** Fills `{name}` in settings' titles; "your assistant" when unknown. */
+	assistantName?: string | null;
 }): SearchGroup[] {
 	const { scope, text } = parseQuery(input.query);
+	const name = input.assistantName ?? null;
+
+	if (scope === 'setting') {
+		const rows = text ? settingsMatching(text, name, 1, SCOPED_ROWS) : SETTINGS.slice(0, SCOPED_ROWS);
+		return [{ label: 'Settings', rows: rows.map((setting) => ({ kind: 'setting', setting })) }];
+	}
 
 	if (scope === 'command') {
 		const rows = text ? commandsMatching(input.commands, text, SCOPED_ROWS).rows : input.commands;
@@ -217,6 +250,9 @@ export function searchGroups(input: {
 
 	const people = matchEntities(text, ENTITY_ROWS);
 	if (people.length) groups.push({ label: null, rows: people.map((entity) => ({ kind: 'entity', entity })) });
+
+	const settings = settingsMatching(text, name, 2, SETTING_ROWS);
+	if (settings.length) groups.push({ label: 'Settings', rows: settings.map((setting) => ({ kind: 'setting', setting })) });
 
 	if (!commands.leading && commandGroup.rows.length) groups.push(commandGroup);
 	if (!question) groups.push(ask);
@@ -264,6 +300,8 @@ export function rowNoun(row: SearchRow): string | null {
 			return row.entity.kind === 'person' ? 'Person' : 'Place';
 		case 'content':
 			return contentNoun(row.hit);
+		case 'setting':
+			return 'Setting';
 		default:
 			return null;
 	}

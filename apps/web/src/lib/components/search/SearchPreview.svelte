@@ -19,7 +19,7 @@
 	import { projectStore } from "$lib/stores/project.svelte";
 	import { recentRows } from "$lib/sidebar/recents.svelte";
 	import { formatDate } from "$lib/utils/dateUtils";
-	import { contentGlyph, previewOf, projectOfRow, rowNoun, type SearchRow } from "$lib/search/results";
+	import { contentGlyph, previewOf, projectOfRow, rowNoun, settingPlace, type SearchRow } from "$lib/search/results";
 
 	interface Props {
 		row: SearchRow | null;
@@ -62,6 +62,8 @@
 				return r.entity.url;
 			case "content":
 				return `content:${r.hit.ontology}:${r.hit.record_id}`;
+			case "setting":
+				return `setting:${r.setting.id}`;
 		}
 	}
 
@@ -127,6 +129,16 @@
 				return { kind: "day", title: r.day.title, hint: r.day.hint, lede: null, dots: [], places: [] };
 			case "entity":
 				return { kind: "entity", title: r.entity.name, line: null, about: null, meta: null };
+			case "setting": {
+				// Theme and Reduce motion change in place; the rest open their page.
+				const here = r.setting.id === "theme" || r.setting.id === "reduce-motion";
+				return {
+					kind: "plain",
+					title: settingPlace(r.setting, null),
+					meta: null,
+					text: here ? "Return changes it here, without leaving search." : "Return opens this page, at this setting.",
+				};
+			}
 			case "record": {
 				const rec = r.record;
 				if (rec.kind === "chat") return { kind: "chat", title: rec.title, meta: `Last active ${dateOf(rec.ts)}`, question: null, answer: null };

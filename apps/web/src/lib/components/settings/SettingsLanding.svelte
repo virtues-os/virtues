@@ -17,6 +17,7 @@
 	import ChangedLately from './ChangedLately.svelte';
 	import DraftCard from './DraftCard.svelte';
 	import { getAssistantProfile } from '$lib/api/client';
+	import { isAppleKeyboard } from '$lib/utils/platform';
 	import { LANDING, SECTIONS, matchSettings, titleOf, type Setting } from '$lib/settings';
 	import { openSetting, openSettingsPage } from '$lib/settings/focus';
 
@@ -133,7 +134,9 @@
 			spellcheck="false"
 			onkeydown={onSearchKey}
 		/>
-		{#if typing}<kbd>Esc</kbd>{/if}
+		<!-- ⌘ , opens Settings from anywhere (the shortcut lives with the
+		     others in UnifiedSidebar); once you type, Esc clears. -->
+		{#if typing}<kbd>Esc</kbd>{:else}<kbd>{isAppleKeyboard ? '⌘ ,' : 'Ctrl ,'}</kbd>{/if}
 	</label>
 
 	{#if typing && !draftText}

@@ -22,6 +22,10 @@
 	import { openWebLink } from "$lib/utils/webLinks";
 	import { newTabMenuItems } from "$lib/utils/newActions";
 	import { canBrowserPane } from "$lib/tauri/bridge";
+	import { getAssistantProfile } from "$lib/api/client";
+	import { motion } from "$lib/stores/motion.svelte";
+	import { titleOf } from "$lib/settings";
+	import { openSettingInTab } from "$lib/settings/focus";
 	import {
 		commandsFromMenu,
 		contentGlyph,
@@ -31,6 +35,7 @@
 		rowNoun,
 		rowRoute,
 		searchGroups,
+		settingPlace,
 		type Command,
 		type SearchRow,
 	} from "$lib/search/results";
@@ -73,6 +78,11 @@
 		// The frecency prior, refreshed at most once a minute.
 		visits.refresh();
 		void canBrowserPane().then((ok) => (browserAvailable = ok));
+		void getAssistantProfile<{ assistant_name?: string | null }>()
+			.then((p) => (assistantName = p.assistant_name?.trim() || null))
+			.catch(() => {
+				// Settings' titles say "your assistant" instead.
+			});
 		// Leaving mid-preview puts back the theme you had.
 		return () => {
 			if (originalTheme) applyTheme(originalTheme);
@@ -124,7 +134,7 @@
 	const commands = $derived<Command[]>([
 		...commandsFromMenu(newTabMenuItems(undefined, { browser: browserAvailable })),
 		{ id: "go-sources", label: "Go to Sources", icon: "atlas:sources", run: () => void windowShellStore.openTabFromRoute("/sources") },
-		{ id: "go-settings", label: "Go to Settings", icon: "atlas:settings", run: () => void windowShellStore.openTabFromRoute("/virtues") },
+		{ id: "go-settings", label: "Go to Settings", icon: "atlas:settings", shortcut: "⌘ ,", run: () => void windowShellStore.openTabFromRoute("/virtues", { label: "Settings", focusExisting: true }) },
 		// The terminal left Settings' list; this is its door.
 		{ id: "open-terminal", label: "Open a terminal on your server", icon: "atlas:terminal", run: () => void windowShellStore.openTabFromRoute("/virtues/developer/terminal", { label: "Terminal" }) },
 		{ id: "change-theme", label: "Change theme", icon: "mynaui:swatches", run: enterThemeMode, keepOpen: true },
@@ -167,7 +177,10 @@
 		};
 	});
 
-	const groups = $derived(searchGroups({ query, here, commands, content: contentHits }));
+	// The assistant's name, for settings' titles ("What Ari can do").
+	let assistantName = $state<string | null>(null);
+
+	const groups = $derived(searchGroups({ query, here, commands, content: contentHits, assistantName }));
 	/** Every row in drawing order, which is what the keys move through. */
 	const rows = $derived(groups.flatMap((g) => g.rows));
 	/** Each group's first row's index in `rows`. */
@@ -213,8 +226,24 @@
 				const target = contentTarget(row.hit);
 				return handOff(() => windowShellStore.openTabFromRoute(target.route, { label: target.label }));
 			}
+			case "setting":
+				// Two settings work right here; the rest open on their page.
+				if (row.setting.id === "theme") return enterThemeMode();
+				if (row.setting.id === "reduce-motion") {
+					motion.set(motion.setting === "reduce" ? "device" : "reduce");
+					return;
+				}
+				openSettingInTab(row.setting.id, assistantName ?? "");
+				break;
 		}
 		onClose();
+	}
+
+	/** What Return does to a setting row that works in place. */
+	function settingNote(id: string): string | null {
+		if (id === "theme") return "Choose";
+		if (id === "reduce-motion") return motion.device ? "On by your device" : motion.reduced ? "On" : "Off";
+		return null;
 	}
 
 	/** The host's field passes its keys here. */
@@ -277,6 +306,10 @@
 		{:else if item.kind === "day"}
 			<Icon icon="atlas:calendar" width="16" class="row-icon" />
 			<span class="row-label">{item.day.title}{#if item.day.hint}<span class="muted">&ensp;{item.day.hint}</span>{/if}</span>
+		{:else if item.kind === "setting"}
+			<Icon icon="atlas:settings" width="16" class="row-icon" />
+			<span class="row-label">{titleOf(item.setting.title, assistantName)}<span class="muted">&ensp;{settingPlace(item.setting, assistantName)}</span></span>
+			{#if settingNote(item.setting.id)}<span class="row-note">{settingNote(item.setting.id)}</span>{/if}
 		{:else if item.kind === "entity"}
 			<Icon icon={item.entity.kind === "person" ? "mynaui:user" : "mynaui:map-pin"} width="16" class="row-icon" />
 			<span class="row-label">{item.entity.name}</span>

@@ -7,7 +7,11 @@
 import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import { SETTINGS, findSetting, sectionAt, titleOf } from './index';
 
-let pending: string | null = null;
+// The row to light, and when it was asked for: a page opened in a tab that
+// was already there does not mount again, so an old request must not light a
+// row the next time some section page mounts.
+let pending: { id: string; at: number } | null = null;
+const PENDING_MS = 3000;
 
 /** The tab label for a Settings page: "Settings · Billing". */
 export function settingsLabel(route: string, assistantName: string): string {
@@ -26,13 +30,21 @@ export function openSettingsPage(route: string, assistantName: string): void {
 export function openSetting(id: string, assistantName: string): void {
 	const setting = findSetting(id);
 	if (!setting) return;
-	pending = sectionAt(setting.route) ? id : null;
+	pending = sectionAt(setting.route) ? { id, at: Date.now() } : null;
 	openSettingsPage(setting.route, assistantName);
+}
+
+/** The same, in a tab of its own (from ⌘K, which opens over whatever you are in). */
+export function openSettingInTab(id: string, assistantName: string): void {
+	const setting = findSetting(id);
+	if (!setting) return;
+	pending = sectionAt(setting.route) ? { id, at: Date.now() } : null;
+	void windowShellStore.openTabFromRoute(setting.route, { label: settingsLabel(setting.route, assistantName), focusExisting: true });
 }
 
 /** The row a section page should light on arrival, once. */
 export function takePendingSetting(): string | null {
-	const id = pending;
+	const asked = pending;
 	pending = null;
-	return id;
+	return asked && Date.now() - asked.at < PENDING_MS ? asked.id : null;
 }

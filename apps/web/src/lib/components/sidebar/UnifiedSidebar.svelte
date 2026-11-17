@@ -125,6 +125,13 @@
 				run: toggleSearch,
 			},
 			{
+				id: "settings.open",
+				keys: "mod+,",
+				label: "Open Settings",
+				group: "Go to",
+				run: () => void windowShellStore.openTabFromRoute("/virtues", { label: "Settings", focusExisting: true }),
+			},
+			{
 				id: "wiki.open",
 				keys: "mod+w",
 				label: "Open the wiki",
