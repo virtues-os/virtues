@@ -216,7 +216,7 @@ async fn finish(pool: &PgPool) -> Result<()> {
 }
 
 /// Centroids share the index's geometry but have no reader (see
-/// `Database::ensure_embedding_dims`). Their ALTER needs `app_projects` to
+/// `Database::ensure_embedding_dims`). Their ALTER needs `app_threads` to
 /// itself; a few short tries rather than one long wait that would hold project
 /// reads behind it. If none lands, bringup resizes the column on its own.
 async fn resize_centroids(pool: &PgPool, dim: i32) {
@@ -224,11 +224,11 @@ async fn resize_centroids(pool: &PgPool, dim: i32) {
         let result = async {
             let mut tx = pool.begin().await?;
             sqlx::query("SET LOCAL lock_timeout = '5s'").execute(&mut *tx).await?;
-            sqlx::query("UPDATE app_projects SET centroid = NULL WHERE centroid IS NOT NULL")
+            sqlx::query("UPDATE app_threads SET centroid = NULL WHERE centroid IS NOT NULL")
                 .execute(&mut *tx)
                 .await?;
             sqlx::query(&format!(
-                "ALTER TABLE app_projects ALTER COLUMN centroid TYPE halfvec({dim}) \
+                "ALTER TABLE app_threads ALTER COLUMN centroid TYPE halfvec({dim}) \
                  USING centroid::halfvec({dim})"
             ))
             .execute(&mut *tx)

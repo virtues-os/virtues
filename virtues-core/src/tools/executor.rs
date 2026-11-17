@@ -65,9 +65,9 @@ pub struct ToolContext {
     /// User ID
     pub user_id: Option<String>,
     /// Project ID
-    pub project_id: Option<String>,
+    pub thread_id: Option<String>,
     /// How the project shapes retrieval: Weighted (Open chat) or Exclusive
-    /// (Scoped/grounded chat). Meaningless without a project_id.
+    /// (Scoped/grounded chat). Meaningless without a thread_id.
     pub scope_mode: crate::search::ScopeMode,
     /// Chat ID (for permission checking)
     pub chat_id: Option<String>,
@@ -142,7 +142,7 @@ impl Default for ToolContext {
         Self {
             page_id: None,
             user_id: None,
-            project_id: None,
+            thread_id: None,
             scope_mode: crate::search::ScopeMode::default(),
             chat_id: None,
             applet_id: None,
@@ -514,7 +514,7 @@ impl ToolExecutor {
                 self.semantic_search
                     .execute(
                         arguments,
-                        context.project_id.as_deref(),
+                        context.thread_id.as_deref(),
                         context.scope_mode,
                         context.timezone.as_deref(),
                     )
@@ -1352,12 +1352,12 @@ impl ToolExecutor {
                 }))),
                 Err(e) => Ok(ToolResult::error(format!("Failed to fetch organization: {}", e))),
             }
-        } else if let Some(project_id) = item_url
+        } else if let Some(thread_id) = item_url
             .strip_prefix("/project/")
             // Legacy spelling — old messages still cite `/notebook/{id}`.
             .or_else(|| item_url.strip_prefix("/notebook/"))
         {
-            match crate::api::projects::get_project(pool, project_id).await {
+            match crate::api::threads::get_thread(pool, thread_id).await {
                 Ok(detail) => {
                     let members: Vec<&str> =
                         detail.items.iter().map(|i| i.url.as_str()).collect();

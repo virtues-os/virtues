@@ -14,7 +14,7 @@
 //! What trashing does and does not touch:
 //!
 //!   - The row keeps everything. Messages, versions, shares, project
-//!     membership and a chat's `project_id` all stay, so a restore brings the
+//!     membership and a chat's `thread_id` all stay, so a restore brings the
 //!     thing back whole. Membership rows for a trashed member are filtered out
 //!     of the project's listing and counts (`projects.rs`), not deleted.
 //!   - The search index is cleared for the record at once. `search_embeddings`
@@ -28,8 +28,8 @@
 //!
 //! The sweep every listing must carry — `deleted_at IS NULL` — is spelled out
 //! in: `chats::list_chats` / `get_chat`, `pages::{list_pages, get_page,
-//! get_backlinks, search_entities}`, `projects::{list_projects, get_project,
-//! add_project_item}`, `circumstances` (threads), `day_summary`'s dossier, and the registry's `embed_where` / `extra_where`
+//! get_backlinks, search_entities}`, `threads::{list_threads, get_thread,
+//! add_thread_item}`, `circumstances` (threads), `day_summary`'s dossier, and the registry's `embed_where` / `extra_where`
 //! for `app_chat` and `app_page`. `sqlx::query` is untyped: a listing that
 //! forgets the predicate shows deleted rows and nothing warns.
 
@@ -66,7 +66,7 @@ impl TrashKind {
         match self {
             Self::Chat => "app_chats",
             Self::Page => "app_pages",
-            Self::Project => "app_projects",
+            Self::Project => "app_threads",
         }
     }
 
@@ -106,7 +106,7 @@ pub async fn list_trash(pool: &PgPool) -> Result<Vec<TrashItem>> {
         FROM app_pages WHERE deleted_at IS NOT NULL
         UNION ALL
         SELECT 'project', id, COALESCE(NULLIF(name, ''), 'Untitled'), icon, deleted_at
-        FROM app_projects WHERE deleted_at IS NOT NULL
+        FROM app_threads WHERE deleted_at IS NOT NULL
         ORDER BY deleted_at DESC
         "#,
     )
@@ -221,7 +221,7 @@ pub async fn purge(pool: &PgPool, kind: TrashKind, id: &str) -> Result<()> {
         TrashKind::Project => None,
     };
     if let Some(url) = url {
-        if let Err(e) = crate::api::projects::remove_items_by_url(pool, &url).await {
+        if let Err(e) = crate::api::threads::remove_items_by_url(pool, &url).await {
             tracing::warn!(kind = ?kind, id, "purge: project membership sweep failed: {e}");
         }
     }

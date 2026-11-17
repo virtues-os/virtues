@@ -23,7 +23,7 @@ use crate::error::{Error, Result};
 use crate::ids::{generate_id, TASK_PREFIX};
 use crate::types::Timestamp;
 
-const TASK_COLUMNS: &str = "id, title, notes, assignee, status, due_on, due_at, project_id, \
+const TASK_COLUMNS: &str = "id, title, notes, assignee, status, due_on, due_at, thread_id, \
      thing_id, recur_every, recur_unit, recurred_from_id, \
      origin, source_url, sort_order, closed_at, created_at, updated_at, result, result_url, \
      chat_id, next_run_at, attempts";
@@ -110,6 +110,9 @@ impl Status {
     }
 }
 
+// TODO(2026-11-17): `thread_id` is still `project_id` on the wire (Task, ListFilter,
+// NewTask, TaskPatch), because the web app and released apps use that name.
+// Rename it when the Threads UI moves.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Task {
     pub id: String,
@@ -119,7 +122,8 @@ pub struct Task {
     pub status: String,
     pub due_on: Option<NaiveDate>,
     pub due_at: Option<Timestamp>,
-    pub project_id: Option<String>,
+    #[serde(rename = "project_id")]
+    pub thread_id: Option<String>,
     /// The thing it sits under. A task has one parent at most: a project or a
     /// thing.
     pub thing_id: Option<String>,
@@ -198,7 +202,8 @@ pub struct ListFilter {
     /// dismissed) or `all`.
     pub status: Option<String>,
     pub assignee: Option<Actor>,
-    pub project_id: Option<String>,
+    #[serde(rename = "project_id")]
+    pub thread_id: Option<String>,
     pub thing_id: Option<String>,
 }
 
@@ -209,7 +214,8 @@ pub struct NewTask {
     pub assignee: Option<Actor>,
     pub due_on: Option<NaiveDate>,
     pub due_at: Option<Timestamp>,
-    pub project_id: Option<String>,
+    #[serde(rename = "project_id")]
+    pub thread_id: Option<String>,
     pub thing_id: Option<String>,
     /// Recurrence, as a pair: both or neither.
     pub recur_every: Option<i32>,
@@ -229,8 +235,8 @@ pub struct TaskPatch {
     pub due_on: Option<Option<NaiveDate>>,
     #[serde(default, deserialize_with = "double_option")]
     pub due_at: Option<Option<Timestamp>>,
-    #[serde(default, deserialize_with = "double_option")]
-    pub project_id: Option<Option<String>>,
+    #[serde(default, rename = "project_id", deserialize_with = "double_option")]
+    pub thread_id: Option<Option<String>>,
     /// Moving a task under a thing takes it out of its project, and moving
     /// it into a project takes it out from under its thing.
     #[serde(default, deserialize_with = "double_option")]
@@ -273,7 +279,7 @@ pub async fn list_tasks(pool: &PgPool, filter: &ListFilter) -> Result<Vec<Task>>
         "SELECT {TASK_COLUMNS}, {RUN_COLUMNS} FROM app_tasks
          WHERE status = ANY($1)
            AND ($2::text IS NULL OR assignee = $2)
-           AND ($3::text IS NULL OR project_id = $3)
+           AND ($3::text IS NULL OR thread_id = $3)
            AND ($4::text IS NULL OR thing_id = $4)
          ORDER BY closed_at DESC NULLS FIRST, due_on ASC NULLS LAST,
                   due_at ASC NULLS LAST, sort_order ASC, created_at DESC
@@ -282,7 +288,7 @@ pub async fn list_tasks(pool: &PgPool, filter: &ListFilter) -> Result<Vec<Task>>
     Ok(sqlx::query_as::<_, Task>(&sql)
         .bind(&statuses)
         .bind(filter.assignee.map(Actor::as_str))
-        .bind(&filter.project_id)
+        .bind(&filter.thread_id)
         .bind(&filter.thing_id)
         .fetch_all(pool)
         .await?)
@@ -326,9 +332,9 @@ pub async fn create_tasks(
             ));
         }
         let next_run_at = (assignee == Actor::Assistant).then(|| queue_time(new.due_at));
-        let project_id = clean_text(new.project_id);
+        let thread_id = clean_text(new.thread_id);
         let thing_id = clean_text(new.thing_id);
-        if project_id.is_some() && thing_id.is_some() {
+        if thread_id.is_some() && thing_id.is_some() {
             return Err(one_parent());
         }
         if let Some(thing_id) = &thing_id {
@@ -341,7 +347,7 @@ pub async fn create_tasks(
         // Keep the order they were given: the first ends up on top.
         let sort_order = top - (count - i) as f64;
         let sql = format!(
-            "INSERT INTO app_tasks (id, title, notes, assignee, due_on, due_at, project_id,
+            "INSERT INTO app_tasks (id, title, notes, assignee, due_on, due_at, thread_id,
                                     origin, source_url, sort_order, next_run_at,
                                     thing_id, recur_every, recur_unit)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
@@ -354,7 +360,7 @@ pub async fn create_tasks(
             .bind(assignee.as_str())
             .bind(due_on)
             .bind(new.due_at)
-            .bind(&project_id)
+            .bind(&thread_id)
             .bind(origin.as_str())
             .bind(clean_text(new.source_url))
             .bind(sort_order)
@@ -414,18 +420,18 @@ pub async fn update_task(
         }
     }
     next.due_on = due_day(next.due_on, next.due_at);
-    let to_project = matches!(patch.project_id, Some(Some(_)));
+    let to_project = matches!(patch.thread_id, Some(Some(_)));
     let to_thing = matches!(patch.thing_id, Some(Some(_)));
-    if let Some(project_id) = patch.project_id {
-        next.project_id = clean_text(project_id);
+    if let Some(thread_id) = patch.thread_id {
+        next.thread_id = clean_text(thread_id);
     }
     if let Some(thing_id) = patch.thing_id {
         next.thing_id = clean_text(thing_id);
     }
-    if next.project_id.is_some() && next.thing_id.is_some() {
+    if next.thread_id.is_some() && next.thing_id.is_some() {
         match (to_project, to_thing) {
             (true, false) => next.thing_id = None,
-            (false, true) => next.project_id = None,
+            (false, true) => next.thread_id = None,
             _ => return Err(one_parent()),
         }
     }
@@ -483,7 +489,7 @@ pub async fn update_task(
     let sql = format!(
         "UPDATE app_tasks
          SET title = $2, notes = $3, assignee = $4, status = $5, due_on = $6, due_at = $7,
-             project_id = $8, sort_order = $9, closed_at = $10, result = $11,
+             thread_id = $8, sort_order = $9, closed_at = $10, result = $11,
              result_url = $12, next_run_at = $13, attempts = $14,
              thing_id = $15, recur_every = $16, recur_unit = $17, updated_at = now()
          WHERE id = $1
@@ -497,7 +503,7 @@ pub async fn update_task(
         .bind(&next.status)
         .bind(next.due_on)
         .bind(next.due_at)
-        .bind(&next.project_id)
+        .bind(&next.thread_id)
         .bind(next.sort_order)
         .bind(next.closed_at)
         .bind(&next.result)
@@ -651,7 +657,7 @@ async fn open_next_occurrence(
         .ok_or_else(|| Error::InvalidInput("that recurrence runs past the calendar".into()))?;
     let id = generate_id(TASK_PREFIX, &[&uuid::Uuid::new_v4().to_string()]);
     sqlx::query(
-        "INSERT INTO app_tasks (id, title, notes, assignee, due_on, project_id, thing_id,
+        "INSERT INTO app_tasks (id, title, notes, assignee, due_on, thread_id, thing_id,
                                 recur_every, recur_unit, recurred_from_id, origin, sort_order)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)",
     )
@@ -660,7 +666,7 @@ async fn open_next_occurrence(
     .bind(&done.notes)
     .bind(&done.assignee)
     .bind(due_on)
-    .bind(&done.project_id)
+    .bind(&done.thread_id)
     .bind(&done.thing_id)
     .bind(every)
     .bind(unit)
@@ -887,7 +893,7 @@ fn edited_fields(before: &Task, after: &Task) -> Map<String, Value> {
     put("assignee", json!(before.assignee), json!(after.assignee));
     put("due_on", json!(before.due_on), json!(after.due_on));
     put("due_at", json!(before.due_at), json!(after.due_at));
-    put("project_id", json!(before.project_id), json!(after.project_id));
+    put("project_id", json!(before.thread_id), json!(after.thread_id));
     put("thing_id", json!(before.thing_id), json!(after.thing_id));
     put("recur_every", json!(before.recur_every), json!(after.recur_every));
     put("recur_unit", json!(before.recur_unit), json!(after.recur_unit));
@@ -1174,12 +1180,12 @@ mod tests {
     #[sqlx::test(migrations = "./migrations")]
     async fn a_task_sits_under_a_project_or_a_thing(pool: PgPool) {
         let house = thing(&pool, "The house").await;
-        sqlx::query("INSERT INTO app_projects (id, name) VALUES ('nb_p', 'Repaint the hallway')")
+        sqlx::query("INSERT INTO app_threads (id, name) VALUES ('nb_p', 'Repaint the hallway')")
             .execute(&pool)
             .await
             .unwrap();
 
-        let both = NewTask { project_id: Some("nb_p".into()), thing_id: Some(house.clone()), ..new("Buy paint") };
+        let both = NewTask { thread_id: Some("nb_p".into()), thing_id: Some(house.clone()), ..new("Buy paint") };
         assert!(create_tasks(&pool, vec![both], Origin::Owner, &Writer::owner()).await.is_err());
         let missing = NewTask { thing_id: Some("thing_missing".into()), ..new("Buy paint") };
         assert!(create_tasks(&pool, vec![missing], Origin::Owner, &Writer::owner()).await.is_err());
@@ -1190,17 +1196,17 @@ mod tests {
         let filter = ListFilter { thing_id: Some(house.clone()), ..Default::default() };
         assert_eq!(list_tasks(&pool, &filter).await.unwrap().len(), 1);
 
-        let into_project = TaskPatch { project_id: Some(Some("nb_p".into())), ..Default::default() };
+        let into_project = TaskPatch { thread_id: Some(Some("nb_p".into())), ..Default::default() };
         let moved = update_task(&pool, &task.id, into_project, &Writer::owner()).await.unwrap();
-        assert_eq!((moved.project_id.as_deref(), moved.thing_id.as_deref()), (Some("nb_p"), None));
+        assert_eq!((moved.thread_id.as_deref(), moved.thing_id.as_deref()), (Some("nb_p"), None));
         assert!(list_tasks(&pool, &filter).await.unwrap().is_empty());
 
         let under_thing = TaskPatch { thing_id: Some(Some(house.clone())), ..Default::default() };
         let back = update_task(&pool, &task.id, under_thing, &Writer::owner()).await.unwrap();
-        assert_eq!((back.project_id.as_deref(), back.thing_id.as_deref()), (None, Some(house.as_str())));
+        assert_eq!((back.thread_id.as_deref(), back.thing_id.as_deref()), (None, Some(house.as_str())));
 
         let both = TaskPatch {
-            project_id: Some(Some("nb_p".into())),
+            thread_id: Some(Some("nb_p".into())),
             thing_id: Some(Some(house.clone())),
             ..Default::default()
         };

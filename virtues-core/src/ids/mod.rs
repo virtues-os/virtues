@@ -111,7 +111,7 @@ pub const TASK_PREFIX: &str = "task";
 // "nb": every existing project id, ref URL, pin and member row carries it, and
 // rewriting ids across foreign keys and stored JSON on live boxes is not worth
 // a cosmetic letter. New projects mint `nb_…` too, so there is one id shape.
-pub const PROJECT_PREFIX: &str = "nb";
+pub const THREAD_PREFIX: &str = "nb";
 
 // Document annotations (highlights + margin notes on drive files)
 pub const ANNOTATION_PREFIX: &str = "anno";

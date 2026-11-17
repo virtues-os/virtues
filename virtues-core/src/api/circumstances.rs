@@ -419,7 +419,7 @@ async fn build_section(
             .fetch_all(pool)
             .await?;
             let projects = sqlx::query(
-                r#"SELECT id, name FROM app_projects
+                r#"SELECT id, name FROM app_threads
                    WHERE archived_at IS NULL AND deleted_at IS NULL
                      AND updated_at > $1::timestamptz - interval '14 days'
                    ORDER BY updated_at DESC, id LIMIT 3"#,
@@ -685,7 +685,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        sqlx::query("INSERT INTO app_projects (id, name) VALUES ('nb_t1', 'Garden')")
+        sqlx::query("INSERT INTO app_threads (id, name) VALUES ('nb_t1', 'Garden')")
             .execute(&pool)
             .await
             .unwrap();

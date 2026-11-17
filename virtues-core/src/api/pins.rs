@@ -2,7 +2,7 @@
 //!
 //! A pin is a single URL pointer the user has dragged to their sidebar's
 //! "Pinned" section — a thing, page, day, person, project, or external URL.
-//! Distinct from project membership (`app_project_items`): a pin is global to
+//! Distinct from project membership (`app_thread_items`): a pin is global to
 //! the user's sidebar, not scoped to a project.
 //!
 //! Same URL convention as the rest of the app: `/person/per_xxx`,

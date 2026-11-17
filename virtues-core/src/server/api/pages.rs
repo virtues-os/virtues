@@ -482,7 +482,7 @@ mod tests {
         let request = CreatePageRequest {
             title: "Trip".into(),
             content: content.into(),
-            project_id: None,
+            thread_id: None,
             icon: None,
             icon_color: None,
             cover_url: None,

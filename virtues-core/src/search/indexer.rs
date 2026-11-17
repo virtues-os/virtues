@@ -1294,7 +1294,7 @@ pub(crate) mod geometry_tests {
             "SELECT format_type(a.atttypid, a.atttypmod) FROM pg_attribute a \
              WHERE (a.attrelid, a.attname) IN (('search_vectors'::regclass, 'embedding'), \
                    ('search_topic_cache'::regclass, 'embedding'), \
-                   ('app_projects'::regclass, 'centroid')) \
+                   ('app_threads'::regclass, 'centroid')) \
              ORDER BY a.attrelid::regclass::text",
         )
         .fetch_all(pool)

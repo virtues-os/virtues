@@ -253,7 +253,7 @@ async fn fetch_names(
         }
         "project" => {
             "SELECT id, COALESCE(NULLIF(name, ''), 'Untitled project') \
-             FROM app_projects WHERE id = ANY($1)"
+             FROM app_threads WHERE id = ANY($1)"
         }
         _ => return Vec::new(),
     };
@@ -328,7 +328,7 @@ pub async fn resolve_identities(
             }
             _ => {
                 "SELECT id, COALESCE(NULLIF(name, ''), 'Untitled project'), icon, accent_color, deleted_at IS NOT NULL \
-                 FROM app_projects WHERE id = ANY($1)"
+                 FROM app_threads WHERE id = ANY($1)"
             }
         };
         let rows = sqlx::query_as::<_, (String, String, Option<String>, Option<String>, bool)>(sql)
@@ -505,7 +505,7 @@ mod live {
     async fn resolves_every_kind_a_real_project_actually_contains() {
         let pool = pool().await;
 
-        let urls: Vec<String> = sqlx::query_scalar("SELECT DISTINCT url FROM app_project_items")
+        let urls: Vec<String> = sqlx::query_scalar("SELECT DISTINCT url FROM app_thread_items")
             .fetch_all(&pool)
             .await
             .expect("project items");

@@ -1,31 +1,35 @@
-//! Projects API — the "room" a chat lives in.
+//! Threads: something happening in the person's life that they are following.
 //!
-//! A project is something unresolved in the person's life that can be finished
-//! and takes more than one step. The person makes it; the server never makes
-//! one on its own. It ends when they finish it or drop it (`archived_at` with
-//! an `outcome`), and it can sit under a thing (`thing_id`,
-//! `crate::api::things`). What goes on and cannot be finished is a thing, and
-//! one step is a task.
+//! A thread unfolds and is not settled: raising a round, getting back to the
+//! gym, a birthday dinner, health. Some finish and some never do. The person
+//! makes it; the server never makes one on its own. It ends when they finish it
+//! or drop it (`archived_at` with an `outcome`), and it can sit under a thing
+//! (`thing_id`, `crate::api::things`), the noun it is about. One step is a task.
 //!
-//! A project gathers entities, chats, and pages as URL-native members
-//! (`app_project_items`) and carries an icon, a color and a brief
-//! (`instructions`).
+//! A thread gathers chats, pages, files and subjects as URL-native members
+//! (`app_thread_items`) and carries an icon, a color and a brief
+//! (`instructions`), the sentence that says what belongs in it.
 //!
-//! No note or memo: `app_projects.current_status(_at)` stay in the table,
-//! unread, so notes written while projects had one are kept rather than
-//! dropped by a migration.
+//! No note or memo: `app_threads.current_status(_at)` stay in the table,
+//! unread, so notes written while the table had one are kept.
 //!
-//! A chat lives in at most one Project (`app_chats.project_id`). Entering a Project
-//! weights its members in retrieval; conversely the chat is folded into the
-//! Project's corpus. Membership is manual in v1 — there is no smart/query view.
-//! A project cannot be a member of a project — you cannot folder a folder.
+//! A chat lives in at most one thread (`app_chats.thread_id`). Entering a thread
+//! weights its members in retrieval; the chat is folded into the thread's
+//! corpus. Membership is manual for now. A thread cannot be a member of a
+//! thread.
 //!
-//! Ids keep the `nb_` prefix from when a project was called a notebook (see
-//! `ids::PROJECT_PREFIX`), and `/notebook/{id}` stays an accepted spelling of
-//! the ref URL (see `refs::split_ref`).
+//! `thread_id` here is one of these threads. On `data_communication_message`
+//! and `data_communication_email` the same column name means a message or email
+//! conversation; the two are unrelated.
+//!
+//! Threads were called projects until 2026-11-17 and notebooks before that. Ids
+//! keep the `nb_` prefix (`ids::THREAD_PREFIX`), and `/project/{id}` and
+//! `/notebook/{id}` stay the ref URLs (`refs::split_ref`). The HTTP routes and
+//! JSON still say project for the web app and released apps; see the TODO on
+//! the routes in `server/api/library.rs`.
 
 use crate::error::{Error, Result};
-use crate::ids::{generate_id, PROJECT_PREFIX};
+use crate::ids::{generate_id, THREAD_PREFIX};
 use crate::types::Timestamp;
 use serde::{Deserialize, Deserializer, Serialize};
 use sqlx::PgPool;
@@ -49,7 +53,7 @@ where
 // ============================================================================
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct Project {
+pub struct Thread {
     pub id: String,
     pub name: String,
     pub icon: Option<String>,
@@ -81,7 +85,7 @@ pub struct Project {
 
 /// List-view summary — adds member and chat counts.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct ProjectSummary {
+pub struct ThreadSummary {
     pub id: String,
     pub name: String,
     pub icon: Option<String>,
@@ -89,7 +93,7 @@ pub struct ProjectSummary {
     pub instructions: Option<String>,
     pub sort_order: i32,
     /// Members other than chats. Chats are counted in `chat_count` from the
-    /// chat's own `project_id`, so counting their `/chat/` rows here as well
+    /// chat's own `thread_id`, so counting their `/chat/` rows here as well
     /// made every filed chat show up twice on a project card.
     pub item_count: i64,
     pub chat_count: i64,
@@ -104,9 +108,9 @@ pub struct ProjectSummary {
     pub updated_at: Timestamp,
 }
 
-/// A single URL-native member of a Project.
+/// A single URL-native member of a Thread.
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct ProjectItem {
+pub struct ThreadItem {
     pub url: String,
     pub sort_order: i32,
     /// `library` (grounds chat) | `manuscript` (yours to write; excluded from
@@ -114,7 +118,7 @@ pub struct ProjectItem {
     pub role: String,
     pub added_at: Timestamp,
     /// What the member is called and what it is, resolved in one batch by
-    /// `get_project` (the same resolver the chat prompt uses). The page used
+    /// `get_thread` (the same resolver the chat prompt uses). The page used
     /// to ask for each member's name itself, one request per member.
     #[sqlx(skip)]
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -129,19 +133,19 @@ pub struct ProjectItem {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectDetail {
+pub struct ThreadDetail {
     #[serde(flatten)]
-    pub project: Project,
-    pub items: Vec<ProjectItem>,
+    pub project: Thread,
+    pub items: Vec<ThreadItem>,
     /// Every live chat filed here, newest conversation first. The page used to
     /// list chats from the session list, which holds only the most recent
     /// chats across the whole box, so a project's older chats were counted on
     /// its card and missing from its page.
-    pub chats: Vec<ProjectChat>,
+    pub chats: Vec<ThreadChat>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
-pub struct ProjectChat {
+pub struct ThreadChat {
     pub id: String,
     pub title: String,
     pub icon: Option<String>,
@@ -150,12 +154,12 @@ pub struct ProjectChat {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectListResponse {
-    pub projects: Vec<ProjectSummary>,
+pub struct ThreadListResponse {
+    pub projects: Vec<ThreadSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct CreateProjectRequest {
+pub struct CreateThreadRequest {
     pub name: String,
     pub icon: Option<String>,
     pub accent_color: Option<String>,
@@ -181,10 +185,10 @@ impl Outcome {
     }
 }
 
-/// Update a Project. `Option<Option<T>>` fields are tri-state: absent = leave,
+/// Update a Thread. `Option<Option<T>>` fields are tri-state: absent = leave,
 /// `Some(None)` = clear, `Some(Some(v))` = set.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct UpdateProjectRequest {
+pub struct UpdateThreadRequest {
     pub name: Option<String>,
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub icon: Option<Option<String>>,
@@ -199,17 +203,17 @@ pub struct UpdateProjectRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct AddProjectItemRequest {
+pub struct AddThreadItemRequest {
     pub url: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReorderProjectItemsRequest {
+pub struct ReorderThreadItemsRequest {
     pub urls: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetProjectItemRoleRequest {
+pub struct SetThreadItemRoleRequest {
     pub url: String,
     /// `library` | `manuscript` | `pin`.
     pub role: String,
@@ -217,7 +221,7 @@ pub struct SetProjectItemRoleRequest {
 
 /// One entity referenced across a project's members.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectGraphNode {
+pub struct ThreadGraphNode {
     /// Ref URL for the entity, e.g. `/person/pe_abc` — also the node's identity.
     pub url: String,
     pub entity_type: String,
@@ -228,28 +232,28 @@ pub struct ProjectGraphNode {
 
 /// Two entities that appear together in at least one member.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectGraphEdge {
+pub struct ThreadGraphEdge {
     pub source: String,
     pub target: String,
     pub weight: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ProjectGraph {
-    pub nodes: Vec<ProjectGraphNode>,
-    pub edges: Vec<ProjectGraphEdge>,
+pub struct ThreadGraph {
+    pub nodes: Vec<ThreadGraphNode>,
+    pub edges: Vec<ThreadGraphEdge>,
 }
 
 // ============================================================================
-// Project CRUD
+// Thread CRUD
 // ============================================================================
 
-/// A project row as [`Project`] reads it, from `app_projects` unaliased. The
+/// A project row as [`Thread`] reads it, from `app_threads` unaliased. The
 /// thing's name is resolved here so no reader needs a second query to say
 /// what a project sits under.
-const PROJECT_COLUMNS: &str = "id, name, icon, accent_color, instructions, sort_order, \
+const THREAD_COLUMNS: &str = "id, name, icon, accent_color, instructions, sort_order, \
      archived_at, outcome, thing_id, \
-     (SELECT t.title FROM wiki_things t WHERE t.id = app_projects.thing_id) AS thing_title, \
+     (SELECT t.title FROM wiki_things t WHERE t.id = app_threads.thing_id) AS thing_title, \
      created_at, updated_at";
 
 /// List Projects, most-recently-active first, with member and chat counts.
@@ -258,34 +262,34 @@ const PROJECT_COLUMNS: &str = "id, name, icon, accent_color, instructions, sort_
 /// "Add to project" submenu) wants the working set.
 ///
 /// A trashed member keeps its membership row so a restore is whole (see
-/// `api::trash`), which is why the counts and `get_project`'s member list
+/// `api::trash`), which is why the counts and `get_thread`'s member list
 /// filter members through their own table's `deleted_at` rather than trusting
 /// the row's existence.
 ///
 /// `member` narrows the list to the projects that hold that url — a page
 /// asking which projects it is in. A page can be in several, unlike a chat.
-pub async fn list_projects(
+pub async fn list_threads(
     pool: &PgPool,
     include_archived: bool,
     member: Option<&str>,
-) -> Result<ProjectListResponse> {
-    let projects = sqlx::query_as::<_, ProjectSummary>(
+) -> Result<ThreadListResponse> {
+    let projects = sqlx::query_as::<_, ThreadSummary>(
         r#"
         SELECT
             s.id, s.name, s.icon, s.accent_color,
             s.instructions, s.sort_order, s.archived_at, s.outcome, s.thing_id,
             (SELECT t.title FROM wiki_things t WHERE t.id = s.thing_id) AS thing_title,
-            COALESCE((SELECT COUNT(*) FROM app_project_items
-                      WHERE project_id = s.id
+            COALESCE((SELECT COUNT(*) FROM app_thread_items
+                      WHERE thread_id = s.id
               AND url NOT LIKE '/chat/%'
               AND NOT EXISTS (SELECT 1 FROM app_pages p WHERE url = '/page/' || p.id AND p.deleted_at IS NOT NULL)), 0) AS item_count,
             COALESCE((SELECT COUNT(*) FROM app_chats
-                      WHERE project_id = s.id AND deleted_at IS NULL), 0) AS chat_count,
+                      WHERE thread_id = s.id AND deleted_at IS NULL), 0) AS chat_count,
             s.created_at, s.updated_at
-        FROM app_projects s
+        FROM app_threads s
         WHERE s.deleted_at IS NULL AND ($1 OR s.archived_at IS NULL)
           AND ($2::text IS NULL OR EXISTS (
-              SELECT 1 FROM app_project_items i WHERE i.project_id = s.id AND i.url = $2
+              SELECT 1 FROM app_thread_items i WHERE i.thread_id = s.id AND i.url = $2
           ))
         ORDER BY s.sort_order ASC, s.updated_at DESC
         "#,
@@ -296,25 +300,25 @@ pub async fn list_projects(
     .await
     .map_err(|e| Error::Database(format!("Failed to list projects: {}", e)))?;
 
-    Ok(ProjectListResponse { projects })
+    Ok(ThreadListResponse { projects })
 }
 
-/// Get a single Project with its ordered members.
-pub async fn get_project(pool: &PgPool, id: &str) -> Result<ProjectDetail> {
-    let project = sqlx::query_as::<_, Project>(&format!(
-        "SELECT {PROJECT_COLUMNS} FROM app_projects WHERE id = $1 AND deleted_at IS NULL"
+/// Get a single Thread with its ordered members.
+pub async fn get_thread(pool: &PgPool, id: &str) -> Result<ThreadDetail> {
+    let project = sqlx::query_as::<_, Thread>(&format!(
+        "SELECT {THREAD_COLUMNS} FROM app_threads WHERE id = $1 AND deleted_at IS NULL"
     ))
     .bind(id)
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get project: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id)))?;
+    .ok_or_else(|| Error::NotFound(format!("Thread not found: {}", id)))?;
 
-    let mut items = sqlx::query_as::<_, ProjectItem>(
+    let mut items = sqlx::query_as::<_, ThreadItem>(
         r#"
         SELECT url, sort_order, role, added_at
-        FROM app_project_items
-        WHERE project_id = $1
+        FROM app_thread_items
+        WHERE thread_id = $1
               AND NOT EXISTS (SELECT 1 FROM app_pages p WHERE url = '/page/' || p.id AND p.deleted_at IS NOT NULL)
               AND NOT EXISTS (SELECT 1 FROM app_chats c WHERE url = '/chat/' || c.id AND c.deleted_at IS NOT NULL)
         ORDER BY sort_order ASC, added_at ASC
@@ -335,7 +339,7 @@ pub async fn get_project(pool: &PgPool, id: &str) -> Result<ProjectDetail> {
         }
     }
 
-    let chats = sqlx::query_as::<_, ProjectChat>(
+    let chats = sqlx::query_as::<_, ThreadChat>(
         r#"
         SELECT id, title, icon, message_count::bigint AS message_count,
                COALESCE(
@@ -343,7 +347,7 @@ pub async fn get_project(pool: &PgPool, id: &str) -> Result<ProjectDetail> {
                    c.created_at
                ) AS last_message_at
         FROM app_chats c
-        WHERE project_id = $1 AND deleted_at IS NULL
+        WHERE thread_id = $1 AND deleted_at IS NULL
         ORDER BY last_message_at DESC
         "#,
     )
@@ -352,14 +356,14 @@ pub async fn get_project(pool: &PgPool, id: &str) -> Result<ProjectDetail> {
     .await
     .map_err(|e| Error::Database(format!("Failed to get project chats: {}", e)))?;
 
-    Ok(ProjectDetail { project, items, chats })
+    Ok(ThreadDetail { project, items, chats })
 }
 
-/// Create a new Project.
-pub async fn create_project(pool: &PgPool, req: CreateProjectRequest) -> Result<Project> {
+/// Create a new Thread.
+pub async fn create_thread(pool: &PgPool, req: CreateThreadRequest) -> Result<Thread> {
     let name = req.name.trim();
     if name.is_empty() {
-        return Err(Error::InvalidInput("Project name cannot be empty".into()));
+        return Err(Error::InvalidInput("Thread name cannot be empty".into()));
     }
 
     if let Some(thing_id) = &req.thing_id {
@@ -367,12 +371,12 @@ pub async fn create_project(pool: &PgPool, req: CreateProjectRequest) -> Result<
     }
 
     let timestamp = chrono::Utc::now().to_rfc3339();
-    let id = generate_id(PROJECT_PREFIX, &[name, &timestamp]);
+    let id = generate_id(THREAD_PREFIX, &[name, &timestamp]);
 
-    let project = sqlx::query_as::<_, Project>(&format!(
-        "INSERT INTO app_projects (id, name, icon, accent_color, thing_id) \
+    let project = sqlx::query_as::<_, Thread>(&format!(
+        "INSERT INTO app_threads (id, name, icon, accent_color, thing_id) \
          VALUES ($1, $2, $3, $4, $5) \
-         RETURNING {PROJECT_COLUMNS}"
+         RETURNING {THREAD_COLUMNS}"
     ))
     .bind(&id)
     .bind(name)
@@ -386,20 +390,20 @@ pub async fn create_project(pool: &PgPool, req: CreateProjectRequest) -> Result<
     Ok(project)
 }
 
-/// Update a Project. Only provided fields change.
-pub async fn update_project(pool: &PgPool, id: &str, req: UpdateProjectRequest) -> Result<Project> {
-    let existing = sqlx::query_as::<_, Project>(&format!(
-        "SELECT {PROJECT_COLUMNS} FROM app_projects WHERE id = $1"
+/// Update a Thread. Only provided fields change.
+pub async fn update_thread(pool: &PgPool, id: &str, req: UpdateThreadRequest) -> Result<Thread> {
+    let existing = sqlx::query_as::<_, Thread>(&format!(
+        "SELECT {THREAD_COLUMNS} FROM app_threads WHERE id = $1"
     ))
     .bind(id)
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to get project: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Project not found: {}", id)))?;
+    .ok_or_else(|| Error::NotFound(format!("Thread not found: {}", id)))?;
 
     let name = req.name.as_deref().unwrap_or(&existing.name).trim().to_string();
     if name.is_empty() {
-        return Err(Error::InvalidInput("Project name cannot be empty".into()));
+        return Err(Error::InvalidInput("Thread name cannot be empty".into()));
     }
 
     let icon = match req.icon {
@@ -423,12 +427,12 @@ pub async fn update_project(pool: &PgPool, id: &str, req: UpdateProjectRequest) 
         crate::api::things::get_thing(pool, thing_id).await?;
     }
 
-    let project = sqlx::query_as::<_, Project>(&format!(
-        "UPDATE app_projects \
+    let project = sqlx::query_as::<_, Thread>(&format!(
+        "UPDATE app_threads \
          SET name = $2, icon = $3, accent_color = $4, sort_order = $5, \
              instructions = $6, thing_id = $7 \
          WHERE id = $1 \
-         RETURNING {PROJECT_COLUMNS}"
+         RETURNING {THREAD_COLUMNS}"
     ))
     .bind(id)
     .bind(&name)
@@ -448,9 +452,9 @@ pub async fn update_project(pool: &PgPool, id: &str, req: UpdateProjectRequest) 
 /// keeps everything. Ending an ended project again changes only how it ended
 /// and keeps the day it ended, so "finished" can be corrected to "dropped"
 /// without reopening it.
-pub async fn archive_project(pool: &PgPool, id: &str, outcome: Outcome) -> Result<()> {
+pub async fn archive_thread(pool: &PgPool, id: &str, outcome: Outcome) -> Result<()> {
     let hit: Option<String> = sqlx::query_scalar(
-        "UPDATE app_projects SET archived_at = COALESCE(archived_at, now()), outcome = $2 \
+        "UPDATE app_threads SET archived_at = COALESCE(archived_at, now()), outcome = $2 \
          WHERE id = $1 AND deleted_at IS NULL RETURNING id",
     )
     .bind(id)
@@ -458,33 +462,33 @@ pub async fn archive_project(pool: &PgPool, id: &str, outcome: Outcome) -> Resul
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to end project {id}: {e}")))?;
-    hit.map(|_| ()).ok_or_else(|| Error::NotFound(format!("Project not found: {id}")))
+    hit.map(|_| ()).ok_or_else(|| Error::NotFound(format!("Thread not found: {id}")))
 }
 
 /// Reopen an ended project.
-pub async fn unarchive_project(pool: &PgPool, id: &str) -> Result<()> {
+pub async fn unarchive_thread(pool: &PgPool, id: &str) -> Result<()> {
     let hit: Option<String> = sqlx::query_scalar(
-        "UPDATE app_projects SET archived_at = NULL, outcome = NULL \
+        "UPDATE app_threads SET archived_at = NULL, outcome = NULL \
          WHERE id = $1 AND deleted_at IS NULL RETURNING id",
     )
     .bind(id)
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to reopen project {id}: {e}")))?;
-    hit.map(|_| ()).ok_or_else(|| Error::NotFound(format!("Project not found: {id}")))
+    hit.map(|_| ()).ok_or_else(|| Error::NotFound(format!("Thread not found: {id}")))
 }
 
-/// Delete a Project — into the trash. Members and the chats' `project_id`
+/// Delete a Thread — into the trash. Members and the chats' `thread_id`
 /// stay on the row so a restore brings the project back whole; the FK
 /// cascade and SET NULL only fire on `trash::purge`, the hard delete the
 /// trash and the sweeper reach after `TRASH_RETENTION_DAYS`.
-pub async fn delete_project(pool: &PgPool, id: &str) -> Result<()> {
+pub async fn delete_thread(pool: &PgPool, id: &str) -> Result<()> {
     crate::api::trash::trash(pool, crate::api::trash::TrashKind::Project, id).await
 }
 
-/// Touch a Project's updated_at to reflect activity.
-pub async fn touch_project(pool: &PgPool, id: &str) -> Result<()> {
-    sqlx::query(r#"UPDATE app_projects SET updated_at = now() WHERE id = $1"#)
+/// Touch a Thread's updated_at to reflect activity.
+pub async fn touch_thread(pool: &PgPool, id: &str) -> Result<()> {
+    sqlx::query(r#"UPDATE app_threads SET updated_at = now() WHERE id = $1"#)
         .bind(id)
         .execute(pool)
         .await
@@ -496,8 +500,8 @@ pub async fn touch_project(pool: &PgPool, id: &str) -> Result<()> {
 // Membership
 // ============================================================================
 
-/// Add a member URL to a Project. Idempotent on (project_id, url).
-pub async fn add_project_item(pool: &PgPool, project_id: &str, req: AddProjectItemRequest) -> Result<ProjectItem> {
+/// Add a member URL to a Thread. Idempotent on (thread_id, url).
+pub async fn add_thread_item(pool: &PgPool, thread_id: &str, req: AddThreadItemRequest) -> Result<ThreadItem> {
     let url = req.url.trim();
     if url.is_empty() {
         return Err(Error::InvalidInput("Member url cannot be empty".into()));
@@ -515,57 +519,57 @@ pub async fn add_project_item(pool: &PgPool, project_id: &str, req: AddProjectIt
     }
 
     let found: Option<Option<Timestamp>> = sqlx::query_scalar(
-        r#"SELECT archived_at FROM app_projects WHERE id = $1 AND deleted_at IS NULL"#,
+        r#"SELECT archived_at FROM app_threads WHERE id = $1 AND deleted_at IS NULL"#,
     )
-    .bind(project_id)
+    .bind(thread_id)
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to verify project: {}", e)))?;
     let Some(archived_at) = found else {
-        return Err(Error::NotFound(format!("Project not found: {}", project_id)));
+        return Err(Error::NotFound(format!("Thread not found: {}", thread_id)));
     };
     // An ended project does not take new members; reopen it first.
     if archived_at.is_some() {
         return Err(Error::InvalidInput("this project has ended".into()));
     }
 
-    // A chat is filed by its own `project_id`, not by a member row: the
+    // A chat is filed by its own `thread_id`, not by a member row: the
     // project view lists chats from the session list and ignores `/chat/`
     // member rows, so a bare row here was an add that did nothing (VIR-359).
     // Bind the chat; the insert below then keeps the membership row in step.
     if let Some(chat_id) = url.strip_prefix("/chat/") {
         refuse_reserved_chat(chat_id)?;
-        set_chat_project(pool, chat_id, Some(project_id)).await?;
+        set_chat_thread(pool, chat_id, Some(thread_id)).await?;
     }
 
     // role='library' = grounds chat, which is what membership means. (The old
     // nav-only 'pin' role for a nested notebook is gone with nesting itself;
     // 'pin' survives only as a role the user can set explicitly.)
-    let item = sqlx::query_as::<_, ProjectItem>(
+    let item = sqlx::query_as::<_, ThreadItem>(
         r#"
-        INSERT INTO app_project_items (project_id, url, sort_order, role)
+        INSERT INTO app_thread_items (thread_id, url, sort_order, role)
         VALUES (
             $1, $2,
-            (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM app_project_items WHERE project_id = $1),
+            (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM app_thread_items WHERE thread_id = $1),
             'library'
         )
         -- Re-adding an existing member upgrades a legacy nav-only 'pin' to
         -- 'library', but must not demote a 'manuscript' back to source material.
-        ON CONFLICT (project_id, url) DO UPDATE SET
+        ON CONFLICT (thread_id, url) DO UPDATE SET
             role = CASE
-                WHEN app_project_items.role = 'pin' THEN 'library'
-                ELSE app_project_items.role
+                WHEN app_thread_items.role = 'pin' THEN 'library'
+                ELSE app_thread_items.role
             END
         RETURNING url, sort_order, role, added_at
         "#,
     )
-    .bind(project_id)
+    .bind(thread_id)
     .bind(url)
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to add project item: {}", e)))?;
 
-    touch_project(pool, project_id).await.ok();
+    touch_thread(pool, thread_id).await.ok();
     Ok(item)
 }
 
@@ -583,24 +587,24 @@ fn refuse_reserved_chat(chat_id: &str) -> Result<()> {
     Ok(())
 }
 
-/// Remove a member URL from a Project.
-pub async fn remove_project_item(pool: &PgPool, project_id: &str, url: &str) -> Result<()> {
-    // The mirror of the add: a chat leaves by its `project_id`, which is what
+/// Remove a member URL from a Thread.
+pub async fn remove_thread_item(pool: &PgPool, thread_id: &str, url: &str) -> Result<()> {
+    // The mirror of the add: a chat leaves by its `thread_id`, which is what
     // the project view lists it by. Deleting only the row left the chat
     // filed, so "Remove from project" on a chat did nothing you could see.
     // Guarded on this project so a stale remove cannot unfile a chat that has
     // since moved elsewhere.
     if let Some(chat_id) = url.strip_prefix("/chat/") {
-        sqlx::query(r#"UPDATE app_chats SET project_id = NULL WHERE id = $1 AND project_id = $2"#)
+        sqlx::query(r#"UPDATE app_chats SET thread_id = NULL WHERE id = $1 AND thread_id = $2"#)
             .bind(chat_id)
-            .bind(project_id)
+            .bind(thread_id)
             .execute(pool)
             .await
             .map_err(|e| Error::Database(format!("Failed to detach chat from project: {}", e)))?;
     }
 
-    let result = sqlx::query(r#"DELETE FROM app_project_items WHERE project_id = $1 AND url = $2"#)
-        .bind(project_id)
+    let result = sqlx::query(r#"DELETE FROM app_thread_items WHERE thread_id = $1 AND url = $2"#)
+        .bind(thread_id)
         .bind(url)
         .execute(pool)
         .await
@@ -609,18 +613,18 @@ pub async fn remove_project_item(pool: &PgPool, project_id: &str, url: &str) -> 
     if result.rows_affected() == 0 {
         return Err(Error::NotFound(format!(
             "Member not found in project: {} / {}",
-            project_id, url
+            thread_id, url
         )));
     }
 
-    touch_project(pool, project_id).await.ok();
+    touch_thread(pool, thread_id).await.ok();
     Ok(())
 }
 
-/// Remove all membership entries for a given URL across every Project.
+/// Remove all membership entries for a given URL across every Thread.
 /// Called when the underlying entity (chat/page/...) is deleted.
 pub async fn remove_items_by_url(pool: &PgPool, url: &str) -> Result<i64> {
-    let result = sqlx::query(r#"DELETE FROM app_project_items WHERE url = $1"#)
+    let result = sqlx::query(r#"DELETE FROM app_thread_items WHERE url = $1"#)
         .bind(url)
         .execute(pool)
         .await
@@ -629,11 +633,11 @@ pub async fn remove_items_by_url(pool: &PgPool, url: &str) -> Result<i64> {
     Ok(result.rows_affected() as i64)
 }
 
-/// Reorder a Project's members. Unknown URLs are ignored.
-pub async fn reorder_project_items(
+/// Reorder a Thread's members. Unknown URLs are ignored.
+pub async fn reorder_thread_items(
     pool: &PgPool,
-    project_id: &str,
-    req: ReorderProjectItemsRequest,
+    thread_id: &str,
+    req: ReorderThreadItemsRequest,
 ) -> Result<()> {
     let mut tx = pool
         .begin()
@@ -642,18 +646,18 @@ pub async fn reorder_project_items(
 
     for (idx, url) in req.urls.iter().enumerate() {
         sqlx::query(
-            r#"UPDATE app_project_items SET sort_order = $1 WHERE project_id = $2 AND url = $3"#,
+            r#"UPDATE app_thread_items SET sort_order = $1 WHERE thread_id = $2 AND url = $3"#,
         )
         .bind(idx as i64)
-        .bind(project_id)
+        .bind(thread_id)
         .bind(url)
         .execute(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("Failed to reorder project items: {}", e)))?;
     }
 
-    sqlx::query(r#"UPDATE app_projects SET updated_at = now() WHERE id = $1"#)
-        .bind(project_id)
+    sqlx::query(r#"UPDATE app_threads SET updated_at = now() WHERE id = $1"#)
+        .bind(thread_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("Failed to touch project: {}", e)))?;
@@ -666,16 +670,16 @@ pub async fn reorder_project_items(
 }
 
 // ============================================================================
-// Chat ↔ Project binding (one active Project per chat)
+// Chat ↔ Thread binding (one active Thread per chat)
 // ============================================================================
 
-/// Set or clear a chat's Project. Passing `Some(project_id)` also folds the chat
-/// into that Project's membership (idempotent); passing `None` detaches it. A
+/// Set or clear a chat's Thread. Passing `Some(thread_id)` also folds the chat
+/// into that Thread's membership (idempotent); passing `None` detaches it. A
 /// chat lives in one project, so its `/chat/<id>` row in any other project goes
-/// in the same transaction — the chat's `project_id` and its membership rows
+/// in the same transaction — the chat's `thread_id` and its membership rows
 /// can never diverge.
-pub async fn set_chat_project(pool: &PgPool, chat_id: &str, project_id: Option<&str>) -> Result<()> {
-    if project_id.is_some() {
+pub async fn set_chat_thread(pool: &PgPool, chat_id: &str, thread_id: Option<&str>) -> Result<()> {
+    if thread_id.is_some() {
         refuse_reserved_chat(chat_id)?;
     }
     let mut tx = pool
@@ -683,39 +687,39 @@ pub async fn set_chat_project(pool: &PgPool, chat_id: &str, project_id: Option<&
         .await
         .map_err(|e| Error::Database(format!("Failed to start transaction: {}", e)))?;
 
-    sqlx::query(r#"UPDATE app_chats SET project_id = $2 WHERE id = $1"#)
+    sqlx::query(r#"UPDATE app_chats SET thread_id = $2 WHERE id = $1"#)
         .bind(chat_id)
-        .bind(project_id)
+        .bind(thread_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("Failed to set chat project: {}", e)))?;
 
-    sqlx::query(r#"DELETE FROM app_project_items WHERE url = $1 AND project_id IS DISTINCT FROM $2"#)
+    sqlx::query(r#"DELETE FROM app_thread_items WHERE url = $1 AND thread_id IS DISTINCT FROM $2"#)
         .bind(format!("/chat/{}", chat_id))
-        .bind(project_id)
+        .bind(thread_id)
         .execute(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("Failed to clear chat's old membership: {}", e)))?;
 
-    if let Some(project_id) = project_id {
+    if let Some(thread_id) = thread_id {
         sqlx::query(
             r#"
-            INSERT INTO app_project_items (project_id, url, sort_order)
+            INSERT INTO app_thread_items (thread_id, url, sort_order)
             VALUES (
                 $1, $2,
-                (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM app_project_items WHERE project_id = $1)
+                (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM app_thread_items WHERE thread_id = $1)
             )
-            ON CONFLICT (project_id, url) DO NOTHING
+            ON CONFLICT (thread_id, url) DO NOTHING
             "#,
         )
-        .bind(project_id)
+        .bind(thread_id)
         .bind(format!("/chat/{}", chat_id))
         .execute(&mut *tx)
         .await
         .map_err(|e| Error::Database(format!("Failed to fold chat into project: {}", e)))?;
 
-        sqlx::query(r#"UPDATE app_projects SET updated_at = now() WHERE id = $1"#)
-            .bind(project_id)
+        sqlx::query(r#"UPDATE app_threads SET updated_at = now() WHERE id = $1"#)
+            .bind(thread_id)
             .execute(&mut *tx)
             .await
             .map_err(|e| Error::Database(format!("Failed to touch project: {}", e)))?;
@@ -730,11 +734,11 @@ pub async fn set_chat_project(pool: &PgPool, chat_id: &str, project_id: Option<&
 
 /// Set a member's role. `library` grounds chat, `manuscript` is yours to write
 /// (kept out of retrieval), `pin` is nav-only.
-pub async fn set_project_item_role(
+pub async fn set_thread_item_role(
     pool: &PgPool,
-    project_id: &str,
-    req: SetProjectItemRoleRequest,
-) -> Result<ProjectItem> {
+    thread_id: &str,
+    req: SetThreadItemRoleRequest,
+) -> Result<ThreadItem> {
     if !matches!(req.role.as_str(), "library" | "manuscript" | "pin") {
         return Err(Error::InvalidInput(format!(
             "Unknown project item role: {}",
@@ -742,22 +746,22 @@ pub async fn set_project_item_role(
         )));
     }
 
-    let item = sqlx::query_as::<_, ProjectItem>(
+    let item = sqlx::query_as::<_, ThreadItem>(
         r#"
-        UPDATE app_project_items SET role = $3
-        WHERE project_id = $1 AND url = $2
+        UPDATE app_thread_items SET role = $3
+        WHERE thread_id = $1 AND url = $2
         RETURNING url, sort_order, role, added_at
         "#,
     )
-    .bind(project_id)
+    .bind(thread_id)
     .bind(&req.url)
     .bind(&req.role)
     .fetch_optional(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to set project item role: {}", e)))?
-    .ok_or_else(|| Error::NotFound(format!("Project member not found: {}", req.url)))?;
+    .ok_or_else(|| Error::NotFound(format!("Thread member not found: {}", req.url)))?;
 
-    touch_project(pool, project_id).await.ok();
+    touch_thread(pool, thread_id).await.ok();
     Ok(item)
 }
 
@@ -799,24 +803,24 @@ fn extract_entity_urls(content: &str) -> std::collections::HashSet<String> {
 /// entity members, and `[@ref]` links inside member pages. Nothing is inferred:
 /// there is no NER over free text, so an entity that is merely *mentioned* in a
 /// PDF does not appear here.
-pub async fn project_graph(pool: &PgPool, project_id: &str) -> Result<ProjectGraph> {
+pub async fn thread_graph(pool: &PgPool, thread_id: &str) -> Result<ThreadGraph> {
     use std::collections::{HashMap, HashSet};
 
     // Nav-only pins are excluded: they are shortcuts, not content.
     let members: Vec<String> = sqlx::query_scalar(
         r#"
-        SELECT url FROM app_project_items
-        WHERE project_id = $1 AND role <> 'pin'
+        SELECT url FROM app_thread_items
+        WHERE thread_id = $1 AND role <> 'pin'
         ORDER BY sort_order ASC, added_at ASC
         "#,
     )
-    .bind(project_id)
+    .bind(thread_id)
     .fetch_all(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to load project members: {}", e)))?;
 
     if members.is_empty() {
-        return Ok(ProjectGraph { nodes: Vec::new(), edges: Vec::new() });
+        return Ok(ThreadGraph { nodes: Vec::new(), edges: Vec::new() });
     }
 
     // item url -> the entity urls it references.
@@ -887,7 +891,7 @@ pub async fn project_graph(pool: &PgPool, project_id: &str) -> Result<ProjectGra
         }
     }
 
-    let mut nodes: Vec<ProjectGraphNode> = node_items
+    let mut nodes: Vec<ThreadGraphNode> = node_items
         .into_iter()
         .filter_map(|(url, item_urls)| {
             let mut parts = url.trim_start_matches('/').splitn(2, '/');
@@ -896,7 +900,7 @@ pub async fn project_graph(pool: &PgPool, project_id: &str) -> Result<ProjectGra
             // An unresolvable id is a dangling ref (entity deleted, stale link).
             // Drop it rather than render a node with no name.
             let name = names.get(&id)?.clone();
-            Some(ProjectGraphNode { url, entity_type, name, item_urls })
+            Some(ThreadGraphNode { url, entity_type, name, item_urls })
         })
         .collect();
     nodes.sort_by(|a, b| {
@@ -926,13 +930,13 @@ pub async fn project_graph(pool: &PgPool, project_id: &str) -> Result<ProjectGra
         }
     }
 
-    let mut edges: Vec<ProjectGraphEdge> = pair_weight
+    let mut edges: Vec<ThreadGraphEdge> = pair_weight
         .into_iter()
-        .map(|((source, target), weight)| ProjectGraphEdge { source, target, weight })
+        .map(|((source, target), weight)| ThreadGraphEdge { source, target, weight })
         .collect();
     edges.sort_by(|a, b| b.weight.cmp(&a.weight).then_with(|| a.source.cmp(&b.source)));
 
-    Ok(ProjectGraph { nodes, edges })
+    Ok(ThreadGraph { nodes, edges })
 }
 
 #[cfg(test)]
@@ -948,7 +952,7 @@ mod tests {
     }
 
     async fn chat_rows(pool: &PgPool, chat_id: &str) -> Vec<String> {
-        sqlx::query_scalar("SELECT project_id FROM app_project_items WHERE url = $1 ORDER BY project_id")
+        sqlx::query_scalar("SELECT thread_id FROM app_thread_items WHERE url = $1 ORDER BY thread_id")
             .bind(format!("/chat/{chat_id}"))
             .fetch_all(pool)
             .await
@@ -956,81 +960,81 @@ mod tests {
     }
 
     async fn chat_project(pool: &PgPool, chat_id: &str) -> Option<String> {
-        sqlx::query_scalar("SELECT project_id FROM app_chats WHERE id = $1")
+        sqlx::query_scalar("SELECT thread_id FROM app_chats WHERE id = $1")
             .bind(chat_id)
             .fetch_one(pool)
             .await
             .expect("read chat")
     }
 
-    fn named(name: &str) -> CreateProjectRequest {
-        CreateProjectRequest { name: name.into(), icon: None, accent_color: None, thing_id: None }
+    fn named(name: &str) -> CreateThreadRequest {
+        CreateThreadRequest { name: name.into(), icon: None, accent_color: None, thing_id: None }
     }
 
     #[sqlx::test(migrations = "./migrations")]
     async fn a_chat_moved_between_projects_leaves_the_first(pool: PgPool) {
-        let a = create_project(&pool, named("A")).await.expect("create A");
-        let b = create_project(&pool, named("B")).await.expect("create B");
+        let a = create_thread(&pool, named("A")).await.expect("create A");
+        let b = create_thread(&pool, named("B")).await.expect("create B");
         seed_chat(&pool, "chat_move").await;
 
-        set_chat_project(&pool, "chat_move", Some(&a.id)).await.expect("file in A");
-        set_chat_project(&pool, "chat_move", Some(&b.id)).await.expect("move to B");
+        set_chat_thread(&pool, "chat_move", Some(&a.id)).await.expect("file in A");
+        set_chat_thread(&pool, "chat_move", Some(&b.id)).await.expect("move to B");
 
         assert_eq!(chat_project(&pool, "chat_move").await.as_deref(), Some(b.id.as_str()));
         assert_eq!(chat_rows(&pool, "chat_move").await, vec![b.id.clone()]);
 
-        set_chat_project(&pool, "chat_move", None).await.expect("unfile");
+        set_chat_thread(&pool, "chat_move", None).await.expect("unfile");
         assert_eq!(chat_project(&pool, "chat_move").await, None);
         assert!(chat_rows(&pool, "chat_move").await.is_empty());
     }
 
     #[sqlx::test(migrations = "./migrations")]
     async fn removing_a_chat_from_its_project_unfiles_it(pool: PgPool) {
-        let a = create_project(&pool, named("A")).await.expect("create A");
+        let a = create_thread(&pool, named("A")).await.expect("create A");
         seed_chat(&pool, "chat_rm").await;
-        add_project_item(&pool, &a.id, AddProjectItemRequest { url: "/chat/chat_rm".into() })
+        add_thread_item(&pool, &a.id, AddThreadItemRequest { url: "/chat/chat_rm".into() })
             .await
             .expect("add chat");
         assert_eq!(chat_project(&pool, "chat_rm").await.as_deref(), Some(a.id.as_str()));
 
-        remove_project_item(&pool, &a.id, "/chat/chat_rm").await.expect("remove chat");
+        remove_thread_item(&pool, &a.id, "/chat/chat_rm").await.expect("remove chat");
         assert_eq!(chat_project(&pool, "chat_rm").await, None);
     }
 
     #[sqlx::test(migrations = "./migrations")]
     async fn the_detail_lists_every_chat_filed_there(pool: PgPool) {
-        let a = create_project(&pool, named("A")).await.expect("create A");
+        let a = create_thread(&pool, named("A")).await.expect("create A");
         for i in 0..30 {
             let id = format!("chat_many_{i}");
             seed_chat(&pool, &id).await;
-            set_chat_project(&pool, &id, Some(&a.id)).await.expect("file chat");
+            set_chat_thread(&pool, &id, Some(&a.id)).await.expect("file chat");
         }
-        let detail = get_project(&pool, &a.id).await.expect("detail");
+        let detail = get_thread(&pool, &a.id).await.expect("detail");
         assert_eq!(detail.chats.len(), 30);
     }
 
     #[sqlx::test(migrations = "./migrations")]
     async fn setup_and_the_interview_are_never_filed(pool: PgPool) {
-        let a = create_project(&pool, named("A")).await.expect("create A");
+        let a = create_thread(&pool, named("A")).await.expect("create A");
         for id in [
             crate::api::getting_started::GETTING_STARTED_CHAT_ID,
             crate::api::narrative_draft::INTERVIEW_CHAT_ID,
         ] {
             seed_chat(&pool, id).await;
             let url = format!("/chat/{id}");
-            assert!(add_project_item(&pool, &a.id, AddProjectItemRequest { url }).await.is_err());
-            assert!(set_chat_project(&pool, id, Some(&a.id)).await.is_err());
+            assert!(add_thread_item(&pool, &a.id, AddThreadItemRequest { url }).await.is_err());
+            assert!(set_chat_thread(&pool, id, Some(&a.id)).await.is_err());
             assert_eq!(chat_project(&pool, id).await, None);
         }
     }
 
     #[sqlx::test(migrations = "./migrations")]
     async fn the_detail_names_its_members(pool: PgPool) {
-        let a = create_project(&pool, named("A")).await.expect("create A");
-        add_project_item(&pool, &a.id, AddProjectItemRequest { url: "https://www.example.com/quotes".into() })
+        let a = create_thread(&pool, named("A")).await.expect("create A");
+        add_thread_item(&pool, &a.id, AddThreadItemRequest { url: "https://www.example.com/quotes".into() })
             .await
             .expect("add link");
-        let detail = get_project(&pool, &a.id).await.expect("detail");
+        let detail = get_thread(&pool, &a.id).await.expect("detail");
         let item = &detail.items[0];
         assert_eq!(item.title.as_deref(), Some("example.com"));
         assert_eq!(item.kind.as_deref(), Some("web"));
@@ -1038,15 +1042,15 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn a_page_lists_the_projects_it_is_in(pool: PgPool) {
-        let a = create_project(&pool, named("A")).await.expect("create A");
-        let b = create_project(&pool, named("B")).await.expect("create B");
-        create_project(&pool, named("C")).await.expect("create C");
+        let a = create_thread(&pool, named("A")).await.expect("create A");
+        let b = create_thread(&pool, named("B")).await.expect("create B");
+        create_thread(&pool, named("C")).await.expect("create C");
         for p in [&a, &b] {
-            add_project_item(&pool, &p.id, AddProjectItemRequest { url: "/page/page_x".into() })
+            add_thread_item(&pool, &p.id, AddThreadItemRequest { url: "/page/page_x".into() })
                 .await
                 .expect("file page");
         }
-        let listed = list_projects(&pool, false, Some("/page/page_x")).await.expect("list");
+        let listed = list_threads(&pool, false, Some("/page/page_x")).await.expect("list");
         let mut ids: Vec<String> = listed.projects.into_iter().map(|p| p.id).collect();
         ids.sort();
         let mut want = vec![a.id, b.id];
@@ -1056,14 +1060,14 @@ mod tests {
 
     #[sqlx::test(migrations = "./migrations")]
     async fn item_count_does_not_count_chats_twice(pool: PgPool) {
-        let a = create_project(&pool, named("A")).await.expect("create A");
+        let a = create_thread(&pool, named("A")).await.expect("create A");
         seed_chat(&pool, "chat_count").await;
-        set_chat_project(&pool, "chat_count", Some(&a.id)).await.expect("file chat");
-        add_project_item(&pool, &a.id, AddProjectItemRequest { url: "https://example.com".into() })
+        set_chat_thread(&pool, "chat_count", Some(&a.id)).await.expect("file chat");
+        add_thread_item(&pool, &a.id, AddThreadItemRequest { url: "https://example.com".into() })
             .await
             .expect("add link");
 
-        let listed = list_projects(&pool, false, None).await.expect("list");
+        let listed = list_threads(&pool, false, None).await.expect("list");
         let row = listed.projects.iter().find(|p| p.id == a.id).expect("project listed");
         assert_eq!((row.chat_count, row.item_count), (1, 1));
     }
@@ -1078,13 +1082,13 @@ mod tests {
             .execute(&pool)
             .await
             .expect("seed a person");
-        let a = create_project(&pool, named("Trip")).await.expect("create");
+        let a = create_thread(&pool, named("Trip")).await.expect("create");
         let page = create_page_as(
             &pool,
             CreatePageRequest {
                 title: "Plan".into(),
                 content: "## Plan\n\nLunch with [@Nick](/person/person_1).\n".into(),
-                project_id: Some(a.id.clone()),
+                thread_id: Some(a.id.clone()),
                 icon: None,
                 icon_color: None,
                 cover_url: None,
@@ -1097,7 +1101,7 @@ mod tests {
         .expect("create a block page")
         .page;
 
-        let graph = project_graph(&pool, &a.id).await.expect("graph");
+        let graph = thread_graph(&pool, &a.id).await.expect("graph");
         assert_eq!(graph.nodes.len(), 1, "{:?}", graph.nodes.iter().map(|n| &n.url).collect::<Vec<_>>());
         let nick = &graph.nodes[0];
         assert_eq!((nick.url.as_str(), nick.name.as_str()), ("/person/person_1", "Nick"));
@@ -1109,49 +1113,49 @@ mod tests {
     /// both.
     #[sqlx::test(migrations = "./migrations")]
     async fn a_project_ends_finished_or_dropped(pool: PgPool) {
-        let p = create_project(&pool, named("Repaint the hallway")).await.unwrap();
+        let p = create_thread(&pool, named("Repaint the hallway")).await.unwrap();
         assert!(p.archived_at.is_none() && p.outcome.is_none());
 
-        archive_project(&pool, &p.id, Outcome::Finished).await.unwrap();
-        let ended = get_project(&pool, &p.id).await.unwrap().project;
+        archive_thread(&pool, &p.id, Outcome::Finished).await.unwrap();
+        let ended = get_thread(&pool, &p.id).await.unwrap().project;
         assert_eq!(ended.outcome.as_deref(), Some("finished"));
         let ended_at = ended.archived_at.expect("an ended project says when");
-        assert!(list_projects(&pool, false, None).await.unwrap().projects.is_empty());
-        assert_eq!(list_projects(&pool, true, None).await.unwrap().projects[0].outcome.as_deref(), Some("finished"));
+        assert!(list_threads(&pool, false, None).await.unwrap().projects.is_empty());
+        assert_eq!(list_threads(&pool, true, None).await.unwrap().projects[0].outcome.as_deref(), Some("finished"));
 
-        archive_project(&pool, &p.id, Outcome::Dropped).await.unwrap();
-        let corrected = get_project(&pool, &p.id).await.unwrap().project;
+        archive_thread(&pool, &p.id, Outcome::Dropped).await.unwrap();
+        let corrected = get_thread(&pool, &p.id).await.unwrap().project;
         assert_eq!(corrected.outcome.as_deref(), Some("dropped"));
         assert_eq!(corrected.archived_at, Some(ended_at), "correcting how it ended keeps when");
 
-        unarchive_project(&pool, &p.id).await.unwrap();
-        let open = get_project(&pool, &p.id).await.unwrap().project;
+        unarchive_thread(&pool, &p.id).await.unwrap();
+        let open = get_thread(&pool, &p.id).await.unwrap().project;
         assert!(open.archived_at.is_none() && open.outcome.is_none());
-        assert!(archive_project(&pool, "nb_missing", Outcome::Finished).await.is_err());
+        assert!(archive_thread(&pool, "nb_missing", Outcome::Finished).await.is_err());
     }
 
     /// A project sits under a thing or alone, and reads back the thing's name.
     #[sqlx::test(migrations = "./migrations")]
     async fn a_project_sits_under_a_thing(pool: PgPool) {
         let house = crate::api::things::create_thing(&pool, "The house").await.unwrap();
-        let under = CreateProjectRequest { thing_id: Some(house.id.clone()), ..named("Repaint the hallway") };
-        let p = create_project(&pool, under).await.unwrap();
+        let under = CreateThreadRequest { thing_id: Some(house.id.clone()), ..named("Repaint the hallway") };
+        let p = create_thread(&pool, under).await.unwrap();
         assert_eq!(p.thing_title.as_deref(), Some("The house"));
-        let listed = list_projects(&pool, false, None).await.unwrap().projects.remove(0);
+        let listed = list_threads(&pool, false, None).await.unwrap().projects.remove(0);
         assert_eq!(listed.thing_id.as_deref(), Some(house.id.as_str()));
         assert_eq!(listed.thing_title.as_deref(), Some("The house"));
 
         // An edit that says nothing about the thing leaves it where it is.
-        let renamed = UpdateProjectRequest { name: Some("Repaint the hall".into()), ..Default::default() };
-        assert_eq!(update_project(&pool, &p.id, renamed).await.unwrap().thing_id, Some(house.id.clone()));
+        let renamed = UpdateThreadRequest { name: Some("Repaint the hall".into()), ..Default::default() };
+        assert_eq!(update_thread(&pool, &p.id, renamed).await.unwrap().thing_id, Some(house.id.clone()));
 
-        let alone = UpdateProjectRequest { thing_id: Some(None), ..Default::default() };
-        let out = update_project(&pool, &p.id, alone).await.unwrap();
+        let alone = UpdateThreadRequest { thing_id: Some(None), ..Default::default() };
+        let out = update_thread(&pool, &p.id, alone).await.unwrap();
         assert!(out.thing_id.is_none() && out.thing_title.is_none());
 
-        let nowhere = UpdateProjectRequest { thing_id: Some(Some("thing_missing".into())), ..Default::default() };
-        assert!(update_project(&pool, &p.id, nowhere).await.is_err());
-        let orphan = CreateProjectRequest { thing_id: Some("thing_missing".into()), ..named("Fix the gate") };
-        assert!(create_project(&pool, orphan).await.is_err());
+        let nowhere = UpdateThreadRequest { thing_id: Some(Some("thing_missing".into())), ..Default::default() };
+        assert!(update_thread(&pool, &p.id, nowhere).await.is_err());
+        let orphan = CreateThreadRequest { thing_id: Some("thing_missing".into()), ..named("Fix the gate") };
+        assert!(create_thread(&pool, orphan).await.is_err());
     }
 }

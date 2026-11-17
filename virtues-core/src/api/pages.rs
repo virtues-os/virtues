@@ -221,7 +221,7 @@ pub struct CreatePageRequest {
     #[serde(default)]
     pub content: String,
     #[serde(rename = "projectId", alias = "notebookId")]
-    pub project_id: Option<String>,  // For auto-add to project_items (not stored on page)
+    pub thread_id: Option<String>,  // For auto-add to project_items (not stored on page)
     pub icon: Option<String>,
     pub icon_color: Option<String>,
     pub cover_url: Option<String>,
@@ -669,7 +669,7 @@ async fn create_page_reporting_if(pool: &PgPool, req: CreatePageRequest, block_p
 /// empty document writes its own into it. Markdown the converter refuses
 /// creates nothing.
 ///
-/// If project_id is provided, the page is added to that project.
+/// If thread_id is provided, the page is added to that project.
 pub async fn create_page_as(
     pool: &PgPool,
     req: CreatePageRequest,
@@ -714,16 +714,16 @@ pub async fn create_page_as(
     .map_err(|e| Error::Database(format!("Failed to create page: {}", e)))?;
 
     // Auto-add the page as a member of the Project it was created in.
-    if let Some(project_id) = &req.project_id {
+    if let Some(thread_id) = &req.thread_id {
         let url = format!("/page/{}", page.id);
-        if let Err(e) = crate::api::projects::add_project_item(
+        if let Err(e) = crate::api::threads::add_thread_item(
             pool,
-            project_id,
-            crate::api::projects::AddProjectItemRequest { url },
+            thread_id,
+            crate::api::threads::AddThreadItemRequest { url },
         )
         .await
         {
-            tracing::warn!("Failed to auto-add page to project {}: {}", project_id, e);
+            tracing::warn!("Failed to auto-add page to project {}: {}", thread_id, e);
             // Don't fail page creation if auto-add fails
         }
     }
@@ -980,7 +980,7 @@ pub async fn search_refs(
                CASE WHEN icon LIKE 'ri:%' THEN icon ELSE 'ri:folder-line' END as icon,
                NULL as mime_type, created_at, updated_at,
                CASE WHEN name ILIKE $2 THEN 0 ELSE 1 END as relevance
-        FROM app_projects
+        FROM app_threads
         WHERE name ILIKE $1 AND deleted_at IS NULL
         ) refs
         WHERE ($5::text[] IS NULL OR entity_type = ANY($5))
@@ -1971,7 +1971,7 @@ mod tests {
             CreatePageRequest {
                 title: "Notes".into(),
                 content: content.into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,
@@ -2123,7 +2123,7 @@ mod tests {
         CreatePageRequest {
             title: "Trip".into(),
             content: content.into(),
-            project_id: None,
+            thread_id: None,
             icon: None,
             icon_color: None,
             cover_url: None,

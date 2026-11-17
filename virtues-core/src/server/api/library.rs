@@ -80,7 +80,11 @@ pub fn routes() -> Router<AppState> {
         .route("/api/publications/preview", get(preview_publication_handler))
         .route("/api/publications/:id/update", post(update_publication_handler))
         .route("/api/publications/:id", delete(revoke_publication_handler))
-        // Projects API (the "room" a chat lives in)
+        // Threads API (`api::threads`). The path, the handler names and the
+        // JSON still say project, because the web app and phone apps built
+        // before the rename call them, and phones update on their own clock.
+        // TODO(2026-11-17): add `/api/threads` with thread names when the
+        // Threads UI moves, and keep these as an alias like `/api/notebooks`.
         .merge(project_routes("/api/projects"))
         .route("/api/projects/:id/archive", post(archive_project_handler))
         .route("/api/projects/:id/unarchive", post(unarchive_project_handler))
@@ -323,7 +327,7 @@ pub async fn list_projects_handler(
     axum::extract::Query(q): axum::extract::Query<ListProjectsQuery>,
 ) -> Response {
     api_response(
-        crate::api::projects::list_projects(
+        crate::api::threads::list_threads(
             state.db.pool(),
             q.include_archived.unwrap_or(false),
             q.member.as_deref(),
@@ -344,7 +348,7 @@ pub struct ListProjectsQuery {
 #[derive(Deserialize)]
 pub struct EndProjectRequest {
     /// `finished` or `dropped`.
-    pub outcome: Option<crate::api::projects::Outcome>,
+    pub outcome: Option<crate::api::threads::Outcome>,
 }
 
 /// POST /api/projects/:id/archive — end a project as finished or dropped
@@ -360,8 +364,8 @@ pub async fn archive_project_handler(
 ) -> Response {
     let outcome = body
         .and_then(|Json(request)| request.outcome)
-        .unwrap_or(crate::api::projects::Outcome::Finished);
-    match crate::api::projects::archive_project(state.db.pool(), &id, outcome).await {
+        .unwrap_or(crate::api::threads::Outcome::Finished);
+    match crate::api::threads::archive_thread(state.db.pool(), &id, outcome).await {
         Ok(()) => success_message("Project ended"),
         Err(e) => error_response(e),
     }
@@ -372,7 +376,7 @@ pub async fn unarchive_project_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::api::projects::unarchive_project(state.db.pool(), &id).await {
+    match crate::api::threads::unarchive_thread(state.db.pool(), &id).await {
         Ok(()) => success_message("Project reopened"),
         Err(e) => error_response(e),
     }
@@ -380,15 +384,15 @@ pub async fn unarchive_project_handler(
 
 /// GET /api/projects/:id - Get a single project with its members
 pub async fn get_project_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
-    api_response(crate::api::projects::get_project(state.db.pool(), &id).await)
+    api_response(crate::api::threads::get_thread(state.db.pool(), &id).await)
 }
 
 /// POST /api/projects - Create a project
 pub async fn create_project_handler(
     State(state): State<AppState>,
-    Json(request): Json<crate::api::projects::CreateProjectRequest>,
+    Json(request): Json<crate::api::threads::CreateThreadRequest>,
 ) -> Response {
-    match crate::api::projects::create_project(state.db.pool(), request).await {
+    match crate::api::threads::create_thread(state.db.pool(), request).await {
         Ok(project) => (StatusCode::CREATED, Json(project)).into_response(),
         Err(e) => error_response(e),
     }
@@ -398,9 +402,9 @@ pub async fn create_project_handler(
 pub async fn update_project_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::projects::UpdateProjectRequest>,
+    Json(request): Json<crate::api::threads::UpdateThreadRequest>,
 ) -> Response {
-    api_response(crate::api::projects::update_project(state.db.pool(), &id, request).await)
+    api_response(crate::api::threads::update_thread(state.db.pool(), &id, request).await)
 }
 
 /// DELETE /api/projects/:id - Delete a project
@@ -408,7 +412,7 @@ pub async fn delete_project_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::api::projects::delete_project(state.db.pool(), &id).await {
+    match crate::api::threads::delete_thread(state.db.pool(), &id).await {
         Ok(_) => success_message("Project deleted"),
         Err(e) => error_response(e),
     }
@@ -418,9 +422,9 @@ pub async fn delete_project_handler(
 pub async fn add_project_item_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::projects::AddProjectItemRequest>,
+    Json(request): Json<crate::api::threads::AddThreadItemRequest>,
 ) -> Response {
-    match crate::api::projects::add_project_item(state.db.pool(), &id, request).await {
+    match crate::api::threads::add_thread_item(state.db.pool(), &id, request).await {
         Ok(item) => (StatusCode::CREATED, Json(item)).into_response(),
         Err(e) => error_response(e),
     }
@@ -437,7 +441,7 @@ pub async fn remove_project_item_handler(
     Path(id): Path<String>,
     Json(request): Json<RemoveProjectItemRequest>,
 ) -> Response {
-    match crate::api::projects::remove_project_item(state.db.pool(), &id, &request.url).await {
+    match crate::api::threads::remove_thread_item(state.db.pool(), &id, &request.url).await {
         Ok(_) => success_message("Item removed from project"),
         Err(e) => error_response(e),
     }
@@ -447,9 +451,9 @@ pub async fn remove_project_item_handler(
 pub async fn reorder_project_items_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::projects::ReorderProjectItemsRequest>,
+    Json(request): Json<crate::api::threads::ReorderThreadItemsRequest>,
 ) -> Response {
-    match crate::api::projects::reorder_project_items(state.db.pool(), &id, request).await {
+    match crate::api::threads::reorder_thread_items(state.db.pool(), &id, request).await {
         Ok(_) => success_message("Project items reordered"),
         Err(e) => error_response(e),
     }
@@ -459,9 +463,9 @@ pub async fn reorder_project_items_handler(
 pub async fn set_project_item_role_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<crate::api::projects::SetProjectItemRoleRequest>,
+    Json(request): Json<crate::api::threads::SetThreadItemRoleRequest>,
 ) -> Response {
-    match crate::api::projects::set_project_item_role(state.db.pool(), &id, request).await {
+    match crate::api::threads::set_thread_item_role(state.db.pool(), &id, request).await {
         Ok(item) => Json(item).into_response(),
         Err(e) => error_response(e),
     }
@@ -472,7 +476,7 @@ pub async fn project_graph_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
-    match crate::api::projects::project_graph(state.db.pool(), &id).await {
+    match crate::api::threads::thread_graph(state.db.pool(), &id).await {
         Ok(graph) => Json(graph).into_response(),
         Err(e) => error_response(e),
     }

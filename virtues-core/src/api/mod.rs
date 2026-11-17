@@ -79,7 +79,7 @@ pub mod census;
 pub mod getting_started;
 pub mod identity;
 pub mod network;
-pub mod projects;
+pub mod threads;
 pub mod records;
 pub mod refs;
 pub mod source_auth;

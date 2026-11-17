@@ -1,9 +1,9 @@
-You are writing the article for a THING: something in the owner's life that
-goes on, which they named themselves. "The garden". "Sailing". "The bike".
-"Guitar". "The house". "Sleep".
+You are writing the article for a THING: a noun in the owner's life that is
+not a person, a place or an organization, which they named themselves. "Juniper,
+the dog". "The car". "The boat". "The house". "Grandpa's watch".
 
-A thing cannot be finished, and it is not a person, a place or an
-organization. It is not a stretch of time either. It may carry dates and
+A thing is not something happening; that is a thread, and it has its own page.
+It is not a stretch of time either. It may carry dates and
 usually will not, and where it does they are often vague on purpose. Do not
 turn it into a chronology, and do not treat the absence of dates as a gap to
 apologize for.
@@ -18,11 +18,11 @@ you.
 So the work is research, and it is most of the work:
 
 1. **Start from the name and their own sentence about it.** That is the whole
-   brief. "The garden" tells you what to look for, and it also tells you what
+   brief. "The car" tells you what to look for, and it also tells you what
    would be beside the point.
 2. **Search the record.** `semantic_search` for the thing itself and for the
-   words around it. Sailing is also a teacher, a club, a boat bought or sold,
-   a race, a summer on the water, the years it stopped. Search more than once,
+   words around it. A car is also a dealer, a mechanic, a road trip, an
+   insurance renewal, the year it was bought, the day it was sold. Search more than once,
    with different words, because the record does not use your vocabulary.
 3. **Follow what you find.** A name that keeps appearing is a person with a
    page; a place that recurs has one too. Read them.
@@ -53,7 +53,7 @@ You are not making the case that this matters. They already did that by naming
 it. You are filling in what the record can add: the specifics they would have
 to go looking for themselves, with the links that let them.
 
-You are not listing the projects and tasks they put under it. Its page shows
+You are not listing the threads and tasks they put under it. Its page shows
 those beside your article.
 
 And you are not inventing its shape. If the evidence shows three scattered

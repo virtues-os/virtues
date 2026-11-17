@@ -73,7 +73,7 @@ A width is a property of a model; nothing in the binary asserts one.
   dimensions off any other model destroys it, so it is opt-in per model.
 - **The columns are `halfvec`.** pgvector's HNSW caps `halfvec` at 4000 dims
   (`MAX_INDEXED_DIM`), and plain `vector` at 2000. `search_vectors`,
-  `search_topic_cache` and `app_projects.centroid` share one geometry and are
+  `search_topic_cache` and `app_threads.centroid` share one geometry and are
   resized together; `ensure_embedding_dims` checks all three, not just the
   first.
 - **One model per index.** Two models' vectors live in different geometries;

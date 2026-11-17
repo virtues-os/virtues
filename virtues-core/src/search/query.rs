@@ -135,7 +135,7 @@ pub struct SearchOptions {
     pub entities: Vec<String>,
     /// Active project: its members' chunks get an additive ranking boost
     /// (Weighted) or become the only searchable set (Exclusive).
-    pub project_id: Option<String>,
+    pub thread_id: Option<String>,
     pub scope_mode: ScopeMode,
     pub limit: Option<i64>,
 }
@@ -272,12 +272,12 @@ impl SemanticSearchEngine {
         // record_ids (page/day/source/chat + document chunks for /drive/file_
         // members) and entity_ids (person/place/org). Weighted = additive
         // ranking bonus; Exclusive = hard filter (grounded chat).
-        let (nb_records, nb_entities): (Vec<String>, Vec<String>) = match &opts.project_id {
+        let (nb_records, nb_entities): (Vec<String>, Vec<String>) = match &opts.thread_id {
             Some(nb) => self.resolve_project_scope(nb).await?,
             None => (Vec::new(), Vec::new()),
         };
         let project_scoped = !nb_records.is_empty() || !nb_entities.is_empty();
-        if opts.project_id.is_some()
+        if opts.thread_id.is_some()
             && opts.scope_mode == ScopeMode::Exclusive
             && !project_scoped
         {
@@ -608,11 +608,11 @@ impl SemanticSearchEngine {
     /// user's own draft — retrieving them would cite their unfinished prose
     /// back at them as a source). External URLs and nested projects aren't
     /// indexed and are skipped.
-    async fn resolve_project_scope(&self, project_id: &str) -> Result<(Vec<String>, Vec<String>)> {
+    async fn resolve_project_scope(&self, thread_id: &str) -> Result<(Vec<String>, Vec<String>)> {
         let urls: Vec<String> = sqlx::query_scalar(
-            "SELECT url FROM app_project_items WHERE project_id = $1 AND role = 'library'",
+            "SELECT url FROM app_thread_items WHERE thread_id = $1 AND role = 'library'",
         )
-        .bind(project_id)
+        .bind(thread_id)
         .fetch_all(self.pool.as_ref())
         .await?;
         let mut records = Vec::new();

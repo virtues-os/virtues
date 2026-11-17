@@ -93,7 +93,7 @@ async fn run_request(pool: &PgPool, yjs_state: &YjsState, task: Task, run_limit:
         user_id: Some("system".to_string()),
         chat_id: Some(chat_id.clone()),
         task_id: Some(task.id.clone()),
-        project_id: task.project_id.clone(),
+        thread_id: task.thread_id.clone(),
         turn: Some(crate::api::chat::generate_id()),
         ..Default::default()
     };

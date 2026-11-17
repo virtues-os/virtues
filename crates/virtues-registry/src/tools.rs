@@ -105,7 +105,7 @@ fn create_task_tool() -> ToolConfig {
         id: "create_task".to_string(),
         name: "Add a task".to_string(),
         description: "Add tasks to your list".to_string(),
-        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). A task for "assistant" runs in the background, at its due time if it has one. Never for things only mentioned in passing. Titles: short, in their words. One step each. thing_id (a wiki_things id) puts it under a thing in place of a project. recur_every with recur_unit makes the owner's own task recur, that long after they finish it."#.to_string(),
+        llm_description: r#"Add to the owner's task list (read it with sql_query on app_tasks). Use when they ask for a task, one entry each; or for something you commit to do later (origin "own", for "assistant"). A task for "assistant" runs in the background, at its due time if it has one. Never for things only mentioned in passing. Titles: short, in their words. One step each. thread_id (an app_threads id) or thing_id (a wiki_things id) puts it under one. recur_every with recur_unit makes the owner's own task recur, that long after they finish it."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["tasks"],
@@ -120,7 +120,7 @@ fn create_task_tool() -> ToolConfig {
                             "notes": { "type": "string" },
                             "due": { "type": "string", "description": "Only if said: 2026-10-23 or 2026-10-23T17:00, owner's time" },
                             "for": { "type": "string", "enum": ["owner", "assistant"] },
-                            "project_id": { "type": "string" },
+                            "thread_id": { "type": "string" },
                             "thing_id": { "type": "string" },
                             "recur_every": { "type": "integer" },
                             "recur_unit": { "type": "string", "enum": ["day", "week", "month", "year"] }
@@ -144,7 +144,7 @@ fn update_task_tool() -> ToolConfig {
         id: "update_task".to_string(),
         name: "Update a task".to_string(),
         description: "Edit, finish or dismiss a task".to_string(),
-        llm_description: r#"Change one task by id: fields, status, or a note in its history. To finish one assigned to you: "ready" with a result, never "done". "none" clears due, thing_id or recur_unit."#.to_string(),
+        llm_description: r#"Change one task by id: fields, status, or a note in its history. To finish one assigned to you: "ready" with a result, never "done". "none" clears due, thread_id, thing_id or recur_unit."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["id"],
@@ -154,7 +154,7 @@ fn update_task_tool() -> ToolConfig {
                 "notes": { "type": "string" },
                 "due": { "type": "string" },
                 "for": { "type": "string", "enum": ["owner", "assistant"] },
-                "project_id": { "type": "string" },
+                "thread_id": { "type": "string" },
                 "thing_id": { "type": "string" },
                 "recur_every": { "type": "integer" },
                 "recur_unit": { "type": "string" },
@@ -585,7 +585,7 @@ fn read_asset_tool() -> ToolConfig {
         description: "Look at an image or file the user has stored".to_string(),
         llm_description: r#"Look at one file in the user's drive; an image comes back for you to see. Take file_id from its ref URL: /drive/dr_abc123 is "dr_abc123".
 
-Use it when answering means seeing the file: "this screenshot", a layout that matters, or a project member marked text="none", which semantic_search cannot see inside, so an empty search is no evidence about it. One known file per call, never a sweep: images cost context. If the file cannot be shown, say so; never describe a file you were not shown."#.to_string(),
+Use it when answering means seeing the file: "this screenshot", a layout that matters, or a thread member marked text="none", which semantic_search cannot see inside, so an empty search is no evidence about it. One known file per call, never a sweep: images cost context. If the file cannot be shown, say so; never describe a file you were not shown."#.to_string(),
         parameters: serde_json::json!({
             "type": "object",
             "required": ["file_id"],
@@ -697,7 +697,7 @@ fn semantic_search_tool() -> ToolConfig {
         description: "Search personal data by meaning".to_string(),
         llm_description: r#"Search the user's own data by meaning; `domains` lists what it holds.
 
-Omit `domains` to search everything; always omit it in a project chat, or its materials drop out. Pass 2-4 phrasings in `queries` for a vague need, one for a precise lookup. Rank is order, not match quality. Cite each `ref` as returned; read a full row with sql_query by its id.
+Omit `domains` to search everything; always omit it in a thread chat, or its materials drop out. Pass 2-4 phrasings in `queries` for a vague need, one for a precise lookup. Rank is order, not match quality. Cite each `ref` as returned; read a full row with sql_query by its id.
 
 Naming a person, place or org, or dates spanning a week or less, puts `from_your_wiki` first: an article, or a card whose id fits `entities`."#.to_string(),
         parameters: serde_json::json!({

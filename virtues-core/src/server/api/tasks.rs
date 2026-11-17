@@ -24,7 +24,7 @@ pub fn routes() -> Router<AppState> {
         .route("/api/tasks/:id/events", get(list_events_handler))
 }
 
-/// GET /api/tasks?status=open|closed|all&assignee=&project_id=
+/// GET /api/tasks?status=open|closed|all&assignee=&thread_id=
 async fn list_tasks_handler(
     State(state): State<AppState>,
     Query(filter): Query<ListFilter>,

@@ -259,7 +259,7 @@ fn the_binary_writes_and_reads_the_shapes_the_web_test_expects() {
 
 /// The two readers of `content` that find refs by their text: the backlinks
 /// query (`api::pages::get_page_backlinks`, a `LIKE` on `/page/{id})`) and
-/// the project graph (`api::projects::extract_entity_urls`, which scans for
+/// the project graph (`api::threads::extract_entity_urls`, which scans for
 /// `](/person/`, `](/place/` and `](/org/` up to the next `)`). Neither can
 /// see a tree, so a mention's export must hold what each reads, byte for
 /// byte as the ref picker writes it (`[@Label](/kind/id)`). These mirror the

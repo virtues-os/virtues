@@ -216,7 +216,7 @@ pub struct ChatRequest {
     /// The Project (room) this chat lives in. Stored on the chat and inlined into
     /// the system prompt as a salience lens (name + memo + member URLs).
     #[serde(rename = "projectId", alias = "notebookId", default)]
-    pub project_id: Option<String>,
+    pub thread_id: Option<String>,
     /// Optional active page context for AI page editing
     #[serde(rename = "activePage")]
     pub active_page: Option<ActivePageContext>,
@@ -238,7 +238,7 @@ pub struct ChatRequest {
     pub agent_mode: String,
     /// Retrieval scope for project chats: "open" (default — whole graph,
     /// project items up-weighted) or "scoped" (grounded — items only).
-    /// Ignored without a project_id.
+    /// Ignored without a thread_id.
     #[serde(rename = "chatMode", default = "default_chat_mode")]
     pub chat_mode: String,
     /// A temporary ("ghost") chat: nothing about it is written to the box.
@@ -984,7 +984,7 @@ async fn build_system_prompt(
     active_page: Option<&ActivePage>,
     timezone: Option<&str>,
     mode: &ChatMode,
-    project_id: Option<&str>,
+    thread_id: Option<&str>,
 ) -> SystemPrompt {
     use crate::api::assistant_profile::get_assistant_name;
     use crate::api::profile::get_display_name;
@@ -1036,7 +1036,7 @@ async fn build_system_prompt(
         active_page,
         timezone,
         mode,
-        project_id,
+        thread_id,
         &assistant_name,
         &user_name,
     )
@@ -1089,8 +1089,8 @@ async fn assemble_turn_request(
     history: &History,
 ) -> TurnRequest {
     let mut system =
-        build_system_prompt(pool, Some(chat_id), active_page, timezone, mode, history.project_id.as_deref()).await;
-    if scoped && history.project_id.is_some() {
+        build_system_prompt(pool, Some(chat_id), active_page, timezone, mode, history.thread_id.as_deref()).await;
+    if scoped && history.thread_id.is_some() {
         system.stable.push_str(SCOPED_CHAT_LINE);
         let at = system.blocks.iter().position(|b| b.in_tail).unwrap_or(system.blocks.len());
         system.blocks.insert(
@@ -1293,7 +1293,7 @@ async fn build_system_prompt_blocks(
     active_page: Option<&ActivePage>,
     timezone: Option<&str>,
     mode: &ChatMode,
-    project_id: Option<&str>,
+    thread_id: Option<&str>,
     assistant_name: &str,
     user_name: &str,
 ) -> (String, String, Vec<crate::agent::prompt_blocks::RenderedBlock>) {
@@ -1414,7 +1414,7 @@ async fn build_system_prompt_blocks(
         Block {
             meta: BlockMeta { tag: "active_project", author: Author::Ui, mood: Mood::Declarative, rung: 45, cadence: Cadence::Session },
             body: Box::pin(async move {
-                match project_id {
+                match thread_id {
                     Some(id) => build_project_context(pool, id).await,
                     None => None,
                 }
@@ -1623,11 +1623,11 @@ const MAX_PROJECT_ITEMS_INLINED: usize = 100;
 
 /// Build a context block for the active Project (room) the chat lives in.
 /// Returns None if the Project can't be loaded.
-async fn build_project_context(pool: &PgPool, project_id: &str) -> Option<String> {
-    let detail = match crate::api::projects::get_project(pool, project_id).await {
+async fn build_project_context(pool: &PgPool, thread_id: &str) -> Option<String> {
+    let detail = match crate::api::threads::get_thread(pool, thread_id).await {
         Ok(d) => d,
         Err(e) => {
-            tracing::warn!("[chat] failed to load active project {}: {}", project_id, e);
+            tracing::warn!("[chat] failed to load active project {}: {}", thread_id, e);
             return None;
         }
     };
@@ -1914,7 +1914,7 @@ async fn chat_handler_inner(
         request,
         mode,
         model,
-        history.project_id,
+        history.thread_id,
         api_messages,
         msg_id,
         checkpoint_event,
@@ -2053,7 +2053,7 @@ fn chat_title(messages: &[UIMessage]) -> String {
 pub(crate) async fn store_user_turn(pool: &PgPool, request: &ChatRequest) {
     if !request.temporary && ensure_chat_row(pool, request).await {
         if let Err(e) =
-            crate::api::projects::set_chat_project(pool, &request.chat_id, request.project_id.as_deref()).await
+            crate::api::threads::set_chat_thread(pool, &request.chat_id, request.thread_id.as_deref()).await
         {
             tracing::warn!("Failed to set chat project: {}", e);
         }
@@ -2223,7 +2223,7 @@ async fn compact_if_critical(pool: &PgPool, chat_id: &str, model: &str) -> Optio
 struct History {
     conversation_summary: Option<String>,
     summary_up_to_index: i64,
-    project_id: Option<String>,
+    thread_id: Option<String>,
     messages: Vec<ChatMessage>,
 }
 
@@ -2236,7 +2236,7 @@ async fn load_history(pool: &PgPool, request: &ChatRequest) -> Result<History, R
         return Ok(History {
             conversation_summary: None,
             summary_up_to_index: 0,
-            project_id: request.project_id.clone(),
+            thread_id: request.thread_id.clone(),
             messages: ghost_history(&request.messages),
         });
     }
@@ -2248,17 +2248,17 @@ async fn load_saved_history(pool: &PgPool, chat_id: &str) -> Result<History, Res
     // The room is read from the persisted row (single source of truth) so the
     // active-project context always matches the binding, even if a stale
     // client sends a different per-message projectId; the create path has
-    // already bound a new chat from request.project_id, so the row is current.
+    // already bound a new chat from request.thread_id, so the row is current.
     //
-    // `project_id` decodes as `Option<String>` on purpose: the column is
+    // `thread_id` decodes as `Option<String>` on purpose: the column is
     // nullable (and the FK is ON DELETE SET NULL), so an unbound chat
     // legitimately reads NULL. A failed read is a 500, never a None: None
     // reads as "not in a project", so a swallowed error would silently unscope
     // a scoped chat — retrieval stops being hard-filtered and the answer
     // contract is dropped.
-    let (conversation_summary, summary_up_to_index, project_id) =
+    let (conversation_summary, summary_up_to_index, thread_id) =
         match sqlx::query_as::<_, (Option<String>, i64, Option<String>)>(
-            "SELECT conversation_summary, summary_up_to_index, project_id FROM app_chats WHERE id = $1",
+            "SELECT conversation_summary, summary_up_to_index, thread_id FROM app_chats WHERE id = $1",
         )
         .bind(chat_id)
         .fetch_one(pool)
@@ -2279,7 +2279,7 @@ async fn load_saved_history(pool: &PgPool, chat_id: &str) -> Result<History, Res
         }
     };
 
-    Ok(History { conversation_summary, summary_up_to_index, project_id, messages })
+    Ok(History { conversation_summary, summary_up_to_index, thread_id, messages })
 }
 
 /// Drive the turn's stream in its own task, pushing each line to the live
@@ -2376,7 +2376,7 @@ fn create_agent_stream(
     model: String,
     // The chat's project as the handler resolved it — from the row, not the
     // request — so the tools search the same project the prompt describes.
-    project_id: Option<String>,
+    thread_id: Option<String>,
     api_messages: Vec<serde_json::Value>,
     msg_id: String,
     // Emitted first when this turn compacted the chat before it started.
@@ -2427,7 +2427,7 @@ fn create_agent_stream(
         let context = ToolContext {
             page_id: request.active_page.as_ref().and_then(|p| p.page_id.clone()),
             user_id: None,
-            project_id,
+            thread_id,
             scope_mode: if request.chat_mode == "scoped" {
                 crate::search::ScopeMode::Exclusive
             } else {
@@ -3068,8 +3068,8 @@ mod live_project {
         let pool = PgPool::connect(&url).await.expect("dev database");
 
         let id: Option<String> = sqlx::query_scalar(
-            "SELECT project_id FROM app_project_items
-             GROUP BY project_id ORDER BY count(*) DESC LIMIT 1",
+            "SELECT thread_id FROM app_thread_items
+             GROUP BY thread_id ORDER BY count(*) DESC LIMIT 1",
         )
         .fetch_optional(&pool)
         .await
@@ -3111,8 +3111,8 @@ mod live_prompt_audit {
         let pool = PgPool::connect(&url).await.expect("dev database");
 
         let project: Option<String> = sqlx::query_scalar(
-            "SELECT project_id FROM app_project_items
-             GROUP BY project_id ORDER BY count(*) DESC LIMIT 1",
+            "SELECT thread_id FROM app_thread_items
+             GROUP BY thread_id ORDER BY count(*) DESC LIMIT 1",
         )
         .fetch_optional(&pool)
         .await
@@ -3637,7 +3637,7 @@ mod active_page_tests {
             pages::CreatePageRequest {
                 title: "Trip".into(),
                 content: markdown.into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,

@@ -85,7 +85,7 @@ Time says how long a thing is. **Tense** says what the system does with it.
   close (*done*, *abandoned*, *superseded*). An **aspiration** is not a
   future-tense item at all. It never starts or finishes; it is part of the
   life page, as a direction.
-- Two rules. First, the **task** list (Home > Tasks, `app_tasks`) is where
+- Two rules. First, the **task** list (the Projects page, `app_tasks`) is where
   commitments become visible, and it never nags: no badges, no counts, no
   reminder the person did not ask for. A commitment that slips is just data
   about the person. Second, the system never offers a grade unprompted (it
@@ -129,43 +129,42 @@ The registry in
 this section in code: one row per subject, and everything that varies by kind
 hangs off it.
 
-## Thing, project, task
+## Thing, thread, task
 
-Three words for what a person keeps track of. One question sorts anything
-they name: **can it be finished?**
+Subjects are nouns: people, places, organizations and things. A thread is
+something happening. A task is one step. A record is something that happened.
 
-| Answer | It is |
-|---|---|
-| never | a **thing**, unless it is a person, a place or an organization |
-| yes, in more than one step | a **project** |
-| yes, in one step | a **task** |
-| each time, and it comes around again | a task that recurs, or a recurring calendar event |
+A **thing** is a noun in the person's life that is not a person, a place or
+an organization: the dog, the car, the boat, the house. The person names it,
+and it gets a page in the wiki. It is a subject: `wiki_things`, subject type
+`thing`, the API is `/api/wiki/things`, and the route is `/thing/{id}`,
+listed in the wiki's Things room. Only the person names one; the server never
+does. Its page lists the threads and tasks under it. No record points at a
+thing yet, which is the uncitable gap below.
 
-A **thing** is something in the person's life that goes on and cannot be
-finished, and that is not a person, a place or an organization. The person
-names it, and it gets a page in the wiki. It is a subject: `wiki_things`,
-subject type `thing`, the API is `/api/wiki/things`, and the route is
-`/thing/{id}`, listed in the wiki's Things room. Only the person names one;
-the server never does. Its page lists the projects and tasks under it. No
-record points at a thing yet, which is the uncitable gap below.
+A **thread** is something happening in the person's life that they are
+following: it unfolds and is not settled. Raising a round, getting back to
+the gym, a birthday dinner, health. Some finish and some never do. The person
+makes it, or says yes when the server suggests one, and gives it a title and
+one sentence that says what belongs in it. It ends when they finish it or
+drop it: `archived_at` and an `outcome` of `finished` or `dropped`. A thread
+can sit under a thing (`thing_id`), the noun it is about. It holds tasks,
+records, and the pages, chats and files the person made or kept, and points
+to the subjects it involves. It is not a subject: it has no place on the
+timeline and gets no article of its own yet. Your server proposes which
+threads are live, and the person can pin or drop any of them.
 
-A **project** is something unresolved in the person's life that can be
-finished and takes more than one step. The person makes it, or says yes when
-the server suggests one, and it ends when they finish it or drop it.
-Suggesting one is not built, so today every project is made by hand. An ended
-project has `archived_at` and an `outcome` of `finished` or `dropped`; the
-UI says finish, drop and reopen, and never archive. A project can sit under
-a thing (`thing_id`). It also keeps a workspace over the person's data:
-material gathered in it, with chat grounded in that material instead of in
-everything. It is not a subject: it has no place on the timeline and gets no
-article. In code it is `app_projects`, its contents are `app_project_items`,
-a chat is bound to one by `app_chats.project_id`, the API is
-`/api/projects`, and the routes are `/projects` and `/project/{id}`; ids
-keep the `nb_` prefix. A project cannot contain a project. It was
-**Notebook** until 2026-09-21, so an older commit message or record that
-says notebook means this.
+In code a thread is `app_threads`, its contents are `app_thread_items`, and a
+chat or task is bound to one by `thread_id`. Ids keep the `nb_` prefix. A
+thread cannot contain a thread. On `data_communication_message` and
+`data_communication_email`, `thread_id` means a message or email
+conversation, which is unrelated. The HTTP API (`/api/projects`, JSON
+`project_id`) and the routes (`/projects`, `/project/{id}`) still say
+project until the Threads UI moves. The word was **project** from 2026-09-21
+to 2026-11-17 and **notebook** before that, so an older commit message or
+record that says either means this.
 
-A **task** is one step (`app_tasks`). It sits under a project, under a
+A **task** is one step (`app_tasks`). It sits under a thread, under a
 thing, or under nothing, with one parent at most. A task can recur: it
 comes back `recur_every` `recur_unit`s after the day the person finishes it,
 so one occurrence is open at a time and a missed one never piles up. What

@@ -124,8 +124,9 @@ pub struct ChatListItem {
     /// `--cat-*` token key, never a hex. See migration 0079.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_color: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project_id: Option<String>,
+    // TODO(2026-11-17): the web app and released apps send and read `project_id`; rename the wire name when the Threads UI moves.
+    #[serde(rename = "project_id", skip_serializing_if = "Option::is_none")]
+    pub thread_id: Option<String>,
     pub first_message_at: Timestamp,
     /// When anything on the row last changed: a rename, a filing, an icon.
     pub last_updated: Timestamp,
@@ -169,7 +170,8 @@ pub struct ConversationMeta {
     /// The project this chat is filed in. On the chat itself because the chat
     /// list holds only the most recent chats, and an older chat opened from a
     /// project could not otherwise say where it lives.
-    pub project_id: Option<String>,
+    #[serde(rename = "project_id")]
+    pub thread_id: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -211,9 +213,9 @@ pub struct UpdateChatRequest {
     #[serde(default)]
     pub icon_color: Option<Option<String>>,
     /// Tri-state: absent = leave, null = detach from Project, value = set Project.
-    /// Routed through `projects::set_chat_project` (also folds chat into membership).
+    /// Routed through `threads::set_chat_thread` (also folds chat into membership).
     #[serde(default, rename = "projectId", alias = "notebookId")]
-    pub project_id: Option<Option<String>>,
+    pub thread_id: Option<Option<String>>,
 }
 
 /// Request to create a new chat with initial messages
@@ -222,7 +224,7 @@ pub struct CreateChatRequest {
     pub title: String,
     pub messages: Vec<ChatMessage>,
     #[serde(rename = "projectId", alias = "notebookId")]
-    pub project_id: Option<String>, // For auto-add to project_items (not stored on chat)
+    pub thread_id: Option<String>, // For auto-add to project_items (not stored on chat)
 }
 
 /// Response after creating a chat
@@ -307,7 +309,7 @@ const LIST_CHATS_SQL: &str = r#"
             title,
             icon,
             icon_color,
-            project_id,
+            thread_id,
             message_count,
             created_at,
             updated_at,
@@ -344,7 +346,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
             let title: String = row.get("title");
             let icon: Option<String> = row.get("icon");
             let icon_color: Option<String> = row.get("icon_color");
-            let project_id: Option<String> = row.get("project_id");
+            let thread_id: Option<String> = row.get("thread_id");
             let message_count: i64 = row.get("message_count");
             let first_message_at: Timestamp = row.get("created_at");
             let last_updated: Timestamp = row.get("updated_at");
@@ -356,7 +358,7 @@ pub async fn list_chats(pool: &PgPool, limit: i64) -> Result<ChatListResponse> {
                 message_count: message_count as i32,
                 icon,
                 icon_color,
-                project_id,
+                thread_id,
                 first_message_at,
                 last_updated,
                 last_message_at,
@@ -396,7 +398,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
             id,
             title,
             icon,
-            project_id,
+            thread_id,
             message_count,
             created_at,
             updated_at
@@ -414,7 +416,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
     let id: String = row.get("id");
     let title: String = row.get("title");
     let icon: Option<String> = row.get("icon");
-    let project_id: Option<String> = row.get("project_id");
+    let thread_id: Option<String> = row.get("thread_id");
     let message_count: i64 = row.get("message_count");
     let created_at: Timestamp = row.get("created_at");
     let updated_at: Timestamp = row.get("updated_at");
@@ -496,7 +498,7 @@ pub async fn get_chat(pool: &PgPool, chat_id: String) -> Result<ChatDetailRespon
         message_count: message_count as i32,
         model: last_message.and_then(|m| m.model.clone()),
         provider: None, // Provider not stored in MessageResponse
-        project_id,
+        thread_id,
     };
 
     Ok(ChatDetailResponse {
@@ -600,15 +602,15 @@ pub async fn create_chat(
 }
 
 /// Create a new chat with initial messages (public API)
-/// If project_id is provided and not the system project, auto-adds to project_items
+/// If thread_id is provided and not the system project, auto-adds to project_items
 pub async fn create_chat_from_request(
     pool: &PgPool,
     request: CreateChatRequest,
 ) -> Result<CreateChatResponse> {
     let chat = create_chat(pool, &request.title, request.messages).await?;
 
-    // Bind the chat to its Project (stores project_id + folds into membership).
-    if let Err(e) = crate::api::projects::set_chat_project(pool, &chat.id, request.project_id.as_deref()).await {
+    // Bind the chat to its Project (stores thread_id + folds into membership).
+    if let Err(e) = crate::api::threads::set_chat_thread(pool, &chat.id, request.thread_id.as_deref()).await {
         tracing::warn!("Failed to set chat project: {}", e);
         // Don't fail chat creation if the binding fails
     }
@@ -666,8 +668,8 @@ pub async fn update_chat(
     let row = row.ok_or_else(|| crate::Error::NotFound("Chat not found".into()))?;
 
     // Bind/unbind the chat's Project if the field was provided.
-    if let Some(ref project_id) = request.project_id {
-        crate::api::projects::set_chat_project(pool, &chat_id, project_id.as_deref()).await?;
+    if let Some(ref thread_id) = request.thread_id {
+        crate::api::threads::set_chat_thread(pool, &chat_id, thread_id.as_deref()).await?;
     }
 
     use sqlx::Row;
@@ -1379,7 +1381,7 @@ mod tests {
             .execute(&pool)
             .await
             .unwrap();
-        let req = UpdateChatRequest { title: Some("Mine".into()), icon: None, icon_color: None, project_id: None };
+        let req = UpdateChatRequest { title: Some("Mine".into()), icon: None, icon_color: None, thread_id: None };
         update_chat(&pool, "chat_r".into(), &req).await.unwrap();
         let source: String = sqlx::query_scalar("SELECT title_source FROM app_chats WHERE id = 'chat_r'")
             .fetch_one(&pool)

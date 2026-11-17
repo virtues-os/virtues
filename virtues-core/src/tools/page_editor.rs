@@ -268,7 +268,7 @@ impl PageEditorTool {
             icon_color: None,
             cover_url: None,
             tags: None,
-            project_id: None,
+            thread_id: None,
             format: None,
         };
 
@@ -2945,7 +2945,7 @@ mod tests {
             pages::CreatePageRequest {
                 title: "Notes".into(),
                 content: "Coffee.\nTea.\n".into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,
@@ -2991,7 +2991,7 @@ mod tests {
             pages::CreatePageRequest {
                 title: "Notes".into(),
                 content: "Your own line.\n".into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,
@@ -3057,7 +3057,7 @@ mod tests {
             pages::CreatePageRequest {
                 title: "Notes".into(),
                 content: "Coffee.\n".into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,
@@ -3123,7 +3123,7 @@ mod tests {
             pages::CreatePageRequest {
                 title: "Notes".into(),
                 content: content.into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,
@@ -3277,7 +3277,7 @@ mod block_pages {
             pages::CreatePageRequest {
                 title: "Trip".into(),
                 content: markdown.into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,
@@ -3785,7 +3785,7 @@ mod block_pages {
             pages::CreatePageRequest {
                 title: "Notes".into(),
                 content: "Coffee.\n".into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,
@@ -5798,7 +5798,7 @@ mod block_pages {
             pages::CreatePageRequest {
                 title: "Notes".into(),
                 content: "Coffee.\n".into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,
@@ -5958,7 +5958,7 @@ mod block_pages {
             pages::CreatePageRequest {
                 title: "Reading".into(),
                 content: "---\nsource: pdf\n---\n\n## Plan\n".into(),
-                project_id: None,
+                thread_id: None,
                 icon: None,
                 icon_color: None,
                 cover_url: None,
@@ -6880,7 +6880,7 @@ mod page_edit_eval {
                     pages::CreatePageRequest {
                         title: "Trip".into(),
                         content: FIXTURE.into(),
-                        project_id: None,
+                        thread_id: None,
                         icon: None,
                         icon_color: None,
                         cover_url: None,

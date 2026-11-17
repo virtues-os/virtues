@@ -188,7 +188,7 @@ impl Database {
         let current = current_type.as_deref().and_then(parse_vector_dim);
         // The early return has to prove ALL THREE columns are right, and the
         // index with them. `search_vectors`, `search_topic_cache` and
-        // `app_projects.centroid` share one embedding geometry and are resized
+        // `app_threads.centroid` share one embedding geometry and are resized
         // together below, between dropping the HNSW index and rebuilding it —
         // but the loop is not a transaction, so a failure partway leaves some
         // converted and some not, or no index at all. Guarding on
@@ -206,7 +206,7 @@ impl Database {
             })
         };
         let topic_type = self.vector_column_type("search_topic_cache", "embedding").await?;
-        let centroid_type = self.vector_column_type("app_projects", "centroid").await?;
+        let centroid_type = self.vector_column_type("app_threads", "centroid").await?;
         let index_built: bool =
             sqlx::query_scalar("SELECT to_regclass('search_vectors_hnsw') IS NOT NULL")
                 .fetch_one(&self.pool)
@@ -223,11 +223,11 @@ impl Database {
         if search_ready {
             for stmt in [
                 format!(
-                    "UPDATE app_projects SET centroid = NULL \
+                    "UPDATE app_threads SET centroid = NULL \
                      WHERE centroid IS NOT NULL AND vector_dims(centroid) <> {target}"
                 ),
                 format!(
-                    "ALTER TABLE app_projects ALTER COLUMN centroid \
+                    "ALTER TABLE app_threads ALTER COLUMN centroid \
                      TYPE halfvec({target}) USING centroid::halfvec({target})"
                 ),
             ] {
@@ -280,16 +280,16 @@ impl Database {
                 "ALTER TABLE search_topic_cache ALTER COLUMN embedding \
                  TYPE halfvec({target}) USING embedding::halfvec({target})"
             ),
-            // Nothing reads or writes `app_projects.centroid` since the magnet
+            // Nothing reads or writes `app_threads.centroid` since the magnet
             // went, but the guard above holds it to this geometry, so it is
             // resized with the rest. A stored centroid of another width cannot
             // be cast to this one; with no reader, NULLing it loses nothing.
             format!(
-                "UPDATE app_projects SET centroid = NULL \
+                "UPDATE app_threads SET centroid = NULL \
                  WHERE centroid IS NOT NULL AND vector_dims(centroid) <> {target}"
             ),
             format!(
-                "ALTER TABLE app_projects ALTER COLUMN centroid \
+                "ALTER TABLE app_threads ALTER COLUMN centroid \
                  TYPE halfvec({target}) USING centroid::halfvec({target})"
             ),
             hnsw_index_sql("search_vectors_hnsw", "search_vectors", false),
@@ -565,7 +565,7 @@ mod tests {
     async fn box_at_384(pool: &PgPool) -> Database {
         for stmt in [
             "UPDATE search_index_meta SET model = 'm', dim = 384 WHERE singleton",
-            "INSERT INTO app_projects (id, name, centroid) \
+            "INSERT INTO app_threads (id, name, centroid) \
              VALUES ('p_1', 'P', array_fill(0.1::real, ARRAY[256])::vector::halfvec)",
         ] {
             sqlx::query(stmt).execute(pool).await.unwrap();
@@ -574,7 +574,7 @@ mod tests {
     }
 
     /// A box whose index is not 256-wide must reach the early return on its
-    /// second boot. When the resize stopped touching `app_projects.centroid`
+    /// second boot. When the resize stopped touching `app_threads.centroid`
     /// but the guard still required it, the guard never passed, and every boot
     /// dropped and rebuilt the HNSW index.
     #[sqlx::test]
@@ -591,7 +591,7 @@ mod tests {
         for (table, col) in [
             ("search_vectors", "embedding"),
             ("search_topic_cache", "embedding"),
-            ("app_projects", "centroid"),
+            ("app_threads", "centroid"),
         ] {
             assert_eq!(
                 db.vector_column_type(table, col).await.unwrap().as_deref(),
@@ -599,7 +599,7 @@ mod tests {
                 "{table}.{col}"
             );
         }
-        let centroids: i64 = sqlx::query_scalar("SELECT count(centroid) FROM app_projects")
+        let centroids: i64 = sqlx::query_scalar("SELECT count(centroid) FROM app_threads")
             .fetch_one(&pool)
             .await
             .unwrap();

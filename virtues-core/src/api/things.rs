@@ -1,8 +1,9 @@
-//! A thing: something in the person's life that goes on.
+//! A thing: a noun in the person's life that is not a person, a place or an
+//! organization.
 //!
-//! The garden. The bike. Guitar. Sleep. A thing cannot be finished, and it is not
-//! a person, a place or an organization. The person names it and it gets an
-//! article. Projects and tasks can sit under it (`app_projects.thing_id`,
+//! The dog. The car. The boat. The house. Something happening is a thread
+//! (`crate::api::threads`), not a thing. The person names a thing and it gets
+//! an article. Threads and tasks can sit under it (`app_threads.thing_id`,
 //! `app_tasks.thing_id`), and its page lists them.
 //!
 //! A thing MAY carry dates and usually will not: `started_at` is when it came
@@ -14,7 +15,7 @@
 //! the person's to say.
 //!
 //! **No record points at a thing.** A person has the messages that mention
-//! them and a year has its days, but nothing resolves a record to "guitar". So
+//! them and a year has its days, but nothing resolves a record to "the car". So
 //! the editor writes a thing's article by searching for it, which is the
 //! argument of `agents/record/article-resolution.md`, "Draft is one-shot;
 //! revision is agentic".
@@ -360,7 +361,7 @@ mod tests {
     #[sqlx::test]
     async fn what_sat_under_a_removed_thing_stays(pool: PgPool) {
         let t = create_thing(&pool, "The house").await.unwrap();
-        sqlx::query("INSERT INTO app_projects (id, name, thing_id) VALUES ('nb_t', 'Repaint the hallway', $1)")
+        sqlx::query("INSERT INTO app_threads (id, name, thing_id) VALUES ('nb_t', 'Repaint the hallway', $1)")
             .bind(&t.id)
             .execute(&pool)
             .await
@@ -374,7 +375,7 @@ mod tests {
         .unwrap();
         delete_thing(&pool, &t.id).await.unwrap();
         let left: (Option<String>, Option<String>) = sqlx::query_as(
-            "SELECT (SELECT thing_id FROM app_projects WHERE id = 'nb_t'), \
+            "SELECT (SELECT thing_id FROM app_threads WHERE id = 'nb_t'), \
                     (SELECT thing_id FROM app_tasks WHERE id = 'task_t')",
         )
         .fetch_one(&pool)

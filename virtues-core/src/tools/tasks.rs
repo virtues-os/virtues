@@ -66,11 +66,11 @@ pub async fn create(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolR
             due_at,
             // A task put under a thing is not also filed in the chat's project:
             // it has one parent.
-            project_id: item
-                .get("project_id")
+            thread_id: item
+                .get("thread_id")
                 .and_then(Value::as_str)
                 .map(str::to_string)
-                .or_else(|| context.project_id.clone().filter(|_| thing_id.is_none())),
+                .or_else(|| context.thread_id.clone().filter(|_| thing_id.is_none())),
             thing_id,
             recur_every: item.get("recur_every").and_then(Value::as_i64).and_then(|n| i32::try_from(n).ok()),
             recur_unit: item.get("recur_unit").and_then(Value::as_str).map(str::to_string),
@@ -118,8 +118,8 @@ pub async fn update(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolR
             }
         }
     }
-    if let Some(project) = args.get("project_id").and_then(Value::as_str) {
-        patch.project_id = Some(Some(project.to_string()).filter(|p| !p.is_empty() && p != "none"));
+    if let Some(project) = args.get("thread_id").and_then(Value::as_str) {
+        patch.thread_id = Some(Some(project.to_string()).filter(|p| !p.is_empty() && p != "none"));
     }
     if let Some(thing) = args.get("thing_id").and_then(Value::as_str) {
         patch.thing_id = Some(Some(thing.to_string()).filter(|t| !t.is_empty() && t != "none"));

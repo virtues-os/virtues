@@ -170,7 +170,7 @@ mod tests {
         let req = CreatePageRequest {
             title: "Notes".into(),
             content: "Lunch.\n".into(),
-            project_id: None,
+            thread_id: None,
             icon: None,
             icon_color: None,
             cover_url: None,
