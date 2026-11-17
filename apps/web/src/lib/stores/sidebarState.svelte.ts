@@ -18,9 +18,9 @@ const WIDTH_KEY = "virtues-sidebar-width";
 export const SIDEBAR_MIN_WIDTH = 140;
 export const SIDEBAR_MAX_WIDTH = 420;
 // Wide enough that a typical chat title fits without its ellipsis.
-export const SIDEBAR_DEFAULT_WIDTH = 236;
-/** The old default. A stored width equal to it was never chosen, so it moves to the new one. */
-const OLD_DEFAULT_WIDTH = 208;
+export const SIDEBAR_DEFAULT_WIDTH = 228;
+/** Earlier defaults. A stored width equal to one was never chosen, so it moves to the new one. */
+const OLD_DEFAULT_WIDTHS = [208, 236];
 /**
  * Released with the pointer asking for less than this, the sidebar closes.
  * It sits 32px past the floor, so the panel visibly stops before the drag
@@ -73,7 +73,7 @@ if (typeof localStorage !== "undefined") {
 		// releases, and a stored 600 from an older build must not survive as a
 		// sidebar half the window wide.
 		const n = Number(storedWidth);
-		width = clampWidth(n === OLD_DEFAULT_WIDTH ? SIDEBAR_DEFAULT_WIDTH : n);
+		width = clampWidth(OLD_DEFAULT_WIDTHS.includes(n) ? SIDEBAR_DEFAULT_WIDTH : n);
 	}
 }
 
