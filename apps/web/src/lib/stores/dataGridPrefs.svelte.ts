@@ -22,11 +22,15 @@ const STORAGE_KEY = 'virtues-datagrid-prefs';
  *
  * It is offered only where a consumer supplies a tile renderer, because the
  * form-per-content rule is domain knowledge the grid does not have.
+ *
+ * `list` is rows you read rather than scan: a title, a line of the thing's
+ * own text and one date, with no column headers. It is offered only where a
+ * consumer supplies a list-row renderer.
  */
-export type ViewMode = 'table' | 'grid' | 'wall';
+export type ViewMode = 'table' | 'grid' | 'wall' | 'list';
 export type Density = 'compact' | 'comfortable';
 
-const VALID_VIEW_MODES: ViewMode[] = ['table', 'grid', 'wall'];
+const VALID_VIEW_MODES: ViewMode[] = ['table', 'grid', 'wall', 'list'];
 const VALID_DENSITIES: Density[] = ['compact', 'comfortable'];
 
 function isValidViewMode(value: unknown): value is ViewMode {

@@ -24,6 +24,19 @@
 		hidden?: boolean;
 		/** Order group keys explicitly; anything unlisted follows, alphabetically. */
 		groupOrder?: string[];
+		/** `appearance`: groups come in the order their first row appears, so a
+		 *  list sorted newest first puts the group with the newest row on top. */
+		groupSort?: 'appearance';
+		/** The groups a row belongs to, when it can be in several (a page in
+		 *  two threads). The row appears under each. Overrides the rendered value. */
+		groupValues?: (item: T) => string[];
+		/** The group for a row with no group value, listed last. Default '—'. */
+		groupFallback?: string;
+	}
+
+	export interface GroupInfo<T> {
+		key: string;
+		items: T[];
 	}
 
 	export interface RowMeta {
@@ -37,10 +50,12 @@
 
 <script lang="ts" generics="T extends { id: string }">
 	import type { Snippet } from 'svelte';
+	import { reducedMotion } from '$lib/stores/motion.svelte';
 	import { fly } from 'svelte/transition';
 	import { flip } from 'svelte/animate';
 	import { cubicOut } from 'svelte/easing';
 	import Icon from '$lib/components/Icon.svelte';
+	import SearchField from '$lib/components/SearchField.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import MenuItem from '$lib/components/MenuItem.svelte';
 	import { dataGridPrefs, type ViewMode, type Density } from '$lib/stores/dataGridPrefs.svelte';
@@ -111,6 +126,16 @@
 		// Custom renderers — receive RowMeta for stagger / index-aware rendering.
 		tableRow?: Snippet<[T, RowMeta]>;
 		card?: Snippet<[T, RowMeta]>;
+		/** Row renderer for the List view. Supplying it is what makes List
+		 *  available: rows you read (a title, a line of text, one date) with no
+		 *  column headers. */
+		listRow?: Snippet<[T, RowMeta]>;
+		/** Replaces a group's header. The group still collapses from its chevron. */
+		groupHeader?: Snippet<[GroupInfo<T>]>;
+		/** The grouping when no stored preference exists: a groupable column key. */
+		defaultGroupBy?: string;
+		/** Show "38 items" in the toolbar and a count on each group. Default true. */
+		showCounts?: boolean;
 		/**
 		 * Tile renderer for the Wall. Supplying it is what makes the Wall mode
 		 * available at all — the grid can pack tiles, but only the consumer
@@ -179,6 +204,10 @@
 		onRetry,
 		tableRow,
 		card,
+		listRow,
+		groupHeader,
+		defaultGroupBy = '',
+		showCounts = true,
 		wallTile,
 		viewModes,
 		toolbarActions,
@@ -555,11 +584,17 @@
 		table: { icon: 'mynaui:list-check', label: 'Table' },
 		grid: { icon: 'mynaui:grid', label: 'Cards' },
 		wall: { icon: 'mynaui:image-rectangle', label: 'Wall' },
+		list: { icon: 'mynaui:list', label: 'List' },
 	};
 
 	/** Wall is offered only where a tile renderer was supplied. */
 	const availableModes = $derived<ViewMode[]>(
-		viewModes ?? (wallTile ? ['table', 'grid', 'wall'] : ['table', 'grid'])
+		viewModes ?? [
+			...(listRow ? (['list'] as ViewMode[]) : []),
+			'table',
+			'grid',
+			...(wallTile ? (['wall'] as ViewMode[]) : []),
+		]
 	);
 
 	/**
@@ -575,7 +610,7 @@
 	 */
 	const pinnedMobileTable = $derived(mobileLayout.isMobile && mobileViewMode === 'table');
 	const effectiveViewMode = $derived<ViewMode>(
-		pinnedMobileTable ? 'table' : availableModes.includes(viewMode) ? viewMode : 'table'
+		pinnedMobileTable ? 'table' : availableModes.includes(viewMode) ? viewMode : (availableModes[0] ?? 'table')
 	);
 
 	function toggleViewMode() {
@@ -788,7 +823,7 @@
 		groupInitialized = true;
 		const stored = dataGridPrefs.hasGroupBy(entityType)
 			? dataGridPrefs.getGroupBy(entityType)
-			: '';
+			: defaultGroupBy;
 		// A stored key whose column has since gone away must not strand the grid
 		// in a grouping the user can no longer see or clear.
 		groupKey = groupableCols.some((c) => String(c.key) === stored) ? stored : '';
@@ -812,16 +847,25 @@
 	const groupedItems = $derived.by<{ key: string; items: T[] }[]>(() => {
 		const col = activeGroupCol;
 		if (!col) return [{ key: '', items: displayedItems }];
+		const fallback = col.groupFallback ?? '—';
 		const buckets = new Map<string, T[]>();
 		for (const item of displayedItems) {
-			const key = getValue(item, col) || '—';
-			const bucket = buckets.get(key);
-			if (bucket) bucket.push(item);
-			else buckets.set(key, [item]);
+			const keys = col.groupValues ? col.groupValues(item) : [getValue(item, col)];
+			const present = keys.filter((k) => !!k);
+			for (const key of present.length ? present : [fallback]) {
+				const bucket = buckets.get(key);
+				if (bucket) bucket.push(item);
+				else buckets.set(key, [item]);
+			}
 		}
 		const order = col.groupOrder ?? [];
-		return [...buckets.entries()]
-			.map(([key, items]) => ({ key, items }))
+		const groups = [...buckets.entries()].map(([key, items]) => ({ key, items }));
+		if (col.groupSort === 'appearance') {
+			// Map keeps insertion order, which is first appearance. The
+			// fallback group goes last whatever its rows' order.
+			return [...groups.filter((g) => g.key !== fallback), ...groups.filter((g) => g.key === fallback)];
+		}
+		return groups
 			.sort((a, b) => {
 				const ai = order.indexOf(a.key);
 				const bi = order.indexOf(b.key);
@@ -845,6 +889,7 @@
 	const rowIndexById = $derived(new Map(visualOrder.map((item, i) => [item.id, i])));
 
 	const isTable = $derived(effectiveViewMode === 'table');
+	const isList = $derived(effectiveViewMode === 'list' && !!listRow);
 	const isWall = $derived(effectiveViewMode === 'wall');
 	/** Cards + a grouping = a board. That is the whole of what Board ever was. */
 	const asBoard = $derived(effectiveViewMode === 'grid' && isGrouped);
@@ -853,8 +898,7 @@
 	// transitions don't honour the media query on their own — the CSS-only
 	// `@media (prefers-reduced-motion)` block can't reach them.
 	const prefersReducedMotion =
-		typeof window !== 'undefined' &&
-		window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+		reducedMotion();
 	const motionMs = prefersReducedMotion ? 0 : 180;
 </script>
 
@@ -875,22 +919,11 @@
 				<Button variant="ghost" size="sm" onclick={clearSelection}>Clear</Button>
 			{:else}
 			<div class="search-container">
-				<Icon icon="mynaui:search" width="16" />
-				<input
-					type="text"
-					bind:this={searchInputEl}
-					bind:value={searchQuery}
-					placeholder={searchPlaceholder}
-					class="search-input"
-				/>
-				{#if searchQuery}
-					<button class="search-clear" onclick={() => (searchQuery = '')}>
-						<Icon icon="mynaui:x" width="16" />
-					</button>
-				{/if}
+				<SearchField bind:value={searchQuery} bind:input={searchInputEl} placeholder={searchPlaceholder} />
 			</div>
 
 			<div class="toolbar-meta">
+				{#if showCounts}
 				<span class="item-count">
 					<!-- Any narrowing counts, not just search. With a filter chip set, the
 					     count went on reporting the unfiltered total, so the number
@@ -902,6 +935,7 @@
 						{totalCount} {totalCount === 1 ? 'item' : 'items'}
 					{/if}
 				</span>
+				{/if}
 				{#if filters && filters.length > 0 && availableFilters.length > 0}
 					<div class="filter-add">
 						<Popover bind:open={addOpen} placement="bottom-end" offset={4}>
@@ -1049,6 +1083,59 @@
 				<p>No results match the active filters</p>
 			{/if}
 		</div>
+	{:else if isList && listRow}
+		{@const total = displayedItems.length}
+		<!-- The List: rows you read. No headers, because each row says what it
+		     is in its own words; a group's header is the only heading. -->
+		<div class="list-view" bind:this={gridEl} in:fly={{ y: 6, duration: motionMs, easing: cubicOut }}>
+			{#each groupedItems as group (group.key)}
+				{@const closed = collapsedGroups.has(group.key)}
+				<section class="list-group" class:ungrouped={!isGrouped}>
+					{#if isGrouped}
+						<header class="list-group-head">
+							<button
+								type="button"
+								class="list-group-chev"
+								class:closed
+								onclick={() => toggleGroup(group.key)}
+								aria-expanded={!closed}
+								aria-label={closed ? `Show ${group.key}` : `Hide ${group.key}`}
+							>
+								<Icon icon="mynaui:chevron-down" width="14" />
+							</button>
+							{#if groupHeader}
+								{@render groupHeader(group)}
+							{:else}
+								<span class="list-group-name">{group.key}</span>
+							{/if}
+							{#if showCounts}<span class="group-count">{group.items.length}</span>{/if}
+						</header>
+					{/if}
+					{#if !closed}
+						<ul class="list-rows">
+							{#each group.items as item (item.id)}
+								{@const i = rowIndexById.get(item.id) ?? 0}
+								<li>
+									<button
+										type="button"
+										class="list-row"
+										data-row-id={item.id}
+										onclick={() => handleRowClick(item)}
+										oncontextmenu={rowContextMenu ? (e) => rowContextMenu(item, e) : undefined}
+										onkeydown={(e) => handleKeyDown(e, item)}
+										onfocus={() => (focusedIndex = i)}
+										tabindex={focusedIndex === i || (focusedIndex === -1 && i === 0) ? 0 : -1}
+										aria-label={`Open ${getItemLabel(item)}`}
+									>
+										{@render listRow(item, { rowIndex: i, colIndex: 0, total })}
+									</button>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</section>
+			{/each}
+		</div>
 	{:else if isTable}
 		{@const total = displayedItems.length}
 		<!-- Once anything is selected the boxes stay put: hunting for a checkbox
@@ -1136,7 +1223,7 @@
 										>
 											<Icon icon="mynaui:chevron-down" width="14" class="group-chev" />
 											<span class="group-name">{group.key}</span>
-											<span class="group-count">{group.items.length}</span>
+											{#if showCounts}<span class="group-count">{group.items.length}</span>{/if}
 										</button>
 									</td>
 								</tr>
@@ -1304,7 +1391,7 @@
 								<Icon icon="mynaui:chevron-down" width="14" class="group-chev" />
 							{/if}
 							<span class="group-name">{group.key}</span>
-							<span class="group-count">{group.items.length}</span>
+							{#if showCounts}<span class="group-count">{group.items.length}</span>{/if}
 						</button>
 					{/if}
 					{#if !collapsedGroups.has(group.key)}
@@ -1432,75 +1519,13 @@
 		gap: 0.5rem;
 	}
 
-	/* Search — matches the project's standard Input.svelte styling */
+	/* Search: the shared SearchField, given the toolbar's width. */
 	.search-container {
 		position: relative;
 		display: flex;
 		align-items: center;
 		flex: 1;
 		max-width: 360px;
-	}
-
-	.search-container > :global(svg:first-child) {
-		position: absolute;
-		left: 10px;
-		color: var(--color-foreground-subtle);
-		pointer-events: none;
-		z-index: 2;
-	}
-
-	.search-input {
-		width: 100%;
-		/* Fixed so the toolbar's height is a known quantity: the row swaps between
-		   this and the selection controls, and it must not resize when it does. */
-		height: 34px;
-		padding: 0 30px;
-		font-family: var(--font-sans);
-		font-size: 0.875rem;
-		color: var(--color-foreground);
-		background: var(--color-surface);
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-lg);
-		outline: none;
-		transition: border-color 0.25s ease, box-shadow 0.25s ease;
-	}
-
-	.search-input::placeholder {
-		color: var(--color-foreground-subtle);
-	}
-
-	.search-input:hover:not(:focus) {
-		border-color: var(--color-border-strong);
-	}
-
-	.search-input:focus {
-		border-color: var(--color-primary);
-		box-shadow: 0 0 0 2px color-mix(in srgb, var(--color-primary) 25%, transparent);
-	}
-
-	.search-clear {
-		position: absolute;
-		right: 8px;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 20px;
-		height: 20px;
-		background: transparent;
-		border: none;
-		border-radius: var(--radius-sm);
-		color: var(--color-foreground-subtle);
-		cursor: pointer;
-		z-index: 2;
-	}
-
-	.search-clear:hover {
-		color: var(--color-foreground);
-	}
-
-	.search-clear:hover {
-		color: var(--color-foreground);
-		background: var(--color-background-hover);
 	}
 
 	.item-count {
@@ -1982,6 +2007,86 @@
 		flex-shrink: 0;
 	}
 	.group-toggle.closed :global(.group-chev) { transform: rotate(-90deg); }
+	/* List view */
+	.list-view {
+		padding-top: 1.5rem;
+	}
+	.list-group {
+		margin-bottom: 2.5rem;
+	}
+	.list-group.ungrouped {
+		margin-bottom: 0;
+	}
+	.list-group-head {
+		position: relative;
+		display: flex;
+		align-items: baseline;
+		gap: 0.75rem;
+		padding-bottom: 0.5rem;
+		border-bottom: 1px solid var(--color-border);
+	}
+	/* The chevron hangs in the margin and shows on hover, so a group header
+	   reads as a heading until you reach for it. */
+	.list-group-chev {
+		position: absolute;
+		left: -1.75rem;
+		top: 0.25rem;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.5rem;
+		height: 1.5rem;
+		padding: 0;
+		border: 0;
+		border-radius: var(--radius-sm);
+		background: transparent;
+		color: var(--color-foreground-subtle);
+		opacity: 0;
+		cursor: pointer;
+		transition: opacity 120ms ease, transform 160ms ease;
+	}
+	.list-group-head:hover .list-group-chev,
+	.list-group-chev:focus-visible,
+	.list-group-chev.closed {
+		opacity: 1;
+	}
+	.list-group-chev.closed {
+		transform: rotate(-90deg);
+	}
+	.list-group-name {
+		font-family: var(--font-serif);
+		font-size: var(--md-h2-size);
+		color: var(--color-foreground);
+	}
+	.list-rows {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+	}
+	.list-row {
+		display: block;
+		width: 100%;
+		padding: 0.875rem 0.25rem;
+		border: 0;
+		border-bottom: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
+		background: none;
+		font: inherit;
+		text-align: left;
+		color: inherit;
+		cursor: pointer;
+	}
+	.list-row:focus-visible {
+		outline: 2px solid var(--color-primary);
+		outline-offset: -2px;
+		border-radius: var(--radius-sm);
+	}
+	@media (max-width: 768px) {
+		.list-group-chev {
+			position: static;
+			opacity: 1;
+		}
+	}
+
 	.group-count {
 		font-family: var(--font-mono);
 		font-size: 0.625rem;

@@ -260,7 +260,12 @@ fn page_excerpt(title: &str, content: &str) -> String {
             continue;
         }
         let plain = strip_markdown(t);
-        let plain = plain.trim();
+        // A task-list item's box is markup, not text.
+        let plain = ["[ ]", "[x]", "[X]"]
+            .iter()
+            .find_map(|b| plain.strip_prefix(b))
+            .unwrap_or(&plain)
+            .trim();
         if plain.is_empty() || plain == title {
             continue;
         }
@@ -2053,6 +2058,8 @@ mod tests {
             "Sellwood felt the most like home."
         );
         assert_eq!(page_excerpt("Untitled", "\n\n"), "");
+        assert_eq!(page_excerpt("Errands", "- [ ] Return the library books"), "Return the library books");
+        assert_eq!(page_excerpt("Errands", "- [x] Call the plumber"), "Call the plumber");
     }
 
     async fn page(pool: &PgPool, content: &str) -> String {

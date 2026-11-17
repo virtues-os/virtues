@@ -10,17 +10,13 @@
 	import { Button, Page } from "$lib";
 	import { onMount } from "svelte";
 	import Icon from "$lib/components/Icon.svelte";
+	import UniversalDataGrid, { type Column, type GroupInfo } from "$lib/components/datagrid/UniversalDataGrid.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	type Grouping = "thread" | "date";
-	type Group = { key: string; name: string; threadId: string | null; pages: PageSummary[] };
-
-	const GROUPING_KEY = "virtues.pages.grouping";
+	const NO_THREAD = "Not in a thread";
 
 	let creating = $state(false);
-	let query = $state("");
-	let grouping = $state<Grouping>(readGrouping());
 
 	const loading = $derived(pagesStore.pagesLoading);
 	const error = $derived(pagesStore.pagesError);
@@ -29,29 +25,24 @@
 		await pagesStore.loadPages();
 	});
 
-	function readGrouping(): Grouping {
-		try {
-			return localStorage.getItem(GROUPING_KEY) === "date" ? "date" : "thread";
-		} catch {
-			return "thread";
-		}
-	}
-
-	function setGrouping(next: Grouping) {
-		grouping = next;
-		try {
-			localStorage.setItem(GROUPING_KEY, next);
-		} catch {
-			// The choice just isn't remembered in this browser.
-		}
-	}
-
 	function isBlank(page: PageSummary): boolean {
 		const title = page.title.trim();
 		return !page.excerpt && (title === "" || title === "Untitled");
 	}
 
-	/** A blank page shows its first line as its name instead of "Untitled". */
+	// Blank drafts stay out of the list. They are still in search and in
+	// the tab they were opened in.
+	const pages = $derived(pagesStore.pages.filter((p) => !isBlank(p)));
+
+	/** A thread's id by its name, for the group header's link. */
+	const threadIds = $derived.by(() => {
+		const ids = new Map<string, string>();
+		// A server older than this app sends no `threads`.
+		for (const p of pages) for (const t of p.threads ?? []) ids.set(t.name, t.id);
+		return ids;
+	});
+
+	/** An untitled page shows its first line as its name. */
 	function displayTitle(page: PageSummary): string {
 		const title = page.title.trim();
 		if (title && title !== "Untitled") return title;
@@ -63,99 +54,82 @@
 		return title && title !== "Untitled" ? (page.excerpt ?? "") : "";
 	}
 
-	// Blank drafts stay out of the list. They are still in search and in
-	// the tab they were opened in.
-	const visible = $derived.by(() => {
-		const q = query.trim().toLowerCase();
-		return pagesStore.pages.filter((p) => {
-			if (isBlank(p)) return false;
-			if (!q) return true;
-			return p.title.toLowerCase().includes(q) || (p.excerpt ?? "").toLowerCase().includes(q);
-		});
-	});
-
 	function startOfDay(d: Date): number {
 		return new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
 	}
 
-	function dateGroup(dateStr: string): { key: string; name: string } {
-		const date = new Date(dateStr);
-		const now = new Date();
-		const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
-		if (days <= 0) return { key: "today", name: "Today" };
-		if (days === 1) return { key: "yesterday", name: "Yesterday" };
-		if (days < 7) return { key: "week", name: "Earlier this week" };
-		const sameYear = date.getFullYear() === now.getFullYear();
-		const name = date.toLocaleDateString("en-US", { month: "long", year: sameYear ? undefined : "numeric" });
-		return { key: `${date.getFullYear()}-${date.getMonth()}`, name };
+	function daysAgo(dateStr: string): number {
+		return Math.round((startOfDay(new Date()) - startOfDay(new Date(dateStr))) / 86_400_000);
 	}
 
-	// Pages arrive newest first, so each group's first page is its latest and
-	// groups come out in the order of their latest page.
-	const groups = $derived.by((): Group[] => {
-		const out = new Map<string, Group>();
-		const add = (key: string, name: string, threadId: string | null, page: PageSummary) => {
-			let g = out.get(key);
-			if (!g) {
-				g = { key, name, threadId, pages: [] };
-				out.set(key, g);
-			}
-			g.pages.push(page);
-		};
-		if (grouping === "date") {
-			for (const p of visible) {
-				const { key, name } = dateGroup(p.updated_at);
-				add(key, name, null, p);
-			}
-			return [...out.values()];
-		}
-		const loose: PageSummary[] = [];
-		for (const p of visible) {
-			// A server older than this app sends no `threads`; its pages are
-			// listed as not in a thread instead of the list failing.
-			const threads = p.threads ?? [];
-			if (threads.length === 0) loose.push(p);
-			for (const t of threads) add(t.id, t.name, t.id, p);
-		}
-		const list = [...out.values()];
-		if (loose.length) list.push({ key: "none", name: "Not in a thread", threadId: null, pages: loose });
-		return list;
-	});
+	function dateGroup(dateStr: string): string {
+		const date = new Date(dateStr);
+		const days = daysAgo(dateStr);
+		if (days <= 0) return "Today";
+		if (days === 1) return "Yesterday";
+		if (days < 7) return "Earlier this week";
+		const sameYear = date.getFullYear() === new Date().getFullYear();
+		return date.toLocaleDateString("en-US", { month: "long", year: sameYear ? undefined : "numeric" });
+	}
 
 	function formatDate(dateStr: string): string {
 		const date = new Date(dateStr);
-		const now = new Date();
-		const days = Math.round((startOfDay(now) - startOfDay(date)) / 86_400_000);
+		const days = daysAgo(dateStr);
 		if (days <= 0) return date.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
 		if (days === 1) return "Yesterday";
 		if (days < 7) return date.toLocaleDateString("en-US", { weekday: "long" });
 		return date.toLocaleDateString("en-US", {
 			month: "short",
 			day: "numeric",
-			year: now.getFullYear() !== date.getFullYear() ? "numeric" : undefined,
+			year: new Date().getFullYear() !== date.getFullYear() ? "numeric" : undefined,
 		});
 	}
 
-	function groupNote(g: Group): string {
-		if (!g.threadId || g.pages.length === 0) return "";
-		const when = formatDate(g.pages[0].updated_at);
-		return /\d:\d/.test(when) ? "Last written today" : `Last written ${when}`;
+	// The list sorts newest first and groups in order of appearance, so the
+	// thread or month with the latest page comes first either way.
+	const columns: Column<PageSummary>[] = [
+		{ key: "title", label: "Title", getValue: displayTitle },
+		{ key: "excerpt", label: "Text", hidden: true },
+		{
+			key: "threads",
+			label: "Thread",
+			hidden: true,
+			groupable: true,
+			groupSort: "appearance",
+			groupFallback: NO_THREAD,
+			getValue: (p) => (p.threads ?? []).map((t) => t.name).join(", "),
+			groupValues: (p) => (p.threads ?? []).map((t) => t.name),
+		},
+		{
+			key: "updated_at",
+			label: "Date",
+			hidden: true,
+			groupable: true,
+			groupSort: "appearance",
+			getValue: (p) => dateGroup(p.updated_at),
+		},
+	];
+
+	function lastWritten(group: GroupInfo<PageSummary>): string {
+		const latest = group.items[0];
+		if (!latest) return "";
+		return daysAgo(latest.updated_at) <= 0 ? "Last written today" : `Last written ${formatDate(latest.updated_at)}`;
 	}
 
-	function openPage(page: PageSummary, e?: MouseEvent) {
+	function openPage(page: PageSummary) {
 		pagesStore.markAsRecent(page.id);
 		windowShellStore.openTabFromRoute(`/page/${page.id}`, {
-			forceNew: !!(e && (e.metaKey || e.ctrlKey)),
 			label: page.title,
 			preferEmptyPane: true,
 		});
 	}
 
-	function openThread(g: Group, e?: MouseEvent) {
-		if (!g.threadId) return;
-		windowShellStore.openTabFromRoute(`/thread/${g.threadId}`, {
-			forceNew: !!(e && (e.metaKey || e.ctrlKey)),
-			label: g.name,
+	function openThread(name: string, e: MouseEvent) {
+		const id = threadIds.get(name);
+		if (!id) return;
+		windowShellStore.openTabFromRoute(`/thread/${id}`, {
+			forceNew: e.metaKey || e.ctrlKey,
+			label: name,
 			preferEmptyPane: true,
 		});
 	}
@@ -228,136 +202,50 @@
 		>
 	{/snippet}
 
-	<div class="controls">
-		<label class="search">
-			<Icon icon="mynaui:search" width="15" />
-			<input type="search" placeholder="Search pages" aria-label="Search pages" bind:value={query} />
-		</label>
-		<div class="switch" role="group" aria-label="Group pages by">
-			<button type="button" aria-pressed={grouping === "thread"} onclick={() => setGrouping("thread")}>By thread</button>
-			<button type="button" aria-pressed={grouping === "date"} onclick={() => setGrouping("date")}>By date</button>
-		</div>
-	</div>
+	<UniversalDataGrid
+		items={pages}
+		{columns}
+		entityType="pages-list"
+		viewModes={["list"]}
+		defaultViewMode="list"
+		defaultGroupBy="threads"
+		showCounts={false}
+		pageSize={100000}
+		{loading}
+		{error}
+		emptyIcon="mynaui:file-text"
+		emptyMessage="Pages you write show up here. Start one with New page."
+		loadingMessage="Loading pages…"
+		searchPlaceholder="Search pages"
+		onItemClick={openPage}
+		onItemContextMenu={handleContextMenu}
+		onRetry={() => pagesStore.loadPages()}
+	>
+		{#snippet groupHeader(group: GroupInfo<PageSummary>)}
+			{#if threadIds.has(group.key)}
+				<button type="button" class="group-name link" onclick={(e) => openThread(group.key, e)}>{group.key}</button>
+				<span class="group-note">{lastWritten(group)}</span>
+			{:else}
+				<h2 class="group-name">{group.key}</h2>
+			{/if}
+		{/snippet}
 
-	{#if error && pagesStore.pages.length === 0}
-		<div class="state">
-			<p>Your pages didn't load. {error}</p>
-			<Button variant="secondary" size="sm" onclick={() => pagesStore.loadPages()}>Try again</Button>
-		</div>
-	{:else if loading && pagesStore.pages.length === 0}
-		<p class="state">Loading pages…</p>
-	{:else if groups.length === 0}
-		<p class="state">
-			{query.trim() ? "No pages match that search." : "Pages you write show up here. Start one with New page."}
-		</p>
-	{:else}
-		{#each groups as g (g.key)}
-			<section class="group">
-				<header class="group-head">
-					{#if g.threadId}
-						<button type="button" class="group-name link" onclick={(e) => openThread(g, e)}>{g.name}</button>
-						<span class="group-note">{groupNote(g)}</span>
-					{:else}
-						<h2 class="group-name">{g.name}</h2>
+		{#snippet listRow(page: PageSummary)}
+			<span class="row">
+				<span class="row-icon"><Icon icon={page.icon || "mynaui:file-text"} width="16" /></span>
+				<span class="row-text">
+					<span class="row-title">{displayTitle(page)}</span>
+					{#if displayExcerpt(page)}
+						<span class="row-excerpt">{displayExcerpt(page)}</span>
 					{/if}
-				</header>
-				<ul class="rows">
-					{#each g.pages as page (page.id)}
-						<li>
-							<button
-								type="button"
-								class="row"
-								onclick={(e) => openPage(page, e)}
-								oncontextmenu={(e) => handleContextMenu(page, e)}
-							>
-								<span class="row-icon"><Icon icon={page.icon || "mynaui:file-text"} width="16" /></span>
-								<span class="row-text">
-									<span class="row-title">{displayTitle(page)}</span>
-									{#if displayExcerpt(page)}
-										<span class="row-excerpt">{displayExcerpt(page)}</span>
-									{/if}
-								</span>
-								<span class="row-date">{formatDate(page.updated_at)}</span>
-							</button>
-						</li>
-					{/each}
-				</ul>
-			</section>
-		{/each}
-	{/if}
+				</span>
+				<span class="row-date">{formatDate(page.updated_at)}</span>
+			</span>
+		{/snippet}
+	</UniversalDataGrid>
 </Page>
 
 <style>
-	.controls {
-		display: flex;
-		flex-wrap: wrap;
-		align-items: center;
-		gap: 0.75rem;
-		margin-bottom: 2.5rem;
-	}
-	.search {
-		flex: 1 1 16rem;
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		height: 2.25rem;
-		padding: 0 0.75rem;
-		border: 1px solid var(--color-border);
-		border-radius: var(--radius-md);
-		color: var(--color-foreground-muted);
-	}
-	.search input {
-		flex: 1;
-		min-width: 0;
-		border: 0;
-		outline: 0;
-		background: transparent;
-		font: inherit;
-		font-size: 0.875rem;
-		color: var(--color-foreground);
-	}
-	.switch {
-		display: flex;
-		padding: 4px;
-		border-radius: var(--radius-md);
-		background: color-mix(in srgb, var(--wash-ink) 5%, transparent);
-	}
-	.switch button {
-		height: 1.875rem;
-		padding: 0 0.75rem;
-		border: 1px solid transparent;
-		border-radius: var(--radius-sm);
-		background: transparent;
-		font: inherit;
-		font-size: 0.8125rem;
-		color: var(--color-foreground-muted);
-		cursor: pointer;
-	}
-	.switch button[aria-pressed="true"] {
-		background: var(--color-background);
-		color: var(--color-foreground);
-		border-color: var(--color-border);
-	}
-
-	.state {
-		color: var(--color-foreground-muted);
-		font-size: 0.9375rem;
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 0.75rem;
-	}
-
-	.group {
-		margin-bottom: 2.5rem;
-	}
-	.group-head {
-		display: flex;
-		align-items: baseline;
-		gap: 0.75rem;
-		padding-bottom: 0.5rem;
-		border-bottom: 1px solid var(--color-border);
-	}
 	.group-name {
 		margin: 0;
 		padding: 0;
@@ -380,26 +268,12 @@
 		color: var(--color-foreground-muted);
 	}
 
-	.rows {
-		list-style: none;
-		margin: 0;
-		padding: 0;
-	}
 	.row {
 		display: flex;
 		align-items: flex-start;
 		gap: 0.875rem;
-		width: 100%;
-		padding: 0.875rem 0.25rem;
-		border: 0;
-		border-bottom: 1px solid color-mix(in srgb, var(--color-border) 55%, transparent);
-		background: none;
-		font: inherit;
-		text-align: left;
-		color: inherit;
-		cursor: pointer;
 	}
-	.row:hover .row-title {
+	:global(.list-row:hover) .row-title {
 		color: var(--color-foreground-muted);
 	}
 	.row-icon {
