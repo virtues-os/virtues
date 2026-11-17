@@ -67,3 +67,22 @@ export function changeRowId(change: SettingsChange): number | null {
 	const match = /^setting:(\d+)$/.exec(change.id);
 	return match ? Number(match[1]) : null;
 }
+
+/** A stored value as a person reads it: dollars for limits, "Not set" for
+ *  nothing, the text otherwise. */
+export function displayValue(settingId: string, value: unknown): string {
+	if (value === null || value === undefined || value === '') return 'Not set';
+	if ((settingId === 'limit-run' || settingId === 'limit-day') && typeof value === 'number') {
+		return `$${(value / 1_000_000).toFixed(2)}`;
+	}
+	return String(value);
+}
+
+/** When a drafted text keeps the old one and adds to it, the two parts, so
+ *  the addition can be highlighted. `null` when it rewrites instead. */
+export function addedText(oldValue: unknown, newValue: unknown): { kept: string; added: string } | null {
+	if (typeof oldValue !== 'string' || typeof newValue !== 'string') return null;
+	const kept = oldValue.trim();
+	if (!kept || !newValue.startsWith(kept) || newValue.length === kept.length) return null;
+	return { kept, added: newValue.slice(kept.length) };
+}

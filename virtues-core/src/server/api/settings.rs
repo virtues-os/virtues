@@ -80,6 +80,10 @@ pub fn routes() -> Router<AppState> {
         // what needs them (api/settings_changes.rs).
         .route("/api/settings/changes", get(settings_changes_handler))
         .route("/api/settings/changes/:id/undo", post(undo_settings_change_handler))
+        // Return in the Settings search field: the assistant drafts changes,
+        // and the owner applies the ones they accept.
+        .route("/api/settings/draft", post(settings_draft_handler))
+        .route("/api/settings/draft/apply", post(apply_settings_draft_handler))
         // Models API
         .route("/api/models", get(list_models_handler))
         .route(
@@ -319,6 +323,33 @@ pub async fn update_assistant_profile_handler(
 /// GET /api/settings/changes — what changed lately and what needs the owner.
 pub async fn settings_changes_handler(State(state): State<AppState>) -> Response {
     api_response(crate::api::settings_changes::lately(&state.db).await)
+}
+
+#[derive(Deserialize)]
+pub struct SettingsDraftBody {
+    text: String,
+}
+
+/// POST /api/settings/draft — what the assistant would change. Saves nothing.
+pub async fn settings_draft_handler(State(state): State<AppState>, Json(body): Json<SettingsDraftBody>) -> Response {
+    api_response(crate::api::settings_changes::draft(state.db.pool(), &body.text).await)
+}
+
+#[derive(Deserialize)]
+pub struct ApplySettingsDraftBody {
+    changes: Vec<crate::api::settings_changes::ApplyChange>,
+}
+
+/// POST /api/settings/draft/apply — save the drafted changes the owner accepted.
+pub async fn apply_settings_draft_handler(
+    State(state): State<AppState>,
+    Json(body): Json<ApplySettingsDraftBody>,
+) -> Response {
+    api_response(
+        crate::api::settings_changes::apply_draft(state.db.pool(), body.changes)
+            .await
+            .map(|()| serde_json::json!({ "ok": true })),
+    )
 }
 
 /// POST /api/settings/changes/:id/undo — write a change's old value back.

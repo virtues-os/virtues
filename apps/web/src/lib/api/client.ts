@@ -2929,6 +2929,30 @@ export function undoSettingsChange(id: number): Promise<{ ok: boolean }> {
 	return apiSend<{ ok: boolean }>('POST', `/settings/changes/${id}/undo`);
 }
 
+/** One change the assistant proposes, in stored form (`api/settings_changes.rs`). */
+export interface SettingsDraftChange {
+	setting_id: string;
+	field: string;
+	old_value: unknown;
+	new_value: unknown;
+}
+
+export interface SettingsDraft {
+	changes: SettingsDraftChange[];
+	/** One sentence, shown when nothing could be drafted. */
+	note: string | null;
+}
+
+/** Ask the assistant to draft settings changes from what was typed. Saves nothing. */
+export function draftSettings(text: string): Promise<SettingsDraft> {
+	return apiSend<SettingsDraft>('POST', '/settings/draft', { text });
+}
+
+/** Save drafted changes the owner accepted, recorded as the assistant's. */
+export function applySettingsDraft(changes: { field: string; new_value: unknown }[]): Promise<{ ok: boolean }> {
+	return apiSend<{ ok: boolean }>('POST', '/settings/draft/apply', { changes });
+}
+
 // ── Billing / wallet ─────────────────────────────────────────────────────────
 export function getBillingLinkStatus<T = unknown>(): Promise<T> {
 	return apiGet<T>('/billing/link/status');

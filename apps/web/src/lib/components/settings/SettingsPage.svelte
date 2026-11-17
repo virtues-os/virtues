@@ -13,7 +13,7 @@
 	 * is underlined. Clicking a name scrolls there and sweeps the highlighter
 	 * across its heading once.
 	 */
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { provideSettingsFilter } from '$lib/settings/filter';
 	import { invalidate } from '$app/navigation';
 	import Button from '$lib/components/Button.svelte';
@@ -33,6 +33,7 @@
 	import YouSettings from '$lib/components/settings/YouSettings.svelte';
 	import BillingSettings from '$lib/components/settings/BillingSettings.svelte';
 	import ChangedLately from '$lib/components/settings/ChangedLately.svelte';
+	import DraftCard from '$lib/components/settings/DraftCard.svelte';
 	import { getAssistantProfile, getProfile, updateProfile } from '$lib/api/client';
 	import { getTheme, isValidTheme, setTheme, type Theme } from '$lib/utils/theme';
 	import { SECTIONS, SETTINGS, findSetting, matchingIds, titleOf, type SectionId } from '$lib/settings';
@@ -81,9 +82,10 @@
 	// show the value that came back.
 	let version = $state(0);
 
-	/** An undo can put back the assistant's name or the theme, which this
-	 *  page holds itself, so both are read again with the sections. */
-	async function refreshAfterUndo() {
+	/** An undo or an applied draft can change the assistant's name or the
+	 *  theme, which this page holds itself, so both are read again with the
+	 *  sections and Changed lately. */
+	async function refreshSettings() {
 		version += 1;
 		void loadAssistant();
 		try {
@@ -109,12 +111,37 @@
 		!matches || SETTINGS.some((s) => s.section === id && s.id !== 'pair-device' && matches!.has(s.id));
 	const nothingMatches = $derived(!!matches && !shows('start-over') && !SECTIONS.some((s) => sectionShown(s.id)));
 
+	// ─── Return asks the assistant ─────────────────────────────────────────
+	// The text Return sent, while its draft card is open; the key gives each
+	// Return a fresh card.
+	let draftText = $state<string | null>(null);
+	let draftKey = $state(0);
+
 	function onSearchKey(e: KeyboardEvent) {
-		if (e.key === 'Escape' && query) {
-			query = '';
+		if (e.key === 'Enter' && query.trim()) {
+			draftText = query.trim();
+			draftKey += 1;
+			e.preventDefault();
+		} else if (e.key === 'Escape' && (draftText || query)) {
+			if (draftText) draftText = null;
+			else query = '';
 			e.preventDefault();
 			e.stopPropagation();
 		}
+	}
+
+	async function draftApplied() {
+		draftText = null;
+		query = '';
+		await refreshSettings();
+	}
+
+	/** Edit first: close the draft, show every setting, and go to the row. */
+	async function editFirst(settingId: string) {
+		draftText = null;
+		query = '';
+		await tick();
+		page?.querySelector(`#setting-${settingId}`)?.scrollIntoView({ behavior: reducedMotion() ? 'auto' : 'smooth', block: 'center' });
 	}
 
 	// ─── The bar: folding title, current section, jumping ──────────────────
@@ -175,7 +202,7 @@
 			<svg viewBox="0 0 24 24" aria-hidden="true" width="16" height="16">
 				<path fill="none" stroke="currentColor" stroke-linecap="round" stroke-width="1.7" d="M19 11.5a7.5 7.5 0 1 1-15 0a7.5 7.5 0 0 1 15 0m-2.107 5.42l3.08 3.08" />
 			</svg>
-			<input type="search" bind:value={query} placeholder="Find a setting" aria-label="Search settings" autocomplete="off" spellcheck="false" onkeydown={onSearchKey} />
+			<input type="search" bind:value={query} placeholder="Find a setting, or say what you want changed" aria-label="Search settings" autocomplete="off" spellcheck="false" onkeydown={onSearchKey} />
 		</label>
 		<nav aria-label="Sections">
 			{#each SECTIONS as section (section.id)}
@@ -189,11 +216,27 @@
 		</nav>
 	</div>
 
-	{#if !matches}
-		<ChangedLately assistantName={spoken} onundo={refreshAfterUndo} />
+	{#if query.trim() && !draftText}
+		<p class="hint"><kbd>Return</kbd> asks {spoken} to draft it.</p>
 	{/if}
 
-	{#if nothingMatches}
+	{#if draftText}
+		{#key draftKey}
+			<DraftCard
+				text={draftText}
+				assistantName={spoken}
+				onapplied={draftApplied}
+				ondismiss={() => (draftText = null)}
+				onedit={editFirst}
+			/>
+		{/key}
+	{/if}
+
+	{#if !matches}
+		{#key version}<ChangedLately assistantName={spoken} onundo={refreshSettings} />{/key}
+	{/if}
+
+	{#if nothingMatches && !draftText}
 		<p class="nothing">Nothing in Settings matches “{query.trim()}”. Esc shows every setting.</p>
 	{/if}
 
@@ -214,15 +257,15 @@
 							<Button variant="secondary" size="sm" onclick={loadAssistant}>Try again</Button>
 						</div>
 					{/if}
-					<div class="block" class:filtered={!shows('assistant-name')}><AssistantNameSettings bind:name disabled={assistant !== 'ready'} /></div>
-					<div class="block" class:filtered={!shows('style')}>
+					<div class="block" id="setting-assistant-name" class:filtered={!shows('assistant-name')}><AssistantNameSettings bind:name disabled={assistant !== 'ready'} /></div>
+					<div class="block" id="setting-style" class:filtered={!shows('style')}>
 						<StyleNotesSettings bind:notes={styleNotes} assistantName={spoken} disabled={assistant !== 'ready'} />
 					</div>
-					<div class="block" class:filtered={!shows('subjects')}><RulesSettings assistantName={spoken} /></div>
+					<div class="block" id="setting-subjects" class:filtered={!shows('subjects')}><RulesSettings assistantName={spoken} /></div>
 					<LinkRow id="memory" label={title('memory')} help="Notes {spoken} keeps from your chats. Edit one and it becomes yours." href="/virtues/assistant/memory" />
 					<!-- The catalog is reached from inside this block ("Compare all"). -->
-					<div class="block" class:filtered={!anyShows('models', 'model-catalog')}><ModelSettings assistantName={spoken} /></div>
-					<div class="block" class:filtered={!shows('suggested-questions')}><SuggestionsSettings assistantName={spoken} /></div>
+					<div class="block" id="setting-models" class:filtered={!anyShows('models', 'model-catalog')}><ModelSettings assistantName={spoken} /></div>
+					<div class="block" id="setting-suggested-questions" class:filtered={!shows('suggested-questions')}><SuggestionsSettings assistantName={spoken} /></div>
 				{:else if section.id === 'data'}
 					<LinkRow id="keys" label={title('keys')} help="Keys your applets use. Values show only when you ask." href="/virtues/keys" />
 					<LinkRow id="shared-links" label={title('shared-links')} help="Every link you've shared, and turning one off." href="/virtues/shared" />
@@ -232,12 +275,12 @@
 					</SettingRow>
 				{:else if section.id === 'billing'}
 					<BillingSettings />
-					<div class="block" class:filtered={!anyShows('limit-day', 'limit-run')}><RequestLimitsSettings assistantName={spoken} /></div>
+					<div class="block" id="setting-limit-run" class:filtered={!anyShows('limit-day', 'limit-run')}><span id="setting-limit-day"></span><RequestLimitsSettings assistantName={spoken} /></div>
 					<LinkRow id="byo-ai" label={title('byo-ai')} help="Send AI calls to your own provider and key instead of paying through Virtues." href="/virtues/billing/byo" />
 					<LinkRow id="ai-cost" label={title('ai-cost')} help="This month, day by day, each kind of work, and every call." href="/virtues/billing" />
 				{:else if section.id === 'server'}
-					<div class="block" class:filtered={!anyShows('updates', 'auto-install', 'update-channel')}><UpdateSection /></div>
-					<div class="block" class:filtered={!shows('reach')}><NetworkSection /></div>
+					<div class="block" id="setting-updates" class:filtered={!anyShows('updates', 'auto-install', 'update-channel')}><span id="setting-auto-install"></span><span id="setting-update-channel"></span><UpdateSection /></div>
+					<div class="block" id="setting-reach" class:filtered={!shows('reach')}><NetworkSection /></div>
 					<LinkRow id="search-runs-on" label={title('search-runs-on')} help="Where search runs, and how much of your record it covers." href="/virtues/search" />
 					<LinkRow id="server-health" label={title('server-health')} help="Storage, memory, backup and the last day, measured." href="/virtues/system" />
 					<LinkRow id="devices" label={title('devices')} help="Everything paired with your server, and pairing a new one." href="/virtues/devices" />
@@ -378,6 +421,20 @@
 	nav button:disabled {
 		color: var(--color-foreground-disabled);
 		cursor: default;
+	}
+
+	.hint {
+		margin: 8px 0 0;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+
+	.hint kbd {
+		font-family: inherit;
+		font-size: 12px;
+		padding: 0 4px;
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-sm);
 	}
 
 	.nothing {

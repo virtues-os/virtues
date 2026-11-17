@@ -2,7 +2,7 @@
 // days read as a person says them.
 import { describe, expect, it } from 'vitest';
 import type { SettingsChange } from '$lib/api/client';
-import { changeRowId, describeChange, whenLabel } from './changes';
+import { addedText, changeRowId, describeChange, displayValue, whenLabel } from './changes';
 
 function change(setting_id: string, new_value: unknown, extra: Partial<SettingsChange> = {}): SettingsChange {
 	return {
@@ -72,6 +72,26 @@ describe('whenLabel', () => {
 	it('adds the year for an earlier year', () => {
 		const lastYear = new Date(2025, 11, 30, 10, 0);
 		expect(whenLabel(lastYear.toISOString(), now)).toContain('2025');
+	});
+});
+
+describe('displayValue', () => {
+	it('shows limits as dollars and nothing as Not set', () => {
+		expect(displayValue('limit-day', 3_000_000)).toBe('$3.00');
+		expect(displayValue('employer', null)).toBe('Not set');
+		expect(displayValue('preferred-name', 'Nick')).toBe('Nick');
+	});
+});
+
+describe('addedText', () => {
+	it('finds what a draft added to the end of a note', () => {
+		expect(addedText('No lists.', 'No lists. Keep answers short.')).toEqual({ kept: 'No lists.', added: ' Keep answers short.' });
+	});
+
+	it('is null for a rewrite, an unchanged note, or a first note', () => {
+		expect(addedText('No lists.', 'Short answers.')).toBeNull();
+		expect(addedText('No lists.', 'No lists.')).toBeNull();
+		expect(addedText(null, 'Short answers.')).toBeNull();
 	});
 });
 

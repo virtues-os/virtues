@@ -102,7 +102,7 @@
 				<li>
 					<span class="what">
 						<span class="name">{nameOf(change)}</span>
-						<span class="sub">{describeChange(change)}</span>
+						<span class="sub">{describeChange(change)}{change.actor === 'assistant' ? `, with ${assistantName}` : ''}</span>
 					</span>
 					<span class="when">{whenLabel(change.occurred_at)}</span>
 					{#if change.can_undo}
