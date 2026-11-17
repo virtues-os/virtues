@@ -33,7 +33,7 @@
 </script>
 
 {#if projects.length > 0}
-	<div class="page-projects" aria-label="Projects this page is in">
+	<div class="page-projects" aria-label="Threads this page is in">
 		{#each projects as project (project.id)}
 			<ProjectChip
 				{project}

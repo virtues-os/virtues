@@ -9,7 +9,7 @@ import { ApiError, type Project, type ProjectOutcome, type ProjectSummary } from
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { GETTING_STARTED_CHAT_ID } from '$lib/components/chat/getting-started/getting-started';
 import { INTERVIEW_CHAT_ID } from '$lib/components/chat/interview/interview';
-import { PROJECT_ICON } from '$lib/utils/iconHelpers';
+import { THREAD_ICON } from '$lib/utils/iconHelpers';
 import { isRecordRoute, parseRef } from '$lib/utils/refRoutes';
 import { untitled } from '$lib/refs/identity.svelte';
 import { chatSessions } from '$lib/stores/chatSessions.svelte';
@@ -31,8 +31,8 @@ export async function newProject(
 ): Promise<void> {
 	const name = (
 		await promptText({
-			title: 'New project',
-			placeholder: 'Name your project',
+			title: 'New thread',
+			placeholder: 'Name your thread',
 			confirmLabel: 'Create',
 		})
 	)?.trim();
@@ -42,14 +42,14 @@ export async function newProject(
 		open(`/thread/${project.id}`, project.name);
 	} catch (e) {
 		console.error('[projectActions] Failed to create project:', e);
-		toast.error("Your server couldn't create that project", {
+		toast.error("Your server couldn't create that thread", {
 			description: 'Nothing changed. Try again',
 		});
 	}
 }
 
 export function openProjects(): void {
-	windowShellStore.openTabFromRoute('/projects', { label: 'Projects', focusExisting: true });
+	windowShellStore.openTabFromRoute('/threads', { label: 'Threads', focusExisting: true });
 }
 
 /** A thread's own url. You can't put a thread inside another thread. */
@@ -129,7 +129,7 @@ function failure(e: unknown, title: string, fallback: string): [string, { descri
 	if (e instanceof ApiError && e.status === 400) {
 		// "archived" is what a server from before finish and drop says.
 		if (/has ended|archived/i.test(e.message)) {
-			return [title, { description: 'This project has ended. Reopen it to add more' }];
+			return [title, { description: 'This thread has ended. Reopen it to add more' }];
 		}
 		if (e.message) return [title, { description: e.message }];
 	}
@@ -211,21 +211,21 @@ export function projectMenuItems(target: FileTarget | null): ContextMenuItem[] {
 	const submenu: ContextMenuItem[] = projects.map((p) => ({
 		id: `project-${p.id}`,
 		label: p.name,
-		icon: p.icon || PROJECT_ICON,
+		icon: p.icon || THREAD_ICON,
 		checked: p.id === home?.id || held.has(p.id),
 		action: () => fileIntoProject(p, target),
 	}));
 
 	submenu.push({
 		id: 'new-project-with-item',
-		label: 'New project…',
+		label: 'New thread…',
 		icon: 'mynaui:plus',
 		dividerBefore: projects.length > 0,
 		action: async () => {
 			const name = (
 				await promptText({
-					title: 'New project',
-					placeholder: 'Name your project',
+					title: 'New thread',
+					placeholder: 'Name your thread',
 					confirmLabel: 'Create',
 				})
 			)?.trim();
@@ -235,7 +235,7 @@ export function projectMenuItems(target: FileTarget | null): ContextMenuItem[] {
 				await fileIntoProject(project, target);
 			} catch (e) {
 				console.error('[projectActions] Failed to create project:', e);
-				toast.error("Your server couldn't create that project", {
+				toast.error("Your server couldn't create that thread", {
 					description: 'Nothing changed. Try again',
 				});
 			}
@@ -254,7 +254,7 @@ export function projectMenuItems(target: FileTarget | null): ContextMenuItem[] {
 	return [
 		{
 			id: 'add-to-project',
-			label: home ? 'Move to project' : 'Add to project',
+			label: home ? 'Move to thread' : 'Add to thread',
 			icon: 'mynaui:folder-plus',
 			dividerBefore: true,
 			submenu,
@@ -349,7 +349,7 @@ export function projectChipMenuItems(
 		submenu: i.submenu?.filter((s) => s.id !== 'remove-from-project'),
 	}));
 	return [
-		{ id: 'open-project', label: `Open ${project.name}`, icon: PROJECT_ICON, action: () => openProject(project) },
+		{ id: 'open-project', label: `Open ${project.name}`, icon: THREAD_ICON, action: () => openProject(project) },
 		...elsewhere,
 		{
 			id: 'remove-from-this-project',
@@ -378,7 +378,7 @@ export function newChatInProject(project: Pick<Project, 'id'>): void {
 
 export async function renameProject(project: Pick<Project, 'id' | 'name'>): Promise<void> {
 	const name = (
-		await promptText({ title: 'Rename project', initialValue: project.name, confirmLabel: 'Rename' })
+		await promptText({ title: 'Rename thread', initialValue: project.name, confirmLabel: 'Rename' })
 	)?.trim();
 	if (!name || name === project.name) return;
 	try {
@@ -472,7 +472,7 @@ export function projectRowMenuItems(
 	if (project.archived_at) {
 		const other: ProjectOutcome = project.outcome === 'dropped' ? 'finished' : 'dropped';
 		return [
-			{ id: 'open', label: 'Open', icon: PROJECT_ICON, action: () => openProject(project) },
+			{ id: 'open', label: 'Open', icon: THREAD_ICON, action: () => openProject(project) },
 			{ id: 'reopen', label: 'Reopen', icon: 'mynaui:undo', action: () => reopenProject(project) },
 			{
 				id: 'change-outcome',

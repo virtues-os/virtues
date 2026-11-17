@@ -20,7 +20,7 @@ export function browserLabel(url: string | null): string {
 	}
 }
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
-import { PROJECT_ICON } from '$lib/utils/iconHelpers';
+import { THREAD_ICON } from '$lib/utils/iconHelpers';
 
 // Views are loaders (see ./lazy.ts): each chunk arrives the first time a
 // tab of that kind opens. Chat and home stay eager — a session opens on them.
@@ -44,8 +44,8 @@ const PageDetailView: ViewLoader = () => import('$lib/components/tabs/views/Page
 const BookmarksView: ViewLoader = () => import('$lib/components/tabs/views/BookmarksView.svelte');
 const PasswordsView: ViewLoader = () => import('$lib/components/tabs/views/PasswordsView.svelte');
 const BookmarkDetailView: ViewLoader = () => import('$lib/components/tabs/views/BookmarkDetailView.svelte');
-const ProjectsListView: ViewLoader = () => import('$lib/components/tabs/views/ProjectsListView.svelte');
-const ProjectDetailView: ViewLoader = () => import('$lib/components/tabs/views/ProjectDetailView.svelte');
+const ThreadsView: ViewLoader = () => import('$lib/components/tabs/views/ThreadsView.svelte');
+const ThreadView: ViewLoader = () => import('$lib/components/tabs/views/ThreadView.svelte');
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
 const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
 const QueryView: ViewLoader = () => import('$lib/components/tabs/views/QueryView.svelte');
@@ -435,55 +435,55 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// THREAD NAMESPACE: /projects (list), /thread/{id} (detail)
+	// THREAD NAMESPACE: /threads (the door), /thread/{id} (a thread's page)
 	//
 	// A thread is something happening that you follow. It holds tasks, filed
-	// chats, pages, files and records. The list keeps its `/projects` route
-	// until the Threads door replaces it.
-	// TODO(2026-11-17): migrate the `project` tab type, ProjectsListView,
-	// ProjectDetailView, projectStore and the Project* types to thread names
-	// with the Threads door rebuild (agents/plan/threads-plan.md).
+	// chats, pages, files and records.
+	// TODO(2026-11-17): migrate projectStore, projectActions, ProjectGlyph and
+	// the Project* types in api/client.ts to thread names once the files that
+	// import them hold no other session's uncommitted work.
 	//
-	// Tasks live on the Projects page. `/tasks` (and `/tasks/assistant`,
-	// `/tasks/all`, from when that page had filter tabs) is a link from before
-	// they joined; it opens Projects, keeping `?task=<id>`, which opens that
-	// task in the list.
+	// Tasks live in the Threads door. `/tasks` (and `/tasks/assistant`,
+	// `/tasks/all`, from when that page had filter tabs) opens the door's
+	// Tasks view, keeping `?task=<id>`, which opens that task in the list.
 	// ========================================================================
-	project: {
+	thread: {
 		match: (path) =>
-			path === '/projects' ||
+			path === '/threads' ||
 			/^\/tasks(\/(assistant|all))?$/.test(path) ||
 			path === '/thread' ||
 			/^\/thread\/[^/]+$/.test(path),
 		parse: (path, params) => {
 			if (!/^\/thread\/[^/]+$/.test(path)) {
-				// The list: Projects, with its tasks. `?task=` survives the rewrite.
+				// The door. `/tasks` and `?task=` open its Tasks view.
 				const task = params?.get('task');
+				const tasks = path.startsWith('/tasks') || !!task || params?.get('view') === 'tasks';
+				const query = task ? `?view=tasks&task=${encodeURIComponent(task)}` : tasks ? '?view=tasks' : '';
 				return {
-					type: 'project',
-					label: 'Projects',
-					icon: PROJECT_ICON,
-					normalizedRoute: task ? `/projects?task=${encodeURIComponent(task)}` : '/projects',
+					type: 'thread',
+					label: 'Threads',
+					icon: THREAD_ICON,
+					normalizedRoute: `/threads${query}`,
 				};
 			}
 			const match = path.match(/^\/thread\/([^/]+)$/);
 			return {
-				type: 'project',
+				type: 'thread',
 				label: 'Thread',
-				icon: PROJECT_ICON,
+				icon: THREAD_ICON,
 				entityId: match?.[1],
 			};
 		},
 		// Prefixed like `bookmark_`, not bare like `person_…`: a bare `nb_…` id
 		// has no tab type in front of it, so `deserializeTab` read it as type
-		// "nb" and every project tab restored as Home.
-		serialize: (id) => (id ? `project_${id}` : 'projects'),
+		// "nb" and every thread tab restored as Home.
+		serialize: (id) => (id ? `thread_${id}` : 'threads'),
 		deserialize: (serialized) =>
-			serialized.startsWith('project_') ? `/thread/${serialized.slice(8)}` : '/projects',
-		icon: PROJECT_ICON,
-		defaultLabel: 'Projects',
-		component: ProjectsListView,
-		detailComponent: ProjectDetailView,
+			serialized.startsWith('thread_') ? `/thread/${serialized.slice(7)}` : '/threads',
+		icon: THREAD_ICON,
+		defaultLabel: 'Threads',
+		component: ThreadsView,
+		detailComponent: ThreadView,
 	},
 
 	// ========================================================================
@@ -1010,7 +1010,7 @@ export function parseRoute(route: string): ParsedRoute {
 		'place',
 		'org',
 		'thing',
-		'project',
+		'thread',
 		// Detail before the room: /bookmark/{id} and /bookmarks are distinct
 		// paths, but keeping the pair adjacent is how the next person notices
 		// that BOTH have to be listed here. An entry in `tabRegistry` alone is

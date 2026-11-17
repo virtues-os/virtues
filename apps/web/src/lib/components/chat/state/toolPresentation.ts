@@ -263,7 +263,7 @@ const TOOLS: Record<string, Presentation> = {
 		say: ["Noting something to remember", "Noted something to remember"],
 	},
 	get_project_item: {
-		noun: "a project",
+		noun: "a thread",
 		depth: 4,
 		say: ["Opening something you're working on", "Opened something you're working on"],
 	},

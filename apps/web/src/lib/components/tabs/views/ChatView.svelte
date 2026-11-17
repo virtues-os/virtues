@@ -140,7 +140,7 @@
 		type SuggestedQuestion,
 	} from "$lib/api/client";
 	import { chatUsage } from "$lib/stores/chatUsage.svelte";
-	import { projectCrumb } from "$lib/tabs/crumbs";
+	import { threadCrumb } from "$lib/tabs/crumbs";
 	import { paneActions } from "$lib/stores/paneActions.svelte";
 	import { untitled } from "$lib/refs/identity.svelte";
 	import { shortcuts } from "$lib/shortcuts/registry.svelte";
@@ -297,7 +297,7 @@
 		if (!chatProject || isGhost || mobileLayout.isMobile || inRoom) return;
 		return paneActions.setCrumbs(tab.id, {
 			glyph: "projects",
-			crumbs: [projectCrumb(chatProject.id, chatProject.name || untitled("thread"))],
+			crumbs: [threadCrumb(chatProject.id, chatProject.name || untitled("thread"))],
 			withoutPage: true,
 		});
 	});

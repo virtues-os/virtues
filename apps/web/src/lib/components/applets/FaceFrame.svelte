@@ -32,7 +32,7 @@
 		'person',
 		'place',
 		'org',
-		'project',
+		'thread',
 		'bookmark',
 		'bookmarks',
 		'applets',

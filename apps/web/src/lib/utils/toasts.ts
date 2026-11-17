@@ -135,7 +135,7 @@ export function notifyTrashed(opts: TrashedOptions): void {
  */
 export function notifyEnded(id: string, name: string | null | undefined, outcome: ProjectOutcome): void {
 	toast(`${outcome === 'finished' ? 'Finished' : 'Dropped'} ${quoted(name)}`, {
-		description: 'Find it under Finished and dropped on your projects list',
+		description: 'Find it under Finished in the Threads door',
 		duration: UNDO_DURATION,
 		action: {
 			label: 'Undo',
@@ -143,7 +143,7 @@ export function notifyEnded(id: string, name: string | null | undefined, outcome
 				void projectStore.unarchive(id).catch((e) => {
 					console.error('[toasts] reopen failed:', e);
 					toast.error(`Your server couldn't reopen ${quoted(name)}`, {
-						description: 'Try Reopen on your projects list',
+						description: 'Try Reopen under Finished in the Threads door',
 					});
 				});
 			},

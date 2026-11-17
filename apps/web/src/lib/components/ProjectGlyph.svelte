@@ -9,7 +9,7 @@
 	 */
 	import Icon from '$lib/components/Icon.svelte';
 	import { projectColor } from '$lib/sidebar/pin-colors';
-	import { PROJECT_ICON } from '$lib/utils/iconHelpers';
+	import { THREAD_ICON } from '$lib/utils/iconHelpers';
 
 	interface Props {
 		project: { id: string; icon?: string | null; accent_color?: string | null };
@@ -23,7 +23,7 @@
 </script>
 
 <Icon
-	icon={project.icon || PROJECT_ICON}
+	icon={project.icon || THREAD_ICON}
 	width={size}
 	height={size}
 	style={tint ? `color: ${tint}` : undefined}

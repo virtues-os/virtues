@@ -38,7 +38,7 @@
 
 	/** Tasks live on the Projects page, above the projects. */
 	function openTasks() {
-		windowShellStore.openTabFromRoute("/projects", { label: "Projects", focusExisting: true });
+		windowShellStore.openTabFromRoute("/threads?view=tasks", { label: "Threads", focusExisting: true });
 	}
 </script>
 

@@ -168,7 +168,7 @@
 		circumstances: 'Circumstances',
 		coverage: 'Coverage',
 		active_project: 'Project',
-		scoped: 'Scoped to the project',
+		scoped: 'Scoped to the thread',
 		compacted_conversation: 'Earlier conversation, summarized',
 		applet: 'Applet',
 		active_context: 'Open page',

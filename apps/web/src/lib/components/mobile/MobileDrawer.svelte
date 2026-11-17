@@ -113,7 +113,7 @@
 	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; run: () => void } }> = {
 		"new-chat": { open: () => go("/chat", "Chat") },
 		pages: { open: () => go("/page", "Pages"), add: { label: "New page", run: newPage } },
-		projects: { open: () => go("/projects", "Projects"), add: { label: "New project", run: addProject } },
+		threads: { open: () => go("/threads", "Threads"), add: { label: "New thread", run: addProject } },
 		applets: { open: () => go("/applets", "Applets") },
 		wiki: { open: () => go("/wiki", "Wiki") },
 		storage: { open: () => go("/storage", "Storage") },

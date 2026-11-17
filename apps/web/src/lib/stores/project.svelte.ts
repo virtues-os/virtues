@@ -93,7 +93,7 @@ export class ProjectStore {
 			this.loaded = true;
 		} catch (e) {
 			console.error('[ProjectStore] Failed to load projects:', e);
-			this.error = e instanceof Error ? e.message : 'Failed to load projects';
+			this.error = e instanceof Error ? e.message : "Your server couldn't load your threads";
 			// Keep the last good list; a failed reload is not an empty one.
 		} finally {
 			this.loading = false;
@@ -165,6 +165,9 @@ export class ProjectStore {
 			instructions?: string | null;
 			sort_order?: number;
 			thing_id?: string | null;
+			current_status?: string | null;
+			is_backlog?: boolean;
+			is_adding_automatic?: boolean;
 		}
 	): Promise<Project> {
 		const updated = await updateProject(id, patch);

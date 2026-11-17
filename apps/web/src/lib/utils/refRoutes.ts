@@ -4,7 +4,7 @@
  */
 
 import { kindOfLink, type MediaKind } from '$lib/document/media-kind';
-import { PROJECT_ICON } from '$lib/utils/iconHelpers';
+import { THREAD_ICON } from '$lib/utils/iconHelpers';
 import { decoded } from '$lib/utils/urlUtils';
 
 // Route bases to entity types (for URLs like /person/slug)
@@ -32,7 +32,7 @@ const TYPE_TO_ICON: Record<string, string> = {
 	thing: 'mynaui:box',
 	page: 'mynaui:file-text',
 	chat: 'mynaui:message',
-	project: PROJECT_ICON,
+	project: THREAD_ICON,
 	file: 'mynaui:file',
 	day: 'mynaui:calendar',
 	year: 'mynaui:calendar',

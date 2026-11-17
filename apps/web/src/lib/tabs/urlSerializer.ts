@@ -24,7 +24,7 @@ const KNOWN_TYPES: TabType[] = [
 	'place',
 	'org',
 	'thing',
-	'project',
+	'thread',
 	'bookmarks',
 	'passwords',
 	'day',
@@ -48,9 +48,9 @@ const KNOWN_TYPES: TabType[] = [
  * keep restoring the same view.
  */
 const TYPE_ALIASES: Record<string, TabType> = {
-	projects: 'project',
-	// The Tasks page joined Projects; a saved Tasks tab restores as Projects.
-	tasks: 'project',
+	threads: 'thread',
+	// The Tasks page joined the Threads door; a saved Tasks tab restores there.
+	tasks: 'thread',
 };
 
 /**

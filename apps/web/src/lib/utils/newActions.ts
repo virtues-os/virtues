@@ -21,16 +21,16 @@ export async function newPage(open: Opener): Promise<void> {
 	open(`/page/${page.id}`, page.title);
 }
 
-/** The Projects page, with its task list's add row open. */
+/** The Threads door's Tasks view, with its add row open. */
 export async function newTask(open: Opener): Promise<void> {
 	const { tasksStore } = await import('$lib/stores/tasks.svelte');
 	tasksStore.requestAdd();
-	open('/projects', 'Projects');
+	open('/threads?view=tasks', 'Threads');
 }
 
 /**
  * A new tab beside the active one in `paneId`. A route already open in a tab
- * (Projects, the wiki) brings that tab to the front instead of doubling it.
+ * (Threads, the wiki) brings that tab to the front instead of doubling it.
  */
 export function inNewTab(paneId?: 'left' | 'right'): Opener {
 	return (route, label) => {
@@ -46,7 +46,7 @@ export function inNewTab(paneId?: 'left' | 'right'): Opener {
 /** Each door's list, for the menu's Go to. New chat is the menu's first row. */
 const DOOR_ROUTES: Partial<Record<DoorId, string>> = {
 	pages: '/page',
-	projects: '/projects',
+	threads: '/threads',
 	applets: '/applets',
 	wiki: '/wiki',
 };
@@ -93,8 +93,8 @@ export function newTabMenuItems(paneId: 'left' | 'right' | undefined, opts: { br
 			action: () => newTask(open),
 		},
 		{
-			id: 'new-project',
-			label: 'New project',
+			id: 'new-thread',
+			label: 'New thread',
 			icon: 'atlas:projects',
 			action: () => newProject(open),
 			dividerAfter: true,

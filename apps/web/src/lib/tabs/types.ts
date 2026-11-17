@@ -18,7 +18,7 @@ export type TabType =
 	| 'place' // Wiki places: /place, /place/place_{id}
 	| 'org' // Wiki organizations: /org, /org/org_{id}
 	| 'thing' // Wiki things: /thing/thing_{id}
-	| 'project' // Projects (rooms a chat lives in): /projects, /project/{id}
+	| 'thread' // Threads: the door at /threads, a thread at /thread/{id}
 	| 'bookmarks' // Saved web content (browser bookmarks, stars, saved links): /bookmarks
 	| 'bookmark' // One saved thing, and the note on it: /bookmark/{id}
 	| 'passwords' // Saved logins, in Drive: /passwords

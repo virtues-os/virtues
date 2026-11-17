@@ -23,19 +23,19 @@ export interface Crumb {
 }
 
 export type CrumbMenu =
-	| { kind: 'projects' }
-	| { kind: 'project'; id: string }
+	| { kind: 'threads' }
+	| { kind: 'thread'; id: string }
 	| { kind: 'pages' }
 	| { kind: 'applets' }
 	/** A sidebar mode's rows: all of them by heading, or one heading's. */
 	| { kind: 'mode'; mode: 'settings' | 'wiki' | 'storage'; group?: string };
 
-export const projectsCrumb = (): Crumb => ({ label: 'Projects', route: '/projects', menu: { kind: 'projects' } });
+export const threadsCrumb = (): Crumb => ({ label: 'Threads', route: '/threads', menu: { kind: 'threads' } });
 
-export const projectCrumb = (id: string, name: string): Crumb => ({
+export const threadCrumb = (id: string, name: string): Crumb => ({
 	label: name,
 	route: `/thread/${id}`,
-	menu: { kind: 'project', id },
+	menu: { kind: 'thread', id },
 });
 
 export const wikiCrumb = (): Crumb => ({ label: 'Wiki', route: '/wiki', menu: { kind: 'mode', mode: 'wiki' } });
@@ -53,7 +53,7 @@ export interface CrumbPath {
 /** A door in the sidebar and the routes that sit under it. */
 const DOORS: { prefixes: string[]; root: Crumb; glyph: string }[] = [
 	{ prefixes: ['/page'], root: { label: 'Pages', route: '/page', menu: { kind: 'pages' } }, glyph: 'pages' },
-	{ prefixes: ['/projects', '/thread'], root: projectsCrumb(), glyph: 'projects' },
+	{ prefixes: ['/threads', '/thread'], root: threadsCrumb(), glyph: 'projects' },
 	{ prefixes: ['/applets', '/applet'], root: { label: 'Applets', route: '/applets', menu: { kind: 'applets' } }, glyph: 'applets' },
 ];
 

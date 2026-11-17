@@ -21,7 +21,7 @@
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { thingsStore } from '$lib/stores/things.svelte';
 	import { projectColor } from '$lib/sidebar/pin-colors';
-	import { PROJECT_ICON } from '$lib/utils/iconHelpers';
+	import { THREAD_ICON } from '$lib/utils/iconHelpers';
 	import {
 		changeOutcome,
 		deleteProject,
@@ -89,7 +89,7 @@
 		try {
 			await projectStore.update(project.id, { thing_id });
 		} catch (e) {
-			toast.error("Your server couldn't move that project", {
+			toast.error("Your server couldn't move that thread", {
 				description: e instanceof Error ? e.message : 'Nothing changed. Try again',
 			});
 		}
@@ -124,7 +124,7 @@
 					color={project.accent_color ?? null}
 					onColorSelect={setAccent}
 					label={project.name}
-					fallback={PROJECT_ICON}
+					fallback={THREAD_ICON}
 					autoColor={projectColor({ id: project.id })}
 				/>
 			{/snippet}
@@ -135,7 +135,7 @@
 				class="title-input font-serif"
 				bind:value={nameDraft}
 				rows="1"
-				placeholder="Untitled project"
+				placeholder="Untitled thread"
 				onfocus={() => (nameFocused = true)}
 				onblur={commitName}
 				onkeydown={(e) => {
@@ -153,7 +153,7 @@
 				class="desc-input"
 				bind:value={briefDraft}
 				rows="1"
-				placeholder="What this project is for. The assistant follows this in every chat here."
+				placeholder="What this thread is for. The assistant follows this in every chat here."
 				onfocus={() => (briefFocused = true)}
 				onblur={commitBrief}
 				onkeydown={(e) => {
@@ -168,7 +168,7 @@
 					{#snippet trigger({ toggle }: { toggle: () => void })}
 						<TextAction
 							quiet
-							title="A thing goes on and can't be finished, like a garden or a bike. A project can sit under one."
+							title="A thing goes on and can't be finished, like a garden or a bike. A thread can sit under one."
 							onclick={() => {
 								thingsStore.ensure();
 								toggle();
@@ -178,7 +178,7 @@
 						</TextAction>
 					{/snippet}
 					{#snippet children({ close }: { close: () => void })}
-						<div class="menu" role="menu" aria-label="The thing this project sits under">
+						<div class="menu" role="menu" aria-label="The thing this thread sits under">
 							<MenuItem
 								role="menuitemradio"
 								checked={!project.thing_id}
@@ -200,7 +200,7 @@
 								/>
 							{/each}
 							{#if thingsStore.loaded && thingsStore.things.length === 0}
-								<p class="menu-note">Name a thing in your wiki to put this project under it.</p>
+								<p class="menu-note">Name a thing in your wiki to put this thread under it.</p>
 							{/if}
 						</div>
 					{/snippet}
@@ -216,7 +216,7 @@
 				{#snippet trigger({ toggle }: { toggle: () => void })}
 					<IconButton
 						icon="mynaui:dots"
-						label="More project actions"
+						label="More thread actions"
 						expanded={overflowOpen}
 						haspopup="menu"
 						onclick={toggle}
@@ -227,7 +227,7 @@
 						{#if project.archived_at}
 							<MenuItem
 								icon="mynaui:undo"
-								label="Reopen project"
+								label="Reopen thread"
 								onclick={() => {
 									close();
 									reopenProject(project);
@@ -244,7 +244,7 @@
 						{:else}
 							<MenuItem
 								icon="mynaui:check-circle"
-								label="Finish project"
+								label="Finish thread"
 								onclick={() => {
 									close();
 									endProject(project, 'finished');
@@ -252,7 +252,7 @@
 							/>
 							<MenuItem
 								icon="mynaui:x-circle"
-								label="Drop project"
+								label="Drop thread"
 								onclick={() => {
 									close();
 									endProject(project, 'dropped');
@@ -261,7 +261,7 @@
 						{/if}
 						<MenuItem
 							icon="mynaui:trash"
-							label="Delete project"
+							label="Delete thread"
 							destructive
 							onclick={() => {
 								close();
@@ -281,7 +281,7 @@
 	<div class="ended-note">
 		<Icon icon={dropped ? 'mynaui:x-circle' : 'mynaui:check-circle'} width="15" />
 		<span>
-			You {dropped ? 'dropped' : 'finished'} this project on {new Date(project.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}.
+			You {dropped ? 'dropped' : 'finished'} this thread on {new Date(project.archived_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}.
 			Its chats and items are all here. Reopen it to add more.
 		</span>
 		<Button variant="secondary" size="sm" onclick={() => reopenProject(project)}>Reopen</Button>

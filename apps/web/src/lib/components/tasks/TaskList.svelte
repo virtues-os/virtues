@@ -582,7 +582,7 @@
 
 	function sourceLabel(url: string): string {
 		const kind = url.split("/")[1];
-		return { page: "a page", chat: "a chat", project: "a project", day: "a day" }[kind] ?? "a link";
+		return { page: "a page", chat: "a chat", thread: "a thread", day: "a day" }[kind] ?? "a link";
 	}
 
 	/** A result URL's label for its card: the page's title when this box has it. */
@@ -864,7 +864,7 @@
 							}}
 						/>
 						{#if projectStore.projects.length > 0}
-							<p class="menu-label">Projects</p>
+							<p class="menu-label">Threads</p>
 							{#each projectStore.projects as p (p.id)}
 								<MenuItem
 									role="menuitemradio"

@@ -15,7 +15,7 @@ import {
 	type SkyWeek
 } from '$lib/api/client';
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
-import { PROJECT_ICON } from '$lib/utils/iconHelpers';
+import { THREAD_ICON } from '$lib/utils/iconHelpers';
 
 /** The icon for each kind of moment, and of link a moment opens to. */
 export const SKY_ICONS: Record<string, string> = {
@@ -30,7 +30,7 @@ export const SKY_ICONS: Record<string, string> = {
 	voice: 'mynaui:microphone',
 	arrive: 'mynaui:map-pin',
 	leave: 'mynaui:map-pin',
-	thread: PROJECT_ICON,
+	thread: THREAD_ICON,
 	page: 'mynaui:file-text',
 	chat: 'mynaui:message'
 };

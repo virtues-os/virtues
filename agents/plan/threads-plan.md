@@ -109,11 +109,15 @@ Checked against the working tree on 2026-11-17, after migration 0082
   urls. Nothing answers at `/api/projects`. Tasks are `server/api/tasks.rs`.
 - Messages and emails carry `conversation_id`, not `thread_id`, so "thread"
   means only the thing you follow.
-- Web: `ProjectsListView.svelte`, `ProjectDetailView.svelte`,
-  `components/projects/` and `components/tasks/`. The web follows the server's
-  `thread` kinds and `/thread/{id}` urls, but the `project` tab type, the
-  `/projects` list route, `projectStore` and the `Project*` types keep their
-  names until slice 3 replaces them (a dated TODO in `tabs/registry.ts`). The owner said on 2026-11-16
+- Web: the Threads door is `ThreadsView.svelte` at `/threads` (Tasks and
+  Threads views, Active, Backlog and Finished, the preview column, rows that
+  take a drop) and a thread's page is `ThreadView.svelte` at `/thread/{id}`
+  (where it stands, tasks and tasks also about it, the thread as a line, and
+  a side column with status, Adding, who it is with and Materials). `/tasks`
+  opens the door's Tasks view. `projectStore`, `projectActions`,
+  `ProjectGlyph` and the `Project*` types keep their names until the files
+  that import them are free of other sessions' work (a dated TODO in
+  `tabs/registry.ts`). The owner said on 2026-11-16
   that this page "needs a HUGE overhaul", so this plan replaces it.
 - Home: `HomeNotes.svelte` shows one note at a time, with its action, "Not
   now" and "Next". Notes come from `GET /api/attention` (conditions the server
@@ -254,11 +258,12 @@ starts. Read `.claude/rules/migrations.md` first.
    `is_adding_automatic`. The `/api/threads` rename is done, with no alias.
    Left for slice 3: the web client's types and a person, place, org or
    thing page showing its tasks.
-3. **The Threads door.** Replace `ProjectsListView` and `ProjectDetailView`
-   with the four views, the preview column, and the thread, task and insight
-   pages. Move `TaskList` onto the new row. Statuses come from slice 1. Rename
-   "Add to project…" and "Move to project" to "Add to thread…" in the tab,
-   chat and page menus, and let Materials and thread rows take a drop.
+3. **The Threads door.** Part 1 is built: the door with its Tasks and
+   Threads views, the preview column and the thread page. Left: the Tasks
+   view and task page (a row shows its home and what it is also about), the
+   Overview with the week once slice 4 exists, and Insights after slice 6.
+   The menus already say "Add to thread…" and "Move to thread", and
+   Materials and thread rows take a drop.
 4. **The week.** One endpoint returns, per thread and per day, minutes done and
    minutes ahead, plus the day's time in no thread. The first version counts
    only what can be counted without a model: calendar events and dated tasks

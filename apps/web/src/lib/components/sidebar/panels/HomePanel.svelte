@@ -521,7 +521,7 @@
 	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; key?: string; run: (e: MouseEvent) => void } }> = {
 		'new-chat': { open: newChat },
 		pages: { open: openPages, add: { label: 'New page', key: 'mod+shift+n', run: newPage } },
-		projects: { open: openProjects, add: { label: 'New project', run: addProject } },
+		threads: { open: openProjects, add: { label: 'New thread', run: addProject } },
 		applets: { open: openApplets },
 		wiki: { open: openWiki },
 		storage: { open: openStorage },

@@ -10,8 +10,8 @@
 //! (`app_thread_items`) and carries an icon, a color and a brief
 //! (`instructions`), the sentence that says what belongs in it.
 //!
-//! No note or memo: `app_threads.current_status(_at)` stay in the table,
-//! unread, so notes written while the table had one are kept.
+//! Where it stands (`current_status`, with `current_status_at`) is one
+//! sentence the owner writes on the thread's page.
 //!
 //! A chat lives in at most one thread (`app_chats.thread_id`). Entering a thread
 //! weights its members in retrieval; the chat is folded into the thread's
@@ -76,6 +76,11 @@ pub struct Thread {
     /// That thing's name, resolved on read.
     #[serde(default)]
     pub thing_title: Option<String>,
+    /// Where it stands, in one sentence, and when that was last written.
+    #[serde(default)]
+    pub current_status: Option<String>,
+    #[serde(default)]
+    pub current_status_at: Option<Timestamp>,
     /// Open and waiting rather than being worked on now. An ended thread
     /// keeps the value it had.
     #[serde(default)]
@@ -109,6 +114,10 @@ pub struct ThreadSummary {
     pub thing_id: Option<String>,
     #[serde(default)]
     pub thing_title: Option<String>,
+    #[serde(default)]
+    pub current_status: Option<String>,
+    #[serde(default)]
+    pub current_status_at: Option<Timestamp>,
     #[serde(default)]
     pub is_backlog: bool,
     #[serde(default)]
@@ -215,6 +224,9 @@ pub struct UpdateThreadRequest {
     /// The thing this thread sits under. `null` takes it out from under one.
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub thing_id: Option<Option<String>>,
+    /// Where it stands. `null` or blank clears it.
+    #[serde(default, deserialize_with = "deserialize_double_option")]
+    pub current_status: Option<Option<String>>,
     pub is_backlog: Option<bool>,
     pub is_adding_automatic: Option<bool>,
 }
@@ -271,7 +283,7 @@ pub struct ThreadGraph {
 const THREAD_COLUMNS: &str = "id, name, icon, accent_color, instructions, sort_order, \
      archived_at, outcome, thing_id, \
      (SELECT t.title FROM wiki_things t WHERE t.id = app_threads.thing_id) AS thing_title, \
-     is_backlog, is_adding_automatic, created_at, updated_at";
+     current_status, current_status_at, is_backlog, is_adding_automatic, created_at, updated_at";
 
 /// List Threads, most-recently-active first, with member and chat counts.
 /// Open ones only unless `include_archived` — the threads page asks for both
@@ -302,6 +314,7 @@ pub async fn list_threads(
               AND NOT EXISTS (SELECT 1 FROM app_pages p WHERE url = '/page/' || p.id AND p.deleted_at IS NOT NULL)), 0) AS item_count,
             COALESCE((SELECT COUNT(*) FROM app_chats
                       WHERE thread_id = s.id AND deleted_at IS NULL), 0) AS chat_count,
+            s.current_status, s.current_status_at,
             s.is_backlog, s.is_adding_automatic, s.created_at, s.updated_at
         FROM app_threads s
         WHERE s.deleted_at IS NULL AND ($1 OR s.archived_at IS NULL)
@@ -450,7 +463,10 @@ pub async fn update_thread(pool: &PgPool, id: &str, req: UpdateThreadRequest) ->
     let thread = sqlx::query_as::<_, Thread>(&format!(
         "UPDATE app_threads \
          SET name = $2, icon = $3, accent_color = $4, sort_order = $5, \
-             instructions = $6, thing_id = $7, is_backlog = $8, is_adding_automatic = $9 \
+             instructions = $6, thing_id = $7, is_backlog = $8, is_adding_automatic = $9, \
+             current_status = $10, \
+             current_status_at = CASE WHEN current_status IS DISTINCT FROM $10 THEN now() \
+                                      ELSE current_status_at END \
          WHERE id = $1 \
          RETURNING {THREAD_COLUMNS}"
     ))
@@ -463,6 +479,10 @@ pub async fn update_thread(pool: &PgPool, id: &str, req: UpdateThreadRequest) ->
     .bind(&thing_id)
     .bind(req.is_backlog.unwrap_or(existing.is_backlog))
     .bind(req.is_adding_automatic.unwrap_or(existing.is_adding_automatic))
+    .bind(match req.current_status {
+        Some(value) => value.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()),
+        None => existing.current_status.clone(),
+    })
     .fetch_one(pool)
     .await
     .map_err(|e| Error::Database(format!("Failed to update thread: {}", e)))?;
@@ -1125,6 +1145,33 @@ mod tests {
         let nick = &graph.nodes[0];
         assert_eq!((nick.url.as_str(), nick.name.as_str()), ("/person/person_1", "Nick"));
         assert_eq!(nick.item_urls, [format!("/page/{}", page.id)]);
+    }
+
+    /// Where it stands is the owner's sentence: writing it stamps when, a
+    /// blank clears it, and leaving it out of an edit keeps it. Backlog and
+    /// automatic adding are kept the same way.
+    #[sqlx::test(migrations = "./migrations")]
+    async fn where_it_stands_and_backlog_are_kept(pool: PgPool) {
+        let p = create_thread(&pool, named("Repaint the hallway")).await.unwrap();
+        assert!(p.current_status.is_none() && !p.is_backlog && !p.is_adding_automatic);
+
+        let set = UpdateThreadRequest {
+            current_status: Some(Some("  Waiting on the paint samples. ".into())),
+            is_backlog: Some(true),
+            ..Default::default()
+        };
+        let t = update_thread(&pool, &p.id, set).await.unwrap();
+        assert_eq!(t.current_status.as_deref(), Some("Waiting on the paint samples."));
+        assert!(t.current_status_at.is_some() && t.is_backlog);
+
+        let rename = UpdateThreadRequest { name: Some("Repaint the hall".into()), ..Default::default() };
+        let kept = update_thread(&pool, &p.id, rename).await.unwrap();
+        assert_eq!(kept.current_status, t.current_status);
+        assert_eq!(kept.current_status_at, t.current_status_at);
+        assert!(kept.is_backlog);
+
+        let clear = UpdateThreadRequest { current_status: Some(Some(" ".into())), ..Default::default() };
+        assert!(update_thread(&pool, &p.id, clear).await.unwrap().current_status.is_none());
     }
 
     /// A thread ends finished or dropped and leaves the working list.

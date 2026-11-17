@@ -32,7 +32,7 @@
 	import { refreshAfterRestore } from "$lib/utils/toasts";
 	import { toast } from "svelte-sonner";
 	import { onMount } from "svelte";
-	import { PROJECT_ICON } from "$lib/utils/iconHelpers";
+	import { THREAD_ICON } from "$lib/utils/iconHelpers";
 
 	let { tab: _tab, active: _active }: { tab: Tab; active: boolean } = $props();
 
@@ -72,7 +72,7 @@
 	const KIND_ICON: Record<RowKind, string> = {
 		chat: "mynaui:message",
 		page: "mynaui:file-text",
-		thread: PROJECT_ICON,
+		thread: THREAD_ICON,
 		file: "mynaui:file",
 	};
 

@@ -32,7 +32,7 @@
 			.sort((a, b) => (b.last_message_at ?? '').localeCompare(a.last_message_at ?? ''))[0] ?? null
 	);
 
-	const PIN_KICKER: Record<string, string> = { page: 'Pinned page', chat: 'Pinned chat', project: 'Pinned project' };
+	const PIN_KICKER: Record<string, string> = { page: 'Pinned page', chat: 'Pinned chat', thread: 'Pinned thread' };
 
 	let pinText = $state<string | null>(null);
 	let lastText = $state<string | null>(null);

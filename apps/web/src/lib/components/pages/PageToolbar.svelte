@@ -203,7 +203,7 @@
 					     shared project menu where this row was. -->
 					<MenuItem
 						icon="mynaui:folder-plus"
-						label="Add to project…"
+						label="Add to thread…"
 						onclick={(e: MouseEvent) => {
 							const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
 							close();

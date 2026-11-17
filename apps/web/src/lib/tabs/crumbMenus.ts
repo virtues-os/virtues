@@ -23,7 +23,7 @@ const GLYPH: Record<RecentKind, string> = {
 
 /** The list kinds: the noun for "All …" and the palette scope. */
 const LISTS = {
-	projects: { kind: 'thread', noun: 'threads' },
+	threads: { kind: 'thread', noun: 'threads' },
 	pages: { kind: 'page', noun: 'pages' },
 	applets: { kind: 'applet', noun: 'applets' },
 } as const;
@@ -46,7 +46,7 @@ export function crumbMenuItems(
 
 	if (menu.kind === 'mode') return modeItems(menu.mode, menu.group, current, open);
 
-	if (menu.kind === 'project') {
+	if (menu.kind === 'thread') {
 		const members = recentRows({ pinned: true }).filter(
 			(r) =>
 				(r.kind === 'chat' && r.session.thread_id === menu.id) ||

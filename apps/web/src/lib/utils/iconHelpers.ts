@@ -11,4 +11,4 @@ export function isEmoji(val: string): boolean {
  * the sidebar rows beside it are drawn from. Every surface that shows a
  * project reads this, so the tab, the row, the menu and the trash agree.
  */
-export const PROJECT_ICON = 'atlas:projects';
+export const THREAD_ICON = 'atlas:projects';
