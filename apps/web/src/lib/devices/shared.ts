@@ -372,11 +372,11 @@ export function returnToPairing(): void {
  */
 export async function revokeDeviceFlow(device: Device): Promise<boolean> {
 	const ok = await confirmAction({
-		title: device.is_current ? 'Revoke this device?' : `Revoke "${device.label}"?`,
+		title: device.is_current ? 'Unpair this device?' : `Unpair "${device.label}"?`,
 		body: device.is_current
 			? `${device.label} is the device you're using. You'll be signed out immediately.`
 			: 'It loses access to your server right away.',
-		confirmLabel: 'Revoke',
+		confirmLabel: 'Unpair',
 		danger: true
 	});
 	if (!ok) return false;
@@ -384,24 +384,24 @@ export async function revokeDeviceFlow(device: Device): Promise<boolean> {
 	try {
 		const resp = await fetch(`/api/devices/${device.id}`, { method: 'DELETE' });
 		if (resp.status === 409) {
-			toast.error("You can't revoke your only paired device", {
-				description: 'Pair another device first, then revoke this one.'
+			toast.error("You can't unpair your only paired device", {
+				description: 'Pair another device first, then unpair this one.'
 			});
 			return false;
 		}
 		if (!resp.ok) {
 			const data = await resp.json().catch(() => ({}));
-			toast.error('Revoke failed', { description: data.error ?? `HTTP ${resp.status}` });
+			toast.error("Your server couldn't unpair it", { description: data.error ?? `HTTP ${resp.status}` });
 			return false;
 		}
-		toast.success('Device revoked');
+		toast.success('Device unpaired');
 		if (device.is_current) {
 			returnToPairing();
 			return false;
 		}
 		return true;
 	} catch (e) {
-		toast.error('Revoke failed', {
+		toast.error("Your server couldn't unpair it", {
 			description: e instanceof Error ? e.message : 'Network error'
 		});
 		return false;

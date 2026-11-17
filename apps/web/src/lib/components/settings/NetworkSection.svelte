@@ -43,7 +43,7 @@
 	void refreshRelay();
 </script>
 
-<!-- No <Page>: this renders INSIDE System as a chapter. -->
+<!-- No <Page>: this renders inside the Settings page, under Server and devices. -->
 <section class="chapter">
 	<h2 class="settings-label">Network</h2>
 	{#if relay}

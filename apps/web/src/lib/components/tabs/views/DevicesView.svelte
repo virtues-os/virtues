@@ -33,7 +33,6 @@
 	import { toast } from "svelte-sonner";
 	import { isMacOS, isTauri } from "$lib/utils/platform";
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
-	import ReopenSection from "$lib/components/settings/ReopenSection.svelte";
 	import DevicePairModal from "$lib/components/sources/DevicePairModal.svelte";
 	import AgentConnectModal from "$lib/components/devices/AgentConnectModal.svelte";
 	import Modal from "$lib/components/Modal.svelte";
@@ -477,7 +476,7 @@
 			{#if row.device}
 				<Button variant="ghost" onclick={() => revoke(row.device!)}>
 					<Icon icon="mynaui:x-circle" />
-					Revoke
+					Unpair
 				</Button>
 			{:else}
 				<!-- The server cannot be revoked; its verb is an upgrade. -->
@@ -489,12 +488,6 @@
 		{/snippet}
 	</UniversalDataGrid>
 
-	<!-- Revoke, in the plural. It lived at the foot of "Box" until 2026-08-17,
-	     below the CPU graphs, which put the button that signs out every device
-	     you own on a page you open to read a temperature. Its subject was
-	     always this one: the same verb as the Revoke buttons above, applied to
-	     all of them at once. -->
-	<ReopenSection />
 </Page>
 
 <Modal open={addOpen} onClose={() => (addOpen = false)} title="Add a device" width="sm">

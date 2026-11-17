@@ -318,8 +318,8 @@
 						onchange={(e) =>
 							switchChannel(e.currentTarget.value as 'stable' | 'prerelease')}
 					>
-						<option value="stable">Main — released builds</option>
-						<option value="prerelease">Staging — unreleased, may break</option>
+						<option value="stable">Released</option>
+						<option value="prerelease">Early, may break</option>
 					</select>
 					{#if status.channel === 'prerelease'}
 						<span class="risk">
@@ -387,10 +387,12 @@
 			     owner decide. -->
 			<p class="state ahead">
 				<Icon icon="mynaui:git-branch" width="14" />
-				This box runs <strong>{status.running_version}</strong>, from the
-				{status.running_channel} track — ahead of
-				{status.latest ?? 'the latest release'} on Main. Nothing to install;
-				Main will catch up.
+				<span>
+					This server runs <strong>{status.running_version}</strong>, from the
+					{status.running_channel} track. That's ahead of
+					{status.latest ?? 'the latest release'}, so there's nothing to install
+					until releases catch up.
+				</span>
 			</p>
 		{:else if status.update_available}
 			<div class="state available">
@@ -402,11 +404,11 @@
 				<p class="warn">
 					{#if staged}
 						Already fetched and checked against this server, so installing is a
-						restart — under a minute. It disconnects every device using the
-						box, not just this one.
+						restart of under a minute. It disconnects every device using your
+						server, not just this one.
 					{:else}
-						The box downloads it, restarts and runs migrations, which
-						disconnects every device using it — not just this one.
+						Your server downloads it, restarts and updates its database, which
+						disconnects every device using it, not just this one.
 					{/if}
 				</p>
 				<Button

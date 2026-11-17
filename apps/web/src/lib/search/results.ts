@@ -21,6 +21,7 @@
  * shows that kind only.
  */
 import type { LocalSearchHit } from '$lib/api/client';
+import { matchRank } from '$lib/search/match';
 import type { ContextMenuItem } from '$lib/stores/contextMenu.svelte';
 import { chatSessions } from '$lib/stores/chatSessions.svelte';
 import { pagesStore } from '$lib/stores/pages.svelte';
@@ -97,20 +98,6 @@ export function isQuestion(text: string): boolean {
 	if (text.endsWith('?')) return true;
 	const words = text.toLowerCase().split(/\s+/).filter(Boolean);
 	return words.length >= 2 && (QUESTION_WORDS.has(words[0]) || words.length >= 5);
-}
-
-/**
- * How well `name` matches `query`: 3 when the name starts with it, 2 when
- * every word of the query starts a word of the name, 1 when the name
- * contains it, 0 for no match.
- */
-function matchRank(name: string, query: string): number {
-	const n = name.toLowerCase();
-	const q = query.toLowerCase();
-	if (n.startsWith(q)) return 3;
-	const words = n.split(/[\s\-_/·:]+/);
-	if (q.split(/\s+/).every((part) => words.some((w) => w.startsWith(part)))) return 2;
-	return n.includes(q) ? 1 : 0;
 }
 
 /** Frecency for the kinds the box keeps it for. */

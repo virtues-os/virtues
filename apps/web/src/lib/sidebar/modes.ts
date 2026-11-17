@@ -83,6 +83,10 @@ export interface SidebarMode {
  * `/virtues/developer/*`); only the door moved. `rowForRoute` matches both,
  * so either lights the sidebar's Settings row and carries the section list.
  */
+// TODO(2026-11-17): migrate the crumbs off these rows. Settings is one page
+// now (lib/settings lists its settings); the Account and Server rows stay only
+// because tabs/crumbs.ts builds Settings' crumbs from them, and the Sources and
+// Developer rows still draw SectionNav on those pages (TabContent).
 export const SETTINGS_MODE: SidebarMode = {
 	id: 'settings',
 	title: 'Settings',
@@ -119,8 +123,7 @@ export const SETTINGS_MODE: SidebarMode = {
 			href: '/virtues/keys',
 			group: 'Account',
 		},
-		// The machine itself and what is physically attached to it: its readings,
-		// its network (/virtues/system/network).
+		// The machine itself, measured.
 		{ id: 'system', label: 'System', icon: 'mynaui:servers', glyph: 'system', href: '/virtues/system', group: 'Server' },
 		// Where search runs (NPU, CPU, or the owner's server) and what it covers.
 		{ id: 'search', label: 'Search', icon: 'mynaui:search', glyph: 'search', href: '/virtues/search', group: 'Server' },

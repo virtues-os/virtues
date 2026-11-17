@@ -2,16 +2,14 @@
 	import type { Tab } from "$lib/tabs/types";
 	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
-	import NetworkSection from "$lib/components/settings/NetworkSection.svelte";
 	import { apiGet } from "$lib/api/client";
 	import { onMount } from "svelte";
 	import { getBackupStatus } from "$lib/api/client";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
-	// The three version lines — box, UI bundle, native shell — used to be read
-	// here, in the About chapter. They are Settings → Software's now: this page
-	// measures the machine, and a version number is not a measurement.
+	// This page measures the machine. Versions are on the server's device page
+	// (SoftwareView), and its settings are on the Settings page.
 
 	// Detail lives ON the page, not in the pane toolbar. The toolbar is shared
 	// chrome — the same strip whatever tab you are in — so a control that only
@@ -432,14 +430,9 @@
 		</section>
 
 		<!-- ─── SERVICE ────────────────────────────────────────────────── -->
-		<!-- Was "About", and it carried the three version lines. Those moved to
-		     Settings → Software, which is now the one place that answers "what
-		     am I running" — they were being told here *and* by the update
-		     panel that used to sit at the top of this same scroll. What stays
-		     is live: is the service healthy, is the database there, how much
-		     of the pool is in use. `Package` goes too — Software says it, with
-		     the channel and the build counter beside it, which is the version
-		     sentence that is actually true. -->
+		<!-- What is live about the service: is it healthy, is the database
+		     there, how much of the pool is in use. Versions are on the server's
+		     device page. -->
 		<section class="chapter">
 			<h2 class="settings-label">Service</h2>
 			<!-- Three facts, so ONE column rather than the two-column grid the
@@ -465,7 +458,6 @@
 				{/if}
 			{/if}
 		</section>
-		<NetworkSection />
 
 		<!-- ─── PROCESSES (detail) ─────────────────────────────────────── -->
 		{#if detail && t?.processes?.length}
@@ -558,9 +550,8 @@
 
 		<!-- ─── BACKUP ─────────────────────────────────────────────────── -->
 		<!--
-			Deliberately above Storage: "how much would I lose" is a more urgent
-			question than "how full is it", and this is the only place the answer
-			appears. There is no restore button — restore needs the service
+			This is the only place the backup's state appears. There is no
+			restore button — restore needs the service
 			stopped, so the box cannot do it to itself, and a button would imply
 			a capability that cannot exist.
 		-->
@@ -605,11 +596,9 @@
 		{/if}
 
 		<!-- ─── HOST ───────────────────────────────────────────────────── -->
-		<!-- Was "Network & Devices", which claimed two subjects this page no
-		     longer owns: which Wi-Fi the box is on is Settings → Network, and
-		     how many devices are paired is Settings → Devices, where you can
-		     also do something about it. What is left is the machine's own
-		     identity and the traffic crossing it — measurements, not settings. -->
+		<!-- The machine's own identity and the traffic crossing it. Reaching the
+		     server away from home is on the Settings page; paired devices are
+		     under Devices. -->
 		<section class="chapter">
 			<h2 class="settings-label">Host</h2>
 			<div class="cols">

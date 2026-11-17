@@ -224,7 +224,7 @@
 {:else if res.error}
 	<ErrorState message={String(res.error)} />
 {:else if !device}
-	<Page title="No such device" description="Someone may have revoked it.">
+	<Page title="No such device" description="It may have been unpaired.">
 		<Button variant="secondary" onclick={backToDevices}>Back to devices</Button>
 	</Page>
 {:else}
@@ -389,7 +389,7 @@
 
 		<div class="mt-8">
 			<Button variant="ghost" onclick={() => void revokeDeviceFlow(device)}>
-				Revoke this device
+				Unpair this device
 			</Button>
 		</div>
 	</Page>

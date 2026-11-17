@@ -6,8 +6,8 @@
 	 * Search opens the search palette (SearchModal), as ⌘K does. It searches
 	 * everything, so it lives in the window's corner rather than on a page's
 	 * toolbar, where it would read as a search of that page. Settings opens
-	 * the Settings page, which carries its own section list (SectionNav). It
-	 * is something you open now and then, so it sits in the corner rather
+	 * the Settings page, every setting on one scroll. It is something you
+	 * open now and then, so it sits in the corner rather
 	 * than in the sidebar's list, and lights while the focused pane shows a
 	 * Settings page.
 	 */
@@ -15,16 +15,16 @@
 	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { search } from '$lib/stores/search.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { SETTINGS_MODE, rowForRoute } from '$lib/sidebar/modes';
 
 	const inSettings = $derived.by(() => {
 		const pane = windowShellStore.activePane;
 		const route = pane?.tabs.find((t) => t.id === pane.activeTabId)?.route;
-		return !!rowForRoute(SETTINGS_MODE, route);
+		const path = route?.split('?')[0];
+		return path === '/virtues' || !!path?.startsWith('/virtues/');
 	});
 
 	function openSettings() {
-		windowShellStore.openTabFromRoute('/virtues/you', { label: 'Settings', focusExisting: true });
+		windowShellStore.openTabFromRoute('/virtues', { label: 'Settings', focusExisting: true });
 	}
 </script>
 

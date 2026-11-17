@@ -11,7 +11,7 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 
 	function backToAssistant() {
-		windowShellStore.navigate("/virtues/assistant", { label: "Settings" });
+		windowShellStore.navigate("/virtues", { label: "Settings" });
 	}
 </script>
 

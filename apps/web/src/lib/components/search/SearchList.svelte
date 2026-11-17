@@ -115,7 +115,7 @@
 	const commands = $derived<Command[]>([
 		...commandsFromMenu(newTabMenuItems(undefined, { browser: browserAvailable })),
 		{ id: "go-sources", label: "Go to Sources", icon: "atlas:sources", run: () => void windowShellStore.openTabFromRoute("/sources") },
-		{ id: "go-settings", label: "Go to Settings", icon: "atlas:settings", run: () => void windowShellStore.openTabFromRoute("/virtues/you") },
+		{ id: "go-settings", label: "Go to Settings", icon: "atlas:settings", run: () => void windowShellStore.openTabFromRoute("/virtues") },
 		{ id: "change-theme", label: "Change theme", icon: "mynaui:swatches", run: enterThemeMode, keepOpen: true },
 	]);
 

@@ -8,17 +8,24 @@
 	import SectionNav from "$lib/components/settings/SectionNav.svelte";
 	import ActionToolbar from "./ActionToolbar.svelte";
 	import { provideTabId } from "$lib/stores/paneActions.svelte";
-	import { SETTINGS_MODE, rowForRoute } from "$lib/sidebar/modes";
+	import { SETTINGS_MODE, rowForRoute, type SidebarMode } from "$lib/sidebar/modes";
+
+	const TOOLS_NAV: SidebarMode = {
+		...SETTINGS_MODE,
+		rows: SETTINGS_MODE.rows.filter((r) => r.group === "Sources" || r.group === "Developer"),
+	};
 	import { mobileLayout } from "$lib/stores/mobileLayout.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
 
 	provideTabId(() => tab.id);
 
-	// A Settings page (Sources and Streams among them) carries Settings'
-	// section list down its left, since the sidebar does not change for
-	// Settings. The phone has its own way through Settings.
-	const settingsNav = $derived(!mobileLayout.isMobile && !!rowForRoute(SETTINGS_MODE, tab.route));
+	// TODO(2026-11-17): migrate Sources and Developer off this list. Settings
+	// itself is one page now (settings/SettingsPage.svelte) with no list
+	// beside it; Sources' four pages and SQL/Terminal still move between each
+	// other through it until Sources gets its own page with tabs (slice 6 of
+	// agents/plan/settings-search-plan.md). Then SectionNav goes.
+	const toolsNav = $derived(!mobileLayout.isMobile && !!rowForRoute(TOOLS_NAV, tab.route));
 
 	// Which view this tab wants, as a loader (see $lib/tabs/lazy.ts). Handles
 	// detail variants for entity namespaces.
@@ -85,12 +92,12 @@
 	{#if !mobileLayout.isMobile}
 		<ActionToolbar {tab} />
 	{/if}
-	<div class="tab-body" class:with-nav={settingsNav}>
-		{#if settingsNav}
-			<SectionNav mode={SETTINGS_MODE} route={tab.route} />
+	<div class="tab-body" class:with-nav={toolsNav}>
+		{#if toolsNav}
+			<SectionNav mode={TOOLS_NAV} route={tab.route} />
 		{/if}
 		{#if ViewComponent}
-			{#if settingsNav}
+			{#if toolsNav}
 				<div class="section-body">
 					<ViewComponent {tab} {active} />
 				</div>

@@ -1,24 +1,16 @@
 <!--
-  Software — what this box runs, and how it moves forward.
+  Software: what each part of the app runs on this server.
 
-  Split out of "Box" on 2026-08-17. The version story used to be told twice on
-  one scroll: UpdateSection at the top said what release the box is on and
-  offered to install the next one, and System's "About" chapter, five sections
-  further down, printed Package / Built / Commit / Interface / App. Two answers
-  to "what am I running" on one page is one answer too many, so the question
-  now has a room and System keeps only what it can measure live.
-
-  The three artifacts below are why this page is more than an Install button.
-  A box, a UI bundle, and a native shell each carry their own version and have
-  no reason to agree — on 2026-08-05 a phone ran visibly newer UI than the Mac
-  beside it and the reason took ssh and a git log to find. With OTA moving the
-  bundle independently of the app, that question gets asked more, not less.
+  A server, a UI bundle, and a native shell each carry their own version and
+  have no reason to agree, so this page lists all three. Installing updates,
+  the channel and automatic installs are on the Settings page (UpdateSection),
+  so the version question has one answer here and the update controls one
+  place there.
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { Page } from '$lib';
 	import { formatDate } from '$lib/utils/dateUtils';
-	import UpdateSection from '$lib/components/settings/UpdateSection.svelte';
 	import { BUILD, buildLabel } from '$lib/build';
 	import {
 		shellIdentity,
@@ -70,10 +62,9 @@
 
 <Page
 	title="Software"
-	description="The release this server runs, and the track it follows."
+	description="What each part of the app runs. Updates are in Settings."
 	maxWidth="wide"
 >
-	<UpdateSection />
 
 	<section class="artifacts">
 		<h3>Artifacts</h3>

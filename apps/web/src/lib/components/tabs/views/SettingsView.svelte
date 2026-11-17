@@ -1,19 +1,16 @@
 <!--
 	SettingsView.svelte
 
-	The one Settings room. A single door in the sidebar opens here; every
-	preference and console lives under it as a route-driven section. Replaces the
-	former two rooms (Account + System) and the flat footer folder
-	(Sources · Tools · Profile · Devices · System · Developers · Sign Out).
+	The one Settings room. Bare /virtues is Settings on one page
+	(settings/SettingsPage.svelte): every setting you change, in six sections
+	from lib/settings. The routes below are the pages a row on it opens, for
+	what is a list, a chart, a table or a long form.
 
-	Doctrine: one tab group max. The primary sub-nav (the nouns the user owns) is
-	the only nav for most sections; only Developer carries a secondary sub-nav,
-	and nothing nests a tab group inside a tab group.
-
-	  You          /virtues/you            — profile, theme
-	  Assistant    /virtues/assistant      — name, style, rules, memory, models (+ /models: the catalog)
-	  Billing      /virtues/billing        — subscription, balance, routing, and
-	                                         the AI calls that draw it down
+	  (page)       /virtues                — every setting, six sections
+	  Memory       /virtues/assistant/memory — what the assistant remembers
+	  Models       /virtues/assistant/models — the catalog
+	  Cost         /virtues/billing        — what AI has cost, and every call
+	  Your own AI  /virtues/billing/byo    — bringing your own AI
 	  Keys         /virtues/keys           — sign-ins and the named keys applets use
 	  System       /virtues/system         — the machine, measured (read-only)
 	  Search       /virtues/search         — where search runs, and what it covers
@@ -49,8 +46,9 @@
 	import { isMacOS, isIOS } from '$lib/utils/platform';
 	import SoftwareView from '$lib/components/tabs/views/SoftwareView.svelte';
 
-	import ProfileView from '$lib/components/tabs/views/ProfileView.svelte';
-	import AssistantView from '$lib/components/tabs/views/AssistantView.svelte';
+	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
+	import MemoryPage from '$lib/components/settings/MemoryPage.svelte';
+	import ByoPage from '$lib/components/settings/ByoPage.svelte';
 	import ModelCatalogView from '$lib/components/tabs/views/ModelCatalogView.svelte';
 	import BillingView from '$lib/components/tabs/views/BillingView.svelte';
 	import SystemInfoView from '$lib/components/tabs/views/SystemInfoView.svelte';
@@ -69,10 +67,13 @@
 	// Old routes → their home in the flattened room. Rewritten in place so the
 	// sub-nav underline and the content both land on the canonical section.
 	const LEGACY_ROUTES: Record<string, string> = {
-		'/virtues': '/virtues/you',
-		'/virtues/account': '/virtues/you',
-		'/virtues/profile': '/virtues/you',
-		'/virtues/account/assistant': '/virtues/assistant',
+		// You and Assistant were pages of their own until Settings became one
+		// page (2026-11-17).
+		'/virtues/you': '/virtues',
+		'/virtues/account': '/virtues',
+		'/virtues/profile': '/virtues',
+		'/virtues/assistant': '/virtues',
+		'/virtues/account/assistant': '/virtues',
 		// The model catalog is Assistant's sub-page, beside the pickers it serves.
 		'/virtues/models': '/virtues/assistant/models',
 		// Billing and Usage merged into Plan (2026-08-31): one subject seen from
@@ -81,7 +82,7 @@
 		// bookmarks, not just historical paths.
 		'/virtues/usage': '/virtues/billing',
 		'/virtues/account/billing': '/virtues/billing',
-		'/virtues/byo-key': '/virtues/billing',
+		'/virtues/byo-key': '/virtues/billing/byo',
 		'/virtues/billing/plan': '/virtues/billing',
 		'/virtues/account/usage': '/virtues/billing',
 		'/virtues/billing/usage': '/virtues/billing',
@@ -95,24 +96,18 @@
 		// The 24h readings went back to System (2026-09-03): they are the
 		// machine measured, and had no business under a wallet balance.
 		'/virtues/system/history': '/virtues/system',
-		// Network lives under System, as the machine's own connection; Software
-		// described the release a DEVICE runs, so it is that device's page
-		// under Devices.
-		'/virtues/network': '/virtues/system',
+		// Network and updates are rows on the Settings page; versions are the
+		// server's device page; the machine measured is System.
+		'/virtues/network': '/virtues',
 		'/virtues/software': '/virtues/devices/server',
-		// Box split into System · Network · Software (2026-08-17). Its own door
-		// lands on System, the largest of the three and the one that kept the
-		// page's former title.
 		'/virtues/box': '/virtues/system',
 		'/virtues/box/health': '/virtues/system',
-		'/virtues/box/network': '/virtues/system',
-		'/virtues/box/updates': '/virtues/devices/server',
-		'/virtues/updates': '/virtues/devices/server',
+		'/virtues/box/network': '/virtues',
+		'/virtues/box/updates': '/virtues',
+		'/virtues/updates': '/virtues',
 		'/virtues/version': '/virtues/devices/server',
-		// Devices absorbed both Start over (the split above) and This Mac, which
-		// was a top-level section for one instance of hardware. It is now
-		// `devices/this` — a device page like any other, and a stable word
-		// Sources can link to without knowing a device id.
+		// This Mac is `devices/this`, a device page like any other, and a
+		// stable word Sources can link to without knowing a device id.
 		'/virtues/box/devices': '/virtues/devices',
 		'/virtues/system/devices': '/virtues/devices',
 		'/virtues/devices/': '/virtues/devices',
@@ -175,7 +170,7 @@
 	});
 
 	type Section =
-		| 'you'
+		| 'page'
 		| 'assistant'
 		| 'billing'
 		| 'keys'
@@ -202,38 +197,31 @@
 	// `/virtues/`; segment 1 = section, segment 2 = sub-section (Assistant, Devices, Developer).
 	const raw = $derived(tab.route.replace(/^\/virtues\/?/, ''));
 	const section = $derived<Section>(
-		SECTIONS.includes(raw.split('/')[0]) ? (raw.split('/')[0] as Section) : 'you'
+		SECTIONS.includes(raw.split('/')[0]) ? (raw.split('/')[0] as Section) : 'page'
 	);
 	const sub = $derived(raw.split('/')[1] ?? '');
 
-	// There is no in-page section nav. The rail's Settings panel carries the
-	// rows (SETTINGS_MODE in `lib/sidebar/modes.ts`) and this room renders
-	// whatever the route names — the same move the wiki and sources made, and
-	// the last of the three duplicated navs to go.
-	//
-	// Settings had the worst case of it: a primary strip of eight AND a second
-	// row nested under Developer, beside a sidebar panel listing the same
-	// words. Two stacked rows of underline tabs is the smell `modes.ts` names
-	// as a nav outgrowing its container — and the container was never the
-	// problem, the second copy was.
-	//
-	// `/virtues/developer/*` renders here too: SQL and Terminal are rows under
-	// the panel's Developer heading, beside the preferences rather than mixed
-	// into them.
+	// No section list sits beside these pages. Bare /virtues is the one page
+	// with every setting, and its section names scroll within it; the routes
+	// above are pages its rows open, and Back returns to it.
 </script>
 
 <div class="settings-view">
 	<main class="content">
-		{#if section === 'you'}
-			<ProfileView {tab} {active} />
+		{#if section === 'page'}
+			<SettingsPage />
 		{:else if section === 'assistant'}
-			{#if sub === 'models'}
-				<ModelCatalogView />
+			{#if sub === 'memory'}
+				<MemoryPage />
 			{:else}
-				<AssistantView />
+				<ModelCatalogView />
 			{/if}
 		{:else if section === 'billing'}
-			<BillingView {tab} {active} />
+			{#if sub === 'byo'}
+				<ByoPage />
+			{:else}
+				<BillingView />
+			{/if}
 		{:else if section === 'keys'}
 			<KeysView />
 		{:else if section === 'system'}

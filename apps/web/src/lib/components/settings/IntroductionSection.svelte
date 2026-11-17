@@ -1,5 +1,5 @@
 <!--
-  Settings → You → "Why this exists": run the introduction again.
+  Settings, at the foot of the page: run the introduction again.
 
   The letter has been re-readable from this page for a while (the link beside
   this). What had no door at all was replaying the WALK — putting the letter
@@ -18,8 +18,8 @@
   clears it. Someone who set integrations aside in week one and now wants them
   gets the step back; nobody loses a thing.
 
-  NAMED AWAY FROM "START OVER" DELIBERATELY. Settings → Devices already has a
-  "Start over", and it means revoke every paired device. Two buttons with one
+  NAMED AWAY FROM "START OVER" DELIBERATELY. The Settings page already has a
+  "Start over", just above this, and it means unpair every device. Two buttons with one
   name, one of which signs you out of your own box, is the kind of collision
   that only shows up in a support thread.
 -->

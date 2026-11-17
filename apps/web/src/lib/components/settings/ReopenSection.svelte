@@ -1,10 +1,6 @@
 <!--
-  Settings → Devices → "Start over".
-
-  Lives at the foot of Devices because that is what it does: it is the plural
-  of Unpair. It used to sit at the bottom of "Box", under the CPU graphs — so
-  a page you opened to check a temperature ended in a button that signs out
-  every device you own.
+  Settings → "Start over", alone at the foot of the Settings page, below
+  every setting, because it unpairs every device you own.
 
   Wraps `POST /api/pair/reopen-onboarding` — the `virtues reset --keep-data`
   path. Revokes every paired device and its credentials; touches no data, no
