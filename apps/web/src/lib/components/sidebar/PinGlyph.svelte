@@ -18,10 +18,11 @@
 <script lang="ts">
 	/**
 	 * A pin's glyph, shared by the sidebar's Pinned rows and the rail: a
-	 * tile in the pin's color with the mark the user picked, else the glyph
-	 * of what it opens, cut out of it. The tile gives the color enough area
-	 * to show, and it tells a pin from a door that draws the same glyph. An
-	 * emoji stands on its own. A pinned chat that is replying shows the
+	 * tile tinted with the pin's color, holding the mark the user picked,
+	 * else the glyph of what it opens, drawn in that color. The tile gives
+	 * the color enough area to show, and it tells a pin from a door that
+	 * draws the same glyph. It is a tint, not a solid, so four pins in four
+	 * colors stay quieter than the doors' ink. An emoji stands on its own. A pinned chat that is replying shows the
 	 * thinking mark. A solid dot read as a status light: red and amber said
 	 * error and warning about a page that had neither.
 	 */
@@ -36,7 +37,7 @@
 
 	/** The glyph inside the tile. */
 	const MARK_PX = 12;
-	/** 1.5px of ink at 12px: a light line on a color reads thinner than ink on paper. */
+	/** 1.5px of ink at 12px: a colored line reads thinner than ink. */
 	const MARK_STROKE = (1.5 * 24) / MARK_PX;
 
 	let { pin }: { pin: Pin } = $props();
@@ -54,7 +55,7 @@
 	{:else if look.icon}
 		<!-- An Atlas pick goes through AtlasIcon so it keeps the nav glyphs'
 		     1.25px line; through iconify at a smaller box it thinned. -->
-		<span class="tile" style="background: {color}">
+		<span class="tile" style="--pin: {color}">
 			{#if look.icon.startsWith('atlas:')}
 				<AtlasIcon name={look.icon.slice('atlas:'.length)} size={MARK_PX} stroke={MARK_STROKE} bare />
 			{:else}
@@ -62,7 +63,7 @@
 			{/if}
 		</span>
 	{:else}
-		<span class="tile" style="background: {color}">
+		<span class="tile" style="--pin: {color}">
 			<AtlasIcon name={pinKindGlyph(pin.url)} size={MARK_PX} stroke={MARK_STROKE} bare />
 		</span>
 	{/if}
@@ -86,8 +87,8 @@
 		line-height: 1;
 	}
 
-	/* The paper's color, so the cut-out is light on the light themes and
-	   dark on the dark ones, whose --cat-* hues are lightened. */
+	/* The pin's color at a sixth behind its glyph, and a little more under
+	   the pointer and on the pin you are on, as a door's glyph fills in. */
 	.tile {
 		width: 18px;
 		height: 18px;
@@ -95,6 +96,13 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		color: var(--color-background);
+		color: var(--pin);
+		background: color-mix(in srgb, var(--pin) 16%, transparent);
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
+	}
+
+	:global(.panel-row:is(:hover, .active)) .tile {
+		background: color-mix(in srgb, var(--pin) 26%, transparent);
+		transition-duration: var(--motion-hover-in);
 	}
 </style>
