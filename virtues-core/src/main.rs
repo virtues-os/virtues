@@ -176,7 +176,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // `virtues init` is PLUMBING, not a wizard (agents/build/onboarding.md): resolve
     // config from the env the installer wrote, run migrations, mint a pair
     // token, print the handoff. The account/subscribe conversation lives in
-    // the web setup wizard (/setup) — a TTY is the worst possible medium for
+    // the web setup wizard (/onboarding) — a TTY is the worst possible medium for
     // billing and OAuth, so the interactive middle this command used to have
     // is gone. The installer execs this at the end of `curl virtues.com/sh`;
     // re-running it by hand is always safe (everything here is idempotent).

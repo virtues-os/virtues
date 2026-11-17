@@ -50,7 +50,6 @@ const TaskView: ViewLoader = () => import('$lib/components/tabs/views/TaskView.s
 const NarrativeIdentityView: ViewLoader = () => import('$lib/components/tabs/views/NarrativeIdentityView.svelte');
 const DataView: ViewLoader = () => import('$lib/components/tabs/views/DataView.svelte');
 const QueryView: ViewLoader = () => import('$lib/components/tabs/views/QueryView.svelte');
-const SetupView: ViewLoader = () => import('$lib/components/tabs/views/SetupView.svelte');
 const TimelineView: ViewLoader = () => import('$lib/components/tabs/views/TimelineView.svelte');
 
 export interface TabDefinition {
@@ -459,7 +458,14 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 				// The door. `/tasks` and `?task=` open its Tasks view.
 				const task = params?.get('task');
 				const tasks = path.startsWith('/tasks') || !!task || params?.get('view') === 'tasks';
-				const query = task ? `?view=tasks&task=${encodeURIComponent(task)}` : tasks ? '?view=tasks' : '';
+				const threads = params?.get('view') === 'threads';
+				const query = task
+					? `?view=tasks&task=${encodeURIComponent(task)}`
+					: tasks
+						? '?view=tasks'
+						: threads
+							? '?view=threads'
+							: '';
 				return {
 					type: 'thread',
 					label: 'Threads',
@@ -587,25 +593,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		detailComponent: WikiDetailView,
 	},
 
-	// ========================================================================
-	// SETUP: /setup, /setup/{step}
-	//   Only once someone is in the app; before that `/setup` is the
-	//   full-screen stage, and nothing sends it here (setup/inApp.ts).
-	// ========================================================================
-	setup: {
-		match: (path) => path === '/setup' || /^\/setup\/[a-z]+$/.test(path),
-		parse: (path) => ({
-			type: 'setup',
-			label: 'Setup',
-			icon: 'mynaui:list-check',
-			normalizedRoute: path,
-		}),
-		serialize: (id) => (id ? `setup_${id}` : 'setup'),
-		deserialize: (serialized) => (serialized.startsWith('setup_') ? `/setup/${serialized.slice(6)}` : '/setup'),
-		icon: 'mynaui:list-check',
-		defaultLabel: 'Setup',
-		component: SetupView,
-	},
 
 	// ========================================================================
 	// NARRATIVE IDENTITY: /narrative-identity
@@ -1045,7 +1032,6 @@ export function parseRoute(route: string): ParsedRoute {
 		'day',
 		'year',
 		'narrative-identity',
-		'setup',
 	];
 
 	for (const type of orderedTypes) {

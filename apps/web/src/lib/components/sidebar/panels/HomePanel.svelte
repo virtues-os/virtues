@@ -43,9 +43,10 @@
 	 * project. The server refuses it and the menus never offer it.
 	 */
 	import { onMount, tick, untrack } from 'svelte';
-	import { crossfade, slide } from 'svelte/transition';
-	import { flip } from 'svelte/animate';
-	import { prefersReducedMotion } from 'svelte/motion';
+	// crossfade has no reduced-motion version; `moving()` below stills it.
+	import { crossfade } from 'svelte/transition';
+	import { flip, slide } from '$lib/utils/transitions';
+	import { reducedMotion } from '$lib/stores/motion.svelte';
 	import { easePremium, motionMs } from '$lib/utils/motion';
 	import { chatSessions, type ChatSession } from '$lib/stores/chatSessions.svelte';
 	import { projectStore } from '$lib/stores/project.svelte';
@@ -87,24 +88,10 @@
 	import { dndManager, PIN_DROP_ATTR, PROJECT_DROP_ATTR, pinGapAt } from '$lib/stores/dndManager.svelte';
 	import AtlasIcon from '../AtlasIcon.svelte';
 	import PinGlyph from '../PinGlyph.svelte';
-	import SetupRing from '../SetupRing.svelte';
-	import { gettingStarted } from '$lib/stores/gettingStarted.svelte';
-	import { setup } from '$lib/components/setup/setup.svelte';
 	import { SHELL_GLYPH_PX } from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { openWebLink } from '$lib/utils/webLinks';
 	import { openMenuItems } from '$lib/utils/openMenuItems';
 
-	// Skipped is not done: a step set aside keeps the door, because Finish
-	// later and Skip both mean "not now", never "not ever". It goes once every
-	// step is done.
-	const setupOpen = $derived(gettingStarted.loaded && !gettingStarted.unsupported && !setup.complete);
-	const setupCount = $derived(`${setup.doneCount}/${setup.steps.length}`);
-	// Setup's own tab, at the step to pick up: the tab carries the steps
-	// across its top, so the sidebar does not list them.
-	function openSetup() {
-		const next = setup.resumeInApp;
-		windowShellStore.openTabFromRoute(next ? `/setup/${next}` : '/setup', { label: 'Setup', focusExisting: true });
-	}
 	const RECENTS_CAP = 10;
 
 	// ── what is where ──────────────────────────────────────────────────────
@@ -370,7 +357,7 @@
 	let motionOn = $state(false);
 	let motionTimer: ReturnType<typeof setTimeout> | undefined;
 	// Read on every move, so turning reduced motion on or off applies at once.
-	const moving = () => motionOn && !prefersReducedMotion.current;
+	const moving = () => motionOn && !reducedMotion();
 
 	/** Hold motion off until the lists settle. */
 	function holdMotion(ms = 400) {
@@ -991,13 +978,6 @@
 		if (e.target === e.currentTarget) showMenu(e, [customizeSidebarItem(false)]);
 	}}
 >
-	{#if setupOpen}
-		<button type="button" class="panel-row panel-door" onclick={openSetup} data-tip={railed ? 'Setup' : undefined} data-tip-side="right">
-			<SetupRing size={16} />
-			<span class="panel-row-text">Setup</span>
-			<span class="door-meta">{setupCount}</span>
-		</button>
-	{/if}
 	{#each doors as door, index (door.id)}
 		{@const act = doorActions[door.id]}
 		<!-- The slot moves as one when doors are reordered, so the Projects
@@ -1891,10 +1871,4 @@
 		}
 	}
 
-	.door-meta {
-		margin-left: auto;
-		font-size: 12px;
-		color: var(--color-foreground-subtle);
-		font-variant-numeric: tabular-nums;
-	}
 </style>

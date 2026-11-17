@@ -4,7 +4,7 @@
  * prints. (agents/plan/onboarding-diy-plan.md.)
  *
  * WHERE IT RUNS. Only where the app itself carries this code. The iPhone's
- * and the Mac's shells open `/setup` from their own copy of the app when
+ * and the Mac's shells open `/onboarding` from their own copy of the app when
  * they have no server, and carry on there after pairing: the server is data
  * to them, reached through this device's loopback. A browser is always past
  * this half: nothing reaches one without a server.
@@ -19,7 +19,6 @@
  */
 import { serversOnNetwork, type NetworkServer } from '$lib/tauri/bridge';
 import { isTauri } from '$lib/utils/platform';
-import { markInApp } from './inApp';
 
 const FAKE_KEY = 'virtues-radio';
 const FAKE_NEARBY_KEY = 'virtues-fake-nearby';
@@ -178,7 +177,6 @@ class PrePair {
 	 * launch, whatever the shell baked when it started.
 	 */
 	startOver(): void {
-		markInApp(false);
 		try {
 			sessionStorage.setItem(FORGOT_KEY, '1');
 			localStorage.removeItem(JUST_PAIRED_KEY);

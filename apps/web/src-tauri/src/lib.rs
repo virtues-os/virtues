@@ -653,7 +653,7 @@ pub fn run() {
       let start = if paired || cfg!(not(target_os = "ios")) {
         "virtues://localhost/connect.html"
       } else {
-        "virtues://localhost/setup"
+        "virtues://localhost/onboarding"
       }
       .parse()
       .expect("static url");

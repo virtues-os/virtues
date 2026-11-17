@@ -20,7 +20,7 @@ vi.mock('$lib/api/client', () => ({
 const { nothingToLose } = await import('./quietReload');
 const { resetUploads, startUpload } = await import('$lib/document/uploads');
 
-const calm = { temporaryChat: false, setupShowing: false, replying: false, focused: null };
+const calm = { temporaryChat: false, replying: false, focused: null };
 
 afterEach(() => {
 	resetUploads();
@@ -52,7 +52,6 @@ describe('nothingToLose', () => {
 
 	it('holds it for what the page holds besides', () => {
 		expect(nothingToLose({ ...calm, temporaryChat: true })).toBe(false);
-		expect(nothingToLose({ ...calm, setupShowing: true })).toBe(false);
 		expect(nothingToLose({ ...calm, replying: true })).toBe(false);
 		expect(nothingToLose({ ...calm, focused: { value: 'half a key' } as unknown as Element })).toBe(false);
 		expect(nothingToLose({ ...calm, focused: { value: '' } as unknown as Element })).toBe(true);

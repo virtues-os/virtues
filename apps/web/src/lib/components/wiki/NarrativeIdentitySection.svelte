@@ -19,7 +19,6 @@
 
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import { goto } from '$app/navigation';
 	import Markdown from '$lib/components/Markdown.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -47,12 +46,6 @@
 
 	function editDocument() {
 		if (pageId) windowShellStore.openRouteBeside(`/page/${pageId}`);
-	}
-
-	/** The interview runs in Setup now; the old getting-started room this
-	 *  opened is retired. */
-	function openInterview() {
-		void goto('/setup/interview');
 	}
 
 	const updatedLabel = $derived(
@@ -98,7 +91,6 @@
 				assistant. When you close the interview, the document appears here and on its own page,
 				in your words and in the first person.
 			</p>
-			<button class="btn primary" onclick={openInterview}>Open the interview</button>
 		</div>
 	{/if}
 
@@ -286,15 +278,6 @@
 	.btn:disabled {
 		opacity: 0.6;
 		cursor: default;
-	}
-
-	.btn.primary {
-		background: var(--color-primary);
-		border-color: var(--color-primary);
-		/* --color-background, not a hardcoded white: on dark themes the
-		   primary is light and white-on-light would vanish. (There is no
-		   --color-primary-foreground token; it silently fell back.) */
-		color: var(--color-background);
 	}
 
 	.empty {

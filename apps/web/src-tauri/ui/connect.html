@@ -273,7 +273,7 @@
           // `#setup` pins the connect screen open on an already-paired device,
           // for connecting it to a second server.
           if (hash === '#setup') return 'entry';
-          // `#existing`: Setup (the app's own /setup, before pairing) sends a
+          // `#existing`: Setup (the app's own /onboarding, before pairing) sends a
           // device that is joining a server someone already set up straight
           // to the join: the QR scan on a phone, the code on a computer.
           // Setup's first half only sets up new servers (2026-09-28).
@@ -556,8 +556,6 @@
         try { await invoke('plugin:reach|forget'); } catch { /* already gone */ }
         try {
           localStorage.removeItem('virtues-just-paired');
-          // No app to open Setup in any more (inApp.ts).
-          localStorage.removeItem('virtues-setup-in-app');
           sessionStorage.setItem('virtues-forgot-server', '1');
         } catch { /* best effort */ }
       }
@@ -613,7 +611,7 @@
           // Setup sends the phone to the first step still open; on a server
           // that is already set up, this phone still gets its own permissions
           // instead of going straight into the app.
-          setTimeout(() => window.location.replace('/setup/connections'), 400);
+          setTimeout(() => window.location.replace('/onboarding/connections'), 400);
           return;
         }
         try {

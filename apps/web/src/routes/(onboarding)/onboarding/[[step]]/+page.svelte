@@ -1,5 +1,5 @@
 <!--
-  /setup — Setup, the one flow (agents/build/onboarding.md, "Setup").
+  /onboarding — Setup, the one flow (agents/build/onboarding.md, "Setup").
 
   THE STAGE (2026-09-25). Paper and grain are painted once, here
   (`.setup-stage`, setup.css), and every step changes on top of them: steps
@@ -11,25 +11,24 @@
   or dark), Server, Names, Connections, Subscription. Connections can be
   skipped; the rest are required. The founder's letter is not a step: the
   pair code lasts about 15 minutes, so it waits at the close as "A note
-  from us", and stays readable in the app and at /founders-letter.
+  from us", and stays readable at /founders-letter.
 
   THE DESK. Every step after Welcome sits on a sheet (the stage's paper,
   lifted by a hairline and a shadow), with the Tuscany print faded along the
   bottom of the window, drawn in the theme's ink (`.setup-print`).
 
   THE FIRST HALF (Server: finding it and pairing) runs here only before this
-  device has a server: on the iPhone and the Mac, whose shells open /setup
+  device has a server: on the iPhone and the Mac, whose shells open /onboarding
   from their own copy of the app when unpaired, or in dev with `?radio=fake`
   (prepair.svelte.ts). Anywhere else it is done by design. Pairing needs no
-  account; the subscription step signs in. Connections carries a Skip, and "Finish later" opens the app with it
-  waiting on the rail's Setup tile. Setup ends once, at Arrival: the dots
+  account; the subscription step signs in. Connections carries a Skip, and "Finish later" opens the app
+  without it. Setup ends once, at Arrival: the dots
   draw together into the ∴, the ink print gives way to the painting in
   color, and the person opens the app themselves.
 
-  `/setup` alone decides where to begin: the first step still to do, which
+  `/onboarding` alone decides where to begin: the first step still to do, which
   is Welcome on a new server.
-  `/setup/{step}` is a step, so the rail's panel can send someone straight
-  back into any of them, and a reload lands where it left off.
+  `/onboarding/{step}` is a step, so a reload lands where it left off.
 
   WAS /founders-letter (2026-08-31 to 2026-09-24), which was the letter and,
   at the end, the subscription; the steps after it lived in the app's pane.
@@ -40,7 +39,7 @@
 	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { page } from "$app/state";
 	import { onMount } from "svelte";
-	import { fade } from "svelte/transition";
+	import { fade } from "$lib/utils/transitions";
 	import "$lib/components/setup/setup.css";
 	import { M, rise } from "$lib/components/setup/motion";
 	import { isMacOS } from "$lib/utils/platform";
@@ -54,7 +53,6 @@
 	import StepPaired from "$lib/components/setup/steps/StepPaired.svelte";
 	import StepServer from "$lib/components/setup/steps/StepServer.svelte";
 	import { prePair } from "$lib/components/setup/prepair.svelte";
-	import { holdStage } from "$lib/components/setup/inApp";
 	import StepSubscription from "$lib/components/setup/steps/StepSubscription.svelte";
 	import StepNames from "$lib/components/setup/steps/StepNames.svelte";
 	import StepConnections from "$lib/components/setup/steps/StepConnections.svelte";
@@ -225,13 +223,6 @@
 		}
 	}
 
-	// The stage is up: its own steps stay on it to the close, even for someone
-	// whose `/setup` would otherwise open in the app (a replay from Welcome).
-	onMount(() => {
-		holdStage(true);
-		return () => holdStage(false);
-	});
-
 	onMount(() => {
 		followSystemTheme();
 		takeCarried();
@@ -259,16 +250,16 @@
 	$effect(() => {
 		if (!ready || closing) return;
 		if (param && !step) {
-			void goto("/setup", { replaceState: true });
+			void goto("/onboarding", { replaceState: true });
 		} else if (current && !current.reachable) {
-			void goto(`/setup/${setup.resumeAt ?? "subscription"}`, { replaceState: true });
+			void goto(`/onboarding/${setup.resumeAt ?? "subscription"}`, { replaceState: true });
 		}
 	});
 
 	function route() {
 		if (step) return;
 		const at = setup.resumeAt;
-		if (at) void goto(`/setup/${at}`, { replaceState: true });
+		if (at) void goto(`/onboarding/${at}`, { replaceState: true });
 		else void finish();
 	}
 
@@ -289,7 +280,7 @@
 	}
 
 	function go(id: SetupStepId) {
-		void goto(`/setup/${id}`);
+		void goto(`/onboarding/${id}`);
 	}
 
 	/** On to the next step still to do. Steps already done are passed over:
@@ -318,14 +309,14 @@
 			await setup.refresh();
 			if (gettingStarted.loaded && (gettingStarted.state || gettingStarted.unsupported)) break;
 			if (Date.now() > until) {
-				location.replace("/setup");
+				location.replace("/onboarding");
 				return;
 			}
 			await new Promise((r) => setTimeout(r, 1500));
 		}
 		// The hold ends only once the next step is on screen: released first,
 		// the paired receipt (StepPaired) drew for a frame under the move.
-		await goto(`/setup/${setup.status("names") === "open" ? "names" : "connections"}`);
+		await goto(`/onboarding/${setup.status("names") === "open" ? "names" : "connections"}`);
 		holdServer = false;
 	}
 
@@ -382,14 +373,14 @@
 	// its mind between the two reads). This page is reused, not remounted, so
 	// it has to leave the close itself.
 	afterNavigate((nav) => {
-		if (!closing || nav.type === "popstate" || !nav.to?.url.pathname.startsWith("/setup")) return;
+		if (!closing || nav.type === "popstate" || !nav.to?.url.pathname.startsWith("/onboarding")) return;
 		closing = false;
 		arrived = false;
 		entering = false;
 		closeError = "Your server still has Setup open. Try again.";
-		// Bounced to bare /setup: stand on the step still open, not an
+		// Bounced to bare /onboarding: stand on the step still open, not an
 		// empty stage. (Not `route()`, which would close again and loop.)
-		if (!step && setup.resumeAt) void goto(`/setup/${setup.resumeAt}`, { replaceState: true });
+		if (!step && setup.resumeAt) void goto(`/onboarding/${setup.resumeAt}`, { replaceState: true });
 	});
 </script>
 

@@ -135,6 +135,6 @@ export class Reconnect {
 			return;
 		}
 		prePair.startOver();
-		window.location.replace('/setup');
+		window.location.replace('/onboarding');
 	}
 }

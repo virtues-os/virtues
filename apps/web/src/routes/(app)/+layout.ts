@@ -1,6 +1,5 @@
 import { redirect } from '@sveltejs/kit';
 import type { LayoutLoad } from './$types';
-import { markInApp } from '$lib/components/setup/inApp';
 import { boxBelowFloor } from '$lib/boxApi';
 import type { SetupState } from '$lib/api/client';
 import { setupStateStore } from '$lib/stores/setupState.svelte';
@@ -71,7 +70,6 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		// must never trap the user out of their app).
 		if (!sessionResponse.ok) {
 			if (sessionResponse.status === 401 || sessionResponse.status === 403) {
-				markInApp(false);
 				throw redirect(303, '/pair');
 			}
 			return OFFLINE_DATA;
@@ -81,7 +79,6 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 
 		// Redirect to login if not authenticated
 		if (!sessionData.user) {
-			markInApp(false);
 			throw redirect(303, '/pair');
 		}
 
@@ -145,9 +142,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 					setup.onboarding_status === 'onboarding' ||
 					(setup.onboarding_complete === false && setup.onboarding_status !== 'active')
 				) {
-					// Setup is the stage again, not a tab: `/setup` must reach it.
-					markInApp(false);
-					throw redirect(303, '/setup');
+					throw redirect(303, '/onboarding');
 				}
 			}
 		} catch (e) {
@@ -159,9 +154,6 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		// The server is too old for this copy of the app: one clear screen
 		// rather than a half-working app. See $lib/boxApi.ts.
 		if (await floorP) throw redirect(303, '/server-update');
-
-		// Let in: from here `/setup` opens as a tab in the app, not the stage.
-		markInApp(true);
 
 		// Fetch profile for user preferences
 		let profileResponse = await profileP;

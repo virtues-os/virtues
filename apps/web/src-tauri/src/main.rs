@@ -2096,7 +2096,7 @@ fn main() {
                 if is_paired() {
                     own_copy("")
                 } else {
-                    own_copy("setup")
+                    own_copy("onboarding")
                 }
             } else if !is_paired() {
                 // Windows and Linux bake no UI yet: the connect page, then the

@@ -17,7 +17,6 @@ const KNOWN_TYPES: TabType[] = [
 	'chat-history',
 	'narrative-identity',
 	// Then regular types
-	'setup',
 	'chat',
 	'page',
 	'person',

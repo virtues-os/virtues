@@ -75,6 +75,6 @@ describe('a pairing this device cannot use', () => {
 
 		expect(reach.forget).not.toHaveBeenCalled();
 		expect(prePair.startOver).toHaveBeenCalled();
-		expect(replace).toHaveBeenCalledWith('/setup');
+		expect(replace).toHaveBeenCalledWith('/onboarding');
 	});
 });

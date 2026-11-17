@@ -1511,7 +1511,7 @@ mod tests {
         assert!(is_backend_path("/health"));
         assert!(!is_backend_path("/apiary"), "a route that merely starts with the letters");
         assert!(!is_backend_path("/"));
-        assert!(!is_backend_path("/setup"));
+        assert!(!is_backend_path("/onboarding"));
         assert!(!is_backend_path("/_app/immutable/a.js"));
     }
 

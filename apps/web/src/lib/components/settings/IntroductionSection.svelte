@@ -59,7 +59,7 @@
 			// From Welcome, so the walk replays with the letter in it; it went
 			// to the Server receipt, past both.
 			await skipOnboarding(false);
-			await goto('/setup/welcome');
+			await goto('/onboarding/welcome');
 		} catch (e) {
 			error = e instanceof Error ? e.message : String(e);
 			busy = false;
