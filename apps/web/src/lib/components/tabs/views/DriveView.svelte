@@ -24,8 +24,28 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { contextMenu } from "$lib/stores/contextMenu.svelte";
 	import { dropZone, hasFiles } from "$lib/actions/dropZone";
+	import { paneActions, usePageActions } from "$lib/stores/paneActions.svelte";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
+
+	// The folders are the path in the tab's action toolbar, under Storage,
+	// and the folder's actions sit at its end. The phone keeps both above
+	// the list.
+	const toolbar = usePageActions(() => driveActions);
+	$effect(() => {
+		if (!toolbar.inToolbar) return;
+		const crumbs = breadcrumbs();
+		return paneActions.setCrumbs(tab.id, {
+			glyph: "drive",
+			crumbs: [
+				{ label: "Storage", route: "/storage", menu: { kind: "mode", mode: "storage" } },
+				...crumbs.map((c, i) => ({
+					label: c.name,
+					run: i < crumbs.length - 1 ? () => void navigateToFolder(c.path) : undefined,
+				})),
+			],
+		});
+	});
 
 	// State
 	let files = $state<DriveFile[]>([]);
@@ -79,9 +99,9 @@
 
 	// Breadcrumb navigation
 	const breadcrumbs = $derived(() => {
-		if (!currentPath) return [{ name: "Drive", path: "" }];
+		if (!currentPath) return [{ name: "Files", path: "" }];
 		const parts = currentPath.split("/");
-		const crumbs = [{ name: "Drive", path: "" }];
+		const crumbs = [{ name: "Files", path: "" }];
 		let pathSoFar = "";
 		for (const part of parts) {
 			pathSoFar = pathSoFar ? `${pathSoFar}/${part}` : part;
@@ -504,7 +524,42 @@
 	}
 </script>
 
-<Page title="Drive" description="Your personal file storage" maxWidth="wide">
+{#snippet driveActions()}
+	<div class="flex items-center gap-2">
+		<Button
+			variant="ghost"
+			size="sm"
+			icon="mynaui:trash"
+			onclick={navigateToTrash}>Trash</Button
+		>
+		<Button
+			variant="ghost"
+			size="sm"
+			icon="mynaui:folder-plus"
+			onclick={() => (showNewFolderModal = true)}
+			>New folder</Button
+		>
+		<Button
+			variant="primary"
+			size="sm"
+			icon="mynaui:upload"
+			disabled={uploading}
+			onclick={() => fileInput?.click()}>Upload</Button
+		>
+		<input
+			bind:this={fileInput}
+			type="file"
+			multiple
+			class="hidden"
+			aria-hidden="true"
+			onchange={(e) =>
+				e.currentTarget.files &&
+				handleUpload(e.currentTarget.files)}
+		/>
+	</div>
+{/snippet}
+
+<Page title="Files" description="The files you keep on your server." maxWidth="wide">
 
 		<!-- Usage Bar -->
 		{#if usage}
@@ -535,7 +590,7 @@
 				>
 					<span class="flex items-center gap-1.5">
 						<span class="w-2.5 h-2.5 bg-primary rounded-sm"></span>
-						Drive ({formatBytes(usage.drive_bytes)})
+						Files ({formatBytes(usage.drive_bytes)})
 					</span>
 					<span class="flex items-center gap-1.5">
 						<span class="w-2.5 h-2.5 bg-border rounded-sm"></span>
@@ -548,8 +603,9 @@
 			</div>
 		{/if}
 
-		<!-- Toolbar -->
-		<div class="flex items-center justify-between mb-4">
+		<!-- The folders and their actions; on the desktop both are in the
+		     action toolbar. -->
+		<div class="flex items-center justify-between mb-4" class:hidden={toolbar.inToolbar}>
 			<!-- Breadcrumbs -->
 			<nav class="flex items-center gap-1 text-sm">
 				{#each breadcrumbs() as crumb, i}
@@ -575,39 +631,9 @@
 				{/each}
 			</nav>
 
-			<!-- Actions -->
-			<div class="flex items-center gap-2">
-				<Button
-					variant="ghost"
-					size="sm"
-					icon="mynaui:trash"
-					onclick={navigateToTrash}>Trash</Button
-				>
-				<Button
-					variant="ghost"
-					size="sm"
-					icon="mynaui:folder-plus"
-					onclick={() => (showNewFolderModal = true)}
-					>New folder</Button
-				>
-				<Button
-					variant="primary"
-					size="sm"
-					icon="mynaui:upload"
-					disabled={uploading}
-					onclick={() => fileInput?.click()}>Upload</Button
-				>
-				<input
-					bind:this={fileInput}
-					type="file"
-					multiple
-					class="hidden"
-					aria-hidden="true"
-					onchange={(e) =>
-						e.currentTarget.files &&
-						handleUpload(e.currentTarget.files)}
-				/>
-			</div>
+			{#if !toolbar.inToolbar}
+				{@render driveActions()}
+			{/if}
 		</div>
 
 		<!-- Error Message -->

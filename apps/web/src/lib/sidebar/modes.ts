@@ -300,7 +300,6 @@ export const STORAGE_MODE: SidebarMode = {
 			icon: 'mynaui:hard-drive',
 			glyph: 'files',
 			href: '/storage/drive',
-			group: 'Storage',
 		},
 		{
 			id: 'bookmarks',
@@ -309,9 +308,8 @@ export const STORAGE_MODE: SidebarMode = {
 			glyph: 'bookmarks',
 			href: '/bookmarks',
 			activeWhen: (route) => route === '/bookmarks' || route.startsWith('/bookmark/'),
-			group: 'Storage',
 		},
-		{ id: 'media', label: 'App Media', icon: 'mynaui:image', glyph: 'media', href: '/storage/media', group: 'Storage' },
+		{ id: 'media', label: 'App Media', icon: 'mynaui:image', glyph: 'media', href: '/storage/media' },
 		// Saved logins. Kept on the box and never read by the assistant
 		// (api/passwords.rs); API keys stay in Settings → Keys.
 		{
@@ -320,7 +318,6 @@ export const STORAGE_MODE: SidebarMode = {
 			icon: 'mynaui:lock-password',
 			glyph: 'passwords',
 			href: '/passwords',
-			group: 'Storage',
 		},
 		{
 			id: 'trash',
@@ -328,7 +325,6 @@ export const STORAGE_MODE: SidebarMode = {
 			icon: 'mynaui:trash',
 			glyph: 'trash',
 			href: '/storage/trash',
-			group: 'Storage',
 		},
 	],
 };
