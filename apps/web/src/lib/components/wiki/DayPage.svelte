@@ -95,7 +95,7 @@
 	import IconButton from "$lib/components/IconButton.svelte";
 	import MenuItem from "$lib/components/MenuItem.svelte";
 	import WikiCrumbs from "./WikiCrumbs.svelte";
-	import { usePageActions, usePageStatus } from "$lib/stores/paneActions.svelte";
+	import { usePageActions } from "$lib/stores/paneActions.svelte";
 
 	interface Props {
 		/** The wire shape. See PersonPage for why the converter is gone. */
@@ -435,19 +435,6 @@
 		const a = await getArticle("day", page.id);
 		if (a?.page_id) windowShellStore.openTabFromRoute(`/page/${a.page_id}`);
 	}
-
-	// The day's page is written by a model provider from the day's evidence
-	// (privacy-boundary.md, "the nightly day write-up"), and the action
-	// toolbar says so while there is a page.
-	usePageStatus(() =>
-		summaryText
-			? {
-					label: "Written off your server",
-					tip: "Your server sent this day's evidence to a model provider to write this page.",
-					offBox: true,
-				}
-			: null,
-	);
 
 	// ─────────────────────────────────────────────────────────────────────────
 	// Section visibility (hide empty sections)

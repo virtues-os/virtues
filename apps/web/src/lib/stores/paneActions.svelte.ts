@@ -44,10 +44,6 @@ export interface StatusMark {
 	tip?: string;
 	/** Myna icon drawn before the label. */
 	icon?: string;
-	/** TODO(2026-11-16): delete once DayPage stops passing it (another
-	 *  agent has DayPage open). Nothing reads it: the toolbar no longer
-	 *  marks work that leaves the box. */
-	offBox?: boolean;
 	/** Something to act on (a failed save). */
 	tone?: "muted" | "error";
 	/** A mark that can be acted on (Stop, open the model settings). */
