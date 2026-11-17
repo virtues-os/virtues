@@ -44,13 +44,17 @@ Each item is the owner's call, with the date and his words where they matter.
   habit thread. A thread's why stays a sentence on that thread.
 - **The new chat carries insights** (2026-11-17). Home shows the one or two
   notes that matter now; the Threads door keeps every note on what it is about.
-- **A thread is a folder first** (2026-11-17). He asked for "a 'magnet off'
-  style of primitive to be and act more as a 'folder' to which you can group
-  chats and pages manually", "less about auto thread resolution", and answered
-  "Yes, add it" to "Only what you add" as the default. Each thread has one
-  setting, What goes in: "Only what you add" (the default) or "Also what your
-  server files", under which records it is sure of are added and the rest
-  become filing questions. Tasks keep their homes either way.
+- **Adding to a thread is manual or automatic** (2026-11-17). He asked for "a
+  'magnet off' style of primitive to be and act more as a 'folder' to which you
+  can group chats and pages manually", "less about auto thread resolution",
+  answered "Yes, add it" to manual as the default, and then put it in one line:
+  "its more 'manual or auto' for adding nodes, thats really what the 'folder vs
+  auto thread' is". Each thread has one setting, Adding:
+  - **Manual** (the default): only what the owner adds becomes a node: chats,
+    pages, files, records and tasks. Your server neither adds to the thread nor
+    asks about it.
+  - **Automatic**: your server also adds records and tasks it is sure belong,
+    and asks about the ones it is not sure of as filing questions.
 
 ## What the app has today
 
@@ -185,7 +189,7 @@ four"), the main column, and a side column of properties.
   and the thread as a vertical line: dates on the left, a typed node for each
   record, solid down to a dotted Today mark, dashed after it, undated tasks
   last. The side column holds status, started, the thing it sits under, this
-  week in small dots, What goes in, and Materials: the chats, pages and files
+  week in small dots, Adding (Manual or Automatic), and Materials: the chats, pages and files
   added to it, with Add and a place to drop them. "Finish the thread" and "Drop
   it" end it.
 - **A task's page.** Its ring and title, why it exists in one sentence, any
@@ -217,8 +221,8 @@ starts. Read `.claude/rules/migrations.md` first.
    one-parent check to all five parents. Add `app_task_links (task_id, kind,
    ref_id)` for "also about", with `kind` in thread, person, place, org, thing.
    Add `status` to `app_threads` (`active` or `backlog`, default `active`).
-   What goes in is stored in `auto_add_materials`, whose default of false
-   already means "Only what you add".
+   Adding is stored in `auto_add_materials`, whose default of false already
+   means Manual.
    The migration header says what a rollback to an older release breaks.
 2. **Homes in the API.** Tasks take and return their home and links. A
    thread's detail returns its own tasks and the tasks that are also about it.
@@ -267,10 +271,9 @@ Each has my pick. None is decided.
 5. **When the old routes go.** Pick: keep `/api/projects` until no released
    phone app calls it, following
    [version-compat-plan.md](version-compat-plan.md).
-6. **The name of the What goes in column.** Keep `auto_add_materials` or
-   rename it with the next change to `app_threads`. Pick: rename it to
-   `files_records` in slice 1, since the old name describes the magnet that was
-   removed.
+6. **The name of the Adding column.** Keep `auto_add_materials` or rename it
+   with the next change to `app_threads`. Pick: rename it to `auto_add` in
+   slice 1, since nodes of every kind are added, not only materials.
 
 ## How to test
 
