@@ -60,7 +60,7 @@
 		const next = draft?.trim();
 		draft = null;
 		if (!next || next === (path.crumbs.at(-1)?.label ?? title)) return;
-		renameRef(tab.route, next).catch((err) => console.error("[ActionToolbar] rename failed:", err));
+		void renameRef(tab.route, next);
 	}
 
 	function renameKeydown(e: KeyboardEvent) {

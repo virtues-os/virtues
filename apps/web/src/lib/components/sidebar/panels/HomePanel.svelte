@@ -695,12 +695,7 @@
 		renaming = null;
 		const title = r?.draft.trim();
 		if (!r || !title || title === r.original) return;
-		try {
-			await renameRef(r.url, title);
-		} catch (e) {
-			console.error('[HomePanel] rename failed:', e);
-			toast.error(`Your server couldn't rename "${r.original}"`, { description: 'It keeps its old name. Try again' });
-		}
+		await renameRef(r.url, title);
 	}
 
 	/** Chats, pages and projects own their names; a web or app-screen pin owns its own. */

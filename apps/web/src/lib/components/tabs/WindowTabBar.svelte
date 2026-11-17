@@ -18,7 +18,6 @@
 	import { iconPickerStore } from "$lib/stores/iconPicker.svelte";
 	import { projectMenuItems, targetForTab } from "$lib/utils/projectActions";
 	import { identityOf, ownedRef, renameRef, setRefLook } from "$lib/refs/identity.svelte";
-	import { toast } from "svelte-sonner";
 	import { accentCss, clothFor } from "$lib/sidebar/pin-colors";
 	import { modifierHint } from "$lib/stores/modifierHint.svelte";
 	import { isEmoji } from "$lib/utils/iconHelpers";
@@ -372,12 +371,8 @@
 		renamingTabId = null;
 		renameValue = "";
 		if (!tab?.route || !ownedRef(tab.route)) return;
-		const original = tabLook(tab).title;
-		if (newLabel === original) return;
-		renameRef(tab.route, newLabel).catch((e) => {
-			console.error("[WindowTabBar] rename failed:", e);
-			toast.error(`Your server couldn't rename "${original}"`, { description: "It keeps its old name. Try again" });
-		});
+		if (newLabel === tabLook(tab).title) return;
+		void renameRef(tab.route, newLabel);
 	}
 
 	// `autofocus` only applies on page load, so a field mounted later has to

@@ -16,6 +16,7 @@
  */
 
 import { SvelteMap } from 'svelte/reactivity';
+import { toast } from 'svelte-sonner';
 import { resolveRefs, updateChat, updatePage, type Pin, type RefIdentity } from '$lib/api/client';
 import { chatSessions } from '$lib/stores/chatSessions.svelte';
 import { pagesStore } from '$lib/stores/pages.svelte';
@@ -189,9 +190,12 @@ export function relabelTabs(route: string, label: string) {
 
 /**
  * Rename what `url` points at. Stores and tabs take the name first, so every
- * surface moves together; a failed write puts the server's name back.
+ * surface moves together. A failed write puts the server's name back and
+ * says so in a toast, so a caller (the sidebar, a tab, the page bar) has
+ * nothing to handle. Resolves to whether your server saved the name.
  */
-export async function renameRef(url: string, title: string): Promise<void> {
+export async function renameRef(url: string, title: string): Promise<boolean> {
+	const original = identityOf(url, {}, { ask: false }).title;
 	const owned = ownedRef(url);
 	resolved.delete(url);
 	relabelTabs(url, title);
@@ -208,6 +212,11 @@ export async function renameRef(url: string, title: string): Promise<void> {
 			const pin = pinsStore.getByUrl(url);
 			if (pin) await pinsStore.setLabel(pin.id, title);
 		}
+		return true;
+	} catch (e) {
+		console.error('[renameRef] rename failed:', e);
+		toast.error(`Your server couldn't rename "${original}"`, { description: 'It keeps its old name. Try again' });
+		return false;
 	} finally {
 		if (owned?.kind === 'chat') await chatSessions.refresh();
 		if (owned?.kind === 'page') await pagesStore.loadPages();
