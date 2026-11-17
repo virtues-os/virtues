@@ -5,7 +5,7 @@
 	 * Displays code_interpreter tool results with expandable code and output.
 	 * Matches EditDiffCard design pattern.
 	 */
-	import { slide } from "svelte/transition";
+	import { slide } from "$lib/utils/transitions";
 	import Icon from "$lib/components/Icon.svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
 	import { backendUrl } from "$lib/config/backend";

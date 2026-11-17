@@ -36,7 +36,7 @@
 	import { onMount, tick } from "svelte";
 	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { useShowing, mayTakeFocus } from "../showing";
-	import { fade } from "svelte/transition";
+	import { fade } from "$lib/utils/transitions";
 	import Icon from "$lib/components/Icon.svelte";
 	import { updateAssistantProfile, updateProfile } from "$lib/api/client";
 	import { inComposition } from "$lib/utils/ime";

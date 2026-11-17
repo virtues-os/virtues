@@ -3,7 +3,7 @@
 	import { motion } from "$lib/stores/motion.svelte";
 	import { onDestroy, onMount } from "svelte";
 	import { Spring } from "svelte/motion";
-	import { fly } from "svelte/transition";
+	import { fly } from "$lib/utils/transitions";
 	import { quintOut } from "svelte/easing";
 	import ContextPanel from "$lib/components/chat/ContextPanel.svelte";
 	import SkillsPanel from "$lib/components/chat/SkillsPanel.svelte";

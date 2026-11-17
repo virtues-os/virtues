@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { flip } from "svelte/animate";
+	import { flip } from "$lib/utils/transitions";
 	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { onMount, untrack } from "svelte";
 	import { dndzone } from "svelte-dnd-action";

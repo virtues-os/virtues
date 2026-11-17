@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { slide } from 'svelte/transition';
+	import { slide } from '$lib/utils/transitions';
 	import Ref from './Ref.svelte';
 	import Icon from './Icon.svelte';
 	import { parseEntityRoute } from '$lib/utils/refRoutes';

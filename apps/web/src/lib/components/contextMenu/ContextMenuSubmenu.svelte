@@ -140,11 +140,11 @@
 		);
 		overflow-y: auto;
 		z-index: var(--z-context-submenu);
-		animation: submenu-fade-in 100ms ease-out;
+		animation: submenu-fade-in var(--motion-enter) var(--ease-premium);
 	}
 
 	.submenu.open-left {
-		animation: submenu-fade-in-left 100ms ease-out;
+		animation: submenu-fade-in-left var(--motion-enter) var(--ease-premium);
 	}
 
 	@keyframes submenu-fade-in {

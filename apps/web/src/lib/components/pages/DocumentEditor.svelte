@@ -75,7 +75,7 @@
 	import AiPromptPopover from "$lib/components/pages/AiPromptPopover.svelte";
 	import FindBar from "$lib/components/pages/FindBar.svelte";
 	import { portal } from "$lib/actions/portal";
-	import { fade, fly } from "svelte/transition";
+	import { fade, fly } from "$lib/utils/transitions";
 	import { cubicOut } from "svelte/easing";
 	import TableMenu from "$lib/components/pages/TableMenu.svelte";
 	import SuggestionBar from "$lib/components/pages/SuggestionBar.svelte";

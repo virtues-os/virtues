@@ -20,7 +20,7 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import { onMount } from 'svelte';
-	import { fade } from 'svelte/transition';
+	import { fade } from '$lib/utils/transitions';
 	import { FloatingContent, useClickOutside, useEscapeKey } from '$lib/floating';
 	import type { VirtualAnchor } from '$lib/floating';
 	import { inComposition } from '$lib/utils/ime';
@@ -361,7 +361,6 @@
 		<div
 			bind:this={pickerEl}
 			class="entity-picker floating"
-			transition:fade={{ duration: 100 }}
 		>
 			{@render pickerContent()}
 		</div>
@@ -371,7 +370,8 @@
 	<div
 		bind:this={pickerEl}
 		class="entity-picker"
-		transition:fade={{ duration: 100 }}
+		in:fade
+		out:fade
 	>
 		{@render pickerContent()}
 	</div>

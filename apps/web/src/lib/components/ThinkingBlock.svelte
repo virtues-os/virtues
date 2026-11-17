@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { slide } from "svelte/transition";
+	import { slide } from "$lib/utils/transitions";
 	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { cubicOut } from "svelte/easing";
 	import { untrack } from "svelte";

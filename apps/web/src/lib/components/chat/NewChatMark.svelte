@@ -5,7 +5,7 @@
 	settling in as the screen opens.
 -->
 <script lang="ts">
-	import { fade } from 'svelte/transition';
+	import { fade } from '$lib/utils/transitions';
 </script>
 
 <div class="mark" in:fade={{ duration: 200 }}>

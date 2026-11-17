@@ -18,7 +18,7 @@
 <script lang="ts">
 	import { onMount } from "svelte";
 	import { reducedMotion } from "$lib/stores/motion.svelte";
-	import { fade } from "svelte/transition";
+	import { fade } from "$lib/utils/transitions";
 	import TextAction from "$lib/components/TextAction.svelte";
 	import {
 		FIGURE_EIGHT_PERIOD,

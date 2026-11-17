@@ -4,7 +4,7 @@
 	 *
 	 * Displays edit_page tool results with an expandable diff view (read-only).
 	 */
-	import { slide } from "svelte/transition";
+	import { slide } from "$lib/utils/transitions";
 	import Icon from "$lib/components/Icon.svelte";
 	import IconButton from "$lib/components/IconButton.svelte";
 

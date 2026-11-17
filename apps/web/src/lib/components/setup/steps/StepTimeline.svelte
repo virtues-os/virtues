@@ -42,7 +42,7 @@
 	import { useShowing, mayTakeFocus, isOurs } from '../showing';
 	import { reducedMotion } from '$lib/stores/motion.svelte';
 	import { onMount, tick } from 'svelte';
-	import { fade } from 'svelte/transition';
+	import { fade } from '$lib/utils/transitions';
 	import {
 		ApiError,
 		getProfile,

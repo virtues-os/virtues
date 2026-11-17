@@ -36,7 +36,7 @@
 	import { onMount } from 'svelte';
 	import { reducedMotion } from '$lib/stores/motion.svelte';
 	import { cubicOut } from 'svelte/easing';
-	import { fade } from 'svelte/transition';
+	import { fade } from '$lib/utils/transitions';
 	import Icon from '$lib/components/Icon.svelte';
 	import NewChatMark from './NewChatMark.svelte';
 	import { portal } from '$lib/actions/portal';

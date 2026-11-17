@@ -10,7 +10,6 @@
 	 */
 
 	import IconButton from '$lib/components/IconButton.svelte';
-	import { fade } from 'svelte/transition';
 	import { FloatingContent, useClickOutside, useEscapeKey } from '$lib/floating';
 	import type { VirtualAnchor } from '$lib/floating';
 	import { TOOLBAR_OFFSET } from '$lib/document/toolbar';
@@ -101,7 +100,6 @@
 	<div
 		bind:this={toolbarEl}
 		class="selection-toolbar"
-		transition:fade={{ duration: 100 }}
 		onmousedown={handleMouseDown}
 		role="toolbar"
 		aria-label="Text formatting"

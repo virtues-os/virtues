@@ -12,7 +12,7 @@
 <script lang="ts">
 	import { onDestroy } from "svelte";
 	import { reducedMotion } from "$lib/stores/motion.svelte";
-	import { fly } from "svelte/transition";
+	import { fly } from "$lib/utils/transitions";
 	import { cubicOut } from "svelte/easing";
 	import Input from "$lib/components/Input.svelte";
 	import { openExternal } from "$lib/tauri/bridge";

@@ -24,8 +24,8 @@
 <script lang="ts">
 	import { onMount, tick, type Snippet } from "svelte";
 	import { motion } from "$lib/stores/motion.svelte";
-	import { slide } from "svelte/transition";
-	import { flip } from "svelte/animate";
+	import { slide } from "$lib/utils/transitions";
+	import { flip } from "$lib/utils/transitions";
 	import Icon from "$lib/components/Icon.svelte";
 	import PersonPicture from "$lib/components/wiki/PersonPicture.svelte";
 	import { inThisChat, keyForHref, type AsideItem } from "./inThisChat";

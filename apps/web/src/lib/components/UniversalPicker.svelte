@@ -4,7 +4,6 @@
 	 *
 	 * Uses the floating UI system for smart positioning and dismiss handling.
 	 */
-	import { fade } from "svelte/transition";
 	import type { Snippet } from "svelte";
 	import { FloatingContent, useClickOutside, useEscapeKey } from "$lib/floating";
 	import type { Placement } from "$lib/floating";
@@ -154,7 +153,6 @@
 			<div
 				bind:this={dropdownElement}
 				class="{width} rounded-lg overflow-hidden"
-				transition:fade={{ duration: 100 }}
 			>
 				{#if searchable}
 					<div class="sticky top-0 z-10 bg-surface border-b border-border p-1">

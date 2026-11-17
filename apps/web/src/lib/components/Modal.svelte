@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { portal } from "$lib/actions/portal";
+	import { fade, floatOut } from "$lib/utils/transitions";
 	import Icon from "$lib/components/Icon.svelte";
 	import type { Snippet } from "svelte";
 
@@ -67,8 +68,8 @@
 
 {#if open}
 	<!-- svelte-ignore a11y_click_events_have_key_events a11y_no_static_element_interactions a11y_no_noninteractive_element_interactions -->
-	<div class="modal-backdrop" onclick={handleBackdropClick} role="presentation" use:portal>
-		<div class="modal {widthClass}" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" use:holdFocus>
+	<div class="modal-backdrop" onclick={handleBackdropClick} role="presentation" use:portal out:fade>
+		<div class="modal {widthClass}" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" use:holdFocus out:floatOut>
 			{#if title}
 				<div class="modal-header">
 					<h2 class="modal-title">{title}</h2>
@@ -105,7 +106,7 @@
 		padding-top: max(15vh, env(safe-area-inset-top));
 		padding-bottom: max(16px, env(safe-area-inset-bottom));
 		z-index: var(--z-modal);
-		animation: backdrop-fade-in 150ms ease-out;
+		animation: backdrop-fade-in var(--motion-enter) var(--ease-premium);
 	}
 
 	@keyframes backdrop-fade-in {
@@ -124,7 +125,10 @@
 		border-radius: var(--radius-xl);
 		box-shadow: 0 16px 48px rgba(0, 0, 0, 0.2);
 		overflow: hidden;
-		animation: modal-slide-in 150ms ease-out;
+		/* It settles down into place and, closing (floatOut), shrinks back
+		   toward its top edge as it fades. */
+		transform-origin: top center;
+		animation: modal-slide-in var(--motion-enter) var(--ease-premium);
 		/* A modal taller than the window scrolls its body; the header and
 		   footer stay put. Without this, anything past the fold could not be
 		   reached at all. */
@@ -179,10 +183,11 @@
 		color: var(--foreground-muted);
 		border: none;
 		cursor: pointer;
-		transition: all 150ms ease;
+		transition: background-color var(--motion-hover-out) var(--ease-premium), color var(--motion-hover-out) var(--ease-premium);
 	}
 
 	.close-btn:hover {
+		transition-duration: var(--motion-hover-in);
 		background: var(--surface-overlay);
 		color: var(--foreground);
 	}

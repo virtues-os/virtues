@@ -42,7 +42,7 @@
 <script lang="ts">
 	import { onDestroy, onMount, tick } from "svelte";
 	import { reducedMotion } from "$lib/stores/motion.svelte";
-	import { fade, fly } from "svelte/transition";
+	import { fade, fly } from "$lib/utils/transitions";
 	import { cubicOut } from "svelte/easing";
 	import Icon from "$lib/components/Icon.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";

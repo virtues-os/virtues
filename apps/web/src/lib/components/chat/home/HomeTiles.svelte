@@ -12,7 +12,7 @@
 	 * the line sits just above the tiles instead of on a row of its own.
 	 */
 	import type { Snippet } from 'svelte';
-	import { fade } from 'svelte/transition';
+	import { fade } from '$lib/utils/transitions';
 	import Icon from '$lib/components/Icon.svelte';
 	import AtlasIcon from '$lib/components/sidebar/AtlasIcon.svelte';
 	import { pinsStore } from '$lib/stores/pins.svelte';

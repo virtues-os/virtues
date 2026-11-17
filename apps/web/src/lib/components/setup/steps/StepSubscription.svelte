@@ -26,7 +26,7 @@
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
 	import { reducedMotion } from "$lib/stores/motion.svelte";
-	import { fly, fade } from "svelte/transition";
+	import { fly, fade } from "$lib/utils/transitions";
 	import { cubicOut } from "svelte/easing";
 	import Icon from "$lib/components/Icon.svelte";
 	import ThinkingMark from "$lib/components/ThinkingMark.svelte";

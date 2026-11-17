@@ -9,7 +9,7 @@
 	 * sees comes back then. Nothing here counts.
 	 */
 	import { onMount } from 'svelte';
-	import { fade } from 'svelte/transition';
+	import { fade } from '$lib/utils/transitions';
 	import type { SuggestedQuestion } from '$lib/api/client';
 	import { attention } from '$lib/stores/attention.svelte';
 	import { chatSessions } from '$lib/stores/chatSessions.svelte';

@@ -2,6 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import type { Anchor, FloatingOptions } from './types';
 	import { useFloating } from '../hooks/useFloating.svelte';
+	import { floatOut, originFor } from '$lib/utils/transitions';
 
 	interface Props {
 		anchor: Anchor | null;
@@ -50,6 +51,8 @@
 	class="floating-content {className}"
 	style={floating.style}
 	data-placement={floating.state.placement}
+	style:transform-origin={originFor(floating.state.placement)}
+	out:floatOut
 >
 	{@render children()}
 
@@ -67,6 +70,7 @@
 		box-shadow: var(--shadow-float);
 		animation: floating-enter var(--motion-enter) var(--ease-premium);
 	}
+
 
 	.floating-arrow {
 		position: absolute;
