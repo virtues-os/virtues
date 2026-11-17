@@ -11,6 +11,7 @@
 	import { onMount, tick } from 'svelte';
 	import { invalidate } from '$app/navigation';
 	import { reducedMotion } from '$lib/stores/motion.svelte';
+	import { lightUp } from '$lib/utils/lit';
 	import Button from '$lib/components/Button.svelte';
 	import ThemePicker from '$lib/components/ThemePicker.svelte';
 	import AssistantNameSettings from '$lib/components/AssistantNameSettings.svelte';
@@ -103,9 +104,7 @@
 	$effect(() => {
 		if (!lit) return;
 		const el = document.getElementById(`setting-${lit}`);
-		el?.classList.add('setting-lit');
-		const timer = setTimeout(() => el?.classList.remove('setting-lit'), 1800);
-		return () => clearTimeout(timer);
+		if (el) lightUp(el);
 	});
 </script>
 
@@ -234,30 +233,9 @@
 		color: var(--color-error);
 	}
 
-	/* The row this page was opened for: one wash of the highlighter that
-	   fades, the way a cited passage lights when you open it. */
-	.rows :global(.setting-lit) {
-		animation: setting-lit 1800ms var(--ease-premium) both;
-	}
-
-	@keyframes setting-lit {
-		0%,
-		60% {
-			background: var(--color-highlight);
-		}
-		100% {
-			background: transparent;
-		}
-	}
-
 	@media (prefers-reduced-motion: reduce) {
 		.back {
 			transition: none;
-		}
-
-		.rows :global(.setting-lit) {
-			animation: none;
-			background: var(--color-highlight);
 		}
 	}
 </style>

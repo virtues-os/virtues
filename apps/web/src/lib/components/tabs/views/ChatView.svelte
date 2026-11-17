@@ -91,6 +91,7 @@
 	import { goto } from "$app/navigation";
 	import { fade, fly } from "$lib/utils/transitions";
 	import { reducedMotion } from "$lib/stores/motion.svelte";
+	import { lightUp } from "$lib/utils/lit";
 	import { cubicInOut } from "svelte/easing";
 	import { chatSessions } from "$lib/stores/chatSessions.svelte";
 	import { chatActivity } from "$lib/stores/chatActivity.svelte";
@@ -1423,13 +1424,10 @@
 	}
 
 	function showRevealed(el: HTMLElement) {
-		// Under reduced motion the jump is instant; the highlight stays, since
-		// it says which message you came for.
+		// Under reduced motion the jump is instant; the wash stays, since it
+		// says which message you came for.
 		el.scrollIntoView({ block: "start", behavior: reducedMotion() ? "auto" : "smooth" });
-		el.animate(
-			[{ backgroundColor: "var(--color-highlight)" }, { backgroundColor: "transparent" }],
-			{ duration: 1600, easing: "ease-out" },
-		);
+		lightUp(el);
 	}
 
 	function openChatMenu(e?: MouseEvent) {

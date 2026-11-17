@@ -17,6 +17,7 @@ import { Extension, type Editor } from '@tiptap/core';
 import { Plugin, PluginKey, type EditorState, type Transaction } from '@tiptap/pm/state';
 import { Decoration, DecorationSet, type EditorView } from '@tiptap/pm/view';
 import { contract } from './schema';
+import { LIT_CLASS } from '$lib/utils/lit';
 
 /** The category colours (`--cat-*` in themes.css) a device's caret takes. */
 const CARET_COLORS = ['orange', 'cyan', 'violet', 'emerald', 'rose', 'indigo', 'yellow', 'pink', 'purple'];
@@ -114,7 +115,7 @@ function flashDecorations(doc: EditorState['doc'], ids: Set<string>): Decoration
 	doc.descendants((node, pos) => {
 		const id = node.attrs[contract.id.attr];
 		if (typeof id === 'string' && ids.has(id)) {
-			decos.push(Decoration.node(pos, pos + node.nodeSize, { class: 'doc-flash' }));
+			decos.push(Decoration.node(pos, pos + node.nodeSize, { class: LIT_CLASS }));
 			return false;
 		}
 		return true;

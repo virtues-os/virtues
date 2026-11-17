@@ -229,18 +229,10 @@
 	}
 }
 
-.doc-flash {
-	animation: doc-flash 1.4s ease forwards;
+/* The blocks a chat edit wrote take the app's one wash for a found thing
+   (presence.ts sets `lit`, $lib/styles/lit.css). */
+.ProseMirror > .lit {
 	border-radius: var(--radius-md);
-}
-
-@keyframes doc-flash {
-	from {
-		background-color: color-mix(in srgb, var(--color-primary) 16%, transparent);
-	}
-	to {
-		background-color: transparent;
-	}
 }
 
 .doc-ai-caret {
@@ -300,8 +292,7 @@
 		animation: none;
 	}
 
-	.doc-ai-trail,
-	.doc-flash {
+	.doc-ai-trail {
 		animation: none;
 	}
 

@@ -9,6 +9,7 @@
 	// IntersectionObserver; the download route's Range support (Phase 2) lets
 	// pdf.js fetch large documents piecewise instead of whole.
 	import Icon from "$lib/components/Icon.svelte";
+	import { lightUp } from "$lib/utils/lit";
 	import IconButton from "$lib/components/IconButton.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import RefPicker, { type EntityResult } from "$lib/components/RefPicker.svelte";
@@ -565,8 +566,7 @@
 	}
 
 	function pulse(el: HTMLElement) {
-		el.classList.add("pdf-flash");
-		setTimeout(() => el.classList.remove("pdf-flash"), 2400);
+		lightUp(el);
 	}
 
 	// Initial jump (deep link / remembered page). Deferred until the pane has
@@ -1285,25 +1285,6 @@
 	}
 	.pdf-hl:hover {
 		filter: brightness(0.92);
-	}
-
-	/* Citation-landing flash — a brief pulse on the cited passage/highlight.
-	   Applied to text-layer spans (transparent text → outline) and highlight
-	   boxes alike. */
-	:global(.pdf-flash) {
-		animation: pdf-flash-pulse 2.4s ease-out;
-		border-radius: var(--radius-xs);
-	}
-	@keyframes pdf-flash-pulse {
-		0%,
-		30% {
-			background: rgba(80, 160, 255, 0.55);
-			box-shadow: 0 0 0 3px rgba(80, 160, 255, 0.4);
-		}
-		100% {
-			background: transparent;
-			box-shadow: 0 0 0 0 rgba(80, 160, 255, 0);
-		}
 	}
 
 	/* Selection color toolbar + note popover */

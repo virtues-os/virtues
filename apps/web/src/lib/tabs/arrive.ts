@@ -12,7 +12,8 @@
  * further below on a soft spring, a beat after the search card drops away
  * ($lib/search/handoff).
  *
- * Two cases keep still. Home and a new chat stand on glass cards over the
+ * Three cases keep still. The page a closed tab uncovers was already there
+ * ($lib/tabs/close). Home and a new chat stand on glass cards over the
  * window's painting, and a fading ancestor cuts glass off from what it
  * frosts. A tab moving between panes has its own motion (`data-motion`).
  */
@@ -37,7 +38,11 @@ export function arrive(node: HTMLElement, params: Arrival) {
 		// By route, not by looking for Home in the slot: when a tab navigates
 		// away from Home in place, Home is still in the slot as this runs.
 		if (reducedMotion() || node.dataset.motion || isNewChat(route)) return;
-		if (document.documentElement.classList.contains('search-handoff')) {
+		const root = document.documentElement;
+		// Uncovered by the page you closed, which shrinks into its tab over it
+		// ($lib/tabs/close): this page was already there.
+		if (root.classList.contains('tab-closing')) return;
+		if (root.classList.contains('search-handoff')) {
 			node.animate([{ transform: 'translateY(24px) scale(0.99)' }, { transform: 'none' }], {
 				duration: WEIGHTED.duration,
 				delay: WEIGHTED_DELAY_MS,

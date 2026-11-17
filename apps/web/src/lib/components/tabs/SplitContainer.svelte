@@ -11,6 +11,8 @@
 	import { gettingStarted } from "$lib/stores/gettingStarted.svelte";
 	import TabContent from "./TabContent.svelte";
 	import { arrive } from "$lib/tabs/arrive";
+	import { closeIntoTab, markClosed } from "$lib/tabs/close";
+	import { beginTabToPane, tabBecomesPane, tabRect } from "$lib/tabs/split";
 	import { mountedTabs, touch } from "$lib/tabs/keepAlive";
 	import { onMount, untrack } from "svelte";
 	import { listenForBrowserOpen } from "./browserPaneListener";
@@ -214,6 +216,27 @@
 			entering.set(id, { side, clip: grew(side) });
 		}
 
+		// Splitting by moving a tab across: the tab becomes the new pane
+		// ($lib/tabs/split). Its place in the first strip is read now, before
+		// the strips change.
+		if (!before.split && after.split) {
+			for (const [id, side] of after.visible) {
+				if (side !== "right" || before.panes.get(id) !== "left") continue;
+				const from = tabRect(id);
+				if (!from || !containerRef || !beginTabToPane(containerRef)) continue;
+				requestAnimationFrame(() => {
+					if (!containerRef) return;
+					const { width, height } = containerRef.getBoundingClientRect();
+					tabBecomesPane(containerRef, id, from, {
+						left: (width * to.left) / 100 + to.gutter / 2,
+						top: 0,
+						width: (width * to.right) / 100 - to.gutter / 2,
+						height,
+					});
+				});
+			}
+		}
+
 		clearTimeout(motionTimer);
 		settling = false;
 		motion = { leaving, entering, survivor };
@@ -243,7 +266,12 @@
 			panes: new Map(allTabs.map((t) => [t.id, windowShellStore.findTabPane(t.id)])),
 		};
 		untrack(() => {
-			if (previous && !isResizing) startMotion(previous, next);
+			if (previous) {
+				// A tab that was on screen and is gone has closed: its page
+				// shrinks back into its tab ($lib/tabs/close).
+				markClosed([...previous.visible.keys()].filter((id) => !next.panes.has(id)));
+				if (!isResizing) startMotion(previous, next);
+			}
 			previous = next;
 		});
 	});
@@ -507,6 +535,8 @@
 		<div
 			class="tab-slot"
 			use:arrive={{ route: tab.route, active: isActive }}
+			out:closeIntoTab={tab}
+			data-tab-id={tab.id}
 			data-side={side}
 			data-active={isActive ? "" : undefined}
 			data-motion={leaving ? "leave" : entering ? "enter" : undefined}
@@ -667,6 +697,24 @@
 		background-color: var(--color-page);
 		background-image: var(--background-image);
 		background-blend-mode: multiply;
+	}
+
+	/* The card that opens out of a tab when it becomes a pane
+	   ($lib/tabs/split), drawn over the panes while it grows. Both cards
+	   move on its spring meanwhile. */
+	.split-container:global(.tab-to-pane) > .pane-shell,
+	.split-container:global(.tab-to-pane) > .tab-slot {
+		transition-duration: var(--split-ms);
+		transition-timing-function: var(--split-ease);
+	}
+
+	.split-container :global(.pane-stand-in) {
+		position: absolute;
+		z-index: 4;
+		pointer-events: none;
+		background-color: var(--color-page);
+		border: 1px solid var(--card-edge);
+		border-radius: var(--radius-xl);
 	}
 
 	.tab-slot[data-motion="leave"] {

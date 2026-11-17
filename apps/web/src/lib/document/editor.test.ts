@@ -3122,7 +3122,7 @@ describe('the assistant on the page', () => {
 			const editor = track(htmlEditor('<p data-id="aaaa0001">One</p><p data-id="aaaa0002">Two</p>', [aiPresence()]));
 			flashBlocks(editor, ['aaaa0002']);
 			expect(flashedBlocks(editor.state)).toEqual(['aaaa0002']);
-			expect(editor.view.dom.querySelectorAll('.doc-flash')).toHaveLength(1);
+			expect(editor.view.dom.querySelectorAll('.lit')).toHaveLength(1);
 			vi.advanceTimersByTime(2000);
 			expect(flashedBlocks(editor.state)).toEqual([]);
 		} finally {
