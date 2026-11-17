@@ -104,6 +104,12 @@ debug = "line-tables-only"
 
 [profile.dev.package."*"]
 debug = false
+# Not stripped. With debug off, Cargo strips each dependency, proc-macro
+# dylibs included, and that strip can leave a dylib's string table 4-byte
+# aligned, which macOS 27's dyld refuses to load ("mis-aligned LINKEDIT
+# string pool"; rust-lang/rust#157750). It broke every Mac build of
+# virtues-api through sqlx_macros. There is no debug info to strip here.
+strip = "none"
 
 [profile.test]
 opt-level = 0
