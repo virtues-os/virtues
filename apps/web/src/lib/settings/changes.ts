@@ -12,6 +12,28 @@ function capitalize(text: string): string {
 	return text.charAt(0).toUpperCase() + text.slice(1);
 }
 
+/** The capability each tool belongs to, as Settings names it (`api/capabilities.rs`). */
+function capabilityOf(tool: string): string | null {
+	if (tool === 'web_search') return 'Search the web';
+	if (tool === 'browse' || tool.startsWith('browser_')) return 'Use your browser';
+	if (tool === 'applet') return 'Make and change applets';
+	if (tool === 'create_page' || tool === 'edit_page') return 'Write in your pages';
+	return null;
+}
+
+/** "Search the web turned off": the capabilities whose tools changed, from the stored switch map. */
+function describeCapabilities(before: unknown, after: unknown): string {
+	const was = (before ?? {}) as Record<string, unknown>;
+	const now = (after ?? {}) as Record<string, unknown>;
+	const lines = new Map<string, boolean>();
+	for (const [tool, on] of Object.entries(now)) {
+		const name = capabilityOf(tool);
+		if (name && typeof on === 'boolean' && (was[tool] ?? true) !== on) lines.set(name, on);
+	}
+	if (lines.size === 0) return 'Changed';
+	return [...lines].map(([name, on]) => `${name} turned ${on ? 'on' : 'off'}`).join(', ');
+}
+
 /** What happened, in a few words: "Turned off", "Changed to $5.00". */
 export function describeChange(change: SettingsChange): string {
 	if (change.kind === 'paired') return 'Paired';
@@ -38,6 +60,8 @@ export function describeChange(change: SettingsChange): string {
 		case 'style':
 		case 'subjects':
 			return 'Changed';
+		case 'capabilities':
+			return describeCapabilities(change.old_value, value);
 	}
 
 	if (value === null || value === '') return 'Cleared';

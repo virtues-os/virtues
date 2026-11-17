@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { slide } from "svelte/transition";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { cubicOut } from "svelte/easing";
 	import { untrack } from "svelte";
 	import ThinkingMark, { LAND_MS } from "./ThinkingMark.svelte";
@@ -241,7 +242,7 @@
 	});
 
 	const reduceMotion =
-		typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 
 	// Check if we have content
 	const hasContent = $derived(

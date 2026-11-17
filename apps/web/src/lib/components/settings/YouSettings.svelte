@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * Settings → You: the basics the assistant and your pages work from. Each
+	 * Settings · Profile: the basics the assistant and your pages work from. Each
 	 * field saves on its own when you leave it (`Input autoSave`), through the
 	 * profile endpoint.
 	 */
@@ -65,12 +65,12 @@
 {:else}
 	<SettingRow id="full-name" label={label('full-name')} forId="profile-full-name">
 		<div class="field">
-			<Input id="profile-full-name" bind:value={values.full_name} autocomplete="name" disabled={phase !== 'ready'} autoSave onSave={(v) => save('full_name', v)} />
+			<Input id="profile-full-name" placeholder="Add" bind:value={values.full_name} autocomplete="name" disabled={phase !== 'ready'} autoSave onSave={(v) => save('full_name', v)} />
 		</div>
 	</SettingRow>
 	<SettingRow id="preferred-name" label={label('preferred-name')} forId="profile-preferred-name">
 		<div class="field">
-			<Input id="profile-preferred-name" bind:value={values.preferred_name} autocomplete="nickname" disabled={phase !== 'ready'} autoSave onSave={(v) => save('preferred_name', v)} />
+			<Input id="profile-preferred-name" placeholder="Add" bind:value={values.preferred_name} autocomplete="nickname" disabled={phase !== 'ready'} autoSave onSave={(v) => save('preferred_name', v)} />
 		</div>
 	</SettingRow>
 	<SettingRow id="birthday" label={label('birthday')} forId="profile-birthday">
@@ -80,12 +80,12 @@
 	</SettingRow>
 	<SettingRow id="occupation" label={label('occupation')} forId="profile-occupation">
 		<div class="field">
-			<Input id="profile-occupation" bind:value={values.occupation} autocomplete="organization-title" disabled={phase !== 'ready'} autoSave onSave={(v) => save('occupation', v)} />
+			<Input id="profile-occupation" placeholder="Add" bind:value={values.occupation} autocomplete="organization-title" disabled={phase !== 'ready'} autoSave onSave={(v) => save('occupation', v)} />
 		</div>
 	</SettingRow>
 	<SettingRow id="employer" label={label('employer')} help="Leave it blank if you work for yourself." forId="profile-employer">
 		<div class="field">
-			<Input id="profile-employer" bind:value={values.employer} autocomplete="organization" disabled={phase !== 'ready'} autoSave onSave={(v) => save('employer', v)} />
+			<Input id="profile-employer" placeholder="Add" bind:value={values.employer} autocomplete="organization" disabled={phase !== 'ready'} autoSave onSave={(v) => save('employer', v)} />
 		</div>
 	</SettingRow>
 	<SettingRow id="home" label={label('home')} help="Your time zone, like America/Chicago. Your days are counted in it." forId="profile-home">
@@ -97,7 +97,25 @@
 
 <style>
 	.field {
-		width: 240px;
+		width: 280px;
+	}
+
+	/* Quiet fields: the value reads as text at the row's end, and the box
+	   shows on hover and while you edit. */
+	.field :global(.input-wrapper:not(.hovered):not(.focused):not(.error) .input-field) {
+		border-color: transparent;
+		background: transparent;
+		text-align: right;
+	}
+
+	.field :global(.input-wrapper.disabled .input-field) {
+		background: transparent;
+	}
+
+	/* "Add" sits where a value would, at the end of the row. */
+	.field :global(.input-wrapper:not(.focused) .placeholder) {
+		left: auto;
+		right: 36px;
 	}
 
 	.load-error {

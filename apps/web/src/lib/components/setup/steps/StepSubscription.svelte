@@ -25,6 +25,7 @@
 -->
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { fly, fade } from "svelte/transition";
 	import { cubicOut } from "svelte/easing";
 	import Icon from "$lib/components/Icon.svelte";
@@ -98,7 +99,7 @@
 	const name = $derived(setup.assistantName);
 
 	const still =
-		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 	const IN = { y: still ? 0 : 8, duration: still ? 0 : 260, easing: cubicOut, delay: still ? 0 : 60 };
 	const OUT = { y: still ? 0 : -6, duration: still ? 0 : 150, easing: cubicOut };
 

@@ -1,7 +1,8 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import { motion } from "$lib/stores/motion.svelte";
 	import { onDestroy, onMount } from "svelte";
-	import { Spring, prefersReducedMotion } from "svelte/motion";
+	import { Spring } from "svelte/motion";
 	import { fly } from "svelte/transition";
 	import { quintOut } from "svelte/easing";
 	import ContextPanel from "$lib/components/chat/ContextPanel.svelte";
@@ -163,7 +164,7 @@
 	// The tray's height follows its content, so opening, closing and moving
 	// between views are all one height transition.
 	let trayContentHeight = $state(0);
-	const viewIn = $derived({ y: 6, duration: prefersReducedMotion.current ? 0 : 280, easing: quintOut });
+	const viewIn = $derived({ y: 6, duration: motion.reduced ? 0 : 280, easing: quintOut });
 	// Mirror of the editor's markdown, so an external `value` set can be told
 	// apart from our own echo of a keystroke.
 	let docText = "";

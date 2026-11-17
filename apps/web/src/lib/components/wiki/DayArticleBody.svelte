@@ -29,6 +29,7 @@
 -->
 <script lang="ts">
 	import type { Snippet } from "svelte";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { tick } from "svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import {
@@ -244,7 +245,7 @@
 		const el = next && root.querySelector<HTMLElement>(`[data-stop="${next.id}"]`);
 		if (!next || !el) return;
 		const focus = !!document.activeElement?.closest(".record-card");
-		const still = matchMedia("(prefers-reduced-motion: reduce)").matches;
+		const still = reducedMotion();
 		el.scrollIntoView({ block: "center", behavior: still ? "auto" : "smooth" });
 		const trigger = el.nextElementSibling?.classList.contains("ev-trigger") ? (el.nextElementSibling as HTMLElement) : null;
 		show({ ...next.source, anchor: el, trigger, stop: next.id, focus });

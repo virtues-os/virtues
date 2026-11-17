@@ -40,6 +40,7 @@
 -->
 <script lang="ts">
 	import { useShowing, mayTakeFocus, isOurs } from '../showing';
+	import { reducedMotion } from '$lib/stores/motion.svelte';
 	import { onMount, tick } from 'svelte';
 	import { fade } from 'svelte/transition';
 	import {
@@ -645,8 +646,7 @@
 	let nextChapter = $state('');
 
 	onMount(() => {
-		const mq = window.matchMedia('(prefers-reduced-motion: reduce)');
-		reduced = mq.matches;
+		reduced = reducedMotion();
 		nextChapter = readNextChapter();
 		let seen = false;
 		try {

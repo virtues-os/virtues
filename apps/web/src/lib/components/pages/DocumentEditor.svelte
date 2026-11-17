@@ -20,6 +20,7 @@
 
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import type { Editor } from "@tiptap/core";
 	import { Extension } from "@tiptap/core";
 	import { isChangeOrigin } from "@tiptap/extension-collaboration";
@@ -176,7 +177,7 @@
 	$effect(() => onFindOpen?.(findOpen && !!findHost));
 	/** A motion's length, or none when the person asks for reduced motion. */
 	const motion = (ms: number) =>
-		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ? 0 : ms;
+		reducedMotion() ? 0 : ms;
 	let findInitial = $state("");
 
 	let tableAnchor = $state<{ x: number; y: number; width: number } | null>(null);

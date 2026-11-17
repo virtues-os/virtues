@@ -41,6 +41,7 @@
 -->
 <script lang="ts">
 	import { onDestroy, onMount, tick } from "svelte";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { fade, fly } from "svelte/transition";
 	import { cubicOut } from "svelte/easing";
 	import Icon from "$lib/components/Icon.svelte";
@@ -190,7 +191,7 @@
 		}
 	}
 	const still =
-		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 
 	const chat = chatInstances.getOrCreate({
 		conversationId: GETTING_STARTED_CHAT_ID,

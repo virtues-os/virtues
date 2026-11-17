@@ -18,6 +18,7 @@
  */
 
 import type { Action } from "svelte/action";
+import { reducedMotion } from "$lib/stores/motion.svelte";
 
 export interface VeilParams {
 	hiding: boolean;
@@ -179,7 +180,7 @@ function scatter(el: HTMLElement, box: DOMRect, n: number, rand: () => number): 
 }
 
 export const veiled: Action<HTMLElement, VeilParams> = (node, params) => {
-	const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+	const still = reducedMotion();
 	const scratch = document.createElement("canvas").getContext("2d", { willReadFrequently: true });
 	let hidden: Hidden[] = [];
 	let canvas: HTMLCanvasElement | null = null;

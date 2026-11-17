@@ -15,6 +15,8 @@
 	 * The only honest signal is the box going away and coming back.
 	 */
 	import { onMount, onDestroy } from 'svelte';
+	import Switch from './Switch.svelte';
+	import Choice from './Choice.svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import Button from '$lib/components/Button.svelte';
 	import {
@@ -26,6 +28,11 @@
 	import { confirmAction } from '$lib/stores/dialog.svelte';
 	import { autoUpdateOf, setAutoUpdate, type AutoUpdateStatus } from '$lib/api/autoUpdate';
 	import { reloadApp } from '$lib/reload';
+
+	const CHANNELS = [
+		{ value: 'stable', label: 'Released' },
+		{ value: 'prerelease', label: 'Early, may break' },
+	] as const;
 
 	let status = $state<UpdateStatus | null>(null);
 	let loading = $state(true);
@@ -311,16 +318,7 @@
 				     deliberate reach, which is the honest shape of this
 				     decision. -->
 				<div class="channel-picker">
-					<select
-						id="channel"
-						disabled={switching}
-						value={status.channel}
-						onchange={(e) =>
-							switchChannel(e.currentTarget.value as 'stable' | 'prerelease')}
-					>
-						<option value="stable">Released</option>
-						<option value="prerelease">Early, may break</option>
-					</select>
+					<Choice id="channel" disabled={switching} value={status.channel === 'prerelease' ? 'prerelease' : 'stable'} options={CHANNELS} onchange={switchChannel} />
 					{#if status.channel === 'prerelease'}
 						<span class="risk">
 							<Icon icon="mynaui:danger-triangle" width="13" />
@@ -341,15 +339,7 @@
 							and restarts. Connected devices reconnect on their own.
 						</p>
 					</div>
-					<button
-						class="switch"
-						class:on={auto.enabled}
-						role="switch"
-						aria-checked={auto.enabled}
-						aria-label="Install updates automatically"
-						disabled={autoSaving}
-						onclick={toggleAuto}
-					></button>
+					<Switch checked={auto.enabled} label="Install updates automatically" disabled={autoSaving} onchange={() => toggleAuto()} />
 				</div>
 				{#if auto.install && !auto.install.ok}
 					<p class="note auto-failed">
@@ -528,16 +518,6 @@
 		flex-wrap: wrap;
 	}
 
-	.channel-picker select {
-		font: inherit;
-		font-size: 13px;
-		padding: 4px 8px;
-		border-radius: var(--radius-md);
-		border: 1px solid var(--color-border);
-		background: var(--color-background);
-		color: var(--color-foreground);
-	}
-
 	.risk {
 		display: inline-flex;
 		align-items: center;
@@ -628,44 +608,6 @@
 
 	.auto-failed {
 		color: var(--error);
-	}
-
-	.switch {
-		width: 44px;
-		height: 26px;
-		border-radius: var(--radius-full);
-		background: var(--color-border);
-		position: relative;
-		flex: none;
-		border: 0;
-		cursor: pointer;
-		transition: background 150ms ease;
-		padding: 0;
-	}
-	.switch.on {
-		background: var(--color-success);
-	}
-	.switch::after {
-		content: '';
-		position: absolute;
-		top: 3px;
-		left: 3px;
-		width: 20px;
-		height: 20px;
-		border-radius: 50%;
-		background: var(--color-background);
-		transition: transform 150ms ease;
-	}
-	.switch.on::after {
-		transform: translateX(18px);
-	}
-	.switch:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 3px;
-	}
-	.switch:disabled {
-		opacity: 0.6;
-		cursor: default;
 	}
 
 	.apply-error {

@@ -11,6 +11,7 @@
  */
 
 import { GS_INTERVIEW_OPENING_ID } from "$lib/components/chat/getting-started/getting-started";
+import { reducedMotion } from "$lib/stores/motion.svelte";
 
 const OPENING_IDS = [GS_INTERVIEW_OPENING_ID, "gs-iv-body", "gs-iv-ask"];
 
@@ -39,7 +40,7 @@ export class OpeningRevealController {
 
 	start() {
 		if (this.#timer) clearTimeout(this.#timer);
-		if (window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) return;
+		if (reducedMotion()) return;
 		const texts = OPENING_IDS.map((id) => this.#textOf(id));
 		const shown: Record<string, number> = Object.fromEntries(OPENING_IDS.map((id) => [id, 0]));
 		this.chars = { ...shown };

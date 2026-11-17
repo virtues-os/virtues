@@ -1,6 +1,6 @@
 <script lang="ts">
 	/**
-	 * One setting on the Settings page: its name and one line of help on the
+	 * One setting on a Settings page: its name and one line of help on the
 	 * left, its control on the right. `block` stacks the control under the
 	 * words, for a field that needs the width (a note, a list, a picker).
 	 *
@@ -8,7 +8,6 @@
 	 * find the row (`data-setting`).
 	 */
 	import type { Snippet } from 'svelte';
-	import { settingsFilter } from '$lib/settings/filter';
 
 	let {
 		id,
@@ -26,11 +25,9 @@
 		block?: boolean;
 		children: Snippet;
 	} = $props();
-
-	const filter = settingsFilter();
 </script>
 
-<div class="row" class:block class:filtered={!filter.shows(id)} id="setting-{id}" data-setting={id}>
+<div class="row" class:block id="setting-{id}" data-setting={id}>
 	<div class="words">
 		{#if forId}
 			<label class="name" for={forId}>{label}</label>
@@ -43,17 +40,12 @@
 </div>
 
 <style>
-	/* Hidden while the page's search field doesn't match it. */
-	.filtered {
-		display: none !important;
-	}
-
 	.row {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: center;
 		gap: 24px;
-		min-height: 58px;
+		min-height: 56px;
 		padding: 8px 0;
 		border-bottom: 1px solid var(--color-border-subtle);
 		box-sizing: border-box;

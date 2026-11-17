@@ -49,6 +49,13 @@ describe('describeChange', () => {
 		expect(describeChange(change('employer', null))).toBe('Cleared');
 	});
 
+	it('names the capability that was switched', () => {
+		const off = change('capabilities', { web_search: false, create_page: true }, { old_value: { web_search: true, create_page: true } });
+		expect(describeChange(off)).toBe('Search the web turned off');
+		const pages = change('capabilities', { create_page: true, edit_page: true }, { old_value: { create_page: false, edit_page: false } });
+		expect(describeChange(pages)).toBe('Write in your pages turned on');
+	});
+
 	it('says a device was paired', () => {
 		expect(describeChange(change('', null, { kind: 'paired', id: 'paired:3', label: 'Kitchen speaker' }))).toBe('Paired');
 	});

@@ -34,6 +34,7 @@
 -->
 <script lang="ts">
 	import { onMount, tick } from "svelte";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { useShowing, mayTakeFocus } from "../showing";
 	import { fade } from "svelte/transition";
 	import Icon from "$lib/components/Icon.svelte";
@@ -62,7 +63,7 @@
 	let width = $state(0);
 
 	const still =
-		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 
 	const trimmed = $derived(text.trim());
 	const changed = $derived(trimmed !== original.trim());

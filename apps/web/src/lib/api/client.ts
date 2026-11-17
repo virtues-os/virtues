@@ -2932,6 +2932,21 @@ export function undoSettingsChange(id: number): Promise<{ ok: boolean }> {
 	return apiSend<{ ok: boolean }>('POST', `/settings/changes/${id}/undo`);
 }
 
+/** One thing the assistant can do, as the owner switched it (`api/capabilities.rs`). */
+export interface Capability {
+	id: 'web_search' | 'browser' | 'applets' | 'pages';
+	on: boolean;
+}
+
+export function getCapabilities(): Promise<Capability[]> {
+	return apiGet<Capability[]>('/settings/capabilities');
+}
+
+/** Turn one on or off. Returns them all. */
+export function setCapability(id: Capability['id'], on: boolean): Promise<Capability[]> {
+	return apiSend<Capability[]>('PUT', `/settings/capabilities/${id}`, { on });
+}
+
 /** One change the assistant proposes, in stored form (`api/settings_changes.rs`). */
 export interface SettingsDraftChange {
 	setting_id: string;

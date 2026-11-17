@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { flip } from "svelte/animate";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { onMount, untrack } from "svelte";
 	import { dndzone } from "svelte-dnd-action";
 	import type { DndEvent } from "svelte-dnd-action";
@@ -380,8 +381,6 @@
 		node.select();
 	}
 
-	const reducedMotion =
-		typeof matchMedia !== "undefined" && matchMedia("(prefers-reduced-motion: reduce)").matches;
 
 	/** `--ease-in-out-quad`. */
 	const easeInOut = cubicBezier(0.45, 0, 0.55, 1);
@@ -434,7 +433,7 @@
 	 * its placeholder as the pointer crosses zones, and it measures the
 	 * strip as it goes.
 	 */
-	const tabMotionMs = () => (reducedMotion || dndManager.session ? 0 : TAB_MOTION_MS);
+	const tabMotionMs = () => (reducedMotion() || dndManager.session ? 0 : TAB_MOTION_MS);
 	const RISE_PX = 8;
 	const SINK_PX = 4;
 
@@ -517,7 +516,7 @@
 			const el = scroller?.querySelector<HTMLElement>(`[data-tab-id="${CSS.escape(id)}"]`);
 			if (!el) return;
 			const reveal = () =>
-				el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: reducedMotion ? "auto" : "smooth" });
+				el.scrollIntoView({ block: "nearest", inline: "nearest", behavior: reducedMotion() ? "auto" : "smooth" });
 			if (unfolding.has(el)) el.addEventListener("introend", reveal, { once: true });
 			else reveal();
 		});

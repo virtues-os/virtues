@@ -1,16 +1,22 @@
 <!--
 	SettingsView.svelte
 
-	The one Settings room. Bare /virtues is Settings on one page
-	(settings/SettingsPage.svelte): every setting you change, in six sections
-	from lib/settings. The routes below are the pages a row on it opens, for
-	what is a list, a chart, a table or a long form.
+	The one Settings room. Bare /virtues is the landing page
+	(settings/SettingsLanding.svelte): search, what needs you, Changed
+	lately, and a link to each page. Each section of lib/settings is a page
+	(settings/SettingsSection.svelte); the other routes are pages a row
+	opens, for what is a list, a chart, a table or a long form.
 
-	  (page)       /virtues                — every setting, six sections
+	  (landing)    /virtues                — search, Changed lately, every page
+	  Profile      /virtues/profile        — you: name, birthday, work, home
+	  Assistant    /virtues/assistant      — its name, how it talks, what it can do
 	  Memory       /virtues/assistant/memory — what the assistant remembers
 	  Models       /virtues/assistant/models — the catalog
-	  Cost         /virtues/billing        — what AI has cost, and every call
+	  Appearance   /virtues/appearance     — theme, reading font, motion
+	  Billing      /virtues/billing        — subscription, balance, limits
+	  Cost         /virtues/billing/cost   — what AI has cost, and every call
 	  Your own AI  /virtues/billing/byo    — bringing your own AI
+	  Server       /virtues/server         — updates, and reaching it from away
 	  Keys         /virtues/keys           — sign-ins and the named keys applets use
 	  System       /virtues/system         — the machine, measured (read-only)
 	  Search       /virtues/search         — where search runs, and what it covers
@@ -46,7 +52,8 @@
 	import { isMacOS, isIOS } from '$lib/utils/platform';
 	import SoftwareView from '$lib/components/tabs/views/SoftwareView.svelte';
 
-	import SettingsPage from '$lib/components/settings/SettingsPage.svelte';
+	import SettingsLanding from '$lib/components/settings/SettingsLanding.svelte';
+	import SettingsSection from '$lib/components/settings/SettingsSection.svelte';
 	import MemoryPage from '$lib/components/settings/MemoryPage.svelte';
 	import ByoPage from '$lib/components/settings/ByoPage.svelte';
 	import ModelCatalogView from '$lib/components/tabs/views/ModelCatalogView.svelte';
@@ -66,28 +73,24 @@
 	// Old routes → their home in the flattened room. Rewritten in place so the
 	// sub-nav underline and the content both land on the canonical section.
 	const LEGACY_ROUTES: Record<string, string> = {
-		// You and Assistant were pages of their own until Settings became one
-		// page (2026-11-17).
-		'/virtues/you': '/virtues',
-		'/virtues/account': '/virtues',
-		'/virtues/profile': '/virtues',
-		'/virtues/assistant': '/virtues',
-		'/virtues/account/assistant': '/virtues',
+		'/virtues/you': '/virtues/profile',
+		'/virtues/account': '/virtues/profile',
+		'/virtues/account/assistant': '/virtues/assistant',
 		// The model catalog is Assistant's sub-page, beside the pickers it serves.
 		'/virtues/models': '/virtues/assistant/models',
 		// Billing and Usage merged into Plan (2026-08-31): one subject seen from
 		// two ends — what you are on, what is left, what drew it down. Both of
 		// their own doors redirect too, because they were live sections with
 		// bookmarks, not just historical paths.
-		'/virtues/usage': '/virtues/billing',
+		'/virtues/usage': '/virtues/billing/cost',
 		'/virtues/account/billing': '/virtues/billing',
 		'/virtues/byo-key': '/virtues/billing/byo',
 		'/virtues/billing/plan': '/virtues/billing',
-		'/virtues/account/usage': '/virtues/billing',
-		'/virtues/billing/usage': '/virtues/billing',
-		// Telemetry was this page under a word for something you send somewhere.
-		'/virtues/telemetry': '/virtues/billing',
-		'/virtues/developer/telemetry': '/virtues/billing',
+		'/virtues/account/usage': '/virtues/billing/cost',
+		'/virtues/billing/usage': '/virtues/billing/cost',
+		// Telemetry was the cost page under a word for something you send somewhere.
+		'/virtues/telemetry': '/virtues/billing/cost',
+		'/virtues/developer/telemetry': '/virtues/billing/cost',
 		// "Plan" named a choice that does not exist — one subscription, one
 		// price. Short-lived (2026-08-31 → 09-03), but it was a live row with
 		// bookmarks, so its door stays open.
@@ -95,15 +98,15 @@
 		// The 24h readings went back to System (2026-09-03): they are the
 		// machine measured, and had no business under a wallet balance.
 		'/virtues/system/history': '/virtues/system',
-		// Network and updates are rows on the Settings page; versions are the
-		// server's device page; the machine measured is System.
-		'/virtues/network': '/virtues',
+		// Network and updates are the Server page; versions are the server's
+		// device page; the machine measured is System.
+		'/virtues/network': '/virtues/server',
 		'/virtues/software': '/virtues/devices/server',
 		'/virtues/box': '/virtues/system',
 		'/virtues/box/health': '/virtues/system',
-		'/virtues/box/network': '/virtues',
-		'/virtues/box/updates': '/virtues',
-		'/virtues/updates': '/virtues',
+		'/virtues/box/network': '/virtues/server',
+		'/virtues/box/updates': '/virtues/server',
+		'/virtues/updates': '/virtues/server',
 		'/virtues/version': '/virtues/devices/server',
 		// This Mac is `devices/this`, a device page like any other, and a
 		// stable word Sources can link to without knowing a device id.
@@ -169,6 +172,9 @@
 
 	type Section =
 		| 'page'
+		| 'profile'
+		| 'appearance'
+		| 'server'
 		| 'assistant'
 		| 'billing'
 		| 'keys'
@@ -180,6 +186,9 @@
 		| 'developer';
 
 	const SECTIONS = [
+		'profile',
+		'appearance',
+		'server',
 		'assistant',
 		'billing',
 		'keys',
@@ -199,26 +208,35 @@
 	);
 	const sub = $derived(raw.split('/')[1] ?? '');
 
-	// No section list sits beside these pages. Bare /virtues is the one page
-	// with every setting, and its section names scroll within it; the routes
-	// above are pages its rows open, and Back returns to it.
+	// No section list sits beside these pages: the landing links to each,
+	// and each page links back to it.
 </script>
 
 <div class="settings-view">
 	<main class="content">
 		{#if section === 'page'}
-			<SettingsPage />
+			<SettingsLanding />
+		{:else if section === 'profile'}
+			<SettingsSection section="you" />
+		{:else if section === 'appearance'}
+			<SettingsSection section="appearance" />
+		{:else if section === 'server'}
+			<SettingsSection section="server" />
 		{:else if section === 'assistant'}
 			{#if sub === 'memory'}
 				<MemoryPage />
-			{:else}
+			{:else if sub === 'models'}
 				<ModelCatalogView />
+			{:else}
+				<SettingsSection section="assistant" />
 			{/if}
 		{:else if section === 'billing'}
 			{#if sub === 'byo'}
 				<ByoPage />
-			{:else}
+			{:else if sub === 'cost'}
 				<BillingView />
+			{:else}
+				<SettingsSection section="billing" />
 			{/if}
 		{:else if section === 'keys'}
 			<KeysView />

@@ -6,6 +6,7 @@
 	 * hourly run and no question in a new chat.
 	 */
 	import { onMount } from 'svelte';
+	import Switch from '$lib/components/settings/Switch.svelte';
 	import { getApplet, patchApplet } from '$lib/api/client';
 
 	let { assistantName = 'Ari' }: { assistantName?: string } = $props();
@@ -52,16 +53,7 @@
 					your day. It writes them once an hour from your calendar, email, messages and pages.
 				</p>
 			</div>
-			<button
-				type="button"
-				class="switch"
-				class:on={enabled}
-				role="switch"
-				aria-checked={enabled}
-				aria-label="Suggested questions"
-				disabled={!loaded || saving}
-				onclick={toggle}
-			></button>
+			<Switch checked={enabled} label="Suggested questions" disabled={!loaded || saving} onchange={() => toggle()} />
 		</div>
 		{#if error}
 			<p class="error">{error}</p>
@@ -83,56 +75,6 @@
 		align-items: flex-start;
 		justify-content: space-between;
 		gap: 24px;
-	}
-
-	.switch {
-		width: 44px;
-		height: 26px;
-		border-radius: var(--radius-full);
-		background: var(--color-border);
-		position: relative;
-		flex: none;
-		border: 0;
-		cursor: pointer;
-		transition: background 150ms ease;
-		padding: 0;
-	}
-
-	.switch.on {
-		background: var(--color-success);
-	}
-
-	.switch::after {
-		content: '';
-		position: absolute;
-		top: 3px;
-		left: 3px;
-		width: 20px;
-		height: 20px;
-		border-radius: 50%;
-		background: var(--color-background);
-		transition: transform 150ms ease;
-	}
-
-	.switch.on::after {
-		transform: translateX(18px);
-	}
-
-	.switch:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 2px;
-	}
-
-	.switch:disabled {
-		opacity: 0.5;
-		cursor: default;
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.switch,
-		.switch::after {
-			transition: none;
-		}
 	}
 
 	.error {

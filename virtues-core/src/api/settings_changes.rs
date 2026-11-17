@@ -49,6 +49,8 @@ pub const ASSISTANT_FIELDS: &[(&str, &str)] = &[
     ("image_model_id", "models"),
     ("request_run_limit_micros", "limit-run"),
     ("request_day_limit_micros", "limit-day"),
+    // What the assistant can do (api::capabilities), one jsonb of tool switches.
+    ("enabled_tools", "capabilities"),
 ];
 
 /// Model slots store NULL for "the Virtues default", which an update can
@@ -240,7 +242,10 @@ pub async fn undo(pool: &PgPool, id: i64) -> Result<()> {
     }
 
     let patch = json!({ field.as_str(): old_value });
-    if PROFILE_FIELDS.iter().any(|&(f, _)| f == field) {
+    if field == "enabled_tools" {
+        // A capability change holds only its own tools; put those back.
+        crate::api::capabilities::apply(pool, &old_value).await?;
+    } else if PROFILE_FIELDS.iter().any(|&(f, _)| f == field) {
         let before = serde_json::to_value(crate::api::profile::get_profile(pool).await?)?;
         let after = crate::api::profile::update_profile(pool, serde_json::from_value(patch)?).await?;
         record_diff(pool, &before, &serde_json::to_value(after)?, PROFILE_FIELDS).await;

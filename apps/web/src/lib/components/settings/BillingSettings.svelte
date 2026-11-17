@@ -12,8 +12,8 @@
 	 * subscription to someone who may have one. Not linked: the connect flow.
 	 */
 	import { Button } from '$lib';
+	import Switch from './Switch.svelte';
 	import SettingRow from '$lib/components/settings/SettingRow.svelte';
-	import { settingsFilter } from '$lib/settings/filter';
 	import { subscriptionStore } from '$lib/stores/subscription.svelte';
 	import { openExternal } from '$lib/tauri/bridge';
 	import { formatMicrosPrecise } from '$lib/utils/currency';
@@ -31,8 +31,6 @@
 	import { toast } from 'svelte-sonner';
 	import { reloadApp } from '$lib/reload';
 
-	// A note under a row hides with it while the page is filtered.
-	const filter = settingsFilter();
 
 	const isSubscribed = $derived(subscriptionStore.subscribed);
 	const standingUnknown = $derived(!subscriptionStore.entitlementKnown && !isSubscribed);
@@ -273,7 +271,7 @@
 			{portalLoading ? 'Opening…' : 'Manage in Stripe'}
 		</button>
 	</SettingRow>
-	{#if portalError && filter.shows('subscription')}
+	{#if portalError}
 		<p class="note note-error">
 			{portalError}
 			{#if portalErrorCode}<span class="error-code">{portalErrorCode}</span>{/if}
@@ -293,7 +291,7 @@
 			</button>
 		{/if}
 	</SettingRow>
-	{#if subscribeError && filter.shows('subscription')}
+	{#if subscribeError}
 		<p class="note note-error">
 			{subscribeError}
 			{#if subscribeErrorCode}<span class="error-code">{subscribeErrorCode}</span>{/if}
@@ -361,7 +359,7 @@
 	<SettingRow id="balance" label="Balance" help="Your server couldn't read the balance.">
 		<button class="btn-quiet" onclick={() => void loadUsage()}>Check again</button>
 	</SettingRow>
-	{#if filter.shows('balance')}<p class="note note-error"><span class="error-code">{usageError}</span></p>{/if}
+	<p class="note note-error"><span class="error-code">{usageError}</span></p>
 {/if}
 
 {#if autoTopup}
@@ -370,18 +368,9 @@
 		label="Auto top-up"
 		help={autoTopup.enabled ? 'Adds $10 when your balance reaches $0.' : 'Off. AI stops when your balance reaches $0.'}
 	>
-		<button
-			class="switch"
-			class:on={autoTopup.enabled}
-			role="switch"
-			aria-checked={autoTopup.enabled}
-			aria-label="Auto top-up"
-			onclick={() => setAutoTopup(!autoTopup!.enabled)}
-		></button>
+		<Switch checked={autoTopup.enabled} label="Auto top-up" onchange={(next) => setAutoTopup(next)} />
 	</SettingRow>
-	{#if !filter.shows('auto-top-up')}
-		<!-- hidden with its row -->
-	{:else if !autoTopup.enabled && autoTopup.disabled_at}
+	{#if !autoTopup.enabled && autoTopup.disabled_at}
 		<p class="note note-error">
 			Auto top-up turned itself off after charges failed three times in a day. Update your payment
 			method in Stripe, then turn it back on.
@@ -395,7 +384,7 @@
 	<SettingRow id="auto-top-up" label="Auto top-up" help="Your server couldn't read this setting.">
 		<button class="btn-quiet" onclick={() => void loadLocal()}>Check again</button>
 	</SettingRow>
-	{#if filter.shows('auto-top-up')}<p class="note note-error"><span class="error-code">{localError}</span></p>{/if}
+	<p class="note note-error"><span class="error-code">{localError}</span></p>
 {/if}
 
 <style>
@@ -501,38 +490,4 @@
 		margin: 4px 0;
 	}
 
-	.switch {
-		width: 44px;
-		height: 26px;
-		border-radius: var(--radius-full);
-		background: var(--color-border);
-		position: relative;
-		flex: none;
-		border: 0;
-		cursor: pointer;
-		transition: background 150ms ease;
-		padding: 0;
-	}
-	.switch.on {
-		background: var(--color-success);
-	}
-	.switch::after {
-		content: '';
-		position: absolute;
-		top: 3px;
-		left: 3px;
-		width: 20px;
-		height: 20px;
-		border-radius: 50%;
-		background: #fff;
-		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
-		transition: transform 150ms ease;
-	}
-	.switch.on::after {
-		transform: translateX(18px);
-	}
-	.switch:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 3px;
-	}
 </style>

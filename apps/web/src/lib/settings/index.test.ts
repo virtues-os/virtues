@@ -2,7 +2,7 @@
 // page draws, reads correctly on its own, and is found by the words people
 // type for it.
 import { describe, expect, it } from 'vitest';
-import { SECTIONS, SETTINGS, findSetting, matchSettings, matchingIds, settingsIn, titleOf } from './index';
+import { LANDING, SECTIONS, SETTINGS, findSetting, matchSettings, sectionAt, settingsIn, titleOf } from './index';
 
 describe('the list of settings', () => {
 	it('gives every setting a unique id', () => {
@@ -30,10 +30,17 @@ describe('the list of settings', () => {
 		}
 	});
 
-	it('lives on the Settings page, or opens a page of its own under Settings', () => {
+	it("lives on its section's page, or opens a page of its own under Settings", () => {
 		for (const s of SETTINGS) expect(s.route, s.id).toMatch(/^\/virtues(\/[a-z]|$)/);
-		for (const s of SETTINGS.filter((s) => s.kind === 'page')) expect(s.route, s.id).not.toBe('/virtues');
-		for (const s of SETTINGS.filter((s) => s.kind === 'control')) expect(s.route, s.id).toBe('/virtues');
+		for (const s of SETTINGS.filter((s) => s.kind === 'page')) expect(sectionAt(s.route), s.id).toBeUndefined();
+		for (const s of SETTINGS.filter((s) => s.kind === 'control')) {
+			expect(s.route, s.id).toBe(SECTIONS.find((section) => section.id === s.section)?.route);
+		}
+	});
+
+	it('links every section page from the landing page', () => {
+		const linked = new Set(LANDING.flatMap((g) => g.links.map((l) => l.route)));
+		for (const section of SECTIONS) if (section.route) expect(linked.has(section.route), section.id).toBe(true);
 	});
 
 	it('marks only actions as impossible to undo', () => {
@@ -93,17 +100,5 @@ describe('findSetting', () => {
 	it('looks a setting up by id', () => {
 		expect(findSetting('start-over')?.destructive).toBe(true);
 		expect(findSetting('nope')).toBeUndefined();
-	});
-});
-
-describe('matchingIds', () => {
-	it('is null for an empty field, so everything shows', () => {
-		expect(matchingIds('')).toBeNull();
-		expect(matchingIds('   ')).toBeNull();
-	});
-
-	it('is the set of matching ids otherwise, empty when nothing matches', () => {
-		expect(matchingIds('dark')?.has('theme')).toBe(true);
-		expect(matchingIds('zzqx')?.size).toBe(0);
 	});
 });

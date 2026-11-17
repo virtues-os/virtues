@@ -34,6 +34,7 @@
 -->
 <script lang="ts">
 	import { onMount } from 'svelte';
+	import { reducedMotion } from '$lib/stores/motion.svelte';
 	import { cubicOut } from 'svelte/easing';
 	import { fade } from 'svelte/transition';
 	import Icon from '$lib/components/Icon.svelte';
@@ -732,7 +733,7 @@
 	// their place and size); only a mark the last level did not have appears,
 	// out of where `from` says, after its `delay`.
 	function appear(node: Element, { from, delay = 0 }: { from?: { dx: number; dy: number }; delay?: number }) {
-		const still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+		const still = reducedMotion();
 		const dx = from?.dx ?? 0;
 		const dy = from?.dy ?? 0;
 		return {

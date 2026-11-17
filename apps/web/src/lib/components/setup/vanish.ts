@@ -14,6 +14,8 @@
  * once and draws nothing.
  */
 
+import { reducedMotion } from '$lib/stores/motion.svelte';
+
 interface Particle {
 	x: number;
 	y: number;
@@ -29,7 +31,7 @@ const MARGIN = 48;
 
 export function vanish(field: HTMLInputElement | HTMLTextAreaElement, text = field.value): Promise<void> {
 	const reduced =
-		typeof window === 'undefined' || !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+		typeof window === 'undefined' || reducedMotion();
 	if (reduced || !text.trim()) return Promise.resolve();
 
 	const rect = field.getBoundingClientRect();

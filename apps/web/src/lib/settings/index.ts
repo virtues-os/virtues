@@ -1,12 +1,15 @@
 /**
- * Every setting in Settings, in the order the page shows them.
+ * Every setting in Settings, grouped by the page it lives on.
  *
- * Settings is one scrolling page in six sections
- * (agents/plan/settings-search-plan.md). This list is what that page, its
- * search field and the ⌘K palette all read, so a setting is added, renamed or
- * moved here once. Each entry says what the setting is called on its own, the
- * words people type for it, which section it belongs to, what kind of row it
- * is, and the route that renders it today.
+ * Settings opens on a landing page (settings/SettingsLanding.svelte): the
+ * search field, what needs you, Changed lately, and a link to each page
+ * (`LANDING`). Each section is a page of its own (settings/SettingsSection
+ * .svelte) at its `route`; Your data has no page, and its links go straight
+ * to the pages that hold it. This list is what the pages, the search field
+ * and the ⌘K palette all read, so a setting is added, renamed or moved here
+ * once. Each entry says what the setting is called on its own, the words
+ * people type for it, which section it belongs to, what kind of row it is,
+ * and the route that shows it.
  *
  * Kinds:
  *   - control: something you change in the row (a field, a switch, a choice);
@@ -25,16 +28,19 @@ export type SectionId = 'you' | 'assistant' | 'data' | 'appearance' | 'billing' 
 
 export interface Section {
 	id: SectionId;
-	/** The heading. `{name}` is the assistant's name (`titleOf`). */
+	/** The page's title. `{name}` is the assistant's name (`titleOf`). */
 	title: string;
-	/** One sentence under the heading. */
+	/** One sentence under the title. */
 	lede: string;
+	/** The section's own page, or null for one whose settings each have a
+	 *  page (Your data). */
+	route: string | null;
 }
 
 export type SettingKind = 'control' | 'value' | 'action' | 'page';
 
 export interface Setting {
-	/** Stable id, used as the row's anchor on the page (`/virtues#<id>`). */
+	/** Stable id, used as the row's anchor on its page (`setting-<id>`). */
 	id: string;
 	/** What the setting is called when it stands alone, as in a search
 	 *  result. Sentence case. `{name}` is the assistant's name. */
@@ -43,61 +49,64 @@ export interface Setting {
 	kind: SettingKind;
 	/** The words people type for it, beyond those in the title. */
 	words: string[];
-	/** Where it lives: `/virtues` for a row on the Settings page, or the
-	 *  page a row opens. */
+	/** Where it lives: its section's page, or the page a row opens. */
 	route: string;
 	/** Undoing it is not possible (unpair everything, start over). */
 	destructive?: boolean;
 }
 
 export const SECTIONS: readonly Section[] = [
-	{ id: 'you', title: 'You', lede: 'The basics {name} and your pages work from.' },
-	{ id: 'assistant', title: '{name}', lede: 'How it talks, what it remembers, and the models it runs on.' },
-	{ id: 'data', title: 'Your data', lede: "The keys your server keeps, and what you've shared." },
-	{ id: 'appearance', title: 'Appearance', lede: 'How the app looks.' },
-	{ id: 'billing', title: 'Billing', lede: 'Your subscription, what AI has cost, and what it may spend.' },
-	{ id: 'server', title: 'Server and devices', lede: 'Updates, reaching it from anywhere, and everything paired with it.' },
+	{ id: 'you', title: 'Profile', lede: 'What {name} knows about you to start with. Your pages and day summaries use it too.', route: '/virtues/profile' },
+	{ id: 'assistant', title: '{name}', lede: 'How it talks to you, what it can do, and the models it runs on.', route: '/virtues/assistant' },
+	{ id: 'data', title: 'Your data', lede: "What {name} remembers, the keys your server keeps, and what you've shared.", route: null },
+	{ id: 'appearance', title: 'Appearance', lede: 'How the app looks, how your pages read, and how much it moves.', route: '/virtues/appearance' },
+	{ id: 'billing', title: 'Billing', lede: 'Your subscription, what AI may spend, and what it has cost.', route: '/virtues/billing' },
+	{ id: 'server', title: 'Updates and network', lede: 'Keeping your server current, and reaching it when you are away.', route: '/virtues/server' },
 ];
 
 export const SETTINGS: readonly Setting[] = [
 	// You
-	{ id: 'full-name', title: 'Your name', section: 'you', kind: 'control', words: ['full name', 'profile', 'me'], route: '/virtues' },
-	{ id: 'preferred-name', title: 'What {name} calls you', section: 'you', kind: 'control', words: ['preferred name', 'nickname', 'call me'], route: '/virtues' },
-	{ id: 'birthday', title: 'Birthday', section: 'you', kind: 'control', words: ['birth date', 'age', 'born'], route: '/virtues' },
-	{ id: 'occupation', title: 'Work', section: 'you', kind: 'control', words: ['occupation', 'job', 'role'], route: '/virtues' },
-	{ id: 'employer', title: 'Where you work', section: 'you', kind: 'control', words: ['employer', 'company', 'job'], route: '/virtues' },
-	{ id: 'home', title: 'Where you live', section: 'you', kind: 'control', words: ['home', 'time zone', 'timezone', 'city', 'location'], route: '/virtues' },
+	{ id: 'full-name', title: 'Your name', section: 'you', kind: 'control', words: ['full name', 'profile', 'me'], route: '/virtues/profile' },
+	{ id: 'preferred-name', title: 'What {name} calls you', section: 'you', kind: 'control', words: ['preferred name', 'nickname', 'call me'], route: '/virtues/profile' },
+	{ id: 'birthday', title: 'Birthday', section: 'you', kind: 'control', words: ['birth date', 'age', 'born'], route: '/virtues/profile' },
+	{ id: 'occupation', title: 'Work', section: 'you', kind: 'control', words: ['occupation', 'job', 'role'], route: '/virtues/profile' },
+	{ id: 'employer', title: 'Where you work', section: 'you', kind: 'control', words: ['employer', 'company', 'job'], route: '/virtues/profile' },
+	{ id: 'home', title: 'Where you live', section: 'you', kind: 'control', words: ['home', 'time zone', 'timezone', 'city', 'location'], route: '/virtues/profile' },
 
 	// The assistant
-	{ id: 'assistant-name', title: "{name}'s name", section: 'assistant', kind: 'control', words: ['assistant', 'rename', 'call it'], route: '/virtues' },
-	{ id: 'style', title: 'How {name} talks to you', section: 'assistant', kind: 'control', words: ['style', 'tone', 'shorter', 'longer', 'answers', 'voice', 'instructions'], route: '/virtues' },
-	{ id: 'subjects', title: 'Subjects {name} never raises', section: 'assistant', kind: 'control', words: ['rules', 'avoid', 'never bring up', 'topics'], route: '/virtues' },
-	{ id: 'memory', title: 'What {name} remembers', section: 'assistant', kind: 'page', words: ['memory', 'memories', 'notes', 'forget'], route: '/virtues/assistant/memory' },
-	{ id: 'models', title: 'Models {name} runs on', section: 'assistant', kind: 'control', words: ['model', 'ai', 'chat model', 'background', 'faster', 'cheaper', 'smarter'], route: '/virtues' },
+	{ id: 'assistant-name', title: "{name}'s name", section: 'assistant', kind: 'control', words: ['assistant', 'rename', 'call it'], route: '/virtues/assistant' },
+	{ id: 'style', title: 'How {name} talks to you', section: 'assistant', kind: 'control', words: ['style', 'tone', 'shorter', 'longer', 'answers', 'voice', 'instructions'], route: '/virtues/assistant' },
+	{ id: 'subjects', title: 'Subjects {name} never raises', section: 'assistant', kind: 'control', words: ['rules', 'avoid', 'never bring up', 'topics'], route: '/virtues/assistant' },
+	{ id: 'capabilities', title: 'What {name} can do', section: 'assistant', kind: 'control', words: ['tools', 'web search', 'browser', 'applets', 'pages', 'permissions', 'allow', 'turn off'], route: '/virtues/assistant' },
+	{ id: 'models', title: 'Models {name} runs on', section: 'assistant', kind: 'control', words: ['model', 'ai', 'chat model', 'background', 'faster', 'cheaper', 'smarter'], route: '/virtues/assistant' },
 	{ id: 'model-catalog', title: 'Every model you can pick', section: 'assistant', kind: 'page', words: ['models', 'catalog', 'compare'], route: '/virtues/assistant/models' },
-	{ id: 'suggested-questions', title: 'Suggested questions', section: 'assistant', kind: 'control', words: ['suggestions', 'prompts', 'new chat', 'ideas'], route: '/virtues' },
+	{ id: 'suggested-questions', title: 'Suggested questions', section: 'assistant', kind: 'control', words: ['suggestions', 'prompts', 'new chat', 'ideas'], route: '/virtues/assistant' },
 
 	// Your data
+	{ id: 'memory', title: 'What {name} remembers', section: 'data', kind: 'page', words: ['memory', 'memories', 'notes', 'forget'], route: '/virtues/assistant/memory' },
 	{ id: 'keys', title: 'Keys', section: 'data', kind: 'page', words: ['api key', 'secrets', 'tokens', 'credentials'], route: '/virtues/keys' },
 	{ id: 'shared-links', title: 'Shared links', section: 'data', kind: 'page', words: ['share', 'public', 'links', 'turn off'], route: '/virtues/shared' },
 
 	// Appearance
-	{ id: 'theme', title: 'Theme', section: 'appearance', kind: 'control', words: ['dark', 'light', 'mode', 'color', 'colour', 'appearance', 'look'], route: '/virtues' },
+	{ id: 'theme', title: 'Theme', section: 'appearance', kind: 'control', words: ['dark', 'light', 'mode', 'color', 'colour', 'appearance', 'look'], route: '/virtues/appearance' },
+	{ id: 'reading-font', title: 'Reading font', section: 'appearance', kind: 'control', words: ['font', 'typeface', 'serif', 'sans', 'mono', 'pages', 'reading'], route: '/virtues/appearance' },
+	{ id: 'text-size', title: 'Text size', section: 'appearance', kind: 'control', words: ['font size', 'bigger text', 'smaller text', 'larger', 'zoom', 'readable'], route: '/virtues/appearance' },
+	{ id: 'reduce-motion', title: 'Reduce motion', section: 'appearance', kind: 'control', words: ['animation', 'motion', 'movement', 'still', 'accessibility', 'dizzy'], route: '/virtues/appearance' },
 
 	// Billing
-	{ id: 'subscription', title: 'Subscription', section: 'billing', kind: 'action', words: ['plan', 'stripe', 'payment', 'card', 'cancel', 'renew'], route: '/virtues' },
-	{ id: 'balance', title: 'Balance', section: 'billing', kind: 'value', words: ['wallet', 'credit', 'money', 'left'], route: '/virtues' },
-	{ id: 'auto-top-up', title: 'Auto top-up', section: 'billing', kind: 'control', words: ['top up', 'refill', 'add money', 'limit'], route: '/virtues' },
-	{ id: 'limit-day', title: 'Most a request can spend in a day', section: 'billing', kind: 'control', words: ['spending limit', 'daily limit', 'cap', 'budget', 'spend'], route: '/virtues' },
-	{ id: 'limit-run', title: 'Most one request can spend', section: 'billing', kind: 'control', words: ['spending limit', 'per run', 'cap', 'budget', 'spend'], route: '/virtues' },
+	{ id: 'subscription', title: 'Subscription', section: 'billing', kind: 'action', words: ['plan', 'stripe', 'payment', 'card', 'cancel', 'renew'], route: '/virtues/billing' },
+	{ id: 'balance', title: 'Balance', section: 'billing', kind: 'value', words: ['wallet', 'credit', 'money', 'left'], route: '/virtues/billing' },
+	{ id: 'auto-top-up', title: 'Auto top-up', section: 'billing', kind: 'control', words: ['top up', 'refill', 'add money', 'limit'], route: '/virtues/billing' },
+	{ id: 'limit-day', title: 'Most a request can spend in a day', section: 'billing', kind: 'control', words: ['spending limit', 'daily limit', 'cap', 'budget', 'spend'], route: '/virtues/billing' },
+	{ id: 'limit-run', title: 'Most one request can spend', section: 'billing', kind: 'control', words: ['spending limit', 'per run', 'cap', 'budget', 'spend'], route: '/virtues/billing' },
 	{ id: 'byo-ai', title: 'Bring your own AI', section: 'billing', kind: 'page', words: ['own key', 'provider', 'endpoint', 'openai', 'byo'], route: '/virtues/billing/byo' },
-	{ id: 'ai-cost', title: 'What AI has cost', section: 'billing', kind: 'page', words: ['usage', 'spend', 'cost', 'calls', 'spending'], route: '/virtues/billing' },
+	{ id: 'ai-cost', title: 'What AI has cost', section: 'billing', kind: 'page', words: ['usage', 'spend', 'cost', 'calls', 'spending'], route: '/virtues/billing/cost' },
 
 	// Server and devices
-	{ id: 'updates', title: 'Check for updates', section: 'server', kind: 'action', words: ['update', 'version', 'upgrade', 'release'], route: '/virtues' },
-	{ id: 'auto-install', title: 'Install updates on their own', section: 'server', kind: 'control', words: ['automatic updates', 'auto update'], route: '/virtues' },
-	{ id: 'update-channel', title: 'Which updates', section: 'server', kind: 'control', words: ['channel', 'early', 'beta', 'released', 'prerelease'], route: '/virtues' },
-	{ id: 'reach', title: 'Reach your server away from home', section: 'server', kind: 'control', words: ['remote', 'relay', 'network', 'anywhere', 'away'], route: '/virtues' },
+	{ id: 'updates', title: 'Check for updates', section: 'server', kind: 'action', words: ['update', 'version', 'upgrade', 'release'], route: '/virtues/server' },
+	{ id: 'auto-install', title: 'Install updates on their own', section: 'server', kind: 'control', words: ['automatic updates', 'auto update'], route: '/virtues/server' },
+	{ id: 'update-channel', title: 'Which updates', section: 'server', kind: 'control', words: ['channel', 'early', 'beta', 'released', 'prerelease'], route: '/virtues/server' },
+	{ id: 'reach', title: 'Reach your server away from home', section: 'server', kind: 'control', words: ['remote', 'relay', 'network', 'anywhere', 'away'], route: '/virtues/server' },
 	{ id: 'search-runs-on', title: 'Where search runs', section: 'server', kind: 'page', words: ['search', 'accelerator', 'npu', 'cpu', 'index'], route: '/virtues/search' },
 	{ id: 'server-health', title: 'How your server is doing', section: 'server', kind: 'page', words: ['system', 'storage', 'disk', 'memory', 'cpu', 'health', 'backup'], route: '/virtues/system' },
 	{ id: 'devices', title: 'Devices', section: 'server', kind: 'page', words: ['phone', 'iphone', 'mac', 'paired', 'unpair'], route: '/virtues/devices' },
@@ -140,11 +149,46 @@ export function matchSettings(query: string, assistantName?: string | null): Set
 		.map((x) => x.setting);
 }
 
-/**
- * The ids the Settings page shows for what was typed, or `null` when the
- * field is empty and everything shows.
- */
-export function matchingIds(query: string, assistantName?: string | null): Set<string> | null {
-	if (!query.trim()) return null;
-	return new Set(matchSettings(query, assistantName).map((s) => s.id));
+/** One link on the landing page: a section's page, or a page of its own. */
+export interface LandingLink {
+	/** `{name}` is the assistant's name. */
+	label: string;
+	/** What is inside, in a few words. */
+	blurb: string;
+	route: string;
+}
+
+/** The landing page's three groups of links, left to right. */
+export const LANDING: readonly { title: string; links: readonly LandingLink[] }[] = [
+	{
+		title: 'You',
+		links: [
+			{ label: 'Profile', blurb: 'Name, birthday, where you live', route: '/virtues/profile' },
+			{ label: '{name}', blurb: 'How it talks, what it can do', route: '/virtues/assistant' },
+			{ label: 'Appearance', blurb: 'Theme, reading font, motion', route: '/virtues/appearance' },
+			{ label: 'Billing', blurb: 'Subscription, limits, AI cost', route: '/virtues/billing' },
+		],
+	},
+	{
+		title: 'Your data',
+		links: [
+			{ label: 'What {name} remembers', blurb: 'Notes from your chats', route: '/virtues/assistant/memory' },
+			{ label: 'Keys', blurb: 'What your applets sign in with', route: '/virtues/keys' },
+			{ label: 'Shared links', blurb: "Everything you've shared", route: '/virtues/shared' },
+		],
+	},
+	{
+		title: 'Your server',
+		links: [
+			{ label: 'Updates and network', blurb: 'Versions, reaching it from away', route: '/virtues/server' },
+			{ label: 'Devices', blurb: 'Everything paired with it', route: '/virtues/devices' },
+			{ label: "How it's doing", blurb: 'Storage, memory, the last day', route: '/virtues/system' },
+			{ label: 'Search', blurb: 'Where search runs', route: '/virtues/search' },
+		],
+	},
+];
+
+/** The section whose page is `route`, if any. */
+export function sectionAt(route: string): Section | undefined {
+	return SECTIONS.find((s) => s.route === route);
 }

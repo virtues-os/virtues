@@ -5,6 +5,7 @@ pub mod annotations;
 pub mod ai_calls;
 pub mod ai_complete;
 pub mod assistant_profile;
+pub mod capabilities;
 pub mod audit;
 pub mod events;
 pub mod attention;

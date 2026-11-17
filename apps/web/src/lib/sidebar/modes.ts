@@ -71,9 +71,10 @@ export interface SidebarMode {
  *   SERVER — the machine, its search, the devices paired to it, shared links
  *     and applets.
  */
-// TODO(2026-11-17): migrate the crumbs off these rows. Settings is one page
-// now (lib/settings lists its settings) and Sources is its own room with tabs;
-// these rows stay only because tabs/crumbs.ts builds Settings' crumbs from them.
+// TODO(2026-11-17): migrate the crumbs off these rows. Settings' pages are
+// listed in lib/settings (its landing links to each) and Sources is its own
+// room with tabs; these rows stay only because tabs/crumbs.ts builds
+// Settings' crumbs from them.
 export const SETTINGS_MODE: SidebarMode = {
 	id: 'settings',
 	title: 'Settings',
@@ -81,7 +82,7 @@ export const SETTINGS_MODE: SidebarMode = {
 		// "Profile", not "You": the wiki has the other "You", the narrative
 		// identity, and two rows with one label in two rooms is a question the
 		// user has to answer by clicking both.
-		{ id: 'you', label: 'Profile', icon: 'mynaui:user', glyph: 'profile', href: '/virtues/you', group: 'Account' },
+		{ id: 'you', label: 'Profile', icon: 'mynaui:user', glyph: 'profile', href: '/virtues/profile', group: 'Account' },
 		{
 			id: 'assistant',
 			label: 'Assistant',
@@ -90,8 +91,14 @@ export const SETTINGS_MODE: SidebarMode = {
 			href: '/virtues/assistant',
 			group: 'Account',
 		},
-		// What AI costs and how it gets paid for: standing, balance, routing and
-		// the call log on one page, because each answers the others.
+		{
+			id: 'appearance',
+			label: 'Appearance',
+			icon: 'mynaui:sun',
+			href: '/virtues/appearance',
+			group: 'Account',
+		},
+		// Subscription, balance and limits; what AI has cost is its sub-page.
 		{
 			id: 'billing',
 			label: 'Billing',
@@ -110,6 +117,7 @@ export const SETTINGS_MODE: SidebarMode = {
 			href: '/virtues/keys',
 			group: 'Account',
 		},
+		{ id: 'server', label: 'Updates and network', icon: 'mynaui:refresh', href: '/virtues/server', group: 'Server' },
 		// The machine itself, measured.
 		{ id: 'system', label: 'System', icon: 'mynaui:servers', glyph: 'system', href: '/virtues/system', group: 'Server' },
 		// Where search runs (NPU, CPU, or the owner's server) and what it covers.

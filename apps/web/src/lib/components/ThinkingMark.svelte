@@ -36,6 +36,8 @@
 	 * Rotation is about the CENTROID (12, 13.667) — about the box center
 	 * instead, a 120° turn walks the mark 3.75 units off and you see the wobble.
 	 */
+	import { untrack } from "svelte";
+	import { motion } from "$lib/stores/motion.svelte";
 
 	interface Props {
 		/** 1, 3, 4 or 5 dots. See the table above — this is a claim, not a mood. */
@@ -284,11 +286,8 @@
 	 * point, since the switch is deliberately held until the loop comes home.
 	 */
 	$effect(() => {
-		const query =
-			typeof window === "undefined"
-				? null
-				: window.matchMedia("(prefers-reduced-motion: reduce)");
-		let reduced = query?.matches ?? false;
+		// Read once; changes come through motion.watch, so the loop is not torn down.
+		let reduced = untrack(() => motion.reduced);
 
 		let frame = 0;
 		let last = performance.now();
@@ -346,8 +345,8 @@
 			frame = 0;
 		};
 
-		const onQuery = (e: MediaQueryListEvent) => {
-			reduced = e.matches;
+		const onQuery = (next: boolean) => {
+			reduced = next;
 			if (reduced) {
 				stopLoop();
 				paint(REST);
@@ -355,14 +354,14 @@
 				startLoop();
 			}
 		};
-		query?.addEventListener("change", onQuery);
+		const unwatch = motion.watch(onQuery);
 
 		if (reduced) paint(REST);
 		else startLoop();
 
 		return () => {
 			stopLoop();
-			query?.removeEventListener("change", onQuery);
+			unwatch();
 		};
 	});
 </script>

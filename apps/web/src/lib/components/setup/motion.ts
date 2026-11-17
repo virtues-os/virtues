@@ -5,6 +5,7 @@
  * transition at once.
  */
 import type { TransitionConfig } from 'svelte/transition';
+import { reducedMotion } from '$lib/stores/motion.svelte';
 import { cubicBezier } from '$lib/utils/motion';
 
 export const M = { quick: 180, base: 360, slow: 640 } as const;
@@ -12,9 +13,7 @@ export const M = { quick: 180, base: 360, slow: 640 } as const;
 /** cubic-bezier(0.22, 0.8, 0.24, 1), the ease setup.css uses. */
 export const ease = cubicBezier(0.22, 0.8, 0.24, 1);
 
-export function reducedMotion(): boolean {
-	return typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
-}
+export { reducedMotion };
 
 /** The one entrance: up a little, out of a little blur. */
 export function rise(_node: Element, { delay = 0, duration = M.slow, y = 8 }: { delay?: number; duration?: number; y?: number } = {}): TransitionConfig {

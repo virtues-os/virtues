@@ -37,6 +37,7 @@
 -->
 <script lang="ts">
 	import { afterNavigate, goto, replaceState } from "$app/navigation";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { page } from "$app/state";
 	import { onMount } from "svelte";
 	import { fade } from "svelte/transition";
@@ -178,7 +179,7 @@
 			(window as unknown as Record<string, unknown>).__VIRTUES_MOBILE__);
 
 	const still =
-		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 
 	const param = $derived(page.params.step ?? null);
 	const step = $derived<SetupStepId | null>(isSetupStep(param) ? param : null);

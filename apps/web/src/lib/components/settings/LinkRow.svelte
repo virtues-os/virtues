@@ -5,7 +5,6 @@
 	 * is the button; the page opens in this tab, so Back returns here.
 	 */
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
-	import { settingsFilter } from '$lib/settings/filter';
 
 	let {
 		id,
@@ -18,14 +17,11 @@
 		help?: string;
 		href: string;
 	} = $props();
-
-	const filter = settingsFilter();
 </script>
 
 <button
 	type="button"
 	class="row"
-	class:filtered={!filter.shows(id)}
 	id="setting-{id}"
 	data-setting={id}
 	onclick={() => windowShellStore.navigate(href, { label: `Settings · ${label}` })}
@@ -43,18 +39,13 @@
 </button>
 
 <style>
-	/* Hidden while the page's search field doesn't match it. */
-	.filtered {
-		display: none !important;
-	}
-
 	.row {
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) auto;
 		align-items: center;
 		gap: 24px;
 		width: 100%;
-		min-height: 58px;
+		min-height: 56px;
 		padding: 8px 0;
 		border: none;
 		border-bottom: 1px solid var(--color-border-subtle);

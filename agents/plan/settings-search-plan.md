@@ -1,13 +1,15 @@
-# Settings on one page
+# Settings: a landing page, then a page per section
 
-Status: planned. Decided with the owner on 2026-11-17, over seven rounds of
-sketches on the "Settings navigation" design canvas. Round 7 shows what this
-plan builds; Round 4 holds the search states it keeps.
+Status: being built. Decided with the owner on 2026-11-17, over eight rounds of
+sketches on the "Settings navigation" design canvas. Round 8 shows the layout
+this plan builds (it replaced Round 7's single scrolling page); Round 7 holds
+the categories, the draft card and the assistant's page, and Round 4 the
+search states.
 
-Settings becomes one scrolling page of the settings people actually change, in
-six sections, with a search field at the top. Typing filters the page in place.
-Return hands the text to the assistant, which drafts the change for you to
-apply. Anything that is a list, a chart, a table or a form opens its own page
+Settings opens on a landing page: a question, the search field, what needs
+you, Changed lately, and a link to each page. Each section is a page of its
+own. Typing lists the matching settings from every page; Return hands the text
+to the assistant, which drafts the change for you to apply. Anything that is a list, a chart, a table or a form opens its own page
 from a row. The section list beside every Settings page goes away, Sources gets
 a button in the window's corner, and SQL and Terminal leave Settings.
 
@@ -50,30 +52,31 @@ a button in the window's corner, and SQL and Terminal leave Settings.
   route that does not exist).
 - Profile asks for ethnicity, which nothing is known to use.
 
-## The page
+## The pages
 
-`/virtues` is one page, 720px wide, in this order:
+`/virtues` is the landing page, 720px wide: the question "What do you want to
+change?", the search field, **Needs you** (what wants an action now) and
+**Changed lately** (changes you made, changes the assistant made at your
+request, and pairings, newest first), each list showing its first four with
+Show all, then three groups of links (You, Your data, Your server), and Start
+over with the introduction at the foot.
 
-1. The title, the search field ("Find a setting, or say what you want changed",
-   ⌘ , from anywhere), and the six section names.
-2. **Changed lately**: changes you made, changes the assistant made at your
-   request, and things that stopped working, newest first, each with one action
-   (Undo, Open, Sign in). It ships with the page.
-3. Six sections, each a serif heading, one sentence, and rows:
+Each section is a page with a link back to Settings, a serif title, one
+sentence and rows: Profile at `/virtues/profile`, the assistant at
+`/virtues/assistant`, Appearance, Billing, and Updates and network at
+`/virtues/server`. Your data has no page; its links go to What the assistant
+remembers, Keys and Shared links. The sections and their rows:
 
 | Section | Rows |
 |---|---|
 | You | Name; what the assistant calls you; birthday; work; where you live (sets the time zone); units |
-| Assistant (titled with its name) | Name; how it talks to you, with a live preview of a sample reply; subjects it never raises; remember things from chats; what it remembers (opens); what it can do: search the web, read pages you link, make applets, write into your pages; model for chat; model for background work; every model (opens); suggested questions |
+| Assistant (titled with its name) | Name; how it talks to you, with a live preview of a sample reply; subjects it never raises; remember things from chats; what it remembers (opens); what it can do: search the web, use your browser, make applets, write in your pages; model for chat; model for background work; every model (opens); suggested questions |
 | Your data | What the assistant may read (opens); shared links (opens); keys (opens); backup (opens); keep recordings; export everything |
 | Appearance | Light or dark; theme; reading font; text size; reduce motion |
 | Billing | Subscription (Stripe); balance; auto top-up; most a request can spend in a day; most one request can spend; bring your own AI (opens); what AI has cost (opens) |
 | Server and devices | Updates (check now); install updates on their own; which updates ("Released", "Early, may break"); reach it away from home; search runs on (setup guide); how your server is doing (opens); each device (opens); pair a device |
 
-4. **Start over** alone at the bottom, then the founder's letter and "Run the
-   introduction again" as quiet links.
-
-Rows are 58px with a hairline between them: the label and one line of help on
+Rows are 56px with a hairline between them: the label and one line of help on
 the left, the control on the right. Nothing carries a count, a badge or a dot.
 
 ### Rows that open a page
@@ -98,23 +101,14 @@ content. Back returns to the same scroll position and flashes the row once.
 - Each device: one page per device, saying "Unpair" everywhere.
 - Keys and Shared links: their grids, as today.
 
-### Where you are on the page
-
-As you scroll, the title folds into the bar, following the scroll position, and
-the six section names stay beside a small search field with an underline under
-the section you are reading (Round 6, option 1). Clicking a name scrolls there;
-its heading gets one sweep of the highlighter yellow, which fades.
-
 ## Search
 
-- **Each keystroke filters the page.** Matching runs in the browser on a list of
-  every setting, by title, section and the words people use for it, and
-  tolerates typos. Rows without a match collapse (about 180ms), sections with
-  none fold shut and grey their name in the bar, and matched words take the
-  highlighter. Settings inside the opened pages match too and are listed under
-  their row. Esc shows everything.
-- **↑ and ↓** move through matching rows; Return on a row enters its control or
-  opens its page.
+- **Each keystroke lists the matching settings** from every page, in place of
+  the rest of the landing page, grouped by the page each lives on. Matching runs
+  in the browser on a list of every setting, by title and the words people use
+  for it, and tolerates typos. Esc clears the field.
+- **↑ and ↓** pick a result; Return opens its page, scrolled to the row, which
+  lights once.
 - **Return with no row picked** asks the assistant. A hint under the field says
   so before you press it. The assistant drafts one or more changes as a card at
   the top of the page: each setting, its old and new value, with Apply, Edit
@@ -165,7 +159,8 @@ your server heard it" labels, and the stale comments listed above.
    limits into Billing. Redirect every old `/virtues/*` route to its section
    anchor.
 3. **Filter and the bar.** Filtering in place, the folding title, the section
-   names and the scroll highlight.
+   names and the scroll highlight. Replaced by the landing page and its search
+   results (Round 8): see "The pages".
 4. **Changed lately.** An append-only record of setting changes written by each
    settings endpoint, with enough to undo a change. Pairing comes from
    `app_auth_event` and stopped sources from their status, without copying them.
@@ -176,23 +171,28 @@ your server heard it" labels, and the stale comments listed above.
    as Query, the Terminal command, redirects from `/virtues/developer/*`, the
    applet list moved to Applets.
 7. **New settings.** Each needs its own work behind it and can land one at a
-   time: units, what the assistant can do, what it may read (server-enforced,
-   as cycle data is today), keep recordings, export everything, backup as a
-   page, reading font, text size, reduce motion, the live style preview.
+   time. Built: reading font and text size (the page display settings a
+   page's Aa menu also sets), reduce motion (`stores/motion.svelte.ts`), and
+   what the assistant can do (`api/capabilities.rs`: the chat leaves an off
+   tool out and the tool runner refuses it). No tool reads a linked page, so
+   that switch is "use your browser" instead. Left: units, what it may read
+   (server-enforced, as cycle data is today), keep recordings, export
+   everything, backup as a page, the live style preview.
 8. **⌘K.** The Settings group, `#settings`, controls in the palette.
 
-Later: the phone, which takes the same single page.
+Later: the phone, which takes the same landing page and section pages.
 
 ## Who it serves
 
-- Narrative seeker: one page that reads top to bottom in sentences, a live
-  preview of how the assistant will sound, and changes asked for in plain words.
+- Narrative seeker: a landing page that opens on a plain question, short pages
+  that read top to bottom in sentences, a live preview of how the assistant will
+  sound, and changes asked for in plain words.
 - Quantified self: what AI has cost and how the server is doing are one row
   away, with real charts; Sources has its own door.
-- Tech prosumer: filter as you type, ⌘ , drafted changes, settings in ⌘K.
+- Tech prosumer: results as you type, drafted changes, settings in ⌘K.
 - Recovery: no counts, badges or warnings; Changed lately is a plain list.
-- Data sovereign: what the assistant may read, source by source; export; keys,
-  shared links and every device on one page.
+- Data sovereign: what the assistant can do and may read; export; keys,
+  shared links and every device a link away from the landing page.
 
 ## Open questions
 

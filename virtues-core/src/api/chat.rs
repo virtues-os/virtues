@@ -1225,8 +1225,11 @@ pub async fn next_turn_preview(
         let at = system.blocks.iter().position(|b| b.in_tail).unwrap_or(system.blocks.len());
         sections.insert(at, part("compacted_conversation", Some(true), summary));
     }
-    let tools = mode
-        .tools()
+    let offered = crate::api::capabilities::without_off(pool, mode.tools()).await.map_err(|e| {
+        tracing::warn!(error = %e, "couldn't read what the assistant can do");
+        internal("Failed to read what the assistant can do")
+    })?;
+    let tools = offered
         .iter()
         .map(|tool| {
             let name = tool["function"]["name"].as_str().unwrap_or("?").to_string();
@@ -2450,7 +2453,16 @@ fn create_agent_stream(
             owner_confirmed: false,
         };
 
-        let tools = mode.tools();
+        // Less what the owner turned off in Settings (api::capabilities). If
+        // the switches can't be read, every tool is offered and the executor,
+        // which reads them again, refuses an off one.
+        let tools = match crate::api::capabilities::without_off(&pool, mode.tools()).await {
+            Ok(tools) => tools,
+            Err(e) => {
+                tracing::warn!(error = %e, "couldn't read what the assistant can do; offering every tool");
+                mode.tools()
+            }
+        };
 
         // The message opens, then its first step; the recorder opens and
         // closes the parts inside each step, and the steps after this one.

@@ -28,6 +28,7 @@
 -->
 <script lang="ts">
 	import { onMount, tick } from "svelte";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import StepFrame from "../StepFrame.svelte";
 	import { rise } from "../motion";
 	import { prePair } from "../prepair.svelte";
@@ -77,7 +78,7 @@
 	let pairedAt = $state("");
 
 	const still =
-		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 	const nothing = $derived(network.length === 0);
 
 	/** Bumped by anything that ends a search, so a stale round can't redraw. */

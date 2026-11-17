@@ -21,6 +21,8 @@
  * missing file is silence. Reduced motion gets no notes.
  */
 
+import { reducedMotion } from '$lib/stores/motion.svelte';
+
 const TRACK = '/onboarding/hello.mp3';
 const VOLUME = 0.8;
 
@@ -91,7 +93,7 @@ class Score {
 	/** The thump for dot `i` of the mark (0, 1, 2). */
 	note(i: number) {
 		if (this.muted || typeof window === 'undefined') return;
-		if (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) return;
+		if (reducedMotion()) return;
 		try {
 			this.#ctx ??= new AudioContext();
 			const ctx = this.#ctx;

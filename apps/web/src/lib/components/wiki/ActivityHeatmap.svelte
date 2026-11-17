@@ -21,7 +21,7 @@
 
 <script lang="ts">
 	import { onDestroy, untrack, type Snippet } from 'svelte';
-	import { prefersReducedMotion } from 'svelte/motion';
+	import { motion } from '$lib/stores/motion.svelte';
 	import { cubicOut, quintOut } from 'svelte/easing';
 	import type { TransitionConfig } from 'svelte/transition';
 	import { animate } from 'motion';
@@ -169,7 +169,7 @@
 		};
 	}
 
-	const reduced = $derived(prefersReducedMotion.current);
+	const reduced = $derived(motion.reduced);
 	const uid = $props.id();
 
 	let rootEl = $state<HTMLDivElement>();
@@ -490,7 +490,7 @@
 			node.style.top = '0';
 		}
 		if (dir === 'instant') return { duration: 0 };
-		if (prefersReducedMotion.current) {
+		if (motion.reduced) {
 			return phase === 'in' ? { duration: FAST, css: (t) => `opacity: ${t}` } : { duration: 0 };
 		}
 		const sign = (dir || 1) * (phase === 'in' ? 1 : -1);
@@ -511,7 +511,7 @@
 		let sized = false;
 		const observer = new ResizeObserver(() => {
 			const width = inner.getBoundingClientRect().width;
-			const glide = sized && !prefersReducedMotion.current && performance.now() < widthArmedUntil;
+			const glide = sized && !motion.reduced && performance.now() < widthArmedUntil;
 			animate(frame, { width }, glide ? MORPH : JUMP);
 			sized = true;
 		});

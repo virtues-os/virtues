@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Button from '$lib/components/Button.svelte';
+	import Switch from '$lib/components/settings/Switch.svelte';
 	import Markdown from '$lib/components/Markdown.svelte';
 	import FaceFrame from '$lib/components/applets/FaceFrame.svelte';
 	import Card from '$lib/components/Card.svelte';
@@ -496,16 +497,7 @@
 				Turn back on
 			</Button>
 		{:else}
-			<button
-				type="button"
-				class="switch"
-				class:on={action.enabled}
-				role="switch"
-				aria-checked={action.enabled}
-				aria-label="Run this applet"
-				disabled={saving}
-				onclick={() => setEnabled(!action!.enabled)}
-			></button>
+			<Switch checked={action.enabled} label="Run this applet" disabled={saving} onchange={(next) => setEnabled(next)} />
 		{/if}
 	{/if}
 {/snippet}
@@ -783,52 +775,8 @@
 		gap: 4px;
 		flex: none;
 	}
-	.head-actions .switch {
+	.head-actions :global(.switch) {
 		margin-left: 8px;
-	}
-
-	.switch {
-		width: 44px;
-		height: 26px;
-		border-radius: var(--radius-full);
-		background: var(--color-border);
-		position: relative;
-		flex: none;
-		border: 0;
-		cursor: pointer;
-		transition: background 150ms ease;
-		padding: 0;
-	}
-	.switch.on {
-		background: var(--color-success);
-	}
-	.switch::after {
-		content: '';
-		position: absolute;
-		top: 3px;
-		left: 3px;
-		width: 20px;
-		height: 20px;
-		border-radius: 50%;
-		background: var(--color-background);
-		transition: transform 150ms ease;
-	}
-	.switch.on::after {
-		transform: translateX(18px);
-	}
-	.switch:focus-visible {
-		outline: 2px solid var(--color-foreground);
-		outline-offset: 3px;
-	}
-	.switch:disabled {
-		opacity: 0.6;
-		cursor: default;
-	}
-	@media (prefers-reduced-motion: reduce) {
-		.switch,
-		.switch::after {
-			transition: none;
-		}
 	}
 
 	.list-head {
@@ -838,7 +786,6 @@
 		font-weight: 500;
 		color: var(--color-foreground-muted);
 	}
-
 
 	/* Info: one narrow column, like a sheet laid on the applet. */
 	.narrow {
@@ -870,7 +817,6 @@
 		gap: 4px;
 		align-items: flex-start;
 	}
-
 
 	/* Results, and beside them All pages or the inspector. */
 	.body.with-side {
@@ -1027,7 +973,6 @@
 		font-size: 12px;
 		color: var(--color-foreground-muted);
 	}
-
 
 	/* What its last runs did, one line each. */
 	.empty {

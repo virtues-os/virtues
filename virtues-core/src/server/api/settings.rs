@@ -84,6 +84,9 @@ pub fn routes() -> Router<AppState> {
         // and the owner applies the ones they accept.
         .route("/api/settings/draft", post(settings_draft_handler))
         .route("/api/settings/draft/apply", post(apply_settings_draft_handler))
+        // What the assistant can do: one switch per capability.
+        .route("/api/settings/capabilities", get(list_capabilities_handler))
+        .route("/api/settings/capabilities/:id", put(set_capability_handler))
         // Models API
         .route("/api/models", get(list_models_handler))
         .route(
@@ -350,6 +353,25 @@ pub async fn apply_settings_draft_handler(
             .await
             .map(|()| serde_json::json!({ "ok": true })),
     )
+}
+
+/// GET /api/settings/capabilities — each thing the assistant can do, on or off.
+pub async fn list_capabilities_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::capabilities::list(state.db.pool()).await)
+}
+
+#[derive(Deserialize)]
+pub struct SetCapabilityBody {
+    on: bool,
+}
+
+/// PUT /api/settings/capabilities/:id — turn one on or off. Returns them all.
+pub async fn set_capability_handler(
+    State(state): State<AppState>,
+    Path(id): Path<String>,
+    Json(body): Json<SetCapabilityBody>,
+) -> Response {
+    api_response(crate::api::capabilities::set(state.db.pool(), &id, body.on).await)
 }
 
 /// POST /api/settings/changes/:id/undo — write a change's old value back.

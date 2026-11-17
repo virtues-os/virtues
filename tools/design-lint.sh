@@ -352,11 +352,13 @@ scan() {
 # sensitivity is not a preference, it is a symptom. Whole-file by nature, so it
 # is its own pass: one record per offending FILE, reported at the first line
 # that moves, which is the line an author should look at.
+# Code that asks stores/motion.svelte.ts (`reducedMotion()`, `motion.reduced`)
+# answers the device setting and Settings' Reduce motion, so it counts too.
 scan_motion() {
     while IFS= read -r f; do
         hit=$(awk '
             /design-ok:/ { next }
-            /prefers-reduced-motion/ { guarded = 1; exit }
+            /prefers-reduced-motion|reducedMotion\(\)|motion\.reduced/ { guarded = 1; exit }
             !moves && /(^|[^a-zA-Z0-9-])(transition|animation)[a-z-]*[ \t]*:/ { moves = FNR; src = $0 }
             END { if (!guarded && moves) { gsub(/\t/, " ", src); sub(/^[ \t]+/, "", src); print moves "\t" src } }
         ' "$f") || return

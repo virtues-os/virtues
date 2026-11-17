@@ -17,6 +17,7 @@
 
 <script lang="ts">
 	import { onMount } from "svelte";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { fade } from "svelte/transition";
 	import TextAction from "$lib/components/TextAction.svelte";
 	import {
@@ -75,7 +76,7 @@
 
 	onMount(() => {
 		const ctx = canvas.getContext("2d")!;
-		const still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+		const still = reducedMotion();
 		let width = 0;
 		let height = 0;
 		let raf = 0;

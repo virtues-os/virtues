@@ -23,9 +23,9 @@
 
 <script lang="ts">
 	import { onMount, tick, type Snippet } from "svelte";
+	import { motion } from "$lib/stores/motion.svelte";
 	import { slide } from "svelte/transition";
 	import { flip } from "svelte/animate";
-	import { prefersReducedMotion } from "svelte/motion";
 	import Icon from "$lib/components/Icon.svelte";
 	import PersonPicture from "$lib/components/wiki/PersonPicture.svelte";
 	import { inThisChat, keyForHref, type AsideItem } from "./inThisChat";
@@ -148,7 +148,7 @@
 		}
 	});
 
-	const moveMs = () => (prefersReducedMotion.current ? 0 : motionMs("--motion-layout", 300));
+	const moveMs = () => (motion.reduced ? 0 : motionMs("--motion-layout", 300));
 	const rowIn = (node: Element) => (settled ? slide(node, { duration: moveMs(), easing: easePremium }) : { duration: 0 });
 	const rowFlip = (node: Element, rects: { from: DOMRect; to: DOMRect }) =>
 		flip(node, rects, { duration: settled ? moveMs() : 0, easing: easePremium });

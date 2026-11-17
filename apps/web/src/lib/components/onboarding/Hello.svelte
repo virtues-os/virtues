@@ -47,6 +47,7 @@
 -->
 <script lang="ts">
 	import { onDestroy, onMount } from "svelte";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import { getTheme, isThemeDark } from "$lib/utils/theme";
 	import { score } from "$lib/components/setup/score.svelte";
 
@@ -162,7 +163,7 @@
 	}
 
 	onMount(() => {
-		still = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+		still = reducedMotion();
 		score.start();
 		if (still) {
 			phase = "door";

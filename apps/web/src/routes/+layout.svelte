@@ -3,6 +3,8 @@
 	// This is kept minimal as (onboarding) and (app) groups have their own layouts
 	import { onMount } from "svelte";
 	import { installErrorReporting, log } from "$lib/log";
+	// Applies Settings' Reduce motion to the root before anything animates.
+	import "$lib/stores/motion.svelte";
 	import CrashScreen from "$lib/components/CrashScreen.svelte";
 
 	let { children } = $props();

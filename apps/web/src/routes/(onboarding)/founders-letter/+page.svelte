@@ -13,10 +13,11 @@
 -->
 <script lang="ts">
 	import { goto } from "$app/navigation";
+	import { reducedMotion } from "$lib/stores/motion.svelte";
 	import FoundersLetter from "$lib/components/onboarding/document/FoundersLetter.svelte";
 
 	const still =
-		typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+		reducedMotion();
 
 	function close() {
 		if (history.length > 1) history.back();
