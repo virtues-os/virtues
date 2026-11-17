@@ -137,12 +137,27 @@ async function startBox(webBuild, modelUrl) {
 }
 
 /** Counters from Chromium itself, after collecting garbage twice. */
-async function settledMetrics(cdp) {
+async function settledMetrics(cdp, page) {
 	await cdp.send('HeapProfiler.collectGarbage');
 	await cdp.send('HeapProfiler.collectGarbage');
 	const { metrics } = await cdp.send('Performance.getMetrics');
 	const m = Object.fromEntries(metrics.map((x) => [x.name, x.value]));
-	return { heap_mb: +(m.JSHeapUsedSize / 1e6).toFixed(2), dom_nodes: m.Nodes, listeners: m.JSEventListeners, documents: m.Documents };
+	// heap_mb is the JavaScript heap alone. memory_mb adds the DOM's own memory
+	// and ArrayBuffer storage, where WebAssembly memory lives: Shiki's
+	// WebAssembly engine once held 24 MB there that heap_mb never showed.
+	const usage = await cdp.send('Runtime.getHeapUsage');
+	const wasm = page
+		? await page.evaluate(() => [...(window.__wasmMemories ?? [])].reduce((a, m) => a + m.buffer.byteLength, 0)).catch(() => 0)
+		: 0;
+	const memory = usage.usedSize + (usage.embedderHeapUsedSize ?? 0) + (usage.backingStorageSize ?? 0) + wasm;
+	return {
+		heap_mb: +(m.JSHeapUsedSize / 1e6).toFixed(2),
+		memory_mb: +(memory / 1e6).toFixed(2),
+		wasm_mb: +(wasm / 1e6).toFixed(2),
+		dom_nodes: m.Nodes,
+		listeners: m.JSEventListeners,
+		documents: m.Documents
+	};
 }
 
 async function newPage(browser) {
@@ -150,6 +165,43 @@ async function newPage(browser) {
 	const page = await context.newPage();
 	const cdp = await context.newCDPSession(page);
 	await cdp.send('Performance.enable');
+	// WebAssembly memory, which no cheap Chromium counter includes: every
+	// memory a module exports or is given, kept so its size can be read later.
+	await page.addInitScript(() => {
+		const memories = (window.__wasmMemories = new Set());
+		const keep = (...objs) => {
+			for (const o of objs) {
+				if (!o || typeof o !== 'object') continue;
+				for (const v of Object.values(o)) {
+					if (v instanceof WebAssembly.Memory) memories.add(v);
+					else if (v && typeof v === 'object' && !(v instanceof WebAssembly.Module)) {
+						for (const w of Object.values(v)) if (w instanceof WebAssembly.Memory) memories.add(w);
+					}
+				}
+			}
+		};
+		const instantiate = WebAssembly.instantiate;
+		WebAssembly.instantiate = async function (source, imports) {
+			const r = await instantiate.call(this, source, imports);
+			keep(imports, (r.instance ?? r).exports);
+			return r;
+		};
+		const streaming = WebAssembly.instantiateStreaming;
+		if (streaming) {
+			WebAssembly.instantiateStreaming = async function (source, imports) {
+				const r = await streaming.call(this, source, imports);
+				keep(imports, r.instance.exports);
+				return r;
+			};
+		}
+		const Instance = WebAssembly.Instance;
+		WebAssembly.Instance = function (module, imports) {
+			const i = new Instance(module, imports);
+			keep(imports, i.exports);
+			return i;
+		};
+		WebAssembly.Instance.prototype = Instance.prototype;
+	});
 	// Long tasks, from the first byte of the document.
 	await page.addInitScript(() => {
 		window.__longTasks = [];
@@ -221,7 +273,7 @@ async function coldLoad(browser) {
 	const before = api.filter((r) => r.end <= readyAt);
 	await page.waitForLoadState('networkidle');
 	const longTasks = await page.evaluate(() => window.__longTasks);
-	const m = await settledMetrics(cdp);
+	const m = await settledMetrics(cdp, page);
 	await context.close();
 	return {
 		ready_ms: readyMs,
@@ -321,7 +373,7 @@ async function longChat(browser) {
 	await twoFrames(page);
 	const scrollLayoutMs = (await layoutWorkMs(cdp)) - before;
 
-	const m = await settledMetrics(cdp);
+	const m = await settledMetrics(cdp, page);
 	await context.close();
 	return {
 		rendered_ms: renderedMs,
@@ -476,7 +528,7 @@ async function viewCycle(browser) {
 	const laps = [];
 	for (let lap = 1; lap <= LAPS; lap++) {
 		for (const v of VIEWS) await go(v);
-		if (lap === 2 || lap === LAPS) laps.push({ lap, ...(await settledMetrics(cdp)) });
+		if (lap === 2 || lap === LAPS) laps.push({ lap, ...(await settledMetrics(cdp, page)) });
 	}
 	await context.close();
 	const [a, b] = laps;
@@ -520,9 +572,9 @@ const RULES = {
 	ready_ms: 'time', rendered_ms: 'time', composer_ms: 'time', sidebar_ms: 'time', open_layout_ms: 'layout', resize_layout_ms: 'layout', scroll_layout_ms: 'layout',
 	first_token_ms: 'time', stream_lag_ms: 'time', stream_script_ms: 'time', stream_layout_ms: 'layout',
 	stream_slow_frames: 'report', stream_longest_frame_ms: 'time',
-	toggle_layout_ms: 'layout', toggle_style_ms: 'layout', toggle_script_ms: 'layout', toggle_slow_frames: 'count', long_task_ms: 'report', longest_task_ms: 'time',
+	toggle_layout_ms: 'layout', toggle_style_ms: 'layout', toggle_script_ms: 'layout', toggle_slow_frames: 'approx', long_task_ms: 'report', longest_task_ms: 'time',
 	api_before_ready: 'report', waterfall_depth: 'approx', api_total: 'count',
-	js_transfer_kb: 'size', heap_mb: 'size', heap_mb_after: 'size', dom_nodes: 'size',
+	js_transfer_kb: 'size', heap_mb: 'size', memory_mb: 'size', wasm_mb: 'size', heap_mb_after: 'size', dom_nodes: 'size',
 	listeners: 'size', documents: 'count',
 	heap_mb_per_lap: 'growth', dom_nodes_per_lap: 'growth', listeners_per_lap: 'growth', documents_per_lap: 'growth'
 };

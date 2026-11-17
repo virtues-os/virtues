@@ -1,26 +1,30 @@
 {
   "cold_load": {
-    "ready_ms": 195,
-    "waterfall_depth": 6,
+    "ready_ms": 157,
+    "waterfall_depth": 7,
     "api_total": 21,
-    "js_transfer_kb": 528.25,
-    "heap_mb": 7.95,
+    "js_transfer_kb": 528.36,
+    "heap_mb": 7.94,
+    "memory_mb": 16.09,
+    "wasm_mb": 2.21,
     "dom_nodes": 1707.3,
     "listeners": 259.35,
     "documents": 2
   },
   "relay_load": {
-    "composer_ms": 338,
-    "sidebar_ms": 493
+    "composer_ms": 267,
+    "sidebar_ms": 416
   },
   "long_chat": {
-    "rendered_ms": 397,
-    "open_layout_ms": 67,
-    "resize_layout_ms": 18,
-    "scroll_layout_ms": 33,
-    "longest_task_ms": 185,
-    "heap_mb": 55.69,
-    "dom_nodes": 60759.3,
+    "rendered_ms": 424,
+    "open_layout_ms": 64,
+    "resize_layout_ms": 19,
+    "scroll_layout_ms": 40,
+    "longest_task_ms": 180,
+    "heap_mb": 58.21,
+    "memory_mb": 82.11,
+    "wasm_mb": 2.21,
+    "dom_nodes": 60761.4,
     "listeners": 448.35,
     "documents": 2
   },
@@ -33,15 +37,15 @@
   },
   "sidebar_toggle": {
     "toggle_layout_ms": 19,
-    "toggle_style_ms": 40,
+    "toggle_style_ms": 38,
     "toggle_script_ms": 17,
-    "toggle_slow_frames": 0
+    "toggle_slow_frames": 1
   },
   "stream_reply": {
     "first_token_ms": 240,
-    "stream_lag_ms": 180,
-    "stream_script_ms": 657,
-    "stream_layout_ms": 439,
-    "stream_longest_frame_ms": 61
+    "stream_lag_ms": 187,
+    "stream_script_ms": 708,
+    "stream_layout_ms": 467,
+    "stream_longest_frame_ms": 65
   }
 }

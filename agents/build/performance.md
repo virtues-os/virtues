@@ -98,7 +98,13 @@ How each number is held to its budget:
 
 Memory is read only after forcing garbage collection twice through the
 DevTools protocol, so it measures what the page holds, not what is waiting
-to be collected.
+to be collected. `heap_mb` is the JavaScript heap alone. `memory_mb` adds the
+DOM's own memory, ArrayBuffer storage and WebAssembly memory (`wasm_mb`),
+which no cheap Chromium counter includes, so the lab records every memory a
+WebAssembly module exports or is given. Shiki's WebAssembly regex engine
+once held 22 MB there that `heap_mb` never showed. DOM node counts
+(`dom_nodes`) include Svelte's empty text and comment placeholders, about
+nine in ten of the long chat's nodes; they take no layout.
 
 Measure memory in headless Chromium or a visible window, never in a hidden
 browser pane. A hidden page gets no animation frames, so Svelte's exit
