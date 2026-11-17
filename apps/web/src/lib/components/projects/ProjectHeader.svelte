@@ -174,7 +174,7 @@
 								toggle();
 							}}
 						>
-							{project.thing_title ? `Under ${project.thing_title}` : 'On its own'}
+							{project.thing_title ? `Under ${project.thing_title}` : 'Not under a thing'}
 						</TextAction>
 					{/snippet}
 					{#snippet children({ close }: { close: () => void })}
@@ -182,7 +182,7 @@
 							<MenuItem
 								role="menuitemradio"
 								checked={!project.thing_id}
-								label="On its own"
+								label="Not under a thing"
 								onclick={() => {
 									close();
 									setThing(null);

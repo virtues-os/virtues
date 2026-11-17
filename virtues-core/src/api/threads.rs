@@ -148,6 +148,11 @@ pub struct ThreadItem {
     #[sqlx(skip)]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub status: Option<String>,
+    /// Records only: when it happened (`started_at` or `occurred_at`), so the
+    /// thread's line puts it on its own day, not the day it was added.
+    #[sqlx(skip)]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub occurred_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -361,6 +366,17 @@ pub async fn get_thread(pool: &PgPool, id: &str) -> Result<ThreadDetail> {
 
     let urls: Vec<String> = items.iter().map(|i| i.url.clone()).collect();
     let mut resolved = crate::api::refs::resolve_refs(pool, &urls).await;
+    let record_keys: Vec<(String, String)> =
+        urls.iter().filter_map(|u| crate::api::record_refs::record_table(u)).collect();
+    let record_times = crate::api::record_refs::record_facts(pool, &record_keys).await?;
+    for item in &mut items {
+        if let Some(at) = crate::api::record_refs::record_table(&item.url)
+            .and_then(|key| record_times.get(&key))
+            .and_then(|facts| facts.at)
+        {
+            item.occurred_at = Some(Timestamp::from(at));
+        }
+    }
     for item in &mut items {
         if let Some(r) = resolved.remove(&item.url) {
             item.title = Some(r.title);

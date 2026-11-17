@@ -178,8 +178,8 @@ fn add_span(
 }
 
 /// `(thread, started_at, ended_at)` for every record with a span that is in
-/// one of `threads` and touches the window. A record route names its table
-/// without the `data_` prefix; only tables with both columns are read.
+/// one of `threads` and touches the window. Only tables with both columns
+/// are read.
 async fn filed_spans(
     pool: &PgPool,
     threads: &[String],
@@ -194,29 +194,20 @@ async fn filed_spans(
     .await?;
     let mut by_table: HashMap<String, Vec<(String, String)>> = HashMap::new();
     for (thread_id, url) in items {
-        let mut parts = url.trim_start_matches("/record/").splitn(2, '/');
-        let (Some(ontology), Some(id)) = (parts.next(), parts.next()) else { continue };
-        if ontology.is_empty() || !ontology.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_') {
-            continue;
+        if let Some((table, id)) = crate::api::record_refs::record_table(&url) {
+            by_table.entry(table).or_default().push((thread_id, id));
         }
-        by_table.entry(format!("data_{ontology}")).or_default().push((thread_id, id.to_string()));
     }
 
     let mut out = Vec::new();
     for (table, members) in by_table {
-        let spans: i64 = sqlx::query_scalar(
-            "SELECT count(*) FROM information_schema.columns
-             WHERE table_schema = 'public' AND table_name = $1 AND column_name IN ('started_at', 'ended_at')",
-        )
-        .bind(&table)
-        .fetch_one(pool)
-        .await?;
-        if spans != 2 {
+        let columns = crate::api::record_refs::columns_of(pool, &table).await?;
+        if !columns.contains("started_at") || !columns.contains("ended_at") {
             continue;
         }
         let record_ids: Vec<String> = members.iter().map(|(_, id)| id.clone()).collect();
-        // `table` is `data_` plus a checked [a-z0-9_] name, and the
-        // information_schema lookup above found it.
+        // `table` is `data_` plus a checked name (`record_table`), and
+        // information_schema found it above.
         let rows: Vec<(String, DateTime<Utc>, DateTime<Utc>)> = sqlx::query_as(&format!(
             "SELECT id, started_at, ended_at FROM {table}
              WHERE id = ANY($1) AND started_at < $3 AND ended_at > $2"

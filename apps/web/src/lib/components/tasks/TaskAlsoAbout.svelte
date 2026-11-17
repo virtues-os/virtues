@@ -10,8 +10,18 @@
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { homeOf, linkFromUrl, sameLink, subjectIcon, subjectName, subjectUrl } from '$lib/tasks/homes';
 
-	let { task, onSave, readonly = false }: { task: Task; onSave: (patch: TaskPatch) => void; readonly?: boolean } =
-		$props();
+	let {
+		task,
+		onSave,
+		readonly = false,
+		plain = false,
+	}: {
+		task: Task;
+		onSave: (patch: TaskPatch) => void;
+		readonly?: boolean;
+		/** Full-size ink, for a column of properties. */
+		plain?: boolean;
+	} = $props();
 
 	let searchAt = $state<{ x: number; y: number } | null>(null);
 	const links = $derived(task.also_about ?? []);
@@ -28,7 +38,7 @@
 	}
 </script>
 
-<span class="also">
+<span class="also" class:plain>
 	{#each links as link (link.kind + link.id)}
 		<span class="chip">
 			<button
@@ -52,7 +62,7 @@
 		</span>
 	{/each}
 	{#if !readonly}
-		<button type="button" class="fact" onclick={(e) => (searchAt = { x: e.clientX, y: e.clientY })}>Add</button>
+		<button type="button" class="fact add" onclick={(e) => (searchAt = { x: e.clientX, y: e.clientY })}>Add</button>
 	{:else if links.length === 0}
 		<span class="none">Nothing else</span>
 	{/if}
@@ -118,6 +128,14 @@
 	.remove:hover {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
+	}
+	.plain .fact,
+	.plain .none {
+		font-size: 14px;
+		color: var(--color-foreground);
+	}
+	.plain .add {
+		color: var(--color-primary);
 	}
 	.none {
 		font-size: 13px;

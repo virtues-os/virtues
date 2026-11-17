@@ -17,6 +17,7 @@
 		onSave,
 		showIcon = false,
 		label,
+		plain = false,
 	}: {
 		task: Task;
 		onSave: (patch: TaskPatch) => void;
@@ -24,6 +25,8 @@
 		showIcon?: boolean;
 		/** The trigger's words, when they should not be the home's name. */
 		label?: string;
+		/** Full-size ink, for a column of properties. */
+		plain?: boolean;
 	} = $props();
 
 	let open = $state(false);
@@ -51,7 +54,7 @@
 
 <Popover bind:open placement="bottom-start" offset={4}>
 	{#snippet trigger({ toggle })}
-		<button type="button" class="fact" onclick={toggle} aria-haspopup="menu">
+		<button type="button" class="fact" class:plain onclick={toggle} aria-haspopup="menu">
 			{#if showIcon && home}<Icon icon={subjectIcon(home.kind)} width="14" />{/if}
 			{label ?? (home ? subjectName(home) : 'No home yet')}
 		</button>
@@ -123,6 +126,10 @@
 		background: var(--hover-bg);
 		color: var(--color-foreground);
 		transition-duration: var(--motion-hover-in);
+	}
+	.fact.plain {
+		font-size: 14px;
+		color: var(--color-foreground);
 	}
 	.menu {
 		display: flex;

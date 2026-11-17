@@ -178,9 +178,9 @@
 			<aside class="side" aria-label="About this task">
 				<dl class="props">
 					<dt>Home</dt>
-					<dd><TaskHome {task} onSave={(p) => save(p, "Your server couldn't move that")} showIcon /></dd>
+					<dd><TaskHome {task} onSave={(p) => save(p, "Your server couldn't move that")} showIcon plain /></dd>
 					<dt>Also about</dt>
-					<dd><TaskAlsoAbout {task} onSave={(p) => save(p)} readonly={isClosed(task)} /></dd>
+					<dd><TaskAlsoAbout {task} onSave={(p) => save(p)} readonly={isClosed(task)} plain /></dd>
 					<dt>Due</dt>
 					<dd>
 						<Popover bind:open={dueOpen} placement="bottom-start" offset={4}>
@@ -221,7 +221,7 @@
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) 280px;
 		gap: 48px;
-		max-width: 1080px;
+		max-width: var(--page-detail);
 		margin: 0 auto;
 		padding: 48px 32px 96px;
 	}
@@ -257,9 +257,6 @@
 		font-size: 36px;
 		line-height: 44px;
 		color: var(--color-foreground);
-	}
-	.title:focus {
-		outline: none;
 	}
 	.title.closed {
 		color: var(--color-foreground-muted);

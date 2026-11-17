@@ -82,6 +82,7 @@ pub mod census;
 pub mod getting_started;
 pub mod identity;
 pub mod network;
+pub mod record_refs;
 pub mod thread_week;
 pub mod threads;
 pub mod records;

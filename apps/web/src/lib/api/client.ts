@@ -2122,6 +2122,8 @@ export interface ProjectItem {
 	kind?: string;
 	/** Drive files only: `extraction_status` as stored. */
 	status?: string;
+	/** Records only: when it happened, so a thread's line puts it on its own day. */
+	occurred_at?: string;
 }
 
 /** One entity referenced across a project's members. */

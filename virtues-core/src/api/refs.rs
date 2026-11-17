@@ -188,6 +188,29 @@ async fn fetch_names(
     kind: &str,
     ids: &[String],
 ) -> Vec<(String, String, Option<String>, Option<String>)> {
+    // A record's id is `<ontology>/<id>`, and each ontology is its own
+    // table with its own title column (`api::record_refs`).
+    if kind == "record" {
+        let keyed: Vec<((String, String), &String)> = ids
+            .iter()
+            .filter_map(|id| crate::api::record_refs::record_table(id).map(|key| (key, id)))
+            .collect();
+        let keys: Vec<(String, String)> = keyed.iter().map(|(key, _)| key.clone()).collect();
+        return match crate::api::record_refs::record_facts(pool, &keys).await {
+            Ok(facts) => keyed
+                .into_iter()
+                .filter_map(|(key, id)| {
+                    let title = facts.get(&key)?.title.clone().filter(|t| !t.trim().is_empty())?;
+                    Some((id.clone(), title, None, None))
+                })
+                .collect(),
+            Err(e) => {
+                tracing::warn!("[refs] record lookup failed: {}", e);
+                Vec::new()
+            }
+        };
+    }
+
     // Drive files carry two extra columns, so they get their own query rather
     // than a lowest-common-denominator shape shared with the entity tables.
     if kind == "drive" {

@@ -1,10 +1,12 @@
 <script lang="ts">
 	/**
-	 * The week of threads: one row per active thread, then "Not in a thread",
-	 * seven days across. One dot is fifteen minutes. A solid dot is time
-	 * spent, a ring is time ahead, a gray dot is recorded time in no thread.
-	 * Today has a dotted outline. No row shows a total: the dots are the
-	 * amount, and a quiet day stays blank.
+	 * The week of threads: one row per active thread with time that week,
+	 * then "Not in a thread", seven days across. One dot is fifteen minutes.
+	 * A solid dot is time spent, a ring is time ahead, a gray dot is recorded
+	 * time in no thread. Today has a dotted outline. No row shows a total:
+	 * the dots are the amount, and a quiet day stays blank. Threads with no
+	 * time that week sit on one line under the chart, where they still
+	 * preview, open and take a drop.
 	 */
 	import type { Week } from '$lib/api/client';
 	import { IconButton } from '$lib';
@@ -71,6 +73,18 @@
 			})),
 	);
 	const anyUnfiled = $derived(week.unfiled_minutes.some((m) => m >= 8));
+	const minutesOf = (t: Week['threads'][number]) => t.days.reduce((n, d) => n + d.done_minutes + d.ahead_minutes, 0);
+	const busy = $derived(week.threads.filter((t) => minutesOf(t) >= 8));
+	const quiet = $derived(week.threads.filter((t) => minutesOf(t) < 8));
+
+	function dropParams(id: string) {
+		return {
+			accepts: (data: DataTransfer) => !!accepts && accepts(data),
+			onActive: (on: boolean) => (dropOn = on ? id : dropOn === id ? null : dropOn),
+			onDrop: (e: DragEvent) => onDropTo?.(id, e),
+			effect: () => 'link' as const,
+		};
+	}
 </script>
 
 <div class="week" role="grid" tabindex="-1" aria-label="This week by thread" onmouseleave={() => onHover(null)}>
@@ -87,7 +101,14 @@
 		{/each}
 	</div>
 
-	{#each week.threads as t (t.id)}
+	{#if busy.length === 0 && !anyUnfiled}
+		<p class="none">
+			Nothing is on your threads this week. Calendar events you add to a thread, and its dated tasks, show here as
+			dots.
+		</p>
+	{/if}
+
+	{#each busy as t (t.id)}
 		<div
 			class="row"
 			class:shown={t.id === shownId}
@@ -101,12 +122,7 @@
 			onkeydown={(e) => {
 				if (e.key === 'Enter') onOpen(t.id);
 			}}
-			use:dropZone={{
-				accepts: (data) => !!accepts && accepts(data),
-				onActive: (on) => (dropOn = on ? t.id : dropOn === t.id ? null : dropOn),
-				onDrop: (e) => onDropTo?.(t.id, e),
-				effect: () => 'link',
-			}}
+			use:dropZone={dropParams(t.id)}
 		>
 			<span class="label" role="rowheader">
 				<ProjectGlyph project={t} size={16} />
@@ -136,9 +152,32 @@
 	{/if}
 </div>
 
+{#if quiet.length > 0}
+	<div class="quiet-list" role="list" aria-label="Threads with nothing this week" onmouseleave={() => onHover(null)}>
+		<span class="quiet-label">Nothing this week</span>
+		{#each quiet as t (t.id)}
+			<button
+				type="button"
+				role="listitem"
+				class="chip"
+				class:shown={t.id === shownId}
+				class:pinned={t.id === pinnedId}
+				class:drop-on={dropOn === t.id}
+				onmouseenter={() => onHover(t.id)}
+				onfocus={() => onHover(t.id)}
+				onclick={() => onPick(t.id)}
+				ondblclick={() => onOpen(t.id)}
+				use:dropZone={dropParams(t.id)}
+			>
+				<ProjectGlyph project={t} size={14} />
+				<span>{t.name || 'Untitled thread'}</span>
+			</button>
+		{/each}
+	</div>
+{/if}
+
 <style>
 	.week {
-		--day: 80px;
 		display: flex;
 		flex-direction: column;
 		margin-top: 8px;
@@ -147,7 +186,7 @@
 	.head,
 	.row {
 		display: grid;
-		grid-template-columns: minmax(200px, 1fr) repeat(7, var(--day));
+		grid-template-columns: minmax(160px, 220px) repeat(7, minmax(56px, 1fr));
 		align-items: start;
 	}
 	.head {
@@ -255,8 +294,54 @@
 	.dot.unfiled {
 		background: var(--color-foreground-subtle);
 	}
+	.none {
+		margin: 8px 0 0;
+		max-width: 520px;
+		font-size: 15px;
+		line-height: 24px;
+		color: var(--color-foreground-muted);
+	}
+	.quiet-list {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 4px 8px;
+		margin-top: 24px;
+	}
+	.quiet-label {
+		margin-right: 4px;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+	}
+	.chip {
+		display: inline-flex;
+		align-items: center;
+		gap: 8px;
+		height: 28px;
+		padding: 0 8px;
+		border: 0;
+		border-radius: var(--radius-md);
+		background: transparent;
+		font-family: var(--font-serif-ui);
+		font-size: 16px;
+		color: var(--color-foreground);
+		cursor: pointer;
+		transition: background-color var(--motion-hover-out) var(--ease-premium);
+	}
+	.chip:hover,
+	.chip.shown {
+		background: var(--hover-bg);
+		transition-duration: var(--motion-hover-in);
+	}
+	.chip.pinned {
+		background: var(--active-bg);
+	}
+	.chip.drop-on {
+		background: var(--drop-tint);
+	}
 	@media (prefers-reduced-motion: reduce) {
-		.row {
+		.row,
+		.chip {
 			transition: none;
 		}
 	}

@@ -343,7 +343,7 @@
 		const records: LineEntry[] = [
 			...memberItems.map((i) => ({
 				key: i.url,
-				date: localDay(new Date(i.added_at)),
+				date: localDay(new Date(i.occurred_at ?? i.added_at)),
 				label: memberName(i),
 				icon: memberIcon(i.url),
 				kind: 'record' as const,
@@ -497,16 +497,17 @@
 									</button>
 								</li>
 							{/each}
-							<li class="entry today">
+							<li class="entry today" aria-label="Today">
 								<span class="date">Today</span>
 								<span class="node today-node"></span>
-								<span class="entry-label quiet-label">{longDay(new Date().toISOString())}</span>
+								<span></span>
 							</li>
 							{#each line.ahead as e (e.key)}
 								<li class="entry ahead">
 									<span class="date">{shortDay(e.date)}</span>
-									<span class="node task"></span>
+									<span class="node" class:task={e.kind === 'task'} class:planned={e.kind === 'record'}></span>
 									<button class="entry-label" onclick={e.open}>
+										{#if e.kind === 'record'}<Icon icon={e.icon} width="14" />{/if}
 										<span>{e.label}</span>
 									</button>
 								</li>
@@ -672,7 +673,7 @@
 		display: grid;
 		grid-template-columns: minmax(0, 1fr) 280px;
 		gap: 48px;
-		max-width: 1080px;
+		max-width: var(--page-detail);
 		margin: 0 auto;
 		padding: 48px 32px 96px;
 	}
@@ -734,10 +735,6 @@
 		line-height: 28px;
 		color: var(--color-foreground);
 		resize: vertical;
-	}
-	.stands-input:focus {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
 	}
 	.quiet {
 		margin: 8px 0 0;
@@ -885,6 +882,13 @@
 		width: 10px;
 		height: 10px;
 	}
+	/* A record still ahead, such as a planned calendar event: solid edge,
+	   empty middle, so it reads as booked but not yet spent. */
+	.node.planned {
+		background: var(--color-page);
+		border: 2px solid var(--color-foreground);
+		box-sizing: border-box;
+	}
 	.today-node {
 		width: 12px;
 		height: 12px;
@@ -924,10 +928,6 @@
 	button.entry-label:hover {
 		background: var(--hover-bg);
 		transition-duration: var(--motion-hover-in);
-	}
-	.quiet-label {
-		color: var(--color-foreground-muted);
-		cursor: default;
 	}
 
 	/* The side column. */
@@ -973,11 +973,6 @@
 		color: var(--color-primary);
 		cursor: pointer;
 	}
-	.person:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-		border-radius: var(--radius-sm);
-	}
 	.vt {
 		height: 28px;
 		padding: 0 12px;
@@ -1000,10 +995,6 @@
 	}
 	.vt:disabled {
 		cursor: default;
-	}
-	.vt:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
 	}
 	.hint {
 		display: block;

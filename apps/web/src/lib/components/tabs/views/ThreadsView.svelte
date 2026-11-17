@@ -157,7 +157,13 @@
 	// It follows the pointer until a click pins a row; Escape lets go.
 	let hoveredId = $state<string | null>(null);
 	let pinnedId = $state<string | null>(null);
-	const shownId = $derived(pinnedId ?? hoveredId ?? rows[0]?.id ?? null);
+	/** With nothing pointed at, the preview shows the first thread with time this week. */
+	const firstBusy = $derived(
+		listFilter === 'active'
+			? (week?.threads.find((t) => t.days.some((d) => d.done_minutes + d.ahead_minutes > 0))?.id ?? null)
+			: null,
+	);
+	const shownId = $derived(pinnedId ?? hoveredId ?? firstBusy ?? rows[0]?.id ?? null);
 	const shown = $derived(rows.find((r) => r.id === shownId) ?? null);
 	const shownIndex = $derived(shown ? rows.indexOf(shown) : -1);
 	const detail = $derived(shownId ? (projectStore.getCached(shownId) ?? null) : null);
@@ -279,7 +285,7 @@
 
 <div class="door">
 	<div class="main">
-		<Page title="Threads" maxWidth={view === 'tasks' ? 'prose' : 'wide'}>
+		<Page title="Threads" maxWidth={view === 'tasks' ? 'reading' : 'full'}>
 			{#snippet actions()}
 				<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New thread</Button>
 			{/snippet}
@@ -298,7 +304,7 @@
 					<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={newTaskHere}>New task</Button>
 				</div>
 				{#if nextTasks.length === 0}
-					<p class="empty">Nothing to do yet. New task adds one.</p>
+					<p class="empty">No tasks yet.</p>
 				{:else}
 					<ul class="next">
 						{#each nextTasks as t (t.id)}
@@ -311,12 +317,11 @@
 							</li>
 						{/each}
 					</ul>
+					<div class="all"><TextAction onclick={() => setView('tasks')}>All tasks</TextAction></div>
 				{/if}
-				<div class="all"><TextAction onclick={() => setView('tasks')}>All tasks</TextAction></div>
 
 				<div class="hrow week-head">
 					<h2 class="h2">Active threads</h2>
-					<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New thread</Button>
 				</div>
 				{@render weekBlock()}
 			{:else}
@@ -415,13 +420,15 @@
 				{/if}
 
 				{#if detail}
-					<div class="sec">Since it began</div>
-					<div class="line-of-dots" aria-hidden="true">
-						<span class="rule"></span>
-						{#each nodes as x, i (i)}<span class="node" style={`left: ${x}%`}></span>{/each}
-						<span class="lab start">{dayOf(detail.created_at)}</span>
-						<span class="lab end">Today</span>
-					</div>
+					{#if nodes.length > 0}
+						<div class="sec">Since it began</div>
+						<div class="line-of-dots" aria-hidden="true">
+							<span class="rule"></span>
+							{#each nodes as x, i (i)}<span class="node" style={`left: ${x}%`}></span>{/each}
+							<span class="lab start">{dayOf(detail.created_at)}</span>
+							<span class="lab end">Today</span>
+						</div>
+					{/if}
 
 					<dl class="props">
 						<dt>Status</dt>
@@ -516,10 +523,6 @@
 		background: var(--active-bg);
 		color: var(--color-foreground);
 	}
-	.vt:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
-	}
 	.views {
 		margin-bottom: 16px;
 	}
@@ -610,10 +613,6 @@
 	}
 	.row.drop-on {
 		background: var(--drop-tint);
-	}
-	.row:focus-visible {
-		outline: 2px solid var(--color-primary);
-		outline-offset: 2px;
 	}
 	.row.placeholder {
 		cursor: default;
