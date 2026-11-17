@@ -1385,10 +1385,48 @@ struct TrayItems {
     status: tauri::menu::IconMenuItem<tauri::Wry>,
 }
 
+/// How long the tray reuses a collector status before asking the CLI again,
+/// when the daemon's health record hasn't changed. The tray polls every 10s,
+/// and each ask starts the tens-of-megabytes collector binary as a process.
+const TRAY_STATUS_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(60);
+
+/// The last status the tray read: when, the health record's mtime then, and
+/// the status. The daemon rewrites `~/.virtues/health.json` whenever its state
+/// changes, so a new mtime means ask now; an unchanged one is trusted for up to
+/// `TRAY_STATUS_MAX_AGE`, which still catches a daemon that died and stopped
+/// writing.
+static TRAY_STATUS: std::sync::Mutex<
+    Option<(std::time::Instant, Option<std::time::SystemTime>, CollectorStatus)>,
+> = std::sync::Mutex::new(None);
+
+/// The collector status for the tray, from `TRAY_STATUS` when it is still good.
+fn tray_collector_status(app: &AppHandle) -> CollectorStatus {
+    let health_mtime = dirs::home_dir()
+        .map(|h| h.join(".virtues").join("health.json"))
+        .and_then(|p| std::fs::metadata(p).and_then(|m| m.modified()).ok());
+    if let Ok(cache) = TRAY_STATUS.lock() {
+        if let Some((at, mtime, status)) = cache.as_ref() {
+            if *mtime == health_mtime && at.elapsed() < TRAY_STATUS_MAX_AGE {
+                return status.clone();
+            }
+        }
+    }
+    match tauri::async_runtime::block_on(get_collector_status(app.clone())) {
+        Ok(status) => {
+            if let Ok(mut cache) = TRAY_STATUS.lock() {
+                *cache = Some((std::time::Instant::now(), health_mtime, status.clone()));
+            }
+            status
+        }
+        // A failed read is not kept, so the next tick asks again.
+        Err(_) => CollectorStatus::default(),
+    }
+}
+
 /// Recompute the status line and apply it. Spawns its OWN thread because
-/// computing the state BLOCKS (probing the box over TCP, and shelling out to
-/// the collector CLI when installed), then hops to the main thread for the
-/// actual menu mutation — AppKit requires UI changes on the main thread.
+/// computing the state BLOCKS (shelling out to the collector CLI when its
+/// status is stale), then hops to the main thread for the actual menu
+/// mutation — AppKit requires UI changes on the main thread.
 fn refresh_tray(app: &AppHandle, items: TrayItems) {
     let app = app.clone();
     std::thread::spawn(move || {
@@ -1396,7 +1434,7 @@ fn refresh_tray(app: &AppHandle, items: TrayItems) {
         // Skip the CLI call entirely when nothing's installed: its sidecar
         // fallback would fork a process on every poll just to hand back defaults.
         let status = if installed {
-            tauri::async_runtime::block_on(get_collector_status(app.clone())).unwrap_or_default()
+            tray_collector_status(&app)
         } else {
             CollectorStatus::default()
         };
@@ -1730,12 +1768,14 @@ const ZOOM_HOTKEYS_JS: &str = r#"
 
   // Swallow the pinch rather than leave it to the webview: a ctrl+wheel that
   // reaches WebKit unclaimed is its own zoom trigger, so ignoring it here is
-  // not the same as stopping it.
+  // not the same as stopping it. One listener: WebKit sends the legacy
+  // `mousewheel` only when nothing listens for `wheel`. It has to be
+  // non-passive to cancel, which makes every scroll's first wheel event wait
+  // on the page's JavaScript, so it does nothing but this check.
   function swallowPinch(event) {
     if (event.ctrlKey) event.preventDefault()
   }
   window.addEventListener('wheel', swallowPinch, { passive: false })
-  window.addEventListener('mousewheel', swallowPinch, { passive: false })
 })()
 "#;
 
@@ -1752,8 +1792,8 @@ fn main() {
     // the box, each page load pinned to one bundle. macOS only: Windows and
     // Linux bake no UI yet. See agents/record/local-ui.md.
     #[cfg(target_os = "macos")]
-    let builder = builder.register_uri_scheme_protocol("virtues", |ctx, request| {
-        virtues_lib::serve_ui(ctx.app_handle(), &request)
+    let builder = builder.register_asynchronous_uri_scheme_protocol("virtues", |ctx, request, responder| {
+        virtues_lib::serve_ui_async(ctx.app_handle().clone(), request, responder)
     });
 
     // Single-instance guard — Windows/Linux only. macOS is single-instance

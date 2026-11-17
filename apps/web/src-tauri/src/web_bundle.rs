@@ -1083,6 +1083,14 @@ pub fn read_from_overlay(app_data: &Path, path: &str) -> Option<Vec<u8>> {
     fs::read(file).ok()
 }
 
+/// Whether the serving overlay has a file at `path`, by the same rules as
+/// `read_from_overlay`, without reading it.
+pub fn overlay_has(app_data: &Path, path: &str) -> bool {
+    let Some(dir) = serving_dir(app_data) else { return false };
+    let file = dir.join(path);
+    file.starts_with(&dir) && file.is_file()
+}
+
 /// Whether an archive entry's path would write outside the destination.
 ///
 /// `tar`'s own `unpack_in` also refuses these (it errors rather than escaping),
