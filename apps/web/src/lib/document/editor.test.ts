@@ -254,6 +254,18 @@ function ids(editor: Editor): string[] {
 	return out;
 }
 
+
+/**
+ * A file's upload as this device holds it, read fresh. A stored file leaves
+ * memory (uploads.ts `settle`) and its block draws the server's copy, so a
+ * fresh read of one finds nothing: that reads as `stored` here. Each test
+ * checks the same file while it is still held first, so `stored` cannot be
+ * a file that never existed.
+ */
+function phaseOf(id: string): string {
+	return get(watchUpload(id))?.phase ?? 'stored';
+}
+
 describe('opening a page writes nothing', () => {
 	it('mounting, resizing and blurring an editor on a server-written page send no update', async () => {
 		const { doc, writtenBy } = pageDoc(FIXTURE);
@@ -2614,7 +2626,7 @@ describe('media', () => {
 			expect(transfers.map((t) => t.id)).toEqual([id, id]);
 			transfers[1].done();
 			await vi.advanceTimersByTimeAsync(0);
-			expect(get(watchUpload(id))).toMatchObject({ phase: 'done' });
+			expect(phaseOf(id)).toBe('stored');
 			expect(uploadsAtStake()).toBe(0);
 		} finally {
 			vi.useRealTimers();
@@ -2642,7 +2654,7 @@ describe('media', () => {
 			expect(transfers.map((t) => [t.id, t.file.name])).toEqual(Array.from({ length: 6 }, () => [id, 'harbour.png']));
 			transfers[5].done();
 			await vi.advanceTimersByTimeAsync(0);
-			expect(get(watchUpload(id))).toMatchObject({ phase: 'done' });
+			expect(phaseOf(id)).toBe('stored');
 			expect(uploadsAtStake()).toBe(0);
 			expect(editor.getJSON()).toEqual(before);
 		} finally {
@@ -2738,7 +2750,7 @@ describe('media', () => {
 			expect(transfers.map((t) => t.id)).toEqual([id, id]);
 			transfers[1].done();
 			await vi.advanceTimersByTimeAsync(0);
-			expect(get(watchUpload(id))).toMatchObject({ phase: 'done' });
+			expect(phaseOf(id)).toBe('stored');
 			expect(uploadsAtStake()).toBe(0);
 		} finally {
 			unregisterTreeEditor('page_one', one);
@@ -4043,7 +4055,7 @@ describe('nothing in the editor lands after a wait', () => {
 		await settle();
 		expect(updates).toHaveLength(0);
 		expect(editor.state.doc.toJSON()).toEqual(before);
-		expect(transfers.slice(0, 3).map((t) => get(watchUpload(t.id))?.phase)).toEqual(['uploading', 'done', 'done']);
+		expect(transfers.slice(0, 3).map((t) => phaseOf(t.id))).toEqual(['uploading', 'stored', 'stored']);
 	});
 
 	const photos = (...names: string[]) => names.map((n) => new File(['x'], n, { type: 'image/png' }));
@@ -4076,7 +4088,7 @@ describe('nothing in the editor lands after a wait', () => {
 		editor.destroy();
 		transfers[0].done();
 		await settle();
-		expect(get(watchUpload(transfers[0].id))).toMatchObject({ phase: 'done' });
+		expect(phaseOf(transfers[0].id)).toBe('stored');
 		const after = htmlEditor('<p>x</p>');
 		track(after);
 		const tree = yXmlFragmentToProseMirrorRootNode(doc.getXmlFragment(contract.fragment), after.schema);
