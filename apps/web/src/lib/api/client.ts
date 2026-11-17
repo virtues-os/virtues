@@ -2082,6 +2082,13 @@ export interface Project {
 	/** The thing it sits under and that thing's name. Absent from a box older than the fields. */
 	thing_id?: string | null;
 	thing_title?: string | null;
+	/** Where it stands, in one sentence, and when that was written. */
+	current_status?: string | null;
+	current_status_at?: string | null;
+	/** Open but waiting: Backlog. False is Active. */
+	is_backlog?: boolean;
+	/** Adding is automatic: your server also files what it is sure belongs. */
+	is_adding_automatic?: boolean;
 	created_at: string;
 	updated_at: string;
 }
@@ -2153,6 +2160,9 @@ export interface ProjectDetail extends Project {
 	items: ProjectItem[];
 	/** Every chat filed here. Absent from a box older than the field. */
 	chats?: ProjectChat[];
+	/** Its open tasks, and open tasks homed elsewhere that are also about it. */
+	tasks?: Task[];
+	tasks_also_about?: Task[];
 }
 
 /** GET /api/threads — all Projects with counts. */
@@ -2211,6 +2221,9 @@ export function updateProject(
 		instructions?: string | null;
 		sort_order?: number;
 		thing_id?: string | null;
+		current_status?: string | null;
+		is_backlog?: boolean;
+		is_adding_automatic?: boolean;
 	}
 ): Promise<Project> {
 	return apiSend<Project>('PUT', `/threads/${encodeURIComponent(id)}`, patch);
@@ -2365,6 +2378,12 @@ export type TaskActor = 'owner' | 'assistant';
 export type TaskStatus = 'open' | 'active' | 'ready' | 'done' | 'dismissed';
 export type RecurUnit = 'day' | 'week' | 'month' | 'year';
 
+/** Something a task is about: a thread or a subject. */
+export interface TaskLink {
+	kind: 'thread' | 'person' | 'place' | 'org' | 'thing';
+	id: string;
+}
+
 export interface Task {
 	id: string;
 	title: string;
@@ -2375,9 +2394,14 @@ export interface Task {
 	due_on: string | null;
 	/** A time, only when one was given. */
 	due_at: string | null;
+	/** Its home, one at most of these five. Absent fields: a box older than them. */
 	thread_id: string | null;
-	/** The thing it sits under. A task has one parent at most: a thread or a thing. */
 	thing_id?: string | null;
+	person_id?: string | null;
+	place_id?: string | null;
+	org_id?: string | null;
+	/** What else it is about, besides its home. */
+	also_about?: TaskLink[];
 	/**
 	 * It recurs every `recur_every` `recur_unit`s, counted from the day it is
 	 * finished. Both null: once. Absent from a box older than the fields.
