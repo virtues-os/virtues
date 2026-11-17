@@ -417,20 +417,22 @@
 		cursor: text;
 	}
 
-	/* The name as a field: the same type, on a quiet well, so the path does
-	   not jump when it opens. */
+	/* The name as a field, in the same look as a renaming tab or sidebar
+	   row (app.css). It keeps the crumb's type and padding, so the path
+	   does not jump when it opens. */
 	.crumb.rename {
 		min-width: 6ch;
 		max-width: 60%;
 		height: 24px;
 		border: none;
 		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
+		background: var(--rename-fill);
 		font: inherit;
 		font-weight: 500;
 		color: var(--color-foreground);
-		outline: 1px solid var(--color-border);
-		outline-offset: 0;
+		caret-color: var(--color-primary);
+		outline: 1px solid var(--rename-edge);
+		outline-offset: -1px;
 	}
 
 	.crumb-sep {

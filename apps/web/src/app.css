@@ -18,6 +18,29 @@
 	color: var(--color-highlight-foreground);
 }
 
+/* Renaming in place: a sidebar row, a tab, the page bar's title. The thing's
+ * own shape becomes the field. It takes the page's fill and a thin accent
+ * edge, its controls step aside, and the name stays exactly where it was.
+ * The input itself draws nothing, so there is never a box inside a pill. */
+:root {
+	--rename-fill: var(--color-page);
+	--rename-edge: color-mix(in srgb, var(--color-primary) 45%, transparent);
+}
+
+.rename-input {
+	flex: 1;
+	min-width: 0;
+	height: 100%;
+	margin: 0;
+	padding: 0;
+	border: none;
+	background: transparent;
+	color: var(--color-foreground);
+	font: inherit;
+	outline: none;
+	caret-color: var(--color-primary);
+}
+
 /* ===================================
    BACKGROUND TREATMENT
    Applies gradient/texture overlays from theme

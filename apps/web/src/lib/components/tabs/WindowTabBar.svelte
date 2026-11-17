@@ -729,7 +729,7 @@
 					{#if tab.id === renamingTabId}
 						<input
 							type="text"
-							class="tab-rename-input"
+							class="rename-input"
 							bind:value={renameValue}
 							onkeydown={handleRenameKeydown}
 							onblur={handleRenameSubmit}
@@ -1163,22 +1163,14 @@
 	/* The label's own face and size, so the title does not move or change
 	   size when it becomes editable. The field shows as a wash around the
 	   text, drawn as a spread shadow so it takes no room. */
-	.tab-rename-input {
-		flex: 1;
-		min-width: 60px;
-		padding: 0;
-		border: none;
-		border-radius: var(--radius-sm);
-		background: var(--hover-bg);
-		/* design-ok: the field's wash spread past the text, not depth */
-		box-shadow: 0 0 0 3px var(--hover-bg);
+	/* Renaming: the tab is the field (app.css). It outranks the glass of
+	   the tab you are on and the hover wash. */
+	.tab.renaming,
+	.tab.renaming:hover {
+		background: var(--rename-fill);
 		color: var(--color-foreground);
-		font: inherit;
-		outline: none;
-		caret-color: var(--color-primary);
-	}
-
-	.tab.renaming {
+		outline: 1px solid var(--rename-edge);
+		outline-offset: -1px;
 		cursor: text;
 	}
 

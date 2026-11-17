@@ -1128,6 +1128,7 @@
 		class="panel-row panel-row-has-actions"
 		class:active={activeRoute === row.url}
 		class:dragging={draggingRecent === row.url}
+		class:renaming={renaming?.url === row.url}
 		class:stale-hover={staleHover}
 		role="link"
 		tabindex="0"
@@ -1193,7 +1194,7 @@
 {#snippet rowTitle(url: string, title: string, untitledTitle: boolean)}
 	{#if renaming?.url === url}
 		<input
-			class="row-rename"
+			class="rename-input"
 			aria-label="Name"
 			bind:value={renaming.draft}
 			placeholder={title}
@@ -1271,6 +1272,7 @@
 					class:drop-before={pinLine === index}
 					class:drop-after={pinLine === pins.length && index === pins.length - 1}
 					class:dragging={draggingPinId === pin.id}
+					class:renaming={renaming?.url === pin.url}
 					class:stale-hover={staleHover}
 					{...pinProject ? { [PROJECT_DROP_ATTR]: pinProject } : {}}
 					{...{ [PIN_DROP_ATTR]: String(index) }}
@@ -1721,24 +1723,20 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* The rename field sits exactly where the title was, in its face and size. */
-	.row-rename {
-		flex: 1;
-		min-width: 0;
-		height: 22px;
-		margin: 0 -4px;
-		padding: 0 4px;
-		border: none;
-		border-radius: var(--radius-sm);
-		background: var(--color-page);
-		box-shadow: inset 0 0 0 1px var(--color-border);
+	/* Renaming: the row is the field (app.css). Pin, More and the unread
+	   dot step aside, since none of them can be used while you type. The
+	   edge sits inside the row because the Pinned fold clips past it. */
+	.panel-row.renaming,
+	.panel-row.renaming:hover {
+		background: var(--rename-fill);
 		color: var(--color-foreground);
-		font: inherit;
-		outline: none;
+		outline: 1px solid var(--rename-edge);
+		outline-offset: -1px;
+		cursor: text;
 	}
 
-	.row-rename:focus {
-		box-shadow: inset 0 0 0 1.5px var(--color-primary);
+	.panel-row.renaming :is(.row-actions, .row-unread) {
+		display: none;
 	}
 
 	/* A stand-in name ("Untitled", "New chat") looks unnamed. */
