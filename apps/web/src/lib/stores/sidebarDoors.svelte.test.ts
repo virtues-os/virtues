@@ -22,8 +22,8 @@ describe('arranging the doors', () => {
 			'wiki',
 			'storage',
 			'new-chat',
-			'pages',
 			'threads',
+			'pages',
 			'applets',
 		]);
 	});
@@ -38,11 +38,11 @@ describe('arranging the doors', () => {
 		// Shown: new-chat, pages, applets, wiki, storage. Wiki to the top.
 		await sidebarDoors.move(3, 0);
 		expect(ids(sidebarDoors.visible)).toEqual(['wiki', 'new-chat', 'pages', 'applets', 'storage']);
-		expect(ids(sidebarDoors.all)).toEqual(['wiki', 'new-chat', 'threads', 'pages', 'applets', 'storage']);
+		expect(ids(sidebarDoors.all)).toEqual(['wiki', 'threads', 'new-chat', 'pages', 'applets', 'storage']);
 		await sidebarDoors.setHidden('threads', false);
-		expect(ids(sidebarDoors.visible)).toEqual(['wiki', 'new-chat', 'threads', 'pages', 'applets', 'storage']);
+		expect(ids(sidebarDoors.visible)).toEqual(['wiki', 'threads', 'new-chat', 'pages', 'applets', 'storage']);
 		expect(saved.at(-1)).toEqual({
-			sidebar_doors: { order: ['wiki', 'new-chat', 'threads', 'pages', 'applets', 'storage'], hidden: [] },
+			sidebar_doors: { order: ['wiki', 'threads', 'new-chat', 'pages', 'applets', 'storage'], hidden: [] },
 		});
 	});
 });

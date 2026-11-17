@@ -17,11 +17,13 @@
 
 <script lang="ts">
 	/**
-	 * A pin's glyph, shared by the sidebar's Pinned rows and the rail: the
-	 * mark the user picked, else the glyph of what it opens, in the pin's
-	 * color. A pinned chat that is replying shows the thinking mark. A solid
-	 * dot read as a status light: red and amber said error and warning about
-	 * a page that had neither.
+	 * A pin's glyph, shared by the sidebar's Pinned rows and the rail: a
+	 * tile in the pin's color with the mark the user picked, else the glyph
+	 * of what it opens, cut out of it. The tile gives the color enough area
+	 * to show, and it tells a pin from a door that draws the same glyph. An
+	 * emoji stands on its own. A pinned chat that is replying shows the
+	 * thinking mark. A solid dot read as a status light: red and amber said
+	 * error and warning about a page that had neither.
 	 */
 	import type { Pin } from '$lib/api/client';
 	import { pinIdentity } from '$lib/refs/identity.svelte';
@@ -30,7 +32,12 @@
 	import { chatActivity } from '$lib/stores/chatActivity.svelte';
 	import ThinkingMark from '$lib/components/ThinkingMark.svelte';
 	import Icon from '$lib/components/Icon.svelte';
-	import AtlasIcon, { SHELL_GLYPH_PX } from './AtlasIcon.svelte';
+	import AtlasIcon from './AtlasIcon.svelte';
+
+	/** The glyph inside the tile. */
+	const MARK_PX = 12;
+	/** 1.5px of ink at 12px: a light line on a color reads thinner than ink on paper. */
+	const MARK_STROKE = (1.5 * 24) / MARK_PX;
 
 	let { pin }: { pin: Pin } = $props();
 
@@ -47,24 +54,27 @@
 	{:else if look.icon}
 		<!-- An Atlas pick goes through AtlasIcon so it keeps the nav glyphs'
 		     1.25px line; through iconify at a smaller box it thinned. -->
-		<span class="kind" style="color: {color}">
+		<span class="tile" style="background: {color}">
 			{#if look.icon.startsWith('atlas:')}
-				<AtlasIcon name={look.icon.slice('atlas:'.length)} size={SHELL_GLYPH_PX} bare fillable />
+				<AtlasIcon name={look.icon.slice('atlas:'.length)} size={MARK_PX} stroke={MARK_STROKE} bare />
 			{:else}
-				<Icon icon={look.icon} width={SHELL_GLYPH_PX} />
+				<Icon icon={look.icon} width={MARK_PX} />
 			{/if}
 		</span>
 	{:else}
-		<span class="kind" style="color: {color}">
-			<AtlasIcon name={pinKindGlyph(pin.url)} size={SHELL_GLYPH_PX} bare fillable />
+		<span class="tile" style="background: {color}">
+			<AtlasIcon name={pinKindGlyph(pin.url)} size={MARK_PX} stroke={MARK_STROKE} bare />
 		</span>
 	{/if}
 </span>
 
 <style>
+	/* 18px, a pixel past the row's 16px slot on each side, so the tile's
+	   center stays on the icons' column (design.md, "One left edge"). */
 	.pin-glyph {
-		width: 16px;
-		height: 16px;
+		width: 18px;
+		height: 18px;
+		margin: 0 -1px;
 		flex: none;
 		display: flex;
 		align-items: center;
@@ -72,11 +82,19 @@
 	}
 
 	.emoji {
-		font-size: 14px;
+		font-size: 15px;
 		line-height: 1;
 	}
 
-	.kind {
+	/* The paper's color, so the cut-out is light on the light themes and
+	   dark on the dark ones, whose --cat-* hues are lightened. */
+	.tile {
+		width: 18px;
+		height: 18px;
+		border-radius: 5px;
 		display: flex;
+		align-items: center;
+		justify-content: center;
+		color: var(--color-background);
 	}
 </style>
