@@ -2,7 +2,11 @@ import { describe, expect, it } from 'vitest';
 import type { TaskEvent } from '$lib/api/client';
 import { eventLine } from './history';
 
-const event = (kind: string, body: Record<string, unknown>, author = 'owner'): TaskEvent => ({
+const event = (
+	kind: TaskEvent['kind'],
+	body: Record<string, unknown>,
+	author: TaskEvent['author'] = 'owner',
+): TaskEvent => ({
 	id: 1,
 	task_id: 'task_1',
 	author,
