@@ -18,6 +18,40 @@ const OFFLINE_DATA = {
 export const load: LayoutLoad = async ({ fetch, url }) => {
 	// Check authentication via Rust auth API
 	try {
+		// PARALLEL, with the session. Setup state, the version floor and the
+		// profile don't depend on each other or on the session's answer, so all
+		// four start at once and are read in gate order below. Waiting for the
+		// session first cost a round trip before the shell, and each one awaited
+		// in turn cost another; on the relay those are most of a cold start. A
+		// gate that redirects leaves the rest unread, and an unpaired device's
+		// 401s are discarded with them. Setup state and the profile are asked
+		// again after the session when the early answer came back empty: right
+		// after the phone resumes, the first attempts can die with the session's
+		// while the parked endpoint rebuilds (the session retries below).
+		const askSetup = async () => {
+			let setup: {
+				setup_complete?: boolean;
+				onboarding_complete?: boolean;
+				onboarding_status?: string;
+			} | null = null;
+			for (let i = 0; i < 3 && !setup; i++) {
+				if (i > 0) await new Promise((r) => setTimeout(r, 400));
+				try {
+					const setupRes = await fetch('/api/setup/state');
+					if (setupRes.ok) setup = await setupRes.json();
+				} catch {
+					// keep trying
+				}
+			}
+			return setup;
+		};
+		const oauth = url.pathname.startsWith('/oauth/');
+		const setupP = oauth ? Promise.resolve(null) : askSetup();
+		const floorP = oauth ? Promise.resolve(false) : boxBelowFloor(fetch);
+		const profileP: Promise<Response | null> = oauth ? Promise.resolve(null) : fetch('/api/profile').catch(() => null);
+		// Mark it handled now: a redirect below returns before it is awaited.
+		floorP.catch(() => {});
+
 		// One retry after a beat: on the mobile shell this fetch rides the iroh
 		// loopback, and right after an app resume the parked endpoint may still
 		// be rebuilding (~1-3s) — the first attempt can die in that window.
@@ -50,7 +84,7 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		}
 
 		// Skip profile check for OAuth callback (it handles its own redirect)
-		if (url.pathname.startsWith('/oauth/')) {
+		if (oauth) {
 			return { session: sessionData };
 		}
 
@@ -84,37 +118,9 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		// Three quick tries, then give up and continue. Onboarding is worth a
 		// second of patience; it is never worth locking someone out of their
 		// own app over a box that blipped.
-		//
-		// PARALLEL, because only the session has to come first. Setup state,
-		// the version floor and the profile don't depend on each other, so all
-		// three start now and are read in gate order below. Each one awaited in
-		// turn cost a round trip apiece before the shell, which on the relay is
-		// most of a cold start. A gate that redirects leaves the others unread.
-		const setupP = (async () => {
-			let setup: {
-				setup_complete?: boolean;
-				onboarding_complete?: boolean;
-				onboarding_status?: string;
-			} | null = null;
-			for (let i = 0; i < 3 && !setup; i++) {
-				if (i > 0) await new Promise((r) => setTimeout(r, 400));
-				try {
-					const setupRes = await fetch('/api/setup/state');
-					if (setupRes.ok) setup = await setupRes.json();
-				} catch {
-					// keep trying
-				}
-			}
-			return setup;
-		})();
-		const floorP = boxBelowFloor(fetch);
-		const profileP = fetch('/api/profile');
-		// Mark both handled now: a redirect below returns before they're awaited.
-		floorP.catch(() => {});
-		profileP.catch(() => {});
 
 		try {
-			const setup = await setupP;
+			const setup = (await setupP) ?? (await askSetup());
 			// The shell's setup store and sidebar would ask again on mount;
 			// hand them these answers instead (see `seed` on each).
 			if (setup) setupStateStore.seed(setup as SetupState);
@@ -153,7 +159,8 @@ export const load: LayoutLoad = async ({ fetch, url }) => {
 		markInApp(true);
 
 		// Fetch profile for user preferences
-		const profileResponse = await profileP;
+		let profileResponse = await profileP;
+		if (!profileResponse?.ok) profileResponse = await fetch('/api/profile');
 
 		if (profileResponse.ok) {
 			const profile = await profileResponse.json();

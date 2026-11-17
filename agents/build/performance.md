@@ -67,6 +67,7 @@ node run.mjs --keep                 # leave the box and database up to look at
 | Scenario | What it records |
 |---|---|
 | `cold_load` | Time from navigation to a visible composer, JavaScript transferred, API requests before ready and in total, the waterfall's depth, long tasks, and heap, DOM and listener counts after garbage collection |
+| `relay_load` | A cold load as the Mac and iPhone apps see it: every API request waits 100 ms (about the relay to a phone) and the UI files load at once. Records when the composer is usable and when the sidebar shows the newest chat. The browser's six connections to the box still apply, as they do to the apps' loopback proxy |
 | `long_chat` | Time until the 300th message is in the page, the longest task, heap and DOM after garbage collection, and Chromium's layout and style time for three moves: opening the chat, narrowing the window (every message laid out again, as when the sidebar opens beside it), and scrolling to the top |
 | `sidebar_toggle` | Six opens and closes of the sidebar beside the long chat, through the header's ∴ button: main-thread layout, style and script time per toggle (median after two warm-ups) and the most frames over 20 ms in any toggle |
 | `view_cycle` | Ten laps through eight views by in-app navigation, and the growth per lap in heap, DOM nodes, listeners and documents between lap 2 and lap 10 |
@@ -116,9 +117,8 @@ join this module the same way.
 
 - A streamed reply. Nothing in the lab asks a model, so the per-token cost of
   rendering a reply is not measured.
-- The relay. Every request in the lab is on loopback, where a round trip is
-  nearly free. The waterfall's depth is the number to watch for the phone:
-  each step is a round trip over the relay.
+- The relay's real behavior. `relay_load` adds a fixed 100 ms to each API
+  request; a real relay varies, and loses packets.
 - The Mac and iPhone shells: launch time, the `virtues://` handler, the tray.
 - GPU work: redrawing the glass's blur as the sidebar or a tile changes
   size. Headless Chromium draws in software, so `sidebar_toggle` holds only

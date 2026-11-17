@@ -236,6 +236,46 @@ async function layoutWorkMs(cdp) {
 
 const twoFrames = (page) => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
 
+/**
+ * A cold load as the Mac and iPhone apps see it: the UI is local, and every
+ * API request crosses the relay. Each request to the box waits RELAY_MS
+ * before it goes; the UI files load at once. The browser still opens at most
+ * six connections to the box, as it does to the apps' loopback proxy, so
+ * requests beyond six wait their turn, a round trip at a time.
+ */
+const RELAY_MS = 100;
+async function relayLoad(browser) {
+	const { context, page } = await newPage(browser);
+	await page.route(
+		(url) => url.pathname.startsWith('/api/') || url.pathname.startsWith('/auth/') || url.pathname === '/health',
+		async (route) => {
+			await sleep(RELAY_MS);
+			await route.continue();
+		}
+	);
+	await page.goto(`${ORIGIN}/chat`, { waitUntil: 'commit' });
+	// Times from the page's own clock, so they start at navigation.
+	const marks = await page.evaluate(
+		(title) =>
+			new Promise((done) => {
+				const out = {};
+				const check = () => {
+					const now = Math.round(performance.now());
+					const input = document.querySelector('.chat-input');
+					if (!out.composer && input && input.getBoundingClientRect().height > 0) out.composer = now;
+					if (!out.sidebar && [...document.querySelectorAll('aside *')].some((el) => el.childElementCount === 0 && el.textContent === title)) out.sidebar = now;
+					if (out.composer && out.sidebar) return done(out);
+					if (now > 30_000) return done(out);
+					requestAnimationFrame(check);
+				};
+				check();
+			}),
+		'A long planning thread'
+	);
+	await context.close();
+	return { composer_ms: marks.composer ?? -1, sidebar_ms: marks.sidebar ?? -1 };
+}
+
 async function longChat(browser) {
 	const { context, page, cdp } = await newPage(browser);
 	const last = `${LONG_CHAT_ID}_${String(LONG_CHAT_MESSAGES - 1).padStart(4, '0')}`;
@@ -406,7 +446,7 @@ async function repeat(name, fn, browser, runs = RUNS) {
 // steady and is budgeted instead). The waterfall depth can be one off for the
 // same race, so it gets one step of slack.
 const RULES = {
-	ready_ms: 'time', rendered_ms: 'time', open_layout_ms: 'layout', resize_layout_ms: 'layout', scroll_layout_ms: 'layout',
+	ready_ms: 'time', rendered_ms: 'time', composer_ms: 'time', sidebar_ms: 'time', open_layout_ms: 'layout', resize_layout_ms: 'layout', scroll_layout_ms: 'layout',
 	toggle_layout_ms: 'layout', toggle_style_ms: 'layout', toggle_script_ms: 'layout', toggle_slow_frames: 'count', long_task_ms: 'report', longest_task_ms: 'time',
 	api_before_ready: 'report', waterfall_depth: 'approx', api_total: 'count',
 	js_transfer_kb: 'size', heap_mb: 'size', heap_mb_after: 'size', dom_nodes: 'size',
@@ -468,6 +508,7 @@ async function main() {
 		await coldLoad(browser);
 		results = {
 			cold_load: await repeat('cold_load', coldLoad, browser),
+			relay_load: await repeat('relay_load', relayLoad, browser),
 			long_chat: await repeat('long_chat', longChat, browser),
 			view_cycle: await repeat('view_cycle', viewCycle, browser, Math.min(RUNS, 3)),
 			sidebar_toggle: await repeat('sidebar_toggle', sidebarToggle, browser)

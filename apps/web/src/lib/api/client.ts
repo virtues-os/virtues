@@ -171,9 +171,19 @@ export async function request<T>(
 	return (res.text ? JSON.parse(res.text) : undefined) as T;
 }
 
-/** GET a JSON endpoint, with an optional query object. */
-export function apiGet<T>(path: string, query?: Record<string, QueryValue>): Promise<T> {
-	return request<T>(path, { query });
+/**
+ * GET a JSON endpoint, with an optional query object. `priority: 'low'` is for
+ * what no first screen shows: the browser opens at most six connections to the
+ * box (and to the apps' loopback proxy), so on a cold start over the relay a
+ * request waits its turn, and a low one waits behind the sidebar's and the
+ * chat's.
+ */
+export function apiGet<T>(
+	path: string,
+	query?: Record<string, QueryValue>,
+	opts?: { priority?: RequestPriority },
+): Promise<T> {
+	return request<T>(path, { query, priority: opts?.priority });
 }
 
 /** Send a JSON body (POST/PUT/PATCH/DELETE) and parse the JSON response. */
@@ -1820,7 +1830,7 @@ export interface RecentVisit {
 
 /** GET /api/visits/recent — each record's last visit, newest first. */
 export function getRecentVisits(): Promise<RecentVisit[]> {
-	return apiGet<RecentVisit[]>('/visits/recent');
+	return apiGet<RecentVisit[]>('/visits/recent', undefined, { priority: 'low' });
 }
 
 /** GET /api/visits/frecency — every visited record's score, highest first. */
@@ -3015,7 +3025,7 @@ export function removeChatPermission<T = unknown>(id: string, entityId: string):
 
 // ── Models ───────────────────────────────────────────────────────────────────
 export function listModels<T = unknown>(): Promise<T> {
-	return apiGet<T>('/models');
+	return apiGet<T>('/models', undefined, { priority: 'low' });
 }
 export function getModel<T = unknown>(id: string): Promise<T> {
 	return apiGet<T>(`/models/${encodeURIComponent(id)}`);
@@ -3174,7 +3184,7 @@ export function getUsageSummary<T = unknown>(): Promise<T> {
 	return apiGet<T>('/usage/summary');
 }
 export function getSubscription<T = unknown>(fresh = false): Promise<T> {
-	return apiGet<T>('/subscription', fresh ? { fresh: 1 } : undefined);
+	return apiGet<T>('/subscription', fresh ? { fresh: 1 } : undefined, { priority: 'low' });
 }
 
 // ── Narrative identity (wiki) ────────────────────────────────────────────────
