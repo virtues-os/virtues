@@ -1,5 +1,6 @@
 <script lang="ts">
 	import Icon from "$lib/components/Icon.svelte";
+	import { fly } from "$lib/utils/transitions";
 	import { onMount, untrack } from "svelte";
 	import {
 		getPersonById,
@@ -51,6 +52,18 @@
 	let { entityId = "", active = true, onLabelChange }: Props = $props();
 
 	let loading = $state(true);
+	/**
+	 * The spinner waits before it shows, so a page that loads quickly never
+	 * flashes one.
+	 */
+	const SPINNER_DELAY_MS = 400;
+	let slow = $state(false);
+	$effect(() => {
+		if (!loading) return;
+		slow = false;
+		const timer = setTimeout(() => (slow = true), SPINNER_DELAY_MS);
+		return () => clearTimeout(timer);
+	});
 	let error = $state<string | null>(null);
 	let wikiPage = $state<Loaded | undefined>(undefined);
 	/** Set when the route is a year; rendered on its own. */
@@ -222,9 +235,11 @@
 
 <div class="wiki-content">
 	{#if loading}
-		<div class="flex items-center justify-center h-full">
-			<Icon icon="mynaui:spinner" width="20" class="spin" />
-		</div>
+		{#if slow}
+			<div class="flex items-center justify-center h-full">
+				<Icon icon="mynaui:spinner" width="20" class="spin" />
+			</div>
+		{/if}
 	{:else if error}
 		<div class="error">
 			<Icon icon="mynaui:danger-circle" />
@@ -237,7 +252,11 @@
 		{#if wikiPage.kind === "day"}
 			<DayPage page={wikiPage.page} />
 		{:else if wikiPage.kind === "person"}
-			<PersonPage page={wikiPage.page} />
+			<!-- The page rises into place as its data arrives; its late parts
+			     ease in where they land (PersonPage). -->
+			<div class="arrived" in:fly|global={{ y: 4, duration: 200 }}>
+				<PersonPage page={wikiPage.page} />
+			</div>
 		{:else if wikiPage.kind === "place"}
 			<PlacePage page={wikiPage.page} />
 		{:else if wikiPage.kind === "organization"}
@@ -258,6 +277,10 @@
 	.wiki-content {
 		height: 100%;
 		overflow: hidden;
+	}
+
+	.arrived {
+		height: 100%;
 	}
 
 	.loading {

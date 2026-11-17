@@ -8,6 +8,7 @@
 <script lang="ts">
 	import { subjectHref } from "$lib/wiki/links";
 	import { untrack } from "svelte";
+	import { slide } from "$lib/utils/transitions";
 	import type { WikiPersonApi } from "$lib/wiki/api";
 	import { parseDateSlug } from "$lib/utils/dateUtils";
 	import EntityArticleSection from "./EntityArticleSection.svelte";
@@ -262,8 +263,10 @@
 				<p class="picture-error" role="alert">{pictureError}</p>
 			{/if}
 
+			<!-- Found after the page is up, so it opens its own space instead of
+			     the page jumping down under it. -->
 			{#each same as other (other.id)}
-				<div class="same-person">
+				<div class="same-person" in:slide>
 					{#if confirming === other.id}
 						<p>
 							Merge {other.name} into {page.name}? Their messages, notes and pins move to
