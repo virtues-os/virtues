@@ -218,8 +218,27 @@ if [ -d "applets" ]; then
     fi
 fi
 
+# ─── Lint 12: Svelte transitions come from $lib/utils/transitions ─────────
+# Svelte 5 runs `in:`, `out:`, `transition:` and `animate:` on the Web
+# Animations API, which neither the reduced-motion media query nor the
+# Settings choice (`:root[data-reduce-motion]`) reaches. The module's
+# versions ask reducedMotion() and default to the motion scale. Type imports
+# are fine, and so is `crossfade`, which the module has no version of.
+violations=$(grep -rEn "from[[:space:]]+['\"]svelte/(transition|animate)['\"]" \
+    apps/web/src/ --include='*.svelte' --include='*.ts' 2>/dev/null \
+    | grep -v 'apps/web/src/lib/utils/transitions.ts:' \
+    | grep -vE 'import[[:space:]]+type[[:space:]]' \
+    | grep -vE 'import[[:space:]]*\{[[:space:]]*crossfade[[:space:]]*\}' \
+    || true)
+if [ -n "$violations" ]; then
+    report \
+        "Svelte transition imported from svelte/transition or svelte/animate" \
+        "Import fade, fly, slide, scale and flip from \$lib/utils/transitions, which follows reduced motion and the motion scale (agents/build/design.md, Motion)." \
+        "$violations"
+fi
+
 if [ "$fail" -eq 0 ]; then
-    echo "arch_lint: OK (11 invariants enforced)"
+    echo "arch_lint: OK (12 invariants enforced)"
 else
     exit 1
 fi

@@ -274,17 +274,8 @@
 		font-size: 32px;
 	}
 
-	@keyframes spin {
-		from {
-			transform: rotate(0deg);
-		}
-		to {
-			transform: rotate(360deg);
-		}
-	}
-
 	.animate-spin {
-		animation: spin 1s linear infinite;
+		animation: virtues-spin 1s linear infinite;
 	}
 
 	.error {
