@@ -866,14 +866,14 @@
 		max-width: 200px;
 		min-width: 36px;
 		flex-shrink: 1;
-		/* Switching tabs moves the glass at once, as in a browser. Only the
+		/* Switching tabs moves the glass at once, as in a browser: the glass,
+		   its edge and the ink change in one frame (`.tab.active`). Only the
 		   hover wash fades. Opening and closing a tab are transitions
 		   (unfold, foldAway), so the tabs already open when the window loads
 		   do not animate in. */
 		transition:
 			background-color var(--motion-hover-out) var(--ease-premium),
 			color var(--motion-hover-out) var(--ease-premium),
-			box-shadow var(--motion-hover-out) var(--ease-premium),
 			transform var(--motion-release) var(--ease-glass);
 	}
 
@@ -883,7 +883,7 @@
 
 	.tab:not(.active):hover {
 		background-color: var(--hover-bg);
-		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
 	}
 
 	/* Rows and tabs take the press fill (design.md, "Grays"). The glass of
@@ -895,7 +895,7 @@
 
 	.tab.active:active {
 		transform: scale(0.97);
-		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-press);
+		transition-duration: 0s, 0s, var(--motion-press);
 	}
 
 	/* The tab you are on: full ink on glass. Never marked by weight: a
@@ -907,16 +907,9 @@
 		   minimum, it lost its label and its × ran into the next tab. */
 		flex-shrink: 0;
 		color: var(--color-foreground);
-		/* The glass settles onto the tab you switch to: it grows in from a
-		   little smaller and springs to size, once, on the switch. */
-		animation: tab-glass-in 280ms var(--ease-glass);
-	}
-
-	@keyframes tab-glass-in {
-		from {
-			scale: 0.92;
-			opacity: 0.4;
-		}
+		/* Lit in one frame when you switch to it; the page under it is what
+		   arrives ($lib/tabs/arrive). */
+		transition-duration: 0s, 0s, var(--motion-release);
 	}
 
 	/* A closing tab takes no pointer, so the tab gliding in under it does.

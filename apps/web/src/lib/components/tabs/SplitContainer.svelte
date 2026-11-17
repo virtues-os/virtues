@@ -632,28 +632,11 @@
 
 	/* Nor a toolbar: there is nothing on home to go back from or to name.
 	   When the chat begins the paper fades in under it (the transition
-	   above) and the toolbar arrives a beat later (below). */
+	   above) and the toolbar comes in with the page as the chat gets its
+	   route ($lib/tabs/arrive). The toolbar has no motion of its own, so a
+	   tab switch does not replay one. */
 	.tab-slot:has(:global(.page-container.home)) :global(.action-toolbar) {
 		display: none;
-	}
-
-	/* A page you open comes in rather than cutting ($lib/tabs/arrive,
-	   which also covers a tab navigating in place). Its toolbar follows a
-	   beat later, and does the same when a chat leaves home. */
-	.tab-slot :global(.action-toolbar) {
-		animation: slot-toolbar-in 260ms var(--ease-premium) 40ms backwards;
-	}
-
-	@keyframes slot-toolbar-in {
-		from {
-			opacity: 0;
-		}
-	}
-
-	@media (prefers-reduced-motion: reduce) {
-		.tab-slot :global(.action-toolbar) {
-			animation: none;
-		}
 	}
 
 	/* A pane that has closed leaves its border behind as a 1px sliver, so
