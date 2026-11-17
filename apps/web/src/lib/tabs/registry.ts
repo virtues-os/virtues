@@ -30,7 +30,6 @@ const BrowserView: ViewLoader = () => import('$lib/components/tabs/views/Browser
 const HistoryView: ViewLoader = () => import('$lib/components/tabs/views/HistoryView.svelte');
 const WikiView: ViewLoader = () => import('$lib/components/tabs/views/WikiView.svelte');
 const WikiDetailView: ViewLoader = () => import('$lib/components/tabs/views/WikiDetailView.svelte');
-const WikiListView: ViewLoader = () => import('$lib/components/tabs/views/WikiListView.svelte');
 const SourcesView: ViewLoader = () => import('$lib/components/sources/SourcesView.svelte');
 const CredentialDetailView: ViewLoader = () => import('$lib/components/tabs/views/CredentialDetailView.svelte');
 const AppletsView: ViewLoader = () => import('$lib/components/tabs/views/AppletsView.svelte');
@@ -232,16 +231,20 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// PERSON NAMESPACE: /person, /person/{id}
+	// PERSON NAMESPACE: /person/{id}
+	//
+	// The list is the wiki's index, `/wiki/people`, so the bare path opens
+	// it with this kind filtered.
 	// ========================================================================
 	person: {
 		match: (path) => path === '/person' || /^\/person\/[^/]+$/.test(path),
 		parse: (path) => {
 			if (path === '/person') {
 				return {
-					type: 'person',
-					label: 'People',
-					icon: 'mynaui:user',
+					type: 'wiki',
+					label: 'Wiki',
+					icon: 'mynaui:book',
+					normalizedRoute: '/wiki/people',
 				};
 			}
 			const match = path.match(/^\/person\/([^/]+)$/);
@@ -257,25 +260,29 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (serialized && serialized !== 'person') {
 				return `/person/${serialized}`;
 			}
-			return '/person';
+			return '/wiki/people';
 		},
 		icon: 'mynaui:user',
 		defaultLabel: 'People',
-		component: WikiListView,
+		component: WikiView,
 		detailComponent: WikiDetailView,
 	},
 
 	// ========================================================================
-	// PLACE NAMESPACE: /place, /place/{id}
+	// PLACE NAMESPACE: /place/{id}
+	//
+	// The list is the wiki's index, `/wiki/places`, so the bare path opens
+	// it with this kind filtered.
 	// ========================================================================
 	place: {
 		match: (path) => path === '/place' || /^\/place\/[^/]+$/.test(path),
 		parse: (path) => {
 			if (path === '/place') {
 				return {
-					type: 'place',
-					label: 'Places',
-					icon: 'mynaui:map-pin',
+					type: 'wiki',
+					label: 'Wiki',
+					icon: 'mynaui:book',
+					normalizedRoute: '/wiki/places',
 				};
 			}
 			const match = path.match(/^\/place\/([^/]+)$/);
@@ -291,25 +298,29 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (serialized && serialized !== 'place') {
 				return `/place/${serialized}`;
 			}
-			return '/place';
+			return '/wiki/places';
 		},
 		icon: 'mynaui:map-pin',
 		defaultLabel: 'Places',
-		component: WikiListView,
+		component: WikiView,
 		detailComponent: WikiDetailView,
 	},
 
 	// ========================================================================
-	// ORG NAMESPACE: /org, /org/{id}
+	// ORG NAMESPACE: /org/{id}
+	//
+	// The list is the wiki's index, `/wiki/orgs`, so the bare path opens
+	// it with this kind filtered.
 	// ========================================================================
 	org: {
 		match: (path) => path === '/org' || /^\/org\/[^/]+$/.test(path),
 		parse: (path) => {
 			if (path === '/org') {
 				return {
-					type: 'org',
-					label: 'Organizations',
-					icon: 'mynaui:building',
+					type: 'wiki',
+					label: 'Wiki',
+					icon: 'mynaui:book',
+					normalizedRoute: '/wiki/orgs',
 				};
 			}
 			const match = path.match(/^\/org\/([^/]+)$/);
@@ -325,11 +336,11 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 			if (serialized && serialized !== 'org') {
 				return `/org/${serialized}`;
 			}
-			return '/org';
+			return '/wiki/orgs';
 		},
 		icon: 'mynaui:building',
 		defaultLabel: 'Organizations',
-		component: WikiListView,
+		component: WikiView,
 		detailComponent: WikiDetailView,
 	},
 

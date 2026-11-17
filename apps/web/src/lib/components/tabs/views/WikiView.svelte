@@ -30,7 +30,6 @@
 	import UniversalDataGrid, {
 		type Column,
 	} from '$lib/components/datagrid/UniversalDataGrid.svelte';
-	import type { FilterDef } from '$lib/components/datagrid/types';
 	import { onMount, untrack } from 'svelte';
 	import Icon from '$lib/components/Icon.svelte';
 	import { Button } from '$lib';
@@ -236,41 +235,26 @@
 		}
 	}
 
+	// The list is read, not scanned: a name and a line under it, grouped by
+	// kind. Within a group the order is by mentions (see loadAllEntities).
 	const entityColumns: Column<UnifiedEntity>[] = [
-		{
-			key: 'name',
-			label: 'Name',
-			icon: 'mynaui:users-group',
-			width: '45%',
-			minWidth: '200px',
-		},
+		{ key: 'name', label: 'Name' },
+		{ key: 'subtitle', label: 'Details', hidden: true },
 		{
 			key: 'entityType',
-			label: 'Type',
-			icon: 'mynaui:tag',
-			width: '20%',
-			minWidth: '120px',
-			getValue: (item) =>
-				item.isSelf ? `${typeConfig[item.entityType].label} · You` : typeConfig[item.entityType].label,
-		},
-		{
-			key: 'subtitle',
-			label: 'Details',
-			icon: 'mynaui:info-circle',
-			width: '25%',
-			minWidth: '140px',
-			hideOnMobile: true,
-		},
-		{
-			key: 'refCount',
-			label: 'Mentions',
-			icon: 'mynaui:link',
-			width: '10%',
-			minWidth: '90px',
-			hideOnMobile: true,
-			getValue: (item) => (item.refCount ? item.refCount.toLocaleString() : '—'),
+			label: 'Kind',
+			hidden: true,
+			groupable: true,
+			groupOrder: ['People', 'Places', 'Organizations'],
+			getValue: (item) => typeConfig[item.entityType].plural,
 		},
 	];
+
+	/** The row's second line, with its first letter raised: "friend" reads "Friend". */
+	function detailLine(entity: UnifiedEntity): string {
+		const text = entity.subtitle?.trim() ?? '';
+		return text ? text[0].toUpperCase() + text.slice(1) : '';
+	}
 
 	/**
 	 * Row menu: the grid's default items, plus the one correction this index
@@ -357,21 +341,11 @@
 		}
 	}
 
-	// One filter instead of three tabs: person/place/org narrow the same index.
-	const entityFilters = $derived<FilterDef<UnifiedEntity>[]>([
-		{
-			id: 'type',
-			label: 'Type',
-			kind: 'multi',
-			field: 'entityType',
-			defaultValue: entityTypePreset ? [entityTypePreset] : null,
-			options: [
-				{ value: 'person', label: 'People', icon: typeConfig.person.icon },
-				{ value: 'place', label: 'Places', icon: typeConfig.place.icon },
-				{ value: 'org', label: 'Organizations', icon: typeConfig.org.icon },
-			],
-		},
-	]);
+	// Grouping by kind does what a type filter would. A legacy per-kind
+	// route (/wiki/people) lists that kind alone.
+	const listedEntities = $derived(
+		entityTypePreset ? allEntities.filter((e) => e.entityType === entityTypePreset) : allEntities
+	);
 
 	// What the front page's finder looks through.
 	const findable = $derived(
@@ -554,59 +528,54 @@
 				<DaysChronicle onOpenDay={openDay} />
 			</div>
 		{:else if section === 'entities'}
-			<div class="grid-wrap">
+			<div class="list-wrap">
 				{#key entityTypePreset}
 					<UniversalDataGrid
-						items={allEntities}
+						items={listedEntities}
 						columns={entityColumns}
-						entityType="entities"
+						entityType="entities-list"
+						viewModes={['list']}
+						defaultViewMode="list"
+						defaultGroupBy="entityType"
+						showCounts={false}
+						pageSize={100000}
 						{loading}
 						{error}
-						filters={entityFilters}
 						emptyIcon="mynaui:users-group"
-						emptyMessage="No people, places, or organizations yet"
+						emptyMessage="People, places and organizations show up here as your server finds them in your records. Add someone with New person."
 						loadingMessage="Loading…"
-						searchPlaceholder="Search people, places, organizations…"
+						searchPlaceholder={entityTypePreset ? `Search ${typeConfig[entityTypePreset].plural.toLowerCase()}` : 'Search people, places, organizations'}
 						onItemClick={openEntity}
 						onItemContextMenu={entityContextMenu}
 						onRetry={loadAllEntities}
 					>
 						{#snippet toolbarActions()}
+							{#if !entityTypePreset || entityTypePreset === 'person'}
 							<!-- People arrived only by resolution before this: from a
 							     contact sync or an email sender. The people who matter
 							     most are often the ones you never email. -->
 							<Button
-								variant="ghost"
+								variant="secondary"
 								size="sm"
 								icon="mynaui:user-plus"
 								onclick={addPerson}>New person</Button
 							>
-						{/snippet}
-						{#snippet tableRow(entity: UnifiedEntity)}
-							<td class="col-name">
-								<div class="name-cell">
-									<Icon icon={typeConfig[entity.entityType].icon} width="16" />
-									<span class="name-text">{entity.name}</span>
-								</div>
-							</td>
-							<td class="col-type">
-								<span class="badge badge-muted">{typeConfig[entity.entityType].label}</span>
-							</td>
-							<td class="col-details hide-mobile">
-								{#if entity.subtitle}
-									<span class="subtitle-text">{entity.subtitle}</span>
-								{:else}
-									<span class="empty-cell">—</span>
-								{/if}
-							</td>
+							{/if}
 						{/snippet}
 
-						{#snippet card(entity: UnifiedEntity)}
-							<div class="card-content">
-								<Icon icon={typeConfig[entity.entityType].icon} width="28" />
-								<span class="card-name">{entity.name}</span>
-								<span class="badge badge-muted">{typeConfig[entity.entityType].label}</span>
-							</div>
+						{#snippet listRow(entity: UnifiedEntity)}
+							<span class="row">
+								<span class="row-icon"><Icon icon={typeConfig[entity.entityType].icon} width="16" /></span>
+								<span class="row-text">
+									<span class="row-title">{entity.name}</span>
+									{#if detailLine(entity)}
+										<span class="row-line">{detailLine(entity)}</span>
+									{/if}
+								</span>
+								{#if entity.isSelf}
+									<span class="row-note">You</span>
+								{/if}
+							</span>
 						{/snippet}
 					</UniversalDataGrid>
 				{/key}
@@ -666,9 +635,13 @@
 	/* This room's own wraps use the page widths in themes.css: full for
 	   anything gridded, reading for text, on the shell's 3rem padding, so
 	   the column does not shift between the room's tabs or its neighbors. */
-	.grid-wrap,
 	.days-wrap {
 		max-width: var(--page-full);
+		width: 100%;
+		margin: 0 auto;
+	}
+	.list-wrap {
+		max-width: var(--page-reading);
 		width: 100%;
 		margin: 0 auto;
 	}
@@ -764,70 +737,49 @@
 		text-decoration: underline;
 	}
 
-	/* Unified entity grid cells */
-	.name-cell {
+	/* Entity rows: the same anatomy as the Pages and Applets lists. */
+	.row {
 		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		color: var(--color-foreground-subtle);
+		align-items: flex-start;
+		gap: 0.875rem;
 	}
-
-	.name-text {
-		font-weight: 500;
-		color: var(--color-foreground);
-	}
-
-	.subtitle-text {
+	:global(.list-row:hover) .row-title {
 		color: var(--color-foreground-muted);
-		font-size: 0.8125rem;
-		text-transform: capitalize;
 	}
-
-	.empty-cell {
-		color: var(--color-foreground-subtle);
+	.row-icon {
+		flex: 0 0 16px;
+		margin-top: 0.25rem;
+		color: var(--color-foreground-muted);
 	}
-
-	.col-name {
-		width: 45%;
-		min-width: 200px;
-		padding: 0.625rem 0.75rem;
-		padding-left: 0;
-	}
-
-	.col-type {
-		width: 20%;
-		min-width: 120px;
-		padding: 0.625rem 0.75rem;
-	}
-
-	.col-details {
-		width: 35%;
-		min-width: 140px;
-		padding: 0.625rem 0.75rem;
-		padding-right: 0;
-	}
-
-	/* Card mode */
-	.card-content {
+	.row-text {
+		flex: 1 1 auto;
+		min-width: 0;
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		gap: 0.75rem;
-		text-align: center;
-		color: var(--color-foreground-subtle);
+		gap: 0.25rem;
 	}
-
-	.card-name {
-		font-weight: 600;
-		font-size: 0.9375rem;
-		color: var(--color-foreground);
+	.row-title,
+	.row-line {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.row-title {
+		font-family: var(--font-serif);
+		font-size: 1.125rem;
 		line-height: 1.3;
+		color: var(--color-foreground);
 	}
-
-	@media (max-width: 768px) {
-		.hide-mobile {
-			display: none;
-		}
+	.row-line {
+		font-family: var(--font-serif);
+		font-size: 1rem;
+		line-height: 1.45;
+		color: var(--color-foreground-muted);
 	}
-
+	.row-note {
+		flex: 0 0 auto;
+		margin-top: 0.25rem;
+		font-size: 0.8125rem;
+		color: var(--color-foreground-muted);
+	}
 </style>
