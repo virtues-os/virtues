@@ -4,7 +4,7 @@
 	import Icon from "$lib/components/Icon.svelte";
 	import NetworkSection from "$lib/components/settings/NetworkSection.svelte";
 	import { apiGet } from "$lib/api/client";
-	import { onMount, onDestroy } from "svelte";
+	import { onMount } from "svelte";
 	import { getBackupStatus } from "$lib/api/client";
 
 	let { tab, active }: { tab: Tab; active: boolean } = $props();
@@ -44,7 +44,6 @@
 	let gpuHist = $state<number[]>([]);
 	let netHist = $state<number[]>([]);
 
-	let pollTimer: ReturnType<typeof setInterval> | null = null;
 
 	function push(arr: number[], v: number): number[] {
 		const next = arr.length >= HIST ? arr.slice(1) : arr.slice();
@@ -231,15 +230,21 @@
 		}
 	}
 
-	onMount(async () => {
-		await Promise.all([loadHealth(), loadTelemetry(), loadBackup(), loadHistory()]);
-		loading = false;
-		// Calm cadence — the machine breathes, it doesn't twitch.
-		pollTimer = setInterval(loadTelemetry, 3000);
+	onMount(() => {
+		void Promise.all([loadHealth(), loadTelemetry(), loadBackup(), loadHistory()]).then(
+			() => (loading = false)
+		);
 	});
 
-	onDestroy(() => {
-		if (pollTimer) clearInterval(pollTimer);
+	// Calm cadence: the machine breathes, it doesn't twitch. Only while this
+	// view is on screen, and started here rather than after an await, where a
+	// view closed during the await kept fetching telemetry forever.
+	$effect(() => {
+		if (!active) return;
+		const timer = setInterval(() => {
+			if (document.visibilityState === "visible") void loadTelemetry();
+		}, 3000);
+		return () => clearInterval(timer);
 	});
 </script>
 

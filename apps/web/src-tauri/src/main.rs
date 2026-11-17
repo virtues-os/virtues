@@ -503,6 +503,52 @@ fn collector_path() -> std::path::PathBuf {
         .join("virtues-collector")
 }
 
+/// How long `virtues-collector status` may run before it is stopped. It
+/// answers in well under a second; one that hangs (a held lock, a stuck
+/// socket) used to hold its caller and its process forever, and the tray asks
+/// every 10 seconds.
+const COLLECTOR_STATUS_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Run `status --json` on a collector command: its exit code, stdout and
+/// stderr, or an error once it has been killed for running past
+/// `COLLECTOR_STATUS_TIMEOUT`. Dropping a timed-out `.output()` would leave
+/// the process running, so this spawns it and keeps the child to kill.
+async fn run_collector_status(
+    cmd: tauri_plugin_shell::process::Command,
+) -> Result<(Option<i32>, Vec<u8>, Vec<u8>), String> {
+    use tauri_plugin_shell::process::CommandEvent;
+    let (mut rx, child) = cmd
+        .args(["status", "--json"])
+        .set_raw_out(true)
+        .spawn()
+        .map_err(|e| e.to_string())?;
+    let collect = async {
+        let (mut out, mut err, mut code) = (Vec::new(), Vec::new(), None);
+        // Until the channel closes, not just until the exit event: the last
+        // chunk of stdout can arrive after it.
+        while let Some(event) = rx.recv().await {
+            match event {
+                CommandEvent::Stdout(b) => out.extend(b),
+                CommandEvent::Stderr(b) => err.extend(b),
+                CommandEvent::Terminated(t) => code = t.code,
+                CommandEvent::Error(e) => return Err(e),
+                _ => {}
+            }
+        }
+        Ok((code, out, err))
+    };
+    match tokio::time::timeout(COLLECTOR_STATUS_TIMEOUT, collect).await {
+        Ok(result) => result,
+        Err(_) => {
+            let _ = child.kill();
+            Err(format!(
+                "collector status took longer than {}s and was stopped",
+                COLLECTOR_STATUS_TIMEOUT.as_secs()
+            ))
+        }
+    }
+}
+
 /// Get collector daemon status by invoking CLI
 #[tauri::command]
 async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String> {
@@ -510,22 +556,17 @@ async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String>
 
     let installed_path = collector_path();
 
-    let output = if installed_path.exists() {
-        shell
-            .command(installed_path.to_string_lossy().to_string())
-            .args(["status", "--json"])
-            .output()
-            .await
-            .map_err(|e| e.to_string())?
+    let (code, stdout, stderr) = if installed_path.exists() {
+        run_collector_status(shell.command(installed_path.to_string_lossy().to_string())).await?
     } else {
         match shell.sidecar("virtues-collector") {
-            Ok(cmd) => cmd.args(["status", "--json"]).output().await.map_err(|e| e.to_string())?,
+            Ok(cmd) => run_collector_status(cmd).await?,
             Err(_) => return Ok(CollectorStatus::default()),
         }
     };
 
-    if output.status.success() {
-        serde_json::from_slice(&output.stdout).map_err(|e| e.to_string())
+    if code == Some(0) {
+        serde_json::from_slice(&stdout).map_err(|e| e.to_string())
     } else {
         // The installed binary (or sidecar) ran but exited non-zero — a real
         // read failure, NOT proof the collector is off. Surface it as an error
@@ -533,9 +574,8 @@ async fn get_collector_status(app: AppHandle) -> Result<CollectorStatus, String>
         // (The genuine "never installed, no sidecar" case already returned a
         // default above.)
         Err(format!(
-            "collector status failed (exit {:?}): {}",
-            output.status.code(),
-            String::from_utf8_lossy(&output.stderr).trim()
+            "collector status failed (exit {code:?}): {}",
+            String::from_utf8_lossy(&stderr).trim()
         ))
     }
 }
@@ -1428,8 +1468,21 @@ fn tray_collector_status(app: &AppHandle) -> CollectorStatus {
 /// status is stale), then hops to the main thread for the actual menu
 /// mutation — AppKit requires UI changes on the main thread.
 fn refresh_tray(app: &AppHandle, items: TrayItems) {
+    // One refresh at a time. Each tick started a new thread, so a refresh
+    // that hung stacked one more thread every 10 seconds until quit.
+    static REFRESHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if REFRESHING.swap(true, std::sync::atomic::Ordering::SeqCst) {
+        return;
+    }
     let app = app.clone();
     std::thread::spawn(move || {
+        struct Done;
+        impl Drop for Done {
+            fn drop(&mut self) {
+                REFRESHING.store(false, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        let _done = Done;
         let installed = collector_installed();
         // Skip the CLI call entirely when nothing's installed: its sidecar
         // fallback would fork a process on every poll just to hand back defaults.

@@ -27,7 +27,7 @@
 	import { Page, Button, Card, Section, Field, LoadingState, ErrorState } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import MacPermissions from "$lib/components/devices/MacPermissions.svelte";
-	import { onDestroy, onMount } from "svelte";
+	import { onMount } from "svelte";
 	import { createResource } from "$lib/utils/resource.svelte";
 	import { formatTimeAgo } from "$lib/utils/dateUtils";
 	import { listDevices } from "$lib/api/client";
@@ -97,21 +97,28 @@
 	let shell = $state<ShellIdentity | null>(null);
 	let upd = $state<AppUpdateState | null>(null);
 	let toggling = $state(false);
-	let poll: ReturnType<typeof setInterval> | null = null;
 
 	async function readLocal() {
 		status = await getCollectorStatus();
 		upd = await appUpdateState();
 	}
 
-	onMount(async () => {
-		if (!local) return;
-		shell = await shellIdentity();
-		await readLocal();
-		poll = setInterval(() => void readLocal(), 2000);
+	onMount(() => {
+		if (local) void shellIdentity().then((s) => (shell = s));
 	});
-	onDestroy(() => {
-		if (poll) clearInterval(poll);
+
+	// Each reading starts the collector CLI as a process, so read only while
+	// this view is on screen: not in a kept-alive tab behind another, and not
+	// while the window is in the background. The timer starts here, not after
+	// an await in onMount, where a view closed during the await kept polling
+	// forever.
+	$effect(() => {
+		if (!local || active === false) return;
+		void readLocal();
+		const timer = setInterval(() => {
+			if (document.visibilityState === "visible") void readLocal();
+		}, 2000);
+		return () => clearInterval(timer);
 	});
 
 	async function recheck() {
