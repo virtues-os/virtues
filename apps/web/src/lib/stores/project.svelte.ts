@@ -30,7 +30,7 @@ import {
 import { chatSessions } from '$lib/stores/chatSessions.svelte';
 
 /**
- * A chat is filed by its own `project_id`, which is what the project page and
+ * A chat is filed by its own `thread_id`, which is what the project page and
  * the chat read, not by a membership row. Any change to a chat's membership
  * has to re-read the session list, or the add looks like it did nothing
  * (VIR-359) and the chat still believes it lives where it used to.
@@ -83,13 +83,13 @@ export class ProjectStore {
 		return this.all.filter((p) => !!p.archived_at);
 	}
 
-	/** GET /api/projects?include_archived=true — refresh the summary list. */
+	/** GET /api/threads?include_archived=true — refresh the summary list. */
 	async load(): Promise<void> {
 		this.loading = true;
 		this.error = null;
 		try {
 			const res = await listProjects({ includeArchived: true });
-			this.all = res.projects;
+			this.all = res.threads;
 			this.loaded = true;
 		} catch (e) {
 			console.error('[ProjectStore] Failed to load projects:', e);
@@ -101,7 +101,7 @@ export class ProjectStore {
 	}
 
 	/**
-	 * POST /api/projects/:id/archive — end it as finished or dropped, then
+	 * POST /api/threads/:id/archive — end it as finished or dropped, then
 	 * refresh list and detail. On an ended project it changes how it ended.
 	 */
 	async archive(id: string, outcome: ProjectOutcome): Promise<void> {
@@ -109,7 +109,7 @@ export class ProjectStore {
 		await this.afterArchiveChange(id);
 	}
 
-	/** POST /api/projects/:id/unarchive — reopen it. */
+	/** POST /api/threads/:id/unarchive — reopen it. */
 	async unarchive(id: string): Promise<void> {
 		await unarchiveProject(id);
 		await this.afterArchiveChange(id);
@@ -140,7 +140,7 @@ export class ProjectStore {
 		return this.details.get(id);
 	}
 
-	/** POST /api/projects — create, refresh the list, return the new Project. */
+	/** POST /api/threads — create, refresh the list, return the new Project. */
 	async create(
 		name: string,
 		opts?: { icon?: string | null; accent_color?: string | null; thing_id?: string | null },
@@ -155,7 +155,7 @@ export class ProjectStore {
 		return project;
 	}
 
-	/** PUT /api/projects/:id — patch a Project, then refresh. */
+	/** PUT /api/threads/:id — patch a Project, then refresh. */
 	async update(
 		id: string,
 		patch: {
@@ -175,7 +175,7 @@ export class ProjectStore {
 		return updated;
 	}
 
-	/** DELETE /api/projects/:id — remove, then refresh. */
+	/** DELETE /api/threads/:id — remove, then refresh. */
 	async remove(id: string): Promise<void> {
 		await deleteProject(id);
 		if (this.details.has(id)) {
@@ -187,7 +187,7 @@ export class ProjectStore {
 	}
 
 	/**
-	 * POST /api/projects/:id/items — add a member URL and update the cached
+	 * POST /api/threads/:id/items — add a member URL and update the cached
 	 * detail. A chat lives in one project, so filing one also takes it out of
 	 * the project it was in; `afterMembershipChange` re-reads every open one.
 	 */
@@ -209,7 +209,7 @@ export class ProjectStore {
 		await this.afterMembershipChange(url);
 	}
 
-	/** DELETE /api/projects/:id/items — remove a member URL and update the cached detail. */
+	/** DELETE /api/threads/:id/items — remove a member URL and update the cached detail. */
 	async removeItem(id: string, url: string): Promise<void> {
 		await removeProjectItem(id, url);
 		if (isChatUrl(url)) chatSessions.noteProject(url.slice('/chat/'.length), null);
@@ -222,7 +222,7 @@ export class ProjectStore {
 	}
 
 	/**
-	 * The counts are the server's: a chat is counted by its `project_id` and
+	 * The counts are the server's: a chat is counted by its `thread_id` and
 	 * everything else by its row, and guessing either here drifted. A chat
 	 * change also re-reads the session list, which is what the project page
 	 * lists chats from and what an open chat reads its project from.
@@ -239,7 +239,7 @@ export class ProjectStore {
 	}
 
 
-	/** PUT /api/projects/:id/items/reorder — set the member order and update the cached detail. */
+	/** PUT /api/threads/:id/items/reorder — set the member order and update the cached detail. */
 	async reorderItems(id: string, urls: string[]): Promise<void> {
 		await reorderProjectItems(id, urls);
 		const cached = this.details.get(id);
@@ -255,7 +255,7 @@ export class ProjectStore {
 		}
 	}
 
-	/** PUT /api/projects/:id/items/role — change what a member is to the project. */
+	/** PUT /api/threads/:id/items/role — change what a member is to the project. */
 	async setItemRole(id: string, url: string, role: ProjectItemRole): Promise<void> {
 		const updated = await setProjectItemRole(id, url, role);
 		const cached = this.details.get(id);
@@ -279,7 +279,7 @@ export class ProjectStore {
 	async loadHolders(url: string): Promise<void> {
 		try {
 			const res = await listProjects({ member: url, includeArchived: true });
-			this.holders = { ...this.holders, [url]: res.projects.map((p) => p.id) };
+			this.holders = { ...this.holders, [url]: res.threads.map((p) => p.id) };
 		} catch (e) {
 			// An aid, not the content: the page reads fine without it.
 			console.error('[ProjectStore] Failed to load holders:', e);

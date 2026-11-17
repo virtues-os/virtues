@@ -5,6 +5,7 @@
 	import ProjectHeader from '$lib/components/projects/ProjectHeader.svelte';
 	import ProjectChats from '$lib/components/projects/ProjectChats.svelte';
 	import ProjectSection from '$lib/components/projects/ProjectSection.svelte';
+	import TaskList from '$lib/components/tasks/TaskList.svelte';
 	import { PROJECT_ICON } from '$lib/utils/iconHelpers';
 	import { Button, IconButton, TextAction } from '$lib';
 	import { projectStore } from '$lib/stores/project.svelte';
@@ -36,7 +37,7 @@
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
 	import { openWebLink } from '$lib/utils/webLinks';
 
-	let { tab }: { tab: Tab; active?: boolean } = $props();
+	let { tab, active = false }: { tab: Tab; active?: boolean } = $props();
 
 	const projectId = $derived.by(() => {
 		const m = tab.route.match(/^\/project\/([^/]+)$/);
@@ -110,13 +111,13 @@
 	});
 
 	// Chats filed into this room, from the project's own detail: every chat
-	// whose `project_id` is this one. The session list holds only the box's
+	// whose `thread_id` is this one. The session list holds only the box's
 	// most recent chats, so reading it here dropped a project's older ones. It
 	// stays as the fallback for a box older than `detail.chats`.
 	const roomChats = $derived.by<ProjectChat[]>(() => {
 		if (detail?.chats) return detail.chats;
 		return chatSessions.sessions
-			.filter((s) => s.project_id === projectId)
+			.filter((s) => s.thread_id === projectId)
 			.map((s) => ({
 				id: s.conversation_id,
 				title: s.title ?? '',
@@ -520,6 +521,11 @@
 			}}
 		>
 			<ProjectHeader project={detail} />
+
+			<!-- Its steps first: what is left to do is what a project is. The
+			     same list as the Projects page, holding only this project's
+			     tasks. An ended project shows them and takes no new ones. -->
+			<TaskList {active} route={tab.route} projectId={detail.id} readonly={archived} emptyText={null} />
 
 			<!-- The way into a new chat about this project, shaped like the
 			     composer it leads to so it reads as a place to type, not a

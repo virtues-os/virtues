@@ -17,13 +17,13 @@ const LIST_ROWS = 10;
 const GLYPH: Record<RecentKind, string> = {
 	chat: 'atlas:chats',
 	page: 'atlas:pages',
-	project: 'atlas:projects',
+	thread: 'atlas:projects',
 	applet: 'atlas:applets',
 };
 
 /** The list kinds: the noun for "All …" and the palette scope. */
 const LISTS = {
-	projects: { kind: 'project', noun: 'projects' },
+	projects: { kind: 'thread', noun: 'threads' },
 	pages: { kind: 'page', noun: 'pages' },
 	applets: { kind: 'applet', noun: 'applets' },
 } as const;
@@ -50,10 +50,10 @@ export function crumbMenuItems(
 		const members = recentRows({ pinned: true }).filter(
 			(r) =>
 				(r.kind === 'chat' && r.session.thread_id === menu.id) ||
-				(r.kind === 'page' && r.page.threads.some((t) => t.id === menu.id)),
+				(r.kind === 'page' && (r.page.threads ?? []).some((t) => t.id === menu.id)),
 		);
 		return withFooter(members.slice(0, LIST_ROWS).map(recordRow), [
-			{ id: 'open', label: 'Open project', icon: 'atlas:projects', action: () => open(`/project/${menu.id}`) },
+			{ id: 'open', label: 'Open thread', icon: 'atlas:projects', action: () => open(`/thread/${menu.id}`) },
 		]);
 	}
 

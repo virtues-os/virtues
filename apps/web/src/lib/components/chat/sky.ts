@@ -30,7 +30,7 @@ export const SKY_ICONS: Record<string, string> = {
 	voice: 'mynaui:microphone',
 	arrive: 'mynaui:map-pin',
 	leave: 'mynaui:map-pin',
-	project: PROJECT_ICON,
+	thread: PROJECT_ICON,
 	page: 'mynaui:file-text',
 	chat: 'mynaui:message'
 };
@@ -209,7 +209,7 @@ export interface Layout {
 
 const EMPTY: Omit<Layout, 'height' | 'stars'> = { now: null, labels: [], paths: [], letters: [], pieceLabels: [], head: null };
 
-export const THREAD_KIND: Record<SkyThread['kind'], string> = { project: 'Project', page: 'Page', chat: 'Chat' };
+export const THREAD_KIND: Record<SkyThread['kind'], string> = { thread: 'Thread', page: 'Page', chat: 'Chat' };
 
 const r1 = (v: number) => Math.round(v * 10) / 10;
 

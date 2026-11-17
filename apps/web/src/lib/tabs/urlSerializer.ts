@@ -44,14 +44,13 @@ const KNOWN_TYPES: TabType[] = [
 
 /**
  * Spellings that restore as another type. A serialized tab string is what an
- * old bookmark or a shared URL carries, so a list form (`projects`) and the
- * pre-rename spelling (projects were notebooks until 2026-09) both have to keep
- * restoring the same view.
+ * old bookmark or a shared URL carries, so the list form (`projects`) has to
+ * keep restoring the same view.
  */
 const TYPE_ALIASES: Record<string, TabType> = {
 	projects: 'project',
-	notebook: 'project',
-	notebooks: 'project',
+	// The Tasks page joined Projects; a saved Tasks tab restores as Projects.
+	tasks: 'project',
 };
 
 /**

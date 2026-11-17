@@ -36,7 +36,7 @@ function parseVisit(route: string): { kind: VisitKind; id: string } | null {
 	const applet = route.match(/^\/applet\/(applet_[^/?#]+)/);
 	if (applet) return { kind: 'applet', id: applet[1] };
 	const ref = parseRef(route);
-	if (ref && (ref.kind === 'chat' || ref.kind === 'page' || ref.kind === 'project')) {
+	if (ref && (ref.kind === 'chat' || ref.kind === 'page' || ref.kind === 'thread')) {
 		return { kind: ref.kind, id: ref.id };
 	}
 	return null;

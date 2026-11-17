@@ -30,8 +30,8 @@ const TOOL_ONLY_ROOTS: [&str; 2] = ["record", "chat"];
 
 /// Every first segment a route on this box can have. A `https://` link whose
 /// host is one of these is a route with a scheme in front of it, not a website.
-const ROUTE_ROOTS: [&str; 13] = [
-    "record", "chat", "page", "day", "year", "person", "place", "org", "drive", "project", "notebook", "source", "sources",
+const ROUTE_ROOTS: [&str; 12] = [
+    "record", "chat", "page", "day", "year", "person", "place", "org", "drive", "thread", "source", "sources",
 ];
 
 /// The handles of one turn and the routes the model could see.

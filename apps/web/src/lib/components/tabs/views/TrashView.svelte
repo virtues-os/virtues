@@ -1,7 +1,7 @@
 <!--
 	Recently deleted — one list for everything deleted anywhere in the app.
 
-	Chats, pages and projects (the box's `api::trash`, migration 0030) and
+	Chats, pages and threads (the box's `api::trash`, migration 0030) and
 	Drive files (the older `/api/drive/trash`) wait here 30 days with a
 	restore, and then the server removes them for good. Two APIs, one room:
 	a second "trash" would be two lists that must agree, and the person
@@ -65,14 +65,14 @@
 	const KIND_LABEL: Record<RowKind, string> = {
 		chat: "Chat",
 		page: "Page",
-		project: "Project",
+		thread: "Thread",
 		file: "File",
 	};
 
 	const KIND_ICON: Record<RowKind, string> = {
 		chat: "mynaui:message",
 		page: "mynaui:file-text",
-		project: PROJECT_ICON,
+		thread: PROJECT_ICON,
 		file: "mynaui:file",
 	};
 
@@ -224,7 +224,7 @@
 
 <Page
 	title="Recently deleted"
-	description="Deleted chats, pages, projects and files stay here for 30 days. After that your server removes them for good."
+	description="Deleted chats, pages, threads and files stay here for 30 days. After that your server removes them for good."
 	maxWidth="wide"
 >
 	{#snippet actions()}

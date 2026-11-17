@@ -243,7 +243,7 @@ pub(crate) async fn assemble(
 
     // ── messages, by thread ──
     let rows = sqlx::query(
-        "SELECT DISTINCT ON (m.id) m.id, m.thread_id, m.body, m.occurred_at, m.from_name, m.from_identifier, \
+        "SELECT DISTINCT ON (m.id) m.id, m.conversation_id, m.body, m.occurred_at, m.from_name, m.from_identifier, \
                 m.is_group_message, COALESCE((m.metadata->>'is_from_me')::boolean, false) AS from_me, \
                 pe.name AS resolved_name \
          FROM data_communication_message m \
@@ -258,10 +258,10 @@ pub(crate) async fn assemble(
     .fetch_all(pool)
     .await?;
     let participants: Vec<(String, String)> = sqlx::query_as(
-        "SELECT DISTINCT m.thread_id, p.name FROM data_communication_message m \
+        "SELECT DISTINCT m.conversation_id, p.name FROM data_communication_message m \
          JOIN wiki_refs r ON r.source_table = 'data_communication_message' AND r.source_id = m.id AND r.entity_type = 'person' \
          JOIN wiki_people p ON p.id = r.entity_id \
-         WHERE m.occurred_at >= $1::timestamptz AND m.occurred_at < $2::timestamptz AND m.thread_id IS NOT NULL \
+         WHERE m.occurred_at >= $1::timestamptz AND m.occurred_at < $2::timestamptz AND m.conversation_id IS NOT NULL \
            AND ($3::text IS NULL OR p.id <> $3)",
     )
     .bind(start)
@@ -296,7 +296,7 @@ pub(crate) async fn assemble(
         };
         raws.push(Raw {
             id: r.try_get("id")?,
-            thread: r.try_get::<Option<String>, _>("thread_id")?.unwrap_or_default(),
+            thread: r.try_get::<Option<String>, _>("conversation_id")?.unwrap_or_default(),
             at: r.try_get("occurred_at")?,
             who,
             body: r.try_get::<Option<String>, _>("body")?.unwrap_or_default(),

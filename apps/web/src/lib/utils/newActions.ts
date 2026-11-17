@@ -21,16 +21,16 @@ export async function newPage(open: Opener): Promise<void> {
 	open(`/page/${page.id}`, page.title);
 }
 
-/** The Tasks list, with its add row open. */
+/** The Projects page, with its task list's add row open. */
 export async function newTask(open: Opener): Promise<void> {
 	const { tasksStore } = await import('$lib/stores/tasks.svelte');
 	tasksStore.requestAdd();
-	open('/tasks', 'Tasks');
+	open('/projects', 'Projects');
 }
 
 /**
  * A new tab beside the active one in `paneId`. A route already open in a tab
- * (Tasks, the wiki) brings that tab to the front instead of doubling it.
+ * (Projects, the wiki) brings that tab to the front instead of doubling it.
  */
 export function inNewTab(paneId?: 'left' | 'right'): Opener {
 	return (route, label) => {
@@ -46,7 +46,6 @@ export function inNewTab(paneId?: 'left' | 'right'): Opener {
 /** Each door's list, for the menu's Go to. New chat is the menu's first row. */
 const DOOR_ROUTES: Partial<Record<DoorId, string>> = {
 	pages: '/page',
-	tasks: '/tasks',
 	projects: '/projects',
 	applets: '/applets',
 	wiki: '/wiki',

@@ -18,8 +18,7 @@ const ROUTE_TO_TYPE: Record<string, string> = {
 	'/drive': 'file',
 	'/page': 'page',
 	'/chat': 'chat',
-	'/project': 'project',
-	'/notebook': 'project', // legacy spelling — projects were notebooks until 2026-09; old refs still carry it
+	'/thread': 'thread',
 	'/sources': 'source',
 	'/source': 'source',
 	'/record': 'record',
@@ -143,8 +142,8 @@ export function linkTarget(url: string | null | undefined): LinkTarget {
 
 /**
  * `/kind/id` → its kind and id: the client's twin of the server's
- * `refs::split_ref`, and the grammar every consumer should parse with. The
- * legacy `/notebook/` reads as `project`; `?` and `#` never belong to an id.
+ * `refs::split_ref`, and the grammar every consumer should parse with. `?`
+ * and `#` never belong to an id.
  * Null for an external URL or anything that is not a record route. Never
  * throws: an id whose %-escapes are malformed (`/person/%`) is read as
  * written, since a page holds any path and is drawn link by link.

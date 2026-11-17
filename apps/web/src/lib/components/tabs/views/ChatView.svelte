@@ -297,7 +297,7 @@
 		if (!chatProject || isGhost || mobileLayout.isMobile || inRoom) return;
 		return paneActions.setCrumbs(tab.id, {
 			glyph: "projects",
-			crumbs: [projectCrumb(chatProject.id, chatProject.name || untitled("project"))],
+			crumbs: [projectCrumb(chatProject.id, chatProject.name || untitled("thread"))],
 			withoutPage: true,
 		});
 	});
@@ -386,7 +386,7 @@
 	async function loadTranscript(id: string, signal?: AbortSignal): Promise<boolean> {
 		const data = await getChat<{
 			messages?: any[];
-			conversation?: { project_id?: string | null };
+			conversation?: { thread_id?: string | null };
 		}>(id, signal);
 		if (signal?.aborted) return false;
 		// A reply still arriving on this instance is newer than the stored
@@ -397,8 +397,8 @@
 		if (chat.status === "submitted" || chat.status === "streaming") return true;
 		// An older chat is not in the session list; its own detail says where
 		// it is filed. A box older than the field leaves it undefined.
-		if (data.conversation && data.conversation.project_id !== undefined) {
-			chatSessions.noteProject(id, data.conversation.project_id ?? null);
+		if (data.conversation && data.conversation.thread_id !== undefined) {
+			chatSessions.noteProject(id, data.conversation.thread_id ?? null);
 		}
 		// A reload of the chat on screen keeps what the reader had drawn.
 		const drawnBefore = undrawnFor === id ? uniqueMessages.length - undrawn : 0;

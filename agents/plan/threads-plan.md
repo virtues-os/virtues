@@ -55,11 +55,20 @@ Each item is the owner's call, with the date and his words where they matter.
     asks about it.
   - **Automatic**: your server also adds records and tasks it is sure belong,
     and asks about the ones it is not sure of as filing questions.
+- **Build and break: the old project names go** (2026-11-17). "rm old
+  cruft/buildnbreak. dont wory about migrating projects", "rm old api projects
+  routes and things. feel free to rename schema. rename messages conversation
+  from thread." So nothing keeps the project names alive for older clients: the
+  `/api/projects` routes, the `project_id` and `projectId` JSON fields, the
+  `project` trash kind and the `/project/` urls all become thread names, and a
+  message or email conversation is a conversation (`thread_id` on
+  `data_communication_message` and `data_communication_email` becomes
+  `conversation_id`).
 
 ## What the app has today
 
-Checked against the working tree on 2026-11-17. Migration 0080 and the Rust
-rename were uncommitted that day.
+Checked against the working tree on 2026-11-17, after migration 0082
+(`threads_cleanup_and_conversations`).
 
 - `app_threads` (0080, from `app_projects`): `name`, `icon`, `accent_color`,
   `current_status` with `current_status_at`, `instructions`, `archived_at`,
@@ -68,8 +77,8 @@ rename were uncommitted that day.
 - `app_thread_items`: an item is a `url` with a `role` (`library`, `pin`,
   `manuscript`) and `added_by` (`user` or `magnet`). Items arrive only by hand
   today: `add_thread_item` in `api/threads.rs` inserts them with role
-  `library`. `app_threads.auto_add_materials` (default false) is still in the
-  schema, and no code reads it.
+  `library`. `app_threads.is_adding_automatic` (default false, so Manual) is in
+  the schema, and no code reads it yet.
 - Adding to a thread by hand already works under the old name. Dropping a
   recent row or a tab on a pinned project's row in the sidebar files it there
   (`HomePanel.svelte`, `fileIntoProject`); a tab's menu offers the projects
@@ -81,13 +90,17 @@ rename were uncommitted that day.
   `source_url`, `due_on`/`due_at`, recurrence (0078), `assignee`, and `status`
   (`open`, `active`, `done`, `dismissed`).
 - Subjects: `wiki_people`, `wiki_places`, `wiki_orgs`, `wiki_things`.
-- Server: `virtues-core/src/api/threads.rs` holds the thread functions. The
-  HTTP routes keep their old names (`/api/projects…` in
-  `server/api/library.rs`), as do the JSON fields. A dated TODO there adds
-  `/api/threads` with the old paths kept as an alias. Tasks are
-  `server/api/tasks.rs`.
+- Server: `virtues-core/src/api/threads.rs` holds the thread functions, served
+  at `/api/threads…` (`server/api/library.rs`) with `thread_id` and `threadId`
+  JSON fields, the `thread` ref, trash and visit kinds, and `/thread/{id}`
+  urls. Nothing answers at `/api/projects`. Tasks are `server/api/tasks.rs`.
+- Messages and emails carry `conversation_id`, not `thread_id`, so "thread"
+  means only the thing you follow.
 - Web: `ProjectsListView.svelte`, `ProjectDetailView.svelte`,
-  `components/projects/` and `components/tasks/`. The owner said on 2026-11-16
+  `components/projects/` and `components/tasks/`. The web follows the server's
+  `thread` kinds and `/thread/{id}` urls, but the `project` tab type, the
+  `/projects` list route, `projectStore` and the `Project*` types keep their
+  names until slice 3 replaces them (a dated TODO in `tabs/registry.ts`). The owner said on 2026-11-16
   that this page "needs a HUGE overhaul", so this plan replaces it.
 - Home: `HomeNotes.svelte` shows one note at a time, with its action, "Not
   now" and "Next". Notes come from `GET /api/attention` (conditions the server
@@ -221,13 +234,14 @@ starts. Read `.claude/rules/migrations.md` first.
    one-parent check to all five parents. Add `app_task_links (task_id, kind,
    ref_id)` for "also about", with `kind` in thread, person, place, org, thing.
    Add `status` to `app_threads` (`active` or `backlog`, default `active`).
-   Adding is stored in `auto_add_materials`, whose default of false already
-   means Manual.
    The migration header says what a rollback to an older release breaks.
+   Migration 0082 already renamed `auto_add_materials` to
+   `is_adding_automatic` and the message and email `thread_id` to
+   `conversation_id`.
 2. **Homes in the API.** Tasks take and return their home and links. A
    thread's detail returns its own tasks and the tasks that are also about it.
-   `/api/threads` arrives with thread field names, and `/api/projects` stays as
-   an alias until released phone apps no longer call it.
+   The rename to `/api/threads`, thread field names, the `thread` kinds and
+   `/thread/` urls is done, with no alias.
 3. **The Threads door.** Replace `ProjectsListView` and `ProjectDetailView`
    with the four views, the preview column, and the thread, task and insight
    pages. Move `TaskList` onto the new row. Statuses come from slice 1. Rename
@@ -253,7 +267,7 @@ starts. Read `.claude/rules/migrations.md` first.
 
 ## Open decisions
 
-Each has my pick. None is decided.
+Each has my pick. None is decided. The owner settled the others on 2026-11-17 (see Decided).
 
 1. **How a task names its home.** One column per kind of parent, or a generic
    `(home_kind, home_id)`. Pick: one column per kind, because the foreign keys
@@ -265,15 +279,6 @@ Each has my pick. None is decided.
 3. **Where notes live.** A table of their own, or attention items that carry
    the task or thread they are about. Pick: attention items with a subject, so
    home already reads them.
-4. **The word for a message conversation.** "Thread" now names the unit. Pick:
-   call a message conversation a "conversation" in the interface and keep
-   `thread_id` on messages as it is.
-5. **When the old routes go.** Pick: keep `/api/projects` until no released
-   phone app calls it, following
-   [version-compat-plan.md](version-compat-plan.md).
-6. **The name of the Adding column.** Keep `auto_add_materials` or rename it
-   with the next change to `app_threads`. Pick: rename it to `auto_add` in
-   slice 1, since nodes of every kind are added, not only materials.
 
 ## How to test
 

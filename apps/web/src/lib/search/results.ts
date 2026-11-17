@@ -65,8 +65,8 @@ export type Scope = RecentKind | 'command';
 const SCOPES: Record<string, Scope> = {
 	chat: 'chat', chats: 'chat',
 	page: 'page', pages: 'page',
-	project: 'project', projects: 'project',
-	thread: 'project', threads: 'project',
+	project: 'thread', projects: 'thread',
+	thread: 'thread', threads: 'thread',
 	applet: 'applet', applets: 'applet',
 	command: 'command', commands: 'command',
 	action: 'command', actions: 'command',
@@ -138,15 +138,15 @@ function commandsMatching(commands: Command[], text: string, limit: number): { r
 function projectAt(route: string): string | null {
 	const ref = parseRef(route);
 	if (!ref) return null;
-	if (ref.kind === 'project') return ref.id;
+	if (ref.kind === 'thread') return ref.id;
 	if (ref.kind === 'chat') return chatSessions.projectOf(ref.id);
-	if (ref.kind === 'page') return pagesStore.pages.find((p) => p.id === ref.id)?.threads[0]?.id ?? null;
+	if (ref.kind === 'page') return pagesStore.pages.find((p) => p.id === ref.id)?.threads?.[0]?.id ?? null;
 	return null;
 }
 
-function projectOfRow(row: RecentRow): string | null {
+export function projectOfRow(row: RecentRow): string | null {
 	if (row.kind === 'chat') return row.session.thread_id ?? null;
-	if (row.kind === 'page') return row.page.threads[0]?.id ?? null;
+	if (row.kind === 'page') return row.page.threads?.[0]?.id ?? null;
 	return null;
 }
 
@@ -161,7 +161,7 @@ function emptyGroups(here: string | null): SearchGroup[] {
 	const project = projectId ? projectStore.projects.find((p) => p.id === projectId) : null;
 	if (project && !project.archived_at) {
 		const members = rows.filter((r) => projectOfRow(r) === project.id).slice(0, HERE_ROWS);
-		const own = recentRows({ pinned: true }).find((r) => r.url === `/project/${project.id}`);
+		const own = recentRows({ pinned: true }).find((r) => r.url === `/thread/${project.id}`);
 		const hereRows = [...(own && own.url !== current ? [own] : []), ...members];
 		if (hereRows.length) {
 			groups.push({ label: `In ${project.name}`, rows: hereRows.map((record) => ({ kind: 'record', record })) });
@@ -245,7 +245,7 @@ export function contentGlyph(hit: LocalSearchHit): string {
 	return ROOMS[hit.ontology]?.glyph ?? 'atlas:sources';
 }
 
-const RECORD_NOUN: Record<RecentKind, string> = { chat: 'Chat', page: 'Page', project: 'Thread', applet: 'Applet' };
+const RECORD_NOUN: Record<RecentKind, string> = { chat: 'Chat', page: 'Page', thread: 'Thread', applet: 'Applet' };
 
 /** `content_bookmark` → "Bookmark": the kind as a noun, without the table's prefix. */
 function contentNoun(hit: LocalSearchHit): string {

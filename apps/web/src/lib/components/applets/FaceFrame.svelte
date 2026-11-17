@@ -25,7 +25,6 @@
 	const OPENABLE: ReadonlySet<TabType> = new Set<TabType>([
 		'chat',
 		'page',
-		'tasks',
 		'day',
 		'year',
 		'timeline',

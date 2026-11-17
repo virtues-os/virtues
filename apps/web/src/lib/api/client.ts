@@ -2599,11 +2599,11 @@ export function getSkyMoment(date: string, id: string): Promise<SkyMomentDetail>
 	return apiGet<SkyMomentDetail>(`/sky/moment/${encodeURIComponent(date)}?id=${encodeURIComponent(id)}`);
 }
 
-/** A project, page or chat a day's moments belong to (`api::sky::Thread`). */
+/** A thread, page or chat a day's moments belong to (`api::sky::Thread`). */
 export interface SkyThread {
 	url: string;
 	label: string;
-	kind: "project" | "page" | "chat";
+	kind: "thread" | "page" | "chat";
 	/** The ids of the moments it links to. */
 	moments: string[];
 }

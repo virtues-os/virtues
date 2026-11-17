@@ -96,7 +96,7 @@ pub async fn run(pool: &PgPool, args: &Value, context: &ToolContext) -> ToolResu
             person_id: target.person_id.as_deref(),
             recipient: &recipient,
             handle: &target.handle,
-            thread_id: target.chat_id.as_deref(),
+            conversation_id: target.chat_id.as_deref(),
             body: text,
             send_at,
             attachments: json!(attachments),
@@ -162,13 +162,13 @@ async fn resolve(pool: &PgPool, to: &str) -> sqlx::Result<Result<Target, String>
     if to.contains(";-;") || to.contains(";+;") {
         let title: Option<(Option<String>,)> = sqlx::query_as(
             "SELECT metadata->>'group_title' FROM data_communication_message
-              WHERE thread_id = $1 ORDER BY occurred_at DESC LIMIT 1",
+              WHERE conversation_id = $1 ORDER BY occurred_at DESC LIMIT 1",
         )
         .bind(to)
         .fetch_optional(pool)
         .await?;
         let Some((title,)) = title else {
-            return Ok(Err(format!("There is no thread {to} in the owner's messages.")));
+            return Ok(Err(format!("There is no conversation {to} in the owner's messages.")));
         };
         // absent-ok: most groups have no name; the thread was found, so it exists.
         let name = title.filter(|t| !t.is_empty()).unwrap_or_else(|| "the group".into());
@@ -198,7 +198,7 @@ async fn resolve(pool: &PgPool, to: &str) -> sqlx::Result<Result<Target, String>
             }
             return Ok(Err(format!(
                 "Nobody in the owner's people, and no group chat, is called \"{to}\". Ask the owner who \
-                 they mean, or pass a phone number or email. For a group with no name, find its thread_id \
+                 they mean, or pass a phone number or email. For a group with no name, find its conversation_id \
                  in data_communication_message (is_group_message) by who is in it, and pass that."
             )))
         }
@@ -289,7 +289,7 @@ async fn matching_people(pool: &PgPool, to: &str) -> sqlx::Result<Vec<Person>> {
 /// groups have no name; those are reached by thread id.
 async fn named_group(pool: &PgPool, to: &str) -> sqlx::Result<Option<Target>> {
     let row: Option<(String, String)> = sqlx::query_as(
-        "SELECT thread_id, metadata->>'group_title' FROM data_communication_message
+        "SELECT conversation_id, metadata->>'group_title' FROM data_communication_message
           WHERE is_group_message AND lower(metadata->>'group_title') = lower($1)
           ORDER BY occurred_at DESC LIMIT 1",
     )
@@ -308,21 +308,21 @@ async fn latest_thread(
     person_id: Option<&str>,
 ) -> sqlx::Result<Option<(String, Option<String>)>> {
     sqlx::query_as(
-        "SELECT thread_id, handle FROM (
-             SELECT m.thread_id, m.from_handle AS handle, m.occurred_at
+        "SELECT conversation_id, handle FROM (
+             SELECT m.conversation_id, m.from_handle AS handle, m.occurred_at
                FROM data_communication_message m
               WHERE m.from_handle = ANY($1)
                 AND NOT m.is_group_message
-                AND m.thread_id <> ''
+                AND m.conversation_id <> ''
              UNION ALL
-             SELECT m.thread_id, NULL, m.occurred_at
+             SELECT m.conversation_id, NULL, m.occurred_at
                FROM wiki_refs r
                JOIN data_communication_message m ON m.id = r.source_id
               WHERE r.entity_id = $2
                 AND r.source_table = 'data_communication_message'
                 AND r.role = 'recipient'
                 AND NOT m.is_group_message
-                AND m.thread_id <> ''
+                AND m.conversation_id <> ''
          ) t
          ORDER BY occurred_at DESC
          LIMIT 1",
@@ -356,7 +356,7 @@ mod tests {
     async fn message(pool: &PgPool, id: &str, thread: &str, handle: &str, minutes_ago: i64) {
         sqlx::query(
             "INSERT INTO data_communication_message
-               (id, message_id, thread_id, channel, body, from_identifier, from_handle,
+               (id, message_id, conversation_id, channel, body, from_identifier, from_handle,
                 occurred_at, source_stream_id, source_table, source_provider)
              VALUES ($1, $1, $2, 'imessage', 'hi', $3, $3,
                      now() - make_interval(mins => $4::int), $1, 'messages', 'mac')",
@@ -420,7 +420,7 @@ mod tests {
     async fn a_group_is_reached_by_its_name_or_its_thread(pool: PgPool) {
         sqlx::query(
             "INSERT INTO data_communication_message
-               (id, message_id, thread_id, channel, body, from_identifier, from_handle, is_group_message,
+               (id, message_id, conversation_id, channel, body, from_identifier, from_handle, is_group_message,
                 occurred_at, source_stream_id, source_table, source_provider, metadata)
              VALUES ('g1', 'g1', 'any;+;chat100', 'imessage', 'hi', '+15125550101', '+15125550101', true,
                      now(), 'g1', 'messages', 'mac', '{\"group_title\": \"Dinner Club\"}'),

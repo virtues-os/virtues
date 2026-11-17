@@ -3,9 +3,12 @@
 	export function pinKindGlyph(url: string): string {
 		if (/^https?:\/\//i.test(url)) return 'wiki';
 		if (url.startsWith('/chat/')) return 'chats';
-		if (url.startsWith('/project/') || url.startsWith('/notebook/')) return 'projects';
+		if (url.startsWith('/thread/')) return 'projects';
 		if (url.startsWith('/applet')) return 'applets';
-		if (url.startsWith('/tasks')) return 'tasks';
+		// A task, linked by `?task=`. A pin made before Tasks joined Projects
+		// still says /tasks, and opens the Projects page.
+		if (url.startsWith('/tasks') || url.startsWith('/projects?task=')) return 'tasks';
+		if (url.startsWith('/projects')) return 'projects';
 		if (url.startsWith('/wiki')) return 'wiki';
 		if (url.startsWith('/day/')) return 'day';
 		return 'pages';

@@ -39,7 +39,7 @@ pub struct Pin {
 pub struct PinView {
     pub id: String,
     pub url: String,
-    /// `chat`, `page`, `project`, a wiki kind, `web` for an external URL, or
+    /// `chat`, `page`, `thread`, a wiki kind, `web` for an external URL, or
     /// `route` for an app screen with no record behind it.
     pub kind: String,
     /// The thing's name now. For an external URL, the pin's label or host.
@@ -65,7 +65,7 @@ pub async fn resolve_pins(db: &PgPool, pins: Vec<Pin>) -> Result<Vec<PinView>> {
     let mut out = Vec::with_capacity(pins.len());
     for pin in pins {
         let Some(found) = identities.get(&pin.url) else { continue };
-        let owned = matches!(found.kind.as_str(), "chat" | "page" | "project");
+        let owned = matches!(found.kind.as_str(), "chat" | "page" | "thread");
         if owned && found.state != "live" {
             continue;
         }

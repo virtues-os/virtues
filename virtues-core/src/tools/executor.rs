@@ -1353,19 +1353,17 @@ impl ToolExecutor {
                 Err(e) => Ok(ToolResult::error(format!("Failed to fetch organization: {}", e))),
             }
         } else if let Some(thread_id) = item_url
-            .strip_prefix("/project/")
-            // Legacy spelling — old messages still cite `/notebook/{id}`.
-            .or_else(|| item_url.strip_prefix("/notebook/"))
+            .strip_prefix("/thread/")
         {
             match crate::api::threads::get_thread(pool, thread_id).await {
                 Ok(detail) => {
                     let members: Vec<&str> =
                         detail.items.iter().map(|i| i.url.as_str()).collect();
                     Ok(ToolResult::success(serde_json::json!({
-                        "type": "project",
-                        "id": detail.project.id,
-                        "name": detail.project.name,
-                        "brief": detail.project.instructions,
+                        "type": "thread",
+                        "id": detail.thread.id,
+                        "name": detail.thread.name,
+                        "brief": detail.thread.instructions,
                         "members": members,
                     })))
                 }
@@ -1380,7 +1378,7 @@ impl ToolExecutor {
             })))
         } else {
             Ok(ToolResult::error(format!(
-                "Unsupported item URL type: {}. Supported: /page/, /chat/, /project/, /person/, /place/, /org/, or https://",
+                "Unsupported item URL type: {}. Supported: /page/, /chat/, /thread/, /person/, /place/, /org/, or https://",
                 item_url
             )))
         }

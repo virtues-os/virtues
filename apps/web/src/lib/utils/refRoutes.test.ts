@@ -56,7 +56,7 @@ describe('linkTarget', () => {
 	it('reads record and other entity routes as entities', () => {
 		expect(linkTarget('/record/health_sleep/rec_1')).toEqual({ kind: 'entity' });
 		expect(linkTarget('/person/david-okafor')).toEqual({ kind: 'entity' });
-		expect(linkTarget('/notebook/nb_1')).toEqual({ kind: 'entity' });
+		expect(linkTarget('/thread/nb_1')).toEqual({ kind: 'entity' });
 	});
 
 	it('reads the web as external', () => {

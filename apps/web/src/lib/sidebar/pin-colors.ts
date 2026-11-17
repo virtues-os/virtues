@@ -207,5 +207,5 @@ export function clothFor(pin: { url: string; color?: string | null }): string {
  * this; none reads `accent_color` directly.
  */
 export function projectColor(project: { id: string; accent_color?: string | null }): string {
-	return clothFor({ url: `/project/${project.id}`, color: project.accent_color });
+	return clothFor({ url: `/thread/${project.id}`, color: project.accent_color });
 }

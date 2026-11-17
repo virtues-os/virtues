@@ -124,8 +124,7 @@ pub struct ChatListItem {
     /// `--cat-*` token key, never a hex. See migration 0079.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_color: Option<String>,
-    // TODO(2026-11-17): the web app and released apps send and read `project_id`; rename the wire name when the Threads UI moves.
-    #[serde(rename = "project_id", skip_serializing_if = "Option::is_none")]
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub thread_id: Option<String>,
     pub first_message_at: Timestamp,
     /// When anything on the row last changed: a rename, a filing, an icon.
@@ -167,10 +166,9 @@ pub struct ConversationMeta {
     pub model: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider: Option<String>,
-    /// The project this chat is filed in. On the chat itself because the chat
+    /// The thread this chat is filed in. On the chat itself because the chat
     /// list holds only the most recent chats, and an older chat opened from a
-    /// project could not otherwise say where it lives.
-    #[serde(rename = "project_id")]
+    /// thread could not otherwise say where it lives.
     pub thread_id: Option<String>,
 }
 
@@ -212,9 +210,9 @@ pub struct UpdateChatRequest {
     pub icon: Option<Option<String>>,
     #[serde(default)]
     pub icon_color: Option<Option<String>>,
-    /// Tri-state: absent = leave, null = detach from Project, value = set Project.
+    /// Tri-state: absent = leave, null = take out of its thread, value = file in that thread.
     /// Routed through `threads::set_chat_thread` (also folds chat into membership).
-    #[serde(default, rename = "projectId", alias = "notebookId")]
+    #[serde(default, rename = "threadId")]
     pub thread_id: Option<Option<String>>,
 }
 
@@ -223,8 +221,8 @@ pub struct UpdateChatRequest {
 pub struct CreateChatRequest {
     pub title: String,
     pub messages: Vec<ChatMessage>,
-    #[serde(rename = "projectId", alias = "notebookId")]
-    pub thread_id: Option<String>, // For auto-add to project_items (not stored on chat)
+    #[serde(rename = "threadId")]
+    pub thread_id: Option<String>, // Files the new chat in this thread
 }
 
 /// Response after creating a chat

@@ -1,7 +1,7 @@
-//! Recently deleted — the trash for chats, pages and projects.
+//! Recently deleted — the trash for chats, pages and threads.
 //!
 //! Delete is not permanent. `DELETE /api/chats/:id`, `/api/pages/:id` and
-//! `/api/projects/:id` stamp `deleted_at` (migration 0030) and the row leaves
+//! `/api/threads/:id` stamp `deleted_at` (migration 0030) and the row leaves
 //! every listing, fetch, day view and search index; it sits here for
 //! [`TRASH_RETENTION_DAYS`] with a restore, and then the sweeper purges it.
 //! `app_drive_files` has worked this way since the squash; this is the same
@@ -13,10 +13,10 @@
 //!
 //! What trashing does and does not touch:
 //!
-//!   - The row keeps everything. Messages, versions, shares, project
+//!   - The row keeps everything. Messages, versions, shares, thread
 //!     membership and a chat's `thread_id` all stay, so a restore brings the
 //!     thing back whole. Membership rows for a trashed member are filtered out
-//!     of the project's listing and counts (`projects.rs`), not deleted.
+//!     of the thread's listing and counts (`threads.rs`), not deleted.
 //!   - The search index is cleared for the record at once. `search_embeddings`
 //!     has no FK to any source table, so a hard delete used to leave the text
 //!     searchable and citable forever — that bug is closed here rather than
@@ -47,7 +47,7 @@ pub const TRASH_RETENTION_DAYS: i64 = 30;
 pub enum TrashKind {
     Chat,
     Page,
-    Project,
+    Thread,
 }
 
 impl TrashKind {
@@ -55,9 +55,9 @@ impl TrashKind {
         match s {
             "chat" => Ok(Self::Chat),
             "page" => Ok(Self::Page),
-            "project" => Ok(Self::Project),
+            "thread" => Ok(Self::Thread),
             other => Err(Error::InvalidInput(format!(
-                "unknown trash kind '{other}' (chat | page | project)"
+                "unknown trash kind '{other}' (chat | page | thread)"
             ))),
         }
     }
@@ -66,18 +66,18 @@ impl TrashKind {
         match self {
             Self::Chat => "app_chats",
             Self::Page => "app_pages",
-            Self::Project => "app_threads",
+            Self::Thread => "app_threads",
         }
     }
 
     /// The `search_embeddings.ontology` names a record of this kind can be
     /// indexed under. A page is `app_page` or `wiki_article` by its `kind`;
-    /// clearing both is cheaper than asking. Projects are not embedded.
+    /// clearing both is cheaper than asking. Threads are not embedded.
     fn ontologies(self) -> &'static [&'static str] {
         match self {
             Self::Chat => &["app_chat"],
             Self::Page => &["app_page", "wiki_article"],
-            Self::Project => &[],
+            Self::Thread => &[],
         }
     }
 }
@@ -105,7 +105,7 @@ pub async fn list_trash(pool: &PgPool) -> Result<Vec<TrashItem>> {
         SELECT 'page', id, COALESCE(NULLIF(title, ''), 'Untitled'), icon, deleted_at
         FROM app_pages WHERE deleted_at IS NOT NULL
         UNION ALL
-        SELECT 'project', id, COALESCE(NULLIF(name, ''), 'Untitled'), icon, deleted_at
+        SELECT 'thread', id, COALESCE(NULLIF(name, ''), 'Untitled'), icon, deleted_at
         FROM app_threads WHERE deleted_at IS NOT NULL
         ORDER BY deleted_at DESC
         "#,
@@ -212,26 +212,26 @@ pub async fn purge(pool: &PgPool, kind: TrashKind, id: &str) -> Result<()> {
         return Err(Error::NotFound(format!("{kind:?} not found: {id}")));
     }
 
-    // A project's members cascade by FK. A chat or page is a member BY URL,
+    // A thread's members cascade by FK. A chat or page is a member BY URL,
     // which no FK knows about, so its rows are swept by hand — best-effort,
     // as the hard deletes always did it.
     let url = match kind {
         TrashKind::Chat => Some(format!("/chat/{id}")),
         TrashKind::Page => Some(format!("/page/{id}")),
-        TrashKind::Project => None,
+        TrashKind::Thread => None,
     };
     if let Some(url) = url {
         if let Err(e) = crate::api::threads::remove_items_by_url(pool, &url).await {
-            tracing::warn!(kind = ?kind, id, "purge: project membership sweep failed: {e}");
+            tracing::warn!(kind = ?kind, id, "purge: thread membership sweep failed: {e}");
         }
     }
-    // Pins are by URL for every kind, projects included. A trashed thing's
+    // Pins are by URL for every kind, threads included. A trashed thing's
     // pin is only hidden (restore brings it back); a purged one's has
     // nothing left to point at.
     let pin_url = format!("/{}/{id}", match kind {
         TrashKind::Chat => "chat",
         TrashKind::Page => "page",
-        TrashKind::Project => "project",
+        TrashKind::Thread => "thread",
     });
     if let Err(e) = sqlx::query("DELETE FROM app_pins WHERE url = $1").bind(&pin_url).execute(pool).await {
         tracing::warn!(kind = ?kind, id, "purge: pin sweep failed: {e}");

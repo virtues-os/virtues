@@ -117,7 +117,7 @@ export interface TurnInputs {
     chatMode: string;
     timezone: string;
     temporary?: true;
-    projectId?: string;
+    threadId?: string;
     activePage?: ActivePageContext;
     model?: string;
 }
@@ -244,7 +244,7 @@ class ChatInstanceStore {
                 timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
                 // The Space (room) this chat lives in — drives the agent's
                 // active-space context block and binds the chat on the server.
-                ...(projectId && { projectId }),
+                ...(projectId && { threadId: projectId }),
                 // Include active page context if a page is bound
                 ...(activePage && { activePage }),
                 ...(model && { model }),

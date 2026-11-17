@@ -1,17 +1,25 @@
 <script lang="ts">
 	/**
-	 * Projects: the list, laid out like Pages because it is the same kind of
-	 * page. A table first (a project is a row you scan for, not a tile you
-	 * admire), the cards one toggle away, the header's count, and one "New
-	 * project" that asks for a name the way the sidebar and ⌘K do.
+	 * Projects: your tasks and your projects on one page, because a task is
+	 * a step and a project is several, and you plan both at once.
 	 *
-	 * Every row has the project's own menu (right-click, or the row's ⋯):
-	 * the same one the sidebar row has, from `projectRowMenuItems`.
+	 *   Tasks     every open task, whatever it sits under: a project, a
+	 *             thing, or nothing (TaskList). The add row is what "New
+	 *             task" and ⌘⇧E open.
+	 *   Projects  a table (a project is a row you scan for), the cards one
+	 *             toggle away, and "New project" in the header, which asks
+	 *             for a name the way the sidebar and ⌘K do. Finished and
+	 *             dropped projects fold at the foot.
+	 *
+	 * Every project row has the project's own menu (right-click, or the
+	 * row's ⋯): the same one the sidebar row has, from `projectRowMenuItems`.
 	 */
 	import { onMount } from 'svelte';
+	import type { Tab } from '$lib/tabs/types';
 	import Icon from '$lib/components/Icon.svelte';
 	import IconButton from '$lib/components/IconButton.svelte';
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
+	import TaskList from '$lib/components/tasks/TaskList.svelte';
 	import { projectColor } from '$lib/sidebar/pin-colors';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { contextMenu } from '$lib/stores/contextMenu.svelte';
@@ -28,7 +36,7 @@
 		reopenProject,
 	} from '$lib/utils/projectActions';
 
-	let { active: _active }: { tab?: unknown; active?: boolean } = $props();
+	let { tab, active = false }: { tab: Tab; active?: boolean } = $props();
 
 	onMount(() => {
 		projectStore.load();
@@ -37,12 +45,6 @@
 	const projects = $derived(projectStore.projects);
 	const archived = $derived(projectStore.archived);
 	const firstLoad = $derived(!projectStore.loaded && projectStore.loading);
-
-	// The header says how many, as Pages does; the explanation is for the
-	// empty page, where it is the only thing to read.
-	const description = $derived(
-		projects.length === 1 ? '1 project' : `${projects.length} projects`
-	);
 
 	// Folded by default: finished and dropped projects wait here, out of the
 	// list you scan. The count on the head says there is something there.
@@ -77,18 +79,19 @@
 	}
 </script>
 
-<Page title="Projects" {description} maxWidth="wide">
+<Page title="Projects" maxWidth="prose">
 	{#snippet actions()}
 		<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New project</Button>
 	{/snippet}
 
+	<TaskList {active} route={tab.route} />
+
+	<h2 class="section-label">Projects</h2>
 	{#if projects.length === 0 && archived.length === 0 && !firstLoad && !projectStore.error}
 		<div class="empty">
-			<span class="empty-glyph"><Icon icon={PROJECT_ICON} width="28" /></span>
-			<p class="empty-title">No projects yet</p>
 			<p class="empty-body">
-				A project keeps the chats, pages and files for one piece of work together. Every chat in
-				it follows the brief you give it.
+				A project is something you can finish in more than one step. It keeps its tasks, chats,
+				pages and files together, and every chat in it follows the brief you give it.
 			</p>
 			<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New project</Button>
 		</div>
@@ -263,28 +266,28 @@
 		color: var(--color-foreground-subtle);
 	}
 
-	/* Empty: the one place the page explains itself. */
+	/* The projects' heading, drawn like the task list's own section labels
+	   above it, so the page reads as one list of two kinds. */
+	.section-label {
+		margin: 2.5rem 0 0.375rem;
+		padding: 0 0.25rem;
+		font-family: var(--font-sans);
+		font-size: 0.8125rem;
+		font-weight: 500;
+		color: var(--color-foreground-muted);
+	}
+
+	/* No projects yet: the one place this half of the page explains itself. */
 	.empty {
 		display: flex;
 		flex-direction: column;
-		align-items: center;
-		gap: 8px;
-		max-width: 26rem;
-		margin: 0 auto;
-		padding: 72px 0;
-		text-align: center;
-	}
-	.empty-glyph {
-		color: var(--color-foreground-subtle);
-	}
-	.empty-title {
-		margin: 4px 0 0;
-		font-size: 0.9375rem;
-		font-weight: 500;
-		color: var(--color-foreground);
+		align-items: flex-start;
+		gap: 12px;
+		padding: 0.25rem 0.25rem 1rem;
 	}
 	.empty-body {
-		margin: 0 0 8px;
+		margin: 0;
+		max-width: 32rem;
 		font-size: 0.875rem;
 		line-height: 1.5;
 		color: var(--color-foreground-muted);

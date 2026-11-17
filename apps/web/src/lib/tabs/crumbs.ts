@@ -34,7 +34,7 @@ export const projectsCrumb = (): Crumb => ({ label: 'Projects', route: '/project
 
 export const projectCrumb = (id: string, name: string): Crumb => ({
 	label: name,
-	route: `/project/${id}`,
+	route: `/thread/${id}`,
 	menu: { kind: 'project', id },
 });
 
@@ -53,8 +53,7 @@ export interface CrumbPath {
 /** A door in the sidebar and the routes that sit under it. */
 const DOORS: { prefixes: string[]; root: Crumb; glyph: string }[] = [
 	{ prefixes: ['/page'], root: { label: 'Pages', route: '/page', menu: { kind: 'pages' } }, glyph: 'pages' },
-	{ prefixes: ['/tasks'], root: { label: 'Tasks', route: '/tasks' }, glyph: 'tasks' },
-	{ prefixes: ['/projects', '/project', '/notebook'], root: projectsCrumb(), glyph: 'projects' },
+	{ prefixes: ['/projects', '/thread'], root: projectsCrumb(), glyph: 'projects' },
 	{ prefixes: ['/applets', '/applet'], root: { label: 'Applets', route: '/applets', menu: { kind: 'applets' } }, glyph: 'applets' },
 ];
 

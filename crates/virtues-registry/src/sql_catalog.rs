@@ -206,7 +206,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_communication_email", TableMetadata {
         description: "Email messages from Gmail, etc.",
         category: "communication",
-        key_columns: &["subject", "body", "body_preview", "from_email", "from_name", "to_emails", "direction", "is_read", "is_starred", "has_attachments", "labels", "thread_id", "occurred_at"],
+        key_columns: &["subject", "body", "body_preview", "from_email", "from_name", "to_emails", "direction", "is_read", "is_starred", "has_attachments", "labels", "conversation_id", "occurred_at"],
         join_hint: Some("JOIN wiki_refs er ON er.source_table = 'data_communication_email' AND er.source_id = data_communication_email.id JOIN wiki_people ON er.entity_id = wiki_people.id AND er.entity_type = 'person'"),
         // The model reads `labels` as text[] and writes `labels && ARRAY[...]`,
         // which Postgres rejects for jsonb.
@@ -215,7 +215,7 @@ pub fn get_table_metadata() -> HashMap<&'static str, TableMetadata> {
     m.insert("data_communication_message", TableMetadata {
         description: "Chat messages (iMessage, SMS, etc.)",
         category: "communication",
-        key_columns: &["body", "channel", "from_identifier", "from_name", "to_identifiers", "is_read", "is_group_message", "has_attachments", "thread_id", "occurred_at"],
+        key_columns: &["body", "channel", "from_identifier", "from_name", "to_identifiers", "is_read", "is_group_message", "has_attachments", "conversation_id", "occurred_at"],
         // A message links to the person on the other end via wiki_refs:
         // role='sender' for messages you received, role='recipient' for messages you
         // sent. Filter both to get a full thread with someone; the message's own

@@ -110,9 +110,6 @@ impl Status {
     }
 }
 
-// TODO(2026-11-17): `thread_id` is still `project_id` on the wire (Task, ListFilter,
-// NewTask, TaskPatch), because the web app and released apps use that name.
-// Rename it when the Threads UI moves.
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct Task {
     pub id: String,
@@ -122,9 +119,8 @@ pub struct Task {
     pub status: String,
     pub due_on: Option<NaiveDate>,
     pub due_at: Option<Timestamp>,
-    #[serde(rename = "project_id")]
     pub thread_id: Option<String>,
-    /// The thing it sits under. A task has one parent at most: a project or a
+    /// The thing it sits under. A task has one parent at most: a thread or a
     /// thing.
     pub thing_id: Option<String>,
     /// It recurs every `recur_every` `recur_unit`s (`day`, `week`, `month` or
@@ -202,7 +198,6 @@ pub struct ListFilter {
     /// dismissed) or `all`.
     pub status: Option<String>,
     pub assignee: Option<Actor>,
-    #[serde(rename = "project_id")]
     pub thread_id: Option<String>,
     pub thing_id: Option<String>,
 }
@@ -214,7 +209,6 @@ pub struct NewTask {
     pub assignee: Option<Actor>,
     pub due_on: Option<NaiveDate>,
     pub due_at: Option<Timestamp>,
-    #[serde(rename = "project_id")]
     pub thread_id: Option<String>,
     pub thing_id: Option<String>,
     /// Recurrence, as a pair: both or neither.
@@ -235,7 +229,7 @@ pub struct TaskPatch {
     pub due_on: Option<Option<NaiveDate>>,
     #[serde(default, deserialize_with = "double_option")]
     pub due_at: Option<Option<Timestamp>>,
-    #[serde(default, rename = "project_id", deserialize_with = "double_option")]
+    #[serde(default, deserialize_with = "double_option")]
     pub thread_id: Option<Option<String>>,
     /// Moving a task under a thing takes it out of its project, and moving
     /// it into a project takes it out from under its thing.
@@ -893,7 +887,7 @@ fn edited_fields(before: &Task, after: &Task) -> Map<String, Value> {
     put("assignee", json!(before.assignee), json!(after.assignee));
     put("due_on", json!(before.due_on), json!(after.due_on));
     put("due_at", json!(before.due_at), json!(after.due_at));
-    put("project_id", json!(before.thread_id), json!(after.thread_id));
+    put("thread_id", json!(before.thread_id), json!(after.thread_id));
     put("thing_id", json!(before.thing_id), json!(after.thing_id));
     put("recur_every", json!(before.recur_every), json!(after.recur_every));
     put("recur_unit", json!(before.recur_unit), json!(after.recur_unit));

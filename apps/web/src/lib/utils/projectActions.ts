@@ -39,7 +39,7 @@ export async function newProject(
 	if (!name) return;
 	try {
 		const project = await projectStore.create(name, under);
-		open(`/project/${project.id}`, project.name);
+		open(`/thread/${project.id}`, project.name);
 	} catch (e) {
 		console.error('[projectActions] Failed to create project:', e);
 		toast.error("Your server couldn't create that project", {
@@ -52,9 +52,9 @@ export function openProjects(): void {
 	windowShellStore.openTabFromRoute('/projects', { label: 'Projects', focusExisting: true });
 }
 
-/** A project's own url, in either spelling. You can't put a project in a project. */
+/** A thread's own url. You can't put a thread inside another thread. */
 export function isProjectUrl(url: string): boolean {
-	return /^\/(?:project|notebook)\//.test(url);
+	return url.startsWith('/thread/');
 }
 
 /**
@@ -329,7 +329,7 @@ export function droppedRefUrl(e: DragEvent): string | null {
 
 /** Open a project in the window you are in. */
 export function openProject(project: Pick<Project, 'id' | 'name'>): void {
-	windowShellStore.openTabFromRoute(`/project/${project.id}`, {
+	windowShellStore.openTabFromRoute(`/thread/${project.id}`, {
 		label: project.name,
 		focusExisting: true,
 	});
@@ -448,12 +448,12 @@ export function outcomeLabel(project: Pick<Project, 'outcome'>): string {
  * went, for a caller that has somewhere to go next.
  */
 export async function deleteProject(project: Pick<Project, 'id' | 'name'>): Promise<boolean> {
-	const route = `/project/${project.id}`;
+	const route = `/thread/${project.id}`;
 	const reopen = routeIfOpen(route);
 	try {
 		await projectStore.remove(project.id);
 		windowShellStore.closeTabsByRoute(route);
-		notifyTrashed({ kind: 'project', id: project.id, name: project.name, reopen });
+		notifyTrashed({ kind: 'thread', id: project.id, name: project.name, reopen });
 		return true;
 	} catch (e) {
 		console.error('[projectActions] delete failed:', e);
@@ -468,7 +468,7 @@ export async function deleteProject(project: Pick<Project, 'id' | 'name'>): Prom
 export function projectRowMenuItems(
 	project: Pick<ProjectSummary, 'id' | 'name' | 'icon' | 'archived_at' | 'outcome'>,
 ): ContextMenuItem[] {
-	const url = `/project/${project.id}`;
+	const url = `/thread/${project.id}`;
 	if (project.archived_at) {
 		const other: ProjectOutcome = project.outcome === 'dropped' ? 'finished' : 'dropped';
 		return [
@@ -546,7 +546,7 @@ export function memberName(item: { url: string; title?: string }): string {
 		}
 	}
 	const kind = parseRef(item.url)?.kind;
-	if (kind === 'chat' || kind === 'page' || kind === 'project') return untitled(kind);
+	if (kind === 'chat' || kind === 'page' || kind === 'thread') return untitled(kind);
 	const names: Record<string, string> = {
 		person: 'Person',
 		place: 'Place',

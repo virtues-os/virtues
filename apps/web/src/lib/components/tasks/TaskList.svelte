@@ -1,28 +1,32 @@
 <script lang="ts">
 	/**
-	 * Tasks (agents/plan/tasks-plan.md): the owner's to-dos and their
-	 * requests to the assistant on one page, top to bottom:
+	 * The task list: the owner's to-dos and their requests to the assistant,
+	 * top to bottom:
 	 *
 	 *   Ready     requests whose result waits for the owner, with the result
-	 *             on the page. Accept closes one; Reply runs it again.
+	 *             in the row. Accept closes one; Reply runs it again.
 	 *   Working   requests queued or running on the server, with the model
 	 *             doing the work and who pays for it.
 	 *   To-dos    the owner's own, dated ones first. Group headers appear only
 	 *             once the list is long enough to need them.
 	 *   Done      folded: accepted requests, finished and dismissed tasks.
 	 *
+	 * One list, three places. The Projects page shows every task above the
+	 * projects; a project's page shows its own (`projectId`); a thing's page
+	 * shows the tasks under it (`thingId`). A task added in a scoped list sits
+	 * under that project or thing, and its row leaves out the parent's name,
+	 * since the page already says it.
+	 *
 	 * Return in the add row makes a to-do; Mod+Return makes a request. A row
 	 * opens in place, with its title editable in the row. No counts, no
 	 * pills and no red anywhere: the list must never nag.
 	 *
-	 * A to-do can sit under a project or a thing, and it can recur: finishing
-	 * it opens the next one, due that long after today, so one is open at a
-	 * time and a missed one never piles up.
+	 * A to-do can recur: finishing it opens the next one, due that long after
+	 * today, so one is open at a time and a missed one never piles up.
 	 *
 	 * The server works requests in the background, so while one is queued or
-	 * running the page reloads the list every few seconds.
+	 * running the list reloads every few seconds.
 	 */
-	import type { Tab } from "$lib/tabs/types";
 	import { addTaskNote, getByoKey, listTaskEvents, type Task, type TaskEvent, type TaskPatch } from "$lib/api/client";
 	import { tasksStore } from "$lib/stores/tasks.svelte";
 	import { projectStore } from "$lib/stores/project.svelte";
@@ -32,7 +36,6 @@
 	import { windowShellStore } from "$lib/stores/window-shell.svelte";
 	import { isAppleKeyboard } from "$lib/utils/platform";
 	import { formatMicrosUSD } from "$lib/utils/currency";
-	import { Page } from "$lib";
 	import Icon from "$lib/components/Icon.svelte";
 	import Markdown from "$lib/components/Markdown.svelte";
 	import MenuItem from "$lib/components/MenuItem.svelte";
@@ -47,7 +50,33 @@
 	import { toast } from "svelte-sonner";
 	import { onMount, tick } from "svelte";
 
-	let { tab, active }: { tab: Tab; active: boolean } = $props();
+	let {
+		active,
+		route,
+		projectId = null,
+		thingId = null,
+		readonly = false,
+		emptyText = 'Nothing here yet. A date at the end, like "fri" or "tomorrow 5pm", sets when it\'s due.',
+	}: {
+		active: boolean;
+		/** The page's route. `?task=<id>` in it opens that task. */
+		route: string;
+		/** Only this project's tasks, and new ones go under it. */
+		projectId?: string | null;
+		/** Only this thing's tasks, and new ones go under it. */
+		thingId?: string | null;
+		/** No add row: a finished or dropped project takes no new tasks. */
+		readonly?: boolean;
+		/** What an empty list says. Null says nothing, and the add row stands alone. */
+		emptyText?: string | null;
+	} = $props();
+
+	/** Whether a task belongs on this list. */
+	function inScope(t: Task): boolean {
+		if (projectId) return t.thread_id === projectId;
+		if (thingId) return t.thing_id === thingId;
+		return true;
+	}
 
 	/** Past this many to-dos, they are grouped under date headers. */
 	const GROUP_FROM = 10;
@@ -73,7 +102,8 @@
 
 	// ── what the page shows ─────────────────────────────────────────────────
 
-	const requests = $derived(tasksStore.open.filter((t) => t.assignee === "assistant"));
+	const scoped = $derived(tasksStore.open.filter(inScope));
+	const requests = $derived(scoped.filter((t) => t.assignee === "assistant"));
 	const ready = $derived(
 		requests.filter((t) => t.status === "ready").sort((a, b) => b.updated_at.localeCompare(a.updated_at)),
 	);
@@ -89,7 +119,7 @@
 	);
 	const todos = $derived.by(() => {
 		void today;
-		return tasksStore.open
+		return scoped
 			.filter((t) => t.assignee === "owner")
 			.sort(
 				(a, b) =>
@@ -108,8 +138,10 @@
 			tasks: todos.filter((t) => dueGroup(t.due_on, now) === g.id),
 		})).filter((g) => g.tasks.length > 0);
 	});
-	const closed = $derived(tasksStore.closed);
-	const isEmpty = $derived(tasksStore.open.length === 0);
+	const closed = $derived(tasksStore.closed.filter(inScope));
+	const isEmpty = $derived(scoped.length === 0);
+	/** "To-dos" is said only when requests sit above it; alone, the list needs no heading. */
+	const labelTodos = $derived(ready.length > 0 || working.length > 0);
 
 	let doneOpen = $state(false);
 
@@ -129,8 +161,15 @@
 
 	/** What a task sits under, by name: its project or its thing. */
 	function parentName(t: Task): string | undefined {
-		if (t.project_id) return projectName.get(t.project_id);
+		if (t.thread_id) return projectName.get(t.thread_id);
 		return thingsStore.byId(t.thing_id)?.title;
+	}
+
+	/** The parent's name for the row, left out on that parent's own page. */
+	function rowParentName(t: Task): string | undefined {
+		if (projectId && t.thread_id === projectId) return undefined;
+		if (thingId && t.thing_id === thingId) return undefined;
+		return parentName(t);
 	}
 
 	// ── loading and live refresh ────────────────────────────────────────────
@@ -211,18 +250,20 @@
 
 	// ── adding ──────────────────────────────────────────────────────────────
 
+	const uid = $props.id();
+	const hintId = `${uid}-hint`;
+
 	let draft = $state("");
 	let addInput: HTMLInputElement | undefined = $state();
 	const preview = $derived(parseDue(draft));
 	const askKeys = isAppleKeyboard ? "⌘Return" : "Ctrl+Enter";
 
-	// A "New task" door asks for the add row: the sidebar +, ⌘⇧E.
-	let seenAddRequest = tasksStore.addRequest;
+	// "New task" asks for the add row (the tab strip's +, ⌘⇧E). It opens the
+	// Projects page, so only the list of every task answers it.
 	$effect(() => {
-		if (tasksStore.addRequest !== seenAddRequest && active) {
-			seenAddRequest = tasksStore.addRequest;
-			void tick().then(() => addInput?.focus());
-		}
+		void tasksStore.addRequest;
+		if (!active || projectId || thingId || readonly) return;
+		if (tasksStore.takeAddRequest()) void tick().then(() => addInput?.focus());
 	});
 
 	/**
@@ -236,7 +277,14 @@
 		const typed = draft;
 		draft = "";
 		try {
-			await tasksStore.create({ title, due_on, due_at, assignee: asRequest ? "assistant" : "owner" });
+			await tasksStore.create({
+				title,
+				due_on,
+				due_at,
+				assignee: asRequest ? "assistant" : "owner",
+				thread_id: projectId,
+				thing_id: projectId ? null : thingId,
+			});
 		} catch (e) {
 			if (!draft) draft = typed;
 			toast.error("Your server couldn't add that", { description: errorText(e) });
@@ -303,11 +351,11 @@
 	}
 
 	/** Put a task under a project, under a thing, or on its own. */
-	function saveParent(t: Task, parent: { project_id: string } | { thing_id: string } | null) {
-		const project_id = parent && "project_id" in parent ? parent.project_id : null;
+	function saveParent(t: Task, parent: { thread_id: string } | { thing_id: string } | null) {
+		const thread_id = parent && "thread_id" in parent ? parent.thread_id : null;
 		const thing_id = parent && "thing_id" in parent ? parent.thing_id : null;
-		if (project_id === (t.project_id ?? null) && thing_id === (t.thing_id ?? null)) return;
-		void save(t.id, { project_id, thing_id }, "Your server couldn't move that");
+		if (thread_id === (t.thread_id ?? null) && thing_id === (t.thing_id ?? null)) return;
+		void save(t.id, { thread_id, thing_id }, "Your server couldn't move that");
 	}
 
 	function saveRecurrence(t: Task, recurs: Recurrence | null) {
@@ -401,11 +449,12 @@
 
 	// `?task=<id>` opens that task. Read once per route, so closing the task
 	// afterwards keeps it closed.
-	const linkedTask = $derived(new URL(tab.route, "http://localhost").searchParams.get("task"));
+	const linkedTask = $derived(new URL(route, "http://localhost").searchParams.get("task"));
 	let openedLink: string | null = null;
 	$effect(() => {
 		const id = linkedTask;
-		if (!id || id === openedLink || !tasksStore.find(id)) return;
+		const linked = id ? tasksStore.find(id) : undefined;
+		if (!id || id === openedLink || !linked || !inScope(linked)) return;
 		openedLink = id;
 		open(id);
 		void tick().then(() => rowEl(id)?.scrollIntoView({ block: "nearest" }));
@@ -504,7 +553,7 @@
 					assignee: "assignee",
 					due_on: "date",
 					due_at: "time",
-					project_id: "project",
+					thread_id: "thread",
 					thing_id: "thing",
 					recur_every: "recurrence",
 					recur_unit: "recurrence",
@@ -545,33 +594,33 @@
 
 <svelte:window onkeydown={onKeydown} />
 
-<div class="flex h-full w-full flex-col bg-background">
-	<div class="min-h-0 flex-1">
-		<Page title="Tasks" maxWidth="prose">
-			<form
-				class="add-row"
-				onsubmit={(e) => {
-					e.preventDefault();
-					void add(false);
-				}}
-			>
-				<span class="add-mark" aria-hidden="true"><Icon icon="mynaui:plus" width="16" /></span>
-				<input
-					bind:this={addInput}
-					bind:value={draft}
-					onkeydown={addKeydown}
-					class="add-input"
-					placeholder="Add a to-do"
-					aria-label="New to-do"
-					aria-describedby="add-hint"
-				/>
-				{#if preview.due_on && preview.title}
-					<span class="add-due" title="Read from what you typed">{dueLabel(preview.due_on, preview.due_at)}</span>
-				{/if}
-			</form>
-			<p class="add-hint" id="add-hint">
-				Return adds it to your list. {askKeys} asks the assistant to do it.
-			</p>
+<div class="task-list">
+			{#if !readonly}
+				<form
+					class="add-row"
+					onsubmit={(e) => {
+						e.preventDefault();
+						void add(false);
+					}}
+				>
+					<span class="add-mark" aria-hidden="true"><Icon icon="mynaui:plus" width="16" /></span>
+					<input
+						bind:this={addInput}
+						bind:value={draft}
+						onkeydown={addKeydown}
+						class="add-input"
+						placeholder="Add a to-do"
+						aria-label="New to-do"
+						aria-describedby={hintId}
+					/>
+					{#if preview.due_on && preview.title}
+						<span class="add-due" title="Read from what you typed">{dueLabel(preview.due_on, preview.due_at)}</span>
+					{/if}
+				</form>
+				<p class="add-hint" id={hintId}>
+					Return adds it to your list. {askKeys} asks the assistant to do it.
+				</p>
+			{/if}
 
 			{#if tasksStore.loading && tasksStore.open.length === 0}
 				<p class="quiet">Loading tasks…</p>
@@ -580,15 +629,13 @@
 					Your server couldn't load your tasks.
 					<button type="button" class="text-btn" onclick={() => tasksStore.load()}>Try again</button>
 				</p>
-			{:else if isEmpty}
-				<p class="quiet">
-					Nothing here yet. A date at the end, like "fri" or "tomorrow 5pm", sets when it's due.
-				</p>
+			{:else if isEmpty && emptyText}
+				<p class="quiet">{emptyText}</p>
 			{/if}
 
 			{#if ready.length > 0}
-				<section class="section" aria-labelledby="ready-label">
-					<h2 class="section-label" id="ready-label">Ready</h2>
+				<section class="section" aria-labelledby={`${uid}-ready`}>
+					<h2 class="section-label" id={`${uid}-ready`}>Ready</h2>
 					<ul class="rows">
 						{#each ready as t (t.id)}
 							<li
@@ -636,8 +683,8 @@
 			{/if}
 
 			{#if working.length > 0}
-				<section class="section" aria-labelledby="working-label">
-					<h2 class="section-label" id="working-label">Working</h2>
+				<section class="section" aria-labelledby={`${uid}-working`}>
+					<h2 class="section-label" id={`${uid}-working`}>Working</h2>
 					<ul class="rows">
 						{#each working as t (t.id)}
 							{@render row(t)}
@@ -647,8 +694,10 @@
 			{/if}
 
 			{#if todos.length > 0}
-				<section class="section" aria-labelledby="todos-label">
-					<h2 class="section-label" id="todos-label">To-dos</h2>
+				<section class="section" aria-label={labelTodos ? undefined : "To-dos"} aria-labelledby={labelTodos ? `${uid}-todos` : undefined}>
+					{#if labelTodos}
+						<h2 class="section-label" id={`${uid}-todos`}>To-dos</h2>
+					{/if}
 					{#each todoGroups as group (group.id)}
 						{#if group.label}
 							<h3 class="group-label">{group.label}</h3>
@@ -678,8 +727,6 @@
 					</ul>
 				{/if}
 			</section>
-		</Page>
-	</div>
 </div>
 
 {#snippet mark(t: Task)}
@@ -692,7 +739,7 @@
 
 {#snippet line(t: Task)}
 	{@const request = t.assignee === "assistant" && !isClosed(t)}
-	{@const parent = parentName(t)}
+	{@const parent = rowParentName(t)}
 	{@const recurs = isClosed(t) ? null : recurrenceOf(t)}
 	<div class="line">
 		{#if request}
@@ -809,7 +856,7 @@
 					<div class="menu" role="menu" aria-label="What this task sits under">
 						<MenuItem
 							role="menuitemradio"
-							checked={!t.project_id && !t.thing_id}
+							checked={!t.thread_id && !t.thing_id}
 							label="On its own"
 							onclick={() => {
 								saveParent(t, null);
@@ -821,10 +868,10 @@
 							{#each projectStore.projects as p (p.id)}
 								<MenuItem
 									role="menuitemradio"
-									checked={t.project_id === p.id}
+									checked={t.thread_id === p.id}
 									label={p.name}
 									onclick={() => {
-										saveParent(t, { project_id: p.id });
+										saveParent(t, { thread_id: p.id });
 										close();
 									}}
 								/>
@@ -996,6 +1043,10 @@
 
 	.section {
 		margin-bottom: 2rem;
+	}
+	/* The list ends at Done; whatever page holds it sets the space after. */
+	.done-section {
+		margin-bottom: 0;
 	}
 	.section-label {
 		display: flex;
@@ -1288,13 +1339,33 @@
 		font-variant-numeric: tabular-nums;
 	}
 
-	/* A phone has no Mod+Return; a to-do goes to the assistant from its detail. */
+	/* A phone has no Mod+Return; a to-do goes to the assistant from its detail.
+	   Its width goes to the title: the date and parent drop under it. */
 	@media (max-width: 640px) {
 		.add-hint {
 			display: none;
 		}
 		.add-row {
 			margin-bottom: 1.75rem;
+		}
+		.line {
+			flex-wrap: wrap;
+			row-gap: 0;
+		}
+		.dismiss {
+			order: 2;
+		}
+		.meta {
+			order: 3;
+			flex-basis: 100%;
+			flex-wrap: wrap;
+			gap: 0 0.75rem;
+			margin-top: -0.375rem;
+			padding: 0 0 0.25rem 1.75rem;
+			text-align: left;
+		}
+		.meta:empty {
+			display: none;
 		}
 	}
 </style>

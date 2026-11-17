@@ -36,8 +36,9 @@
 		}
 	}
 
+	/** Tasks live on the Projects page, above the projects. */
 	function openTasks() {
-		windowShellStore.openTabFromRoute("/tasks", { label: "Tasks", focusExisting: true });
+		windowShellStore.openTabFromRoute("/projects", { label: "Projects", focusExisting: true });
 	}
 </script>
 

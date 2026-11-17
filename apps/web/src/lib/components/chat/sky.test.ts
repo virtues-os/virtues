@@ -107,7 +107,7 @@ describe('layoutDay', () => {
 describe('layoutWeek', () => {
 	const week: SkyWeek = {
 		start: '2031-03-10',
-		threads: [{ url: '/project/p', label: 'Friday review', kind: 'project', moments: ['2031-03-10|a', '2031-03-12|c'] }],
+		threads: [{ url: '/thread/p', label: 'Friday review', kind: 'thread', moments: ['2031-03-10|a', '2031-03-12|c'] }],
 		days: Array.from({ length: 7 }, (_, i) =>
 			invented(
 				`2031-03-${10 + i}`,
@@ -139,7 +139,7 @@ describe('layoutWeek', () => {
 	it('draws a thread as one storyline across the days it touches', () => {
 		const { paths } = layoutWeek(week, 640, '2031-03-12');
 		expect(paths).toHaveLength(1);
-		expect(paths[0].url).toBe('/project/p');
+		expect(paths[0].url).toBe('/thread/p');
 	});
 });
 
@@ -149,14 +149,14 @@ describe('layoutContext', () => {
 		const context: SkyContext = {
 			date: day.date,
 			threads: [
-				{ url: '/project/p', label: 'Friday review', kind: 'project', moments: ['a', 'b'] },
+				{ url: '/thread/p', label: 'Friday review', kind: 'thread', moments: ['a', 'b'] },
 				{ url: '/chat/c', label: 'Menu ideas for the week', kind: 'chat', moments: ['a'] },
 				{ url: '/page/g', label: 'Garden', kind: 'page', moments: ['c'] }
 			]
 		};
 		const { labels, paths } = layoutContext(day, context, 640);
 		const joins = (url: string) => paths.filter((p) => p.url === url).length;
-		expect([joins('/project/p'), joins('/chat/c'), joins('/page/g')]).toEqual([2, 1, 1]);
+		expect([joins('/thread/p'), joins('/chat/c'), joins('/page/g')]).toEqual([2, 1, 1]);
 		for (const a of labels)
 			for (const b of labels)
 				if (a !== b && a.y === b.y) expect(Math.abs(a.x - b.x)).toBeGreaterThan(60);

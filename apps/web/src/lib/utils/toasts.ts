@@ -70,7 +70,7 @@ export async function refreshAfterRestore(kind: TrashedKind): Promise<void> {
 	void pinsStore.load();
 	if (kind === 'chat') await chatSessions.refresh();
 	else if (kind === 'page') await pagesStore.loadPages();
-	else if (kind === 'project') await projectStore.load();
+	else if (kind === 'thread') await projectStore.load();
 	windowShellStore.invalidateViewCache(kind === 'file' ? 'storage' : kind);
 }
 

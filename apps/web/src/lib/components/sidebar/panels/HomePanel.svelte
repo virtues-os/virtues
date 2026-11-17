@@ -8,12 +8,13 @@
 	 *
 	 * Doors first, then groups, and the order is the order of reach:
 	 *
-	 *   doors     New chat, Pages, Tasks, Projects, Applets, Wiki. The verb,
+	 *   doors     New chat, Pages, Projects, Applets, Wiki. The verb,
 	 *             then the places. Each place is one row that opens its
 	 *             overview; none of them lists its contents here. Search is
 	 *             not a door: it is the ⌘K palette, reached from anywhere.
-	 *             Pages, Tasks and Projects carry a `+` on hover: the word is
-	 *             the list, the plus is the new one.
+	 *             Pages and Projects carry a `+` on hover: the word is the
+	 *             list, the plus is the new one. Tasks live on the Projects
+	 *             page, above the projects.
 	 *   Pinned    what the user chose to keep, in their own order: a chat, a
 	 *             page, a project, an applet, a task, anything with a url.
 	 *             Everything you want one click away lives here, so the doors
@@ -68,7 +69,7 @@
 	import ThinkingMark from '$lib/components/ThinkingMark.svelte';
 	import { pinMenuItem, pinIconMenuItem, isPinned, togglePin, canPin, pinAtGap } from '$lib/pins/pinAction';
 	import { getProjectMenuItems } from '$lib/utils/contextMenuItems';
-	import { newPage as makePage, newTask as makeTask } from '$lib/utils/newActions';
+	import { newPage as makePage } from '$lib/utils/newActions';
 	import { notifyTrashed, routeIfOpen } from '$lib/utils/toasts';
 	import { toast } from 'svelte-sonner';
 	import {
@@ -275,7 +276,7 @@
 		{ id: 'all', label: 'Everything', plural: 'things', seeAll: () => openAllChats() },
 		{ id: 'chat', label: 'Chats', plural: 'chats', seeAll: () => openAllChats() },
 		{ id: 'page', label: 'Pages', plural: 'pages', seeAll: () => openPages() },
-		{ id: 'project', label: 'Projects', plural: 'projects', seeAll: () => openProjects() },
+		{ id: 'thread', label: 'Threads', plural: 'threads', seeAll: () => openProjects() },
 		{ id: 'applet', label: 'Applets', plural: 'applets', seeAll: () => openApplets() },
 	];
 	const RECENT_FILTER_KEY = 'virtues-sidebar-recent-filter';
@@ -493,16 +494,6 @@
 		await makePage((route, label) => windowShellStore.openTabFromRoute(route, { label }));
 	}
 
-	function openTasks() {
-		windowShellStore.openTabFromRoute('/tasks', { label: 'Tasks', focusExisting: true });
-	}
-
-	async function newTask(e: MouseEvent) {
-		e.preventDefault();
-		e.stopPropagation();
-		await makeTask(openTasks);
-	}
-
 	async function addProject(e: MouseEvent) {
 		e.preventDefault();
 		e.stopPropagation();
@@ -518,15 +509,14 @@
 	}
 
 	/**
-	 * What each door does. Pages, Tasks and Projects carry a + on hover: the
-	 * word is the list, the plus is a new one. Tasks never shows a count: the
-	 * list does not nag from the sidebar (agents/plan/tasks-plan.md). The
-	 * Wiki opens its overview, whose index reaches its sections.
+	 * What each door does. Pages and Projects carry a + on hover: the word
+	 * is the list, the plus is a new one. Projects never shows a count: the
+	 * tasks on its page do not nag from the sidebar. The Wiki opens its
+	 * overview, whose index reaches its sections.
 	 */
 	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; key?: string; run: (e: MouseEvent) => void } }> = {
 		'new-chat': { open: newChat },
 		pages: { open: openPages, add: { label: 'New page', key: 'mod+shift+n', run: newPage } },
-		tasks: { open: openTasks, add: { label: 'New task', key: 'mod+shift+e', run: newTask } },
 		projects: { open: openProjects, add: { label: 'New project', run: addProject } },
 		applets: { open: openApplets },
 		wiki: { open: openWiki },
@@ -881,7 +871,8 @@
 				p ?? {
 					id: owned.id,
 					title: look.title,
-					project_id: null,
+					excerpt: '',
+					threads: [],
 					icon: look.icon,
 					icon_color: look.color,
 					cover_url: null,
@@ -890,7 +881,7 @@
 					updated_at: '',
 				},
 			);
-		} else if (owned?.kind === 'project') {
+		} else if (owned?.kind === 'thread') {
 			const p = projects.find((x) => x.id === owned.id);
 			base = projectRowMenuItems(p ?? { id: owned.id, name: look.title, icon: look.icon, archived_at: null });
 		}
@@ -944,7 +935,7 @@
 	function recentMenu(row: RecentRow): ContextMenuItem[] {
 		if (row.kind === 'chat') return chatMenu(row.session);
 		if (row.kind === 'page') return pageMenu(row.page);
-		if (row.kind === 'project') return projectRowMenuItems(row.project);
+		if (row.kind === 'thread') return projectRowMenuItems(row.project);
 		return [
 			...openMenuItems(row.url, row.title),
 			pinMenuItem({ url: row.url, label: row.title }),
@@ -1127,7 +1118,7 @@
 {#snippet recentRow(row: RecentRow)}
 	{@const pinned = isPinned(row.url)}
 	{@const chatId = row.kind === 'chat' ? row.session.conversation_id : null}
-	{@const home = row.kind === 'chat' && row.session.project_id ? projectStore.byId(row.session.project_id) : undefined}
+	{@const home = row.kind === 'chat' && row.session.thread_id ? projectStore.byId(row.session.thread_id) : undefined}
 	<div
 		class="panel-row panel-row-has-actions"
 		class:active={activeRoute === row.url}
@@ -1262,7 +1253,7 @@
 				{@const pinChat = pin.url.startsWith('/chat/') ? pin.url.slice('/chat/'.length) : null}
 				{@const look = pinIdentity(pin)}
 				{@const owned = ownedRef(pin.url)}
-				{@const pinProject = owned?.kind === 'project' ? owned.id : null}
+				{@const pinProject = owned?.kind === 'thread' ? owned.id : null}
 				<div
 					in:rowIn={pin.url}
 					out:rowOut={pin.url}

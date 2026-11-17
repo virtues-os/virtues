@@ -213,9 +213,9 @@ pub struct ChatRequest {
     /// Optional client-generated message ID for idempotency
     #[serde(rename = "messageId")]
     pub message_id: Option<String>,
-    /// The Project (room) this chat lives in. Stored on the chat and inlined into
+    /// The thread this chat lives in. Stored on the chat and inlined into
     /// the system prompt as a salience lens (name + memo + member URLs).
-    #[serde(rename = "projectId", alias = "notebookId", default)]
+    #[serde(rename = "threadId", default)]
     pub thread_id: Option<String>,
     /// Optional active page context for AI page editing
     #[serde(rename = "activePage")]
@@ -1635,10 +1635,10 @@ async fn build_project_context(pool: &PgPool, thread_id: &str) -> Option<String>
     let mut out = String::new();
     out.push_str(&format!(
         "\n\n<active_project name=\"{}\">",
-        escape_attr(&detail.project.name),
+        escape_attr(&detail.thread.name),
     ));
 
-    if let Some(instr) = detail.project.instructions.as_deref() {
+    if let Some(instr) = detail.thread.instructions.as_deref() {
         if !instr.is_empty() {
             out.push_str(&format!(
                 "\n  <instructions>{}</instructions>",
@@ -2246,8 +2246,8 @@ async fn load_history(pool: &PgPool, request: &ChatRequest) -> Result<History, R
 /// A saved chat's row and transcript. Err is the response to send.
 async fn load_saved_history(pool: &PgPool, chat_id: &str) -> Result<History, Response> {
     // The room is read from the persisted row (single source of truth) so the
-    // active-project context always matches the binding, even if a stale
-    // client sends a different per-message projectId; the create path has
+    // active-thread context always matches the binding, even if a stale
+    // client sends a different per-message threadId; the create path has
     // already bound a new chat from request.thread_id, so the row is current.
     //
     // `thread_id` decodes as `Option<String>` on purpose: the column is

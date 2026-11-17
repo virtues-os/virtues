@@ -38,13 +38,13 @@ export async function lastReplyLine(chatId: string): Promise<string | null> {
 
 /** A line from inside a pinned thing, for the kinds that have one. */
 export async function pinLine(url: string, title: string): Promise<string | null> {
-	const [, kind, id] = url.split('?')[0].match(/^\/(page|chat|project)\/([^/]+)$/) ?? [];
+	const [, kind, id] = url.split('?')[0].match(/^\/(page|chat|thread)\/([^/]+)$/) ?? [];
 	if (kind === 'page') {
 		const page = await getPage(id);
 		return firstSentence(page.content ?? '', page.title ?? title);
 	}
 	if (kind === 'chat') return lastReplyLine(id);
-	if (kind === 'project') {
+	if (kind === 'thread') {
 		const brief = projectStore.byId(id)?.instructions;
 		return brief ? firstSentence(brief, title) : null;
 	}

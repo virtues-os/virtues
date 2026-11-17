@@ -285,7 +285,7 @@ struct Msg {
     /// message at a time. `""` means "not a person" — a short code, or ourselves —
     /// and is what stops the resolver re-asking about every 2FA robot forever.
     from_handle: String,
-    thread_id: Option<String>,
+    conversation_id: Option<String>,
     timestamp: DateTime<Utc>,
     guid: String,
     metadata: Value,
@@ -331,7 +331,7 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
         // down too). Sent-vs-received is preserved in `metadata.is_from_me` below.
 
         // The collector sends `chat_id`; this read `chat_guid`. They never matched, so
-        // thread_id was NULL on EVERY message ever ingested — no conversation grouping
+        // conversation_id was NULL on EVERY message ever ingested — no conversation grouping
         // at all, and no way to ask "what did I talk about with X". Accept both.
         let chat_guid = m
             .get("chat_id")
@@ -412,7 +412,7 @@ pub async fn write_imessages(db: &PgPool, messages: &[Value]) -> Result<usize> {
             from_handle: virtues_helpers::handles::normalize_handle(&from_handle)
                 .unwrap_or_default(),
             from_identifier: from_handle,
-            thread_id: chat_guid,
+            conversation_id: chat_guid,
             timestamp: ts,
             guid: guid.to_string(),
             metadata: serde_json::json!({
@@ -485,7 +485,7 @@ async fn flush_imessage(db: &PgPool, rows: &[Msg]) -> Result<usize> {
         // `channel` is what the registry reads for a message's source_type
         // ("message:" || channel), so name it rather than leaving it "unknown".
         "channel",
-        "thread_id",
+        "conversation_id",
         "occurred_at",
         // These four were on the wire and thrown away on arrival — every tapback,
         // every read receipt, every "they sent a photo", and every group chat.
@@ -508,7 +508,7 @@ async fn flush_imessage(db: &PgPool, rows: &[Msg]) -> Result<usize> {
         &[
             "body",
             "from_handle",
-            "thread_id",
+            "conversation_id",
             "is_read",
             "has_attachments",
             "is_group_message",
@@ -527,7 +527,7 @@ async fn flush_imessage(db: &PgPool, rows: &[Msg]) -> Result<usize> {
             .bind(&r.from_identifier)
             .bind(&r.from_handle)
             .bind("imessage")
-            .bind(&r.thread_id)
+            .bind(&r.conversation_id)
             .bind(r.timestamp)
             .bind(r.is_read)
             .bind(r.has_attachments)

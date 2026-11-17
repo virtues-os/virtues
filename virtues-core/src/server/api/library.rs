@@ -1,4 +1,4 @@
-//! The library: bookmarks, pins, projects, the lake, recently deleted and
+//! The library: bookmarks, pins, threads, the lake, recently deleted and
 //! the visits log.
 
 use axum::{
@@ -58,8 +58,8 @@ pub fn routes() -> Router<AppState> {
             "/api/pins/:id",
             patch(update_pin_handler).delete(delete_pin_handler),
         )
-        // Recently deleted: chats, pages and projects wait here 30 days.
-        // Every chat, page and project DELETE lands a thing here; these are
+        // Recently deleted: chats, pages and threads wait here 30 days.
+        // Every chat, page and thread DELETE lands a thing here; these are
         // the only doors to a hard delete.
         .route("/api/trash", get(list_trash_handler))
         .route("/api/trash/empty", post(empty_trash_handler))
@@ -80,50 +80,24 @@ pub fn routes() -> Router<AppState> {
         .route("/api/publications/preview", get(preview_publication_handler))
         .route("/api/publications/:id/update", post(update_publication_handler))
         .route("/api/publications/:id", delete(revoke_publication_handler))
-        // Threads API (`api::threads`). The path, the handler names and the
-        // JSON still say project, because the web app and phone apps built
-        // before the rename call them, and phones update on their own clock.
-        // TODO(2026-11-17): add `/api/threads` with thread names when the
-        // Threads UI moves, and keep these as an alias like `/api/notebooks`.
-        .merge(project_routes("/api/projects"))
-        .route("/api/projects/:id/archive", post(archive_project_handler))
-        .route("/api/projects/:id/unarchive", post(unarchive_project_handler))
-        // LEGACY ALIAS: `/api/notebooks…` for clients built before the
-        // notebook→project rename (migration 0029). Phones self-update both
-        // ahead of boxes and behind them, so an old app can be talking to a
-        // new box for weeks. Same handlers, same bodies (request fields accept
-        // `notebookId` via a serde alias); archive/unarchive have no alias.
-        // Remove once no supported client build says "notebook".
-        .merge(project_routes("/api/notebooks"))
-}
-
-/// A project, its membership and its graph, under `base`.
-fn project_routes(base: &str) -> Router<AppState> {
-    Router::new()
+        // Threads (`api::threads`): a thread, what has been added to it, and
+        // its graph. Items come back inside GET /api/threads/:id.
+        .route("/api/threads", get(list_threads_handler).post(create_thread_handler))
         .route(
-            base,
-            get(list_projects_handler).post(create_project_handler),
+            "/api/threads/:id",
+            get(get_thread_handler)
+                .put(update_thread_handler)
+                .delete(delete_thread_handler),
         )
+        .route("/api/threads/:id/archive", post(archive_thread_handler))
+        .route("/api/threads/:id/unarchive", post(unarchive_thread_handler))
         .route(
-            &format!("{base}/:id"),
-            get(get_project_handler)
-                .put(update_project_handler)
-                .delete(delete_project_handler),
+            "/api/threads/:id/items",
+            post(add_thread_item_handler).delete(remove_thread_item_handler),
         )
-        // Project membership (items come back inside GET {base}/:id)
-        .route(
-            &format!("{base}/:id/items"),
-            post(add_project_item_handler).delete(remove_project_item_handler),
-        )
-        .route(
-            &format!("{base}/:id/items/reorder"),
-            put(reorder_project_items_handler),
-        )
-        .route(
-            &format!("{base}/:id/items/role"),
-            put(set_project_item_role_handler),
-        )
-        .route(&format!("{base}/:id/graph"), get(project_graph_handler))
+        .route("/api/threads/:id/items/reorder", put(reorder_thread_items_handler))
+        .route("/api/threads/:id/items/role", put(set_thread_item_role_handler))
+        .route("/api/threads/:id/graph", get(thread_graph_handler))
 }
 
 
@@ -318,13 +292,13 @@ pub async fn resolve_refs_handler(
 }
 
 // ============================================================================
-// Projects Handlers
+// Threads Handlers
 // ============================================================================
 
-/// GET /api/projects - List all projects
-pub async fn list_projects_handler(
+/// GET /api/threads - List the threads
+pub async fn list_threads_handler(
     State(state): State<AppState>,
-    axum::extract::Query(q): axum::extract::Query<ListProjectsQuery>,
+    axum::extract::Query(q): axum::extract::Query<ListThreadsQuery>,
 ) -> Response {
     api_response(
         crate::api::threads::list_threads(
@@ -337,69 +311,68 @@ pub async fn list_projects_handler(
 }
 
 #[derive(Deserialize)]
-pub struct ListProjectsQuery {
-    /// `?include_archived=true` — ended projects too, for the projects page,
+pub struct ListThreadsQuery {
+    /// `?include_archived=true` — ended threads too, for the threads page,
     /// which folds them.
     pub include_archived: Option<bool>,
-    /// `?member=/page/…` — only the projects holding that url.
+    /// `?member=/page/…` — only the threads holding that url.
     pub member: Option<String>,
 }
 
 #[derive(Deserialize)]
-pub struct EndProjectRequest {
+pub struct EndThreadRequest {
     /// `finished` or `dropped`.
     pub outcome: Option<crate::api::threads::Outcome>,
 }
 
-/// POST /api/projects/:id/archive — end a project as finished or dropped
-/// (kept, out of the working view). Called again on an ended project, it
+/// POST /api/threads/:id/archive — end a thread as finished or dropped
+/// (kept, out of the working view). Called again on an ended thread, it
 /// changes only how it ended.
 ///
-/// The body is optional: an app built before projects had an outcome sends
-/// none, and closing a project meant finishing it then.
-pub async fn archive_project_handler(
+/// With no body the thread ends as finished.
+pub async fn archive_thread_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    body: Option<Json<EndProjectRequest>>,
+    body: Option<Json<EndThreadRequest>>,
 ) -> Response {
     let outcome = body
         .and_then(|Json(request)| request.outcome)
         .unwrap_or(crate::api::threads::Outcome::Finished);
     match crate::api::threads::archive_thread(state.db.pool(), &id, outcome).await {
-        Ok(()) => success_message("Project ended"),
+        Ok(()) => success_message("Thread ended"),
         Err(e) => error_response(e),
     }
 }
 
-/// POST /api/projects/:id/unarchive
-pub async fn unarchive_project_handler(
+/// POST /api/threads/:id/unarchive
+pub async fn unarchive_thread_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
     match crate::api::threads::unarchive_thread(state.db.pool(), &id).await {
-        Ok(()) => success_message("Project reopened"),
+        Ok(()) => success_message("Thread reopened"),
         Err(e) => error_response(e),
     }
 }
 
-/// GET /api/projects/:id - Get a single project with its members
-pub async fn get_project_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+/// GET /api/threads/:id - Get a single thread with its members
+pub async fn get_thread_handler(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     api_response(crate::api::threads::get_thread(state.db.pool(), &id).await)
 }
 
-/// POST /api/projects - Create a project
-pub async fn create_project_handler(
+/// POST /api/threads - Create a thread
+pub async fn create_thread_handler(
     State(state): State<AppState>,
     Json(request): Json<crate::api::threads::CreateThreadRequest>,
 ) -> Response {
     match crate::api::threads::create_thread(state.db.pool(), request).await {
-        Ok(project) => (StatusCode::CREATED, Json(project)).into_response(),
+        Ok(thread) => (StatusCode::CREATED, Json(thread)).into_response(),
         Err(e) => error_response(e),
     }
 }
 
-/// PUT /api/projects/:id - Update a project
-pub async fn update_project_handler(
+/// PUT /api/threads/:id - Update a thread
+pub async fn update_thread_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(request): Json<crate::api::threads::UpdateThreadRequest>,
@@ -407,19 +380,19 @@ pub async fn update_project_handler(
     api_response(crate::api::threads::update_thread(state.db.pool(), &id, request).await)
 }
 
-/// DELETE /api/projects/:id - Delete a project
-pub async fn delete_project_handler(
+/// DELETE /api/threads/:id - Delete a thread
+pub async fn delete_thread_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
     match crate::api::threads::delete_thread(state.db.pool(), &id).await {
-        Ok(_) => success_message("Project deleted"),
+        Ok(_) => success_message("Thread deleted"),
         Err(e) => error_response(e),
     }
 }
 
-/// POST /api/projects/:id/items - Add a member URL to a project
-pub async fn add_project_item_handler(
+/// POST /api/threads/:id/items - Add a member URL to a thread
+pub async fn add_thread_item_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(request): Json<crate::api::threads::AddThreadItemRequest>,
@@ -431,36 +404,36 @@ pub async fn add_project_item_handler(
 }
 
 #[derive(Debug, Deserialize)]
-pub struct RemoveProjectItemRequest {
+pub struct RemoveThreadItemRequest {
     pub url: String,
 }
 
-/// DELETE /api/projects/:id/items - Remove a member URL from a project
-pub async fn remove_project_item_handler(
+/// DELETE /api/threads/:id/items - Remove a member URL from a thread
+pub async fn remove_thread_item_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
-    Json(request): Json<RemoveProjectItemRequest>,
+    Json(request): Json<RemoveThreadItemRequest>,
 ) -> Response {
     match crate::api::threads::remove_thread_item(state.db.pool(), &id, &request.url).await {
-        Ok(_) => success_message("Item removed from project"),
+        Ok(_) => success_message("Item removed from thread"),
         Err(e) => error_response(e),
     }
 }
 
-/// PUT /api/projects/:id/items/reorder - Reorder project members
-pub async fn reorder_project_items_handler(
+/// PUT /api/threads/:id/items/reorder - Reorder thread members
+pub async fn reorder_thread_items_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(request): Json<crate::api::threads::ReorderThreadItemsRequest>,
 ) -> Response {
     match crate::api::threads::reorder_thread_items(state.db.pool(), &id, request).await {
-        Ok(_) => success_message("Project items reordered"),
+        Ok(_) => success_message("Thread items reordered"),
         Err(e) => error_response(e),
     }
 }
 
-/// PUT /api/projects/:id/items/role - Set a member's role
-pub async fn set_project_item_role_handler(
+/// PUT /api/threads/:id/items/role - Set a member's role
+pub async fn set_thread_item_role_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
     Json(request): Json<crate::api::threads::SetThreadItemRoleRequest>,
@@ -471,8 +444,8 @@ pub async fn set_project_item_role_handler(
     }
 }
 
-/// GET /api/projects/:id/graph - Entities referenced across the members
-pub async fn project_graph_handler(
+/// GET /api/threads/:id/graph - Entities referenced across the members
+pub async fn thread_graph_handler(
     State(state): State<AppState>,
     Path(id): Path<String>,
 ) -> Response {
@@ -497,7 +470,7 @@ pub async fn list_lake_streams_handler(State(state): State<AppState>) -> Respons
 }
 
 // ============================================================================
-// Recently deleted — the trash for chats, pages and projects (`api::trash`)
+// Recently deleted — the trash for chats, pages and threads (`api::trash`)
 // ============================================================================
 
 /// GET /api/trash — everything in the trash, all kinds, newest deletion first.
@@ -549,7 +522,7 @@ pub async fn empty_trash_handler(State(state): State<AppState>) -> Response {
 // Visits — the frecency log behind ⌘K (`api::visits`)
 // ============================================================================
 
-/// POST /api/visits — the owner opened a chat, page, project or applet themselves.
+/// POST /api/visits — the owner opened a chat, page, thread or applet themselves.
 pub async fn record_visit_handler(
     State(state): State<AppState>,
     Json(req): Json<crate::api::visits::RecordVisitRequest>,

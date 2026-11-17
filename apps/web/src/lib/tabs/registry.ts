@@ -33,7 +33,6 @@ const WikiDetailView: ViewLoader = () => import('$lib/components/tabs/views/Wiki
 const WikiListView: ViewLoader = () => import('$lib/components/tabs/views/WikiListView.svelte');
 const SourcesView: ViewLoader = () => import('$lib/components/sources/SourcesView.svelte');
 const CredentialDetailView: ViewLoader = () => import('$lib/components/tabs/views/CredentialDetailView.svelte');
-const TasksView: ViewLoader = () => import('$lib/components/tabs/views/TasksView.svelte');
 const AppletsView: ViewLoader = () => import('$lib/components/tabs/views/AppletsView.svelte');
 const AppletDetailView: ViewLoader = () => import('$lib/components/tabs/views/AppletDetailView.svelte');
 const AppletView: ViewLoader = () => import('$lib/components/tabs/views/AppletView.svelte');
@@ -417,7 +416,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		component: PasswordsView,
 	},
 
-	// BOOKMARK DETAIL: /bookmark/{id} — singular, matching /project/{id}.
+	// BOOKMARK DETAIL: /bookmark/{id} — singular, matching /thread/{id}.
 	bookmark: {
 		match: (path) => /^\/bookmark\/.+$/.test(path),
 		parse: (path) => ({
@@ -436,41 +435,43 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 	},
 
 	// ========================================================================
-	// PROJECT NAMESPACE: /projects (list), /project/{id} (detail)
+	// THREAD NAMESPACE: /projects (list), /thread/{id} (detail)
 	//
-	// A Project is the "room" a chat lives in — a workspace lens over the graph:
-	// a Library of materials, filed chats, entities, and pages. (id may be a
-	// legacy `space_…` or a new `nb_…` — both route the same.)
+	// A thread is something happening that you follow. It holds tasks, filed
+	// chats, pages, files and records. The list keeps its `/projects` route
+	// until the Threads door replaces it.
+	// TODO(2026-11-17): migrate the `project` tab type, ProjectsListView,
+	// ProjectDetailView, projectStore and the Project* types to thread names
+	// with the Threads door rebuild (agents/plan/threads-plan.md).
 	//
-	// Projects were called notebooks until 2026-09. The legacy `/notebooks` and
-	// `/notebook/{id}` spellings still match — old pins, citations and serialized
-	// tab URLs carry them — and parse to a `project` tab with `normalizedRoute`
-	// rewritten to the `/project…` form, so nothing downstream sees the old name.
+	// Tasks live on the Projects page. `/tasks` (and `/tasks/assistant`,
+	// `/tasks/all`, from when that page had filter tabs) is a link from before
+	// they joined; it opens Projects, keeping `?task=<id>`, which opens that
+	// task in the list.
 	// ========================================================================
 	project: {
 		match: (path) =>
 			path === '/projects' ||
-			path === '/project' ||
-			path === '/notebooks' ||
-			path === '/notebook' ||
-			/^\/(?:project|notebook)\/[^/]+$/.test(path),
-		parse: (path) => {
-			if (path === '/projects' || path === '/project' || path === '/notebooks' || path === '/notebook') {
+			/^\/tasks(\/(assistant|all))?$/.test(path) ||
+			path === '/thread' ||
+			/^\/thread\/[^/]+$/.test(path),
+		parse: (path, params) => {
+			if (!/^\/thread\/[^/]+$/.test(path)) {
+				// The list: Projects, with its tasks. `?task=` survives the rewrite.
+				const task = params?.get('task');
 				return {
 					type: 'project',
 					label: 'Projects',
 					icon: PROJECT_ICON,
-					normalizedRoute: '/projects',
+					normalizedRoute: task ? `/projects?task=${encodeURIComponent(task)}` : '/projects',
 				};
 			}
-			const match = path.match(/^\/(project|notebook)\/([^/]+)$/);
+			const match = path.match(/^\/thread\/([^/]+)$/);
 			return {
 				type: 'project',
-				label: 'Project',
+				label: 'Thread',
 				icon: PROJECT_ICON,
-				entityId: match?.[2],
-				// Rewrite the legacy spelling; the canonical form is a no-op.
-				...(match?.[1] === 'notebook' && { normalizedRoute: `/project/${match[2]}` }),
+				entityId: match?.[1],
 			};
 		},
 		// Prefixed like `bookmark_`, not bare like `person_…`: a bare `nb_…` id
@@ -478,7 +479,7 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		// "nb" and every project tab restored as Home.
 		serialize: (id) => (id ? `project_${id}` : 'projects'),
 		deserialize: (serialized) =>
-			serialized.startsWith('project_') ? `/project/${serialized.slice(8)}` : '/projects',
+			serialized.startsWith('project_') ? `/thread/${serialized.slice(8)}` : '/projects',
 		icon: PROJECT_ICON,
 		defaultLabel: 'Projects',
 		component: ProjectsListView,
@@ -652,25 +653,6 @@ export const tabRegistry: Record<TabType, TabDefinition> = {
 		// owns the whole namespace and dispatches the detail itself, against the
 		// same SOURCES_SECTIONS list the matcher above uses.
 		component: SourcesView,
-	},
-
-	// ========================================================================
-	// TASKS: /tasks — the to-do list the owner and the assistant share
-	// ========================================================================
-	tasks: {
-		// One page. /tasks/assistant and /tasks/all are links from when the
-		// page had filter tabs; they still open it.
-		match: (path) => /^\/tasks(\/(assistant|all))?$/.test(path),
-		parse: () => ({
-			type: 'tasks',
-			label: 'Tasks',
-			icon: 'atlas:tasks',
-		}),
-		serialize: () => 'tasks',
-		deserialize: () => '/tasks',
-		icon: 'atlas:tasks',
-		defaultLabel: 'Tasks',
-		component: TasksView,
 	},
 
 	// ========================================================================
@@ -1004,7 +986,6 @@ export function parseRoute(route: string): ParsedRoute {
 		// Specific patterns first
 		'browser', // /browser?url=…
 		'source', // Source list and detail views
-		'tasks', // The shared to-do list
 		'applets', // Applets list page (must come before singular 'applet')
 		'applet-view', // Applet full-page face (must come before 'applet')
 		'applet', // Applet detail page

@@ -48,7 +48,7 @@
 	import { isEmoji } from "$lib/utils/iconHelpers";
 	import { openWebLink } from "$lib/utils/webLinks";
 	import { newProject } from "$lib/utils/projectActions";
-	import { newPage as makePage, newTask as makeTask } from "$lib/utils/newActions";
+	import { newPage as makePage } from "$lib/utils/newActions";
 	import type { Pin } from "$lib/api/client";
 	import ProjectGlyph from "$lib/components/ProjectGlyph.svelte";
 	import { search } from "$lib/stores/search.svelte";
@@ -100,10 +100,6 @@
 		void makePage(go);
 	}
 
-	function newTask() {
-		void makeTask(go);
-	}
-
 	function addProject() {
 		mobileLayout.closeDrawer();
 		void newProject();
@@ -117,7 +113,6 @@
 	const doorActions: Record<DoorId, { open: () => void; add?: { label: string; run: () => void } }> = {
 		"new-chat": { open: () => go("/chat", "Chat") },
 		pages: { open: () => go("/page", "Pages"), add: { label: "New page", run: newPage } },
-		tasks: { open: () => go("/tasks", "Tasks"), add: { label: "New task", run: newTask } },
 		projects: { open: () => go("/projects", "Projects"), add: { label: "New project", run: addProject } },
 		applets: { open: () => go("/applets", "Applets") },
 		wiki: { open: () => go("/wiki", "Wiki") },
@@ -285,7 +280,7 @@
 		<div class="section-label">Recents</div>
 		{#each recentSessions as s (s.conversation_id)}
 			{@const route = `/chat/${s.conversation_id}`}
-			{@const home = s.project_id ? projectStore.byId(s.project_id) : undefined}
+			{@const home = s.thread_id ? projectStore.byId(s.thread_id) : undefined}
 			<button
 				class="chat-row"
 				class:active={activeRoute === route}

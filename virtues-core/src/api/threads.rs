@@ -18,15 +18,12 @@
 //! corpus. Membership is manual for now. A thread cannot be a member of a
 //! thread.
 //!
-//! `thread_id` here is one of these threads. On `data_communication_message`
-//! and `data_communication_email` the same column name means a message or email
-//! conversation; the two are unrelated.
+//! `thread_id` here is one of these threads. A message or email conversation
+//! is `conversation_id` on `data_communication_message` and
+//! `data_communication_email`.
 //!
-//! Threads were called projects until 2026-11-17 and notebooks before that. Ids
-//! keep the `nb_` prefix (`ids::THREAD_PREFIX`), and `/project/{id}` and
-//! `/notebook/{id}` stay the ref URLs (`refs::split_ref`). The HTTP routes and
-//! JSON still say project for the web app and released apps; see the TODO on
-//! the routes in `server/api/library.rs`.
+//! Ids keep the `nb_` prefix (`ids::THREAD_PREFIX`) from when threads were
+//! notebooks; a thread's ref URL is `/thread/{id}` (`refs::split_ref`).
 
 use crate::error::{Error, Result};
 use crate::ids::{generate_id, THREAD_PREFIX};
@@ -59,18 +56,18 @@ pub struct Thread {
     pub icon: Option<String>,
     pub accent_color: Option<String>,
     /// The brief: standing directions the assistant follows in every chat in
-    /// this project. Written by the owner, never by the model.
+    /// this thread. Written by the owner, never by the model.
     pub instructions: Option<String>,
     pub sort_order: i32,
-    /// When the project ended: kept, out of the working view. Distinct from
-    /// `deleted_at` (the trash): an ended project is one the owner closed, a
-    /// trashed one is one they removed. Ended projects leave the Home panel,
-    /// the projects list and the "Add to project" submenu; their chats and
-    /// pages stay filed in them, and the project reopens from the projects
+    /// When the thread ended: kept, out of the working view. Distinct from
+    /// `deleted_at` (the trash): an ended thread is one the owner closed, a
+    /// trashed one is one they removed. Ended threads leave the Home panel,
+    /// the threads list and the "Add to thread" submenu; their chats and
+    /// pages stay filed in them, and the thread reopens from the threads
     /// page.
     pub archived_at: Option<Timestamp>,
     /// How it ended: `finished` or `dropped`. Set with `archived_at`, and
-    /// null while the project is open.
+    /// null while the thread is open.
     #[serde(default)]
     pub outcome: Option<String>,
     /// The thing it sits under, if any (`wiki_things.id`).
@@ -94,7 +91,7 @@ pub struct ThreadSummary {
     pub sort_order: i32,
     /// Members other than chats. Chats are counted in `chat_count` from the
     /// chat's own `thread_id`, so counting their `/chat/` rows here as well
-    /// made every filed chat show up twice on a project card.
+    /// made every filed chat show up twice on a thread card.
     pub item_count: i64,
     pub chat_count: i64,
     pub archived_at: Option<Timestamp>,
@@ -135,11 +132,11 @@ pub struct ThreadItem {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadDetail {
     #[serde(flatten)]
-    pub project: Thread,
+    pub thread: Thread,
     pub items: Vec<ThreadItem>,
     /// Every live chat filed here, newest conversation first. The page used to
     /// list chats from the session list, which holds only the most recent
-    /// chats across the whole box, so a project's older chats were counted on
+    /// chats across the whole box, so a thread's older chats were counted on
     /// its card and missing from its page.
     pub chats: Vec<ThreadChat>,
 }
@@ -155,7 +152,7 @@ pub struct ThreadChat {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadListResponse {
-    pub projects: Vec<ThreadSummary>,
+    pub threads: Vec<ThreadSummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,7 +165,7 @@ pub struct CreateThreadRequest {
     pub thing_id: Option<String>,
 }
 
-/// How a project ended.
+/// How a thread ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Outcome {
@@ -197,7 +194,7 @@ pub struct UpdateThreadRequest {
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub instructions: Option<Option<String>>,
     pub sort_order: Option<i32>,
-    /// The thing this project sits under. `null` takes it out from under one.
+    /// The thing this thread sits under. `null` takes it out from under one.
     #[serde(default, deserialize_with = "deserialize_double_option")]
     pub thing_id: Option<Option<String>>,
 }
@@ -219,7 +216,7 @@ pub struct SetThreadItemRoleRequest {
     pub role: String,
 }
 
-/// One entity referenced across a project's members.
+/// One entity referenced across a thread's members.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ThreadGraphNode {
     /// Ref URL for the entity, e.g. `/person/pe_abc` — also the node's identity.
@@ -248,32 +245,32 @@ pub struct ThreadGraph {
 // Thread CRUD
 // ============================================================================
 
-/// A project row as [`Thread`] reads it, from `app_threads` unaliased. The
+/// A thread row as [`Thread`] reads it, from `app_threads` unaliased. The
 /// thing's name is resolved here so no reader needs a second query to say
-/// what a project sits under.
+/// what a thread sits under.
 const THREAD_COLUMNS: &str = "id, name, icon, accent_color, instructions, sort_order, \
      archived_at, outcome, thing_id, \
      (SELECT t.title FROM wiki_things t WHERE t.id = app_threads.thing_id) AS thing_title, \
      created_at, updated_at";
 
-/// List Projects, most-recently-active first, with member and chat counts.
-/// Open ones only unless `include_archived` — the projects page asks for both
+/// List Threads, most-recently-active first, with member and chat counts.
+/// Open ones only unless `include_archived` — the threads page asks for both
 /// and folds the ended ones; every other reader (Home panel, ⌘K, the
-/// "Add to project" submenu) wants the working set.
+/// "Add to thread" submenu) wants the working set.
 ///
 /// A trashed member keeps its membership row so a restore is whole (see
 /// `api::trash`), which is why the counts and `get_thread`'s member list
 /// filter members through their own table's `deleted_at` rather than trusting
 /// the row's existence.
 ///
-/// `member` narrows the list to the projects that hold that url — a page
-/// asking which projects it is in. A page can be in several, unlike a chat.
+/// `member` narrows the list to the threads that hold that url — a page
+/// asking which threads it is in. A page can be in several, unlike a chat.
 pub async fn list_threads(
     pool: &PgPool,
     include_archived: bool,
     member: Option<&str>,
 ) -> Result<ThreadListResponse> {
-    let projects = sqlx::query_as::<_, ThreadSummary>(
+    let threads = sqlx::query_as::<_, ThreadSummary>(
         r#"
         SELECT
             s.id, s.name, s.icon, s.accent_color,
@@ -298,20 +295,20 @@ pub async fn list_threads(
     .bind(member)
     .fetch_all(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to list projects: {}", e)))?;
+    .map_err(|e| Error::Database(format!("Failed to list threads: {}", e)))?;
 
-    Ok(ThreadListResponse { projects })
+    Ok(ThreadListResponse { threads })
 }
 
 /// Get a single Thread with its ordered members.
 pub async fn get_thread(pool: &PgPool, id: &str) -> Result<ThreadDetail> {
-    let project = sqlx::query_as::<_, Thread>(&format!(
+    let thread = sqlx::query_as::<_, Thread>(&format!(
         "SELECT {THREAD_COLUMNS} FROM app_threads WHERE id = $1 AND deleted_at IS NULL"
     ))
     .bind(id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to get project: {}", e)))?
+    .map_err(|e| Error::Database(format!("Failed to get thread: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Thread not found: {}", id)))?;
 
     let mut items = sqlx::query_as::<_, ThreadItem>(
@@ -327,7 +324,7 @@ pub async fn get_thread(pool: &PgPool, id: &str) -> Result<ThreadDetail> {
     .bind(id)
     .fetch_all(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to get project items: {}", e)))?;
+    .map_err(|e| Error::Database(format!("Failed to get thread items: {}", e)))?;
 
     let urls: Vec<String> = items.iter().map(|i| i.url.clone()).collect();
     let mut resolved = crate::api::refs::resolve_refs(pool, &urls).await;
@@ -354,9 +351,9 @@ pub async fn get_thread(pool: &PgPool, id: &str) -> Result<ThreadDetail> {
     .bind(id)
     .fetch_all(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to get project chats: {}", e)))?;
+    .map_err(|e| Error::Database(format!("Failed to get thread chats: {}", e)))?;
 
-    Ok(ThreadDetail { project, items, chats })
+    Ok(ThreadDetail { thread, items, chats })
 }
 
 /// Create a new Thread.
@@ -373,7 +370,7 @@ pub async fn create_thread(pool: &PgPool, req: CreateThreadRequest) -> Result<Th
     let timestamp = chrono::Utc::now().to_rfc3339();
     let id = generate_id(THREAD_PREFIX, &[name, &timestamp]);
 
-    let project = sqlx::query_as::<_, Thread>(&format!(
+    let thread = sqlx::query_as::<_, Thread>(&format!(
         "INSERT INTO app_threads (id, name, icon, accent_color, thing_id) \
          VALUES ($1, $2, $3, $4, $5) \
          RETURNING {THREAD_COLUMNS}"
@@ -385,9 +382,9 @@ pub async fn create_thread(pool: &PgPool, req: CreateThreadRequest) -> Result<Th
     .bind(&req.thing_id)
     .fetch_one(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to create project: {}", e)))?;
+    .map_err(|e| Error::Database(format!("Failed to create thread: {}", e)))?;
 
-    Ok(project)
+    Ok(thread)
 }
 
 /// Update a Thread. Only provided fields change.
@@ -398,7 +395,7 @@ pub async fn update_thread(pool: &PgPool, id: &str, req: UpdateThreadRequest) ->
     .bind(id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to get project: {}", e)))?
+    .map_err(|e| Error::Database(format!("Failed to get thread: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Thread not found: {}", id)))?;
 
     let name = req.name.as_deref().unwrap_or(&existing.name).trim().to_string();
@@ -427,7 +424,7 @@ pub async fn update_thread(pool: &PgPool, id: &str, req: UpdateThreadRequest) ->
         crate::api::things::get_thing(pool, thing_id).await?;
     }
 
-    let project = sqlx::query_as::<_, Thread>(&format!(
+    let thread = sqlx::query_as::<_, Thread>(&format!(
         "UPDATE app_threads \
          SET name = $2, icon = $3, accent_color = $4, sort_order = $5, \
              instructions = $6, thing_id = $7 \
@@ -443,13 +440,13 @@ pub async fn update_thread(pool: &PgPool, id: &str, req: UpdateThreadRequest) ->
     .bind(&thing_id)
     .fetch_one(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to update project: {}", e)))?;
+    .map_err(|e| Error::Database(format!("Failed to update thread: {}", e)))?;
 
-    Ok(project)
+    Ok(thread)
 }
 
-/// End a project as finished or dropped: it leaves the working surfaces and
-/// keeps everything. Ending an ended project again changes only how it ended
+/// End a thread as finished or dropped: it leaves the working surfaces and
+/// keeps everything. Ending an ended thread again changes only how it ended
 /// and keeps the day it ended, so "finished" can be corrected to "dropped"
 /// without reopening it.
 pub async fn archive_thread(pool: &PgPool, id: &str, outcome: Outcome) -> Result<()> {
@@ -461,11 +458,11 @@ pub async fn archive_thread(pool: &PgPool, id: &str, outcome: Outcome) -> Result
     .bind(outcome.as_str())
     .fetch_optional(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to end project {id}: {e}")))?;
+    .map_err(|e| Error::Database(format!("Failed to end thread {id}: {e}")))?;
     hit.map(|_| ()).ok_or_else(|| Error::NotFound(format!("Thread not found: {id}")))
 }
 
-/// Reopen an ended project.
+/// Reopen an ended thread.
 pub async fn unarchive_thread(pool: &PgPool, id: &str) -> Result<()> {
     let hit: Option<String> = sqlx::query_scalar(
         "UPDATE app_threads SET archived_at = NULL, outcome = NULL \
@@ -474,16 +471,16 @@ pub async fn unarchive_thread(pool: &PgPool, id: &str) -> Result<()> {
     .bind(id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to reopen project {id}: {e}")))?;
+    .map_err(|e| Error::Database(format!("Failed to reopen thread {id}: {e}")))?;
     hit.map(|_| ()).ok_or_else(|| Error::NotFound(format!("Thread not found: {id}")))
 }
 
 /// Delete a Thread — into the trash. Members and the chats' `thread_id`
-/// stay on the row so a restore brings the project back whole; the FK
+/// stay on the row so a restore brings the thread back whole; the FK
 /// cascade and SET NULL only fire on `trash::purge`, the hard delete the
 /// trash and the sweeper reach after `TRASH_RETENTION_DAYS`.
 pub async fn delete_thread(pool: &PgPool, id: &str) -> Result<()> {
-    crate::api::trash::trash(pool, crate::api::trash::TrashKind::Project, id).await
+    crate::api::trash::trash(pool, crate::api::trash::TrashKind::Thread, id).await
 }
 
 /// Touch a Thread's updated_at to reflect activity.
@@ -492,7 +489,7 @@ pub async fn touch_thread(pool: &PgPool, id: &str) -> Result<()> {
         .bind(id)
         .execute(pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to touch project: {}", e)))?;
+        .map_err(|e| Error::Database(format!("Failed to touch thread: {}", e)))?;
     Ok(())
 }
 
@@ -507,14 +504,11 @@ pub async fn add_thread_item(pool: &PgPool, thread_id: &str, req: AddThreadItemR
         return Err(Error::InvalidInput("Member url cannot be empty".into()));
     }
 
-    // A project cannot be a member of a project — you cannot folder a folder.
-    // Before the rename a nested notebook was a nav-only 'pin' edge and a
-    // self-reference was a cycle in scope resolution; migration 0029 deleted
-    // the rows that existed, and this is what keeps them from coming back.
-    // `/notebook/` is the legacy spelling of the same route (`refs::split_ref`).
-    if url.starts_with("/project/") || url.starts_with("/notebook/") {
+    // A thread cannot be a member of a thread. A nested one would be a cycle
+    // in scope resolution, and this keeps those rows from being written.
+    if url.starts_with("/thread/") {
         return Err(Error::InvalidInput(
-            "You can't put a project inside another project.".into(),
+            "You can't put a thread inside another thread.".into(),
         ));
     }
 
@@ -524,17 +518,17 @@ pub async fn add_thread_item(pool: &PgPool, thread_id: &str, req: AddThreadItemR
     .bind(thread_id)
     .fetch_optional(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to verify project: {}", e)))?;
+    .map_err(|e| Error::Database(format!("Failed to verify thread: {}", e)))?;
     let Some(archived_at) = found else {
         return Err(Error::NotFound(format!("Thread not found: {}", thread_id)));
     };
-    // An ended project does not take new members; reopen it first.
+    // An ended thread does not take new members; reopen it first.
     if archived_at.is_some() {
-        return Err(Error::InvalidInput("this project has ended".into()));
+        return Err(Error::InvalidInput("this thread has ended".into()));
     }
 
     // A chat is filed by its own `thread_id`, not by a member row: the
-    // project view lists chats from the session list and ignores `/chat/`
+    // thread view lists chats from the session list and ignores `/chat/`
     // member rows, so a bare row here was an add that did nothing (VIR-359).
     // Bind the chat; the insert below then keeps the membership row in step.
     if let Some(chat_id) = url.strip_prefix("/chat/") {
@@ -567,21 +561,21 @@ pub async fn add_thread_item(pool: &PgPool, thread_id: &str, req: AddThreadItemR
     .bind(url)
     .fetch_one(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to add project item: {}", e)))?;
+    .map_err(|e| Error::Database(format!("Failed to add thread item: {}", e)))?;
 
     touch_thread(pool, thread_id).await.ok();
     Ok(item)
 }
 
 /// Setup and the interview are rooms of their own, and the interview is the
-/// most private text on the box: neither is ever filed, so a project's brief
-/// and members can't reach them and their words can't reach a project.
+/// most private text on the box: neither is ever filed, so a thread's brief
+/// and members can't reach them and their words can't reach a thread.
 fn refuse_reserved_chat(chat_id: &str) -> Result<()> {
     if chat_id == crate::api::getting_started::GETTING_STARTED_CHAT_ID
         || chat_id == crate::api::narrative_draft::INTERVIEW_CHAT_ID
     {
         return Err(Error::InvalidInput(
-            "You can't file Setup or the interview in a project.".into(),
+            "You can't file Setup or the interview in a thread.".into(),
         ));
     }
     Ok(())
@@ -590,9 +584,9 @@ fn refuse_reserved_chat(chat_id: &str) -> Result<()> {
 /// Remove a member URL from a Thread.
 pub async fn remove_thread_item(pool: &PgPool, thread_id: &str, url: &str) -> Result<()> {
     // The mirror of the add: a chat leaves by its `thread_id`, which is what
-    // the project view lists it by. Deleting only the row left the chat
-    // filed, so "Remove from project" on a chat did nothing you could see.
-    // Guarded on this project so a stale remove cannot unfile a chat that has
+    // the thread view lists it by. Deleting only the row left the chat
+    // filed, so "Remove from thread" on a chat did nothing you could see.
+    // Guarded on this thread so a stale remove cannot unfile a chat that has
     // since moved elsewhere.
     if let Some(chat_id) = url.strip_prefix("/chat/") {
         sqlx::query(r#"UPDATE app_chats SET thread_id = NULL WHERE id = $1 AND thread_id = $2"#)
@@ -600,7 +594,7 @@ pub async fn remove_thread_item(pool: &PgPool, thread_id: &str, url: &str) -> Re
             .bind(thread_id)
             .execute(pool)
             .await
-            .map_err(|e| Error::Database(format!("Failed to detach chat from project: {}", e)))?;
+            .map_err(|e| Error::Database(format!("Failed to detach chat from thread: {}", e)))?;
     }
 
     let result = sqlx::query(r#"DELETE FROM app_thread_items WHERE thread_id = $1 AND url = $2"#)
@@ -608,11 +602,11 @@ pub async fn remove_thread_item(pool: &PgPool, thread_id: &str, url: &str) -> Re
         .bind(url)
         .execute(pool)
         .await
-        .map_err(|e| Error::Database(format!("Failed to remove project item: {}", e)))?;
+        .map_err(|e| Error::Database(format!("Failed to remove thread item: {}", e)))?;
 
     if result.rows_affected() == 0 {
         return Err(Error::NotFound(format!(
-            "Member not found in project: {} / {}",
+            "Member not found in thread: {} / {}",
             thread_id, url
         )));
     }
@@ -653,14 +647,14 @@ pub async fn reorder_thread_items(
         .bind(url)
         .execute(&mut *tx)
         .await
-        .map_err(|e| Error::Database(format!("Failed to reorder project items: {}", e)))?;
+        .map_err(|e| Error::Database(format!("Failed to reorder thread items: {}", e)))?;
     }
 
     sqlx::query(r#"UPDATE app_threads SET updated_at = now() WHERE id = $1"#)
         .bind(thread_id)
         .execute(&mut *tx)
         .await
-        .map_err(|e| Error::Database(format!("Failed to touch project: {}", e)))?;
+        .map_err(|e| Error::Database(format!("Failed to touch thread: {}", e)))?;
 
     tx.commit()
         .await
@@ -675,7 +669,7 @@ pub async fn reorder_thread_items(
 
 /// Set or clear a chat's Thread. Passing `Some(thread_id)` also folds the chat
 /// into that Thread's membership (idempotent); passing `None` detaches it. A
-/// chat lives in one project, so its `/chat/<id>` row in any other project goes
+/// chat lives in one thread, so its `/chat/<id>` row in any other thread goes
 /// in the same transaction — the chat's `thread_id` and its membership rows
 /// can never diverge.
 pub async fn set_chat_thread(pool: &PgPool, chat_id: &str, thread_id: Option<&str>) -> Result<()> {
@@ -692,7 +686,7 @@ pub async fn set_chat_thread(pool: &PgPool, chat_id: &str, thread_id: Option<&st
         .bind(thread_id)
         .execute(&mut *tx)
         .await
-        .map_err(|e| Error::Database(format!("Failed to set chat project: {}", e)))?;
+        .map_err(|e| Error::Database(format!("Failed to set chat thread: {}", e)))?;
 
     sqlx::query(r#"DELETE FROM app_thread_items WHERE url = $1 AND thread_id IS DISTINCT FROM $2"#)
         .bind(format!("/chat/{}", chat_id))
@@ -716,18 +710,18 @@ pub async fn set_chat_thread(pool: &PgPool, chat_id: &str, thread_id: Option<&st
         .bind(format!("/chat/{}", chat_id))
         .execute(&mut *tx)
         .await
-        .map_err(|e| Error::Database(format!("Failed to fold chat into project: {}", e)))?;
+        .map_err(|e| Error::Database(format!("Failed to fold chat into thread: {}", e)))?;
 
         sqlx::query(r#"UPDATE app_threads SET updated_at = now() WHERE id = $1"#)
             .bind(thread_id)
             .execute(&mut *tx)
             .await
-            .map_err(|e| Error::Database(format!("Failed to touch project: {}", e)))?;
+            .map_err(|e| Error::Database(format!("Failed to touch thread: {}", e)))?;
     }
 
     tx.commit()
         .await
-        .map_err(|e| Error::Database(format!("Failed to commit chat project binding: {}", e)))?;
+        .map_err(|e| Error::Database(format!("Failed to commit chat thread binding: {}", e)))?;
 
     Ok(())
 }
@@ -741,7 +735,7 @@ pub async fn set_thread_item_role(
 ) -> Result<ThreadItem> {
     if !matches!(req.role.as_str(), "library" | "manuscript" | "pin") {
         return Err(Error::InvalidInput(format!(
-            "Unknown project item role: {}",
+            "Unknown thread item role: {}",
             req.role
         )));
     }
@@ -758,14 +752,14 @@ pub async fn set_thread_item_role(
     .bind(&req.role)
     .fetch_optional(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to set project item role: {}", e)))?
+    .map_err(|e| Error::Database(format!("Failed to set thread item role: {}", e)))?
     .ok_or_else(|| Error::NotFound(format!("Thread member not found: {}", req.url)))?;
 
     touch_thread(pool, thread_id).await.ok();
     Ok(item)
 }
 
-/// Entity ref-URL prefixes that can appear as a project member or inside a
+/// Entity ref-URL prefixes that can appear as a thread member or inside a
 /// page's markdown. Kept in sync with the frontend's ref routes. (`/thing/`
 /// is gone: migration 0071 dropped wiki_things and swept every stored
 /// `/thing/` url — the stragglers here were what kept its ghost walking.)
@@ -798,7 +792,7 @@ fn extract_entity_urls(content: &str) -> std::collections::HashSet<String> {
     out
 }
 
-/// The entities referenced across a project's members, with co-occurrence
+/// The entities referenced across a thread's members, with co-occurrence
 /// edges. Nodes come only from things the user explicitly wrote or filed —
 /// entity members, and `[@ref]` links inside member pages. Nothing is inferred:
 /// there is no NER over free text, so an entity that is merely *mentioned* in a
@@ -817,7 +811,7 @@ pub async fn thread_graph(pool: &PgPool, thread_id: &str) -> Result<ThreadGraph>
     .bind(thread_id)
     .fetch_all(pool)
     .await
-    .map_err(|e| Error::Database(format!("Failed to load project members: {}", e)))?;
+    .map_err(|e| Error::Database(format!("Failed to load thread members: {}", e)))?;
 
     if members.is_empty() {
         return Ok(ThreadGraph { nodes: Vec::new(), edges: Vec::new() });
@@ -845,7 +839,7 @@ pub async fn thread_graph(pool: &PgPool, thread_id: &str) -> Result<ThreadGraph>
     for url in &members {
         let mut refs = HashSet::new();
         if ENTITY_PREFIXES.iter().any(|p| url.starts_with(p)) {
-            // An entity filed directly in the project is a node in its own right.
+            // An entity filed directly in the thread is a node in its own right.
             refs.insert(url.clone());
         } else if let Some(pid) = url.strip_prefix("/page/") {
             if let Some(content) = page_content.get(pid) {
@@ -1051,7 +1045,7 @@ mod tests {
                 .expect("file page");
         }
         let listed = list_threads(&pool, false, Some("/page/page_x")).await.expect("list");
-        let mut ids: Vec<String> = listed.projects.into_iter().map(|p| p.id).collect();
+        let mut ids: Vec<String> = listed.threads.into_iter().map(|p| p.id).collect();
         ids.sort();
         let mut want = vec![a.id, b.id];
         want.sort();
@@ -1068,13 +1062,13 @@ mod tests {
             .expect("add link");
 
         let listed = list_threads(&pool, false, None).await.expect("list");
-        let row = listed.projects.iter().find(|p| p.id == a.id).expect("project listed");
+        let row = listed.threads.iter().find(|p| p.id == a.id).expect("thread listed");
         assert_eq!((row.chat_count, row.item_count), (1, 1));
     }
 
     /// A block page's `content` is its export, and a mention exports as the
     /// ref the graph reads, so a person a block page mentions is on the
-    /// graph of a project the page is in.
+    /// graph of a thread the page is in.
     #[sqlx::test(migrations = "./migrations")]
     async fn a_block_page_puts_who_it_mentions_on_the_graph(pool: PgPool) {
         use crate::api::pages::{create_page_as, CreatePageRequest, PageFormat};
@@ -1108,7 +1102,7 @@ mod tests {
         assert_eq!(nick.item_urls, [format!("/page/{}", page.id)]);
     }
 
-    /// A project ends finished or dropped and leaves the working list.
+    /// A thread ends finished or dropped and leaves the working list.
     /// Correcting how it ended keeps the day it ended, and reopening clears
     /// both.
     #[sqlx::test(migrations = "./migrations")]
@@ -1117,31 +1111,31 @@ mod tests {
         assert!(p.archived_at.is_none() && p.outcome.is_none());
 
         archive_thread(&pool, &p.id, Outcome::Finished).await.unwrap();
-        let ended = get_thread(&pool, &p.id).await.unwrap().project;
+        let ended = get_thread(&pool, &p.id).await.unwrap().thread;
         assert_eq!(ended.outcome.as_deref(), Some("finished"));
-        let ended_at = ended.archived_at.expect("an ended project says when");
-        assert!(list_threads(&pool, false, None).await.unwrap().projects.is_empty());
-        assert_eq!(list_threads(&pool, true, None).await.unwrap().projects[0].outcome.as_deref(), Some("finished"));
+        let ended_at = ended.archived_at.expect("an ended thread says when");
+        assert!(list_threads(&pool, false, None).await.unwrap().threads.is_empty());
+        assert_eq!(list_threads(&pool, true, None).await.unwrap().threads[0].outcome.as_deref(), Some("finished"));
 
         archive_thread(&pool, &p.id, Outcome::Dropped).await.unwrap();
-        let corrected = get_thread(&pool, &p.id).await.unwrap().project;
+        let corrected = get_thread(&pool, &p.id).await.unwrap().thread;
         assert_eq!(corrected.outcome.as_deref(), Some("dropped"));
         assert_eq!(corrected.archived_at, Some(ended_at), "correcting how it ended keeps when");
 
         unarchive_thread(&pool, &p.id).await.unwrap();
-        let open = get_thread(&pool, &p.id).await.unwrap().project;
+        let open = get_thread(&pool, &p.id).await.unwrap().thread;
         assert!(open.archived_at.is_none() && open.outcome.is_none());
         assert!(archive_thread(&pool, "nb_missing", Outcome::Finished).await.is_err());
     }
 
-    /// A project sits under a thing or alone, and reads back the thing's name.
+    /// A thread sits under a thing or alone, and reads back the thing's name.
     #[sqlx::test(migrations = "./migrations")]
     async fn a_project_sits_under_a_thing(pool: PgPool) {
         let house = crate::api::things::create_thing(&pool, "The house").await.unwrap();
         let under = CreateThreadRequest { thing_id: Some(house.id.clone()), ..named("Repaint the hallway") };
         let p = create_thread(&pool, under).await.unwrap();
         assert_eq!(p.thing_title.as_deref(), Some("The house"));
-        let listed = list_threads(&pool, false, None).await.unwrap().projects.remove(0);
+        let listed = list_threads(&pool, false, None).await.unwrap().threads.remove(0);
         assert_eq!(listed.thing_id.as_deref(), Some(house.id.as_str()));
         assert_eq!(listed.thing_title.as_deref(), Some("The house"));
 

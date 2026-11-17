@@ -32,12 +32,12 @@ export interface Identity {
 }
 
 /** The kinds whose name, icon and color live on their own record. */
-export type OwnedKind = 'chat' | 'page' | 'project';
+export type OwnedKind = 'chat' | 'page' | 'thread';
 
 export function ownedRef(url: string): { kind: OwnedKind; id: string } | null {
 	const ref = parseRef(url);
 	if (!ref) return null;
-	if (ref.kind === 'chat' || ref.kind === 'page' || ref.kind === 'project') {
+	if (ref.kind === 'chat' || ref.kind === 'page' || ref.kind === 'thread') {
 		return { kind: ref.kind, id: ref.id };
 	}
 	return null;
@@ -47,7 +47,7 @@ export function ownedRef(url: string): { kind: OwnedKind; id: string } | null {
 export function untitled(kind: string): string {
 	if (kind === 'chat') return 'New chat';
 	if (kind === 'page') return 'Untitled page';
-	if (kind === 'project') return 'Untitled project';
+	if (kind === 'thread') return 'Untitled thread';
 	return 'Untitled';
 }
 
@@ -70,9 +70,9 @@ function storeIdentity(url: string): Identity | null {
 	} else if (owned?.kind === 'page') {
 		const p = pagesStore.pages.find((x) => x.id === owned.id);
 		if (p) return { kind: 'page', title: p.title?.trim() || untitled('page'), icon: p.icon, color: p.icon_color };
-	} else if (owned?.kind === 'project') {
+	} else if (owned?.kind === 'thread') {
 		const p = projectStore.projects.find((x) => x.id === owned.id);
-		if (p) return { kind: 'project', title: p.name?.trim() || untitled('project'), icon: p.icon, color: p.accent_color ?? null };
+		if (p) return { kind: 'thread', title: p.name?.trim() || untitled('thread'), icon: p.icon, color: p.accent_color ?? null };
 	}
 	return null;
 }
@@ -84,7 +84,7 @@ function storeIdentity(url: string): Identity | null {
  * named by its date, and a view titles it better ("Wednesday, 30 September")
  * than its id would; an app screen has no record at all.
  */
-const NAMED = new Set(['chat', 'page', 'project', 'person', 'place', 'org', 'file']);
+const NAMED = new Set(['chat', 'page', 'thread', 'person', 'place', 'org', 'file']);
 
 /** Resolved identities by url, filled in batches as surfaces ask. */
 const resolved = new SvelteMap<string, RefIdentity>();
@@ -202,7 +202,7 @@ export async function renameRef(url: string, title: string): Promise<void> {
 		} else if (owned?.kind === 'page') {
 			pagesStore.updatePageLocally(owned.id, { title });
 			await updatePage(owned.id, { title });
-		} else if (owned?.kind === 'project') {
+		} else if (owned?.kind === 'thread') {
 			await projectStore.update(owned.id, { name: title });
 		} else {
 			const pin = pinsStore.getByUrl(url);
@@ -238,7 +238,7 @@ export async function setRefLook(
 			...('icon' in look ? { icon: look.icon ?? null } : {}),
 			...('color' in look ? { icon_color: look.color ?? null } : {}),
 		});
-	} else if (owned?.kind === 'project') {
+	} else if (owned?.kind === 'thread') {
 		await projectStore.update(owned.id, {
 			...('icon' in look ? { icon: look.icon ?? null } : {}),
 			...('color' in look ? { accent_color: look.color ?? null } : {}),
