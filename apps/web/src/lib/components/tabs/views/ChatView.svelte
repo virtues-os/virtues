@@ -966,9 +966,9 @@
 	/**
 	 * Draw up to `count` more of the earlier messages, holding the reader where
 	 * they are: the first message drawn before stays at the same place on
-	 * screen. Corrected for a few frames, because rows the browser skipped off
-	 * screen (`.far`) take their real height as they are first drawn, and
-	 * WebKit does not hold the scroll position by itself.
+	 * screen. Corrected for a few frames where the browser does not anchor
+	 * scrolling itself (WebKit before `overflow-anchor`), since rows drawn
+	 * above would otherwise push the reader down.
 	 */
 	async function drawEarlier(count = DRAWN_MORE, until?: string) {
 		// A reveal waits for a draw already under way; the top edge just
@@ -1626,11 +1626,10 @@
 
 	/**
 	 * Open on the newest message and stay there while the first rows draw.
-	 * Rows the browser skips off screen (`.far`) stand in at a guessed
-	 * height until they are drawn, and WebKit does not hold the bottom when
-	 * they take their real one, so the end can slide below the fold. For
-	 * about a third of a second, or until the reader scrolls, wheels, touches
-	 * or types, it is put back at the bottom.
+	 * Rows can grow just after the first frame (highlighted code, images,
+	 * fonts), and WebKit does not hold the bottom when they do, so the end
+	 * can slide below the fold. For about a third of a second, or until the
+	 * reader scrolls, wheels, touches or types, it is put back at the bottom.
 	 */
 	function openAtNewest() {
 		const scroller = scrollContainer;
@@ -2067,17 +2066,13 @@
 									</button>
 								</div>
 							{/if}
-							{#each drawnMessages as message, messageIndex (message.id)}
+							{#each drawnMessages as message (message.id)}
 								{@const isUserMessage = message.role === "user"}
 								{@const exchangeIndex = isUserMessage ? (exchangeIndexById.get(message.id) ?? -1) : -1}
-								<!-- `far`: every row but the last two, which may be streaming or
-								     just sent. The browser skips layout and paint for one off
-								     screen, which on a long chat is most of them. -->
 								<div
 									class="flex {isUserMessage
 										? 'justify-end'
 										: 'justify-start'}"
-									class:far={messageIndex < drawnMessages.length - 2}
 									id={isUserMessage
 										? `exchange-${exchangeIndex}`
 										: undefined}
@@ -3238,13 +3233,10 @@
 		contain: layout paint;
 	}
 
-	/* A settled row off screen is skipped: no layout, no paint, until it
-	   scrolls near. `auto` remembers each row's real height once it has been
-	   drawn, so scrolling back does not jump; 240px stands in before that. */
-	.far {
-		content-visibility: auto;
-		contain-intrinsic-size: auto 240px;
-	}
+	/* No `content-visibility: auto` on rows. WebKit does not hold the reading
+	   position when a skipped row takes its real height, so scrolling up a long
+	   chat in the apps jumped by a few hundred pixels at every row. The drawn
+	   window (DRAWN_AT_FIRST) keeps the rows few instead. */
 
 	/* The top of a long transcript, while earlier messages are not drawn. */
 	.earlier-edge {

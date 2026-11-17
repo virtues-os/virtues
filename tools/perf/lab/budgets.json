@@ -20,7 +20,7 @@
     "rendered_ms": 332,
     "open_layout_ms": 46,
     "resize_layout_ms": 15,
-    "scroll_layout_ms": 19,
+    "scroll_layout_ms": 12,
     "longest_task_ms": 120,
     "heap_mb": 23.55,
     "memory_mb": 32.53,
@@ -38,7 +38,7 @@
   },
   "sidebar_toggle": {
     "toggle_layout_ms": 18,
-    "toggle_style_ms": 34,
+    "toggle_style_ms": 43,
     "toggle_script_ms": 15,
     "toggle_slow_frames": 1
   },
@@ -48,5 +48,8 @@
     "stream_script_ms": 455,
     "stream_layout_ms": 385,
     "stream_longest_frame_ms": 67
+  },
+  "webkit_scroll": {
+    "scroll_jumps": 1
   }
 }

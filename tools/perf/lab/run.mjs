@@ -31,7 +31,7 @@ import { existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync, mkdi
 import { tmpdir, homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { chromium } from 'playwright-core';
+import { chromium, webkit } from 'playwright-core';
 import { seedSql, LONG_CHAT_ID, LONG_CHAT_MESSAGES } from './seed.mjs';
 import { startFakeModel, TOKENS, TOKEN_INTERVAL_MS } from './fake-model.mjs';
 
@@ -420,6 +420,69 @@ async function relayLoad(browser) {
 	return { composer_ms: marks.composer ?? -1, sidebar_ms: marks.sidebar ?? -1, preflights };
 }
 
+/**
+ * The long chat scrolled from its newest message to its first with the mouse
+ * wheel, in WebKit, the engine of the Mac and iPhone apps. After each step the
+ * row that was at the top must have moved down by exactly what the wheel
+ * scrolled, including the steps that draw earlier messages above it. A step
+ * where it moved more than 40 px off that is a jump the reader sees. WebKit
+ * jumped at almost every step while rows were skipped off screen with
+ * `content-visibility: auto`; Chromium did not, so this runs in WebKit.
+ */
+const WHEEL_STEP = 300;
+async function webkitScroll() {
+	let browser;
+	try {
+		browser = await webkit.launch({ headless: true });
+	} catch (e) {
+		throw new Error(`webkit_scroll needs Playwright's WebKit: run \`npx playwright-core install webkit\` in tools/perf/lab (${e.message.split('\n')[0]})`);
+	}
+	try {
+		const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
+		const page = await context.newPage();
+		await page.goto(`${ORIGIN}/chat/${LONG_CHAT_ID}`);
+		const last = `${LONG_CHAT_ID}_${String(LONG_CHAT_MESSAGES - 1).padStart(4, '0')}`;
+		await waitOrExplain(page, page.locator(`[data-message-id="${last}"]`), 'attached', 60_000);
+		await page.waitForTimeout(1000);
+		const box = await page.locator('.chat-layout').boundingBox();
+		await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+		const state = () =>
+			page.evaluate(() => {
+				const s = document.querySelector('.chat-layout');
+				const top = s.getBoundingClientRect().top;
+				const rows = [...s.querySelectorAll('[data-message-id]')];
+				const ref = rows.find((r) => r.getBoundingClientRect().bottom > top + 20);
+				return { scrollTop: s.scrollTop, drawn: rows.length, ref: ref?.dataset.messageId, refTop: ref?.getBoundingClientRect().top ?? 0, first: rows[0]?.dataset.messageId };
+			});
+		// The first seeded message, not a count: stream_reply's turn may still
+		// be at the end of the chat.
+		const firstId = `${LONG_CHAT_ID}_0000`;
+		let prev = await state();
+		let jumps = 0;
+		let worst = 0;
+		let reachedTop = false;
+		for (let i = 0; i < 500 && !reachedTop; i++) {
+			await page.mouse.wheel(0, -WHEEL_STEP);
+			await page.waitForTimeout(120);
+			const now = await state();
+			const refNow = await page.evaluate((id) => document.querySelector(`[data-message-id="${id}"]`)?.getBoundingClientRect().top ?? null, prev.ref);
+			// Near the top the wheel scrolls only what is left, unless rows were
+			// just drawn above.
+			const expected = now.drawn !== prev.drawn ? WHEEL_STEP : Math.min(WHEEL_STEP, prev.scrollTop);
+			const off = refNow === null ? Infinity : Math.abs(refNow - prev.refTop - expected);
+			if (off > 40) jumps++;
+			if (Number.isFinite(off)) worst = Math.max(worst, off);
+			// WebKit's scrollTop is fractional.
+			reachedTop = now.scrollTop < 1 && now.first === firstId;
+			prev = now;
+		}
+		await context.close();
+		return { scroll_jumps: reachedTop ? jumps : -1, scroll_worst_px: Math.round(worst) };
+	} finally {
+		await browser.close().catch(() => {});
+	}
+}
+
 async function longChat(browser) {
 	const { context, page, cdp } = await newPage(browser);
 	const last = `${LONG_CHAT_ID}_${String(LONG_CHAT_MESSAGES - 1).padStart(4, '0')}`;
@@ -686,7 +749,7 @@ const RULES = {
 	first_token_ms: 'time', stream_lag_ms: 'time', stream_script_ms: 'time', stream_layout_ms: 'layout',
 	stream_slow_frames: 'report', stream_longest_frame_ms: 'time',
 	toggle_layout_ms: 'layout', toggle_style_ms: 'layout', toggle_script_ms: 'layout', toggle_slow_frames: 'approx', long_task_ms: 'report', longest_task_ms: 'time',
-	api_before_ready: 'report', waterfall_depth: 'approx', api_total: 'count', preflights: 'approx',
+	api_before_ready: 'report', waterfall_depth: 'approx', api_total: 'count', preflights: 'approx', scroll_jumps: 'count', scroll_worst_px: 'report',
 	js_transfer_kb: 'size', heap_mb: 'size', memory_mb: 'size', wasm_mb: 'size', heap_mb_after: 'size', dom_nodes: 'size',
 	listeners: 'size', documents: 'count',
 	heap_mb_per_lap: 'growth', dom_nodes_per_lap: 'growth', listeners_per_lap: 'growth', documents_per_lap: 'growth'
@@ -769,7 +832,9 @@ async function main() {
 			long_chat: await repeat('long_chat', longChat, browser),
 			view_cycle: await repeat('view_cycle', viewCycle, browser, Math.min(RUNS, 3)),
 			sidebar_toggle: await repeat('sidebar_toggle', sidebarToggle, browser),
-			stream_reply: await repeat('stream_reply', streamReply, browser)
+			stream_reply: await repeat('stream_reply', streamReply, browser),
+			// Deterministic: the same wheel steps over the same rows.
+			webkit_scroll: await repeat('webkit_scroll', webkitScroll, null, 1)
 		};
 		await resetLongChat();
 	} finally {

@@ -9,7 +9,7 @@ its baseline in the same commit and say why in the message.
 | Check | What it measures | Where it runs |
 |---|---|---|
 | Bundle budget | What the chat home loads before its first paint | CI, on pull requests to `main` and `staging` that change more than docs |
-| Lab run | Six scenarios: cold load, cold load over the relay, a long chat, a streamed reply, the sidebar toggle, and memory across view changes | Locally, by hand |
+| Lab run | Seven scenarios: cold load, cold load over the relay, a long chat, a streamed reply, the sidebar toggle, memory across view changes, and scrolling a long chat in WebKit | Locally, by hand |
 | Query plans | The hot chat queries are planned without a sequential scan | `cargo test -p virtues` |
 
 ## Bundle budget
@@ -64,9 +64,11 @@ rm -rf /tmp/budget && git clone --local -b wave . /tmp/budget \
 3. It seeds invented data (`seed.mjs`): 40 short chats and one chat of 300
    messages with headings, lists, code, tables, reasoning and tool results.
    The generator is seeded, so the data is the same on every run.
-4. It drives headless Chromium through six scenarios, each run in a fresh
-   browser context. Each scenario runs five times (`--runs`) and keeps the
-   median; `view_cycle` runs at most three times.
+4. It drives headless Chromium through six scenarios and headless WebKit
+   through one, each run in a fresh browser context. Each scenario runs five
+   times (`--runs`) and keeps the median; `view_cycle` runs at most three
+   times, and `webkit_scroll` once, because it does the same steps every
+   time.
 5. It compares the result with `tools/perf/lab/budgets.json`. Whether the
    run passes or fails, it stops the box, drops the database and removes its
    temporary files, unless `--keep` is given.
@@ -76,6 +78,7 @@ names a live process, because it would drop the first one's database.
 
 ```sh
 cd tools/perf/lab && pnpm install   # once
+npx playwright-core install webkit  # once, for webkit_scroll
 node run.mjs                        # measure and compare
 node run.mjs --web-build DIR        # reuse a build, skip the clone
 node run.mjs --update               # record budgets.json from this run
@@ -89,23 +92,25 @@ PERF_RUST_LOG=info node run.mjs     # the box's log goes to results/box.log eith
 | `relay_load` | A cold load as the Mac and iPhone apps see it. The UI loads at once, and the page sends every box request through a proxy that holds it 100 ms (about a round trip over the relay), using the same `__VIRTUES_BACKEND_ORIGIN__` the shells inject. A held request keeps its connection, so the browser's six connections to the proxy queue as they do to the apps' loopback. Records when the composer is usable, when the sidebar shows the newest chat, and how many CORS preflights the proxy saw. Each preflight is a relay round trip ahead of its request, so the apps send the build identity header only on low-priority requests (lib/build.ts) |
 | `long_chat` | The chat draws its latest 60 messages, so this measures that window. Time until the 300th message is in the page, the longest task, memory after garbage collection, and Chromium's layout and style time for three moves: opening the chat, narrowing the window (every drawn message laid out again, as when the sidebar opens beside it), and scrolling to the top |
 | `stream_reply` | A message sent in the long chat and the fake model's reply streamed back. Records the time to the first token on screen, how long after the model sent its last token the page showed it, the main thread's script and layout time over the turn, and frames over 20 ms. The first and last tokens are seen with a MutationObserver, not by reading the page's text every frame. Each run starts and ends by deleting any turn after the 300 seeded messages |
+| `webkit_scroll` | The long chat scrolled with the mouse wheel from its newest message to its first, 300 px a step, in WebKit, the engine of the Mac and iPhone apps. After each step the message that was at the top must have moved down by what the wheel scrolled, including steps that draw earlier messages above it. Records the steps where it moved more than 40 px off, and the worst miss |
 | `sidebar_toggle` | Six opens and closes of the sidebar beside the long chat, through the header's ∴ button: main-thread layout, style and script time per toggle (median after two warm-ups) and the most frames over 20 ms in any toggle |
 | `view_cycle` | Ten laps through eight views by in-app navigation, and the growth per lap in heap, DOM nodes, listeners and documents between lap 2 and lap 10 |
 
 How each number is held to its budget:
 
-- Counts (requests, documents) and growth per lap are exact. The preflight
-  count gets one step of slack, like the waterfall's depth.
+- Counts (requests, documents, scroll jumps) and growth per lap are exact.
+  The preflight count gets one step of slack, like the waterfall's depth.
 - Times get 30% headroom with a 50 ms floor. Layout, style and script times
   (`*_layout_ms`, `toggle_style_ms`, `toggle_script_ms`) get 30% with a 10 ms
-  floor, because a 50 ms floor would hide a long chat's relayout going back
-  to what it cost before its rows could be skipped.
+  floor, because a 50 ms floor would hide a long chat's relayout getting
+  several times slower.
 - Sizes (memory, transfer, DOM nodes, listeners) get 5%.
 - The waterfall's depth and the toggle's slow frames get one step of slack:
   both depend on timing between runs of the same code.
 - Three numbers are reported and never budgeted, because they move between
   runs of the same code: requests that finished before the composer showed,
-  the sum of all long tasks, and slow frames during the stream.
+  the sum of all long tasks, and slow frames during the stream. The worst
+  scroll miss is reported too; the count of jumps is what is budgeted.
 - A budgeted number the run did not produce, or a -1 from a wait that timed
   out, fails the run.
 
@@ -153,9 +158,10 @@ should join this module the same way.
 - The relay's real behavior. `relay_load` adds a fixed 100 ms to each
   request; a real relay varies, and loses packets.
 - The Mac and iPhone shells: launch time, the `virtues://` handler, the tray.
-- WebKit. The lab runs Chromium, which anchors scrolling; WebKit does not,
-  and the long chat's scroll handling has a path for that which the lab does
-  not run.
+- WebKit beyond scrolling. Only `webkit_scroll` runs in WebKit, and
+  Playwright's WebKit is a recent build, not the macOS or iOS one the apps
+  get. It reports `overflow-anchor` as supported, so the long chat's
+  correction for WebKit without it does not run here.
 - GPU work: redrawing the glass's blur as the sidebar or a tile changes
   size. Headless Chromium draws in software, so `sidebar_toggle` holds only
   the main thread's half. Measure the rest in the Mac app with Safari's Web
