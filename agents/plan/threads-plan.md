@@ -270,7 +270,11 @@ starts. Read `.claude/rules/migrations.md` first.
    after slice 6.
    The menus already say "Add to thread…" and "Move to thread", and
    Materials and thread rows take a drop.
-4. **The week.** One endpoint returns, per thread and per day, minutes done and
+4. **The week.** Built: `GET /api/threads/week` (`api/thread_week.rs`) and
+   the door's Overview (the next five tasks, then the active threads as dots)
+   and the Threads view's Active filter. A task is one dot; spans of twelve
+   hours or more are left out. Habits are not in it yet.
+   One endpoint returns, per thread and per day, minutes done and
    minutes ahead, plus the day's time in no thread. The first version counts
    only what can be counted without a model: calendar events and dated tasks
    placed in a thread by the owner, and records with a duration added to a

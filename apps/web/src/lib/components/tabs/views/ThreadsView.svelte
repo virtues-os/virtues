@@ -2,18 +2,28 @@
 	/**
 	 * The Threads door: what you follow and the steps in it.
 	 *
-	 *   Tasks    every open task, whatever its home (TaskList). The add row is
-	 *            what "New task" and ⌘⇧E open.
-	 *   Threads  Active, Backlog and Finished. A row is a thread's name and
-	 *            where it stands. Pointing at a row shows it in the preview
-	 *            column; a click keeps it there, and opening it goes to its
-	 *            page. A row takes a dropped chat, page or pin.
+	 *   Overview  the next five tasks, then the active threads as a week of
+	 *             dots (WeekChart).
+	 *   Tasks     every open task, whatever its home (TaskList). The add row
+	 *             is what "New task" and ⌘⇧E open.
+	 *   Threads   Active (the week), Backlog and Finished (rows with where
+	 *             each stands).
 	 *
-	 * The view is in the route (`?view=tasks`), so a pin or a link can open
-	 * either one.
+	 * Pointing at a thread shows it in the preview column; a click keeps it
+	 * there, and opening it goes to its page. A thread's row takes a dropped
+	 * chat, page or pin. The view is in the route (`?view=tasks`,
+	 * `?view=threads`), so a pin or a link can open any of them.
 	 */
 	import type { Tab } from '$lib/tabs/types';
-	import type { ProjectSummary, Task } from '$lib/api/client';
+	import type { ProjectSummary, Task, Week } from '$lib/api/client';
+	import { getThreadWeek } from '$lib/api/client';
+	import WeekChart from '$lib/components/threads/WeekChart.svelte';
+	import TaskCheck from '$lib/components/tasks/TaskCheck.svelte';
+	import { tasksStore } from '$lib/stores/tasks.svelte';
+	import { toggleTaskDone } from '$lib/tasks/actions';
+	import { dueLabel } from '$lib/tasks/due';
+	import { homeOf, subjectName } from '$lib/tasks/homes';
+	import { TextAction } from '$lib';
 	import Icon from '$lib/components/Icon.svelte';
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import TaskList from '$lib/components/tasks/TaskList.svelte';
@@ -36,20 +46,96 @@
 
 	let { tab, active = false }: { tab: Tab; active?: boolean } = $props();
 
-	type View = 'tasks' | 'threads';
+	type View = 'overview' | 'tasks' | 'threads';
 	type Filter = 'active' | 'backlog' | 'finished';
 
 	const params = $derived(new URLSearchParams(tab.route.split('?')[1] ?? ''));
-	const view = $derived<View>(params.get('view') === 'tasks' ? 'tasks' : 'threads');
+	const view = $derived<View>(
+		params.get('view') === 'tasks' ? 'tasks' : params.get('view') === 'threads' ? 'threads' : 'overview',
+	);
 
 	function setView(next: View) {
-		const query = next === 'tasks' ? '?view=tasks' : '';
+		const query = next === 'overview' ? '' : `?view=${next}`;
 		windowShellStore.updateTab(tab.id, { route: `/threads${query}` });
 	}
 
 	onMount(() => {
 		projectStore.load();
+		void tasksStore.load();
 	});
+
+	// ── the week ───────────────────────────────────────────────────────────
+	let weekStart = $state<string | null>(null);
+	let week = $state<Week | null>(null);
+	let weekError = $state(false);
+
+	$effect(() => {
+		if (view === 'tasks') return;
+		const start = weekStart;
+		void projectStore.projects.length;
+		getThreadWeek(start ?? undefined)
+			.then((w) => {
+				week = w;
+				weekError = false;
+			})
+			.catch((e) => {
+				console.error('[ThreadsView] week failed:', e);
+				weekError = true;
+			});
+	});
+
+	function shiftWeek(days: number) {
+		if (!week) return;
+		const d = new Date(`${week.start}T12:00:00`);
+		d.setDate(d.getDate() + days);
+		const m = String(d.getMonth() + 1).padStart(2, '0');
+		weekStart = `${d.getFullYear()}-${m}-${String(d.getDate()).padStart(2, '0')}`;
+	}
+
+	function hours(minutes: number): string {
+		const h = Math.floor(minutes / 60);
+		const m = minutes % 60;
+		if (h === 0) return `${m} m`;
+		return m === 0 ? `${h} h` : `${h} h ${m} m`;
+	}
+
+	/** "6 h spent, 6 h 30 m ahead", saying only what is there. */
+	function weekLine(id: string): string | null {
+		const t = week?.threads.find((x) => x.id === id);
+		if (!t) return null;
+		const done = t.days.reduce((n, d) => n + d.done_minutes, 0);
+		const ahead = t.days.reduce((n, d) => n + d.ahead_minutes, 0);
+		const parts = [done > 0 ? `${hours(done)} spent` : null, ahead > 0 ? `${hours(ahead)} ahead` : null].filter(Boolean);
+		return parts.length ? parts.join(', ') : null;
+	}
+
+	// ── the overview's tasks ───────────────────────────────────────────────
+	const nextTasks = $derived(
+		tasksStore.open
+			.filter((t) => t.assignee === 'owner')
+			.sort((a, b) => (a.due_on ?? '~').localeCompare(b.due_on ?? '~') || a.sort_order - b.sort_order)
+			.slice(0, 5),
+	);
+
+	function newTaskHere() {
+		tasksStore.requestAdd();
+		setView('tasks');
+	}
+
+	function openTask(t: Task) {
+		windowShellStore.openTabFromRoute(`/task/${t.id}`, { label: t.title, focusExisting: true });
+	}
+
+	function openById(id: string) {
+		const p = rows.find((r) => r.id === id);
+		if (p) openProject(p);
+	}
+
+	async function dropOnThread(id: string, e: DragEvent) {
+		const p = rows.find((r) => r.id === id);
+		const url = droppedRefUrl(e);
+		if (p && url) await fileIntoProject(p, url);
+	}
 
 	let filter = $state<Filter>('active');
 	const FILTERS: { id: Filter; label: string }[] = [
@@ -59,9 +145,11 @@
 	];
 
 	const firstLoad = $derived(!projectStore.loaded && projectStore.loading);
+	// The overview shows the active threads, as the Active filter does.
+	const listFilter = $derived<Filter>(view === 'overview' ? 'active' : filter);
 	const rows = $derived.by<ProjectSummary[]>(() => {
-		if (filter === 'finished') return projectStore.archived;
-		const backlog = filter === 'backlog';
+		if (listFilter === 'finished') return projectStore.archived;
+		const backlog = listFilter === 'backlog';
 		return projectStore.projects.filter((p) => !!p.is_backlog === backlog);
 	});
 
@@ -97,7 +185,7 @@
 	}
 
 	function onKey(e: KeyboardEvent) {
-		if (!active || view !== 'threads' || e.metaKey || e.ctrlKey || e.altKey) return;
+		if (!active || view === 'tasks' || e.metaKey || e.ctrlKey || e.altKey) return;
 		const target = e.target as HTMLElement | null;
 		if (target?.closest('input, textarea, [contenteditable="true"], [role="menu"]')) return;
 		if (e.key === 'j' || e.key === 'ArrowDown') {
@@ -165,20 +253,72 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="door" class:with-preview={view === 'threads'}>
+{#snippet weekBlock()}
+	{#if week && week.threads.length > 0}
+		<WeekChart
+			{week}
+			{shownId}
+			{pinnedId}
+			onPrev={() => shiftWeek(-7)}
+			onNext={() => shiftWeek(7)}
+			onHover={(id) => (hoveredId = id)}
+			onPick={(id) => (pinnedId = id)}
+			onOpen={openById}
+			accepts={(data) => data.types.includes(REF_DRAG_TYPE)}
+			onDropTo={dropOnThread}
+		/>
+	{:else if weekError}
+		<p class="empty">Your server couldn't load the week. Try again in a moment.</p>
+	{:else if week}
+		<p class="empty">
+			A thread is something happening in your life that you follow. It keeps its tasks, chats, pages and files
+			together, and its time shows here week by week.
+		</p>
+	{/if}
+{/snippet}
+
+<div class="door">
 	<div class="main">
-		<Page title="Threads" maxWidth="prose">
+		<Page title="Threads" maxWidth={view === 'tasks' ? 'prose' : 'wide'}>
 			{#snippet actions()}
 				<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New thread</Button>
 			{/snippet}
 
 			<div class="views" role="tablist" aria-label="Views">
+				<button class="vt" role="tab" aria-selected={view === 'overview'} onclick={() => setView('overview')}>Overview</button>
 				<button class="vt" role="tab" aria-selected={view === 'tasks'} onclick={() => setView('tasks')}>Tasks</button>
 				<button class="vt" role="tab" aria-selected={view === 'threads'} onclick={() => setView('threads')}>Threads</button>
 			</div>
 
 			{#if view === 'tasks'}
 				<TaskList {active} route={tab.route} />
+			{:else if view === 'overview'}
+				<div class="hrow">
+					<h2 class="h2">Tasks</h2>
+					<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={newTaskHere}>New task</Button>
+				</div>
+				{#if nextTasks.length === 0}
+					<p class="empty">Nothing to do yet. New task adds one.</p>
+				{:else}
+					<ul class="next">
+						{#each nextTasks as t (t.id)}
+							{@const home = homeOf(t)}
+							<li class="next-row">
+								<TaskCheck done={false} label={`Complete ${t.title}`} onclick={() => toggleTaskDone(t)} />
+								<button class="next-title" onclick={() => openTask(t)}>{t.title}</button>
+								{#if home}<span class="next-meta">{subjectName(home)}</span>{/if}
+								{#if t.due_on}<span class="next-meta due">{dueLabel(t.due_on, t.due_at)}</span>{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+				<div class="all"><TextAction onclick={() => setView('tasks')}>All tasks</TextAction></div>
+
+				<div class="hrow week-head">
+					<h2 class="h2">Active threads</h2>
+					<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New thread</Button>
+				</div>
+				{@render weekBlock()}
 			{:else}
 				<div class="filters" role="group" aria-label="Show">
 					{#each FILTERS as f (f.id)}
@@ -186,7 +326,9 @@
 					{/each}
 				</div>
 
-				{#if firstLoad}
+				{#if filter === 'active' && week && week.threads.length > 0}
+					{@render weekBlock()}
+				{:else if firstLoad}
 					<div class="rows" aria-hidden="true">
 						{#each [0, 1, 2] as i (i)}<div class="row placeholder"></div>{/each}
 					</div>
@@ -249,7 +391,7 @@
 		</Page>
 	</div>
 
-	{#if view === 'threads'}
+	{#if view !== 'tasks'}
 		<aside class="preview" aria-live="polite" aria-label="Preview">
 			{#if shown}
 				<div class="ph">
@@ -284,6 +426,10 @@
 					<dl class="props">
 						<dt>Status</dt>
 						<dd>{statusOf(shown)}</dd>
+						{#if weekLine(shown.id)}
+							<dt>This week</dt>
+							<dd>{weekLine(shown.id)}</dd>
+						{/if}
 						<dt>Started</dt>
 						<dd>{dayOf(shown.created_at)}</dd>
 						{#if shown.thing_title}
@@ -376,6 +522,67 @@
 	}
 	.views {
 		margin-bottom: 16px;
+	}
+	.hrow {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		min-height: 32px;
+		margin-top: 16px;
+	}
+	.week-head {
+		margin-top: 40px;
+	}
+	.h2 {
+		margin: 0;
+		font-family: var(--font-serif);
+		font-weight: 400;
+		font-size: var(--md-h2-size);
+		line-height: 28px;
+		color: var(--color-foreground);
+	}
+	.next {
+		list-style: none;
+		margin: 8px 0 0;
+		padding: 0;
+	}
+	.next-row {
+		display: flex;
+		align-items: center;
+		gap: 12px;
+		min-height: 40px;
+	}
+	.next-title {
+		flex: 1 1 auto;
+		min-width: 0;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		font: inherit;
+		font-size: 15px;
+		color: var(--color-foreground);
+		text-align: left;
+		cursor: pointer;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.next-title:hover {
+		color: var(--color-primary);
+	}
+	.next-meta {
+		flex: none;
+		font-size: 13px;
+		color: var(--color-foreground-muted);
+		white-space: nowrap;
+	}
+	.next-meta.due {
+		min-width: 72px;
+		text-align: right;
+		font-variant-numeric: tabular-nums;
+	}
+	.all {
+		margin-top: 4px;
 	}
 
 	.rows {

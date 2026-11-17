@@ -83,6 +83,7 @@ pub fn routes() -> Router<AppState> {
         // Threads (`api::threads`): a thread, what has been added to it, and
         // its graph. Items come back inside GET /api/threads/:id.
         .route("/api/threads", get(list_threads_handler).post(create_thread_handler))
+        .route("/api/threads/week", get(thread_week_handler))
         .route(
             "/api/threads/:id",
             get(get_thread_handler)
@@ -442,6 +443,30 @@ pub async fn set_thread_item_role_handler(
         Ok(item) => Json(item).into_response(),
         Err(e) => error_response(e),
     }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ThreadWeekQuery {
+    /// The week's first day, `YYYY-MM-DD`. Absent: the Monday of the owner's
+    /// current week.
+    pub start: Option<chrono::NaiveDate>,
+}
+
+/// GET /api/threads/week - Each active thread's time by day, spent and ahead
+pub async fn thread_week_handler(
+    State(state): State<AppState>,
+    axum::extract::Query(q): axum::extract::Query<ThreadWeekQuery>,
+) -> Response {
+    use chrono::Datelike;
+    let pool = state.db.pool();
+    let start = match q.start {
+        Some(start) => start,
+        None => {
+            let today = crate::timezone::home_today(pool).await;
+            today - chrono::Duration::days(today.weekday().num_days_from_monday() as i64)
+        }
+    };
+    api_response(crate::api::thread_week::week(pool, start).await)
 }
 
 /// GET /api/threads/:id/graph - Entities referenced across the members
