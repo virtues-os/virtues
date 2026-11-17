@@ -1597,6 +1597,15 @@
 		color: var(--color-foreground);
 	}
 
+	/* Pressed, a row takes the tint it will have once you are there, at once
+	   (design.md: rows take a press fill and never shrink). Let go on
+	   another row and it fades off like a hover. */
+	.panel-row:active:not(.active) {
+		background: var(--lq-row-selected);
+		color: var(--color-foreground);
+		transition-duration: var(--motion-press);
+	}
+
 	/* A pinned project with something held over it: the row takes the drop
 	   tint, the same one a pane shows for a tab it will take. It outranks
 	   the active row's fill, which would otherwise hide it. */

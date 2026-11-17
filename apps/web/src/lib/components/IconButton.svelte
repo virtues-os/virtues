@@ -148,10 +148,23 @@
 		/* We paint our own :active ground; the platform's gray flash on touch
 		   would land a beat later and in a color no theme chose. */
 		-webkit-tap-highlight-color: transparent;
+		/* The shell's press (design.md, Motion): a hover comes on fast and goes
+		   off slow; a press sinks the square to 94% at once and it springs
+		   back when you let go. */
 		transition:
-			background-color 120ms ease,
-			border-color 120ms ease,
-			color 120ms ease;
+			background-color var(--motion-hover-out) var(--ease-premium),
+			border-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-premium);
+	}
+
+	.v-iconbtn:hover:not(:disabled) {
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
+	}
+
+	.v-iconbtn:active:not(:disabled) {
+		transform: scale(0.94);
+		transition-duration: var(--motion-press);
 	}
 
 	/* An inline SVG sits on the text baseline and hangs a descender's worth of
@@ -233,7 +246,7 @@
 	}
 
 	.v-iconbtn[data-variant="ghost"]:active:not(:disabled) {
-		background: var(--active-bg);
+		background: var(--press-bg);
 	}
 
 	.v-iconbtn[data-variant="secondary"] {
@@ -249,7 +262,7 @@
 	}
 
 	.v-iconbtn[data-variant="secondary"]:active:not(:disabled) {
-		background: var(--active-bg);
+		background: var(--press-bg);
 	}
 
 	/* Destroys something. Quiet until touched — an always-red icon in a
@@ -261,7 +274,7 @@
 	}
 
 	.v-iconbtn[data-variant="danger"]:active:not(:disabled) {
-		background: var(--active-bg);
+		background: var(--press-bg);
 	}
 
 	/* A toggle that is ON. The accent means *now* (§5), and it outranks the
@@ -278,6 +291,10 @@
 	@media (prefers-reduced-motion: reduce) {
 		.v-iconbtn {
 			transition: none;
+		}
+
+		.v-iconbtn:active:not(:disabled) {
+			transform: none;
 		}
 	}
 </style>

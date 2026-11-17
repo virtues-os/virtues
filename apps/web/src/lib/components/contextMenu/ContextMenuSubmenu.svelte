@@ -190,6 +190,12 @@
 		transition-duration: var(--motion-hover-in);
 	}
 
+	/* Rows take the press fill and never shrink (design.md, Motion). */
+	.menu-item:active:not(.disabled) {
+		background: var(--press-bg);
+		transition-duration: var(--motion-press);
+	}
+
 	.menu-item.disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
@@ -220,6 +226,10 @@
 
 	.menu-item.destructive:hover:not(.disabled) {
 		background: color-mix(in srgb, var(--color-error, #ef4444) 12%, transparent);
+	}
+
+	.menu-item.destructive:active:not(.disabled) {
+		background: color-mix(in srgb, var(--color-error, #ef4444) 20%, transparent);
 	}
 
 	.item-icon {

@@ -111,10 +111,21 @@
 		font-weight: 500;
 		white-space: nowrap;
 		cursor: pointer;
+		/* The shell's press (design.md, Motion): a hover comes on fast and goes
+		   off slow, and a press fills at once. A labelled button takes the
+		   fill only, like a row: a wide control that shrank would wobble. */
 		transition:
-			background-color 120ms ease,
-			border-color 120ms ease,
-			color 120ms ease;
+			background-color var(--motion-hover-out) var(--ease-premium),
+			border-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium);
+	}
+
+	.v-btn:hover:not(:disabled) {
+		transition-duration: var(--motion-hover-in);
+	}
+
+	.v-btn:active:not(:disabled) {
+		transition-duration: var(--motion-press);
 	}
 
 	.v-btn:disabled {
@@ -214,7 +225,7 @@
 	}
 
 	.v-btn[data-variant="secondary"]:active:not(:disabled) {
-		background: var(--active-bg);
+		background: var(--press-bg);
 	}
 
 	.v-btn[data-variant="ghost"] {
@@ -228,7 +239,7 @@
 	}
 
 	.v-btn[data-variant="ghost"]:active:not(:disabled) {
-		background: var(--active-bg);
+		background: var(--press-bg);
 	}
 
 	.v-btn[data-variant="danger"] {
@@ -238,6 +249,10 @@
 
 	.v-btn[data-variant="danger"]:hover:not(:disabled) {
 		background: color-mix(in srgb, var(--color-error) 88%, black);
+	}
+
+	.v-btn[data-variant="danger"]:active:not(:disabled) {
+		background: color-mix(in srgb, var(--color-error) 78%, black);
 	}
 
 	/* Keep the information, drop the travel (StateBlock.svelte does the same).

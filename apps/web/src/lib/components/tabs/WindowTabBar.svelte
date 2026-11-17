@@ -1140,10 +1140,6 @@
 			transform: none;
 		}
 
-		.tab.active {
-			animation: none;
-		}
-
 		.tab-unread {
 			animation: none;
 		}

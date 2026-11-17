@@ -176,6 +176,12 @@
 		transition-duration: var(--motion-hover-in);
 	}
 
+	/* Rows take the press fill and never shrink (design.md, Motion). */
+	.v-menuitem:active:not(:disabled) {
+		background: var(--press-bg);
+		transition-duration: var(--motion-press);
+	}
+
 	.v-menuitem:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
@@ -194,6 +200,10 @@
 	[data-destructive="true"]:hover:not(:disabled),
 	[data-destructive="true"].is-focused:not(:disabled) {
 		background: color-mix(in srgb, var(--color-error) 12%, transparent);
+	}
+
+	[data-destructive="true"]:active:not(:disabled) {
+		background: color-mix(in srgb, var(--color-error) 20%, transparent);
 	}
 
 	.mi-lead {

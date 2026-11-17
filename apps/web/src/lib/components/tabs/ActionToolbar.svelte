@@ -408,6 +408,12 @@
 	.crumb.menu.open {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
+		transition-duration: var(--motion-hover-in);
+	}
+
+	.crumb.menu:active {
+		background: var(--press-bg);
+		transition-duration: var(--motion-press);
 	}
 
 	.crumb.current {
@@ -468,6 +474,18 @@
 		background: transparent;
 		color: var(--color-foreground-subtle);
 		cursor: pointer;
+		transition:
+			color var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-premium);
+	}
+
+	.pin:hover {
+		transition-duration: var(--motion-hover-in), var(--motion-release);
+	}
+
+	.pin:active {
+		transform: scale(0.94);
+		transition-duration: var(--motion-press);
 	}
 
 	.pin:hover,
@@ -555,12 +573,27 @@
 		cursor: pointer;
 		transition:
 			background-color var(--motion-hover-out) var(--ease-premium),
-			color var(--motion-hover-out) var(--ease-premium);
+			color var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-premium);
 	}
 
+	/* Hover comes on fast and goes off slow; a press fills at once, and a
+	   square button sinks to 94% and springs back (design.md, Motion). */
 	.action:hover:not(:disabled) {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
+	}
+
+	.action:active:not(:disabled) {
+		background: var(--press-bg);
+		transition-duration: var(--motion-press);
+	}
+
+	/* A labelled action is wide, and a wide control that shrank would
+	   wobble: it takes the fill only. */
+	.action:not(.primary):active:not(:disabled) {
+		transform: scale(0.94);
 	}
 
 	.action.primary {
@@ -595,5 +628,18 @@
 	.action:disabled {
 		opacity: 0.4;
 		cursor: default;
+	}
+
+	/* Keep the fill, drop the sink. */
+	@media (prefers-reduced-motion: reduce) {
+		.action,
+		.pin,
+		.crumb.link {
+			transition: none;
+		}
+		.action:active:not(:disabled),
+		.pin:active {
+			transform: none;
+		}
 	}
 </style>

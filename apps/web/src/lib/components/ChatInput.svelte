@@ -1000,9 +1000,33 @@
 		height: 2rem;
 		border-radius: var(--radius-full);
 		cursor: pointer;
+		/* The shell's press (design.md, Motion): a hover comes on fast and goes
+		   off slow; a press fills or darkens at once, and the button sinks to
+		   94% and springs back. */
 		transition:
-			background-color 0.15s ease,
-			opacity 0.15s ease;
+			background-color var(--motion-hover-out) var(--ease-premium),
+			color var(--motion-hover-out) var(--ease-premium),
+			opacity var(--motion-hover-out) var(--ease-premium),
+			transform var(--motion-release) var(--ease-premium);
+	}
+
+	.pill-btn:hover:not(:disabled) {
+		transition-duration: var(--motion-hover-in), var(--motion-hover-in), var(--motion-hover-in), var(--motion-release);
+	}
+
+	.pill-btn:active:not(:disabled) {
+		transform: scale(0.94);
+		transition-duration: var(--motion-press);
+	}
+
+	/* Keep the fill, drop the sink. */
+	@media (prefers-reduced-motion: reduce) {
+		.pill-btn {
+			transition: none;
+		}
+		.pill-btn:active:not(:disabled) {
+			transform: none;
+		}
 	}
 
 	/* The composer's buttons are 32px because the pill they sit in is tight, and
@@ -1035,6 +1059,10 @@
 	.mic-button:hover:not(:disabled) {
 		background: var(--hover-bg);
 		color: var(--color-foreground);
+	}
+	.attach-button:active,
+	.mic-button:active:not(:disabled) {
+		background: var(--press-bg);
 	}
 
 	/* Send is a soft square: grey while there is nothing to send, the navy
