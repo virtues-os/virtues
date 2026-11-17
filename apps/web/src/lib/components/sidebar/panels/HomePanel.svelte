@@ -328,7 +328,7 @@
 		const measure = () => {
 			const rows = zone.querySelector<HTMLElement>('.sidebar-expandable-inner');
 			if (!rows) return;
-			const row = parseFloat(getComputedStyle(body).getPropertyValue('--sidebar-interactive-height')) || 34;
+			const row = parseFloat(getComputedStyle(body).getPropertyValue('--sidebar-interactive-height')) || 32;
 			const bottom = body.getBoundingClientRect().bottom - parseFloat(getComputedStyle(body).paddingBottom);
 			const room = bottom - rows.getBoundingClientRect().top;
 			recentRoom = Math.max(0, Math.floor((room + ROW_GAP_PX) / (row + ROW_GAP_PX)));

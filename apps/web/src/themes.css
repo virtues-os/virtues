@@ -411,7 +411,8 @@
 	--sidebar-interactive-gap: 10px;
 	--sidebar-interactive-icon-size: 16px; /* SHELL_GLYPH_PX in AtlasIcon.svelte */
 	--sidebar-interactive-icon-size-small: 14px;
-	--sidebar-interactive-height: 34px;
+	/* 32px rows, 2px apart: a row every 34px. */
+	--sidebar-interactive-height: 32px;
 	/* Four registers instead of one. Every row used to be 28px / 13px / one
 	   weight / one colour, so pins read like destinations read like utilities —
 	   ten items all shouting at the same volume, which gives the eye nothing to
@@ -490,8 +491,9 @@
 	   --card-radius. The chrome and the pane never carry one. */
 	--shadow-float: 0 4px 16px rgba(0, 0, 0, 0.15);
 	/* The window header: 34px glass controls with 10px of air above and
-	   below, so the panes start 54px down. The ∴ and the sidebar's rows
-	   are as tall as a control. The rail is wider than a control, 44px
+	   below, so the panes start 54px down. The ∴ is as tall as a
+	   control; the sidebar's rows are 2px shorter (--sidebar-interactive-height),
+	   so a row lands every 34px. The rail is wider than a control, 44px
 	   (RAIL_GLASS_PX in sidebarState), so its glyphs have room around
 	   them. */
 	--chrome-row-h: 54px;

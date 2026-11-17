@@ -69,7 +69,7 @@
 </button>
 
 <style>
-	/* As tall as a tab and a sidebar row. Laid out like a row: the ∴, as large as a
+	/* As tall as a tab. Laid out like a sidebar row: the ∴, as large as a
 	   row's icon, then the name where a row's label starts. Closed it is as
 	   wide as a rail row, with the ∴ in the middle (the inset is set inline
 	   from the width). Its width and the inset ease on the sidebar's clock,
