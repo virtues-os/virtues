@@ -32,8 +32,9 @@
 	import LinkRow from '$lib/components/settings/LinkRow.svelte';
 	import YouSettings from '$lib/components/settings/YouSettings.svelte';
 	import BillingSettings from '$lib/components/settings/BillingSettings.svelte';
-	import { getAssistantProfile, updateProfile } from '$lib/api/client';
-	import { getTheme, setTheme, type Theme } from '$lib/utils/theme';
+	import ChangedLately from '$lib/components/settings/ChangedLately.svelte';
+	import { getAssistantProfile, getProfile, updateProfile } from '$lib/api/client';
+	import { getTheme, isValidTheme, setTheme, type Theme } from '$lib/utils/theme';
 	import { SECTIONS, SETTINGS, findSetting, matchingIds, titleOf, type SectionId } from '$lib/settings';
 
 	// The assistant's profile is read once here: its name goes into every
@@ -75,6 +76,26 @@
 	}
 
 	const title = (id: string) => titleOf(findSetting(id)?.title ?? id, spoken);
+
+	// Bumped after an undo from Changed lately, so the sections load again and
+	// show the value that came back.
+	let version = $state(0);
+
+	/** An undo can put back the assistant's name or the theme, which this
+	 *  page holds itself, so both are read again with the sections. */
+	async function refreshAfterUndo() {
+		version += 1;
+		void loadAssistant();
+		try {
+			const saved = (await getProfile()).theme;
+			if (saved && isValidTheme(saved) && saved !== theme) {
+				theme = saved as Theme;
+				setTheme(theme);
+			}
+		} catch {
+			// The theme stays as it is; the next load of Settings reads it.
+		}
+	}
 
 	// ─── Filtering ─────────────────────────────────────────────────────────
 	let query = $state('');
@@ -168,10 +189,15 @@
 		</nav>
 	</div>
 
+	{#if !matches}
+		<ChangedLately assistantName={spoken} onundo={refreshAfterUndo} />
+	{/if}
+
 	{#if nothingMatches}
 		<p class="nothing">Nothing in Settings matches “{query.trim()}”. Esc shows every setting.</p>
 	{/if}
 
+	{#key version}
 	{#each SECTIONS as section (section.id)}
 		<section id="section-{section.id}" aria-labelledby="heading-{section.id}" class:filtered={!sectionShown(section.id)}>
 			<h2 id="heading-{section.id}" class:lit={lit === section.id}><span class="hl">{titleOf(section.title, spoken)}</span></h2>
@@ -219,6 +245,7 @@
 			</div>
 		</section>
 	{/each}
+	{/key}
 
 	<footer class="foot" class:filtered={!!matches && !shows('start-over')}>
 		<div id="setting-start-over" data-setting="start-over" class:filtered={!shows('start-over')}><ReopenSection /></div>

@@ -16,6 +16,7 @@ pub mod devices;
 pub mod pair;
 pub mod passwords;
 pub mod settings_byo;
+pub mod settings_changes;
 pub mod setup;
 pub mod owner_proof;
 pub mod web_bundle;

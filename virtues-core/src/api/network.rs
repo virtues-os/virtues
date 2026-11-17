@@ -73,5 +73,13 @@ pub async fn relay_toggle_handler(
             .into_response();
     }
     crate::relay::request_rebind();
+    crate::api::settings_changes::record(
+        state.db.pool(),
+        "reach",
+        "relay_enabled",
+        &serde_json::json!(!body.enabled),
+        &serde_json::json!(body.enabled),
+    )
+    .await;
     Json(serde_json::json!({ "ok": true, "enabled": body.enabled })).into_response()
 }

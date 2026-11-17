@@ -2895,6 +2895,40 @@ export async function updateUiPreferences(patch: Record<string, unknown>): Promi
 	await updateAssistantProfile({ ui_preferences: { ...(profile?.ui_preferences ?? {}), ...patch } });
 }
 
+// ── Changed lately (Settings) ────────────────────────────────────────────────
+/** One change on the Settings page's Changed lately list
+ *  (`api/settings_changes.rs`): a setting you changed, or a device you paired. */
+export interface SettingsChange {
+	/** `setting:<id>` or `paired:<id>`. */
+	id: string;
+	kind: 'setting' | 'paired';
+	/** The setting's id in `lib/settings`, for a setting. */
+	setting_id: string | null;
+	old_value: unknown;
+	new_value: unknown;
+	/** The device's name, for a pairing. */
+	label: string | null;
+	actor: 'owner' | 'assistant' | null;
+	occurred_at: string;
+	can_undo: boolean;
+}
+
+export interface SettingsLately {
+	/** What needs you now, most urgent first. */
+	needs_you: AttentionItem[];
+	/** Changes and pairings, newest first. */
+	changes: SettingsChange[];
+}
+
+export function getSettingsChanges(): Promise<SettingsLately> {
+	return apiGet<SettingsLately>('/settings/changes');
+}
+
+/** Write a setting change's old value back. `id` is the number in `setting:<id>`. */
+export function undoSettingsChange(id: number): Promise<{ ok: boolean }> {
+	return apiSend<{ ok: boolean }>('POST', `/settings/changes/${id}/undo`);
+}
+
 // ── Billing / wallet ─────────────────────────────────────────────────────────
 export function getBillingLinkStatus<T = unknown>(): Promise<T> {
 	return apiGet<T>('/billing/link/status');

@@ -157,6 +157,15 @@ pub async fn set_auto_topup_handler(
          SET auto_topup_enabled = FALSE \
          WHERE id = '00000000-0000-0000-0000-000000000001'"
     };
-    let _ = sqlx::query(q).execute(&pool).await;
+    // A failed write must say so: the page shows the switch in the state
+    // the server answers with, and this is money.
+    if let Err(e) = sqlx::query(q).execute(&pool).await {
+        tracing::warn!("auto top-up not saved: {e}");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({"error": "Your server couldn't save auto top-up. Try again."})),
+        );
+    }
+    crate::api::settings_changes::record(&pool, "auto-top-up", "auto_topup_enabled", &json!(!req.enabled), &json!(req.enabled)).await;
     (StatusCode::OK, Json(json!({"ok": true, "enabled": req.enabled})))
 }

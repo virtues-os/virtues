@@ -75,6 +75,11 @@ pub fn routes() -> Router<AppState> {
             "/api/assistant-profile",
             get(get_assistant_profile_handler).put(update_assistant_profile_handler),
         )
+        // Changed lately, at the top of the Settings page: what the owner
+        // changed (recorded by the two profile saves above), pairings, and
+        // what needs them (api/settings_changes.rs).
+        .route("/api/settings/changes", get(settings_changes_handler))
+        .route("/api/settings/changes/:id/undo", post(undo_settings_change_handler))
         // Models API
         .route("/api/models", get(list_models_handler))
         .route(
@@ -255,7 +260,23 @@ pub async fn update_profile_handler(
     State(state): State<AppState>,
     Json(request): Json<crate::api::profile::UpdateProfileRequest>,
 ) -> Response {
-    api_response(crate::api::profile::update_profile(state.db.pool(), request).await)
+    let pool = state.db.pool();
+    // The record before the save, for Changed lately. If it can't be read
+    // there is nothing to compare against: the save goes ahead, unrecorded.
+    let before = match crate::api::profile::get_profile(pool).await {
+        Ok(p) => serde_json::to_value(p).ok(),
+        Err(e) => {
+            tracing::warn!("changed lately: profile unreadable before save: {e}");
+            None
+        }
+    };
+    let result = crate::api::profile::update_profile(pool, request).await;
+    if let (Some(before), Ok(after)) = (&before, &result) {
+        if let Ok(after) = serde_json::to_value(after) {
+            crate::api::settings_changes::record_diff(pool, before, &after, crate::api::settings_changes::PROFILE_FIELDS).await;
+        }
+    }
+    api_response(result)
 }
 
 // =============================================================================
@@ -272,7 +293,37 @@ pub async fn update_assistant_profile_handler(
     State(state): State<AppState>,
     Json(request): Json<crate::api::assistant_profile::UpdateAssistantProfileRequest>,
 ) -> Response {
-    api_response(crate::api::assistant_profile::update_assistant_profile(state.db.pool(), request).await)
+    let pool = state.db.pool();
+    // The record before the save, for Changed lately. If it can't be read
+    // there is nothing to compare against: the save goes ahead, unrecorded.
+    let before = match crate::api::assistant_profile::get_assistant_profile(pool).await {
+        Ok(p) => serde_json::to_value(p).ok(),
+        Err(e) => {
+            tracing::warn!("changed lately: assistant profile unreadable before save: {e}");
+            None
+        }
+    };
+    let result = crate::api::assistant_profile::update_assistant_profile(pool, request).await;
+    if let (Some(before), Ok(after)) = (&before, &result) {
+        if let Ok(after) = serde_json::to_value(after) {
+            crate::api::settings_changes::record_diff(pool, before, &after, crate::api::settings_changes::ASSISTANT_FIELDS).await;
+        }
+    }
+    api_response(result)
+}
+
+// =============================================================================
+// Changed lately
+// =============================================================================
+
+/// GET /api/settings/changes — what changed lately and what needs the owner.
+pub async fn settings_changes_handler(State(state): State<AppState>) -> Response {
+    api_response(crate::api::settings_changes::lately(&state.db).await)
+}
+
+/// POST /api/settings/changes/:id/undo — write a change's old value back.
+pub async fn undo_settings_change_handler(State(state): State<AppState>, Path(id): Path<i64>) -> Response {
+    api_response(crate::api::settings_changes::undo(state.db.pool(), id).await.map(|()| serde_json::json!({ "ok": true })))
 }
 
 // =============================================================================
@@ -700,9 +751,22 @@ pub async fn update_status_handler() -> Response {
 
 /// PUT /api/system/update/channel — follow stable or prerelease.
 pub async fn set_channel_handler(
+    State(state): State<AppState>,
     Json(request): Json<crate::api::updates::SetChannelRequest>,
 ) -> Response {
-    api_response(crate::api::updates::set_channel(request))
+    let before = crate::api::updates::channel_name();
+    let (asked_channel, asked_auto) = (request.channel.is_some(), request.auto_update);
+    let result = crate::api::updates::set_channel(request);
+    if let Ok(after) = &result {
+        let pool = state.db.pool();
+        if asked_channel && after.channel != before {
+            crate::api::settings_changes::record(pool, "update-channel", "update_channel", &serde_json::json!(before), &serde_json::json!(after.channel)).await;
+        }
+        if let Some(on) = asked_auto {
+            crate::api::settings_changes::record(pool, "auto-install", "auto_update", &serde_json::json!(!on), &serde_json::json!(on)).await;
+        }
+    }
+    api_response(result)
 }
 
 /// POST /api/system/update/apply — start an upgrade.

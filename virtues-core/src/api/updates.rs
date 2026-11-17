@@ -191,6 +191,11 @@ pub async fn status() -> UpdateStatus {
 /// back — it means "stop taking prereleases", and the box stays where it is
 /// until stable catches up. The UI has to say that plainly, or it reads as the
 /// setting having silently failed.
+/// The update channel this server follows, by name ('stable', 'prerelease').
+pub fn channel_name() -> String {
+    channel::current().as_str().to_string()
+}
+
 pub fn set_channel(req: SetChannelRequest) -> Result<UpdateChannelResponse> {
     if let Some(name) = &req.channel {
         let channel = Channel::parse(name).ok_or_else(|| {
