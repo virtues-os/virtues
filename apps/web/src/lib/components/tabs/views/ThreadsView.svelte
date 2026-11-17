@@ -27,6 +27,8 @@
 	import Icon from '$lib/components/Icon.svelte';
 	import ProjectGlyph from '$lib/components/ProjectGlyph.svelte';
 	import TaskList from '$lib/components/tasks/TaskList.svelte';
+	import TaskPreview from '$lib/components/tasks/TaskPreview.svelte';
+	import { newTaskDialog } from '$lib/stores/newTask.svelte';
 	import { Button, IconButton, Page } from '$lib';
 	import { projectStore } from '$lib/stores/project.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
@@ -119,9 +121,18 @@
 	);
 
 	function newTaskHere() {
-		tasksStore.requestAdd();
-		setView('tasks');
+		newTaskDialog.open();
 	}
+
+	// ── the Tasks view's preview ───────────────────────────────────────────
+	let hoveredTaskId = $state<string | null>(null);
+	let pinnedTaskId = $state<string | null>(null);
+	const shownTask = $derived.by(() => {
+		const id = pinnedTaskId ?? hoveredTaskId;
+		const picked = id ? tasksStore.find(id) : undefined;
+		if (picked) return picked;
+		return tasksStore.open.find((t) => t.assignee === 'owner') ?? tasksStore.open[0] ?? null;
+	});
 
 	function openTask(t: Task) {
 		windowShellStore.openTabFromRoute(`/task/${t.id}`, { label: t.title, focusExisting: true });
@@ -310,7 +321,11 @@
 	<div class="main">
 		<Page title="Threads" maxWidth={view === 'tasks' ? 'reading' : 'full'}>
 			{#snippet actions()}
-				<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New thread</Button>
+				{#if view === 'tasks'}
+					<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={newTaskHere}>New task</Button>
+				{:else}
+					<Button variant="secondary" size="sm" icon="mynaui:plus" onclick={() => newProject()}>New thread</Button>
+				{/if}
 			{/snippet}
 
 			<div class="views" role="tablist" aria-label="Views">
@@ -320,7 +335,16 @@
 			</div>
 
 			{#if view === 'tasks'}
-				<TaskList {active} route={tab.route} />
+				<TaskList
+					{active}
+					route={tab.route}
+					hideNew
+					emptyText="No tasks yet. New task adds one."
+					shownId={shownTask?.id ?? null}
+					pinnedId={pinnedTaskId}
+					onPick={(t) => (pinnedTaskId = t.id)}
+					onHover={(t) => (hoveredTaskId = t?.id ?? null)}
+				/>
 			{:else if view === 'overview'}
 				<div class="hrow">
 					<h2 class="h2">Tasks</h2>
@@ -449,7 +473,20 @@
 		</Page>
 	</div>
 
-	{#if view !== 'tasks'}
+	{#if view === 'tasks'}
+		<aside class="preview" aria-live="polite" aria-label="Preview">
+			{#if shownTask}
+				<TaskPreview task={shownTask} />
+				<div class="pf">
+					<span><kbd>↵</kbd> Open</span>
+					<span><kbd>J</kbd> <kbd>K</kbd> Move</span>
+				</div>
+			{:else}
+				<div class="ph"><span class="kind">Preview</span></div>
+				<p class="quiet">Point at a task to see it here.</p>
+			{/if}
+		</aside>
+	{:else}
 		<aside class="preview" aria-live="polite" aria-label="Preview">
 			{#if shown}
 				<div class="ph">

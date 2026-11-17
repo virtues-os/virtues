@@ -171,7 +171,7 @@
 	}
 
 	function handleNewTask() {
-		void newTask((route, label) => windowShellStore.openTabFromRoute(route, { label, focusExisting: true }));
+		newTask();
 	}
 
 	function toggleCollapse() {

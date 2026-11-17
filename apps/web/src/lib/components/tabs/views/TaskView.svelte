@@ -17,13 +17,16 @@
 	import DuePicker from '$lib/components/tasks/DuePicker.svelte';
 	import TaskHome from '$lib/components/tasks/TaskHome.svelte';
 	import TaskAlsoAbout from '$lib/components/tasks/TaskAlsoAbout.svelte';
+	import TaskActions from '$lib/components/tasks/TaskActions.svelte';
+	import MenuItem from '$lib/components/MenuItem.svelte';
 	import { Button } from '$lib';
 	import { tasksStore } from '$lib/stores/tasks.svelte';
 	import { windowShellStore } from '$lib/stores/window-shell.svelte';
 	import { identityOf } from '$lib/refs/identity.svelte';
 	import { isClosed, toggleTaskDone } from '$lib/tasks/actions';
 	import { dueLabel } from '$lib/tasks/due';
-	import { recurLabel, recurrenceOf } from '$lib/tasks/recur';
+	import { RECUR_CHOICES, recurLabel, recurrenceOf, type Recurrence } from '$lib/tasks/recur';
+	import { isRequest } from '$lib/tasks/requests';
 	import { eventLine, eventTime } from '$lib/tasks/history';
 	import { toast } from 'svelte-sonner';
 
@@ -86,6 +89,19 @@
 	}
 
 	let dueOpen = $state(false);
+	let recurOpen = $state(false);
+
+	function saveRecurrence(recurs: Recurrence | null) {
+		recurOpen = false;
+		void save(
+			{ recur_every: recurs?.every ?? null, recur_unit: recurs?.unit ?? null },
+			"Your server couldn't change how that repeats",
+		);
+	}
+
+	async function reloadHistory() {
+		if (task) history = await listTaskEvents(task.id);
+	}
 
 	const source = $derived(task?.source_url ? identityOf(task.source_url) : null);
 	const recurs = $derived(task ? recurrenceOf(task) : null);
@@ -120,8 +136,12 @@
 							}}
 						/>
 					{/key}
-					<Button variant="secondary" size="sm" onclick={toggle}>{isClosed(task) ? 'Reopen' : 'Mark done'}</Button>
+					{#if !isRequest(task)}
+						<Button variant="secondary" size="sm" onclick={toggle}>{isClosed(task) ? 'Reopen' : 'Mark done'}</Button>
+					{/if}
 				</div>
+
+				<TaskActions {task} onChanged={reloadHistory} />
 
 				<section class="block">
 					<h2 class="block-title">Notes</h2>
@@ -150,7 +170,7 @@
 					</section>
 				{/if}
 
-				{#if task.result}
+				{#if task.result && isClosed(task)}
 					<section class="block">
 						<h2 class="block-title">What the assistant left</h2>
 						<div class="result"><Markdown content={task.result} /></div>
@@ -202,7 +222,33 @@
 						</Popover>
 					</dd>
 					<dt>Repeats</dt>
-					<dd class="plain">{recurs ? recurLabel(recurs.every, recurs.unit) : 'Never'}</dd>
+					<dd>
+						{#if isRequest(task)}
+							<span class="plain">Never</span>
+						{:else}
+							<Popover bind:open={recurOpen} placement="bottom-start" offset={4}>
+								{#snippet trigger({ toggle: toggleRecur })}
+									<button type="button" class="fact" onclick={toggleRecur} aria-haspopup="menu">
+										{recurs ? recurLabel(recurs.every, recurs.unit) : 'Never'}
+									</button>
+								{/snippet}
+								{#snippet children()}
+									<div class="menu" role="menu" aria-label="How often this task repeats">
+										<MenuItem role="menuitemradio" checked={!recurs} label="Never" onclick={() => saveRecurrence(null)} />
+										{#each RECUR_CHOICES as choice (choice.every + choice.unit)}
+											<MenuItem
+												role="menuitemradio"
+												checked={recurs?.every === choice.every && recurs?.unit === choice.unit}
+												label={recurLabel(choice.every, choice.unit)}
+												onclick={() => saveRecurrence(choice)}
+											/>
+										{/each}
+										<p class="menu-note">Counted from the day you finish it.</p>
+									</div>
+								{/snippet}
+							</Popover>
+						{/if}
+					</dd>
 					<dt>For</dt>
 					<dd class="plain">{task.assignee === 'assistant' ? 'The assistant' : 'You'}</dd>
 				</dl>
@@ -370,6 +416,21 @@
 	.fact:hover {
 		background: var(--hover-bg);
 		transition-duration: var(--motion-hover-in);
+	}
+	.menu {
+		display: flex;
+		flex-direction: column;
+		min-width: 12rem;
+		padding: 4px;
+		background: var(--color-background);
+		border: 1px solid var(--color-border);
+		border-radius: var(--radius-lg);
+	}
+	.menu-note {
+		margin: 0;
+		padding: 8px 8px 4px;
+		font-size: 12px;
+		color: var(--color-foreground-subtle);
 	}
 	@media (max-width: 900px) {
 		.frame {

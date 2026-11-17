@@ -22,6 +22,7 @@
 	import { toast } from 'svelte-sonner';
 	import { uploadDriveFile, addProjectItem, reextractDriveFile, getProjectGraph } from '$lib/api/client';
 	import { askVirtues } from '$lib/stores/pendingPrompt.svelte';
+	import { newTaskDialog } from '$lib/stores/newTask.svelte';
 	import { dropZone, hasFiles } from '$lib/actions/dropZone';
 	import {
 		droppedRefUrl,
@@ -443,8 +444,13 @@
 				</section>
 
 				<section class="block" aria-labelledby="tasks-h">
-					<h2 id="tasks-h" class="block-title">Tasks</h2>
-					<TaskList {active} route={tab.route} projectId={detail.id} readonly={archived} emptyText={null} />
+					<div class="block-head">
+						<h2 id="tasks-h" class="block-title">Tasks</h2>
+						{#if !archived}
+							<TextAction onclick={() => newTaskDialog.open({ home: { kind: 'thread', id: detail.id } })}>New task</TextAction>
+						{/if}
+					</div>
+					<TaskList {active} route={tab.route} projectId={detail.id} readonly={archived} hideNew emptyText={null} />
 					{#if (detail.tasks_also_about ?? []).length > 0}
 						<h3 class="sub">Also about this thread</h3>
 						<ul class="also">

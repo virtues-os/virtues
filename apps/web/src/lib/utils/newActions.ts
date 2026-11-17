@@ -10,6 +10,7 @@ import { windowShellStore } from '$lib/stores/window-shell.svelte';
 import { sidebarDoors, type DoorId } from '$lib/stores/sidebarDoors.svelte';
 import { shortcuts } from '$lib/shortcuts/registry.svelte';
 import { newProject } from '$lib/utils/projectActions';
+import { newTaskDialog } from '$lib/stores/newTask.svelte';
 import { getLocalDateSlug } from '$lib/utils/dateUtils';
 
 /** Where a new thing opens: its route, and the label its tab starts with. */
@@ -21,11 +22,9 @@ export async function newPage(open: Opener): Promise<void> {
 	open(`/page/${page.id}`, page.title);
 }
 
-/** The Threads door's Tasks view, with its add row open. */
-export async function newTask(open: Opener): Promise<void> {
-	const { tasksStore } = await import('$lib/stores/tasks.svelte');
-	tasksStore.requestAdd();
-	open('/threads?view=tasks', 'Threads');
+/** The New task dialog. */
+export function newTask(): void {
+	newTaskDialog.open();
 }
 
 /**
@@ -90,7 +89,7 @@ export function newTabMenuItems(paneId: 'left' | 'right' | undefined, opts: { br
 			label: 'New task',
 			icon: 'atlas:tasks',
 			shortcut: shortcuts.format('mod+shift+e'),
-			action: () => newTask(open),
+			action: () => newTask(),
 		},
 		{
 			id: 'new-thread',

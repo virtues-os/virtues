@@ -264,7 +264,10 @@ starts. Read `.claude/rules/migrations.md` first.
    is also about, grouped Today, Tomorrow, Later this week, Later and No
    date; a past day stays under Today and is never marked late. Its home
    moves to a thread, thing, person, place or organization, and "Also about"
-   takes threads and subjects. Left: person, place and organization pages
+   takes threads and subjects. New task is a dialog (title, notes, home,
+   due, who it is for, also about) from every place that adds one, and the
+   door's Tasks view previews a task in the preview column; the inline add
+   row and the row that opened in place are gone. Left: person, place and organization pages
    listing their tasks (those pages held other sessions' uncommitted work on
    2026-11-17), the Overview with the week once slice 4 exists, and Insights
    after slice 6.

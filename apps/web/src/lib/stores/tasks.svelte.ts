@@ -22,26 +22,6 @@ class TasksStore {
 	loading = $state(false);
 	error = $state<string | null>(null);
 	closedLoaded = $state(false);
-	/**
-	 * Bumped by "New task" (the tab strip's +, ⌘⇧E) so the list of every
-	 * task focuses its add row, whether it is opening now or already open.
-	 * A list that mounts after the bump still finds it waiting, because a
-	 * request stays until a list takes it.
-	 */
-	addRequest = $state(0);
-	private addTaken = 0;
-
-	requestAdd() {
-		this.addRequest++;
-	}
-
-	/** Whether a "New task" is waiting for an add row, taking it if so. */
-	takeAddRequest(): boolean {
-		if (this.addRequest === this.addTaken) return false;
-		this.addTaken = this.addRequest;
-		return true;
-	}
-
 	async load() {
 		this.loading = true;
 		this.error = null;
