@@ -287,6 +287,63 @@ async function longChat(browser) {
 	};
 }
 
+/**
+ * Open and close the sidebar beside the long chat, through the header's ∴
+ * button, and record the main thread's layout, style and script time per
+ * toggle and any frame over 20 ms. The first two toggles warm up and are
+ * left out. The glass's blur is redrawn on the GPU, which headless Chromium
+ * does in software, so that half is not measured here.
+ */
+async function sidebarToggle(browser) {
+	const { context, page, cdp } = await newPage(browser);
+	await page.goto(`${ORIGIN}/chat/${LONG_CHAT_ID}`);
+	await waitOrExplain(page, page.locator('.chat-input').first(), 'visible', 30_000);
+	await page.waitForLoadState('networkidle');
+	await sleep(1500);
+	const metrics = async () => {
+		const { metrics } = await cdp.send('Performance.getMetrics');
+		return Object.fromEntries(metrics.map((x) => [x.name, x.value]));
+	};
+	const button = page.locator('button[aria-label="Hide the sidebar"], button[aria-label="Show the sidebar"]').first();
+	const rows = [];
+	for (let i = 0; i < 6; i++) {
+		const m0 = await metrics();
+		const frames = page.evaluate(
+			() =>
+				new Promise((done) => {
+					const ts = [];
+					const t0 = performance.now();
+					const tick = (t) => {
+						ts.push(t);
+						if (t - t0 < 900) requestAnimationFrame(tick);
+						else done(ts);
+					};
+					requestAnimationFrame(tick);
+				})
+		);
+		await button.click();
+		const ts = await frames;
+		await sleep(300);
+		const m1 = await metrics();
+		if (i < 2) continue;
+		const gaps = ts.slice(1).map((t, k) => t - ts[k]);
+		rows.push({
+			layout: (m1.LayoutDuration - m0.LayoutDuration) * 1000,
+			style: (m1.RecalcStyleDuration - m0.RecalcStyleDuration) * 1000,
+			script: (m1.ScriptDuration - m0.ScriptDuration) * 1000,
+			slow: gaps.filter((g) => g > 20).length
+		});
+	}
+	await context.close();
+	const med = (k) => median(rows.map((r) => r[k]));
+	return {
+		toggle_layout_ms: +med('layout').toFixed(1),
+		toggle_style_ms: +med('style').toFixed(1),
+		toggle_script_ms: +med('script').toFixed(1),
+		toggle_slow_frames: Math.max(...rows.map((r) => r.slow))
+	};
+}
+
 /** Move between views through the app's own router, and see what stays behind. */
 async function viewCycle(browser) {
 	const { context, page, cdp } = await newPage(browser);
@@ -349,7 +406,8 @@ async function repeat(name, fn, browser, runs = RUNS) {
 // steady and is budgeted instead). The waterfall depth can be one off for the
 // same race, so it gets one step of slack.
 const RULES = {
-	ready_ms: 'time', rendered_ms: 'time', open_layout_ms: 'layout', resize_layout_ms: 'layout', scroll_layout_ms: 'layout', long_task_ms: 'report', longest_task_ms: 'time',
+	ready_ms: 'time', rendered_ms: 'time', open_layout_ms: 'layout', resize_layout_ms: 'layout', scroll_layout_ms: 'layout',
+	toggle_layout_ms: 'layout', toggle_style_ms: 'layout', toggle_script_ms: 'layout', toggle_slow_frames: 'count', long_task_ms: 'report', longest_task_ms: 'time',
 	api_before_ready: 'report', waterfall_depth: 'approx', api_total: 'count',
 	js_transfer_kb: 'size', heap_mb: 'size', heap_mb_after: 'size', dom_nodes: 'size',
 	listeners: 'size', documents: 'count',
@@ -411,7 +469,8 @@ async function main() {
 		results = {
 			cold_load: await repeat('cold_load', coldLoad, browser),
 			long_chat: await repeat('long_chat', longChat, browser),
-			view_cycle: await repeat('view_cycle', viewCycle, browser, Math.min(RUNS, 3))
+			view_cycle: await repeat('view_cycle', viewCycle, browser, Math.min(RUNS, 3)),
+			sidebar_toggle: await repeat('sidebar_toggle', sidebarToggle, browser)
 		};
 	} finally {
 		await browser.close();

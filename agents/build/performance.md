@@ -68,6 +68,7 @@ node run.mjs --keep                 # leave the box and database up to look at
 |---|---|
 | `cold_load` | Time from navigation to a visible composer, JavaScript transferred, API requests before ready and in total, the waterfall's depth, long tasks, and heap, DOM and listener counts after garbage collection |
 | `long_chat` | Time until the 300th message is in the page, the longest task, heap and DOM after garbage collection, and Chromium's layout and style time for three moves: opening the chat, narrowing the window (every message laid out again, as when the sidebar opens beside it), and scrolling to the top |
+| `sidebar_toggle` | Six opens and closes of the sidebar beside the long chat, through the header's ∴ button: main-thread layout, style and script time per toggle (median after two warm-ups) and the most frames over 20 ms in any toggle |
 | `view_cycle` | Ten laps through eight views by in-app navigation, and the growth per lap in heap, DOM nodes, listeners and documents between lap 2 and lap 10 |
 
 How each number is held to its budget:
@@ -119,4 +120,8 @@ join this module the same way.
   nearly free. The waterfall's depth is the number to watch for the phone:
   each step is a round trip over the relay.
 - The Mac and iPhone shells: launch time, the `virtues://` handler, the tray.
+- GPU work: redrawing the glass's blur as the sidebar or a tile changes
+  size. Headless Chromium draws in software, so `sidebar_toggle` holds only
+  the main thread's half. Measure the rest in the Mac app with Safari's Web
+  Inspector (Timelines, Layers).
 - Server memory over a long run.
